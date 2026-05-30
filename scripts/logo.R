@@ -28,28 +28,159 @@ bezier2d <- function(n, xs, ys) {
   cbind(bezier1d(t, xs), bezier1d(t, ys))
 }
 
-# ---- R outline -----------------------------------------------------------
-# Target endpoints along the silhouette of an upper-case R inside the box
-# [0, 0.7] x [0, 1]. The "R" emerges from where threads converge --- it is
-# never drawn explicitly.
-r_outline <- function(n = 200) {
-  bar_len <- 1.0
-  bowl_len <- 1.25
-  leg_len <- sqrt(0.7^2 + 0.55^2)
-  total <- bar_len + bowl_len + leg_len
-  n_bar <- max(2, round(n * bar_len / total))
-  n_bowl <- max(2, round(n * bowl_len / total))
-  n_leg <- n - n_bar - n_bowl
+# ---- R logo geometry -----------------------------------------------------
+# Outer outline and bowl counter of the official R-project logo (Rlogo.svg).
+# Source coordinates are in the SVG viewBox (724 x 561, y-down). We flatten
+# the path into a polygon and rejection-sample inside (outer minus counter)
+# so threads land across the whole letter with visible weight --- the
+# counter naturally reads as negative space.
 
-  bar <- line2d(n_bar, 0, 0, 0, 1)
-  bowl <- bezier2d(
-    n_bowl,
-    xs = c(0, 0.95, 0.95, 0),
-    ys = c(1.00, 1.00, 0.55, 0.55)
+# Flatten a sequence of cubic-bezier / line segments to a polygon. `segs` is
+# a list of list(type = "L", end) or list(type = "C", c1, c2, end).
+flatten_path <- function(start, segs, n_per_seg = 18) {
+  pts <- matrix(start, nrow = 1)
+  cur <- start
+  for (s in segs) {
+    if (s$type == "L") {
+      seg <- line2d(n_per_seg, cur[1], cur[2], s$end[1], s$end[2])
+    } else {
+      seg <- bezier2d(
+        n_per_seg,
+        xs = c(cur[1], s$c1[1], s$c2[1], s$end[1]),
+        ys = c(cur[2], s$c1[2], s$c2[2], s$end[2])
+      )
+    }
+    pts <- rbind(pts, seg[-1, , drop = FALSE])
+    cur <- s$end
+  }
+  pts
+}
+
+r_outer_start <- c(550.000, 377.000)
+r_outer_segs <- list(
+  list(
+    type = "C",
+    c1 = c(550.000, 377.000),
+    c2 = c(571.822, 383.585),
+    end = c(584.500, 390.000)
+  ),
+  list(
+    type = "C",
+    c1 = c(588.899, 392.226),
+    c2 = c(596.510, 396.668),
+    end = c(602.000, 402.500)
+  ),
+  list(
+    type = "C",
+    c1 = c(607.378, 408.212),
+    c2 = c(610.000, 414.000),
+    end = c(610.000, 414.000)
+  ),
+  list(type = "L", end = c(696.000, 559.000)),
+  list(type = "L", end = c(557.000, 559.062)),
+  list(type = "L", end = c(492.000, 437.000)),
+  list(
+    type = "C",
+    c1 = c(492.000, 437.000),
+    c2 = c(478.690, 414.131),
+    end = c(470.500, 407.500)
+  ),
+  list(
+    type = "C",
+    c1 = c(463.668, 401.969),
+    c2 = c(460.755, 400.000),
+    end = c(454.000, 400.000)
+  ),
+  list(
+    type = "C",
+    c1 = c(449.298, 400.000),
+    c2 = c(420.974, 400.000),
+    end = c(420.974, 400.000)
+  ),
+  list(type = "L", end = c(421.000, 558.974)),
+  list(type = "L", end = c(298.000, 559.026)),
+  list(type = "L", end = c(298.000, 152.938)),
+  list(type = "L", end = c(545.000, 152.938)),
+  list(
+    type = "C",
+    c1 = c(545.000, 152.938),
+    c2 = c(657.500, 154.967),
+    end = c(657.500, 262.000)
+  ),
+  list(
+    type = "C",
+    c1 = c(657.500, 369.033),
+    c2 = c(550.000, 377.000),
+    end = c(550.000, 377.000)
   )
-  leg <- line2d(n_leg, 0, 0.55, 0.7, 0)
+)
 
-  rbind(bar, bowl, leg)
+r_counter_start <- c(496.500, 241.024)
+r_counter_segs <- list(
+  list(type = "L", end = c(422.037, 240.976)),
+  list(type = "L", end = c(422.000, 310.026)),
+  list(type = "L", end = c(496.500, 310.002)),
+  list(
+    type = "C",
+    c1 = c(496.500, 310.002),
+    c2 = c(531.000, 309.895),
+    end = c(531.000, 274.877)
+  ),
+  list(
+    type = "C",
+    c1 = c(531.000, 239.155),
+    c2 = c(496.500, 241.024),
+    end = c(496.500, 241.024)
+  )
+)
+
+# Vectorized ray-casting point-in-polygon: loops over edges, vectorized
+# over test points.
+points_in_poly <- function(xs, ys, poly) {
+  n <- nrow(poly)
+  inside <- logical(length(xs))
+  j <- n
+  for (i in seq_len(n)) {
+    xi <- poly[i, 1]
+    yi <- poly[i, 2]
+    xj <- poly[j, 1]
+    yj <- poly[j, 2]
+    cond <- ((yi > ys) != (yj > ys)) &
+      (xs < (xj - xi) * (ys - yi) / (yj - yi) + xi)
+    inside <- xor(inside, cond)
+    j <- i
+  }
+  inside
+}
+
+# Sample n target points uniformly inside the filled R region, mapped into
+# the [0, 0.7] x [0, 1] box (y flipped, since SVG is y-down).
+r_targets <- function(n = 200) {
+  outer_poly <- flatten_path(r_outer_start, r_outer_segs)
+  counter_poly <- flatten_path(r_counter_start, r_counter_segs)
+
+  xr <- range(outer_poly[, 1])
+  yr <- range(outer_poly[, 2])
+
+  out_x <- numeric(0)
+  out_y <- numeric(0)
+
+  while (length(out_x) < n) {
+    batch <- max(64L, as.integer((n - length(out_x)) * 3L))
+    xs <- runif(batch, xr[1], xr[2])
+    ys <- runif(batch, yr[1], yr[2])
+    keep <- points_in_poly(xs, ys, outer_poly) &
+      !points_in_poly(xs, ys, counter_poly)
+    out_x <- c(out_x, xs[keep])
+    out_y <- c(out_y, ys[keep])
+  }
+
+  out_x <- out_x[seq_len(n)]
+  out_y <- out_y[seq_len(n)]
+
+  nx <- (out_x - 298) / (696 - 298) * 0.7
+  ny <- 1 - (out_y - 152.938) / (559.062 - 152.938)
+  cbind(nx, ny)
 }
 
 # ---- Thread generator ----------------------------------------------------
@@ -95,7 +226,7 @@ make_thread <- function(
 # ---- Renderer ------------------------------------------------------------
 render_logo <- function(
   seed = 1,
-  n_threads = 80,
+  n_threads = 50,
   n_points = 500,
   col = "#111111",
   alpha = 0.45,
@@ -107,10 +238,7 @@ render_logo <- function(
 ) {
   set.seed(seed)
 
-  targets <- r_outline(n_threads)
-  # Shuffle so adjacent threads don't fan out neatly --- gives crossings
-  # in the middle, which reads as "unraveling".
-  targets <- targets[sample.int(nrow(targets)), , drop = FALSE]
+  targets <- r_targets(n_threads)
 
   tangle_c <- c(-0.55, 0.5)
 
@@ -134,9 +262,16 @@ render_logo <- function(
   )
 
   for (i in seq_len(n_threads)) {
-    start <- tangle_c + c(runif(1, -0.08, 0.08), runif(1, -0.18, 0.18))
+    start <- tangle_c + c(runif(1, -0.08, 0.08), runif(1, -0.28, 0.38))
     pts <- make_thread(start, targets[i, ], n = n_points)
     lines(pts[, 1], pts[, 2], col = adjustcolor(col, alpha), lwd = lwd)
+    points(
+      pts[nrow(pts), 1],
+      pts[nrow(pts), 2],
+      col = adjustcolor(col, alpha * 1.2),
+      pch = 16,
+      cex = lwd * 1.5
+    )
   }
 
   invisible(out)
