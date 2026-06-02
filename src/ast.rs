@@ -4,5 +4,5 @@ pub mod nodes;
 
 pub use nodes::{
     Arg, ArgList, AssignmentExpr, BinaryExpr, BlockExpr, CallExpr, ForExpr, ForExprParts,
-    FunctionExpr, IfExpr, ParenExpr, Root, UnaryExpr, WhileExpr, WhileExprParts,
+    FunctionExpr, IfExpr, Param, ParenExpr, Root, UnaryExpr, WhileExpr, WhileExprParts,
 };

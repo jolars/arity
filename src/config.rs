@@ -67,7 +67,16 @@ fn default_indent_width() -> u32 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct LintConfig {}
+pub struct LintConfig {
+    /// Explicit allowlist of rule IDs. When `Some`, only these rules run.
+    /// Unknown rule IDs are reported at lint-time, not at config parse-time.
+    #[serde(default)]
+    pub select: Option<Vec<String>>,
+    /// Rule IDs to disable. Applied on top of either `select` (subtracts) or
+    /// the default rule set.
+    #[serde(default)]
+    pub ignore: Vec<String>,
+}
 
 impl From<&FormatConfig> for FormatStyle {
     fn from(config: &FormatConfig) -> Self {
@@ -340,6 +349,21 @@ mod tests {
     fn rejects_unknown_field_in_lint() {
         let err = parse("[lint]\nstyle = \"strict\"\n").expect_err("unknown field");
         assert!(matches!(err, ConfigError::Parse { .. }));
+    }
+
+    #[test]
+    fn parses_lint_select() {
+        let config = parse("[lint]\nselect = [\"unused-binding\"]\n").expect("parse");
+        assert_eq!(
+            config.lint.select.as_deref(),
+            Some(&["unused-binding".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn parses_lint_ignore() {
+        let config = parse("[lint]\nignore = [\"undefined-symbol\"]\n").expect("parse");
+        assert_eq!(config.lint.ignore, vec!["undefined-symbol".to_string()]);
     }
 
     #[test]

@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
-use ravel::cli::{Cli, Commands};
+use ravel::cli::{Cli, Commands, LintOutput};
 use ravel::config::{Config, ConfigError};
 use ravel::formatter::{FormatStyle, check_paths_with_style, format_with_style};
+use ravel::linter::{OutputMode, render_findings};
 use ravel::parser::{parse, reconstruct};
 
 fn main() -> ExitCode {
@@ -38,7 +39,11 @@ fn main() -> ExitCode {
             },
             &config_source,
         ),
-        Commands::Lint { paths, check } => run_lint(paths, check, &config_source),
+        Commands::Lint {
+            paths,
+            check,
+            output,
+        } => run_lint(paths, check, output, &config_source),
         Commands::Lsp => run_lsp(),
     }
 }
@@ -294,12 +299,12 @@ fn run_format_write_paths(paths: &[PathBuf], verify: bool, style: FormatStyle) -
     ExitCode::SUCCESS
 }
 
-fn run_lint(paths: Vec<PathBuf>, check: bool, config_source: &ConfigSource) -> ExitCode {
-    if !check {
-        eprintln!("error: lint currently requires --check");
-        return ExitCode::from(2);
-    }
-
+fn run_lint(
+    paths: Vec<PathBuf>,
+    check: bool,
+    output: LintOutput,
+    config_source: &ConfigSource,
+) -> ExitCode {
     let anchor = match cwd_anchor() {
         Ok(anchor) => anchor,
         Err(code) => return code,
@@ -315,24 +320,12 @@ fn run_lint(paths: Vec<PathBuf>, check: bool, config_source: &ConfigSource) -> E
     match ravel::linter::check_paths_with_config(&paths, &config.lint) {
         Ok(result) => {
             let mut has_parse_blockers = false;
-            let mut has_findings = false;
-            for report in result.reports {
+            let mut all_findings = Vec::new();
+            for report in &result.reports {
                 match report.status {
                     ravel::linter::LintStatus::Clean => {}
                     ravel::linter::LintStatus::Findings { .. } => {
-                        has_findings = true;
-                        for diagnostic in report.diagnostics {
-                            eprintln!(
-                                "{}:{}:{}: [{}] {} (span {}..{})",
-                                diagnostic.path.display(),
-                                diagnostic.line,
-                                diagnostic.column,
-                                diagnostic.rule_id,
-                                diagnostic.message,
-                                diagnostic.start,
-                                diagnostic.end
-                            );
-                        }
+                        all_findings.extend(report.diagnostics.iter().cloned());
                     }
                     ravel::linter::LintStatus::ParseDiagnostics { count } => {
                         has_parse_blockers = true;
@@ -346,6 +339,23 @@ fn run_lint(paths: Vec<PathBuf>, check: bool, config_source: &ConfigSource) -> E
                 }
             }
 
+            if !all_findings.is_empty() {
+                let mode = match output {
+                    LintOutput::Pretty => OutputMode::Pretty,
+                    LintOutput::Concise => OutputMode::Concise,
+                    LintOutput::Json => OutputMode::Json,
+                };
+                let source_for = |path: &PathBuf| fs::read_to_string(path).ok();
+                let rendered = render_findings(&all_findings, mode, &source_for);
+                if matches!(mode, OutputMode::Json) {
+                    println!("{rendered}");
+                } else {
+                    eprint!("{rendered}");
+                }
+            }
+
+            let _ = check;
+            let has_findings = !all_findings.is_empty();
             if has_parse_blockers || has_findings {
                 ExitCode::from(1)
             } else {

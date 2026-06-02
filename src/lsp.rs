@@ -1,21 +1,30 @@
-//! Stdio-based LSP server exposing ravel's formatter as
-//! `textDocument/formatting`. v1: no diagnostics, no range formatting.
+//! Stdio-based LSP server: formatting + pushed diagnostics.
+//!
+//! Document changes are debounced (200 ms) per URI and serialized by an i32
+//! version counter so a fast typist can't trigger overlapping lint runs.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use tokio::time;
 use tower_lsp_server::jsonrpc::Result as JsonRpcResult;
 use tower_lsp_server::ls_types::{
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
-    OneOf, Position, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    InitializeParams, InitializeResult, InitializedParams, MessageType, NumberOrString, OneOf,
+    Position, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextEdit, Uri,
 };
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
-use crate::config::Config;
+use crate::config::{Config, LintConfig};
 use crate::formatter::{FormatStyle, format_with_style};
+use crate::linter::{Diagnostic, Severity};
+use crate::text::LineIndex;
+
+const LINT_DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// Run the language server on stdio until the client disconnects.
 pub async fn run() {
@@ -28,24 +37,36 @@ pub async fn run() {
 #[derive(Debug)]
 struct Backend {
     client: Client,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
 }
 
 #[derive(Debug, Default)]
 struct State {
-    documents: HashMap<Uri, String>,
-    config_cache: HashMap<PathBuf, FormatStyle>,
+    documents: HashMap<Uri, Document>,
+    config_cache: HashMap<PathBuf, ResolvedSettings>,
+}
+
+#[derive(Debug, Clone)]
+struct Document {
+    text: String,
+    version: i32,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedSettings {
+    style: FormatStyle,
+    lint: LintConfig,
 }
 
 impl Backend {
     fn new(client: Client) -> Self {
         Self {
             client,
-            state: Mutex::new(State::default()),
+            state: Arc::new(Mutex::new(State::default())),
         }
     }
 
-    fn resolve_style(&self, uri: &Uri) -> Result<FormatStyle, ConfigResolveError> {
+    fn resolve_settings(&self, uri: &Uri) -> Result<ResolvedSettings, ConfigResolveError> {
         if !uri.scheme().as_str().eq_ignore_ascii_case("file") {
             return Err(ConfigResolveError::NonFileUri);
         }
@@ -60,18 +81,81 @@ impl Backend {
 
         {
             let state = self.state.lock().expect("state mutex poisoned");
-            if let Some(style) = state.config_cache.get(&anchor) {
-                return Ok(*style);
+            if let Some(s) = state.config_cache.get(&anchor) {
+                return Ok(s.clone());
             }
         }
 
         let (config, _source) = Config::resolve(None, false, &anchor)
             .map_err(|err| ConfigResolveError::Config(err.to_string()))?;
-        let style = FormatStyle::from(&config.format);
+        let resolved = ResolvedSettings {
+            style: FormatStyle::from(&config.format),
+            lint: config.lint,
+        };
 
         let mut state = self.state.lock().expect("state mutex poisoned");
-        state.config_cache.insert(anchor, style);
-        Ok(style)
+        state.config_cache.insert(anchor, resolved.clone());
+        Ok(resolved)
+    }
+
+    fn schedule_lint(&self, uri: Uri) {
+        let state = Arc::clone(&self.state);
+        let client = self.client.clone();
+        let backend_uri = uri.clone();
+        tokio::spawn(async move {
+            time::sleep(LINT_DEBOUNCE).await;
+            // Snapshot the document & its version. If the version changed
+            // during the debounce window, another scheduled lint will run.
+            let snapshot = {
+                let s = state.lock().expect("state mutex poisoned");
+                s.documents.get(&backend_uri).cloned()
+            };
+            let Some(doc) = snapshot else { return };
+
+            let path = match backend_uri.to_file_path() {
+                Some(p) => p.into_owned(),
+                None => PathBuf::from("untitled.R"),
+            };
+
+            // Resolve lint config (use a fresh lookup; cheap).
+            let lint_config = {
+                let anchor = path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."));
+                let cached = {
+                    let s = state.lock().expect("state mutex poisoned");
+                    s.config_cache.get(&anchor).cloned()
+                };
+                cached
+                    .map(|s| s.lint)
+                    .or_else(|| {
+                        Config::resolve(None, false, &anchor)
+                            .ok()
+                            .map(|(c, _)| c.lint)
+                    })
+                    .unwrap_or_default()
+            };
+
+            let diagnostics = crate::linter::check::check_document(&path, &doc.text, &lint_config)
+                .unwrap_or_default();
+            let line_index = LineIndex::new(&doc.text);
+            let lsp_diags: Vec<LspDiagnostic> = diagnostics
+                .iter()
+                .map(|d| to_lsp_diagnostic(d, &line_index))
+                .collect();
+
+            // Only publish if the document version hasn't moved past our snapshot.
+            let still_current = {
+                let s = state.lock().expect("state mutex poisoned");
+                matches!(s.documents.get(&backend_uri), Some(cur) if cur.version == doc.version)
+            };
+            if still_current {
+                client
+                    .publish_diagnostics(backend_uri, lsp_diags, Some(doc.version))
+                    .await;
+            }
+        });
     }
 }
 
@@ -104,25 +188,46 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let mut state = self.state.lock().expect("state mutex poisoned");
-        state
-            .documents
-            .insert(params.text_document.uri, params.text_document.text);
+        let uri = params.text_document.uri.clone();
+        {
+            let mut state = self.state.lock().expect("state mutex poisoned");
+            state.documents.insert(
+                uri.clone(),
+                Document {
+                    text: params.text_document.text,
+                    version: params.text_document.version,
+                },
+            );
+        }
+        self.schedule_lint(uri);
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
         let Some(change) = params.content_changes.pop() else {
             return;
         };
-        let mut state = self.state.lock().expect("state mutex poisoned");
-        state
-            .documents
-            .insert(params.text_document.uri, change.text);
+        let uri = params.text_document.uri.clone();
+        {
+            let mut state = self.state.lock().expect("state mutex poisoned");
+            state.documents.insert(
+                uri.clone(),
+                Document {
+                    text: change.text,
+                    version: params.text_document.version,
+                },
+            );
+        }
+        self.schedule_lint(uri);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let mut state = self.state.lock().expect("state mutex poisoned");
-        state.documents.remove(&params.text_document.uri);
+        let uri = params.text_document.uri;
+        {
+            let mut state = self.state.lock().expect("state mutex poisoned");
+            state.documents.remove(&uri);
+        }
+        // Tell the client to clear stale diagnostics.
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn formatting(
@@ -132,7 +237,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let text = {
             let state = self.state.lock().expect("state mutex poisoned");
-            state.documents.get(&uri).cloned()
+            state.documents.get(&uri).map(|d| d.text.clone())
         };
         let Some(text) = text else {
             self.client
@@ -144,8 +249,8 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let style = match self.resolve_style(&uri) {
-            Ok(style) => style,
+        let settings = match self.resolve_settings(&uri) {
+            Ok(s) => s,
             Err(err) => {
                 self.client
                     .log_message(
@@ -157,7 +262,7 @@ impl LanguageServer for Backend {
             }
         };
 
-        match compute_format_edits(&text, style) {
+        match compute_format_edits(&text, settings.style) {
             Some(edits) => Ok(Some(edits)),
             None => {
                 self.client
@@ -198,28 +303,32 @@ pub fn compute_format_edits(text: &str, style: FormatStyle) -> Option<Vec<TextEd
     if formatted == text {
         return Some(Vec::new());
     }
+    let line_index = LineIndex::new(text);
+    let end = line_index.byte_to_position(text.len());
     Some(vec![TextEdit {
-        range: full_range(text),
+        range: Range {
+            start: Position::new(0, 0),
+            end,
+        },
         new_text: formatted,
     }])
 }
 
-fn full_range(text: &str) -> Range {
-    Range {
-        start: Position::new(0, 0),
-        end: end_position(text),
+fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnostic {
+    let start = idx.byte_to_position(u32::from(d.range.start()) as usize);
+    let end = idx.byte_to_position(u32::from(d.range.end()) as usize);
+    let severity = match d.severity {
+        Severity::Error => DiagnosticSeverity::ERROR,
+        Severity::Warning => DiagnosticSeverity::WARNING,
+        Severity::Info => DiagnosticSeverity::INFORMATION,
+        Severity::Hint => DiagnosticSeverity::HINT,
+    };
+    LspDiagnostic {
+        range: Range { start, end },
+        severity: Some(severity),
+        code: Some(NumberOrString::String(d.rule.to_string())),
+        source: Some("ravel".to_string()),
+        message: d.message.body.clone(),
+        ..Default::default()
     }
-}
-
-fn end_position(text: &str) -> Position {
-    let mut line: u32 = 0;
-    let mut last_line_start: usize = 0;
-    for (offset, byte) in text.bytes().enumerate() {
-        if byte == b'\n' {
-            line += 1;
-            last_line_start = offset + 1;
-        }
-    }
-    let character = text[last_line_start..].encode_utf16().count() as u32;
-    Position::new(line, character)
 }

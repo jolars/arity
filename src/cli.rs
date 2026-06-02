@@ -68,14 +68,28 @@ pub enum Commands {
     },
     /// Lint .R files
     Lint {
-        /// Input file or path; required with --check
+        /// Input file or path
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
 
-        /// Check .R files under the provided paths
+        /// Exit non-zero when any findings are reported (no effect on output)
         #[arg(long)]
         check: bool,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t = LintOutput::Pretty)]
+        output: LintOutput,
     },
     /// Run the language server over stdio (formatting only)
     Lsp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum LintOutput {
+    /// Annotated multi-line snippets (default; matches jarl/rustc-style output).
+    Pretty,
+    /// One finding per line (`path:line:col: severity [rule] message`).
+    Concise,
+    /// JSON array of diagnostics, for editor integration.
+    Json,
 }

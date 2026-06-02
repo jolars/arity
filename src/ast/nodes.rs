@@ -1,5 +1,6 @@
 use rowan::ast::support;
 use rowan::{SyntaxElement, SyntaxToken};
+use smol_str::SmolStr;
 
 use crate::ast::AstNode;
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
@@ -62,6 +63,233 @@ impl Root {
     pub fn expressions(&self) -> impl Iterator<Item = SyntaxNode> {
         self.syntax().children()
     }
+}
+
+impl AssignmentExpr {
+    /// The assignment operator kind. Returns one of `ASSIGN_LEFT` (`<-`),
+    /// `ASSIGN_RIGHT` (`->`), `SUPER_ASSIGN` (`<<-`), `SUPER_ASSIGN_RIGHT`
+    /// (`->>`), `ASSIGN_EQ` (`=`), or `WALRUS` (`:=`).
+    pub fn op_kind(&self) -> Option<SyntaxKind> {
+        self.syntax()
+            .children_with_tokens()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if is_assignment_op(token.kind()) => Some(token.kind()),
+                _ => None,
+            })
+    }
+
+    /// The operator token, if present.
+    pub fn op_token(&self) -> Option<SyntaxToken<RLanguage>> {
+        self.syntax()
+            .children_with_tokens()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if is_assignment_op(token.kind()) => Some(token),
+                _ => None,
+            })
+    }
+
+    /// The element on the *target* side of the operator (the side that becomes
+    /// the binding). For `<-`/`=`/`<<-`/`:=` this is the left element; for
+    /// `->`/`->>` it is the right element.
+    pub fn target_element(&self) -> Option<SyntaxElement<RLanguage>> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let op_idx = assignment_op_index(&elements)?;
+        let kind = element_kind(&elements[op_idx])?;
+        let (start, end) = if is_right_assign(kind) {
+            (op_idx + 1, elements.len())
+        } else {
+            (0, op_idx)
+        };
+        elements[start..end]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
+            .cloned()
+    }
+
+    /// The element on the *value* side of the operator.
+    pub fn value_element(&self) -> Option<SyntaxElement<RLanguage>> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let op_idx = assignment_op_index(&elements)?;
+        let kind = element_kind(&elements[op_idx])?;
+        let (start, end) = if is_right_assign(kind) {
+            (0, op_idx)
+        } else {
+            (op_idx + 1, elements.len())
+        };
+        elements[start..end]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
+            .cloned()
+    }
+
+    /// If the target is a simple `IDENT` (or backtick-quoted identifier), the
+    /// bound name as a `SmolStr`. Returns `None` for complex LHS like
+    /// `dim(x) <- ...`, `x[1] <- ...`, `x$y <- ...`.
+    pub fn target_name(&self) -> Option<SmolStr> {
+        match self.target_element()? {
+            SyntaxElement::Token(token) if token.kind() == SyntaxKind::IDENT => {
+                Some(SmolStr::new(token.text()))
+            }
+            SyntaxElement::Token(token) if token.kind() == SyntaxKind::STRING => {
+                strip_string_quotes(token.text()).map(SmolStr::new)
+            }
+            _ => None,
+        }
+    }
+
+    /// The target name token, useful when the binding site's range is needed.
+    pub fn target_name_token(&self) -> Option<SyntaxToken<RLanguage>> {
+        match self.target_element()? {
+            SyntaxElement::Token(token)
+                if token.kind() == SyntaxKind::IDENT || token.kind() == SyntaxKind::STRING =>
+            {
+                Some(token)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl FunctionExpr {
+    pub fn lparen_index(&self) -> Option<usize> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        elements.iter().position(|e| e.kind() == SyntaxKind::LPAREN)
+    }
+
+    pub fn rparen_index(&self) -> Option<usize> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let lparen_idx = self.lparen_index()?;
+        let mut depth = 0usize;
+        elements
+            .iter()
+            .enumerate()
+            .skip(lparen_idx)
+            .find_map(|(i, el)| match el.kind() {
+                SyntaxKind::LPAREN => {
+                    depth += 1;
+                    None
+                }
+                SyntaxKind::RPAREN => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 { Some(i) } else { None }
+                }
+                _ => None,
+            })
+    }
+
+    /// Iterate the parameters of the function. Each entry yields the parameter
+    /// name and the range of its name token. Default-value tokens are skipped
+    /// (function param defaults are raw tokens in the param list, not nodes).
+    pub fn params(&self) -> Vec<Param> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let Some(lparen_idx) = self.lparen_index() else {
+            return Vec::new();
+        };
+        let Some(rparen_idx) = self.rparen_index() else {
+            return Vec::new();
+        };
+        let mut params = Vec::new();
+        let mut depth = 0usize;
+        let mut at_param_start = true;
+        let mut i = lparen_idx + 1;
+        while i < rparen_idx {
+            let element = &elements[i];
+            match element.kind() {
+                SyntaxKind::LPAREN
+                | SyntaxKind::LBRACK
+                | SyntaxKind::LBRACK2
+                | SyntaxKind::LBRACE => {
+                    depth += 1;
+                    at_param_start = false;
+                }
+                SyntaxKind::RPAREN
+                | SyntaxKind::RBRACK
+                | SyntaxKind::RBRACK2
+                | SyntaxKind::RBRACE => {
+                    depth = depth.saturating_sub(1);
+                    at_param_start = false;
+                }
+                SyntaxKind::COMMA if depth == 0 => {
+                    at_param_start = true;
+                }
+                SyntaxKind::IDENT if depth == 0 && at_param_start => {
+                    if let SyntaxElement::Token(token) = element {
+                        params.push(Param {
+                            name: SmolStr::new(token.text()),
+                            name_token: token.clone(),
+                        });
+                    }
+                    at_param_start = false;
+                }
+                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT => {}
+                _ => {
+                    at_param_start = false;
+                }
+            }
+            i += 1;
+        }
+        params
+    }
+
+    /// The function body — the expression that follows the `)`. May be any
+    /// expression node (a `BLOCK_EXPR` for `function(x) { ... }`, or any other
+    /// expression for `function(x) x + 1`). Returns `None` if the body was
+    /// missing or replaced by an error-recovery placeholder.
+    pub fn body(&self) -> Option<SyntaxElement<RLanguage>> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let rparen_idx = self.rparen_index()?;
+        elements[rparen_idx + 1..]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
+            .cloned()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: SmolStr,
+    pub name_token: SyntaxToken<RLanguage>,
+}
+
+fn is_assignment_op(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::ASSIGN_LEFT
+            | SyntaxKind::ASSIGN_RIGHT
+            | SyntaxKind::SUPER_ASSIGN
+            | SyntaxKind::SUPER_ASSIGN_RIGHT
+            | SyntaxKind::ASSIGN_EQ
+            | SyntaxKind::WALRUS
+    )
+}
+
+fn is_right_assign(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::ASSIGN_RIGHT | SyntaxKind::SUPER_ASSIGN_RIGHT
+    )
+}
+
+fn assignment_op_index(elements: &[SyntaxElement<RLanguage>]) -> Option<usize> {
+    elements
+        .iter()
+        .position(|e| matches!(e, SyntaxElement::Token(t) if is_assignment_op(t.kind())))
+}
+
+fn element_kind(element: &SyntaxElement<RLanguage>) -> Option<SyntaxKind> {
+    Some(element.kind())
+}
+
+fn strip_string_quotes(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' || first == b'\'' || first == b'`') && first == last {
+            return Some(text[1..text.len() - 1].to_string());
+        }
+    }
+    None
 }
 
 impl CallExpr {

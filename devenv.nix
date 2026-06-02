@@ -42,6 +42,14 @@
 
     r = {
       enable = true;
+
+      package = (
+        pkgs.rWrapper.override {
+          packages = with pkgs.rPackages; [
+            languageserver
+          ];
+        }
+      );
     };
 
     javascript = {
