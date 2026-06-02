@@ -1,4 +1,4 @@
-# Ravel
+# Ravel <img src='https://raw.githubusercontent.com/jolars/ravel/refs/heads/main/images/logo.svg' align="right" width="139" />
 
 Ravel is a language server, formatter, and linter for the R programming
 language. It is designed to provide a seamless development experience for R
