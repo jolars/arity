@@ -76,6 +76,14 @@ pub enum Commands {
         #[arg(long)]
         check: bool,
 
+        /// Apply safe autofixes in place and report what remains
+        #[arg(long)]
+        fix: bool,
+
+        /// Also apply fixes that may change behavior (requires --fix)
+        #[arg(long)]
+        unsafe_fixes: bool,
+
         /// Output format
         #[arg(long, value_enum, default_value_t = LintOutput::Pretty)]
         output: LintOutput,

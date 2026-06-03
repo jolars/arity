@@ -5,10 +5,22 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use ravel::cli::{Cli, Commands, LintOutput};
-use ravel::config::{Config, ConfigError};
+use ravel::config::{Config, ConfigError, LintConfig};
+use ravel::file_discovery::collect_r_files;
 use ravel::formatter::{FormatStyle, check_paths_with_style, format_with_style};
-use ravel::linter::{OutputMode, render_findings};
+use ravel::linter::{OutputMode, apply_fixes, check_document, render_findings};
 use ravel::parser::{parse, reconstruct};
+
+/// Autofix selection for `lint --fix`.
+#[derive(Debug, Clone, Copy)]
+struct FixOptions {
+    fix: bool,
+    unsafe_fixes: bool,
+}
+
+/// Cap on fixpoint iterations per file, guarding against a fix that fails to
+/// clear its own diagnostic.
+const MAX_FIX_ITERATIONS: usize = 10;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -42,8 +54,16 @@ fn main() -> ExitCode {
         Commands::Lint {
             paths,
             check,
+            fix,
+            unsafe_fixes,
             output,
-        } => run_lint(paths, check, output, &config_source),
+        } => run_lint(
+            paths,
+            check,
+            FixOptions { fix, unsafe_fixes },
+            output,
+            &config_source,
+        ),
         Commands::Lsp => run_lsp(),
     }
 }
@@ -302,6 +322,7 @@ fn run_format_write_paths(paths: &[PathBuf], verify: bool, style: FormatStyle) -
 fn run_lint(
     paths: Vec<PathBuf>,
     check: bool,
+    fix_opts: FixOptions,
     output: LintOutput,
     config_source: &ConfigSource,
 ) -> ExitCode {
@@ -316,6 +337,14 @@ fn run_lint(
             return ExitCode::from(2);
         }
     };
+
+    // Apply fixes in place first; the reporting pass below then re-reads from
+    // disk and shows whatever findings remain.
+    if fix_opts.fix
+        && let Some(code) = apply_fixes_to_paths(&paths, &config.lint, fix_opts.unsafe_fixes)
+    {
+        return code;
+    }
 
     match ravel::linter::check_paths_with_config(&paths, &config.lint) {
         Ok(result) => {
@@ -367,6 +396,64 @@ fn run_lint(
             ExitCode::from(2)
         }
     }
+}
+
+/// Discover `.R` files under `paths` and apply autofixes in place. Returns
+/// `Some(exit_code)` only on a hard error (discovery / IO); on success returns
+/// `None` so the caller falls through to the normal reporting pass.
+fn apply_fixes_to_paths(
+    paths: &[PathBuf],
+    config: &LintConfig,
+    include_unsafe: bool,
+) -> Option<ExitCode> {
+    let files = match collect_r_files(paths) {
+        Ok(files) => files,
+        Err(err) => {
+            eprintln!("error: {}", ravel::linter::LintError::from(err));
+            return Some(ExitCode::from(2));
+        }
+    };
+    for path in files {
+        match fix_file(&path, config, include_unsafe) {
+            Ok(0) => {}
+            Ok(n) => eprintln!("{}: {n} fix{} applied", path.display(), plural(n)),
+            Err(err) => {
+                eprintln!("error: failed to fix {}: {err}", path.display());
+                return Some(ExitCode::from(2));
+            }
+        }
+    }
+    None
+}
+
+/// Run the fixpoint loop on a single file and write it back if anything changed.
+/// Returns the number of individual fixes applied.
+fn fix_file(path: &Path, config: &LintConfig, include_unsafe: bool) -> io::Result<usize> {
+    let mut content = fs::read_to_string(path)?;
+    let mut total = 0usize;
+    for _ in 0..MAX_FIX_ITERATIONS {
+        let Ok(diagnostics) = check_document(path, &content, config) else {
+            break;
+        };
+        let fixes: Vec<_> = diagnostics.into_iter().filter_map(|d| d.fix).collect();
+        if fixes.is_empty() {
+            break;
+        }
+        let outcome = apply_fixes(&content, &fixes, include_unsafe);
+        if outcome.applied == 0 {
+            break;
+        }
+        total += outcome.applied;
+        content = outcome.output;
+    }
+    if total > 0 {
+        fs::write(path, &content)?;
+    }
+    Ok(total)
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "es" }
 }
 
 fn cwd_anchor() -> Result<PathBuf, ExitCode> {

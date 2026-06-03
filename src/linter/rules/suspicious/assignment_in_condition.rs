@@ -4,7 +4,7 @@
 
 use rowan::NodeOrToken;
 
-use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
 use crate::linter::rules::{Rule, RuleContext};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -25,6 +25,22 @@ impl Rule for AssignmentInCondition {
             match node.kind() {
                 SyntaxKind::IF_EXPR | SyntaxKind::WHILE_EXPR => {
                     if let Some(assign) = direct_assignment_in_condition(&node) {
+                        // Only the bare `=` form gets an autofix (`=` → `==`);
+                        // `<-`/`<<-`/`:=` in a condition are too ambiguous to
+                        // rewrite automatically.
+                        let fix = assign
+                            .children_with_tokens()
+                            .find(|e| e.kind() == SyntaxKind::ASSIGN_EQ)
+                            .and_then(|e| e.into_token())
+                            .map(|tok| {
+                                let r = tok.text_range();
+                                Fix::safe(
+                                    usize::from(r.start()),
+                                    usize::from(r.end()),
+                                    "==",
+                                    "Replace `=` with `==`",
+                                )
+                            });
                         out.push(Diagnostic {
                             rule: "assignment-in-condition",
                             severity: Severity::Warning,
@@ -35,7 +51,7 @@ impl Rule for AssignmentInCondition {
                                 "assignment used as a condition; did you mean `==`?",
                             )
                             .with_suggestion("Replace `=` with `==` or move the assignment out."),
-                            fix: None,
+                            fix,
                         });
                     }
                 }

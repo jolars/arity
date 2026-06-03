@@ -11,11 +11,12 @@ use std::time::Duration;
 use tokio::time;
 use tower_lsp_server::jsonrpc::Result as JsonRpcResult;
 use tower_lsp_server::ls_types::{
-    Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-    InitializeParams, InitializeResult, InitializedParams, MessageType, NumberOrString, OneOf,
-    Position, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Uri,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
+    CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
+    DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentFormattingParams, InitializeParams, InitializeResult,
+    InitializedParams, MessageType, NumberOrString, OneOf, Position, Range, ServerCapabilities,
+    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
@@ -167,6 +168,7 @@ impl LanguageServer for Backend {
                     TextDocumentSyncKind::FULL,
                 )),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -275,6 +277,93 @@ impl LanguageServer for Backend {
             }
         }
     }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> JsonRpcResult<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let state = self.state.lock().expect("state mutex poisoned");
+            state.documents.get(&uri).map(|d| d.text.clone())
+        };
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        let path = uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+            .unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let lint = self
+            .resolve_settings(&uri)
+            .map(|s| s.lint)
+            .unwrap_or_default();
+
+        Ok(Some(compute_code_actions(
+            &text,
+            &path,
+            &lint,
+            &uri,
+            params.range,
+        )))
+    }
+}
+
+/// Build quick-fix code actions for the fixes whose diagnostics overlap
+/// `range`. Pure (no IO beyond the in-memory `text`) so it can be unit-tested.
+pub fn compute_code_actions(
+    text: &str,
+    path: &std::path::Path,
+    lint: &LintConfig,
+    uri: &Uri,
+    range: Range,
+) -> CodeActionResponse {
+    let diagnostics = crate::linter::check_document(path, text, lint).unwrap_or_default();
+    let line_index = LineIndex::new(text);
+
+    diagnostics
+        .iter()
+        .filter_map(|d| {
+            let fix = d.fix.as_ref()?;
+            let diag_range = Range {
+                start: line_index.byte_to_position(u32::from(d.range.start()) as usize),
+                end: line_index.byte_to_position(u32::from(d.range.end()) as usize),
+            };
+            if !ranges_overlap(diag_range, range) {
+                return None;
+            }
+            let edit = TextEdit {
+                range: Range {
+                    start: line_index.byte_to_position(fix.start),
+                    end: line_index.byte_to_position(fix.end),
+                },
+                new_text: fix.content.clone(),
+            };
+            let mut changes = HashMap::new();
+            changes.insert(uri.clone(), vec![edit]);
+            Some(CodeActionOrCommand::CodeAction(CodeAction {
+                title: fix.description.clone(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![to_lsp_diagnostic(d, &line_index)]),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(changes),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        })
+        .collect()
+}
+
+/// Inclusive overlap test for two LSP ranges (a zero-width cursor touching a
+/// diagnostic's edge counts as overlapping, so the quick-fix still shows up).
+fn ranges_overlap(a: Range, b: Range) -> bool {
+    !(position_lt(a.end, b.start) || position_lt(b.end, a.start))
+}
+
+fn position_lt(a: Position, b: Position) -> bool {
+    (a.line, a.character) < (b.line, b.character)
 }
 
 #[derive(Debug)]
@@ -330,5 +419,74 @@ fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnostic {
         source: Some("ravel".to_string()),
         message: d.message.body.clone(),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn pos(line: u32, character: u32) -> Position {
+        Position { line, character }
+    }
+
+    fn full_line_0() -> Range {
+        Range {
+            start: pos(0, 0),
+            end: pos(0, 100),
+        }
+    }
+
+    fn uri() -> Uri {
+        Uri::from_file_path("/tmp/t.R").expect("valid file uri")
+    }
+
+    #[test]
+    fn code_action_offers_quickfix_for_diagnostic_in_range() {
+        let src = "if (x = 1) print(x)\n";
+        let actions = compute_code_actions(
+            src,
+            Path::new("/tmp/t.R"),
+            &LintConfig::default(),
+            &uri(),
+            full_line_0(),
+        );
+
+        let CodeActionOrCommand::CodeAction(action) = actions
+            .iter()
+            .find(|a| matches!(a, CodeActionOrCommand::CodeAction(a) if a.title.contains("==")))
+            .expect("an `=` → `==` quick-fix")
+        else {
+            unreachable!()
+        };
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        let changes = action
+            .edit
+            .as_ref()
+            .and_then(|e| e.changes.as_ref())
+            .expect("workspace edit with changes");
+        let edits = changes.get(&uri()).expect("edits for our uri");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "==");
+        // The edit targets the `=` token on line 0.
+        assert_eq!(edits[0].range.start.line, 0);
+    }
+
+    #[test]
+    fn code_action_empty_when_range_misses_diagnostics() {
+        let src = "if (x = 1) print(x)\n";
+        let far = Range {
+            start: pos(5, 0),
+            end: pos(5, 0),
+        };
+        let actions = compute_code_actions(
+            src,
+            Path::new("/tmp/t.R"),
+            &LintConfig::default(),
+            &uri(),
+            far,
+        );
+        assert!(actions.is_empty(), "expected no actions, got {actions:?}");
     }
 }

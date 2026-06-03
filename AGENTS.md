@@ -33,6 +33,14 @@ includes `R`.
 4. **Losslessness is the parser's job.** The parser must preserve all text
    (whitespace, comments, etc.) so that `reconstruct(text)` is always `text`.
    The formatter can assume the CST is lossless and focus on formatting logic.
+5. **Autofixes never introduce formatting errors.** A lint fix is not a
+   formatter and need not fully format unformatted input, but it must never
+   make formatted code unformatted: `format` → `lint --fix` → `format --check`
+   must pass. This is a correctness property of each fix, enforced by an
+   automated test (`tests/lint.rs`), not by formatting at fix time. When a fix
+   would introduce a formatting error, fix it in the rule --- make the edit
+   format-clean by construction, or withhold the fix for that shape (the
+   finding is still reported). Don't run the formatter inside `--fix`.
 
 ## Commands
 

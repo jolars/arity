@@ -112,9 +112,9 @@ easy -> medium -> hard.
 - [x] `ok/repeat_statement.R` (hard)
 - [x] `ok/dots.R` (hard)
 - [x] `ok/dot_dot_i.R` (hard)
-- [x] `ok/value/complex_value.R` (hard) --- ⚠️ fixture ported but lexing is
-      **incorrect**: the imaginary suffix `i` is not lexed, so `1i` becomes
-      `INT "1"` + `IDENT "i"`. See "Known issues / follow-ups" below.
+- [x] `ok/value/complex_value.R` (hard) --- the lexer now recognizes the
+      imaginary suffix, lexing `1i` / `2.5i` / `1e6i` / `0x123Fi` as single
+      `COMPLEX` tokens (the earlier `INT "1"` + `IDENT "i"` mis-lex is fixed).
 
 ### AIR `error` cases (7)
 
@@ -531,11 +531,25 @@ in-tree parser, not a drop-in jarl replacement.
       cache. The script is `include_str!`-inlined in the binary so there is
       no installed-package layout to manage. The cache becomes a third
       `SymbolProvider` impl beside `StaticBaseR` and the CRAN manifest.
-- [ ] Autofix infrastructure. The `Diagnostic` type carries `fix:
-      Option<Fix>` for forward compatibility; no rules emit fixes yet and
-      `--fix` is unimplemented. First rules to fix would be
-      `assignment-in-condition` (`=` → `==`) and `unused-binding`
-      (delete the assignment).
+- [x] Autofix infrastructure. `Fix` gained `applicability` (`Safe`/`Unsafe`)
+      and a `description`; a pure `apply_fixes(source, fixes, include_unsafe)`
+      engine (`src/linter/fix.rs`) sorts by offset, drops overlaps, and
+      splices right-to-left. Two rules emit fixes:
+      `assignment-in-condition` (`=` → `==`, **Safe**) and `unused-binding`
+      (delete the statement incl. leading indent + trailing newline,
+      **Unsafe** because the RHS may have side effects). `ravel lint --fix`
+      applies Safe fixes in a bounded fixpoint loop (re-linting via
+      `check_document`), `--unsafe-fixes` opts into the rest; the LSP
+      advertises `code_action_provider` and serves QuickFix `WorkspaceEdit`s
+      via `compute_code_actions`. Per **tenet 5**, fixes never introduce
+      formatting errors (`format` → `--fix` → `format --check` passes): the
+      `unused-binding` deletion is format-clean by construction (its span
+      absorbs leading indent, its line terminator, and adjacent blank lines)
+      and is *withheld* for shapes a pure deletion can't keep clean (emptying
+      a block, or shrinking a function body to one statement that would flatten
+      to a bare body). This is guarded by `fixes_never_introduce_formatting_errors`
+      in `tests/lint.rs`, not by running the formatter at fix time. Follow-ups:
+      fixes for `duplicate-formal` and `shadowed-builtin`.
 - [ ] DESCRIPTION / NAMESPACE parsing for R-package authoring contexts.
       Match jarl's behavior: track `importFrom()` direct mappings and
       `export()` declarations so `unused-binding` doesn't flag exported
@@ -554,9 +568,9 @@ in-tree parser, not a drop-in jarl replacement.
       `place_comment`; ravel's next-non-trivia-sibling walk already
       handles most cases.)
 - [ ] LSP refinements: honor `initializationOptions` /
-      `workspace/didChangeConfiguration`; add `textDocument/codeAction`
-      hooks for future autofix rules; add `textDocument/rangeFormatting`
-      once the formatter gains a range API.
+      `workspace/didChangeConfiguration`; add `textDocument/rangeFormatting`
+      once the formatter gains a range API. (`textDocument/codeAction` QuickFix
+      hooks now shipped alongside autofix — see Phase 6.x autofix above.)
 - [ ] `ravel-ignore-unused` meta-diagnostic: emit a finding for suppression
       comments that didn't actually suppress anything (rule ID is reserved
       but the rule is not yet wired in).

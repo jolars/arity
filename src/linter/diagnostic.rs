@@ -14,9 +14,20 @@ pub enum Severity {
     Hint,
 }
 
-/// A code edit that, if applied, fixes the diagnostic in question. Carried in
-/// `Diagnostic::fix` for forward compatibility; no rules emit fixes yet, and
-/// the `--fix` CLI flag is not implemented in this pass.
+/// Whether a [`Fix`] preserves program behavior. `Safe` fixes are applied by
+/// `lint --fix`; `Unsafe` fixes (those that could change runtime behavior, e.g.
+/// deleting a statement whose RHS has side effects) require `--unsafe-fixes` or
+/// an explicit editor action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Applicability {
+    Safe,
+    Unsafe,
+}
+
+/// A code edit that, if applied, fixes the diagnostic in question. A fix is a
+/// single contiguous replacement: substitute `content` for the source bytes in
+/// `start..end`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Fix {
     /// Replacement text to substitute in.
@@ -25,6 +36,44 @@ pub struct Fix {
     pub start: usize,
     /// Byte offset of the end of the replacement (exclusive).
     pub end: usize,
+    /// Whether applying the fix preserves behavior.
+    pub applicability: Applicability,
+    /// Human-readable title (e.g. for an LSP code action).
+    pub description: String,
+}
+
+impl Fix {
+    /// A behavior-preserving fix.
+    pub fn safe(
+        start: usize,
+        end: usize,
+        content: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self {
+            content: content.into(),
+            start,
+            end,
+            applicability: Applicability::Safe,
+            description: description.into(),
+        }
+    }
+
+    /// A fix that may change behavior; applied only on explicit opt-in.
+    pub fn unsafe_(
+        start: usize,
+        end: usize,
+        content: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self {
+            content: content.into(),
+            start,
+            end,
+            applicability: Applicability::Unsafe,
+            description: description.into(),
+        }
+    }
 }
 
 /// Render-ready violation metadata that the renderer consumes. `name` is the

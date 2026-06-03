@@ -8,12 +8,15 @@
 
 pub mod check;
 pub mod diagnostic;
+pub mod fix;
 pub mod render;
 pub mod rules;
 pub mod suppression;
 
 pub use check::{
-    LintError, LintFileReport, LintResult, LintStatus, check_paths, check_paths_with_config,
+    LintError, LintFileReport, LintResult, LintStatus, check_document, check_paths,
+    check_paths_with_config,
 };
-pub use diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+pub use diagnostic::{Applicability, Diagnostic, Fix, Severity, ViolationData};
+pub use fix::{FixOutcome, apply_fixes};
 pub use render::{OutputMode, render_findings};

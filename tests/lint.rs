@@ -1,6 +1,8 @@
+use std::path::Path;
 use std::process::{Command, Stdio};
 
-use ravel::linter::{LintStatus, check_paths};
+use ravel::config::LintConfig;
+use ravel::linter::{Applicability, LintStatus, apply_fixes, check_document, check_paths};
 use tempfile::tempdir;
 
 #[test]
@@ -179,6 +181,198 @@ fn cli_lint_emits_json_output() {
     let array = parsed.as_array().unwrap();
     assert_eq!(array.len(), 1);
     assert_eq!(array[0]["rule"], "duplicate-formal");
+}
+
+// ---------------------------------------------------------------------------
+// Autofix
+// ---------------------------------------------------------------------------
+
+fn diagnostics(src: &str) -> Vec<ravel::linter::Diagnostic> {
+    check_document(Path::new("t.R"), src, &LintConfig::default()).expect("lint should succeed")
+}
+
+#[test]
+fn assignment_in_condition_emits_safe_eq_fix() {
+    let src = "if (x = 1) print(x)\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "assignment-in-condition")
+        .expect("expected an assignment-in-condition finding");
+    let fix = d.fix.as_ref().expect("should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Safe);
+    assert_eq!(fix.content, "==");
+
+    let out = apply_fixes(src, std::slice::from_ref(fix), false);
+    assert_eq!(out.output, "if (x == 1) print(x)\n");
+}
+
+#[test]
+fn unused_binding_emits_unsafe_deletion_fix() {
+    let src = "x <- 1\nprint(2)\n";
+    let diags = diagnostics(src);
+    let d = diags
+        .iter()
+        .find(|d| d.rule == "unused-binding")
+        .expect("expected an unused-binding finding");
+    let fix = d.fix.as_ref().expect("should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Unsafe);
+
+    // Safe-only application is a no-op; opting in deletes the whole statement,
+    // leaving no orphaned blank line.
+    assert_eq!(
+        apply_fixes(src, std::slice::from_ref(fix), false).output,
+        src
+    );
+    assert_eq!(
+        apply_fixes(src, std::slice::from_ref(fix), true).output,
+        "print(2)\n"
+    );
+}
+
+#[test]
+fn fix_output_parses_and_is_format_idempotent() {
+    use ravel::formatter::{FormatStyle, format_with_style};
+    use ravel::parser::parse;
+
+    let src = "x <- 1\nprint(2)\n";
+    let fixes: Vec<_> = diagnostics(src).into_iter().filter_map(|d| d.fix).collect();
+    let fixed = apply_fixes(src, &fixes, true).output;
+    assert_eq!(fixed, "print(2)\n");
+
+    assert!(
+        parse(&fixed).diagnostics.is_empty(),
+        "fixed output must parse cleanly"
+    );
+    let formatted = format_with_style(&fixed, FormatStyle::default()).expect("formats");
+    let twice = format_with_style(&formatted, FormatStyle::default()).expect("formats");
+    assert_eq!(formatted, twice, "fixed output should be format-idempotent");
+}
+
+#[test]
+fn cli_fix_applies_safe_fixes_and_leaves_unsafe() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("fix.R");
+    std::fs::write(&path, "if (x = 1) {\n  y <- 2\n}\n").expect("failed to write file");
+
+    let output = run_cli(["lint", "--fix", path.to_str().unwrap()]);
+    // The `=`→`==` fix lands; the unused `y` (unsafe) remains, so exit is 1.
+    assert_eq!(output.status.code(), Some(1));
+    let content = std::fs::read_to_string(&path).expect("read back");
+    assert_eq!(content, "if (x == 1) {\n  y <- 2\n}\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("1 fix applied"), "got: {stderr}");
+}
+
+#[test]
+fn cli_fix_unsafe_clears_top_level_findings() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("fix.R");
+    std::fs::write(&path, "if (x = 1) print(x)\nunused <- 2\n").expect("failed to write file");
+
+    let output = run_cli(["lint", "--fix", "--unsafe-fixes", path.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(0));
+    let content = std::fs::read_to_string(&path).expect("read back");
+    // `=`→`==` (safe) and the top-level unused deletion (unsafe) both land.
+    assert_eq!(content, "if (x == 1) print(x)\n");
+}
+
+#[test]
+fn cli_fix_withholds_unsafe_deletion_that_would_empty_a_block() {
+    // Deleting the sole statement of a block would leave `{\n}`, which the
+    // formatter rewrites to `{}` — so the deletion is withheld (tenet 5). The
+    // finding is still reported (exit 1) and the file stays format-clean.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("fix.R");
+    std::fs::write(&path, "if (cond) {\n  unused <- 2\n}\n").expect("failed to write file");
+
+    let output = run_cli(["lint", "--fix", "--unsafe-fixes", path.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1));
+    let content = std::fs::read_to_string(&path).expect("read back");
+    assert_eq!(content, "if (cond) {\n  unused <- 2\n}\n");
+
+    // The withheld result must pass `format --check`.
+    let check = run_cli(["format", "--check", path.to_str().unwrap()]);
+    assert!(
+        check.status.success(),
+        "withheld output should be format-clean; stderr: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}
+
+#[test]
+fn cli_fix_fixpoint_clears_multiple_unused_bindings() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("fix.R");
+    // Two independent unused bindings; both should be removed in one invocation.
+    std::fs::write(&path, "a <- 1\nb <- 2\nprint(3)\n").expect("failed to write file");
+
+    let output = run_cli(["lint", "--fix", "--unsafe-fixes", path.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(0));
+    let content = std::fs::read_to_string(&path).expect("read back");
+    assert_eq!(content, "print(3)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Tenet 5: autofixes never introduce formatting errors.
+// `format` -> apply all fixes -> `format --check` must still pass.
+// ---------------------------------------------------------------------------
+
+/// Format `input` to canonical form, apply every available fix to a fixpoint,
+/// then assert the result still parses and is format-clean.
+fn assert_fix_is_format_stable(input: &str) {
+    use ravel::formatter::{FormatStyle, format_with_style};
+    use ravel::parser::parse;
+
+    let style = FormatStyle::default();
+    let clean = format_with_style(input, style).expect("input should format");
+
+    let mut content = clean.clone();
+    for _ in 0..10 {
+        let diags = check_document(Path::new("t.R"), &content, &LintConfig::default())
+            .expect("lint should succeed");
+        let fixes: Vec<_> = diags.into_iter().filter_map(|d| d.fix).collect();
+        if fixes.is_empty() {
+            break;
+        }
+        let out = apply_fixes(&content, &fixes, true); // include unsafe
+        if out.applied == 0 {
+            break;
+        }
+        content = out.output;
+    }
+
+    assert!(
+        parse(&content).diagnostics.is_empty(),
+        "fixed output must parse cleanly:\n{content:?}"
+    );
+    let reformatted = format_with_style(&content, style).expect("fixed output should format");
+    assert_eq!(
+        content, reformatted,
+        "a fix introduced a formatting error (tenet 5).\nstarted from:\n{clean}\n--- after fixes ---\n{content}\n--- but format produces ---\n{reformatted}"
+    );
+}
+
+#[test]
+fn fixes_never_introduce_formatting_errors() {
+    let cases = [
+        // assignment-in-condition (`=` → `==`)
+        "if (x = 1) print(x)\n",
+        "while (y = f()) g()\n",
+        // unused-binding deletion — top level
+        "unused <- 1\nprint(2)\n",
+        "unused <- 1\n\nprint(2)\n",
+        "print(2)\n\nunused <- 1\n",
+        "a <- 1\nb <- 2\nprint(3)\n",
+        "only <- 1\n",
+        // unused-binding deletion — inside blocks (the dangerous shapes)
+        "if (cond) {\n  unused <- 1\n}\n",
+        "f <- function() {\n  unused <- 1\n  g()\n}\n",
+        "f <- function() {\n  unused <- 1\n  a()\n  b()\n}\n",
+        "for (i in xs) {\n  unused <- 1\n  use(i)\n}\n",
+    ];
+    for case in cases {
+        assert_fix_is_format_stable(case);
+    }
 }
 
 fn run_cli<const N: usize>(args: [&str; N]) -> std::process::Output {
