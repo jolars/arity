@@ -76,6 +76,7 @@ pub trait SymbolProvider: Send + Sync {
 }
 
 /// Static symbol provider backed by the baked-in default-package export lists.
+#[derive(Debug)]
 pub struct StaticBaseR {
     /// Maps a symbol → the list of default packages that export it. Most
     /// symbols are exported by exactly one package; a handful (e.g. `body`

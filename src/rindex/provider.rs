@@ -18,7 +18,7 @@ use crate::rindex::schema::{PackageIndex, SymbolEntry};
 use crate::semantic::symbols::{LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider};
 
 /// Resolves names against indexed, attached packages and holds the rich data.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct IndexedProvider {
     /// package → set of exported names (for `origin` membership tests).
     pkg_exports: HashMap<SmolStr, HashSet<SmolStr>>,
@@ -83,6 +83,7 @@ impl IndexedProvider {
 }
 
 /// `StaticBaseR` + an `IndexedProvider`, honoring search-path masking.
+#[derive(Debug)]
 pub struct CompositeProvider {
     base: StaticBaseR,
     indexed: IndexedProvider,
