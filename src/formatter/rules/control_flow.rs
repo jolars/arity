@@ -15,6 +15,18 @@ pub(crate) fn format_if_expr(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<String, FormatError> {
+    format_if_expr_impl(node, indent, ctx, false)
+}
+
+/// `force_braces` propagates the "this chain uses braces" decision down an
+/// `else if` chain so the whole chain is braced (or not) as a unit, per the
+/// tidyverse all-or-nothing rule.
+fn format_if_expr_impl(
+    node: &SyntaxNode,
+    indent: usize,
+    ctx: FormatContext,
+    force_braces: bool,
+) -> Result<String, FormatError> {
     let if_expr = IfExpr::cast(node.clone()).ok_or_else(|| FormatError::AmbiguousConstruct {
         context: "invalid if expression node",
         snippet: node.text().to_string(),
@@ -59,17 +71,53 @@ pub(crate) fn format_if_expr(
     let (mut then_expr, then_is_block, interstitial_comments, interstitial_attach_to_then) =
         format_if_then_branch_with_comments(&then_elements, indent, ctx, has_else)?;
 
-    let mut out = format!("if ({condition}) {then_expr}");
-    if has_else {
-        let else_elements =
+    let else_elements = if has_else {
+        Some(
             if_expr
                 .else_elements()
                 .ok_or_else(|| FormatError::AmbiguousConstruct {
                     context: "missing else branch",
                     snippet: node.text().to_string(),
-                })?;
-        let mut else_expr = format_if_branch(&else_elements, indent, ctx, true)?;
-        let mut else_is_block = branch_starts_with_block(&else_elements);
+                })?,
+        )
+    } else {
+        None
+    };
+
+    // A chain uses braces iff any branch in it does (or a parent forced it):
+    // braces are all-or-nothing across an `if`/`else if`/`else` chain.
+    let needs_braces = force_braces
+        || then_is_block
+        || else_elements
+            .as_deref()
+            .is_some_and(else_branch_requires_braces);
+
+    // Wrap a bare then-branch when the chain uses braces. This must happen even
+    // with no `else` so a forced `else if` (which has no `else` of its own)
+    // still braces its then-branch.
+    if needs_braces && !then_is_block {
+        then_expr = wrap_branch_in_block(&then_expr, &[], indent, ctx);
+    }
+
+    let mut out = format!("if ({condition}) {then_expr}");
+    if let Some(else_elements) = else_elements {
+        // Render the else branch. An `else if` (the else branch is itself an
+        // `if`) recurses so brace usage propagates across the whole chain
+        // instead of nesting the `if` inside a synthetic block.
+        let else_if_node = sole_else_if_node(&else_elements);
+        let mut else_expr;
+        let mut else_is_block;
+        if let Some(if_node) = &else_if_node {
+            else_expr = format_if_expr_impl(if_node, indent, ctx, needs_braces)?;
+            else_is_block = true;
+        } else {
+            else_expr = format_if_branch(&else_elements, indent, ctx, true)?;
+            // Treat a (comment-led) `else if` as block-like so it is never
+            // wrapped into a synthetic block below.
+            else_is_block =
+                branch_starts_with_block(&else_elements) || branch_starts_with_if(&else_elements);
+        }
+
         if !interstitial_comments.is_empty() {
             if then_is_block && interstitial_attach_to_then {
                 then_expr =
@@ -81,16 +129,55 @@ pub(crate) fn format_if_expr(
                 else_is_block = true;
             }
         }
-        if then_is_block && !else_is_block {
+
+        if needs_braces && !else_is_block {
             else_expr = wrap_branch_in_block(&else_expr, &[], indent, ctx);
-        } else if !then_is_block && else_is_block {
-            then_expr = wrap_branch_in_block(&then_expr, &[], indent, ctx);
-            out = format!("if ({condition}) {then_expr}");
         }
+
         out.push_str(" else ");
         out.push_str(&else_expr);
     }
     Ok(out)
+}
+
+/// The sole significant element of an else branch when it is exactly one `if`
+/// expression (an `else if` with no leading comments). Comment-led `else if`s
+/// fall back to the generic branch renderer.
+fn sole_else_if_node(elements: &[SyntaxElement<RLanguage>]) -> Option<SyntaxNode> {
+    match significant_elements(elements).as_slice() {
+        [NodeOrToken::Node(node)] if node.kind() == SyntaxKind::IF_EXPR => Some(node.clone()),
+        _ => None,
+    }
+}
+
+/// Whether an else branch (a block, or an `else if` chain) contains any braced
+/// branch, which forces the enclosing chain to use braces throughout.
+fn else_branch_requires_braces(elements: &[SyntaxElement<RLanguage>]) -> bool {
+    match significant_elements(elements).first() {
+        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR => true,
+        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::IF_EXPR => {
+            if_node_requires_braces(node)
+        }
+        _ => false,
+    }
+}
+
+/// Whether an `if` node has a braced branch anywhere in its own chain.
+fn if_node_requires_braces(node: &SyntaxNode) -> bool {
+    let Some(if_expr) = IfExpr::cast(node.clone()) else {
+        return false;
+    };
+    if let Some(then_elements) = if_expr.then_elements()
+        && branch_starts_with_block(&then_elements)
+    {
+        return true;
+    }
+    if if_expr.else_keyword().is_some()
+        && let Some(else_elements) = if_expr.else_elements()
+    {
+        return else_branch_requires_braces(&else_elements);
+    }
+    false
 }
 
 fn format_if_then_branch_with_comments(
@@ -236,6 +323,14 @@ fn comments_attach_to_then_block(elements: &[SyntaxElement<RLanguage>]) -> bool 
 fn branch_starts_with_block(elements: &[SyntaxElement<RLanguage>]) -> bool {
     significant_elements(elements).first().is_some_and(
         |el| matches!(el, NodeOrToken::Node(node) if node.kind() == SyntaxKind::BLOCK_EXPR),
+    )
+}
+
+/// True when the (else) branch is itself an `if` expression, i.e. an `else if`
+/// chain. Such a branch is rendered as-is, not wrapped in a synthetic block.
+fn branch_starts_with_if(elements: &[SyntaxElement<RLanguage>]) -> bool {
+    significant_elements(elements).first().is_some_and(
+        |el| matches!(el, NodeOrToken::Node(node) if node.kind() == SyntaxKind::IF_EXPR),
     )
 }
 

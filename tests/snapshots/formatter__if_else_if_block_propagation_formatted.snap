@@ -1,0 +1,11 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+if (cond) {
+  a
+} else if (cond2) {
+  b
+} else {
+  c
+}
