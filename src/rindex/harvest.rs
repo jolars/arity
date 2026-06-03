@@ -13,9 +13,12 @@ use std::path::{Path, PathBuf};
 
 use smol_str::SmolStr;
 
-use crate::rindex::lazyload;
+use crate::rindex::deparse;
+use crate::rindex::lazyload::{self, LazyLoadDb};
 use crate::rindex::rds::{self, Rkind, Robj};
-use crate::rindex::schema::{HelpDoc, PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
+use crate::rindex::schema::{
+    Formal, HelpDoc, PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind,
+};
 
 #[derive(Debug)]
 pub enum HarvestError {
@@ -85,6 +88,11 @@ pub fn harvest_package(
         AliasTitles::default()
     };
 
+    // Open the lazy-load DB to fetch object values (formals + kind refinement).
+    // `.ok()` is deliberate: a package may ship only a `.rdx` (no `.rdb`), in
+    // which case we keep the cheap-tier defaults rather than failing the harvest.
+    let db = LazyLoadDb::open(&pkg_dir.join("R").join(format!("{package}.rdx"))).ok();
+
     let mut symbols: Vec<SymbolEntry> = exports
         .into_iter()
         .map(|name| {
@@ -92,14 +100,12 @@ pub fn harvest_package(
                 title: Some(t.to_string()),
                 ..Default::default()
             });
+            let (kind, formals) = refine_symbol(db.as_ref(), &name);
             SymbolEntry {
                 name: SmolStr::new(&name),
-                // Phase 1 cannot cheaply distinguish functions from data
-                // without fetching objects; default to Function and refine in
-                // a later phase.
-                kind: SymbolKind::Function,
+                kind,
                 exported: true,
-                formals: None,
+                formals,
                 help,
             }
         })
@@ -124,6 +130,46 @@ pub fn harvest_package(
 fn read_object_names(pkg_dir: &Path, package: &str) -> Vec<String> {
     let rdx = pkg_dir.join("R").join(format!("{package}.rdx"));
     lazyload::read_index_names(&rdx).unwrap_or_default()
+}
+
+/// Classify an exported object and, for closures, read its formals. Falls back
+/// to the cheap-tier default (`Function`, no formals) when there is no DB to
+/// fetch from, or the object isn't in it, or it decodes to a type we don't
+/// model — a single object that won't decode never aborts the package.
+fn refine_symbol(db: Option<&LazyLoadDb>, name: &str) -> (SymbolKind, Option<Vec<Formal>>) {
+    let Some(db) = db else {
+        return (SymbolKind::Function, None);
+    };
+    let Ok(obj) = db.fetch(name) else {
+        return (SymbolKind::Function, None);
+    };
+    match &obj.kind {
+        Rkind::Closure { formals, .. } => (SymbolKind::Function, Some(extract_formals(formals))),
+        // A primitive aliased into the package (e.g. `add <- `+``): callable,
+        // but no R-level formals.
+        Rkind::Builtin => (SymbolKind::Function, None),
+        Rkind::Logical(_) | Rkind::Int(_) | Rkind::Real(_) | Rkind::Str(_) | Rkind::List(_) => {
+            (SymbolKind::Data, None)
+        }
+        // Environments, S4 objects, external pointers, symbols, …
+        _ => (SymbolKind::Other, None),
+    }
+}
+
+/// Map a closure's formals pairlist (tag = parameter name, value = default
+/// expression or the empty-arg sentinel) to [`Formal`]s. A zero-parameter
+/// function yields an empty list (distinct from `None` = "not read").
+fn extract_formals(formals: &Robj) -> Vec<Formal> {
+    match &formals.kind {
+        Rkind::Pairlist(items) => items
+            .iter()
+            .map(|it| Formal {
+                name: it.tag.clone().unwrap_or_default(),
+                default: deparse::deparse(&it.value),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------

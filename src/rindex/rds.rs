@@ -54,8 +54,11 @@ pub enum Rkind {
     },
     /// An environment — contents not retained (placeholder so refs resolve).
     Env,
-    /// A builtin/special/primitive or other type whose value we don't model
-    /// but whose bytes were consumed correctly.
+    /// A builtin or special primitive (e.g. an export aliased to `` `+` ``).
+    /// Callable, but has no R-level formals.
+    Builtin,
+    /// A type whose value we don't model but whose bytes were consumed
+    /// correctly (S4 objects, external pointers, promises, complex/raw vectors).
     Opaque,
 }
 
@@ -381,7 +384,7 @@ impl<'a> Reader<'a> {
             BUILTINSXP | SPECIALSXP => {
                 let n = self.read_i32()?; // name length
                 let _ = self.take(n as usize)?;
-                Ok(Robj::bare(Rkind::Opaque))
+                Ok(Robj::bare(Rkind::Builtin))
             }
             BCODESXP => self.read_bytecode(),
             S4SXP => {
@@ -403,10 +406,18 @@ impl<'a> Reader<'a> {
             }
             ALTREP_SXP => self.read_altrep(),
             NAMESPACESXP | PACKAGESXP | PERSISTSXP => {
-                // A wrapped string vector naming the namespace/package; stored
-                // in the ref table.
-                let _flags2 = self.read_i32()?;
-                let names = self.read_item()?;
+                // A string vector naming the namespace/package (R's
+                // `InStringVec`): an `i32` "has-names" flag (always 0), an
+                // `i32` length, then that many CHARSXP elements. Stored in the
+                // ref table so later REFSXPs resolve.
+                let _has_names = self.read_i32()?;
+                let len = self.read_length()?;
+                let mut v = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let item = self.read_item()?; // CHARSXP
+                    v.push(item.into_single_str());
+                }
+                let names = Robj::bare(Rkind::Str(v));
                 self.refs.push(names.clone());
                 Ok(names)
             }
@@ -518,39 +529,81 @@ impl<'a> Reader<'a> {
         Ok(env)
     }
 
+    /// Consume a `BCODESXP`. We never interpret bytecode — we only walk its
+    /// bytes so the surrounding stream stays aligned (the body of a fetched
+    /// closure is left `Opaque`; its formals were already read). This is a
+    /// faithful port of R's `serialize.c` `ReadBC`/`ReadBC1`/`ReadBCConsts`/
+    /// `ReadBCLang`. The crux: inside this sub-grammar, type tags are **bare
+    /// `read_i32` values**, not the packed `flags` that [`read_item`] decodes.
     fn read_bytecode(&mut self) -> Result<Robj> {
-        // BCODESXP: an int count of bc-reps, then the code/consts. We don't
-        // execute it; consume structurally. Layout: read reps table size, then
-        // the code (an INTSXP) and constants (a VECSXP-like) via the bcode
-        // sub-grammar. Simplest correct consumption: read the "reps" integer,
-        // then a single item for the code, then the constant pool.
-        let _nreps = self.read_i32()?;
-        self.read_bc_inner()
+        let nreps = self.read_i32()?;
+        // The reps table lets a BCREPREF point back at an earlier BCREPDEF. We
+        // only consume bytes, so placeholder nulls suffice; clamp the count to
+        // guard against a corrupt/negative length.
+        let mut reps: Vec<Robj> = vec![Robj::null(); nreps.max(0) as usize];
+        self.read_bc1(&mut reps)
     }
 
-    fn read_bc_inner(&mut self) -> Result<Robj> {
-        // The code object (an INTSXP) followed by the constant pool.
+    /// `ReadBC1`: the code object (an INTSXP) followed by the constant pool.
+    fn read_bc1(&mut self, reps: &mut Vec<Robj>) -> Result<Robj> {
         let _code = self.read_item()?;
         let nconsts = self.read_i32()?;
         for _ in 0..nconsts {
-            let ty = self.read_i32()? as u8;
+            let ty = self.read_i32()? as u8; // bare type tag
             match ty {
                 BCODESXP => {
-                    self.read_bc_inner()?;
+                    self.read_bc1(reps)?;
                 }
-                LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP => {
-                    // BCREPDEF/REF wrapped lang — read as an item with the
-                    // flags already consumed is awkward; fall back to a full
-                    // item read by rewinding is not possible. These appear in
-                    // compiled closures (Phase 2); reject clearly for now.
-                    return Err(RdsError::UnsupportedType(ty));
+                LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP | BCREPDEF | BCREPREF => {
+                    self.read_bc_lang(ty, reps)?;
                 }
                 _ => {
-                    return Err(RdsError::UnsupportedType(ty));
+                    // Any other constant is an ordinary packed-flags item.
+                    self.read_item()?;
                 }
             }
         }
         Ok(Robj::bare(Rkind::Opaque))
+    }
+
+    /// `ReadBCLang`: dispatch a bare type tag within the bytecode const pool.
+    fn read_bc_lang(&mut self, ty: u8, reps: &mut Vec<Robj>) -> Result<Robj> {
+        match ty {
+            BCREPREF => {
+                // A back-reference to a previously defined node: one index.
+                let _idx = self.read_i32()?;
+                Ok(Robj::null())
+            }
+            BCREPDEF => {
+                // A definition slot, then the real type follows.
+                let _pos = self.read_i32()?;
+                let real_ty = self.read_i32()? as u8;
+                self.read_bc_lang_node(real_ty, reps)
+            }
+            LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP => self.read_bc_lang_node(ty, reps),
+            // Any other real type is an ordinary item.
+            _ => self.read_item(),
+        }
+    }
+
+    /// Read one `LANG`/`LIST` cons cell within the bytecode grammar: optional
+    /// attributes (for the `ATTR*` variants), a tag, then CAR and CDR — each
+    /// introduced by its own bare type tag.
+    fn read_bc_lang_node(&mut self, ty: u8, reps: &mut Vec<Robj>) -> Result<Robj> {
+        match ty {
+            LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP => {
+                if ty == ATTRLANGSXP || ty == ATTRLISTSXP {
+                    let _attrib = self.read_item()?;
+                }
+                let _tag = self.read_item()?;
+                let car_ty = self.read_i32()? as u8;
+                let _car = self.read_bc_lang(car_ty, reps)?;
+                let cdr_ty = self.read_i32()? as u8;
+                let _cdr = self.read_bc_lang(cdr_ty, reps)?;
+                Ok(Robj::bare(Rkind::Opaque))
+            }
+            _ => self.read_item(),
+        }
     }
 
     fn read_altrep(&mut self) -> Result<Robj> {
@@ -691,5 +744,32 @@ mod tests {
     fn rejects_non_xdr() {
         let err = read_rds_stream(b"B\n\0\0\0\x02").unwrap_err();
         assert!(matches!(err, RdsError::BadHeader(_)));
+    }
+
+    /// A namespace reference (`NAMESPACESXP`) is a length-prefixed string
+    /// vector, not a single item. Decoding it as the closure's environment must
+    /// leave the stream aligned so the formals that follow read correctly.
+    #[test]
+    fn decodes_namespace_string_vec() {
+        // Hand-built XDR stream: header, then NAMESPACESXP { has_names=0,
+        // len=2, "magrittr", "2.0.4" }.
+        let mut s: Vec<u8> = Vec::new();
+        s.extend_from_slice(b"X\n");
+        s.extend_from_slice(&2i32.to_be_bytes()); // version
+        s.extend_from_slice(&0x0003_0603i32.to_be_bytes()); // writer
+        s.extend_from_slice(&0x0002_0300i32.to_be_bytes()); // min reader
+        s.extend_from_slice(&(NAMESPACESXP as i32).to_be_bytes());
+        s.extend_from_slice(&0i32.to_be_bytes()); // has_names
+        s.extend_from_slice(&2i32.to_be_bytes()); // len
+        for name in ["magrittr", "2.0.4"] {
+            s.extend_from_slice(&(CHARSXP as i32).to_be_bytes());
+            s.extend_from_slice(&(name.len() as i32).to_be_bytes());
+            s.extend_from_slice(name.as_bytes());
+        }
+        let obj = read_rds_stream(&s).expect("decode namespace");
+        assert_eq!(
+            obj.as_str_vec(),
+            Some([Some("magrittr".to_string()), Some("2.0.4".to_string())].as_slice())
+        );
     }
 }

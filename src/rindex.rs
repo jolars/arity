@@ -15,6 +15,7 @@
 
 pub mod build;
 pub mod cache;
+pub mod deparse;
 pub mod discover;
 pub mod harvest;
 pub mod lazyload;

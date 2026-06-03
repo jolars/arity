@@ -541,11 +541,16 @@ in-tree parser, not a drop-in jarl replacement.
       (`library()`/`require()`/`pkg::`, the latter newly captured in
       `SemanticModel::referenced_packages`); `ravel lint` loads the cache and
       resolves attached-package names. Tested R-free against checked-in package
-      fixtures (`tests/fixtures/rindex/`). **Remaining:** Phase 2 — read
-      function formals from `R/{pkg}.rdb` (needs `CLOSXP`/bytecode decode);
-      Phase 3 — full Rd help bodies; LSP lazy background build; flip
-      `undefined-symbol` on by default behind an all-loaded-indexed gate (and
-      fix the `library(pkg)`-arg false positive).
+      fixtures (`tests/fixtures/rindex/`). Phase 2 (done) — function formals
+      from `R/{pkg}.rdb`: faithful `BCODESXP` consumption (a `ReadBC`/
+      `ReadBCConsts`/`ReadBCLang` port) so byte-compiled closures fetch, a fixed
+      `NAMESPACESXP`/`PACKAGESXP` string-vector decode, an `Robj`→R-source
+      deparser (`deparse.rs`) for default values, and `SymbolKind` refinement
+      (closure→function w/ formals, primitive→function, vectors→data) wired
+      unconditionally into harvest with graceful degradation when no `.rdb` is
+      present. **Remaining:** Phase 3 — full Rd help bodies; LSP lazy background
+      build; flip `undefined-symbol` on by default behind an all-loaded-indexed
+      gate (and fix the `library(pkg)`-arg false positive).
 - [x] Autofix infrastructure. `Fix` gained `applicability` (`Safe`/`Unsafe`)
       and a `description`; a pure `apply_fixes(source, fixes, include_unsafe)`
       engine (`src/linter/fix.rs`) sorts by offset, drops overlaps, and

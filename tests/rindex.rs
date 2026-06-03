@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use ravel::rindex::harvest::{HarvestOptions, harvest_package};
 use ravel::rindex::lazyload::LazyLoadDb;
-use ravel::rindex::rds;
-use ravel::rindex::schema::SymbolEntry;
+use ravel::rindex::rds::{self, Rkind};
+use ravel::rindex::schema::{SymbolEntry, SymbolKind};
 
 fn fixture(pkg: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -77,6 +77,66 @@ fn harvests_export_pattern_package() {
     // Dotted internals are excluded by the pattern.
     assert!(find(&idx.symbols, ".onLoad").is_none());
     assert!(find(&idx.symbols, ".__NAMESPACE__.").is_none());
+}
+
+#[test]
+fn fetches_compiled_closure_formals() {
+    // `freduce` is a byte-compiled magrittr closure: fetching it requires
+    // consuming a BCODESXP body, and its formals must come back intact.
+    let rdx = fixture("magrittr").join("R/magrittr.rdx");
+    let db = LazyLoadDb::open(&rdx).expect("open magrittr lazy-load db");
+    let obj = db.fetch("freduce").expect("fetch freduce");
+    let Rkind::Closure { formals, .. } = &obj.kind else {
+        panic!("freduce should be a closure, got {:?}", obj.kind);
+    };
+    let names: Vec<&str> = match &formals.kind {
+        Rkind::Pairlist(items) => items.iter().filter_map(|i| i.tag.as_deref()).collect(),
+        other => panic!("formals should be a pairlist, got {other:?}"),
+    };
+    assert_eq!(names, ["value", "function_list"]);
+
+    // A formal carrying `...` round-trips as a named, default-less argument.
+    let dots = db.fetch("[.fseq").expect("fetch [.fseq");
+    let Rkind::Closure { formals, .. } = &dots.kind else {
+        panic!("[.fseq should be a closure");
+    };
+    let names: Vec<&str> = match &formals.kind {
+        Rkind::Pairlist(items) => items.iter().filter_map(|i| i.tag.as_deref()).collect(),
+        other => panic!("formals pairlist, got {other:?}"),
+    };
+    assert!(
+        names.contains(&"..."),
+        "expected a `...` formal, got {names:?}"
+    );
+}
+
+#[test]
+fn harvest_fills_function_formals() {
+    let idx = harvest_package(&fixture("magrittr"), HarvestOptions::default(), 0)
+        .expect("harvest magrittr");
+
+    let freduce = find(&idx.symbols, "freduce").expect("freduce exported");
+    assert_eq!(freduce.kind, SymbolKind::Function);
+    let formals = freduce.formals.as_ref().expect("freduce has formals");
+    let names: Vec<&str> = formals.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["value", "function_list"]);
+    // Both are required → no default text.
+    assert!(formals.iter().all(|f| f.default.is_none()));
+
+    // A primitive aliased into the package stays a callable Function with no
+    // R-level formals (not misclassified as data).
+    let add = find(&idx.symbols, "add").expect("add exported");
+    assert_eq!(add.kind, SymbolKind::Function);
+    assert!(add.formals.is_none());
+}
+
+#[test]
+fn harvest_tolerates_missing_rdb() {
+    // R.oo ships only a `.rdx` (no `.rdb`): harvesting must still succeed, just
+    // without formals.
+    let idx =
+        harvest_package(&fixture("R.oo"), HarvestOptions::default(), 0).expect("harvest R.oo");
+    assert!(idx.symbols.iter().all(|s| s.formals.is_none()));
 }
 
 #[test]
