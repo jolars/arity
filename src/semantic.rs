@@ -35,6 +35,11 @@ pub struct SemanticModel {
     /// Identifier *read* sites. Definition sites are recorded as `Binding`s.
     idents: Vec<IdentRef>,
     loaded_packages: Vec<LoadedPackage>,
+    /// Packages named on the left of `::` / `:::`. Unlike `loaded_packages`,
+    /// these are *not* attached to the search path — `pkg::name` is a direct
+    /// reference — so they never affect bare-name resolution. They drive
+    /// which packages the introspection index should harvest.
+    referenced_packages: Vec<SmolStr>,
 }
 
 impl SemanticModel {
@@ -65,6 +70,12 @@ impl SemanticModel {
 
     pub fn loaded_packages(&self) -> &[LoadedPackage] {
         &self.loaded_packages
+    }
+
+    /// Packages referenced via `pkg::name` / `pkg:::name`, in source order
+    /// (with duplicates preserved as encountered).
+    pub fn referenced_packages(&self) -> &[SmolStr] {
+        &self.referenced_packages
     }
 
     /// Resolve a single identifier read against the scope tree. Walks
@@ -157,6 +168,16 @@ mod tests {
     fn library_call_inside_function_ignored() {
         let m = model_of("f <- function() { library(dplyr); 1 }");
         assert_eq!(m.loaded_packages.len(), 0);
+    }
+
+    #[test]
+    fn colon_reference_records_referenced_package() {
+        let m = model_of("dplyr::filter(x)\nrlang:::abort(\"e\")");
+        let refs: Vec<&str> = m.referenced_packages().iter().map(|s| s.as_str()).collect();
+        assert!(refs.contains(&"dplyr"));
+        assert!(refs.contains(&"rlang"));
+        // A `::` reference does not attach the package to the search path.
+        assert!(m.loaded_packages.is_empty());
     }
 
     #[test]

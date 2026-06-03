@@ -10,6 +10,11 @@ use ravel::file_discovery::collect_r_files;
 use ravel::formatter::{FormatStyle, check_paths_with_style, format_with_style};
 use ravel::linter::{OutputMode, apply_fixes, check_document, render_findings};
 use ravel::parser::{parse, reconstruct};
+use ravel::rindex::build::{BuildOptions, PackageOutcome, build_index};
+use ravel::rindex::cache::{Cache, resolve_cache_root};
+use ravel::rindex::discover::referenced_packages;
+use ravel::rindex::libpaths::LibrarySearch;
+use ravel::rindex::provider::{CompositeProvider, IndexedProvider};
 
 /// Autofix selection for `lint --fix`.
 #[derive(Debug, Clone, Copy)]
@@ -64,8 +69,131 @@ fn main() -> ExitCode {
             output,
             &config_source,
         ),
+        Commands::Index {
+            paths,
+            force,
+            no_help,
+            cache_dir,
+            quiet,
+        } => run_index(
+            paths,
+            IndexCliOptions {
+                force,
+                no_help,
+                cache_dir,
+                quiet,
+            },
+            &config_source,
+        ),
         Commands::Lsp => run_lsp(),
     }
+}
+
+struct IndexCliOptions {
+    force: bool,
+    no_help: bool,
+    cache_dir: Option<PathBuf>,
+    quiet: bool,
+}
+
+fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigSource) -> ExitCode {
+    let anchor = match cwd_anchor() {
+        Ok(anchor) => anchor,
+        Err(code) => return code,
+    };
+    let config = match load_config(config_source, &anchor) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let scan_paths = if paths.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        paths
+    };
+
+    let packages = match referenced_packages(&scan_paths) {
+        Ok(pkgs) => pkgs,
+        Err(err) => {
+            eprintln!("error: {}", ravel::linter::LintError::from(err));
+            return ExitCode::from(2);
+        }
+    };
+    if packages.is_empty() {
+        eprintln!("no referenced packages found under the provided paths");
+        return ExitCode::SUCCESS;
+    }
+
+    let cache_root =
+        match resolve_cache_root(opts.cache_dir.as_deref(), config.index.cache_dir.as_deref()) {
+            Ok(root) => root,
+            Err(err) => {
+                eprintln!("error: {err}");
+                return ExitCode::from(2);
+            }
+        };
+    let cache = Cache::new(cache_root);
+    let search = LibrarySearch::discover(Some(&anchor), &config.index.library_paths);
+
+    let report = build_index(
+        &packages,
+        &cache,
+        &search,
+        BuildOptions {
+            help: config.index.help && !opts.no_help,
+            force: opts.force,
+        },
+        now_unix_secs(),
+    );
+
+    let mut any_missing = false;
+    for (pkg, outcome) in &report.packages {
+        match outcome {
+            PackageOutcome::Indexed { version, symbols } => {
+                if !opts.quiet {
+                    eprintln!("indexed {pkg}@{version} ({symbols} symbols)");
+                }
+            }
+            PackageOutcome::UpToDate { version } => {
+                if !opts.quiet {
+                    eprintln!("up to date {pkg}@{version}");
+                }
+            }
+            PackageOutcome::NotInstalled => {
+                any_missing = true;
+                eprintln!("warning: {pkg} is not installed in any known library");
+            }
+            PackageOutcome::Failed { reason } => {
+                any_missing = true;
+                eprintln!("warning: failed to index {pkg}: {reason}");
+            }
+        }
+    }
+
+    // A missing/failed package is a warning, not a hard error: you can index a
+    // project before all its dependencies are installed.
+    let _ = any_missing;
+    ExitCode::SUCCESS
+}
+
+/// Build a symbol provider for linting, loading the installed-package index
+/// from the cache when one is configured/available.
+fn lint_symbol_provider(config: &ravel::config::Config) -> CompositeProvider {
+    let Ok(cache_root) = resolve_cache_root(None, config.index.cache_dir.as_deref()) else {
+        return CompositeProvider::base_only();
+    };
+    let cache = Cache::new(cache_root);
+    CompositeProvider::with_index(IndexedProvider::from_cache(&cache))
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn run_lsp() -> ExitCode {
@@ -346,7 +474,8 @@ fn run_lint(
         return code;
     }
 
-    match ravel::linter::check_paths_with_config(&paths, &config.lint) {
+    let provider = lint_symbol_provider(&config);
+    match ravel::linter::check_paths_with_provider(&paths, &config.lint, &provider) {
         Ok(result) => {
             let mut has_parse_blockers = false;
             let mut all_findings = Vec::new();

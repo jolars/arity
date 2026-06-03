@@ -27,6 +27,8 @@ pub struct Config {
     pub format: FormatConfig,
     #[serde(default)]
     pub lint: LintConfig,
+    #[serde(default)]
+    pub index: IndexConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -76,6 +78,40 @@ pub struct LintConfig {
     /// the default rule set.
     #[serde(default)]
     pub ignore: Vec<String>,
+}
+
+/// `[index]` — the R-introspection sidecar.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct IndexConfig {
+    /// Explicit R library directories, used when automatic `.libPaths()`
+    /// discovery misses (highest-priority source).
+    #[serde(default)]
+    pub library_paths: Vec<PathBuf>,
+    /// Override the cache directory (otherwise XDG / `$RAVEL_CACHE_DIR`).
+    #[serde(default)]
+    pub cache_dir: Option<PathBuf>,
+    /// Let the LSP lazily build indices for referenced-but-unindexed packages.
+    #[serde(default = "default_true")]
+    pub auto_build: bool,
+    /// Harvest help (titles in this phase). When false, only names are stored.
+    #[serde(default = "default_true")]
+    pub help: bool,
+}
+
+impl Default for IndexConfig {
+    fn default() -> Self {
+        Self {
+            library_paths: Vec::new(),
+            cache_dir: None,
+            auto_build: true,
+            help: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl From<&FormatConfig> for FormatStyle {

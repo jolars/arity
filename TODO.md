@@ -526,11 +526,26 @@ in-tree parser, not a drop-in jarl replacement.
       export lists keyed by package version. With a manifest in place,
       enable `undefined-symbol` by default and stop returning `Unknown` for
       names from `library()`-attached packages.
-- [ ] Optional R-introspection sidecar (`ravel index`): shell out to
-      `Rscript` to harvest installed-package exports / formals into a local
-      cache. The script is `include_str!`-inlined in the binary so there is
-      no installed-package layout to manage. The cache becomes a third
-      `SymbolProvider` impl beside `StaticBaseR` and the CRAN manifest.
+- [~] R-introspection sidecar (`ravel index`). **Pure on-disk, no R runtime**
+      (chosen over shelling to `Rscript`): installed packages keep code/help in
+      R's serialized lazy-load DBs, so `src/rindex/` reads them natively — a
+      minimal RDS reader (`rds.rs`, `flate2` for gzip/zlib), lazy-load `.rdb`/
+      `.rdx` decode (`lazyload.rs`), `.libPaths()`-style discovery without R
+      (`libpaths.rs`, config escape hatch `[index].library-paths`), per-package
+      harvest (`harvest.rs`: `DESCRIPTION` version, `NAMESPACE` exports incl.
+      `exportPattern` expansion via `regex`, `Meta/Rd.rds` help titles), a
+      versioned JSON cache (`cache.rs`, `{pkg}@{ver}.json` + `meta.json`), and
+      `IndexedProvider`/`CompositeProvider` (`provider.rs`) — a third
+      `SymbolProvider` layered over `StaticBaseR` with correct search-path
+      masking. `ravel index [paths]` harvests referenced packages
+      (`library()`/`require()`/`pkg::`, the latter newly captured in
+      `SemanticModel::referenced_packages`); `ravel lint` loads the cache and
+      resolves attached-package names. Tested R-free against checked-in package
+      fixtures (`tests/fixtures/rindex/`). **Remaining:** Phase 2 — read
+      function formals from `R/{pkg}.rdb` (needs `CLOSXP`/bytecode decode);
+      Phase 3 — full Rd help bodies; LSP lazy background build; flip
+      `undefined-symbol` on by default behind an all-loaded-indexed gate (and
+      fix the `library(pkg)`-arg false positive).
 - [x] Autofix infrastructure. `Fix` gained `applicability` (`Safe`/`Unsafe`)
       and a `description`; a pure `apply_fixes(source, fixes, include_unsafe)`
       engine (`src/linter/fix.rs`) sorts by offset, drops overlaps, and

@@ -302,6 +302,12 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             let op_idx = elements
                 .iter()
                 .position(|e| matches!(e.kind(), SyntaxKind::COLON2 | SyntaxKind::COLON3));
+            // The LHS names a referenced (not attached) package; record it.
+            if let Some(op) = op_idx
+                && let Some(pkg) = lhs_package_name(&elements[..op])
+            {
+                ctx.model.referenced_packages.push(pkg);
+            }
             if let Some(op) = op_idx {
                 for el in &elements[op + 1..] {
                     match el {
@@ -444,6 +450,22 @@ fn first_string_or_ident_arg(call: &CallExpr) -> Option<(SmolStr, TextRange)> {
                 return Some((SmolStr::new(stripped), t.text_range()));
             }
             _ => return None,
+        }
+    }
+    None
+}
+
+/// The package named on the left of `::` / `:::`: the last `IDENT`/`STRING`
+/// token in the left-hand-side elements (ignoring trivia).
+fn lhs_package_name(lhs: &[NodeOrToken<SyntaxNode, SyntaxToken<RLanguage>>]) -> Option<SmolStr> {
+    for el in lhs.iter().rev() {
+        if let NodeOrToken::Token(t) = el {
+            match t.kind() {
+                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT => continue,
+                SyntaxKind::IDENT => return Some(SmolStr::new(t.text())),
+                SyntaxKind::STRING => return strip_quotes(t.text()).map(SmolStr::new),
+                _ => return None,
+            }
         }
     }
     None

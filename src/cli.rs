@@ -88,6 +88,28 @@ pub enum Commands {
         #[arg(long, value_enum, default_value_t = LintOutput::Pretty)]
         output: LintOutput,
     },
+    /// Build or refresh the installed-package introspection index
+    Index {
+        /// Project path(s) to scan for referenced packages (default: ".")
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+
+        /// Re-harvest even when the installed version is already indexed
+        #[arg(long)]
+        force: bool,
+
+        /// Skip harvesting help (names only; faster)
+        #[arg(long)]
+        no_help: bool,
+
+        /// Override the cache directory
+        #[arg(long, value_name = "DIR")]
+        cache_dir: Option<PathBuf>,
+
+        /// Suppress per-package progress output
+        #[arg(long)]
+        quiet: bool,
+    },
     /// Run the language server over stdio (formatting only)
     Lsp,
 }

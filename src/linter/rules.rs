@@ -9,7 +9,8 @@
 
 use std::path::Path;
 
-use crate::semantic::{SemanticModel, StaticBaseR, SymbolProvider};
+use crate::rindex::provider::CompositeProvider;
+use crate::semantic::{SemanticModel, SymbolProvider};
 use crate::syntax::SyntaxNode;
 
 use super::diagnostic::{Diagnostic, Severity};
@@ -125,8 +126,9 @@ pub fn run_rules(
     all
 }
 
-/// Provide a sane default symbol provider (`StaticBaseR`). Cheap to
-/// construct; rules can re-use a shared instance via this helper.
-pub fn default_symbol_provider() -> StaticBaseR {
-    StaticBaseR::new()
+/// Provide a sane default symbol provider: base R only, with no installed-
+/// package index. Behaves exactly like the historical `StaticBaseR` for files
+/// that don't attach non-default packages.
+pub fn default_symbol_provider() -> CompositeProvider {
+    CompositeProvider::base_only()
 }
