@@ -57,6 +57,30 @@ impl<'a> LineIndex<'a> {
         Position::new(line_idx as u32, character)
     }
 
+    /// Inverse of [`byte_to_position`](Self::byte_to_position): a 0-indexed LSP
+    /// `Position` (UTF-16 character offset) back to a byte offset. A line or
+    /// character past the end clamps to the end of the line / buffer.
+    pub fn position_to_byte(&self, position: Position) -> usize {
+        let line = position.line as usize;
+        let Some(&line_start) = self.line_starts.get(line) else {
+            return self.text.len();
+        };
+        let line_end = self
+            .line_starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or(self.text.len());
+        let line_text = &self.text[line_start..line_end];
+        let mut utf16 = 0u32;
+        for (byte_off, ch) in line_text.char_indices() {
+            if utf16 >= position.character {
+                return line_start + byte_off;
+            }
+            utf16 += ch.len_utf16() as u32;
+        }
+        line_end
+    }
+
     /// Total line count (1 even for empty text).
     pub fn line_count(&self) -> usize {
         self.line_starts.len()
@@ -131,5 +155,32 @@ mod tests {
     fn trailing_newline() {
         let idx = LineIndex::new("ab\n");
         assert_eq!(idx.byte_to_lc(3), LineCol { line: 2, column: 1 });
+    }
+
+    #[test]
+    fn position_to_byte_round_trips() {
+        let text = "ab\ncde\nf";
+        let idx = LineIndex::new(text);
+        for offset in 0..=text.len() {
+            // Only byte offsets on char boundaries round-trip exactly.
+            if !text.is_char_boundary(offset) {
+                continue;
+            }
+            let pos = idx.byte_to_position(offset);
+            assert_eq!(idx.position_to_byte(pos), offset, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn position_to_byte_handles_utf16_and_overshoot() {
+        // Emoji is 4 UTF-8 bytes, 2 UTF-16 units.
+        let idx = LineIndex::new("\u{1F600}x\ny");
+        assert_eq!(idx.position_to_byte(Position::new(0, 0)), 0);
+        assert_eq!(idx.position_to_byte(Position::new(0, 2)), 4); // at 'x'
+        assert_eq!(idx.position_to_byte(Position::new(1, 0)), 6); // at 'y'
+        // A character past the line end clamps to the line end.
+        assert_eq!(idx.position_to_byte(Position::new(0, 99)), 6);
+        // A line past the end clamps to the buffer end.
+        assert_eq!(idx.position_to_byte(Position::new(9, 0)), 7);
     }
 }

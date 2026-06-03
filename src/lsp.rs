@@ -1,13 +1,17 @@
-//! Stdio-based LSP server: formatting + pushed diagnostics.
+//! Stdio-based LSP server: formatting, pushed diagnostics, quick-fix code
+//! actions, and hover backed by the introspection index.
 //!
 //! Document changes are debounced (200 ms) per URI and serialized by an i32
-//! version counter so a fast typist can't trigger overlapping lint runs.
+//! version counter so a fast typist can't trigger overlapping lint runs. Hover
+//! resolves the symbol under the cursor (a bare name against the attached
+//! packages, or a `pkg::name` access directly) and renders the indexed help.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use smol_str::SmolStr;
 use tokio::time;
 use tower_lsp_server::jsonrpc::Result as JsonRpcResult;
@@ -15,21 +19,26 @@ use tower_lsp_server::ls_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
     DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, InitializeParams, InitializeResult,
-    InitializedParams, MessageType, NumberOrString, OneOf, Position, Range, ServerCapabilities,
+    DidOpenTextDocumentParams, DocumentFormattingParams, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, MarkupContent,
+    MarkupKind, MessageType, NumberOrString, OneOf, Position, Range, ServerCapabilities,
     ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
+use crate::ast::{AstNode as _, BinaryExpr};
 use crate::config::{Config, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_with_style};
 use crate::linter::{Diagnostic, Severity};
+use crate::parser::parse;
 use crate::rindex::build::{BuildOptions, build_index};
 use crate::rindex::cache::{Cache, resolve_cache_root};
 use crate::rindex::discover::referenced_in_source;
 use crate::rindex::libpaths::LibrarySearch;
 use crate::rindex::provider::{CompositeProvider, IndexedProvider};
-use crate::semantic::SymbolProvider as _;
+use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
+use crate::semantic::{PackageOrigin, SemanticModel, SymbolProvider as _};
+use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::LineIndex;
 
 const LINT_DEBOUNCE: Duration = Duration::from_millis(200);
@@ -326,6 +335,7 @@ impl LanguageServer for Backend {
                 )),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -465,6 +475,32 @@ impl LanguageServer for Backend {
             params.range,
         )))
     }
+
+    async fn hover(&self, params: HoverParams) -> JsonRpcResult<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let text = {
+            let state = self.state.lock().expect("state mutex poisoned");
+            state.documents.get(&uri).map(|d| d.text.clone())
+        };
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        let path = uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+            .unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let anchor = path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let (_, index_config) = resolve_doc_config(&self.state, &anchor);
+        let provider = ensure_index(&self.state, &anchor, &index_config);
+
+        let offset = LineIndex::new(&text).position_to_byte(position);
+        Ok(compute_hover(&text, offset, &provider))
+    }
 }
 
 /// Build quick-fix code actions for the fixes whose diagnostics overlap
@@ -579,6 +615,169 @@ fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnostic {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Hover
+// ---------------------------------------------------------------------------
+
+/// The symbol referenced at a cursor position: either a namespaced access
+/// (`pkg::name`) whose package is known directly, or a bare name whose package
+/// must be resolved against the attached packages.
+enum SymbolQuery {
+    Namespaced {
+        package: SmolStr,
+        name: SmolStr,
+        range: TextRange,
+    },
+    Bare {
+        name: SmolStr,
+        range: TextRange,
+    },
+}
+
+/// Build hover contents for the symbol at byte `offset`, if it resolves to an
+/// indexed package export. Pure (parses `text` itself) so it is unit-testable.
+pub fn compute_hover(text: &str, offset: usize, provider: &CompositeProvider) -> Option<Hover> {
+    let root = parse(text).cst;
+    let offset = TextSize::new(offset.min(text.len()) as u32);
+    let query = symbol_query_at(&root, offset)?;
+    let (package, entry, range) = resolve_query(query, &root, provider)?;
+
+    let line_index = LineIndex::new(text);
+    let lsp_range = Range {
+        start: line_index.byte_to_position(u32::from(range.start()) as usize),
+        end: line_index.byte_to_position(u32::from(range.end()) as usize),
+    };
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: render_hover_markdown(&package, entry),
+        }),
+        range: Some(lsp_range),
+    })
+}
+
+/// Classify the name token under the cursor, distinguishing `pkg::name` from a
+/// bare reference. Returns `None` when the cursor isn't on a name.
+fn symbol_query_at(root: &SyntaxNode, offset: TextSize) -> Option<SymbolQuery> {
+    let token = pick_name_token(root, offset)?;
+    for ancestor in token.parent_ancestors() {
+        if ancestor.kind() == SyntaxKind::BINARY_EXPR
+            && let Some(access) = BinaryExpr::cast(ancestor).and_then(|b| b.namespace_access())
+            && access.name_token == token
+        {
+            return Some(SymbolQuery::Namespaced {
+                package: access.package,
+                name: access.name,
+                range: token.text_range(),
+            });
+        }
+    }
+    Some(SymbolQuery::Bare {
+        name: SmolStr::new(token.text()),
+        range: token.text_range(),
+    })
+}
+
+/// The `IDENT`/`USER_OP` token at `offset`, preferring the right side when the
+/// cursor sits exactly between two tokens.
+fn pick_name_token(root: &SyntaxNode, offset: TextSize) -> Option<SyntaxToken<RLanguage>> {
+    let is_name = |k: SyntaxKind| matches!(k, SyntaxKind::IDENT | SyntaxKind::USER_OP);
+    match root.token_at_offset(offset) {
+        TokenAtOffset::None => None,
+        TokenAtOffset::Single(t) => is_name(t.kind()).then_some(t),
+        TokenAtOffset::Between(left, right) => {
+            if is_name(right.kind()) {
+                Some(right)
+            } else if is_name(left.kind()) {
+                Some(left)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Resolve a [`SymbolQuery`] to the indexed entry that documents it.
+fn resolve_query<'p>(
+    query: SymbolQuery,
+    root: &SyntaxNode,
+    provider: &'p CompositeProvider,
+) -> Option<(SmolStr, &'p SymbolEntry, TextRange)> {
+    match query {
+        SymbolQuery::Namespaced {
+            package,
+            name,
+            range,
+        } => {
+            let entry = provider.indexed().lookup(&package, &name)?;
+            Some((package, entry, range))
+        }
+        SymbolQuery::Bare { name, range } => {
+            let model = SemanticModel::build(root);
+            let package = match provider.origin(&name, model.loaded_packages()) {
+                PackageOrigin::Resolved(p) => p,
+                // The last attacher masks the rest under R's lookup rules.
+                PackageOrigin::Ambiguous(mut v) => v.pop()?,
+                PackageOrigin::Unknown => return None,
+            };
+            let entry = provider.indexed().lookup(&package, &name)?;
+            Some((package, entry, range))
+        }
+    }
+}
+
+/// Render a symbol's signature + help into hover markdown.
+fn render_hover_markdown(package: &str, entry: &SymbolEntry) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+
+    // Signature: the `\usage` block if present, else a formals-derived call.
+    let usage = entry.help.as_ref().and_then(|h| h.usage.as_deref());
+    let signature = usage.map(str::to_string).or_else(|| {
+        entry.formals.as_ref().map(|formals| {
+            let args = formals
+                .iter()
+                .map(format_formal)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}({})", entry.name, args)
+        })
+    });
+    if let Some(signature) = signature {
+        let _ = write!(out, "```r\n{signature}\n```\n");
+    }
+
+    let kind = match entry.kind {
+        SymbolKind::Function => "function",
+        SymbolKind::Data => "data",
+        SymbolKind::Other => "object",
+    };
+    let _ = write!(out, "`{package}::{}` · {kind}", entry.name);
+
+    if let Some(help) = &entry.help {
+        if let Some(title) = &help.title {
+            let _ = write!(out, "\n\n**{title}**");
+        }
+        if let Some(description) = &help.description {
+            let _ = write!(out, "\n\n{description}");
+        }
+        if !help.arguments.is_empty() {
+            out.push_str("\n\n**Arguments**\n");
+            for arg in &help.arguments {
+                let _ = write!(out, "\n- `{}` — {}", arg.name, arg.description);
+            }
+        }
+    }
+    out
+}
+
+fn format_formal(formal: &Formal) -> String {
+    match &formal.default {
+        Some(default) => format!("{} = {}", formal.name, default),
+        None => formal.name.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,5 +878,90 @@ mod tests {
         // A second pass returns nothing — tidyr was already attempted.
         let second = packages_to_build(&state, &provider, src);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
+    }
+
+    // --- hover ------------------------------------------------------------
+
+    /// dplyr with one richly-documented export (`across`).
+    fn documented_dplyr() -> CompositeProvider {
+        use crate::rindex::schema::{Formal, HelpArg, HelpDoc, PackageIndex, SCHEMA_VERSION};
+        let idx = PackageIndex {
+            schema_version: SCHEMA_VERSION,
+            package: "dplyr".into(),
+            version: "1.0".into(),
+            lib_path: "/lib".into(),
+            r_version: None,
+            harvested_at: 0,
+            symbols: vec![SymbolEntry {
+                name: "across".into(),
+                kind: SymbolKind::Function,
+                exported: true,
+                formals: Some(vec![
+                    Formal {
+                        name: ".cols".into(),
+                        default: Some("everything()".into()),
+                    },
+                    Formal {
+                        name: ".fns".into(),
+                        default: None,
+                    },
+                ]),
+                help: Some(HelpDoc {
+                    title: Some("Apply a function across columns".into()),
+                    description: Some("Apply one or more functions to a set of columns.".into()),
+                    usage: Some("across(.cols, .fns)".into()),
+                    arguments: vec![HelpArg {
+                        name: ".cols".into(),
+                        description: "Columns to transform.".into(),
+                    }],
+                }),
+            }],
+        };
+        CompositeProvider::with_index(IndexedProvider::from_indices([idx]))
+    }
+
+    /// Byte offset of the first occurrence of `needle` in `src`.
+    fn offset_of(src: &str, needle: &str) -> usize {
+        src.find(needle).expect("needle present") + 1
+    }
+
+    fn hover_markdown(src: &str, needle: &str, provider: &CompositeProvider) -> Option<String> {
+        compute_hover(src, offset_of(src, needle), provider).map(|h| match h.contents {
+            HoverContents::Markup(m) => m.value,
+            other => panic!("expected markup, got {other:?}"),
+        })
+    }
+
+    #[test]
+    fn hover_resolves_bare_name_via_attached_package() {
+        let provider = documented_dplyr();
+        let src = "library(dplyr)\nacross(a, mean)\n";
+        let md = hover_markdown(src, "across(a", &provider).expect("hover for across");
+        assert!(md.contains("across(.cols, .fns)"), "signature: {md}");
+        assert!(md.contains("dplyr::across"), "origin: {md}");
+        assert!(
+            md.contains("Apply a function across columns"),
+            "title: {md}"
+        );
+        assert!(md.contains("`.cols`"), "arguments: {md}");
+    }
+
+    #[test]
+    fn hover_resolves_namespaced_without_library() {
+        let provider = documented_dplyr();
+        // No `library(dplyr)`: the `pkg::name` form resolves directly.
+        let src = "dplyr::across(a)\n";
+        let md = hover_markdown(src, "across", &provider).expect("hover for dplyr::across");
+        assert!(md.contains("dplyr::across"));
+    }
+
+    #[test]
+    fn hover_none_for_unknown_and_non_name() {
+        let provider = documented_dplyr();
+        // `bogus` is not indexed by any attached package.
+        assert!(compute_hover("bogus()\n", 1, &provider).is_none());
+        // Cursor on whitespace yields nothing.
+        let src = "across (a)\n";
+        assert!(compute_hover(src, offset_of(src, " (a"), &provider).is_none());
     }
 }

@@ -5,6 +5,81 @@ use ravel::ast::{
 use ravel::parser::parse;
 use ravel::syntax::SyntaxKind;
 
+fn first_binary(src: &str) -> BinaryExpr {
+    let parsed = parse(src);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "parse: {:?}",
+        parsed.diagnostics
+    );
+    parsed
+        .cst
+        .descendants()
+        .find_map(BinaryExpr::cast)
+        .expect("a binary expression")
+}
+
+#[test]
+fn namespace_access_plain_reference() {
+    let na = first_binary("dplyr::filter")
+        .namespace_access()
+        .expect("namespace access");
+    assert_eq!(na.package, "dplyr");
+    assert_eq!(na.name, "filter");
+    assert!(!na.internal);
+    assert_eq!(na.name_token.text(), "filter");
+    assert_eq!(na.package_token.text(), "dplyr");
+}
+
+#[test]
+fn namespace_access_call_form_uses_callee_name() {
+    // `pkg::name(args)`: the name is the callee of the inner call, not an arg.
+    let na = first_binary("dplyr::filter(x, y)")
+        .namespace_access()
+        .expect("namespace access");
+    assert_eq!(na.package, "dplyr");
+    assert_eq!(na.name, "filter");
+    assert_eq!(na.name_token.kind(), SyntaxKind::IDENT);
+}
+
+#[test]
+fn namespace_access_internal_operator() {
+    let na = first_binary("rlang:::abort")
+        .namespace_access()
+        .expect("namespace access");
+    assert!(na.internal);
+    assert_eq!(na.package, "rlang");
+    assert_eq!(na.name, "abort");
+}
+
+#[test]
+fn non_namespace_binary_has_no_access() {
+    assert!(first_binary("a + b").namespace_access().is_none());
+}
+
+#[test]
+fn callee_token_resolves_simple_call() {
+    let parsed = parse("foo(1, 2)");
+    let call = parsed
+        .cst
+        .descendants()
+        .find_map(CallExpr::cast)
+        .expect("a call");
+    assert_eq!(call.callee_token().expect("callee").text(), "foo");
+}
+
+#[test]
+fn callee_token_none_for_computed_callee() {
+    // `(g)(x)`: the callee is a parenthesized expression, not a name.
+    let parsed = parse("(g)(x)");
+    let call = parsed
+        .cst
+        .descendants()
+        .find_map(CallExpr::cast)
+        .expect("a call");
+    assert!(call.callee_token().is_none());
+}
+
 #[test]
 fn casts_core_expression_wrappers() {
     let parsed = parse(

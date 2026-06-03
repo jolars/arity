@@ -296,6 +296,102 @@ impl CallExpr {
     pub fn arg_list(&self) -> Option<ArgList> {
         support::child(self.syntax())
     }
+
+    /// The callee name token — the `IDENT`/`STRING` immediately preceding the
+    /// argument list, when the function being called is a simple name (`foo(…)`,
+    /// `` `+`(…) ``). Returns `None` for a computed callee (`(g())(…)`,
+    /// `x$f(…)`).
+    pub fn callee_token(&self) -> Option<SyntaxToken<RLanguage>> {
+        for element in self.syntax().children_with_tokens() {
+            match element {
+                SyntaxElement::Token(token)
+                    if is_trivia(token.kind()) || token.kind() == SyntaxKind::COMMENT =>
+                {
+                    continue;
+                }
+                SyntaxElement::Token(token)
+                    if matches!(token.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) =>
+                {
+                    return Some(token);
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+}
+
+/// A resolved namespace access (`pkg::name` / `pkg:::name`), as extracted from a
+/// [`BinaryExpr`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceAccess {
+    pub package: SmolStr,
+    pub package_token: SyntaxToken<RLanguage>,
+    /// `true` for the internal `:::` operator, `false` for `::`.
+    pub internal: bool,
+    pub name: SmolStr,
+    pub name_token: SyntaxToken<RLanguage>,
+}
+
+impl BinaryExpr {
+    /// If this binary expression is a namespace access — `pkg::name`,
+    /// `pkg:::name`, or the call form `pkg::name(args)` — the resolved package
+    /// and accessed name with their tokens. The package and name may be written
+    /// as backtick/quoted strings, which are unquoted.
+    pub fn namespace_access(&self) -> Option<NamespaceAccess> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let (op_idx, internal) = elements
+            .iter()
+            .enumerate()
+            .find_map(|(i, e)| match e.kind() {
+                SyntaxKind::COLON2 => Some((i, false)),
+                SyntaxKind::COLON3 => Some((i, true)),
+                _ => None,
+            })?;
+        // Package: the last name token before the operator.
+        let package_token = elements[..op_idx].iter().rev().find_map(|e| match e {
+            SyntaxElement::Token(t)
+                if matches!(t.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) =>
+            {
+                Some(t.clone())
+            }
+            _ => None,
+        })?;
+        // Name: the first non-trivia element after the operator — either a bare
+        // name token or the callee of a `pkg::name(args)` call.
+        let rhs = elements[op_idx + 1..]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)?;
+        let name_token = match rhs {
+            SyntaxElement::Token(t)
+                if matches!(t.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) =>
+            {
+                t.clone()
+            }
+            SyntaxElement::Node(n) if n.kind() == SyntaxKind::CALL_EXPR => {
+                CallExpr::cast(n.clone())?.callee_token()?
+            }
+            _ => return None,
+        };
+        Some(NamespaceAccess {
+            package: token_name(&package_token),
+            package_token,
+            internal,
+            name: token_name(&name_token),
+            name_token,
+        })
+    }
+}
+
+/// The textual name a token denotes: the raw text for an `IDENT`, or the
+/// unquoted contents for a backtick/quoted `STRING`.
+fn token_name(token: &SyntaxToken<RLanguage>) -> SmolStr {
+    if token.kind() == SyntaxKind::STRING
+        && let Some(inner) = strip_string_quotes(token.text())
+    {
+        return SmolStr::new(inner);
+    }
+    SmolStr::new(token.text())
 }
 
 impl ArgList {
