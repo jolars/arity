@@ -526,7 +526,7 @@ in-tree parser, not a drop-in jarl replacement.
       export lists keyed by package version. With a manifest in place,
       enable `undefined-symbol` by default and stop returning `Unknown` for
       names from `library()`-attached packages.
-- [~] R-introspection sidecar (`ravel index`). **Pure on-disk, no R runtime**
+- [x] R-introspection sidecar (`ravel index`). **Pure on-disk, no R runtime**
       (chosen over shelling to `Rscript`): installed packages keep code/help in
       R's serialized lazy-load DBs, so `src/rindex/` reads them natively — a
       minimal RDS reader (`rds.rs`, `flate2` for gzip/zlib), lazy-load `.rdb`/
@@ -548,9 +548,15 @@ in-tree parser, not a drop-in jarl replacement.
       deparser (`deparse.rs`) for default values, and `SymbolKind` refinement
       (closure→function w/ formals, primitive→function, vectors→data) wired
       unconditionally into harvest with graceful degradation when no `.rdb` is
-      present. **Remaining:** Phase 3 — full Rd help bodies; LSP lazy background
-      build; flip `undefined-symbol` on by default behind an all-loaded-indexed
-      gate (and fix the `library(pkg)`-arg false positive).
+      present. Phase 3 (done) — full Rd help bodies from `help/{pkg}.rdb`
+      rendered to lightweight markdown (`rd.rs`: `\title`/`\description`/
+      `\usage`/`\arguments`, inline `\code`→backticks etc.) keyed by the
+      `Meta/Rd.rds` `File` column; the LSP now lints with the loaded index and
+      lazily harvests referenced-but-unindexed packages in the background
+      (behind `[index].auto-build`), swapping in the new provider and re-linting;
+      and `undefined-symbol` is on by default behind an all-loaded-indexed gate
+      (silent for a file whenever an attached package isn't indexed), with the
+      `library(pkg)`-arg false positive fixed in the semantic builder.
 - [x] Autofix infrastructure. `Fix` gained `applicability` (`Safe`/`Unsafe`)
       and a `description`; a pure `apply_fixes(source, fixes, include_unsafe)`
       engine (`src/linter/fix.rs`) sorts by offset, drops overlaps, and
