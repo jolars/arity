@@ -171,6 +171,27 @@ mod tests {
     }
 
     #[test]
+    fn library_package_name_is_not_a_read() {
+        // The bare package name must not be recorded as an identifier read
+        // (otherwise `undefined-symbol` flags it).
+        let m = model_of("library(dplyr)");
+        assert!(
+            !m.idents().iter().any(|i| i.name == "dplyr"),
+            "package name should be suppressed, got {:?}",
+            m.idents()
+        );
+    }
+
+    #[test]
+    fn library_other_args_still_read() {
+        // Only the package-name argument is suppressed; later args resolve as
+        // normal reads.
+        let m = model_of("library(dplyr, character.only = flag)");
+        assert!(!m.idents().iter().any(|i| i.name == "dplyr"));
+        assert!(m.idents().iter().any(|i| i.name == "flag"));
+    }
+
+    #[test]
     fn colon_reference_records_referenced_package() {
         let m = model_of("dplyr::filter(x)\nrlang:::abort(\"e\")");
         let refs: Vec<&str> = m.referenced_packages().iter().map(|s| s.as_str()).collect();

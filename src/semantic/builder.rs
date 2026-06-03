@@ -35,6 +35,7 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
     let mut ctx = BuildCtx {
         model: &mut model,
         function_depth: 0,
+        suppress_read: None,
     };
     walk_generic(&mut ctx, root, file_scope);
     resolve_reads(&mut model);
@@ -46,6 +47,10 @@ struct BuildCtx<'a> {
     /// How many `FUNCTION_EXPR`s deep we are. Used to decide whether a
     /// `library()` call counts as "top-level."
     function_depth: usize,
+    /// A single IDENT range whose read must be suppressed. Set while walking the
+    /// package-name argument of a `library()`/`require()` call so the bare
+    /// package name isn't recorded as an undefined read.
+    suppress_read: Option<TextRange>,
 }
 
 fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -75,6 +80,10 @@ fn walk_generic(ctx: &mut BuildCtx<'_>, parent: &SyntaxNode, scope: ScopeId) {
 }
 
 fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope: ScopeId) {
+    // The package-name argument of a `library()`/`require()` call is not a read.
+    if ctx.suppress_read == Some(tok.text_range()) {
+        return;
+    }
     let name = tok.text();
     // `...`, `..1`, etc. are lexed as IDENT but are not scope-resolvable.
     if name.starts_with('.') && name.chars().all(|c| c == '.' || c.is_ascii_digit()) {
@@ -275,6 +284,13 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             name: pkg_name,
             range: pkg_range,
         });
+        // Don't record the bare package name (e.g. `dplyr` in `library(dplyr)`)
+        // as an undefined read. A string arg has no IDENT, so this is a no-op
+        // for `requireNamespace("pkg")`.
+        let prev = ctx.suppress_read.replace(pkg_range);
+        walk_generic(ctx, node, scope);
+        ctx.suppress_read = prev;
+        return;
     }
     walk_generic(ctx, node, scope);
 }

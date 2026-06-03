@@ -1,9 +1,12 @@
 //! `undefined-symbol`: an identifier read that doesn't resolve to any
 //! in-scope binding nor any known package export.
 //!
-//! Off by default this pass — without a CRAN export manifest, any name
-//! introduced by a `library()` call resolves as `Unknown` and would generate
-//! false positives. Re-enable once the manifest ships.
+//! On by default, but gated: the rule only runs when *every* `library()`-
+//! attached package is indexed (a default package, or harvested into the
+//! introspection cache). If any attached package's exports are unknown, the
+//! rule stays silent for the whole file — an un-indexed package could export
+//! any of the otherwise-unresolved names, so flagging them would be a false
+//! positive.
 
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::{Rule, RuleContext};
@@ -21,12 +24,17 @@ impl Rule for UndefinedSymbol {
     }
 
     fn default_enabled(&self) -> bool {
-        false
+        true
     }
 
     fn run(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
         let mut out = Vec::new();
         let loaded = ctx.model.loaded_packages();
+        // Conservative gate: bail out entirely if any attached package's exports
+        // are unknown, since such a package could define the unresolved names.
+        if loaded.iter().any(|p| !ctx.symbols.package_indexed(&p.name)) {
+            return out;
+        }
         for ident in ctx.model.idents() {
             // Skip if it resolves to a local binding.
             if ctx.model.resolve_local(ident).is_some() {

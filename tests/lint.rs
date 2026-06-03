@@ -184,6 +184,75 @@ fn cli_lint_emits_json_output() {
 }
 
 // ---------------------------------------------------------------------------
+// undefined-symbol: default-on, gated on all attached packages being indexed
+// ---------------------------------------------------------------------------
+
+use ravel::linter::check_document_with_provider;
+use ravel::rindex::provider::{CompositeProvider, IndexedProvider};
+use ravel::rindex::schema::{PackageIndex, SymbolEntry, SymbolKind};
+
+fn indexed_pkg(name: &str, exports: &[&str]) -> PackageIndex {
+    PackageIndex {
+        schema_version: ravel::rindex::schema::SCHEMA_VERSION,
+        package: name.into(),
+        version: "1.0".into(),
+        lib_path: "/lib".into(),
+        r_version: None,
+        harvested_at: 0,
+        symbols: exports
+            .iter()
+            .map(|n| SymbolEntry {
+                name: (*n).into(),
+                kind: SymbolKind::Function,
+                exported: true,
+                formals: None,
+                help: None,
+            })
+            .collect(),
+    }
+}
+
+fn undefined_with(src: &str, provider: &CompositeProvider) -> Vec<String> {
+    check_document_with_provider(Path::new("t.R"), src, &LintConfig::default(), provider)
+        .expect("lint should succeed")
+        .into_iter()
+        .filter(|d| d.rule == "undefined-symbol")
+        .map(|d| d.message.body.clone())
+        .collect()
+}
+
+#[test]
+fn undefined_symbol_flags_base_only_typo() {
+    // No attached packages: base R is fully known, so a typo is genuinely
+    // undefined and is flagged.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("lenth(1)\n", &p);
+    assert_eq!(msgs.len(), 1, "expected one finding, got {msgs:?}");
+    assert!(msgs[0].contains("lenth"));
+}
+
+#[test]
+fn undefined_symbol_gated_off_when_attached_package_unindexed() {
+    // `library(somepkg)` with somepkg un-indexed: the rule stays silent for the
+    // whole file because somepkg could export `bogus`.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("library(somepkg)\nbogus()\n", &p);
+    assert!(msgs.is_empty(), "gate should suppress, got {msgs:?}");
+}
+
+#[test]
+fn undefined_symbol_resolves_indexed_export_and_flags_others() {
+    // dplyr indexed (exports `across`): `across()` resolves, `bogus()` doesn't.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "dplyr",
+        &["across"],
+    )]));
+    let msgs = undefined_with("library(dplyr)\nacross()\nbogus()\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+// ---------------------------------------------------------------------------
 // Autofix
 // ---------------------------------------------------------------------------
 
@@ -267,13 +336,17 @@ fn cli_fix_applies_safe_fixes_and_leaves_unsafe() {
 fn cli_fix_unsafe_clears_top_level_findings() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("fix.R");
-    std::fs::write(&path, "if (x = 1) print(x)\nunused <- 2\n").expect("failed to write file");
+    // `x` is bound so the only findings are the two this test exercises
+    // (assignment-in-condition + the unused `unused`); otherwise the now-default
+    // `undefined-symbol` rule would flag the read of `x`.
+    std::fs::write(&path, "x <- 0\nif (x = 1) print(x)\nunused <- 2\n")
+        .expect("failed to write file");
 
     let output = run_cli(["lint", "--fix", "--unsafe-fixes", path.to_str().unwrap()]);
     assert_eq!(output.status.code(), Some(0));
     let content = std::fs::read_to_string(&path).expect("read back");
     // `=`→`==` (safe) and the top-level unused deletion (unsafe) both land.
-    assert_eq!(content, "if (x == 1) print(x)\n");
+    assert_eq!(content, "x <- 0\nif (x == 1) print(x)\n");
 }
 
 #[test]

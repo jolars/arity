@@ -64,6 +64,15 @@ pub trait SymbolProvider: Send + Sync {
 
     /// True when `name` is exported by one of R's default packages.
     fn is_base(&self, name: &str) -> bool;
+
+    /// True if this provider has *full* export knowledge for `pkg` — i.e. an
+    /// unresolved name attributed to `pkg` is genuinely undefined, not merely
+    /// un-indexed. Default packages always qualify; installed packages qualify
+    /// once harvested into the index. Default: `false`.
+    fn package_indexed(&self, pkg: &str) -> bool {
+        let _ = pkg;
+        false
+    }
 }
 
 /// Static symbol provider backed by the baked-in default-package export lists.
@@ -125,6 +134,11 @@ impl SymbolProvider for StaticBaseR {
 
     fn is_base(&self, name: &str) -> bool {
         self.base_names.contains(name)
+    }
+
+    fn package_indexed(&self, pkg: &str) -> bool {
+        // The seven default packages are fully known via the baked-in lists.
+        DEFAULT_PACKAGES.contains(&pkg)
     }
 }
 

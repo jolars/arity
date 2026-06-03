@@ -135,6 +135,12 @@ impl SymbolProvider for CompositeProvider {
     fn is_base(&self, name: &str) -> bool {
         self.base.is_base(name)
     }
+
+    fn package_indexed(&self, pkg: &str) -> bool {
+        // A default package (known to base) or a harvested package (in the
+        // index) is one whose exports we know in full.
+        self.base.package_indexed(pkg) || self.indexed.has_package(pkg)
+    }
 }
 
 #[cfg(test)]
