@@ -21,5 +21,6 @@ pub mod harvest;
 pub mod lazyload;
 pub mod libpaths;
 pub mod provider;
+pub mod rd;
 pub mod rds;
 pub mod schema;

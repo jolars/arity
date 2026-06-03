@@ -1,0 +1,27 @@
+---
+source: tests/rindex.rs
+expression: pipe.help
+---
+Some(
+    HelpDoc {
+        title: Some(
+            "Pipe",
+        ),
+        description: Some(
+            "Pipe an object forward into a function or call expression.",
+        ),
+        usage: Some(
+            "lhs %>% rhs",
+        ),
+        arguments: [
+            HelpArg {
+                name: "lhs",
+                description: "A value or the magrittr placeholder.",
+            },
+            HelpArg {
+                name: "rhs",
+                description: "A function call using the magrittr semantics.",
+            },
+        ],
+    },
+)

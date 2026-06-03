@@ -1,13 +1,14 @@
 //! Harvest a single installed package into a [`PackageIndex`] by reading its
 //! on-disk metadata — no R runtime.
 //!
-//! Cheap tier (this phase):
+//! What is read:
 //! - `DESCRIPTION` → version (and the building R version, when present).
 //! - `NAMESPACE` → exported names (explicit `export()` plus `exportPattern()`
 //!   expanded against the lazy-load object names).
-//! - `Meta/Rd.rds` → per-symbol help titles via the alias → title map.
-//!
-//! Formals and full help bodies are filled in by later phases.
+//! - `R/{pkg}.rdb` → function formals and symbol-kind refinement.
+//! - `Meta/Rd.rds` → per-symbol help titles + the help-page key for each alias.
+//! - `help/{pkg}.rdb` → full Rd bodies (description/usage/arguments), rendered
+//!   to markdown via [`rd`](crate::rindex::rd).
 
 use std::path::{Path, PathBuf};
 
@@ -15,6 +16,7 @@ use smol_str::SmolStr;
 
 use crate::rindex::deparse;
 use crate::rindex::lazyload::{self, LazyLoadDb};
+use crate::rindex::rd;
 use crate::rindex::rds::{self, Rkind, Robj};
 use crate::rindex::schema::{
     Formal, HelpDoc, PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind,
@@ -82,24 +84,28 @@ pub fn harvest_package(
     let namespace = std::fs::read_to_string(pkg_dir.join("NAMESPACE")).unwrap_or_default();
     let exports = resolve_exports(&namespace, &object_names);
 
-    let titles = if opts.help {
-        read_help_titles(pkg_dir)
+    let help_index = if opts.help {
+        read_help_index(pkg_dir)
     } else {
-        AliasTitles::default()
+        AliasHelp::default()
     };
 
     // Open the lazy-load DB to fetch object values (formals + kind refinement).
     // `.ok()` is deliberate: a package may ship only a `.rdx` (no `.rdb`), in
     // which case we keep the cheap-tier defaults rather than failing the harvest.
     let db = LazyLoadDb::open(&pkg_dir.join("R").join(format!("{package}.rdx"))).ok();
+    // The help DB (full Rd bodies) lives separately; many packages ship it, some
+    // don't. `.ok()` keeps title-only behavior when it's absent.
+    let help_db = if opts.help {
+        LazyLoadDb::open(&pkg_dir.join("help").join(format!("{package}.rdx"))).ok()
+    } else {
+        None
+    };
 
     let mut symbols: Vec<SymbolEntry> = exports
         .into_iter()
         .map(|name| {
-            let help = titles.title_for(&name).map(|t| HelpDoc {
-                title: Some(t.to_string()),
-                ..Default::default()
-            });
+            let help = build_help(&help_index, help_db.as_ref(), &name);
             let (kind, formals) = refine_symbol(db.as_ref(), &name);
             SymbolEntry {
                 name: SmolStr::new(&name),
@@ -471,52 +477,94 @@ fn unquote(value: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Help titles (Meta/Rd.rds)
+// Help index (Meta/Rd.rds) — alias → (title, help-page key)
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
-struct AliasTitles {
-    /// alias → title.
-    map: std::collections::HashMap<String, String>,
+/// What `Meta/Rd.rds` tells us about an alias: its page title and the help-DB
+/// key (the `File` column minus `.Rd`) under which the full Rd body is stored.
+#[derive(Clone, Default)]
+struct AliasEntry {
+    title: Option<String>,
+    page: Option<String>,
 }
 
-impl AliasTitles {
-    fn title_for(&self, name: &str) -> Option<&str> {
-        self.map.get(name).map(|s| s.as_str())
+#[derive(Default)]
+struct AliasHelp {
+    /// alias → entry.
+    map: std::collections::HashMap<String, AliasEntry>,
+}
+
+impl AliasHelp {
+    fn entry_for(&self, name: &str) -> Option<&AliasEntry> {
+        self.map.get(name)
     }
 }
 
-fn read_help_titles(pkg_dir: &Path) -> AliasTitles {
+fn read_help_index(pkg_dir: &Path) -> AliasHelp {
     let path = pkg_dir.join("Meta").join("Rd.rds");
     let Ok(bytes) = std::fs::read(&path) else {
-        return AliasTitles::default();
+        return AliasHelp::default();
     };
     let Ok(rd) = rds::read_rds(&bytes) else {
-        return AliasTitles::default();
+        return AliasHelp::default();
     };
-    parse_rd_titles(&rd).unwrap_or_default()
+    parse_rd_index(&rd).unwrap_or_default()
 }
 
-fn parse_rd_titles(rd: &Robj) -> Option<AliasTitles> {
+/// Parse the `Meta/Rd.rds` data frame into an alias → entry map. `Aliases` (the
+/// keying column) is required; `Title` and `File` are best-effort. The help-DB
+/// key is the `File` value with its `.Rd` suffix stripped.
+fn parse_rd_index(rd: &Robj) -> Option<AliasHelp> {
     let names = rd.names()?;
     let cols = rd.as_list()?;
-    let title_idx = names.iter().position(|c| *c == Some("Title"))?;
+    let col = |label: &str| {
+        names
+            .iter()
+            .position(|c| *c == Some(label))
+            .and_then(|i| cols.get(i))
+    };
     let alias_idx = names.iter().position(|c| *c == Some("Aliases"))?;
-    let titles = cols.get(title_idx)?.as_str_vec()?;
     let aliases = cols.get(alias_idx)?.as_list()?; // list column
+    let titles = col("Title").and_then(|c| c.as_str_vec());
+    let files = col("File").and_then(|c| c.as_str_vec());
 
     let mut map = std::collections::HashMap::new();
     for (i, alias_cell) in aliases.iter().enumerate() {
-        let Some(title) = titles.get(i).and_then(|t| t.as_deref()) else {
-            continue;
-        };
+        let title = titles
+            .and_then(|t| t.get(i))
+            .and_then(|t| t.as_deref())
+            .map(str::to_string);
+        let page = files
+            .and_then(|f| f.get(i))
+            .and_then(|f| f.as_deref())
+            .map(|f| f.strip_suffix(".Rd").unwrap_or(f).to_string());
         if let Rkind::Str(alias_vec) = &alias_cell.kind {
             for a in alias_vec.iter().flatten() {
-                map.entry(a.clone()).or_insert_with(|| title.to_string());
+                map.entry(a.clone()).or_insert_with(|| AliasEntry {
+                    title: title.clone(),
+                    page: page.clone(),
+                });
             }
         }
     }
-    Some(AliasTitles { map })
+    Some(AliasHelp { map })
+}
+
+/// Assemble a symbol's [`HelpDoc`]: the title from `Meta/Rd.rds`, the body
+/// (description/usage/arguments) from the help lazy-load DB page, if any. A page
+/// that fails to decode degrades to title-only; a symbol no Rd documents yields
+/// `None`.
+fn build_help(index: &AliasHelp, db: Option<&LazyLoadDb>, name: &str) -> Option<HelpDoc> {
+    let entry = index.entry_for(name)?;
+    let sections = entry
+        .page
+        .as_deref()
+        .zip(db)
+        .and_then(|(page, db)| db.fetch(page).ok())
+        .map(|page_obj| rd::render_page(&page_obj))
+        .unwrap_or_default();
+    let doc = rd::into_help_doc(entry.title.clone(), sections);
+    (doc != HelpDoc::default()).then_some(doc)
 }
 
 #[cfg(test)]

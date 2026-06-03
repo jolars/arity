@@ -145,3 +145,71 @@ fn help_can_be_disabled() {
         .expect("harvest magrittr");
     assert!(idx.symbols.iter().all(|s| s.help.is_none()));
 }
+
+#[test]
+fn harvests_full_help_body_from_help_db() {
+    // magrittr ships `help/magrittr.{rdb,rdx}`: the pipe page resolves a full
+    // body (title + description + usage + arguments), not just a title.
+    let idx = harvest_package(&fixture("magrittr"), HarvestOptions::default(), 0)
+        .expect("harvest magrittr");
+    let pipe = find(&idx.symbols, "%>%").expect("%>% exported");
+    let help = pipe.help.as_ref().expect("%>% has help");
+
+    assert_eq!(help.title.as_deref(), Some("Pipe"));
+    assert!(
+        help.description
+            .as_deref()
+            .is_some_and(|d| d.to_lowercase().contains("pipe an object")),
+        "description: {:?}",
+        help.description
+    );
+    assert!(help.usage.as_deref().is_some_and(|u| u.contains("%>%")));
+    assert!(
+        help.arguments.iter().any(|a| a.name == "lhs"),
+        "arguments: {:?}",
+        help.arguments
+    );
+
+    // `\code{lhs}` inside the assignment-pipe description renders as a backtick
+    // span, proving inline-macro markdown rendering (not just title passthrough).
+    let apipe = find(&idx.symbols, "%<>%").expect("%<>% exported");
+    let desc = apipe
+        .help
+        .as_ref()
+        .and_then(|h| h.description.as_deref())
+        .unwrap_or_default();
+    assert!(
+        desc.contains("`lhs`"),
+        "expected backtick span, got: {desc}"
+    );
+}
+
+#[test]
+fn missing_help_db_degrades_to_title_only() {
+    // R.oo ships no `help/` lazy-load DB: titles still resolve from Meta/Rd.rds,
+    // but no symbol gets a description/usage/arguments body.
+    let idx =
+        harvest_package(&fixture("R.oo"), HarvestOptions::default(), 0).expect("harvest R.oo");
+    assert!(
+        idx.symbols
+            .iter()
+            .filter_map(|s| s.help.as_ref())
+            .any(|h| h.title.is_some()),
+        "expected at least one title from Meta/Rd.rds"
+    );
+    assert!(
+        idx.symbols
+            .iter()
+            .filter_map(|s| s.help.as_ref())
+            .all(|h| { h.description.is_none() && h.usage.is_none() && h.arguments.is_empty() }),
+        "no Rd bodies should be present without a help DB"
+    );
+}
+
+#[test]
+fn help_body_snapshot() {
+    let idx = harvest_package(&fixture("magrittr"), HarvestOptions::default(), 0)
+        .expect("harvest magrittr");
+    let pipe = find(&idx.symbols, "%>%").expect("%>% exported");
+    insta::assert_debug_snapshot!(pipe.help);
+}
