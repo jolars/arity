@@ -794,8 +794,18 @@ mod tests {
         }
     }
 
+    /// An absolute path valid on the host platform (`Uri::from_file_path`
+    /// rejects non-absolute paths, and `/tmp/t.R` is not absolute on Windows).
+    fn test_path() -> &'static Path {
+        if cfg!(windows) {
+            Path::new(r"C:\tmp\t.R")
+        } else {
+            Path::new("/tmp/t.R")
+        }
+    }
+
     fn uri() -> Uri {
-        Uri::from_file_path("/tmp/t.R").expect("valid file uri")
+        Uri::from_file_path(test_path()).expect("valid file uri")
     }
 
     #[test]
@@ -803,7 +813,7 @@ mod tests {
         let src = "if (x = 1) print(x)\n";
         let actions = compute_code_actions(
             src,
-            Path::new("/tmp/t.R"),
+            test_path(),
             &LintConfig::default(),
             &uri(),
             full_line_0(),
@@ -836,13 +846,7 @@ mod tests {
             start: pos(5, 0),
             end: pos(5, 0),
         };
-        let actions = compute_code_actions(
-            src,
-            Path::new("/tmp/t.R"),
-            &LintConfig::default(),
-            &uri(),
-            far,
-        );
+        let actions = compute_code_actions(src, test_path(), &LintConfig::default(), &uri(), far);
         assert!(actions.is_empty(), "expected no actions, got {actions:?}");
     }
 

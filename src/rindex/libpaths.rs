@@ -192,9 +192,16 @@ mod tests {
 
     #[test]
     fn reads_r_libs_env_in_priority_order() {
+        // Join with the platform separator so `split_path_list` round-trips
+        // (`;` on Windows, `:` elsewhere).
+        let site = if cfg!(windows) {
+            "/site/a;/site/b"
+        } else {
+            "/site/a:/site/b"
+        };
         let mut env = HashMap::new();
         env.insert("R_LIBS_USER", "/user/lib");
-        env.insert("R_LIBS_SITE", "/site/a:/site/b");
+        env.insert("R_LIBS_SITE", site);
         let search = LibrarySearch::assemble(None, &[], &env_from(&env), None);
         let dirs = search.dirs();
         assert!(dirs.contains(&PathBuf::from("/user/lib")));
