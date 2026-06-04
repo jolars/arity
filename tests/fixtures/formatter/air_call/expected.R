@@ -169,7 +169,7 @@ fn(
 # Trails `a`
 fn(
   a, # comment
-     # comment2
+  # comment2
   ,
   b
 )
@@ -744,7 +744,9 @@ storms <- storms %>%
       str_to_title(name)
     )
   ) %>%
-  filter(any(status %in% c("hurricane", "tropical storm", "tropical depression")))
+  filter(any(
+    status %in% c("hurricane", "tropical storm", "tropical depression")
+  ))
 
 # Sanity checks for comments
 c(

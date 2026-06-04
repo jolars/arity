@@ -356,12 +356,31 @@ fn is_huggable_node(node: &SyntaxNode) -> bool {
         // indent and breaks its own params / braces its own body
         // (`fn(function(<long params>) { ... })`).
         SyntaxKind::FUNCTION_EXPR => true,
-        SyntaxKind::BINARY_EXPR => node
-            .children()
-            .last()
-            .is_some_and(|rhs| is_huggable_node(&rhs)),
+        // Only a *tight access* binary (`pkg::fn(...)`, `obj$method(...)`) hugs:
+        // its space-less operator makes the whole left side read as the callee.
+        // A spaced operator binary (`x %in% c(...)`, `a + f(...)`) is a real
+        // expression and breaks onto its own argument line instead of hugging.
+        SyntaxKind::BINARY_EXPR => {
+            binary_op_is_tight_access(node)
+                && node
+                    .children()
+                    .last()
+                    .is_some_and(|rhs| is_huggable_node(&rhs))
+        }
         _ => false,
     }
+}
+
+/// Whether a `BINARY_EXPR`'s operator is a tight, space-less access operator
+/// (`::`, `:::`, `$`, `@`) --- the only binaries that hug a trailing arg list.
+fn binary_op_is_tight_access(node: &SyntaxNode) -> bool {
+    node.children_with_tokens().any(|el| {
+        matches!(el, NodeOrToken::Token(t)
+        if matches!(
+            t.kind(),
+            SyntaxKind::COLON2 | SyntaxKind::COLON3 | SyntaxKind::DOLLAR | SyntaxKind::AT
+        ))
+    })
 }
 
 fn call_or_subset_has_content(node: &SyntaxNode) -> bool {
@@ -844,8 +863,10 @@ fn layout_call_comment_items(items: &[IrCallItem]) -> Vec<Ir> {
                     continue;
                 }
 
-                // `arg, # comment` — the comment shares the comma's line. Trailing
-                // comment-only args after it align under the comment (` ` ×3).
+                // `arg, # comment` — the comment shares the comma's line. Any
+                // further comment-only args sit on their own lines at the base
+                // argument indent (air does not align them under the trailing
+                // comment).
                 if let (
                     Some(IrCallItem::Comma {
                         newline_after: false,
@@ -865,7 +886,7 @@ fn layout_call_comment_items(items: &[IrCallItem]) -> Vec<Ir> {
                         if !extra.is_comment_only {
                             break;
                         }
-                        out.push(Ir::text(format!("   {}", extra.comment_text)));
+                        out.push(Ir::text(extra.comment_text.clone()));
                         i += 1;
                     }
                     continue;

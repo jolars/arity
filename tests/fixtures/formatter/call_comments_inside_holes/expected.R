@@ -57,7 +57,7 @@ fn(
 # Trails `a`
 fn(
   a, # comment
-     # comment2
+  # comment2
   ,
   b
 )

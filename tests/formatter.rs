@@ -103,6 +103,7 @@ fn fixture_names() -> &'static [&'static str] {
         "call_empty_lines_between_args",
         "call_comments_basic",
         "call_hugging_basics",
+        "call_single_arg_hug_overflow",
         "call_comments_sanity",
         "call_leading_holes_hugging",
         "call_subsetting_hugging",

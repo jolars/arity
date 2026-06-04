@@ -150,10 +150,21 @@ impl Printer {
                     stack.push((indent, mode, chosen));
                 }
                 Ir::Group { inner, expand, hug } => {
-                    let m = if *expand || !self.fits(w.col, inner, *hug) {
+                    let m = if *expand {
                         Mode::Break
-                    } else {
+                    } else if *hug {
+                        // A trailing-block hug measures only its own prefix up to
+                        // the block's opening brace; what follows sits on the
+                        // block's closing line, not this one.
+                        if self.fits(w.col, inner, true) {
+                            Mode::Flat
+                        } else {
+                            Mode::Break
+                        }
+                    } else if self.group_fits(w.col, inner, &stack) {
                         Mode::Flat
+                    } else {
+                        Mode::Break
                     };
                     stack.push((indent, m, inner));
                 }
@@ -303,6 +314,133 @@ impl Printer {
             }
         }
         true
+    }
+
+    /// Rest-aware fit check for a non-hugging [`Ir::Group`]: whether `inner`
+    /// laid flat, *followed by* the already-queued `rest` commands up to the
+    /// next line break, fits within the line width from `start_col`. Trailing
+    /// same-line content (e.g. the closing `)` of a call hugging this group as
+    /// its sole argument) counts toward the decision, so a group breaks when the
+    /// inner plus what follows would overflow — not just the inner in isolation.
+    /// This is the Wadler/Prettier "fits the rest of the line" rule and the cure
+    /// for break decisions that were previously purely local.
+    fn group_fits(&self, start_col: usize, inner: &Ir, rest: &[(usize, Mode, &Ir)]) -> bool {
+        // Phase 1: `inner`, laid flat. A forced break (or an already-expanded
+        // nested group) means it cannot be flat, so the group must break.
+        let mut col = start_col;
+        let mut stack: Vec<&Ir> = vec![inner];
+        while let Some(node) = stack.pop() {
+            match node {
+                Ir::Nil | Ir::SoftLine => {}
+                Ir::Text(s) => {
+                    col += s.chars().count();
+                    if col > self.line_width {
+                        return false;
+                    }
+                }
+                Ir::HardLine | Ir::EmptyLine => return false,
+                Ir::Verbatim { text, force_break } => {
+                    if *force_break {
+                        return false;
+                    }
+                    col += text.chars().count();
+                    if col > self.line_width {
+                        return false;
+                    }
+                }
+                Ir::Concat(items) => {
+                    for item in items.iter().rev() {
+                        stack.push(item);
+                    }
+                }
+                Ir::Indent(i) => stack.push(i),
+                Ir::Line => {
+                    col += 1;
+                    if col > self.line_width {
+                        return false;
+                    }
+                }
+                Ir::IfBreak { flat, .. } => stack.push(flat),
+                Ir::Group {
+                    inner: gi, expand, ..
+                } => {
+                    if *expand {
+                        return false;
+                    }
+                    stack.push(gi);
+                }
+                Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
+                    if let Some(first) = cands.first() {
+                        stack.push(first);
+                    }
+                }
+            }
+        }
+        // Phase 2: the rest of the line, each command in its decided mode, until
+        // a line break (the line fits) or the width is exceeded (it does not).
+        self.rest_fits(col, rest)
+    }
+
+    /// Measure the queued commands `rest` (the printer stack after the group
+    /// being decided) from `start_col`, stopping at the first line break. Each
+    /// command keeps its already-decided mode; an undecided nested group is
+    /// measured flat (optimistic), an expanded one in break mode so its first
+    /// soft break ends the line. Returns whether everything up to that break
+    /// fits within the line width.
+    fn rest_fits(&self, start_col: usize, rest: &[(usize, Mode, &Ir)]) -> bool {
+        let mut col = start_col;
+        let mut work: Vec<(Mode, &Ir)> = rest.iter().map(|(_, m, n)| (*m, *n)).collect();
+        while let Some((mode, node)) = work.pop() {
+            match node {
+                Ir::Nil | Ir::SoftLine if mode == Mode::Flat => {}
+                Ir::Nil => {}
+                Ir::SoftLine => return true,
+                Ir::Text(s) => {
+                    col += s.chars().count();
+                    if col > self.line_width {
+                        return false;
+                    }
+                }
+                Ir::Verbatim { text, .. } => {
+                    if let Some((first, _)) = text.split_once('\n') {
+                        col += first.chars().count();
+                        return col <= self.line_width;
+                    }
+                    col += text.chars().count();
+                    if col > self.line_width {
+                        return false;
+                    }
+                }
+                Ir::HardLine | Ir::EmptyLine => return true,
+                Ir::Line => match mode {
+                    Mode::Flat => {
+                        col += 1;
+                        if col > self.line_width {
+                            return false;
+                        }
+                    }
+                    Mode::Break => return true,
+                },
+                Ir::Concat(items) => {
+                    for item in items.iter().rev() {
+                        work.push((mode, item));
+                    }
+                }
+                Ir::Indent(i) => work.push((mode, i)),
+                Ir::IfBreak { flat, broken } => {
+                    work.push((mode, if mode == Mode::Break { broken } else { flat }));
+                }
+                Ir::Group { inner, expand, .. } => {
+                    work.push((if *expand { Mode::Break } else { Mode::Flat }, inner));
+                }
+                Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
+                    if let Some(first) = cands.first() {
+                        work.push((Mode::Flat, first));
+                    }
+                }
+            }
+        }
+        col <= self.line_width
     }
 
     /// Does the *first line* of `node` fit starting at `start_col`? Unlike
