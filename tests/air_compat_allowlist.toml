@@ -1,0 +1,26 @@
+# Recorded intentional deviations from `air`'s output.
+#
+# This file is the "documented deviations" list behind the soft air-compatibility
+# gauge (see `tests/air_compat.rs` and `AIR_COMPAT.md`). It is SUBORDINATE to
+# Tenet 1 (deterministic, rule-based formatting): listing a file here means
+# "ravel diverges from air here ON PURPOSE", not "air is wrong to flag it".
+#
+# Anything that diverges from air and is NOT listed here is reported as an
+# UNEXPLAINED divergence --- the triage queue. Adding an entry is how you resolve
+# that tension in favor of keeping ravel's own rule (the alternative being to fix
+# ravel to match air, when air's output is the more idiomatic one).
+#
+# Key   = corpus file identifier:
+#           - default corpus: the fixture directory name (e.g. `air_call`)
+#           - custom corpus:  the path relative to `AIR_COMPAT_CORPUS`
+# Value = a short rationale for the deviation.
+#
+# NOTE: keying by whole file is coarse --- a fixture may mix an intentional
+# deviation with a genuine bug. Only list a file when ALL of its divergence is
+# deliberate; otherwise leave it unexplained so the bug stays visible.
+
+[deviations]
+# Example (seed): ravel hugs a trailing function/lambda argument and lets the
+# lambda's own parameter list break, instead of exploding the outer call the way
+# air does. This is a deliberate ravel layout choice (the printer's group-hug).
+air_function_definition = "function-arg hugging: ravel hugs the trailing lambda; air explodes the outer call"

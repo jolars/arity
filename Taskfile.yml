@@ -36,6 +36,11 @@ tasks:
     cmds:
       - RUST_LOG=off cargo test
 
+  air-compat:
+    desc: Measure soft air-formatter compatibility (writes AIR_COMPAT.md)
+    cmds:
+      - cargo test --test air_compat -- --ignored --nocapture
+
   docs-preview:
     desc: Preview documentation site locally
     cmds:

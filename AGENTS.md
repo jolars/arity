@@ -42,6 +42,29 @@ includes `R`.
    format-clean by construction, or withhold the fix for that shape (the
    finding is still reported). Don't run the formatter inside `--fix`.
 
+## Air compatibility (soft target)
+
+Ravel tracks a **soft, one-directional compatibility target** with the `air`
+formatter (a la ruff's "% Black-compatible" number) --- but this is **strictly
+subordinate to Tenet 1** and is **never a quality gate**. We do not match air;
+we measure how often air would leave ravel's output unchanged, and treat air's
+maturity as a free differential oracle for finding our own inconsistencies.
+
+- The gauge lives in `tests/air_compat.rs` (`#[ignore]`d, so it never runs in
+  `cargo test` and cannot fail CI). Run it with `task air-compat`; it regenerates
+  `AIR_COMPAT.md`.
+- It measures the *fixed point* `air(ravel(x)) == ravel(x)`, not a head-to-head
+  diff --- this cancels out the persistent-line-break difference (which is the
+  whole point of ravel) by construction, leaving only genuine rule divergences.
+- Divergences are triaged into two buckets. **Adopt** when air's output is simply
+  more idiomatic and ravel is being inconsistent (fix the rule). **Record** when
+  the divergence is a deliberate ravel choice --- add it to
+  `tests/air_compat_allowlist.toml` with a rationale.
+- Diverging from air is allowed, but should **raise tension**: it is a conscious,
+  documented decision (an allowlist entry), not a silent one. An unexplained
+  divergence in `AIR_COMPAT.md` is an open question, never an excuse to fail a
+  build.
+
 ## Commands
 
 ```sh
