@@ -1330,16 +1330,15 @@ fn ir_function_params_with_comments(param_elements: &[SyntaxElement<RLanguage>])
 ///   when every rendered line fits, mirroring legacy's `fits_with_newlines`
 ///   check.
 fn function_body_choice(head: Ir, params: Ir, bare_body: Ir, braced_body: Ir) -> Ir {
-    let bare = Ir::concat([
-        head.clone(),
-        params.clone(),
-        Ir::text(" "),
-        bare_body.clone(),
-    ]);
-    let braced = function_braced_hug(head, params, braced_body);
     if bare_body.contains_forced_break() {
-        Ir::conditional_group_all_lines([bare, braced])
+        // A multi-line control-flow body (`function(p) if (cond) {…}`,
+        // `function(p) for (…) {…}`, …) always gets its own braces, matching
+        // air: the function body group breaks, so the body is wrapped rather
+        // than hugged onto the signature line.
+        function_braced_hug(head, params, braced_body)
     } else {
+        let bare = Ir::concat([head.clone(), params.clone(), Ir::text(" "), bare_body]);
+        let braced = function_braced_hug(head, params, braced_body);
         Ir::group(Ir::if_break(bare, braced))
     }
 }

@@ -1,2 +1,6 @@
-x <- if (a) if (b) 1
-if (condition) if (condition2) this else that
+x <- if (a) {
+  if (b) 1
+}
+if (condition) {
+  if (condition2) this else that
+}

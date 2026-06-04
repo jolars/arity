@@ -1,0 +1,10 @@
+f <- function() {
+  g()
+  if (a) 1
+}
+h <- function() {
+  if (a) {
+    1
+  }
+  g()
+}

@@ -5,6 +5,8 @@ expression: formatted
 x <- if (a) {
   if (b) 1
 }
-if (condition) {
-  if (condition2) this else that
+y <- if (a) {
+  1
+} else if (b) {
+  2
 }

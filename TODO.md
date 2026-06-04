@@ -25,12 +25,19 @@ failing fixture first (TDD), and must hold idempotence + losslessness.
       `{{ x }}` arg rule and air); standalone / assignment-RHS bodies still
       expand, as air does. Fixtures: `call_trailing_inline_function`, `air_call`,
       `function_body_curly_curly`.
-- [ ] **Control-flow bracing is left flat.** Ravel keeps
+- [x] **Control-flow bracing is left flat.** Ravel kept
       `if (a) 1 else if (b) 2` and bare control-flow function bodies
       (`function(p) if (cond) {...}`) flat; air force-braces consequences /
-      bodies onto their own lines. **Decision: adopt air's always-brace.**
-      Biggest single divergence. Fixtures: `if_else_if_bare_flat`,
-      `if_nested_consequence`, `function_bare_control_flow_body`.
+      bodies onto their own lines. Adopted air's always-brace (a faithful,
+      position-aware port: statement-position `if` always braces; a simple
+      value-position one-liner stays flat unless it is a nested-if / `else if`
+      chain or overflows the line width). Air's leading-newline forcing is
+      *not* ported (Tenet 1: input line breaks never influence output). Bare
+      control-flow function bodies now wrap in their own braces, matching air.
+      Fixtures: `if_else_if_bare_flat`, `if_nested_consequence`,
+      `function_bare_control_flow_body`, plus `if_statement_position_simple`,
+      `if_value_position_stays_flat`, `if_value_position_nested_braces`,
+      `if_block_position_boundary`.
 - [ ] **`fn(NULL = )` spacing.** Named arg with a missing value: ravel emits
       `fn(NULL =)`, air keeps the trailing space `fn(NULL = )`. Trivial; match
       air. Fixture: part of `air_call`.

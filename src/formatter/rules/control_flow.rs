@@ -10,12 +10,31 @@ use super::super::ir::Ir;
 use crate::ast::{AstNode, ForExpr, ForExprParts, IfExpr, WhileExpr, WhileExprParts};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
-pub(crate) fn format_if_expr(
-    node: &SyntaxNode,
-    indent: usize,
-    ctx: FormatContext,
-) -> Result<String, FormatError> {
-    format_if_expr_impl(node, indent, ctx, false)
+/// Whether an `if` expression sits in statement (effect) position and so must
+/// always be braced, mirroring air's `SyntaxPosition` (minus the
+/// persistent-line-break forcing that Tenet 1 forbids ravel from copying).
+/// Derived purely from the CST parent:
+///
+/// * a top-level program statement (`ROOT` child) --- always effect;
+/// * a `{ }` block child --- effect, unless it is the block's last expression
+///   (the block's return value, which is value position);
+/// * anything else (assignment RHS, call argument, function body, an `else`
+///   alternative, …) --- value position.
+fn in_statement_position(node: &SyntaxNode) -> bool {
+    match node.parent() {
+        Some(parent) if parent.kind() == SyntaxKind::ROOT => true,
+        Some(parent) if parent.kind() == SyntaxKind::BLOCK_EXPR => {
+            !is_block_value_child(node, &parent)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `node` is the block's last expression (its return value). `children()`
+/// yields only the block's statement nodes (braces, `;`, and trivia are tokens),
+/// so the last one is the value position.
+fn is_block_value_child(node: &SyntaxNode, block: &SyntaxNode) -> bool {
+    block.children().last().is_some_and(|last| &last == node)
 }
 
 /// `force_braces` propagates the "this chain uses braces" decision down an
@@ -85,17 +104,28 @@ fn format_if_expr_impl(
     };
 
     // A chain uses braces iff any branch in it does (or a parent forced it):
-    // braces are all-or-nothing across an `if`/`else if`/`else` chain.
+    // braces are all-or-nothing across an `if`/`else if`/`else` chain. Beyond an
+    // already-braced branch, air's always-brace rule also forces braces when the
+    // consequence is itself an `if` (a nested-if consequence) or the alternative
+    // is itself an `if` (an `else if` chain) --- the chain then braces even in
+    // value position. Statement position is propagated via `force_braces`.
+    let consequence_is_if = branch_starts_with_if(&then_elements);
+    let alternative_is_if = else_elements
+        .as_deref()
+        .is_some_and(|els| sole_else_if_node(els).is_some());
     let needs_braces = force_braces
         || then_is_block
+        || consequence_is_if
+        || alternative_is_if
         || else_elements
             .as_deref()
             .is_some_and(else_branch_requires_braces);
 
     // Wrap a bare then-branch when the chain uses braces. This must happen even
     // with no `else` so a forced `else if` (which has no `else` of its own)
-    // still braces its then-branch.
-    if needs_braces && !then_is_block {
+    // still braces its then-branch. A branch that already rendered as a block
+    // (e.g. a comment-led empty `{}`) must not be re-wrapped.
+    if needs_braces && !then_is_block && !rendered_is_block(&then_expr) {
         then_expr = wrap_branch_in_block(&then_expr, &[], indent, ctx);
     }
 
@@ -130,7 +160,7 @@ fn format_if_expr_impl(
             }
         }
 
-        if needs_braces && !else_is_block {
+        if needs_braces && !else_is_block && !rendered_is_block(&else_expr) {
             else_expr = wrap_branch_in_block(&else_expr, &[], indent, ctx);
         }
 
@@ -365,6 +395,13 @@ fn prepend_comments_to_branch(
     wrap_branch_in_block(rendered, comments, indent, ctx)
 }
 
+/// Whether a rendered branch is already a `{ }` block, so that
+/// [`wrap_branch_in_block`] would double-wrap it. A bare expression rendering
+/// never starts with `{` (only a block does).
+fn rendered_is_block(rendered: &str) -> bool {
+    rendered.trim_start().starts_with('{')
+}
+
 fn wrap_branch_in_block(
     rendered: &str,
     comments: &[String],
@@ -497,18 +534,36 @@ fn format_if_branch(
     Ok(rendered)
 }
 
-/// IR builder for if/else. Unlike loops, if/else has no width-driven wrapping
-/// (the condition is always inlined and branch bodies are always-multiline
-/// blocks), and its comment/auto-brace handling is intricately string-based, so
-/// it is rendered by the dedicated [`format_if_expr`] renderer and composed into
-/// the IR verbatim. `Ir::verbatim` forces a break only when the rendering spans
-/// multiple lines, matching how the bridged renderer behaved inline.
+/// IR builder for if/else. Its comment/auto-brace handling is intricately
+/// string-based, so the actual rendering is delegated to [`format_if_expr_impl`]
+/// and composed into the IR verbatim (`Ir::verbatim` forces a break only when the
+/// rendering spans multiple lines).
+///
+/// In **statement position** the chain is always braced. In **value position** a
+/// simple one-liner stays flat when it fits but braces when it does not: we offer
+/// both the un-forced rendering and the braced rendering as an
+/// [`Ir::conditional_group`], letting the printer pick the flat candidate only
+/// while its first line fits at the current column (air's `if_group_breaks`). The
+/// un-forced rendering is *already* braced (multi-line) for nested-if / `else if`
+/// / block-arm / comment chains, in which case no flat alternative exists.
 pub(crate) fn ir_if_expr(
     node: &SyntaxNode,
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    Ok(Ir::verbatim(format_if_expr(node, indent, ctx)?))
+    if in_statement_position(node) {
+        return Ok(Ir::verbatim(format_if_expr_impl(node, indent, ctx, true)?));
+    }
+    let flat = format_if_expr_impl(node, indent, ctx, false)?;
+    if flat.contains('\n') {
+        // No single-line alternative: the un-forced form is already braced.
+        return Ok(Ir::verbatim(flat));
+    }
+    let braced = format_if_expr_impl(node, indent, ctx, true)?;
+    Ok(Ir::conditional_group([
+        Ir::verbatim(flat),
+        Ir::verbatim(braced),
+    ]))
 }
 
 /// IR builder for `for`. Mirrors [`format_for_expr`].
