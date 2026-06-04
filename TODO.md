@@ -70,6 +70,24 @@ failing fixture first (TDD), and must hold idempotence + losslessness.
       over-width `test_that("...", {` prefix on one line --- is air's callee
       special case; ravel explodes deterministically (Tenet 1) and this is now the
       recorded deviation `air_test_that` in `tests/air_compat_allowlist.toml`.
+- [ ] **"Breaking must reduce overflow" rule (the `test_that` explosion,
+      reconsidered).** For `test_that("<very long desc>", { ... })`, ravel
+      explodes the call one-arg-per-line, but the description string *still*
+      overflows on its own line afterward --- so the explosion costs four lines
+      and a deeper indent and buys no width reduction. Air keeps it compact via a
+      callee/shape special case (string first arg + trailing block), which we
+      correctly reject under Tenet 1 (it guesses author intent from syntax;
+      `extended_test_that` and any look-alike call would trigger it). The open
+      question is whether a *general, deterministic* rule captures the better
+      outcome without any callee-awareness: **do not break an argument list to
+      make room for an element that would overflow its own line anyway** --- only
+      break when breaking actually reduces overflow. This would keep the
+      `test_that` block hugged as pure layout logic. Risks to evaluate before
+      adopting: it must suppress only the break *caused by* the unbreakable atom
+      (a string/long symbol), not all breaking; and it softens the line-width
+      contract, so measure the corpus fallout. If it doesn't survive, keep the
+      explosion as the honest cost of determinism and leave `air_test_that`
+      recorded. Fixture: `air_test_that`.
 
 ## Linter
 
