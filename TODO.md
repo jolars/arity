@@ -42,10 +42,16 @@ failing fixture first (TDD), and must hold idempotence + losslessness.
       `fn(NULL =)`, air keeps the trailing space `fn(NULL = )`. Matched air via an
       `ArgSlot::ends_with_eq` flag that keeps a space before a same-line comma or
       closing bracket. Fixture: part of `air_call`.
-- [ ] **Pipe / nested-call indent depth.** In a pipeline, ravel indents a broken
-      RHS call's args one level; air uses an extra level. Investigate whether
-      this is a bug in ravel's indent model or a deliberate flatter style before
-      deciding adopt vs record. Fixture: `air_pipelines`.
+- [x] **Pipe / nested-call indent depth.** In a pipeline, a broken RHS call's
+      args sat one level too shallow and the closing paren dangled at the base
+      indent --- not a flatter style but a genuine bug: the pipe builder
+      (`ir_binary_expr`) wrapped only the continuation `hard_line` in
+      `Ir::indent`, leaving the RHS operand itself at the base indent, so the
+      RHS call's own arg breaks used the wrong indent context. Fixed by moving
+      the RHS inside the indent (`Ir::indent([hard_line, rhs])`); args now nest
+      relative to the pipe stage and the close paren aligns with the call head,
+      matching air. Fixtures: `air_pipelines`, plus the `mutate()` case in
+      `air_call`.
 - [ ] **Hug vs explode when the call head exceeds the line width (design
       question, not a clear bug).** Ravel breaks an over-width call head onto
       multiple lines; air keeps the head over-width to preserve the trailing hug

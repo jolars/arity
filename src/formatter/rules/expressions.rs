@@ -156,13 +156,16 @@ pub(crate) fn ir_binary_expr(
     }
 
     // Pipes always break after the operator, indenting the continuation. The
-    // right operand stays at the base indent (matching the legacy renderer).
+    // continuation *and the right operand itself* live one level in, so when the
+    // RHS call breaks its own arg list those args nest relative to the pipe stage
+    // (close paren aligned with the call head) rather than dangling at the base
+    // indent. The chain is left-associative, so only the final stage's RHS is a
+    // leaf call here; deeper stages sit in the LHS and keep their own indent.
     if op_kind == SyntaxKind::PIPE || (op_kind == SyntaxKind::USER_OP && op_text == "%>%") {
         return Ok(Ir::concat([
             lhs,
             Ir::text(format!(" {op_text}")),
-            Ir::indent(Ir::hard_line()),
-            rhs,
+            Ir::indent(Ir::concat([Ir::hard_line(), rhs])),
         ]));
     }
 
