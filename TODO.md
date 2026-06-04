@@ -1,6 +1,6 @@
 # TODOs
 
-### Parser
+## Parser
 
 - [ ] Comment-aware suppression placement edge cases: directives inside
       `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` need special
@@ -8,87 +8,7 @@
       solved this by overriding biome's `place_comment`; ravel's
       next-non-trivia-sibling walk already handles most cases.)
 
-### Formatter
-
-#### Air-compat divergences (from the soft gauge)
-
-Surfaced by `task air-compat` / `AIR_COMPAT.md`. These are cases where `air`'s
-output is the more idiomatic one and ravel is being inconsistent --- "adopt"
-work, not a quality gate (Tenet 1 still rules). Fixing the holes item alone
-clears \~6 fixtures and is the biggest compat jump. Each fix lands its own
-failing fixture first (TDD), and must hold idempotence + losslessness.
-
-- [x] **`{{ }}` embracing is expanded.** Ravel expanded the rlang embracing
-      operator in a function body (`function(x) {{ x }}`) into nested multi-line
-      braces; air keeps `{{ x }}` inline when the function is a call argument.
-      Now kept inline in call-argument position (matching ravel's existing direct
-      `{{ x }}` arg rule and air); standalone / assignment-RHS bodies still
-      expand, as air does. Fixtures: `call_trailing_inline_function`, `air_call`,
-      `function_body_curly_curly`.
-- [x] **Control-flow bracing is left flat.** Ravel kept
-      `if (a) 1 else if (b) 2` and bare control-flow function bodies
-      (`function(p) if (cond) {...}`) flat; air force-braces consequences /
-      bodies onto their own lines. Adopted air's always-brace (a faithful,
-      position-aware port: statement-position `if` always braces; a simple
-      value-position one-liner stays flat unless it is a nested-if / `else if`
-      chain or overflows the line width). Air's leading-newline forcing is
-      *not* ported (Tenet 1: input line breaks never influence output). Bare
-      control-flow function bodies now wrap in their own braces, matching air.
-      Fixtures: `if_else_if_bare_flat`, `if_nested_consequence`,
-      `function_bare_control_flow_body`, plus `if_statement_position_simple`,
-      `if_value_position_stays_flat`, `if_value_position_nested_braces`,
-      `if_block_position_boundary`.
-- [x] **`fn(NULL = )` spacing.** Named arg with a missing value: ravel emitted
-      `fn(NULL =)`, air keeps the trailing space `fn(NULL = )`. Matched air via an
-      `ArgSlot::ends_with_eq` flag that keeps a space before a same-line comma or
-      closing bracket. Fixture: part of `air_call`.
-- [x] **Pipe / nested-call indent depth.** In a pipeline, a broken RHS call's
-      args sat one level too shallow and the closing paren dangled at the base
-      indent --- not a flatter style but a genuine bug: the pipe builder
-      (`ir_binary_expr`) wrapped only the continuation `hard_line` in
-      `Ir::indent`, leaving the RHS operand itself at the base indent, so the
-      RHS call's own arg breaks used the wrong indent context. Fixed by moving
-      the RHS inside the indent (`Ir::indent([hard_line, rhs])`); args now nest
-      relative to the pipe stage and the close paren aligns with the call head,
-      matching air. Fixtures: `air_pipelines`, plus the `mutate()` case in
-      `air_call`.
-- [x] **Hug vs explode when the call head exceeds the line width.** Resolved in
-      favor of a uniform rule: a trailing-element hug applies only when the whole
-      prefix up to the hugged block's opening `{` fits flat on the line
-      (`callee(leading, function(params) {` or `callee(leading, {`); the
-      function's own params never break to "rescue" the hug). When it does not
-      fit, the call explodes one argument per line --- line width wins over the
-      hug. The same principle now governs function *parameter* lists: a
-      brace-block default (`function(a = { ... }, b)`) forces the list to expand
-      rather than hugging the brace mid-list. Trailing functions now route
-      through the flat-only `group_hug` (the break-aware `build_arg_hug_conditional`
-      was removed), and brace defaults render as native `Ir::indent` (no baked
-      `Verbatim`), so they indent correctly even when the function is itself a
-      nested, exploded call argument. This made `air_function_definition`,
-      `function_definition_misc`, and `call_trailing_inline_function` exact air
-      fixed points. The `test_that("...", {` family is now also a fixed point ---
-      see the unbreakable-atom hug rule below.
-- [x] **Unbreakable-atom hug (the `test_that` explosion, resolved).** A trailing-
-      block call no longer explodes its argument list when the overflow is caused
-      solely by a leading *unbreakable atom too wide to fit on any line* --- a
-      string literal or long symbol whose width `>= line_width`. Breaking such an
-      atom out buys no width (it overflows its own exploded line too), only lines
-      and indent, so the call keeps the trailing `{` hug. The discriminator is
-      "is the overflow rescuable", not "how many columns are saved": a call whose
-      args *decompose* into fitting pieces still explodes (it goes through the
-      normal `group_fits` path), and an arg that nests a *breakable* group (e.g.
-      `test_that(identity("<long>"), {`) still explodes (the group could be
-      rescued by breaking). Implemented as a structural/columnar split:
-      `build_arg_hug` sets `hug_excuse_overflow` only when every leading arg is a
-      bare atom (no nested group), and the printer's hug-prefix `fits` excuses an
-      atom only when `w >= line_width`. This is uniform and callee-agnostic
-      (Tenet 1): `extended_test_that` and `with(<long symbol>, {` get the same
-      treatment. Side effects: `air_test_that` is now an air fixed point (our rule
-      coincides with air's `test_that` special case there), so its allowlist entry
-      was removed; `with(<over-width symbol>, {` newly diverges from air (air
-      expands) and is the recorded deviation in `air_call` /
-      `call_trailing_braced_expression`. Fixtures: `air_test_that`, `air_call`,
-      `call_trailing_braced_expression`.
+## Formatter
 
 ## Linter
 
