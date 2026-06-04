@@ -254,14 +254,14 @@ fixture/idempotence/round-trip suite).
 
 Done: `ravel.toml` v1 lives in `src/config.rs` with kebab-case keys, strict
 `deny_unknown_fields`, and a tiny `[format]` (`line-width`, `indent-width`) +
-empty `[lint]` schema. The CLI gained global `--config <PATH>` and
-`--no-config` (mutually exclusive) and per-`format` `--line-width` /
-`--indent-width` overrides. Discovery walks cwd → ancestors looking for
-`ravel.toml`, stops at the first match or at a `.git` boundary. Config loading
-lives in `main.rs` only — the library API (`format_with_style`,
-`check_paths_with_style`, `linter::check_paths_with_config`) continues to take
-a fully-resolved style/config so `format()` stays pure. The repo root carries
-a dogfood `ravel.toml` documenting the defaults. Errors render
+empty `[lint]` schema. The CLI gained global `--config <PATH>` and `--no-config`
+(mutually exclusive) and per-`format` `--line-width` / `--indent-width`
+overrides. Discovery walks cwd → ancestors looking for `ravel.toml`, stops at
+the first match or at a `.git` boundary. Config loading lives in `main.rs` only
+--- the library API (`format_with_style`, `check_paths_with_style`,
+`linter::check_paths_with_config`) continues to take a fully-resolved
+style/config so `format()` stays pure. The repo root carries a dogfood
+`ravel.toml` documenting the defaults. Errors render
 `path:line:col: <toml message>` for parse failures and
 `path: invalid <field>: <reason>` for value validation.
 
@@ -300,11 +300,11 @@ parser + formatter foundation, and ahead of the LSP/linter phases.
 - [x] **Comments inside `if (...)` condition break parsing.** Root cause:
       `parse_if_expr` was skipping only whitespace/newlines (not comments) when
       hunting for the `(`, `)`, and then-body around an `if` clause, so a
-      comment between any of those landed on a comment and tripped "expected
-      '(' after 'if'" / "expected ')' after if condition". Fixed by routing the
-      `if` clause through the consolidated `skip_clause_trivia` helper (the
-      same helper `while`/`for` already use) at every clause boundary, which
-      also cleans up the previously bespoke comment-skip loops before `else`.
+      comment between any of those landed on a comment and tripped "expected '('
+      after 'if'" / "expected ')' after if condition". Fixed by routing the `if`
+      clause through the consolidated `skip_clause_trivia` helper (the same
+      helper `while`/`for` already use) at every clause boundary, which also
+      cleans up the previously bespoke comment-skip loops before `else`.
       Fixture: `tests/fixtures/parser/if_comment_in_condition`; the air port
       `air_ok_if_statement` now parses without diagnostics.
 - [x] **Newline between subset args breaks parsing in some contexts.** Root
@@ -469,136 +469,173 @@ parser + formatter foundation, and ahead of the LSP/linter phases.
       throughout (the only remaining non-idempotence is the pre-existing
       `air_ok_for_statement` `for`-quirk noted in memory).
 
+#### Air-compat divergences (from the soft gauge)
+
+Surfaced by `task air-compat` / `AIR_COMPAT.md`. These are cases where `air`'s
+output is the more idiomatic one and ravel is being inconsistent --- "adopt"
+work, not a quality gate (Tenet 1 still rules). Fixing the holes item alone
+clears \~6 fixtures and is the biggest compat jump. Each fix lands its own
+failing fixture first (TDD), and must hold idempotence + losslessness.
+
+- [ ] **Empty argument holes explode vertically.** Ravel prints `fn(,,)` /
+      `dt[,]` as one hole per line (`fn(\n  ,\n  ,\n)`); air keeps holes inline
+      (`fn(,,`). Adopt air's inline form. Fixtures: `call_leading_holes`,
+      `call_leading_holes_hugging`, `call_comments_after_holes`,
+      `call_comments_inside_holes`, `subset_comments_after_holes`,
+      `call_empty_lines_between_args`, and part of `air_call`.
+- [ ] **`{{ }}` embracing is expanded.** Ravel expands the rlang embracing
+      operator into nested multi-line braces; air keeps `{{ x }}` inline. Keep
+      it inline. Fixture: part of `call_trailing_inline_function`.
+- [ ] **Control-flow bracing is left flat.** Ravel keeps
+      `if (a) 1 else if (b) 2` and bare control-flow function bodies
+      (`function(p) if (cond) {...}`) flat; air force-braces consequences /
+      bodies onto their own lines. **Decision: adopt air's always-brace.**
+      Biggest single divergence. Fixtures: `if_else_if_bare_flat`,
+      `if_nested_consequence`, `function_bare_control_flow_body`.
+- [ ] **`fn(NULL = )` spacing.** Named arg with a missing value: ravel emits
+      `fn(NULL =)`, air keeps the trailing space `fn(NULL = )`. Trivial; match
+      air. Fixture: part of `air_call`.
+- [ ] **Pipe / nested-call indent depth.** In a pipeline, ravel indents a broken
+      RHS call's args one level; air uses an extra level. Investigate whether
+      this is a bug in ravel's indent model or a deliberate flatter style before
+      deciding adopt vs record. Fixture: `air_pipelines`.
+- [ ] **Hug vs explode when the call head exceeds the line width (design
+      question, not a clear bug).** Ravel breaks an over-width call head onto
+      multiple lines; air keeps the head over-width to preserve the trailing hug
+      (e.g. `test_that("very long desc", {`). The hugging itself is a deliberate
+      ravel choice (the one recorded deviation, `air_function_definition` in
+      `tests/air_compat_allowlist.toml`); what needs a principled rule is
+      whether hugging should win over line width. Resolve, then either fix or
+      record. Fixtures: `air_test_that`, `function_definition_misc`, part of
+      `call_trailing_inline_function`.
+
 ## Phase 6: Linter and LSP foundation
 
 Closest precedent: **jarl** (`etiennebacher/jarl`, Rust + rowan + air-parser,
 55+ rules, suppression directives, LSP, autofix). The foundation pass borrows
 shape (diagnostic + `Violation` trait, `PackageOrigin` enum, `# ravel-ignore`
 suppression directive style, annotate-snippets rendering) but stays its own
-project — ravel is a unified formatter + linter + LSP binary on ravel's own
+project --- ravel is a unified formatter + linter + LSP binary on ravel's own
 in-tree parser, not a drop-in jarl replacement.
 
-- [x] Minimal LSP exposing `textDocument/formatting` over stdio
-      (`ravel lsp`), reusing `format_with_style` and per-file `ravel.toml`
-      discovery.
-- [x] Add semantic layers: symbols, scopes, and lightweight inference. Built
-      a single-walk `SemanticModel` (`src/semantic/`) with `ScopeTree`,
-      `Binding` table, identifier-read collection with namespace/member
-      access suppression, and `IdentRef::resolve_local`. Top-level
-      `library()` / `require()` / `requireNamespace()` calls populate
-      `loaded_packages` in source order; calls nested inside functions are
-      ignored (matching R semantics). `BLOCK_EXPR` does not introduce a new
-      scope (R has no block-level lexical scoping). `<<-` / `->>` bind in
-      the enclosing function-or-file scope. A static `SymbolProvider` impl
-      (`StaticBaseR`) is backed by per-package symbol lists baked into the
-      binary via `include_str!`; lists are regenerated by
-      `scripts/dump_base_symbols.R` (run by hand, not at build time).
-- [x] Build diagnostics and lint passes on CST + semantic model. Replaced
-      the placeholder `assignment-spacing` rule (was a stylistic check that
+- [x] Minimal LSP exposing `textDocument/formatting` over stdio (`ravel lsp`),
+      reusing `format_with_style` and per-file `ravel.toml` discovery.
+- [x] Add semantic layers: symbols, scopes, and lightweight inference. Built a
+      single-walk `SemanticModel` (`src/semantic/`) with `ScopeTree`, `Binding`
+      table, identifier-read collection with namespace/member access
+      suppression, and `IdentRef::resolve_local`. Top-level `library()` /
+      `require()` / `requireNamespace()` calls populate `loaded_packages` in
+      source order; calls nested inside functions are ignored (matching R
+      semantics). `BLOCK_EXPR` does not introduce a new scope (R has no
+      block-level lexical scoping). `<<-` / `->>` bind in the enclosing
+      function-or-file scope. A static `SymbolProvider` impl (`StaticBaseR`) is
+      backed by per-package symbol lists baked into the binary via
+      `include_str!`; lists are regenerated by `scripts/dump_base_symbols.R`
+      (run by hand, not at build time).
+- [x] Build diagnostics and lint passes on CST + semantic model. Replaced the
+      placeholder `assignment-spacing` rule (was a stylistic check that
       `format --check` already enforces) with five purely-semantic rules:
       `unused-binding`, `duplicate-formal`, `shadowed-builtin`,
-      `assignment-in-condition`, and `undefined-symbol` (off by default
-      until a CRAN export manifest ships). New `Diagnostic` shape matches
-      jarl's: `{ rule, severity, path, range, message: ViolationData,
-      fix: Option<Fix> }`. `Violation` trait + per-category subdirectories
-      (`correctness/`, `suspicious/`). Implemented `# ravel-ignore <rule>:
-      <reason>` (node-level) and `# ravel-ignore-file [<rule>]: <reason>`
-      (file-level / file-all) suppression directives via a CST descendants
-      walk; the node-level directive attaches to the next non-trivia
-      sibling. CLI gains `--output={pretty,concise,json}` with
-      `annotate-snippets` for the pretty mode; `lint --check` is no longer
-      required. `LintConfig` gains `select` / `ignore` lists validated
-      against the rule registry at run time. Shared `LineIndex` utility
-      (`src/text/line_index.rs`) handles byte → line/col / LSP-position
-      conversions (UTF-16-aware for LSP).
+      `assignment-in-condition`, and `undefined-symbol` (off by default until a
+      CRAN export manifest ships). New `Diagnostic` shape matches jarl's:
+      `{ rule, severity, path, range, message: ViolationData,       fix: Option<Fix> }`.
+      `Violation` trait + per-category subdirectories (`correctness/`,
+      `suspicious/`). Implemented `# ravel-ignore <rule>:       <reason>`
+      (node-level) and `# ravel-ignore-file [<rule>]: <reason>` (file-level /
+      file-all) suppression directives via a CST descendants walk; the
+      node-level directive attaches to the next non-trivia sibling. CLI gains
+      `--output={pretty,concise,json}` with `annotate-snippets` for the pretty
+      mode; `lint --check` is no longer required. `LintConfig` gains `select` /
+      `ignore` lists validated against the rule registry at run time. Shared
+      `LineIndex` utility (`src/text/line_index.rs`) handles byte → line/col /
+      LSP-position conversions (UTF-16-aware for LSP).
 - [x] Wire diagnostics into the LSP (`textDocument/publishDiagnostics`).
-      `did_open` / `did_change` schedule a debounced (200 ms) lint task
-      guarded by an `i32` document version; `did_close` clears stale
-      diagnostics. Range mapping uses the shared `LineIndex`.
-- [ ] Range formatting (`textDocument/rangeFormatting`) once the formatter
-      gains a range API.
+      `did_open` / `did_change` schedule a debounced (200 ms) lint task guarded
+      by an `i32` document version; `did_close` clears stale diagnostics. Range
+      mapping uses the shared `LineIndex`.
+- [ ] Range formatting (`textDocument/rangeFormatting`) once the formatter gains
+      a range API.
 - [ ] Honor editor-supplied `initializationOptions` /
       `workspace/didChangeConfiguration` for `line-width` / `indent-width`.
 
 ## Phase 6.x: Linter + LSP follow-ups
 
 - [ ] CRAN-wide symbol manifest as a downloadable sidecar. Shape: per-package
-      export lists keyed by package version. With a manifest in place,
-      enable `undefined-symbol` by default and stop returning `Unknown` for
-      names from `library()`-attached packages.
+      export lists keyed by package version. With a manifest in place, enable
+      `undefined-symbol` by default and stop returning `Unknown` for names from
+      `library()`-attached packages.
 - [x] R-introspection sidecar (`ravel index`). **Pure on-disk, no R runtime**
       (chosen over shelling to `Rscript`): installed packages keep code/help in
-      R's serialized lazy-load DBs, so `src/rindex/` reads them natively — a
+      R's serialized lazy-load DBs, so `src/rindex/` reads them natively --- a
       minimal RDS reader (`rds.rs`, `flate2` for gzip/zlib), lazy-load `.rdb`/
       `.rdx` decode (`lazyload.rs`), `.libPaths()`-style discovery without R
       (`libpaths.rs`, config escape hatch `[index].library-paths`), per-package
       harvest (`harvest.rs`: `DESCRIPTION` version, `NAMESPACE` exports incl.
       `exportPattern` expansion via `regex`, `Meta/Rd.rds` help titles), a
       versioned JSON cache (`cache.rs`, `{pkg}@{ver}.json` + `meta.json`), and
-      `IndexedProvider`/`CompositeProvider` (`provider.rs`) — a third
+      `IndexedProvider`/`CompositeProvider` (`provider.rs`) --- a third
       `SymbolProvider` layered over `StaticBaseR` with correct search-path
       masking. `ravel index [paths]` harvests referenced packages
       (`library()`/`require()`/`pkg::`, the latter newly captured in
       `SemanticModel::referenced_packages`); `ravel lint` loads the cache and
       resolves attached-package names. Tested R-free against checked-in package
-      fixtures (`tests/fixtures/rindex/`). Phase 2 (done) — function formals
+      fixtures (`tests/fixtures/rindex/`). Phase 2 (done) --- function formals
       from `R/{pkg}.rdb`: faithful `BCODESXP` consumption (a `ReadBC`/
       `ReadBCConsts`/`ReadBCLang` port) so byte-compiled closures fetch, a fixed
       `NAMESPACESXP`/`PACKAGESXP` string-vector decode, an `Robj`→R-source
       deparser (`deparse.rs`) for default values, and `SymbolKind` refinement
       (closure→function w/ formals, primitive→function, vectors→data) wired
       unconditionally into harvest with graceful degradation when no `.rdb` is
-      present. Phase 3 (done) — full Rd help bodies from `help/{pkg}.rdb`
+      present. Phase 3 (done) --- full Rd help bodies from `help/{pkg}.rdb`
       rendered to lightweight markdown (`rd.rs`: `\title`/`\description`/
       `\usage`/`\arguments`, inline `\code`→backticks etc.) keyed by the
       `Meta/Rd.rds` `File` column; the LSP now lints with the loaded index and
       lazily harvests referenced-but-unindexed packages in the background
-      (behind `[index].auto-build`), swapping in the new provider and re-linting;
-      and `undefined-symbol` is on by default behind an all-loaded-indexed gate
-      (silent for a file whenever an attached package isn't indexed), with the
-      `library(pkg)`-arg false positive fixed in the semantic builder.
-- [x] Autofix infrastructure. `Fix` gained `applicability` (`Safe`/`Unsafe`)
-      and a `description`; a pure `apply_fixes(source, fixes, include_unsafe)`
-      engine (`src/linter/fix.rs`) sorts by offset, drops overlaps, and
-      splices right-to-left. Two rules emit fixes:
-      `assignment-in-condition` (`=` → `==`, **Safe**) and `unused-binding`
-      (delete the statement incl. leading indent + trailing newline,
-      **Unsafe** because the RHS may have side effects). `ravel lint --fix`
-      applies Safe fixes in a bounded fixpoint loop (re-linting via
-      `check_document`), `--unsafe-fixes` opts into the rest; the LSP
-      advertises `code_action_provider` and serves QuickFix `WorkspaceEdit`s
-      via `compute_code_actions`. Per **tenet 5**, fixes never introduce
-      formatting errors (`format` → `--fix` → `format --check` passes): the
-      `unused-binding` deletion is format-clean by construction (its span
-      absorbs leading indent, its line terminator, and adjacent blank lines)
-      and is *withheld* for shapes a pure deletion can't keep clean (emptying
-      a block, or shrinking a function body to one statement that would flatten
-      to a bare body). This is guarded by `fixes_never_introduce_formatting_errors`
-      in `tests/lint.rs`, not by running the formatter at fix time. Follow-ups:
-      fixes for `duplicate-formal` and `shadowed-builtin`.
-- [ ] DESCRIPTION / NAMESPACE parsing for R-package authoring contexts.
-      Match jarl's behavior: track `importFrom()` direct mappings and
-      `export()` declarations so `unused-binding` doesn't flag exported
-      package symbols.
-- [ ] Cross-file scope awareness: a binding defined in `a.R` should resolve
-      from `b.R` when both belong to the same package or project.
-- [ ] Salsa-cached `semantic_model` query in `src/incremental.rs`. The
-      current `parse_file` query stores only a debug-formatted CST string;
-      both the linter and LSP rebuild the semantic model from text. Adding
-      a tracked query requires a `salsa::Update`-friendly snapshot type
-      (the rowan `SyntaxNode` itself isn't easy to wire in).
+      (behind `[index].auto-build`), swapping in the new provider and
+      re-linting; and `undefined-symbol` is on by default behind an
+      all-loaded-indexed gate (silent for a file whenever an attached package
+      isn't indexed), with the `library(pkg)`-arg false positive fixed in the
+      semantic builder.
+- [x] Autofix infrastructure. `Fix` gained `applicability` (`Safe`/`Unsafe`) and
+      a `description`; a pure `apply_fixes(source, fixes, include_unsafe)`
+      engine (`src/linter/fix.rs`) sorts by offset, drops overlaps, and splices
+      right-to-left. Two rules emit fixes: `assignment-in-condition` (`=` →
+      `==`, **Safe**) and `unused-binding` (delete the statement incl. leading
+      indent + trailing newline, **Unsafe** because the RHS may have side
+      effects). `ravel lint --fix` applies Safe fixes in a bounded fixpoint loop
+      (re-linting via `check_document`), `--unsafe-fixes` opts into the rest;
+      the LSP advertises `code_action_provider` and serves QuickFix
+      `WorkspaceEdit`s via `compute_code_actions`. Per **tenet 5**, fixes never
+      introduce formatting errors (`format` → `--fix` → `format --check`
+      passes): the `unused-binding` deletion is format-clean by construction
+      (its span absorbs leading indent, its line terminator, and adjacent blank
+      lines) and is *withheld* for shapes a pure deletion can't keep clean
+      (emptying a block, or shrinking a function body to one statement that
+      would flatten to a bare body). This is guarded by
+      `fixes_never_introduce_formatting_errors` in `tests/lint.rs`, not by
+      running the formatter at fix time. Follow-ups: fixes for
+      `duplicate-formal` and `shadowed-builtin`.
+- [ ] DESCRIPTION / NAMESPACE parsing for R-package authoring contexts. Match
+      jarl's behavior: track `importFrom()` direct mappings and `export()`
+      declarations so `unused-binding` doesn't flag exported package symbols.
+- [ ] Cross-file scope awareness: a binding defined in `a.R` should resolve from
+      `b.R` when both belong to the same package or project.
+- [ ] Salsa-cached `semantic_model` query in `src/incremental.rs`. The current
+      `parse_file` query stores only a debug-formatted CST string; both the
+      linter and LSP rebuild the semantic model from text. Adding a tracked
+      query requires a `salsa::Update`-friendly snapshot type (the rowan
+      `SyntaxNode` itself isn't easy to wire in).
 - [ ] Comment-aware suppression placement edge cases: directives inside
-      `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` need
-      special handling so they attach to `next_arg` instead of the
-      argument list. (Jarl solved this by overriding biome's
-      `place_comment`; ravel's next-non-trivia-sibling walk already
-      handles most cases.)
+      `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` need special
+      handling so they attach to `next_arg` instead of the argument list. (Jarl
+      solved this by overriding biome's `place_comment`; ravel's
+      next-non-trivia-sibling walk already handles most cases.)
 - [ ] LSP refinements: honor `initializationOptions` /
       `workspace/didChangeConfiguration`; add `textDocument/rangeFormatting`
       once the formatter gains a range API. (`textDocument/codeAction` QuickFix
-      hooks now shipped alongside autofix — see Phase 6.x autofix above.)
+      hooks now shipped alongside autofix --- see Phase 6.x autofix above.)
 - [ ] `ravel-ignore-unused` meta-diagnostic: emit a finding for suppression
-      comments that didn't actually suppress anything (rule ID is reserved
-      but the rule is not yet wired in).
+      comments that didn't actually suppress anything (rule ID is reserved but
+      the rule is not yet wired in).
 - [ ] Rmd / Qmd chunk extraction; chunk-level suppression directives via
       Quarto-style `#| ravel-ignore-chunk` comments.
