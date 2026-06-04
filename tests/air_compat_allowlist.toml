@@ -20,7 +20,11 @@
 # deliberate; otherwise leave it unexplained so the bug stays visible.
 
 [deviations]
-# Example (seed): ravel hugs a trailing function/lambda argument and lets the
-# lambda's own parameter list break, instead of exploding the outer call the way
-# air does. This is a deliberate ravel layout choice (the printer's group-hug).
-air_function_definition = "function-arg hugging: ravel hugs the trailing lambda; air explodes the outer call"
+# `test_that()` (and friends) special case: air keeps an over-width call prefix
+# on one line to preserve the trailing `{` hug when the first argument is a
+# string literal (`test_that("very long desc", {`). Ravel does not special-case
+# any callee (Tenet 1: deterministic, rule-based) --- an over-width prefix
+# explodes one argument per line like any other call. The hug-vs-line-width rule
+# is otherwise uniform across calls, trailing blocks, and function parameter
+# lists (see TODO.md).
+air_test_that = "no `test_that` special case: ravel explodes an over-width prefix; air keeps it on one line"

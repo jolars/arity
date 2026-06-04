@@ -8,9 +8,12 @@ function(
   a
 }
 
-function(a = {
-  1
-}, b) {
+function(
+  a = {
+    1
+  },
+  b
+) {
   1
 }
 

@@ -8,8 +8,7 @@ use super::super::core::{
 use super::super::ir::Ir;
 use super::super::trivia::split_lines;
 use super::expressions::{
-    ArgSlot, build_arg_group, build_arg_hug, build_arg_hug_conditional, expr_ends_in_block,
-    should_force_leading_hole_expand,
+    ArgSlot, build_arg_group, build_arg_hug, expr_ends_in_block, should_force_leading_hole_expand,
 };
 use crate::parser::parse;
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
@@ -514,17 +513,16 @@ fn build_call_args_ir(slots: &[ArgSlot], force_named_functions: bool) -> Ir {
     let first_non_empty = slots.iter().position(|s| !s.is_empty_hole());
     let no_non_empty = first_non_empty.is_none();
 
-    // A positional trailing function-definition argument hugs its call: the
-    // call's first line `callee(leading, function(` must fit, and any further
-    // breaking happens inside the function. This is the IR-native form of the
-    // legacy "format-then-measure" hug. Route it through the conditional
-    // variant whose break-aware first-line measurement lets the function's
-    // own params/body group break naturally during the decision (the flat
-    // `group_hug` would measure the function flat and overflow before its
-    // params have a chance to break, collapsing the whole call into the
-    // expanded one-arg-per-line layout). A plain trailing block has no such
-    // nested breakable group before its opening brace, so the flat-only
-    // `group_hug` still suffices.
+    // A positional trailing function-definition argument or block hugs its
+    // call: the hug applies only when the whole prefix up to the hugged block's
+    // opening `{` fits flat on the line (`callee(leading, function(params) {` or
+    // `callee(leading, {`). When it does not fit, the outer call explodes one
+    // argument per line rather than letting the prefix overflow or the
+    // function's own params break to "rescue" the hug. This makes the hug rule
+    // uniform across blocks and trailing functions: line width wins over the
+    // hug, and the flat-only `group_hug` measurement enforces it. (Tenet 1: no
+    // special-casing of particular callees such as `test_that` to keep an
+    // over-width prefix on one line.)
     let leading_ok = !force_named_functions && slots[..last].iter().all(|s| !s.has_forced_break());
     let trailing_function = leading_ok
         && matches!(&slots[last], ArgSlot::Expr { expr_node: Some(node), .. }
@@ -532,10 +530,7 @@ fn build_call_args_ir(slots: &[ArgSlot], force_named_functions: bool) -> Ir {
     let trailing_block = leading_ok
         && matches!(&slots[last], ArgSlot::Expr { ir, expr_node: Some(node), .. }
             if expr_ends_in_block(node) && ir.contains_forced_break());
-    if trailing_function {
-        return build_arg_hug_conditional(slots, "(", ")", first_non_empty, no_non_empty);
-    }
-    if trailing_block {
+    if trailing_function || trailing_block {
         return build_arg_hug(slots, "(", ")", first_non_empty, no_non_empty);
     }
 
@@ -1395,10 +1390,16 @@ fn ir_function_params(
     }
 
     let segments = split_function_param_segments(&significant)?;
-    let nested_brace = segments
+    // A brace-block default (`a = { … }`) is always rendered multi-line, so the
+    // whole parameter list breaks one-per-line rather than hugging the brace
+    // onto the signature line (`function(\n  a = {\n    1\n  },\n  b\n)`). This
+    // is the parameter-list analogue of the call trailing-block hug rule: a
+    // forced-break element never keeps the rest of the list flat. The exploded
+    // params render at `indent + 1`.
+    let brace_default = segments
         .iter()
-        .any(|seg| param_has_nested_brace_default(seg));
-    let param_indent = if nested_brace { indent + 1 } else { indent };
+        .any(|seg| param_has_breaking_brace_default(seg));
+    let param_indent = if brace_default { indent + 1 } else { indent };
     let mut params: Vec<Ir> = Vec::with_capacity(segments.len());
     for param in &segments {
         params.push(ir_function_parameter(param, param_indent, ctx)?);
@@ -1418,17 +1419,19 @@ fn ir_function_params(
         Ir::soft_line(),
         Ir::text(")"),
     ]);
-    if nested_brace {
+    if brace_default {
         Ok(Ir::group_expanded(inner))
     } else {
         Ok(inner)
     }
 }
 
-/// A param whose default is `{ <BLOCK> ... }` — a brace default whose inner
-/// starts with another `{`. Matches the legacy
-/// `param.contains("= {\n  {\n")` heuristic at the token level.
-fn param_has_nested_brace_default(param: &[SyntaxElement<RLanguage>]) -> bool {
+/// A param whose default is a non-empty brace block (`a = { … }`). Such a
+/// default is always rendered multi-line (an empty `{}` is not — it stays
+/// inline), so its presence forces the whole parameter list to expand. Matches
+/// the brace-default detection in [`ir_function_param_default`] (first/last
+/// significant tokens are `{`/`}`), with the empty case excluded.
+fn param_has_breaking_brace_default(param: &[SyntaxElement<RLanguage>]) -> bool {
     let Some(eq_idx) = param
         .iter()
         .position(|el| matches!(el, NodeOrToken::Token(t) if t.kind() == SyntaxKind::ASSIGN_EQ))
@@ -1439,11 +1442,9 @@ fn param_has_nested_brace_default(param: &[SyntaxElement<RLanguage>]) -> bool {
         .iter()
         .filter(|el| !super::super::core::is_trivia(el.kind()))
         .collect();
-    if default_significant.len() < 4 {
-        return false;
-    }
-    matches!(default_significant.first(), Some(NodeOrToken::Token(t)) if t.kind() == SyntaxKind::LBRACE)
-        && matches!(default_significant.get(1), Some(NodeOrToken::Token(t)) if t.kind() == SyntaxKind::LBRACE)
+    // `{}` is two tokens and stays inline; a non-empty block is three or more.
+    default_significant.len() >= 3
+        && matches!(default_significant.first(), Some(NodeOrToken::Token(t)) if t.kind() == SyntaxKind::LBRACE)
         && matches!(default_significant.last(), Some(NodeOrToken::Token(t)) if t.kind() == SyntaxKind::RBRACE)
 }
 
@@ -1548,15 +1549,18 @@ fn ir_brace_token_default(
             snippet,
         });
     };
+    // Native IR (not a baked `Verbatim`): the surrounding param list always
+    // expands when a brace default is present (see `ir_function_params`), so the
+    // block renders relative to the printer's live indent via `Ir::indent`. This
+    // keeps it correct when the enclosing function is itself nested deeper than
+    // its build-time indent (e.g. an exploded call argument).
     let inner_ir = ir_expr_element(only, indent + 1, ctx)?;
-    let inner_text =
-        super::super::printer::Printer::new(ctx.style()).print_at(&inner_ir, indent + 1);
-    Ok(Ir::verbatim_forced(format!(
-        "{{\n{}{}\n{}}}",
-        ctx.indent_text(indent + 1),
-        inner_text,
-        ctx.indent_text(indent)
-    )))
+    Ok(Ir::concat([
+        Ir::text("{"),
+        Ir::indent(Ir::concat([Ir::hard_line(), inner_ir])),
+        Ir::hard_line(),
+        Ir::text("}"),
+    ]))
 }
 
 /// Split params on top-level commas, preserving the legacy splitter's errors on

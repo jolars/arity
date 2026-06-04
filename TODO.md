@@ -52,15 +52,24 @@ failing fixture first (TDD), and must hold idempotence + losslessness.
       relative to the pipe stage and the close paren aligns with the call head,
       matching air. Fixtures: `air_pipelines`, plus the `mutate()` case in
       `air_call`.
-- [ ] **Hug vs explode when the call head exceeds the line width (design
-      question, not a clear bug).** Ravel breaks an over-width call head onto
-      multiple lines; air keeps the head over-width to preserve the trailing hug
-      (e.g. `test_that("very long desc", {`). The hugging itself is a deliberate
-      ravel choice (the one recorded deviation, `air_function_definition` in
-      `tests/air_compat_allowlist.toml`); what needs a principled rule is
-      whether hugging should win over line width. Resolve, then either fix or
-      record. Fixtures: `air_test_that`, `function_definition_misc`, part of
-      `call_trailing_inline_function`.
+- [x] **Hug vs explode when the call head exceeds the line width.** Resolved in
+      favor of a uniform rule: a trailing-element hug applies only when the whole
+      prefix up to the hugged block's opening `{` fits flat on the line
+      (`callee(leading, function(params) {` or `callee(leading, {`); the
+      function's own params never break to "rescue" the hug). When it does not
+      fit, the call explodes one argument per line --- line width wins over the
+      hug. The same principle now governs function *parameter* lists: a
+      brace-block default (`function(a = { ... }, b)`) forces the list to expand
+      rather than hugging the brace mid-list. Trailing functions now route
+      through the flat-only `group_hug` (the break-aware `build_arg_hug_conditional`
+      was removed), and brace defaults render as native `Ir::indent` (no baked
+      `Verbatim`), so they indent correctly even when the function is itself a
+      nested, exploded call argument. This made `air_function_definition`,
+      `function_definition_misc`, and `call_trailing_inline_function` exact air
+      fixed points. The one remaining divergence in this family --- air keeping an
+      over-width `test_that("...", {` prefix on one line --- is air's callee
+      special case; ravel explodes deterministically (Tenet 1) and this is now the
+      recorded deviation `air_test_that` in `tests/air_compat_allowlist.toml`.
 
 ## Linter
 

@@ -372,39 +372,43 @@ map(
 # `parameters` when looking at options for the middle variant, so the middle
 # variant can't choose to put each parameter on its own line in the current
 # form. Only the most expanded form can do that when fully breaking everything.
-map(x, function(
-  a,
-  a_really_really_long_parameter,
-  and_another_one_here_too_wow_this_is_long
-) {
-  1
-})
+map(
+  x,
+  function(
+    a,
+    a_really_really_long_parameter,
+    and_another_one_here_too_wow_this_is_long
+  ) {
+    1
+  }
+)
 
 # Best fitting is used to choose most expanded here. Even with the middle
 # variant, the first map() argument and the function signature would exceed the
 # line length. Autobracing DOES NOT kick in as it expands in this case.
-map(my_long_list_my_long_list_my_long_list_my_long_list, function(
-  my_long_argument
-) {
-  my_long_argument
-})
+map(
+  my_long_list_my_long_list_my_long_list_my_long_list,
+  function(my_long_argument) my_long_argument
+)
 
 # Best fitting is used to choose most expanded here. Even with the middle
 # variant, the first map() argument and the function signature would exceed the
 # line length. Autobracing DOES kick in as it expands in this case as it fully
 # expands the function definition too to keep it within the line length.
-map(my_long_list_my_long_list_my_long_list_my_long_list, function(
-  my_long_argument
-) {
-  my_long_list_my_long_list_my_long_list_my_long_list_my_long_list
-})
+map(
+  my_long_list_my_long_list_my_long_list_my_long_list,
+  function(my_long_argument) {
+    my_long_list_my_long_list_my_long_list_my_long_list_my_long_list
+  }
+)
 
 # Best fitting is used to choose the middle variant over the current most flat
 # form. The middle variant fits within the line length, so is preferred over
 # the most expanded form.
-map(xs, function(my_long_argument) {
-  my_long_argument + my_extra_long_extra_argument
-})
+map(
+  xs,
+  function(my_long_argument) my_long_argument + my_extra_long_extra_argument
+)
 
 # Best fitting is used to choose the middle variant. The line break forces
 # autobracing, which means the function definition breaks. That rules out
@@ -429,17 +433,24 @@ map(xs, function(x, option = "a") x)
 
 # The `{ 1 }` parameter would force a hard line break. We detect this and don't
 # use best-fitting. Instead we fall back to the most expanded form.
-map(x, function(a = {
-  1
-}) {
-  1
-})
+map(
+  x,
+  function(
+    a = {
+      1
+    }
+  ) {
+    1
+  }
+)
 
 # Since there is only 1 argument, we want these to hug the function call even
 # though the `parameters` cause a break and would typically force full expansion
-fn(function(a = {
-  1
-}) {
+fn(function(
+  a = {
+    1
+  }
+) {
   1
 })
 fn(function(
