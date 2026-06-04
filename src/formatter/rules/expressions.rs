@@ -795,13 +795,21 @@ pub(crate) fn build_arg_hug(
     first_non_empty: Option<usize>,
     no_non_empty: bool,
 ) -> Ir {
-    Ir::group_hug(build_arg_hug_inner(
-        slots,
-        open,
-        close,
-        first_non_empty,
-        no_non_empty,
-    ))
+    let inner = build_arg_hug_inner(slots, open, close, first_non_empty, no_non_empty);
+    // Excuse a leading argument that overflows on its own line *only* when every
+    // leading argument is a bare atom: a nested breakable group could be
+    // rescued by breaking, so its overflow must still force the list open. With
+    // only bare atoms, breaking buys no width — just lines — so the prefix hugs
+    // (e.g. `test_that("<very long desc>", { … })`).
+    let last = slots.len() - 1;
+    let leading_all_atoms = slots[..last]
+        .iter()
+        .all(|slot| !slot.content().contains_group());
+    if leading_all_atoms {
+        Ir::group_hug_excused(inner)
+    } else {
+        Ir::group_hug(inner)
+    }
 }
 
 fn build_arg_hug_inner(

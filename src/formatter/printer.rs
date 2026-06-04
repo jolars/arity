@@ -149,14 +149,19 @@ impl Printer {
                     let chosen = if mode == Mode::Break { broken } else { flat };
                     stack.push((indent, mode, chosen));
                 }
-                Ir::Group { inner, expand, hug } => {
+                Ir::Group {
+                    inner,
+                    expand,
+                    hug,
+                    hug_excuse_overflow,
+                } => {
                     let m = if *expand {
                         Mode::Break
                     } else if *hug {
                         // A trailing-block hug measures only its own prefix up to
                         // the block's opening brace; what follows sits on the
                         // block's closing line, not this one.
-                        if self.fits(w.col, inner, true) {
+                        if self.fits(w.col, inner, true, *hug_excuse_overflow) {
                             Mode::Flat
                         } else {
                             Mode::Break
@@ -250,7 +255,17 @@ impl Printer {
     /// stops the measurement *successfully*: only the prefix up to a trailing
     /// block's opening brace needs to fit. A forced-break `Verbatim` (a comment)
     /// still fails, so a comment in the prefix prevents hugging.
-    fn fits(&self, start_col: usize, node: &Ir, hug: bool) -> bool {
+    /// Whether an overflowing atom of width `w` should be *excused* during a
+    /// hug-prefix fit: it can never fit on any line (`w >= line_width`), so
+    /// breaking the argument list would not rescue it — only cost lines. Gated
+    /// on `excuse_overflow`, which the rule sets solely when every leading
+    /// argument is a bare atom (nothing breaking could rescue). See the
+    /// `hug_excuse_overflow` field on [`Ir::Group`].
+    fn atom_is_unfittable(&self, hug: bool, excuse_overflow: bool, w: usize) -> bool {
+        hug && excuse_overflow && w >= self.line_width
+    }
+
+    fn fits(&self, start_col: usize, node: &Ir, hug: bool, excuse_overflow: bool) -> bool {
         let mut remaining = self.line_width.saturating_sub(start_col);
         let mut stack: Vec<&Ir> = vec![node];
         while let Some(node) = stack.pop() {
@@ -259,6 +274,9 @@ impl Printer {
                 Ir::Text(s) => {
                     let w = s.chars().count();
                     if w > remaining {
+                        if self.atom_is_unfittable(hug, excuse_overflow, w) {
+                            return true;
+                        }
                         return false;
                     }
                     remaining -= w;
@@ -279,6 +297,9 @@ impl Printer {
                     }
                     let w = text.chars().count();
                     if w > remaining {
+                        if self.atom_is_unfittable(hug, excuse_overflow, w) {
+                            return true;
+                        }
                         return false;
                     }
                     remaining -= w;
@@ -507,8 +528,13 @@ impl Printer {
                     let chosen = if mode == Mode::Break { broken } else { flat };
                     stack.push((mode, chosen));
                 }
-                Ir::Group { inner, expand, hug } => {
-                    let m = if *expand || !self.fits(col, inner, *hug) {
+                Ir::Group {
+                    inner,
+                    expand,
+                    hug,
+                    hug_excuse_overflow,
+                } => {
+                    let m = if *expand || !self.fits(col, inner, *hug, *hug_excuse_overflow) {
                         Mode::Break
                     } else {
                         Mode::Flat

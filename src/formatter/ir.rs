@@ -49,6 +49,15 @@ pub(crate) enum Ir {
         inner: Rc<Ir>,
         expand: bool,
         hug: bool,
+        /// Only meaningful together with `hug`. When set, the prefix fit
+        /// measurement *excuses* a leading argument that is an unbreakable atom
+        /// too wide to fit on any line (`width >= line_width`): such an atom
+        /// would overflow whether or not the list breaks, so it must not, by
+        /// itself, force the hug to expand. Set by the rule only when every
+        /// leading argument is such a bare atom (no nested breakable group, so
+        /// nothing is rescuable by breaking). See the `test_that("<long>", {…})`
+        /// case: breaking buys no width, only lines.
+        hug_excuse_overflow: bool,
     },
     /// Emit `flat` when the enclosing group is flat, `broken` when it is broken.
     IfBreak { flat: Rc<Ir>, broken: Rc<Ir> },
@@ -111,6 +120,7 @@ impl Ir {
             inner: Rc::new(inner),
             expand: false,
             hug: false,
+            hug_excuse_overflow: false,
         }
     }
 
@@ -119,6 +129,7 @@ impl Ir {
             inner: Rc::new(inner),
             expand: true,
             hug: false,
+            hug_excuse_overflow: false,
         }
     }
 
@@ -130,6 +141,21 @@ impl Ir {
             inner: Rc::new(inner),
             expand: false,
             hug: true,
+            hug_excuse_overflow: false,
+        }
+    }
+
+    /// Like [`Self::group_hug`], but the prefix fit measurement excuses a
+    /// leading argument that is an unbreakable atom too wide to fit on any line.
+    /// See [`Ir::Group`]'s `hug_excuse_overflow` field. Callers must only use
+    /// this when every leading argument is a bare atom (nothing breaking could
+    /// rescue), so the excuse cannot hide a genuinely fittable argument.
+    pub(crate) fn group_hug_excused(inner: Ir) -> Ir {
+        Ir::Group {
+            inner: Rc::new(inner),
+            expand: false,
+            hug: true,
+            hug_excuse_overflow: true,
         }
     }
 
@@ -189,6 +215,26 @@ impl Ir {
 
     pub(crate) fn soft_line() -> Ir {
         Ir::SoftLine
+    }
+
+    /// Whether this tree contains a nested breakable group (`Group` or either
+    /// `ConditionalGroup` variant). Used by the arg-hug rule to decide whether a
+    /// leading argument is a bare atom: if it holds a breakable group, its
+    /// overflow may be rescuable by breaking, so the hug must not excuse it.
+    pub(crate) fn contains_group(&self) -> bool {
+        match self {
+            Ir::Group { .. } | Ir::ConditionalGroup(_) | Ir::ConditionalGroupAllLines(_) => true,
+            Ir::Concat(items) => items.iter().any(Ir::contains_group),
+            Ir::Indent(inner) => inner.contains_group(),
+            Ir::IfBreak { flat, broken } => flat.contains_group() || broken.contains_group(),
+            Ir::Text(_)
+            | Ir::Verbatim { .. }
+            | Ir::HardLine
+            | Ir::EmptyLine
+            | Ir::Line
+            | Ir::SoftLine
+            | Ir::Nil => false,
+        }
     }
 
     pub(crate) fn hard_line() -> Ir {

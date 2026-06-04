@@ -20,11 +20,13 @@
 # deliberate; otherwise leave it unexplained so the bug stays visible.
 
 [deviations]
-# `test_that()` (and friends) special case: air keeps an over-width call prefix
-# on one line to preserve the trailing `{` hug when the first argument is a
-# string literal (`test_that("very long desc", {`). Ravel does not special-case
-# any callee (Tenet 1: deterministic, rule-based) --- an over-width prefix
-# explodes one argument per line like any other call. The hug-vs-line-width rule
-# is otherwise uniform across calls, trailing blocks, and function parameter
-# lists (see TODO.md).
-air_test_that = "no `test_that` special case: ravel explodes an over-width prefix; air keeps it on one line"
+# Unbreakable-atom hug: when a call's only leading argument is a bare atom too
+# wide to fit on any line, breaking the list buys no width (the atom overflows
+# its own exploded line too) --- only lines and indentation. Ravel keeps the
+# trailing `{` hug rather than exploding (`with(<82-char symbol>, {`). Air
+# expands here. This is the same uniform, callee-agnostic rule that keeps
+# `test_that("<long>", {`…`})` compact (which now MATCHES air's `test_that`
+# special case as a side effect, so `air_test_that` is no longer a deviation).
+# See TODO.md and the `air_test_that` fixture.
+air_call = "unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands"
+call_trailing_braced_expression = "unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands"

@@ -66,28 +66,29 @@ failing fixture first (TDD), and must hold idempotence + losslessness.
       `Verbatim`), so they indent correctly even when the function is itself a
       nested, exploded call argument. This made `air_function_definition`,
       `function_definition_misc`, and `call_trailing_inline_function` exact air
-      fixed points. The one remaining divergence in this family --- air keeping an
-      over-width `test_that("...", {` prefix on one line --- is air's callee
-      special case; ravel explodes deterministically (Tenet 1) and this is now the
-      recorded deviation `air_test_that` in `tests/air_compat_allowlist.toml`.
-- [ ] **"Breaking must reduce overflow" rule (the `test_that` explosion,
-      reconsidered).** For `test_that("<very long desc>", { ... })`, ravel
-      explodes the call one-arg-per-line, but the description string *still*
-      overflows on its own line afterward --- so the explosion costs four lines
-      and a deeper indent and buys no width reduction. Air keeps it compact via a
-      callee/shape special case (string first arg + trailing block), which we
-      correctly reject under Tenet 1 (it guesses author intent from syntax;
-      `extended_test_that` and any look-alike call would trigger it). The open
-      question is whether a *general, deterministic* rule captures the better
-      outcome without any callee-awareness: **do not break an argument list to
-      make room for an element that would overflow its own line anyway** --- only
-      break when breaking actually reduces overflow. This would keep the
-      `test_that` block hugged as pure layout logic. Risks to evaluate before
-      adopting: it must suppress only the break *caused by* the unbreakable atom
-      (a string/long symbol), not all breaking; and it softens the line-width
-      contract, so measure the corpus fallout. If it doesn't survive, keep the
-      explosion as the honest cost of determinism and leave `air_test_that`
-      recorded. Fixture: `air_test_that`.
+      fixed points. The `test_that("...", {` family is now also a fixed point ---
+      see the unbreakable-atom hug rule below.
+- [x] **Unbreakable-atom hug (the `test_that` explosion, resolved).** A trailing-
+      block call no longer explodes its argument list when the overflow is caused
+      solely by a leading *unbreakable atom too wide to fit on any line* --- a
+      string literal or long symbol whose width `>= line_width`. Breaking such an
+      atom out buys no width (it overflows its own exploded line too), only lines
+      and indent, so the call keeps the trailing `{` hug. The discriminator is
+      "is the overflow rescuable", not "how many columns are saved": a call whose
+      args *decompose* into fitting pieces still explodes (it goes through the
+      normal `group_fits` path), and an arg that nests a *breakable* group (e.g.
+      `test_that(identity("<long>"), {`) still explodes (the group could be
+      rescued by breaking). Implemented as a structural/columnar split:
+      `build_arg_hug` sets `hug_excuse_overflow` only when every leading arg is a
+      bare atom (no nested group), and the printer's hug-prefix `fits` excuses an
+      atom only when `w >= line_width`. This is uniform and callee-agnostic
+      (Tenet 1): `extended_test_that` and `with(<long symbol>, {` get the same
+      treatment. Side effects: `air_test_that` is now an air fixed point (our rule
+      coincides with air's `test_that` special case there), so its allowlist entry
+      was removed; `with(<over-width symbol>, {` newly diverges from air (air
+      expands) and is the recorded deviation in `air_call` /
+      `call_trailing_braced_expression`. Fixtures: `air_test_that`, `air_call`,
+      `call_trailing_braced_expression`.
 
 ## Linter
 
