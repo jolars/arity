@@ -23,6 +23,7 @@
     pkgs.shfmt
     pkgs.wasm-pack
     pkgs.stylua
+    pkgs.hyperfine
     pkgs.yamlfmt
     pkgs.vsce
     (pkgs.rWrapper.override {
