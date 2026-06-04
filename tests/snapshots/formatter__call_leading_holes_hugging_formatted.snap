@@ -2,9 +2,7 @@
 source: tests/formatter.rs
 expression: formatted
 ---
-fn(
-  ,
-  ,
+fn(,,
   paste0(
     "This is a section",
     and,

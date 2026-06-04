@@ -1,12 +1,8 @@
-fn(
-  ,
-  ,
+fn(,,
   # comment
   x
 )
-fn(
-  ,
-  ,
+fn(,,
   # comment1
   # comment2
   x

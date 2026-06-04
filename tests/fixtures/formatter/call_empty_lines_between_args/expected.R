@@ -16,8 +16,7 @@ fn(
   b
 )
 
-fn(
-  ,
+fn(,
   # comment2
   ,
   b

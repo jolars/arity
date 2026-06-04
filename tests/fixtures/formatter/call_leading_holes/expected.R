@@ -13,8 +13,7 @@ fn(
   x = 1
 )
 
-fn(
-  ,
+fn(,
   # comment
   ,
   x = 1

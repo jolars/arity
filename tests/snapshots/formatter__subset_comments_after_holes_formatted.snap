@@ -2,8 +2,7 @@
 source: tests/formatter.rs
 expression: formatted
 ---
-dt[
-  ,
+dt[,
   # comment
   x
 ]

@@ -103,8 +103,7 @@ fn(
   x = 1
 )
 
-fn(
-  ,
+fn(,
   # comment
   ,
   x = 1
@@ -117,47 +116,37 @@ fn(
   ,
 )
 
-fn(
-  ,
+fn(,
   # comment
 )
-fn(
-  ,
+fn(,
   # comment
 )
-fn(
-  ,
+fn(,
   # comment
 )
-fn(
-  ,
+fn(,
   # comment
 )
 
-fn(
-  ,
+fn(,
   # comment
   ,
 )
-fn(
-  ,
+fn(,
   # comment
   ,
 )
-fn(
-  ,
+fn(,
   # comment
   ,
 )
-fn(
-  ,
+fn(,
   # comment
   ,
 )
 
-fn(
-  ,
-  ,
+fn(,,
   # comment1
   # comment2
   ,
@@ -186,8 +175,7 @@ fn(
 )
 
 # Special test - ensure this leads `b` rather than trails `a`
-fn(
-  ,
+fn(,
   a,
   ,
   # comment
@@ -211,17 +199,14 @@ fn(
   ,
   b
 )
-fn(
-  ,
+fn(,
   # comment
   ,
   x
 )
 
 # Comment leads `{` but doesn't move inside it
-fn(
-  ,
-  ,
+fn(,,
   # comment
   {
     1 + 1
@@ -240,15 +225,11 @@ list2(
 # Both get attached to `x`
 # Following token isn't `,`, `)`, `]`, or `]]`, and following node is non-hole,
 # so we attach to it
-fn(
-  ,
-  ,
+fn(,,
   # comment
   x
 )
-fn(
-  ,
-  ,
+fn(,,
   # comment1
   # comment2
   x
@@ -673,8 +654,7 @@ fn(
   b
 )
 
-fn(
-  ,
+fn(,
   # comment2
   ,
   b
@@ -806,9 +786,7 @@ c(
 )
 
 # Leading holes
-fn(
-  ,
-  ,
+fn(,,
   paste0(
     "This is a section",
     and,
@@ -817,9 +795,7 @@ fn(
   )
 )
 
-fn[
-  ,
-  ,
+fn[,,
   paste0(
     "This is a section",
     and,

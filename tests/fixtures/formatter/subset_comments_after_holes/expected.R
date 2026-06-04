@@ -1,5 +1,4 @@
-dt[
-  ,
+dt[,
   # comment
   x
 ]

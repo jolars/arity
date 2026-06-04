@@ -645,22 +645,11 @@ fn build_subset_args_ir(data: &ArgSlots, open: &str, close: &str) -> Ir {
         return build_arg_hug(slots, open, close, first_non_empty, no_non_empty);
     }
 
-    let leading_hole = slots[0].is_empty_hole();
     let force = data.has_comment_only
         || data.has_comment_prefixed
         || should_force_leading_hole_expand(slots, first_non_empty);
-    let hug_leading_hole =
-        force && leading_hole && !data.has_comment_only && !data.has_comment_prefixed;
 
-    build_arg_group(
-        slots,
-        open,
-        close,
-        first_non_empty,
-        no_non_empty,
-        force,
-        hug_leading_hole,
-    )
+    build_arg_group(slots, open, close, first_non_empty, no_non_empty, force)
 }
 
 /// Whether a subset arg's expression ends in a block (`{ … }`), so its arg list
@@ -708,6 +697,15 @@ pub(crate) fn flat_arg_sep(
     if compact { "," } else { ", " }
 }
 
+/// Number of consecutive empty holes at the start of the slot list. These pack
+/// onto the open-bracket line (`fn(,,`) rather than each taking their own line
+/// when the group breaks --- matching air's treatment of leading holes. An
+/// interior hole (one preceded by any non-hole slot) still breaks onto its own
+/// line.
+pub(crate) fn leading_empty_run(slots: &[ArgSlot]) -> usize {
+    slots.iter().take_while(|s| s.is_empty_hole()).count()
+}
+
 pub(crate) fn build_arg_group(
     slots: &[ArgSlot],
     open: &str,
@@ -715,20 +713,25 @@ pub(crate) fn build_arg_group(
     first_non_empty: Option<usize>,
     no_non_empty: bool,
     force: bool,
-    hug_leading_hole: bool,
 ) -> Ir {
     let n = slots.len();
-    let start = usize::from(hug_leading_hole);
+    // Leading holes pack onto the open line: suppress the break before each one
+    // so their bare commas trail the opening bracket. In flat mode soft lines
+    // emit nothing anyway, so this only changes the broken layout. The whole
+    // list being empty is never reached forced, so the run never covers `n`.
+    let lead_run = leading_empty_run(slots);
 
     let mut body: Vec<Ir> = Vec::new();
-    for idx in start..n {
+    for idx in 0..n {
         let is_last = idx + 1 == n;
         // A trailing empty slot is dropped: the preceding arg keeps its comma
         // but there is no final blank line (`fn[a, , b, , ]`, `fn(x, {}, )`).
         if is_last && idx > 0 && slots[idx].is_empty_hole() {
             continue;
         }
-        body.push(Ir::soft_line());
+        if idx >= lead_run {
+            body.push(Ir::soft_line());
+        }
         body.push(slots[idx].content());
         if !is_last {
             let sep = flat_arg_sep(slots, idx, first_non_empty, no_non_empty);
@@ -738,11 +741,6 @@ pub(crate) fn build_arg_group(
 
     let inner = Ir::concat([
         Ir::text(open),
-        if hug_leading_hole {
-            Ir::text(",")
-        } else {
-            Ir::nil()
-        },
         Ir::indent(Ir::concat(body)),
         Ir::soft_line(),
         Ir::text(close),

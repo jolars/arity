@@ -531,18 +531,8 @@ fn build_call_args_ir(slots: &[ArgSlot], force_named_functions: bool) -> Ir {
         return build_arg_hug(slots, "(", ")", first_non_empty, no_non_empty);
     }
 
-    let leading_hole = slots[0].is_empty_hole();
     let force = force_named_functions || should_force_leading_hole_expand(slots, first_non_empty);
-    let hug_leading_hole = force && leading_hole && !force_named_functions;
-    build_arg_group(
-        slots,
-        "(",
-        ")",
-        first_non_empty,
-        no_non_empty,
-        force,
-        hug_leading_hole,
-    )
+    build_arg_group(slots, "(", ")", first_non_empty, no_non_empty, force)
 }
 
 // ===================== Native IR call comment relocation =====================
@@ -583,12 +573,19 @@ fn ir_call_args_with_comments(
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
     let items = collect_call_comment_items(arg_list, indent, ctx)?;
-    let lines = layout_call_comment_items(&items);
+    // A leading run of bare holes packs onto the open-paren line (`fn(,,`)
+    // rather than each comma taking its own line; only an interior hole (one
+    // preceded by a real arg or comment) breaks. Mirrors `leading_empty_run`
+    // in the comment-free path.
+    let (lead_commas, rest) = split_leading_holes(&items);
+    let lead = Ir::text(",".repeat(lead_commas));
+    let lines = layout_call_comment_items(rest);
     if lines.is_empty() {
-        return Ok(Ir::text("()"));
+        return Ok(Ir::concat([Ir::text("("), lead, Ir::text(")")]));
     }
     Ok(Ir::concat([
         Ir::text("("),
+        lead,
         Ir::indent(Ir::concat([
             Ir::hard_line(),
             Ir::join(Ir::hard_line(), lines),
@@ -596,6 +593,22 @@ fn ir_call_args_with_comments(
         Ir::hard_line(),
         Ir::text(")"),
     ]))
+}
+
+/// Peels the leading run of bare empty holes (each an `Arg(empty)` immediately
+/// followed by a `Comma`) off the front of the item stream. Returns the number
+/// of commas peeled (to pack after the open paren) and the remaining items. An
+/// interior hole, or one carrying a comment, is left in place to break normally.
+fn split_leading_holes(items: &[IrCallItem]) -> (usize, &[IrCallItem]) {
+    let mut commas = 0usize;
+    let mut rest = items;
+    while let [IrCallItem::Arg(arg), IrCallItem::Comma { .. }, ..] = rest
+        && arg.is_empty
+    {
+        commas += 1;
+        rest = &rest[2..];
+    }
+    (commas, rest)
 }
 
 fn collect_call_comment_items(

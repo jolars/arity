@@ -4,47 +4,37 @@ fn(
   ,
 )
 
-fn(
-  ,
+fn(,
   # comment
 )
-fn(
-  ,
+fn(,
   # comment
 )
-fn(
-  ,
+fn(,
   # comment
 )
-fn(
-  ,
+fn(,
   # comment
 )
 
-fn(
-  ,
+fn(,
   # comment
   ,
 )
-fn(
-  ,
+fn(,
   # comment
   ,
 )
-fn(
-  ,
+fn(,
   # comment
   ,
 )
-fn(
-  ,
+fn(,
   # comment
   ,
 )
 
-fn(
-  ,
-  ,
+fn(,,
   # comment1
   # comment2
   ,
@@ -73,8 +63,7 @@ fn(
 )
 
 # Special test - ensure this leads `b` rather than trails `a`
-fn(
-  ,
+fn(,
   a,
   ,
   # comment
@@ -98,17 +87,14 @@ fn(
   ,
   b
 )
-fn(
-  ,
+fn(,
   # comment
   ,
   x
 )
 
 # Comment leads `{` but doesn't move inside it
-fn(
-  ,
-  ,
+fn(,,
   # comment
   {
     1 + 1

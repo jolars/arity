@@ -477,12 +477,21 @@ work, not a quality gate (Tenet 1 still rules). Fixing the holes item alone
 clears \~6 fixtures and is the biggest compat jump. Each fix lands its own
 failing fixture first (TDD), and must hold idempotence + losslessness.
 
-- [ ] **Empty argument holes explode vertically.** Ravel prints `fn(,,)` /
-      `dt[,]` as one hole per line (`fn(\n  ,\n  ,\n)`); air keeps holes inline
-      (`fn(,,`). Adopt air's inline form. Fixtures: `call_leading_holes`,
+- [x] **Empty argument holes explode vertically.** Ravel printed `fn(,,)` /
+      `dt[,]` as one hole per line (`fn(\n  ,\n  ,\n)`); air keeps the leading
+      run of holes inline (`fn(,,`). Generalized the single-hole hug into a
+      "leading hole run" rule on both arg renderers: `build_arg_group`
+      (subset + comment-free calls) now suppresses the break before each slot
+      in the leading run so their bare commas pack onto the open bracket, which
+      let the old `hug_leading_hole` special case go; the comment-aware call
+      path (`ir_call_args_with_comments`) peels the leading `[hole, comma]` run
+      via `split_leading_holes` and packs those commas after `(`. Interior holes
+      still break onto their own line (matches air). Byte-identical to air on
+      all six leading-hole fixtures; cleared 6 from the gauge (file-compat
+      79.7% → 87.3%). Fixtures: `call_leading_holes`,
       `call_leading_holes_hugging`, `call_comments_after_holes`,
       `call_comments_inside_holes`, `subset_comments_after_holes`,
-      `call_empty_lines_between_args`, and part of `air_call`.
+      `call_empty_lines_between_args`, `air_call`, `air_subset2`.
 - [ ] **`{{ }}` embracing is expanded.** Ravel expands the rlang embracing
       operator into nested multi-line braces; air keeps `{{ x }}` inline. Keep
       it inline. Fixture: part of `call_trailing_inline_function`.

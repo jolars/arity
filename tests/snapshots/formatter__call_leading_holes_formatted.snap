@@ -1,6 +1,5 @@
 ---
 source: tests/formatter.rs
-assertion_line: 250
 expression: formatted
 ---
 # Leading holes
@@ -18,8 +17,7 @@ fn(
   x = 1
 )
 
-fn(
-  ,
+fn(,
   # comment
   ,
   x = 1

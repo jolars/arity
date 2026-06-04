@@ -1,17 +1,12 @@
 ---
 source: tests/formatter.rs
-assertion_line: 252
 expression: formatted
 ---
-fn(
-  ,
-  ,
+fn(,,
   # comment
   x
 )
-fn(
-  ,
-  ,
+fn(,,
   # comment1
   # comment2
   x

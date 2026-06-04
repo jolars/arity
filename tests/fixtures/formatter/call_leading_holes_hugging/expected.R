@@ -1,6 +1,4 @@
-fn(
-  ,
-  ,
+fn(,,
   paste0(
     "This is a section",
     and,
