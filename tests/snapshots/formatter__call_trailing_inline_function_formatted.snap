@@ -14,16 +14,11 @@ map(
   function(x) {}
 )
 
-map(xs, function(x) {
-  {
-    x
-  }
-})
-map(xs_that_is_long_to_just_barely_pass_the_line_lengthhhhh, function(x) {
-  {
-    x
-  }
-})
+map(xs, function(x) {{ x }})
+map(
+  xs_that_is_long_to_just_barely_pass_the_line_lengthhhhh,
+  function(x) {{ x }}
+)
 
 map(xs, function(x) x)
 

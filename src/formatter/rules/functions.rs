@@ -1193,12 +1193,30 @@ pub(crate) fn ir_function_expr(
     {
         let block_ir =
             ir_block_expr_with_prefixed_comments(block, indent, ctx, &body_leading_comments)?;
+        // A curly-curly `{{ x }}` body stays inline when the whole definition
+        // fits flat (`function(x) {{ x }}`), otherwise it expands to nested
+        // blocks like any other. This only applies when the function is itself a
+        // call argument — the embrace is recognised in call-argument position
+        // only (a bare `{{ x }}` body, an assignment RHS, etc. expand as ordinary
+        // nested blocks), matching air and ravel's direct `{{ x }}` arg handling.
+        // The flat curly-curly is the bare form, the nested-block `block_ir` the
+        // braced fallback.
+        let in_call_arg = node.parent().is_some_and(|p| p.kind() == SyntaxKind::ARG);
+        let curly_inline = if in_call_arg && !param_has_comment && body_leading_comments.is_empty()
+        {
+            ir_curly_curly(&body_core, indent, ctx)?
+        } else {
+            None
+        };
+        if let Some(curly) = curly_inline {
+            function_body_choice(head_ir, params_ir, curly, block_ir)
+        }
         // A flattenable block (`function(p) { stmt }` → `function(p) stmt`) only
         // applies with no comments forcing the layout open *and* when the
         // single statement renders flat — a multi-line inner statement (a
         // nested block, an `if` with braced arms) keeps the outer braces, so
         // the user sees the structure they wrote.
-        if !param_has_comment
+        else if !param_has_comment
             && body_leading_comments.is_empty()
             && let Some(stmt_ir) = try_flatten_function_block(block, indent, ctx)?
             && !stmt_ir.contains_forced_break()

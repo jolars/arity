@@ -347,16 +347,11 @@ map(
 
 # Best fitting is not used, the empty `{}` would (typically) never be expanded,
 # so we don't require best fitting
-map(xs, function(x) {
-  {
-    x
-  }
-})
-map(xs_that_is_long_to_just_barely_pass_the_line_lengthhhhh, function(x) {
-  {
-    x
-  }
-})
+map(xs, function(x) {{ x }})
+map(
+  xs_that_is_long_to_just_barely_pass_the_line_lengthhhhh,
+  function(x) {{ x }}
+)
 
 # Best fitting is used to choose the most flat variant, and this stays
 # as is

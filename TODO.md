@@ -18,9 +18,13 @@ work, not a quality gate (Tenet 1 still rules). Fixing the holes item alone
 clears \~6 fixtures and is the biggest compat jump. Each fix lands its own
 failing fixture first (TDD), and must hold idempotence + losslessness.
 
-- [ ] **`{{ }}` embracing is expanded.** Ravel expands the rlang embracing
-      operator into nested multi-line braces; air keeps `{{ x }}` inline. Keep
-      it inline. Fixture: part of `call_trailing_inline_function`.
+- [x] **`{{ }}` embracing is expanded.** Ravel expanded the rlang embracing
+      operator in a function body (`function(x) {{ x }}`) into nested multi-line
+      braces; air keeps `{{ x }}` inline when the function is a call argument.
+      Now kept inline in call-argument position (matching ravel's existing direct
+      `{{ x }}` arg rule and air); standalone / assignment-RHS bodies still
+      expand, as air does. Fixtures: `call_trailing_inline_function`, `air_call`,
+      `function_body_curly_curly`.
 - [ ] **Control-flow bracing is left flat.** Ravel keeps
       `if (a) 1 else if (b) 2` and bare control-flow function bodies
       (`function(p) if (cond) {...}`) flat; air force-braces consequences /
