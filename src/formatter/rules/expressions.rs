@@ -395,6 +395,10 @@ pub(crate) enum ArgSlot {
         /// The argument's significant expression node, when it is a node (used
         /// to detect a trailing block to hug); `None` for a bare token.
         expr_node: Option<SyntaxNode>,
+        /// A value-less named argument (`name =`): its rendered IR ends in `=`,
+        /// so a following comma or the closing bracket keeps a separating space
+        /// (`fn(NULL = )`, `fn(NULL = , )`), matching air's hole spacing.
+        ends_with_eq: bool,
     },
 }
 
@@ -419,6 +423,18 @@ impl ArgSlot {
             ArgSlot::Comment(text) => Ir::verbatim_forced(text.clone()),
             ArgSlot::Expr { ir, .. } => ir.clone(),
         }
+    }
+
+    /// Whether this slot is a value-less named argument (`name =`); see
+    /// [`ArgSlot::Expr`]'s `ends_with_eq`.
+    pub(crate) fn ends_with_eq(&self) -> bool {
+        matches!(
+            self,
+            ArgSlot::Expr {
+                ends_with_eq: true,
+                ..
+            }
+        )
     }
 }
 
@@ -511,6 +527,9 @@ fn collect_subset_ir_slots(
                 ArgSlot::Expr {
                     ir,
                     expr_node: node,
+                    // Subset named args are `ASSIGNMENT_EXPR` nodes, never the
+                    // raw value-less `name =` token shape this flag tracks.
+                    ends_with_eq: false,
                 }
             }
             None if lead.is_empty() => ArgSlot::Empty,
@@ -734,15 +753,29 @@ pub(crate) fn build_arg_group(
         }
         body.push(slots[idx].content());
         if !is_last {
-            let sep = flat_arg_sep(slots, idx, first_non_empty, no_non_empty);
-            body.push(Ir::if_break(Ir::text(sep), Ir::text(",")));
+            // A value-less named arg (`name =`) keeps a space before the comma
+            // (` , ` flat, ` ,` broken) so the empty value position stays visible.
+            if slots[idx].ends_with_eq() {
+                body.push(Ir::if_break(Ir::text(" , "), Ir::text(" ,")));
+            } else {
+                let sep = flat_arg_sep(slots, idx, first_non_empty, no_non_empty);
+                body.push(Ir::if_break(Ir::text(sep), Ir::text(",")));
+            }
         }
     }
 
+    // When the final argument is a value-less named arg, the closing bracket
+    // keeps a separating space on a single line (`fn(NULL = )`); broken, the
+    // arg sits alone on its line with no trailing space.
+    let close_space = slots[n - 1].ends_with_eq();
     let inner = Ir::concat([
         Ir::text(open),
         Ir::indent(Ir::concat(body)),
-        Ir::soft_line(),
+        if close_space {
+            Ir::concat([Ir::if_break(Ir::text(" "), Ir::nil()), Ir::soft_line()])
+        } else {
+            Ir::soft_line()
+        },
         Ir::text(close),
     ]);
     if force {
@@ -805,10 +838,14 @@ fn build_arg_hug_inner(
     let mut leading: Vec<Ir> = vec![Ir::soft_line()];
     for idx in 0..last {
         leading.push(slots[idx].content());
-        leading.push(Ir::if_break(
-            Ir::text(flat_arg_sep(slots, idx, first_non_empty, no_non_empty)),
-            Ir::text(","),
-        ));
+        if slots[idx].ends_with_eq() {
+            leading.push(Ir::if_break(Ir::text(" , "), Ir::text(" ,")));
+        } else {
+            leading.push(Ir::if_break(
+                Ir::text(flat_arg_sep(slots, idx, first_non_empty, no_non_empty)),
+                Ir::text(","),
+            ));
+        }
         if idx + 1 < last {
             leading.push(Ir::soft_line());
         }

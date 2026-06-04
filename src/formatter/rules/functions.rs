@@ -448,10 +448,12 @@ fn ir_call_argument(
                 ctx,
             )?)
         };
+        let ends_with_eq = value_significant.is_empty();
         let ir = build_named_arg_ir(name_ir, name_empty, value_ir);
         return Ok(ArgSlot::Expr {
             ir,
             expr_node: value_node,
+            ends_with_eq,
         });
     }
 
@@ -461,10 +463,15 @@ fn ir_call_argument(
         return Ok(ArgSlot::Expr {
             ir: curly,
             expr_node,
+            ends_with_eq: false,
         });
     }
     let ir = ir_expr_segment(elements, "call argument", indent, ctx)?;
-    Ok(ArgSlot::Expr { ir, expr_node })
+    Ok(ArgSlot::Expr {
+        ir,
+        expr_node,
+        ends_with_eq: false,
+    })
 }
 
 fn single_node(significant: &[SyntaxElement<RLanguage>]) -> Option<SyntaxNode> {
@@ -490,8 +497,9 @@ fn ir_arg_side(
     Ok((ir_expr_segment(elements, context, indent, ctx)?, false))
 }
 
-/// `name = value`, with the legacy spacing for the value-less variants
-/// (`name =`, `= value`, `=`).
+/// `name = value`, with the spacing for the value-less variants
+/// (`name = `, `= value`, `=`). A value-less named arg keeps the trailing
+/// space after `=` (`fn(NULL = )`), matching air.
 fn build_named_arg_ir(name_ir: Ir, name_empty: bool, value_ir: Option<Ir>) -> Ir {
     match (name_empty, value_ir) {
         (false, Some(value)) => Ir::concat([name_ir, Ir::text(" = "), value]),
@@ -522,7 +530,7 @@ fn build_call_args_ir(slots: &[ArgSlot], force_named_functions: bool) -> Ir {
         && matches!(&slots[last], ArgSlot::Expr { expr_node: Some(node), .. }
             if expr_is_positional_function(node));
     let trailing_block = leading_ok
-        && matches!(&slots[last], ArgSlot::Expr { ir, expr_node: Some(node) }
+        && matches!(&slots[last], ArgSlot::Expr { ir, expr_node: Some(node), .. }
             if expr_ends_in_block(node) && ir.contains_forced_break());
     if trailing_function {
         return build_arg_hug_conditional(slots, "(", ")", first_non_empty, no_non_empty);

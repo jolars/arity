@@ -38,9 +38,10 @@ failing fixture first (TDD), and must hold idempotence + losslessness.
       `function_bare_control_flow_body`, plus `if_statement_position_simple`,
       `if_value_position_stays_flat`, `if_value_position_nested_braces`,
       `if_block_position_boundary`.
-- [ ] **`fn(NULL = )` spacing.** Named arg with a missing value: ravel emits
-      `fn(NULL =)`, air keeps the trailing space `fn(NULL = )`. Trivial; match
-      air. Fixture: part of `air_call`.
+- [x] **`fn(NULL = )` spacing.** Named arg with a missing value: ravel emitted
+      `fn(NULL =)`, air keeps the trailing space `fn(NULL = )`. Matched air via an
+      `ArgSlot::ends_with_eq` flag that keeps a space before a same-line comma or
+      closing bracket. Fixture: part of `air_call`.
 - [ ] **Pipe / nested-call indent depth.** In a pipeline, ravel indents a broken
       RHS call's args one level; air uses an extra level. Investigate whether
       this is a bug in ravel's indent model or a deliberate flatter style before
