@@ -35,9 +35,19 @@ impl Rule for UndefinedSymbol {
         if loaded.iter().any(|p| !ctx.symbols.package_indexed(&p.name)) {
             return out;
         }
+        // Conservative gate: an unresolved `source()` (dynamic argument, or a
+        // target outside the analyzed set) could define any of the names below.
+        if ctx.project.is_some_and(|p| p.has_dynamic_source) {
+            return out;
+        }
         for ident in ctx.model.idents() {
             // Skip if it resolves to a local binding.
             if ctx.model.resolve_local(ident).is_some() {
+                continue;
+            }
+            // Skip if a sibling file in the same package or source-closure binds
+            // it at top level.
+            if ctx.project.is_some_and(|p| p.resolves(&ident.name)) {
                 continue;
             }
             // Skip if the symbol provider can place it.

@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use crate::config::LintConfig;
 use crate::file_discovery::{FileDiscoveryError, collect_r_files};
 use crate::incremental::{IncrementalDatabase, SourceFile};
+use crate::project::{
+    FileFacts, FileScope, ProjectScope, collect_source_edges, file_exports, file_free_reads,
+    package_root,
+};
 use crate::semantic::SymbolProvider;
 
 use super::diagnostic::Diagnostic;
@@ -118,32 +122,47 @@ pub fn check_paths_with_provider(
 
     let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
-    let mut reports = Vec::new();
-    let mut total_findings = 0usize;
 
-    for path in files {
-        let content = fs::read_to_string(&path).map_err(|err| LintError::ReadError {
+    // Pass 1: track every file and collect cross-file facts for the cleanly
+    // parsed ones. Files with parse diagnostics are recorded for reporting but
+    // contribute nothing to the project scope.
+    let mut facts: Vec<FileFacts> = Vec::new();
+    let mut parse_errors: HashMap<PathBuf, usize> = HashMap::new();
+    for path in &files {
+        let content = fs::read_to_string(path).map_err(|err| LintError::ReadError {
             path: path.clone(),
             source: err.to_string(),
         })?;
-
-        let file = match tracked.get(&path).copied() {
-            Some(file) => {
-                db.set_file_text(file, content.clone());
-                file
-            }
-            None => {
-                let file = db.add_file(content.clone());
-                tracked.insert(path.clone(), file);
-                file
-            }
-        };
+        let file = db.upsert_file(path, content);
+        tracked.insert(path.clone(), file);
 
         let parse_diag_count = db.parse_diagnostics(file).len();
-        let (status, diagnostics) = if parse_diag_count == 0 {
-            // The cached parse tree and semantic model are reused across runs;
-            // an unchanged file recomputes neither.
-            let kept = lint_parsed_file(&db, file, &path, &rules, provider);
+        if parse_diag_count == 0 {
+            let model = db.semantic_model(file);
+            facts.push(FileFacts {
+                path: path.clone(),
+                exports: file_exports(model),
+                free_reads: file_free_reads(model),
+                source_edges: collect_source_edges(&db.parsed_tree(file), path.parent()),
+                package_root: package_root(path),
+            });
+        } else {
+            parse_errors.insert(path.clone(), parse_diag_count);
+        }
+    }
+
+    let scope = ProjectScope::build(&facts);
+
+    // Pass 2: lint each cleanly parsed file with its cross-file scope.
+    let mut reports = Vec::new();
+    let mut total_findings = 0usize;
+    for path in files {
+        let file = tracked[&path];
+        let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
+            (LintStatus::ParseDiagnostics { count }, Vec::new())
+        } else {
+            let file_scope = scope.for_file(&path);
+            let kept = lint_parsed_file(&db, file, &path, &rules, provider, Some(&file_scope));
             total_findings += kept.len();
             let status = if kept.is_empty() {
                 LintStatus::Clean
@@ -151,15 +170,7 @@ pub fn check_paths_with_provider(
                 LintStatus::Findings { count: kept.len() }
             };
             (status, kept)
-        } else {
-            (
-                LintStatus::ParseDiagnostics {
-                    count: parse_diag_count,
-                },
-                Vec::new(),
-            )
         };
-
         reports.push(LintFileReport {
             path,
             status,
@@ -183,10 +194,11 @@ fn lint_parsed_file(
     path: &Path,
     rules: &ResolvedRules,
     provider: &dyn SymbolProvider,
+    project: Option<&FileScope<'_>>,
 ) -> Vec<Diagnostic> {
     let root_node = db.parsed_tree(file);
     let model = db.semantic_model(file);
-    let mut diagnostics = run_rules(&rules.rules, path, &root_node, model, provider);
+    let mut diagnostics = run_rules(&rules.rules, path, &root_node, model, provider, project);
     let suppress = SuppressionMap::build(&root_node);
     diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));
     for d in &mut diagnostics {
@@ -212,7 +224,7 @@ pub fn check_tracked_file(
     if !db.parse_diagnostics(file).is_empty() {
         return Ok(Vec::new());
     }
-    Ok(lint_parsed_file(db, file, path, &rules, provider))
+    Ok(lint_parsed_file(db, file, path, &rules, provider, None))
 }
 
 /// Convenience: lint a single in-memory document by path + text (used by quick

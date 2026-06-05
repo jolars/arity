@@ -6,7 +6,9 @@
 //! feeds cross-file name resolution.
 
 pub mod exports;
+pub mod scope;
 pub mod source;
 
-pub use exports::file_exports;
+pub use exports::{file_exports, file_free_reads};
+pub use scope::{FileFacts, FileScope, ProjectScope, package_root};
 pub use source::{SourceEdge, SourceTarget, collect_source_edges};

@@ -9,6 +9,7 @@
 
 use std::path::Path;
 
+use crate::project::FileScope;
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{SemanticModel, SymbolProvider};
 use crate::syntax::SyntaxNode;
@@ -54,6 +55,9 @@ pub struct RuleContext<'a> {
     pub root: &'a SyntaxNode,
     pub model: &'a SemanticModel,
     pub symbols: &'a dyn SymbolProvider,
+    /// Cross-file visibility for this file, when linting a multi-file project.
+    /// `None` for single-file runs (the LSP per-document path, one-shot checks).
+    pub project: Option<&'a FileScope<'a>>,
 }
 
 /// Configured set of rules and severities for a single linting run.
@@ -105,12 +109,14 @@ pub fn run_rules(
     root: &SyntaxNode,
     model: &SemanticModel,
     symbols: &dyn SymbolProvider,
+    project: Option<&FileScope<'_>>,
 ) -> Vec<Diagnostic> {
     let ctx = RuleContext {
         path,
         root,
         model,
         symbols,
+        project,
     };
     let mut all = Vec::new();
     for rule in rules {

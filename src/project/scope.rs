@@ -1,0 +1,378 @@
+//! Cross-file visibility: which names a file can see from the rest of its
+//! project, and which of its own top-level bindings are used elsewhere.
+//!
+//! Two models, unified here:
+//! - **Package** — files under a common package root (a directory with
+//!   `DESCRIPTION` + `R/`) share one namespace: R sources them all together, so
+//!   every file sees every other file's top-level bindings.
+//! - **Scripts** — files relate through explicit `source()` edges. A file sees
+//!   the top-level bindings of the files it (transitively) sources.
+//!
+//! Resolution runs in both directions:
+//! - [`FileScope::resolves`] — a free read here may bind in a file we can see
+//!   (so it isn't `undefined-symbol`).
+//! - [`FileScope::used_elsewhere`] — a top-level binding here may be read by a
+//!   file that can see us (so it isn't `unused-binding`).
+//!
+//! When a `source()` target can't be resolved — a dynamic argument, or a literal
+//! path to a file outside the analyzed set — visibility is *incomplete*, so
+//! [`FileScope::has_dynamic_source`] is set and callers must stay conservative.
+
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use smol_str::SmolStr;
+
+use crate::project::source::{SourceEdge, SourceTarget};
+
+static EMPTY: BTreeSet<SmolStr> = BTreeSet::new();
+
+/// One file's contribution to cross-file resolution.
+#[derive(Debug, Clone)]
+pub struct FileFacts {
+    pub path: PathBuf,
+    /// Top-level binding names this file defines
+    /// (see [`crate::project::file_exports`]).
+    pub exports: BTreeSet<SmolStr>,
+    /// Names this file reads but does not bind locally
+    /// (see [`crate::project::exports::file_free_reads`]).
+    pub free_reads: BTreeSet<SmolStr>,
+    /// Top-level `source()` edges this file declares.
+    pub source_edges: Vec<SourceEdge>,
+    /// The package root this file belongs to, if any. Files sharing a root
+    /// share one namespace.
+    pub package_root: Option<PathBuf>,
+}
+
+/// Cross-file resolution resolved over a set of files.
+#[derive(Debug, Default)]
+pub struct ProjectScope {
+    /// Per file: top-level names reachable from the files it can see.
+    visible: HashMap<PathBuf, BTreeSet<SmolStr>>,
+    /// Per file: names read by some file that can see it.
+    used_by_others: HashMap<PathBuf, BTreeSet<SmolStr>>,
+    /// Files whose cross-file visibility is incomplete (unresolved `source()`).
+    dynamic: HashSet<PathBuf>,
+}
+
+/// One file's view of its project.
+pub struct FileScope<'a> {
+    visible: &'a BTreeSet<SmolStr>,
+    used_by_others: &'a BTreeSet<SmolStr>,
+    /// A `source()` couldn't be fully resolved, so cross-file visibility is
+    /// incomplete and callers must not flag otherwise-unresolved names.
+    pub has_dynamic_source: bool,
+}
+
+impl FileScope<'_> {
+    /// True when `name` is bound at top level in a file visible from here.
+    pub fn resolves(&self, name: &str) -> bool {
+        self.visible.contains(name)
+    }
+
+    /// True when `name` (a top-level binding here) is read by a file that can
+    /// see this one — so it isn't unused even if unread locally.
+    pub fn used_elsewhere(&self, name: &str) -> bool {
+        self.used_by_others.contains(name)
+    }
+}
+
+impl ProjectScope {
+    /// Resolve cross-file relationships for `files`.
+    pub fn build(files: &[FileFacts]) -> Self {
+        let by_path: HashMap<&Path, &FileFacts> =
+            files.iter().map(|f| (f.path.as_path(), f)).collect();
+
+        // Package members keyed by root, so package siblings see each other.
+        let mut package_members: HashMap<&Path, Vec<&Path>> = HashMap::new();
+        for f in files {
+            if let Some(root) = &f.package_root {
+                package_members
+                    .entry(root.as_path())
+                    .or_default()
+                    .push(f.path.as_path());
+            }
+        }
+
+        // For each file, the set of *other* files it can see.
+        let mut sees: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+        let mut dynamic: HashSet<PathBuf> = HashSet::new();
+        for f in files {
+            let mut seen: HashSet<PathBuf> = HashSet::new();
+            if let Some(root) = &f.package_root {
+                for member in &package_members[root.as_path()] {
+                    if *member != f.path {
+                        seen.insert(member.to_path_buf());
+                    }
+                }
+            }
+
+            let mut unresolved = false;
+            let mut visited: HashSet<&Path> = HashSet::from([f.path.as_path()]);
+            let mut queue: Vec<&FileFacts> = vec![f];
+            while let Some(cur) = queue.pop() {
+                for edge in &cur.source_edges {
+                    match source_dependency(edge) {
+                        Dependency::Skip => {}
+                        Dependency::Unresolved => unresolved = true,
+                        Dependency::Path(p) => match by_path.get(p) {
+                            Some(target) if visited.insert(target.path.as_path()) => {
+                                seen.insert(target.path.clone());
+                                queue.push(target);
+                            }
+                            Some(_) => {}
+                            // A resolved path to a file we didn't analyze is just
+                            // as opaque as a dynamic source.
+                            None => unresolved = true,
+                        },
+                    }
+                }
+            }
+
+            if unresolved {
+                dynamic.insert(f.path.clone());
+            }
+            sees.insert(f.path.clone(), seen);
+        }
+
+        // Derive the two directions from `sees`.
+        let mut visible: HashMap<PathBuf, BTreeSet<SmolStr>> = HashMap::new();
+        let mut used_by_others: HashMap<PathBuf, BTreeSet<SmolStr>> = files
+            .iter()
+            .map(|f| (f.path.clone(), BTreeSet::new()))
+            .collect();
+        for f in files {
+            let mut defs = BTreeSet::new();
+            for seen in &sees[&f.path] {
+                if let Some(target) = by_path.get(seen.as_path()) {
+                    defs.extend(target.exports.iter().cloned());
+                }
+            }
+            // `visible` is strictly cross-file; own bindings resolve locally.
+            for name in &f.exports {
+                defs.remove(name);
+            }
+            visible.insert(f.path.clone(), defs);
+
+            // Every file `f` sees contributes `f`'s free reads to that file's
+            // "used by others" set.
+            for seen in &sees[&f.path] {
+                if let Some(used) = used_by_others.get_mut(seen) {
+                    used.extend(f.free_reads.iter().cloned());
+                }
+            }
+        }
+
+        Self {
+            visible,
+            used_by_others,
+            dynamic,
+        }
+    }
+
+    /// One file's view of the project. Files not in the analyzed set get an
+    /// empty, non-dynamic scope.
+    pub fn for_file(&self, path: &Path) -> FileScope<'_> {
+        FileScope {
+            visible: self.visible.get(path).unwrap_or(&EMPTY),
+            used_by_others: self.used_by_others.get(path).unwrap_or(&EMPTY),
+            has_dynamic_source: self.dynamic.contains(path),
+        }
+    }
+}
+
+enum Dependency<'a> {
+    /// Contributes the target file's top-level bindings to global scope.
+    Path(&'a Path),
+    /// Unresolvable (dynamic argument); visibility is incomplete.
+    Unresolved,
+    /// `local = TRUE`: loads into the calling env, never global scope.
+    Skip,
+}
+
+fn source_dependency(edge: &SourceEdge) -> Dependency<'_> {
+    match &edge.target {
+        SourceTarget::Dynamic => Dependency::Unresolved,
+        SourceTarget::Path(_) if edge.local => Dependency::Skip,
+        SourceTarget::Path(p) => Dependency::Path(p.as_path()),
+    }
+}
+
+/// Walk up from `path` to find an enclosing R package root: a directory with
+/// both a `DESCRIPTION` file and an `R/` subdirectory. Touches the filesystem.
+pub fn package_root(path: &Path) -> Option<PathBuf> {
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if d.join("DESCRIPTION").is_file() && d.join("R").is_dir() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rowan::{TextRange, TextSize};
+
+    fn set(names: &[&str]) -> BTreeSet<SmolStr> {
+        names.iter().map(|n| SmolStr::new(*n)).collect()
+    }
+
+    fn source_path(target: &str, local: bool) -> SourceEdge {
+        SourceEdge {
+            target: SourceTarget::Path(PathBuf::from(target)),
+            local,
+            range: TextRange::new(TextSize::new(0), TextSize::new(0)),
+        }
+    }
+
+    fn dynamic_edge() -> SourceEdge {
+        SourceEdge {
+            target: SourceTarget::Dynamic,
+            local: false,
+            range: TextRange::new(TextSize::new(0), TextSize::new(0)),
+        }
+    }
+
+    /// Build `FileFacts` with `path`, exports, free reads, source edges, root.
+    fn facts(
+        path: &str,
+        exp: &[&str],
+        reads: &[&str],
+        edges: Vec<SourceEdge>,
+        root: Option<&str>,
+    ) -> FileFacts {
+        FileFacts {
+            path: PathBuf::from(path),
+            exports: set(exp),
+            free_reads: set(reads),
+            source_edges: edges,
+            package_root: root.map(PathBuf::from),
+        }
+    }
+
+    fn names(set: &BTreeSet<SmolStr>) -> Vec<String> {
+        let mut v: Vec<String> = set.iter().map(|s| s.to_string()).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn package_files_share_one_namespace() {
+        let files = [
+            facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg")),
+            facts("/pkg/R/b.R", &["bar"], &["foo"], vec![], Some("/pkg")),
+        ];
+        let scope = ProjectScope::build(&files);
+        // b reads foo, which a defines: resolves cross-file.
+        assert!(scope.for_file(Path::new("/pkg/R/b.R")).resolves("foo"));
+        // foo is used by b, so a's foo isn't unused.
+        assert!(
+            scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .used_elsewhere("foo")
+        );
+        // bar is defined by b but read by nobody.
+        assert!(
+            !scope
+                .for_file(Path::new("/pkg/R/b.R"))
+                .used_elsewhere("bar")
+        );
+    }
+
+    #[test]
+    fn source_closure_is_directional() {
+        // a.R sources b.R: a sees bar; b does not see foo.
+        let files = [
+            facts(
+                "/s/a.R",
+                &["foo"],
+                &["bar"],
+                vec![source_path("/s/b.R", false)],
+                None,
+            ),
+            facts("/s/b.R", &["bar"], &[], vec![], None),
+        ];
+        let scope = ProjectScope::build(&files);
+        assert!(scope.for_file(Path::new("/s/a.R")).resolves("bar"));
+        assert!(!scope.for_file(Path::new("/s/b.R")).resolves("foo"));
+        // a reads bar, and a sees b, so b's bar is used elsewhere.
+        assert!(scope.for_file(Path::new("/s/b.R")).used_elsewhere("bar"));
+        assert!(!scope.for_file(Path::new("/s/a.R")).has_dynamic_source);
+    }
+
+    #[test]
+    fn source_closure_is_transitive_and_cycle_safe() {
+        // a -> b -> c, plus c -> a (cycle). a sees bar + baz.
+        let files = [
+            facts(
+                "/s/a.R",
+                &["foo"],
+                &[],
+                vec![source_path("/s/b.R", false)],
+                None,
+            ),
+            facts(
+                "/s/b.R",
+                &["bar"],
+                &[],
+                vec![source_path("/s/c.R", false)],
+                None,
+            ),
+            facts(
+                "/s/c.R",
+                &["baz"],
+                &[],
+                vec![source_path("/s/a.R", false)],
+                None,
+            ),
+        ];
+        let scope = ProjectScope::build(&files);
+        assert_eq!(
+            names(scope.for_file(Path::new("/s/a.R")).visible),
+            vec!["bar", "baz"]
+        );
+    }
+
+    #[test]
+    fn dynamic_source_marks_scope_incomplete() {
+        let files = [facts("/s/a.R", &[], &[], vec![dynamic_edge()], None)];
+        let scope = ProjectScope::build(&files);
+        assert!(scope.for_file(Path::new("/s/a.R")).has_dynamic_source);
+    }
+
+    #[test]
+    fn source_to_unanalyzed_file_marks_scope_incomplete() {
+        let files = [facts(
+            "/s/a.R",
+            &[],
+            &[],
+            vec![source_path("/s/missing.R", false)],
+            None,
+        )];
+        let scope = ProjectScope::build(&files);
+        assert!(scope.for_file(Path::new("/s/a.R")).has_dynamic_source);
+    }
+
+    #[test]
+    fn local_source_neither_contributes_nor_marks_dynamic() {
+        let files = [
+            facts(
+                "/s/a.R",
+                &[],
+                &["bar"],
+                vec![source_path("/s/b.R", true)],
+                None,
+            ),
+            facts("/s/b.R", &["bar"], &[], vec![], None),
+        ];
+        let scope = ProjectScope::build(&files);
+        let a = scope.for_file(Path::new("/s/a.R"));
+        assert!(!a.resolves("bar"));
+        assert!(!a.has_dynamic_source);
+        // A local source doesn't make b's bar "used elsewhere".
+        assert!(!scope.for_file(Path::new("/s/b.R")).used_elsewhere("bar"));
+    }
+}

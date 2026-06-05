@@ -9,6 +9,7 @@ use rowan::TextRange;
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
 use crate::linter::rules::{Rule, RuleContext};
+use crate::semantic::ScopeKind;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 pub struct UnusedBinding;
@@ -26,6 +27,13 @@ impl Rule for UnusedBinding {
         let src = ctx.root.text().to_string();
         ctx.model
             .unused_local_bindings()
+            // A top-level binding read by a sibling file (same package or
+            // source-closure) is used cross-file, so it isn't unused.
+            .filter(|id| {
+                let b = ctx.model.binding(*id);
+                let top_level = ctx.model.scope(b.scope).kind == ScopeKind::File;
+                !(top_level && ctx.project.is_some_and(|p| p.used_elsewhere(&b.name)))
+            })
             .map(|id| {
                 let b = ctx.model.binding(id);
                 let fix = deletion_fix(ctx.root, &src, &b.name, b.def_range);

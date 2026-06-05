@@ -2,8 +2,20 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use ravel::config::LintConfig;
-use ravel::linter::{Applicability, LintStatus, apply_fixes, check_document, check_paths};
+use ravel::linter::{
+    Applicability, LintResult, LintStatus, apply_fixes, check_document, check_paths,
+};
 use tempfile::tempdir;
+
+/// Rule ids reported for the file named `file_name` in `result`.
+fn rules_for<'a>(result: &'a LintResult, file_name: &str) -> Vec<&'a str> {
+    result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some(file_name))
+        .map(|r| r.diagnostics.iter().map(|d| d.rule).collect())
+        .unwrap_or_default()
+}
 
 #[test]
 fn lint_reports_clean_status_for_parseable_files() {
@@ -43,6 +55,66 @@ fn lint_flags_unused_binding() {
         .map(|d| d.rule)
         .collect();
     assert!(diags.contains(&"unused-binding"));
+}
+
+#[test]
+fn package_resolves_bindings_across_files() {
+    // A package shares one namespace across R/*.R: `foo` defined in a.R both
+    // resolves from b.R (no undefined-symbol) and counts as used (no
+    // unused-binding in a.R).
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
+    std::fs::write(r_dir.join("b.R"), "foo()\n").unwrap();
+
+    let result =
+        check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed");
+
+    assert_eq!(result.total_findings, 0, "reports: {:?}", result.reports);
+    assert!(rules_for(&result, "a.R").is_empty());
+    assert!(rules_for(&result, "b.R").is_empty());
+}
+
+#[test]
+fn source_closure_resolves_bindings_across_scripts() {
+    // a.R sources helpers.R, so `greet` resolves there, and helpers.R's `greet`
+    // is used (not flagged unused).
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("a.R"), "source(\"helpers.R\")\ngreet()\n").unwrap();
+    std::fs::write(dir.path().join("helpers.R"), "greet <- function() \"hi\"\n").unwrap();
+
+    let result =
+        check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed");
+
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+    assert!(
+        !rules_for(&result, "helpers.R").contains(&"unused-binding"),
+        "helpers.R: {:?}",
+        rules_for(&result, "helpers.R")
+    );
+}
+
+#[test]
+fn dynamic_source_suppresses_undefined_symbol() {
+    // A `source()` we can't resolve statically could define anything, so we must
+    // not flag otherwise-unresolved names in that file.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("a.R");
+    std::fs::write(&path, "source(paste0(d, \".R\"))\nmystery()\n").unwrap();
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
 }
 
 #[test]

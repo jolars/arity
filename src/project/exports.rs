@@ -24,6 +24,19 @@ pub fn file_exports(model: &SemanticModel) -> BTreeSet<SmolStr> {
         .collect()
 }
 
+/// The names a file reads but does not bind locally — candidates for resolution
+/// against another file in the same package or `source()` closure. The mirror of
+/// [`file_exports`]: it drives cross-file *use* (so a binding read only in a
+/// sibling file isn't flagged unused).
+pub fn file_free_reads(model: &SemanticModel) -> BTreeSet<SmolStr> {
+    model
+        .idents()
+        .iter()
+        .filter(|ident| model.resolve_local(ident).is_none())
+        .map(|ident| ident.name.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +67,13 @@ mod tests {
     fn includes_top_level_super_assignment() {
         let e = exports_of("g <<- 1\n");
         assert_eq!(names(&e), vec!["g"]);
+    }
+
+    #[test]
+    fn free_reads_exclude_locally_resolved_names() {
+        let model = SemanticModel::build(&parse("x <- 1\nfoo(x, y)\n").cst);
+        let reads = file_free_reads(&model);
+        // `foo` and `y` are free; `x` resolves to the local binding.
+        assert_eq!(names(&reads), vec!["foo", "y"]);
     }
 }
