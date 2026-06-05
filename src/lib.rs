@@ -7,6 +7,7 @@ pub mod incremental;
 pub mod linter;
 pub mod lsp;
 pub mod parser;
+pub mod project;
 pub mod rindex;
 pub mod semantic;
 pub mod syntax;
