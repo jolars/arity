@@ -34,13 +34,13 @@ includes `R`.
    (whitespace, comments, etc.) so that `reconstruct(text)` is always `text`.
    The formatter can assume the CST is lossless and focus on formatting logic.
 5. **Autofixes never introduce formatting errors.** A lint fix is not a
-   formatter and need not fully format unformatted input, but it must never
-   make formatted code unformatted: `format` → `lint --fix` → `format --check`
-   must pass. This is a correctness property of each fix, enforced by an
-   automated test (`tests/lint.rs`), not by formatting at fix time. When a fix
-   would introduce a formatting error, fix it in the rule --- make the edit
-   format-clean by construction, or withhold the fix for that shape (the
-   finding is still reported). Don't run the formatter inside `--fix`.
+   formatter and need not fully format unformatted input, but it must never make
+   formatted code unformatted: `format` → `lint --fix` → `format --check` must
+   pass. This is a correctness property of each fix, enforced by an automated
+   test (`tests/lint.rs`), not by formatting at fix time. When a fix would
+   introduce a formatting error, fix it in the rule --- make the edit
+   format-clean by construction, or withhold the fix for that shape (the finding
+   is still reported). Don't run the formatter inside `--fix`.
 
 ## Air compatibility (soft target)
 
@@ -51,19 +51,19 @@ we measure how often air would leave ravel's output unchanged, and treat air's
 maturity as a free differential oracle for finding our own inconsistencies.
 
 - The gauge lives in `tests/air_compat.rs` (`#[ignore]`d, so it never runs in
-  `cargo test` and cannot fail CI). Run it with `task air-compat`; it regenerates
-  `AIR_COMPAT.md`.
+  `cargo test` and cannot fail CI). Run it with `task air-compat`; it
+  regenerates `AIR_COMPAT.md`.
 - It measures the *fixed point* `air(ravel(x)) == ravel(x)`, not a head-to-head
   diff --- this cancels out the persistent-line-break difference (which is the
   whole point of ravel) by construction, leaving only genuine rule divergences.
-- Divergences are triaged into two buckets. **Adopt** when air's output is simply
-  more idiomatic and ravel is being inconsistent (fix the rule). **Record** when
-  the divergence is a deliberate ravel choice --- add it to
+- Divergences are triaged into two buckets. **Adopt** when air's output is
+  simply more idiomatic and ravel is being inconsistent (fix the rule).
+  **Record** when the divergence is a deliberate ravel choice --- add it to
   `tests/air_compat_allowlist.toml` with a rationale.
-- Diverging from air is allowed, but should **raise tension**: it is a conscious,
-  documented decision (an allowlist entry), not a silent one. An unexplained
-  divergence in `AIR_COMPAT.md` is an open question, never an excuse to fail a
-  build.
+- Diverging from air is allowed, but should **raise tension**: it is a
+  conscious, documented decision (an allowlist entry), not a silent one. An
+  unexplained divergence in `AIR_COMPAT.md` is an open question, never an excuse
+  to fail a build.
 
 ## Commands
 
@@ -173,9 +173,8 @@ it pass. For a bug, always start by adding a failing test that reproduces it
 
 - `air/` --- a local checkout of posit-dev/air (tree-sitter-based R tooling)
   kept for reference/comparison. **Not** in the Cargo build and not exposed via
-  this
-  CLI. It has its own `air/CLAUDE.md` describing *that* project's conventions
-       (e.g. `just test`, `air.toml`) --- do not apply those to ravel.
+  this CLI. It has its own `air/CLAUDE.md` describing *that* project's
+  conventions (e.g. `just test`, `air.toml`) --- do not apply those to ravel.
 - `style/` --- vendored copy of the tidyverse R style guide (the formatter's
   target style).
 - `docs/` --- Quarto site (`task docs-preview`); CI formats/lints it as a
