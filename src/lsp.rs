@@ -29,6 +29,7 @@ use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 use crate::ast::{AstNode as _, BinaryExpr};
 use crate::config::{Config, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_with_style};
+use crate::incremental::IncrementalDatabase;
 use crate::linter::{Diagnostic, Severity};
 use crate::parser::parse;
 use crate::rindex::build::{BuildOptions, build_index};
@@ -55,6 +56,10 @@ pub async fn run() {
 struct Backend {
     client: Client,
     state: Arc<Mutex<State>>,
+    /// Long-lived salsa database. Editor buffers are pushed in on edit so the
+    /// lint hot path reuses cached parses and semantic models instead of
+    /// re-parsing from text every keystroke.
+    db: Arc<Mutex<IncrementalDatabase>>,
 }
 
 #[derive(Debug)]
@@ -101,6 +106,7 @@ impl Backend {
         Self {
             client,
             state: Arc::new(Mutex::new(State::default())),
+            db: Arc::new(Mutex::new(IncrementalDatabase::default())),
         }
     }
 
@@ -140,10 +146,11 @@ impl Backend {
     /// Lint `uri` after the debounce window and publish diagnostics.
     fn schedule_lint(&self, uri: Uri) {
         let state = Arc::clone(&self.state);
+        let db = Arc::clone(&self.db);
         let client = self.client.clone();
         tokio::spawn(async move {
             time::sleep(LINT_DEBOUNCE).await;
-            lint_and_publish(state, client, uri).await;
+            lint_and_publish(state, db, client, uri).await;
         });
     }
 }
@@ -166,7 +173,12 @@ fn resolve_doc_config(state: &Arc<Mutex<State>>, anchor: &Path) -> (LintConfig, 
 
 /// Lint a single document with the current index-backed provider and publish.
 /// Reused by the debounced `schedule_lint` and by background-build completion.
-async fn lint_and_publish(state: Arc<Mutex<State>>, client: Client, uri: Uri) {
+async fn lint_and_publish(
+    state: Arc<Mutex<State>>,
+    db: Arc<Mutex<IncrementalDatabase>>,
+    client: Client,
+    uri: Uri,
+) {
     let snapshot = {
         let s = state.lock().expect("state mutex poisoned");
         s.documents.get(&uri).cloned()
@@ -187,13 +199,15 @@ async fn lint_and_publish(state: Arc<Mutex<State>>, client: Client, uri: Uri) {
     // Make sure the index cache for this workspace is loaded, then lint against
     // it; finally, kick off a background harvest for any still-unknown packages.
     let provider = ensure_index(&state, &anchor, &index_config);
-    let diagnostics = crate::linter::check::check_document_with_provider(
-        &path,
-        &doc.text,
-        &lint_config,
-        &*provider,
-    )
-    .unwrap_or_default();
+    // Push the buffer into the persistent database and lint off the cached
+    // parse/model. The db lock is held only for the synchronous lint (no await),
+    // and is separate from the state lock so editor edits don't contend on it.
+    let diagnostics = {
+        let mut db = db.lock().expect("db mutex poisoned");
+        let file = db.upsert_file(&path, doc.text.clone());
+        crate::linter::check::check_tracked_file(&db, file, &path, &lint_config, &*provider)
+            .unwrap_or_default()
+    };
     let line_index = LineIndex::new(&doc.text);
     let lsp_diags: Vec<LspDiagnostic> = diagnostics
         .iter()
@@ -211,7 +225,15 @@ async fn lint_and_publish(state: Arc<Mutex<State>>, client: Client, uri: Uri) {
     }
 
     if index_config.auto_build {
-        schedule_index_build(&state, &client, anchor, index_config, &doc.text, &provider);
+        schedule_index_build(
+            &state,
+            &db,
+            &client,
+            anchor,
+            index_config,
+            &doc.text,
+            &provider,
+        );
     }
 }
 
@@ -264,6 +286,7 @@ fn packages_to_build(
 /// swap in a freshly-loaded provider and re-lint every open document.
 fn schedule_index_build(
     state: &Arc<Mutex<State>>,
+    db: &Arc<Mutex<IncrementalDatabase>>,
     client: &Client,
     anchor: PathBuf,
     cfg: IndexConfig,
@@ -279,6 +302,7 @@ fn schedule_index_build(
     };
 
     let state = Arc::clone(state);
+    let db = Arc::clone(db);
     let client = client.clone();
     tokio::spawn(async move {
         let now = now_unix_secs();
@@ -314,7 +338,12 @@ fn schedule_index_build(
             s.documents.keys().cloned().collect::<Vec<_>>()
         };
         for uri in open_uris {
-            tokio::spawn(lint_and_publish(Arc::clone(&state), client.clone(), uri));
+            tokio::spawn(lint_and_publish(
+                Arc::clone(&state),
+                Arc::clone(&db),
+                client.clone(),
+                uri,
+            ));
         }
     });
 }

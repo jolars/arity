@@ -70,6 +70,22 @@ fn editing_one_file_invalidates_only_that_file_queries() {
 }
 
 #[test]
+fn upsert_reuses_input_for_same_path() {
+    use std::path::Path;
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+
+    let first = db.upsert_file(path, "x <- 1\n".to_string());
+    let second = db.upsert_file(path, "x <- 1\ny <- 2\n".to_string());
+
+    assert!(
+        first == second,
+        "same path should reuse the SourceFile input"
+    );
+    assert_eq!(db.semantic_model(second).bindings().len(), 2);
+}
+
+#[test]
 fn body_edit_keeps_model_in_sync() {
     // Editing a file's contents recomputes its semantic model so downstream
     // consumers see the new bindings.

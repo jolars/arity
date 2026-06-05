@@ -8,6 +8,8 @@
 //! builds on the cached tree, so the linter and LSP no longer re-parse and
 //! rebuild the model from text on every run.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use salsa::Setter;
@@ -109,6 +111,10 @@ pub fn semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> SemanticModel
 pub struct IncrementalDatabase {
     storage: salsa::Storage<Self>,
     query_log: Arc<Mutex<Vec<QueryLogEntry>>>,
+    /// Path → input mapping, so repeated edits to the same path reuse the same
+    /// `SourceFile` input (and thus its cached queries) instead of creating a
+    /// fresh one each time. Seeds the cross-file project graph (Phase B).
+    files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
 }
 
 impl Default for IncrementalDatabase {
@@ -116,7 +122,15 @@ impl Default for IncrementalDatabase {
         Self {
             storage: salsa::Storage::new(None),
             query_log: Arc::new(Mutex::new(Vec::new())),
+            files: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+}
+
+impl std::fmt::Debug for IncrementalDatabase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncrementalDatabase")
+            .finish_non_exhaustive()
     }
 }
 
@@ -127,6 +141,33 @@ impl IncrementalDatabase {
 
     pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<String>) {
         file.set_text(self).to(text.into());
+    }
+
+    /// Insert or update the input for `path`, reusing the existing `SourceFile`
+    /// when one is already tracked. The hot path for editor buffers: a keystroke
+    /// updates the text of an existing input so unchanged downstream queries stay
+    /// cached.
+    pub fn upsert_file(&mut self, path: &Path, text: String) -> SourceFile {
+        let existing = self
+            .files
+            .lock()
+            .expect("file cache mutex poisoned")
+            .get(path)
+            .copied();
+        match existing {
+            Some(file) => {
+                file.set_text(self).to(text);
+                file
+            }
+            None => {
+                let file = SourceFile::new(self, text);
+                self.files
+                    .lock()
+                    .expect("file cache mutex poisoned")
+                    .insert(path.to_path_buf(), file);
+                file
+            }
+        }
     }
 
     /// Parse diagnostics for `file` (empty when it parses cleanly).

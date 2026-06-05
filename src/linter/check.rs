@@ -9,8 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::config::LintConfig;
 use crate::file_discovery::{FileDiscoveryError, collect_r_files};
 use crate::incremental::{IncrementalDatabase, SourceFile};
-use crate::parser::parse;
-use crate::semantic::{SemanticModel, SymbolProvider};
+use crate::semantic::SymbolProvider;
 
 use super::diagnostic::Diagnostic;
 use super::rules::{ResolvedRules, default_symbol_provider, run_rules};
@@ -144,18 +143,7 @@ pub fn check_paths_with_provider(
         let (status, diagnostics) = if parse_diag_count == 0 {
             // The cached parse tree and semantic model are reused across runs;
             // an unchanged file recomputes neither.
-            let root_node = db.parsed_tree(file);
-            let model = db.semantic_model(file);
-            let raw = run_rules(&rules.rules, &path, &root_node, model, provider);
-            let suppress = SuppressionMap::build(&root_node);
-            let kept: Vec<Diagnostic> = raw
-                .into_iter()
-                .map(|mut d| {
-                    d.path = path.clone();
-                    d
-                })
-                .filter(|d| !suppress.is_suppressed(d.rule, d.range))
-                .collect();
+            let kept = lint_parsed_file(&db, file, &path, &rules, provider);
             total_findings += kept.len();
             let status = if kept.is_empty() {
                 LintStatus::Clean
@@ -186,7 +174,50 @@ pub fn check_paths_with_provider(
     })
 }
 
-/// Convenience: lint a single in-memory document by path + text (used by the LSP).
+/// Run the resolved rules against a cleanly-parsed file, using the cached parse
+/// tree and semantic model, and drop suppressed findings. Callers must have
+/// already confirmed the file parses without diagnostics.
+fn lint_parsed_file(
+    db: &IncrementalDatabase,
+    file: SourceFile,
+    path: &Path,
+    rules: &ResolvedRules,
+    provider: &dyn SymbolProvider,
+) -> Vec<Diagnostic> {
+    let root_node = db.parsed_tree(file);
+    let model = db.semantic_model(file);
+    let mut diagnostics = run_rules(&rules.rules, path, &root_node, model, provider);
+    let suppress = SuppressionMap::build(&root_node);
+    diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));
+    for d in &mut diagnostics {
+        d.path = path.to_path_buf();
+    }
+    diagnostics
+}
+
+/// Lint a file already tracked in `db`, reusing its cached parse and model.
+/// Returns no findings when the file has parse diagnostics. Used by the LSP,
+/// which holds a long-lived `db` so edits don't re-parse from scratch.
+pub fn check_tracked_file(
+    db: &IncrementalDatabase,
+    file: SourceFile,
+    path: &Path,
+    config: &LintConfig,
+    provider: &dyn SymbolProvider,
+) -> Result<Vec<Diagnostic>, LintError> {
+    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+    if let Some(rule) = unknown.into_iter().next() {
+        return Err(LintError::UnknownRule { rule });
+    }
+    if !db.parse_diagnostics(file).is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(lint_parsed_file(db, file, path, &rules, provider))
+}
+
+/// Convenience: lint a single in-memory document by path + text (used by quick
+/// fixes and tests). Builds a one-shot database; the LSP's hot lint path uses
+/// [`check_tracked_file`] against its persistent database instead.
 pub fn check_document(
     path: &Path,
     content: &str,
@@ -195,30 +226,14 @@ pub fn check_document(
     check_document_with_provider(path, content, config, &default_symbol_provider())
 }
 
-/// Like [`check_document`] but with a caller-supplied symbol provider. The LSP
-/// holds a long-lived index-backed provider and passes it here so the cache is
-/// not re-read on every keystroke.
+/// Like [`check_document`] but with a caller-supplied symbol provider.
 pub fn check_document_with_provider(
     path: &Path,
     content: &str,
     config: &LintConfig,
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
-    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
-    if let Some(rule) = unknown.into_iter().next() {
-        return Err(LintError::UnknownRule { rule });
-    }
-    let parsed = parse(content);
-    if !parsed.diagnostics.is_empty() {
-        return Ok(Vec::new());
-    }
-    let root_node = parsed.cst;
-    let model = SemanticModel::build(&root_node);
-    let suppress = SuppressionMap::build(&root_node);
-    let mut diagnostics = run_rules(&rules.rules, path, &root_node, &model, provider);
-    diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));
-    for d in &mut diagnostics {
-        d.path = path.to_path_buf();
-    }
-    Ok(diagnostics)
+    let db = IncrementalDatabase::default();
+    let file = db.add_file(content.to_string());
+    check_tracked_file(&db, file, path, config, provider)
 }
