@@ -47,8 +47,6 @@ in-tree parser, not a drop-in jarl replacement.
 
 ## Misc
 
-- [ ] Rmd / Qmd chunk extraction; chunk-level suppression directives via
-      Quarto-style `#| ravel-ignore-chunk` comments.
 - [ ] `ravel-ignore-unused` meta-diagnostic: emit a finding for suppression
       comments that didn't actually suppress anything (rule ID is reserved but
       the rule is not yet wired in).
