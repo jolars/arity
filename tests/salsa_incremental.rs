@@ -11,16 +11,16 @@ fn count_by_kind(entries: &[ravel::incremental::QueryLogEntry]) -> HashMap<Query
 }
 
 #[test]
-fn parse_query_is_reused_when_input_unchanged() {
+fn semantic_model_is_reused_when_input_unchanged() {
     let db = IncrementalDatabase::default();
     let file = db.add_file("x <- 1 + 2\n");
 
-    let first = db.parse(file);
-    assert!(first.diagnostics.is_empty());
+    assert!(db.parse_diagnostics(file).is_empty());
+    let _ = db.semantic_model(file);
 
     db.clear_query_log();
-    let second = db.parse(file);
-    assert_eq!(first, second);
+    let _ = db.semantic_model(file);
+    assert!(db.parse_diagnostics(file).is_empty());
 
     assert!(
         db.query_log().is_empty(),
@@ -34,19 +34,17 @@ fn editing_one_file_invalidates_only_that_file_queries() {
     let file_a = db.add_file("x <- 1 + 2\n");
     let file_b = db.add_file("y <- 3 + 4\n");
 
-    let baseline_a = db.parse(file_a);
-    let baseline_b = db.parse(file_b);
-    assert!(baseline_a.diagnostics.is_empty());
-    assert!(baseline_b.diagnostics.is_empty());
+    // Materialize parse + model for both files.
+    let _ = db.semantic_model(file_a);
+    let _ = db.semantic_model(file_b);
+    assert!(db.parse_diagnostics(file_a).is_empty());
+    assert!(db.parse_diagnostics(file_b).is_empty());
 
     db.clear_query_log();
     db.set_file_text(file_a, "x <- 10 + 2\n");
 
-    let updated_a = db.parse(file_a);
-    let stable_b = db.parse(file_b);
-
-    assert!(updated_a.diagnostics.is_empty());
-    assert_eq!(baseline_b, stable_b);
+    let _ = db.semantic_model(file_a);
+    let _ = db.semantic_model(file_b);
 
     let log = db.query_log();
     let file_a_entries: Vec<_> = log
@@ -65,7 +63,20 @@ fn editing_one_file_invalidates_only_that_file_queries() {
         "expected file_b queries to be reused after file_a edit"
     );
 
+    // file_a's text changed: both its parse and its semantic model re-run once.
     let counts = count_by_kind(&file_a_entries);
-    assert_eq!(counts.get(&QueryKind::ParseFile), Some(&1));
-    assert_eq!(counts.get(&QueryKind::FileText), Some(&1));
+    assert_eq!(counts.get(&QueryKind::ParsedDocument), Some(&1));
+    assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
+}
+
+#[test]
+fn body_edit_keeps_model_in_sync() {
+    // Editing a file's contents recomputes its semantic model so downstream
+    // consumers see the new bindings.
+    let mut db = IncrementalDatabase::default();
+    let file = db.add_file("x <- 1\n");
+    assert_eq!(db.semantic_model(file).bindings().len(), 1);
+
+    db.set_file_text(file, "x <- 1\ny <- 2\n");
+    assert_eq!(db.semantic_model(file).bindings().len(), 2);
 }

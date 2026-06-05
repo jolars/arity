@@ -1,11 +1,9 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 
 use super::{FormatError, FormatStyle, format_with_style};
 use crate::file_discovery::{FileDiscoveryError, collect_r_files};
-use crate::incremental::{IncrementalDatabase, SourceFile};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
@@ -83,8 +81,7 @@ pub fn check_paths_with_style(
         return Err(CheckError::NoRFiles);
     }
 
-    let mut db = IncrementalDatabase::default();
-    let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
+    let checked_files = files.len();
     let mut changed_files = Vec::new();
 
     for path in files {
@@ -93,19 +90,6 @@ pub fn check_paths_with_style(
             source: err.to_string(),
         })?;
 
-        let file = match tracked.get(&path).copied() {
-            Some(file) => {
-                db.set_file_text(file, content.clone());
-                file
-            }
-            None => {
-                let file = db.add_file(content.clone());
-                tracked.insert(path.clone(), file);
-                file
-            }
-        };
-
-        let _ = db.parse(file);
         let formatted =
             format_with_style(&content, style).map_err(|err| CheckError::FormatError {
                 path: path.clone(),
@@ -117,7 +101,7 @@ pub fn check_paths_with_style(
     }
 
     Ok(CheckResult {
-        checked_files: tracked.len(),
+        checked_files,
         changed_files,
     })
 }

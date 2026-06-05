@@ -20,7 +20,7 @@ pub use symbols::{LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider};
 use crate::syntax::SyntaxNode;
 
 /// A reference to an identifier read site, paired with its enclosing scope.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentRef {
     pub name: SmolStr,
     pub range: TextRange,
@@ -28,7 +28,7 @@ pub struct IdentRef {
 }
 
 /// Per-file semantic information derived from the CST.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct SemanticModel {
     scopes: Vec<Scope>,
     bindings: Vec<Binding>,

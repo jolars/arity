@@ -25,7 +25,7 @@ pub enum BindingKind {
     Implicit,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
     pub name: SmolStr,
     pub kind: BindingKind,

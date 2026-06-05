@@ -6,9 +6,6 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rowan::ast::AstNode as _;
-
-use crate::ast::Root;
 use crate::config::LintConfig;
 use crate::file_discovery::{FileDiscoveryError, collect_r_files};
 use crate::incremental::{IncrementalDatabase, SourceFile};
@@ -143,15 +140,13 @@ pub fn check_paths_with_provider(
             }
         };
 
-        let parsed = db.parse(file);
-        let (status, diagnostics) = if parsed.diagnostics.is_empty() {
-            // Re-parse to get a usable rowan tree (the salsa query stores only
-            // the debug-formatted CST; the real tree is cheap to rebuild and
-            // does not affect cache invalidation).
-            let live = parse(&content);
-            let root_node = live.cst.clone();
-            let model = SemanticModel::build(&root_node);
-            let raw = run_rules(&rules.rules, &path, &root_node, &model, provider);
+        let parse_diag_count = db.parse_diagnostics(file).len();
+        let (status, diagnostics) = if parse_diag_count == 0 {
+            // The cached parse tree and semantic model are reused across runs;
+            // an unchanged file recomputes neither.
+            let root_node = db.parsed_tree(file);
+            let model = db.semantic_model(file);
+            let raw = run_rules(&rules.rules, &path, &root_node, model, provider);
             let suppress = SuppressionMap::build(&root_node);
             let kept: Vec<Diagnostic> = raw
                 .into_iter()
@@ -167,13 +162,11 @@ pub fn check_paths_with_provider(
             } else {
                 LintStatus::Findings { count: kept.len() }
             };
-            // Reference Root just to keep AstNode import alive for downstream users.
-            let _ = Root::cast(root_node);
             (status, kept)
         } else {
             (
                 LintStatus::ParseDiagnostics {
-                    count: parsed.diagnostics.len(),
+                    count: parse_diag_count,
                 },
                 Vec::new(),
             )

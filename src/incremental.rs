@@ -1,8 +1,20 @@
+//! Salsa-backed incremental layer: file text → parse tree → semantic model.
+//!
+//! The CST is cached as a `rowan::GreenNode` (Arc-backed, `Send + Sync`) rather
+//! than a `SyntaxNode` (which holds non-`Send` cursor state and is neither
+//! `Eq` nor `salsa::Update`). Callers materialize a fresh cursor via
+//! [`parsed_tree_root`] — a cheap atomic clone — so each consumer gets its own
+//! tree without leaking the salsa cell. The per-file [`semantic_model`] query
+//! builds on the cached tree, so the linter and LSP no longer re-parse and
+//! rebuild the model from text on every run.
+
 use std::sync::{Arc, Mutex};
 
 use salsa::Setter;
 
 use crate::parser::parse;
+use crate::semantic::SemanticModel;
+use crate::syntax::SyntaxNode;
 
 #[salsa::input]
 pub struct SourceFile {
@@ -12,8 +24,8 @@ pub struct SourceFile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryKind {
-    FileText,
-    ParseFile,
+    ParsedDocument,
+    SemanticModel,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,16 +34,23 @@ pub struct QueryLogEntry {
     pub file: SourceFile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseDiagnosticData {
     pub message: String,
     pub start: usize,
     pub end: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, salsa::Update)]
-pub struct ParsedFile {
-    pub cst_debug: String,
+/// A cached parse: the green tree plus parse diagnostics, computed once per
+/// `(db, file)`.
+///
+/// The `GreenNode` is not `Eq`/`salsa::Update`, so [`parsed_document`] is
+/// `no_eq, unsafe(non_update_types)`: salsa never compares parse outputs and
+/// relies purely on input (text) change detection to invalidate. That is sound
+/// because the tree is a pure function of the text.
+#[derive(Debug, Clone)]
+pub struct ParsedDocument {
+    pub green: rowan::GreenNode,
     pub diagnostics: Vec<ParseDiagnosticData>,
 }
 
@@ -40,23 +59,14 @@ pub trait IncrementalDb: salsa::Database {
     fn record_query(&self, entry: QueryLogEntry);
 }
 
-#[salsa::tracked]
-pub fn file_text(db: &dyn IncrementalDb, file: SourceFile) -> String {
+#[salsa::tracked(returns(ref), no_eq, unsafe(non_update_types))]
+pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocument {
     db.record_query(QueryLogEntry {
-        kind: QueryKind::FileText,
-        file,
-    });
-    file.text(db).clone()
-}
-
-#[salsa::tracked]
-pub fn parse_file(db: &dyn IncrementalDb, file: SourceFile) -> ParsedFile {
-    db.record_query(QueryLogEntry {
-        kind: QueryKind::ParseFile,
+        kind: QueryKind::ParsedDocument,
         file,
     });
 
-    let parsed = parse(file_text(db, file).as_str());
+    let parsed = parse(file.text(db).as_str());
     let diagnostics = parsed
         .diagnostics
         .into_iter()
@@ -67,10 +77,32 @@ pub fn parse_file(db: &dyn IncrementalDb, file: SourceFile) -> ParsedFile {
         })
         .collect();
 
-    ParsedFile {
-        cst_debug: format!("{:#?}", parsed.cst),
+    ParsedDocument {
+        green: parsed.cst.green().into_owned(),
         diagnostics,
     }
+}
+
+/// The parse diagnostics for `file` (empty when the file parses cleanly).
+pub fn parse_diagnostics(db: &dyn IncrementalDb, file: SourceFile) -> &[ParseDiagnosticData] {
+    &parsed_document(db, file).diagnostics
+}
+
+/// Materialize the cached parse for `file` as a fresh `SyntaxNode` cursor.
+pub fn parsed_tree_root(db: &dyn IncrementalDb, file: SourceFile) -> SyntaxNode {
+    SyntaxNode::new_root(parsed_document(db, file).green.clone())
+}
+
+/// The per-file semantic model, built on the cached parse tree. Returned by
+/// reference; salsa short-circuits downstream consumers when an edit leaves the
+/// model unchanged (`SemanticModel: Eq`).
+#[salsa::tracked(returns(ref))]
+pub fn semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> SemanticModel {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::SemanticModel,
+        file,
+    });
+    SemanticModel::build(&parsed_tree_root(db, file))
 }
 
 #[salsa::db]
@@ -97,8 +129,19 @@ impl IncrementalDatabase {
         file.set_text(self).to(text.into());
     }
 
-    pub fn parse(&self, file: SourceFile) -> ParsedFile {
-        parse_file(self, file)
+    /// Parse diagnostics for `file` (empty when it parses cleanly).
+    pub fn parse_diagnostics(&self, file: SourceFile) -> &[ParseDiagnosticData] {
+        parse_diagnostics(self, file)
+    }
+
+    /// A fresh `SyntaxNode` over the cached parse tree.
+    pub fn parsed_tree(&self, file: SourceFile) -> SyntaxNode {
+        parsed_tree_root(self, file)
+    }
+
+    /// The cached per-file semantic model.
+    pub fn semantic_model(&self, file: SourceFile) -> &SemanticModel {
+        semantic_model(self, file)
     }
 
     pub fn clear_query_log(&self) {
