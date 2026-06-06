@@ -151,7 +151,19 @@ pub fn check_paths_with_provider(
         }
     }
 
-    let scope = ProjectScope::build(&facts);
+    // Read the NAMESPACE of each package being linted, so exported bindings
+    // aren't flagged unused and imported names resolve.
+    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
+    for f in &facts {
+        if let Some(root) = &f.package_root
+            && !namespaces.contains_key(root)
+            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
+        {
+            namespaces.insert(root.clone(), text);
+        }
+    }
+
+    let scope = ProjectScope::build(&facts, &namespaces);
 
     // Pass 2: lint each cleanly parsed file with its cross-file scope.
     let mut reports = Vec::new();

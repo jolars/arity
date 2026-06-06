@@ -117,6 +117,55 @@ fn dynamic_source_suppresses_undefined_symbol() {
     );
 }
 
+/// Write a minimal package (DESCRIPTION + NAMESPACE + R/a.R) and lint it.
+fn lint_package(namespace: &str, a_r: &str) -> LintResult {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), a_r).unwrap();
+    check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed")
+}
+
+#[test]
+fn namespace_export_is_not_unused() {
+    // `foo` is exported, so it's public API — not an unused binding even though
+    // nothing in the package reads it.
+    let result = lint_package("export(foo)\n", "foo <- function() 1\n");
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn namespace_import_from_resolves_symbol() {
+    // `filter` is imported from dplyr, so it resolves.
+    let result = lint_package(
+        "importFrom(dplyr, filter)\n",
+        "my_fun <- function(d) filter(d)\nmy_fun(1)\n",
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn namespace_wholesale_import_suppresses_undefined_symbol() {
+    // `import(rlang)` brings unknown exports into scope, so `abort` must not
+    // flag as undefined.
+    let result = lint_package("import(rlang)\n", "f <- function() abort(\"boom\")\nf()\n");
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
 #[test]
 fn lint_reports_parse_diagnostics_pathway() {
     let dir = tempdir().expect("failed to create temp dir");

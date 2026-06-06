@@ -35,9 +35,10 @@ impl Rule for UndefinedSymbol {
         if loaded.iter().any(|p| !ctx.symbols.package_indexed(&p.name)) {
             return out;
         }
-        // Conservative gate: an unresolved `source()` (dynamic argument, or a
-        // target outside the analyzed set) could define any of the names below.
-        if ctx.project.is_some_and(|p| p.has_dynamic_source) {
+        // Conservative gate: incomplete cross-file visibility (an unresolved
+        // `source()`, or a wholesale `import(pkg)`) could define any of the
+        // names below.
+        if ctx.project.is_some_and(|p| p.resolution_incomplete) {
             return out;
         }
         for ident in ctx.model.idents() {

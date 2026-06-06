@@ -10,6 +10,7 @@
 //! - `help/{pkg}.rdb` → full Rd bodies (description/usage/arguments), rendered
 //!   to markdown via [`rd`](crate::rindex::rd).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use smol_str::SmolStr;
@@ -227,19 +228,31 @@ fn parse_built_r_version(built: &str) -> Option<SmolStr> {
 // NAMESPACE
 // ---------------------------------------------------------------------------
 
-/// Resolve the set of exported names from a NAMESPACE file, expanding
-/// `exportPattern` directives against the package's object names.
-pub fn resolve_exports(namespace: &str, object_names: &[String]) -> Vec<String> {
-    use std::collections::BTreeSet;
-    let mut out: BTreeSet<String> = BTreeSet::new();
+/// Everything a NAMESPACE file declares that name resolution cares about.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct NamespaceInfo {
+    /// Names made public via `export()` / `exportMethods()` / `exportClasses()`,
+    /// plus `exportPattern()` matches against the package's object names.
+    pub exports: BTreeSet<String>,
+    /// Names imported individually via `importFrom(pkg, name, ...)`.
+    pub imported_names: BTreeSet<String>,
+    /// Packages imported wholesale via `import(pkg)`. Every export of such a
+    /// package is in scope, so without that package's index any unresolved name
+    /// could come from it.
+    pub imported_packages: BTreeSet<String>,
+}
+
+/// Parse a NAMESPACE file into the exports and imports it declares, expanding
+/// `exportPattern` directives against `object_names` (the package's top-level
+/// object names).
+pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInfo {
+    let mut info = NamespaceInfo::default();
     let mut patterns: Vec<regex::Regex> = Vec::new();
 
     for directive in NamespaceDirectives::new(namespace) {
         match directive.name {
             "export" | "exportMethods" | "exportClasses" => {
-                for arg in directive.args {
-                    out.insert(arg);
-                }
+                info.exports.extend(directive.args);
             }
             "exportPattern" | "exportClassPattern" => {
                 for arg in directive.args {
@@ -248,6 +261,17 @@ pub fn resolve_exports(namespace: &str, object_names: &[String]) -> Vec<String> 
                     }
                 }
             }
+            "importFrom" => {
+                // `importFrom(pkg, a, b, ...)`: the first arg is the package, the
+                // rest are the imported names.
+                let mut args = directive.args.into_iter();
+                if args.next().is_some() {
+                    info.imported_names.extend(args);
+                }
+            }
+            "import" => {
+                info.imported_packages.extend(directive.args);
+            }
             _ => {}
         }
     }
@@ -255,12 +279,21 @@ pub fn resolve_exports(namespace: &str, object_names: &[String]) -> Vec<String> 
     if !patterns.is_empty() {
         for name in object_names {
             if patterns.iter().any(|re| re.is_match(name)) {
-                out.insert(name.clone());
+                info.exports.insert(name.clone());
             }
         }
     }
 
-    out.into_iter().collect()
+    info
+}
+
+/// Resolve the set of exported names from a NAMESPACE file, expanding
+/// `exportPattern` directives against the package's object names.
+pub fn resolve_exports(namespace: &str, object_names: &[String]) -> Vec<String> {
+    parse_namespace(namespace, object_names)
+        .exports
+        .into_iter()
+        .collect()
 }
 
 /// Translate an R regular expression (as found in `exportPattern`) into a Rust
@@ -289,6 +322,8 @@ const RECOGNIZED: &[&str] = &[
     "exportClasses",
     "exportMethods",
     "export",
+    "importFrom",
+    "import",
 ];
 
 impl<'a> NamespaceDirectives<'a> {
@@ -617,6 +652,18 @@ mod tests {
         let ns = r#"exportPattern("^x")"#;
         let exports = resolve_exports(ns, &["xa".to_string(), "yb".to_string()]);
         assert_eq!(exports, vec!["xa".to_string()]);
+    }
+
+    #[test]
+    fn parses_import_directives() {
+        let ns = "import(rlang)\nimportFrom(dplyr, filter, select)\nexport(foo)\n";
+        let info = parse_namespace(ns, &[]);
+        assert!(info.exports.contains("foo"));
+        assert!(info.imported_names.contains("filter"));
+        assert!(info.imported_names.contains("select"));
+        // The package name is not itself an imported name.
+        assert!(!info.imported_names.contains("dplyr"));
+        assert!(info.imported_packages.contains("rlang"));
     }
 
     #[test]

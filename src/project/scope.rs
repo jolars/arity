@@ -14,9 +14,15 @@
 //! - [`FileScope::used_elsewhere`] — a top-level binding here may be read by a
 //!   file that can see us (so it isn't `unused-binding`).
 //!
-//! When a `source()` target can't be resolved — a dynamic argument, or a literal
-//! path to a file outside the analyzed set — visibility is *incomplete*, so
-//! [`FileScope::has_dynamic_source`] is set and callers must stay conservative.
+//! Package authoring (NAMESPACE) is folded into the same two directions:
+//! `importFrom(pkg, name)` makes `name` resolve, and `export(name)` marks a
+//! top-level binding as used (it's public API).
+//!
+//! Visibility can be *incomplete* — a `source()` target that can't be resolved
+//! (dynamic argument, or a path outside the analyzed set), or a wholesale
+//! `import(pkg)` whose exports we can't enumerate. Then
+//! [`FileScope::resolution_incomplete`] is set and callers must stay
+//! conservative (no `undefined-symbol` findings).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -24,6 +30,7 @@ use std::path::{Path, PathBuf};
 use smol_str::SmolStr;
 
 use crate::project::source::{SourceEdge, SourceTarget};
+use crate::rindex::harvest::parse_namespace;
 
 static EMPTY: BTreeSet<SmolStr> = BTreeSet::new();
 
@@ -59,9 +66,10 @@ pub struct ProjectScope {
 pub struct FileScope<'a> {
     visible: &'a BTreeSet<SmolStr>,
     used_by_others: &'a BTreeSet<SmolStr>,
-    /// A `source()` couldn't be fully resolved, so cross-file visibility is
-    /// incomplete and callers must not flag otherwise-unresolved names.
-    pub has_dynamic_source: bool,
+    /// Cross-file visibility is incomplete — an unresolved `source()` or a
+    /// wholesale `import(pkg)` could supply otherwise-unresolved names — so
+    /// callers must not flag them.
+    pub resolution_incomplete: bool,
 }
 
 impl FileScope<'_> {
@@ -78,8 +86,9 @@ impl FileScope<'_> {
 }
 
 impl ProjectScope {
-    /// Resolve cross-file relationships for `files`.
-    pub fn build(files: &[FileFacts]) -> Self {
+    /// Resolve cross-file relationships for `files`. `namespaces` maps a package
+    /// root to its NAMESPACE file contents, when present.
+    pub fn build(files: &[FileFacts], namespaces: &HashMap<PathBuf, String>) -> Self {
         let by_path: HashMap<&Path, &FileFacts> =
             files.iter().map(|f| (f.path.as_path(), f)).collect();
 
@@ -163,6 +172,38 @@ impl ProjectScope {
             }
         }
 
+        // Fold NAMESPACE declarations into the same two directions: imported
+        // names resolve (visible), exported names count as used (used_by_others),
+        // and a wholesale `import(pkg)` makes resolution incomplete.
+        for (root, text) in namespaces {
+            let Some(members) = package_members.get(root.as_path()) else {
+                continue;
+            };
+            let object_names: Vec<String> = members
+                .iter()
+                .filter_map(|m| by_path.get(m))
+                .flat_map(|f| f.exports.iter().map(|n| n.to_string()))
+                .collect();
+            let info = parse_namespace(text, &object_names);
+            let exported: BTreeSet<SmolStr> = info.exports.iter().map(SmolStr::new).collect();
+            let imported: BTreeSet<SmolStr> =
+                info.imported_names.iter().map(SmolStr::new).collect();
+            let incomplete = !info.imported_packages.is_empty();
+
+            for member in members {
+                let path = member.to_path_buf();
+                if let Some(used) = used_by_others.get_mut(&path) {
+                    used.extend(exported.iter().cloned());
+                }
+                if let Some(vis) = visible.get_mut(&path) {
+                    vis.extend(imported.iter().cloned());
+                }
+                if incomplete {
+                    dynamic.insert(path);
+                }
+            }
+        }
+
         Self {
             visible,
             used_by_others,
@@ -176,7 +217,7 @@ impl ProjectScope {
         FileScope {
             visible: self.visible.get(path).unwrap_or(&EMPTY),
             used_by_others: self.used_by_others.get(path).unwrap_or(&EMPTY),
-            has_dynamic_source: self.dynamic.contains(path),
+            resolution_incomplete: self.dynamic.contains(path),
         }
     }
 }
@@ -259,13 +300,18 @@ mod tests {
         v
     }
 
+    /// Build a scope with no NAMESPACE data.
+    fn build_scope(files: &[FileFacts]) -> ProjectScope {
+        ProjectScope::build(files, &HashMap::new())
+    }
+
     #[test]
     fn package_files_share_one_namespace() {
         let files = [
             facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg")),
             facts("/pkg/R/b.R", &["bar"], &["foo"], vec![], Some("/pkg")),
         ];
-        let scope = ProjectScope::build(&files);
+        let scope = build_scope(&files);
         // b reads foo, which a defines: resolves cross-file.
         assert!(scope.for_file(Path::new("/pkg/R/b.R")).resolves("foo"));
         // foo is used by b, so a's foo isn't unused.
@@ -295,12 +341,12 @@ mod tests {
             ),
             facts("/s/b.R", &["bar"], &[], vec![], None),
         ];
-        let scope = ProjectScope::build(&files);
+        let scope = build_scope(&files);
         assert!(scope.for_file(Path::new("/s/a.R")).resolves("bar"));
         assert!(!scope.for_file(Path::new("/s/b.R")).resolves("foo"));
         // a reads bar, and a sees b, so b's bar is used elsewhere.
         assert!(scope.for_file(Path::new("/s/b.R")).used_elsewhere("bar"));
-        assert!(!scope.for_file(Path::new("/s/a.R")).has_dynamic_source);
+        assert!(!scope.for_file(Path::new("/s/a.R")).resolution_incomplete);
     }
 
     #[test]
@@ -329,7 +375,7 @@ mod tests {
                 None,
             ),
         ];
-        let scope = ProjectScope::build(&files);
+        let scope = build_scope(&files);
         assert_eq!(
             names(scope.for_file(Path::new("/s/a.R")).visible),
             vec!["bar", "baz"]
@@ -339,8 +385,8 @@ mod tests {
     #[test]
     fn dynamic_source_marks_scope_incomplete() {
         let files = [facts("/s/a.R", &[], &[], vec![dynamic_edge()], None)];
-        let scope = ProjectScope::build(&files);
-        assert!(scope.for_file(Path::new("/s/a.R")).has_dynamic_source);
+        let scope = build_scope(&files);
+        assert!(scope.for_file(Path::new("/s/a.R")).resolution_incomplete);
     }
 
     #[test]
@@ -352,8 +398,8 @@ mod tests {
             vec![source_path("/s/missing.R", false)],
             None,
         )];
-        let scope = ProjectScope::build(&files);
-        assert!(scope.for_file(Path::new("/s/a.R")).has_dynamic_source);
+        let scope = build_scope(&files);
+        assert!(scope.for_file(Path::new("/s/a.R")).resolution_incomplete);
     }
 
     #[test]
@@ -368,11 +414,53 @@ mod tests {
             ),
             facts("/s/b.R", &["bar"], &[], vec![], None),
         ];
-        let scope = ProjectScope::build(&files);
+        let scope = build_scope(&files);
         let a = scope.for_file(Path::new("/s/a.R"));
         assert!(!a.resolves("bar"));
-        assert!(!a.has_dynamic_source);
+        assert!(!a.resolution_incomplete);
         // A local source doesn't make b's bar "used elsewhere".
         assert!(!scope.for_file(Path::new("/s/b.R")).used_elsewhere("bar"));
+    }
+
+    fn namespaces(entries: &[(&str, &str)]) -> HashMap<PathBuf, String> {
+        entries
+            .iter()
+            .map(|(root, text)| (PathBuf::from(*root), text.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn namespace_export_marks_binding_used() {
+        // `foo` is exported, so it isn't unused even though no file reads it.
+        let files = [facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"))];
+        let ns = namespaces(&[("/pkg", "export(foo)\n")]);
+        let scope = ProjectScope::build(&files, &ns);
+        assert!(
+            scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .used_elsewhere("foo")
+        );
+    }
+
+    #[test]
+    fn namespace_import_from_resolves_name() {
+        let files = [facts("/pkg/R/a.R", &[], &["filter"], vec![], Some("/pkg"))];
+        let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\n")]);
+        let scope = ProjectScope::build(&files, &ns);
+        let a = scope.for_file(Path::new("/pkg/R/a.R"));
+        assert!(a.resolves("filter"));
+        assert!(!a.resolution_incomplete);
+    }
+
+    #[test]
+    fn namespace_wholesale_import_marks_resolution_incomplete() {
+        let files = [facts("/pkg/R/a.R", &[], &["abort"], vec![], Some("/pkg"))];
+        let ns = namespaces(&[("/pkg", "import(rlang)\n")]);
+        let scope = ProjectScope::build(&files, &ns);
+        assert!(
+            scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .resolution_incomplete
+        );
     }
 }
