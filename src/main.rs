@@ -197,18 +197,13 @@ fn now_unix_secs() -> u64 {
 }
 
 fn run_lsp() -> ExitCode {
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
+    match ravel::lsp::run() {
+        Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("error: failed to start LSP runtime: {err}");
-            return ExitCode::from(2);
+            eprintln!("error: language server exited: {err}");
+            ExitCode::from(2)
         }
-    };
-    runtime.block_on(ravel::lsp::run());
-    ExitCode::SUCCESS
+    }
 }
 
 struct ConfigSource {

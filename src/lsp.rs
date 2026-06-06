@@ -1,30 +1,47 @@
-//! Stdio-based LSP server: formatting, pushed diagnostics, quick-fix code
-//! actions, and hover backed by the introspection index.
+//! Stdio-based LSP server (built on `lsp-server`): formatting, pushed
+//! diagnostics, quick-fix code actions, and hover backed by the introspection
+//! index.
 //!
-//! Document changes are debounced (200 ms) per URI and serialized by an i32
-//! version counter so a fast typist can't trigger overlapping lint runs. Hover
-//! resolves the symbol under the cursor (a bare name against the attached
-//! packages, or a `pkg::name` access directly) and renders the indexed help.
+//! Architecture (see the dedicated-lint-thread design): the main loop owns no
+//! salsa database. Read-only requests (formatting, code actions, hover) run on
+//! the rayon pool and reply directly. Linting is serialized on a dedicated
+//! thread that owns the persistent [`IncrementalDatabase`]; salsa is strictly
+//! single-writer, and cross-file linting writes sibling files into the db, so
+//! lint cannot run on a shared snapshot. Instead the lint thread *coalesces*
+//! requests (only the latest version per URI is linted, stale ones dropped),
+//! which replaces the old debounce. Diagnostics route back through the main loop
+//! so it can drop publishes for closed or superseded documents.
+
+// `lsp_types::Uri` (a `fluent_uri` newtype) carries an internal `Cell` tag for
+// its mutable-view mechanism, which trips `clippy::mutable_key_type` when a
+// `Uri` is used as a map key. Our URIs are owned + parsed (never "taken"), and
+// `Uri`'s `Hash`/`Eq` go through `as_str()`, so this is sound; `WorkspaceEdit`
+// also forces `HashMap<Uri, _>` on us. Allow it module-wide.
+#![allow(clippy::mutable_key_type)]
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
+use std::thread::JoinHandle;
 
-use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
-use smol_str::SmolStr;
-use tokio::time;
-use tower_lsp_server::jsonrpc::Result as JsonRpcResult;
-use tower_lsp_server::ls_types::{
+use crossbeam_channel::{Receiver, Sender, select};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
+use lsp_types::notification::{
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
+    Notification as NotificationTrait, PublishDiagnostics,
+};
+use lsp_types::request::{CodeActionRequest, Formatting, HoverRequest, Request as RequestTrait};
+use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
     DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentFormattingParams, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, MarkupContent,
-    MarkupKind, MessageType, NumberOrString, OneOf, Position, Range, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
+    HoverProviderCapability, InitializeResult, MarkupContent, MarkupKind, NumberOrString, OneOf,
+    Position, PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
-use tower_lsp_server::{Client, LanguageServer, LspService, Server};
+use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
+use smol_str::SmolStr;
 
 use crate::ast::{AstNode as _, BinaryExpr};
 use crate::config::{Config, IndexConfig, LintConfig};
@@ -42,50 +59,72 @@ use crate::semantic::{PackageOrigin, SemanticModel, SymbolProvider as _};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::LineIndex;
 
-const LINT_DEBOUNCE: Duration = Duration::from_millis(200);
+type DynError = Box<dyn std::error::Error + Sync + Send>;
 
 /// Run the language server on stdio until the client disconnects.
-pub async fn run() {
-    let (service, socket) = LspService::new(Backend::new);
-    Server::new(tokio::io::stdin(), tokio::io::stdout(), socket)
-        .serve(service)
-        .await;
+pub fn run() -> Result<(), DynError> {
+    let (connection, io_threads) = Connection::stdio();
+
+    let (id, _params) = connection.initialize_start()?;
+    let init_result = InitializeResult {
+        capabilities: server_capabilities(),
+        server_info: Some(ServerInfo {
+            name: "ravel".to_string(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        }),
+    };
+    connection.initialize_finish(id, serde_json::to_value(init_result)?)?;
+
+    main_loop(connection)?;
+    io_threads.join()?;
+    Ok(())
 }
 
-#[derive(Debug)]
-struct Backend {
-    client: Client,
-    state: Arc<Mutex<State>>,
-    /// Long-lived salsa database. Editor buffers are pushed in on edit so the
-    /// lint hot path reuses cached parses and semantic models instead of
-    /// re-parsing from text every keystroke.
-    db: Arc<Mutex<IncrementalDatabase>>,
+fn server_capabilities() -> ServerCapabilities {
+    ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        ..Default::default()
+    }
 }
 
-#[derive(Debug)]
-struct State {
-    documents: HashMap<Uri, Document>,
-    config_cache: HashMap<PathBuf, ResolvedSettings>,
-    /// The symbol provider used for linting. Starts base-R-only and is replaced
-    /// once the index cache is loaded (and again after a background build).
-    index: Arc<CompositeProvider>,
-    /// Workspace anchors whose index cache has already been loaded into `index`.
-    index_loaded: HashSet<PathBuf>,
-    /// Packages a background harvest has already been scheduled for this session
-    /// — never retried, so a not-installed package doesn't loop.
-    index_attempts: HashSet<SmolStr>,
-}
+/// The main event loop: dispatch incoming JSON-RPC messages and lint results.
+/// Owns the connection so that returning drops the sender and lets the writer
+/// thread finish; joins the lint thread before returning.
+fn main_loop(connection: Connection) -> Result<(), DynError> {
+    let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
+    let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
+    let lint_handle = spawn_lint_thread(lint_rx, out_tx);
 
-impl Default for State {
-    fn default() -> Self {
-        State {
-            documents: HashMap::new(),
-            config_cache: HashMap::new(),
-            index: Arc::new(CompositeProvider::base_only()),
-            index_loaded: HashSet::new(),
-            index_attempts: HashSet::new(),
+    let mut state = GlobalState::new(connection.sender.clone(), lint_tx);
+
+    loop {
+        select! {
+            recv(connection.receiver) -> msg => {
+                let Ok(msg) = msg else { break };
+                match msg {
+                    Message::Request(req) => {
+                        if connection.handle_shutdown(&req)? {
+                            break;
+                        }
+                        state.on_request(req);
+                    }
+                    Message::Notification(not) => state.on_notification(not),
+                    Message::Response(_) => {}
+                }
+            }
+            recv(out_rx) -> ob => {
+                let Ok(ob) = ob else { break };
+                state.on_outbound(ob);
+            }
         }
     }
+
+    drop(state); // drops lint_tx → the lint thread's recv disconnects → it exits
+    let _ = lint_handle.join();
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -101,33 +140,243 @@ struct ResolvedSettings {
     index: IndexConfig,
 }
 
-impl Backend {
-    fn new(client: Client) -> Self {
+/// A lint request handed to the dedicated lint thread.
+struct LintRequest {
+    uri: Uri,
+    path: PathBuf,
+    text: String,
+    version: i32,
+    lint_config: LintConfig,
+    index_config: IndexConfig,
+}
+
+enum LintMsg {
+    Request(LintRequest),
+}
+
+/// Messages from the lint thread back to the main loop.
+enum Outbound {
+    /// Diagnostics for `uri` at `version`; published only if still current.
+    Diagnostics {
+        uri: Uri,
+        version: i32,
+        diags: Vec<LspDiagnostic>,
+    },
+    /// The symbol provider changed (cache loaded or a background build finished);
+    /// the main loop caches it for hover.
+    ProviderUpdated(Arc<CompositeProvider>),
+    /// A background index build completed; re-lint every open document.
+    RelintAll,
+}
+
+// ---------------------------------------------------------------------------
+// Main-loop state
+// ---------------------------------------------------------------------------
+
+struct GlobalState {
+    documents: HashMap<Uri, Document>,
+    config_cache: HashMap<PathBuf, ResolvedSettings>,
+    /// The current symbol provider, used for hover. Updated by the lint thread
+    /// via [`Outbound::ProviderUpdated`]; starts base-R-only.
+    provider: Arc<CompositeProvider>,
+    sender: Sender<Message>,
+    lint_tx: Sender<LintMsg>,
+}
+
+impl GlobalState {
+    fn new(sender: Sender<Message>, lint_tx: Sender<LintMsg>) -> Self {
         Self {
-            client,
-            state: Arc::new(Mutex::new(State::default())),
-            db: Arc::new(Mutex::new(IncrementalDatabase::default())),
+            documents: HashMap::new(),
+            config_cache: HashMap::new(),
+            provider: Arc::new(CompositeProvider::base_only()),
+            sender,
+            lint_tx,
         }
     }
 
-    fn resolve_settings(&self, uri: &Uri) -> Result<ResolvedSettings, ConfigResolveError> {
-        if !uri.scheme().as_str().eq_ignore_ascii_case("file") {
-            return Err(ConfigResolveError::NonFileUri);
+    fn on_request(&mut self, req: Request) {
+        match req.method.as_str() {
+            Formatting::METHOD => self.on_formatting(req),
+            CodeActionRequest::METHOD => self.on_code_action(req),
+            HoverRequest::METHOD => self.on_hover(req),
+            _ => {
+                let resp = Response::new_err(
+                    req.id,
+                    ErrorCode::MethodNotFound as i32,
+                    format!("unhandled method: {}", req.method),
+                );
+                let _ = self.sender.send(Message::Response(resp));
+            }
         }
-        let path = uri
-            .to_file_path()
-            .ok_or(ConfigResolveError::NonFileUri)?
-            .into_owned();
+    }
+
+    fn on_formatting(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<DocumentFormattingParams>(Formatting::METHOD) else {
+            self.respond_err(id, "invalid formatting params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let Ok(settings) = self.resolve_settings(&uri) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let style = settings.style;
+        let sender = self.sender.clone();
+        rayon::spawn(move || {
+            let result = compute_format_edits(&text, style);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        });
+    }
+
+    fn on_code_action(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<CodeActionParams>(CodeActionRequest::METHOD) else {
+            self.respond_err(id, "invalid code action params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let lint = self
+            .resolve_settings(&uri)
+            .map(|s| s.lint)
+            .unwrap_or_default();
+        let range = params.range;
+        let sender = self.sender.clone();
+        rayon::spawn(move || {
+            let actions = compute_code_actions(&text, &path, &lint, &uri, range);
+            let _ = sender.send(Message::Response(Response::new_ok(id, actions)));
+        });
+    }
+
+    fn on_hover(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<HoverParams>(HoverRequest::METHOD) else {
+            self.respond_err(id, "invalid hover params");
+            return;
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let provider = Arc::clone(&self.provider);
+        let sender = self.sender.clone();
+        rayon::spawn(move || {
+            let offset = LineIndex::new(&text).position_to_byte(position);
+            let result = compute_hover(&text, offset, &provider);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        });
+    }
+
+    fn on_notification(&mut self, not: Notification) {
+        match not.method.as_str() {
+            DidOpenTextDocument::METHOD => {
+                if let Ok(params) =
+                    not.extract::<DidOpenTextDocumentParams>(DidOpenTextDocument::METHOD)
+                {
+                    let uri = params.text_document.uri;
+                    self.documents.insert(
+                        uri.clone(),
+                        Document {
+                            text: params.text_document.text,
+                            version: params.text_document.version,
+                        },
+                    );
+                    self.send_lint(uri);
+                }
+            }
+            DidChangeTextDocument::METHOD => {
+                if let Ok(mut params) =
+                    not.extract::<DidChangeTextDocumentParams>(DidChangeTextDocument::METHOD)
+                    && let Some(change) = params.content_changes.pop()
+                {
+                    let uri = params.text_document.uri;
+                    self.documents.insert(
+                        uri.clone(),
+                        Document {
+                            text: change.text,
+                            version: params.text_document.version,
+                        },
+                    );
+                    self.send_lint(uri);
+                }
+            }
+            DidCloseTextDocument::METHOD => {
+                if let Ok(params) =
+                    not.extract::<DidCloseTextDocumentParams>(DidCloseTextDocument::METHOD)
+                {
+                    let uri = params.text_document.uri;
+                    self.documents.remove(&uri);
+                    // Tell the client to clear stale diagnostics.
+                    self.publish(uri, Vec::new(), None);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_outbound(&mut self, ob: Outbound) {
+        match ob {
+            Outbound::Diagnostics {
+                uri,
+                version,
+                diags,
+            } => {
+                if matches!(self.documents.get(&uri), Some(d) if d.version == version) {
+                    self.publish(uri, diags, Some(version));
+                }
+            }
+            Outbound::ProviderUpdated(provider) => self.provider = provider,
+            Outbound::RelintAll => {
+                let uris: Vec<Uri> = self.documents.keys().cloned().collect();
+                for uri in uris {
+                    self.send_lint(uri);
+                }
+            }
+        }
+    }
+
+    /// Send a lint request for `uri`'s current buffer to the lint thread.
+    fn send_lint(&mut self, uri: Uri) {
+        let Some(doc) = self.documents.get(&uri) else {
+            return;
+        };
+        let text = doc.text.clone();
+        let version = doc.version;
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let (lint_config, index_config) = match self.resolve_settings(&uri) {
+            Ok(s) => (s.lint, s.index),
+            Err(_) => (LintConfig::default(), IndexConfig::default()),
+        };
+        let _ = self.lint_tx.send(LintMsg::Request(LintRequest {
+            uri,
+            path,
+            text,
+            version,
+            lint_config,
+            index_config,
+        }));
+    }
+
+    fn resolve_settings(&mut self, uri: &Uri) -> Result<ResolvedSettings, ConfigResolveError> {
+        let path = uri::to_path(uri).ok_or(ConfigResolveError::NonFileUri)?;
         let anchor = path
             .parent()
             .ok_or(ConfigResolveError::NoParentDirectory)?
             .to_path_buf();
 
-        {
-            let state = self.state.lock().expect("state mutex poisoned");
-            if let Some(s) = state.config_cache.get(&anchor) {
-                return Ok(s.clone());
-            }
+        if let Some(s) = self.config_cache.get(&anchor) {
+            return Ok(s.clone());
         }
 
         let (config, _source) = Config::resolve(None, false, &anchor)
@@ -137,187 +386,179 @@ impl Backend {
             lint: config.lint,
             index: config.index,
         };
-
-        let mut state = self.state.lock().expect("state mutex poisoned");
-        state.config_cache.insert(anchor, resolved.clone());
+        self.config_cache.insert(anchor, resolved.clone());
         Ok(resolved)
     }
 
-    /// Lint `uri` after the debounce window and publish diagnostics.
-    fn schedule_lint(&self, uri: Uri) {
-        let state = Arc::clone(&self.state);
-        let db = Arc::clone(&self.db);
-        let client = self.client.clone();
-        tokio::spawn(async move {
-            time::sleep(LINT_DEBOUNCE).await;
-            lint_and_publish(state, db, client, uri).await;
-        });
+    fn publish(&self, uri: Uri, diagnostics: Vec<LspDiagnostic>, version: Option<i32>) {
+        let params = PublishDiagnosticsParams {
+            uri,
+            diagnostics,
+            version,
+        };
+        let not = Notification::new(PublishDiagnostics::METHOD.to_string(), params);
+        let _ = self.sender.send(Message::Notification(not));
+    }
+
+    fn respond_ok(&self, id: RequestId, value: serde_json::Value) {
+        let _ = self
+            .sender
+            .send(Message::Response(Response::new_ok(id, value)));
+    }
+
+    fn respond_err(&self, id: RequestId, message: &str) {
+        let resp = Response::new_err(id, ErrorCode::InvalidParams as i32, message.to_string());
+        let _ = self.sender.send(Message::Response(resp));
     }
 }
 
-/// Resolve the (lint, index) config for a document path's anchor, preferring the
-/// per-anchor cache and falling back to a fresh `Config::resolve`.
-fn resolve_doc_config(state: &Arc<Mutex<State>>, anchor: &Path) -> (LintConfig, IndexConfig) {
-    let cached = {
-        let s = state.lock().expect("state mutex poisoned");
-        s.config_cache.get(anchor).cloned()
-    };
-    if let Some(s) = cached {
-        return (s.lint, s.index);
-    }
-    Config::resolve(None, false, anchor)
-        .ok()
-        .map(|(c, _)| (c.lint, c.index))
-        .unwrap_or_default()
+// ---------------------------------------------------------------------------
+// Lint thread
+// ---------------------------------------------------------------------------
+
+/// Spawn the dedicated lint thread that owns the persistent salsa database.
+fn spawn_lint_thread(lint_rx: Receiver<LintMsg>, out_tx: Sender<Outbound>) -> JoinHandle<()> {
+    let (build_tx, build_rx) = crossbeam_channel::unbounded::<Arc<CompositeProvider>>();
+    std::thread::Builder::new()
+        .name("ravel-lint".to_string())
+        .spawn(move || {
+            let mut worker = LintWorker {
+                db: IncrementalDatabase::default(),
+                index: Arc::new(CompositeProvider::base_only()),
+                index_loaded: HashSet::new(),
+                index_attempts: HashSet::new(),
+                out_tx,
+                build_tx,
+            };
+            worker.run(&lint_rx, &build_rx);
+        })
+        .expect("spawn lint thread")
 }
 
-/// Lint a single document with the current index-backed provider and publish.
-/// Reused by the debounced `schedule_lint` and by background-build completion.
-async fn lint_and_publish(
-    state: Arc<Mutex<State>>,
-    db: Arc<Mutex<IncrementalDatabase>>,
-    client: Client,
-    uri: Uri,
-) {
-    let snapshot = {
-        let s = state.lock().expect("state mutex poisoned");
-        s.documents.get(&uri).cloned()
-    };
-    let Some(doc) = snapshot else { return };
+struct LintWorker {
+    db: IncrementalDatabase,
+    /// The symbol provider used for linting. Starts base-R-only and is replaced
+    /// once the index cache is loaded (and again after a background build).
+    index: Arc<CompositeProvider>,
+    /// Workspace anchors whose index cache has already been loaded into `index`.
+    index_loaded: HashSet<PathBuf>,
+    /// Packages a background harvest has already been scheduled for this session
+    /// — never retried, so a not-installed package doesn't loop.
+    index_attempts: HashSet<SmolStr>,
+    out_tx: Sender<Outbound>,
+    build_tx: Sender<Arc<CompositeProvider>>,
+}
 
-    let path = match uri.to_file_path() {
-        Some(p) => p.into_owned(),
-        None => PathBuf::from("untitled.R"),
-    };
-    let anchor = path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+impl LintWorker {
+    fn run(&mut self, lint_rx: &Receiver<LintMsg>, build_rx: &Receiver<Arc<CompositeProvider>>) {
+        loop {
+            select! {
+                recv(lint_rx) -> msg => {
+                    let Ok(LintMsg::Request(first)) = msg else { break };
+                    // Coalesce: drain everything pending and keep only the latest
+                    // version per URI, so a fast typist's stale edits are dropped.
+                    let mut latest: HashMap<Uri, LintRequest> = HashMap::new();
+                    latest.insert(first.uri.clone(), first);
+                    while let Ok(LintMsg::Request(r)) = lint_rx.try_recv() {
+                        latest.insert(r.uri.clone(), r);
+                    }
+                    for (_, req) in latest {
+                        self.lint(req);
+                    }
+                }
+                recv(build_rx) -> built => {
+                    let Ok(provider) = built else { continue };
+                    self.index = Arc::clone(&provider);
+                    let _ = self.out_tx.send(Outbound::ProviderUpdated(provider));
+                    let _ = self.out_tx.send(Outbound::RelintAll);
+                }
+            }
+        }
+    }
 
-    let (lint_config, index_config) = resolve_doc_config(&state, &anchor);
+    fn lint(&mut self, req: LintRequest) {
+        let anchor = req
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
 
-    // Make sure the index cache for this workspace is loaded, then lint against
-    // it; finally, kick off a background harvest for any still-unknown packages.
-    let provider = ensure_index(&state, &anchor, &index_config);
-    // Push the buffer into the persistent database and lint off the cached
-    // parse/model. The db lock is held only for the synchronous lint (no await),
-    // and is separate from the state lock so editor edits don't contend on it.
-    let diagnostics = {
-        let mut db = db.lock().expect("db mutex poisoned");
-        let file = db.upsert_file(&path, doc.text.clone());
-        crate::linter::check::check_document_in_project(
-            &mut db,
-            &path,
+        let provider = self.ensure_index(&anchor, &req.index_config);
+
+        // Push the buffer into the persistent database and lint off the cached
+        // parse/model; siblings stay cached across keystrokes.
+        let file = self.db.upsert_file(&req.path, req.text.clone());
+        let diagnostics = crate::linter::check::check_document_in_project(
+            &mut self.db,
+            &req.path,
             file,
-            &lint_config,
+            &req.lint_config,
             &*provider,
         )
-        .unwrap_or_default()
-    };
-    let line_index = LineIndex::new(&doc.text);
-    let lsp_diags: Vec<LspDiagnostic> = diagnostics
-        .iter()
-        .map(|d| to_lsp_diagnostic(d, &line_index))
-        .collect();
+        .unwrap_or_default();
 
-    let still_current = {
-        let s = state.lock().expect("state mutex poisoned");
-        matches!(s.documents.get(&uri), Some(cur) if cur.version == doc.version)
-    };
-    if still_current {
-        client
-            .publish_diagnostics(uri, lsp_diags, Some(doc.version))
-            .await;
-    }
+        let line_index = LineIndex::new(&req.text);
+        let diags: Vec<LspDiagnostic> = diagnostics
+            .iter()
+            .map(|d| to_lsp_diagnostic(d, &line_index))
+            .collect();
+        let _ = self.out_tx.send(Outbound::Diagnostics {
+            uri: req.uri,
+            version: req.version,
+            diags,
+        });
 
-    if index_config.auto_build {
-        schedule_index_build(
-            &state,
-            &db,
-            &client,
-            anchor,
-            index_config,
-            &doc.text,
-            &provider,
-        );
-    }
-}
-
-/// Load the index cache for `anchor` into the shared provider the first time we
-/// see that workspace; return the current provider either way. Cache reads
-/// happen outside the state lock.
-fn ensure_index(
-    state: &Arc<Mutex<State>>,
-    anchor: &Path,
-    cfg: &IndexConfig,
-) -> Arc<CompositeProvider> {
-    {
-        let s = state.lock().expect("state mutex poisoned");
-        if s.index_loaded.contains(anchor) {
-            return Arc::clone(&s.index);
+        if req.index_config.auto_build {
+            self.maybe_build(&anchor, &req.index_config, &req.text, &provider);
         }
     }
-    let provider = match resolve_cache_root(None, cfg.cache_dir.as_deref()) {
-        Ok(root) => {
-            let cache = Cache::new(root);
-            Arc::new(CompositeProvider::with_index(IndexedProvider::from_cache(
-                &cache,
-            )))
+
+    /// Load the index cache for `anchor` into the provider the first time we see
+    /// that workspace; return the current provider either way.
+    fn ensure_index(&mut self, anchor: &Path, cfg: &IndexConfig) -> Arc<CompositeProvider> {
+        if self.index_loaded.contains(anchor) {
+            return Arc::clone(&self.index);
         }
-        Err(_) => Arc::new(CompositeProvider::base_only()),
-    };
-    let mut s = state.lock().expect("state mutex poisoned");
-    s.index = Arc::clone(&provider);
-    s.index_loaded.insert(anchor.to_path_buf());
-    provider
-}
-
-/// Packages referenced in `source` that the current `provider` can't resolve and
-/// that we haven't already attempted this session. Marks the returned packages
-/// as attempted so they aren't built twice.
-fn packages_to_build(
-    state: &Arc<Mutex<State>>,
-    provider: &CompositeProvider,
-    source: &str,
-) -> Vec<SmolStr> {
-    let referenced = referenced_in_source(source);
-    let mut s = state.lock().expect("state mutex poisoned");
-    referenced
-        .into_iter()
-        .filter(|pkg| !provider.package_indexed(pkg) && s.index_attempts.insert(pkg.clone()))
-        .collect()
-}
-
-/// Spawn a background harvest for the document's unknown packages. On success,
-/// swap in a freshly-loaded provider and re-lint every open document.
-fn schedule_index_build(
-    state: &Arc<Mutex<State>>,
-    db: &Arc<Mutex<IncrementalDatabase>>,
-    client: &Client,
-    anchor: PathBuf,
-    cfg: IndexConfig,
-    source: &str,
-    provider: &CompositeProvider,
-) {
-    let to_build = packages_to_build(state, provider, source);
-    if to_build.is_empty() {
-        return;
+        let provider = match resolve_cache_root(None, cfg.cache_dir.as_deref()) {
+            Ok(root) => {
+                let cache = Cache::new(root);
+                Arc::new(CompositeProvider::with_index(IndexedProvider::from_cache(
+                    &cache,
+                )))
+            }
+            Err(_) => Arc::new(CompositeProvider::base_only()),
+        };
+        self.index = Arc::clone(&provider);
+        self.index_loaded.insert(anchor.to_path_buf());
+        let _ = self
+            .out_tx
+            .send(Outbound::ProviderUpdated(Arc::clone(&provider)));
+        provider
     }
-    let Ok(cache_root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
-        return;
-    };
 
-    let state = Arc::clone(state);
-    let db = Arc::clone(db);
-    let client = client.clone();
-    tokio::spawn(async move {
-        let now = now_unix_secs();
-        let build_anchor = anchor.clone();
-        // Harvesting reads (potentially large) on-disk DBs — keep it off the
-        // async worker threads.
-        let reloaded = tokio::task::spawn_blocking(move || {
+    /// Spawn a background harvest for the document's unknown packages. On
+    /// success the new provider is sent back on `build_tx`.
+    fn maybe_build(
+        &mut self,
+        anchor: &Path,
+        cfg: &IndexConfig,
+        source: &str,
+        provider: &CompositeProvider,
+    ) {
+        let to_build = packages_to_build(&mut self.index_attempts, provider, source);
+        if to_build.is_empty() {
+            return;
+        }
+        let Ok(cache_root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
+            return;
+        };
+        let cfg = cfg.clone();
+        let anchor = anchor.to_path_buf();
+        let build_tx = self.build_tx.clone();
+        rayon::spawn(move || {
+            let now = now_unix_secs();
             let cache = Cache::new(cache_root);
-            let search = LibrarySearch::discover(Some(&build_anchor), &cfg.library_paths);
+            let search = LibrarySearch::discover(Some(&anchor), &cfg.library_paths);
             let report = build_index(
                 &to_build,
                 &cache,
@@ -328,30 +569,28 @@ fn schedule_index_build(
                 },
                 now,
             );
-            report
-                .newly_indexed()
-                .next()
-                .is_some()
-                .then(|| CompositeProvider::with_index(IndexedProvider::from_cache(&cache)))
-        })
-        .await;
+            if report.newly_indexed().next().is_some() {
+                let provider = Arc::new(CompositeProvider::with_index(
+                    IndexedProvider::from_cache(&cache),
+                ));
+                let _ = build_tx.send(provider);
+            }
+        });
+    }
+}
 
-        let Ok(Some(provider)) = reloaded else { return };
-
-        let open_uris = {
-            let mut s = state.lock().expect("state mutex poisoned");
-            s.index = Arc::new(provider);
-            s.documents.keys().cloned().collect::<Vec<_>>()
-        };
-        for uri in open_uris {
-            tokio::spawn(lint_and_publish(
-                Arc::clone(&state),
-                Arc::clone(&db),
-                client.clone(),
-                uri,
-            ));
-        }
-    });
+/// Packages referenced in `source` that the current `provider` can't resolve and
+/// that we haven't already attempted this session. Marks the returned packages
+/// as attempted so they aren't built twice.
+fn packages_to_build(
+    attempts: &mut HashSet<SmolStr>,
+    provider: &CompositeProvider,
+    source: &str,
+) -> Vec<SmolStr> {
+    referenced_in_source(source)
+        .into_iter()
+        .filter(|pkg| !provider.package_indexed(pkg) && attempts.insert(pkg.clone()))
+        .collect()
 }
 
 fn now_unix_secs() -> u64 {
@@ -361,182 +600,9 @@ fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
-impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> JsonRpcResult<InitializeResult> {
-        Ok(InitializeResult {
-            capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
-                )),
-                document_formatting_provider: Some(OneOf::Left(true)),
-                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                ..Default::default()
-            },
-            server_info: Some(ServerInfo {
-                name: "ravel".to_string(),
-                version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            }),
-            ..Default::default()
-        })
-    }
-
-    async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "ravel LSP ready")
-            .await;
-    }
-
-    async fn shutdown(&self) -> JsonRpcResult<()> {
-        Ok(())
-    }
-
-    async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let uri = params.text_document.uri.clone();
-        {
-            let mut state = self.state.lock().expect("state mutex poisoned");
-            state.documents.insert(
-                uri.clone(),
-                Document {
-                    text: params.text_document.text,
-                    version: params.text_document.version,
-                },
-            );
-        }
-        self.schedule_lint(uri);
-    }
-
-    async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
-        let Some(change) = params.content_changes.pop() else {
-            return;
-        };
-        let uri = params.text_document.uri.clone();
-        {
-            let mut state = self.state.lock().expect("state mutex poisoned");
-            state.documents.insert(
-                uri.clone(),
-                Document {
-                    text: change.text,
-                    version: params.text_document.version,
-                },
-            );
-        }
-        self.schedule_lint(uri);
-    }
-
-    async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let uri = params.text_document.uri;
-        {
-            let mut state = self.state.lock().expect("state mutex poisoned");
-            state.documents.remove(&uri);
-        }
-        // Tell the client to clear stale diagnostics.
-        self.client.publish_diagnostics(uri, Vec::new(), None).await;
-    }
-
-    async fn formatting(
-        &self,
-        params: DocumentFormattingParams,
-    ) -> JsonRpcResult<Option<Vec<TextEdit>>> {
-        let uri = params.text_document.uri;
-        let text = {
-            let state = self.state.lock().expect("state mutex poisoned");
-            state.documents.get(&uri).map(|d| d.text.clone())
-        };
-        let Some(text) = text else {
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("format request for unknown document: {}", uri.as_str()),
-                )
-                .await;
-            return Ok(None);
-        };
-
-        let settings = match self.resolve_settings(&uri) {
-            Ok(s) => s,
-            Err(err) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("config error for {}: {err}", uri.as_str()),
-                    )
-                    .await;
-                return Ok(None);
-            }
-        };
-
-        match compute_format_edits(&text, settings.style) {
-            Some(edits) => Ok(Some(edits)),
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::WARNING,
-                        format!("ravel could not format {}", uri.as_str()),
-                    )
-                    .await;
-                Ok(None)
-            }
-        }
-    }
-
-    async fn code_action(
-        &self,
-        params: CodeActionParams,
-    ) -> JsonRpcResult<Option<CodeActionResponse>> {
-        let uri = params.text_document.uri;
-        let text = {
-            let state = self.state.lock().expect("state mutex poisoned");
-            state.documents.get(&uri).map(|d| d.text.clone())
-        };
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
-        let path = uri
-            .to_file_path()
-            .map(|p| p.into_owned())
-            .unwrap_or_else(|| PathBuf::from("untitled.R"));
-        let lint = self
-            .resolve_settings(&uri)
-            .map(|s| s.lint)
-            .unwrap_or_default();
-
-        Ok(Some(compute_code_actions(
-            &text,
-            &path,
-            &lint,
-            &uri,
-            params.range,
-        )))
-    }
-
-    async fn hover(&self, params: HoverParams) -> JsonRpcResult<Option<Hover>> {
-        let uri = params.text_document_position_params.text_document.uri;
-        let position = params.text_document_position_params.position;
-        let text = {
-            let state = self.state.lock().expect("state mutex poisoned");
-            state.documents.get(&uri).map(|d| d.text.clone())
-        };
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
-        let path = uri
-            .to_file_path()
-            .map(|p| p.into_owned())
-            .unwrap_or_else(|| PathBuf::from("untitled.R"));
-        let anchor = path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let (_, index_config) = resolve_doc_config(&self.state, &anchor);
-        let provider = ensure_index(&self.state, &anchor, &index_config);
-
-        let offset = LineIndex::new(&text).position_to_byte(position);
-        Ok(compute_hover(&text, offset, &provider))
-    }
-}
+// ---------------------------------------------------------------------------
+// Pure compute helpers (unit-testable; no IO beyond the in-memory `text`)
+// ---------------------------------------------------------------------------
 
 /// Build quick-fix code actions for the fixes whose diagnostics overlap
 /// `range`. Pure (no IO beyond the in-memory `text`) so it can be unit-tested.
@@ -813,6 +879,91 @@ fn format_formal(formal: &Formal) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// file: URI ↔ path
+// ---------------------------------------------------------------------------
+
+/// `lsp-types`' `Uri` (a `fluent_uri` newtype) has no file-path conveniences, so
+/// we provide our own. Decoding rides on `fluent_uri` via `Deref`; encoding uses
+/// a small percent-encoder over a fixed safe set.
+mod uri {
+    #[cfg(test)]
+    use std::path::Path;
+    use std::path::PathBuf;
+    #[cfg(test)]
+    use std::str::FromStr;
+
+    use lsp_types::Uri;
+
+    /// Convert a `file:` URI to a filesystem path, or `None` if it isn't a file
+    /// URI or has no scheme.
+    pub fn to_path(uri: &Uri) -> Option<PathBuf> {
+        let scheme = uri.scheme()?;
+        if !scheme.as_str().eq_ignore_ascii_case("file") {
+            return None;
+        }
+        let decoded = uri
+            .path()
+            .as_estr()
+            .decode()
+            .into_string_lossy()
+            .into_owned();
+        Some(from_uri_path(&decoded))
+    }
+
+    #[cfg(windows)]
+    fn from_uri_path(p: &str) -> PathBuf {
+        // "/C:/Users/x" → "C:\Users\x"
+        PathBuf::from(p.strip_prefix('/').unwrap_or(p).replace('/', "\\"))
+    }
+
+    #[cfg(not(windows))]
+    fn from_uri_path(p: &str) -> PathBuf {
+        PathBuf::from(p)
+    }
+
+    /// Convert a filesystem path to a `file:` URI. Currently only the tests build
+    /// URIs from paths (the client always supplies URIs in real traffic).
+    #[cfg(test)]
+    pub fn from_path(path: &Path) -> Option<Uri> {
+        let s = path.to_str()?;
+        let mut out = String::from("file://");
+        encode_into(&to_uri_path(s), &mut out);
+        Uri::from_str(&out).ok()
+    }
+
+    #[cfg(all(test, windows))]
+    fn to_uri_path(s: &str) -> String {
+        // "C:\Users\x" → "/C:/Users/x" (the URI path needs a leading slash)
+        format!("/{}", s.replace('\\', "/"))
+    }
+
+    #[cfg(all(test, not(windows)))]
+    fn to_uri_path(s: &str) -> String {
+        s.to_string()
+    }
+
+    /// Percent-encode `s`, leaving the unreserved set plus `/` and `:` (drive
+    /// letters) intact.
+    #[cfg(test)]
+    fn encode_into(s: &str, out: &mut String) {
+        for &b in s.as_bytes() {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {
+                out.push(b as char);
+            } else {
+                out.push('%');
+                out.push(hex(b >> 4));
+                out.push(hex(b & 0x0f));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn hex(n: u8) -> char {
+        char::from(if n < 10 { b'0' + n } else { b'A' + (n - 10) })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,8 +980,8 @@ mod tests {
         }
     }
 
-    /// An absolute path valid on the host platform (`Uri::from_file_path`
-    /// rejects non-absolute paths, and `/tmp/t.R` is not absolute on Windows).
+    /// An absolute path valid on the host platform (the URI conversion needs an
+    /// absolute path, and `/tmp/t.R` is not absolute on Windows).
     fn test_path() -> &'static Path {
         if cfg!(windows) {
             Path::new(r"C:\tmp\t.R")
@@ -839,8 +990,14 @@ mod tests {
         }
     }
 
-    fn uri() -> Uri {
-        Uri::from_file_path(test_path()).expect("valid file uri")
+    fn test_uri() -> Uri {
+        uri::from_path(test_path()).expect("valid file uri")
+    }
+
+    #[test]
+    fn uri_path_round_trips() {
+        let uri = test_uri();
+        assert_eq!(uri::to_path(&uri).as_deref(), Some(test_path()));
     }
 
     #[test]
@@ -850,7 +1007,7 @@ mod tests {
             src,
             test_path(),
             &LintConfig::default(),
-            &uri(),
+            &test_uri(),
             full_line_0(),
         );
 
@@ -867,7 +1024,7 @@ mod tests {
             .as_ref()
             .and_then(|e| e.changes.as_ref())
             .expect("workspace edit with changes");
-        let edits = changes.get(&uri()).expect("edits for our uri");
+        let edits = changes.get(&test_uri()).expect("edits for our uri");
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "==");
         // The edit targets the `=` token on line 0.
@@ -881,7 +1038,8 @@ mod tests {
             start: pos(5, 0),
             end: pos(5, 0),
         };
-        let actions = compute_code_actions(src, test_path(), &LintConfig::default(), &uri(), far);
+        let actions =
+            compute_code_actions(src, test_path(), &LintConfig::default(), &test_uri(), far);
         assert!(actions.is_empty(), "expected no actions, got {actions:?}");
     }
 
@@ -907,15 +1065,15 @@ mod tests {
 
     #[test]
     fn packages_to_build_skips_indexed_and_dedups_attempts() {
-        let state = Arc::new(Mutex::new(State::default()));
+        let mut attempts = HashSet::new();
         let provider = indexed_dplyr();
         // dplyr is indexed (skipped); a default package (stats) is "indexed" too;
         // only tidyr needs a build.
         let src = "library(dplyr)\nlibrary(stats)\nlibrary(tidyr)\n";
-        let first = packages_to_build(&state, &provider, src);
+        let first = packages_to_build(&mut attempts, &provider, src);
         assert_eq!(first, vec![SmolStr::new("tidyr")]);
         // A second pass returns nothing — tidyr was already attempted.
-        let second = packages_to_build(&state, &provider, src);
+        let second = packages_to_build(&mut attempts, &provider, src);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }
 

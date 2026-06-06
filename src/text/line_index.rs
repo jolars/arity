@@ -4,7 +4,7 @@
 //! - 1-indexed (line, column) in **code points** for CLI diagnostics.
 //! - 0-indexed (line, character) in **UTF-16 units** for LSP positions.
 
-use tower_lsp_server::ls_types::Position;
+use lsp_types::Position;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineCol {
