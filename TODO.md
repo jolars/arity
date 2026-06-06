@@ -28,17 +28,26 @@ in-tree parser, not a drop-in jarl replacement.
 - [ ] CRAN-wide symbol manifest as a downloadable sidecar. Shape: per-package
       export lists keyed by package version. With a manifest in place, enable
       `undefined-symbol` by default and stop returning `Unknown` for names from
-      `library()`-attached packages.
-- [ ] DESCRIPTION / NAMESPACE parsing for R-package authoring contexts. Match
-      jarl's behavior: track `importFrom()` direct mappings and `export()`
-      declarations so `unused-binding` doesn't flag exported package symbols.
-- [ ] Cross-file scope awareness: a binding defined in `a.R` should resolve from
-      `b.R` when both belong to the same package or project.
-- [ ] Salsa-cached `semantic_model` query in `src/incremental.rs`. The current
-      `parse_file` query stores only a debug-formatted CST string; both the
-      linter and LSP rebuild the semantic model from text. Adding a tracked
-      query requires a `salsa::Update`-friendly snapshot type (the rowan
-      `SyntaxNode` itself isn't easy to wire in).
+      `library()`-attached packages. Would also let DESCRIPTION `Imports`/
+      `Depends` feed name resolution (the `import(pkg)` case currently only
+      marks resolution incomplete, in `src/project/scope.rs`).
+- [x] DESCRIPTION / NAMESPACE parsing for R-package authoring contexts. NAMESPACE
+      `export()`/`exportPattern()`, `importFrom()`, and `import()` are parsed
+      (`rindex::harvest::parse_namespace`) and folded into cross-file resolution
+      (`src/project/scope.rs`): exported bindings aren't flagged `unused-binding`,
+      `importFrom` names resolve, and `import(pkg)` suppresses `undefined-symbol`.
+- [x] Cross-file scope awareness: a binding defined in `a.R` resolves from `b.R`
+      when both belong to the same package (shared `R/` namespace) or `source()`
+      closure. Implemented in `src/project/` (`ProjectScope`) and wired into both
+      the batch linter and the LSP (`check_document_in_project`).
+- [x] Salsa-cached `semantic_model` query in `src/incremental.rs`. The CST is now
+      cached as a `rowan::GreenNode` (via `no_eq, unsafe(non_update_types)`) and
+      `semantic_model` is a tracked query; the linter and LSP reuse them instead
+      of re-parsing from text.
+- [ ] Cross-file follow-ups: wrap the project scope as tracked salsa queries
+      (`file_exports` firewall, `source_edges`, `project_graph`, `visible_symbols`)
+      so a body edit doesn't rebuild the whole project scope; today
+      `ProjectScope` is recomputed per lint over cached per-file parses.
 - [ ] Honor editor-supplied `initializationOptions` /
       `workspace/didChangeConfiguration` for `line-width` / `indent-width`.
 - [ ] Range formatting (`textDocument/rangeFormatting`) once the formatter gains
