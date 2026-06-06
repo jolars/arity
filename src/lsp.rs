@@ -205,8 +205,14 @@ async fn lint_and_publish(
     let diagnostics = {
         let mut db = db.lock().expect("db mutex poisoned");
         let file = db.upsert_file(&path, doc.text.clone());
-        crate::linter::check::check_tracked_file(&db, file, &path, &lint_config, &*provider)
-            .unwrap_or_default()
+        crate::linter::check::check_document_in_project(
+            &mut db,
+            &path,
+            file,
+            &lint_config,
+            &*provider,
+        )
+        .unwrap_or_default()
     };
     let line_index = LineIndex::new(&doc.text);
     let lsp_diags: Vec<LspDiagnostic> = diagnostics

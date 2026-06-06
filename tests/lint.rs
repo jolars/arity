@@ -167,6 +167,63 @@ fn namespace_wholesale_import_suppresses_undefined_symbol() {
 }
 
 #[test]
+fn project_aware_document_resolves_cross_file() {
+    // The LSP entry: linting b.R (live buffer) resolves `foo` from a sibling
+    // a.R read off disk.
+    use ravel::incremental::IncrementalDatabase;
+    use ravel::linter::check_document_in_project;
+    use ravel::rindex::provider::CompositeProvider;
+
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
+    let b = r_dir.join("b.R");
+    std::fs::write(&b, "foo()\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    let provider = CompositeProvider::base_only();
+
+    let diags = check_document_in_project(&mut db, &b, active, &LintConfig::default(), &provider)
+        .expect("lint should succeed");
+    let rules: Vec<&str> = diags.iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"undefined-symbol"), "diags: {rules:?}");
+}
+
+#[test]
+fn project_aware_relint_reuses_unchanged_siblings() {
+    // Re-linting with unchanged content must not re-parse sibling files: the
+    // salsa caches stay warm across LSP keystrokes.
+    use ravel::incremental::IncrementalDatabase;
+    use ravel::linter::check_document_in_project;
+    use ravel::rindex::provider::CompositeProvider;
+
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
+    let b = r_dir.join("b.R");
+    std::fs::write(&b, "foo()\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    let provider = CompositeProvider::base_only();
+
+    check_document_in_project(&mut db, &b, active, &LintConfig::default(), &provider).unwrap();
+    db.clear_query_log();
+    check_document_in_project(&mut db, &b, active, &LintConfig::default(), &provider).unwrap();
+
+    assert!(
+        db.query_log().is_empty(),
+        "unchanged re-lint re-ran queries: {:?}",
+        db.query_log().len()
+    );
+}
+
+#[test]
 fn lint_reports_parse_diagnostics_pathway() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("bad.R");

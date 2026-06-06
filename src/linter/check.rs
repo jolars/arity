@@ -239,6 +239,84 @@ pub fn check_tracked_file(
     Ok(lint_parsed_file(db, file, path, &rules, provider, None))
 }
 
+/// Lint `path` (already tracked in `db` as `active`, carrying the live editor
+/// buffer) with cross-file resolution. Discovers the enclosing project — the R
+/// package root, else the file's directory — loads its sibling files into `db`
+/// (cached across calls, so unchanged siblings aren't re-parsed), builds the
+/// project scope, and lints the target file against it. Used by the LSP.
+pub fn check_document_in_project(
+    db: &mut IncrementalDatabase,
+    path: &Path,
+    active: SourceFile,
+    config: &LintConfig,
+    provider: &dyn SymbolProvider,
+) -> Result<Vec<Diagnostic>, LintError> {
+    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+    if let Some(rule) = unknown.into_iter().next() {
+        return Err(LintError::UnknownRule { rule });
+    }
+    if !db.parse_diagnostics(active).is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Discover the project's files: the package root, else the file's directory.
+    let search_dir =
+        package_root(path).or_else(|| path.parent().filter(|p| p.is_dir()).map(Path::to_path_buf));
+    let mut project_files = match &search_dir {
+        Some(dir) => collect_r_files(std::slice::from_ref(dir)).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    if !project_files.iter().any(|p| p == path) {
+        project_files.push(path.to_path_buf());
+    }
+
+    // Build facts for each project file, using the live buffer for `path` and
+    // on-disk content (cached in `db`) for siblings.
+    let mut facts = Vec::new();
+    for file_path in &project_files {
+        let file = if file_path == path {
+            active
+        } else {
+            match fs::read_to_string(file_path) {
+                Ok(text) => db.upsert_file(file_path, text),
+                Err(_) => continue,
+            }
+        };
+        if !db.parse_diagnostics(file).is_empty() {
+            continue;
+        }
+        let model = db.semantic_model(file);
+        facts.push(FileFacts {
+            path: file_path.clone(),
+            exports: file_exports(model),
+            free_reads: file_free_reads(model),
+            source_edges: collect_source_edges(&db.parsed_tree(file), file_path.parent()),
+            package_root: package_root(file_path),
+        });
+    }
+
+    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
+    for f in &facts {
+        if let Some(root) = &f.package_root
+            && !namespaces.contains_key(root)
+            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
+        {
+            namespaces.insert(root.clone(), text);
+        }
+    }
+
+    let scope = ProjectScope::build(&facts, &namespaces);
+    let file_scope = scope.for_file(path);
+    Ok(lint_parsed_file(
+        db,
+        active,
+        path,
+        &rules,
+        provider,
+        Some(&file_scope),
+    ))
+}
+
 /// Convenience: lint a single in-memory document by path + text (used by quick
 /// fixes and tests). Builds a one-shot database; the LSP's hot lint path uses
 /// [`check_tracked_file`] against its persistent database instead.

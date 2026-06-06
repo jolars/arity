@@ -156,7 +156,12 @@ impl IncrementalDatabase {
             .copied();
         match existing {
             Some(file) => {
-                file.set_text(self).to(text);
+                // Skip the write when the text is unchanged: setting an input
+                // unconditionally bumps the revision and would re-run every
+                // downstream query (a sibling file re-read on each keystroke).
+                if file.text(self) != &text {
+                    file.set_text(self).to(text);
+                }
                 file
             }
             None => {
