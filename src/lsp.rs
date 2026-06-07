@@ -27,24 +27,26 @@ use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
+    DidChangeConfiguration, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{CodeActionRequest, Formatting, HoverRequest, Request as RequestTrait};
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
-    DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeResult, MarkupContent, MarkupKind, NumberOrString, OneOf,
-    Position, PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
+    DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams, Hover,
+    HoverContents, HoverParams, HoverProviderCapability, InitializeResult, MarkupContent,
+    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range,
+    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    Uri, WorkspaceEdit,
 };
 use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
+use serde::Deserialize;
 use smol_str::SmolStr;
 
 use crate::ast::{AstNode as _, BinaryExpr};
-use crate::config::{Config, IndexConfig, LintConfig};
+use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_with_style};
 use crate::incremental::IncrementalDatabase;
 use crate::linter::{Diagnostic, Severity};
@@ -65,7 +67,11 @@ type DynError = Box<dyn std::error::Error + Sync + Send>;
 pub fn run() -> Result<(), DynError> {
     let (connection, io_threads) = Connection::stdio();
 
-    let (id, _params) = connection.initialize_start()?;
+    let (id, params) = connection.initialize_start()?;
+    let editor_settings = params
+        .get("initializationOptions")
+        .map(EditorSettings::from_client_value)
+        .unwrap_or_default();
     let init_result = InitializeResult {
         capabilities: server_capabilities(),
         server_info: Some(ServerInfo {
@@ -75,7 +81,7 @@ pub fn run() -> Result<(), DynError> {
     };
     connection.initialize_finish(id, serde_json::to_value(init_result)?)?;
 
-    main_loop(connection)?;
+    main_loop(connection, editor_settings)?;
     io_threads.join()?;
     Ok(())
 }
@@ -93,12 +99,12 @@ fn server_capabilities() -> ServerCapabilities {
 /// The main event loop: dispatch incoming JSON-RPC messages and lint results.
 /// Owns the connection so that returning drops the sender and lets the writer
 /// thread finish; joins the lint thread before returning.
-fn main_loop(connection: Connection) -> Result<(), DynError> {
+fn main_loop(connection: Connection, editor_settings: EditorSettings) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
     let lint_handle = spawn_lint_thread(lint_rx, out_tx);
 
-    let mut state = GlobalState::new(connection.sender.clone(), lint_tx);
+    let mut state = GlobalState::new(connection.sender.clone(), lint_tx, editor_settings);
 
     loop {
         select! {
@@ -140,6 +146,64 @@ struct ResolvedSettings {
     index: IndexConfig,
 }
 
+/// Formatter knobs the editor can push via `initializationOptions` (at startup)
+/// or `workspace/didChangeConfiguration` (later). These are the *fallback*: a
+/// discovered `ravel.toml` is authoritative and ignores them entirely. Fields
+/// are `Option` so an unset key leaves the built-in default in place.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct EditorSettings {
+    line_width: Option<u32>,
+    indent_width: Option<u32>,
+}
+
+impl EditorSettings {
+    /// Extract our settings from a client-supplied JSON value. Accepts either
+    /// the bare options object or a tree namespaced under a `"ravel"` key (how
+    /// `workspace/didChangeConfiguration` clients typically scope settings).
+    /// Unknown keys are ignored, and a malformed value yields the defaults.
+    fn from_client_value(value: &serde_json::Value) -> Self {
+        let section = value
+            .get("ravel")
+            .filter(|v| v.is_object())
+            .unwrap_or(value);
+        serde_json::from_value(section.clone()).unwrap_or_default()
+    }
+
+    /// The [`FormatStyle`] these settings imply, layered over the built-in
+    /// defaults. Out-of-range values are rejected wholesale (falling back to
+    /// defaults), reusing [`FormatConfig`]'s validation bounds — the LSP has no
+    /// good channel to report a bad editor setting, so we ignore it.
+    fn to_format_style(&self) -> FormatStyle {
+        let mut config = FormatConfig::default();
+        if let Some(width) = self.line_width {
+            config.line_width = width;
+        }
+        if let Some(width) = self.indent_width {
+            config.indent_width = width;
+        }
+        match config.validate(None) {
+            Ok(()) => FormatStyle::from(&config),
+            Err(_) => FormatStyle::default(),
+        }
+    }
+}
+
+/// Resolve the [`FormatStyle`] for a document: a discovered `ravel.toml`
+/// (`config_present`) wins outright; otherwise editor-pushed settings apply over
+/// the built-in defaults.
+fn resolve_format_style(
+    config: &Config,
+    config_present: bool,
+    editor: &EditorSettings,
+) -> FormatStyle {
+    if config_present {
+        FormatStyle::from(&config.format)
+    } else {
+        editor.to_format_style()
+    }
+}
+
 /// A lint request handed to the dedicated lint thread.
 struct LintRequest {
     uri: Uri,
@@ -179,16 +243,24 @@ struct GlobalState {
     /// The current symbol provider, used for hover. Updated by the lint thread
     /// via [`Outbound::ProviderUpdated`]; starts base-R-only.
     provider: Arc<CompositeProvider>,
+    /// Editor-pushed formatter defaults; the fallback when no `ravel.toml` is
+    /// found. Updated by `workspace/didChangeConfiguration`.
+    editor_settings: EditorSettings,
     sender: Sender<Message>,
     lint_tx: Sender<LintMsg>,
 }
 
 impl GlobalState {
-    fn new(sender: Sender<Message>, lint_tx: Sender<LintMsg>) -> Self {
+    fn new(
+        sender: Sender<Message>,
+        lint_tx: Sender<LintMsg>,
+        editor_settings: EditorSettings,
+    ) -> Self {
         Self {
             documents: HashMap::new(),
             config_cache: HashMap::new(),
             provider: Arc::new(CompositeProvider::base_only()),
+            editor_settings,
             sender,
             lint_tx,
         }
@@ -321,6 +393,22 @@ impl GlobalState {
                     self.publish(uri, Vec::new(), None);
                 }
             }
+            DidChangeConfiguration::METHOD => {
+                if let Ok(params) =
+                    not.extract::<DidChangeConfigurationParams>(DidChangeConfiguration::METHOD)
+                {
+                    let updated = EditorSettings::from_client_value(&params.settings);
+                    if updated != self.editor_settings {
+                        self.editor_settings = updated;
+                        // Drop cached resolutions so the new fallback is picked
+                        // up on the next pull. A discovered `ravel.toml` still
+                        // wins, so docs in a configured workspace are unaffected.
+                        // Format requests re-resolve on demand; lint output does
+                        // not depend on these knobs, so no re-lint is needed.
+                        self.config_cache.clear();
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -379,10 +467,10 @@ impl GlobalState {
             return Ok(s.clone());
         }
 
-        let (config, _source) = Config::resolve(None, false, &anchor)
+        let (config, source) = Config::resolve(None, false, &anchor)
             .map_err(|err| ConfigResolveError::Config(err.to_string()))?;
         let resolved = ResolvedSettings {
-            style: FormatStyle::from(&config.format),
+            style: resolve_format_style(&config, source.is_some(), &self.editor_settings),
             lint: config.lint,
             index: config.index,
         };
@@ -992,6 +1080,83 @@ mod tests {
 
     fn test_uri() -> Uri {
         uri::from_path(test_path()).expect("valid file uri")
+    }
+
+    // --- editor settings --------------------------------------------------
+
+    #[test]
+    fn editor_settings_parse_bare_camel_case_object() {
+        let value = serde_json::json!({ "lineWidth": 100, "indentWidth": 4 });
+        let settings = EditorSettings::from_client_value(&value);
+        assert_eq!(settings.line_width, Some(100));
+        assert_eq!(settings.indent_width, Some(4));
+    }
+
+    #[test]
+    fn editor_settings_parse_namespaced_under_ravel() {
+        // didChangeConfiguration clients push their whole settings tree; ours is
+        // scoped under "ravel" and sibling keys are ignored.
+        let value = serde_json::json!({
+            "ravel": { "lineWidth": 120 },
+            "editor": { "tabSize": 8 },
+        });
+        let settings = EditorSettings::from_client_value(&value);
+        assert_eq!(settings.line_width, Some(120));
+        assert_eq!(settings.indent_width, None);
+    }
+
+    #[test]
+    fn editor_settings_ignore_unknown_and_malformed() {
+        let unknown = serde_json::json!({ "bogus": true });
+        assert_eq!(
+            EditorSettings::from_client_value(&unknown),
+            EditorSettings::default()
+        );
+        let malformed = serde_json::json!("not an object");
+        assert_eq!(
+            EditorSettings::from_client_value(&malformed),
+            EditorSettings::default()
+        );
+    }
+
+    #[test]
+    fn editor_settings_to_style_layers_over_defaults() {
+        let settings = EditorSettings {
+            line_width: Some(100),
+            indent_width: None,
+        };
+        let style = settings.to_format_style();
+        assert_eq!(style.line_width, 100);
+        // Unset field keeps the built-in default.
+        assert_eq!(style.indent_width, FormatStyle::default().indent_width);
+    }
+
+    #[test]
+    fn editor_settings_out_of_range_fall_back_to_defaults() {
+        // 0 is below the valid width floor; the whole layer is discarded.
+        let settings = EditorSettings {
+            line_width: Some(0),
+            indent_width: Some(4),
+        };
+        assert_eq!(settings.to_format_style(), FormatStyle::default());
+    }
+
+    #[test]
+    fn config_file_wins_over_editor_settings() {
+        let mut config = Config::default();
+        config.format.line_width = 70;
+        let editor = EditorSettings {
+            line_width: Some(120),
+            indent_width: Some(8),
+        };
+        // ravel.toml present → editor settings ignored entirely.
+        let style = resolve_format_style(&config, true, &editor);
+        assert_eq!(style.line_width, 70);
+        assert_eq!(style.indent_width, FormatStyle::default().indent_width);
+        // No config file → editor settings apply over defaults.
+        let fallback = resolve_format_style(&Config::default(), false, &editor);
+        assert_eq!(fallback.line_width, 120);
+        assert_eq!(fallback.indent_width, 8);
     }
 
     #[test]

@@ -21,10 +21,12 @@ in-tree parser, not a drop-in jarl replacement.
 
 ## Language Server
 
-- [ ] LSP refinements: honor `initializationOptions` /
-      `workspace/didChangeConfiguration`; add `textDocument/rangeFormatting`
-      once the formatter gains a range API. (`textDocument/codeAction` QuickFix
-      hooks now shipped alongside autofix --- see Phase 6.x autofix above.)
+- [ ] LSP refinements: `initializationOptions` /
+      `workspace/didChangeConfiguration` are now honored for `line-width` /
+      `indent-width` (a discovered `ravel.toml` wins; editor settings are the
+      fallback). Still pending: `textDocument/rangeFormatting`, once the
+      formatter gains a range API. (`textDocument/codeAction` QuickFix hooks
+      shipped alongside autofix --- see Phase 6.x autofix above.)
 - [ ] CRAN-wide symbol manifest as a downloadable sidecar. Shape: per-package
       export lists keyed by package version. With a manifest in place, enable
       `undefined-symbol` by default and stop returning `Unknown` for names from
@@ -54,8 +56,12 @@ in-tree parser, not a drop-in jarl replacement.
       reads could move onto read-only snapshot queries off that thread. Relatedly,
       the lint thread *coalesces* stale requests but does not preemptively cancel a
       long in-flight lint.
-- [ ] Honor editor-supplied `initializationOptions` /
+- [x] Honor editor-supplied `initializationOptions` /
       `workspace/didChangeConfiguration` for `line-width` / `indent-width`.
+      Editor settings are the *fallback*: a discovered `ravel.toml` is
+      authoritative and ignores them. Parsed in `src/lsp.rs` (`EditorSettings`),
+      applied via `resolve_format_style`; a config change clears the resolution
+      cache so the next pull picks up the new fallback.
 - [ ] Range formatting (`textDocument/rangeFormatting`) once the formatter gains
       a range API.
 - [ ] Add parse performance and incremental-reparse benchmarks.
