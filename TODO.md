@@ -48,6 +48,12 @@ in-tree parser, not a drop-in jarl replacement.
       (`file_exports` firewall, `source_edges`, `project_graph`, `visible_symbols`)
       so a body edit doesn't rebuild the whole project scope; today
       `ProjectScope` is recomputed per lint over cached per-file parses.
+- [ ] LSP read-path follow-ups (`src/lsp.rs`): hover/formatting/code-action
+      currently re-parse independently instead of reusing the salsa db. With the
+      dedicated lint thread now owning the db (salsa is single-writer), interactive
+      reads could move onto read-only snapshot queries off that thread. Relatedly,
+      the lint thread *coalesces* stale requests but does not preemptively cancel a
+      long in-flight lint.
 - [ ] Honor editor-supplied `initializationOptions` /
       `workspace/didChangeConfiguration` for `line-width` / `indent-width`.
 - [ ] Range formatting (`textDocument/rangeFormatting`) once the formatter gains

@@ -5,9 +5,8 @@ repository.
 
 ## Project
 
-Ravel is a Rust CLI providing a language server (planned), formatter, and linter
-for the R language. Single-crate Cargo package (`ravel`, edition 2024), not a
-workspace.
+Ravel is a Rust CLI providing a language server, formatter, and linter for the R
+language. Single-crate Cargo package (`ravel`, edition 2024), not a workspace.
 
 **Strategy (see `TODO.md`):** bring the parser + formatter foundation to
 near-completion *first*; the linter and LSP are deferred to later phases. When
@@ -132,6 +131,17 @@ using legacy string-based wrapping, pending native IR re-implementation.
 **Linter** (`src/linter/`): `check_paths` walks files, parses, and reports
 `LintStatus` (`Clean` / `Findings` / `ParseDiagnostics`); parse diagnostics
 block linting a file. Largely a placeholder ahead of Phase 6.
+
+**Language server** (`src/lsp.rs`, CLI `ravel lsp`): a stdio JSON-RPC server on
+the `lsp-server` crate (rust-analyzer's transport) --- offers formatting, pushed
+diagnostics, quick-fix code actions, and index-backed hover. The main loop owns
+no salsa database: read-only requests run on `rayon`, and linting is serialized
+on a **dedicated thread** that owns the persistent `IncrementalDatabase`. This is
+forced by salsa being strictly single-writer (a `set_*` setter blocks until all
+other db handles drop) combined with cross-file lint *writing* sibling files into
+the db --- so lint can't run on a shared read snapshot. The lint thread
+*coalesces* requests (latest version per URI wins) in lieu of a debounce. See the
+module doc for the full rationale.
 
 **File discovery** (`src/file_discovery.rs`): `collect_r_files` walks paths for
 `.R` files (via `ignore`); rejects non-`.R` explicit file paths.
