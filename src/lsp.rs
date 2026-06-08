@@ -53,16 +53,18 @@ use lsp_types::notification::{
     DidChangeConfiguration, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
     Notification as NotificationTrait, PublishDiagnostics,
 };
-use lsp_types::request::{CodeActionRequest, Formatting, HoverRequest, Request as RequestTrait};
+use lsp_types::request::{
+    CodeActionRequest, Formatting, HoverRequest, RangeFormatting, Request as RequestTrait,
+};
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams, Hover,
-    HoverContents, HoverParams, HoverProviderCapability, InitializeResult, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range,
-    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    Uri, WorkspaceEdit,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    DocumentRangeFormattingParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeResult, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
+    PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -71,7 +73,7 @@ use smol_str::SmolStr;
 
 use crate::ast::{AstNode as _, BinaryExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
-use crate::formatter::{FormatStyle, format_node, format_with_style};
+use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
 use crate::incremental::IncrementalDatabase;
 use crate::linter::{Diagnostic, Severity};
 use crate::parser::parse;
@@ -114,6 +116,7 @@ fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         document_formatting_provider: Some(OneOf::Left(true)),
+        document_range_formatting_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         ..Default::default()
@@ -257,6 +260,14 @@ enum ReadJob {
         style: FormatStyle,
         sender: Sender<Message>,
     },
+    FormatRange {
+        id: RequestId,
+        path: PathBuf,
+        text: String,
+        range: Range,
+        style: FormatStyle,
+        sender: Sender<Message>,
+    },
     Hover {
         id: RequestId,
         path: PathBuf,
@@ -334,6 +345,7 @@ impl GlobalState {
     fn on_request(&mut self, req: Request) {
         match req.method.as_str() {
             Formatting::METHOD => self.on_formatting(req),
+            RangeFormatting::METHOD => self.on_range_formatting(req),
             CodeActionRequest::METHOD => self.on_code_action(req),
             HoverRequest::METHOD => self.on_hover(req),
             _ => {
@@ -367,6 +379,33 @@ impl GlobalState {
             id,
             path,
             text,
+            style: settings.style,
+            sender: self.sender.clone(),
+        });
+    }
+
+    fn on_range_formatting(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<DocumentRangeFormattingParams>(RangeFormatting::METHOD)
+        else {
+            self.respond_err(id, "invalid range formatting params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let Ok(settings) = self.resolve_settings(&uri) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::FormatRange {
+            id,
+            path,
+            text,
+            range: params.range,
             style: settings.style,
             sender: self.sender.clone(),
         });
@@ -447,6 +486,7 @@ impl GlobalState {
         if let Err(crossbeam_channel::SendError(job)) = self.read_tx.send(job) {
             let (id, sender) = match job {
                 ReadJob::Format { id, sender, .. } => (id, sender),
+                ReadJob::FormatRange { id, sender, .. } => (id, sender),
                 ReadJob::Hover { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
@@ -1009,6 +1049,17 @@ fn run_read(snapshot: IncrementalDatabase, job: ReadJob) {
             let result = format_edits_via_db(&snapshot, &path, &text, style);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
+        ReadJob::FormatRange {
+            id,
+            path,
+            text,
+            range,
+            style,
+            sender,
+        } => {
+            let result = format_range_edits_via_db(&snapshot, &path, &text, range, style);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
         ReadJob::Hover {
             id,
             path,
@@ -1050,6 +1101,43 @@ fn format_edits_via_db(
         Ok(Some(edits)) => edits,
         // Cache miss (`Ok(None)`) or a racing write (`Err`): re-parse from text.
         Ok(None) | Err(_) => compute_format_edits(text, style),
+    }
+}
+
+/// Range-format `text` off the snapshot's cached parse when the db's tracked
+/// buffer for `path` still matches it; otherwise re-parse. Mirrors
+/// [`format_edits_via_db`]'s cache/cancellation handling.
+fn format_range_edits_via_db(
+    snapshot: &IncrementalDatabase,
+    path: &Path,
+    text: &str,
+    range: Range,
+    style: FormatStyle,
+) -> Option<Vec<TextEdit>> {
+    let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        let file = snapshot.lookup_file(path)?;
+        if snapshot.file_text(file) != text {
+            // The tracked input lags the live buffer; the cached tree is stale.
+            return None;
+        }
+        if !snapshot.parse_diagnostics(file).is_empty() {
+            // Parse errors: the formatter refuses, like the whole-document path.
+            return Some(None);
+        }
+        let root = snapshot.parsed_tree(file);
+        let line_index = LineIndex::new(text);
+        let text_range = lsp_range_to_text_range(&line_index, range);
+        let edits = match format_range(&root, text_range, style) {
+            Ok(Some(formatted)) => Some(range_edits(&line_index, text, formatted)),
+            Ok(None) => Some(Vec::new()),
+            Err(_) => None,
+        };
+        Some(edits)
+    }));
+    match cached {
+        Ok(Some(edits)) => edits,
+        // Cache miss (`Ok(None)`) or a racing write (`Err`): re-parse from text.
+        Ok(None) | Err(_) => compute_format_range_edits(text, range, style),
     }
 }
 
@@ -1178,6 +1266,61 @@ impl std::fmt::Display for ConfigResolveError {
 pub fn compute_format_edits(text: &str, style: FormatStyle) -> Option<Vec<TextEdit>> {
     let formatted = format_with_style(text, style).ok()?;
     Some(edits_for_formatted(text, formatted))
+}
+
+/// Compute the LSP `TextEdit`s to format the selection `range` of `text`,
+/// re-parsing it.
+///
+/// Returns `None` when the formatter rejects the input (e.g. parse error). An
+/// empty `Vec` means the selected region is already formatted or covers no
+/// statement.
+pub fn compute_format_range_edits(
+    text: &str,
+    range: Range,
+    style: FormatStyle,
+) -> Option<Vec<TextEdit>> {
+    let parsed = parse(text);
+    if !parsed.diagnostics.is_empty() {
+        return None;
+    }
+    let line_index = LineIndex::new(text);
+    let text_range = lsp_range_to_text_range(&line_index, range);
+    match format_range(&parsed.cst, text_range, style).ok()? {
+        Some(formatted) => Some(range_edits(&line_index, text, formatted)),
+        None => Some(Vec::new()),
+    }
+}
+
+/// Convert an LSP `Range` to a byte `TextRange`. `position_to_byte` already
+/// clamps to the text length; we only ensure `start <= end`.
+fn lsp_range_to_text_range(line_index: &LineIndex, range: Range) -> TextRange {
+    let start = line_index.position_to_byte(range.start);
+    let end = line_index.position_to_byte(range.end);
+    TextRange::new(
+        TextSize::new(start as u32),
+        TextSize::new(start.max(end) as u32),
+    )
+}
+
+/// Turn a [`RangeFormatted`] region into the LSP edit list, dropping the edit
+/// when it would not change the buffer.
+fn range_edits(
+    line_index: &LineIndex,
+    text: &str,
+    formatted: crate::formatter::RangeFormatted,
+) -> Vec<TextEdit> {
+    let start = usize::from(formatted.range.start());
+    let end = usize::from(formatted.range.end());
+    if text.get(start..end) == Some(formatted.text.as_str()) {
+        return Vec::new();
+    }
+    vec![TextEdit {
+        range: Range {
+            start: line_index.byte_to_position(start),
+            end: line_index.byte_to_position(end),
+        },
+        new_text: formatted.text,
+    }]
 }
 
 /// The whole-document edit replacing `text` with its formatted form (empty when

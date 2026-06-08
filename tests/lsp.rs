@@ -1,5 +1,6 @@
+use lsp_types::{Position, Range};
 use ravel::formatter::{FormatStyle, format_with_style};
-use ravel::lsp::compute_format_edits;
+use ravel::lsp::{compute_format_edits, compute_format_range_edits};
 
 #[test]
 fn reformats_unformatted_input_with_full_document_edit() {
@@ -63,4 +64,55 @@ fn end_position_handles_input_without_trailing_newline() {
     assert_eq!(edit.range.start.line, 0);
     assert_eq!(edit.range.end.line, 0);
     assert_eq!(edit.range.end.character, input.len() as u32);
+}
+
+fn line_range(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> Range {
+    Range {
+        start: Position::new(start_line, start_char),
+        end: Position::new(end_line, end_char),
+    }
+}
+
+#[test]
+fn range_edit_is_scoped_to_the_selected_statement() {
+    let style = FormatStyle::default();
+    // Select the middle line `2+2`; only it should be reformatted.
+    let input = "1+1\n2+2\n3+3\n";
+    let range = line_range(1, 0, 1, 3);
+    let edits = compute_format_range_edits(input, range, style).expect("formats");
+    assert_eq!(edits.len(), 1, "expected a single scoped edit");
+    let edit = &edits[0];
+    assert_eq!(edit.new_text, "2 + 2");
+    assert_eq!(edit.range.start, Position::new(1, 0));
+    assert_eq!(edit.range.end, Position::new(1, 3));
+}
+
+#[test]
+fn range_edit_preserves_first_line_indentation() {
+    let style = FormatStyle::default();
+    let input = "f <- function() {\n  1+1\n}\n";
+    // Select the indented `1+1` (characters 2..5 of line 1).
+    let range = line_range(1, 2, 1, 5);
+    let edits = compute_format_range_edits(input, range, style).expect("formats");
+    let edit = &edits[0];
+    assert_eq!(edit.new_text, "1 + 1");
+    // The edit starts after the existing indentation, which is left untouched.
+    assert_eq!(edit.range.start, Position::new(1, 2));
+}
+
+#[test]
+fn range_edit_is_empty_when_already_formatted() {
+    let style = FormatStyle::default();
+    let input = "1 + 1\n2 + 2\n";
+    let range = line_range(0, 0, 0, 5);
+    let edits = compute_format_range_edits(input, range, style).expect("accepts input");
+    assert!(edits.is_empty(), "formatted region should produce no edits");
+}
+
+#[test]
+fn range_edit_returns_none_on_parse_errors() {
+    let style = FormatStyle::default();
+    let range = line_range(0, 0, 1, 0);
+    let result = compute_format_range_edits("function(x\n", range, style);
+    assert!(result.is_none(), "parse errors must block range formatting");
 }
