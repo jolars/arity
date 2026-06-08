@@ -224,6 +224,82 @@ fn project_aware_relint_reuses_unchanged_siblings() {
 }
 
 #[test]
+fn prepared_split_matches_wrapper_and_runs_on_clone() {
+    // The write/read split (prepare_document_in_project + analyze_prepared) must
+    // reproduce check_document_in_project exactly, and the read-phase must work
+    // off a db *clone* — the property the LSP relies on to lint off its thread.
+    use ravel::incremental::IncrementalDatabase;
+    use ravel::linter::{analyze_prepared, check_document_in_project, prepare_document_in_project};
+    use ravel::rindex::provider::CompositeProvider;
+
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
+    let b = r_dir.join("b.R");
+    // `foo` resolves cross-file; `bar` is genuinely undefined → one finding.
+    std::fs::write(&b, "foo()\nbar()\n").unwrap();
+
+    let keys = |diags: &[ravel::linter::Diagnostic]| -> Vec<(String, u32, u32)> {
+        let mut v: Vec<_> = diags
+            .iter()
+            .map(|d| {
+                (
+                    d.rule.to_string(),
+                    u32::from(d.range.start()),
+                    u32::from(d.range.end()),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let provider = CompositeProvider::base_only();
+    let cfg = LintConfig::default();
+
+    // Reference: the wrapper.
+    let mut db_ref = IncrementalDatabase::default();
+    let active_ref = db_ref.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    let want = check_document_in_project(&mut db_ref, &b, active_ref, &cfg, &provider).unwrap();
+    assert!(
+        want.iter().any(|d| d.rule == "undefined-symbol"),
+        "fixture should flag `bar`: {:?}",
+        keys(&want)
+    );
+
+    // Split: prepare on the owner, analyze on a clone.
+    let mut db = IncrementalDatabase::default();
+    let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    let prepared = prepare_document_in_project(&mut db, &b, active, &cfg)
+        .unwrap()
+        .expect("clean file should prepare");
+    let snapshot = db.clone();
+    let got = analyze_prepared(&snapshot, &prepared, &provider);
+    drop(snapshot);
+
+    assert_eq!(keys(&got), keys(&want), "split diverged from the wrapper");
+}
+
+#[test]
+fn prepare_returns_none_on_parse_error() {
+    // A parse-erroring active buffer skips analysis entirely (Ok(None)), mirroring
+    // the wrapper's empty-diagnostics early return.
+    use ravel::incremental::IncrementalDatabase;
+    use ravel::linter::prepare_document_in_project;
+
+    let dir = tempdir().expect("failed to create temp dir");
+    let f = dir.path().join("broken.R");
+    std::fs::write(&f, "foo(\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let active = db.upsert_file(&f, std::fs::read_to_string(&f).unwrap());
+    let prepared =
+        prepare_document_in_project(&mut db, &f, active, &LintConfig::default()).unwrap();
+    assert!(prepared.is_none(), "parse error should yield Ok(None)");
+}
+
+#[test]
 fn lint_reports_parse_diagnostics_pathway() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("bad.R");

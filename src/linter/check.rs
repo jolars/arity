@@ -239,24 +239,46 @@ pub fn check_tracked_file(
     Ok(lint_parsed_file(db, file, path, &rules, provider, None))
 }
 
-/// Lint `path` (already tracked in `db` as `active`, carrying the live editor
-/// buffer) with cross-file resolution. Discovers the enclosing project — the R
-/// package root, else the file's directory — loads its sibling files into `db`
-/// (cached across calls, so unchanged siblings aren't re-parsed), builds the
-/// project scope, and lints the target file against it. Used by the LSP.
-pub fn check_document_in_project(
+/// The write-phase output of cross-file linting: everything [`analyze_prepared`]
+/// needs, all derivable with read-only `&db` access afterward. Produced by
+/// [`prepare_document_in_project`].
+///
+/// Splitting the lint into a write-phase ([`prepare_document_in_project`], needs
+/// `&mut db`) and a read-phase ([`analyze_prepared`], `&db` only) lets the LSP
+/// run the expensive read-phase off its lint thread on a short-lived db clone,
+/// where it can be cancelled by a fresher edit (see `src/lsp.rs`).
+pub struct PreparedProject {
+    active: SourceFile,
+    active_path: PathBuf,
+    rules: ResolvedRules,
+    /// Cleanly-parsing project files (path + tracked input), including `active`.
+    /// Files with parse diagnostics are dropped here, matching the old behavior.
+    files: Vec<(PathBuf, SourceFile)>,
+    namespaces: HashMap<PathBuf, String>,
+}
+
+/// Write-phase of cross-file linting (needs `&mut db`). Discovers the enclosing
+/// project — the R package root, else the file's directory — loads its sibling
+/// files into `db` (cached across calls, so unchanged siblings aren't re-parsed),
+/// and reads the relevant `NAMESPACE` files. `active` must already be tracked in
+/// `db` carrying the live editor buffer.
+///
+/// Returns `Ok(None)` when the active file has parse diagnostics (the caller
+/// publishes no findings, as the old early-return did). All `db` *writes*
+/// (`upsert_file`) happen here; the returned [`PreparedProject`] is then consumed
+/// by the read-only [`analyze_prepared`].
+pub fn prepare_document_in_project(
     db: &mut IncrementalDatabase,
     path: &Path,
     active: SourceFile,
     config: &LintConfig,
-    provider: &dyn SymbolProvider,
-) -> Result<Vec<Diagnostic>, LintError> {
+) -> Result<Option<PreparedProject>, LintError> {
     let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
     if !db.parse_diagnostics(active).is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
     // Discover the project's files: the package root, else the file's directory.
@@ -270,9 +292,10 @@ pub fn check_document_in_project(
         project_files.push(path.to_path_buf());
     }
 
-    // Build facts for each project file, using the live buffer for `path` and
-    // on-disk content (cached in `db`) for siblings.
-    let mut facts = Vec::new();
+    // Upsert each project file — the live buffer for `path`, on-disk content for
+    // siblings — and keep the cleanly-parsing ones for the read-phase. These are
+    // the only db writes; `analyze_prepared` reads off the inputs set here.
+    let mut files = Vec::new();
     for file_path in &project_files {
         let file = if file_path == path {
             active
@@ -285,36 +308,77 @@ pub fn check_document_in_project(
         if !db.parse_diagnostics(file).is_empty() {
             continue;
         }
-        let model = db.semantic_model(file);
+        files.push((file_path.clone(), file));
+    }
+
+    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
+    for (file_path, _) in &files {
+        if let Some(root) = package_root(file_path)
+            && !namespaces.contains_key(&root)
+            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
+        {
+            namespaces.insert(root, text);
+        }
+    }
+
+    Ok(Some(PreparedProject {
+        active,
+        active_path: path.to_path_buf(),
+        rules,
+        files,
+        namespaces,
+    }))
+}
+
+/// Read-phase of cross-file linting (`&db` only — no disk, no writes). Builds the
+/// per-file facts from cached models/trees, assembles the project scope, and
+/// lints the active file against it. Safe to run on a db clone; salsa aborts it
+/// with [`salsa::Cancelled`] (at the next tracked-query entry) if a write races.
+pub fn analyze_prepared(
+    db: &IncrementalDatabase,
+    prepared: &PreparedProject,
+    provider: &dyn SymbolProvider,
+) -> Vec<Diagnostic> {
+    let mut facts = Vec::new();
+    for (file_path, file) in &prepared.files {
+        let model = db.semantic_model(*file);
         facts.push(FileFacts {
             path: file_path.clone(),
             exports: file_exports(model),
             free_reads: file_free_reads(model),
-            source_edges: collect_source_edges(&db.parsed_tree(file), file_path.parent()),
+            source_edges: collect_source_edges(&db.parsed_tree(*file), file_path.parent()),
             package_root: package_root(file_path),
         });
     }
 
-    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
-    for f in &facts {
-        if let Some(root) = &f.package_root
-            && !namespaces.contains_key(root)
-            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
-        {
-            namespaces.insert(root.clone(), text);
-        }
-    }
-
-    let scope = ProjectScope::build(&facts, &namespaces);
-    let file_scope = scope.for_file(path);
-    Ok(lint_parsed_file(
+    let scope = ProjectScope::build(&facts, &prepared.namespaces);
+    let file_scope = scope.for_file(&prepared.active_path);
+    lint_parsed_file(
         db,
-        active,
-        path,
-        &rules,
+        prepared.active,
+        &prepared.active_path,
+        &prepared.rules,
         provider,
         Some(&file_scope),
-    ))
+    )
+}
+
+/// Lint `path` (already tracked in `db` as `active`, carrying the live editor
+/// buffer) with cross-file resolution. Thin wrapper over the write-phase
+/// ([`prepare_document_in_project`]) and read-phase ([`analyze_prepared`]); used
+/// by the CLI and tests. The LSP drives the two phases separately so the
+/// read-phase can run cancellably off its lint thread.
+pub fn check_document_in_project(
+    db: &mut IncrementalDatabase,
+    path: &Path,
+    active: SourceFile,
+    config: &LintConfig,
+    provider: &dyn SymbolProvider,
+) -> Result<Vec<Diagnostic>, LintError> {
+    match prepare_document_in_project(db, path, active, config)? {
+        Some(prepared) => Ok(analyze_prepared(db, &prepared, provider)),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// Convenience: lint a single in-memory document by path + text (used by quick

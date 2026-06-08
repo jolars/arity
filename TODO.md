@@ -57,13 +57,15 @@ in-tree parser, not a drop-in jarl replacement.
       racing write falls back to a fresh parse. Code actions are served from the
       last lint's findings (cached per URI by version) with no re-lint on a
       version match. `IncrementalDatabase` is now `Clone` (shared storage handle).
-- [ ] LSP read-path follow-up: preemptive lint cancellation. The lint thread
-      *coalesces* queued requests (latest version per URI wins) but still runs an
-      in-flight lint to completion; a fresher edit can't interrupt it. With reads
-      now riding short-lived db clones, a long lint also briefly delays a read
-      behind it (the read waits for the lint thread to return to its `select!`).
-      `db.trigger_cancellation()` / unwinding the active lint on a newer request
-      would address both.
+- [x] LSP read-path follow-up: preemptive lint cancellation. The lint is split
+      into a write-phase (`prepare_document_in_project`, `&mut db`, on the lint
+      thread) and a read-phase (`analyze_prepared`, `&db` only) that now runs on a
+      rayon worker holding a db clone, wrapped in `salsa::Cancelled::catch`. The
+      lint thread returns to its `select!` right after the cheap write-phase, so
+      reads are no longer delayed behind a long lint. A strictly-newer edit of the
+      *same* URI calls `db.trigger_cancellation()` to unwind the in-flight analyze
+      (a `decide` scheduler keeps at most one in flight and never cross-cancels a
+      different URI, so multi-URI `RelintAll` still publishes every file).
 - [x] Honor editor-supplied `initializationOptions` /
       `workspace/didChangeConfiguration` for `line-width` / `indent-width`.
       Editor settings are the *fallback*: a discovered `ravel.toml` is
