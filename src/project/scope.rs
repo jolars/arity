@@ -27,12 +27,10 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use smol_str::SmolStr;
-
-use crate::project::source::{SourceEdge, SourceTarget};
+use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::harvest::parse_namespace;
 
-static EMPTY: BTreeSet<SmolStr> = BTreeSet::new();
+static EMPTY: BTreeSet<String> = BTreeSet::new();
 
 /// One file's contribution to cross-file resolution.
 #[derive(Debug, Clone)]
@@ -40,12 +38,12 @@ pub struct FileFacts {
     pub path: PathBuf,
     /// Top-level binding names this file defines
     /// (see [`crate::project::file_exports`]).
-    pub exports: BTreeSet<SmolStr>,
+    pub exports: BTreeSet<String>,
     /// Names this file reads but does not bind locally
     /// (see [`crate::project::exports::file_free_reads`]).
-    pub free_reads: BTreeSet<SmolStr>,
-    /// Top-level `source()` edges this file declares.
-    pub source_edges: Vec<SourceEdge>,
+    pub free_reads: BTreeSet<String>,
+    /// Top-level `source()` edges this file declares (range-free).
+    pub source_edges: Vec<SourceEdgeKey>,
     /// The package root this file belongs to, if any. Files sharing a root
     /// share one namespace.
     pub package_root: Option<PathBuf>,
@@ -55,24 +53,49 @@ pub struct FileFacts {
 #[derive(Debug, Default)]
 pub struct ProjectScope {
     /// Per file: top-level names reachable from the files it can see.
-    visible: HashMap<PathBuf, BTreeSet<SmolStr>>,
+    visible: HashMap<PathBuf, BTreeSet<String>>,
     /// Per file: names read by some file that can see it.
-    used_by_others: HashMap<PathBuf, BTreeSet<SmolStr>>,
+    used_by_others: HashMap<PathBuf, BTreeSet<String>>,
     /// Files whose cross-file visibility is incomplete (unresolved `source()`).
     dynamic: HashSet<PathBuf>,
 }
 
 /// One file's view of its project.
 pub struct FileScope<'a> {
-    visible: &'a BTreeSet<SmolStr>,
-    used_by_others: &'a BTreeSet<SmolStr>,
+    visible: &'a BTreeSet<String>,
+    used_by_others: &'a BTreeSet<String>,
     /// Cross-file visibility is incomplete — an unresolved `source()` or a
     /// wholesale `import(pkg)` could supply otherwise-unresolved names — so
     /// callers must not flag them.
     pub resolution_incomplete: bool,
 }
 
-impl FileScope<'_> {
+impl<'a> FileScope<'a> {
+    /// Construct a view directly from borrowed visibility sets. Lets the salsa
+    /// [`crate::project::Visibility`] memo back a `FileScope` without going
+    /// through [`ProjectScope::for_file`].
+    pub fn new(
+        visible: &'a BTreeSet<String>,
+        used_by_others: &'a BTreeSet<String>,
+        resolution_incomplete: bool,
+    ) -> Self {
+        Self {
+            visible,
+            used_by_others,
+            resolution_incomplete,
+        }
+    }
+
+    /// The names visible to this file from the rest of the project.
+    pub fn visible_names(&self) -> &BTreeSet<String> {
+        self.visible
+    }
+
+    /// The names of this file's bindings read by some file that can see it.
+    pub fn used_names(&self) -> &BTreeSet<String> {
+        self.used_by_others
+    }
+
     /// True when `name` is bound at top level in a file visible from here.
     pub fn resolves(&self, name: &str) -> bool {
         self.visible.contains(name)
@@ -145,8 +168,8 @@ impl ProjectScope {
         }
 
         // Derive the two directions from `sees`.
-        let mut visible: HashMap<PathBuf, BTreeSet<SmolStr>> = HashMap::new();
-        let mut used_by_others: HashMap<PathBuf, BTreeSet<SmolStr>> = files
+        let mut visible: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+        let mut used_by_others: HashMap<PathBuf, BTreeSet<String>> = files
             .iter()
             .map(|f| (f.path.clone(), BTreeSet::new()))
             .collect();
@@ -185,9 +208,8 @@ impl ProjectScope {
                 .flat_map(|f| f.exports.iter().map(|n| n.to_string()))
                 .collect();
             let info = parse_namespace(text, &object_names);
-            let exported: BTreeSet<SmolStr> = info.exports.iter().map(SmolStr::new).collect();
-            let imported: BTreeSet<SmolStr> =
-                info.imported_names.iter().map(SmolStr::new).collect();
+            let exported: BTreeSet<String> = info.exports.iter().cloned().collect();
+            let imported: BTreeSet<String> = info.imported_names.iter().cloned().collect();
             let incomplete = !info.imported_packages.is_empty();
 
             for member in members {
@@ -231,7 +253,7 @@ enum Dependency<'a> {
     Skip,
 }
 
-fn source_dependency(edge: &SourceEdge) -> Dependency<'_> {
+fn source_dependency(edge: &SourceEdgeKey) -> Dependency<'_> {
     match &edge.target {
         SourceTarget::Dynamic => Dependency::Unresolved,
         SourceTarget::Path(_) if edge.local => Dependency::Skip,
@@ -255,25 +277,22 @@ pub fn package_root(path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rowan::{TextRange, TextSize};
 
-    fn set(names: &[&str]) -> BTreeSet<SmolStr> {
-        names.iter().map(|n| SmolStr::new(*n)).collect()
+    fn set(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
     }
 
-    fn source_path(target: &str, local: bool) -> SourceEdge {
-        SourceEdge {
+    fn source_path(target: &str, local: bool) -> SourceEdgeKey {
+        SourceEdgeKey {
             target: SourceTarget::Path(PathBuf::from(target)),
             local,
-            range: TextRange::new(TextSize::new(0), TextSize::new(0)),
         }
     }
 
-    fn dynamic_edge() -> SourceEdge {
-        SourceEdge {
+    fn dynamic_edge() -> SourceEdgeKey {
+        SourceEdgeKey {
             target: SourceTarget::Dynamic,
             local: false,
-            range: TextRange::new(TextSize::new(0), TextSize::new(0)),
         }
     }
 
@@ -282,7 +301,7 @@ mod tests {
         path: &str,
         exp: &[&str],
         reads: &[&str],
-        edges: Vec<SourceEdge>,
+        edges: Vec<SourceEdgeKey>,
         root: Option<&str>,
     ) -> FileFacts {
         FileFacts {
@@ -294,7 +313,7 @@ mod tests {
         }
     }
 
-    fn names(set: &BTreeSet<SmolStr>) -> Vec<String> {
+    fn names(set: &BTreeSet<String>) -> Vec<String> {
         let mut v: Vec<String> = set.iter().map(|s| s.to_string()).collect();
         v.sort();
         v

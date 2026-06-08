@@ -8,18 +8,26 @@
 //! builds on the cached tree, so the linter and LSP no longer re-parse and
 //! rebuild the model from text on every run.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use salsa::Setter;
 
 use crate::parser::parse;
+use crate::project::SourceEdgeKey;
 use crate::semantic::SemanticModel;
 use crate::syntax::SyntaxNode;
 
 #[salsa::input]
 pub struct SourceFile {
+    /// The path this file was tracked under. Set once at creation and never
+    /// mutated, so path-keyed queries (e.g. [`source_edges`], which resolves
+    /// relative `source()` targets against `path.parent()`) don't re-run on a
+    /// text edit. In-memory files (see [`IncrementalDatabase::add_file`]) get a
+    /// unique synthetic path so they never collide.
+    #[returns(ref)]
+    pub path: PathBuf,
     #[returns(ref)]
     pub text: String,
 }
@@ -28,12 +36,19 @@ pub struct SourceFile {
 pub enum QueryKind {
     ParsedDocument,
     SemanticModel,
+    FileExports,
+    FileFreeReads,
+    SourceEdges,
+    ProjectGraph,
+    VisibleSymbols,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueryLogEntry {
     pub kind: QueryKind,
-    pub file: SourceFile,
+    /// The per-file query subject, or `None` for project-level queries
+    /// ([`QueryKind::ProjectGraph`]) that aren't keyed on a single file.
+    pub file: Option<SourceFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +80,7 @@ pub trait IncrementalDb: salsa::Database {
 pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocument {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ParsedDocument,
-        file,
+        file: Some(file),
     });
 
     let parsed = parse(file.text(db).as_str());
@@ -102,9 +117,49 @@ pub fn parsed_tree_root(db: &dyn IncrementalDb, file: SourceFile) -> SyntaxNode 
 pub fn semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> SemanticModel {
     db.record_query(QueryLogEntry {
         kind: QueryKind::SemanticModel,
-        file,
+        file: Some(file),
     });
     SemanticModel::build(&parsed_tree_root(db, file))
+}
+
+/// The file's top-level exports (a [`crate::project::file_exports`] projection),
+/// as a tracked query. This is the cross-file *firewall*: editing a function
+/// body changes [`semantic_model`] but leaves this `BTreeSet` equal, so salsa
+/// backdates and the project graph that depends on it is not rebuilt.
+#[salsa::tracked(returns(ref))]
+pub fn file_exports(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FileExports,
+        file: Some(file),
+    });
+    crate::project::file_exports(semantic_model(db, file))
+}
+
+/// The names the file reads but does not bind locally
+/// ([`crate::project::file_free_reads`]), as a tracked query. The mirror
+/// firewall to [`file_exports`].
+#[salsa::tracked(returns(ref))]
+pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FileFreeReads,
+        file: Some(file),
+    });
+    crate::project::file_free_reads(semantic_model(db, file))
+}
+
+/// The file's top-level `source()` edges, range-free
+/// ([`crate::project::collect_source_edge_keys`]), as a tracked query. Resolves
+/// relative targets against the file's own directory (`path.parent()`); the
+/// path is an input field set once, so this re-runs only on a text edit and
+/// backdates when the edges are unchanged.
+#[salsa::tracked(returns(ref))]
+pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Vec<SourceEdgeKey> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::SourceEdges,
+        file: Some(file),
+    });
+    let root = parsed_tree_root(db, file);
+    crate::project::collect_source_edge_keys(&root, file.path(db).parent())
 }
 
 #[salsa::db]
@@ -153,8 +208,13 @@ impl std::fmt::Debug for IncrementalDatabase {
 }
 
 impl IncrementalDatabase {
+    /// Track an in-memory document with no on-disk path. Each call mints a
+    /// unique synthetic path so two in-memory files never alias in a path-keyed
+    /// query. Used by tests and one-shot single-file checks; the LSP/CLI use
+    /// [`upsert_file`](Self::upsert_file) with the real path.
     pub fn add_file(&self, text: impl Into<String>) -> SourceFile {
-        SourceFile::new(self, text.into())
+        let path = PathBuf::from(format!("<mem>/{}.R", uuid::Uuid::new_v4()));
+        SourceFile::new(self, path, text.into())
     }
 
     pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<String>) {
@@ -183,7 +243,7 @@ impl IncrementalDatabase {
                 file
             }
             None => {
-                let file = SourceFile::new(self, text);
+                let file = SourceFile::new(self, path.to_path_buf(), text);
                 self.files
                     .lock()
                     .expect("file cache mutex poisoned")
@@ -208,6 +268,11 @@ impl IncrementalDatabase {
     /// The text currently tracked for `file`.
     pub fn file_text(&self, file: SourceFile) -> &str {
         file.text(self)
+    }
+
+    /// The path `file` is tracked under.
+    pub fn file_path(&self, file: SourceFile) -> &Path {
+        file.path(self)
     }
 
     /// Parse diagnostics for `file` (empty when it parses cleanly).

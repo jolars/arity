@@ -21,13 +21,24 @@ type SyntaxToken = rowan::SyntaxToken<RLanguage>;
 type SyntaxElement = NodeOrToken<SyntaxNode, SyntaxToken>;
 
 /// The target file of a `source()` call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum SourceTarget {
     /// A statically-resolved path: the literal string argument, joined onto the
     /// sourcing file's directory when relative and a base directory is known.
     Path(PathBuf),
     /// A non-literal argument we cannot resolve without evaluating R.
     Dynamic,
+}
+
+/// A `source()` edge stripped of its byte range — the part the cross-file graph
+/// depends on. Carries no positional data, so a body edit that merely shifts a
+/// `source()` call's offset leaves it unchanged and the project graph memo holds
+/// (the firewall this module feeds). It also satisfies `salsa::Update`, which
+/// [`SourceEdge`] cannot because of its `TextRange` field.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct SourceEdgeKey {
+    pub target: SourceTarget,
+    pub local: bool,
 }
 
 /// A top-level `source(...)` dependency edge extracted from a file.
@@ -47,6 +58,14 @@ impl SourceEdge {
     pub fn contributes_scope(&self) -> bool {
         !self.local && matches!(self.target, SourceTarget::Path(_))
     }
+
+    /// Project this edge onto its range-free [`SourceEdgeKey`].
+    pub fn key(&self) -> SourceEdgeKey {
+        SourceEdgeKey {
+            target: self.target.clone(),
+            local: self.local,
+        }
+    }
 }
 
 /// Collect top-level `source(...)` calls in `root`. `base_dir` is the directory
@@ -60,6 +79,15 @@ pub fn collect_source_edges(root: &SyntaxNode, base_dir: Option<&Path>) -> Vec<S
     root.children()
         .filter_map(|child| source_call(&child))
         .map(|call| source_edge(&call, base_dir))
+        .collect()
+}
+
+/// Like [`collect_source_edges`] but projected onto range-free
+/// [`SourceEdgeKey`]s — the form the cross-file graph query consumes.
+pub fn collect_source_edge_keys(root: &SyntaxNode, base_dir: Option<&Path>) -> Vec<SourceEdgeKey> {
+    root.children()
+        .filter_map(|child| source_call(&child))
+        .map(|call| source_edge(&call, base_dir).key())
         .collect()
 }
 

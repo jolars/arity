@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
-use ravel::incremental::{IncrementalDatabase, QueryKind};
+use ravel::incremental::{IncrementalDatabase, QueryKind, SourceFile};
+use ravel::project::{Project, ProjectMember, visible_symbols};
 
 fn count_by_kind(entries: &[ravel::incremental::QueryLogEntry]) -> HashMap<QueryKind, usize> {
     let mut counts = HashMap::new();
@@ -50,12 +52,12 @@ fn editing_one_file_invalidates_only_that_file_queries() {
     let file_a_entries: Vec<_> = log
         .iter()
         .copied()
-        .filter(|entry| entry.file == file_a)
+        .filter(|entry| entry.file == Some(file_a))
         .collect();
     let file_b_entries: Vec<_> = log
         .iter()
         .copied()
-        .filter(|entry| entry.file == file_b)
+        .filter(|entry| entry.file == Some(file_b))
         .collect();
 
     assert!(
@@ -126,4 +128,134 @@ fn body_edit_keeps_model_in_sync() {
 
     db.set_file_text(file, "x <- 1\ny <- 2\n");
     assert_eq!(db.semantic_model(file).bindings().len(), 2);
+}
+
+/// A two-file package: `a.R` defines `foo`, `b.R` reads it inside a function
+/// body. Returns the db and the two tracked inputs.
+fn package_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, SourceFile) {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/pkg/R/a.R"), a_src.to_string());
+    let b = db.upsert_file(Path::new("/pkg/R/b.R"), b_src.to_string());
+    (db, a, b)
+}
+
+/// Intern the `{a, b}` package membership. Mirrors production, which re-interns
+/// the (deduped) membership on every lint rather than holding an id across an
+/// edit — so the interned `Project` borrow never spans a `&mut db` write.
+fn project_ab(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project<'_> {
+    let members = vec![
+        ProjectMember {
+            file: a,
+            path: PathBuf::from("/pkg/R/a.R"),
+            package_root: Some(PathBuf::from("/pkg")),
+        },
+        ProjectMember {
+            file: b,
+            path: PathBuf::from("/pkg/R/b.R"),
+            package_root: Some(PathBuf::from("/pkg")),
+        },
+    ];
+    Project::new(db, members, Vec::new())
+}
+
+#[test]
+fn body_edit_does_not_rebuild_project_scope() {
+    // The firewall: editing b.R's function *body* changes its semantic model but
+    // not its top-level exports / free reads / source edges, so the cross-file
+    // project graph and per-file visibility memos must be reused.
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+
+    // Materialize the graph + both files' visibility.
+    {
+        let project = project_ab(&db, a, b);
+        let _ = visible_symbols(&db, project, a);
+        let _ = visible_symbols(&db, project, b);
+        assert!(visible_symbols(&db, project, b).visible.contains("foo"));
+    }
+
+    db.clear_query_log();
+
+    // Edit b's body only: still defines `bar`, still reads `foo`.
+    db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
+
+    // Re-lint: re-intern the (unchanged) membership, as production does.
+    let project = project_ab(&db, a, b);
+    let _ = visible_symbols(&db, project, a);
+    let _ = visible_symbols(&db, project, b);
+
+    let counts = count_by_kind(&db.query_log());
+    // b's parse + model re-run (the body changed)...
+    assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
+    // ...but its exports/free-reads are unchanged, so the graph and visibility
+    // memos are reused — the whole point of the firewall.
+    assert_eq!(
+        counts.get(&QueryKind::ProjectGraph),
+        None,
+        "project graph must not rebuild on a body edit"
+    );
+    assert_eq!(
+        counts.get(&QueryKind::VisibleSymbols),
+        None,
+        "per-file visibility must not rebuild on a body edit"
+    );
+}
+
+#[test]
+fn export_change_rebuilds_project_scope() {
+    // The complement: adding a top-level binding changes b's exports, so the
+    // graph and visibility *must* rebuild (the firewall doesn't over-cache).
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = visible_symbols(&db, project, a);
+        let _ = visible_symbols(&db, project, b);
+    }
+
+    db.clear_query_log();
+
+    // Add a new top-level binding: b's exports change.
+    db.set_file_text(b, "bar <- function() {\n  foo()\n}\nqux <- 2\n");
+
+    let project = project_ab(&db, a, b);
+    let _ = visible_symbols(&db, project, a);
+    let _ = visible_symbols(&db, project, b);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ProjectGraph),
+        Some(&1),
+        "project graph must rebuild when an export changes"
+    );
+    assert!(
+        counts.get(&QueryKind::VisibleSymbols).copied().unwrap_or(0) >= 1,
+        "visibility must rebuild when an export changes"
+    );
+}
+
+#[test]
+fn reinterning_same_membership_reuses_graph_memo() {
+    // Interning a fresh `Project` from an unchanged membership snapshot yields
+    // the same id, so the graph memo is reused — this is what keeps the scope
+    // warm across lints that re-discover the same set of files.
+    let (db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() foo()\n");
+    let project = project_ab(&db, a, b);
+    let _ = visible_symbols(&db, project, a);
+    let _ = visible_symbols(&db, project, b);
+
+    db.clear_query_log();
+
+    // Re-intern the identical membership (same files, same roots, no namespaces).
+    let project2 = project_ab(&db, a, b);
+    assert!(
+        project == project2,
+        "same membership should re-intern to the same id"
+    );
+
+    let _ = visible_symbols(&db, project2, b);
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
+        None,
+        "an unchanged membership must not rebuild the graph"
+    );
 }

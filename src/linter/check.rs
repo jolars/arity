@@ -9,10 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::config::LintConfig;
 use crate::file_discovery::{FileDiscoveryError, collect_r_files};
 use crate::incremental::{IncrementalDatabase, SourceFile};
-use crate::project::{
-    FileFacts, FileScope, ProjectScope, collect_source_edges, file_exports, file_free_reads,
-    package_root,
-};
+use crate::project::{FileScope, Project, ProjectMember, package_root, visible_symbols};
 use crate::semantic::SymbolProvider;
 
 use super::diagnostic::Diagnostic;
@@ -123,10 +120,10 @@ pub fn check_paths_with_provider(
     let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
 
-    // Pass 1: track every file and collect cross-file facts for the cleanly
+    // Pass 1: track every file and collect project membership for the cleanly
     // parsed ones. Files with parse diagnostics are recorded for reporting but
     // contribute nothing to the project scope.
-    let mut facts: Vec<FileFacts> = Vec::new();
+    let mut members: Vec<ProjectMember> = Vec::new();
     let mut parse_errors: HashMap<PathBuf, usize> = HashMap::new();
     for path in &files {
         let content = fs::read_to_string(path).map_err(|err| LintError::ReadError {
@@ -138,12 +135,9 @@ pub fn check_paths_with_provider(
 
         let parse_diag_count = db.parse_diagnostics(file).len();
         if parse_diag_count == 0 {
-            let model = db.semantic_model(file);
-            facts.push(FileFacts {
+            members.push(ProjectMember {
+                file,
                 path: path.clone(),
-                exports: file_exports(model),
-                free_reads: file_free_reads(model),
-                source_edges: collect_source_edges(&db.parsed_tree(file), path.parent()),
                 package_root: package_root(path),
             });
         } else {
@@ -153,17 +147,8 @@ pub fn check_paths_with_provider(
 
     // Read the NAMESPACE of each package being linted, so exported bindings
     // aren't flagged unused and imported names resolve.
-    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
-    for f in &facts {
-        if let Some(root) = &f.package_root
-            && !namespaces.contains_key(root)
-            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
-        {
-            namespaces.insert(root.clone(), text);
-        }
-    }
-
-    let scope = ProjectScope::build(&facts, &namespaces);
+    let namespaces = read_namespaces(members.iter().filter_map(|m| m.package_root.as_deref()));
+    let project = intern_project(&db, members, namespaces);
 
     // Pass 2: lint each cleanly parsed file with its cross-file scope.
     let mut reports = Vec::new();
@@ -173,7 +158,8 @@ pub fn check_paths_with_provider(
         let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
             (LintStatus::ParseDiagnostics { count }, Vec::new())
         } else {
-            let file_scope = scope.for_file(&path);
+            let visibility = visible_symbols(&db, project, file);
+            let file_scope = visibility.scope();
             let kept = lint_parsed_file(&db, file, &path, &rules, provider, Some(&file_scope));
             total_findings += kept.len();
             let status = if kept.is_empty() {
@@ -195,6 +181,36 @@ pub fn check_paths_with_provider(
         total_findings,
         reports,
     })
+}
+
+/// Read the `NAMESPACE` of each distinct package `root`, returning
+/// `(root, text)` pairs sorted by root (deduped, missing files skipped). Disk
+/// work, done in the write-phase; the result becomes part of the interned
+/// [`Project`] key.
+fn read_namespaces<'a>(roots: impl Iterator<Item = &'a Path>) -> Vec<(PathBuf, String)> {
+    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
+    for root in roots {
+        if !namespaces.contains_key(root)
+            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
+        {
+            namespaces.insert(root.to_path_buf(), text);
+        }
+    }
+    let mut namespaces: Vec<(PathBuf, String)> = namespaces.into_iter().collect();
+    namespaces.sort_by(|a, b| a.0.cmp(&b.0));
+    namespaces
+}
+
+/// Intern a [`Project`] from a membership snapshot. Sorts `members` by path so
+/// the interned key is deterministic — an unchanged set always yields the same
+/// id, which is what keeps the project-graph memo alive across body edits.
+fn intern_project(
+    db: &IncrementalDatabase,
+    mut members: Vec<ProjectMember>,
+    namespaces: Vec<(PathBuf, String)>,
+) -> Project<'_> {
+    members.sort_by(|a, b| a.path.cmp(&b.path));
+    Project::new(db, members, namespaces)
 }
 
 /// Run the resolved rules against a cleanly-parsed file, using the cached parse
@@ -249,12 +265,15 @@ pub fn check_tracked_file(
 /// where it can be cancelled by a fresher edit (see `src/lsp.rs`).
 pub struct PreparedProject {
     active: SourceFile,
-    active_path: PathBuf,
     rules: ResolvedRules,
-    /// Cleanly-parsing project files (path + tracked input), including `active`.
-    /// Files with parse diagnostics are dropped here, matching the old behavior.
-    files: Vec<(PathBuf, SourceFile)>,
-    namespaces: HashMap<PathBuf, String>,
+    /// Cleanly-parsing project members (incl. `active`), with their tracked
+    /// inputs and package roots; files with parse diagnostics are dropped, as
+    /// before. Plain owned data — *not* an interned [`Project`] — because the
+    /// LSP moves this across a thread boundary onto a different db handle and
+    /// interns inside the read-phase ([`analyze_prepared`]).
+    members: Vec<ProjectMember>,
+    /// `(package_root, NAMESPACE text)` pairs, sorted by root.
+    namespaces: Vec<(PathBuf, String)>,
 }
 
 /// Write-phase of cross-file linting (needs `&mut db`). Discovers the enclosing
@@ -295,7 +314,7 @@ pub fn prepare_document_in_project(
     // Upsert each project file — the live buffer for `path`, on-disk content for
     // siblings — and keep the cleanly-parsing ones for the read-phase. These are
     // the only db writes; `analyze_prepared` reads off the inputs set here.
-    let mut files = Vec::new();
+    let mut members = Vec::new();
     for file_path in &project_files {
         let file = if file_path == path {
             active
@@ -308,24 +327,19 @@ pub fn prepare_document_in_project(
         if !db.parse_diagnostics(file).is_empty() {
             continue;
         }
-        files.push((file_path.clone(), file));
+        members.push(ProjectMember {
+            file,
+            path: file_path.clone(),
+            package_root: package_root(file_path),
+        });
     }
 
-    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
-    for (file_path, _) in &files {
-        if let Some(root) = package_root(file_path)
-            && !namespaces.contains_key(&root)
-            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
-        {
-            namespaces.insert(root, text);
-        }
-    }
+    let namespaces = read_namespaces(members.iter().filter_map(|m| m.package_root.as_deref()));
 
     Ok(Some(PreparedProject {
         active,
-        active_path: path.to_path_buf(),
         rules,
-        files,
+        members,
         namespaces,
     }))
 }
@@ -339,24 +353,17 @@ pub fn analyze_prepared(
     prepared: &PreparedProject,
     provider: &dyn SymbolProvider,
 ) -> Vec<Diagnostic> {
-    let mut facts = Vec::new();
-    for (file_path, file) in &prepared.files {
-        let model = db.semantic_model(*file);
-        facts.push(FileFacts {
-            path: file_path.clone(),
-            exports: file_exports(model),
-            free_reads: file_free_reads(model),
-            source_edges: collect_source_edges(&db.parsed_tree(*file), file_path.parent()),
-            package_root: package_root(file_path),
-        });
-    }
-
-    let scope = ProjectScope::build(&facts, &prepared.namespaces);
-    let file_scope = scope.for_file(&prepared.active_path);
+    // Intern the project here (read-phase): the membership snapshot is plain
+    // owned data in `prepared`, so this is safe on a db clone, and an unchanged
+    // set re-interns to the same id — keeping the project-graph memo warm.
+    let project = intern_project(db, prepared.members.clone(), prepared.namespaces.clone());
+    let active_path = db.file_path(prepared.active).to_path_buf();
+    let visibility = visible_symbols(db, project, prepared.active);
+    let file_scope = visibility.scope();
     lint_parsed_file(
         db,
         prepared.active,
-        &prepared.active_path,
+        &active_path,
         &prepared.rules,
         provider,
         Some(&file_scope),

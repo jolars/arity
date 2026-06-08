@@ -3,8 +3,6 @@
 
 use std::collections::BTreeSet;
 
-use smol_str::SmolStr;
-
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 
 /// The names bound at file (top) level — the symbols another file in the same
@@ -14,13 +12,13 @@ use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 /// firewall between per-file analysis and cross-file resolution. Editing a
 /// function *body* changes the [`SemanticModel`] but leaves this set unchanged,
 /// so downstream cross-file queries short-circuit.
-pub fn file_exports(model: &SemanticModel) -> BTreeSet<SmolStr> {
+pub fn file_exports(model: &SemanticModel) -> BTreeSet<String> {
     model
         .bindings()
         .iter()
         .filter(|binding| matches!(binding.kind, BindingKind::Local | BindingKind::Implicit))
         .filter(|binding| model.scope(binding.scope).kind == ScopeKind::File)
-        .map(|binding| binding.name.clone())
+        .map(|binding| binding.name.to_string())
         .collect()
 }
 
@@ -28,12 +26,12 @@ pub fn file_exports(model: &SemanticModel) -> BTreeSet<SmolStr> {
 /// against another file in the same package or `source()` closure. The mirror of
 /// [`file_exports`]: it drives cross-file *use* (so a binding read only in a
 /// sibling file isn't flagged unused).
-pub fn file_free_reads(model: &SemanticModel) -> BTreeSet<SmolStr> {
+pub fn file_free_reads(model: &SemanticModel) -> BTreeSet<String> {
     model
         .idents()
         .iter()
         .filter(|ident| model.resolve_local(ident).is_none())
-        .map(|ident| ident.name.clone())
+        .map(|ident| ident.name.to_string())
         .collect()
 }
 
@@ -42,12 +40,12 @@ mod tests {
     use super::*;
     use crate::parser::parse;
 
-    fn exports_of(src: &str) -> BTreeSet<SmolStr> {
+    fn exports_of(src: &str) -> BTreeSet<String> {
         file_exports(&SemanticModel::build(&parse(src).cst))
     }
 
-    fn names(set: &BTreeSet<SmolStr>) -> Vec<&str> {
-        set.iter().map(SmolStr::as_str).collect()
+    fn names(set: &BTreeSet<String>) -> Vec<&str> {
+        set.iter().map(String::as_str).collect()
     }
 
     #[test]

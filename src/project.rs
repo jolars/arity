@@ -6,9 +6,13 @@
 //! feeds cross-file name resolution.
 
 pub mod exports;
+pub mod graph;
 pub mod scope;
 pub mod source;
 
 pub use exports::{file_exports, file_free_reads};
+pub use graph::{Project, ProjectMember, Visibility, project_graph, visible_symbols};
 pub use scope::{FileFacts, FileScope, ProjectScope, package_root};
-pub use source::{SourceEdge, SourceTarget, collect_source_edges};
+pub use source::{
+    SourceEdge, SourceEdgeKey, SourceTarget, collect_source_edge_keys, collect_source_edges,
+};

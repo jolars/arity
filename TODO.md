@@ -47,10 +47,14 @@ in-tree parser, not a drop-in jarl replacement.
       now cached as a `rowan::GreenNode` (via `no_eq, unsafe(non_update_types)`)
       and `semantic_model` is a tracked query; the linter and LSP reuse them
       instead of re-parsing from text.
-- [ ] Cross-file follow-ups: wrap the project scope as tracked salsa queries
-      (`file_exports` firewall, `source_edges`, `project_graph`,
-      `visible_symbols`) so a body edit doesn't rebuild the whole project scope;
-      today `ProjectScope` is recomputed per lint over cached per-file parses.
+- [x] Cross-file follow-ups: the project scope is now tracked salsa queries.
+      Per-file firewalls (`file_exports`, `file_free_reads`, `source_edges` in
+      `src/incremental.rs`, returning `Eq` values so a body edit backdates) feed
+      `project_graph` + `visible_symbols` (`src/project/graph.rs`), keyed on an
+      interned `Project` membership snapshot. A function-body edit no longer
+      rebuilds the project graph (`SourceFile` gained a `path` field; the range
+      is dropped via `SourceEdgeKey` so the graph input stays `salsa::Update`).
+      Guarded by `body_edit_does_not_rebuild_project_scope` and friends.
 - [x] LSP read-path: hover/formatting reuse the salsa db. The lint thread (db
       owner) mints a short-lived clone per read job and runs it on rayon
       (`run_read`), formatting/hovering off the cached parse tree when the

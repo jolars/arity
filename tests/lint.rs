@@ -224,6 +224,42 @@ fn project_aware_relint_reuses_unchanged_siblings() {
 }
 
 #[test]
+fn body_edit_relint_does_not_rebuild_project_scope() {
+    // The firewall on the real two-phase path: editing the active file's
+    // function *body* re-parses it but must not rebuild the cross-file project
+    // graph, since its exports / free reads / source edges are unchanged.
+    use ravel::incremental::{IncrementalDatabase, QueryKind};
+    use ravel::linter::check_document_in_project;
+    use ravel::rindex::provider::CompositeProvider;
+
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
+    let b = r_dir.join("b.R");
+    std::fs::write(&b, "bar <- function() {\n  foo()\n}\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let provider = CompositeProvider::base_only();
+    let cfg = LintConfig::default();
+
+    let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    check_document_in_project(&mut db, &b, active, &cfg, &provider).unwrap();
+    db.clear_query_log();
+
+    // Edit b's body only (still defines `bar`, still reads `foo`).
+    let active = db.upsert_file(&b, "bar <- function() {\n  foo()\n  2\n}\n".to_string());
+    check_document_in_project(&mut db, &b, active, &cfg, &provider).unwrap();
+
+    let kinds: Vec<QueryKind> = db.query_log().iter().map(|e| e.kind).collect();
+    assert!(
+        !kinds.contains(&QueryKind::ProjectGraph),
+        "body edit rebuilt the project graph: {kinds:?}"
+    );
+}
+
+#[test]
 fn prepared_split_matches_wrapper_and_runs_on_clone() {
     // The write/read split (prepare_document_in_project + analyze_prepared) must
     // reproduce check_document_in_project exactly, and the read-phase must work
