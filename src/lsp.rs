@@ -3,14 +3,24 @@
 //! index.
 //!
 //! Architecture (see the dedicated-lint-thread design): the main loop owns no
-//! salsa database. Read-only requests (formatting, code actions, hover) run on
-//! the rayon pool and reply directly. Linting is serialized on a dedicated
-//! thread that owns the persistent [`IncrementalDatabase`]; salsa is strictly
-//! single-writer, and cross-file linting writes sibling files into the db, so
-//! lint cannot run on a shared snapshot. Instead the lint thread *coalesces*
-//! requests (only the latest version per URI is linted, stale ones dropped),
-//! which replaces the old debounce. Diagnostics route back through the main loop
-//! so it can drop publishes for closed or superseded documents.
+//! salsa database. Linting is serialized on a dedicated thread that owns the
+//! persistent [`IncrementalDatabase`]; salsa is strictly single-writer, and
+//! cross-file linting writes sibling files into the db, so lint cannot run on a
+//! shared snapshot. Instead the lint thread *coalesces* requests (only the
+//! latest version per URI is linted, stale ones dropped), which replaces the old
+//! debounce. Diagnostics route back through the main loop so it can drop
+//! publishes for closed or superseded documents.
+//!
+//! Read-only requests reuse the lint thread's cached work rather than re-parsing:
+//! - **Formatting and hover** are sent to the lint thread as [`ReadJob`]s; it
+//!   mints a short-lived db clone and runs the job on rayon ([`run_read`]),
+//!   formatting/hovering off the cached parse tree when the tracked buffer still
+//!   matches the live text. A clone outstanding when the lint thread writes trips
+//!   [`salsa::Cancelled`]; both that and a cache miss fall back to a fresh parse,
+//!   so reads are always correct, only sometimes warm.
+//! - **Code actions** are served from the findings of the most recent lint
+//!   (cached per URI by version in the main loop), with no parse or lint at all
+//!   when the version matches; otherwise they fall back to an independent lint.
 
 // `lsp_types::Uri` (a `fluent_uri` newtype) carries an internal `Cell` tag for
 // its mutable-view mechanism, which trips `clippy::mutable_key_type` when a
@@ -20,6 +30,7 @@
 #![allow(clippy::mutable_key_type)]
 
 use std::collections::{HashMap, HashSet};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -47,7 +58,7 @@ use smol_str::SmolStr;
 
 use crate::ast::{AstNode as _, BinaryExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
-use crate::formatter::{FormatStyle, format_with_style};
+use crate::formatter::{FormatStyle, format_node, format_with_style};
 use crate::incremental::IncrementalDatabase;
 use crate::linter::{Diagnostic, Severity};
 use crate::parser::parse;
@@ -102,9 +113,10 @@ fn server_capabilities() -> ServerCapabilities {
 fn main_loop(connection: Connection, editor_settings: EditorSettings) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
-    let lint_handle = spawn_lint_thread(lint_rx, out_tx);
+    let (read_tx, read_rx) = crossbeam_channel::unbounded::<ReadJob>();
+    let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx);
 
-    let mut state = GlobalState::new(connection.sender.clone(), lint_tx, editor_settings);
+    let mut state = GlobalState::new(connection.sender.clone(), lint_tx, read_tx, editor_settings);
 
     loop {
         select! {
@@ -218,13 +230,38 @@ enum LintMsg {
     Request(LintRequest),
 }
 
+/// A read-only request the lint thread services by cloning its salsa db and
+/// running the work off-thread on `rayon`. Each variant carries the live buffer
+/// `text` and the client `sender` so the worker can reply directly; the lint
+/// thread only adds the db snapshot. See [`run_read`].
+enum ReadJob {
+    Format {
+        id: RequestId,
+        path: PathBuf,
+        text: String,
+        style: FormatStyle,
+        sender: Sender<Message>,
+    },
+    Hover {
+        id: RequestId,
+        path: PathBuf,
+        text: String,
+        position: Position,
+        provider: Arc<CompositeProvider>,
+        sender: Sender<Message>,
+    },
+}
+
 /// Messages from the lint thread back to the main loop.
 enum Outbound {
-    /// Diagnostics for `uri` at `version`; published only if still current.
+    /// Diagnostics for `uri` at `version`; published only if still current. The
+    /// raw `findings` ride along so the main loop can cache them and serve
+    /// quick-fix code actions without re-linting (see [`GlobalState::findings`]).
     Diagnostics {
         uri: Uri,
         version: i32,
         diags: Vec<LspDiagnostic>,
+        findings: Arc<Vec<Diagnostic>>,
     },
     /// The symbol provider changed (cache loaded or a background build finished);
     /// the main loop caches it for hover.
@@ -239,6 +276,12 @@ enum Outbound {
 
 struct GlobalState {
     documents: HashMap<Uri, Document>,
+    /// The most recent lint findings per document, tagged with the version they
+    /// were computed against. `textDocument/codeAction` serves quick fixes from
+    /// here (a pure lookup) when the cached version still matches the buffer,
+    /// avoiding an independent re-lint; a stale or missing entry falls back to
+    /// [`compute_code_actions`].
+    findings: HashMap<Uri, (i32, Arc<Vec<Diagnostic>>)>,
     config_cache: HashMap<PathBuf, ResolvedSettings>,
     /// The current symbol provider, used for hover. Updated by the lint thread
     /// via [`Outbound::ProviderUpdated`]; starts base-R-only.
@@ -248,21 +291,28 @@ struct GlobalState {
     editor_settings: EditorSettings,
     sender: Sender<Message>,
     lint_tx: Sender<LintMsg>,
+    /// Channel to the lint thread for read-only jobs (formatting, hover). The
+    /// lint thread owns the salsa db, so it mints a short-lived clone per job and
+    /// runs the read off-thread against the cached parse. See [`run_read`].
+    read_tx: Sender<ReadJob>,
 }
 
 impl GlobalState {
     fn new(
         sender: Sender<Message>,
         lint_tx: Sender<LintMsg>,
+        read_tx: Sender<ReadJob>,
         editor_settings: EditorSettings,
     ) -> Self {
         Self {
             documents: HashMap::new(),
+            findings: HashMap::new(),
             config_cache: HashMap::new(),
             provider: Arc::new(CompositeProvider::base_only()),
             editor_settings,
             sender,
             lint_tx,
+            read_tx,
         }
     }
 
@@ -297,11 +347,13 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let style = settings.style;
-        let sender = self.sender.clone();
-        rayon::spawn(move || {
-            let result = compute_format_edits(&text, style);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::Format {
+            id,
+            path,
+            text,
+            style: settings.style,
+            sender: self.sender.clone(),
         });
     }
 
@@ -312,17 +364,38 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+        let Some((text, version)) = self
+            .documents
+            .get(&uri)
+            .map(|d| (d.text.clone(), d.version))
+        else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
+        let range = params.range;
+        let sender = self.sender.clone();
+
+        // Fast path: the last lint's findings are still current, so serving quick
+        // fixes is a pure lookup — no re-parse, no re-lint. Their byte ranges
+        // index `text`, which the version match proves is the linted source.
+        if let Some((cached_version, findings)) = self.findings.get(&uri)
+            && *cached_version == version
+        {
+            let findings = Arc::clone(findings);
+            rayon::spawn(move || {
+                let actions = code_actions_from_findings(&findings, &text, &uri, range);
+                let _ = sender.send(Message::Response(Response::new_ok(id, actions)));
+            });
+            return;
+        }
+
+        // Fallback: no findings for this version yet (e.g. a fix requested before
+        // the debounced lint caught up) — lint this buffer independently.
         let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
         let lint = self
             .resolve_settings(&uri)
             .map(|s| s.lint)
             .unwrap_or_default();
-        let range = params.range;
-        let sender = self.sender.clone();
         rayon::spawn(move || {
             let actions = compute_code_actions(&text, &path, &lint, &uri, range);
             let _ = sender.send(Message::Response(Response::new_ok(id, actions)));
@@ -341,13 +414,31 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let provider = Arc::clone(&self.provider);
-        let sender = self.sender.clone();
-        rayon::spawn(move || {
-            let offset = LineIndex::new(&text).position_to_byte(position);
-            let result = compute_hover(&text, offset, &provider);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::Hover {
+            id,
+            path,
+            text,
+            position,
+            provider: Arc::clone(&self.provider),
+            sender: self.sender.clone(),
         });
+    }
+
+    /// Hand a read-only job to the lint thread (db owner), which snapshots the db
+    /// and runs it on `rayon`. If that channel is gone (shutdown in flight), reply
+    /// `null` so the client isn't left waiting.
+    fn dispatch_read(&self, job: ReadJob) {
+        if let Err(crossbeam_channel::SendError(job)) = self.read_tx.send(job) {
+            let (id, sender) = match job {
+                ReadJob::Format { id, sender, .. } => (id, sender),
+                ReadJob::Hover { id, sender, .. } => (id, sender),
+            };
+            let _ = sender.send(Message::Response(Response::new_ok(
+                id,
+                serde_json::Value::Null,
+            )));
+        }
     }
 
     fn on_notification(&mut self, not: Notification) {
@@ -389,6 +480,7 @@ impl GlobalState {
                 {
                     let uri = params.text_document.uri;
                     self.documents.remove(&uri);
+                    self.findings.remove(&uri);
                     // Tell the client to clear stale diagnostics.
                     self.publish(uri, Vec::new(), None);
                 }
@@ -419,8 +511,10 @@ impl GlobalState {
                 uri,
                 version,
                 diags,
+                findings,
             } => {
                 if matches!(self.documents.get(&uri), Some(d) if d.version == version) {
+                    self.findings.insert(uri.clone(), (version, findings));
                     self.publish(uri, diags, Some(version));
                 }
             }
@@ -505,7 +599,11 @@ impl GlobalState {
 // ---------------------------------------------------------------------------
 
 /// Spawn the dedicated lint thread that owns the persistent salsa database.
-fn spawn_lint_thread(lint_rx: Receiver<LintMsg>, out_tx: Sender<Outbound>) -> JoinHandle<()> {
+fn spawn_lint_thread(
+    lint_rx: Receiver<LintMsg>,
+    read_rx: Receiver<ReadJob>,
+    out_tx: Sender<Outbound>,
+) -> JoinHandle<()> {
     let (build_tx, build_rx) = crossbeam_channel::unbounded::<Arc<CompositeProvider>>();
     std::thread::Builder::new()
         .name("ravel-lint".to_string())
@@ -518,7 +616,7 @@ fn spawn_lint_thread(lint_rx: Receiver<LintMsg>, out_tx: Sender<Outbound>) -> Jo
                 out_tx,
                 build_tx,
             };
-            worker.run(&lint_rx, &build_rx);
+            worker.run(&lint_rx, &read_rx, &build_rx);
         })
         .expect("spawn lint thread")
 }
@@ -538,7 +636,12 @@ struct LintWorker {
 }
 
 impl LintWorker {
-    fn run(&mut self, lint_rx: &Receiver<LintMsg>, build_rx: &Receiver<Arc<CompositeProvider>>) {
+    fn run(
+        &mut self,
+        lint_rx: &Receiver<LintMsg>,
+        read_rx: &Receiver<ReadJob>,
+        build_rx: &Receiver<Arc<CompositeProvider>>,
+    ) {
         loop {
             select! {
                 recv(lint_rx) -> msg => {
@@ -553,6 +656,15 @@ impl LintWorker {
                     for (_, req) in latest {
                         self.lint(req);
                     }
+                }
+                recv(read_rx) -> job => {
+                    let Ok(job) = job else { continue };
+                    // Mint a short-lived read-only snapshot and run the job off the
+                    // lint thread. The clone is dropped inside `run_read`, so the
+                    // next write isn't blocked once the read finishes (or a racing
+                    // write trips `salsa::Cancelled`, handled by the fallback).
+                    let snapshot = self.db.clone();
+                    rayon::spawn(move || run_read(snapshot, job));
                 }
                 recv(build_rx) -> built => {
                     let Ok(provider) = built else { continue };
@@ -594,6 +706,7 @@ impl LintWorker {
             uri: req.uri,
             version: req.version,
             diags,
+            findings: Arc::new(diagnostics),
         });
 
         if req.index_config.auto_build {
@@ -689,6 +802,97 @@ fn now_unix_secs() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// Read jobs (run on `rayon` with a salsa db snapshot)
+// ---------------------------------------------------------------------------
+
+/// Service a read-only job against a db `snapshot`, replying to the client.
+/// Runs on a `rayon` worker; the `snapshot` is dropped on return so it never
+/// blocks the lint thread's next write longer than the job itself.
+fn run_read(snapshot: IncrementalDatabase, job: ReadJob) {
+    match job {
+        ReadJob::Format {
+            id,
+            path,
+            text,
+            style,
+            sender,
+        } => {
+            let result = format_edits_via_db(&snapshot, &path, &text, style);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::Hover {
+            id,
+            path,
+            text,
+            position,
+            provider,
+            sender,
+        } => {
+            let result = hover_via_db(&snapshot, &path, &text, position, &provider);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+    }
+}
+
+/// Format `text` off the snapshot's cached parse when the db's tracked buffer
+/// for `path` still matches it; otherwise re-parse. A write racing the read
+/// trips [`salsa::Cancelled`], which also falls back to a fresh parse.
+fn format_edits_via_db(
+    snapshot: &IncrementalDatabase,
+    path: &Path,
+    text: &str,
+    style: FormatStyle,
+) -> Option<Vec<TextEdit>> {
+    let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        let file = snapshot.lookup_file(path)?;
+        if snapshot.file_text(file) != text {
+            // The tracked input lags the live buffer; the cached tree is stale.
+            return None;
+        }
+        if !snapshot.parse_diagnostics(file).is_empty() {
+            // Parse errors: the formatter refuses, like `compute_format_edits`.
+            return Some(None);
+        }
+        let root = snapshot.parsed_tree(file);
+        let formatted = format_node(&root, style, text.ends_with('\n')).ok();
+        Some(formatted.map(|formatted| edits_for_formatted(text, formatted)))
+    }));
+    match cached {
+        Ok(Some(edits)) => edits,
+        // Cache miss (`Ok(None)`) or a racing write (`Err`): re-parse from text.
+        Ok(None) | Err(_) => compute_format_edits(text, style),
+    }
+}
+
+/// Resolve hover off the snapshot's cached parse when the db's tracked buffer for
+/// `path` still matches `text`; otherwise re-parse. Falls back on cancellation.
+fn hover_via_db(
+    snapshot: &IncrementalDatabase,
+    path: &Path,
+    text: &str,
+    position: Position,
+    provider: &CompositeProvider,
+) -> Option<Hover> {
+    let line_index = LineIndex::new(text);
+    let offset = line_index.position_to_byte(position).min(text.len());
+    let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        let file = snapshot.lookup_file(path)?;
+        if snapshot.file_text(file) != text {
+            return None;
+        }
+        let root = snapshot.parsed_tree(file);
+        Some(hover_from_node(&root, &line_index, offset, provider))
+    }));
+    match cached {
+        Ok(Some(hover)) => hover,
+        Ok(None) | Err(_) => {
+            let root = parse(text).cst;
+            hover_from_node(&root, &line_index, offset, provider)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Pure compute helpers (unit-testable; no IO beyond the in-memory `text`)
 // ---------------------------------------------------------------------------
 
@@ -702,9 +906,22 @@ pub fn compute_code_actions(
     range: Range,
 ) -> CodeActionResponse {
     let diagnostics = crate::linter::check_document(path, text, lint).unwrap_or_default();
+    code_actions_from_findings(&diagnostics, text, uri, range)
+}
+
+/// Build quick-fix code actions from already-computed lint findings, for the
+/// fixes whose diagnostics overlap `range`. `text` must be the source the
+/// `findings` were produced against (their ranges are byte offsets into it), so
+/// the LSP only serves cached findings when the buffer version still matches.
+fn code_actions_from_findings(
+    findings: &[Diagnostic],
+    text: &str,
+    uri: &Uri,
+    range: Range,
+) -> CodeActionResponse {
     let line_index = LineIndex::new(text);
 
-    diagnostics
+    findings
         .iter()
         .filter_map(|d| {
             let fix = d.fix.as_ref()?;
@@ -765,24 +982,31 @@ impl std::fmt::Display for ConfigResolveError {
     }
 }
 
-/// Compute the LSP `TextEdit`s to format `text` with `style`.
+/// Compute the LSP `TextEdit`s to format `text` with `style`, re-parsing it.
 ///
 /// Returns `None` when the formatter rejects the input (e.g. parse error).
 /// An empty `Vec` means the document is already formatted.
 pub fn compute_format_edits(text: &str, style: FormatStyle) -> Option<Vec<TextEdit>> {
     let formatted = format_with_style(text, style).ok()?;
+    Some(edits_for_formatted(text, formatted))
+}
+
+/// The whole-document edit replacing `text` with its formatted form (empty when
+/// already formatted). The single source of the edit geometry shared by the
+/// re-parse path ([`compute_format_edits`]) and the cached-tree path.
+fn edits_for_formatted(text: &str, formatted: String) -> Vec<TextEdit> {
     if formatted == text {
-        return Some(Vec::new());
+        return Vec::new();
     }
     let line_index = LineIndex::new(text);
     let end = line_index.byte_to_position(text.len());
-    Some(vec![TextEdit {
+    vec![TextEdit {
         range: Range {
             start: Position::new(0, 0),
             end,
         },
         new_text: formatted,
-    }])
+    }]
 }
 
 fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnostic {
@@ -827,11 +1051,23 @@ enum SymbolQuery {
 /// indexed package export. Pure (parses `text` itself) so it is unit-testable.
 pub fn compute_hover(text: &str, offset: usize, provider: &CompositeProvider) -> Option<Hover> {
     let root = parse(text).cst;
-    let offset = TextSize::new(offset.min(text.len()) as u32);
-    let query = symbol_query_at(&root, offset)?;
-    let (package, entry, range) = resolve_query(query, &root, provider)?;
-
     let line_index = LineIndex::new(text);
+    hover_from_node(&root, &line_index, offset.min(text.len()), provider)
+}
+
+/// Build hover contents off an already-parsed CST (and a matching line index),
+/// without re-parsing. The LSP read path uses this against the cached parse tree
+/// in its salsa database; [`compute_hover`] is the parse-from-text wrapper.
+fn hover_from_node(
+    root: &SyntaxNode,
+    line_index: &LineIndex,
+    offset: usize,
+    provider: &CompositeProvider,
+) -> Option<Hover> {
+    let offset = TextSize::new(offset as u32);
+    let query = symbol_query_at(root, offset)?;
+    let (package, entry, range) = resolve_query(query, root, provider)?;
+
     let lsp_range = Range {
         start: line_index.byte_to_position(u32::from(range.start()) as usize),
         end: line_index.byte_to_position(u32::from(range.end()) as usize),
@@ -1325,5 +1561,77 @@ mod tests {
         // Cursor on whitespace yields nothing.
         let src = "across (a)\n";
         assert!(compute_hover(src, offset_of(src, " (a"), &provider).is_none());
+    }
+
+    // --- db read path -----------------------------------------------------
+
+    /// The cached-tree format path matches the re-parse path when the db's
+    /// tracked buffer is the live text, and falls back (still correctly) when the
+    /// db lags the buffer or has never seen the path.
+    #[test]
+    fn format_via_db_matches_compute_and_falls_back() {
+        use crate::incremental::IncrementalDatabase;
+        let style = FormatStyle::default();
+        let path = test_path();
+        let buffer = "x<-f(1 )\n";
+        let expected = compute_format_edits(buffer, style);
+        assert!(
+            matches!(&expected, Some(edits) if !edits.is_empty()),
+            "fixture must require reformatting"
+        );
+
+        // Cache hit: tracked text == buffer → format off the cached tree.
+        let mut db = IncrementalDatabase::default();
+        db.upsert_file(path, buffer.to_string());
+        let snapshot = db.clone();
+        assert_eq!(
+            format_edits_via_db(&snapshot, path, buffer, style),
+            expected,
+            "cached-tree format must match the re-parse path"
+        );
+
+        // Stale db (tracked text lags the buffer) → fall back to a fresh parse.
+        let mut stale = IncrementalDatabase::default();
+        stale.upsert_file(path, "y <- 1\n".to_string());
+        assert_eq!(
+            format_edits_via_db(&stale.clone(), path, buffer, style),
+            expected,
+            "version skew must fall back to the buffer text"
+        );
+
+        // Untracked path → fall back as well.
+        let empty = IncrementalDatabase::default();
+        assert_eq!(
+            format_edits_via_db(&empty, path, buffer, style),
+            expected,
+            "untracked path must fall back to the buffer text"
+        );
+    }
+
+    #[test]
+    fn hover_via_db_matches_compute() {
+        use crate::incremental::IncrementalDatabase;
+        let provider = documented_dplyr();
+        let path = test_path();
+        let src = "library(dplyr)\nacross(a, mean)\n";
+        // Cursor on `across` (line 1, character 0).
+        let position = pos(1, 0);
+
+        let mut db = IncrementalDatabase::default();
+        db.upsert_file(path, src.to_string());
+        let hover = hover_via_db(&db.clone(), path, src, position, &provider)
+            .expect("hover for across via db");
+        let md = match hover.contents {
+            HoverContents::Markup(m) => m.value,
+            other => panic!("expected markup, got {other:?}"),
+        };
+        assert!(md.contains("dplyr::across"), "origin: {md}");
+
+        // Untracked path still resolves, via the fresh-parse fallback.
+        let empty = IncrementalDatabase::default();
+        assert!(
+            hover_via_db(&empty, path, src, position, &provider).is_some(),
+            "fallback hover should resolve too"
+        );
     }
 }

@@ -86,6 +86,37 @@ fn upsert_reuses_input_for_same_path() {
 }
 
 #[test]
+fn clone_shares_inputs_and_cached_parse() {
+    // A clone is a second handle onto the same storage: it sees the same
+    // path→input map and reuses the owner's memoized parse without re-running it.
+    // This is the LSP read path — format/hover run off a short-lived clone.
+    use std::path::Path;
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let file = db.upsert_file(path, "x <- f(1)\n".to_string());
+    // Materialize the parse on the owner.
+    let _ = db.parsed_tree(file);
+
+    let snapshot = db.clone();
+    // The clone resolves the same input by path...
+    assert!(
+        snapshot.lookup_file(path) == Some(file),
+        "clone should see the owner's tracked file"
+    );
+    assert_eq!(snapshot.file_text(file), "x <- f(1)\n");
+
+    // ...and reads the memoized parse without re-executing the query.
+    snapshot.clear_query_log();
+    let root = snapshot.parsed_tree(file);
+    assert_eq!(root.text().to_string(), "x <- f(1)\n");
+    assert!(
+        snapshot.query_log().is_empty(),
+        "clone should reuse the owner's cached parse, ran {} queries",
+        snapshot.query_log().len()
+    );
+}
+
+#[test]
 fn body_edit_keeps_model_in_sync() {
     // Editing a file's contents recomputes its semantic model so downstream
     // consumers see the new bindings.

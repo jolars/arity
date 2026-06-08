@@ -127,6 +127,24 @@ impl Default for IncrementalDatabase {
     }
 }
 
+/// Cloning yields a second handle onto the *same* salsa storage (a cheap
+/// `Arc`-bump of the shared `Zalsa`, plus the shared path→input map and query
+/// log). This is how the language server runs read-only queries off the lint
+/// thread: the owner mints a short-lived clone, hands it to a worker, and the
+/// clone is dropped promptly. Salsa is single-writer — a clone outstanding when
+/// the owner performs a write blocks that write until the clone drops (and trips
+/// `salsa::Cancelled` in any read still in flight), so clones must never be held
+/// across a write or parked long-term.
+impl Clone for IncrementalDatabase {
+    fn clone(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+            query_log: Arc::clone(&self.query_log),
+            files: Arc::clone(&self.files),
+        }
+    }
+}
+
 impl std::fmt::Debug for IncrementalDatabase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IncrementalDatabase")
@@ -173,6 +191,23 @@ impl IncrementalDatabase {
                 file
             }
         }
+    }
+
+    /// The `SourceFile` input currently tracked for `path`, if any. Read-only:
+    /// unlike [`upsert_file`](Self::upsert_file) it never inserts, so it is safe
+    /// to call on a shared clone (the language server's read path uses it to find
+    /// the cached parse for the buffer under the cursor).
+    pub fn lookup_file(&self, path: &Path) -> Option<SourceFile> {
+        self.files
+            .lock()
+            .expect("file cache mutex poisoned")
+            .get(path)
+            .copied()
+    }
+
+    /// The text currently tracked for `file`.
+    pub fn file_text(&self, file: SourceFile) -> &str {
+        file.text(self)
     }
 
     /// Parse diagnostics for `file` (empty when it parses cleanly).

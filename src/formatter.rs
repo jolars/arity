@@ -9,5 +9,5 @@ pub mod style;
 pub(crate) mod trivia;
 
 pub use check::{CheckError, CheckResult, check_paths, check_paths_with_style};
-pub use core::{FormatError, format, format_with_style};
+pub use core::{FormatError, format, format_node, format_with_style};
 pub use style::FormatStyle;

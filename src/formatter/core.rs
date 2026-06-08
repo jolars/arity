@@ -74,10 +74,25 @@ pub fn format_with_style(input: &str, style: FormatStyle) -> Result<String, Form
         });
     }
 
-    validate_supported_tokens(&parse_output.cst)?;
+    format_node(&parse_output.cst, style, input.ends_with('\n'))
+}
+
+/// Format an already-parsed CST. The caller is responsible for rejecting input
+/// that failed to parse (the diagnostics live next to the green tree in the
+/// salsa cache, not on the node); this entry only guards against stray `ERROR`
+/// tokens. `trailing_newline` preserves a final newline the source had.
+///
+/// Used by the language server's read path, which formats off the cached parse
+/// tree in its salsa database rather than re-parsing the buffer.
+pub fn format_node(
+    root: &SyntaxNode,
+    style: FormatStyle,
+    trailing_newline: bool,
+) -> Result<String, FormatError> {
+    validate_supported_tokens(root)?;
     let ctx = FormatContext::new(style);
-    let mut formatted = format_root(&parse_output.cst, ctx)?;
-    if input.ends_with('\n') && !formatted.ends_with('\n') {
+    let mut formatted = format_root(root, ctx)?;
+    if trailing_newline && !formatted.ends_with('\n') {
         formatted.push('\n');
     }
     Ok(formatted)
@@ -424,4 +439,30 @@ pub(super) fn format_expr_with_optional_comment(
 
 pub(super) fn is_trivia(kind: SyntaxKind) -> bool {
     is_trivia_kind(kind)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Formatting an already-parsed CST must match formatting the same text,
+    /// so the LSP read path (which formats off the cached parse tree) stays
+    /// byte-identical to the text entry point.
+    #[test]
+    fn format_node_matches_format_with_style() {
+        let style = FormatStyle::default();
+        for input in [
+            "x<-1\n",
+            "x <- 1\n",
+            "f(a,b ,c)\n",
+            "if(x){y}else{z}\n",
+            "x<-1", // no trailing newline
+            "",
+        ] {
+            let via_text = format_with_style(input, style);
+            let parsed = parse(input);
+            let via_node = format_node(&parsed.cst, style, input.ends_with('\n'));
+            assert_eq!(via_text, via_node, "mismatch for {input:?}");
+        }
+    }
 }

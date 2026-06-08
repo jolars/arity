@@ -50,12 +50,20 @@ in-tree parser, not a drop-in jarl replacement.
       (`file_exports` firewall, `source_edges`, `project_graph`, `visible_symbols`)
       so a body edit doesn't rebuild the whole project scope; today
       `ProjectScope` is recomputed per lint over cached per-file parses.
-- [ ] LSP read-path follow-ups (`src/lsp.rs`): hover/formatting/code-action
-      currently re-parse independently instead of reusing the salsa db. With the
-      dedicated lint thread now owning the db (salsa is single-writer), interactive
-      reads could move onto read-only snapshot queries off that thread. Relatedly,
-      the lint thread *coalesces* stale requests but does not preemptively cancel a
-      long in-flight lint.
+- [x] LSP read-path: hover/formatting reuse the salsa db. The lint thread (db
+      owner) mints a short-lived clone per read job and runs it on rayon
+      (`run_read`), formatting/hovering off the cached parse tree when the tracked
+      buffer matches the live text; a cache miss or a `salsa::Cancelled` from a
+      racing write falls back to a fresh parse. Code actions are served from the
+      last lint's findings (cached per URI by version) with no re-lint on a
+      version match. `IncrementalDatabase` is now `Clone` (shared storage handle).
+- [ ] LSP read-path follow-up: preemptive lint cancellation. The lint thread
+      *coalesces* queued requests (latest version per URI wins) but still runs an
+      in-flight lint to completion; a fresher edit can't interrupt it. With reads
+      now riding short-lived db clones, a long lint also briefly delays a read
+      behind it (the read waits for the lint thread to return to its `select!`).
+      `db.trigger_cancellation()` / unwinding the active lint on a newer request
+      would address both.
 - [x] Honor editor-supplied `initializationOptions` /
       `workspace/didChangeConfiguration` for `line-width` / `indent-width`.
       Editor settings are the *fallback*: a discovered `ravel.toml` is
