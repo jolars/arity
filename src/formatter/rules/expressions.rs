@@ -191,18 +191,23 @@ fn ir_binary_side(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    // Curly-curly is migrated later; bridge it through the legacy renderer.
     if let Some(curly_curly) = try_format_curly_curly(elements, indent, ctx)? {
-        return Ok(Ir::verbatim(curly_curly));
+        return Ok(curly_curly);
     }
     ir_expr_segment(elements, context, indent, ctx)
 }
 
+/// A binary-operand curly-curly `{{ symbol }}`, rendered as a single-line atom on
+/// the IR. Returns `None` (so the caller falls through to the general segment
+/// path, which renders nested blocks) for any shape that isn't a single-line,
+/// comment-free `{{ … }}`. The single-line/comment guard still renders the inner
+/// body to a string to decide, but the emitted body is composable IR --- the
+/// layout engine, not a baked string, owns it.
 fn try_format_curly_curly(
     elements: &[SyntaxElement<RLanguage>],
     indent: usize,
     ctx: FormatContext,
-) -> Result<Option<String>, FormatError> {
+) -> Result<Option<Ir>, FormatError> {
     let significant: Vec<_> = elements
         .iter()
         .filter(|el| !super::super::core::is_trivia(el.kind()))
@@ -262,7 +267,12 @@ fn try_format_curly_curly(
     if body.contains('\n') || body.trim_start().starts_with('#') {
         return Ok(None);
     }
-    Ok(Some(format!("{{{{ {body} }}}}")))
+    let body_ir = ir_expr_segment(inner_body, "curly-curly inner body", indent, ctx)?;
+    Ok(Some(Ir::concat([
+        Ir::text("{{ "),
+        body_ir,
+        Ir::text(" }}"),
+    ])))
 }
 
 /// IR builder for parenthesized expressions. Mirrors [`format_paren_expr`]:
