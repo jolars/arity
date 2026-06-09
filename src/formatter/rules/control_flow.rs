@@ -4,7 +4,7 @@ use super::super::context::FormatContext;
 use super::super::core::{
     FormatError, format_block_expr_with_prefixed_comments, format_expr_segment,
     format_expr_with_optional_comment, ir_block_expr_with_prefixed_comments, ir_expr_element,
-    ir_expr_segment, is_trivia,
+    ir_expr_segment, ir_expr_with_optional_comment, is_trivia,
 };
 use super::super::ir::Ir;
 use crate::ast::{AstNode, ForExpr, ForExprParts, IfExpr, WhileExpr, WhileExprParts};
@@ -554,7 +554,11 @@ pub(crate) fn ir_if_expr(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    if if_subtree_has_comment(node) || !if_chain_native_eligible(node, indent, ctx)? {
+    // The eligibility gate guards only the comment-free path, whose bare branches
+    // are spliced as single-line opaque units. Comment-bearing chains relocate
+    // comments natively (wrapping wide bare branches in a block), so they bypass
+    // the gate and build native IR directly.
+    if !if_subtree_has_comment(node) && !if_chain_native_eligible(node, indent, ctx)? {
         return ir_if_expr_legacy(node, indent, ctx);
     }
     if in_statement_position(node) {
@@ -581,9 +585,9 @@ pub(crate) fn ir_if_expr(
     Ok(Ir::conditional_group([Ir::verbatim(flat), braced]))
 }
 
-/// Whether the `if` subtree carries any comment token. Comment relocation in
-/// if/else is still string-based, so such chains route to the legacy renderer;
-/// the comment-free majority builds native IR.
+/// Whether the `if` subtree carries any comment token. Comment-bearing chains
+/// bypass the comment-free eligibility gate and build native IR directly (see
+/// [`ir_if_expr`]).
 fn if_subtree_has_comment(node: &SyntaxNode) -> bool {
     node.descendants_with_tokens()
         .any(|el| el.kind() == SyntaxKind::COMMENT)
@@ -661,7 +665,60 @@ fn ir_if_expr_impl(
         indent,
         ctx,
     )?);
-    let (mut then_ir, then_is_block) = ir_if_branch(&then_elements, indent, ctx)?;
+    // Comment relocation (IR port of `format_if_then_branch_with_comments` +
+    // `prepend_comments_to_branch`). A comment trailing the then-block's `}` on
+    // the same line stays with the then block; any other comment between the
+    // branches moves onto the `else` branch (or braces a bare then-branch).
+    let then_significant = significant_elements(&then_elements);
+    let then_starts_block = matches!(
+        then_significant.first(),
+        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR
+    );
+
+    let mut interstitial: Vec<String> = Vec::new();
+    let mut attach_to_then = false;
+    let (mut then_ir, then_is_block) = if then_starts_block {
+        interstitial = then_significant
+            .iter()
+            .skip(1)
+            .filter_map(|el| match el {
+                NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT => {
+                    Some(tok.text().to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        attach_to_then = comments_attach_to_then_block(&then_elements);
+        let then_comments: &[String] = if attach_to_then {
+            interstitial.as_slice()
+        } else {
+            &[]
+        };
+        let block = then_significant
+            .first()
+            .and_then(|el| el.as_node())
+            .expect("then branch starts with a block");
+        (
+            ir_block_expr_with_prefixed_comments(block, indent, ctx, then_comments)?,
+            true,
+        )
+    } else {
+        // Bare then-branch. A comment between the body and `else` cannot stay
+        // inline (it would swallow `else` or read as an ambiguous sibling), so
+        // wrap the body in a block; own-line comments are surfaced as
+        // interstitial for the `else` branch, while a same-line trailing comment
+        // rides the body's line.
+        let inter = bare_branch_interstitial_comments(&then_elements);
+        if has_else && (!inter.is_empty() || bare_branch_trailing_comment(&then_elements).is_some())
+        {
+            interstitial = inter;
+            let body_only = elements_without_trailing_own_line_content(&then_elements);
+            let (body_ir, _) = ir_if_branch(&body_only, indent + 1, ctx, &[])?;
+            (synthetic_block(vec![body_ir]), true)
+        } else {
+            ir_if_branch(&then_elements, indent, ctx, &[])?
+        }
+    };
 
     // Braces are all-or-nothing across a chain (tidyverse): forced by statement
     // position, a braced branch anywhere, or a nested-if / `else if` arm.
@@ -681,15 +738,31 @@ fn ir_if_expr_impl(
         then_ir = synthetic_block(vec![then_ir]);
     }
 
+    // Interstitial comments not bound to the then block attach to the `else`
+    // branch (the IR port of `prepend_comments_to_branch`).
+    let else_comments: &[String] = if attach_to_then {
+        &[]
+    } else {
+        interstitial.as_slice()
+    };
+
     let mut parts = vec![Ir::text("if ("), condition, Ir::text(") "), then_ir];
     if let Some(else_elements) = else_elements {
         // An `else if` recurses so the brace decision propagates across the whole
         // chain instead of nesting the `if` inside a synthetic block.
         let (mut else_ir, else_is_block) = if let Some(if_node) = sole_else_if_node(&else_elements)
         {
-            (ir_if_expr_impl(&if_node, indent, ctx, needs_braces)?, true)
+            let inner = ir_if_expr_impl(&if_node, indent, ctx, needs_braces)?;
+            if else_comments.is_empty() {
+                (inner, true)
+            } else {
+                (
+                    synthetic_block_with_comments(vec![inner], else_comments),
+                    true,
+                )
+            }
         } else {
-            let (ir, is_block) = ir_if_branch(&else_elements, indent, ctx)?;
+            let (ir, is_block) = ir_if_branch(&else_elements, indent, ctx, else_comments)?;
             (ir, is_block || branch_starts_with_if(&else_elements))
         };
         if needs_braces && !else_is_block {
@@ -714,24 +787,87 @@ fn ir_if_branch(
     elements: &[SyntaxElement<RLanguage>],
     indent: usize,
     ctx: FormatContext,
+    prefixed_comments: &[String],
 ) -> Result<(Ir, bool), FormatError> {
     let significant = significant_elements(elements);
-    match significant.first() {
-        None => Ok((Ir::text("{}"), true)),
-        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR => Ok((
-            ir_block_expr_with_prefixed_comments(node, indent, ctx, &[])?,
-            true,
-        )),
-        _ => Ok((
-            Ir::verbatim(format_expr_with_optional_comment(
-                &significant,
-                "if branch",
-                indent,
-                ctx,
-            )?),
-            false,
-        )),
+
+    // Peel leading own-line comments and a single same-line trailing comment,
+    // mirroring `format_if_branch`. Leading comments join the relocated
+    // `prefixed_comments`; the trailing comment rides the body's line.
+    let mut start = 0usize;
+    let mut leading = Vec::new();
+    while let Some(NodeOrToken::Token(tok)) = significant.get(start) {
+        if tok.kind() != SyntaxKind::COMMENT {
+            break;
+        }
+        leading.push(tok.text().to_string());
+        start += 1;
     }
+    let mut end = significant.len();
+    let trailing = if end > start
+        && matches!(
+            significant.last(),
+            Some(NodeOrToken::Token(tok)) if tok.kind() == SyntaxKind::COMMENT
+        ) {
+        end -= 1;
+        match &significant[end] {
+            NodeOrToken::Token(tok) => Some(tok.text().to_string()),
+            NodeOrToken::Node(_) => None,
+        }
+    } else {
+        None
+    };
+    let core = &significant[start..end];
+
+    let mut combined = prefixed_comments.to_vec();
+    combined.extend(leading);
+
+    if core.is_empty() {
+        if combined.is_empty() {
+            return match trailing {
+                Some(comment) => Ok((Ir::verbatim_forced(comment), false)),
+                None => Ok((Ir::text("{}"), true)),
+            };
+        }
+        let items = combined
+            .iter()
+            .map(|c| Ir::verbatim_forced(c.clone()))
+            .collect();
+        return Ok((synthetic_block(items), true));
+    }
+
+    // A sole block renders natively (structural indent), with any relocated and
+    // leading comments prepended inside it.
+    if core.len() == 1
+        && let NodeOrToken::Node(node) = &core[0]
+        && node.kind() == SyntaxKind::BLOCK_EXPR
+    {
+        let mut ir = ir_block_expr_with_prefixed_comments(node, indent, ctx, &combined)?;
+        if let Some(comment) = trailing {
+            ir = Ir::concat([ir, Ir::text(" "), Ir::verbatim_forced(comment)]);
+        }
+        return Ok((ir, true));
+    }
+
+    // A bare expression. With no comments it stays a single-line opaque unit (the
+    // comment-free native path); with comments it is wrapped in a block so the
+    // comments survive (the IR port of the legacy relocation).
+    if combined.is_empty() {
+        let mut rendered = format_expr_with_optional_comment(core, "if branch", indent, ctx)?;
+        if let Some(comment) = trailing {
+            rendered.push(' ');
+            rendered.push_str(&comment);
+        }
+        return Ok((Ir::verbatim(rendered), false));
+    }
+    let mut expr_ir = ir_expr_with_optional_comment(core, "if branch", indent + 1, ctx)?;
+    if let Some(comment) = trailing {
+        expr_ir = Ir::concat([expr_ir, Ir::text(" "), Ir::verbatim_forced(comment)]);
+    }
+    Ok((
+        synthetic_block_with_comments(vec![expr_ir], &combined),
+        true,
+    ))
 }
 
 /// Whether a comment-free `if` chain can be rendered natively. The native builder
@@ -931,14 +1067,26 @@ fn ir_loop_body(
 
 /// Wrap `items` (one per line) in a hard-broken, indented `{ }` block.
 fn synthetic_block(items: Vec<Ir>) -> Ir {
-    let body = Ir::concat(
-        items
-            .into_iter()
-            .map(|it| Ir::concat([Ir::hard_line(), it])),
-    );
+    synthetic_block_with_comments(items, &[])
+}
+
+/// Like [`synthetic_block`] but prefixes `comments` (each forced onto its own
+/// line) before the items. Mirror of `brace_wrap_body_with_comments` in
+/// `functions.rs`; a single-line comment carries no indentation, so it
+/// re-indents structurally inside the block's [`Ir::indent`].
+fn synthetic_block_with_comments(items: Vec<Ir>, comments: &[String]) -> Ir {
+    let mut inner: Vec<Ir> = Vec::new();
+    for comment in comments {
+        inner.push(Ir::hard_line());
+        inner.push(Ir::verbatim_forced(comment.clone()));
+    }
+    for it in items {
+        inner.push(Ir::hard_line());
+        inner.push(it);
+    }
     Ir::concat([
         Ir::text("{"),
-        Ir::indent(body),
+        Ir::indent(Ir::concat(inner)),
         Ir::hard_line(),
         Ir::text("}"),
     ])
