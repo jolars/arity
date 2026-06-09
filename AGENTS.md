@@ -124,9 +124,11 @@ best-fit layout engine (`printer.rs`) that makes all line-break decisions.
 `rules/` builds the IR per construct; `core.rs` exposes `format` /
 `format_with_style`; `check.rs` exposes `check_paths`; `style.rs` is
 `FormatStyle`; `trivia.rs`/`context.rs`/`render.rs` are support. Target style is
-the tidyverse R style guide. Note (per `TODO.md` follow-ups):
-subset/call/function arg-lists are still bridged into the IR via `Verbatim`
-using legacy string-based wrapping, pending native IR re-implementation.
+the tidyverse R style guide. The native-IR migration is largely complete
+(subset/call/function arg-lists, curly-curly, parens, if/else, and external-body
+control flow all build native IR). The remaining `Ir::verbatim` legacy bridge is
+**comment-bearing `if`/`else`** (`ir_if_expr_legacy`), whose comment relocation is
+not yet ported (see `TODO.md` follow-ups).
 
 **Linter** (`src/linter/`): `check_paths` walks files, parses, and reports
 `LintStatus` (`Clean` / `Findings` / `ParseDiagnostics`); parse diagnostics

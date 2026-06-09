@@ -17,6 +17,23 @@
 
 ## Formatter
 
+- [ ] Native-IR migration tail. The Wadler-IR migration is largely complete:
+      curly-curly, parens, comment-free `if`/`else`, and external-body
+      control-flow all build native IR (a baked-indent bug for `if` nested in a
+      breaking call arg was fixed along the way --- see
+      `if_nested_in_call_argument`). Two coupled follow-ups remain:
+  - [ ] **if/else comment relocation → IR** (the hard, rare part). Comment-bearing
+        `if`/`else` still routes to `ir_if_expr_legacy` (an `Ir::verbatim` string
+        bridge); port the relocation logic (`format_if_then_branch_with_comments`,
+        `prepend_comments_to_branch`, interstitial/trailing handling) to native IR.
+        Also covers the bare-branch-too-wide-to-fit fallback
+        (`if_chain_native_eligible`). Cases: the 4 `if_else_*comment*` fixtures.
+  - [ ] **Remove the function-body re-render hack** (`functions.rs:1258-1262`):
+        re-rendering a body at `indent + 1` is only needed while a forced-break
+        `Ir::verbatim` bridge bakes indent. Blocked on the comment-relocation port
+        above (comment-bearing if/else in a function body is the last such bridge).
+        Then delete remaining dead legacy if/else string renderers.
+
 ## Linter
 
 Closest precedent: **jarl** (`etiennebacher/jarl`, Rust + rowan + air-parser,
