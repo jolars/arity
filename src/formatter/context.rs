@@ -17,14 +17,4 @@ impl FormatContext {
     pub(crate) fn indent_text(self, indent: usize) -> String {
         " ".repeat(self.style.indent_width * indent)
     }
-
-    pub(crate) fn fits_inline(self, indent: usize, text: &str) -> bool {
-        !text.contains('\n') && text.chars().count() <= self.max_inline_width(indent)
-    }
-
-    fn max_inline_width(self, indent: usize) -> usize {
-        self.style
-            .line_width
-            .saturating_sub(self.style.indent_width * indent)
-    }
 }

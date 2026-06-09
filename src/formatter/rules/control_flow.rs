@@ -2,9 +2,9 @@ use rowan::{NodeOrToken, SyntaxElement, SyntaxToken};
 
 use super::super::context::FormatContext;
 use super::super::core::{
-    FormatError, format_block_expr_with_prefixed_comments, format_expr_element,
-    format_expr_segment, format_expr_with_optional_comment, ir_block_expr_with_prefixed_comments,
-    ir_expr_element, ir_expr_segment, is_trivia,
+    FormatError, format_block_expr_with_prefixed_comments, format_expr_segment,
+    format_expr_with_optional_comment, ir_block_expr_with_prefixed_comments, ir_expr_element,
+    ir_expr_segment, is_trivia,
 };
 use super::super::ir::Ir;
 use crate::ast::{AstNode, ForExpr, ForExprParts, IfExpr, WhileExpr, WhileExprParts};
@@ -793,15 +793,7 @@ pub(crate) fn ir_for_expr(
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
     let parts = parse_for_expr_parts(node, indent, ctx)?;
-    let variable = ir_expr_segment(&parts.variable_elements, "for loop variable", indent, ctx)?;
-    let sequence = ir_expr_segment(&parts.sequence_elements, "for loop sequence", indent, ctx)?;
-    let header = Ir::concat([
-        Ir::text("for ("),
-        variable,
-        Ir::text(" in "),
-        sequence,
-        Ir::text(")"),
-    ]);
+    let header = ir_for_header(&parts, indent, ctx)?;
     let prefixed = comment_texts(&parts.post_clause_comments);
     let body = ir_loop_body(parts.body.as_ref(), indent, ctx, &prefixed)?;
     Ok(ir_with_leading_comments(
@@ -809,6 +801,24 @@ pub(crate) fn ir_for_expr(
         header,
         body,
     ))
+}
+
+/// The `for (var in seq)` header as IR, shared by [`ir_for_expr`] and the
+/// external-body handler.
+fn ir_for_header(
+    parts: &ForExprParts,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<Ir, FormatError> {
+    let variable = ir_expr_segment(&parts.variable_elements, "for loop variable", indent, ctx)?;
+    let sequence = ir_expr_segment(&parts.sequence_elements, "for loop sequence", indent, ctx)?;
+    Ok(Ir::concat([
+        Ir::text("for ("),
+        variable,
+        Ir::text(" in "),
+        sequence,
+        Ir::text(")"),
+    ]))
 }
 
 /// IR builder for `while`. Mirrors [`format_while_expr`]: the condition is
@@ -819,18 +829,7 @@ pub(crate) fn ir_while_expr(
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
     let parts = parse_while_expr_parts(node, indent, ctx)?;
-    let condition = ir_expr_segment(
-        &parts.condition_elements,
-        "while loop condition",
-        indent + 1,
-        ctx,
-    )?;
-    let header = Ir::group(Ir::concat([
-        Ir::text("while ("),
-        Ir::indent(Ir::concat([Ir::soft_line(), condition])),
-        Ir::soft_line(),
-        Ir::text(")"),
-    ]));
+    let header = ir_while_header(&parts, indent, ctx)?;
     let prefixed = comment_texts(&parts.post_clause_comments);
     let body = ir_loop_body(parts.body.as_ref(), indent, ctx, &prefixed)?;
     Ok(ir_with_leading_comments(
@@ -838,6 +837,28 @@ pub(crate) fn ir_while_expr(
         header,
         body,
     ))
+}
+
+/// The `while (cond)` header as IR (the condition wraps onto its own indented
+/// line when it cannot stay inline), shared by [`ir_while_expr`] and the
+/// external-body handler.
+fn ir_while_header(
+    parts: &WhileExprParts,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<Ir, FormatError> {
+    let condition = ir_expr_segment(
+        &parts.condition_elements,
+        "while loop condition",
+        indent + 1,
+        ctx,
+    )?;
+    Ok(Ir::group(Ir::concat([
+        Ir::text("while ("),
+        Ir::indent(Ir::concat([Ir::soft_line(), condition])),
+        Ir::soft_line(),
+        Ir::text(")"),
+    ])))
 }
 
 /// IR builder for `repeat`. Mirrors [`format_repeat_expr`].
@@ -928,7 +949,7 @@ pub(crate) fn try_format_for_with_external_body(
     line_idx: usize,
     indent: usize,
     ctx: FormatContext,
-) -> Result<Option<(String, usize)>, FormatError> {
+) -> Result<Option<(Ir, usize)>, FormatError> {
     let significant = significant_elements(&lines[line_idx]);
     let (for_node, trailing_comment) = match significant.as_slice() {
         [NodeOrToken::Node(node)] if node.kind() == SyntaxKind::FOR_EXPR => (node.clone(), None),
@@ -974,28 +995,26 @@ pub(crate) fn try_format_for_with_external_body(
         .map(|tok| tok.text().to_string())
         .collect();
     merged_comment_texts.extend(extra_body_comments);
-    let body = format_for_body(Some(&body_element), indent, ctx, &merged_comment_texts)?;
+    let header = ir_for_header(&parts, indent, ctx)?;
+    let body = ir_loop_body(Some(&body_element), indent, ctx, &merged_comment_texts)?;
+    let ir = ir_external_body(&parts.leading_comments, header, body, trailing_comment);
+    Ok(Some((ir, cursor - line_idx)))
+}
 
-    let mut out = String::new();
-    for comment in &parts.leading_comments {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&ctx.indent_text(indent));
-        out.push_str(comment.text());
+/// Assemble an external-body control-flow construct: leading comments, the
+/// header, the body, and an optional trailing comment. The IR counterpart of the
+/// string assembly the external-body handlers shared.
+fn ir_external_body(
+    leading: &[SyntaxToken<RLanguage>],
+    header: Ir,
+    body: Ir,
+    trailing_comment: Option<String>,
+) -> Ir {
+    let assembled = ir_with_leading_comments(leading, header, body);
+    match trailing_comment {
+        Some(comment) => Ir::concat([assembled, Ir::text(" "), Ir::text(comment)]),
+        None => assembled,
     }
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    out.push_str(&format_for_header(&parts, indent, ctx)?);
-    out.push(' ');
-    out.push_str(&body);
-    if let Some(comment) = trailing_comment {
-        out.push(' ');
-        out.push_str(&comment);
-    }
-
-    Ok(Some((out, cursor - line_idx)))
 }
 
 pub(crate) fn try_format_while_with_external_body(
@@ -1003,7 +1022,7 @@ pub(crate) fn try_format_while_with_external_body(
     line_idx: usize,
     indent: usize,
     ctx: FormatContext,
-) -> Result<Option<(String, usize)>, FormatError> {
+) -> Result<Option<(Ir, usize)>, FormatError> {
     let significant = significant_elements(&lines[line_idx]);
     let (while_node, trailing_comment) = match significant.as_slice() {
         [NodeOrToken::Node(node)] if node.kind() == SyntaxKind::WHILE_EXPR => (node.clone(), None),
@@ -1049,28 +1068,10 @@ pub(crate) fn try_format_while_with_external_body(
         .map(|tok| tok.text().to_string())
         .collect();
     merged_comment_texts.extend(extra_body_comments);
-    let body = format_while_body(Some(&body_element), indent, ctx, &merged_comment_texts)?;
-
-    let mut out = String::new();
-    for comment in &parts.leading_comments {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&ctx.indent_text(indent));
-        out.push_str(comment.text());
-    }
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    out.push_str(&format_while_header(&parts, indent, ctx)?);
-    out.push(' ');
-    out.push_str(&body);
-    if let Some(comment) = trailing_comment {
-        out.push(' ');
-        out.push_str(&comment);
-    }
-
-    Ok(Some((out, cursor - line_idx)))
+    let header = ir_while_header(&parts, indent, ctx)?;
+    let body = ir_loop_body(Some(&body_element), indent, ctx, &merged_comment_texts)?;
+    let ir = ir_external_body(&parts.leading_comments, header, body, trailing_comment);
+    Ok(Some((ir, cursor - line_idx)))
 }
 
 pub(crate) fn try_format_repeat_with_external_body(
@@ -1078,7 +1079,7 @@ pub(crate) fn try_format_repeat_with_external_body(
     line_idx: usize,
     indent: usize,
     ctx: FormatContext,
-) -> Result<Option<(String, usize)>, FormatError> {
+) -> Result<Option<(Ir, usize)>, FormatError> {
     let significant = significant_elements(&lines[line_idx]);
     let (repeat_node, trailing_comment) = match significant.as_slice() {
         [NodeOrToken::Node(node)] if node.kind() == SyntaxKind::REPEAT_EXPR => (node.clone(), None),
@@ -1120,15 +1121,9 @@ pub(crate) fn try_format_repeat_with_external_body(
 
     let mut merged_comments = parts.post_keyword_comments;
     merged_comments.extend(extra_body_comments);
-    let body = format_repeat_body(Some(&body_element), indent, ctx, &merged_comments)?;
-
-    let mut out = format!("repeat {body}");
-    if let Some(comment) = trailing_comment {
-        out.push(' ');
-        out.push_str(&comment);
-    }
-
-    Ok(Some((out, cursor - line_idx)))
+    let body = ir_loop_body(Some(&body_element), indent, ctx, &merged_comments)?;
+    let ir = ir_external_body(&[], Ir::text("repeat"), body, trailing_comment);
+    Ok(Some((ir, cursor - line_idx)))
 }
 
 pub(crate) fn try_format_if_with_external_body(
@@ -1136,7 +1131,7 @@ pub(crate) fn try_format_if_with_external_body(
     line_idx: usize,
     indent: usize,
     ctx: FormatContext,
-) -> Result<Option<(String, usize)>, FormatError> {
+) -> Result<Option<(Ir, usize)>, FormatError> {
     let significant = significant_elements(&lines[line_idx]);
     let (if_node, trailing_comment) = match significant.as_slice() {
         [NodeOrToken::Node(node)] if node.kind() == SyntaxKind::IF_EXPR => (node.clone(), None),
@@ -1186,15 +1181,23 @@ pub(crate) fn try_format_if_with_external_body(
                 context: "missing if condition",
                 snippet: String::new(),
             })?;
-    let condition = format_expr_segment(&condition_elements, "if condition", indent, ctx)?;
-    let body_expr = format_expr_element(&body_element, indent + 1, ctx)?;
-    let body = wrap_branch_in_block(&body_expr, &[then_comment], indent, ctx);
-    let mut out = format!("if ({condition}) {body}");
-    if let Some(comment) = trailing_comment {
-        out.push(' ');
-        out.push_str(&comment);
-    }
-    Ok(Some((out, cursor - line_idx)))
+    // The then-branch is a comment; wrap the next-line body (bare or block) in a
+    // synthetic block led by that comment, exactly as the legacy
+    // `wrap_branch_in_block(body, &[then_comment], …)` did.
+    let condition = Ir::verbatim(format_expr_segment(
+        &condition_elements,
+        "if condition",
+        indent,
+        ctx,
+    )?);
+    let body_expr = ir_expr_element(&body_element, indent + 1, ctx)?;
+    let body = synthetic_block(vec![Ir::text(then_comment), body_expr]);
+    let header = Ir::concat([Ir::text("if ("), condition, Ir::text(") "), body]);
+    let ir = match trailing_comment {
+        Some(comment) => Ir::concat([header, Ir::text(" "), Ir::text(comment)]),
+        None => header,
+    };
+    Ok(Some((ir, cursor - line_idx)))
 }
 
 pub(crate) fn should_insert_comment_for_gap(
@@ -1232,16 +1235,6 @@ fn parse_for_expr_parts(
         })
 }
 
-fn format_for_header(
-    parts: &ForExprParts,
-    indent: usize,
-    ctx: FormatContext,
-) -> Result<String, FormatError> {
-    let variable = format_expr_segment(&parts.variable_elements, "for loop variable", indent, ctx)?;
-    let sequence = format_expr_segment(&parts.sequence_elements, "for loop sequence", indent, ctx)?;
-    Ok(format!("for ({variable} in {sequence})"))
-}
-
 fn parse_while_expr_parts(
     node: &SyntaxNode,
     _indent: usize,
@@ -1258,175 +1251,6 @@ fn parse_while_expr_parts(
             context: "invalid while expression structure",
             snippet: node.text().to_string(),
         })
-}
-
-fn format_while_header(
-    parts: &WhileExprParts,
-    indent: usize,
-    ctx: FormatContext,
-) -> Result<String, FormatError> {
-    let condition = format_expr_segment(
-        &parts.condition_elements,
-        "while loop condition",
-        indent + 1,
-        ctx,
-    )?;
-
-    if condition.contains('\n') {
-        return Ok(format!(
-            "while (\n{}{}\n{})",
-            ctx.indent_text(indent + 1),
-            condition,
-            ctx.indent_text(indent)
-        ));
-    }
-
-    let inline = format!("while ({condition})");
-    if ctx.fits_inline(indent, &inline) {
-        return Ok(inline);
-    }
-
-    Ok(format!(
-        "while (\n{}{}\n{})",
-        ctx.indent_text(indent + 1),
-        condition,
-        ctx.indent_text(indent)
-    ))
-}
-
-fn format_for_body(
-    body: Option<&SyntaxElement<RLanguage>>,
-    indent: usize,
-    ctx: FormatContext,
-    prefixed_comments: &[String],
-) -> Result<String, FormatError> {
-    match body {
-        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR => {
-            format_block_expr_with_prefixed_comments(node, indent, ctx, prefixed_comments)
-        }
-        Some(element) => {
-            let expr = format_expr_element(element, indent + 1, ctx)?;
-            let mut out = String::from("{\n");
-            for comment in prefixed_comments {
-                out.push_str(&ctx.indent_text(indent + 1));
-                out.push_str(comment);
-                out.push('\n');
-            }
-            out.push_str(&ctx.indent_text(indent + 1));
-            out.push_str(&expr);
-            out.push('\n');
-            out.push_str(&ctx.indent_text(indent));
-            out.push('}');
-            Ok(out)
-        }
-        None => {
-            if prefixed_comments.is_empty() {
-                return Ok("{}".to_string());
-            }
-            let mut out = String::from("{\n");
-            for (idx, comment) in prefixed_comments.iter().enumerate() {
-                out.push_str(&ctx.indent_text(indent + 1));
-                out.push_str(comment);
-                if idx + 1 < prefixed_comments.len() {
-                    out.push('\n');
-                }
-            }
-            out.push('\n');
-            out.push_str(&ctx.indent_text(indent));
-            out.push('}');
-            Ok(out)
-        }
-    }
-}
-
-fn format_while_body(
-    body: Option<&SyntaxElement<RLanguage>>,
-    indent: usize,
-    ctx: FormatContext,
-    prefixed_comments: &[String],
-) -> Result<String, FormatError> {
-    match body {
-        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR => {
-            format_block_expr_with_prefixed_comments(node, indent, ctx, prefixed_comments)
-        }
-        Some(element) => {
-            let expr = format_expr_element(element, indent + 1, ctx)?;
-            let mut out = String::from("{\n");
-            for comment in prefixed_comments {
-                out.push_str(&ctx.indent_text(indent + 1));
-                out.push_str(comment);
-                out.push('\n');
-            }
-            out.push_str(&ctx.indent_text(indent + 1));
-            out.push_str(&expr);
-            out.push('\n');
-            out.push_str(&ctx.indent_text(indent));
-            out.push('}');
-            Ok(out)
-        }
-        None => {
-            if prefixed_comments.is_empty() {
-                return Ok("{}".to_string());
-            }
-            let mut out = String::from("{\n");
-            for (idx, comment) in prefixed_comments.iter().enumerate() {
-                out.push_str(&ctx.indent_text(indent + 1));
-                out.push_str(comment);
-                if idx + 1 < prefixed_comments.len() {
-                    out.push('\n');
-                }
-            }
-            out.push('\n');
-            out.push_str(&ctx.indent_text(indent));
-            out.push('}');
-            Ok(out)
-        }
-    }
-}
-
-fn format_repeat_body(
-    body: Option<&SyntaxElement<RLanguage>>,
-    indent: usize,
-    ctx: FormatContext,
-    prefixed_comments: &[String],
-) -> Result<String, FormatError> {
-    match body {
-        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR => {
-            format_block_expr_with_prefixed_comments(node, indent, ctx, prefixed_comments)
-        }
-        Some(element) => {
-            let expr = format_expr_element(element, indent + 1, ctx)?;
-            let mut out = String::from("{\n");
-            for comment in prefixed_comments {
-                out.push_str(&ctx.indent_text(indent + 1));
-                out.push_str(comment);
-                out.push('\n');
-            }
-            out.push_str(&ctx.indent_text(indent + 1));
-            out.push_str(&expr);
-            out.push('\n');
-            out.push_str(&ctx.indent_text(indent));
-            out.push('}');
-            Ok(out)
-        }
-        None => {
-            if prefixed_comments.is_empty() {
-                return Ok("{}".to_string());
-            }
-            let mut out = String::from("{\n");
-            for (idx, comment) in prefixed_comments.iter().enumerate() {
-                out.push_str(&ctx.indent_text(indent + 1));
-                out.push_str(comment);
-                if idx + 1 < prefixed_comments.len() {
-                    out.push('\n');
-                }
-            }
-            out.push('\n');
-            out.push_str(&ctx.indent_text(indent));
-            out.push('}');
-            Ok(out)
-        }
-    }
 }
 
 struct RepeatExprParts {

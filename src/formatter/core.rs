@@ -284,25 +284,25 @@ pub(super) fn ir_statements(
             }
         }
 
-        let consumed = if let Some((formatted, consumed)) =
+        let consumed = if let Some((body_ir, consumed)) =
             try_format_for_with_external_body(lines, idx, indent, ctx)?
         {
-            items.push(Ir::verbatim(formatted));
+            items.push(body_ir);
             consumed
-        } else if let Some((formatted, consumed)) =
+        } else if let Some((body_ir, consumed)) =
             try_format_while_with_external_body(lines, idx, indent, ctx)?
         {
-            items.push(Ir::verbatim(formatted));
+            items.push(body_ir);
             consumed
-        } else if let Some((formatted, consumed)) =
+        } else if let Some((body_ir, consumed)) =
             try_format_if_with_external_body(lines, idx, indent, ctx)?
         {
-            items.push(Ir::verbatim(formatted));
+            items.push(body_ir);
             consumed
-        } else if let Some((formatted, consumed)) =
+        } else if let Some((body_ir, consumed)) =
             try_format_repeat_with_external_body(lines, idx, indent, ctx)?
         {
-            items.push(Ir::verbatim(formatted));
+            items.push(body_ir);
             consumed
         } else {
             items.push(ir_line(&lines[idx], indent, ctx)?);
