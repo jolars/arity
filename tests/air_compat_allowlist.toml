@@ -30,3 +30,14 @@
 # See TODO.md and the `air_test_that` fixture.
 air_call = "unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands"
 call_trailing_braced_expression = "unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands"
+
+# Over-width `if` condition: ravel keeps the condition hugged to `if (` and lets
+# the condition's own call wrap internally (the condition is spliced opaquely and
+# never wraps on the `if (…)` prefix's account --- see `ir_if_expr_impl`), and it
+# does NOT brace the bare consequence just because the condition went multi-line
+# (Tenet 1: input/derived line breaks never force braces). Air instead breaks the
+# whole condition onto its own line inside the parens and braces the consequence.
+# This fixture also guards the function-body re-render hack (`functions.rs`),
+# which re-indents the condition's baked-indent verbatim when the bare body is
+# brace-wrapped.
+function_body_wide_if_condition = "over-width if-condition: ravel hugs the condition to `if (` and leaves the bare consequence un-braced; air breaks the condition onto its own line and braces the consequence"

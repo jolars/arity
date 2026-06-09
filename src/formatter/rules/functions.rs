@@ -1254,12 +1254,14 @@ pub(crate) fn ir_function_expr(
         // at different indents (bare at the function-expr's own indent, braced
         // at +1 inside the wrapping `{ … }`), so build a separate IR for each.
         // Native IR builders are insensitive to the build-time `indent`
-        // parameter (they use `Ir::Indent` for layout), but legacy bridges
-        // like `ir_if_expr` bake the indent into a `Verbatim` — re-rendering
-        // at `indent + 1` is what lines the verbatim's content up correctly
-        // when wrapped in braces. The bare/braced choice itself routes
-        // through `function_body_choice`, which now measures all lines for
-        // forced-break bodies (the IR port of legacy `fits_with_newlines`).
+        // parameter (they use `Ir::Indent` for layout), but a few constructs
+        // still splice a baked-indent `Verbatim` — notably the `if`/`while`
+        // condition (rendered standalone in `control_flow.rs`), whose
+        // continuation lines wrap at the build indent. Re-rendering at
+        // `indent + 1` is what lines that verbatim up correctly when wrapped in
+        // braces. The bare/braced choice itself routes through
+        // `function_body_choice`, which measures all lines for forced-break
+        // bodies (the IR port of legacy `fits_with_newlines`).
         let bare_body_ir = ir_expr_segment(&body_core, "function body", indent, ctx)?;
         let braced_body_ir = if bare_body_ir.contains_forced_break() {
             ir_expr_segment(&body_core, "function body", indent + 1, ctx)?

@@ -17,22 +17,27 @@
 
 ## Formatter
 
-- [ ] Native-IR migration tail. The Wadler-IR migration is largely complete:
-      curly-curly, parens, comment-free `if`/`else`, and external-body
-      control-flow all build native IR (a baked-indent bug for `if` nested in a
-      breaking call arg was fixed along the way --- see
-      `if_nested_in_call_argument`). Two coupled follow-ups remain:
-  - [ ] **if/else comment relocation → IR** (the hard, rare part). Comment-bearing
-        `if`/`else` still routes to `ir_if_expr_legacy` (an `Ir::verbatim` string
-        bridge); port the relocation logic (`format_if_then_branch_with_comments`,
-        `prepend_comments_to_branch`, interstitial/trailing handling) to native IR.
-        Also covers the bare-branch-too-wide-to-fit fallback
-        (`if_chain_native_eligible`). Cases: the 4 `if_else_*comment*` fixtures.
-  - [ ] **Remove the function-body re-render hack** (`functions.rs:1258-1262`):
-        re-rendering a body at `indent + 1` is only needed while a forced-break
-        `Ir::verbatim` bridge bakes indent. Blocked on the comment-relocation port
-        above (comment-bearing if/else in a function body is the last such bridge).
-        Then delete remaining dead legacy if/else string renderers.
+- [x] Native-IR migration tail. The Wadler-IR migration is complete for
+      `if`/`else`: comment relocation is built natively (no string bridge), the
+      eligibility gate and all legacy if/else string renderers are deleted, and
+      with them the entire legacy line-rendering subsystem (`format_line`,
+      `format_expr_with_optional_comment`, `format_block_expr_with_prefixed_comments`,
+      `FormatLineFn`, `indent_text`). A too-wide bare value-position branch now
+      braces (air-aligned) instead of wrapping unbraced --- see
+      `if_value_position_wide_bare_braces` / `if_else_wide_bare_branches` /
+      `if_comment_wide_branch`.
+  - [ ] **Function-body re-render hack still required** (`functions.rs`,
+        bare-body branch). Comment-bearing if/else no longer bakes indent, but the
+        `if`/`while` **condition** is still spliced as a baked-indent `Ir::verbatim`
+        (`control_flow.rs` `ir_if_expr_impl`/`try_format_if_with_external_body`).
+        A wide condition in a bare function body wraps at the build indent, so the
+        body must be re-rendered at `indent + 1` when brace-wrapped --- guarded by
+        `function_body_wide_if_condition`. Removing the hack is blocked on
+        migrating the condition splice to native IR. Calls/functions with comment
+        relocation may also still bake indent --- audit before removing.
+  - Air divergence recorded: ravel hugs an over-width `if` condition to `if (` and
+    leaves a bare consequence un-braced (Tenet 1); air breaks the condition onto
+    its own line and braces it. See `tests/air_compat_allowlist.toml`.
 
 ## Linter
 

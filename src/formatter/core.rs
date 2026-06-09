@@ -3,7 +3,7 @@ use rowan::{NodeOrToken, SyntaxElement, TextRange};
 use super::context::FormatContext;
 use super::ir::Ir;
 use super::printer::Printer;
-use super::render::{format_atom_token, format_block_expr_with_prefixed_comments as render_block};
+use super::render::format_atom_token;
 use super::rules::control_flow::{
     ir_for_expr, ir_if_expr, ir_repeat_expr, ir_while_expr, should_insert_comment_for_gap,
     try_format_for_with_external_body, try_format_if_with_external_body,
@@ -356,44 +356,6 @@ pub(super) fn ir_block_statements(
     })
 }
 
-pub(super) fn format_line(
-    line: &[SyntaxElement<RLanguage>],
-    indent: usize,
-    ctx: FormatContext,
-) -> Result<String, FormatError> {
-    let significant: Vec<_> = line
-        .iter()
-        .filter(|el| !is_trivia_kind(el.kind()))
-        .cloned()
-        .collect();
-    if significant.is_empty() {
-        return Ok(String::new());
-    }
-
-    if let [NodeOrToken::Token(token)] = significant.as_slice()
-        && token.kind() == SyntaxKind::COMMENT
-    {
-        return Ok(format!("{}{}", ctx.indent_text(indent), token.text()));
-    }
-
-    if significant.len() == 2
-        && matches!(
-            significant.last(),
-            Some(NodeOrToken::Token(token)) if token.kind() == SyntaxKind::COMMENT
-        )
-    {
-        let expr = format_expr_element(&significant[0], indent, ctx)?;
-        let comment = match &significant[1] {
-            NodeOrToken::Token(token) => token.text(),
-            NodeOrToken::Node(_) => unreachable!(),
-        };
-        return Ok(format!("{}{} {}", ctx.indent_text(indent), expr, comment));
-    }
-
-    let expr = format_expr_segment(&significant, "line expression", indent, ctx)?;
-    Ok(format!("{}{}", ctx.indent_text(indent), expr))
-}
-
 pub(super) fn format_expr_segment(
     elements: &[SyntaxElement<RLanguage>],
     context: &'static str,
@@ -403,9 +365,9 @@ pub(super) fn format_expr_segment(
     super::render::format_expr_segment(elements, context, indent, ctx, format_expr_element)
 }
 
-/// IR counterpart of [`format_line`]: a single statement line as IR, without the
-/// leading indentation (the caller supplies that structurally via [`Ir::Indent`]
-/// and line breaks). An empty (blank) line yields [`Ir::Nil`].
+/// A single statement line as IR, without the leading indentation (the caller
+/// supplies that structurally via [`Ir::Indent`] and line breaks). An empty
+/// (blank) line yields [`Ir::Nil`].
 pub(super) fn ir_line(
     line: &[SyntaxElement<RLanguage>],
     indent: usize,
@@ -544,8 +506,8 @@ pub(super) fn ir_expr_segment(
     ir_expr_element(&significant[0], indent, ctx)
 }
 
-/// IR counterpart of [`format_expr_with_optional_comment`]: a single expression
-/// optionally followed by a trailing comment on the same line.
+/// A single expression optionally followed by a trailing comment on the same
+/// line.
 pub(super) fn ir_expr_with_optional_comment(
     elements: &[SyntaxElement<RLanguage>],
     context: &'static str,
@@ -575,15 +537,6 @@ pub(super) fn ir_expr_with_optional_comment(
     ir_expr_segment(elements, context, indent, ctx)
 }
 
-pub(super) fn format_block_expr_with_prefixed_comments(
-    node: &SyntaxNode,
-    indent: usize,
-    ctx: FormatContext,
-    prefixed_comments: &[String],
-) -> Result<String, FormatError> {
-    render_block(node, indent, ctx, prefixed_comments, format_line)
-}
-
 fn ir_block_expr(node: &SyntaxNode, indent: usize, ctx: FormatContext) -> Result<Ir, FormatError> {
     ir_block_expr_with_prefixed_comments(node, indent, ctx, &[])
 }
@@ -605,21 +558,6 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
 
 pub(super) fn snippet_from_elements(elements: &[SyntaxElement<RLanguage>]) -> String {
     super::render::snippet_from_elements(elements)
-}
-
-pub(super) fn format_expr_with_optional_comment(
-    elements: &[SyntaxElement<RLanguage>],
-    context: &'static str,
-    indent: usize,
-    ctx: FormatContext,
-) -> Result<String, FormatError> {
-    super::render::format_expr_with_optional_comment(
-        elements,
-        context,
-        indent,
-        ctx,
-        format_expr_element,
-    )
 }
 
 pub(super) fn is_trivia(kind: SyntaxKind) -> bool {
