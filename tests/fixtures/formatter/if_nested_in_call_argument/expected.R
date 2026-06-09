@@ -1,0 +1,23 @@
+f(
+  if (a) {
+    1
+  } else {
+    3
+  }
+)
+list(
+  z = if (a) {
+    1
+  }
+)
+g(
+  if (cond) {
+    x
+  } else if (other) {
+    y
+  } else {
+    z
+  },
+  second_argument
+)
+map(items, if (flag) do_thing() else do_other())

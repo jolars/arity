@@ -534,19 +534,63 @@ fn format_if_branch(
     Ok(rendered)
 }
 
-/// IR builder for if/else. Its comment/auto-brace handling is intricately
-/// string-based, so the actual rendering is delegated to [`format_if_expr_impl`]
-/// and composed into the IR verbatim (`Ir::verbatim` forces a break only when the
-/// rendering spans multiple lines).
+/// IR builder for if/else.
 ///
 /// In **statement position** the chain is always braced. In **value position** a
 /// simple one-liner stays flat when it fits but braces when it does not: we offer
 /// both the un-forced rendering and the braced rendering as an
 /// [`Ir::conditional_group`], letting the printer pick the flat candidate only
 /// while its first line fits at the current column (air's `if_group_breaks`). The
-/// un-forced rendering is *already* braced (multi-line) for nested-if / `else if`
-/// / block-arm / comment chains, in which case no flat alternative exists.
+/// un-forced rendering is *already* braced (multi-line, so it carries a forced
+/// break) for nested-if / `else if` / block-arm chains, in which case no flat
+/// alternative exists.
+///
+/// Comment-free chains build native IR ([`ir_if_expr_impl`]); chains carrying any
+/// comment fall back to the legacy string renderer
+/// ([`ir_if_expr_legacy`]/[`format_if_expr_impl`]) whose comment relocation is not
+/// yet ported to the IR.
 pub(crate) fn ir_if_expr(
+    node: &SyntaxNode,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<Ir, FormatError> {
+    if if_subtree_has_comment(node) || !if_chain_native_eligible(node, indent, ctx)? {
+        return ir_if_expr_legacy(node, indent, ctx);
+    }
+    if in_statement_position(node) {
+        return ir_if_expr_impl(node, indent, ctx, true);
+    }
+    // Structurally braced chains (a block arm, a nested-if consequence, or an
+    // `else if`) have no flat alternative: the un-forced native build already
+    // carries a forced break, so it *is* the answer.
+    let unforced = ir_if_expr_impl(node, indent, ctx, false)?;
+    if unforced.contains_forced_break() {
+        return Ok(unforced);
+    }
+    // A simple bare-branch chain. The flat candidate must be an *unbreakable*
+    // single-line unit: it either fits on one line as-is, or the chain braces.
+    // The legacy renderer produces exactly that string (it renders each branch
+    // standalone at the `if`'s own indent), so we reuse it for the flat candidate
+    // while the braced candidate stays native (structural `Ir::indent`). A branch
+    // wide enough to wrap even standalone keeps the legacy un-braced layout.
+    let flat = format_if_expr_impl(node, indent, ctx, false)?;
+    if flat.contains('\n') {
+        return Ok(Ir::verbatim(flat));
+    }
+    let braced = ir_if_expr_impl(node, indent, ctx, true)?;
+    Ok(Ir::conditional_group([Ir::verbatim(flat), braced]))
+}
+
+/// Whether the `if` subtree carries any comment token. Comment relocation in
+/// if/else is still string-based, so such chains route to the legacy renderer;
+/// the comment-free majority builds native IR.
+fn if_subtree_has_comment(node: &SyntaxNode) -> bool {
+    node.descendants_with_tokens()
+        .any(|el| el.kind() == SyntaxKind::COMMENT)
+}
+
+/// Legacy string-bridge for comment-bearing if/else (see [`ir_if_expr`]).
+fn ir_if_expr_legacy(
     node: &SyntaxNode,
     indent: usize,
     ctx: FormatContext,
@@ -556,7 +600,6 @@ pub(crate) fn ir_if_expr(
     }
     let flat = format_if_expr_impl(node, indent, ctx, false)?;
     if flat.contains('\n') {
-        // No single-line alternative: the un-forced form is already braced.
         return Ok(Ir::verbatim(flat));
     }
     let braced = format_if_expr_impl(node, indent, ctx, true)?;
@@ -564,6 +607,183 @@ pub(crate) fn ir_if_expr(
         Ir::verbatim(flat),
         Ir::verbatim(braced),
     ]))
+}
+
+/// Native-IR mirror of [`format_if_expr_impl`] for comment-free chains. Builds
+/// the branch bodies with structural [`Ir::indent`] (via [`synthetic_block`] and
+/// the native block builder) rather than baked indentation, so a wrapping context
+/// can re-indent the whole `if` by layering another `Ir::indent`. `force_braces`
+/// propagates the chain-wide brace decision down an `else if` chain, exactly as in
+/// the legacy renderer.
+fn ir_if_expr_impl(
+    node: &SyntaxNode,
+    indent: usize,
+    ctx: FormatContext,
+    force_braces: bool,
+) -> Result<Ir, FormatError> {
+    let if_expr = IfExpr::cast(node.clone()).ok_or_else(|| FormatError::AmbiguousConstruct {
+        context: "invalid if expression node",
+        snippet: node.text().to_string(),
+    })?;
+    let condition_elements =
+        if_expr
+            .condition_elements()
+            .ok_or_else(|| FormatError::AmbiguousConstruct {
+                context: "missing '(' after if",
+                snippet: node.text().to_string(),
+            })?;
+    let then_elements = if_expr
+        .then_elements()
+        .ok_or_else(|| FormatError::AmbiguousConstruct {
+            context: "missing ')' after if condition",
+            snippet: node.text().to_string(),
+        })?;
+    let has_else = if_expr.else_keyword().is_some();
+    let else_elements = if has_else {
+        Some(
+            if_expr
+                .else_elements()
+                .ok_or_else(|| FormatError::AmbiguousConstruct {
+                    context: "missing else branch",
+                    snippet: node.text().to_string(),
+                })?,
+        )
+    } else {
+        None
+    };
+
+    // The condition is rendered standalone and spliced opaquely: an `if`
+    // condition never wraps on the `if (…)` prefix's account (unlike `while`),
+    // so it must not participate in the header's width measurement.
+    let condition = Ir::verbatim(format_expr_segment(
+        &condition_elements,
+        "if condition",
+        indent,
+        ctx,
+    )?);
+    let (mut then_ir, then_is_block) = ir_if_branch(&then_elements, indent, ctx)?;
+
+    // Braces are all-or-nothing across a chain (tidyverse): forced by statement
+    // position, a braced branch anywhere, or a nested-if / `else if` arm.
+    let consequence_is_if = branch_starts_with_if(&then_elements);
+    let alternative_is_if = else_elements
+        .as_deref()
+        .is_some_and(|els| sole_else_if_node(els).is_some());
+    let needs_braces = force_braces
+        || then_is_block
+        || consequence_is_if
+        || alternative_is_if
+        || else_elements
+            .as_deref()
+            .is_some_and(else_branch_requires_braces);
+
+    if needs_braces && !then_is_block {
+        then_ir = synthetic_block(vec![then_ir]);
+    }
+
+    let mut parts = vec![Ir::text("if ("), condition, Ir::text(") "), then_ir];
+    if let Some(else_elements) = else_elements {
+        // An `else if` recurses so the brace decision propagates across the whole
+        // chain instead of nesting the `if` inside a synthetic block.
+        let (mut else_ir, else_is_block) = if let Some(if_node) = sole_else_if_node(&else_elements)
+        {
+            (ir_if_expr_impl(&if_node, indent, ctx, needs_braces)?, true)
+        } else {
+            let (ir, is_block) = ir_if_branch(&else_elements, indent, ctx)?;
+            (ir, is_block || branch_starts_with_if(&else_elements))
+        };
+        if needs_braces && !else_is_block {
+            else_ir = synthetic_block(vec![else_ir]);
+        }
+        parts.push(Ir::text(" else "));
+        parts.push(else_ir);
+    }
+    Ok(Ir::concat(parts))
+}
+
+/// Render a comment-free if/else branch to IR, returning whether it is a `{ }`
+/// block (so the caller knows not to wrap it again). Mirrors the comment-free
+/// path of [`format_if_branch`]: a sole block renders natively (structural
+/// indent); a bare expression is rendered standalone at the `if`'s indent and
+/// spliced opaquely. A bare branch is rendered standalone — like the legacy
+/// renderer — so it neither wraps on the surrounding column nor on the extra
+/// indent level a brace would add; [`if_chain_native_eligible`] has already
+/// guaranteed it fits on one line, so the opaque splice re-indents cleanly inside
+/// a [`synthetic_block`].
+fn ir_if_branch(
+    elements: &[SyntaxElement<RLanguage>],
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<(Ir, bool), FormatError> {
+    let significant = significant_elements(elements);
+    match significant.first() {
+        None => Ok((Ir::text("{}"), true)),
+        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR => Ok((
+            ir_block_expr_with_prefixed_comments(node, indent, ctx, &[])?,
+            true,
+        )),
+        _ => Ok((
+            Ir::verbatim(format_expr_with_optional_comment(
+                &significant,
+                "if branch",
+                indent,
+                ctx,
+            )?),
+            false,
+        )),
+    }
+}
+
+/// Whether a comment-free `if` chain can be rendered natively. The native builder
+/// splices each bare (non-block) branch as a single-line opaque unit, so it is
+/// only faithful when every bare branch in the chain renders on one line at the
+/// `if`'s indent. A bare branch wide enough to wrap standalone hits the legacy
+/// renderer's baked-indent line-shifting, which the structural IR does not
+/// reproduce, so such a chain falls back to the legacy path.
+fn if_chain_native_eligible(
+    node: &SyntaxNode,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<bool, FormatError> {
+    let Some(if_expr) = IfExpr::cast(node.clone()) else {
+        return Ok(false);
+    };
+    let Some(then_elements) = if_expr.then_elements() else {
+        return Ok(false);
+    };
+    if !branch_native_eligible(&then_elements, indent, ctx)? {
+        return Ok(false);
+    }
+    if if_expr.else_keyword().is_some() {
+        let Some(else_elements) = if_expr.else_elements() else {
+            return Ok(false);
+        };
+        if let Some(if_node) = sole_else_if_node(&else_elements) {
+            return if_chain_native_eligible(&if_node, indent, ctx);
+        }
+        return branch_native_eligible(&else_elements, indent, ctx);
+    }
+    Ok(true)
+}
+
+/// A single branch is native-eligible when it is a block (rendered structurally)
+/// or a bare expression that fits on one line standalone (see
+/// [`if_chain_native_eligible`]).
+fn branch_native_eligible(
+    elements: &[SyntaxElement<RLanguage>],
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<bool, FormatError> {
+    let significant = significant_elements(elements);
+    match significant.first() {
+        None => Ok(true),
+        Some(NodeOrToken::Node(node)) if node.kind() == SyntaxKind::BLOCK_EXPR => Ok(true),
+        _ => {
+            let rendered =
+                format_expr_with_optional_comment(&significant, "if branch", indent, ctx)?;
+            Ok(!rendered.contains('\n'))
+        }
+    }
 }
 
 /// IR builder for `for`. Mirrors [`format_for_expr`].
