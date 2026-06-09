@@ -7,6 +7,13 @@
       handling so they attach to `next_arg` instead of the argument list. (Jarl
       solved this by overriding biome's `place_comment`; ravel's
       next-non-trivia-sibling walk already handles most cases.)
+- [ ] Incremental reparse (token/block) beneath `parsed_document`
+      (`src/incremental.rs`): rowan-style `reparse_token` → `reparse_block` →
+      full-reparse fallback (cf. rust-analyzer `reparsing.rs`), splicing reused
+      green subtrees. Serves Tenet 2; **benchmark first** — folds into the open
+      "incremental-reparse benchmarks" item under Language Server. Add
+      `SyntaxNodePtr`/`AstPtr` only when a feature needs a stable cross-edit
+      reference (none does today). See `ARCHITECTURE_AUDIT.md` §3.4.
 
 ## Formatter
 
@@ -81,7 +88,28 @@ in-tree parser, not a drop-in jarl replacement.
       cache so the next pull picks up the new fallback.
 - [x] Range formatting (`textDocument/rangeFormatting`) once the formatter gains
       a range API.
-- [ ] Add parse performance and incremental-reparse benchmarks.
+- [ ] Add parse performance and incremental-reparse benchmarks. (Prereq for the
+      token/block incremental-reparse work under Parser.)
+- [ ] Type-level read/write split (rust-analyzer `Analysis`/`AnalysisHost`):
+      wrap `IncrementalDatabase` in an `Analysis` newtype exposing only `&self`
+      read queries, handed to read jobs (`run_read`, the analyze worker), keeping
+      the `&mut` handle private to the lint worker. Makes "lint thread is the
+      sole writer" a compile-time guarantee instead of a convention. Files:
+      `src/incremental.rs`, `src/lsp.rs`, `src/linter/check.rs`. See
+      `ARCHITECTURE_AUDIT.md` §3.1.
+- [ ] Salsa durability for rarely-changing inputs: set `Durability::HIGH` on
+      installed-package exports / NAMESPACE / DESCRIPTION inputs so a keystroke
+      (LOW write) skips revalidating the library subgraph. Longer-term, model
+      library symbols as HIGH-durability salsa queries instead of the external
+      `Arc<CompositeProvider>`. Dovetails with the CRAN-manifest item above.
+      Files: `src/incremental.rs`, `src/rindex/provider.rs`,
+      `src/project/graph.rs`. See `ARCHITECTURE_AUDIT.md` §3.2.
+- [ ] `FileId` / VFS abstraction: replace direct `PathBuf` keys + the synthetic
+      `<mem>/{uuid}.R` hack with an opaque `FileId` + a small file-source map
+      (rust-analyzer `vfs`/`SourceRoot` model), so paths/cwd don't leak into the
+      analysis and `SourceRoot`-scoped durability becomes possible. Files:
+      `src/incremental.rs`, `src/project/graph.rs`, `src/lsp.rs` (URI↔FileId
+      boundary). See `ARCHITECTURE_AUDIT.md` §3.3.
 
 ## Misc
 
