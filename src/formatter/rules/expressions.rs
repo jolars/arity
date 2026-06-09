@@ -2,8 +2,7 @@ use rowan::{NodeOrToken, SyntaxElement};
 
 use super::super::context::FormatContext;
 use super::super::core::{
-    FormatError, format_expr_segment, format_expr_with_optional_comment, format_line,
-    ir_expr_segment, ir_expr_with_optional_comment,
+    FormatError, format_expr_segment, ir_expr_segment, ir_expr_with_optional_comment, ir_line,
 };
 use super::super::ir::Ir;
 use super::super::trivia::split_lines;
@@ -275,10 +274,11 @@ fn try_format_curly_curly(
     ])))
 }
 
-/// IR builder for parenthesized expressions. Mirrors [`format_paren_expr`]:
-/// a single inner expression (optionally with a trailing comment) is wrapped
-/// inline in `( )` and lets the inner expression handle its own wrapping; the
-/// rarer multi-statement form is bridged through the legacy renderer.
+/// IR builder for parenthesized expressions: a single inner expression
+/// (optionally with a trailing comment) is wrapped inline in `( )` and lets the
+/// inner expression handle its own wrapping; the rarer multi-statement form is
+/// laid out like a block body --- one statement per line, indented one level,
+/// with the closing `)` back at the base indent.
 pub(crate) fn ir_paren_expr(
     node: &SyntaxNode,
     indent: usize,
@@ -314,61 +314,26 @@ pub(crate) fn ir_paren_expr(
         return Ok(Ir::concat([Ir::text("("), inner, Ir::text(")")]));
     }
 
-    // Multi-statement / empty parens: bridge through the legacy renderer.
-    Ok(Ir::verbatim(format_paren_expr(node, indent, ctx)?))
-}
-
-pub(crate) fn format_paren_expr(
-    node: &SyntaxNode,
-    indent: usize,
-    ctx: FormatContext,
-) -> Result<String, FormatError> {
-    let elements: Vec<_> = node.children_with_tokens().collect();
-    let open_idx = elements
-        .iter()
-        .position(|el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::LPAREN))
-        .ok_or_else(|| FormatError::AmbiguousConstruct {
-            context: "missing '(' in parenthesized expression",
-            snippet: node.text().to_string(),
-        })?;
-    let close_idx = elements
-        .iter()
-        .rposition(|el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::RPAREN))
-        .ok_or_else(|| FormatError::AmbiguousConstruct {
-            context: "missing ')' in parenthesized expression",
-            snippet: node.text().to_string(),
-        })?;
-
-    if close_idx <= open_idx {
-        return Err(FormatError::AmbiguousConstruct {
-            context: "invalid parenthesized expression bounds",
-            snippet: node.text().to_string(),
-        });
-    }
-
-    let inner_elements = &elements[open_idx + 1..close_idx];
-    if let Ok(inner) =
-        format_expr_with_optional_comment(inner_elements, "parenthesized expression", indent, ctx)
-    {
-        return Ok(format!("({inner})"));
-    }
-
+    // Multi-statement / empty parens: lay out like a block body.
     let lines = split_lines(inner_elements.to_vec(), "parenthesized expression")?;
-    if lines.is_empty() {
-        return Ok("()".to_string());
+    let items = lines
+        .iter()
+        .map(|line| ir_line(line, indent + 1, ctx))
+        .collect::<Result<Vec<_>, _>>()?;
+    if items.is_empty() {
+        return Ok(Ir::text("()"));
     }
-
-    let mut out = String::from("(\n");
-    for (idx, line) in lines.iter().enumerate() {
-        if idx > 0 {
-            out.push('\n');
-        }
-        out.push_str(&format_line(line, indent + 1, ctx)?);
-    }
-    out.push('\n');
-    out.push_str(&ctx.indent_text(indent));
-    out.push(')');
-    Ok(out)
+    let body = Ir::concat(
+        items
+            .into_iter()
+            .map(|it| Ir::concat([Ir::hard_line(), it])),
+    );
+    Ok(Ir::concat([
+        Ir::text("("),
+        Ir::indent(body),
+        Ir::hard_line(),
+        Ir::text(")"),
+    ]))
 }
 
 fn bracket_open_text(kind: SyntaxKind) -> &'static str {
