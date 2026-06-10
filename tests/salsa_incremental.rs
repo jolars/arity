@@ -119,6 +119,37 @@ fn clone_shares_inputs_and_cached_parse() {
 }
 
 #[test]
+fn body_edit_uses_incremental_reparse_and_stays_correct() {
+    // A function-body edit splices the previous tree rather than re-parsing from
+    // scratch. The spliced parse must match a from-scratch parse of the new text.
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let file = db.upsert_file(path, "f <- function() {\n  a + b\n}\n".to_string());
+
+    // First parse: a full parse, no reparse hit.
+    let _ = db.parsed_tree(file);
+    assert_eq!(db.reparse_hits(), 0);
+
+    // Edit the body: insert `c` inside the `{ a + b }` block.
+    db.upsert_file(path, "f <- function() {\n  a + b + c\n}\n".to_string());
+    let spliced = db.parsed_tree(file).text().to_string();
+    assert_eq!(spliced, "f <- function() {\n  a + b + c\n}\n");
+    assert_eq!(
+        db.reparse_hits(),
+        1,
+        "body edit should be served by an incremental reparse"
+    );
+
+    // The spliced tree is byte-identical to a from-scratch parse.
+    let fresh = ravel::parser::parse("f <- function() {\n  a + b + c\n}\n");
+    assert_eq!(
+        db.parsed_tree(file).text().to_string(),
+        fresh.cst.text().to_string()
+    );
+    assert!(db.parse_diagnostics(file).is_empty());
+}
+
+#[test]
 fn body_edit_keeps_model_in_sync() {
     // Editing a file's contents recomputes its semantic model so downstream
     // consumers see the new bindings.

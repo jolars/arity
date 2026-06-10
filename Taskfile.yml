@@ -46,6 +46,11 @@ tasks:
     cmds:
       - ./scripts/bench-format.sh
 
+  bench-parse:
+    desc: Benchmark parse + incremental-reparse speed (criterion)
+    cmds:
+      - cargo bench --bench parse
+
   docs-preview:
     desc: Preview documentation site locally
     cmds:

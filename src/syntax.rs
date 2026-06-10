@@ -176,3 +176,5 @@ impl Language for RLanguage {
 }
 
 pub type SyntaxNode = rowan::SyntaxNode<RLanguage>;
+pub type SyntaxToken = rowan::SyntaxToken<RLanguage>;
+pub type SyntaxElement = rowan::SyntaxElement<RLanguage>;

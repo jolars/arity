@@ -10,11 +10,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use salsa::Setter;
 
-use crate::parser::parse;
+use crate::parser::{ParseDiagnostic, diff_edit, parse, reparse};
 use crate::project::SourceEdgeKey;
 use crate::semantic::SemanticModel;
 use crate::syntax::SyntaxNode;
@@ -71,9 +72,31 @@ pub struct ParsedDocument {
     pub diagnostics: Vec<ParseDiagnosticData>,
 }
 
+/// The previous parse of a file, kept outside salsa to drive incremental
+/// reparse. `parsed_document` recovers the edit from the old and new text and
+/// splices the old green tree instead of re-parsing from scratch. This only ever
+/// affects *how fast* `parsed_document` computes, never *what* it returns (a
+/// successful reparse is byte-identical to a full parse — see
+/// `crate::parser::reparse`), so it is sound to read/write from inside the
+/// otherwise-pure tracked query.
+#[derive(Debug, Clone)]
+pub struct PrevParse {
+    pub text: String,
+    pub green: rowan::GreenNode,
+    pub diagnostics: Vec<ParseDiagnostic>,
+}
+
 #[salsa::db]
 pub trait IncrementalDb: salsa::Database {
     fn record_query(&self, entry: QueryLogEntry);
+
+    /// The cached previous parse for `file`, if any (the incremental-reparse
+    /// base).
+    fn reparse_prev(&self, file: SourceFile) -> Option<Arc<PrevParse>>;
+
+    /// Store `prev` as the reparse base for `file`. `incremental` records
+    /// whether this parse reused the previous tree (for tests/metrics).
+    fn reparse_store(&self, file: SourceFile, prev: PrevParse, incremental: bool);
 }
 
 #[salsa::tracked(returns(ref), no_eq, unsafe(non_update_types))]
@@ -83,9 +106,40 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
         file: Some(file),
     });
 
-    let parsed = parse(file.text(db).as_str());
-    let diagnostics = parsed
-        .diagnostics
+    let text = file.text(db);
+
+    // Try an incremental reparse off the previous parse of this file. A miss
+    // (first parse, or an edit no strategy handles) falls back to a full parse;
+    // either way the result is identical to `parse(text)`.
+    let reparsed = db
+        .reparse_prev(file)
+        .filter(|prev| prev.text != *text)
+        .and_then(|prev| {
+            let edit = diff_edit(&prev.text, text);
+            let old_root = SyntaxNode::new_root(prev.green.clone());
+            reparse(&old_root, &prev.text, &prev.diagnostics, &edit)
+        });
+
+    let incremental = reparsed.is_some();
+    let (green, diagnostics): (rowan::GreenNode, Vec<ParseDiagnostic>) = match reparsed {
+        Some(r) => (r.green, r.diagnostics),
+        None => {
+            let parsed = parse(text.as_str());
+            (parsed.cst.green().into_owned(), parsed.diagnostics)
+        }
+    };
+
+    db.reparse_store(
+        file,
+        PrevParse {
+            text: text.clone(),
+            green: green.clone(),
+            diagnostics: diagnostics.clone(),
+        },
+        incremental,
+    );
+
+    let diagnostics = diagnostics
         .into_iter()
         .map(|diagnostic| ParseDiagnosticData {
             message: diagnostic.message,
@@ -94,10 +148,7 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
         })
         .collect();
 
-    ParsedDocument {
-        green: parsed.cst.green().into_owned(),
-        diagnostics,
-    }
+    ParsedDocument { green, diagnostics }
 }
 
 /// The parse diagnostics for `file` (empty when the file parses cleanly).
@@ -170,6 +221,13 @@ pub struct IncrementalDatabase {
     /// `SourceFile` input (and thus its cached queries) instead of creating a
     /// fresh one each time. Seeds the cross-file project graph (Phase B).
     files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
+    /// Previous parse per file, the base for incremental reparse in
+    /// [`parsed_document`]. Outside salsa: a pure performance hint that never
+    /// changes query *outputs* (see [`PrevParse`]). Shared across clones.
+    reparse_cache: Arc<Mutex<HashMap<SourceFile, Arc<PrevParse>>>>,
+    /// Count of parses that reused the previous tree (incremental reparse hits),
+    /// for tests and metrics. Shared across clones.
+    reparse_hits: Arc<AtomicU64>,
 }
 
 impl Default for IncrementalDatabase {
@@ -178,6 +236,8 @@ impl Default for IncrementalDatabase {
             storage: salsa::Storage::new(None),
             query_log: Arc::new(Mutex::new(Vec::new())),
             files: Arc::new(Mutex::new(HashMap::new())),
+            reparse_cache: Arc::new(Mutex::new(HashMap::new())),
+            reparse_hits: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -196,6 +256,8 @@ impl Clone for IncrementalDatabase {
             storage: self.storage.clone(),
             query_log: Arc::clone(&self.query_log),
             files: Arc::clone(&self.files),
+            reparse_cache: Arc::clone(&self.reparse_cache),
+            reparse_hits: Arc::clone(&self.reparse_hits),
         }
     }
 }
@@ -303,6 +365,12 @@ impl IncrementalDatabase {
             .expect("query log mutex poisoned")
             .clone()
     }
+
+    /// Number of parses served by an incremental reparse (reused the previous
+    /// tree) since construction. For tests and metrics.
+    pub fn reparse_hits(&self) -> u64 {
+        self.reparse_hits.load(Ordering::Relaxed)
+    }
 }
 
 #[salsa::db]
@@ -315,5 +383,23 @@ impl IncrementalDb for IncrementalDatabase {
             .lock()
             .expect("query log mutex poisoned")
             .push(entry);
+    }
+
+    fn reparse_prev(&self, file: SourceFile) -> Option<Arc<PrevParse>> {
+        self.reparse_cache
+            .lock()
+            .expect("reparse cache mutex poisoned")
+            .get(&file)
+            .cloned()
+    }
+
+    fn reparse_store(&self, file: SourceFile, prev: PrevParse, incremental: bool) {
+        if incremental {
+            self.reparse_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        self.reparse_cache
+            .lock()
+            .expect("reparse cache mutex poisoned")
+            .insert(file, Arc::new(prev));
     }
 }

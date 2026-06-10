@@ -22,7 +22,14 @@ pub(crate) fn build_tree(tokens: &[Token], events: &[Event]) -> SyntaxNode {
 }
 
 fn push_token(builder: &mut GreenNodeBuilder<'_>, tok: &Token) {
-    let sk = match tok.kind {
+    builder.token(syntax_kind_for(&tok.kind).into(), tok.text.as_str());
+}
+
+/// The `SyntaxKind` a lexed token of `kind` is materialized as in the CST. The
+/// single source of truth for the token-kind mapping, shared by [`build_tree`]
+/// and incremental reparse (`crate::parser::reparse`).
+pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
+    match kind {
         TokKind::Ident => SyntaxKind::IDENT,
         TokKind::Int => SyntaxKind::INT,
         TokKind::Float => SyntaxKind::FLOAT,
@@ -81,6 +88,5 @@ fn push_token(builder: &mut GreenNodeBuilder<'_>, tok: &Token) {
         TokKind::Whitespace => SyntaxKind::WHITESPACE,
         TokKind::Newline => SyntaxKind::NEWLINE,
         TokKind::Unknown => SyntaxKind::ERROR,
-    };
-    builder.token(sk.into(), tok.text.as_str());
+    }
 }

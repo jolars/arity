@@ -41,6 +41,11 @@ uuid = { version = "1.23.0", features = ["v4"] }
 [dev-dependencies]
 insta = "1.47.2"
 air_r_parser = { git = "https://github.com/posit-dev/air", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "parse"
+harness = false
 
 [build-dependencies]
 clap = { version = "4.6.0", features = ["derive"] }

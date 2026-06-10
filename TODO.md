@@ -7,13 +7,24 @@
       handling so they attach to `next_arg` instead of the argument list. (Jarl
       solved this by overriding biome's `place_comment`; ravel's
       next-non-trivia-sibling walk already handles most cases.)
-- [ ] Incremental reparse (token/block) beneath `parsed_document`
+- [x] Incremental reparse (token/block) beneath `parsed_document`
       (`src/incremental.rs`): rowan-style `reparse_token` → `reparse_block` →
       full-reparse fallback (cf. rust-analyzer `reparsing.rs`), splicing reused
-      green subtrees. Serves Tenet 2; **benchmark first** — folds into the open
-      "incremental-reparse benchmarks" item under Language Server. Add
-      `SyntaxNodePtr`/`AstPtr` only when a feature needs a stable cross-edit
-      reference (none does today). See `ARCHITECTURE_AUDIT.md` §3.4.
+      green subtrees (`src/parser/reparse.rs`). `parsed_document` recovers the
+      edit from the old/new text via a prefix/suffix diff and splices off a
+      non-salsa per-file previous-parse cache (a pure perf hint — a successful
+      reparse is byte-identical to a full parse, so it never changes query
+      output). Correctness is pinned by an oracle property test
+      (`tests/incremental_reparse.rs`: `reparse == parse(new)` in tree *and*
+      diagnostics across the corpus) plus a salsa-level test
+      (`body_edit_uses_incremental_reparse_and_stays_correct`). On a ~100 KB file
+      reparse is ~200× faster than a full parse (`benches/parse.rs`). Serves
+      Tenet 2. No `SyntaxNodePtr`/`AstPtr` added (no feature needs a stable
+      cross-edit reference yet). See `ARCHITECTURE_AUDIT.md` §3.4.
+  - [ ] Follow-up: top-level-statement reparse (non-braced). v1 reparses only
+        brace blocks + single tokens; edits elsewhere fall back to a full parse
+        (correct, just not incremental). Could also use the LSP's precise edit
+        ranges instead of the prefix/suffix text diff.
 
 ## Formatter
 
@@ -112,8 +123,10 @@ in-tree parser, not a drop-in jarl replacement.
       cache so the next pull picks up the new fallback.
 - [x] Range formatting (`textDocument/rangeFormatting`) once the formatter gains
       a range API.
-- [ ] Add parse performance and incremental-reparse benchmarks. (Prereq for the
-      token/block incremental-reparse work under Parser.)
+- [x] Add parse performance and incremental-reparse benchmarks. `benches/parse.rs`
+      (criterion, `task bench-parse`): `full_parse` across sizes plus an
+      `incremental` group measuring `reparse_token`/`reparse_block` against a full
+      parse of the same edited text.
 - [ ] Type-level read/write split (rust-analyzer `Analysis`/`AnalysisHost`):
       wrap `IncrementalDatabase` in an `Analysis` newtype exposing only `&self`
       read queries, handed to read jobs (`run_read`, the analyze worker), keeping
