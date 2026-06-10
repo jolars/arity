@@ -70,6 +70,7 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
+  { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained but not vulnerable. It enters the graph only as a transitive build-time dep of the air_r_parser dev-dependency (air's vendored biome fork) and never reaches the shipped binary. Upstream must migrate; drop this ignore once air bumps its biome rev." },
   #"RUSTSEC-0000-0000",
   #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
   #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish

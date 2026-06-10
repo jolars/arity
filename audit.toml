@@ -1,0 +1,11 @@
+# Configuration for `cargo audit` (and the rustsec/audit-check CI action).
+# See https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+
+[advisories]
+ignore = [
+  # proc-macro-error2 is unmaintained but not vulnerable. It enters the graph
+  # only as a transitive build-time dep of the air_r_parser dev-dependency
+  # (air's vendored biome fork) and never reaches the shipped binary. Upstream
+  # must migrate; drop this once air bumps its biome rev.
+  "RUSTSEC-2026-0173",
+]
