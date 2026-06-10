@@ -53,12 +53,17 @@ jobs:
           pkgs <- lines[nzchar(lines) & !startsWith(lines, "#")]
           pkgs <- setdiff(pkgs, rownames(installed.packages()))
           # pak resolves dependencies + apt system requirements and uses PPM
-          # binaries. Install in chunks so one bad package doesn't sink the rest.
+          # binaries. Install in chunks for speed; if a chunk fails as a whole
+          # (one unsatisfiable package aborts pak's transaction), retry its
+          # packages individually so the other 24 aren't dropped with it.
+          install <- function(p) pak::pkg_install(p, ask = FALSE, dependencies = TRUE)
           for (chunk in split(pkgs, ceiling(seq_along(pkgs) / 25))) {
-            tryCatch(
-              pak::pkg_install(chunk, ask = FALSE, dependencies = TRUE),
-              error = function(e) message("chunk failed (continuing): ", conditionMessage(e))
-            )
+            tryCatch(install(chunk), error = function(e) {
+              message("chunk failed, retrying individually: ", conditionMessage(e))
+              for (p in chunk) {
+                tryCatch(install(p), error = function(e2) message("  skip ", p, ": ", conditionMessage(e2)))
+              }
+            })
           }
           EOF
 
