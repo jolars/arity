@@ -371,6 +371,64 @@ impl IncrementalDatabase {
     pub fn reparse_hits(&self) -> u64 {
         self.reparse_hits.load(Ordering::Relaxed)
     }
+
+    /// Mint a read-only [`Analysis`] snapshot: a short-lived db clone wrapped so
+    /// callers can only *read*. Drop it promptly --- an outstanding clone blocks
+    /// the next write (salsa is single-writer; see the [`Clone`] impl).
+    pub fn snapshot(&self) -> Analysis {
+        Analysis(self.clone())
+    }
+}
+
+/// A read-only handle onto the incremental database, à la rust-analyzer's
+/// `Analysis` (vs. its writer `AnalysisHost`). Wraps a short-lived clone of the
+/// lint thread's [`IncrementalDatabase`] and exposes *only* read queries, so a
+/// read job cannot call `upsert_file` / salsa setters --- the single-writer
+/// invariant is encoded in the type system rather than left to convention.
+///
+/// Handed to the language server's read jobs and the cross-file read-phase
+/// ([`analyze_prepared`](crate::linter::check::analyze_prepared)); the
+/// `&mut`-capable [`IncrementalDatabase`] stays private to the lint worker.
+pub struct Analysis(IncrementalDatabase);
+
+impl Analysis {
+    /// The `SourceFile` input currently tracked for `path`, if any.
+    pub fn lookup_file(&self, path: &Path) -> Option<SourceFile> {
+        self.0.lookup_file(path)
+    }
+
+    /// The text currently tracked for `file`.
+    pub fn file_text(&self, file: SourceFile) -> &str {
+        self.0.file_text(file)
+    }
+
+    /// The path `file` is tracked under.
+    pub fn file_path(&self, file: SourceFile) -> &Path {
+        self.0.file_path(file)
+    }
+
+    /// Parse diagnostics for `file` (empty when it parses cleanly).
+    pub fn parse_diagnostics(&self, file: SourceFile) -> &[ParseDiagnosticData] {
+        self.0.parse_diagnostics(file)
+    }
+
+    /// A fresh `SyntaxNode` over the cached parse tree.
+    pub fn parsed_tree(&self, file: SourceFile) -> SyntaxNode {
+        self.0.parsed_tree(file)
+    }
+
+    /// The cached per-file semantic model.
+    pub fn semantic_model(&self, file: SourceFile) -> &SemanticModel {
+        self.0.semantic_model(file)
+    }
+
+    /// Borrow the underlying db as the salsa query trait, for read-phase free
+    /// functions (`intern_project`, `visible_symbols`). A shared borrow can't
+    /// mutate, so this preserves the read-only guarantee; crate-private so read
+    /// jobs go through the methods above and never reach the trait.
+    pub(crate) fn as_db(&self) -> &dyn IncrementalDb {
+        &self.0
+    }
 }
 
 #[salsa::db]

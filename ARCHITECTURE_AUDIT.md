@@ -129,23 +129,25 @@ These are correct and should **not** be churned.
 
 ## 3. Gaps to adopt (tracked in `TODO.md`)
 
-### 3.1 Type-level read/write split --- *highest leverage, lowest risk*
+### 3.1 Type-level read/write split --- *adopted*
 
 - **rust-analyzer:** `AnalysisHost` is the only writer (`apply_change`);
   `Analysis` is an immutable snapshot exposing only `&self` reads. The
   single-writer rule is a *compile-time* guarantee, and read handlers take
   `FilePosition`-style params, not the db.
-- **ravel:** "the lint thread is the sole writer" is only a *convention*.
-  `run_read` and the analyze worker both receive a full `IncrementalDatabase`
-  clone (`src/lsp.rs:1040`, `:908`) and *could* call `upsert_file` / salsa
-  setters --- nothing in the types prevents it.
-- **Recommend:** a newtype `Analysis(IncrementalDatabase)` exposing only the
-  read queries (`parsed_tree_root`, `semantic_model`, `visible_symbols`,
-  `lookup_file`, ...), handed to read jobs; keep the `&mut`-capable handle
-  private to the lint worker. This encodes the invariant the module doc
-  (`src/lsp.rs:5-14`) already relies on. Files: `src/incremental.rs` (newtype +
-  read API), `src/lsp.rs` (`run_read`, analyze worker), `src/linter/check.rs`
-  (`analyze_prepared`).
+- **ravel (was):** "the lint thread is the sole writer" was only a *convention*.
+  `run_read` and the analyze worker both received a full `IncrementalDatabase`
+  clone and *could* have called `upsert_file` / salsa setters --- nothing in the
+  types prevented it.
+- **Done:** `IncrementalDatabase::snapshot()` mints a read-only newtype
+  `Analysis(IncrementalDatabase)` (`src/incremental.rs`) exposing only the read
+  queries (`lookup_file`, `file_text`, `file_path`, `parse_diagnostics`,
+  `parsed_tree`, `semantic_model`) plus a crate-private `as_db()` for the
+  read-phase salsa free functions (`intern_project`, `visible_symbols`). The
+  read jobs (`run_read`) and the cross-file read-phase (`analyze_prepared`,
+  `src/linter/check.rs`) now take `&Analysis`; the `&mut`-capable handle stays
+  private to the lint worker. The single-writer invariant the module doc
+  (`src/lsp.rs:5-14`) relies on is now a compile-time guarantee.
 
 ### 3.2 Durability + pulling the index into salsa --- *medium leverage/effort*
 

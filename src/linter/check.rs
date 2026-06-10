@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 use crate::config::LintConfig;
 use crate::file_discovery::{FileDiscoveryError, collect_r_files};
-use crate::incremental::{IncrementalDatabase, SourceFile};
+use crate::incremental::{
+    Analysis, IncrementalDatabase, IncrementalDb, SourceFile, parsed_tree_root, semantic_model,
+};
 use crate::project::{FileScope, Project, ProjectMember, package_root, visible_symbols};
 use crate::semantic::SymbolProvider;
 
@@ -204,11 +206,11 @@ fn read_namespaces<'a>(roots: impl Iterator<Item = &'a Path>) -> Vec<(PathBuf, S
 /// Intern a [`Project`] from a membership snapshot. Sorts `members` by path so
 /// the interned key is deterministic — an unchanged set always yields the same
 /// id, which is what keeps the project-graph memo alive across body edits.
-fn intern_project(
-    db: &IncrementalDatabase,
+fn intern_project<'db>(
+    db: &'db dyn IncrementalDb,
     mut members: Vec<ProjectMember>,
     namespaces: Vec<(PathBuf, String)>,
-) -> Project<'_> {
+) -> Project<'db> {
     members.sort_by(|a, b| a.path.cmp(&b.path));
     Project::new(db, members, namespaces)
 }
@@ -217,15 +219,15 @@ fn intern_project(
 /// tree and semantic model, and drop suppressed findings. Callers must have
 /// already confirmed the file parses without diagnostics.
 fn lint_parsed_file(
-    db: &IncrementalDatabase,
+    db: &dyn IncrementalDb,
     file: SourceFile,
     path: &Path,
     rules: &ResolvedRules,
     provider: &dyn SymbolProvider,
     project: Option<&FileScope<'_>>,
 ) -> Vec<Diagnostic> {
-    let root_node = db.parsed_tree(file);
-    let model = db.semantic_model(file);
+    let root_node = parsed_tree_root(db, file);
+    let model = semantic_model(db, file);
     let mut diagnostics = run_rules(&rules.rules, path, &root_node, model, provider, project);
     let suppress = SuppressionMap::build(&root_node);
     diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));
@@ -349,15 +351,18 @@ pub fn prepare_document_in_project(
 /// lints the active file against it. Safe to run on a db clone; salsa aborts it
 /// with [`salsa::Cancelled`] (at the next tracked-query entry) if a write races.
 pub fn analyze_prepared(
-    db: &IncrementalDatabase,
+    analysis: &Analysis,
     prepared: &PreparedProject,
     provider: &dyn SymbolProvider,
 ) -> Vec<Diagnostic> {
+    // One `&dyn IncrementalDb` borrow for the read-phase: a single `'db`
+    // lifetime keeps the interned `Project<'db>` and `visible_symbols` aligned.
+    let db = analysis.as_db();
     // Intern the project here (read-phase): the membership snapshot is plain
     // owned data in `prepared`, so this is safe on a db clone, and an unchanged
     // set re-interns to the same id — keeping the project-graph memo warm.
     let project = intern_project(db, prepared.members.clone(), prepared.namespaces.clone());
-    let active_path = db.file_path(prepared.active).to_path_buf();
+    let active_path = analysis.file_path(prepared.active).to_path_buf();
     let visibility = visible_symbols(db, project, prepared.active);
     let file_scope = visibility.scope();
     lint_parsed_file(
@@ -383,7 +388,10 @@ pub fn check_document_in_project(
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
     match prepare_document_in_project(db, path, active, config)? {
-        Some(prepared) => Ok(analyze_prepared(db, &prepared, provider)),
+        Some(prepared) => {
+            let analysis = db.snapshot();
+            Ok(analyze_prepared(&analysis, &prepared, provider))
+        }
         None => Ok(Vec::new()),
     }
 }

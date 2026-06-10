@@ -310,7 +310,7 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     let prepared = prepare_document_in_project(&mut db, &b, active, &cfg)
         .unwrap()
         .expect("clean file should prepare");
-    let snapshot = db.clone();
+    let snapshot = db.snapshot();
     let got = analyze_prepared(&snapshot, &prepared, &provider);
     drop(snapshot);
 

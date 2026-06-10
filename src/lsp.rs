@@ -74,7 +74,7 @@ use smol_str::SmolStr;
 use crate::ast::{AstNode as _, BinaryExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
-use crate::incremental::IncrementalDatabase;
+use crate::incremental::{Analysis, IncrementalDatabase};
 use crate::linter::{Diagnostic, Severity};
 use crate::parser::parse;
 use crate::rindex::build::{BuildOptions, build_index};
@@ -789,7 +789,7 @@ impl LintWorker {
                     // lint thread. The clone is dropped inside `run_read`, so the
                     // next write isn't blocked once the read finishes (or a racing
                     // write trips `salsa::Cancelled`, handled by the fallback).
-                    let snapshot = self.db.clone();
+                    let snapshot = self.db.snapshot();
                     rayon::spawn(move || run_read(snapshot, job));
                 }
                 recv(build_rx) -> built => {
@@ -894,7 +894,7 @@ impl LintWorker {
         // Read-phase on rayon, holding a db clone. A superseding edit (or any
         // write) trips `salsa::Cancelled`, caught here so a cancelled analyze
         // publishes nothing; the main loop's version gate is the backstop.
-        let snapshot = self.db.clone();
+        let snapshot = self.db.snapshot();
         let out_tx = self.out_tx.clone();
         let done_tx = self.done_tx.clone();
         let uri = req.uri.clone();
@@ -1037,7 +1037,7 @@ fn now_unix_secs() -> u64 {
 /// Service a read-only job against a db `snapshot`, replying to the client.
 /// Runs on a `rayon` worker; the `snapshot` is dropped on return so it never
 /// blocks the lint thread's next write longer than the job itself.
-fn run_read(snapshot: IncrementalDatabase, job: ReadJob) {
+fn run_read(snapshot: Analysis, job: ReadJob) {
     match job {
         ReadJob::Format {
             id,
@@ -1078,7 +1078,7 @@ fn run_read(snapshot: IncrementalDatabase, job: ReadJob) {
 /// for `path` still matches it; otherwise re-parse. A write racing the read
 /// trips [`salsa::Cancelled`], which also falls back to a fresh parse.
 fn format_edits_via_db(
-    snapshot: &IncrementalDatabase,
+    snapshot: &Analysis,
     path: &Path,
     text: &str,
     style: FormatStyle,
@@ -1108,7 +1108,7 @@ fn format_edits_via_db(
 /// buffer for `path` still matches it; otherwise re-parse. Mirrors
 /// [`format_edits_via_db`]'s cache/cancellation handling.
 fn format_range_edits_via_db(
-    snapshot: &IncrementalDatabase,
+    snapshot: &Analysis,
     path: &Path,
     text: &str,
     range: Range,
@@ -1144,7 +1144,7 @@ fn format_range_edits_via_db(
 /// Resolve hover off the snapshot's cached parse when the db's tracked buffer for
 /// `path` still matches `text`; otherwise re-parse. Falls back on cancellation.
 fn hover_via_db(
-    snapshot: &IncrementalDatabase,
+    snapshot: &Analysis,
     path: &Path,
     text: &str,
     position: Position,
@@ -2004,7 +2004,7 @@ mod tests {
         // Cache hit: tracked text == buffer → format off the cached tree.
         let mut db = IncrementalDatabase::default();
         db.upsert_file(path, buffer.to_string());
-        let snapshot = db.clone();
+        let snapshot = db.snapshot();
         assert_eq!(
             format_edits_via_db(&snapshot, path, buffer, style),
             expected,
@@ -2015,7 +2015,7 @@ mod tests {
         let mut stale = IncrementalDatabase::default();
         stale.upsert_file(path, "y <- 1\n".to_string());
         assert_eq!(
-            format_edits_via_db(&stale.clone(), path, buffer, style),
+            format_edits_via_db(&stale.snapshot(), path, buffer, style),
             expected,
             "version skew must fall back to the buffer text"
         );
@@ -2023,7 +2023,7 @@ mod tests {
         // Untracked path → fall back as well.
         let empty = IncrementalDatabase::default();
         assert_eq!(
-            format_edits_via_db(&empty, path, buffer, style),
+            format_edits_via_db(&empty.snapshot(), path, buffer, style),
             expected,
             "untracked path must fall back to the buffer text"
         );
@@ -2040,7 +2040,7 @@ mod tests {
 
         let mut db = IncrementalDatabase::default();
         db.upsert_file(path, src.to_string());
-        let hover = hover_via_db(&db.clone(), path, src, position, &provider)
+        let hover = hover_via_db(&db.snapshot(), path, src, position, &provider)
             .expect("hover for across via db");
         let md = match hover.contents {
             HoverContents::Markup(m) => m.value,
@@ -2051,7 +2051,7 @@ mod tests {
         // Untracked path still resolves, via the fresh-parse fallback.
         let empty = IncrementalDatabase::default();
         assert!(
-            hover_via_db(&empty, path, src, position, &provider).is_some(),
+            hover_via_db(&empty.snapshot(), path, src, position, &provider).is_some(),
             "fallback hover should resolve too"
         );
     }

@@ -142,7 +142,7 @@ in-tree parser, not a drop-in jarl replacement.
       (criterion, `task bench-parse`): `full_parse` across sizes plus an
       `incremental` group measuring `reparse_token`/`reparse_block` against a full
       parse of the same edited text.
-- [ ] Type-level read/write split (rust-analyzer `Analysis`/`AnalysisHost`):
+- [x] Type-level read/write split (rust-analyzer `Analysis`/`AnalysisHost`):
       wrap `IncrementalDatabase` in an `Analysis` newtype exposing only `&self`
       read queries, handed to read jobs (`run_read`, the analyze worker), keeping
       the `&mut` handle private to the lint worker. Makes "lint thread is the
