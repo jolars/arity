@@ -1,18 +1,12 @@
----
-source: tests/formatter.rs
-expression: formatted
----
-f <- function() {
+result <- lapply(items, function(x) {
   if (some_long_condition_function(
     aaaaaaaa,
     bbbbbbbb,
     cccccccc,
     dddddddd,
     eeeeeeee,
-    ffffffff,
-    gggggggg,
-    hhhhhhhh
+    ffffffff
   )) {
     x
   }
-}
+})

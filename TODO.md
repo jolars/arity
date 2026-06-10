@@ -26,18 +26,20 @@
       braces (air-aligned) instead of wrapping unbraced --- see
       `if_value_position_wide_bare_braces` / `if_else_wide_bare_branches` /
       `if_comment_wide_branch`.
-  - [ ] **Function-body re-render hack still required** (`functions.rs`,
-        bare-body branch). Comment-bearing if/else no longer bakes indent, but the
-        `if`/`while` **condition** is still spliced as a baked-indent `Ir::verbatim`
-        (`control_flow.rs` `ir_if_expr_impl`/`try_format_if_with_external_body`).
-        A wide condition in a bare function body wraps at the build indent, so the
-        body must be re-rendered at `indent + 1` when brace-wrapped --- guarded by
-        `function_body_wide_if_condition`. Removing the hack is blocked on
-        migrating the condition splice to native IR. Calls/functions with comment
-        relocation may also still bake indent --- audit before removing.
+  - [x] **Function-body re-render hack removed.** The `if` condition is now
+        native IR spliced inline (`control_flow.rs`
+        `ir_if_expr_impl`/`try_format_if_with_external_body`), so it re-indents
+        structurally and the bare-body branch no longer re-renders at `indent + 1`
+        (`functions.rs`). An over-width `if` whose flat form spans multiple lines
+        now braces its consequence (air-aligned), matching the general
+        multi-line-`if` brace rule. Guarded by `function_body_wide_if_condition`
+        (bare body) and `function_body_wide_if_condition_nested` (nested deeper
+        than build indent). `while`/`for` conditions were already native; the
+        audit confirmed no other multi-line baked `Verbatim` is reachable from a
+        bare body (`ir_brace_token_default` is already native).
   - Air divergence recorded: ravel hugs an over-width `if` condition to `if (` and
-    leaves a bare consequence un-braced (Tenet 1); air breaks the condition onto
-    its own line and braces it. See `tests/air_compat_allowlist.toml`.
+    wraps it internally (Tenet 1); air breaks the condition onto its own line.
+    Both brace the consequence. See `tests/air_compat_allowlist.toml`.
 
 ## Linter
 

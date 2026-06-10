@@ -1250,36 +1250,26 @@ pub(crate) fn ir_function_expr(
             function_braced_hug(head_ir, params_ir, block_ir)
         }
     } else {
-        // Bare (non-block) body. The bare and braced layouts render the body
-        // at different indents (bare at the function-expr's own indent, braced
-        // at +1 inside the wrapping `{ … }`), so build a separate IR for each.
-        // Native IR builders are insensitive to the build-time `indent`
-        // parameter (they use `Ir::Indent` for layout), but a few constructs
-        // still splice a baked-indent `Verbatim` — notably the `if`/`while`
-        // condition (rendered standalone in `control_flow.rs`), whose
-        // continuation lines wrap at the build indent. Re-rendering at
-        // `indent + 1` is what lines that verbatim up correctly when wrapped in
-        // braces. The bare/braced choice itself routes through
+        // Bare (non-block) body. Native IR builders are insensitive to the
+        // build-time `indent` parameter (they lay out via `Ir::Indent`), so one
+        // build serves both the bare splice and the braced fallback: the brace
+        // wrapper supplies its own `Ir::indent`, re-indenting the body
+        // structurally. The bare/braced choice routes through
         // `function_body_choice`, which measures all lines for forced-break
         // bodies (the IR port of legacy `fits_with_newlines`).
-        let bare_body_ir = ir_expr_segment(&body_core, "function body", indent, ctx)?;
-        let braced_body_ir = if bare_body_ir.contains_forced_break() {
-            ir_expr_segment(&body_core, "function body", indent + 1, ctx)?
-        } else {
-            bare_body_ir.clone()
-        };
+        let body_ir = ir_expr_segment(&body_core, "function body", indent, ctx)?;
         if !param_has_comment && body_leading_comments.is_empty() {
             function_body_choice(
                 head_ir,
                 params_ir,
-                bare_body_ir,
-                brace_wrap_body(braced_body_ir),
+                body_ir.clone(),
+                brace_wrap_body(body_ir),
             )
         } else {
             function_braced_hug(
                 head_ir,
                 params_ir,
-                brace_wrap_body_with_comments(braced_body_ir, &body_leading_comments),
+                brace_wrap_body_with_comments(body_ir, &body_leading_comments),
             )
         }
     };
@@ -1396,8 +1386,9 @@ fn brace_wrap_body(body: Ir) -> Ir {
 /// expression is itself a literal block (`function(a = {{ var }})`). Legacy
 /// triggers this on the formatted string (`param.contains("= {\n  {\n")`);
 /// here we detect the same shape at the token level and wrap the params in
-/// [`Ir::group_expanded`], pushing the brace default's `Verbatim` to be
-/// rendered at `indent + 1` so the nested `{` lines up correctly.
+/// [`Ir::group_expanded`] so the brace default's native IR (see
+/// [`ir_brace_token_default`]) renders at `indent + 1` and the nested `{` lines
+/// up correctly.
 fn ir_function_params(
     param_elements: &[SyntaxElement<RLanguage>],
     indent: usize,
@@ -1536,14 +1527,12 @@ fn ir_function_param_default(
     ir_expr_element(only, indent, ctx)
 }
 
-/// Brace-token parameter default (`a = { … }`). The legacy renderer
-/// (`format_expr_or_braced_tokens`) emits this as
-/// `{\n<indent+1>inner\n<indent>}` using explicit indent strings tied to the
-/// function-expr's own `indent`, not the param list's nested indent — so the
-/// closing `}` lands at the function's level regardless of param-list
-/// breaking. The IR's `Ir::Indent` doesn't have that affordance, so we
-/// pre-render the inner expression and splice the multi-line braced form
-/// through as a `Verbatim`, exactly matching the legacy layout.
+/// Brace-token parameter default (`a = { … }`), built as native IR: a
+/// `{`/`}` pair around the inner expression on its own `Ir::indent`ed line. The
+/// surrounding param list always expands when a brace default is present (see
+/// [`ir_function_params`]), so the block renders relative to the printer's live
+/// indent and re-indents structurally even when the function is nested deeper
+/// than its build-time `indent`.
 fn ir_brace_token_default(
     significant: &[SyntaxElement<RLanguage>],
     indent: usize,

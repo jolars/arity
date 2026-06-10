@@ -2,8 +2,8 @@ use rowan::{NodeOrToken, SyntaxElement, SyntaxToken};
 
 use super::super::context::FormatContext;
 use super::super::core::{
-    FormatError, format_expr_segment, ir_block_expr_with_prefixed_comments, ir_expr_element,
-    ir_expr_segment, ir_expr_with_optional_comment, is_trivia,
+    FormatError, ir_block_expr_with_prefixed_comments, ir_expr_element, ir_expr_segment,
+    ir_expr_with_optional_comment, is_trivia,
 };
 use super::super::ir::Ir;
 use super::super::printer::Printer;
@@ -265,15 +265,11 @@ fn ir_if_expr_impl(
         None
     };
 
-    // The condition is rendered standalone and spliced opaquely: an `if`
-    // condition never wraps on the `if (…)` prefix's account (unlike `while`),
-    // so it must not participate in the header's width measurement.
-    let condition = Ir::verbatim(format_expr_segment(
-        &condition_elements,
-        "if condition",
-        indent,
-        ctx,
-    )?);
+    // The condition is native IR spliced inline (re-indenting structurally, so a
+    // wrapping context can re-indent the whole `if`). Unlike `while`, it carries
+    // no enclosing soft-line group: the condition is never dropped onto its own
+    // line on the `if (…)` prefix's account; only its own internal groups wrap.
+    let condition = ir_expr_segment(&condition_elements, "if condition", indent, ctx)?;
     // Comment relocation (IR port of `format_if_then_branch_with_comments` +
     // `prepend_comments_to_branch`). A comment trailing the then-block's `}` on
     // the same line stays with the then block; any other comment between the
@@ -883,13 +879,9 @@ pub(crate) fn try_format_if_with_external_body(
                 snippet: String::new(),
             })?;
     // The then-branch is a comment; wrap the next-line body (bare or block) in a
-    // synthetic block led by that comment.
-    let condition = Ir::verbatim(format_expr_segment(
-        &condition_elements,
-        "if condition",
-        indent,
-        ctx,
-    )?);
+    // synthetic block led by that comment. The condition is native IR (see
+    // `ir_if_expr_impl`), spliced inline with no enclosing soft-line group.
+    let condition = ir_expr_segment(&condition_elements, "if condition", indent, ctx)?;
     let body_expr = ir_expr_element(&body_element, indent + 1, ctx)?;
     let body = synthetic_block(vec![Ir::text(then_comment), body_expr]);
     let header = Ir::concat([Ir::text("if ("), condition, Ir::text(") "), body]);

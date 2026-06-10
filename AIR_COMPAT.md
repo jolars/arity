@@ -17,5 +17,5 @@ Listed in `tests/air_compat_allowlist.toml`. These diverge from air on purpose.
 |---|---|---|
 | `air_call` | 99.5% | unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands |
 | `call_trailing_braced_expression` | 95.1% | unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands |
-| `function_body_wide_if_condition` | 14.3% | over-width if-condition: ravel hugs the condition to `if (` and leaves the bare consequence un-braced; air breaks the condition onto its own line and braces the consequence |
+| `function_body_wide_if_condition` | 26.7% | over-width if-condition: ravel hugs the condition to `if (` and wraps it internally; air breaks the condition onto its own line |
 

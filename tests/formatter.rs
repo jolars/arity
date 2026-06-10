@@ -87,6 +87,7 @@ fn fixture_names() -> &'static [&'static str] {
         "if_comment_wide_branch",
         "if_function_body_wide_if",
         "function_body_wide_if_condition",
+        "function_body_wide_if_condition_nested",
         "inline_comment",
         "noop_assignment",
         "noop_if_else_block",

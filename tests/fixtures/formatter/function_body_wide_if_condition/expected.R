@@ -8,5 +8,7 @@ f <- function() {
     ffffffff,
     gggggggg,
     hhhhhhhh
-  )) x
+  )) {
+    x
+  }
 }
