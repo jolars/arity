@@ -57,7 +57,9 @@ ranked=$(
   echo "# ($BASE_URL), summed over: ${dates[*]}."
   echo "# One package per line. Regenerate with: scripts/rank_cran_downloads.sh"
   echo ""
-  echo "$ranked" | head -n "$N" | cut -f2
+  # `awk` (not `head`) consumes all input: closing the pipe early would SIGPIPE
+  # the producing `echo` and, under `set -o pipefail`, fail the script.
+  echo "$ranked" | awk -v n="$N" 'NR <= n { print $2 }'
 } > "$LIST_FILE"
 
 echo "wrote top $N packages to $LIST_FILE" >&2
