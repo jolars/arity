@@ -23,7 +23,7 @@ crossbeam-channel = "0.5"
 env_logger = "0.11.10"
 flate2 = "1.0"
 globset = "0.4.18"
-ignore = "0.4.25"
+ignore = "0.4.26"
 log = { version = "0.4.29", features = ["release_max_level_info"] }
 lsp-server = "0.7"
 lsp-types = "0.97"
