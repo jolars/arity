@@ -15,7 +15,9 @@ use smol_str::SmolStr;
 
 use crate::rindex::cache::Cache;
 use crate::rindex::schema::{PackageIndex, SymbolEntry};
-use crate::semantic::symbols::{LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider};
+use crate::semantic::symbols::{
+    BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
+};
 
 /// Resolves names against indexed, attached packages and holds the rich data.
 #[derive(Debug, Default)]
@@ -82,19 +84,23 @@ impl IndexedProvider {
     }
 }
 
-/// `StaticBaseR` + an `IndexedProvider`, honoring search-path masking.
+/// `StaticBaseR` + an `IndexedProvider` + bundled CRAN export lists, honoring
+/// search-path masking. Precedence per package: locally harvested index
+/// (version-exact) → base defaults → bundled CRAN (approximate latest).
 #[derive(Debug)]
 pub struct CompositeProvider {
     base: StaticBaseR,
     indexed: IndexedProvider,
+    bundled: BundledPackages,
 }
 
 impl CompositeProvider {
-    /// Base only — equivalent to the historical `StaticBaseR` behavior.
+    /// No local index — base defaults plus the bundled CRAN export lists.
     pub fn base_only() -> Self {
         CompositeProvider {
             base: StaticBaseR::new(),
             indexed: IndexedProvider::empty(),
+            bundled: BundledPackages::new(),
         }
     }
 
@@ -102,6 +108,7 @@ impl CompositeProvider {
         CompositeProvider {
             base: StaticBaseR::new(),
             indexed,
+            bundled: BundledPackages::new(),
         }
     }
 
@@ -120,9 +127,15 @@ impl SymbolProvider for CompositeProvider {
             PackageOrigin::Unknown => Vec::new(),
         };
         // Then `library()`-attached packages in source order; the last attacher
-        // masks the rest.
+        // masks the rest. Prefer the version-exact installed index when present,
+        // otherwise fall back to the bundled CRAN export list.
         for pkg in loaded {
-            if self.indexed.exports(&pkg.name, name) && !candidates.contains(&pkg.name) {
+            let exports_it = if self.indexed.has_package(&pkg.name) {
+                self.indexed.exports(&pkg.name, name)
+            } else {
+                self.bundled.exports(&pkg.name, name)
+            };
+            if exports_it && !candidates.contains(&pkg.name) {
                 candidates.push(pkg.name.clone());
             }
         }
@@ -138,9 +151,12 @@ impl SymbolProvider for CompositeProvider {
     }
 
     fn package_indexed(&self, pkg: &str) -> bool {
-        // A default package (known to base) or a harvested package (in the
-        // index) is one whose exports we know in full.
-        self.base.package_indexed(pkg) || self.indexed.has_package(pkg)
+        // A default package (known to base), a harvested package (in the index),
+        // or a bundled CRAN package is one whose exports we know — enough for
+        // `undefined-symbol` to fire instead of suppressing the whole file.
+        self.base.package_indexed(pkg)
+            || self.indexed.has_package(pkg)
+            || self.bundled.has_package(pkg)
     }
 }
 
@@ -220,12 +236,50 @@ mod tests {
     }
 
     #[test]
-    fn unindexed_loaded_package_leaves_name_unknown() {
+    fn unindexed_unbundled_loaded_package_leaves_name_unknown() {
         let p = CompositeProvider::base_only();
-        // dplyr is attached but not indexed: a name only dplyr would export
-        // stays Unknown (conservative).
+        // A package that is neither indexed nor bundled: a name only it would
+        // export stays Unknown (conservative whole-file suppression still
+        // applies via `package_indexed`).
+        assert!(!p.package_indexed("not_a_real_package_xyz"));
         assert_eq!(
-            p.origin("across", &[loaded("dplyr")]),
+            p.origin("some_export_xyz", &[loaded("not_a_real_package_xyz")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    #[test]
+    fn bundled_package_is_indexed_and_resolves() {
+        // No local index: the bundled CRAN list backs resolution.
+        let p = CompositeProvider::base_only();
+        assert!(p.package_indexed("data.table"));
+        assert_eq!(
+            p.origin("fread", &[loaded("data.table")]),
+            PackageOrigin::Resolved(SmolStr::new("data.table"))
+        );
+        // An unknown name with a bundled package attached stays Unknown, so
+        // `undefined-symbol` can fire on it.
+        assert_eq!(
+            p.origin("not_a_real_export_xyz", &[loaded("data.table")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    #[test]
+    fn installed_index_wins_over_bundled() {
+        // An installed index for a bundled package is version-exact and takes
+        // precedence: its export resolves, and a name only the (stale) bundled
+        // list has does not.
+        let p = CompositeProvider::with_index(IndexedProvider::from_indices([pkg(
+            "data.table",
+            &["custom_installed_sym"],
+        )]));
+        assert_eq!(
+            p.origin("custom_installed_sym", &[loaded("data.table")]),
+            PackageOrigin::Resolved(SmolStr::new("data.table"))
+        );
+        assert_eq!(
+            p.origin("fread", &[loaded("data.table")]),
             PackageOrigin::Unknown
         );
     }

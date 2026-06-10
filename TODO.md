@@ -69,12 +69,27 @@ in-tree parser, not a drop-in jarl replacement.
       fallback). Still pending: `textDocument/rangeFormatting`, once the
       formatter gains a range API. (`textDocument/codeAction` QuickFix hooks
       shipped alongside autofix --- see Phase 6.x autofix above.)
-- [ ] CRAN-wide symbol manifest as a downloadable sidecar. Shape: per-package
-      export lists keyed by package version. With a manifest in place, enable
-      `undefined-symbol` by default and stop returning `Unknown` for names from
-      `library()`-attached packages. Would also let DESCRIPTION `Imports`/
-      `Depends` feed name resolution (the `import(pkg)` case currently only
-      marks resolution incomplete, in `src/project/scope.rs`).
+- [x] Bundled top-N CRAN export lists (names-only). The top-500 packages by
+      download count (ranked from the RStudio/Posit CRAN logs by
+      `scripts/rank_cran_downloads.sh` → `scripts/cran_top_packages.txt`, a
+      reproducible snapshot) are dumped to a sectioned data file
+      (`scripts/dump_cran_symbols.R` → `src/semantic/cran/exports.txt`) and
+      baked in via `BundledPackages` (`src/semantic/symbols.rs`), wired into
+      `CompositeProvider` (`src/rindex/provider.rs`) as the lowest-precision tier
+      (installed harvest → base → bundled). `undefined-symbol` now resolves
+      `library()`-attached packages in the bundled set without them being
+      installed, instead of suppressing the whole file. A weekly CI job
+      (`.github/workflows/cran-symbols.yml`) re-ranks, installs the set from PPM
+      binaries, regenerates the data file, and opens a PR.
+- [ ] Full downloadable CRAN sidecar (escalation of the bundled lists above).
+      Shape: per-package export lists keyed by package version, covering the long
+      tail the bundled set omits. Carries an out-of-band cost (a CRAN-processing
+      pipeline + hosting + refresh cadence) the bundled lists avoid; add it as an
+      additive `SymbolProvider` layer when long-tail/CI completeness is worth
+      that. Would also let DESCRIPTION `Imports`/`Depends` feed name resolution
+      (the `import(pkg)` case currently only marks resolution incomplete, in
+      `src/project/scope.rs`). Names-only `pkg::name` resolution for
+      bundled-but-not-installed packages is a smaller related follow-up.
 - [x] DESCRIPTION / NAMESPACE parsing for R-package authoring contexts.
       NAMESPACE `export()`/`exportPattern()`, `importFrom()`, and `import()` are
       parsed (`rindex::harvest::parse_namespace`) and folded into cross-file

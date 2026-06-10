@@ -542,6 +542,26 @@ fn undefined_symbol_resolves_indexed_export_and_flags_others() {
     assert!(msgs[0].contains("bogus"));
 }
 
+#[test]
+fn undefined_symbol_resolves_bundled_cran_export_and_flags_others() {
+    // data.table is a bundled (names-only) CRAN package, not locally indexed.
+    // With it attached, a real export (`fread`) resolves and the gate no longer
+    // suppresses the file, so a genuine typo (`bogus`) is still flagged.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("library(data.table)\nfread(\"x.csv\")\nbogus()\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_still_gated_for_unbundled_package() {
+    // A package neither indexed nor bundled keeps the conservative whole-file
+    // suppression — no regression for the long tail.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("library(some_obscure_pkg_xyz)\nbogus()\n", &p);
+    assert!(msgs.is_empty(), "gate should suppress, got {msgs:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Autofix
 // ---------------------------------------------------------------------------
