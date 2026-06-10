@@ -21,17 +21,71 @@ use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SemanticModel;
 use crate::syntax::SyntaxNode;
 
+/// An opaque, process-local file identity. Decouples a tracked file from any
+/// path: it is allocated once when a file is first seen and never reused, so it
+/// is the stable handle the rest of the system can key on without a path leaking
+/// in. On-disk files carry one alongside their (immutable) path; in-memory files
+/// carry one with no path at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FileId(pub u32);
+
 #[salsa::input]
 pub struct SourceFile {
-    /// The path this file was tracked under. Set once at creation and never
-    /// mutated, so path-keyed queries (e.g. [`source_edges`], which resolves
-    /// relative `source()` targets against `path.parent()`) don't re-run on a
-    /// text edit. In-memory files (see [`IncrementalDatabase::add_file`]) get a
-    /// unique synthetic path so they never collide.
+    /// This file's opaque identity, allocated by the [`FileSourceMap`]. Set once
+    /// and never mutated.
+    pub id: FileId,
+    /// The path this file was tracked under, or `None` for an in-memory document.
+    /// Set once at creation and never mutated, so path-reading queries (e.g.
+    /// [`source_edges`], which resolves relative `source()` targets against
+    /// `path.parent()`) don't re-run on a text edit. Equivalent path forms are
+    /// deduplicated *before* a file is created (see [`FileSourceMap`]), so two
+    /// spellings of the same path never mint two inputs.
     #[returns(ref)]
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
     #[returns(ref)]
     pub text: String,
+}
+
+/// Lexically normalize `path` for use as a deduplication key: absolutize it
+/// (against the current directory, without touching the filesystem) and collapse
+/// `.` / `..` segments. Purely textual — no symlink resolution, no existence
+/// check — so it is stable for not-yet-saved buffers and never blocks on I/O.
+/// `a.R`, `./a.R`, and `dir/../a.R` all map to the same key.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// The path → input index plus the [`FileId`] allocator. Maps a *normalized*
+/// path to the single [`SourceFile`] tracked for it, so reaching the same file
+/// by an equivalent path spelling reuses one input (and its cached queries)
+/// rather than minting a duplicate. In-memory files get a [`FileId`] but no entry
+/// here (nothing looks them up by path).
+#[derive(Default)]
+struct FileSourceMap {
+    by_path: HashMap<PathBuf, SourceFile>,
+    next_id: u32,
+}
+
+impl FileSourceMap {
+    fn alloc_id(&mut self) -> FileId {
+        let id = FileId(self.next_id);
+        self.next_id += 1;
+        id
+    }
 }
 
 /// The harvested package symbol index, modeled as a salsa **singleton** input at
@@ -250,17 +304,19 @@ pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Vec<SourceEdgeK
         file: Some(file),
     });
     let root = parsed_tree_root(db, file);
-    crate::project::collect_source_edge_keys(&root, file.path(db).parent())
+    let base_dir = file.path(db).as_deref().and_then(Path::parent);
+    crate::project::collect_source_edge_keys(&root, base_dir)
 }
 
 #[salsa::db]
 pub struct IncrementalDatabase {
     storage: salsa::Storage<Self>,
     query_log: Arc<Mutex<Vec<QueryLogEntry>>>,
-    /// Path → input mapping, so repeated edits to the same path reuse the same
-    /// `SourceFile` input (and thus its cached queries) instead of creating a
+    /// Normalized-path → input index plus the [`FileId`] allocator, so repeated
+    /// edits to the same path (under any equivalent spelling) reuse the same
+    /// `SourceFile` input — and thus its cached queries — instead of creating a
     /// fresh one each time. Seeds the cross-file project graph (Phase B).
-    files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
+    source_map: Arc<Mutex<FileSourceMap>>,
     /// Previous parse per file, the base for incremental reparse in
     /// [`parsed_document`]. Outside salsa: a pure performance hint that never
     /// changes query *outputs* (see [`PrevParse`]). Shared across clones.
@@ -275,7 +331,7 @@ impl Default for IncrementalDatabase {
         Self {
             storage: salsa::Storage::new(None),
             query_log: Arc::new(Mutex::new(Vec::new())),
-            files: Arc::new(Mutex::new(HashMap::new())),
+            source_map: Arc::new(Mutex::new(FileSourceMap::default())),
             reparse_cache: Arc::new(Mutex::new(HashMap::new())),
             reparse_hits: Arc::new(AtomicU64::new(0)),
         }
@@ -295,7 +351,7 @@ impl Clone for IncrementalDatabase {
         Self {
             storage: self.storage.clone(),
             query_log: Arc::clone(&self.query_log),
-            files: Arc::clone(&self.files),
+            source_map: Arc::clone(&self.source_map),
             reparse_cache: Arc::clone(&self.reparse_cache),
             reparse_hits: Arc::clone(&self.reparse_hits),
         }
@@ -310,13 +366,18 @@ impl std::fmt::Debug for IncrementalDatabase {
 }
 
 impl IncrementalDatabase {
-    /// Track an in-memory document with no on-disk path. Each call mints a
-    /// unique synthetic path so two in-memory files never alias in a path-keyed
-    /// query. Used by tests and one-shot single-file checks; the LSP/CLI use
+    /// Track an in-memory document with no on-disk path. It gets a fresh
+    /// [`FileId`] and a `None` path, so it never aliases another file and never
+    /// participates in path-based cross-file resolution. Used by tests and
+    /// one-shot single-file checks; the LSP/CLI use
     /// [`upsert_file`](Self::upsert_file) with the real path.
     pub fn add_file(&self, text: impl Into<String>) -> SourceFile {
-        let path = PathBuf::from(format!("<mem>/{}.R", uuid::Uuid::new_v4()));
-        SourceFile::new(self, path, text.into())
+        let id = self
+            .source_map
+            .lock()
+            .expect("file source map mutex poisoned")
+            .alloc_id();
+        SourceFile::new(self, id, None, text.into())
     }
 
     pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<String>) {
@@ -365,11 +426,13 @@ impl IncrementalDatabase {
     /// updates the text of an existing input so unchanged downstream queries stay
     /// cached.
     pub fn upsert_file(&mut self, path: &Path, text: String) -> SourceFile {
+        let key = normalize_path(path);
         let existing = self
-            .files
+            .source_map
             .lock()
-            .expect("file cache mutex poisoned")
-            .get(path)
+            .expect("file source map mutex poisoned")
+            .by_path
+            .get(&key)
             .copied();
         match existing {
             Some(file) => {
@@ -382,11 +445,20 @@ impl IncrementalDatabase {
                 file
             }
             None => {
-                let file = SourceFile::new(self, path.to_path_buf(), text);
-                self.files
+                let id = self
+                    .source_map
                     .lock()
-                    .expect("file cache mutex poisoned")
-                    .insert(path.to_path_buf(), file);
+                    .expect("file source map mutex poisoned")
+                    .alloc_id();
+                // Store the first-seen spelling as the file's path; the index is
+                // keyed by the normalized form, so later equivalent spellings
+                // resolve to this same input and its first-seen path.
+                let file = SourceFile::new(self, id, Some(path.to_path_buf()), text);
+                self.source_map
+                    .lock()
+                    .expect("file source map mutex poisoned")
+                    .by_path
+                    .insert(key, file);
                 file
             }
         }
@@ -397,10 +469,11 @@ impl IncrementalDatabase {
     /// to call on a shared clone (the language server's read path uses it to find
     /// the cached parse for the buffer under the cursor).
     pub fn lookup_file(&self, path: &Path) -> Option<SourceFile> {
-        self.files
+        self.source_map
             .lock()
-            .expect("file cache mutex poisoned")
-            .get(path)
+            .expect("file source map mutex poisoned")
+            .by_path
+            .get(&normalize_path(path))
             .copied()
     }
 
@@ -409,9 +482,9 @@ impl IncrementalDatabase {
         file.text(self)
     }
 
-    /// The path `file` is tracked under.
-    pub fn file_path(&self, file: SourceFile) -> &Path {
-        file.path(self)
+    /// The path `file` is tracked under, or `None` for an in-memory document.
+    pub fn file_path(&self, file: SourceFile) -> Option<&Path> {
+        file.path(self).as_deref()
     }
 
     /// Parse diagnostics for `file` (empty when it parses cleanly).
@@ -479,8 +552,8 @@ impl Analysis {
         self.0.file_text(file)
     }
 
-    /// The path `file` is tracked under.
-    pub fn file_path(&self, file: SourceFile) -> &Path {
+    /// The path `file` is tracked under, or `None` for an in-memory document.
+    pub fn file_path(&self, file: SourceFile) -> Option<&Path> {
         self.0.file_path(file)
     }
 

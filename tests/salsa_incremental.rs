@@ -163,6 +163,29 @@ fn body_edit_keeps_model_in_sync() {
     assert_eq!(db.semantic_model(file).bindings().len(), 2);
 }
 
+#[test]
+fn upsert_dedups_equivalent_path_forms() {
+    // `/pkg/R/a.R` and `/pkg/sub/../R/a.R` denote the same file; they must intern
+    // to the same `SourceFile` input rather than minting two (which would double
+    // the parse work and split project membership). `Path` collapses mid-path `.`
+    // on its own but never `..`, so this exercises our lexical normalization.
+    let mut db = IncrementalDatabase::default();
+    let direct = db.upsert_file(Path::new("/pkg/R/a.R"), "x <- 1\n".to_string());
+    let dotted = db.upsert_file(Path::new("/pkg/sub/../R/a.R"), "x <- 1\n".to_string());
+    assert!(
+        direct == dotted,
+        "equivalent path forms must map to the same input"
+    );
+}
+
+#[test]
+fn in_memory_file_has_no_path() {
+    // An in-memory document carries no on-disk path (no `<mem>/uuid` phantom).
+    let db = IncrementalDatabase::default();
+    let file = db.add_file("x <- 1\n");
+    assert_eq!(db.file_path(file), None);
+}
+
 /// A two-file package: `a.R` defines `foo`, `b.R` reads it inside a function
 /// body. Returns the db and the two tracked inputs.
 fn package_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, SourceFile) {

@@ -116,7 +116,12 @@ pub fn visible_symbols<'db>(
     });
 
     let graph = project_graph(db, project);
-    let scope = graph.for_file(file.path(db));
+    // A project member always has a path; a pathless (in-memory) file never
+    // enters a project, so it simply has no cross-file visibility.
+    let Some(path) = file.path(db).as_deref() else {
+        return Visibility::default();
+    };
+    let scope = graph.for_file(path);
     Visibility {
         visible: scope.visible_names().clone(),
         used_by_others: scope.used_names().clone(),

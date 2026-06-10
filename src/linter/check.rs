@@ -396,7 +396,10 @@ pub fn analyze_prepared(
     // owned data in `prepared`, so this is safe on a db clone, and an unchanged
     // set re-interns to the same id — keeping the project-graph memo warm.
     let project = intern_project(db, prepared.members.clone(), prepared.namespaces.clone());
-    let active_path = analysis.file_path(prepared.active).to_path_buf();
+    let active_path = analysis
+        .file_path(prepared.active)
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let visibility = visible_symbols(db, project, prepared.active);
     let file_scope = visibility.scope();
     // Resolve undefined symbols through the salsa library index when one is

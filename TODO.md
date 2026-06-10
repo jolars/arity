@@ -160,12 +160,20 @@ in-tree parser, not a drop-in jarl replacement.
       `src/incremental.rs`, `src/rindex/provider.rs`, `src/project/graph.rs`,
       `src/linter/{check.rs,rules.rs,rules/correctness/undefined_symbol.rs}`,
       `src/lsp.rs`. See `ARCHITECTURE_AUDIT.md` §3.2.
-- [ ] `FileId` / VFS abstraction: replace direct `PathBuf` keys + the synthetic
-      `<mem>/{uuid}.R` hack with an opaque `FileId` + a small file-source map
-      (rust-analyzer `vfs`/`SourceRoot` model), so paths/cwd don't leak into the
-      analysis and `SourceRoot`-scoped durability becomes possible. Files:
-      `src/incremental.rs`, `src/project/graph.rs`, `src/lsp.rs` (URI↔FileId
-      boundary). See `ARCHITECTURE_AUDIT.md` §3.3.
+- [x] Thin `FileId` + file-source map (retire the `<mem>` hack). `SourceFile`
+      now carries an opaque `FileId` and an *optional* path
+      (`src/incremental.rs`): in-memory files have `None` (no more synthetic
+      `<mem>/{uuid}.R`), and a small normalized-path index (`FileSourceMap`)
+      dedups equivalent path spellings to one input, so cwd/path-form no longer
+      leaks into salsa keys. `file_path` is now `Option<&Path>`; `source_edges`
+      reads the optional path as before. The `uuid` dependency is gone. Scoping
+      is unchanged — multi-root layouts (package + scripts) are governed by
+      `package_root`/`ProjectScope`, not the file key. See
+      `ARCHITECTURE_AUDIT.md` §3.3.
+  - [ ] Follow-up: full `vfs`/`SourceRoot` model — opaque-`FileId`-at-the-URI
+        boundary in `src/lsp.rs` and `SourceRoot`-scoped durability — when
+        multi-root workspaces actually need it. Lower leverage for a single-crate
+        tool (the wart is already gone).
 
 ## Misc
 
