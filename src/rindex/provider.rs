@@ -10,6 +10,7 @@
 //!   order, and the last attacher masks.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use smol_str::SmolStr;
 
@@ -18,6 +19,65 @@ use crate::rindex::schema::{PackageIndex, SymbolEntry};
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
 };
+
+/// R's default-package export lists. A compile-time constant (baked-in symbol
+/// lists), shared process-wide so it is parsed once rather than per provider.
+static BASE_R: LazyLock<StaticBaseR> = LazyLock::new(StaticBaseR::new);
+
+/// The bundled top-N CRAN export lists. Also a compile-time constant, shared.
+static BUNDLED: LazyLock<BundledPackages> = LazyLock::new(BundledPackages::new);
+
+/// Resolve a bare `name` against R's default packages, the bundled CRAN lists,
+/// and the harvested `indexed` layer, honoring search-path masking: default
+/// packages attach first, then `loaded` packages in source order, and the last
+/// attacher masks. The version-exact installed index wins over the bundled list
+/// for a given package.
+///
+/// This is the single masking implementation; both [`CompositeProvider`] and the
+/// salsa `external_resolution` query call it. The static layers are read from
+/// the shared [`BASE_R`]/[`BUNDLED`] singletons; only `indexed` varies.
+pub fn resolve_origin(
+    indexed: &IndexedProvider,
+    name: &str,
+    loaded: &[LoadedPackage],
+) -> PackageOrigin {
+    // Default packages attach first.
+    let mut candidates: Vec<SmolStr> = match BASE_R.origin(name, &[]) {
+        PackageOrigin::Resolved(p) => vec![p],
+        PackageOrigin::Ambiguous(v) => v,
+        PackageOrigin::Unknown => Vec::new(),
+    };
+    // Then `library()`-attached packages in source order; the last attacher
+    // masks. Prefer the version-exact installed index when present, otherwise
+    // fall back to the bundled CRAN export list.
+    for pkg in loaded {
+        let exports_it = if indexed.has_package(&pkg.name) {
+            indexed.exports(&pkg.name, name)
+        } else {
+            BUNDLED.exports(&pkg.name, name)
+        };
+        if exports_it && !candidates.contains(&pkg.name) {
+            candidates.push(pkg.name.clone());
+        }
+    }
+    match candidates.len() {
+        0 => PackageOrigin::Unknown,
+        1 => PackageOrigin::Resolved(candidates.into_iter().next().unwrap()),
+        _ => PackageOrigin::Ambiguous(candidates),
+    }
+}
+
+/// True if `pkg`'s exports are fully known — a default package, a harvested
+/// package, or a bundled CRAN package — so an unresolved name attributed to it
+/// is genuinely undefined rather than merely un-indexed.
+pub fn package_indexed(indexed: &IndexedProvider, pkg: &str) -> bool {
+    BASE_R.package_indexed(pkg) || indexed.has_package(pkg) || BUNDLED.has_package(pkg)
+}
+
+/// True if `name` is exported by one of R's default packages.
+pub fn is_base(name: &str) -> bool {
+    BASE_R.is_base(name)
+}
 
 /// Resolves names against indexed, attached packages and holds the rich data.
 #[derive(Debug, Default)]
@@ -84,32 +144,29 @@ impl IndexedProvider {
     }
 }
 
-/// `StaticBaseR` + an `IndexedProvider` + bundled CRAN export lists, honoring
+/// The default-package + bundled-CRAN + harvested-index resolver, honoring
 /// search-path masking. Precedence per package: locally harvested index
 /// (version-exact) → base defaults → bundled CRAN (approximate latest).
+///
+/// Holds only the harvested [`IndexedProvider`]; the static default-package and
+/// bundled-CRAN layers live in the shared [`BASE_R`]/[`BUNDLED`] singletons, and
+/// all three are combined by the free [`resolve_origin`]/[`package_indexed`]
+/// functions — the same ones the salsa `external_resolution` query uses.
 #[derive(Debug)]
 pub struct CompositeProvider {
-    base: StaticBaseR,
     indexed: IndexedProvider,
-    bundled: BundledPackages,
 }
 
 impl CompositeProvider {
     /// No local index — base defaults plus the bundled CRAN export lists.
     pub fn base_only() -> Self {
         CompositeProvider {
-            base: StaticBaseR::new(),
             indexed: IndexedProvider::empty(),
-            bundled: BundledPackages::new(),
         }
     }
 
     pub fn with_index(indexed: IndexedProvider) -> Self {
-        CompositeProvider {
-            base: StaticBaseR::new(),
-            indexed,
-            bundled: BundledPackages::new(),
-        }
+        CompositeProvider { indexed }
     }
 
     /// The indexed layer, for callers that need the rich data (e.g. the LSP).
@@ -120,43 +177,15 @@ impl CompositeProvider {
 
 impl SymbolProvider for CompositeProvider {
     fn origin(&self, name: &str, loaded: &[LoadedPackage]) -> PackageOrigin {
-        // Default packages attach first.
-        let mut candidates: Vec<SmolStr> = match self.base.origin(name, &[]) {
-            PackageOrigin::Resolved(p) => vec![p],
-            PackageOrigin::Ambiguous(v) => v,
-            PackageOrigin::Unknown => Vec::new(),
-        };
-        // Then `library()`-attached packages in source order; the last attacher
-        // masks the rest. Prefer the version-exact installed index when present,
-        // otherwise fall back to the bundled CRAN export list.
-        for pkg in loaded {
-            let exports_it = if self.indexed.has_package(&pkg.name) {
-                self.indexed.exports(&pkg.name, name)
-            } else {
-                self.bundled.exports(&pkg.name, name)
-            };
-            if exports_it && !candidates.contains(&pkg.name) {
-                candidates.push(pkg.name.clone());
-            }
-        }
-        match candidates.len() {
-            0 => PackageOrigin::Unknown,
-            1 => PackageOrigin::Resolved(candidates.into_iter().next().unwrap()),
-            _ => PackageOrigin::Ambiguous(candidates),
-        }
+        resolve_origin(&self.indexed, name, loaded)
     }
 
     fn is_base(&self, name: &str) -> bool {
-        self.base.is_base(name)
+        is_base(name)
     }
 
     fn package_indexed(&self, pkg: &str) -> bool {
-        // A default package (known to base), a harvested package (in the index),
-        // or a bundled CRAN package is one whose exports we know — enough for
-        // `undefined-symbol` to fire instead of suppressing the whole file.
-        self.base.package_indexed(pkg)
-            || self.indexed.has_package(pkg)
-            || self.bundled.has_package(pkg)
+        package_indexed(&self.indexed, pkg)
     }
 }
 

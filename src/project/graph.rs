@@ -19,11 +19,16 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
+use rowan::TextRange;
+use smol_str::SmolStr;
+
 use crate::incremental::{
-    IncrementalDb, QueryKind, QueryLogEntry, SourceFile, file_exports, file_free_reads,
-    source_edges,
+    IncrementalDb, LibraryIndex, QueryKind, QueryLogEntry, SourceFile, file_exports,
+    file_free_reads, loaded_names, source_edges,
 };
 use crate::project::scope::{FileFacts, FileScope, ProjectScope};
+use crate::rindex::provider::{package_indexed, resolve_origin};
+use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
 
 /// One member of a project: its tracked input, on-disk path, and enclosing
 /// package root (if any). Disk-derived — assembled in the lint write-phase and
@@ -117,4 +122,83 @@ pub fn visible_symbols<'db>(
         used_by_others: scope.used_names().clone(),
         incomplete: scope.resolution_incomplete,
     }
+}
+
+/// The free-read names in `file` that resolve to nothing — neither a sibling /
+/// `source()`-closure binding (cross-file visibility) nor any attached package
+/// (default, harvested, or bundled). These are the `undefined-symbol`
+/// candidates, keyed by name (range-free) so the memo backdates across body
+/// edits. Empty when the rule's conservative gates trip — an attached package
+/// whose exports are unknown, or incomplete cross-file visibility — since either
+/// could supply the otherwise-unresolved names.
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+pub struct ExternalResolution {
+    pub unresolved: BTreeSet<String>,
+}
+
+/// Resolve a file's free reads against the project graph and the
+/// HIGH-durability [`LibraryIndex`], yielding the `undefined-symbol` candidate
+/// names.
+///
+/// The library index is set at `Durability::HIGH`, and every other dependency
+/// ([`file_free_reads`], [`loaded_names`], [`visible_symbols`]) is an `Eq`
+/// firewall projection that backdates on a body edit. So a keystroke that leaves
+/// the free-read / loaded / visibility sets unchanged re-runs neither this query
+/// nor any masking work: salsa skips the HIGH library subgraph in a single
+/// version-vector compare. The result is range-free — the rule re-attaches
+/// diagnostic spans from the fresh [`semantic_model`](crate::incremental::semantic_model)
+/// and re-applies the per-occurrence local-binding check, so a name bound in one
+/// scope but free in another is handled correctly.
+#[salsa::tracked(returns(ref))]
+pub fn external_resolution<'db>(
+    db: &'db dyn IncrementalDb,
+    manifest: LibraryIndex,
+    project: Project<'db>,
+    file: SourceFile,
+) -> ExternalResolution {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ExternalResolution,
+        file: Some(file),
+    });
+
+    let index: &crate::rindex::provider::IndexedProvider = manifest.data(db);
+    let loaded = loaded_names(db, file);
+
+    // Gate: an attached package whose exports we don't fully know could define
+    // any of the unresolved names — suppress the whole file.
+    if loaded.iter().any(|pkg| !package_indexed(index, pkg)) {
+        return ExternalResolution::default();
+    }
+
+    let visibility = visible_symbols(db, project, file);
+    // Gate: incomplete cross-file visibility (an unresolved `source()` or a
+    // wholesale `import(pkg)`) could supply otherwise-unresolved names.
+    if visibility.incomplete {
+        return ExternalResolution::default();
+    }
+
+    // Resolution only asks whether a name resolves to *some* attached package, so
+    // load order is irrelevant here; rebuild lightweight `LoadedPackage`s (the
+    // ranges are unused by `resolve_origin`).
+    let loaded_pkgs: Vec<LoadedPackage> = loaded
+        .iter()
+        .map(|name| LoadedPackage {
+            name: SmolStr::new(name),
+            range: TextRange::default(),
+        })
+        .collect();
+
+    let unresolved = file_free_reads(db, file)
+        .iter()
+        .filter(|name| !visibility.visible.contains(name.as_str()))
+        .filter(|name| {
+            matches!(
+                resolve_origin(index, name, &loaded_pkgs),
+                PackageOrigin::Unknown
+            )
+        })
+        .cloned()
+        .collect();
+
+    ExternalResolution { unresolved }
 }

@@ -14,7 +14,7 @@ use ravel::rindex::build::{BuildOptions, PackageOutcome, build_index};
 use ravel::rindex::cache::{Cache, resolve_cache_root};
 use ravel::rindex::discover::referenced_packages;
 use ravel::rindex::libpaths::LibrarySearch;
-use ravel::rindex::provider::{CompositeProvider, IndexedProvider};
+use ravel::rindex::provider::IndexedProvider;
 
 /// Autofix selection for `lint --fix`.
 #[derive(Debug, Clone, Copy)]
@@ -179,14 +179,15 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
     ExitCode::SUCCESS
 }
 
-/// Build a symbol provider for linting, loading the installed-package index
-/// from the cache when one is configured/available.
-fn lint_symbol_provider(config: &ravel::config::Config) -> CompositeProvider {
+/// Build the harvested package index for linting, loading it from the cache
+/// when one is configured/available. Installed into salsa as the
+/// HIGH-durability library index; R's default + bundled CRAN lists are static.
+fn lint_index(config: &ravel::config::Config) -> IndexedProvider {
     let Ok(cache_root) = resolve_cache_root(None, config.index.cache_dir.as_deref()) else {
-        return CompositeProvider::base_only();
+        return IndexedProvider::empty();
     };
     let cache = Cache::new(cache_root);
-    CompositeProvider::with_index(IndexedProvider::from_cache(&cache))
+    IndexedProvider::from_cache(&cache)
 }
 
 fn now_unix_secs() -> u64 {
@@ -469,8 +470,8 @@ fn run_lint(
         return code;
     }
 
-    let provider = lint_symbol_provider(&config);
-    match ravel::linter::check_paths_with_provider(&paths, &config.lint, &provider) {
+    let index = lint_index(&config);
+    match ravel::linter::check_paths_with_index(&paths, &config.lint, index) {
         Ok(result) => {
             let mut has_parse_blockers = false;
             let mut all_findings = Vec::new();

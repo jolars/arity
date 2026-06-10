@@ -13,10 +13,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use salsa::Setter;
+use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, parse, reparse};
 use crate::project::SourceEdgeKey;
+use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SemanticModel;
 use crate::syntax::SyntaxNode;
 
@@ -33,6 +34,23 @@ pub struct SourceFile {
     pub text: String,
 }
 
+/// The harvested package symbol index, modeled as a salsa **singleton** input at
+/// `Durability::HIGH`. Only the harvested layer ([`IndexedProvider`]) varies at
+/// runtime — R's default-package lists and the bundled CRAN exports are
+/// compile-time constants and stay out of salsa. Because the value is set at
+/// HIGH durability, a keystroke (a LOW write to a [`SourceFile`]) skips
+/// revalidating any query whose only changing dependency is this index: salsa's
+/// version vector compares the HIGH revision in one integer compare and finds it
+/// unmoved. The payload is held behind an `Arc` so a swap is a cheap pointer
+/// write; input fields are never compared for equality (salsa inputs do not
+/// backdate), so the non-`Update` `HashMap`/`SmolStr` inside `IndexedProvider`
+/// is fine here.
+#[salsa::input(singleton)]
+pub struct LibraryIndex {
+    #[returns(ref)]
+    pub data: Arc<IndexedProvider>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryKind {
     ParsedDocument,
@@ -42,6 +60,8 @@ pub enum QueryKind {
     SourceEdges,
     ProjectGraph,
     VisibleSymbols,
+    LoadedNames,
+    ExternalResolution,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -198,6 +218,26 @@ pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<Str
     crate::project::file_free_reads(semantic_model(db, file))
 }
 
+/// The names of the packages attached via `library()`/`require()` in the file,
+/// a projection of [`semantic_model`]'s loaded packages. A masking firewall for
+/// [`external_resolution`](crate::project::external_resolution): editing a body
+/// changes the model but leaves this set equal, so resolution backdates. A set
+/// (not the source-ordered list) because resolution only asks whether a name
+/// resolves to *some* attached package — load order affects only
+/// Resolved-vs-Ambiguous, which the undefined-symbol gate does not distinguish.
+#[salsa::tracked(returns(ref))]
+pub fn loaded_names(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::LoadedNames,
+        file: Some(file),
+    });
+    semantic_model(db, file)
+        .loaded_packages()
+        .iter()
+        .map(|pkg| pkg.name.to_string())
+        .collect()
+}
+
 /// The file's top-level `source()` edges, range-free
 /// ([`crate::project::collect_source_edge_keys`]), as a tracked query. Resolves
 /// relative targets against the file's own directory (`path.parent()`); the
@@ -281,6 +321,43 @@ impl IncrementalDatabase {
 
     pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<String>) {
         file.set_text(self).to(text.into());
+    }
+
+    /// Install (or replace) the harvested package index as the
+    /// [`LibraryIndex`] singleton, at `Durability::HIGH`. The sole writer (CLI
+    /// setup, the LSP lint thread) calls this; never a read snapshot. Creating
+    /// the singleton lands at default durability, so we immediately re-set the
+    /// field at HIGH — the first edit after creation then also skips the library
+    /// subgraph. Returns the singleton input handle.
+    pub fn set_library_index(&mut self, indexed: IndexedProvider) -> LibraryIndex {
+        let data = Arc::new(indexed);
+        match LibraryIndex::try_get(self) {
+            Some(index) => {
+                index
+                    .set_data(self)
+                    .with_durability(Durability::HIGH)
+                    .to(data);
+                index
+            }
+            None => {
+                let index = LibraryIndex::new(self, Arc::clone(&data));
+                index
+                    .set_data(self)
+                    .with_durability(Durability::HIGH)
+                    .to(data);
+                index
+            }
+        }
+    }
+
+    /// The [`LibraryIndex`] singleton, if one has been installed. Read-only.
+    pub fn library_index(&self) -> Option<LibraryIndex> {
+        LibraryIndex::try_get(self)
+    }
+
+    /// The harvested package index payload, if installed. A cheap `Arc` clone.
+    pub fn library_data(&self) -> Option<Arc<IndexedProvider>> {
+        LibraryIndex::try_get(self).map(|index| index.data(self).clone())
     }
 
     /// Insert or update the input for `path`, reusing the existing `SourceFile`
@@ -420,6 +497,22 @@ impl Analysis {
     /// The cached per-file semantic model.
     pub fn semantic_model(&self, file: SourceFile) -> &SemanticModel {
         self.0.semantic_model(file)
+    }
+
+    /// The installed [`LibraryIndex`] singleton handle, if any. The read-phase
+    /// uses it to key the [`external_resolution`](crate::project::external_resolution)
+    /// query.
+    pub fn library_index(&self) -> Option<LibraryIndex> {
+        self.0.library_index()
+    }
+
+    /// The harvested package index payload, if installed. Hover reads the rich
+    /// per-symbol data from this snapshot rather than carrying a separate `Arc`,
+    /// so it sees exactly the index the lint thread last set.
+    pub fn library_data(&self) -> Option<Arc<IndexedProvider>> {
+        self.0
+            .library_index()
+            .map(|index| index.data(&self.0).clone())
     }
 
     /// Borrow the underlying db as the salsa query trait, for read-phase free

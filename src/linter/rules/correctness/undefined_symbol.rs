@@ -28,6 +28,33 @@ impl Rule for UndefinedSymbol {
     }
 
     fn run(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
+        match ctx.resolution {
+            // Cross-file path: the salsa `external_resolution` query already
+            // applied the conservative gates and the project + package masking,
+            // memoized and backdated across edits. We only re-apply the cheap,
+            // always-fresh per-occurrence local-binding check and re-attach the
+            // diagnostic span — the resolved set is range-free.
+            Some(resolution) => ctx
+                .model
+                .idents()
+                .iter()
+                .filter(|ident| ctx.model.resolve_local(ident).is_none())
+                .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
+                .map(|ident| undefined(&ident.name, ident.range))
+                .collect(),
+            // Single-file fallback (no project / no manifest): resolve inline
+            // against the provided `SymbolProvider`, preserving the historical
+            // behavior for one-shot checks and the LSP per-document path.
+            None => self.run_standalone(ctx),
+        }
+    }
+}
+
+impl UndefinedSymbol {
+    /// Inline resolution used when no salsa-backed [`ExternalResolution`] is
+    /// available (single-file paths). Mirrors the cross-file path's logic using
+    /// the [`RuleContext::symbols`] provider directly.
+    fn run_standalone(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
         let mut out = Vec::new();
         let loaded = ctx.model.loaded_packages();
         // Conservative gate: bail out entirely if any attached package's exports
@@ -58,21 +85,23 @@ impl Rule for UndefinedSymbol {
             ) {
                 continue;
             }
-            out.push(Diagnostic {
-                rule: "undefined-symbol",
-                severity: Severity::Warning,
-                path: Default::default(),
-                range: ident.range,
-                message: ViolationData::new(
-                    "undefined-symbol",
-                    format!(
-                        "no in-scope binding or attached package exports `{}`",
-                        ident.name
-                    ),
-                ),
-                fix: None,
-            });
+            out.push(undefined(&ident.name, ident.range));
         }
         out
+    }
+}
+
+/// Build an `undefined-symbol` diagnostic for `name` at `range`.
+fn undefined(name: &str, range: rowan::TextRange) -> Diagnostic {
+    Diagnostic {
+        rule: "undefined-symbol",
+        severity: Severity::Warning,
+        path: Default::default(),
+        range,
+        message: ViolationData::new(
+            "undefined-symbol",
+            format!("no in-scope binding or attached package exports `{name}`"),
+        ),
+        fix: None,
     }
 }

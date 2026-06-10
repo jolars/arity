@@ -16,7 +16,7 @@ pub mod suppression;
 pub use check::{
     LintError, LintFileReport, LintResult, LintStatus, PreparedProject, analyze_prepared,
     check_document, check_document_in_project, check_document_with_provider, check_paths,
-    check_paths_with_config, check_paths_with_provider, prepare_document_in_project,
+    check_paths_with_config, check_paths_with_index, prepare_document_in_project,
 };
 pub use diagnostic::{Applicability, Diagnostic, Fix, Severity, ViolationData};
 pub use fix::{FixOutcome, apply_fixes};

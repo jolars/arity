@@ -149,13 +149,17 @@ in-tree parser, not a drop-in jarl replacement.
       sole writer" a compile-time guarantee instead of a convention. Files:
       `src/incremental.rs`, `src/lsp.rs`, `src/linter/check.rs`. See
       `ARCHITECTURE_AUDIT.md` §3.1.
-- [ ] Salsa durability for rarely-changing inputs: set `Durability::HIGH` on
-      installed-package exports / NAMESPACE / DESCRIPTION inputs so a keystroke
-      (LOW write) skips revalidating the library subgraph. Longer-term, model
-      library symbols as HIGH-durability salsa queries instead of the external
-      `Arc<CompositeProvider>`. Dovetails with the CRAN-manifest item above.
-      Files: `src/incremental.rs`, `src/rindex/provider.rs`,
-      `src/project/graph.rs`. See `ARCHITECTURE_AUDIT.md` §3.2.
+- [x] Salsa durability for rarely-changing inputs: the harvested package index
+      is now a HIGH-durability salsa **singleton input** (`LibraryIndex`), read by
+      a tracked `external_resolution` query that backdates across body edits, so a
+      keystroke (LOW write) skips revalidating the library subgraph via the
+      version vector. The external `Arc<CompositeProvider>` swap pipeline is gone:
+      the lint thread installs the index with `set_library_index` (sole writer)
+      and hover reads it from the read snapshot. R's default-package and bundled
+      CRAN lists stay `&'static` (compile-time constants, never in salsa). Files:
+      `src/incremental.rs`, `src/rindex/provider.rs`, `src/project/graph.rs`,
+      `src/linter/{check.rs,rules.rs,rules/correctness/undefined_symbol.rs}`,
+      `src/lsp.rs`. See `ARCHITECTURE_AUDIT.md` §3.2.
 - [ ] `FileId` / VFS abstraction: replace direct `PathBuf` keys + the synthetic
       `<mem>/{uuid}.R` hack with an opaque `FileId` + a small file-source map
       (rust-analyzer `vfs`/`SourceRoot` model), so paths/cwd don't leak into the

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ravel::incremental::{IncrementalDatabase, QueryKind, SourceFile};
-use ravel::project::{Project, ProjectMember, visible_symbols};
+use ravel::project::{Project, ProjectMember, external_resolution, visible_symbols};
+use ravel::rindex::provider::IndexedProvider;
+use ravel::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
 
 fn count_by_kind(entries: &[ravel::incremental::QueryLogEntry]) -> HashMap<QueryKind, usize> {
     let mut counts = HashMap::new();
@@ -288,5 +290,164 @@ fn reinterning_same_membership_reuses_graph_memo() {
         count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
         None,
         "an unchanged membership must not rebuild the graph"
+    );
+}
+
+/// A single-file "project" with no package root (a bare script), so cross-file
+/// visibility is complete and resolution turns purely on the library index.
+fn project_one<'db>(db: &'db IncrementalDatabase, file: SourceFile, path: &str) -> Project<'db> {
+    let members = vec![ProjectMember {
+        file,
+        path: PathBuf::from(path),
+        package_root: None,
+    }];
+    Project::new(db, members, Vec::new())
+}
+
+/// A harvested package index for `name` exporting `exports`.
+fn index_pkg(name: &str, exports: &[&str]) -> PackageIndex {
+    PackageIndex {
+        schema_version: SCHEMA_VERSION,
+        package: name.into(),
+        version: "1.0".into(),
+        lib_path: "/lib".into(),
+        r_version: None,
+        harvested_at: 0,
+        symbols: exports
+            .iter()
+            .map(|n| SymbolEntry {
+                name: (*n).into(),
+                kind: SymbolKind::Function,
+                exported: true,
+                formals: None,
+                help: None,
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn body_edit_does_not_rerun_external_resolution() {
+    // The library firewall: editing a function *body* changes the model but not
+    // the free-read / loaded-package sets, so `external_resolution` — whose only
+    // other dependency is the HIGH-durability library index — must backdate
+    // rather than re-run. This is the "keystroke skips the library subgraph" win.
+    let mut db = IncrementalDatabase::default();
+    let path = "/proj/a.R";
+    let file = db.upsert_file(
+        Path::new(path),
+        "foo <- function() {\n  bar(1)\n}\n".to_string(),
+    );
+    let manifest = db.set_library_index(IndexedProvider::empty());
+
+    {
+        let project = project_one(&db, file, path);
+        let res = external_resolution(&db, manifest, project, file);
+        assert!(
+            res.unresolved.contains("bar"),
+            "bar is undefined: {:?}",
+            res.unresolved
+        );
+    }
+
+    db.clear_query_log();
+
+    // Edit the body only: add a literal statement. Free reads ({bar}) and loaded
+    // packages ({}) are unchanged.
+    db.set_file_text(file, "foo <- function() {\n  bar(1)\n  2\n}\n");
+
+    let project = project_one(&db, file, path);
+    let _ = external_resolution(&db, manifest, project, file);
+
+    let counts = count_by_kind(&db.query_log());
+    // The body changed, so the model re-runs...
+    assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
+    // ...but resolution backdates: its free-read / loaded inputs are unchanged and
+    // the library index is HIGH-durability, so it is not re-executed.
+    assert_eq!(
+        counts.get(&QueryKind::ExternalResolution),
+        None,
+        "external resolution must not re-run on a body edit"
+    );
+}
+
+#[test]
+fn swapping_library_index_invalidates_resolution() {
+    // The complement: replacing the library index re-runs resolution (it is a
+    // real dependency) without touching the text-derived queries (parse/model).
+    let mut db = IncrementalDatabase::default();
+    let path = "/proj/a.R";
+    let file = db.upsert_file(
+        Path::new(path),
+        "library(somepkg)\nfoo <- function() across()\n".to_string(),
+    );
+
+    // somepkg is indexed (so the rule's gate passes) but does not yet export
+    // `across`, so `across` is unresolved.
+    let manifest = db.set_library_index(IndexedProvider::from_indices([index_pkg("somepkg", &[])]));
+    {
+        let project = project_one(&db, file, path);
+        let res = external_resolution(&db, manifest, project, file);
+        assert!(
+            res.unresolved.contains("across"),
+            "across unresolved before swap: {:?}",
+            res.unresolved
+        );
+    }
+
+    db.clear_query_log();
+
+    // Swap the index: somepkg now exports `across`.
+    db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "somepkg",
+        &["across"],
+    )]));
+
+    let project = project_one(&db, file, path);
+    let res = external_resolution(&db, manifest, project, file);
+    assert!(
+        !res.unresolved.contains("across"),
+        "across resolves after the swap: {:?}",
+        res.unresolved
+    );
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ExternalResolution),
+        Some(&1),
+        "a library-index swap must re-run resolution"
+    );
+    // The text is unchanged, so the parse and model are orthogonal to the swap.
+    assert_eq!(
+        counts.get(&QueryKind::SemanticModel),
+        None,
+        "model must not re-run on a library-index swap"
+    );
+    assert_eq!(
+        counts.get(&QueryKind::ParsedDocument),
+        None,
+        "parse must not re-run on a library-index swap"
+    );
+}
+
+#[test]
+fn unindexed_attached_package_suppresses_resolution() {
+    // Conservative gate: when an attached package's exports are unknown (not
+    // base, not indexed, not bundled), it could define any unresolved name, so
+    // resolution yields nothing for the whole file.
+    let mut db = IncrementalDatabase::default();
+    let path = "/proj/a.R";
+    let file = db.upsert_file(
+        Path::new(path),
+        "library(mysterypkgxyz)\nfoo <- function() across()\n".to_string(),
+    );
+    let manifest = db.set_library_index(IndexedProvider::empty());
+
+    let project = project_one(&db, file, path);
+    let res = external_resolution(&db, manifest, project, file);
+    assert!(
+        res.unresolved.is_empty(),
+        "an unindexed attached package suppresses resolution: {:?}",
+        res.unresolved
     );
 }

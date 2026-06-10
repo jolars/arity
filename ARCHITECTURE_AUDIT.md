@@ -149,19 +149,33 @@ These are correct and should **not** be churned.
   private to the lint worker. The single-writer invariant the module doc
   (`src/lsp.rs:5-14`) relies on is now a compile-time guarantee.
 
-### 3.2 Durability + pulling the index into salsa --- *medium leverage/effort*
+### 3.2 Durability + pulling the index into salsa --- *adopted*
 
 - **rust-analyzer:** library/std `SourceRoot`s get `Durability::HIGH`, user code
   `LOW`. salsa keeps a version *vector*, so a keystroke (LOW write) skips
   revalidating the HIGH-durability library subgraph in a single integer compare.
-- **ravel:** no durability is set; all inputs default to LOW. The rindex is
-  entirely outside salsa, rebuilt on rayon and swapped via `Arc`.
-- **Recommend:** (a) raise durability to `HIGH` for rarely-changing inputs
-  (installed package exports, NAMESPACE/DESCRIPTION) when they're set; (b)
-  longer-term, model library symbols as HIGH-durability salsa inputs/queries so
-  name resolution memoizes across edits instead of carrying an external `Arc`.
-  Dovetails with the existing "CRAN-wide symbol manifest" TODO. Files:
-  `src/incremental.rs`, `src/rindex/provider.rs`, `src/project/graph.rs`.
+- **ravel (was):** no durability was set; all inputs defaulted to LOW. The rindex
+  lived entirely outside salsa, rebuilt on rayon and hot-swapped via `Arc` through
+  a channel; name resolution called the provider directly, bypassing salsa.
+- **Done:** the harvested package index is a HIGH-durability salsa **singleton
+  input** `LibraryIndex(Arc<IndexedProvider>)` (`src/incremental.rs`). A tracked
+  `external_resolution(manifest, project, file)` query (`src/project/graph.rs`)
+  resolves a file's free reads against it, returning an `Eq` `BTreeSet<String>`
+  of undefined-symbol candidates. It depends only on `Eq` firewall projections
+  (`file_free_reads`, the new `loaded_names`, `visible_symbols`) plus the HIGH
+  manifest, so a body edit that leaves the free-read / loaded / visibility sets
+  unchanged re-runs neither it nor any masking work — salsa skips the library
+  subgraph via the version vector (`tests/salsa_incremental.rs`). The masking
+  algorithm was extracted into free `resolve_origin`/`package_indexed` functions
+  over the static base/bundled layers + the indexed layer, shared by the query,
+  the `undefined-symbol` rule, and hover. The external `Arc<CompositeProvider>`
+  swap pipeline is removed: the lint thread is the sole writer
+  (`set_library_index`, HIGH durability), and hover reads the index from the read
+  snapshot (`Analysis::library_data`). The rule re-attaches diagnostic spans (and
+  re-applies the per-occurrence local-binding check) from the fresh
+  `semantic_model`, so the range-free resolved set stays correct. R's
+  default-package and bundled-CRAN lists stay `&'static` (compile-time constants,
+  never in salsa). Single-file paths keep the `&dyn SymbolProvider` fallback.
 
 ### 3.3 FileId / VFS abstraction --- *lower leverage, removes a wart*
 

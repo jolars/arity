@@ -11,7 +11,10 @@ pub mod scope;
 pub mod source;
 
 pub use exports::{file_exports, file_free_reads};
-pub use graph::{Project, ProjectMember, Visibility, project_graph, visible_symbols};
+pub use graph::{
+    ExternalResolution, Project, ProjectMember, Visibility, external_resolution, project_graph,
+    visible_symbols,
+};
 pub use scope::{FileFacts, FileScope, ProjectScope, package_root};
 pub use source::{
     SourceEdge, SourceEdgeKey, SourceTarget, collect_source_edge_keys, collect_source_edges,

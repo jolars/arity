@@ -11,7 +11,11 @@ use crate::file_discovery::{FileDiscoveryError, collect_r_files};
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, SourceFile, parsed_tree_root, semantic_model,
 };
-use crate::project::{FileScope, Project, ProjectMember, package_root, visible_symbols};
+use crate::project::{
+    ExternalResolution, FileScope, Project, ProjectMember, external_resolution, package_root,
+    visible_symbols,
+};
+use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
 
 use super::diagnostic::Diagnostic;
@@ -94,16 +98,17 @@ pub fn check_paths_with_config(
     paths: &[PathBuf],
     config: &LintConfig,
 ) -> Result<LintResult, LintError> {
-    check_paths_with_provider(paths, config, &default_symbol_provider())
+    check_paths_with_index(paths, config, IndexedProvider::empty())
 }
 
-/// Like [`check_paths_with_config`] but with a caller-supplied symbol provider
-/// (e.g. one backed by the installed-package index). The provider is built
-/// once and reused across all files.
-pub fn check_paths_with_provider(
+/// Like [`check_paths_with_config`] but with a caller-supplied harvested package
+/// index, installed into salsa as the HIGH-durability [`LibraryIndex`] and used
+/// by the [`external_resolution`] query. R's default packages and the bundled
+/// CRAN lists are static and need not be supplied.
+pub fn check_paths_with_index(
     paths: &[PathBuf],
     config: &LintConfig,
-    provider: &dyn SymbolProvider,
+    indexed: IndexedProvider,
 ) -> Result<LintResult, LintError> {
     if paths.is_empty() {
         return Err(LintError::MissingPaths);
@@ -147,10 +152,19 @@ pub fn check_paths_with_provider(
         }
     }
 
+    // Install the harvested index as the HIGH-durability library singleton
+    // before interning (interning borrows `&db`). `external_resolution` reads it.
+    let manifest = db.set_library_index(indexed);
+
     // Read the NAMESPACE of each package being linted, so exported bindings
     // aren't flagged unused and imported names resolve.
     let namespaces = read_namespaces(members.iter().filter_map(|m| m.package_root.as_deref()));
     let project = intern_project(&db, members, namespaces);
+
+    // The cross-file path resolves undefined symbols through `external_resolution`
+    // (which uses the salsa library index), so the provider passed to the rules is
+    // only the fallback for rules that read static base-R facts (`is_base`).
+    let fallback = default_symbol_provider();
 
     // Pass 2: lint each cleanly parsed file with its cross-file scope.
     let mut reports = Vec::new();
@@ -162,7 +176,16 @@ pub fn check_paths_with_provider(
         } else {
             let visibility = visible_symbols(&db, project, file);
             let file_scope = visibility.scope();
-            let kept = lint_parsed_file(&db, file, &path, &rules, provider, Some(&file_scope));
+            let resolution = external_resolution(&db, manifest, project, file);
+            let kept = lint_parsed_file(
+                &db,
+                file,
+                &path,
+                &rules,
+                &fallback,
+                Some(&file_scope),
+                Some(resolution),
+            );
             total_findings += kept.len();
             let status = if kept.is_empty() {
                 LintStatus::Clean
@@ -225,10 +248,19 @@ fn lint_parsed_file(
     rules: &ResolvedRules,
     provider: &dyn SymbolProvider,
     project: Option<&FileScope<'_>>,
+    resolution: Option<&ExternalResolution>,
 ) -> Vec<Diagnostic> {
     let root_node = parsed_tree_root(db, file);
     let model = semantic_model(db, file);
-    let mut diagnostics = run_rules(&rules.rules, path, &root_node, model, provider, project);
+    let mut diagnostics = run_rules(
+        &rules.rules,
+        path,
+        &root_node,
+        model,
+        provider,
+        project,
+        resolution,
+    );
     let suppress = SuppressionMap::build(&root_node);
     diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));
     for d in &mut diagnostics {
@@ -254,7 +286,9 @@ pub fn check_tracked_file(
     if !db.parse_diagnostics(file).is_empty() {
         return Ok(Vec::new());
     }
-    Ok(lint_parsed_file(db, file, path, &rules, provider, None))
+    Ok(lint_parsed_file(
+        db, file, path, &rules, provider, None, None,
+    ))
 }
 
 /// The write-phase output of cross-file linting: everything [`analyze_prepared`]
@@ -365,6 +399,12 @@ pub fn analyze_prepared(
     let active_path = analysis.file_path(prepared.active).to_path_buf();
     let visibility = visible_symbols(db, project, prepared.active);
     let file_scope = visibility.scope();
+    // Resolve undefined symbols through the salsa library index when one is
+    // installed (HIGH-durability, so it survives keystrokes); else fall back to
+    // the threaded `provider`. The query memoizes and backdates across body edits.
+    let resolution = analysis
+        .library_index()
+        .map(|manifest| external_resolution(db, manifest, project, prepared.active));
     lint_parsed_file(
         db,
         prepared.active,
@@ -372,6 +412,7 @@ pub fn analyze_prepared(
         &prepared.rules,
         provider,
         Some(&file_scope),
+        resolution,
     )
 }
 

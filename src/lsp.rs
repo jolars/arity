@@ -81,9 +81,11 @@ use crate::rindex::build::{BuildOptions, build_index};
 use crate::rindex::cache::{Cache, resolve_cache_root};
 use crate::rindex::discover::referenced_in_source;
 use crate::rindex::libpaths::LibrarySearch;
-use crate::rindex::provider::{CompositeProvider, IndexedProvider};
+use crate::rindex::provider::{
+    CompositeProvider, IndexedProvider, package_indexed, resolve_origin,
+};
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
-use crate::semantic::{PackageOrigin, SemanticModel, SymbolProvider as _};
+use crate::semantic::{PackageOrigin, SemanticModel};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::LineIndex;
 
@@ -273,7 +275,6 @@ enum ReadJob {
         path: PathBuf,
         text: String,
         position: Position,
-        provider: Arc<CompositeProvider>,
         sender: Sender<Message>,
     },
 }
@@ -289,9 +290,6 @@ enum Outbound {
         diags: Vec<LspDiagnostic>,
         findings: Arc<Vec<Diagnostic>>,
     },
-    /// The symbol provider changed (cache loaded or a background build finished);
-    /// the main loop caches it for hover.
-    ProviderUpdated(Arc<CompositeProvider>),
     /// A background index build completed; re-lint every open document.
     RelintAll,
 }
@@ -309,9 +307,6 @@ struct GlobalState {
     /// [`compute_code_actions`].
     findings: HashMap<Uri, (i32, Arc<Vec<Diagnostic>>)>,
     config_cache: HashMap<PathBuf, ResolvedSettings>,
-    /// The current symbol provider, used for hover. Updated by the lint thread
-    /// via [`Outbound::ProviderUpdated`]; starts base-R-only.
-    provider: Arc<CompositeProvider>,
     /// Editor-pushed formatter defaults; the fallback when no `ravel.toml` is
     /// found. Updated by `workspace/didChangeConfiguration`.
     editor_settings: EditorSettings,
@@ -334,7 +329,6 @@ impl GlobalState {
             documents: HashMap::new(),
             findings: HashMap::new(),
             config_cache: HashMap::new(),
-            provider: Arc::new(CompositeProvider::base_only()),
             editor_settings,
             sender,
             lint_tx,
@@ -474,7 +468,6 @@ impl GlobalState {
             path,
             text,
             position,
-            provider: Arc::clone(&self.provider),
             sender: self.sender.clone(),
         });
     }
@@ -573,7 +566,6 @@ impl GlobalState {
                     self.publish(uri, diags, Some(version));
                 }
             }
-            Outbound::ProviderUpdated(provider) => self.provider = provider,
             Outbound::RelintAll => {
                 let uris: Vec<Uri> = self.documents.keys().cloned().collect();
                 for uri in uris {
@@ -659,14 +651,13 @@ fn spawn_lint_thread(
     read_rx: Receiver<ReadJob>,
     out_tx: Sender<Outbound>,
 ) -> JoinHandle<()> {
-    let (build_tx, build_rx) = crossbeam_channel::unbounded::<Arc<CompositeProvider>>();
+    let (build_tx, build_rx) = crossbeam_channel::unbounded::<IndexedProvider>();
     let (done_tx, done_rx) = crossbeam_channel::unbounded::<AnalyzeDone>();
     std::thread::Builder::new()
         .name("ravel-lint".to_string())
         .spawn(move || {
             let mut worker = LintWorker {
                 db: IncrementalDatabase::default(),
-                index: Arc::new(CompositeProvider::base_only()),
                 index_loaded: HashSet::new(),
                 index_attempts: HashSet::new(),
                 out_tx,
@@ -731,16 +722,16 @@ fn decide(inflight: Option<(&Uri, i32)>, pending: &HashMap<Uri, i32>) -> Dispatc
 
 struct LintWorker {
     db: IncrementalDatabase,
-    /// The symbol provider used for linting. Starts base-R-only and is replaced
-    /// once the index cache is loaded (and again after a background build).
-    index: Arc<CompositeProvider>,
-    /// Workspace anchors whose index cache has already been loaded into `index`.
+    /// Workspace anchors whose index cache has already been loaded into the salsa
+    /// [`LibraryIndex`] singleton.
     index_loaded: HashSet<PathBuf>,
     /// Packages a background harvest has already been scheduled for this session
     /// — never retried, so a not-installed package doesn't loop.
     index_attempts: HashSet<SmolStr>,
     out_tx: Sender<Outbound>,
-    build_tx: Sender<Arc<CompositeProvider>>,
+    /// A finished background harvest sends its freshly-loaded index here; the
+    /// lint thread (sole writer) installs it into salsa at HIGH durability.
+    build_tx: Sender<IndexedProvider>,
     /// Read-phase workers signal completion here so the lint thread can free the
     /// in-flight slot and dispatch the next pending lint.
     done_tx: Sender<AnalyzeDone>,
@@ -758,7 +749,7 @@ impl LintWorker {
         &mut self,
         lint_rx: &Receiver<LintMsg>,
         read_rx: &Receiver<ReadJob>,
-        build_rx: &Receiver<Arc<CompositeProvider>>,
+        build_rx: &Receiver<IndexedProvider>,
         done_rx: &Receiver<AnalyzeDone>,
     ) {
         loop {
@@ -793,9 +784,10 @@ impl LintWorker {
                     rayon::spawn(move || run_read(snapshot, job));
                 }
                 recv(build_rx) -> built => {
-                    let Ok(provider) = built else { continue };
-                    self.index = Arc::clone(&provider);
-                    let _ = self.out_tx.send(Outbound::ProviderUpdated(provider));
+                    let Ok(indexed) = built else { continue };
+                    // Sole writer installs the freshly-harvested index at HIGH
+                    // durability, then re-lints every open document against it.
+                    self.db.set_library_index(indexed);
                     let _ = self.out_tx.send(Outbound::RelintAll);
                 }
             }
@@ -865,7 +857,7 @@ impl LintWorker {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
 
-        let provider = self.ensure_index(&anchor, &req.index_config);
+        self.ensure_index(&anchor, &req.index_config);
 
         // Write-phase: push the live buffer + sibling files into the persistent
         // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
@@ -885,10 +877,11 @@ impl LintWorker {
             }
         };
 
-        // `auto_build` reads the buffer + provider and mutates `index_attempts`,
-        // so it stays on the lint thread; it spawns its own background build.
+        // `auto_build` reads the buffer + the current salsa index and mutates
+        // `index_attempts`, so it stays on the lint thread; it spawns its own
+        // background build, whose result is installed back here on `build_rx`.
         if req.index_config.auto_build {
-            self.maybe_build(&anchor, &req.index_config, &req.text, &provider);
+            self.maybe_build(&anchor, &req.index_config, &req.text);
         }
 
         // Read-phase on rayon, holding a db clone. A superseding edit (or any
@@ -905,9 +898,13 @@ impl LintWorker {
             version,
         });
 
+        // The snapshot carries the salsa library index, so `analyze_prepared`
+        // resolves undefined symbols through it; this provider is only the
+        // fallback for rules that read static base-R facts (`is_base`).
+        let fallback = CompositeProvider::base_only();
         rayon::spawn(move || {
             let result = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-                crate::linter::check::analyze_prepared(&snapshot, &prepared, &*provider)
+                crate::linter::check::analyze_prepared(&snapshot, &prepared, &fallback)
             }));
             if let Ok(diagnostics) = result {
                 let line_index = LineIndex::new(&text);
@@ -943,39 +940,30 @@ impl LintWorker {
         });
     }
 
-    /// Load the index cache for `anchor` into the provider the first time we see
-    /// that workspace; return the current provider either way.
-    fn ensure_index(&mut self, anchor: &Path, cfg: &IndexConfig) -> Arc<CompositeProvider> {
+    /// Load the index cache for `anchor` into the salsa [`LibraryIndex`] the
+    /// first time we see that workspace. Idempotent per anchor. Runs on the lint
+    /// thread (sole writer); the HIGH-durability set means subsequent keystrokes
+    /// don't revalidate the library subgraph.
+    fn ensure_index(&mut self, anchor: &Path, cfg: &IndexConfig) {
         if self.index_loaded.contains(anchor) {
-            return Arc::clone(&self.index);
+            return;
         }
-        let provider = match resolve_cache_root(None, cfg.cache_dir.as_deref()) {
-            Ok(root) => {
-                let cache = Cache::new(root);
-                Arc::new(CompositeProvider::with_index(IndexedProvider::from_cache(
-                    &cache,
-                )))
-            }
-            Err(_) => Arc::new(CompositeProvider::base_only()),
+        let indexed = match resolve_cache_root(None, cfg.cache_dir.as_deref()) {
+            Ok(root) => IndexedProvider::from_cache(&Cache::new(root)),
+            Err(_) => IndexedProvider::empty(),
         };
-        self.index = Arc::clone(&provider);
+        self.db.set_library_index(indexed);
         self.index_loaded.insert(anchor.to_path_buf());
-        let _ = self
-            .out_tx
-            .send(Outbound::ProviderUpdated(Arc::clone(&provider)));
-        provider
     }
 
-    /// Spawn a background harvest for the document's unknown packages. On
-    /// success the new provider is sent back on `build_tx`.
-    fn maybe_build(
-        &mut self,
-        anchor: &Path,
-        cfg: &IndexConfig,
-        source: &str,
-        provider: &CompositeProvider,
-    ) {
-        let to_build = packages_to_build(&mut self.index_attempts, provider, source);
+    /// Spawn a background harvest for the document's unknown packages. On success
+    /// the freshly-loaded index is sent back on `build_tx` for the lint thread to
+    /// install. The "already indexed?" check reads the current salsa index.
+    fn maybe_build(&mut self, anchor: &Path, cfg: &IndexConfig, source: &str) {
+        let current = self.db.library_data();
+        let empty = IndexedProvider::empty();
+        let indexed = current.as_deref().unwrap_or(&empty);
+        let to_build = packages_to_build(&mut self.index_attempts, indexed, source);
         if to_build.is_empty() {
             return;
         }
@@ -1000,26 +988,23 @@ impl LintWorker {
                 now,
             );
             if report.newly_indexed().next().is_some() {
-                let provider = Arc::new(CompositeProvider::with_index(
-                    IndexedProvider::from_cache(&cache),
-                ));
-                let _ = build_tx.send(provider);
+                let _ = build_tx.send(IndexedProvider::from_cache(&cache));
             }
         });
     }
 }
 
-/// Packages referenced in `source` that the current `provider` can't resolve and
-/// that we haven't already attempted this session. Marks the returned packages
-/// as attempted so they aren't built twice.
+/// Packages referenced in `source` that the current index can't resolve and that
+/// we haven't already attempted this session. Marks the returned packages as
+/// attempted so they aren't built twice.
 fn packages_to_build(
     attempts: &mut HashSet<SmolStr>,
-    provider: &CompositeProvider,
+    indexed: &IndexedProvider,
     source: &str,
 ) -> Vec<SmolStr> {
     referenced_in_source(source)
         .into_iter()
-        .filter(|pkg| !provider.package_indexed(pkg) && attempts.insert(pkg.clone()))
+        .filter(|pkg| !package_indexed(indexed, pkg) && attempts.insert(pkg.clone()))
         .collect()
 }
 
@@ -1065,10 +1050,9 @@ fn run_read(snapshot: Analysis, job: ReadJob) {
             path,
             text,
             position,
-            provider,
             sender,
         } => {
-            let result = hover_via_db(&snapshot, &path, &text, position, &provider);
+            let result = hover_via_db(&snapshot, &path, &text, position);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
     }
@@ -1143,28 +1127,26 @@ fn format_range_edits_via_db(
 
 /// Resolve hover off the snapshot's cached parse when the db's tracked buffer for
 /// `path` still matches `text`; otherwise re-parse. Falls back on cancellation.
-fn hover_via_db(
-    snapshot: &Analysis,
-    path: &Path,
-    text: &str,
-    position: Position,
-    provider: &CompositeProvider,
-) -> Option<Hover> {
+fn hover_via_db(snapshot: &Analysis, path: &Path, text: &str, position: Position) -> Option<Hover> {
     let line_index = LineIndex::new(text);
     let offset = line_index.position_to_byte(position).min(text.len());
+    // Read the harvested index from the same snapshot, so hover sees exactly the
+    // index the lint thread last installed. An empty index (none installed yet)
+    // still resolves base-R + bundled names via the static layers.
+    let index = snapshot.library_data().unwrap_or_default();
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
         if snapshot.file_text(file) != text {
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(hover_from_node(&root, &line_index, offset, provider))
+        Some(hover_from_node(&root, &line_index, offset, &index))
     }));
     match cached {
         Ok(Some(hover)) => hover,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            hover_from_node(&root, &line_index, offset, provider)
+            hover_from_node(&root, &line_index, offset, &index)
         }
     }
 }
@@ -1381,10 +1363,10 @@ enum SymbolQuery {
 
 /// Build hover contents for the symbol at byte `offset`, if it resolves to an
 /// indexed package export. Pure (parses `text` itself) so it is unit-testable.
-pub fn compute_hover(text: &str, offset: usize, provider: &CompositeProvider) -> Option<Hover> {
+pub fn compute_hover(text: &str, offset: usize, indexed: &IndexedProvider) -> Option<Hover> {
     let root = parse(text).cst;
     let line_index = LineIndex::new(text);
-    hover_from_node(&root, &line_index, offset.min(text.len()), provider)
+    hover_from_node(&root, &line_index, offset.min(text.len()), indexed)
 }
 
 /// Build hover contents off an already-parsed CST (and a matching line index),
@@ -1394,11 +1376,11 @@ fn hover_from_node(
     root: &SyntaxNode,
     line_index: &LineIndex,
     offset: usize,
-    provider: &CompositeProvider,
+    indexed: &IndexedProvider,
 ) -> Option<Hover> {
     let offset = TextSize::new(offset as u32);
     let query = symbol_query_at(root, offset)?;
-    let (package, entry, range) = resolve_query(query, root, provider)?;
+    let (package, entry, range) = resolve_query(query, root, indexed)?;
 
     let lsp_range = Range {
         start: line_index.byte_to_position(u32::from(range.start()) as usize),
@@ -1458,7 +1440,7 @@ fn pick_name_token(root: &SyntaxNode, offset: TextSize) -> Option<SyntaxToken<RL
 fn resolve_query<'p>(
     query: SymbolQuery,
     root: &SyntaxNode,
-    provider: &'p CompositeProvider,
+    indexed: &'p IndexedProvider,
 ) -> Option<(SmolStr, &'p SymbolEntry, TextRange)> {
     match query {
         SymbolQuery::Namespaced {
@@ -1466,18 +1448,18 @@ fn resolve_query<'p>(
             name,
             range,
         } => {
-            let entry = provider.indexed().lookup(&package, &name)?;
+            let entry = indexed.lookup(&package, &name)?;
             Some((package, entry, range))
         }
         SymbolQuery::Bare { name, range } => {
             let model = SemanticModel::build(root);
-            let package = match provider.origin(&name, model.loaded_packages()) {
+            let package = match resolve_origin(indexed, &name, model.loaded_packages()) {
                 PackageOrigin::Resolved(p) => p,
                 // The last attacher masks the rest under R's lookup rules.
                 PackageOrigin::Ambiguous(mut v) => v.pop()?,
                 PackageOrigin::Unknown => return None,
             };
-            let entry = provider.indexed().lookup(&package, &name)?;
+            let entry = indexed.lookup(&package, &name)?;
             Some((package, entry, range))
         }
     }
@@ -1865,7 +1847,7 @@ mod tests {
         assert!(actions.is_empty(), "expected no actions, got {actions:?}");
     }
 
-    fn indexed_dplyr() -> CompositeProvider {
+    fn indexed_dplyr() -> IndexedProvider {
         use crate::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
         let idx = PackageIndex {
             schema_version: SCHEMA_VERSION,
@@ -1882,27 +1864,27 @@ mod tests {
                 help: None,
             }],
         };
-        CompositeProvider::with_index(IndexedProvider::from_indices([idx]))
+        IndexedProvider::from_indices([idx])
     }
 
     #[test]
     fn packages_to_build_skips_indexed_and_dedups_attempts() {
         let mut attempts = HashSet::new();
-        let provider = indexed_dplyr();
-        // dplyr is indexed (skipped); a default package (stats) is "indexed" too;
-        // only tidyr needs a build.
-        let src = "library(dplyr)\nlibrary(stats)\nlibrary(tidyr)\n";
-        let first = packages_to_build(&mut attempts, &provider, src);
-        assert_eq!(first, vec![SmolStr::new("tidyr")]);
-        // A second pass returns nothing — tidyr was already attempted.
-        let second = packages_to_build(&mut attempts, &provider, src);
+        let indexed = indexed_dplyr();
+        // dplyr is indexed (skipped); a default package (stats) is "indexed" too,
+        // as is any bundled-CRAN package — only an unknown package needs a build.
+        let src = "library(dplyr)\nlibrary(stats)\nlibrary(notarealpkg)\n";
+        let first = packages_to_build(&mut attempts, &indexed, src);
+        assert_eq!(first, vec![SmolStr::new("notarealpkg")]);
+        // A second pass returns nothing — the package was already attempted.
+        let second = packages_to_build(&mut attempts, &indexed, src);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }
 
     // --- hover ------------------------------------------------------------
 
     /// dplyr with one richly-documented export (`across`).
-    fn documented_dplyr() -> CompositeProvider {
+    fn documented_dplyr() -> IndexedProvider {
         use crate::rindex::schema::{Formal, HelpArg, HelpDoc, PackageIndex, SCHEMA_VERSION};
         let idx = PackageIndex {
             schema_version: SCHEMA_VERSION,
@@ -1936,7 +1918,7 @@ mod tests {
                 }),
             }],
         };
-        CompositeProvider::with_index(IndexedProvider::from_indices([idx]))
+        IndexedProvider::from_indices([idx])
     }
 
     /// Byte offset of the first occurrence of `needle` in `src`.
@@ -1944,8 +1926,8 @@ mod tests {
         src.find(needle).expect("needle present") + 1
     }
 
-    fn hover_markdown(src: &str, needle: &str, provider: &CompositeProvider) -> Option<String> {
-        compute_hover(src, offset_of(src, needle), provider).map(|h| match h.contents {
+    fn hover_markdown(src: &str, needle: &str, indexed: &IndexedProvider) -> Option<String> {
+        compute_hover(src, offset_of(src, needle), indexed).map(|h| match h.contents {
             HoverContents::Markup(m) => m.value,
             other => panic!("expected markup, got {other:?}"),
         })
@@ -2032,16 +2014,17 @@ mod tests {
     #[test]
     fn hover_via_db_matches_compute() {
         use crate::incremental::IncrementalDatabase;
-        let provider = documented_dplyr();
         let path = test_path();
         let src = "library(dplyr)\nacross(a, mean)\n";
         // Cursor on `across` (line 1, character 0).
         let position = pos(1, 0);
 
+        // Hover reads the index from the snapshot, so it must be installed first.
         let mut db = IncrementalDatabase::default();
+        db.set_library_index(documented_dplyr());
         db.upsert_file(path, src.to_string());
-        let hover = hover_via_db(&db.snapshot(), path, src, position, &provider)
-            .expect("hover for across via db");
+        let hover =
+            hover_via_db(&db.snapshot(), path, src, position).expect("hover for across via db");
         let md = match hover.contents {
             HoverContents::Markup(m) => m.value,
             other => panic!("expected markup, got {other:?}"),
@@ -2049,9 +2032,10 @@ mod tests {
         assert!(md.contains("dplyr::across"), "origin: {md}");
 
         // Untracked path still resolves, via the fresh-parse fallback.
-        let empty = IncrementalDatabase::default();
+        let mut empty = IncrementalDatabase::default();
+        empty.set_library_index(documented_dplyr());
         assert!(
-            hover_via_db(&empty.snapshot(), path, src, position, &provider).is_some(),
+            hover_via_db(&empty.snapshot(), path, src, position).is_some(),
             "fallback hover should resolve too"
         );
     }

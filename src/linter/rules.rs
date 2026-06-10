@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use crate::project::FileScope;
+use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{SemanticModel, SymbolProvider};
 use crate::syntax::SyntaxNode;
@@ -58,6 +58,12 @@ pub struct RuleContext<'a> {
     /// Cross-file visibility for this file, when linting a multi-file project.
     /// `None` for single-file runs (the LSP per-document path, one-shot checks).
     pub project: Option<&'a FileScope<'a>>,
+    /// Salsa-resolved external-symbol verdict for this file, when available (the
+    /// cross-file lint path). Carries the backdated set of free-read names that
+    /// resolve to no attached package, so `undefined-symbol` consumes a memoized
+    /// result instead of re-running masking on every keystroke. `None` on the
+    /// single-file paths, where the rule falls back to [`RuleContext::symbols`].
+    pub resolution: Option<&'a ExternalResolution>,
 }
 
 /// Configured set of rules and severities for a single linting run.
@@ -110,6 +116,7 @@ pub fn run_rules(
     model: &SemanticModel,
     symbols: &dyn SymbolProvider,
     project: Option<&FileScope<'_>>,
+    resolution: Option<&ExternalResolution>,
 ) -> Vec<Diagnostic> {
     let ctx = RuleContext {
         path,
@@ -117,6 +124,7 @@ pub fn run_rules(
         model,
         symbols,
         project,
+        resolution,
     };
     let mut all = Vec::new();
     for rule in rules {
