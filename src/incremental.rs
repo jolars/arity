@@ -8,17 +8,18 @@
 //! builds on the cached tree, so the linter and LSP no longer re-parse and
 //! rebuild the model from text on every run.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use rowan::TextRange;
 use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, parse, reparse};
-use crate::project::SourceEdgeKey;
+use crate::project::{DefKind, SourceEdgeKey};
 use crate::rindex::provider::IndexedProvider;
-use crate::semantic::SemanticModel;
+use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 use crate::syntax::SyntaxNode;
 
 /// An opaque, process-local file identity. Decouples a tracked file from any
@@ -105,14 +106,43 @@ pub struct LibraryIndex {
     pub data: Arc<IndexedProvider>,
 }
 
+/// The explicit workspace file-set, modeled as a salsa **singleton** input at
+/// `Durability::MEDIUM`. The interned [`Project`](crate::project::Project) is
+/// *derived* from this (see
+/// [`workspace_project`](crate::project::workspace_project)) rather than rebuilt
+/// by a per-request disk walk: the member files are discovered once (the LSP
+/// seed, the CLI's `collect_r_files`) and reused until the set actually changes.
+///
+/// MEDIUM durability sits between the HIGH [`LibraryIndex`] and the LOW per-file
+/// [`SourceFile`] text. Like every salsa input it never backdates, so the setter
+/// ([`set_workspace_members`](IncrementalDatabase::set_workspace_members)) must
+/// skip the write when the member set is unchanged — otherwise re-seeding an
+/// identical set on each lint would bump the revision needlessly. `members` may
+/// include files that currently fail to parse; `workspace_project` filters those
+/// out, so membership is stable across a parse error appearing and clearing.
+#[salsa::input(singleton)]
+pub struct Workspace {
+    /// Every tracked file in the workspace, in any order (the setter sorts for a
+    /// stable key). Pathless in-memory files are ignored by `workspace_project`.
+    #[returns(ref)]
+    pub members: Vec<SourceFile>,
+    /// The workspace roots the members were discovered under.
+    #[returns(ref)]
+    pub roots: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryKind {
     ParsedDocument,
     SemanticModel,
     FileExports,
     FileFreeReads,
+    FileDefSites,
     SourceEdges,
+    ReverseSourceEdges,
+    WorkspaceProject,
     ProjectGraph,
+    ProjectDefs,
     VisibleSymbols,
     LoadedNames,
     ExternalResolution,
@@ -272,6 +302,20 @@ pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<Str
     crate::project::file_free_reads(semantic_model(db, file))
 }
 
+/// The file's top-level definitions tagged by [`DefKind`]
+/// ([`crate::project::file_def_sites`]), as a tracked query. The name set mirrors
+/// [`file_exports`]; the tag enables a symbol index. Range-free, so it backdates
+/// across a body edit exactly like [`file_exports`] — a consumer recovers the
+/// actual def span from the fresh [`semantic_model`] per request.
+#[salsa::tracked(returns(ref))]
+pub fn file_def_sites(db: &dyn IncrementalDb, file: SourceFile) -> BTreeMap<String, DefKind> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FileDefSites,
+        file: Some(file),
+    });
+    crate::project::file_def_sites(semantic_model(db, file), &parsed_tree_root(db, file))
+}
+
 /// The names of the packages attached via `library()`/`require()` in the file,
 /// a projection of [`semantic_model`]'s loaded packages. A masking firewall for
 /// [`external_resolution`](crate::project::external_resolution): editing a body
@@ -414,6 +458,54 @@ impl IncrementalDatabase {
     /// The [`LibraryIndex`] singleton, if one has been installed. Read-only.
     pub fn library_index(&self) -> Option<LibraryIndex> {
         LibraryIndex::try_get(self)
+    }
+
+    /// Install (or update) the explicit workspace file-set as the [`Workspace`]
+    /// singleton, at `Durability::MEDIUM`. `members` are sorted by [`FileId`] for
+    /// a stable key; the write is **skipped when the set is unchanged**, because a
+    /// salsa input always bumps its revision on a `set_*` and re-seeding an
+    /// identical membership on each lint would needlessly invalidate
+    /// [`workspace_project`](crate::project::workspace_project). The sole writer
+    /// (CLI setup, the LSP lint thread) calls this; never a read snapshot.
+    pub fn set_workspace_members(
+        &mut self,
+        mut members: Vec<SourceFile>,
+        roots: Vec<PathBuf>,
+    ) -> Workspace {
+        members.sort_by_key(|file| file.id(self));
+        members.dedup();
+        match Workspace::try_get(self) {
+            Some(ws) => {
+                if ws.members(self) != &members {
+                    ws.set_members(self)
+                        .with_durability(Durability::MEDIUM)
+                        .to(members);
+                }
+                if ws.roots(self) != &roots {
+                    ws.set_roots(self)
+                        .with_durability(Durability::MEDIUM)
+                        .to(roots);
+                }
+                ws
+            }
+            None => {
+                let ws = Workspace::new(self, members.clone(), roots.clone());
+                // Creation lands at default durability; re-set at MEDIUM so the
+                // first edit after seeding also skips revalidating the file-set.
+                ws.set_members(self)
+                    .with_durability(Durability::MEDIUM)
+                    .to(members);
+                ws.set_roots(self)
+                    .with_durability(Durability::MEDIUM)
+                    .to(roots);
+                ws
+            }
+        }
+    }
+
+    /// The [`Workspace`] singleton, if one has been seeded. Read-only.
+    pub fn workspace(&self) -> Option<Workspace> {
+        Workspace::try_get(self)
     }
 
     /// The harvested package index payload, if installed. A cheap `Arc` clone.
@@ -570,6 +662,26 @@ impl Analysis {
     /// The cached per-file semantic model.
     pub fn semantic_model(&self, file: SourceFile) -> &SemanticModel {
         self.0.semantic_model(file)
+    }
+
+    /// The definition span of the top-level binding named `name` in `file`, read
+    /// from the *fresh* semantic model so the range always indexes the current
+    /// text (never a stale memo). Mirrors the def-site filter of
+    /// [`crate::project::file_def_sites`] — this is how a consumer recovers the
+    /// actual span the range-free
+    /// [`project_defs`](crate::project::project_defs) aggregate omits. Returns the
+    /// first matching top-level binding.
+    pub fn def_range_in(&self, file: SourceFile, name: &str) -> Option<TextRange> {
+        let model = self.0.semantic_model(file);
+        model
+            .bindings()
+            .iter()
+            .find(|binding| {
+                matches!(binding.kind, BindingKind::Local | BindingKind::Implicit)
+                    && model.scope(binding.scope).kind == ScopeKind::File
+                    && binding.name.as_str() == name
+            })
+            .map(|binding| binding.def_range)
     }
 
     /// The installed [`LibraryIndex`] singleton handle, if any. The read-phase

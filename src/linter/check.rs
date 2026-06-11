@@ -13,7 +13,7 @@ use crate::incremental::{
 };
 use crate::project::{
     ExternalResolution, FileScope, Project, ProjectMember, external_resolution, package_root,
-    visible_symbols,
+    visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -127,10 +127,9 @@ pub fn check_paths_with_index(
     let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
 
-    // Pass 1: track every file and collect project membership for the cleanly
-    // parsed ones. Files with parse diagnostics are recorded for reporting but
-    // contribute nothing to the project scope.
-    let mut members: Vec<ProjectMember> = Vec::new();
+    // Pass 1: track every file, recording parse-error counts for reporting.
+    // Membership is derived from the workspace file-set below; files with parse
+    // diagnostics are tracked but `workspace_project` drops them from the scope.
     let mut parse_errors: HashMap<PathBuf, usize> = HashMap::new();
     for path in &files {
         let content = fs::read_to_string(path).map_err(|err| LintError::ReadError {
@@ -141,25 +140,22 @@ pub fn check_paths_with_index(
         tracked.insert(path.clone(), file);
 
         let parse_diag_count = db.parse_diagnostics(file).len();
-        if parse_diag_count == 0 {
-            members.push(ProjectMember {
-                file,
-                path: path.clone(),
-                package_root: package_root(path),
-            });
-        } else {
+        if parse_diag_count != 0 {
             parse_errors.insert(path.clone(), parse_diag_count);
         }
     }
 
     // Install the harvested index as the HIGH-durability library singleton
-    // before interning (interning borrows `&db`). `external_resolution` reads it.
+    // before deriving the project (which borrows `&db`). `external_resolution`
+    // reads it.
     let manifest = db.set_library_index(indexed);
 
-    // Read the NAMESPACE of each package being linted, so exported bindings
-    // aren't flagged unused and imported names resolve.
-    let namespaces = read_namespaces(members.iter().filter_map(|m| m.package_root.as_deref()));
-    let project = intern_project(&db, members, namespaces);
+    // Seed the explicit workspace file-set and derive the interned project from
+    // it. `workspace_project` filters to cleanly-parsing members, reads each
+    // package's NAMESPACE, and interns — the same membership the inline build
+    // produced, now keyed off the salsa `Workspace` input.
+    db.set_workspace_members(tracked.values().copied().collect(), files.clone());
+    let project = workspace_project(&db);
 
     // The cross-file path resolves undefined symbols through `external_resolution`
     // (which uses the salsa library index), so the provider passed to the rules is
@@ -206,24 +202,6 @@ pub fn check_paths_with_index(
         total_findings,
         reports,
     })
-}
-
-/// Read the `NAMESPACE` of each distinct package `root`, returning
-/// `(root, text)` pairs sorted by root (deduped, missing files skipped). Disk
-/// work, done in the write-phase; the result becomes part of the interned
-/// [`Project`] key.
-fn read_namespaces<'a>(roots: impl Iterator<Item = &'a Path>) -> Vec<(PathBuf, String)> {
-    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
-    for root in roots {
-        if !namespaces.contains_key(root)
-            && let Ok(text) = fs::read_to_string(root.join("NAMESPACE"))
-        {
-            namespaces.insert(root.to_path_buf(), text);
-        }
-    }
-    let mut namespaces: Vec<(PathBuf, String)> = namespaces.into_iter().collect();
-    namespaces.sort_by(|a, b| a.0.cmp(&b.0));
-    namespaces
 }
 
 /// Intern a [`Project`] from a membership snapshot. Sorts `members` by path so
@@ -324,7 +302,7 @@ pub struct PreparedProject {
 /// by the read-only [`analyze_prepared`].
 pub fn prepare_document_in_project(
     db: &mut IncrementalDatabase,
-    path: &Path,
+    _path: &Path,
     active: SourceFile,
     config: &LintConfig,
 ) -> Result<Option<PreparedProject>, LintError> {
@@ -336,41 +314,15 @@ pub fn prepare_document_in_project(
         return Ok(None);
     }
 
-    // Discover the project's files: the package root, else the file's directory.
-    let search_dir =
-        package_root(path).or_else(|| path.parent().filter(|p| p.is_dir()).map(Path::to_path_buf));
-    let mut project_files = match &search_dir {
-        Some(dir) => collect_r_files(std::slice::from_ref(dir)).unwrap_or_default(),
-        None => Vec::new(),
-    };
-    if !project_files.iter().any(|p| p == path) {
-        project_files.push(path.to_path_buf());
-    }
-
-    // Upsert each project file — the live buffer for `path`, on-disk content for
-    // siblings — and keep the cleanly-parsing ones for the read-phase. These are
-    // the only db writes; `analyze_prepared` reads off the inputs set here.
-    let mut members = Vec::new();
-    for file_path in &project_files {
-        let file = if file_path == path {
-            active
-        } else {
-            match fs::read_to_string(file_path) {
-                Ok(text) => db.upsert_file(file_path, text),
-                Err(_) => continue,
-            }
-        };
-        if !db.parse_diagnostics(file).is_empty() {
-            continue;
-        }
-        members.push(ProjectMember {
-            file,
-            path: file_path.clone(),
-            package_root: package_root(file_path),
-        });
-    }
-
-    let namespaces = read_namespaces(members.iter().filter_map(|m| m.package_root.as_deref()));
+    // Membership comes from the explicit `Workspace` file-set (seeded by the
+    // caller — the LSP's lazy seed or `seed_workspace_for`), not a per-call disk
+    // walk. `workspace_project` filters to cleanly-parsing members and reads each
+    // package's NAMESPACE; we snapshot its owned membership for the read-phase,
+    // which re-interns it on a db clone (so the `Project<'db>` never crosses the
+    // thread boundary).
+    let project = workspace_project(&*db);
+    let members = project.members(&*db).clone();
+    let namespaces = project.namespaces(&*db).clone();
 
     Ok(Some(PreparedProject {
         active,
@@ -378,6 +330,41 @@ pub fn prepare_document_in_project(
         members,
         namespaces,
     }))
+}
+
+/// Fold the project enclosing `path` — its R package root, else its directory —
+/// plus `active` into the salsa [`Workspace`](crate::incremental::Workspace)
+/// file-set, so [`prepare_document_in_project`] can derive membership from it.
+///
+/// Walks disk once to discover siblings and unions them into the existing
+/// file-set; the conditional setter
+/// ([`set_workspace_members`](IncrementalDatabase::set_workspace_members)) makes
+/// a repeat call with an unchanged set a no-op. The LSP calls this lazily (only
+/// when the active file isn't yet a member), so the walk leaves the per-keystroke
+/// path; one-shot callers ([`check_document_in_project`]) call it each time.
+pub fn seed_workspace_for(db: &mut IncrementalDatabase, path: &Path, active: SourceFile) {
+    let (mut files, mut roots) = match db.workspace() {
+        Some(ws) => (ws.members(&*db).to_vec(), ws.roots(&*db).to_vec()),
+        None => (Vec::new(), Vec::new()),
+    };
+    files.push(active);
+
+    let search_dir =
+        package_root(path).or_else(|| path.parent().filter(|p| p.is_dir()).map(Path::to_path_buf));
+    if let Some(dir) = search_dir {
+        for sibling in collect_r_files(std::slice::from_ref(&dir)).unwrap_or_default() {
+            if sibling == path {
+                continue;
+            }
+            if let Ok(text) = fs::read_to_string(&sibling) {
+                files.push(db.upsert_file(&sibling, text));
+            }
+        }
+        if !roots.contains(&dir) {
+            roots.push(dir);
+        }
+    }
+    db.set_workspace_members(files, roots);
 }
 
 /// Read-phase of cross-file linting (`&db` only — no disk, no writes). Builds the
@@ -431,6 +418,7 @@ pub fn check_document_in_project(
     config: &LintConfig,
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
+    seed_workspace_for(db, path, active);
     match prepare_document_in_project(db, path, active, config)? {
         Some(prepared) => {
             let analysis = db.snapshot();

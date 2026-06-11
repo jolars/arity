@@ -78,16 +78,16 @@ infrastructure present and reusable:
   `file_exports`/`file_free_reads`/`source_edges` across members
   (`src/project/graph.rs`).
 
-Two genuine gaps gate the **cross-file** half of the list (both soft --- new
-infra that builds *with* the grain, not architectural fights):
+Two genuine gaps gated the **cross-file** half of the list (both soft --- new
+infra that builds *with* the grain, not architectural fights). The first has
+landed; the second is still open but only matters for cross-edit-stable handles:
 
-- [ ] **Reverse `source_edges` index + an explicit workspace file-set.**
-      `source_edges` is per-file and forward-only (who *I* source); there is no
-      "who sources me," and the file-set is implicit (`upsert`'d on demand,
-      `Project` membership rebuilt by a disk walk in the lint write-phase,
-      `src/linter/check.rs`). This is the one piece that blocks workspace
-      symbols, cross-file references, cross-file rename, file rename, and call
-      hierarchy. Detailed below under *Cross-cutting prerequisite*.
+- [x] **Reverse `source_edges` index + an explicit workspace file-set.** Done:
+      `reverse_source_edges(db, project)` (`src/project/graph.rs`) is the
+      who-sources-me map (`Eq`, backdates), and the file-set is now the explicit
+      salsa `Workspace` input (`src/incremental.rs`) from which the interned
+      `Project` is derived by `workspace_project` — no per-request disk walk. See
+      *Cross-cutting prerequisite* below for the full landed shape.
 - [ ] **No stable cross-edit node references** (`SyntaxNodePtr`/`AstPtr`); each
       consumer materializes a fresh cursor per reparse. A non-issue for
       stateless request/response navigation (re-resolve from a `TextRange` each
@@ -181,25 +181,29 @@ infra that builds *with* the grain, not architectural fights):
 
 ### Cross-cutting prerequisite
 
-- [ ] **Workspace-wide symbol/reference index.** Workspace symbols, cross-file
-      go-to-references, cross-file rename, file rename, and call hierarchy all
-      depend on the same thing: a project-wide, incrementally maintained index
-      mapping names → definition sites, plus a **reverse `source_edges` graph**
-      (who sources/reads whom --- today's `source_edges` is per-file and
-      forward-only, `src/incremental.rs`). Concretely this needs three pieces:
-      (1) an explicit, salsa-tracked workspace file-set (currently implicit ---
-      files are `upsert`'d on demand and `Project` membership is rebuilt by a
-      disk walk in the lint write-phase, `src/linter/check.rs`), driven by
-      workspace file discovery; (2) the reverse edge map over `source_edges`;
-      (3) a name → def-site aggregate keyed on the interned `Project` (extends
-      the existing `project_graph`/`visible_symbols` queries in
-      `src/project/graph.rs`, which already aggregate exports at member level).
-      None of this fights the architecture --- it builds on the `Project`
-      intern that exists. The current model is per-file and
-      read-snapshot-oriented; this is the central enabling piece for the
-      cross-file half of the list above. Pairs naturally with the
-      `vfs`/`SourceRoot` follow-up under *Thin `FileId`* and the
-      top-level-statement reparse follow-up under *Parser*.
+- [x] **Workspace-wide symbol/reference index.** Done --- all three pieces
+      landed, keyed on the interned `Project`: (1) an explicit, salsa-tracked
+      workspace file-set, the singleton `Workspace` input at `Durability::MEDIUM`
+      with a conditional setter, from which the interned `Project` is *derived* by
+      the `workspace_project` query (`src/incremental.rs`, `src/project/graph.rs`)
+      --- the CLI and LSP both go through it, and the LSP seeds it from
+      `initialize` `workspaceFolders`/`rootUri` plus a lazy per-file backstop
+      (`src/lsp.rs`, `seed_workspace_for`); (2) the reverse `source_edges` map
+      `reverse_source_edges` (`Eq`, backdates; keeps `local=TRUE` and out-of-set
+      targets, unlike the forward scope builder); (3) the name → def-site
+      aggregate --- range-free `file_def_sites`/`DefKind` firewall +
+      project-wide `project_defs`, with spans recovered per-request via
+      `Analysis::def_range_in` from the fresh `semantic_model`. Backdating proofs
+      in `tests/salsa_incremental.rs`. The cross-file *consumers* (workspace
+      symbols, references, rename, file rename, call hierarchy) now have no index
+      work left --- they sit on these queries.
+      - [ ] Follow-up (model (b)): `workspace_project` still reads
+            `package_root`/`NAMESPACE` from disk (model (a)), so a keystroke
+            re-runs it (it backdates to the same `Project`, so the graph is
+            spared). Carry per-root NAMESPACE text + package-root markers as
+            salsa inputs so the query is fully pure and a future
+            `didChangeWatchedFiles` watcher invalidates it correctly. Pairs with
+            the `vfs`/`SourceRoot` follow-up under *Thin `FileId`*.
 
 - [ ] Full downloadable CRAN sidecar (escalation of the bundled lists above).
       Shape: per-package export lists keyed by package version, covering the

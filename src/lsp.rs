@@ -86,8 +86,9 @@ use smol_str::SmolStr;
 
 use crate::ast::{AstNode as _, BinaryExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
+use crate::file_discovery::collect_r_files;
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
-use crate::incremental::{Analysis, IncrementalDatabase};
+use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
 use crate::linter::{Diagnostic, Severity};
 use crate::parser::parse;
 use crate::rindex::build::{BuildOptions, build_index};
@@ -114,6 +115,7 @@ pub fn run() -> Result<(), DynError> {
         .get("initializationOptions")
         .map(EditorSettings::from_client_value)
         .unwrap_or_default();
+    let workspace_roots = workspace_roots_from_params(&params);
     let init_result = InitializeResult {
         capabilities: server_capabilities(),
         server_info: Some(ServerInfo {
@@ -123,9 +125,33 @@ pub fn run() -> Result<(), DynError> {
     };
     connection.initialize_finish(id, serde_json::to_value(init_result)?)?;
 
-    main_loop(connection, editor_settings)?;
+    main_loop(connection, editor_settings, workspace_roots)?;
     io_threads.join()?;
     Ok(())
+}
+
+/// Extract the workspace roots from the `initialize` params: the
+/// `workspaceFolders` array if present, else the legacy `rootUri`. Non-`file`
+/// URIs are skipped. Drives the one-time workspace seed (see [`LintWorker`]).
+fn workspace_roots_from_params(params: &serde_json::Value) -> Vec<PathBuf> {
+    let from_uri = |s: &str| s.parse::<Uri>().ok().and_then(|u| uri::to_path(&u));
+    let mut roots: Vec<PathBuf> = params
+        .get("workspaceFolders")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| folder.get("uri").and_then(|u| u.as_str()))
+        .filter_map(from_uri)
+        .collect();
+    if roots.is_empty()
+        && let Some(path) = params
+            .get("rootUri")
+            .and_then(|u| u.as_str())
+            .and_then(from_uri)
+    {
+        roots.push(path);
+    }
+    roots
 }
 
 fn server_capabilities() -> ServerCapabilities {
@@ -142,7 +168,11 @@ fn server_capabilities() -> ServerCapabilities {
 /// The main event loop: dispatch incoming JSON-RPC messages and lint results.
 /// Owns the connection so that returning drops the sender and lets the writer
 /// thread finish; joins the lint thread before returning.
-fn main_loop(connection: Connection, editor_settings: EditorSettings) -> Result<(), DynError> {
+fn main_loop(
+    connection: Connection,
+    editor_settings: EditorSettings,
+    workspace_roots: Vec<PathBuf>,
+) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
     let (read_tx, read_rx) = crossbeam_channel::unbounded::<ReadJob>();
@@ -154,6 +184,15 @@ fn main_loop(connection: Connection, editor_settings: EditorSettings) -> Result<
     let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx, read_pool.spawner());
     // `done_tx`/`done_rx` are created inside the lint thread (see
     // `spawn_lint_thread`) so the main loop never holds the read end.
+
+    // Seed the explicit workspace file-set once, before any document traffic, so
+    // cross-file queries see the whole workspace. The lint thread owns the db, so
+    // the walk + upsert happen there (off the main loop).
+    if !workspace_roots.is_empty() {
+        let _ = lint_tx.send(LintMsg::SeedWorkspace {
+            roots: workspace_roots,
+        });
+    }
 
     let mut state = GlobalState::new(
         connection.sender.clone(),
@@ -272,7 +311,14 @@ struct LintRequest {
 }
 
 enum LintMsg {
-    Request(LintRequest),
+    // Boxed: `LintRequest` is much larger than the other variant, so boxing keeps
+    // the enum (and every channel slot) small.
+    Request(Box<LintRequest>),
+    /// Seed the explicit workspace file-set from the discovered roots (sent once
+    /// at startup). Handled on the lint thread, the sole db writer.
+    SeedWorkspace {
+        roots: Vec<PathBuf>,
+    },
 }
 
 /// A read-only request the lint thread services by cloning its salsa db and
@@ -619,14 +665,14 @@ impl GlobalState {
             Ok(s) => (s.lint, s.index),
             Err(_) => (LintConfig::default(), IndexConfig::default()),
         };
-        let _ = self.lint_tx.send(LintMsg::Request(LintRequest {
+        let _ = self.lint_tx.send(LintMsg::Request(Box::new(LintRequest {
             uri,
             path,
             text,
             version,
             lint_config,
             index_config,
-        }));
+        })));
     }
 
     fn resolve_settings(&mut self, uri: &Uri) -> Result<ResolvedSettings, ConfigResolveError> {
@@ -800,12 +846,13 @@ impl LintWorker {
         loop {
             select! {
                 recv(lint_rx) -> msg => {
-                    let Ok(LintMsg::Request(req)) = msg else { break };
+                    let Ok(msg) = msg else { break };
                     // Coalesce: keep only the latest version per URI, so a fast
                     // typist's stale edits are dropped before they're ever linted.
-                    self.enqueue(req);
-                    while let Ok(LintMsg::Request(r)) = lint_rx.try_recv() {
-                        self.enqueue(r);
+                    // A `SeedWorkspace` is applied inline (it's the db writer).
+                    self.handle_lint_msg(msg);
+                    while let Ok(m) = lint_rx.try_recv() {
+                        self.handle_lint_msg(m);
                     }
                     self.try_dispatch();
                 }
@@ -837,6 +884,34 @@ impl LintWorker {
                 }
             }
         }
+    }
+
+    /// Dispatch a lint-channel message: queue a request, or apply a workspace
+    /// seed inline (the lint thread is the sole db writer).
+    fn handle_lint_msg(&mut self, msg: LintMsg) {
+        match msg {
+            LintMsg::Request(req) => self.enqueue(*req),
+            LintMsg::SeedWorkspace { roots } => self.seed_workspace(roots),
+        }
+    }
+
+    /// Walk the workspace roots once and install the discovered `.R` files as the
+    /// explicit [`Workspace`](crate::incremental::Workspace) file-set, unioned with
+    /// anything already tracked. Pre-warms cross-file membership so later edits
+    /// don't re-walk (see [`seed_workspace_for`](crate::linter::check::seed_workspace_for)).
+    fn seed_workspace(&mut self, roots: Vec<PathBuf>) {
+        let discovered = collect_r_files(&roots).unwrap_or_default();
+        let mut files: Vec<SourceFile> = self
+            .db
+            .workspace()
+            .map(|ws| ws.members(&self.db).to_vec())
+            .unwrap_or_default();
+        for path in discovered {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                files.push(self.db.upsert_file(&path, text));
+            }
+        }
+        self.db.set_workspace_members(files, roots);
     }
 
     /// Add `req` to the pending queue, keeping the highest version per URI (guards
@@ -907,6 +982,16 @@ impl LintWorker {
         // Write-phase: push the live buffer + sibling files into the persistent
         // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
         let active = self.db.upsert_file(&req.path, req.text.clone());
+        // Ensure the active file's project is in the workspace file-set. Lazy:
+        // only walks disk when the file isn't already a member (the initialize
+        // seed covers the common case), so discovery leaves the keystroke path.
+        let already_member = self
+            .db
+            .workspace()
+            .is_some_and(|ws| ws.members(&self.db).contains(&active));
+        if !already_member {
+            crate::linter::check::seed_workspace_for(&mut self.db, &req.path, active);
+        }
         let prepared = match crate::linter::check::prepare_document_in_project(
             &mut self.db,
             &req.path,
@@ -2083,5 +2168,24 @@ mod tests {
             hover_via_db(&empty.snapshot(), path, src, position).is_some(),
             "fallback hover should resolve too"
         );
+    }
+
+    #[test]
+    fn workspace_roots_parses_folders_then_root_uri() {
+        let uri = test_uri();
+        let want = vec![test_path().to_path_buf()];
+
+        // `workspaceFolders` is used when present.
+        let params = serde_json::json!({
+            "workspaceFolders": [{ "uri": uri.as_str(), "name": "w" }],
+        });
+        assert_eq!(workspace_roots_from_params(&params), want);
+
+        // Falls back to the legacy `rootUri` when no folders are given.
+        let params = serde_json::json!({ "rootUri": uri.as_str() });
+        assert_eq!(workspace_roots_from_params(&params), want);
+
+        // Neither present → no roots (a single file opened outside a workspace).
+        assert!(workspace_roots_from_params(&serde_json::json!({})).is_empty());
     }
 }

@@ -265,7 +265,10 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     // reproduce check_document_in_project exactly, and the read-phase must work
     // off a db *clone* — the property the LSP relies on to lint off its thread.
     use ravel::incremental::IncrementalDatabase;
-    use ravel::linter::{analyze_prepared, check_document_in_project, prepare_document_in_project};
+    use ravel::linter::{
+        analyze_prepared, check_document_in_project, prepare_document_in_project,
+        seed_workspace_for,
+    };
     use ravel::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
@@ -304,9 +307,12 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
         keys(&want)
     );
 
-    // Split: prepare on the owner, analyze on a clone.
+    // Split: prepare on the owner, analyze on a clone. The caller seeds the
+    // workspace first (as the wrapper and the LSP's write-phase do), since
+    // membership now comes from the explicit file-set, not a per-call walk.
     let mut db = IncrementalDatabase::default();
     let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    seed_workspace_for(&mut db, &b, active);
     let prepared = prepare_document_in_project(&mut db, &b, active, &cfg)
         .unwrap()
         .expect("clean file should prepare");

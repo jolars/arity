@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ravel::incremental::{IncrementalDatabase, QueryKind, SourceFile};
-use ravel::project::{Project, ProjectMember, external_resolution, visible_symbols};
+use ravel::incremental::{IncrementalDatabase, QueryKind, SourceFile, file_def_sites};
+use ravel::project::{
+    DefKind, Project, ProjectMember, external_resolution, project_defs, reverse_source_edges,
+    visible_symbols, workspace_project,
+};
 use ravel::rindex::provider::IndexedProvider;
 use ravel::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
 
@@ -12,6 +15,40 @@ fn count_by_kind(entries: &[ravel::incremental::QueryLogEntry]) -> HashMap<Query
         *counts.entry(entry.kind).or_insert(0) += 1;
     }
     counts
+}
+
+#[test]
+fn file_def_sites_reused_when_input_unchanged() {
+    let db = IncrementalDatabase::default();
+    let file = db.add_file("f <- function() 1\nx <- 2\n");
+
+    let _ = file_def_sites(&db, file);
+    db.clear_query_log();
+    let _ = file_def_sites(&db, file);
+
+    assert!(
+        db.query_log().is_empty(),
+        "unchanged input must not re-run file_def_sites"
+    );
+}
+
+#[test]
+fn file_def_sites_backdates_across_body_edit() {
+    // The firewall: editing a function *body* re-runs the model, and
+    // file_def_sites re-executes, but its output (the name→kind map) is
+    // unchanged, so it backdates and downstream aggregates are spared. Here we
+    // assert the load-bearing half — the value is stable across the edit.
+    let mut db = IncrementalDatabase::default();
+    let file = db.add_file("f <- function() {\n  g()\n}\nx <- 1\n");
+    let before = file_def_sites(&db, file).clone();
+
+    db.set_file_text(file, "f <- function() {\n  g()\n  h()\n}\nx <- 1\n");
+    let after = file_def_sites(&db, file).clone();
+
+    assert_eq!(
+        before, after,
+        "a body edit must not change the def-site map"
+    );
 }
 
 #[test]
@@ -212,6 +249,295 @@ fn project_ab(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project
         },
     ];
     Project::new(db, members, Vec::new())
+}
+
+/// A two-script project where `a.R` sources `b.R`. No package root, so the only
+/// cross-file relation is the `source()` edge.
+fn scripts_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, SourceFile) {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), a_src.to_string());
+    let b = db.upsert_file(Path::new("/s/b.R"), b_src.to_string());
+    (db, a, b)
+}
+
+fn project_scripts(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project<'_> {
+    let members = vec![
+        ProjectMember {
+            file: a,
+            path: PathBuf::from("/s/a.R"),
+            package_root: None,
+        },
+        ProjectMember {
+            file: b,
+            path: PathBuf::from("/s/b.R"),
+            package_root: None,
+        },
+    ];
+    Project::new(db, members, Vec::new())
+}
+
+#[test]
+fn body_edit_does_not_rebuild_reverse_source_edges() {
+    // The firewall: `a.R` sources `b.R`; editing `b.R`'s function body re-runs
+    // its model but not its (empty) source edges, so the reverse map's memo —
+    // keyed on the interned project + per-file source_edges — must be reused.
+    let (mut db, a, b) = scripts_ab("source(\"b.R\")\n", "bar <- function() {\n  baz()\n}\n");
+
+    {
+        let project = project_scripts(&db, a, b);
+        let rev = reverse_source_edges(&db, project);
+        assert!(
+            rev.sourced_by
+                .get(Path::new("/s/b.R"))
+                .is_some_and(|s| s.contains(Path::new("/s/a.R"))),
+            "a.R should be recorded as a sourcer of b.R"
+        );
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "bar <- function() {\n  baz()\n  2\n}\n");
+
+    let project = project_scripts(&db, a, b);
+    let _ = reverse_source_edges(&db, project);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ReverseSourceEdges),
+        None,
+        "a body edit must not rebuild the reverse source-edge map"
+    );
+}
+
+#[test]
+fn adding_source_call_rebuilds_reverse_edges() {
+    // The complement: adding a top-level `source()` changes a.R's source edges,
+    // so the reverse map *must* rebuild and gain the new edge.
+    let (mut db, a, b) = scripts_ab("source(\"b.R\")\n", "bar <- 1\n");
+
+    {
+        let project = project_scripts(&db, a, b);
+        let _ = reverse_source_edges(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(a, "source(\"b.R\")\nsource(\"c.R\")\n");
+
+    let project = project_scripts(&db, a, b);
+    let rev = reverse_source_edges(&db, project);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ReverseSourceEdges),
+        Some(&1),
+        "a new source() call must rebuild the reverse map"
+    );
+    assert!(
+        rev.sourced_by
+            .get(Path::new("/s/c.R"))
+            .is_some_and(|s| s.contains(Path::new("/s/a.R"))),
+        "the new edge a.R -> c.R must appear in the reverse map"
+    );
+}
+
+#[test]
+fn project_defs_aggregates_def_sites_by_name() {
+    let (db, a, b) = package_ab("foo <- function() 1\n", "bar <- 2\nfoo <- 3\n");
+    let project = project_ab(&db, a, b);
+    let defs = project_defs(&db, project);
+
+    // `foo` is defined in both files — a function in a.R, a value in b.R.
+    let foo = defs.by_name.get("foo").expect("foo is defined");
+    assert!(foo.contains(&(PathBuf::from("/pkg/R/a.R"), DefKind::Function)));
+    assert!(foo.contains(&(PathBuf::from("/pkg/R/b.R"), DefKind::Value)));
+    // `bar` only in b.R.
+    let bar = defs.by_name.get("bar").expect("bar is defined");
+    assert_eq!(bar.len(), 1);
+    assert!(bar.contains(&(PathBuf::from("/pkg/R/b.R"), DefKind::Value)));
+}
+
+#[test]
+fn body_edit_does_not_rebuild_project_defs() {
+    // The firewall: editing b.R's body re-runs its model and file_def_sites, but
+    // the def-site set is unchanged, so the project-wide aggregate is reused.
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_defs(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
+
+    let project = project_ab(&db, a, b);
+    let _ = project_defs(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
+    assert_eq!(
+        counts.get(&QueryKind::ProjectDefs),
+        None,
+        "a body edit must not rebuild project_defs"
+    );
+}
+
+#[test]
+fn adding_top_level_binding_rebuilds_project_defs() {
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() foo()\n");
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_defs(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "bar <- function() foo()\nqux <- 2\n");
+
+    let project = project_ab(&db, a, b);
+    let defs = project_defs(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ProjectDefs),
+        Some(&1),
+        "a new top-level binding must rebuild project_defs"
+    );
+    assert!(defs.by_name.contains_key("qux"));
+}
+
+#[test]
+fn def_range_in_recovers_live_span_after_edit() {
+    // The range-free aggregate omits def spans; def_range_in recovers them from
+    // the fresh model, so the span tracks the *current* text. Inserting a leading
+    // line shifts foo's definition; the recovered range must still spell "foo".
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- 2\n");
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_defs(&db, project);
+    }
+
+    db.set_file_text(a, "# header\nfoo <- function() 1\n");
+
+    let project = project_ab(&db, a, b);
+    let defs = project_defs(&db, project);
+    assert!(
+        defs.by_name
+            .get("foo")
+            .is_some_and(|sites| sites.iter().any(|(p, _)| p == Path::new("/pkg/R/a.R"))),
+        "project_defs should point foo at a.R"
+    );
+
+    let snapshot = db.snapshot();
+    let file = snapshot.lookup_file(Path::new("/pkg/R/a.R")).unwrap();
+    let range = snapshot
+        .def_range_in(file, "foo")
+        .expect("foo has a def span");
+    let text = snapshot.file_text(file);
+    let start: usize = range.start().into();
+    let end: usize = range.end().into();
+    assert_eq!(&text[start..end], "foo");
+    assert_eq!(
+        start,
+        "# header\n".len(),
+        "the span must reflect the post-edit position"
+    );
+}
+
+#[test]
+fn workspace_project_excludes_parse_error_files() {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- 1\n".to_string());
+    let bad = db.upsert_file(Path::new("/s/bad.R"), "x <- function(\n".to_string());
+    assert!(
+        !db.parse_diagnostics(bad).is_empty(),
+        "bad.R should not parse"
+    );
+
+    db.set_workspace_members(vec![a, bad], vec![PathBuf::from("/s")]);
+    let project = workspace_project(&db);
+
+    let paths: Vec<_> = project
+        .members(&db)
+        .iter()
+        .map(|m| m.path.clone())
+        .collect();
+    assert_eq!(
+        paths,
+        vec![PathBuf::from("/s/a.R")],
+        "a file with parse errors must be dropped from the derived membership"
+    );
+}
+
+#[test]
+fn keystroke_backdates_workspace_project_and_spares_graph() {
+    // The membership firewall: a body edit re-runs workspace_project (it reads
+    // the edited file's parse status), but it backdates to the *same* interned
+    // Project, so the cross-file project graph derived from it is not rebuilt.
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
+    let b = db.upsert_file(
+        Path::new("/s/b.R"),
+        "bar <- function() {\n  foo()\n}\n".to_string(),
+    );
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+
+    {
+        let project = workspace_project(&db);
+        let _ = visible_symbols(&db, project, a);
+        let _ = visible_symbols(&db, project, b);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
+
+    let project = workspace_project(&db);
+    let _ = visible_symbols(&db, project, a);
+    let _ = visible_symbols(&db, project, b);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
+        None,
+        "a body edit must not rebuild the project graph derived from the workspace"
+    );
+}
+
+#[test]
+fn reseeding_identical_membership_skips_write() {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- 1\n".to_string());
+    let b = db.upsert_file(Path::new("/s/b.R"), "bar <- 2\n".to_string());
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+    let _ = workspace_project(&db);
+
+    db.clear_query_log();
+    // Re-seed the identical membership (order swapped — the setter sorts): the
+    // conditional setter must skip the write, so the memo is reused.
+    db.set_workspace_members(vec![b, a], vec![PathBuf::from("/s")]);
+    let _ = workspace_project(&db);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::WorkspaceProject),
+        None,
+        "re-seeding an identical membership must not re-run workspace_project"
+    );
+}
+
+#[test]
+fn adding_a_member_rebuilds_workspace_project() {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- 1\n".to_string());
+    db.set_workspace_members(vec![a], vec![PathBuf::from("/s")]);
+    let _ = workspace_project(&db);
+
+    db.clear_query_log();
+    let b = db.upsert_file(Path::new("/s/b.R"), "bar <- 2\n".to_string());
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+    let project = workspace_project(&db);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::WorkspaceProject),
+        Some(&1),
+        "adding a member must re-run workspace_project"
+    );
+    assert_eq!(project.members(&db).len(), 2);
 }
 
 #[test]

@@ -16,17 +16,19 @@
 //! the (re-validated) interned `Project`, editing a body re-runs neither it nor
 //! `visible_symbols`. See `tests/salsa_incremental.rs`.
 
-use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 use rowan::TextRange;
 use smol_str::SmolStr;
 
 use crate::incremental::{
-    IncrementalDb, LibraryIndex, QueryKind, QueryLogEntry, SourceFile, file_exports,
-    file_free_reads, loaded_names, source_edges,
+    IncrementalDb, LibraryIndex, QueryKind, QueryLogEntry, SourceFile, Workspace, file_def_sites,
+    file_exports, file_free_reads, loaded_names, parse_diagnostics, source_edges,
 };
-use crate::project::scope::{FileFacts, FileScope, ProjectScope};
+use crate::project::exports::DefKind;
+use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
+use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::provider::{package_indexed, resolve_origin};
 use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
 
@@ -68,6 +70,66 @@ impl Visibility {
     pub fn scope(&self) -> FileScope<'_> {
         FileScope::new(&self.visible, &self.used_by_others, self.incomplete)
     }
+}
+
+/// Read the `NAMESPACE` of each distinct package root among `members`, returning
+/// `(root, text)` pairs sorted by root (deduped, missing files skipped). Disk
+/// work, run inside [`workspace_project`]; the result becomes part of the
+/// interned [`Project`] key.
+pub(crate) fn read_namespaces(members: &[ProjectMember]) -> Vec<(PathBuf, String)> {
+    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
+    for member in members {
+        if let Some(root) = &member.package_root
+            && !namespaces.contains_key(root)
+            && let Ok(text) = std::fs::read_to_string(root.join("NAMESPACE"))
+        {
+            namespaces.insert(root.clone(), text);
+        }
+    }
+    let mut namespaces: Vec<(PathBuf, String)> = namespaces.into_iter().collect();
+    namespaces.sort_by(|a, b| a.0.cmp(&b.0));
+    namespaces
+}
+
+/// Derive the interned [`Project`] from the explicit [`Workspace`] file-set,
+/// replacing the per-request disk walk and imperative interning. Membership is
+/// the workspace's cleanly-parsing, on-disk members, sorted by path; pathless
+/// in-memory files and files with parse errors are dropped (the long-standing
+/// invariant — a broken file contributes nothing to cross-file scope).
+///
+/// Re-runs when the workspace input changes or a member's parse status flips, but
+/// backdates to the *same* interned `Project` id when the derived membership is
+/// unchanged, so a body edit doesn't rebuild [`project_graph`] (the existing
+/// interning firewall). `package_root`/NAMESPACE reads touch disk (model (a));
+/// carrying those as inputs so the query is fully pure is a follow-up.
+#[salsa::tracked]
+pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::WorkspaceProject,
+        file: None,
+    });
+    let mut members: Vec<ProjectMember> = match Workspace::try_get(db) {
+        Some(ws) => ws
+            .members(db)
+            .iter()
+            .filter_map(|&file| {
+                let path = file.path(db).as_deref()?.to_path_buf();
+                if !parse_diagnostics(db, file).is_empty() {
+                    return None;
+                }
+                let package_root = package_root(&path);
+                Some(ProjectMember {
+                    file,
+                    path,
+                    package_root,
+                })
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    members.sort_by(|a, b| a.path.cmp(&b.path));
+    let namespaces = read_namespaces(&members);
+    Project::new(db, members, namespaces)
 }
 
 /// The cross-file scope for `project`, built from the per-file firewall queries.
@@ -127,6 +189,112 @@ pub fn visible_symbols<'db>(
         used_by_others: scope.used_names().clone(),
         incomplete: scope.resolution_incomplete,
     }
+}
+
+/// The reverse of the forward `source()` graph: for each statically-resolved
+/// target path, the set of member files that `source()` it ("who sources me").
+///
+/// Deliberately broader than the forward scope builder ([`ProjectScope::build`])
+/// in two ways, because file-rename and cross-file references care about the
+/// *dependency*, not scope contribution:
+/// - `local = TRUE` edges are **kept** (the forward builder skips them, since
+///   they don't fold bindings into global scope — `src/project/scope.rs`).
+/// - targets **outside** the analyzed member set are **kept** (the forward
+///   builder treats them as incomplete visibility), so renaming an as-yet-
+///   unopened file still finds its sourcers.
+///
+/// `BTreeMap`/`BTreeSet` so the type is `Eq`/`salsa::Update` and the query
+/// backdates: a body edit leaves every `source_edges` unchanged (it is
+/// range-free), so this re-runs only when a `source()` call is actually
+/// added/removed/retargeted.
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+pub struct ReverseSources {
+    /// Target path → the member paths that `source()` it.
+    pub sourced_by: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+    /// Members with a `Dynamic` `source()` argument: their outgoing edge can't
+    /// be resolved to a path, so they can't be recorded as a sourcer of any
+    /// specific target. Tracked so a consumer knows the reverse map is partial.
+    pub dynamic_sources: BTreeSet<PathBuf>,
+}
+
+/// Invert per-file forward `source()` edges into a [`ReverseSources`] map. Pure
+/// over `(path, edges)` pairs so it is unit-testable without a salsa db.
+fn invert_source_edges<'a>(
+    members: impl IntoIterator<Item = (&'a Path, &'a [SourceEdgeKey])>,
+) -> ReverseSources {
+    let mut rev = ReverseSources::default();
+    for (path, edges) in members {
+        for edge in edges {
+            match &edge.target {
+                SourceTarget::Dynamic => {
+                    rev.dynamic_sources.insert(path.to_path_buf());
+                }
+                SourceTarget::Path(target) => {
+                    rev.sourced_by
+                        .entry(target.clone())
+                        .or_default()
+                        .insert(path.to_path_buf());
+                }
+            }
+        }
+    }
+    rev
+}
+
+/// The "who sources me" index for `project`, inverting every member's forward
+/// `source_edges`. Keyed on the interned [`Project`] and the per-member
+/// (range-free) `source_edges` firewall, so it backdates across body edits.
+#[salsa::tracked(returns(ref))]
+pub fn reverse_source_edges<'db>(
+    db: &'db dyn IncrementalDb,
+    project: Project<'db>,
+) -> ReverseSources {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ReverseSourceEdges,
+        file: None,
+    });
+    invert_source_edges(
+        project
+            .members(db)
+            .iter()
+            .map(|m| (m.path.as_path(), source_edges(db, m.file).as_slice())),
+    )
+}
+
+/// A project-wide name → definition-site index: for each top-level binding name,
+/// the set of `(member path, kind)` it is defined at. Range-free, aggregated from
+/// the per-file [`file_def_sites`] firewall, so it backdates across body edits;
+/// a consumer recovers the actual span per request via
+/// [`Analysis::def_range_in`](crate::incremental::Analysis::def_range_in).
+///
+/// This is the index that backs workspace symbols, cross-file go-to-definition
+/// and references, and call hierarchy.
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+pub struct DefIndex {
+    pub by_name: BTreeMap<String, BTreeSet<(PathBuf, DefKind)>>,
+}
+
+/// Aggregate every member's [`file_def_sites`] into the project-wide
+/// [`DefIndex`]. Keyed on the interned [`Project`] and the per-file firewall, so
+/// it backdates across body edits and re-runs only when some file's top-level
+/// definitions change.
+#[salsa::tracked(returns(ref))]
+pub fn project_defs<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> DefIndex {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ProjectDefs,
+        file: None,
+    });
+    let mut index = DefIndex::default();
+    for member in project.members(db) {
+        for (name, kind) in file_def_sites(db, member.file) {
+            index
+                .by_name
+                .entry(name.clone())
+                .or_default()
+                .insert((member.path.clone(), *kind));
+        }
+    }
+    index
 }
 
 /// The free-read names in `file` that resolve to nothing — neither a sibling /
@@ -206,4 +374,83 @@ pub fn external_resolution<'db>(
         .collect();
 
     ExternalResolution { unresolved }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::source::{SourceEdgeKey, SourceTarget};
+
+    fn path_edge(target: &str, local: bool) -> SourceEdgeKey {
+        SourceEdgeKey {
+            target: SourceTarget::Path(PathBuf::from(target)),
+            local,
+        }
+    }
+
+    fn dynamic_edge() -> SourceEdgeKey {
+        SourceEdgeKey {
+            target: SourceTarget::Dynamic,
+            local: false,
+        }
+    }
+
+    fn invert(members: &[(&str, Vec<SourceEdgeKey>)]) -> ReverseSources {
+        invert_source_edges(
+            members
+                .iter()
+                .map(|(p, edges)| (Path::new(*p), edges.as_slice())),
+        )
+    }
+
+    fn sourcers<'a>(rev: &'a ReverseSources, target: &str) -> Vec<&'a str> {
+        rev.sourced_by
+            .get(Path::new(target))
+            .into_iter()
+            .flat_map(|set| set.iter().map(|p| p.to_str().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn single_edge_inverts() {
+        let rev = invert(&[
+            ("/s/a.R", vec![path_edge("/s/b.R", false)]),
+            ("/s/b.R", vec![]),
+        ]);
+        assert_eq!(sourcers(&rev, "/s/b.R"), vec!["/s/a.R"]);
+        // The sourcer itself is never keyed as a target.
+        assert!(!rev.sourced_by.contains_key(Path::new("/s/a.R")));
+        assert!(rev.dynamic_sources.is_empty());
+    }
+
+    #[test]
+    fn multiple_sourcers_aggregate() {
+        let rev = invert(&[
+            ("/s/a.R", vec![path_edge("/s/c.R", false)]),
+            ("/s/b.R", vec![path_edge("/s/c.R", false)]),
+        ]);
+        assert_eq!(sourcers(&rev, "/s/c.R"), vec!["/s/a.R", "/s/b.R"]);
+    }
+
+    #[test]
+    fn local_edge_is_retained() {
+        // Unlike the forward scope builder, a local=TRUE edge is still a file
+        // dependency the reverse map records.
+        let rev = invert(&[("/s/a.R", vec![path_edge("/s/b.R", true)])]);
+        assert_eq!(sourcers(&rev, "/s/b.R"), vec!["/s/a.R"]);
+    }
+
+    #[test]
+    fn dynamic_edge_recorded_separately() {
+        let rev = invert(&[("/s/a.R", vec![dynamic_edge()])]);
+        assert!(rev.sourced_by.is_empty());
+        assert!(rev.dynamic_sources.contains(Path::new("/s/a.R")));
+    }
+
+    #[test]
+    fn target_outside_member_set_is_retained() {
+        // /s/gen.R is not itself a member, but its sourcer is still recorded.
+        let rev = invert(&[("/s/a.R", vec![path_edge("/s/gen.R", false)])]);
+        assert_eq!(sourcers(&rev, "/s/gen.R"), vec!["/s/a.R"]);
+    }
 }
