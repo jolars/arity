@@ -215,13 +215,14 @@ These are correct and should **not** be churned.
 
 ## 4. Secondary observations (no separate TODO)
 
-- **rayon global-pool sharing.** Lint analyze, reads, code actions, *and* heavy
-  background package indexing (`src/lsp.rs:988`) all run on rayon's global pool,
-  which has no priority concept --- a heavy index build can starve a
-  latency-sensitive read. rust-analyzer tags jobs with
-  `ThreadIntent::{Worker,   LatencySensitive}` on its own pool. Watch-item: if
-  read latency regresses under load, give indexing a separate pool or
-  deprioritize it.
+- **rayon global-pool sharing.** *Resolved.* Lint analyze, reads, code actions,
+  *and* heavy background package indexing used to share rayon's global pool,
+  which has no priority concept --- a heavy index build could starve a
+  latency-sensitive read. The LSP now uses two purpose-built `TaskPool`s
+  (`src/lsp/task_pool.rs`): a read pool sized to the machine's parallelism for
+  latency-sensitive work, and a single-thread index pool that isolates the one
+  unbounded-duration job (background harvesting). rayon is reserved for future
+  CLI data parallelism.
 - **Diagnostics channel.** rust-analyzer surfaces diagnostics via
   `#[salsa::accumulator]`; ravel threads them through query return values and
   the owned `PreparedProject`. The current approach is fine and explicit;

@@ -9,9 +9,18 @@
 //! **write-phase** ([`prepare_document_in_project`](crate::linter::check::prepare_document_in_project),
 //! `&mut db`, on the lint thread: upsert the live buffer + siblings) and an
 //! expensive **read-phase** ([`analyze_prepared`](crate::linter::check::analyze_prepared),
-//! `&db` only) that runs on a rayon worker holding a short-lived db clone. The
+//! `&db` only) that runs on the read pool holding a short-lived db clone. The
 //! lint thread returns to its `select!` right after the write-phase, so a long
 //! analyze no longer blocks queued reads.
+//!
+//! Threading uses two purpose-built [`TaskPool`](task_pool::TaskPool)s rather
+//! than rayon's global pool (which has no priority concept): a **read pool**
+//! sized to the machine's parallelism serves latency-sensitive work (formatting,
+//! hover, the analyze read-phase, code actions), and a **single-thread index
+//! pool** isolates the one unbounded-duration job — background package indexing
+//! ([`build_index`]) — so a long harvest can never starve a read. (CLI
+//! format/lint stays sequential; rayon is reserved for future CLI data
+//! parallelism.)
 //!
 //! Requests are *coalesced* (latest version per URI; stale edits dropped) into a
 //! pending queue. A [`decide`] scheduler keeps at most one analyze in flight: a
@@ -25,7 +34,7 @@
 //!
 //! Read-only requests reuse the lint thread's cached work rather than re-parsing:
 //! - **Formatting and hover** are sent to the lint thread as [`ReadJob`]s; it
-//!   mints a short-lived db clone and runs the job on rayon ([`run_read`]),
+//!   mints a short-lived db clone and runs the job on the read pool ([`run_read`]),
 //!   formatting/hovering off the cached parse tree when the tracked buffer still
 //!   matches the live text. A clone outstanding when the lint thread writes trips
 //!   [`salsa::Cancelled`]; both that and a cache miss fall back to a fresh parse,
@@ -40,6 +49,8 @@
 // `Uri`'s `Hash`/`Eq` go through `as_str()`, so this is sound; `WorkspaceEdit`
 // also forces `HashMap<Uri, _>` on us. Allow it module-wide.
 #![allow(clippy::mutable_key_type)]
+
+mod task_pool;
 
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
@@ -88,6 +99,7 @@ use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
 use crate::semantic::{PackageOrigin, SemanticModel};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::LineIndex;
+use task_pool::{Spawner, TaskPool, read_pool_size};
 
 type DynError = Box<dyn std::error::Error + Sync + Send>;
 
@@ -132,11 +144,22 @@ fn main_loop(connection: Connection, editor_settings: EditorSettings) -> Result<
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
     let (read_tx, read_rx) = crossbeam_channel::unbounded::<ReadJob>();
-    let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx);
+
+    // The read pool serves latency-sensitive work (formatting, hover, the analyze
+    // read-phase, code actions). Its `_workers` must outlive both `state` and the
+    // lint thread; the drop order at the end of this function guarantees that.
+    let read_pool = TaskPool::new("ravel-lsp-read", read_pool_size());
+    let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx, read_pool.spawner());
     // `done_tx`/`done_rx` are created inside the lint thread (see
     // `spawn_lint_thread`) so the main loop never holds the read end.
 
-    let mut state = GlobalState::new(connection.sender.clone(), lint_tx, read_tx, editor_settings);
+    let mut state = GlobalState::new(
+        connection.sender.clone(),
+        lint_tx,
+        read_tx,
+        read_pool.spawner(),
+        editor_settings,
+    );
 
     loop {
         select! {
@@ -251,7 +274,7 @@ enum LintMsg {
 }
 
 /// A read-only request the lint thread services by cloning its salsa db and
-/// running the work off-thread on `rayon`. Each variant carries the live buffer
+/// running the work off-thread on the read pool. Each variant carries the live buffer
 /// `text` and the client `sender` so the worker can reply directly; the lint
 /// thread only adds the db snapshot. See [`run_read`].
 enum ReadJob {
@@ -316,6 +339,11 @@ struct GlobalState {
     /// lint thread owns the salsa db, so it mints a short-lived clone per job and
     /// runs the read off-thread against the cached parse. See [`run_read`].
     read_tx: Sender<ReadJob>,
+    /// Submit-side handle onto the read pool, for serving `textDocument/codeAction`
+    /// off the main loop (a pure lookup over cached findings, or an independent
+    /// re-lint). Shared with the lint thread, which uses it for read jobs and the
+    /// analyze read-phase.
+    read_spawner: Spawner,
 }
 
 impl GlobalState {
@@ -323,6 +351,7 @@ impl GlobalState {
         sender: Sender<Message>,
         lint_tx: Sender<LintMsg>,
         read_tx: Sender<ReadJob>,
+        read_spawner: Spawner,
         editor_settings: EditorSettings,
     ) -> Self {
         Self {
@@ -333,6 +362,7 @@ impl GlobalState {
             sender,
             lint_tx,
             read_tx,
+            read_spawner,
         }
     }
 
@@ -430,7 +460,7 @@ impl GlobalState {
             && *cached_version == version
         {
             let findings = Arc::clone(findings);
-            rayon::spawn(move || {
+            self.read_spawner.spawn(move || {
                 let actions = code_actions_from_findings(&findings, &text, &uri, range);
                 let _ = sender.send(Message::Response(Response::new_ok(id, actions)));
             });
@@ -444,7 +474,7 @@ impl GlobalState {
             .resolve_settings(&uri)
             .map(|s| s.lint)
             .unwrap_or_default();
-        rayon::spawn(move || {
+        self.read_spawner.spawn(move || {
             let actions = compute_code_actions(&text, &path, &lint, &uri, range);
             let _ = sender.send(Message::Response(Response::new_ok(id, actions)));
         });
@@ -473,8 +503,8 @@ impl GlobalState {
     }
 
     /// Hand a read-only job to the lint thread (db owner), which snapshots the db
-    /// and runs it on `rayon`. If that channel is gone (shutdown in flight), reply
-    /// `null` so the client isn't left waiting.
+    /// and runs it on the read pool. If that channel is gone (shutdown in flight),
+    /// reply `null` so the client isn't left waiting.
     fn dispatch_read(&self, job: ReadJob) {
         if let Err(crossbeam_channel::SendError(job)) = self.read_tx.send(job) {
             let (id, sender) = match job {
@@ -650,12 +680,17 @@ fn spawn_lint_thread(
     lint_rx: Receiver<LintMsg>,
     read_rx: Receiver<ReadJob>,
     out_tx: Sender<Outbound>,
+    read_spawner: Spawner,
 ) -> JoinHandle<()> {
     let (build_tx, build_rx) = crossbeam_channel::unbounded::<IndexedProvider>();
     let (done_tx, done_rx) = crossbeam_channel::unbounded::<AnalyzeDone>();
     std::thread::Builder::new()
         .name("ravel-lint".to_string())
         .spawn(move || {
+            // The single-thread index pool isolates the one unbounded-duration
+            // job (background package harvesting) from the read pool, so a long
+            // build can never starve a latency-sensitive read. Owned by the
+            // worker, so its thread lives exactly as long as the lint thread.
             let mut worker = LintWorker {
                 db: IncrementalDatabase::default(),
                 index_loaded: HashSet::new(),
@@ -665,6 +700,8 @@ fn spawn_lint_thread(
                 done_tx,
                 inflight: None,
                 pending: HashMap::new(),
+                read_spawner,
+                index_pool: TaskPool::new("ravel-index", 1),
             };
             worker.run(&lint_rx, &read_rx, &build_rx, &done_rx);
         })
@@ -742,6 +779,12 @@ struct LintWorker {
     /// Coalesced lint queue: the latest pending request per URI. Persists across
     /// `select!` iterations (it used to be a per-iteration local).
     pending: HashMap<Uri, LintRequest>,
+    /// Submit-side handle onto the read pool, shared with the main loop. Used for
+    /// read jobs (formatting, hover) and the analyze read-phase.
+    read_spawner: Spawner,
+    /// Single-thread pool that isolates background package indexing — the one
+    /// unbounded-duration job — from the read pool.
+    index_pool: TaskPool,
 }
 
 impl LintWorker {
@@ -781,7 +824,7 @@ impl LintWorker {
                     // next write isn't blocked once the read finishes (or a racing
                     // write trips `salsa::Cancelled`, handled by the fallback).
                     let snapshot = self.db.snapshot();
-                    rayon::spawn(move || run_read(snapshot, job));
+                    self.read_spawner.spawn(move || run_read(snapshot, job));
                 }
                 recv(build_rx) -> built => {
                     let Ok(indexed) = built else { continue };
@@ -844,7 +887,7 @@ impl LintWorker {
     }
 
     /// Run one lint: the write-phase (`&mut db`, on this thread) then the
-    /// read-phase analyze on a `rayon` worker holding a db clone. Returning to
+    /// read-phase analyze on the read pool holding a db clone. Returning to
     /// `select!` right after spawning keeps reads responsive (problem 2) and lets
     /// a fresher edit cancel the analyze (problem 1).
     ///
@@ -884,7 +927,7 @@ impl LintWorker {
             self.maybe_build(&anchor, &req.index_config, &req.text);
         }
 
-        // Read-phase on rayon, holding a db clone. A superseding edit (or any
+        // Read-phase on the read pool, holding a db clone. A superseding edit (or any
         // write) trips `salsa::Cancelled`, caught here so a cancelled analyze
         // publishes nothing; the main loop's version gate is the backstop.
         let snapshot = self.db.snapshot();
@@ -902,7 +945,7 @@ impl LintWorker {
         // resolves undefined symbols through it; this provider is only the
         // fallback for rules that read static base-R facts (`is_base`).
         let fallback = CompositeProvider::base_only();
-        rayon::spawn(move || {
+        self.read_spawner.spawn(move || {
             let result = salsa::Cancelled::catch(AssertUnwindSafe(|| {
                 crate::linter::check::analyze_prepared(&snapshot, &prepared, &fallback)
             }));
@@ -973,7 +1016,7 @@ impl LintWorker {
         let cfg = cfg.clone();
         let anchor = anchor.to_path_buf();
         let build_tx = self.build_tx.clone();
-        rayon::spawn(move || {
+        self.index_pool.spawn(move || {
             let now = now_unix_secs();
             let cache = Cache::new(cache_root);
             let search = LibrarySearch::discover(Some(&anchor), &cfg.library_paths);
@@ -1016,11 +1059,11 @@ fn now_unix_secs() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Read jobs (run on `rayon` with a salsa db snapshot)
+// Read jobs (run on the read pool with a salsa db snapshot)
 // ---------------------------------------------------------------------------
 
 /// Service a read-only job against a db `snapshot`, replying to the client.
-/// Runs on a `rayon` worker; the `snapshot` is dropped on return so it never
+/// Runs on a read-pool worker; the `snapshot` is dropped on return so it never
 /// blocks the lint thread's next write longer than the job itself.
 fn run_read(snapshot: Analysis, job: ReadJob) {
     match job {
