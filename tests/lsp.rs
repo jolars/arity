@@ -1,9 +1,9 @@
-use lsp_types::{DocumentHighlightKind, Position, Range, TextEdit};
+use lsp_types::{DocumentHighlightKind, DocumentSymbol, Position, Range, SymbolKind, TextEdit};
 use ravel::formatter::{FormatStyle, format_with_style};
 use ravel::lsp::{
-    compute_definition, compute_document_highlights, compute_format_edits,
-    compute_format_range_edits, compute_prepare_rename, compute_references, compute_rename,
-    compute_rename_with_anchor,
+    compute_definition, compute_document_highlights, compute_document_symbols,
+    compute_format_edits, compute_format_range_edits, compute_prepare_rename, compute_references,
+    compute_rename, compute_rename_with_anchor,
 };
 
 #[test]
@@ -352,4 +352,70 @@ fn document_highlight_marks_definition_write_and_reads_read() {
 #[test]
 fn document_highlight_declines_a_nonlocal_name() {
     assert!(compute_document_highlights("print(1)\n", 0).is_none());
+}
+
+// --- document symbols -------------------------------------------------------
+
+/// `(name, kind)` pairs for a flat list of symbols, in order.
+#[track_caller]
+fn symbol_names(symbols: &[DocumentSymbol]) -> Vec<(&str, SymbolKind)> {
+    symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect()
+}
+
+#[test]
+fn document_symbols_list_top_level_functions_and_variables() {
+    let text = "f <- function(x) x + 1\ny <- 42\n";
+    let symbols = compute_document_symbols(text);
+    assert_eq!(
+        symbol_names(&symbols),
+        vec![("f", SymbolKind::FUNCTION), ("y", SymbolKind::VARIABLE)]
+    );
+}
+
+#[test]
+fn document_symbols_nest_bindings_inside_a_function_body() {
+    let text = "f <- function() {\n  g <- function() 1\n  h <- 2\n}\n";
+    let symbols = compute_document_symbols(text);
+    assert_eq!(symbol_names(&symbols), vec![("f", SymbolKind::FUNCTION)]);
+    let children = symbols[0].children.as_ref().expect("f has nested symbols");
+    assert_eq!(
+        symbol_names(children),
+        vec![("g", SymbolKind::FUNCTION), ("h", SymbolKind::VARIABLE)]
+    );
+    // The leaf function has no further children.
+    assert!(children[0].children.is_none());
+}
+
+#[test]
+fn document_symbols_are_empty_for_a_bare_call() {
+    assert!(compute_document_symbols("print(1)\n").is_empty());
+}
+
+#[test]
+fn document_symbols_surface_a_binding_inside_a_control_flow_block() {
+    // An `if` block introduces no scope, so `x` is a file-level binding: it must
+    // still surface (here flattened to the top level), never be lost.
+    let text = "if (cond) {\n  x <- 1\n}\n";
+    let symbols = compute_document_symbols(text);
+    assert_eq!(symbol_names(&symbols), vec![("x", SymbolKind::VARIABLE)]);
+}
+
+#[test]
+fn document_symbols_handle_right_assignment() {
+    let text = "42 -> z\n";
+    let symbols = compute_document_symbols(text);
+    assert_eq!(symbol_names(&symbols), vec![("z", SymbolKind::VARIABLE)]);
+}
+
+#[test]
+fn document_symbol_ranges_target_the_name_and_enclose_the_statement() {
+    let text = "value <- 1\n";
+    let symbols = compute_document_symbols(text);
+    let sym = &symbols[0];
+    // The selection range is the identifier `value` (columns 0..5).
+    assert_eq!(sym.selection_range.start, Position::new(0, 0));
+    assert_eq!(sym.selection_range.end, Position::new(0, 5));
+    // The full range encloses the whole `value <- 1` statement.
+    assert_eq!(sym.range.start, Position::new(0, 0));
+    assert_eq!(sym.range.end, Position::new(0, 10));
 }

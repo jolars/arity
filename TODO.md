@@ -136,11 +136,18 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 ### Symbols
 
-- [ ] **Document symbols** (`textDocument/documentSymbol`). Walk the file's
-      top-level (and nested function) bindings into a `DocumentSymbol` tree ---
-      functions, assigned variables, maybe `R6`/`setClass` shapes later. Backed
-      directly by `file_exports` + the scope tree; no cross-file work. Highest
-      leverage-to-effort item here.
+- [x] **Document symbols** (`textDocument/documentSymbol`). A hierarchical
+      `DocumentSymbol` outline of the file's function and variable bindings
+      (`compute_document_symbols` / `on_document_symbol`). The name set is the
+      `SemanticModel`'s `Local`/`Implicit` bindings at *every* scope (the
+      `file_exports` predicate lifted past file scope; params and `for`-vars
+      excluded); the CST then supplies the tree and each symbol's full/selection
+      spans. A binding's children are the symbols nested in its value side, and
+      non-binding nodes (`if`/`for`/`{}`, which introduce no symbol) are
+      descended through so every binding surfaces at the right level. Pure and
+      single-file (no workspace), so it runs straight on the read pool like
+      document highlight. `R6`/`setClass` shapes deferred. Kind is `FUNCTION` vs
+      `VARIABLE`; `detail` (signatures) is a follow-up.
 - [ ] **Workspace symbols** (`workspace/symbol`). Fuzzy name search across all
       project files. Needs a persistent, queryable symbol index keyed by name
       (aggregate `file_exports` across the workspace) plus project-wide file

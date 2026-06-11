@@ -67,8 +67,9 @@ use lsp_types::notification::{
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, DocumentHighlightRequest, Formatting, GotoDefinition, HoverRequest,
-    PrepareRenameRequest, RangeFormatting, References, Rename, Request as RequestTrait,
+    CodeActionRequest, DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDefinition,
+    HoverRequest, PrepareRenameRequest, RangeFormatting, References, Rename,
+    Request as RequestTrait,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -76,19 +77,20 @@ use lsp_types::{
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
     DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
-    DocumentRangeFormattingParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverContents, HoverParams, HoverProviderCapability, InitializeResult, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams,
-    Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
+    DocumentRangeFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
+    OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams,
+    RenameOptions, RenameParams, ServerCapabilities, ServerInfo, SymbolKind as LspSymbolKind,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
     WorkspaceEdit,
 };
-use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
+use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
 use serde::Deserialize;
 use smol_str::SmolStr;
 
-use crate::ast::{AstNode as _, BinaryExpr};
+use crate::ast::{AssignmentExpr, AstNode as _, BinaryExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::file_discovery::collect_r_files;
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
@@ -103,7 +105,7 @@ use crate::rindex::provider::{
     CompositeProvider, IndexedProvider, package_indexed, resolve_origin,
 };
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
-use crate::semantic::{BindingId, PackageOrigin, SemanticModel};
+use crate::semantic::{BindingId, BindingKind, PackageOrigin, SemanticModel};
 use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::LineIndex;
 use task_pool::{Spawner, TaskPool, read_pool_size};
@@ -168,6 +170,7 @@ fn server_capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -461,6 +464,7 @@ impl GlobalState {
             GotoDefinition::METHOD => self.on_definition(req),
             References::METHOD => self.on_references(req),
             DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
+            DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
             _ => {
@@ -682,6 +686,30 @@ impl GlobalState {
                     .collect::<Vec<_>>()
             });
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        });
+    }
+
+    /// `textDocument/documentSymbol`: the file's function and variable bindings
+    /// as a hierarchical outline. Pure and single-file (no workspace lookup), so
+    /// like document highlight it runs straight on the read pool rather than
+    /// through the lint thread. See [`compute_document_symbols`].
+    fn on_document_symbol(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid documentSymbol params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let symbols = compute_document_symbols(&text);
+            let response = DocumentSymbolResponse::Nested(symbols);
+            let _ = sender.send(Message::Response(Response::new_ok(id, response)));
         });
     }
 
@@ -2089,6 +2117,94 @@ pub fn compute_document_highlights(
     );
     highlights.sort_by_key(|(range, _)| range.start());
     Some(highlights)
+}
+
+/// The document-symbol outline for `text`: every function and variable binding,
+/// nested to mirror the source. Pure (parses `text` itself) and unit-testable;
+/// single-file, so it never consults the workspace.
+///
+/// The set of names is authoritative from the [`SemanticModel`] — the file-scope
+/// `Local`/`Implicit` predicate behind [`crate::project::file_exports`], lifted to
+/// *every* scope so nested locals are included; parameters and `for`-vars are
+/// deliberately excluded. The CST then supplies the tree shape and each symbol's
+/// spans. Best-effort, with no clean-parse gate (an outline of partial input is
+/// still useful).
+pub fn compute_document_symbols(text: &str) -> Vec<DocumentSymbol> {
+    let root = parse(text).cst;
+    let model = SemanticModel::build(&root);
+    // Name keyed by the defining identifier's span: an assignment is a symbol iff
+    // its target token range is a key here. Using the model's name (not the raw
+    // token text) yields the unquoted form for backtick/string targets.
+    let bindings: HashMap<TextRange, SmolStr> = model
+        .bindings()
+        .iter()
+        .filter(|b| matches!(b.kind, BindingKind::Local | BindingKind::Implicit))
+        .map(|b| (b.def_range, b.name.clone()))
+        .collect();
+    let line_index = LineIndex::new(text);
+    let mut symbols = Vec::new();
+    collect_document_symbols(&root, &bindings, &line_index, &mut symbols);
+    symbols
+}
+
+/// Walk `node`'s child nodes, emitting a [`DocumentSymbol`] for each assignment
+/// whose target is a known binding (recursing into its value for nested symbols)
+/// and descending through every other node. Descending into non-binding nodes is
+/// what lets a binding nested in an `if`/`for`/`{}` (none of which introduce a
+/// symbol of their own) surface at the right level instead of being dropped.
+fn collect_document_symbols(
+    node: &SyntaxNode,
+    bindings: &HashMap<TextRange, SmolStr>,
+    line_index: &LineIndex,
+    out: &mut Vec<DocumentSymbol>,
+) {
+    for child in node.children() {
+        match document_symbol_for(&child, bindings, line_index) {
+            Some(symbol) => out.push(symbol),
+            None => collect_document_symbols(&child, bindings, line_index, out),
+        }
+    }
+}
+
+/// Build the [`DocumentSymbol`] for `node` when it is an assignment binding a
+/// known name, else `None`. The full range is the whole assignment statement; the
+/// selection range is the defining identifier; the kind is `FUNCTION` when the
+/// value is a function/lambda, else `VARIABLE`. Children are the symbols nested in
+/// the value side.
+#[expect(deprecated, reason = "DocumentSymbol::deprecated is a required field")]
+fn document_symbol_for(
+    node: &SyntaxNode,
+    bindings: &HashMap<TextRange, SmolStr>,
+    line_index: &LineIndex,
+) -> Option<DocumentSymbol> {
+    let assign = AssignmentExpr::cast(node.clone())?;
+    let name_token = assign.target_name_token()?;
+    let name = bindings.get(&name_token.text_range())?;
+    let value = assign.value_element();
+    let is_function =
+        matches!(&value, Some(NodeOrToken::Node(n)) if FunctionExpr::can_cast(n.kind()));
+
+    // Nested bindings live in the value side (a function body, or any expression
+    // that itself contains assignments). The target side binds no further names.
+    let mut children = Vec::new();
+    if let Some(NodeOrToken::Node(value_node)) = &value {
+        collect_document_symbols(value_node, bindings, line_index, &mut children);
+    }
+
+    Some(DocumentSymbol {
+        name: name.to_string(),
+        detail: None,
+        kind: if is_function {
+            LspSymbolKind::FUNCTION
+        } else {
+            LspSymbolKind::VARIABLE
+        },
+        tags: None,
+        deprecated: None,
+        range: text_range_to_lsp_range(line_index, node.text_range()),
+        selection_range: text_range_to_lsp_range(line_index, name_token.text_range()),
+        children: (!children.is_empty()).then_some(children),
+    })
 }
 
 /// The def span the cursor's local binding resolves to, off an already-parsed CST
