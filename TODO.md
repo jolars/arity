@@ -12,45 +12,25 @@
       full-reparse fallback (cf. rust-analyzer `reparsing.rs`), splicing reused
       green subtrees (`src/parser/reparse.rs`). `parsed_document` recovers the
       edit from the old/new text via a prefix/suffix diff and splices off a
-      non-salsa per-file previous-parse cache (a pure perf hint — a successful
+      non-salsa per-file previous-parse cache (a pure perf hint --- a successful
       reparse is byte-identical to a full parse, so it never changes query
       output). Correctness is pinned by an oracle property test
       (`tests/incremental_reparse.rs`: `reparse == parse(new)` in tree *and*
       diagnostics across the corpus) plus a salsa-level test
-      (`body_edit_uses_incremental_reparse_and_stays_correct`). On a ~100 KB file
-      reparse is ~200× faster than a full parse (`benches/parse.rs`). Serves
-      Tenet 2. No `SyntaxNodePtr`/`AstPtr` added (no feature needs a stable
-      cross-edit reference yet). See `ARCHITECTURE_AUDIT.md` §3.4.
-  - [ ] Follow-up: top-level-statement reparse (non-braced). v1 reparses only
-        brace blocks + single tokens; edits elsewhere fall back to a full parse
-        (correct, just not incremental). Could also use the LSP's precise edit
-        ranges instead of the prefix/suffix text diff.
+      (`body_edit_uses_incremental_reparse_and_stays_correct`). On a \~100 KB
+      file reparse is \~200× faster than a full parse (`benches/parse.rs`).
+      Serves Tenet 2. No `SyntaxNodePtr`/`AstPtr` added (no feature needs a
+      stable cross-edit reference yet). See `ARCHITECTURE_AUDIT.md` §3.4.
+      - [ ] Follow-up: top-level-statement reparse (non-braced). v1 reparses
+            only brace blocks + single tokens; edits elsewhere fall back to a
+            full parse (correct, just not incremental). Could also use the LSP's
+            precise edit ranges instead of the prefix/suffix text diff.
 
 ## Formatter
 
-- [x] Native-IR migration tail. The Wadler-IR migration is complete for
-      `if`/`else`: comment relocation is built natively (no string bridge), the
-      eligibility gate and all legacy if/else string renderers are deleted, and
-      with them the entire legacy line-rendering subsystem (`format_line`,
-      `format_expr_with_optional_comment`, `format_block_expr_with_prefixed_comments`,
-      `FormatLineFn`, `indent_text`). A too-wide bare value-position branch now
-      braces (air-aligned) instead of wrapping unbraced --- see
-      `if_value_position_wide_bare_braces` / `if_else_wide_bare_branches` /
-      `if_comment_wide_branch`.
-  - [x] **Function-body re-render hack removed.** The `if` condition is now
-        native IR spliced inline (`control_flow.rs`
-        `ir_if_expr_impl`/`try_format_if_with_external_body`), so it re-indents
-        structurally and the bare-body branch no longer re-renders at `indent + 1`
-        (`functions.rs`). An over-width `if` whose flat form spans multiple lines
-        now braces its consequence (air-aligned), matching the general
-        multi-line-`if` brace rule. Guarded by `function_body_wide_if_condition`
-        (bare body) and `function_body_wide_if_condition_nested` (nested deeper
-        than build indent). `while`/`for` conditions were already native; the
-        audit confirmed no other multi-line baked `Verbatim` is reachable from a
-        bare body (`ir_brace_token_default` is already native).
-  - Air divergence recorded: ravel hugs an over-width `if` condition to `if (` and
-    wraps it internally (Tenet 1); air breaks the condition onto its own line.
-    Both brace the consequence. See `tests/air_compat_allowlist.toml`.
+- [ ] Tibbles
+
+- [ ] Roxygen syntax formatting
 
 ## Linter
 
@@ -63,103 +43,16 @@ in-tree parser, not a drop-in jarl replacement.
 
 ## Language Server
 
-- [x] LSP refinements: `initializationOptions` /
-      `workspace/didChangeConfiguration` are now honored for `line-width` /
-      `indent-width` (a discovered `ravel.toml` wins; editor settings are the
-      fallback). Still pending: `textDocument/rangeFormatting`, once the
-      formatter gains a range API. (`textDocument/codeAction` QuickFix hooks
-      shipped alongside autofix --- see Phase 6.x autofix above.)
-- [x] Bundled top-N CRAN export lists (names-only). The top-500 packages by
-      download count (ranked from the RStudio/Posit CRAN logs by
-      `scripts/rank_cran_downloads.sh` → `scripts/cran_top_packages.txt`, a
-      reproducible snapshot) are dumped to a sectioned data file
-      (`scripts/dump_cran_symbols.R` → `src/semantic/cran/exports.txt`) and
-      baked in via `BundledPackages` (`src/semantic/symbols.rs`), wired into
-      `CompositeProvider` (`src/rindex/provider.rs`) as the lowest-precision tier
-      (installed harvest → base → bundled). `undefined-symbol` now resolves
-      `library()`-attached packages in the bundled set without them being
-      installed, instead of suppressing the whole file. A weekly CI job
-      (`.github/workflows/cran-symbols.yml`) re-ranks, installs the set from PPM
-      binaries, regenerates the data file, and opens a PR.
 - [ ] Full downloadable CRAN sidecar (escalation of the bundled lists above).
-      Shape: per-package export lists keyed by package version, covering the long
-      tail the bundled set omits. Carries an out-of-band cost (a CRAN-processing
-      pipeline + hosting + refresh cadence) the bundled lists avoid; add it as an
-      additive `SymbolProvider` layer when long-tail/CI completeness is worth
-      that. Would also let DESCRIPTION `Imports`/`Depends` feed name resolution
-      (the `import(pkg)` case currently only marks resolution incomplete, in
-      `src/project/scope.rs`). Names-only `pkg::name` resolution for
-      bundled-but-not-installed packages is a smaller related follow-up.
-- [x] DESCRIPTION / NAMESPACE parsing for R-package authoring contexts.
-      NAMESPACE `export()`/`exportPattern()`, `importFrom()`, and `import()` are
-      parsed (`rindex::harvest::parse_namespace`) and folded into cross-file
-      resolution (`src/project/scope.rs`): exported bindings aren't flagged
-      `unused-binding`, `importFrom` names resolve, and `import(pkg)` suppresses
-      `undefined-symbol`.
-- [x] Cross-file scope awareness: a binding defined in `a.R` resolves from `b.R`
-      when both belong to the same package (shared `R/` namespace) or `source()`
-      closure. Implemented in `src/project/` (`ProjectScope`) and wired into
-      both the batch linter and the LSP (`check_document_in_project`).
-- [x] Salsa-cached `semantic_model` query in `src/incremental.rs`. The CST is
-      now cached as a `rowan::GreenNode` (via `no_eq, unsafe(non_update_types)`)
-      and `semantic_model` is a tracked query; the linter and LSP reuse them
-      instead of re-parsing from text.
-- [x] Cross-file follow-ups: the project scope is now tracked salsa queries.
-      Per-file firewalls (`file_exports`, `file_free_reads`, `source_edges` in
-      `src/incremental.rs`, returning `Eq` values so a body edit backdates) feed
-      `project_graph` + `visible_symbols` (`src/project/graph.rs`), keyed on an
-      interned `Project` membership snapshot. A function-body edit no longer
-      rebuilds the project graph (`SourceFile` gained a `path` field; the range
-      is dropped via `SourceEdgeKey` so the graph input stays `salsa::Update`).
-      Guarded by `body_edit_does_not_rebuild_project_scope` and friends.
-- [x] LSP read-path: hover/formatting reuse the salsa db. The lint thread (db
-      owner) mints a short-lived clone per read job and runs it on rayon
-      (`run_read`), formatting/hovering off the cached parse tree when the
-      tracked buffer matches the live text; a cache miss or a `salsa::Cancelled`
-      from a racing write falls back to a fresh parse. Code actions are served
-      from the last lint's findings (cached per URI by version) with no re-lint
-      on a version match. `IncrementalDatabase` is now `Clone` (shared storage
-      handle).
-- [x] LSP read-path follow-up: preemptive lint cancellation. The lint is split
-      into a write-phase (`prepare_document_in_project`, `&mut db`, on the lint
-      thread) and a read-phase (`analyze_prepared`, `&db` only) that now runs on
-      a rayon worker holding a db clone, wrapped in `salsa::Cancelled::catch`.
-      The lint thread returns to its `select!` right after the cheap
-      write-phase, so reads are no longer delayed behind a long lint. A
-      strictly-newer edit of the *same* URI calls `db.trigger_cancellation()` to
-      unwind the in-flight analyze (a `decide` scheduler keeps at most one in
-      flight and never cross-cancels a different URI, so multi-URI `RelintAll`
-      still publishes every file).
-- [x] Honor editor-supplied `initializationOptions` /
-      `workspace/didChangeConfiguration` for `line-width` / `indent-width`.
-      Editor settings are the *fallback*: a discovered `ravel.toml` is
-      authoritative and ignores them. Parsed in `src/lsp.rs` (`EditorSettings`),
-      applied via `resolve_format_style`; a config change clears the resolution
-      cache so the next pull picks up the new fallback.
-- [x] Range formatting (`textDocument/rangeFormatting`) once the formatter gains
-      a range API.
-- [x] Add parse performance and incremental-reparse benchmarks. `benches/parse.rs`
-      (criterion, `task bench-parse`): `full_parse` across sizes plus an
-      `incremental` group measuring `reparse_token`/`reparse_block` against a full
-      parse of the same edited text.
-- [x] Type-level read/write split (rust-analyzer `Analysis`/`AnalysisHost`):
-      wrap `IncrementalDatabase` in an `Analysis` newtype exposing only `&self`
-      read queries, handed to read jobs (`run_read`, the analyze worker), keeping
-      the `&mut` handle private to the lint worker. Makes "lint thread is the
-      sole writer" a compile-time guarantee instead of a convention. Files:
-      `src/incremental.rs`, `src/lsp.rs`, `src/linter/check.rs`. See
-      `ARCHITECTURE_AUDIT.md` §3.1.
-- [x] Salsa durability for rarely-changing inputs: the harvested package index
-      is now a HIGH-durability salsa **singleton input** (`LibraryIndex`), read by
-      a tracked `external_resolution` query that backdates across body edits, so a
-      keystroke (LOW write) skips revalidating the library subgraph via the
-      version vector. The external `Arc<CompositeProvider>` swap pipeline is gone:
-      the lint thread installs the index with `set_library_index` (sole writer)
-      and hover reads it from the read snapshot. R's default-package and bundled
-      CRAN lists stay `&'static` (compile-time constants, never in salsa). Files:
-      `src/incremental.rs`, `src/rindex/provider.rs`, `src/project/graph.rs`,
-      `src/linter/{check.rs,rules.rs,rules/correctness/undefined_symbol.rs}`,
-      `src/lsp.rs`. See `ARCHITECTURE_AUDIT.md` §3.2.
+      Shape: per-package export lists keyed by package version, covering the
+      long tail the bundled set omits. Carries an out-of-band cost (a
+      CRAN-processing pipeline + hosting + refresh cadence) the bundled lists
+      avoid; add it as an additive `SymbolProvider` layer when long-tail/CI
+      completeness is worth that. Would also let DESCRIPTION `Imports`/`Depends`
+      feed name resolution (the `import(pkg)` case currently only marks
+      resolution incomplete, in `src/project/scope.rs`). Names-only `pkg::name`
+      resolution for bundled-but-not-installed packages is a smaller related
+      follow-up.
 - [x] Thin `FileId` + file-source map (retire the `<mem>` hack). `SourceFile`
       now carries an opaque `FileId` and an *optional* path
       (`src/incremental.rs`): in-memory files have `None` (no more synthetic
@@ -167,13 +60,14 @@ in-tree parser, not a drop-in jarl replacement.
       dedups equivalent path spellings to one input, so cwd/path-form no longer
       leaks into salsa keys. `file_path` is now `Option<&Path>`; `source_edges`
       reads the optional path as before. The `uuid` dependency is gone. Scoping
-      is unchanged — multi-root layouts (package + scripts) are governed by
+      is unchanged --- multi-root layouts (package + scripts) are governed by
       `package_root`/`ProjectScope`, not the file key. See
       `ARCHITECTURE_AUDIT.md` §3.3.
-  - [ ] Follow-up: full `vfs`/`SourceRoot` model — opaque-`FileId`-at-the-URI
-        boundary in `src/lsp.rs` and `SourceRoot`-scoped durability — when
-        multi-root workspaces actually need it. Lower leverage for a single-crate
-        tool (the wart is already gone).
+      - [ ] Follow-up: full `vfs`/`SourceRoot` model ---
+            opaque-`FileId`-at-the-URI boundary in `src/lsp.rs` and
+            `SourceRoot`-scoped durability --- when multi-root workspaces
+            actually need it. Lower leverage for a single-crate tool (the wart
+            is already gone).
 
 ## Misc
 
