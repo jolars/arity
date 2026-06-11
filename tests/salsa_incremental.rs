@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use ravel::incremental::{IncrementalDatabase, QueryKind, SourceFile, file_def_sites};
 use ravel::project::{
-    DefKind, Project, ProjectMember, external_resolution, project_defs, reverse_source_edges,
-    visible_symbols, workspace_project,
+    DefKind, Project, ProjectMember, external_resolution, project_defs, project_reads,
+    reverse_source_edges, visible_symbols, workspace_project,
 };
 use ravel::rindex::provider::IndexedProvider;
 use ravel::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
@@ -589,6 +589,104 @@ fn workspace_def_sites_empty_without_a_workspace_or_match() {
     let snapshot = db.snapshot();
     assert!(
         snapshot.workspace_def_sites("foo").is_empty(),
+        "no workspace seeded"
+    );
+}
+
+#[test]
+fn project_reads_aggregates_free_reads_by_name() {
+    // The read-site mirror of project_defs: `foo` is free-read in b.R but bound
+    // (not free-read) in a.R, so the index points only at b.R.
+    let (db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+    let project = project_ab(&db, a, b);
+    let reads = project_reads(&db, project);
+
+    let foo = reads.by_name.get("foo").expect("foo is free-read");
+    assert!(foo.contains(&PathBuf::from("/pkg/R/b.R")));
+    assert!(
+        !foo.contains(&PathBuf::from("/pkg/R/a.R")),
+        "a.R binds foo, so it is not a free read there"
+    );
+}
+
+#[test]
+fn body_edit_does_not_rebuild_project_reads() {
+    // The firewall: editing b.R's body re-runs its model and file_free_reads, but
+    // the free-read name set is unchanged, so the project-wide aggregate is reused.
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_reads(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
+
+    let project = project_ab(&db, a, b);
+    let _ = project_reads(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
+    assert_eq!(
+        counts.get(&QueryKind::ProjectReads),
+        None,
+        "a body edit must not rebuild project_reads"
+    );
+}
+
+#[test]
+fn workspace_read_sites_finds_a_cross_file_read() {
+    // b.R reads `foo`, defined at top level in a.R. The workspace read index must
+    // point a find-references at b.R, with a span spelling "foo".
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
+    let b = db.upsert_file(
+        Path::new("/s/b.R"),
+        "bar <- function() {\n  foo()\n}\n".to_string(),
+    );
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+
+    let snapshot = db.snapshot();
+    let sites = snapshot.workspace_read_sites("foo");
+    assert_eq!(sites.len(), 1, "foo is read once, in b.R");
+    let (path, range) = &sites[0];
+    assert_eq!(path, Path::new("/s/b.R"));
+    let text = snapshot.file_text(b);
+    let start: usize = range.start().into();
+    let end: usize = range.end().into();
+    assert_eq!(&text[start..end], "foo");
+    assert_eq!(start, text.find("foo()").expect("read site"));
+}
+
+#[test]
+fn workspace_read_sites_span_tracks_current_text_after_edit() {
+    // Range-free index + read_ranges_in: a leading-line edit in the *reading*
+    // file must shift the recovered read span to the post-edit position.
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
+    let b = db.upsert_file(Path::new("/s/b.R"), "bar <- function() foo()\n".to_string());
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+
+    db.set_file_text(b, "# header\nbar <- function() foo()\n");
+
+    let snapshot = db.snapshot();
+    let sites = snapshot.workspace_read_sites("foo");
+    let (_, range) = sites.first().expect("foo still read after the edit");
+    let start: usize = range.start().into();
+    assert_eq!(
+        start,
+        "# header\nbar <- function() ".len(),
+        "span follows the edited text"
+    );
+}
+
+#[test]
+fn workspace_read_sites_empty_without_a_workspace_or_match() {
+    let db = IncrementalDatabase::default();
+    let snapshot = db.snapshot();
+    assert!(
+        snapshot.workspace_read_sites("foo").is_empty(),
         "no workspace seeded"
     );
 }

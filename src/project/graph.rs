@@ -297,6 +297,42 @@ pub fn project_defs<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> D
     index
 }
 
+/// A project-wide name → read-site index: for each name a member *free-reads*
+/// (reads without binding it locally), the set of member paths that read it.
+/// Range-free, aggregated from the per-file [`file_free_reads`] firewall, so it
+/// backdates across body edits; a consumer recovers the actual read spans per
+/// request via [`Analysis::read_ranges_in`](crate::incremental::Analysis::read_ranges_in).
+///
+/// The read-site mirror of [`DefIndex`]: it backs cross-file find-references (the
+/// inverse of the def index that backs cross-file go-to-definition).
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+pub struct ReadIndex {
+    pub by_name: BTreeMap<String, BTreeSet<PathBuf>>,
+}
+
+/// Aggregate every member's [`file_free_reads`] into the project-wide
+/// [`ReadIndex`]. Keyed on the interned [`Project`] and the per-file firewall, so
+/// it backdates across body edits and re-runs only when some file's free-read
+/// name set changes.
+#[salsa::tracked(returns(ref))]
+pub fn project_reads<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> ReadIndex {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ProjectReads,
+        file: None,
+    });
+    let mut index = ReadIndex::default();
+    for member in project.members(db) {
+        for name in file_free_reads(db, member.file) {
+            index
+                .by_name
+                .entry(name.clone())
+                .or_default()
+                .insert(member.path.clone());
+        }
+    }
+    index
+}
+
 /// The free-read names in `file` that resolve to nothing — neither a sibling /
 /// `source()`-closure binding (cross-file visibility) nor any attached package
 /// (default, harvested, or bundled). These are the `undefined-symbol`

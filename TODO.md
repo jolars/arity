@@ -116,14 +116,21 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       consumer — via the new `Analysis::workspace_def_sites`, recovering each
       span per file with `def_range_in`. Package-export / namespaced targets have
       no in-tree location, so they return nothing and lean on hover (as planned).
-- [ ] **Go-to-references / find-all-references** (`textDocument/references`).
-      Inverse of the above over `idents`: collect every read site that resolves
-      to the binding under the cursor. Intra-file first; cross-file references
-      require a reverse index over `source_edges` (which file reads which name)
-      and is the same machinery workspace symbols and rename need.
-- [ ] **Document highlight** (`textDocument/documentHighlight`). A degenerate
-      same-file references query (read + write occurrences of the binding under
-      the cursor); essentially free once intra-file references land.
+- [x] **Go-to-references / find-all-references** (`textDocument/references`). The
+      inverse of go-to-definition, in the same two phases. Intra-file: the cursor
+      resolves to a local binding (shared `resolve_local_target`) and every
+      `idents()` read of it is reported via the shared `local_occurrences`
+      (`compute_references` / `references_via_db`), honoring
+      `context.includeDeclaration`. Cross-file: a *file-scope* (top-level) binding
+      or a bare free read is matched against the new project-wide `project_reads`
+      aggregate — the read-site mirror of `project_defs`, built over the range-free
+      `file_free_reads` firewall — via `Analysis::workspace_read_sites`, recovering
+      each read span per file with `read_ranges_in`. Nested locals stay intra-file;
+      namespaced (`pkg::name`) names have no in-tree reads.
+- [x] **Document highlight** (`textDocument/documentHighlight`). The degenerate
+      same-file references query, sharing `local_occurrences`
+      (`compute_document_highlights`): the definition as `WRITE`, each read as
+      `READ`. Pure (no workspace snapshot), so it runs straight on the read pool.
 - [ ] **Go-to-declaration / type-definition / implementation**. Low priority for
       R's dynamic semantics; likely alias to definition or omit.
 
@@ -210,8 +217,10 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       project-wide `project_defs`, with spans recovered per-request via
       `Analysis::def_range_in` from the fresh `semantic_model`. Backdating proofs
       in `tests/salsa_incremental.rs`. The cross-file *consumers* (workspace
-      symbols, references, rename, file rename, call hierarchy) now have no index
-      work left --- they sit on these queries.
+      symbols, references, rename, file rename, call hierarchy) sit on these
+      queries; find-references added the symmetric read-site aggregate
+      (`project_reads` + `Analysis::workspace_read_sites`/`read_ranges_in`) over
+      the same `file_free_reads` firewall.
       - [ ] Follow-up (model (b)): `workspace_project` still reads
             `package_root`/`NAMESPACE` from disk (model (a)), so a keystroke
             re-runs it (it backdates to the same `Project`, so the graph is

@@ -67,19 +67,21 @@ use lsp_types::notification::{
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
-    RangeFormatting, Rename, Request as RequestTrait,
+    CodeActionRequest, DocumentHighlightRequest, Formatting, GotoDefinition, HoverRequest,
+    PrepareRenameRequest, RangeFormatting, References, Rename, Request as RequestTrait,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
     DocumentRangeFormattingParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverContents, HoverParams, HoverProviderCapability, InitializeResult, Location, MarkupContent,
     MarkupKind, NumberOrString, OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams,
-    Range, RenameOptions, RenameParams, ServerCapabilities, ServerInfo, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
+    Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
+    WorkspaceEdit,
 };
 use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -164,6 +166,8 @@ fn server_capabilities() -> ServerCapabilities {
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -365,6 +369,17 @@ enum ReadJob {
         position: Position,
         sender: Sender<Message>,
     },
+    References {
+        id: RequestId,
+        path: PathBuf,
+        /// In-file reads report `Location`s back into this URI; cross-file reads
+        /// carry their own.
+        uri: Uri,
+        text: String,
+        position: Position,
+        include_declaration: bool,
+        sender: Sender<Message>,
+    },
 }
 
 /// Messages from the lint thread back to the main loop.
@@ -444,6 +459,8 @@ impl GlobalState {
             CodeActionRequest::METHOD => self.on_code_action(req),
             HoverRequest::METHOD => self.on_hover(req),
             GotoDefinition::METHOD => self.on_definition(req),
+            References::METHOD => self.on_references(req),
+            DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
             _ => {
@@ -603,6 +620,71 @@ impl GlobalState {
         });
     }
 
+    /// `textDocument/references`: every read site of the name under the cursor. A
+    /// read-only job dispatched to the lint thread like definition; resolution
+    /// (intra-file reads of the local binding, plus cross-file reads of a
+    /// top-level name) runs on the read pool. See [`references_via_db`].
+    fn on_references(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<ReferenceParams>(References::METHOD) else {
+            self.respond_err(id, "invalid references params");
+            return;
+        };
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::References {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            include_declaration,
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `textDocument/documentHighlight`: the definition and reads of the local
+    /// binding under the cursor, in the current file only — a degenerate same-file
+    /// references query. Pure (no workspace snapshot needed), so it runs straight
+    /// on the read pool like the cached code-action fast path. See
+    /// [`compute_document_highlights`].
+    fn on_document_highlight(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<DocumentHighlightParams>(DocumentHighlightRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid documentHighlight params");
+            return;
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let line_index = LineIndex::new(&text);
+            let offset = line_index.position_to_byte(position).min(text.len());
+            let result = compute_document_highlights(&text, offset).map(|highlights| {
+                highlights
+                    .into_iter()
+                    .map(|(range, kind)| DocumentHighlight {
+                        range: text_range_to_lsp_range(&line_index, range),
+                        kind: Some(kind),
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        });
+    }
+
     /// `textDocument/prepareRename`: confirm the cursor sits on a renameable
     /// local identifier and return its range + placeholder. Computed
     /// synchronously (a single cheap parse) because the result anchors per-URI
@@ -691,6 +773,7 @@ impl GlobalState {
                 ReadJob::FormatRange { id, sender, .. } => (id, sender),
                 ReadJob::Hover { id, sender, .. } => (id, sender),
                 ReadJob::Definition { id, sender, .. } => (id, sender),
+                ReadJob::References { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
                 id,
@@ -1329,6 +1412,19 @@ fn run_read(snapshot: Analysis, job: ReadJob) {
             let result = definition_via_db(&snapshot, &path, &uri, &text, position);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
+        ReadJob::References {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            include_declaration,
+            sender,
+        } => {
+            let result =
+                references_via_db(&snapshot, &path, &uri, &text, position, include_declaration);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
     }
 }
 
@@ -1493,6 +1589,110 @@ fn definition_via_db(
         )),
         _ => Some(GotoDefinitionResponse::Array(locations)),
     }
+}
+
+/// Resolve `textDocument/references` against a db `snapshot`. The inverse of
+/// [`definition_via_db`], in the same two phases. Intra-file: the cursor names a
+/// local binding (or its definition), and every in-file read of it is reported as
+/// a `Location` into `uri` (plus the definition when `include_declaration`). When
+/// that binding is *file-scope* (a top-level name a sibling file can read), the
+/// workspace read index ([`Analysis::workspace_read_sites`]) adds the cross-file
+/// reads. Otherwise the cursor sits on a bare free read of a workspace name, and
+/// every read of that name across the workspace is reported. Namespaced
+/// (`pkg::name`) and base-R names have no in-tree reads to find. Snapshot reads
+/// are wrapped in [`salsa::Cancelled::catch`].
+fn references_via_db(
+    snapshot: &Analysis,
+    path: &Path,
+    uri: &Uri,
+    text: &str,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let line_index = LineIndex::new(text);
+    let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
+    let root = parse(text).cst;
+    let model = SemanticModel::build(&root);
+
+    // Intra-file: the cursor names a local binding (or sits on its definition).
+    if let Some((target, occ)) = local_occurrences(&root, &model, offset) {
+        let mut locations: Vec<Location> = occ
+            .reads
+            .iter()
+            .map(|range| Location {
+                uri: uri.clone(),
+                range: text_range_to_lsp_range(&line_index, *range),
+            })
+            .collect();
+        if include_declaration {
+            locations.push(Location {
+                uri: uri.clone(),
+                range: text_range_to_lsp_range(&line_index, occ.def),
+            });
+        }
+        // Cross-file: a top-level binding can be free-read from sibling files.
+        // Nested locals are file-private, so they stay intra-file.
+        if model.binding_is_file_scope(target.binding) {
+            let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+                snapshot
+                    .workspace_read_sites(&target.name)
+                    .into_iter()
+                    // The current file's reads were collected intra-file above.
+                    .filter(|(read_path, _)| read_path != path)
+                    .filter_map(|(read_path, range)| location_in(snapshot, &read_path, range))
+                    .collect::<Vec<_>>()
+            }))
+            .unwrap_or_default();
+            locations.extend(cross);
+        }
+        return (!locations.is_empty()).then_some(locations);
+    }
+
+    // The cursor sits on a bare free read of a workspace name (no local binding).
+    // A namespaced name is a package export with no in-tree reads to collect.
+    let token = pick_name_token(&root, offset)?;
+    if token.kind() != SyntaxKind::IDENT
+        || matches!(
+            symbol_query_at(&root, offset),
+            Some(SymbolQuery::Namespaced { .. })
+        )
+    {
+        return None;
+    }
+    let name = SmolStr::new(token.text());
+    let locations = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        // Every read of the name across the workspace, including this file's own.
+        let mut locs: Vec<Location> = snapshot
+            .workspace_read_sites(&name)
+            .into_iter()
+            .filter_map(|(read_path, range)| location_in(snapshot, &read_path, range))
+            .collect();
+        if include_declaration {
+            locs.extend(
+                snapshot
+                    .workspace_def_sites(&name)
+                    .into_iter()
+                    .filter_map(|(def_path, range)| location_in(snapshot, &def_path, range)),
+            );
+        }
+        locs
+    }))
+    .unwrap_or_default();
+
+    (!locations.is_empty()).then_some(locations)
+}
+
+/// A `Location` for `range` in the workspace file at `path`, mapping the byte
+/// span through that file's *current* text. `None` if the file isn't tracked or
+/// its path has no URI.
+fn location_in(snapshot: &Analysis, path: &Path, range: TextRange) -> Option<Location> {
+    let file = snapshot.lookup_file(path)?;
+    let target_uri = uri::from_path(path)?;
+    let target_index = LineIndex::new(snapshot.file_text(file));
+    Some(Location {
+        uri: target_uri,
+        range: text_range_to_lsp_range(&target_index, range),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1842,6 +2042,55 @@ pub fn compute_definition(text: &str, offset: usize) -> Option<TextRange> {
     definition_local_range(&root, &model, off)
 }
 
+/// The in-file read spans of the local binding under the cursor, plus its
+/// definition span when `include_declaration`. Pure (parses `text` itself) and
+/// unit-testable: the intra-file core of go-to-references. The cross-file reads
+/// of a top-level name are added by [`references_via_db`], which this helper does
+/// not see (mirroring how [`compute_definition`] handles only the intra-file
+/// half). `None` for a non-identifier or a name that names no local binding.
+pub fn compute_references(
+    text: &str,
+    offset: usize,
+    include_declaration: bool,
+) -> Option<Vec<TextRange>> {
+    let root = parse(text).cst;
+    let model = SemanticModel::build(&root);
+    let off = TextSize::new(offset.min(text.len()) as u32);
+    let (_, occ) = local_occurrences(&root, &model, off)?;
+    let mut ranges = occ.reads;
+    if include_declaration {
+        ranges.push(occ.def);
+    }
+    ranges.sort_by_key(|range| range.start());
+    ranges.dedup();
+    Some(ranges)
+}
+
+/// The document highlights for the local binding under the cursor: its definition
+/// as [`DocumentHighlightKind::WRITE`] and each in-file read as
+/// [`DocumentHighlightKind::READ`], sorted by position. Pure and unit-testable;
+/// always same-file (no workspace lookup). `None` when the cursor names no local
+/// binding.
+pub fn compute_document_highlights(
+    text: &str,
+    offset: usize,
+) -> Option<Vec<(TextRange, DocumentHighlightKind)>> {
+    let root = parse(text).cst;
+    let model = SemanticModel::build(&root);
+    let off = TextSize::new(offset.min(text.len()) as u32);
+    let (_, occ) = local_occurrences(&root, &model, off)?;
+    let mut highlights: Vec<(TextRange, DocumentHighlightKind)> =
+        Vec::with_capacity(occ.reads.len() + 1);
+    highlights.push((occ.def, DocumentHighlightKind::WRITE));
+    highlights.extend(
+        occ.reads
+            .into_iter()
+            .map(|range| (range, DocumentHighlightKind::READ)),
+    );
+    highlights.sort_by_key(|(range, _)| range.start());
+    Some(highlights)
+}
+
 /// The def span the cursor's local binding resolves to, off an already-parsed CST
 /// and model. The shared core of [`compute_definition`] and the intra-file branch
 /// of [`definition_via_db`].
@@ -1852,6 +2101,36 @@ fn definition_local_range(
 ) -> Option<TextRange> {
     let target = resolve_local_target(root, model, offset)?;
     Some(model.binding(target.binding).def_range)
+}
+
+/// The definition span and every in-file read span of the local binding under the
+/// cursor, sorted and deduped. The shared intra-file core of find-references and
+/// document highlight: [`resolve_local_target`] picks the binding, then the
+/// `idents()` reads resolving to it are collected (the read-gathering half of
+/// [`rename_edits`]). `None` when the cursor names no local binding.
+struct LocalOccurrences {
+    def: TextRange,
+    reads: Vec<TextRange>,
+}
+
+fn local_occurrences(
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    offset: TextSize,
+) -> Option<(LocalTarget, LocalOccurrences)> {
+    let target = resolve_local_target(root, model, offset)?;
+    let mut reads: Vec<TextRange> = model
+        .idents()
+        .iter()
+        .filter(|ident| {
+            ident.name == target.name && model.resolve_local(ident) == Some(target.binding)
+        })
+        .map(|ident| ident.range)
+        .collect();
+    reads.sort_by_key(|range| range.start());
+    reads.dedup();
+    let def = model.binding(target.binding).def_range;
+    Some((target, LocalOccurrences { def, reads }))
 }
 
 /// `textDocument/rename` driven by a [`RenameAnchor`] instead of a fresh

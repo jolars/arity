@@ -1,8 +1,9 @@
-use lsp_types::{Position, Range, TextEdit};
+use lsp_types::{DocumentHighlightKind, Position, Range, TextEdit};
 use ravel::formatter::{FormatStyle, format_with_style};
 use ravel::lsp::{
-    compute_definition, compute_format_edits, compute_format_range_edits, compute_prepare_rename,
-    compute_rename, compute_rename_with_anchor,
+    compute_definition, compute_document_highlights, compute_format_edits,
+    compute_format_range_edits, compute_prepare_rename, compute_references, compute_rename,
+    compute_rename_with_anchor,
 };
 
 #[test]
@@ -244,4 +245,111 @@ fn definition_declines_a_nonlocal_name() {
 #[test]
 fn definition_declines_a_keyword() {
     assert!(compute_definition("if (x) y\n", 0).is_none());
+}
+
+// --- references -------------------------------------------------------------
+
+/// The `(start, text)` pairs for `compute_references` at `offset`, in order.
+#[track_caller]
+fn refs_at(text: &str, offset: usize, include_declaration: bool) -> Vec<(usize, String)> {
+    compute_references(text, offset, include_declaration)
+        .expect("resolves references")
+        .into_iter()
+        .map(|range| {
+            let start = usize::from(range.start());
+            let end = usize::from(range.end());
+            (start, text[start..end].to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn references_with_declaration_returns_definition_and_all_reads() {
+    let text = "value <- 1\nprint(value)\nlog(value)\n";
+    let def = text.find("value").expect("definition");
+    let read1 = text.find("value)").expect("first read");
+    let read2 = text.rfind("value)").expect("second read");
+    assert_eq!(
+        refs_at(text, def, true),
+        vec![
+            (def, "value".to_string()),
+            (read1, "value".to_string()),
+            (read2, "value".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn references_without_declaration_drops_the_definition() {
+    let text = "value <- 1\nprint(value)\n";
+    let read = text.find("value)").expect("read site");
+    assert_eq!(refs_at(text, 0, false), vec![(read, "value".to_string())]);
+}
+
+#[test]
+fn references_from_a_read_site_finds_the_full_set() {
+    // Starting on a read resolves the same binding the definition does.
+    let text = "value <- 1\nprint(value)\n";
+    let read = text.find("value)").expect("read site");
+    assert_eq!(
+        refs_at(text, read, true),
+        vec![(0, "value".to_string()), (read, "value".to_string())]
+    );
+}
+
+#[test]
+fn references_of_a_parameter_are_collected_in_file() {
+    // A nested local (a parameter) still resolves its in-file def + reads.
+    let text = "f <- function(x) {\n  x + 1\n}\n";
+    let param = text.find("x)").expect("param def");
+    let read = text.find("x + 1").expect("param read");
+    assert_eq!(
+        refs_at(text, read, true),
+        vec![(param, "x".to_string()), (read, "x".to_string())]
+    );
+}
+
+#[test]
+fn references_decline_a_nonlocal_name() {
+    assert!(compute_references("print(1)\n", 0, true).is_none());
+}
+
+#[test]
+fn references_decline_a_keyword() {
+    assert!(compute_references("if (x) y\n", 0, true).is_none());
+}
+
+// --- document highlight -----------------------------------------------------
+
+/// The `(start, text, kind)` triples for `compute_document_highlights` at
+/// `offset`, in order.
+#[track_caller]
+fn highlights_at(text: &str, offset: usize) -> Vec<(usize, String, DocumentHighlightKind)> {
+    compute_document_highlights(text, offset)
+        .expect("resolves highlights")
+        .into_iter()
+        .map(|(range, kind)| {
+            let start = usize::from(range.start());
+            let end = usize::from(range.end());
+            (start, text[start..end].to_string(), kind)
+        })
+        .collect()
+}
+
+#[test]
+fn document_highlight_marks_definition_write_and_reads_read() {
+    let text = "value <- 1\nprint(value)\n";
+    let read = text.find("value)").expect("read site");
+    assert_eq!(
+        highlights_at(text, 0),
+        vec![
+            (0, "value".to_string(), DocumentHighlightKind::WRITE),
+            (read, "value".to_string(), DocumentHighlightKind::READ),
+        ]
+    );
+}
+
+#[test]
+fn document_highlight_declines_a_nonlocal_name() {
+    assert!(compute_document_highlights("print(1)\n", 0).is_none());
 }

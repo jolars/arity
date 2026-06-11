@@ -64,6 +64,14 @@ impl SemanticModel {
         &self.bindings[id.0 as usize]
     }
 
+    /// Whether `id` is a top-level (file-scope) binding — the gate cross-file
+    /// find-references uses to decide a local binding can also be read from
+    /// sibling files. Nested locals (params, `for`-vars, function-body locals)
+    /// are file-private, so references for them stay intra-file.
+    pub fn binding_is_file_scope(&self, id: BindingId) -> bool {
+        self.scope(self.binding(id).scope).kind == ScopeKind::File
+    }
+
     pub fn idents(&self) -> &[IdentRef] {
         &self.idents
     }

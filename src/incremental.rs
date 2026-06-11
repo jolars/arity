@@ -17,7 +17,7 @@ use rowan::TextRange;
 use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
-use crate::project::{DefKind, SourceEdgeKey, project_defs, workspace_project};
+use crate::project::{DefKind, SourceEdgeKey, project_defs, project_reads, workspace_project};
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
@@ -143,6 +143,7 @@ pub enum QueryKind {
     WorkspaceProject,
     ProjectGraph,
     ProjectDefs,
+    ProjectReads,
     VisibleSymbols,
     LoadedNames,
     ExternalResolution,
@@ -706,6 +707,53 @@ impl Analysis {
             .filter_map(|(path, _kind)| {
                 let file = self.0.lookup_file(path)?;
                 Some((path.clone(), self.def_range_in(file, name)?))
+            })
+            .collect()
+    }
+
+    /// The free-read sites of `name` in `file`, read from the *fresh* semantic
+    /// model so each span indexes the current text. A "free read" is an identifier
+    /// occurrence that binds to no local binding — the same predicate
+    /// [`crate::project::file_free_reads`] uses, so a name in that (range-free) set
+    /// is exactly one this recovers spans for. The read-site mirror of
+    /// [`def_range_in`](Self::def_range_in).
+    pub fn read_ranges_in(&self, file: SourceFile, name: &str) -> Vec<TextRange> {
+        let model = self.0.semantic_model(file);
+        model
+            .idents()
+            .iter()
+            .filter(|ident| ident.name.as_str() == name && model.resolve_local(ident).is_none())
+            .map(|ident| ident.range)
+            .collect()
+    }
+
+    /// The cross-file read sites of `name` across the workspace, as `(member path,
+    /// read span)`. Empty when no workspace is seeded or no member free-reads
+    /// `name`. The read-site mirror of [`workspace_def_sites`](Self::workspace_def_sites)
+    /// and the first consumer of [`project_reads`](crate::project::project_reads):
+    /// it supplies the range-free set of reading files, and each span is recovered
+    /// per file via [`read_ranges_in`](Self::read_ranges_in) against its current
+    /// text. Backs cross-file find-references. A pure read — the caller wraps it in
+    /// [`salsa::Cancelled::catch`].
+    pub fn workspace_read_sites(&self, name: &str) -> Vec<(PathBuf, TextRange)> {
+        if self.0.workspace().is_none() {
+            return Vec::new();
+        }
+        let project = workspace_project(&self.0);
+        let index = project_reads(&self.0, project);
+        let Some(paths) = index.by_name.get(name) else {
+            return Vec::new();
+        };
+        paths
+            .iter()
+            .filter_map(|path| {
+                let file = self.0.lookup_file(path)?;
+                Some((path.clone(), file))
+            })
+            .flat_map(|(path, file)| {
+                self.read_ranges_in(file, name)
+                    .into_iter()
+                    .map(move |range| (path.clone(), range))
             })
             .collect()
     }
