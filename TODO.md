@@ -217,10 +217,8 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       project-wide `project_defs`, with spans recovered per-request via
       `Analysis::def_range_in` from the fresh `semantic_model`. Backdating proofs
       in `tests/salsa_incremental.rs`. The cross-file *consumers* (workspace
-      symbols, references, rename, file rename, call hierarchy) sit on these
-      queries; find-references added the symmetric read-site aggregate
-      (`project_reads` + `Analysis::workspace_read_sites`/`read_ranges_in`) over
-      the same `file_free_reads` firewall.
+      symbols, references, rename, file rename, call hierarchy) now have no index
+      work left --- they sit on these queries.
       - [ ] Follow-up (model (b)): `workspace_project` still reads
             `package_root`/`NAMESPACE` from disk (model (a)), so a keystroke
             re-runs it (it backdates to the same `Project`, so the graph is
