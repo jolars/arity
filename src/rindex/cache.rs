@@ -116,17 +116,40 @@ impl Cache {
         (idx.schema_version == SCHEMA_VERSION).then_some(idx)
     }
 
-    /// Write a package index and update `meta.json` to point at this version.
-    pub fn write_package(&self, idx: &PackageIndex) -> Result<()> {
+    /// Write a single package index file (`pkg@ver.json`) **without** touching
+    /// `meta.json`. Safe to call concurrently for distinct packages: each writes
+    /// its own path (via a uniquely-named temp file), and the only shared
+    /// mutation — `meta.json` — is deferred to [`record_indexed`]. Compact JSON,
+    /// not pretty: these files are large (they carry help bodies) and only ever
+    /// machine-read, so indentation just bloats them.
+    pub fn write_package_file(&self, idx: &PackageIndex) -> Result<()> {
         std::fs::create_dir_all(self.index_dir()).map_err(|e| CacheError::Io(e.to_string()))?;
-        let json = serde_json::to_vec_pretty(idx).map_err(|e| CacheError::Serde(e.to_string()))?;
-        atomic_write(&self.package_path(&idx.package, &idx.version), &json)?;
+        let json = serde_json::to_vec(idx).map_err(|e| CacheError::Serde(e.to_string()))?;
+        atomic_write(&self.package_path(&idx.package, &idx.version), &json)
+    }
 
+    /// Fold newly-indexed `(package, version)` pairs into `meta.json` in one
+    /// read-modify-write. Call once, *sequentially*, after a (possibly parallel)
+    /// batch of [`write_package_file`] calls: concurrent callers would race on
+    /// the shared meta file and silently lose entries.
+    pub fn record_indexed(&self, entries: &[(SmolStr, SmolStr)]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
         let mut meta = self.read_meta();
         meta.schema_version = SCHEMA_VERSION;
-        meta.packages
-            .insert(idx.package.clone(), idx.version.clone());
+        for (package, version) in entries {
+            meta.packages.insert(package.clone(), version.clone());
+        }
         self.write_meta(&meta)
+    }
+
+    /// Write a package index and update `meta.json` to point at this version.
+    /// Convenience for single writes; the batch build path uses
+    /// [`write_package_file`] + [`record_indexed`] so it can parallelize harvest.
+    pub fn write_package(&self, idx: &PackageIndex) -> Result<()> {
+        self.write_package_file(idx)?;
+        self.record_indexed(&[(idx.package.clone(), idx.version.clone())])
     }
 
     /// Load every package index currently named by `meta.json`.

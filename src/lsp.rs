@@ -18,9 +18,11 @@
 //! sized to the machine's parallelism serves latency-sensitive work (formatting,
 //! hover, the analyze read-phase, code actions), and a **single-thread index
 //! pool** isolates the one unbounded-duration job — background package indexing
-//! ([`build_index`]) — so a long harvest can never starve a read. (CLI
-//! format/lint stays sequential; rayon is reserved for future CLI data
-//! parallelism.)
+//! ([`build_index`]) — so a long harvest can never *slot-block* a read.
+//! `build_index` itself fans the per-package harvest across rayon underneath
+//! that single index thread, shortening the build's CPU-contention window
+//! without ever competing for read-pool slots. (CLI format/lint stays
+//! sequential.)
 //!
 //! Requests are *coalesced* (latest version per URI; stale edits dropped) into a
 //! pending queue. A [`decide`] scheduler keeps at most one analyze in flight: a
