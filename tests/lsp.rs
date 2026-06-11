@@ -1,8 +1,8 @@
 use lsp_types::{Position, Range, TextEdit};
 use ravel::formatter::{FormatStyle, format_with_style};
 use ravel::lsp::{
-    compute_format_edits, compute_format_range_edits, compute_prepare_rename, compute_rename,
-    compute_rename_with_anchor,
+    compute_definition, compute_format_edits, compute_format_range_edits, compute_prepare_rename,
+    compute_rename, compute_rename_with_anchor,
 };
 
 #[test]
@@ -199,4 +199,49 @@ fn rename_via_anchor_survives_an_edit_since_prepare() {
             edit_at(2, 6, 11, "v2"), // read inside print()
         ]
     );
+}
+
+/// Assert `compute_definition` at `offset` jumps to the byte span spelling
+/// `expected` at `expected_start`.
+#[track_caller]
+fn assert_def(text: &str, offset: usize, expected: &str, expected_start: usize) {
+    let range = compute_definition(text, offset).expect("resolves a definition");
+    let start = usize::from(range.start());
+    let end = usize::from(range.end());
+    assert_eq!(&text[start..end], expected);
+    assert_eq!(start, expected_start, "definition start");
+}
+
+#[test]
+fn definition_from_read_jumps_to_the_assignment() {
+    // Cursor on the read inside `print(value)` jumps to the LHS of the assignment.
+    let text = "value <- 1\nprint(value)\n";
+    let offset = text.find("value)").expect("read site");
+    assert_def(text, offset, "value", 0);
+}
+
+#[test]
+fn definition_on_the_definition_returns_itself() {
+    let text = "value <- 1\nprint(value)\n";
+    assert_def(text, 0, "value", 0);
+}
+
+#[test]
+fn definition_of_a_parameter_read_jumps_to_the_param() {
+    // The read of `x` in the body jumps to the parameter binding.
+    let text = "f <- function(x) {\n  x + 1\n}\n";
+    let offset = text.find("x + 1").expect("param read");
+    let param_start = text.find("x)").expect("param def");
+    assert_def(text, offset, "x", param_start);
+}
+
+#[test]
+fn definition_declines_a_nonlocal_name() {
+    // `print` resolves to no local binding; intra-file definition yields nothing.
+    assert!(compute_definition("print(1)\n", 0).is_none());
+}
+
+#[test]
+fn definition_declines_a_keyword() {
+    assert!(compute_definition("if (x) y\n", 0).is_none());
 }

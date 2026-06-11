@@ -67,19 +67,19 @@ use lsp_types::notification::{
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, Formatting, HoverRequest, PrepareRenameRequest, RangeFormatting, Rename,
-    Request as RequestTrait,
+    CodeActionRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
+    RangeFormatting, Rename, Request as RequestTrait,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-    DocumentRangeFormattingParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeResult, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
-    PrepareRenameResponse, PublishDiagnosticsParams, Range, RenameOptions, RenameParams,
-    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
+    DocumentRangeFormattingParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverContents, HoverParams, HoverProviderCapability, InitializeResult, Location, MarkupContent,
+    MarkupKind, NumberOrString, OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams,
+    Range, RenameOptions, RenameParams, ServerCapabilities, ServerInfo, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -163,6 +163,7 @@ fn server_capabilities() -> ServerCapabilities {
         document_range_formatting_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -354,6 +355,16 @@ enum ReadJob {
         position: Position,
         sender: Sender<Message>,
     },
+    Definition {
+        id: RequestId,
+        path: PathBuf,
+        /// The current document's URI — an intra-file hit reports a `Location`
+        /// back into it, so unlike the other jobs this one needs the URI too.
+        uri: Uri,
+        text: String,
+        position: Position,
+        sender: Sender<Message>,
+    },
 }
 
 /// Messages from the lint thread back to the main loop.
@@ -432,6 +443,7 @@ impl GlobalState {
             RangeFormatting::METHOD => self.on_range_formatting(req),
             CodeActionRequest::METHOD => self.on_code_action(req),
             HoverRequest::METHOD => self.on_hover(req),
+            GotoDefinition::METHOD => self.on_definition(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
             _ => {
@@ -564,6 +576,33 @@ impl GlobalState {
         });
     }
 
+    /// `textDocument/definition`: jump to the definition of the name under the
+    /// cursor. A read-only job, dispatched to the lint thread like hover; the
+    /// resolution (intra-file binding, else a cross-file workspace def) runs on
+    /// the read pool. See [`definition_via_db`].
+    fn on_definition(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<GotoDefinitionParams>(GotoDefinition::METHOD) else {
+            self.respond_err(id, "invalid definition params");
+            return;
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::Definition {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            sender: self.sender.clone(),
+        });
+    }
+
     /// `textDocument/prepareRename`: confirm the cursor sits on a renameable
     /// local identifier and return its range + placeholder. Computed
     /// synchronously (a single cheap parse) because the result anchors per-URI
@@ -651,6 +690,7 @@ impl GlobalState {
                 ReadJob::Format { id, sender, .. } => (id, sender),
                 ReadJob::FormatRange { id, sender, .. } => (id, sender),
                 ReadJob::Hover { id, sender, .. } => (id, sender),
+                ReadJob::Definition { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
                 id,
@@ -1278,6 +1318,17 @@ fn run_read(snapshot: Analysis, job: ReadJob) {
             let result = hover_via_db(&snapshot, &path, &text, position);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
+        ReadJob::Definition {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            sender,
+        } => {
+            let result = definition_via_db(&snapshot, &path, &uri, &text, position);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
     }
 }
 
@@ -1371,6 +1422,76 @@ fn hover_via_db(snapshot: &Analysis, path: &Path, text: &str, position: Position
             let root = parse(text).cst;
             hover_from_node(&root, &line_index, offset, &index)
         }
+    }
+}
+
+/// Resolve go-to-definition for the name at `position`. The current file is
+/// always parsed from the live `text` (definition is a deliberate, infrequent
+/// action, so the parse is cheap relative to the round-trip). An intra-file
+/// binding wins and reports a `Location` back into `uri`. Otherwise a bare
+/// top-level name falls back to the workspace index ([`Analysis::workspace_def_sites`]),
+/// reporting the sibling file(s) it is defined in. Namespaced (`pkg::name`) and
+/// base-R names have no in-tree location, so they resolve to nothing (hover still
+/// documents them). Snapshot reads are wrapped in [`salsa::Cancelled::catch`].
+fn definition_via_db(
+    snapshot: &Analysis,
+    path: &Path,
+    uri: &Uri,
+    text: &str,
+    position: Position,
+) -> Option<GotoDefinitionResponse> {
+    let line_index = LineIndex::new(text);
+    let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
+    let root = parse(text).cst;
+    let model = SemanticModel::build(&root);
+
+    // Intra-file: the cursor names a local binding (or sits on its definition).
+    if let Some(def_range) = definition_local_range(&root, &model, offset) {
+        let location = Location {
+            uri: uri.clone(),
+            range: text_range_to_lsp_range(&line_index, def_range),
+        };
+        return Some(GotoDefinitionResponse::Scalar(location));
+    }
+
+    // Cross-file: a bare top-level name defined in a sibling workspace file. A
+    // namespaced name is a package export with no in-tree source location.
+    let token = pick_name_token(&root, offset)?;
+    if token.kind() != SyntaxKind::IDENT
+        || matches!(
+            symbol_query_at(&root, offset),
+            Some(SymbolQuery::Namespaced { .. })
+        )
+    {
+        return None;
+    }
+    let name = SmolStr::new(token.text());
+    let locations = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        snapshot
+            .workspace_def_sites(&name)
+            .into_iter()
+            // The current file is handled intra-file above; skip it so a stale
+            // tracked copy never shadows the live buffer's own definition.
+            .filter(|(def_path, _)| def_path != path)
+            .filter_map(|(def_path, range)| {
+                let file = snapshot.lookup_file(&def_path)?;
+                let target_uri = uri::from_path(&def_path)?;
+                let target_index = LineIndex::new(snapshot.file_text(file));
+                Some(Location {
+                    uri: target_uri,
+                    range: text_range_to_lsp_range(&target_index, range),
+                })
+            })
+            .collect::<Vec<_>>()
+    }))
+    .unwrap_or_default();
+
+    match locations.len() {
+        0 => None,
+        1 => Some(GotoDefinitionResponse::Scalar(
+            locations.into_iter().next()?,
+        )),
+        _ => Some(GotoDefinitionResponse::Array(locations)),
     }
 }
 
@@ -1496,6 +1617,15 @@ pub fn compute_format_range_edits(
     }
 }
 
+/// Convert a byte `TextRange` to an LSP `Range` via `line_index` (built over the
+/// text the range indexes).
+fn text_range_to_lsp_range(line_index: &LineIndex, range: TextRange) -> Range {
+    Range {
+        start: line_index.byte_to_position(u32::from(range.start()) as usize),
+        end: line_index.byte_to_position(u32::from(range.end()) as usize),
+    }
+}
+
 /// Convert an LSP `Range` to a byte `TextRange`. `position_to_byte` already
 /// clamps to the text length; we only ensure `start <= end`.
 fn lsp_range_to_text_range(line_index: &LineIndex, range: Range) -> TextRange {
@@ -1607,7 +1737,7 @@ pub struct PreparedRename {
 }
 
 /// The binding the cursor names, plus the token range and name.
-struct RenameTarget {
+struct LocalTarget {
     binding: BindingId,
     range: TextRange,
     name: SmolStr,
@@ -1616,12 +1746,14 @@ struct RenameTarget {
 /// Resolve the cursor to the *local* binding it names, whether the cursor is on a
 /// read site or the definition itself. Returns `None` for a non-identifier, or a
 /// name that resolves to no local binding (a package export, a global, an
-/// undefined name) — those are out of scope for intra-file rename.
-fn resolve_rename_target(
+/// undefined name) — those are out of scope for intra-file rename and the
+/// intra-file branch of go-to-definition (which falls back to the workspace
+/// index for them).
+fn resolve_local_target(
     root: &SyntaxNode,
     model: &SemanticModel,
     offset: TextSize,
-) -> Option<RenameTarget> {
+) -> Option<LocalTarget> {
     let token = pick_name_token(root, offset)?;
     if token.kind() != SyntaxKind::IDENT {
         return None;
@@ -1630,14 +1762,14 @@ fn resolve_rename_target(
     let name = SmolStr::new(token.text());
     if let Some(ident) = model.idents().iter().find(|i| i.range == range) {
         let binding = model.resolve_local(ident)?;
-        return Some(RenameTarget {
+        return Some(LocalTarget {
             binding,
             range,
             name,
         });
     }
     let idx = model.bindings().iter().position(|b| b.def_range == range)?;
-    Some(RenameTarget {
+    Some(LocalTarget {
         binding: BindingId::from_index(idx),
         range,
         name,
@@ -1656,7 +1788,7 @@ pub fn compute_prepare_rename(text: &str, offset: usize) -> Option<PreparedRenam
     let root = parsed.cst;
     let model = SemanticModel::build(&root);
     let off = TextSize::new(offset.min(text.len()) as u32);
-    let target = resolve_rename_target(&root, &model, off)?;
+    let target = resolve_local_target(&root, &model, off)?;
     let token = pick_name_token(&root, off)?;
     let node = token.parent()?;
     let offset_in_node = u32::from(target.range.start()) - u32::from(node.text_range().start());
@@ -1690,10 +1822,36 @@ pub fn compute_rename(text: &str, offset: usize, new_name: &str) -> Option<Vec<T
     let root = parsed.cst;
     let model = SemanticModel::build(&root);
     let off = TextSize::new(offset.min(text.len()) as u32);
-    let target = resolve_rename_target(&root, &model, off)?;
+    let target = resolve_local_target(&root, &model, off)?;
     let line_index = LineIndex::new(text);
     let edits = rename_edits(&model, &target, new_name, &line_index);
     (!edits.is_empty()).then_some(edits)
+}
+
+/// The byte span of the definition of the local binding under the cursor, if the
+/// name resolves to an in-file binding. Pure (parses `text` itself) and
+/// unit-testable; the intra-file half of go-to-definition. Best-effort, with no
+/// clean-parse gate (jumping is always safe). Returns `None` for a
+/// non-identifier or a name that names no local binding — a package export, a
+/// global, or a cross-file name (the last is resolved against the workspace index
+/// by [`definition_via_db`], which this helper does not see).
+pub fn compute_definition(text: &str, offset: usize) -> Option<TextRange> {
+    let root = parse(text).cst;
+    let model = SemanticModel::build(&root);
+    let off = TextSize::new(offset.min(text.len()) as u32);
+    definition_local_range(&root, &model, off)
+}
+
+/// The def span the cursor's local binding resolves to, off an already-parsed CST
+/// and model. The shared core of [`compute_definition`] and the intra-file branch
+/// of [`definition_via_db`].
+fn definition_local_range(
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    offset: TextSize,
+) -> Option<TextRange> {
+    let target = resolve_local_target(root, model, offset)?;
+    Some(model.binding(target.binding).def_range)
 }
 
 /// `textDocument/rename` driven by a [`RenameAnchor`] instead of a fresh
@@ -1730,7 +1888,7 @@ fn rename_cursor_offset(current_text: &str, anchor: &RenameAnchor) -> Option<usi
 /// The text edits renaming `target`'s definition and every in-file read of it.
 fn rename_edits(
     model: &SemanticModel,
-    target: &RenameTarget,
+    target: &LocalTarget,
     new_name: &str,
     line_index: &LineIndex,
 ) -> Vec<TextEdit> {
@@ -1965,10 +2123,8 @@ fn format_formal(formal: &Formal) -> String {
 /// we provide our own. Decoding rides on `fluent_uri` via `Deref`; encoding uses
 /// a small percent-encoder over a fixed safe set.
 mod uri {
-    #[cfg(test)]
     use std::path::Path;
     use std::path::PathBuf;
-    #[cfg(test)]
     use std::str::FromStr;
 
     use lsp_types::Uri;
@@ -2000,9 +2156,9 @@ mod uri {
         PathBuf::from(p)
     }
 
-    /// Convert a filesystem path to a `file:` URI. Currently only the tests build
-    /// URIs from paths (the client always supplies URIs in real traffic).
-    #[cfg(test)]
+    /// Convert a filesystem path to a `file:` URI. Used by go-to-definition to
+    /// name a cross-file target (the client always supplies URIs in real traffic,
+    /// so request handling never needs this) and by the tests.
     pub fn from_path(path: &Path) -> Option<Uri> {
         let s = path.to_str()?;
         let mut out = String::from("file://");
@@ -2010,20 +2166,19 @@ mod uri {
         Uri::from_str(&out).ok()
     }
 
-    #[cfg(all(test, windows))]
+    #[cfg(windows)]
     fn to_uri_path(s: &str) -> String {
         // "C:\Users\x" → "/C:/Users/x" (the URI path needs a leading slash)
         format!("/{}", s.replace('\\', "/"))
     }
 
-    #[cfg(all(test, not(windows)))]
+    #[cfg(not(windows))]
     fn to_uri_path(s: &str) -> String {
         s.to_string()
     }
 
     /// Percent-encode `s`, leaving the unreserved set plus `/` and `:` (drive
     /// letters) intact.
-    #[cfg(test)]
     fn encode_into(s: &str, out: &mut String) {
         for &b in s.as_bytes() {
             if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {
@@ -2036,7 +2191,6 @@ mod uri {
         }
     }
 
-    #[cfg(test)]
     fn hex(n: u8) -> char {
         char::from(if n < 10 { b'0' + n } else { b'A' + (n - 10) })
     }

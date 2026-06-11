@@ -17,7 +17,7 @@ use rowan::TextRange;
 use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
-use crate::project::{DefKind, SourceEdgeKey};
+use crate::project::{DefKind, SourceEdgeKey, project_defs, workspace_project};
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
@@ -682,6 +682,32 @@ impl Analysis {
                     && binding.name.as_str() == name
             })
             .map(|binding| binding.def_range)
+    }
+
+    /// The top-level definition sites for `name` across the workspace, as
+    /// `(member path, def span)`. Empty when no workspace is seeded or `name`
+    /// matches no top-level binding. The first consumer of
+    /// [`project_defs`](crate::project::project_defs): it supplies the
+    /// range-free `(path, kind)` set, and each span is recovered per site via
+    /// [`def_range_in`](Self::def_range_in) so it indexes that file's *current*
+    /// text. Backs cross-file go-to-definition. A pure read — the caller wraps
+    /// it in [`salsa::Cancelled::catch`] (as hover wraps its read).
+    pub fn workspace_def_sites(&self, name: &str) -> Vec<(PathBuf, TextRange)> {
+        if self.0.workspace().is_none() {
+            return Vec::new();
+        }
+        let project = workspace_project(&self.0);
+        let index = project_defs(&self.0, project);
+        let Some(sites) = index.by_name.get(name) else {
+            return Vec::new();
+        };
+        sites
+            .iter()
+            .filter_map(|(path, _kind)| {
+                let file = self.0.lookup_file(path)?;
+                Some((path.clone(), self.def_range_in(file, name)?))
+            })
+            .collect()
     }
 
     /// Re-resolve a [`NodePtr`] taken against `taken_at_text` to a node in

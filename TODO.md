@@ -108,14 +108,14 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 ### Navigation
 
-- [ ] **Go-to-definition** (`textDocument/definition`). Intra-file is the cheap
-      win: `SemanticModel::resolve_local` already maps a read site to a
-      `BindingId`; we need binding *definition* spans (the model currently
-      tracks read sites, not def ranges) and a token-at-offset lookup like
-      `symbol_query_at`. Cross-file definition (a name `source()`-d in, or a
-      package export) escalates: package-export targets have no in-tree source
-      location, so resolve to the index entry (and lean on hover) rather than a
-      file position.
+- [x] **Go-to-definition** (`textDocument/definition`). Intra-file resolves a
+      read site (or the def itself) to its local binding via the shared
+      `resolve_local_target` and reports `Binding::def_range`
+      (`compute_definition` / `definition_via_db`). Cross-file resolves a bare
+      top-level name against the workspace `project_defs` index — its first
+      consumer — via the new `Analysis::workspace_def_sites`, recovering each
+      span per file with `def_range_in`. Package-export / namespaced targets have
+      no in-tree location, so they return nothing and lean on hover (as planned).
 - [ ] **Go-to-references / find-all-references** (`textDocument/references`).
       Inverse of the above over `idents`: collect every read site that resolves
       to the binding under the cursor. Intra-file first; cross-file references

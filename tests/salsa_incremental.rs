@@ -542,6 +542,58 @@ fn adding_a_member_rebuilds_workspace_project() {
 }
 
 #[test]
+fn workspace_def_sites_finds_a_cross_file_definition() {
+    // b.R reads `foo`, defined at top level in a.R. The workspace def index must
+    // point a cross-file go-to-definition at a.R, with a span spelling "foo".
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
+    let b = db.upsert_file(
+        Path::new("/s/b.R"),
+        "bar <- function() {\n  foo()\n}\n".to_string(),
+    );
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+
+    let snapshot = db.snapshot();
+    let sites = snapshot.workspace_def_sites("foo");
+    assert_eq!(sites.len(), 1, "foo is defined once, in a.R");
+    let (path, range) = &sites[0];
+    assert_eq!(path, Path::new("/s/a.R"));
+    let text = snapshot.file_text(a);
+    let start: usize = range.start().into();
+    let end: usize = range.end().into();
+    assert_eq!(&text[start..end], "foo");
+    assert_eq!(start, 0);
+}
+
+#[test]
+fn workspace_def_sites_span_tracks_current_text_after_edit() {
+    // Range-free index + def_range_in: a leading-line edit in the defining file
+    // must shift the recovered span to the post-edit position.
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
+    let b = db.upsert_file(Path::new("/s/b.R"), "bar <- function() foo()\n".to_string());
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+
+    db.set_file_text(a, "# header\nfoo <- function() 1\n");
+
+    let snapshot = db.snapshot();
+    let sites = snapshot.workspace_def_sites("foo");
+    let (_, range) = sites.first().expect("foo still resolves after the edit");
+    let start: usize = range.start().into();
+    assert_eq!(start, "# header\n".len(), "span follows the edited text");
+}
+
+#[test]
+fn workspace_def_sites_empty_without_a_workspace_or_match() {
+    let db = IncrementalDatabase::default();
+    let snapshot = db.snapshot();
+    assert!(
+        snapshot.workspace_def_sites("foo").is_empty(),
+        "no workspace seeded"
+    );
+}
+
+#[test]
 fn body_edit_does_not_rebuild_project_scope() {
     // The firewall: editing b.R's function *body* changes its semantic model but
     // not its top-level exports / free reads / source edges, so the cross-file
