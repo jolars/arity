@@ -12,4 +12,7 @@ pub(crate) mod structural;
 pub(crate) mod tree_builder;
 
 pub use core::{ParseDiagnostic, ParseOutput, parse, reconstruct};
-pub use reparse::{Edit, ReparseKind, Reparsed, diff_edit, reparse};
+pub use reparse::{
+    Edit, ReparseKind, Reparsed, diff_edit, map_range_through_edit, map_range_through_edits,
+    reparse,
+};

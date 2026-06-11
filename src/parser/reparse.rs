@@ -55,6 +55,50 @@ impl Edit {
     }
 }
 
+/// Map a `TextRange` taken against the text *before* `edit` to its position in
+/// the text *after* `edit`.
+///
+/// Returns `None` when the edit's replaced range overlaps the node's interior:
+/// a `(kind, range)` handle cannot promise the node survived an edit inside it
+/// (its text, and possibly its kind, may have changed). Comparisons are
+/// half-open, so the boundary cases are deterministic: an edit ending exactly at
+/// the node's start shifts the node (it survives), an edit starting exactly at
+/// the node's end leaves it unchanged (it survives), and an insertion strictly
+/// inside the node returns `None`. A zero-length node sitting at an insertion
+/// point is treated as preceding the insertion (unchanged).
+///
+/// Note: [`parsed_document`](crate::incremental::parsed_document) recovers a
+/// single spanning [`diff_edit`], so several disjoint keystrokes coalesce into
+/// one wide edit. That only widens the overlap and yields `None` more often
+/// (more position-based re-resolution by the caller) — it never produces a wrong
+/// mapping. Feeding precise per-change LSP edits would shrink the edit and
+/// reduce those fallbacks.
+pub fn map_range_through_edit(range: TextRange, edit: &Edit) -> Option<TextRange> {
+    let node_start = usize::from(range.start());
+    let node_end = usize::from(range.end());
+
+    if node_end <= edit.range.start {
+        // Node entirely before the edit: untouched.
+        Some(range)
+    } else if node_start >= edit.range.end {
+        // Node entirely after the edit: every offset shifts by the length delta.
+        let start = (node_start as isize + edit.delta()) as usize;
+        let end = (node_end as isize + edit.delta()) as usize;
+        Some(text_range(start, end))
+    } else {
+        // The edit's replaced range intersects the node's interior: invalidated.
+        None
+    }
+}
+
+/// Map a range through a sequence of edits applied left-to-right (the order
+/// [`Edit::apply`] would run them — each edit is expressed against the text
+/// produced by its predecessors). Any single invalidating edit collapses the
+/// whole result to `None`.
+pub fn map_range_through_edits(range: TextRange, edits: &[Edit]) -> Option<TextRange> {
+    edits.iter().try_fold(range, map_range_through_edit)
+}
+
 /// Which strategy produced a [`Reparsed`]. Surfaced for tests and benchmarks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReparseKind {
@@ -319,4 +363,123 @@ fn shift(d: &ParseDiagnostic, delta: isize) -> ParseDiagnostic {
 
 fn text_range(start: usize, end: usize) -> TextRange {
     TextRange::new(TextSize::new(start as u32), TextSize::new(end as u32))
+}
+
+#[cfg(test)]
+mod map_range_tests {
+    use super::*;
+
+    fn edit(start: usize, end: usize, insert: &str) -> Edit {
+        Edit {
+            range: start..end,
+            insert: insert.to_string(),
+        }
+    }
+
+    #[test]
+    fn node_before_edit_is_unchanged() {
+        let node = text_range(0, 5);
+        assert_eq!(
+            map_range_through_edit(node, &edit(10, 12, "xxxx")),
+            Some(node)
+        );
+    }
+
+    #[test]
+    fn node_after_insertion_shifts_by_delta() {
+        let node = text_range(10, 15);
+        // Insert 4 chars where 2 stood before the node: net +2.
+        assert_eq!(
+            map_range_through_edit(node, &edit(0, 2, "xxxx")),
+            Some(text_range(12, 17))
+        );
+    }
+
+    #[test]
+    fn node_after_deletion_shifts_back() {
+        let node = text_range(10, 15);
+        assert_eq!(
+            map_range_through_edit(node, &edit(0, 4, "")),
+            Some(text_range(6, 11))
+        );
+    }
+
+    #[test]
+    fn edit_ending_at_node_start_shifts_node() {
+        // ee == ns: the node survives and shifts by the delta.
+        let node = text_range(10, 15);
+        assert_eq!(
+            map_range_through_edit(node, &edit(8, 10, "abcd")),
+            Some(text_range(12, 17))
+        );
+    }
+
+    #[test]
+    fn insertion_at_node_start_shifts_node() {
+        let node = text_range(10, 15);
+        assert_eq!(
+            map_range_through_edit(node, &edit(10, 10, "ab")),
+            Some(text_range(12, 17))
+        );
+    }
+
+    #[test]
+    fn insertion_at_node_end_leaves_node_unchanged() {
+        let node = text_range(10, 15);
+        assert_eq!(
+            map_range_through_edit(node, &edit(15, 15, "ab")),
+            Some(node)
+        );
+    }
+
+    #[test]
+    fn insertion_strictly_inside_invalidates() {
+        let node = text_range(10, 15);
+        assert_eq!(map_range_through_edit(node, &edit(12, 12, "z")), None);
+    }
+
+    #[test]
+    fn overlapping_deletion_invalidates() {
+        let node = text_range(10, 15);
+        assert_eq!(map_range_through_edit(node, &edit(12, 18, "")), None);
+    }
+
+    #[test]
+    fn zero_length_node_at_insertion_point_is_unchanged() {
+        // Deterministic boundary rule: a zero-length node at the insertion point
+        // is treated as preceding the insertion.
+        let node = text_range(10, 10);
+        assert_eq!(
+            map_range_through_edit(node, &edit(10, 10, "ab")),
+            Some(node)
+        );
+    }
+
+    #[test]
+    fn append_at_eof_leaves_earlier_node_unchanged() {
+        let node = text_range(0, 5);
+        assert_eq!(
+            map_range_through_edit(node, &edit(5, 5, "\n# trailing")),
+            Some(node)
+        );
+    }
+
+    #[test]
+    fn map_through_edits_folds_in_order() {
+        let node = text_range(10, 15);
+        // Two insertions before the node, each expressed against the prior text.
+        let edits = [edit(0, 0, "ab"), edit(0, 0, "cd")];
+        assert_eq!(
+            map_range_through_edits(node, &edits),
+            Some(text_range(14, 19))
+        );
+    }
+
+    #[test]
+    fn map_through_edits_invalidates_on_any_overlap() {
+        let node = text_range(10, 15);
+        // After the first edit the node is at [12, 17); the second lands inside.
+        let edits = [edit(0, 0, "ab"), edit(13, 13, "z")];
+        assert_eq!(map_range_through_edits(node, &edits), None);
+    }
 }

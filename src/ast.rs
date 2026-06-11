@@ -1,4 +1,4 @@
-pub use rowan::ast::{AstChildren, AstNode, support};
+pub use rowan::ast::{AstChildren, AstNode, AstPtr, SyntaxNodePtr, support};
 
 pub mod nodes;
 

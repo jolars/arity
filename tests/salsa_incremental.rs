@@ -8,6 +8,7 @@ use ravel::project::{
 };
 use ravel::rindex::provider::IndexedProvider;
 use ravel::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
+use ravel::syntax::{NodePtr, SyntaxKind};
 
 fn count_by_kind(entries: &[ravel::incremental::QueryLogEntry]) -> HashMap<QueryKind, usize> {
     let mut counts = HashMap::new();
@@ -798,5 +799,89 @@ fn unindexed_attached_package_suppresses_resolution() {
         res.unresolved.is_empty(),
         "an unindexed attached package suppresses resolution: {:?}",
         res.unresolved
+    );
+}
+
+/// Capture a handle to the first `CALL_EXPR` in `file`'s current parse.
+fn first_call_ptr(db: &IncrementalDatabase, file: SourceFile) -> NodePtr {
+    let snapshot = db.snapshot();
+    let root = snapshot.parsed_tree(file);
+    let call = root
+        .descendants()
+        .find(|node| node.kind() == SyntaxKind::CALL_EXPR)
+        .expect("a call expression");
+    NodePtr::from_node(&call)
+}
+
+#[test]
+fn resolve_ptr_resolves_against_unchanged_text() {
+    let db = IncrementalDatabase::default();
+    let file = db.add_file("foo <- bar(2)\n");
+    let text = db.snapshot().file_text(file).to_string();
+    let ptr = first_call_ptr(&db, file);
+
+    let snapshot = db.snapshot();
+    let node = snapshot
+        .resolve_ptr(file, ptr, &text)
+        .expect("resolves on the same revision");
+    assert_eq!(node.kind(), SyntaxKind::CALL_EXPR);
+    assert_eq!(node.text(), "bar(2)");
+}
+
+#[test]
+fn resolve_ptr_survives_edit_before_the_node() {
+    let mut db = IncrementalDatabase::default();
+    let old = "foo <- bar(2)\n";
+    let file = db.add_file(old);
+    let ptr = first_call_ptr(&db, file);
+    let old = old.to_string();
+
+    // Prepend a comment line: the call shifts down but is otherwise untouched.
+    db.set_file_text(file, "# header\nfoo <- bar(2)\n");
+
+    let snapshot = db.snapshot();
+    let node = snapshot
+        .resolve_ptr(file, ptr, &old)
+        .expect("resolves after an edit before the node");
+    assert_eq!(node.kind(), SyntaxKind::CALL_EXPR);
+    assert_eq!(node.text(), "bar(2)");
+}
+
+#[test]
+fn resolve_ptr_invalidates_when_the_node_is_edited() {
+    let mut db = IncrementalDatabase::default();
+    let old = "foo <- bar(2)\n";
+    let file = db.add_file(old);
+    let ptr = first_call_ptr(&db, file);
+    let old = old.to_string();
+
+    // Edit lands inside the call (`bar` -> `bazzz`): the handle is invalidated.
+    db.set_file_text(file, "foo <- bazzz(2)\n");
+
+    let snapshot = db.snapshot();
+    assert!(snapshot.resolve_ptr(file, ptr, &old).is_none());
+}
+
+#[test]
+fn resolve_ptr_reuses_the_cached_parse() {
+    // Tenet 2: re-resolution is a pure read — it must not trigger a reparse.
+    let mut db = IncrementalDatabase::default();
+    let file = db.add_file("foo <- bar(2)\nx <- 1\n");
+    db.set_file_text(file, "foo <- bar(2)\nx <- 2\n");
+    let text = "foo <- bar(2)\nx <- 2\n".to_string();
+    let ptr = first_call_ptr(&db, file);
+    let hits = db.reparse_hits();
+
+    let snapshot = db.snapshot();
+    let node = snapshot
+        .resolve_ptr(file, ptr, &text)
+        .expect("resolves on the warm tree");
+    assert_eq!(node.text(), "bar(2)");
+    drop(snapshot);
+
+    assert_eq!(
+        db.reparse_hits(),
+        hits,
+        "resolve_ptr must not perturb the reparse path"
     );
 }

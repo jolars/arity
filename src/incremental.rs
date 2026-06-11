@@ -16,11 +16,11 @@ use std::sync::{Arc, Mutex};
 use rowan::TextRange;
 use salsa::{Durability, Setter};
 
-use crate::parser::{ParseDiagnostic, diff_edit, parse, reparse};
+use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
 use crate::project::{DefKind, SourceEdgeKey};
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
-use crate::syntax::SyntaxNode;
+use crate::syntax::{NodePtr, SyntaxNode};
 
 /// An opaque, process-local file identity. Decouples a tracked file from any
 /// path: it is allocated once when a file is first seen and never reused, so it
@@ -682,6 +682,33 @@ impl Analysis {
                     && binding.name.as_str() == name
             })
             .map(|binding| binding.def_range)
+    }
+
+    /// Re-resolve a [`NodePtr`] taken against `taken_at_text` to a node in
+    /// `file`'s *current* parse tree.
+    ///
+    /// When the snapshot's text still equals `taken_at_text` the handle resolves
+    /// directly. Otherwise the stored range is first mapped through the single
+    /// edit separating the two texts ([`diff_edit`] + [`map_range_through_edit`])
+    /// before resolving against the new tree — the same `file_text != text`
+    /// staleness signal hover uses, here turned into an offset fix-up rather than
+    /// a bail-out. Returns `None` (caller falls back to position/name
+    /// re-resolution) when the node was edited or the mapped range no longer names
+    /// a node of that kind. A pure read: the caller wraps it in
+    /// [`salsa::Cancelled::catch`], as hover wraps `hover_from_node`.
+    pub fn resolve_ptr(
+        &self,
+        file: SourceFile,
+        ptr: NodePtr,
+        taken_at_text: &str,
+    ) -> Option<SyntaxNode> {
+        let root = self.parsed_tree(file);
+        if self.file_text(file) == taken_at_text {
+            return ptr.try_to_node(&root);
+        }
+        let edit = diff_edit(taken_at_text, self.file_text(file));
+        let mapped = map_range_through_edit(ptr.text_range(), &edit)?;
+        ptr.with_range(mapped).try_to_node(&root)
     }
 
     /// The installed [`LibraryIndex`] singleton handle, if any. The read-phase

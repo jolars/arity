@@ -1,7 +1,13 @@
 use rowan::Language;
 
+pub mod ptr;
+
+pub use ptr::NodePtr;
+
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[repr(u16)]
 pub enum SyntaxKind {
     ROOT,

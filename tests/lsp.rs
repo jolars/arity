@@ -1,6 +1,9 @@
-use lsp_types::{Position, Range};
+use lsp_types::{Position, Range, TextEdit};
 use ravel::formatter::{FormatStyle, format_with_style};
-use ravel::lsp::{compute_format_edits, compute_format_range_edits};
+use ravel::lsp::{
+    compute_format_edits, compute_format_range_edits, compute_prepare_rename, compute_rename,
+    compute_rename_with_anchor,
+};
 
 #[test]
 fn reformats_unformatted_input_with_full_document_edit() {
@@ -115,4 +118,85 @@ fn range_edit_returns_none_on_parse_errors() {
     let range = line_range(0, 0, 1, 0);
     let result = compute_format_range_edits("function(x\n", range, style);
     assert!(result.is_none(), "parse errors must block range formatting");
+}
+
+// --- rename ----------------------------------------------------------------
+
+fn edit_at(line: u32, start: u32, end: u32, new_text: &str) -> TextEdit {
+    TextEdit {
+        range: line_range(line, start, line, end),
+        new_text: new_text.to_string(),
+    }
+}
+
+#[test]
+fn prepare_rename_offers_a_local_identifier() {
+    // Cursor on the definition of `value`.
+    let prepared = compute_prepare_rename("value <- 1\nprint(value)\n", 0).expect("offers rename");
+    assert_eq!(prepared.placeholder, "value");
+    assert_eq!(prepared.range, line_range(0, 0, 0, 5));
+}
+
+#[test]
+fn prepare_rename_declines_a_keyword() {
+    // Cursor on `if`: not an identifier, so no rename is offered.
+    assert!(compute_prepare_rename("if (x) y\n", 0).is_none());
+}
+
+#[test]
+fn prepare_rename_declines_a_nonlocal_name() {
+    // `print` resolves to no local binding.
+    assert!(compute_prepare_rename("print(1)\n", 0).is_none());
+}
+
+#[test]
+fn rename_rewrites_definition_and_reads() {
+    let edits = compute_rename("value <- 1\nprint(value)\n", 0, "v2").expect("renames");
+    assert_eq!(
+        edits,
+        vec![
+            edit_at(0, 0, 5, "v2"),  // definition
+            edit_at(1, 6, 11, "v2"), // read inside print()
+        ]
+    );
+}
+
+#[test]
+fn rename_from_a_read_site_finds_the_binding() {
+    // Cursor on the read inside `print(value)` (byte offset 17).
+    let text = "value <- 1\nprint(value)\n";
+    let offset = text.find("value)").expect("read site");
+    let edits = compute_rename(text, offset, "v2").expect("renames");
+    assert_eq!(edits, vec![edit_at(0, 0, 5, "v2"), edit_at(1, 6, 11, "v2")]);
+}
+
+#[test]
+fn rename_rejects_an_invalid_identifier() {
+    assert!(compute_rename("value <- 1\n", 0, "1bad").is_none());
+    assert!(compute_rename("value <- 1\n", 0, "if").is_none());
+    assert!(compute_rename("value <- 1\n", 0, "has space").is_none());
+}
+
+#[test]
+fn rename_declines_a_nonlocal_name() {
+    assert!(compute_rename("print(1)\n", 0, "p2").is_none());
+}
+
+#[test]
+fn rename_via_anchor_survives_an_edit_since_prepare() {
+    // Prepare a rename of `value` against text A, then a keystroke inserts a
+    // comment line above. The stored anchor must still drive the rename at the
+    // shifted positions in text B.
+    let text_a = "value <- 1\nprint(value)\n";
+    let prepared = compute_prepare_rename(text_a, 0).expect("offers rename");
+
+    let text_b = "# note\nvalue <- 1\nprint(value)\n";
+    let edits = compute_rename_with_anchor(text_b, &prepared.anchor, "v2").expect("renames");
+    assert_eq!(
+        edits,
+        vec![
+            edit_at(1, 0, 5, "v2"),  // definition, shifted down a line
+            edit_at(2, 6, 11, "v2"), // read inside print()
+        ]
+    );
 }

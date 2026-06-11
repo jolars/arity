@@ -67,7 +67,8 @@ use lsp_types::notification::{
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, Formatting, HoverRequest, RangeFormatting, Request as RequestTrait,
+    CodeActionRequest, Formatting, HoverRequest, PrepareRenameRequest, RangeFormatting, Rename,
+    Request as RequestTrait,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -76,7 +77,8 @@ use lsp_types::{
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
     DocumentRangeFormattingParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeResult, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
-    PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    PrepareRenameResponse, PublishDiagnosticsParams, Range, RenameOptions, RenameParams,
+    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use rowan::{SyntaxToken, TextRange, TextSize, TokenAtOffset};
@@ -90,7 +92,7 @@ use crate::file_discovery::collect_r_files;
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
 use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
 use crate::linter::{Diagnostic, Severity};
-use crate::parser::parse;
+use crate::parser::{diff_edit, map_range_through_edit, parse};
 use crate::rindex::build::{BuildOptions, build_index};
 use crate::rindex::cache::{Cache, resolve_cache_root};
 use crate::rindex::discover::referenced_in_source;
@@ -99,8 +101,8 @@ use crate::rindex::provider::{
     CompositeProvider, IndexedProvider, package_indexed, resolve_origin,
 };
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
-use crate::semantic::{PackageOrigin, SemanticModel};
-use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
+use crate::semantic::{BindingId, PackageOrigin, SemanticModel};
+use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::LineIndex;
 use task_pool::{Spawner, TaskPool, read_pool_size};
 
@@ -161,6 +163,10 @@ fn server_capabilities() -> ServerCapabilities {
         document_range_formatting_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
         ..Default::default()
     }
 }
@@ -377,6 +383,11 @@ struct GlobalState {
     /// avoiding an independent re-lint; a stale or missing entry falls back to
     /// [`compute_code_actions`].
     findings: HashMap<Uri, (i32, Arc<Vec<Diagnostic>>)>,
+    /// The most recent `prepareRename` anchor per document. Holds a [`NodePtr`]
+    /// to the identifier's enclosing node plus the buffer it was taken against,
+    /// so the follow-up `rename` re-locates the cursor even if the buffer changed
+    /// since prepare (the "anchor that survives typing"). Cleared on rename/close.
+    rename_anchors: HashMap<Uri, RenameAnchor>,
     config_cache: HashMap<PathBuf, ResolvedSettings>,
     /// Editor-pushed formatter defaults; the fallback when no `ravel.toml` is
     /// found. Updated by `workspace/didChangeConfiguration`.
@@ -405,6 +416,7 @@ impl GlobalState {
         Self {
             documents: HashMap::new(),
             findings: HashMap::new(),
+            rename_anchors: HashMap::new(),
             config_cache: HashMap::new(),
             editor_settings,
             sender,
@@ -420,6 +432,8 @@ impl GlobalState {
             RangeFormatting::METHOD => self.on_range_formatting(req),
             CodeActionRequest::METHOD => self.on_code_action(req),
             HoverRequest::METHOD => self.on_hover(req),
+            PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
+            Rename::METHOD => self.on_rename(req),
             _ => {
                 let resp = Response::new_err(
                     req.id,
@@ -550,6 +564,84 @@ impl GlobalState {
         });
     }
 
+    /// `textDocument/prepareRename`: confirm the cursor sits on a renameable
+    /// local identifier and return its range + placeholder. Computed
+    /// synchronously (a single cheap parse) because the result anchors per-URI
+    /// state on the main thread — these requests are deliberate and infrequent,
+    /// unlike hover/format which offload to the read pool.
+    fn on_prepare_rename(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<TextDocumentPositionParams>(PrepareRenameRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid prepareRename params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let line_index = LineIndex::new(&text);
+        let offset = line_index.position_to_byte(params.position).min(text.len());
+        match compute_prepare_rename(&text, offset) {
+            Some(prepared) => {
+                self.rename_anchors.insert(uri, prepared.anchor);
+                let response = PrepareRenameResponse::RangeWithPlaceholder {
+                    range: prepared.range,
+                    placeholder: prepared.placeholder,
+                };
+                self.respond_ok(id, serde_json::to_value(response).unwrap_or_default());
+            }
+            None => {
+                self.rename_anchors.remove(&uri);
+                self.respond_ok(id, serde_json::Value::Null);
+            }
+        }
+    }
+
+    /// `textDocument/rename`: build an intra-file [`WorkspaceEdit`] renaming the
+    /// binding under the cursor. Prefers the stored `prepareRename` anchor (so the
+    /// rename targets the same binding even if the buffer was edited since
+    /// prepare), falling back to the request's position.
+    fn on_rename(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<RenameParams>(Rename::METHOD) else {
+            self.respond_err(id, "invalid rename params");
+            return;
+        };
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let new_name = params.new_name;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+
+        let anchored = self
+            .rename_anchors
+            .get(&uri)
+            .and_then(|anchor| compute_rename_with_anchor(&text, anchor, &new_name));
+        let edits = anchored.or_else(|| {
+            let line_index = LineIndex::new(&text);
+            let offset = line_index.position_to_byte(position).min(text.len());
+            compute_rename(&text, offset, &new_name)
+        });
+        // A rename consumes its anchor; a fresh prepare precedes any next rename.
+        self.rename_anchors.remove(&uri);
+
+        match edits {
+            Some(edits) if !edits.is_empty() => {
+                let workspace_edit = WorkspaceEdit {
+                    changes: Some(HashMap::from([(uri, edits)])),
+                    ..Default::default()
+                };
+                self.respond_ok(id, serde_json::to_value(workspace_edit).unwrap_or_default());
+            }
+            _ => self.respond_err(id, "rename is not available here"),
+        }
+    }
+
     /// Hand a read-only job to the lint thread (db owner), which snapshots the db
     /// and runs it on the read pool. If that channel is gone (shutdown in flight),
     /// reply `null` so the client isn't left waiting.
@@ -607,6 +699,7 @@ impl GlobalState {
                     let uri = params.text_document.uri;
                     self.documents.remove(&uri);
                     self.findings.remove(&uri);
+                    self.rename_anchors.remove(&uri);
                     // Tell the client to clear stale diagnostics.
                     self.publish(uri, Vec::new(), None);
                 }
@@ -1489,6 +1582,223 @@ enum SymbolQuery {
         name: SmolStr,
         range: TextRange,
     },
+}
+
+/// A cross-edit-stable anchor for an in-flight rename: a [`NodePtr`] to the
+/// renamed identifier's enclosing node, the cursor's offset *within* that node,
+/// the name, and the buffer the handle was taken against. Opaque to callers —
+/// produced by [`compute_prepare_rename`] and consumed by
+/// [`compute_rename_with_anchor`].
+#[derive(Debug, Clone)]
+pub struct RenameAnchor {
+    node_ptr: NodePtr,
+    offset_in_node: u32,
+    text: String,
+}
+
+/// The result of [`compute_prepare_rename`]: the editable range + placeholder the
+/// LSP returns, plus the [`RenameAnchor`] the server stashes for the follow-up
+/// `rename`.
+#[derive(Debug, Clone)]
+pub struct PreparedRename {
+    pub range: Range,
+    pub placeholder: String,
+    pub anchor: RenameAnchor,
+}
+
+/// The binding the cursor names, plus the token range and name.
+struct RenameTarget {
+    binding: BindingId,
+    range: TextRange,
+    name: SmolStr,
+}
+
+/// Resolve the cursor to the *local* binding it names, whether the cursor is on a
+/// read site or the definition itself. Returns `None` for a non-identifier, or a
+/// name that resolves to no local binding (a package export, a global, an
+/// undefined name) — those are out of scope for intra-file rename.
+fn resolve_rename_target(
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    offset: TextSize,
+) -> Option<RenameTarget> {
+    let token = pick_name_token(root, offset)?;
+    if token.kind() != SyntaxKind::IDENT {
+        return None;
+    }
+    let range = token.text_range();
+    let name = SmolStr::new(token.text());
+    if let Some(ident) = model.idents().iter().find(|i| i.range == range) {
+        let binding = model.resolve_local(ident)?;
+        return Some(RenameTarget {
+            binding,
+            range,
+            name,
+        });
+    }
+    let idx = model.bindings().iter().position(|b| b.def_range == range)?;
+    Some(RenameTarget {
+        binding: BindingId::from_index(idx),
+        range,
+        name,
+    })
+}
+
+/// `textDocument/prepareRename`: validate the cursor is on a renameable local and
+/// return its range + placeholder, plus the cross-edit [`RenameAnchor`]. Pure
+/// (parses `text` itself) so it is unit-testable. Refuses on parse errors so a
+/// prepared rename never resolves against a malformed tree.
+pub fn compute_prepare_rename(text: &str, offset: usize) -> Option<PreparedRename> {
+    let parsed = parse(text);
+    if !parsed.diagnostics.is_empty() {
+        return None;
+    }
+    let root = parsed.cst;
+    let model = SemanticModel::build(&root);
+    let off = TextSize::new(offset.min(text.len()) as u32);
+    let target = resolve_rename_target(&root, &model, off)?;
+    let token = pick_name_token(&root, off)?;
+    let node = token.parent()?;
+    let offset_in_node = u32::from(target.range.start()) - u32::from(node.text_range().start());
+    let line_index = LineIndex::new(text);
+    Some(PreparedRename {
+        range: Range {
+            start: line_index.byte_to_position(usize::from(target.range.start())),
+            end: line_index.byte_to_position(usize::from(target.range.end())),
+        },
+        placeholder: target.name.to_string(),
+        anchor: RenameAnchor {
+            node_ptr: NodePtr::from_node(&node),
+            offset_in_node,
+            text: text.to_string(),
+        },
+    })
+}
+
+/// `textDocument/rename` from a cursor offset: the text edits that rename the
+/// binding under the cursor and all its in-file reads to `new_name`. Pure and
+/// unit-testable. Returns `None` when `new_name` isn't a syntactic R identifier,
+/// the file has parse errors, or the cursor names no renameable local.
+pub fn compute_rename(text: &str, offset: usize, new_name: &str) -> Option<Vec<TextEdit>> {
+    if !is_syntactic_r_name(new_name) {
+        return None;
+    }
+    let parsed = parse(text);
+    if !parsed.diagnostics.is_empty() {
+        return None;
+    }
+    let root = parsed.cst;
+    let model = SemanticModel::build(&root);
+    let off = TextSize::new(offset.min(text.len()) as u32);
+    let target = resolve_rename_target(&root, &model, off)?;
+    let line_index = LineIndex::new(text);
+    let edits = rename_edits(&model, &target, new_name, &line_index);
+    (!edits.is_empty()).then_some(edits)
+}
+
+/// `textDocument/rename` driven by a [`RenameAnchor`] instead of a fresh
+/// position: re-locate the cursor in `current_text` via the anchor (mapping its
+/// node range across any edit since prepare), then rename. This mirrors
+/// [`Analysis::resolve_ptr`](crate::incremental::Analysis::resolve_ptr) but
+/// resolves against the live buffer, which is authoritative for the in-flight
+/// edit. Returns `None` if the anchor's node was edited away (caller falls back
+/// to the request position).
+pub fn compute_rename_with_anchor(
+    current_text: &str,
+    anchor: &RenameAnchor,
+    new_name: &str,
+) -> Option<Vec<TextEdit>> {
+    let offset = rename_cursor_offset(current_text, anchor)?;
+    compute_rename(current_text, offset, new_name)
+}
+
+/// Re-derive the cursor's byte offset in `current_text` from a [`RenameAnchor`]:
+/// resolve the anchor's node (directly when the text is unchanged, else by
+/// mapping its range through the edit) and add the stored intra-node offset.
+fn rename_cursor_offset(current_text: &str, anchor: &RenameAnchor) -> Option<usize> {
+    let root = parse(current_text).cst;
+    let node = if current_text == anchor.text {
+        anchor.node_ptr.try_to_node(&root)?
+    } else {
+        let edit = diff_edit(&anchor.text, current_text);
+        let mapped = map_range_through_edit(anchor.node_ptr.text_range(), &edit)?;
+        anchor.node_ptr.with_range(mapped).try_to_node(&root)?
+    };
+    Some(usize::from(node.text_range().start()) + anchor.offset_in_node as usize)
+}
+
+/// The text edits renaming `target`'s definition and every in-file read of it.
+fn rename_edits(
+    model: &SemanticModel,
+    target: &RenameTarget,
+    new_name: &str,
+    line_index: &LineIndex,
+) -> Vec<TextEdit> {
+    let mut ranges: Vec<TextRange> = vec![model.binding(target.binding).def_range];
+    for ident in model.idents() {
+        if ident.name == target.name && model.resolve_local(ident) == Some(target.binding) {
+            ranges.push(ident.range);
+        }
+    }
+    ranges.sort_by_key(|range| range.start());
+    ranges.dedup();
+    ranges
+        .into_iter()
+        .map(|range| TextEdit {
+            range: Range {
+                start: line_index.byte_to_position(usize::from(range.start())),
+                end: line_index.byte_to_position(usize::from(range.end())),
+            },
+            new_text: new_name.to_string(),
+        })
+        .collect()
+}
+
+/// Whether `name` is a syntactic R identifier usable without backtick-quoting:
+/// starts with a letter or `.` (and a leading `.` is not followed by a digit),
+/// contains only letters, digits, `.`, and `_`, and isn't a reserved word.
+/// Backtick-quoted non-syntactic names are out of scope (the rename withholds).
+fn is_syntactic_r_name(name: &str) -> bool {
+    let Some(first) = name.chars().next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '.') {
+        return false;
+    }
+    if first == '.' && matches!(name.as_bytes().get(1), Some(b) if b.is_ascii_digit()) {
+        return false;
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+    {
+        return false;
+    }
+    !is_reserved_word(name)
+}
+
+fn is_reserved_word(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "else"
+            | "repeat"
+            | "while"
+            | "function"
+            | "for"
+            | "in"
+            | "next"
+            | "break"
+            | "TRUE"
+            | "FALSE"
+            | "NULL"
+            | "Inf"
+            | "NaN"
+            | "NA"
+            | "NA_integer_"
+            | "NA_real_"
+            | "NA_character_"
+            | "NA_complex_"
+    )
 }
 
 /// Build hover contents for the symbol at byte `offset`, if it resolves to an

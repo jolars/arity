@@ -43,9 +43,11 @@ in-tree parser, not a drop-in jarl replacement.
 
 ## Language Server
 
-Today the server advertises only **formatting** (whole-document + range),
-**hover** (index-backed), **quick-fix code actions**, and **pushed diagnostics**
-(`src/lsp.rs` `server_capabilities`). Everything below is unimplemented. Much of
+Today the server advertises **formatting** (whole-document + range), **hover**
+(index-backed), **quick-fix code actions**, **pushed diagnostics**, and
+**intra-file rename** (`prepareRename` + `rename`, local bindings only)
+(`src/lsp.rs` `server_capabilities`). Everything else below is unimplemented.
+Much of
 it is closer than it looks: the per-file `SemanticModel` (`src/semantic.rs`:
 scope tree, bindings, identifier *read* sites, `loaded_packages`,
 `referenced_packages`) plus the salsa queries (`semantic_model`, `file_exports`,
@@ -88,13 +90,21 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       salsa `Workspace` input (`src/incremental.rs`) from which the interned
       `Project` is derived by `workspace_project` — no per-request disk walk. See
       *Cross-cutting prerequisite* below for the full landed shape.
-- [ ] **No stable cross-edit node references** (`SyntaxNodePtr`/`AstPtr`); each
-      consumer materializes a fresh cursor per reparse. A non-issue for
-      stateless request/response navigation (re-resolve from a `TextRange` each
-      request, as hover does), but a prerequisite for any feature that must
-      hold a node handle *across edits* (a persistent call-hierarchy item, a
-      `prepareRename` anchor that survives typing). Add it only when a feature
-      actually needs cross-edit stability.
+- [x] **Stable cross-edit node references.** Done, landed with its first
+      consumer (intra-file rename). Three pieces: (1) rowan's typed
+      same-revision handles `AstPtr`/`SyntaxNodePtr` re-exported from
+      `src/ast.rs`; (2) ravel's canonical `NodePtr` (`src/syntax/ptr.rs`) — a
+      `(kind, range)` handle that owns its construction (rowan's is closed) and
+      derives `serde`, so it can be mapped onto a new revision *and* ride an LSP
+      `data` field, with a hand-written `try_to_node` via `covering_element`;
+      (3) the cross-edit layer `map_range_through_edit(s)`
+      (`src/parser/reparse.rs`) that shifts a stored range through an `Edit`
+      (or returns `None` when the edit overlaps the node), surfaced as
+      `Analysis::resolve_ptr` (`src/incremental.rs`, the db-backed re-resolution)
+      and exercised live by `compute_rename_with_anchor` (`src/lsp.rs`, which
+      resolves against the authoritative buffer). The `prepareRename` anchor that
+      "survives typing" is the worked example; a persistent call-hierarchy item
+      reuses the same `NodePtr` + `serde` form for its `data` round-trip.
 
 ### Navigation
 
@@ -133,11 +143,16 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 ### Rename
 
 - [ ] **Rename symbol** (`textDocument/rename` + `textDocument/prepareRename`).
-      Intra-file rename is references + a `WorkspaceEdit` of text edits; gated
-      on definition/references landing and on validating the new name (R
-      syntactic identifier rules, backtick-quoting where needed). Cross-file
-      rename of an exported/`source()`-d name rides the same reverse index as
-      cross-file references and must edit every dependent file atomically.
+      Intra-file rename of a *local* binding has landed (`src/lsp.rs`
+      `compute_prepare_rename`/`compute_rename`): resolve the cursor to a
+      `BindingId` (read site via `resolve_local`, or the def site), collect the
+      def + all in-scope reads into a `WorkspaceEdit`, validate the new name
+      against R's syntactic identifier rules (`is_syntactic_r_name`), and anchor
+      the prepare→rename handshake on a `NodePtr` so it survives an edit (see the
+      cross-edit references prerequisite above). Still open: backtick-quoting of
+      non-syntactic names; renaming an exported/`source()`-d name cross-file
+      (rides the same reverse index as cross-file references and must edit every
+      dependent file atomically); and renaming package-qualified names.
 - [ ] **File rename** (`workspace/willRenameFiles` / `workspace/didRenameFiles`,
       advertised via `fileOperations` server capability). On an `.R` file move,
       rewrite `source("old/path.R")` string literals in dependents to the new
