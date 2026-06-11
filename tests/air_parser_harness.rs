@@ -2,10 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use air_r_parser::{RParserOptions, parse as air_parse};
-use ravel::parser::parse;
+use arity::parser::parse;
 
 #[test]
-fn air_parser_accepts_ravel_parseable_fixtures() {
+fn air_parser_accepts_arity_parseable_fixtures() {
     for (name, input) in fixture_inputs() {
         let output = parse(&input);
         if !output.diagnostics.is_empty() {

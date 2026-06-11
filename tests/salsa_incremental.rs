@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ravel::incremental::{IncrementalDatabase, QueryKind, SourceFile, file_def_sites};
-use ravel::project::{
+use arity::incremental::{IncrementalDatabase, QueryKind, SourceFile, file_def_sites};
+use arity::project::{
     DefKind, Project, ProjectMember, external_resolution, project_defs, project_reads,
     reverse_source_edges, visible_symbols, workspace_project,
 };
-use ravel::rindex::provider::IndexedProvider;
-use ravel::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
-use ravel::syntax::{NodePtr, SyntaxKind};
+use arity::rindex::provider::IndexedProvider;
+use arity::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
+use arity::syntax::{NodePtr, SyntaxKind};
 
-fn count_by_kind(entries: &[ravel::incremental::QueryLogEntry]) -> HashMap<QueryKind, usize> {
+fn count_by_kind(entries: &[arity::incremental::QueryLogEntry]) -> HashMap<QueryKind, usize> {
     let mut counts = HashMap::new();
     for entry in entries {
         *counts.entry(entry.kind).or_insert(0) += 1;
@@ -181,7 +181,7 @@ fn body_edit_uses_incremental_reparse_and_stays_correct() {
     );
 
     // The spliced tree is byte-identical to a from-scratch parse.
-    let fresh = ravel::parser::parse("f <- function() {\n  a + b + c\n}\n");
+    let fresh = arity::parser::parse("f <- function() {\n  a + b + c\n}\n");
     assert_eq!(
         db.parsed_tree(file).text().to_string(),
         fresh.cst.text().to_string()

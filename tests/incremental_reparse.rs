@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 
-use ravel::parser::{Edit, ParseDiagnostic, ReparseKind, parse, reparse};
-use ravel::syntax::SyntaxNode;
+use arity::parser::{Edit, ParseDiagnostic, ReparseKind, parse, reparse};
+use arity::syntax::SyntaxNode;
 
 /// A complete structural fingerprint of a tree: every node/token with its kind,
 /// range, and (for tokens) text. Two trees with equal fingerprints are

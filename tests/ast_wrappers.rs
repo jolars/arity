@@ -1,9 +1,9 @@
-use ravel::ast::{
+use arity::ast::{
     ArgList, AssignmentExpr, AstNode, BinaryExpr, BlockExpr, CallExpr, ForExpr, FunctionExpr,
     IfExpr,
 };
-use ravel::parser::parse;
-use ravel::syntax::SyntaxKind;
+use arity::parser::parse;
+use arity::syntax::SyntaxKind;
 
 fn first_binary(src: &str) -> BinaryExpr {
     let parsed = parse(src);

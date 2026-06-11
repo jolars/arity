@@ -12,7 +12,7 @@ use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
 /// Whether an `if` expression sits in statement (effect) position and so must
 /// always be braced, mirroring air's `SyntaxPosition` (minus the
-/// persistent-line-break forcing that Tenet 1 forbids ravel from copying).
+/// persistent-line-break forcing that Tenet 1 forbids arity from copying).
 /// Derived purely from the CST parent:
 ///
 /// * a top-level program statement (`ROOT` child) --- always effect;

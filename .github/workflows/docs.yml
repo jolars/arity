@@ -67,4 +67,4 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Audit URLs using Lighthouse
-        run: npx unlighthouse-ci --site https://ravel.bz --build-static
+        run: npx unlighthouse-ci --site https://arity.cc --build-static

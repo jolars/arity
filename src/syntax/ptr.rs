@@ -3,7 +3,7 @@
 //! rowan ships [`SyntaxNodePtr`](rowan::ast::SyntaxNodePtr) /
 //! [`AstPtr`](rowan::ast::AstPtr) for the same-revision case (re-exported from
 //! [`crate::ast`]), but their fields are private — they cannot be constructed
-//! from a mapped `(kind, range)` or deserialized. [`NodePtr`] is ravel's
+//! from a mapped `(kind, range)` or deserialized. [`NodePtr`] is arity's
 //! canonical handle: it owns its construction (so a range mapped across an edit
 //! can be re-resolved) and derives `serde` (so it can ride an LSP
 //! `CallHierarchyItem.data` field).

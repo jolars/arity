@@ -3,12 +3,12 @@
 # This file is the "documented deviations" list behind the soft air-compatibility
 # gauge (see `tests/air_compat.rs` and `AIR_COMPAT.md`). It is SUBORDINATE to
 # Tenet 1 (deterministic, rule-based formatting): listing a file here means
-# "ravel diverges from air here ON PURPOSE", not "air is wrong to flag it".
+# "arity diverges from air here ON PURPOSE", not "air is wrong to flag it".
 #
 # Anything that diverges from air and is NOT listed here is reported as an
 # UNEXPLAINED divergence --- the triage queue. Adding an entry is how you resolve
-# that tension in favor of keeping ravel's own rule (the alternative being to fix
-# ravel to match air, when air's output is the more idiomatic one).
+# that tension in favor of keeping arity's own rule (the alternative being to fix
+# arity to match air, when air's output is the more idiomatic one).
 #
 # Key   = corpus file identifier:
 #           - default corpus: the fixture directory name (e.g. `air_call`)
@@ -22,19 +22,19 @@
 [deviations]
 # Unbreakable-atom hug: when a call's only leading argument is a bare atom too
 # wide to fit on any line, breaking the list buys no width (the atom overflows
-# its own exploded line too) --- only lines and indentation. Ravel keeps the
+# its own exploded line too) --- only lines and indentation. Arity keeps the
 # trailing `{` hug rather than exploding (`with(<82-char symbol>, {`). Air
 # expands here. This is the same uniform, callee-agnostic rule that keeps
 # `test_that("<long>", {`…`})` compact (which now MATCHES air's `test_that`
 # special case as a side effect, so `air_test_that` is no longer a deviation).
 # See TODO.md and the `air_test_that` fixture.
-air_call = "unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands"
-call_trailing_braced_expression = "unbreakable-atom hug: ravel keeps `with(<over-width symbol>, {` compact; air expands"
+air_call = "unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands"
+call_trailing_braced_expression = "unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands"
 
-# Over-width `if` condition: ravel keeps the condition hugged to `if (` and lets
+# Over-width `if` condition: arity keeps the condition hugged to `if (` and lets
 # the condition's own call wrap internally --- the condition is native IR spliced
 # inline with no enclosing soft-line group, so it never drops onto its own line on
 # the `if (…)` prefix's account (see `ir_if_expr_impl`). Air instead breaks the
 # whole condition onto its own line inside the parens. Both now brace the
 # consequence when the `if` goes multi-line.
-function_body_wide_if_condition = "over-width if-condition: ravel hugs the condition to `if (` and wraps it internally; air breaks the condition onto its own line"
+function_body_wide_if_condition = "over-width if-condition: arity hugs the condition to `if (` and wraps it internally; air breaks the condition onto its own line"

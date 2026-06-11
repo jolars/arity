@@ -1,7 +1,7 @@
 //! Soft air-compatibility gauge (NOT a quality gate).
 //!
-//! This harness measures how much of ravel's output the `air` formatter would
-//! leave unchanged --- a one-directional "ravel is air-compatible" signal in the
+//! This harness measures how much of arity's output the `air` formatter would
+//! leave unchanged --- a one-directional "arity is air-compatible" signal in the
 //! spirit of ruff's "% Black-compatible" number. It is **subordinate to Tenet 1**
 //! (deterministic, rule-based formatting): a divergence from air is never a bug
 //! by itself, and this test never fails the build. It is `#[ignore]`d so it does
@@ -13,11 +13,11 @@
 //! cargo test --test air_compat -- --ignored --nocapture
 //! ```
 //!
-//! Methodology --- we measure the *fixed point*, `air(ravel(x)) == ravel(x)`, not
-//! a head-to-head `air(x)` vs `ravel(x)`. That is deliberate: ravel ignores the
+//! Methodology --- we measure the *fixed point*, `air(arity(x)) == arity(x)`, not
+//! a head-to-head `air(x)` vs `arity(x)`. That is deliberate: arity ignores the
 //! input's line breaks while air honors them ("persistent line breaks"), so a
 //! head-to-head diff would be dominated by that intended philosophical difference
-//! rather than genuine rule divergences. Because ravel's collapsed output never
+//! rather than genuine rule divergences. Because arity's collapsed output never
 //! carries air's persistent-break trigger, the fixed-point check cancels the
 //! line-break difference out by construction and surfaces only real rule gaps.
 //!
@@ -31,18 +31,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ravel::formatter::format;
+use arity::formatter::format;
 
 /// One corpus file's outcome.
 enum Outcome {
-    /// `air` would leave ravel's output unchanged.
+    /// `air` would leave arity's output unchanged.
     Compatible,
-    /// `air` would rewrite ravel's output. Carries the per-file line similarity
+    /// `air` would rewrite arity's output. Carries the per-file line similarity
     /// (Dice coefficient over lines, 0.0..=1.0).
     Divergent { line_similarity: f64 },
-    /// ravel could not format the input (parse error / unsupported).
-    SkippedRavel,
-    /// `air` could not process ravel's output (parse error in air).
+    /// arity could not format the input (parse error / unsupported).
+    SkippedArity,
+    /// `air` could not process arity's output (parse error in air).
     SkippedAir,
 }
 
@@ -71,7 +71,7 @@ fn air_compat_report() {
     let mut reports: Vec<FileReport> = Vec::new();
     // Aggregate line counts for the corpus-wide similarity index.
     let mut total_lcs2: usize = 0; // sum of 2 * LCS
-    let mut total_lines: usize = 0; // sum of (ravel_lines + air_lines) over divergent+compatible files
+    let mut total_lines: usize = 0; // sum of (arity_lines + air_lines) over divergent+compatible files
 
     for (key, path) in &corpus {
         let raw = match fs::read_to_string(path) {
@@ -79,18 +79,18 @@ fn air_compat_report() {
             Err(_) => continue,
         };
 
-        let ravel_out = match format(&raw) {
+        let arity_out = match format(&raw) {
             Ok(out) => out,
             Err(_) => {
                 reports.push(FileReport {
                     key: key.clone(),
-                    outcome: Outcome::SkippedRavel,
+                    outcome: Outcome::SkippedArity,
                 });
                 continue;
             }
         };
 
-        let Some(air_out) = air_format(&air, tmp.path(), &ravel_out) else {
+        let Some(air_out) = air_format(&air, tmp.path(), &arity_out) else {
             reports.push(FileReport {
                 key: key.clone(),
                 outcome: Outcome::SkippedAir,
@@ -98,19 +98,19 @@ fn air_compat_report() {
             continue;
         };
 
-        let ravel_lines: Vec<&str> = ravel_out.lines().collect();
+        let arity_lines: Vec<&str> = arity_out.lines().collect();
         let air_lines: Vec<&str> = air_out.lines().collect();
-        let lcs = lcs_len(&ravel_lines, &air_lines);
+        let lcs = lcs_len(&arity_lines, &air_lines);
         total_lcs2 += 2 * lcs;
-        total_lines += ravel_lines.len() + air_lines.len();
+        total_lines += arity_lines.len() + air_lines.len();
 
-        if ravel_out == air_out {
+        if arity_out == air_out {
             reports.push(FileReport {
                 key: key.clone(),
                 outcome: Outcome::Compatible,
             });
         } else {
-            let denom = ravel_lines.len() + air_lines.len();
+            let denom = arity_lines.len() + air_lines.len();
             let line_similarity = if denom == 0 {
                 1.0
             } else {
@@ -284,7 +284,7 @@ fn render_report(
     corpus_label: &str,
 ) -> String {
     let mut compatible = 0usize;
-    let mut skipped_ravel = 0usize;
+    let mut skipped_arity = 0usize;
     let mut skipped_air = 0usize;
     let mut intentional: Vec<(&str, &str, f64)> = Vec::new();
     let mut unexplained: Vec<(&str, f64)> = Vec::new();
@@ -292,7 +292,7 @@ fn render_report(
     for r in reports {
         match r.outcome {
             Outcome::Compatible => compatible += 1,
-            Outcome::SkippedRavel => skipped_ravel += 1,
+            Outcome::SkippedArity => skipped_arity += 1,
             Outcome::SkippedAir => skipped_air += 1,
             Outcome::Divergent { line_similarity } => {
                 if let Some(reason) = allowlist.get(&r.key) {
@@ -324,7 +324,7 @@ fn render_report(
     s.push_str(
         "This is a **soft gauge, not a quality gate**, and is subordinate to Tenet 1 \
          (deterministic, rule-based formatting). It measures the one-directional fixed point \
-         `air(ravel(x)) == ravel(x)`: how much of ravel's output the `air` formatter would \
+         `air(arity(x)) == arity(x)`: how much of arity's output the `air` formatter would \
          leave untouched. A divergence is never a bug by itself --- it is either a deliberate, \
          recorded deviation or an open question.\n\n",
     );
@@ -340,9 +340,9 @@ fn render_report(
         intentional.len(),
         unexplained.len()
     ));
-    if skipped_ravel + skipped_air > 0 {
+    if skipped_arity + skipped_air > 0 {
         s.push_str(&format!(
-            "- **Skipped:** {skipped_ravel} (ravel could not format) + {skipped_air} (air could not parse)\n"
+            "- **Skipped:** {skipped_arity} (arity could not format) + {skipped_air} (air could not parse)\n"
         ));
     }
     s.push('\n');

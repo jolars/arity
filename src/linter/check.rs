@@ -1,4 +1,4 @@
-//! `ravel lint` driver: walks input paths, parses, builds a semantic model,
+//! `arity lint` driver: walks input paths, parses, builds a semantic model,
 //! runs the configured rules, filters suppressed findings, and reports.
 
 use std::collections::HashMap;

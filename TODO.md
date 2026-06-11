@@ -5,7 +5,7 @@
 - [ ] Comment-aware suppression placement edge cases: directives inside
       `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` need special
       handling so they attach to `next_arg` instead of the argument list. (Jarl
-      solved this by overriding biome's `place_comment`; ravel's
+      solved this by overriding biome's `place_comment`; arity's
       next-non-trivia-sibling walk already handles most cases.)
 - [x] Incremental reparse (token/block) beneath `parsed_document`
       (`src/incremental.rs`): rowan-style `reparse_token` → `reparse_block` →
@@ -36,9 +36,9 @@
 
 Closest precedent: **jarl** (`etiennebacher/jarl`, Rust + rowan + air-parser,
 55+ rules, suppression directives, LSP, autofix). The foundation pass borrows
-shape (diagnostic + `Violation` trait, `PackageOrigin` enum, `# ravel-ignore`
+shape (diagnostic + `Violation` trait, `PackageOrigin` enum, `# arity-ignore`
 suppression directive style, annotate-snippets rendering) but stays its own
-project --- ravel is a unified formatter + linter + LSP binary on ravel's own
+project --- arity is a unified formatter + linter + LSP binary on arity's own
 in-tree parser, not a drop-in jarl replacement.
 
 ## Language Server
@@ -93,7 +93,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 - [x] **Stable cross-edit node references.** Done, landed with its first
       consumer (intra-file rename). Three pieces: (1) rowan's typed
       same-revision handles `AstPtr`/`SyntaxNodePtr` re-exported from
-      `src/ast.rs`; (2) ravel's canonical `NodePtr` (`src/syntax/ptr.rs`) — a
+      `src/ast.rs`; (2) arity's canonical `NodePtr` (`src/syntax/ptr.rs`) — a
       `(kind, range)` handle that owns its construction (rowan's is closed) and
       derives `serde`, so it can be mapped onto a new revision *and* ride an LSP
       `data` field, with a hand-written `try_to_node` via `covering_element`;
@@ -263,6 +263,6 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 ## Misc
 
-- [ ] `ravel-ignore-unused` meta-diagnostic: emit a finding for suppression
+- [ ] `arity-ignore-unused` meta-diagnostic: emit a finding for suppression
       comments that didn't actually suppress anything (rule ID is reserved but
       the rule is not yet wired in).

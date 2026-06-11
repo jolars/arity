@@ -1,9 +1,9 @@
 //! Cross-edit node handles: `NodePtr` round-trips, cross-edit re-resolution via
 //! range mapping, and serde of the LSP `data`-ready handle.
 
-use ravel::ast::{AssignmentExpr, AstNode, CallExpr, FunctionExpr};
-use ravel::parser::{Edit, map_range_through_edit, parse};
-use ravel::syntax::{NodePtr, SyntaxKind, SyntaxNode};
+use arity::ast::{AssignmentExpr, AstNode, CallExpr, FunctionExpr};
+use arity::parser::{Edit, map_range_through_edit, parse};
+use arity::syntax::{NodePtr, SyntaxKind, SyntaxNode};
 
 fn root(src: &str) -> SyntaxNode {
     let parsed = parse(src);
@@ -15,7 +15,7 @@ fn root(src: &str) -> SyntaxNode {
     parsed.cst
 }
 
-fn first<N: AstNode<Language = ravel::syntax::RLanguage>>(root: &SyntaxNode) -> N {
+fn first<N: AstNode<Language = arity::syntax::RLanguage>>(root: &SyntaxNode) -> N {
     root.descendants().find_map(N::cast).expect("a node")
 }
 

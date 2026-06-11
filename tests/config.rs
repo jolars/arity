@@ -8,13 +8,13 @@ use tempfile::tempdir;
 const LONG_FN_INPUT: &str = "x <- function(aaaaa, bbbbb, ccccc, ddddd) { 1 }\n";
 
 fn run_cli<const N: usize>(args: [&str; N], stdin_input: &str) -> std::process::Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ravel"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_arity"));
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().expect("failed to spawn ravel cli");
+    let mut child = cmd.spawn().expect("failed to spawn arity cli");
     let mut stdin = child.stdin.take().expect("failed to open stdin");
     stdin
         .write_all(stdin_input.as_bytes())
@@ -28,14 +28,14 @@ fn run_cli_in<const N: usize>(
     args: [&str; N],
     stdin_input: &str,
 ) -> std::process::Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ravel"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_arity"));
     cmd.args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().expect("failed to spawn ravel cli");
+    let mut child = cmd.spawn().expect("failed to spawn arity cli");
     let mut stdin = child.stdin.take().expect("failed to open stdin");
     stdin
         .write_all(stdin_input.as_bytes())
@@ -45,7 +45,7 @@ fn run_cli_in<const N: usize>(
 }
 
 fn run_cli_in_no_stdin<const N: usize>(cwd: &Path, args: [&str; N]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ravel"))
+    Command::new(env!("CARGO_BIN_EXE_arity"))
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -132,10 +132,10 @@ fn cli_missing_config_file_errors() {
 }
 
 #[test]
-fn cli_no_config_ignores_discovered_ravel_toml() {
+fn cli_no_config_ignores_discovered_arity_toml() {
     let dir = tempdir().unwrap();
-    // Ancestor ravel.toml would force a tight line width — we must ignore it.
-    fs::write(dir.path().join("ravel.toml"), "[format]\nline-width = 30\n").unwrap();
+    // Ancestor arity.toml would force a tight line width — we must ignore it.
+    fs::write(dir.path().join("arity.toml"), "[format]\nline-width = 30\n").unwrap();
 
     let output = run_cli_in(dir.path(), ["format", "--no-config"], LONG_FN_INPUT);
     assert!(
@@ -151,7 +151,7 @@ fn cli_no_config_ignores_discovered_ravel_toml() {
 #[test]
 fn cli_config_discovered_from_cwd() {
     let dir = tempdir().unwrap();
-    fs::write(dir.path().join("ravel.toml"), "[format]\nline-width = 30\n").unwrap();
+    fs::write(dir.path().join("arity.toml"), "[format]\nline-width = 30\n").unwrap();
 
     let output = run_cli_in(dir.path(), ["format"], LONG_FN_INPUT);
     assert!(
@@ -202,7 +202,7 @@ fn cli_bad_config_field_reports_file_and_line() {
 #[test]
 fn cli_format_check_honors_configured_line_width() {
     let dir = tempdir().unwrap();
-    fs::write(dir.path().join("ravel.toml"), "[format]\nline-width = 30\n").unwrap();
+    fs::write(dir.path().join("arity.toml"), "[format]\nline-width = 30\n").unwrap();
     let r_file = dir.path().join("a.R");
     // Already formatted for the default 80 (bare body); the configured
     // line-width = 30 should force a reformat.

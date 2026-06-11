@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Benchmark ravel's formatter speed against `air` (posit-dev/air) on large
+# Benchmark arity's formatter speed against `air` (posit-dev/air) on large
 # inputs, using hyperfine. Mirrors `task air-compat` in spirit: an opt-in,
 # local-only measurement that regenerates a tracked report (BENCH.md).
 #
@@ -10,7 +10,7 @@
 #
 # Usage:
 #   ./scripts/bench-format.sh           # synthetic corpus (two size tiers)
-#   RAVEL_BENCH_INPUT=path/to/file.R ./scripts/bench-format.sh
+#   ARITY_BENCH_INPUT=path/to/file.R ./scripts/bench-format.sh
 #                                       # benchmark a real file instead
 #
 set -euo pipefail
@@ -19,7 +19,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-RAVEL="$REPO_ROOT/target/release/ravel"
+ARITY="$REPO_ROOT/target/release/arity"
 OUT="$REPO_ROOT/BENCH.md"
 
 # Repetition counts that build the two synthetic size tiers from the base block.
@@ -47,20 +47,20 @@ declare -a TIERS=()        # human label per tier
 declare -a TIER_FILES=()   # corpus file per tier
 declare -a TIER_LINES=()   # line count per tier
 
-if [[ -n "${RAVEL_BENCH_INPUT:-}" ]]; then
-  if [[ ! -f "$RAVEL_BENCH_INPUT" ]]; then
-    echo "error: RAVEL_BENCH_INPUT='$RAVEL_BENCH_INPUT' is not a file" >&2
+if [[ -n "${ARITY_BENCH_INPUT:-}" ]]; then
+  if [[ ! -f "$ARITY_BENCH_INPUT" ]]; then
+    echo "error: ARITY_BENCH_INPUT='$ARITY_BENCH_INPUT' is not a file" >&2
     exit 1
   fi
-  echo ">> Using override input: $RAVEL_BENCH_INPUT"
+  echo ">> Using override input: $ARITY_BENCH_INPUT"
   TIERS+=("override")
-  TIER_FILES+=("$RAVEL_BENCH_INPUT")
-  TIER_LINES+=("$(wc -l <"$RAVEL_BENCH_INPUT")")
+  TIER_FILES+=("$ARITY_BENCH_INPUT")
+  TIER_LINES+=("$(wc -l <"$ARITY_BENCH_INPUT")")
 else
   echo ">> Generating synthetic corpus from formatter fixtures..."
   # One deterministic base block: every formatter fixture's expected.R, in
-  # sorted order, blank-line separated. These are guaranteed ravel-parseable
-  # and ravel-clean, so `ravel format` never errors on them.
+  # sorted order, blank-line separated. These are guaranteed arity-parseable
+  # and arity-clean, so `arity format` never errors on them.
   BASE="$TMP/base.R"
   : >"$BASE"
   found=0
@@ -89,12 +89,12 @@ else
   done
 fi
 
-# --- Sanity gate: ravel must format the largest corpus without error --------
+# --- Sanity gate: arity must format the largest corpus without error --------
 
 LAST_IDX=$((${#TIER_FILES[@]} - 1))
-echo ">> Sanity check: ravel format on '${TIERS[$LAST_IDX]}' corpus..."
-if ! "$RAVEL" format <"${TIER_FILES[$LAST_IDX]}" >/dev/null; then
-  echo "error: ravel failed to format the corpus (parse diagnostics?)" >&2
+echo ">> Sanity check: arity format on '${TIERS[$LAST_IDX]}' corpus..."
+if ! "$ARITY" format <"${TIER_FILES[$LAST_IDX]}" >/dev/null; then
+  echo "error: arity failed to format the corpus (parse diagnostics?)" >&2
   exit 1
 fi
 
@@ -108,7 +108,7 @@ for idx in "${!TIERS[@]}"; do
   echo
   echo ">> Benchmarking '$label' tier (${TIER_LINES[$idx]} lines)..."
   hyperfine --warmup 3 \
-    --command-name ravel "$RAVEL format < '$corpus' > /dev/null" \
+    --command-name arity "$ARITY format < '$corpus' > /dev/null" \
     --command-name air "air format --stdin-file-path bench.R < '$corpus' > /dev/null" \
     --export-markdown "$md"
   RESULT_MD+=("$md")
@@ -117,9 +117,9 @@ done
 # --- Assemble BENCH.md ------------------------------------------------------
 
 {
-  echo "# Formatter benchmark: ravel vs. air"
+  echo "# Formatter benchmark: arity vs. air"
   echo
-  echo "Wall-clock formatting speed of \`ravel\` against \`air\`"
+  echo "Wall-clock formatting speed of \`arity\` against \`air\`"
   echo "(posit-dev/air), measured with [hyperfine]. Both tools format"
   echo "stdin → stdout (exit 0 regardless of changes), so the comparison is"
   echo "free of file-mutation and exit-code noise."
@@ -131,10 +131,10 @@ done
   echo
   echo "[hyperfine]: https://github.com/sharkdp/hyperfine"
   echo
-  if [[ -n "${RAVEL_BENCH_INPUT:-}" ]]; then
+  if [[ -n "${ARITY_BENCH_INPUT:-}" ]]; then
     echo "## Input"
     echo
-    echo "- Override file \`$RAVEL_BENCH_INPUT\` (${TIER_LINES[0]} lines)."
+    echo "- Override file \`$ARITY_BENCH_INPUT\` (${TIER_LINES[0]} lines)."
   else
     echo "## Corpus"
     echo

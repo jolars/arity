@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use ravel::config::LintConfig;
-use ravel::linter::{
+use arity::config::LintConfig;
+use arity::linter::{
     Applicability, LintResult, LintStatus, apply_fixes, check_document, check_paths,
 };
 use tempfile::tempdir;
@@ -170,9 +170,9 @@ fn namespace_wholesale_import_suppresses_undefined_symbol() {
 fn project_aware_document_resolves_cross_file() {
     // The LSP entry: linting b.R (live buffer) resolves `foo` from a sibling
     // a.R read off disk.
-    use ravel::incremental::IncrementalDatabase;
-    use ravel::linter::check_document_in_project;
-    use ravel::rindex::provider::CompositeProvider;
+    use arity::incremental::IncrementalDatabase;
+    use arity::linter::check_document_in_project;
+    use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
     std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
@@ -196,9 +196,9 @@ fn project_aware_document_resolves_cross_file() {
 fn project_aware_relint_reuses_unchanged_siblings() {
     // Re-linting with unchanged content must not re-parse sibling files: the
     // salsa caches stay warm across LSP keystrokes.
-    use ravel::incremental::IncrementalDatabase;
-    use ravel::linter::check_document_in_project;
-    use ravel::rindex::provider::CompositeProvider;
+    use arity::incremental::IncrementalDatabase;
+    use arity::linter::check_document_in_project;
+    use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
     std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
@@ -228,9 +228,9 @@ fn body_edit_relint_does_not_rebuild_project_scope() {
     // The firewall on the real two-phase path: editing the active file's
     // function *body* re-parses it but must not rebuild the cross-file project
     // graph, since its exports / free reads / source edges are unchanged.
-    use ravel::incremental::{IncrementalDatabase, QueryKind};
-    use ravel::linter::check_document_in_project;
-    use ravel::rindex::provider::CompositeProvider;
+    use arity::incremental::{IncrementalDatabase, QueryKind};
+    use arity::linter::check_document_in_project;
+    use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
     std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
@@ -264,12 +264,12 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     // The write/read split (prepare_document_in_project + analyze_prepared) must
     // reproduce check_document_in_project exactly, and the read-phase must work
     // off a db *clone* — the property the LSP relies on to lint off its thread.
-    use ravel::incremental::IncrementalDatabase;
-    use ravel::linter::{
+    use arity::incremental::IncrementalDatabase;
+    use arity::linter::{
         analyze_prepared, check_document_in_project, prepare_document_in_project,
         seed_workspace_for,
     };
-    use ravel::rindex::provider::CompositeProvider;
+    use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
     std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
@@ -280,7 +280,7 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     // `foo` resolves cross-file; `bar` is genuinely undefined → one finding.
     std::fs::write(&b, "foo()\nbar()\n").unwrap();
 
-    let keys = |diags: &[ravel::linter::Diagnostic]| -> Vec<(String, u32, u32)> {
+    let keys = |diags: &[arity::linter::Diagnostic]| -> Vec<(String, u32, u32)> {
         let mut v: Vec<_> = diags
             .iter()
             .map(|d| {
@@ -327,8 +327,8 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
 fn prepare_returns_none_on_parse_error() {
     // A parse-erroring active buffer skips analysis entirely (Ok(None)), mirroring
     // the wrapper's empty-diagnostics early return.
-    use ravel::incremental::IncrementalDatabase;
-    use ravel::linter::prepare_document_in_project;
+    use arity::incremental::IncrementalDatabase;
+    use arity::linter::prepare_document_in_project;
 
     let dir = tempdir().expect("failed to create temp dir");
     let f = dir.path().join("broken.R");
@@ -483,13 +483,13 @@ fn cli_lint_emits_json_output() {
 // undefined-symbol: default-on, gated on all attached packages being indexed
 // ---------------------------------------------------------------------------
 
-use ravel::linter::check_document_with_provider;
-use ravel::rindex::provider::{CompositeProvider, IndexedProvider};
-use ravel::rindex::schema::{PackageIndex, SymbolEntry, SymbolKind};
+use arity::linter::check_document_with_provider;
+use arity::rindex::provider::{CompositeProvider, IndexedProvider};
+use arity::rindex::schema::{PackageIndex, SymbolEntry, SymbolKind};
 
 fn indexed_pkg(name: &str, exports: &[&str]) -> PackageIndex {
     PackageIndex {
-        schema_version: ravel::rindex::schema::SCHEMA_VERSION,
+        schema_version: arity::rindex::schema::SCHEMA_VERSION,
         package: name.into(),
         version: "1.0".into(),
         lib_path: "/lib".into(),
@@ -572,7 +572,7 @@ fn undefined_symbol_still_gated_for_unbundled_package() {
 // Autofix
 // ---------------------------------------------------------------------------
 
-fn diagnostics(src: &str) -> Vec<ravel::linter::Diagnostic> {
+fn diagnostics(src: &str) -> Vec<arity::linter::Diagnostic> {
     check_document(Path::new("t.R"), src, &LintConfig::default()).expect("lint should succeed")
 }
 
@@ -616,8 +616,8 @@ fn unused_binding_emits_unsafe_deletion_fix() {
 
 #[test]
 fn fix_output_parses_and_is_format_idempotent() {
-    use ravel::formatter::{FormatStyle, format_with_style};
-    use ravel::parser::parse;
+    use arity::formatter::{FormatStyle, format_with_style};
+    use arity::parser::parse;
 
     let src = "x <- 1\nprint(2)\n";
     let fixes: Vec<_> = diagnostics(src).into_iter().filter_map(|d| d.fix).collect();
@@ -709,8 +709,8 @@ fn cli_fix_fixpoint_clears_multiple_unused_bindings() {
 /// Format `input` to canonical form, apply every available fix to a fixpoint,
 /// then assert the result still parses and is format-clean.
 fn assert_fix_is_format_stable(input: &str) {
-    use ravel::formatter::{FormatStyle, format_with_style};
-    use ravel::parser::parse;
+    use arity::formatter::{FormatStyle, format_with_style};
+    use arity::parser::parse;
 
     let style = FormatStyle::default();
     let clean = format_with_style(input, style).expect("input should format");
@@ -765,7 +765,7 @@ fn fixes_never_introduce_formatting_errors() {
 }
 
 fn run_cli<const N: usize>(args: [&str; N]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ravel"))
+    Command::new(env!("CARGO_BIN_EXE_arity"))
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

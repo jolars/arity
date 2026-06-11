@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use insta::assert_snapshot;
 
-use ravel::parser::{parse, reconstruct};
+use arity::parser::{parse, reconstruct};
 
 #[test]
 fn parser_fixtures_snapshots_and_losslessness() {

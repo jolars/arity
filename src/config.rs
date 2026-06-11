@@ -1,4 +1,4 @@
-//! `ravel.toml` configuration: schema, file loading, and ancestor-walk discovery.
+//! `arity.toml` configuration: schema, file loading, and ancestor-walk discovery.
 //!
 //! The CLI is the only consumer; the library API (`format_with_style`,
 //! `check_paths_with_style`, ...) continues to take a fully-resolved
@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::formatter::FormatStyle;
 
-pub const CONFIG_FILE_NAME: &str = "ravel.toml";
+pub const CONFIG_FILE_NAME: &str = "arity.toml";
 
 const MIN_WIDTH: u32 = 1;
 const MAX_WIDTH: u32 = 1000;
@@ -88,7 +88,7 @@ pub struct IndexConfig {
     /// discovery misses (highest-priority source).
     #[serde(default)]
     pub library_paths: Vec<PathBuf>,
-    /// Override the cache directory (otherwise XDG / `$RAVEL_CACHE_DIR`).
+    /// Override the cache directory (otherwise XDG / `$ARITY_CACHE_DIR`).
     #[serde(default)]
     pub cache_dir: Option<PathBuf>,
     /// Let the LSP lazily build indices for referenced-but-unindexed packages.
@@ -176,7 +176,7 @@ impl std::error::Error for ConfigError {
 }
 
 impl Config {
-    /// Parse a `ravel.toml` from disk and validate it.
+    /// Parse a `arity.toml` from disk and validate it.
     pub fn load_from(path: &Path) -> Result<Self, ConfigError> {
         let text = fs::read_to_string(path).map_err(|source| ConfigError::Io {
             path: path.to_path_buf(),
@@ -206,7 +206,7 @@ impl Config {
         self.format.validate(path)
     }
 
-    /// Walk `start` and its ancestors looking for a `ravel.toml`. Stops at the
+    /// Walk `start` and its ancestors looking for a `arity.toml`. Stops at the
     /// first match or at a directory that contains a `.git` entry (repo root),
     /// whichever comes first. Returns `None` if neither is found before the
     /// filesystem root.
@@ -282,7 +282,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn parse(text: &str) -> Result<Config, ConfigError> {
-        Config::parse_str(text, Path::new("ravel.toml"))
+        Config::parse_str(text, Path::new("arity.toml"))
     }
 
     #[test]
@@ -419,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn discover_finds_ravel_toml_in_parent() {
+    fn discover_finds_arity_toml_in_parent() {
         let dir = tempdir().unwrap();
         fs::write(
             dir.path().join(CONFIG_FILE_NAME),

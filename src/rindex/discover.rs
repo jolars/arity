@@ -1,4 +1,4 @@
-//! Discover which packages a project references, so `ravel index` harvests
+//! Discover which packages a project references, so `arity index` harvests
 //! only those. A package is "referenced" if it is attached via
 //! `library()`/`require()`/`requireNamespace()` or named via `pkg::` / `pkg:::`
 //! anywhere in the project's `.R` files.

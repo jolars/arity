@@ -3,45 +3,47 @@ project:
   pre-render: filters/pre-render.lua
   preview:
     port: 4200
+  resources:
+    - CNAME
 
 website:
-  title: "Ravel: Language Server, Formatter, and Linter for R"
+  title: "Arity: Language Server, Formatter, and Linter for R"
   description: >-
-    Ravel is a language server, formatter, and linter for R.
+    Arity is a language server, formatter, and linter for R.
 
-  site-url: "https://jolars.github.io/ravel"
-  repo-url: "https://github.com/jolars/ravel"
-  issue-url: "https://github.com/jolars/ravel/issues"
+  site-url: "https://arity.cc"
+  repo-url: "https://github.com/jolars/arity"
+  issue-url: "https://github.com/jolars/arity/issues"
 
   repo-actions: [edit, issue]
 
   search: true
 
   # image: images/og.png
-  image-alt: "Ravel logo"
+  image-alt: "Arity logo"
 
   twitter-card: true
 
   open-graph:
     locale: en_US
-    site-name: "Ravel"
+    site-name: "Arity"
 
   page-footer:
-    left: "ravel v{{< meta version >}} | Copyright 2026, Johan Larsson"
+    left: "arity v{{< meta version >}} | Copyright 2026, Johan Larsson"
     right:
       - icon: github
-        href: "https://github.com/jolars/ravel"
+        href: "https://github.com/jolars/arity"
         aria-label: "Source for this webpage"
 
   navbar:
     logo: images/logo-with-text.svg
-    logo-alt: "Ravel logo"
+    logo-alt: "Arity logo"
 
     title: false
 
     tools:
       - icon: github
-        href: "https://github.com/jolars/ravel"
+        href: "https://github.com/jolars/arity"
 
     left:
       - href: index.qmd
@@ -52,10 +54,10 @@ website:
         menu:
           - text: Report a bug
             icon: "bug"
-            href: "https://github.com/jolars/ravel/issues"
+            href: "https://github.com/jolars/arity/issues"
           - text: Ask a question
             icon: "chat-right-text"
-            href: "https://github.com/jolars/ravel/discussions"
+            href: "https://github.com/jolars/arity/discussions"
 
 # resources:
 # - "apple-touch-icon.png"

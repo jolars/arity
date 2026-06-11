@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Generative logo for ravel.
+# Generative logo for arity.
 #
 # Threads start jumbled on a ring around the letter, then fold into the R's
 # outline (tangent-matched at the join, so there's no visible kink) and
@@ -315,7 +315,7 @@ render_logo <- function(
     s0 <- runif(1, 0, al$total)
     dir <- sample(c(-1, 1), 1)
     # Heavy-tailed travel length: most threads barely wrap, a few wrap a
-    # lot --- that's where the "ravel" reading comes from.
+    # lot --- that's where the "arity" reading comes from.
     L <- rbeta(1, 1.5, 4) * max_arc_frac * al$total
 
     entry <- polyline_walk(al, s0, dir, 0, 1)

@@ -51,7 +51,7 @@ with(data,
 )
 
 # The lone argument is a bare symbol too long to fit on any line, so breaking
-# the list buys no width (it overflows expanded too) --- only lines. ravel hugs
+# the list buys no width (it overflows expanded too) --- only lines. arity hugs
 # instead; air expands. See `air_test_that`.
 with(my_long_list_my_long_list_my_long_list_my_long_list_long_long_long_long_long_list,
   {

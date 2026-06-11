@@ -1,11 +1,11 @@
-//! Comment-based suppression: `# ravel-ignore` directives.
+//! Comment-based suppression: `# arity-ignore` directives.
 //!
 //! Three forms are recognized:
 //!
 //! ```text
-//! # ravel-ignore <rule>: <reason>           # suppresses on the next non-trivia sibling
-//! # ravel-ignore-file <rule>: <reason>      # suppresses anywhere in the file
-//! # ravel-ignore-file: <reason>             # suppresses ALL rules
+//! # arity-ignore <rule>: <reason>           # suppresses on the next non-trivia sibling
+//! # arity-ignore-file <rule>: <reason>      # suppresses anywhere in the file
+//! # arity-ignore-file: <reason>             # suppresses ALL rules
 //! ```
 //!
 //! Implementation note: the comment-to-node attachment for a node-level
@@ -20,7 +20,7 @@ use crate::syntax::{SyntaxKind, SyntaxNode};
 
 #[derive(Debug, Clone, Default)]
 pub struct SuppressionMap {
-    /// Rule IDs suppressed file-wide (`# ravel-ignore-file <rule>: …`).
+    /// Rule IDs suppressed file-wide (`# arity-ignore-file <rule>: …`).
     file_rules: HashSet<String>,
     /// Whether the file has a "suppress everything" directive.
     file_all: bool,
@@ -73,20 +73,20 @@ fn classify_comment(tok: &rowan::SyntaxToken<crate::syntax::RLanguage>, map: &mu
         Some(rest) => rest.trim_start(),
         None => return,
     };
-    if let Some(rest) = body.strip_prefix("ravel-ignore-file") {
+    if let Some(rest) = body.strip_prefix("arity-ignore-file") {
         let rest = rest.trim_start();
         if let Some(rule_part) = rest.strip_prefix(':') {
             let _ = rule_part;
             map.file_all = true;
             return;
         }
-        // `ravel-ignore-file <rule>: reason` — rest starts with the rule ID.
+        // `arity-ignore-file <rule>: reason` — rest starts with the rule ID.
         if let Some(rule) = parse_rule(rest) {
             map.file_rules.insert(rule);
         }
         return;
     }
-    if let Some(rest) = body.strip_prefix("ravel-ignore") {
+    if let Some(rest) = body.strip_prefix("arity-ignore") {
         let rest = rest.trim_start();
         if let Some(rule) = parse_rule(rest) {
             // Attach to the next non-trivia, non-comment sibling.
@@ -208,20 +208,20 @@ mod tests {
 
     #[test]
     fn file_all_suppresses_everything() {
-        let m = map_of("# ravel-ignore-file: noisy\nx <- 1\n");
+        let m = map_of("# arity-ignore-file: noisy\nx <- 1\n");
         assert!(m.is_suppressed("anything", TextRange::new(0.into(), 1.into())));
     }
 
     #[test]
     fn file_rule_suppresses_only_that_rule() {
-        let m = map_of("# ravel-ignore-file unused-binding: temp\nx <- 1\n");
+        let m = map_of("# arity-ignore-file unused-binding: temp\nx <- 1\n");
         assert!(m.is_suppressed("unused-binding", TextRange::new(0.into(), 1.into())));
         assert!(!m.is_suppressed("undefined-symbol", TextRange::new(0.into(), 1.into())));
     }
 
     #[test]
     fn node_suppression_attaches_to_next_sibling() {
-        let src = "# ravel-ignore unused-binding: temp\nx <- 1\n";
+        let src = "# arity-ignore unused-binding: temp\nx <- 1\n";
         let m = map_of(src);
         // The `x <- 1` ASSIGNMENT_EXPR spans 36..42 in the file.
         assert!(m.is_suppressed("unused-binding", TextRange::new(36.into(), 42.into())));
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn node_suppression_does_not_leak_to_following_statements() {
-        let src = "# ravel-ignore unused-binding: only first\nx <- 1\ny <- 2\n";
+        let src = "# arity-ignore unused-binding: only first\nx <- 1\ny <- 2\n";
         let m = map_of(src);
         // x assignment is at 42..48, y at 49..55.
         assert!(m.is_suppressed("unused-binding", TextRange::new(42.into(), 48.into())));

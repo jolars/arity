@@ -1,27 +1,27 @@
 ---
-title: "Ravel"
-title-meta: "Ravel: Language Server, Formatter, and Linter for R"
+title: "Arity"
+title-meta: "Arity: Language Server, Formatter, and Linter for R"
 description-meta: >-
-  Ravel is a language server, formatter, and linter for R.
+  Arity is a language server, formatter, and linter for R.
 title-prefix: ""
 image: images/logo.svg
-image-alt: "Ravel logo"
+image-alt: "Arity logo"
 
 open-graph:
-  title: "Ravel: Language Server, Formatter, and Linter for R"
+  title: "Arity: Language Server, Formatter, and Linter for R"
 
 twitter-card:
-  title: "Ravel: Language Server, Formatter, and Linter for R"
+  title: "Arity: Language Server, Formatter, and Linter for R"
 
 format:
   html:
     toc: false
 ---
 
-<!-- <img src="images/logo.svg" alt="Ravel logo" class="float-end ms-3" -->
+<!-- <img src="images/logo.svg" alt="Arity logo" class="float-end ms-3" -->
 <!-- style="max-width: 20%; height: auto;"> -->
 
-Ravel is a language server, formatter, and linter for R.
+Arity is a language server, formatter, and linter for R.
 
 <div style="clear: both;"></div>
 
@@ -30,19 +30,19 @@ Ravel is a language server, formatter, and linter for R.
 Install with Cargo:
 
 ```bash
-cargo install ravel
+cargo install arity
 ```
 
 Format your first document:
 
 ```bash
-ravel format file.R
+arity format file.R
 ```
 
 Run lint checks:
 
 ```bash
-ravel lint file.R
+arity lint file.R
 ```
 
 For full installation options (prebuilt binaries, package managers, and source

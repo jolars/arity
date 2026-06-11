@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use ravel::parser::{parse, reconstruct};
+use arity::parser::{parse, reconstruct};
 
 #[test]
 fn parser_round_trips_crlf_fixture() {

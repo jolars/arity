@@ -1,5 +1,5 @@
 //! A minimal fixed-size worker thread pool, modeled on rust-analyzer's
-//! `TaskPool` (and ravel's sibling project, panache).
+//! `TaskPool` (and arity's sibling project, panache).
 //!
 //! The LSP keeps latency-sensitive reads (hover, formatting, the lint analyze
 //! read-phase, code actions) on a dedicated [`TaskPool`] sized to the machine's

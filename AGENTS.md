@@ -5,9 +5,9 @@ repository.
 
 ## Project
 
-Ravel is a Rust CLI providing a language server, formatter, and linter for the R
-language. Single-crate Cargo package (published to crates.io as `ravelr`, edition
-2024; the binary and library crate are both named `ravel`), not a workspace.
+Arity is a Rust CLI providing a language server, formatter, and linter for the R
+language. Single-crate Cargo package (published to crates.io as `arity`, edition
+2024; the binary and library crate are both named `arity`), not a workspace.
 
 **Strategy (see `TODO.md`):** bring the parser + formatter foundation to
 near-completion *first*; the linter and LSP are deferred to later phases. When
@@ -22,7 +22,7 @@ includes `R`.
 1. **Deterministic, rule-based formatting.** Output is decided solely by the
    formatter's rules and the layout engine. Push back against attempts to
    hard-code special cases or exceptions for specific constructs. Unlike air
-   (ravel's closest relative), ravel does **not** honor "persistent line breaks"
+   (arity's closest relative), arity does **not** honor "persistent line breaks"
    --- the input's existing line breaks never influence the result.
 2. **Incremental parsing is first-class**, not an afterthought. Parser/CST work
    must keep the `salsa`-based incremental reparse path (`src/incremental.rs`)
@@ -44,21 +44,21 @@ includes `R`.
 
 ## Air compatibility (soft target)
 
-Ravel tracks a **soft, one-directional compatibility target** with the `air`
+Arity tracks a **soft, one-directional compatibility target** with the `air`
 formatter (a la ruff's "% Black-compatible" number) --- but this is **strictly
 subordinate to Tenet 1** and is **never a quality gate**. We do not match air;
-we measure how often air would leave ravel's output unchanged, and treat air's
+we measure how often air would leave arity's output unchanged, and treat air's
 maturity as a free differential oracle for finding our own inconsistencies.
 
 - The gauge lives in `tests/air_compat.rs` (`#[ignore]`d, so it never runs in
   `cargo test` and cannot fail CI). Run it with `task air-compat`; it
   regenerates `AIR_COMPAT.md`.
-- It measures the *fixed point* `air(ravel(x)) == ravel(x)`, not a head-to-head
+- It measures the *fixed point* `air(arity(x)) == arity(x)`, not a head-to-head
   diff --- this cancels out the persistent-line-break difference (which is the
-  whole point of ravel) by construction, leaving only genuine rule divergences.
+  whole point of arity) by construction, leaving only genuine rule divergences.
 - Divergences are triaged into two buckets. **Adopt** when air's output is
-  simply more idiomatic and ravel is being inconsistent (fix the rule).
-  **Record** when the divergence is a deliberate ravel choice --- add it to
+  simply more idiomatic and arity is being inconsistent (fix the rule).
+  **Record** when the divergence is a deliberate arity choice --- add it to
   `tests/air_compat_allowlist.toml` with a rationale.
 - Diverging from air is allowed, but should **raise tension**: it is a
   conscious, documented decision (an allowlist entry), not a silent one. An
@@ -135,7 +135,7 @@ not yet ported (see `TODO.md` follow-ups).
 `LintStatus` (`Clean` / `Findings` / `ParseDiagnostics`); parse diagnostics
 block linting a file. Largely a placeholder ahead of Phase 6.
 
-**Language server** (`src/lsp.rs`, CLI `ravel lsp`): a stdio JSON-RPC server on
+**Language server** (`src/lsp.rs`, CLI `arity lsp`): a stdio JSON-RPC server on
 the `lsp-server` crate (rust-analyzer's transport) --- offers formatting, pushed
 diagnostics, quick-fix code actions, and index-backed hover. The main loop owns
 no salsa database: read-only requests run on `rayon`, and linting is serialized
@@ -187,7 +187,7 @@ it pass. For a bug, always start by adding a failing test that reproduces it
 - `air/` --- a local checkout of posit-dev/air (tree-sitter-based R tooling)
   kept for reference/comparison. **Not** in the Cargo build and not exposed via
   this CLI. It has its own `air/CLAUDE.md` describing *that* project's
-  conventions (e.g. `just test`, `air.toml`) --- do not apply those to ravel.
+  conventions (e.g. `just test`, `air.toml`) --- do not apply those to arity.
 - `style/` --- vendored copy of the tidyverse R style guide (the formatter's
   target style).
 - `docs/` --- Quarto site (`task docs-preview`); CI formats/lints it as a

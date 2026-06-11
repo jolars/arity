@@ -1,13 +1,13 @@
+use arity::formatter::{FormatStyle, format, format_with_style};
+use arity::parser::{parse, reconstruct};
 use insta::assert_snapshot;
-use ravel::formatter::{FormatStyle, format, format_with_style};
-use ravel::parser::{parse, reconstruct};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{fs, path::Path};
 use tempfile::tempdir;
 
 fn run_cli_no_stdin<const N: usize>(args: [&str; N]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ravel"))
+    Command::new(env!("CARGO_BIN_EXE_arity"))
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -17,13 +17,13 @@ fn run_cli_no_stdin<const N: usize>(args: [&str; N]) -> std::process::Output {
 }
 
 fn run_cli<const N: usize>(args: [&str; N], stdin_input: &str) -> std::process::Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ravel"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_arity"));
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().expect("failed to spawn ravel cli");
+    let mut child = cmd.spawn().expect("failed to spawn arity cli");
     let mut stdin = child.stdin.take().expect("failed to open stdin");
     stdin
         .write_all(stdin_input.as_bytes())

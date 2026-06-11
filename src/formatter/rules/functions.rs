@@ -1222,7 +1222,7 @@ pub(crate) fn ir_function_expr(
         // blocks like any other. This only applies when the function is itself a
         // call argument — the embrace is recognised in call-argument position
         // only (a bare `{{ x }}` body, an assignment RHS, etc. expand as ordinary
-        // nested blocks), matching air and ravel's direct `{{ x }}` arg handling.
+        // nested blocks), matching air and arity's direct `{{ x }}` arg handling.
         // The flat curly-curly is the bare form, the nested-block `block_ir` the
         // braced fallback.
         let in_call_arg = node.parent().is_some_and(|p| p.kind() == SyntaxKind::ARG);

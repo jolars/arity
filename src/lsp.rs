@@ -125,7 +125,7 @@ pub fn run() -> Result<(), DynError> {
     let init_result = InitializeResult {
         capabilities: server_capabilities(),
         server_info: Some(ServerInfo {
-            name: "ravel".to_string(),
+            name: "arity".to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }),
     };
@@ -194,7 +194,7 @@ fn main_loop(
     // The read pool serves latency-sensitive work (formatting, hover, the analyze
     // read-phase, code actions). Its `_workers` must outlive both `state` and the
     // lint thread; the drop order at the end of this function guarantees that.
-    let read_pool = TaskPool::new("ravel-lsp-read", read_pool_size());
+    let read_pool = TaskPool::new("arity-lsp-read", read_pool_size());
     let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx, read_pool.spawner());
     // `done_tx`/`done_rx` are created inside the lint thread (see
     // `spawn_lint_thread`) so the main loop never holds the read end.
@@ -258,7 +258,7 @@ struct ResolvedSettings {
 
 /// Formatter knobs the editor can push via `initializationOptions` (at startup)
 /// or `workspace/didChangeConfiguration` (later). These are the *fallback*: a
-/// discovered `ravel.toml` is authoritative and ignores them entirely. Fields
+/// discovered `arity.toml` is authoritative and ignores them entirely. Fields
 /// are `Option` so an unset key leaves the built-in default in place.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -269,12 +269,12 @@ struct EditorSettings {
 
 impl EditorSettings {
     /// Extract our settings from a client-supplied JSON value. Accepts either
-    /// the bare options object or a tree namespaced under a `"ravel"` key (how
+    /// the bare options object or a tree namespaced under a `"arity"` key (how
     /// `workspace/didChangeConfiguration` clients typically scope settings).
     /// Unknown keys are ignored, and a malformed value yields the defaults.
     fn from_client_value(value: &serde_json::Value) -> Self {
         let section = value
-            .get("ravel")
+            .get("arity")
             .filter(|v| v.is_object())
             .unwrap_or(value);
         serde_json::from_value(section.clone()).unwrap_or_default()
@@ -299,7 +299,7 @@ impl EditorSettings {
     }
 }
 
-/// Resolve the [`FormatStyle`] for a document: a discovered `ravel.toml`
+/// Resolve the [`FormatStyle`] for a document: a discovered `arity.toml`
 /// (`config_present`) wins outright; otherwise editor-pushed settings apply over
 /// the built-in defaults.
 fn resolve_format_style(
@@ -418,7 +418,7 @@ struct GlobalState {
     /// since prepare (the "anchor that survives typing"). Cleared on rename/close.
     rename_anchors: HashMap<Uri, RenameAnchor>,
     config_cache: HashMap<PathBuf, ResolvedSettings>,
-    /// Editor-pushed formatter defaults; the fallback when no `ravel.toml` is
+    /// Editor-pushed formatter defaults; the fallback when no `arity.toml` is
     /// found. Updated by `workspace/didChangeConfiguration`.
     editor_settings: EditorSettings,
     sender: Sender<Message>,
@@ -863,7 +863,7 @@ impl GlobalState {
                     if updated != self.editor_settings {
                         self.editor_settings = updated;
                         // Drop cached resolutions so the new fallback is picked
-                        // up on the next pull. A discovered `ravel.toml` still
+                        // up on the next pull. A discovered `arity.toml` still
                         // wins, so docs in a configured workspace are unaffected.
                         // Format requests re-resolve on demand; lint output does
                         // not depend on these knobs, so no re-lint is needed.
@@ -977,7 +977,7 @@ fn spawn_lint_thread(
     let (build_tx, build_rx) = crossbeam_channel::unbounded::<IndexedProvider>();
     let (done_tx, done_rx) = crossbeam_channel::unbounded::<AnalyzeDone>();
     std::thread::Builder::new()
-        .name("ravel-lint".to_string())
+        .name("arity-lint".to_string())
         .spawn(move || {
             // The single-thread index pool isolates the one unbounded-duration
             // job (background package harvesting) from the read pool, so a long
@@ -993,7 +993,7 @@ fn spawn_lint_thread(
                 inflight: None,
                 pending: HashMap::new(),
                 read_spawner,
-                index_pool: TaskPool::new("ravel-index", 1),
+                index_pool: TaskPool::new("arity-index", 1),
             };
             worker.run(&lint_rx, &read_rx, &build_rx, &done_rx);
         })
@@ -1917,7 +1917,7 @@ fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnostic {
         range: Range { start, end },
         severity: Some(severity),
         code: Some(NumberOrString::String(d.rule.to_string())),
-        source: Some("ravel".to_string()),
+        source: Some("arity".to_string()),
         message: d.message.body.clone(),
         ..Default::default()
     }
@@ -2721,11 +2721,11 @@ mod tests {
     }
 
     #[test]
-    fn editor_settings_parse_namespaced_under_ravel() {
+    fn editor_settings_parse_namespaced_under_arity() {
         // didChangeConfiguration clients push their whole settings tree; ours is
-        // scoped under "ravel" and sibling keys are ignored.
+        // scoped under "arity" and sibling keys are ignored.
         let value = serde_json::json!({
-            "ravel": { "lineWidth": 120 },
+            "arity": { "lineWidth": 120 },
             "editor": { "tabSize": 8 },
         });
         let settings = EditorSettings::from_client_value(&value);
@@ -2777,7 +2777,7 @@ mod tests {
             line_width: Some(120),
             indent_width: Some(8),
         };
-        // ravel.toml present → editor settings ignored entirely.
+        // arity.toml present → editor settings ignored entirely.
         let style = resolve_format_style(&config, true, &editor);
         assert_eq!(style.line_width, 70);
         assert_eq!(style.indent_width, FormatStyle::default().indent_width);

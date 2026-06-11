@@ -3,18 +3,18 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use arity::cli::{Cli, Commands, LintOutput};
+use arity::config::{Config, ConfigError, LintConfig};
+use arity::file_discovery::collect_r_files;
+use arity::formatter::{FormatStyle, check_paths_with_style, format_with_style};
+use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
+use arity::parser::{parse, reconstruct};
+use arity::rindex::build::{BuildOptions, PackageOutcome, build_index};
+use arity::rindex::cache::{Cache, resolve_cache_root};
+use arity::rindex::discover::referenced_packages;
+use arity::rindex::libpaths::LibrarySearch;
+use arity::rindex::provider::IndexedProvider;
 use clap::Parser;
-use ravel::cli::{Cli, Commands, LintOutput};
-use ravel::config::{Config, ConfigError, LintConfig};
-use ravel::file_discovery::collect_r_files;
-use ravel::formatter::{FormatStyle, check_paths_with_style, format_with_style};
-use ravel::linter::{OutputMode, apply_fixes, check_document, render_findings};
-use ravel::parser::{parse, reconstruct};
-use ravel::rindex::build::{BuildOptions, PackageOutcome, build_index};
-use ravel::rindex::cache::{Cache, resolve_cache_root};
-use ravel::rindex::discover::referenced_packages;
-use ravel::rindex::libpaths::LibrarySearch;
-use ravel::rindex::provider::IndexedProvider;
 
 /// Autofix selection for `lint --fix`.
 #[derive(Debug, Clone, Copy)]
@@ -118,7 +118,7 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
     let packages = match referenced_packages(&scan_paths) {
         Ok(pkgs) => pkgs,
         Err(err) => {
-            eprintln!("error: {}", ravel::linter::LintError::from(err));
+            eprintln!("error: {}", arity::linter::LintError::from(err));
             return ExitCode::from(2);
         }
     };
@@ -182,7 +182,7 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
 /// Build the harvested package index for linting, loading it from the cache
 /// when one is configured/available. Installed into salsa as the
 /// HIGH-durability library index; R's default + bundled CRAN lists are static.
-fn lint_index(config: &ravel::config::Config) -> IndexedProvider {
+fn lint_index(config: &arity::config::Config) -> IndexedProvider {
     let Ok(cache_root) = resolve_cache_root(None, config.index.cache_dir.as_deref()) else {
         return IndexedProvider::empty();
     };
@@ -198,7 +198,7 @@ fn now_unix_secs() -> u64 {
 }
 
 fn run_lsp() -> ExitCode {
-    match ravel::lsp::run() {
+    match arity::lsp::run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: language server exited: {err}");
@@ -378,16 +378,16 @@ fn run_format_check(paths: &[PathBuf], style: FormatStyle) -> ExitCode {
 }
 
 fn run_format_write_paths(paths: &[PathBuf], verify: bool, style: FormatStyle) -> ExitCode {
-    let files = match ravel::file_discovery::collect_r_files(paths) {
+    let files = match arity::file_discovery::collect_r_files(paths) {
         Ok(files) => files,
-        Err(ravel::file_discovery::FileDiscoveryError::NonRFilePath { path }) => {
+        Err(arity::file_discovery::FileDiscoveryError::NonRFilePath { path }) => {
             eprintln!(
                 "error: input file {} is not an .R file; format only supports .R files",
                 path.display()
             );
             return ExitCode::from(2);
         }
-        Err(ravel::file_discovery::FileDiscoveryError::WalkError { path, message }) => {
+        Err(arity::file_discovery::FileDiscoveryError::WalkError { path, message }) => {
             eprintln!("error: failed while scanning {}: {message}", path.display());
             return ExitCode::from(2);
         }
@@ -471,17 +471,17 @@ fn run_lint(
     }
 
     let index = lint_index(&config);
-    match ravel::linter::check_paths_with_index(&paths, &config.lint, index) {
+    match arity::linter::check_paths_with_index(&paths, &config.lint, index) {
         Ok(result) => {
             let mut has_parse_blockers = false;
             let mut all_findings = Vec::new();
             for report in &result.reports {
                 match report.status {
-                    ravel::linter::LintStatus::Clean => {}
-                    ravel::linter::LintStatus::Findings { .. } => {
+                    arity::linter::LintStatus::Clean => {}
+                    arity::linter::LintStatus::Findings { .. } => {
                         all_findings.extend(report.diagnostics.iter().cloned());
                     }
-                    ravel::linter::LintStatus::ParseDiagnostics { count } => {
+                    arity::linter::LintStatus::ParseDiagnostics { count } => {
                         has_parse_blockers = true;
                         eprintln!(
                             "lint blocked by parse diagnostics: {} ({} diagnostic{})",
@@ -534,7 +534,7 @@ fn apply_fixes_to_paths(
     let files = match collect_r_files(paths) {
         Ok(files) => files,
         Err(err) => {
-            eprintln!("error: {}", ravel::linter::LintError::from(err));
+            eprintln!("error: {}", arity::linter::LintError::from(err));
             return Some(ExitCode::from(2));
         }
     };

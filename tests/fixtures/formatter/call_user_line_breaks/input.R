@@ -1,4 +1,4 @@
-# Unlike air, Ravel doesn't cater to user line breaks
+# Unlike air, Arity doesn't cater to user line breaks
 dictionary <- list(
   a = 1,
   b = 2

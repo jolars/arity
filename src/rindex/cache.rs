@@ -40,8 +40,8 @@ impl std::error::Error for CacheError {}
 type Result<T> = std::result::Result<T, CacheError>;
 
 /// Resolve the cache root: `cli_override` > `config_override` >
-/// `$RAVEL_CACHE_DIR` > platform default (`$XDG_CACHE_HOME/ravel`,
-/// `$HOME/.cache/ravel`, or `%LOCALAPPDATA%\ravel`).
+/// `$ARITY_CACHE_DIR` > platform default (`$XDG_CACHE_HOME/arity`,
+/// `$HOME/.cache/arity`, or `%LOCALAPPDATA%\arity`).
 pub fn resolve_cache_root(
     cli_override: Option<&Path>,
     config_override: Option<&Path>,
@@ -52,7 +52,7 @@ pub fn resolve_cache_root(
     if let Some(p) = config_override {
         return Ok(p.to_path_buf());
     }
-    if let Some(p) = std::env::var_os("RAVEL_CACHE_DIR") {
+    if let Some(p) = std::env::var_os("ARITY_CACHE_DIR") {
         return Ok(PathBuf::from(p));
     }
     default_cache_root().ok_or(CacheError::NoCacheDir)
@@ -60,11 +60,11 @@ pub fn resolve_cache_root(
 
 fn default_cache_root() -> Option<PathBuf> {
     if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("ravel"))
+        std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("arity"))
     } else if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME").filter(|s| !s.is_empty()) {
-        Some(PathBuf::from(xdg).join("ravel"))
+        Some(PathBuf::from(xdg).join("arity"))
     } else {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/ravel"))
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/arity"))
     }
 }
 

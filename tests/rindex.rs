@@ -4,10 +4,10 @@
 
 use std::path::PathBuf;
 
-use ravel::rindex::harvest::{HarvestOptions, harvest_package};
-use ravel::rindex::lazyload::LazyLoadDb;
-use ravel::rindex::rds::{self, Rkind};
-use ravel::rindex::schema::{SymbolEntry, SymbolKind};
+use arity::rindex::harvest::{HarvestOptions, harvest_package};
+use arity::rindex::lazyload::LazyLoadDb;
+use arity::rindex::rds::{self, Rkind};
+use arity::rindex::schema::{SymbolEntry, SymbolKind};
 
 fn fixture(pkg: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

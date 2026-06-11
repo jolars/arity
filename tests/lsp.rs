@@ -1,10 +1,10 @@
-use lsp_types::{DocumentHighlightKind, DocumentSymbol, Position, Range, SymbolKind, TextEdit};
-use ravel::formatter::{FormatStyle, format_with_style};
-use ravel::lsp::{
+use arity::formatter::{FormatStyle, format_with_style};
+use arity::lsp::{
     compute_definition, compute_document_highlights, compute_document_symbols,
     compute_format_edits, compute_format_range_edits, compute_prepare_rename, compute_references,
     compute_rename, compute_rename_with_anchor,
 };
+use lsp_types::{DocumentHighlightKind, DocumentSymbol, Position, Range, SymbolKind, TextEdit};
 
 #[test]
 fn reformats_unformatted_input_with_full_document_edit() {

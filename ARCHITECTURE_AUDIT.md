@@ -1,10 +1,10 @@
 # Architecture audit: LSP / linter / formatter ↔ salsa ↔ rowan
 
-*Audit date: 2026-06-09. Compares ravel's incremental + language-server
+*Audit date: 2026-06-09. Compares arity's incremental + language-server
 architecture against rust-analyzer's and salsa's documented patterns, and
 records which patterns are worth adopting.*
 
-Ravel is modeled after rust-analyzer. The headline finding is that the core is
+Arity is modeled after rust-analyzer. The headline finding is that the core is
 **already closely aligned**: a single-writer salsa database owned by a dedicated
 thread, snapshot-per-read on a worker pool, cancel-on-edit via salsa
 cancellation, firewall queries that backdate on body edits, a lossless rowan CST
@@ -114,7 +114,7 @@ channel when a background build completes.
 
 ## 2. Already aligned with rust-analyzer (no action)
 
-  | Pattern                            | rust-analyzer                                                                                   | ravel                                                                                     |
+  | Pattern                            | rust-analyzer                                                                                   | arity                                                                                     |
   | ---------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
   | Single-writer db + snapshot reads  | `AnalysisHost::apply_change` writer; many `Analysis` snapshots                                  | lint thread sole writer; short-lived db clones for reads                                  |
   | Cancel-on-edit                     | new edit = `set_*` write → in-flight reads unwind `Cancelled::PendingWrite`; dispatcher retries | newer same-URI edit → `trigger_cancellation` → `Cancelled::catch` drops the stale analyze |
@@ -135,7 +135,7 @@ These are correct and should **not** be churned.
   `Analysis` is an immutable snapshot exposing only `&self` reads. The
   single-writer rule is a *compile-time* guarantee, and read handlers take
   `FilePosition`-style params, not the db.
-- **ravel (was):** "the lint thread is the sole writer" was only a *convention*.
+- **arity (was):** "the lint thread is the sole writer" was only a *convention*.
   `run_read` and the analyze worker both received a full `IncrementalDatabase`
   clone and *could* have called `upsert_file` / salsa setters --- nothing in the
   types prevented it.
@@ -154,7 +154,7 @@ These are correct and should **not** be churned.
 - **rust-analyzer:** library/std `SourceRoot`s get `Durability::HIGH`, user code
   `LOW`. salsa keeps a version *vector*, so a keystroke (LOW write) skips
   revalidating the HIGH-durability library subgraph in a single integer compare.
-- **ravel (was):** no durability was set; all inputs defaulted to LOW. The rindex
+- **arity (was):** no durability was set; all inputs defaulted to LOW. The rindex
   lived entirely outside salsa, rebuilt on rayon and hot-swapped via `Arc` through
   a channel; name resolution called the provider directly, bypassing salsa.
 - **Done:** the harvested package index is a HIGH-durability salsa **singleton
@@ -183,7 +183,7 @@ These are correct and should **not** be churned.
   snapshots + `SourceRoot` grouping. Handlers convert URI → `FileId` at the
   boundary, so paths/cwd never leak into the analysis, and `SourceRoot` is the
   unit durability is assigned to.
-- **ravel:** keys directly on `PathBuf`; in-memory buffers use the synthetic
+- **arity:** keys directly on `PathBuf`; in-memory buffers use the synthetic
   `<mem>/{uuid}.R` path hack (`src/incremental.rs:216`).
 - **Recommend:** a thin `FileId` (newtype over the salsa `SourceFile` id, or an
   interned path) plus a small file-source map, retiring the synthetic-path hack
@@ -201,7 +201,7 @@ These are correct and should **not** be churned.
   reparse. Green nodes are immutable and structurally shared, so splicing reuses
   untouched subtrees. `SyntaxNodePtr`/`AstPtr` (offset+kind) survive reparses
   for source maps (never on *mutable* trees).
-- **ravel:** whole-file reparse under `parsed_document`; no stable pointers.
+- **arity:** whole-file reparse under `parsed_document`; no stable pointers.
 - **Recommend:** (a) add `reparse_token`/`reparse_block` beneath
   `parsed_document` as a perf optimization --- directly serves **Tenet 2**
   (incremental parsing is first-class) and the open "parse performance and
@@ -224,10 +224,10 @@ These are correct and should **not** be churned.
   unbounded-duration job (background harvesting). rayon is reserved for future
   CLI data parallelism.
 - **Diagnostics channel.** rust-analyzer surfaces diagnostics via
-  `#[salsa::accumulator]`; ravel threads them through query return values and
+  `#[salsa::accumulator]`; arity threads them through query return values and
   the owned `PreparedProject`. The current approach is fine and explicit;
   accumulators are the idiomatic alternative if diagnostic plumbing grows.
 - **Generalized cancel-and-retry.** rust-analyzer's dispatcher *retries* any
-  read on cancellation against the new revision; ravel's reads instead fall back
+  read on cancellation against the new revision; arity's reads instead fall back
   to a fresh parse. The fallback is simpler and equally correct --- noted as a
   difference, not a gap.

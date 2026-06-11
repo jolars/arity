@@ -1,5 +1,5 @@
 //! Orchestrate an index build: resolve each referenced package to an installed
-//! library, harvest it, and write it to the cache. Shared by the `ravel index`
+//! library, harvest it, and write it to the cache. Shared by the `arity index`
 //! CLI command and (later) the LSP's lazy background build.
 
 use rayon::prelude::*;

@@ -11,17 +11,17 @@ const STYLES: Styles = Styles::styled()
     .placeholder(AnsiColor::Cyan.on_default());
 
 #[derive(Parser)]
-#[command(name = "ravel")]
+#[command(name = "arity")]
 #[command(author, version)]
-#[command(about = "Ravel: a language server, formatter, and linter for R")]
+#[command(about = "Arity: a language server, formatter, and linter for R")]
 #[command(styles = STYLES)]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
-    /// Path to an explicit `ravel.toml` (skips discovery)
+    /// Path to an explicit `arity.toml` (skips discovery)
     #[arg(long, value_name = "PATH", global = true, conflicts_with = "no_config")]
     pub config: Option<PathBuf>,
 
-    /// Ignore any discovered `ravel.toml` and use built-in defaults
+    /// Ignore any discovered `arity.toml` and use built-in defaults
     #[arg(long, global = true)]
     pub no_config: bool,
 
