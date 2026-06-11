@@ -6,7 +6,8 @@ repository.
 ## Project
 
 Ravel is a Rust CLI providing a language server, formatter, and linter for the R
-language. Single-crate Cargo package (`ravel`, edition 2024), not a workspace.
+language. Single-crate Cargo package (published to crates.io as `ravelr`, edition
+2024; the binary and library crate are both named `ravel`), not a workspace.
 
 **Strategy (see `TODO.md`):** bring the parser + formatter foundation to
 near-completion *first*; the linter and LSP are deferred to later phases. When

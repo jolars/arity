@@ -1,5 +1,7 @@
 [package]
-name = "ravel"
+# Published to crates.io as `ravelr` (`ravel` was taken); the binary and the
+# library crate are still named `ravel` (see `[lib]`/`[[bin]]` below).
+name = "ravelr"
 version = "0.1.0"
 edition = "2024"
 readme = "README.md"
@@ -15,6 +17,15 @@ categories = [
   "parsing",
   "parser-implementations",
 ]
+
+# Keep the library import path and the binary as `ravel` even though the
+# published package is `ravelr` (both otherwise default to the package name).
+[lib]
+name = "ravel"
+
+[[bin]]
+name = "ravel"
+path = "src/main.rs"
 
 [dependencies]
 annotate-snippets = "0.11.5"
