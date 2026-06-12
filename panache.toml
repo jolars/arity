@@ -1,1 +1,7 @@
-extend-exclude = ["TODO.md", "AGENTS.md", "CHANGELOG.md", "AIR_COMPAT.md"]
+extend-exclude = [
+  "TODO.md",
+  "AGENTS.md",
+  "CHANGELOG.md",
+  "AIR_COMPAT.md",
+  "ARCHITECTURE_AUDIT.md",
+]
