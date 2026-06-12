@@ -50,6 +50,8 @@ website:
         text: Overview
       - href: getting-started.qmd
         text: Getting Started
+      - href: reference/cli.qmd
+        text: Reference
       - text: Help
         menu:
           - text: Report a bug

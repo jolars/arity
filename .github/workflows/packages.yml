@@ -139,10 +139,12 @@ jobs:
       - name: Create archive (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist
+          mkdir -p dist/man dist/completions
           cp target/${{ matrix.target }}/release/arity dist/
           cp LICENSE dist/
           cp README.md dist/
+          cp target/man/*.1 dist/man/
+          cp target/completions/arity.bash target/completions/arity.fish target/completions/_arity dist/completions/
           tar czf arity-${{ matrix.target }}.tar.gz -C dist .
           rm -rf dist
 
