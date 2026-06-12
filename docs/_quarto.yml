@@ -36,7 +36,7 @@ website:
         aria-label: "Source for this webpage"
 
   navbar:
-    logo: images/logo-with-text.svg
+    logo: images/logo.png
     logo-alt: "Arity logo"
 
     title: false

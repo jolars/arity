@@ -53,6 +53,18 @@
       );
     };
 
+    python = {
+      enable = true;
+
+      package = (
+        pkgs.python3.withPackages (
+          ps: with ps; [
+            openai
+          ]
+        )
+      );
+    };
+
     javascript = {
       enable = true;
 
