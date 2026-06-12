@@ -11,7 +11,7 @@ use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
 use arity::parser::{parse, reconstruct};
 use arity::rindex::build::{BuildOptions, PackageOutcome, build_index};
 use arity::rindex::cache::{Cache, resolve_cache_root};
-use arity::rindex::discover::referenced_packages;
+use arity::rindex::discover::{referenced_packages, with_default_packages};
 use arity::rindex::libpaths::LibrarySearch;
 use arity::rindex::provider::IndexedProvider;
 use clap::Parser;
@@ -115,17 +115,15 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
         paths
     };
 
+    // Always index R's default packages (base, stats, …) on top of the project's
+    // explicit dependencies, so hover and signatures resolve for base-R symbols.
     let packages = match referenced_packages(&scan_paths) {
-        Ok(pkgs) => pkgs,
+        Ok(pkgs) => with_default_packages(pkgs),
         Err(err) => {
             eprintln!("error: {}", arity::linter::LintError::from(err));
             return ExitCode::from(2);
         }
     };
-    if packages.is_empty() {
-        eprintln!("no referenced packages found under the provided paths");
-        return ExitCode::SUCCESS;
-    }
 
     let cache_root =
         match resolve_cache_root(opts.cache_dir.as_deref(), config.index.cache_dir.as_deref()) {

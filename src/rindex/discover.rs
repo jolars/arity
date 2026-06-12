@@ -35,6 +35,24 @@ pub fn referenced_in_source(source: &str) -> Vec<SmolStr> {
     set.into_iter().collect()
 }
 
+/// R's always-attached default packages followed by `referenced`, deduplicated.
+/// An index should always cover the default packages (`base`, `stats`, …) so
+/// hover and signatures resolve for base-R symbols, which no source file
+/// `library()`s explicitly. Defaults come first; `referenced` entries already in
+/// the default set are dropped.
+pub fn with_default_packages(referenced: Vec<SmolStr>) -> Vec<SmolStr> {
+    let mut out: Vec<SmolStr> = crate::semantic::symbols::default_packages()
+        .iter()
+        .map(|p| SmolStr::new(*p))
+        .collect();
+    for pkg in referenced {
+        if !out.contains(&pkg) {
+            out.push(pkg);
+        }
+    }
+    out
+}
+
 fn collect_into(source: &str, set: &mut BTreeSet<SmolStr>) {
     let parsed = parse(source);
     let model = SemanticModel::build(&parsed.cst);
@@ -70,5 +88,16 @@ mod tests {
     fn deduplicates() {
         let src = "library(dplyr)\ndplyr::filter(x)\ndplyr::select(y)";
         assert_eq!(referenced_in_source(src), vec![SmolStr::new("dplyr")]);
+    }
+
+    #[test]
+    fn with_defaults_prepends_and_dedups() {
+        let out = with_default_packages(vec![SmolStr::new("dplyr"), SmolStr::new("stats")]);
+        // Default packages lead, base first.
+        assert_eq!(out.first().map(SmolStr::as_str), Some("base"));
+        // A non-default reference is appended.
+        assert!(out.contains(&SmolStr::new("dplyr")));
+        // `stats` is a default, so it appears once, not twice.
+        assert_eq!(out.iter().filter(|s| s.as_str() == "stats").count(), 1);
     }
 }

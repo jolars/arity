@@ -266,3 +266,9 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 - [ ] `arity-ignore-unused` meta-diagnostic: emit a finding for suppression
       comments that didn't actually suppress anything (rule ID is reserved but
       the rule is not yet wired in).
+- [ ] **Harvest lazy-data symbols.** The index now covers R's default packages
+      (so hover/signatures work for base-R functions), but `harvest_package`
+      only reads `NAMESPACE`/object exports --- it skips a package's lazy-data
+      (`.getNamespaceInfo(ns, "lazydata")`). So `datasets` harvests 0 symbols and
+      hovering a dataset (e.g. `iris`) resolves the package but finds no entry.
+      The static name lists already include lazydata; the harvest does not.

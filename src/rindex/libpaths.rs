@@ -1,11 +1,16 @@
-//! Discover R library locations without invoking R.
+//! Discover R library locations from the filesystem, with one cheap R probe.
 //!
 //! `.libPaths()` is computed by R from environment variables, platform
 //! defaults, and project overlays (`renv`/`packrat`). We replicate the parts we
 //! can read off disk, in priority order, and probe each candidate for the
-//! requested package. When discovery misses (it can — exotic layouts, custom
-//! `.Renviron`), the user points us at the right directory via the
-//! `[index].library-paths` config (the highest-priority source).
+//! requested package. The one place we ask R is for `R_HOME` when it is absent
+//! from the environment: `R RHOME` prints the home directory and evaluates no
+//! user code, so an editor-launched server (which often doesn't inherit
+//! `R_HOME`) can still find the *system* library where the default packages
+//! (`base`, `stats`, …) live. When discovery still misses (exotic layouts,
+//! custom `.Renviron`, R not on `PATH`), the user points us at the right
+//! directory via the `[index].library-paths` config (the highest-priority
+//! source).
 
 use std::path::{Path, PathBuf};
 
@@ -16,14 +21,20 @@ pub struct LibrarySearch {
 }
 
 impl LibrarySearch {
-    /// Assemble the search path from the real environment + filesystem.
+    /// Assemble the search path from the real environment + filesystem. When
+    /// `R_HOME` is absent, fall back to probing `R RHOME` so the system library
+    /// is still found (see the module doc).
     pub fn discover(project_root: Option<&Path>, configured: &[PathBuf]) -> Self {
-        Self::assemble(
-            project_root,
-            configured,
-            &|k| std::env::var(k).ok(),
-            home_dir(),
-        )
+        // Resolve `R_HOME` once: the environment wins, then a `R RHOME` probe.
+        let r_home = std::env::var("R_HOME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(probe_r_home);
+        let env = move |k: &str| match k {
+            "R_HOME" => r_home.clone(),
+            other => std::env::var(other).ok(),
+        };
+        Self::assemble(project_root, configured, &env, home_dir())
     }
 
     /// All candidate directories, in priority order, deduplicated.
@@ -92,6 +103,20 @@ impl LibrarySearch {
 
         LibrarySearch { dirs }
     }
+}
+
+/// Ask R for its home directory. `R RHOME` only prints `R.home()` — it does not
+/// start an R session or evaluate user code — so it stays within the
+/// "no R evaluation" tenet while letting us locate the *system* library (where
+/// the default packages live) when `R_HOME` is missing from the environment.
+/// Returns `None` if R isn't on `PATH` or the probe fails.
+fn probe_r_home() -> Option<String> {
+    let output = std::process::Command::new("R").arg("RHOME").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let home = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!home.is_empty()).then_some(home)
 }
 
 /// Split an `R_LIBS*`-style path list on the platform separator.
@@ -214,6 +239,20 @@ mod tests {
             .unwrap();
         let si = dirs.iter().position(|d| d == Path::new("/site/a")).unwrap();
         assert!(ui < si);
+    }
+
+    #[test]
+    fn appends_r_home_system_library() {
+        // `R_HOME` (env or `R RHOME` probe) contributes `$R_HOME/library`, the
+        // system library where the default packages live.
+        let mut env = HashMap::new();
+        env.insert("R_HOME", "/opt/R");
+        let search = LibrarySearch::assemble(None, &[], &env_from(&env), None);
+        assert!(
+            search.dirs().contains(&PathBuf::from("/opt/R/library")),
+            "system library missing from {:?}",
+            search.dirs()
+        );
     }
 
     #[test]

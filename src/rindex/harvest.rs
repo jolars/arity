@@ -82,8 +82,7 @@ pub fn harvest_package(
     let r_version = desc.field("Built").and_then(parse_built_r_version);
 
     let object_names = read_object_names(pkg_dir, &package);
-    let namespace = std::fs::read_to_string(pkg_dir.join("NAMESPACE")).unwrap_or_default();
-    let exports = resolve_exports(&namespace, &object_names);
+    let exports = resolve_package_exports(pkg_dir, &object_names);
 
     let help_index = if opts.help {
         read_help_index(pkg_dir)
@@ -131,6 +130,22 @@ pub fn harvest_package(
         harvested_at,
         symbols,
     })
+}
+
+/// The exported names of the package at `pkg_dir`. A package with a `NAMESPACE`
+/// file exports exactly what it declares (explicit exports plus `exportPattern`
+/// matches). A package *without* a `NAMESPACE` — most notably `base`, whose
+/// namespace is the implicit base environment — exports its whole object set,
+/// matching R's pre-namespace "export everything" rule. Over-exporting is
+/// harmless: name resolution still gates which names reach a `base` lookup.
+fn resolve_package_exports(pkg_dir: &Path, object_names: &[String]) -> Vec<String> {
+    let ns_path = pkg_dir.join("NAMESPACE");
+    if ns_path.is_file() {
+        let namespace = std::fs::read_to_string(&ns_path).unwrap_or_default();
+        resolve_exports(&namespace, object_names)
+    } else {
+        object_names.to_vec()
+    }
 }
 
 /// Read the lazy-load object names from `R/{pkg}.rdx`, if present.
@@ -664,6 +679,23 @@ mod tests {
         // The package name is not itself an imported name.
         assert!(!info.imported_names.contains("dplyr"));
         assert!(info.imported_packages.contains("rlang"));
+    }
+
+    #[test]
+    fn no_namespace_exports_every_object() {
+        // `base` ships no NAMESPACE; its whole object set is exported.
+        let tmp = tempfile::tempdir().unwrap();
+        let objs = vec!["as.matrix".to_string(), "cbind".to_string()];
+        let exports = resolve_package_exports(tmp.path(), &objs);
+        assert_eq!(exports, objs);
+    }
+
+    #[test]
+    fn namespace_present_restricts_to_declared_exports() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("NAMESPACE"), "export(foo)\n").unwrap();
+        let exports = resolve_package_exports(tmp.path(), &["foo".to_string(), "bar".to_string()]);
+        assert_eq!(exports, vec!["foo".to_string()]);
     }
 
     #[test]

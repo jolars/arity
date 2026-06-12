@@ -99,11 +99,9 @@ use crate::linter::{Diagnostic, Severity};
 use crate::parser::{diff_edit, map_range_through_edit, parse};
 use crate::rindex::build::{BuildOptions, build_index};
 use crate::rindex::cache::{Cache, resolve_cache_root};
-use crate::rindex::discover::referenced_in_source;
+use crate::rindex::discover::{referenced_in_source, with_default_packages};
 use crate::rindex::libpaths::LibrarySearch;
-use crate::rindex::provider::{
-    CompositeProvider, IndexedProvider, package_indexed, resolve_origin,
-};
+use crate::rindex::provider::{CompositeProvider, IndexedProvider, resolve_origin};
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
 use crate::semantic::{BindingId, BindingKind, PackageOrigin, SemanticModel};
 use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
@@ -1368,17 +1366,23 @@ impl LintWorker {
     }
 }
 
-/// Packages referenced in `source` that the current index can't resolve and that
-/// we haven't already attempted this session. Marks the returned packages as
-/// attempted so they aren't built twice.
+/// Packages to harvest for `source`: the always-attached default packages plus
+/// everything `source` references, minus what we already hold a *harvested*
+/// index for and minus what we've already attempted this session. Marks the
+/// returned packages as attempted so they aren't built twice.
+///
+/// The skip test is [`IndexedProvider::has_package`] (do we have the rich,
+/// harvested data?), not mere name-resolvability: the default packages and the
+/// bundled-CRAN packages resolve by name from static lists, but those carry no
+/// help or formals, so they still need a real harvest for hover and signatures.
 fn packages_to_build(
     attempts: &mut HashSet<SmolStr>,
     indexed: &IndexedProvider,
     source: &str,
 ) -> Vec<SmolStr> {
-    referenced_in_source(source)
+    with_default_packages(referenced_in_source(source))
         .into_iter()
-        .filter(|pkg| !package_indexed(indexed, pkg) && attempts.insert(pkg.clone()))
+        .filter(|pkg| !indexed.has_package(pkg) && attempts.insert(pkg.clone()))
         .collect()
 }
 
@@ -2857,15 +2861,26 @@ mod tests {
     }
 
     #[test]
-    fn packages_to_build_skips_indexed_and_dedups_attempts() {
+    fn packages_to_build_covers_defaults_and_unharvested_deps() {
         let mut attempts = HashSet::new();
         let indexed = indexed_dplyr();
-        // dplyr is indexed (skipped); a default package (stats) is "indexed" too,
-        // as is any bundled-CRAN package — only an unknown package needs a build.
+        // dplyr is already harvested (skipped). The default packages and any
+        // referenced-but-unharvested package (stats is a default; notarealpkg
+        // is neither default nor harvested) still need a build for rich data.
         let src = "library(dplyr)\nlibrary(stats)\nlibrary(notarealpkg)\n";
         let first = packages_to_build(&mut attempts, &indexed, src);
-        assert_eq!(first, vec![SmolStr::new("notarealpkg")]);
-        // A second pass returns nothing — the package was already attempted.
+        assert!(
+            !first.contains(&SmolStr::new("dplyr")),
+            "harvested dep skipped"
+        );
+        for default in crate::semantic::symbols::default_packages() {
+            assert!(
+                first.contains(&SmolStr::new(*default)),
+                "default package {default} should be built, got {first:?}"
+            );
+        }
+        assert!(first.contains(&SmolStr::new("notarealpkg")));
+        // A second pass returns nothing — every package was already attempted.
         let second = packages_to_build(&mut attempts, &indexed, src);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }
@@ -2934,6 +2949,40 @@ mod tests {
             "title: {md}"
         );
         assert!(md.contains("`.cols`"), "arguments: {md}");
+    }
+
+    #[test]
+    fn hover_resolves_base_r_bare_name() {
+        // Regression: base-R symbols resolve to package `base` via the static
+        // name list, but hover also needs the harvested rich entry. Once `base`
+        // is harvested, a bare `as.matrix` (no `library()`) hovers.
+        use crate::rindex::schema::{HelpDoc, PackageIndex, SCHEMA_VERSION};
+        let idx = PackageIndex {
+            schema_version: SCHEMA_VERSION,
+            package: "base".into(),
+            version: "4.5.3".into(),
+            lib_path: "/lib".into(),
+            r_version: None,
+            harvested_at: 0,
+            symbols: vec![SymbolEntry {
+                name: "as.matrix".into(),
+                kind: SymbolKind::Function,
+                exported: true,
+                formals: None,
+                help: Some(HelpDoc {
+                    title: Some("Matrices".into()),
+                    description: None,
+                    usage: Some("as.matrix(x, ...)".into()),
+                    arguments: vec![],
+                }),
+            }],
+        };
+        let provider = IndexedProvider::from_indices([idx]);
+        let src = "x <- cbind(1:5, 6:10)\nas.matrix(x)\n";
+        let md = hover_markdown(src, "as.matrix(x)", &provider).expect("hover for as.matrix");
+        assert!(md.contains("as.matrix(x, ...)"), "signature: {md}");
+        assert!(md.contains("base::as.matrix"), "origin: {md}");
+        assert!(md.contains("Matrices"), "title: {md}");
     }
 
     #[test]
