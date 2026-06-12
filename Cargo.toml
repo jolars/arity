@@ -6,7 +6,7 @@ readme = "README.md"
 description = "An LSP, formatter, and linter for R"
 license = "MIT"
 repository = "https://github.com/jolars/arity"
-# homepage = "https://jolars.github.io/arity"
+homepage = "https://arity.cc"
 authors = ["Johan Larsson <johan@jolars.co>"]
 keywords = ["r", "language-server", "formatter", "linter"]
 categories = [
@@ -47,7 +47,9 @@ toml = "1.1.2"
 [dev-dependencies]
 insta = "1.47.2"
 air_r_parser = { git = "https://github.com/posit-dev/air", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.5", default-features = false, features = [
+  "cargo_bench_support",
+] }
 
 [[bench]]
 name = "parse"
