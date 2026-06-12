@@ -3,5 +3,6 @@ extend-exclude = [
   "AGENTS.md",
   "CHANGELOG.md",
   "AIR_COMPAT.md",
+  "BENCH.md",
   "ARCHITECTURE_AUDIT.md",
 ]
