@@ -21,7 +21,7 @@ matching binary from GitHub releases when none is bundled.
 
 ## Commands
 
-- `Arity: Restart Server` --- stops and restarts the Arity language server
+- `Arity: Restart Server`: stops and restarts the Arity language server
   (re-reads settings and re-resolves the binary). Useful if the LSP gets wedged
   or after changing settings such as `arity.version` or `arity.executablePath`.
 
@@ -29,20 +29,21 @@ matching binary from GitHub releases when none is bundled.
 
 By default, the extension uses an `arity` binary that ships inside the extension
 itself (one platform-specific VSIX per OS/architecture). No download, no GitHub
-round-trip, and the language server starts on first activation even on restricted
-or offline networks. Behavior is controlled by `arity.executableStrategy`:
+round-trip, and the language server starts on first activation even on
+restricted or offline networks. Behavior is controlled by
+`arity.executableStrategy`:
 
-- `bundled` (default) --- use the binary that ships inside the extension. If
-  you're on a platform without a platform-specific build (or you've installed the
-  universal VSIX), the extension falls back to downloading a matching binary from
-  GitHub releases.
-- `environment` --- look for `arity` on the system `PATH`.
-- `path` --- use the binary at `arity.executablePath`.
+- `bundled` (default): use the binary that ships inside the extension. If you're
+  on a platform without a platform-specific build (or you've installed the
+  universal VSIX), the extension falls back to downloading a matching binary
+  from GitHub releases.
+- `environment`: look for `arity` on the system `PATH`.
+- `path`: use the binary at `arity.executablePath`.
 
 If you set `arity.version` or `arity.releaseTag` explicitly, the bundled binary
 is skipped and the requested version is downloaded from GitHub. When
-`arity.version` is `latest`, the extension selects the most recent stable release
-that contains a matching platform asset.
+`arity.version` is `latest`, the extension selects the most recent stable
+release that contains a matching platform asset.
 
 ## Common setup examples
 
@@ -96,17 +97,18 @@ Use `arity.releaseTag` only if you need an exact tag override:
 
 Arity registers itself as the default formatter for `[r]` files.
 
-- `arity.executableStrategy`: how to locate the `arity` binary --- `bundled`
+- `arity.executableStrategy`: how to locate the `arity` binary: `bundled`
   (default), `environment`, or `path`.
-- `arity.executablePath`: path to the binary, used only when `executableStrategy`
-  is `path`.
+- `arity.executablePath`: path to the binary, used only when
+  `executableStrategy` is `path`.
 - `arity.version`: version to install (default: `"latest"`).
-- `arity.releaseTag`: advanced exact tag override (takes precedence if explicitly
-  set).
+- `arity.releaseTag`: advanced exact tag override (takes precedence if
+  explicitly set).
 - `arity.githubRepo`: GitHub repo for downloads (default: `"jolars/arity"`).
 - `arity.serverArgs`: extra args after `arity lsp`.
 - `arity.serverEnv`: extra environment variables.
-- `arity.extraPath`: extra PATH entries prepended for the language server process.
+- `arity.extraPath`: extra PATH entries prepended for the language server
+  process.
 - `arity.logLevel`: log level for the language server, mapped to `RUST_LOG`
   (`off`, `error`, `warn`, `info`, `debug`, `trace`; unset by default).
   `arity.serverEnv.RUST_LOG` overrides this if both are set.
@@ -114,7 +116,8 @@ Arity registers itself as the default formatter for `[r]` files.
 
 ## Security and trust
 
-When `arity.executableStrategy` is `bundled` (the default), the extension prefers
-the binary that shipped inside the VSIX. If no bundled binary is available, or
-`arity.version` / `arity.releaseTag` is set explicitly, it downloads from GitHub
-releases configured by `arity.githubRepo` (default `jolars/arity`).
+When `arity.executableStrategy` is `bundled` (the default), the extension
+prefers the binary that shipped inside the VSIX. If no bundled binary is
+available, or `arity.version` / `arity.releaseTag` is set explicitly, it
+downloads from GitHub releases configured by `arity.githubRepo` (default
+`jolars/arity`).
