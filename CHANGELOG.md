@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.0](https://github.com/jolars/arity/compare/v0.3.0...v0.4.0) (2026-06-12)
+
+### Features
+- add npm distribution (arity-cli) ([`ea0658b`](https://github.com/jolars/arity/commit/ea0658b3d386fd24f0df528b3784384a14e3eeaa))
+
 ## [0.3.0](https://github.com/jolars/arity/compare/v0.2.0...v0.3.0) (2026-06-12)
 
 ### Features
