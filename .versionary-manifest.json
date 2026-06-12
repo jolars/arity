@@ -1,28 +1,28 @@
 {
   "manifest-version": 1,
-  "baseline-sha": "0678e53e6e77e3a79889035f2a83a58c181bbfc6",
+  "baseline-sha": "ea0658b3d386fd24f0df528b3784384a14e3eeaa",
   "release-targets": [
     {
       "path": ".",
-      "version": "0.3.0",
-      "tag": "v0.3.0"
+      "version": "0.4.0",
+      "tag": "v0.4.0"
     },
     {
       "path": "editors/code",
-      "version": "0.3.0",
-      "tag": "arity-code-v0.3.0"
+      "version": "0.4.0",
+      "tag": "arity-code-v0.4.0"
     }
   ],
   "pending-release-targets": [
     {
       "path": ".",
-      "version": "0.3.0",
-      "tag": "v0.3.0"
+      "version": "0.4.0",
+      "tag": "v0.4.0"
     },
     {
       "path": "editors/code",
-      "version": "0.3.0",
-      "tag": "arity-code-v0.3.0"
+      "version": "0.4.0",
+      "tag": "arity-code-v0.4.0"
     }
   ]
 }
