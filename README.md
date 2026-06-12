@@ -1,6 +1,5 @@
 # Arity <img src='https://raw.githubusercontent.com/jolars/arity/refs/heads/main/images/logo.svg' align="right" width="139" />
 
-
 Arity is a language server, formatter, and linter for the R programming
 language. It is designed to provide a seamless development experience for R
 programmers by integrating with popular code editors and IDEs.
