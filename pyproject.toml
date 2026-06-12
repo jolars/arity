@@ -1,0 +1,34 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "arity"
+description = "A language server, formatter, and linter for R"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Johan Larsson", email = "johan@jolars.co" }]
+keywords = ["r", "language-server", "formatter", "linter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://arity.cc"
+Repository = "https://github.com/jolars/arity"
+
+[tool.maturin]
+# Package the existing `arity` binary (not a Python extension module) as a wheel.
+bindings = "bin"
+strip = true
