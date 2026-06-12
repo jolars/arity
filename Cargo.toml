@@ -8,12 +8,7 @@ license = "MIT"
 repository = "https://github.com/jolars/arity"
 homepage = "https://arity.cc"
 authors = ["Johan Larsson <johan@jolars.co>"]
-include = [
-  "/src/**/*",
-  "/build.rs",
-  "/README.md",
-  "/LICENSE",
-]
+include = ["/src/**/*", "/build.rs", "/README.md", "/LICENSE"]
 keywords = ["r", "language-server", "formatter", "linter"]
 categories = [
   "command-line-utilities",
@@ -24,7 +19,6 @@ categories = [
 # Whitelist what ships to crates.io: source (incl. the include_str! symbol
 # tables under src/) plus the readme and license. Keeps the fixture corpus,
 # snapshots, docs, and images out of the published crate.
-include = ["/src/**/*", "/README.md", "/LICENSE"]
 
 [lib]
 name = "arity"
