@@ -71,7 +71,7 @@ jobs:
         run: Rscript scripts/dump_cran_symbols.R
 
       - name: Open PR
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: chore/refresh-cran-symbols
           commit-message: "chore(symbols): refresh bundled CRAN export lists"
