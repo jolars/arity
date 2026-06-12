@@ -4,5 +4,15 @@
   "release-type": "rust",
   "bump-minor-pre-major": true,
   "include-commit-authors": true,
-  "release-reference-comments": "best-effort"
+  "release-reference-comments": "best-effort",
+  "packages": {
+    ".": {
+      "exclude-paths": ["editors"]
+    },
+    "editors/code": {
+      "release-type": "node",
+      "package-name": "arity-code",
+      "follows": ["."]
+    }
+  }
 }
