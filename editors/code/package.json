@@ -2,7 +2,7 @@
   "name": "arity",
   "displayName": "Arity",
   "description": "R language server, formatter, and linter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "jolars",
   "license": "MIT",
   "icon": "icon.png",
@@ -63,7 +63,11 @@
       "properties": {
         "arity.executableStrategy": {
           "type": "string",
-          "enum": ["bundled", "environment", "path"],
+          "enum": [
+            "bundled",
+            "environment",
+            "path"
+          ],
           "enumDescriptions": [
             "Use the binary bundled inside the extension; fall back to downloading from GitHub if none is bundled or `arity.version`/`arity.releaseTag` is set explicitly (default).",
             "Look for `arity` on the system PATH.",
@@ -73,7 +77,10 @@
           "markdownDescription": "Strategy used to locate the `arity` executable for the language server."
         },
         "arity.executablePath": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "default": null,
           "markdownDescription": "Path to the `arity` executable. Only used when `arity.executableStrategy` is set to `path`."
         },
@@ -94,38 +101,61 @@
         },
         "arity.serverArgs": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Additional command-line arguments passed after `arity lsp`."
         },
         "arity.serverEnv": {
           "type": "object",
-          "additionalProperties": {"type": "string"},
+          "additionalProperties": {
+            "type": "string"
+          },
           "default": {},
           "description": "Environment variables merged into the Arity language server process."
         },
         "arity.extraPath": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Extra PATH entries prepended for the Arity language server process."
         },
         "arity.logLevel": {
-          "type": ["string", "null"],
-          "enum": [null, "off", "error", "warn", "info", "debug", "trace"],
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            null,
+            "off",
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
           "default": null,
           "markdownDescription": "Log level for the Arity language server. Maps to the `RUST_LOG` environment variable. Leave unset to use the server's default. If `arity.serverEnv.RUST_LOG` is also set, it takes precedence."
         },
         "arity.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Trace communication between VS Code and the Arity language server."
         }
       }
     },
     "configurationDefaults": {
-      "[r]": {"editor.defaultFormatter": "jolars.arity"}
+      "[r]": {
+        "editor.defaultFormatter": "jolars.arity"
+      }
     },
     "commands": [
       {

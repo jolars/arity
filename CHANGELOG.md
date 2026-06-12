@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/jolars/arity/compare/v0.2.0...v0.3.0) (2026-06-12)
+
+### Features
+- add VS Code / Open VSX extension ([`4501ec4`](https://github.com/jolars/arity/commit/4501ec4119b949518874024b1b2f8fbbb19cb8e6))
+- **lsp:** index default R packages for hover ([`3bf0927`](https://github.com/jolars/arity/commit/3bf0927d666ade67aca70502583b91848f703f2a))
+- build man pages and completion and cli docs ([`660d947`](https://github.com/jolars/arity/commit/660d9475f246ebf75e625e1de37f955a1075df7f))
+
 ## [0.2.0](https://github.com/jolars/arity/compare/v0.1.0...v0.2.0) (2026-06-12)
 
 ### Breaking changes
