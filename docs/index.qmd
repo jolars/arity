@@ -4,7 +4,7 @@ title-meta: "Arity: Language Server, Formatter, and Linter for R"
 description-meta: >-
   Arity is a language server, formatter, and linter for R.
 title-prefix: ""
-image: images/logo.svg
+image: images/logo.png
 image-alt: "Arity logo"
 
 open-graph:
@@ -18,7 +18,7 @@ format:
     toc: false
 ---
 
-<!-- <img src="images/logo.svg" alt="Arity logo" class="float-end ms-3" -->
+<!-- <img src="images/logo.png" alt="Arity logo" class="float-end ms-3" -->
 <!-- style="max-width: 20%; height: auto;"> -->
 
 Arity is a language server, formatter, and linter for R.
