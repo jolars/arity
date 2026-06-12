@@ -1,0 +1,30 @@
+{
+  "name": "@arity-cli/__NAME__",
+  "version": "__VERSION__",
+  "description": "Prebuilt arity binary for __NAME__. Install arity-cli instead.",
+  "homepage": "https://arity.cc",
+  "bugs": "https://github.com/jolars/arity/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jolars/arity.git"
+  },
+  "license": "MIT",
+  "author": "Johan Larsson <johan@jolars.co>",
+  "files": [
+    "__BINARY__",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "__OS__"
+  ],
+  "cpu": [
+    "__CPU__"
+  ],
+  "libc": [
+    "__LIBC__"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
