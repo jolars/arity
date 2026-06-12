@@ -5,4 +5,5 @@ extend-exclude = [
   "AIR_COMPAT.md",
   "BENCH.md",
   "ARCHITECTURE_AUDIT.md",
+  "docs/reference/cli.qmd",
 ]
