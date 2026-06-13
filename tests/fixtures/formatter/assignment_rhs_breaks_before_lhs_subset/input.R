@@ -1,0 +1,3 @@
+for (i in seq_len(m)) {
+  beta_out[[i]] <- do.call(cbind, lapply(beta, function(x) x[, i, drop = FALSE]))
+}

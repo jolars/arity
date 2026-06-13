@@ -452,11 +452,20 @@ impl Printer {
                     work.push((mode, if mode == Mode::Break { broken } else { flat }));
                 }
                 Ir::Group { inner, expand, .. } => {
-                    work.push((if *expand { Mode::Break } else { Mode::Flat }, inner));
+                    // An undecided group inherits the surrounding mode: when the
+                    // rest of the line is being laid out in `Break` mode, the
+                    // group *can* break, so its first soft break ends the line —
+                    // a later sibling group breaking is what accommodates the
+                    // overflow, rather than forcing *this* group to break. Only a
+                    // group whose parent is flat (or one already expanded) is
+                    // measured flat. This is Prettier's `groupMode = doc.break ?
+                    // BREAK : mode` rule, and the cure for breaking the leftmost
+                    // group when a rightmost one should break instead.
+                    work.push((if *expand { Mode::Break } else { mode }, inner));
                 }
                 Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
                     if let Some(first) = cands.first() {
-                        work.push((Mode::Flat, first));
+                        work.push((mode, first));
                     }
                 }
             }
