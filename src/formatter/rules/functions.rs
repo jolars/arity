@@ -3,7 +3,7 @@ use rowan::{NodeOrToken, SyntaxElement};
 use super::super::context::FormatContext;
 use super::super::core::{
     FormatError, ir_block_expr_with_prefixed_comments, ir_expr_element, ir_expr_segment,
-    ir_expr_with_optional_comment, ir_line, snippet_from_elements,
+    ir_expr_with_optional_comment, ir_line, reparse_snippet_from_elements, snippet_from_elements,
 };
 use super::super::ir::Ir;
 use super::super::trivia::split_lines;
@@ -1442,9 +1442,7 @@ fn ir_function_params(
 
 /// A param whose default is a non-empty brace block (`a = { … }`). Such a
 /// default is always rendered multi-line (an empty `{}` is not — it stays
-/// inline), so its presence forces the whole parameter list to expand. Matches
-/// the brace-default detection in [`ir_function_param_default`] (first/last
-/// significant tokens are `{`/`}`), with the empty case excluded.
+/// inline), so its presence forces the whole parameter list to expand.
 fn param_has_breaking_brace_default(param: &[SyntaxElement<RLanguage>]) -> bool {
     let Some(eq_idx) = param
         .iter()
@@ -1456,10 +1454,24 @@ fn param_has_breaking_brace_default(param: &[SyntaxElement<RLanguage>]) -> bool 
         .iter()
         .filter(|el| !super::super::core::is_trivia(el.kind()))
         .collect();
-    // `{}` is two tokens and stays inline; a non-empty block is three or more.
-    default_significant.len() >= 3
-        && matches!(default_significant.first(), Some(NodeOrToken::Token(t)) if t.kind() == SyntaxKind::LBRACE)
-        && matches!(default_significant.last(), Some(NodeOrToken::Token(t)) if t.kind() == SyntaxKind::RBRACE)
+    // The default is parsed as a single expression node; only a `BLOCK_EXPR`
+    // with inner content breaks. An empty `{}` stays inline.
+    matches!(
+        default_significant.as_slice(),
+        [NodeOrToken::Node(node)]
+            if node.kind() == SyntaxKind::BLOCK_EXPR && block_default_breaks(node)
+    )
+}
+
+/// Whether a `{ … }` default renders multi-line: true unless it is an empty
+/// `{}`. Any inner expression or comment (even a dangling one) forces a break.
+fn block_default_breaks(block: &SyntaxNode) -> bool {
+    block.children_with_tokens().any(|el| {
+        !matches!(
+            el.kind(),
+            SyntaxKind::LBRACE | SyntaxKind::RBRACE | SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE
+        )
+    })
 }
 
 fn ir_function_parameter(
@@ -1478,34 +1490,25 @@ fn ir_function_parameter(
     ir_expr_segment(param, "function parameter", indent, ctx)
 }
 
-/// Render a parameter default. The parser builds no nodes inside the param list,
-/// so a non-trivial default arrives as a raw run of tokens (`c(1, 2, 3)` is
-/// `IDENT ( INT , INT , INT )`); reparse it into a single expression. Brace
-/// defaults (`{ … }`) take a separate path: they are *always* multi-line and
-/// are rendered relative to the function-expr's own indent (mirroring the
-/// legacy `format_expr_or_braced_tokens`), independent of the enclosing
-/// param-list `Ir::Indent`.
+/// Render a parameter default. The parser parses each default value into a
+/// single expression node (or a lone atom token), so the common case is exactly
+/// one element, formatted in value position — an `if`/call/block default lays
+/// out just like the same expression anywhere else. A `{ … }` default is a
+/// `BLOCK_EXPR` node handled by the same path; the surrounding param list
+/// expands when such a default is present (see [`param_has_breaking_brace_default`]).
+///
+/// A lenient parse can still leave more than one element (e.g. the invalid
+/// `function(a = 1 2)`); reparse that run space-joined (so adjacent tokens keep
+/// their boundaries) and format the single resulting expression.
 fn ir_function_param_default(
     elements: &[SyntaxElement<RLanguage>],
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    let significant: Vec<_> = elements
-        .iter()
-        .filter(|el| !super::super::core::is_trivia(el.kind()))
-        .cloned()
-        .collect();
-    if let (Some(NodeOrToken::Token(lb)), Some(NodeOrToken::Token(rb))) =
-        (significant.first(), significant.last())
-        && lb.kind() == SyntaxKind::LBRACE
-        && rb.kind() == SyntaxKind::RBRACE
-    {
-        return ir_brace_token_default(&significant, indent, ctx);
-    }
     if let [only] = elements {
         return ir_expr_element(only, indent, ctx);
     }
-    let snippet = snippet_from_elements(elements);
+    let snippet = reparse_snippet_from_elements(elements);
     let parsed = parse(&snippet);
     if !parsed.diagnostics.is_empty() {
         return Err(FormatError::AmbiguousConstruct {
@@ -1525,54 +1528,6 @@ fn ir_function_param_default(
         });
     };
     ir_expr_element(only, indent, ctx)
-}
-
-/// Brace-token parameter default (`a = { … }`), built as native IR: a
-/// `{`/`}` pair around the inner expression on its own `Ir::indent`ed line. The
-/// surrounding param list always expands when a brace default is present (see
-/// [`ir_function_params`]), so the block renders relative to the printer's live
-/// indent and re-indents structurally even when the function is nested deeper
-/// than its build-time `indent`.
-fn ir_brace_token_default(
-    significant: &[SyntaxElement<RLanguage>],
-    indent: usize,
-    ctx: FormatContext,
-) -> Result<Ir, FormatError> {
-    if significant.len() == 2 {
-        return Ok(Ir::text("{}"));
-    }
-    let inner = &significant[1..significant.len() - 1];
-    let snippet = snippet_from_elements(inner);
-    let parsed = parse(&snippet);
-    if !parsed.diagnostics.is_empty() {
-        return Err(FormatError::AmbiguousConstruct {
-            context: "function parameter brace default",
-            snippet,
-        });
-    }
-    let reparsed: Vec<_> = parsed
-        .cst
-        .children_with_tokens()
-        .filter(|el| !super::super::core::is_trivia(el.kind()))
-        .collect();
-    let [only] = reparsed.as_slice() else {
-        return Err(FormatError::AmbiguousConstruct {
-            context: "function parameter brace default",
-            snippet,
-        });
-    };
-    // Native IR (not a baked `Verbatim`): the surrounding param list always
-    // expands when a brace default is present (see `ir_function_params`), so the
-    // block renders relative to the printer's live indent via `Ir::indent`. This
-    // keeps it correct when the enclosing function is itself nested deeper than
-    // its build-time indent (e.g. an exploded call argument).
-    let inner_ir = ir_expr_element(only, indent + 1, ctx)?;
-    Ok(Ir::concat([
-        Ir::text("{"),
-        Ir::indent(Ir::concat([Ir::hard_line(), inner_ir])),
-        Ir::hard_line(),
-        Ir::text("}"),
-    ]))
 }
 
 /// Split params on top-level commas, preserving the legacy splitter's errors on

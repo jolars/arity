@@ -392,10 +392,12 @@ pub(crate) fn parse_function_expr(
         events.push(Event::Tok(params_lparen));
         cursor = params_lparen + 1;
 
-        let mut i = cursor;
+        // Locate the matching ')'. Default values contain balanced parens, so
+        // depth counting still lands on the parameter list's own close.
+        let mut close = cursor;
         let mut depth = 1usize;
-        while i < tokens.len() {
-            match tokens[i].kind {
+        while close < tokens.len() {
+            match tokens[close].kind {
                 TokKind::LParen => depth += 1,
                 TokKind::RParen => {
                     depth -= 1;
@@ -405,13 +407,60 @@ pub(crate) fn parse_function_expr(
                 }
                 _ => {}
             }
-            i += 1;
+            close += 1;
         }
 
-        if i < tokens.len() && matches!(tokens[i].kind, TokKind::RParen) {
-            push_range(&mut events, cursor, i);
-            events.push(Event::Tok(i));
-            cursor = i + 1;
+        if close < tokens.len() && matches!(tokens[close].kind, TokKind::RParen) {
+            // Walk the parameter list, parsing each default value after `=` into
+            // a proper expression node (mirroring call-argument value parsing in
+            // `parse_call_expr`). Names, commas, `=`, and trivia stay flat tokens;
+            // turning the default into a node means a non-trivial default
+            // (`if`/call/binary/block) is shaped — and so formats — like the same
+            // expression anywhere else, instead of arriving as a loose token run.
+            let mut i = cursor;
+            while i < close {
+                if matches!(tokens[i].kind, TokKind::AssignEq) {
+                    events.push(Event::Tok(i)); // =
+                    let val_start = i + 1;
+                    let mut value_idx = val_start;
+                    while value_idx < close
+                        && matches!(
+                            tokens.get(value_idx).map(|t| &t.kind),
+                            Some(TokKind::Whitespace | TokKind::Newline | TokKind::Comment)
+                        )
+                    {
+                        value_idx += 1;
+                    }
+                    if value_idx >= close
+                        || matches!(tokens.get(value_idx).map(|t| &t.kind), Some(TokKind::Comma))
+                    {
+                        // No default expression (a malformed `a =,` / `a =)`); keep
+                        // the trivia so the round-trip stays lossless.
+                        for idx in val_start..value_idx {
+                            events.push(Event::Tok(idx));
+                        }
+                        i = value_idx;
+                    } else if let Some(val) =
+                        parse_expr_in_brackets(tokens, value_idx, 0, diagnostics)
+                    {
+                        for idx in val_start..val.start {
+                            events.push(Event::Tok(idx));
+                        }
+                        events.extend(val.events);
+                        i = val.end;
+                    } else {
+                        for idx in val_start..value_idx {
+                            events.push(Event::Tok(idx));
+                        }
+                        i = value_idx;
+                    }
+                } else {
+                    events.push(Event::Tok(i));
+                    i += 1;
+                }
+            }
+            events.push(Event::Tok(close)); // )
+            cursor = close + 1;
         } else {
             push_token_diagnostic(
                 diagnostics,

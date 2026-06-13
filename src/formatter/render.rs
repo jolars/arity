@@ -126,3 +126,21 @@ pub(super) fn snippet_from_elements(elements: &[SyntaxElement<RLanguage>]) -> St
         })
         .collect::<String>()
 }
+
+/// Reconstruct a snippet for *reparsing* a flat token run, separating elements
+/// with single spaces so adjacent tokens never merge. Plain concatenation (see
+/// [`snippet_from_elements`]) is wrong here because callers pass trivia-stripped
+/// runs: `1 else 2` would collapse to `1else2`, which re-lexes as `1` followed
+/// by the identifier `else2`. Spaces can only ever separate tokens, never fuse
+/// them, and the reparsed node is consumed structurally (the formatter re-emits
+/// its own spacing), so the inserted spaces have no effect on the output.
+pub(super) fn reparse_snippet_from_elements(elements: &[SyntaxElement<RLanguage>]) -> String {
+    elements
+        .iter()
+        .map(|el| match el {
+            NodeOrToken::Node(node) => node.text().to_string(),
+            NodeOrToken::Token(tok) => tok.text().to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}

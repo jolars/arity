@@ -560,6 +560,10 @@ pub(super) fn snippet_from_elements(elements: &[SyntaxElement<RLanguage>]) -> St
     super::render::snippet_from_elements(elements)
 }
 
+pub(super) fn reparse_snippet_from_elements(elements: &[SyntaxElement<RLanguage>]) -> String {
+    super::render::reparse_snippet_from_elements(elements)
+}
+
 pub(super) fn is_trivia(kind: SyntaxKind) -> bool {
     is_trivia_kind(kind)
 }

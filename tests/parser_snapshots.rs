@@ -97,6 +97,7 @@ fn fixture_names() -> &'static [&'static str] {
         "while_missing_condition",
         "while_missing_rparen",
         "function_simple",
+        "function_param_default_expr",
         "function_newline_body",
         "function_missing_body",
         "function_missing_rparen_body",
