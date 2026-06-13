@@ -265,11 +265,13 @@ fn ir_if_expr_impl(
         None
     };
 
-    // The condition is native IR spliced inline (re-indenting structurally, so a
-    // wrapping context can re-indent the whole `if`). Unlike `while`, it carries
-    // no enclosing soft-line group: the condition is never dropped onto its own
-    // line on the `if (…)` prefix's account; only its own internal groups wrap.
-    let condition = ir_expr_segment(&condition_elements, "if condition", indent, ctx)?;
+    // The condition is native IR (re-indenting structurally, so a wrapping
+    // context can re-indent the whole `if`), wrapped in a soft-line group exactly
+    // like `while`: when it cannot stay inline it drops onto its own indented line
+    // rather than hugging `if (` and trailing `)) {`. Built at `indent + 1` to
+    // match that dropped position.
+    let condition = ir_expr_segment(&condition_elements, "if condition", indent + 1, ctx)?;
+    let header = ir_condition_header("if (", condition);
     // Comment relocation (IR port of `format_if_then_branch_with_comments` +
     // `prepend_comments_to_branch`). A comment trailing the then-block's `}` on
     // the same line stays with the then block; any other comment between the
@@ -351,7 +353,7 @@ fn ir_if_expr_impl(
         interstitial.as_slice()
     };
 
-    let mut parts = vec![Ir::text("if ("), condition, Ir::text(") "), then_ir];
+    let mut parts = vec![header, Ir::text(" "), then_ir];
     if let Some(else_elements) = else_elements {
         // An `else if` recurses so the brace decision propagates across the whole
         // chain instead of nesting the `if` inside a synthetic block.
@@ -524,6 +526,21 @@ pub(crate) fn ir_while_expr(
     ))
 }
 
+/// A `keyword (cond)` header as IR: the already-built condition is wrapped in a
+/// soft-line group so it drops onto its own indented line when it cannot stay
+/// inline, rather than hugging the opening `(`. Shared by `if`, `while`, and the
+/// external-body handler so the three format an over-width condition identically.
+/// `open` is the keyword plus its paren (e.g. `"if ("`). The condition must have
+/// been built at `indent + 1` to match its dropped position.
+fn ir_condition_header(open: &'static str, condition: Ir) -> Ir {
+    Ir::group(Ir::concat([
+        Ir::text(open),
+        Ir::indent(Ir::concat([Ir::soft_line(), condition])),
+        Ir::soft_line(),
+        Ir::text(")"),
+    ]))
+}
+
 /// The `while (cond)` header as IR (the condition wraps onto its own indented
 /// line when it cannot stay inline), shared by [`ir_while_expr`] and the
 /// external-body handler.
@@ -538,12 +555,7 @@ fn ir_while_header(
         indent + 1,
         ctx,
     )?;
-    Ok(Ir::group(Ir::concat([
-        Ir::text("while ("),
-        Ir::indent(Ir::concat([Ir::soft_line(), condition])),
-        Ir::soft_line(),
-        Ir::text(")"),
-    ])))
+    Ok(ir_condition_header("while (", condition))
 }
 
 /// IR builder for `repeat`. Mirrors [`format_repeat_expr`].
@@ -879,12 +891,13 @@ pub(crate) fn try_format_if_with_external_body(
                 snippet: String::new(),
             })?;
     // The then-branch is a comment; wrap the next-line body (bare or block) in a
-    // synthetic block led by that comment. The condition is native IR (see
-    // `ir_if_expr_impl`), spliced inline with no enclosing soft-line group.
-    let condition = ir_expr_segment(&condition_elements, "if condition", indent, ctx)?;
+    // synthetic block led by that comment. The condition is native IR wrapped in
+    // the same soft-line group as `ir_if_expr_impl`, so an over-width condition
+    // drops onto its own indented line rather than hugging `if (`.
+    let condition = ir_expr_segment(&condition_elements, "if condition", indent + 1, ctx)?;
     let body_expr = ir_expr_element(&body_element, indent + 1, ctx)?;
     let body = synthetic_block(vec![Ir::text(then_comment), body_expr]);
-    let header = Ir::concat([Ir::text("if ("), condition, Ir::text(") "), body]);
+    let header = Ir::concat([ir_condition_header("if (", condition), Ir::text(" "), body]);
     let ir = match trailing_comment {
         Some(comment) => Ir::concat([header, Ir::text(" "), Ir::text(comment)]),
         None => header,

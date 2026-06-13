@@ -1,12 +1,14 @@
 result <- lapply(items, function(x) {
-  if (some_long_condition_function(
-    aaaaaaaa,
-    bbbbbbbb,
-    cccccccc,
-    dddddddd,
-    eeeeeeee,
-    ffffffff
-  )) {
+  if (
+    some_long_condition_function(
+      aaaaaaaa,
+      bbbbbbbb,
+      cccccccc,
+      dddddddd,
+      eeeeeeee,
+      ffffffff
+    )
+  ) {
     x
   }
 })

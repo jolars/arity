@@ -30,11 +30,3 @@
 # See TODO.md and the `air_test_that` fixture.
 air_call = "unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands"
 call_trailing_braced_expression = "unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands"
-
-# Over-width `if` condition: arity keeps the condition hugged to `if (` and lets
-# the condition's own call wrap internally --- the condition is native IR spliced
-# inline with no enclosing soft-line group, so it never drops onto its own line on
-# the `if (…)` prefix's account (see `ir_if_expr_impl`). Air instead breaks the
-# whole condition onto its own line inside the parens. Both now brace the
-# consequence when the `if` goes multi-line.
-function_body_wide_if_condition = "over-width if-condition: arity hugs the condition to `if (` and wraps it internally; air breaks the condition onto its own line"
