@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use annotate_snippets::{Level, Renderer, Snippet};
+use annotate_snippets::{AnnotationKind, Level, Renderer, Snippet};
 
 use crate::text::LineIndex;
 
@@ -103,12 +103,13 @@ fn render_pretty(
             let level = severity_level(d.severity);
             let start = u32::from(d.range.start()) as usize;
             let end = u32::from(d.range.end()) as usize;
-            let snippet = Snippet::source(&source)
-                .origin(&origin)
-                .annotation(level.span(start..end).label(&d.message.body));
-            let title = level.title(d.rule);
-            let message = title.snippet(snippet);
-            let rendered = renderer.render(message);
+            let snippet = Snippet::source(&source).path(&origin).annotation(
+                AnnotationKind::Primary
+                    .span(start..end)
+                    .label(&d.message.body),
+            );
+            let group = level.primary_title(d.rule).element(snippet);
+            let rendered = renderer.render(&[group]);
             let _ = writeln!(out, "{rendered}");
             if let Some(s) = &d.message.suggestion {
                 let _ = writeln!(out, "  = help: {s}");
@@ -127,11 +128,11 @@ fn severity_word(s: Severity) -> &'static str {
     }
 }
 
-fn severity_level(s: Severity) -> Level {
+fn severity_level(s: Severity) -> Level<'static> {
     match s {
-        Severity::Error => Level::Error,
-        Severity::Warning => Level::Warning,
-        Severity::Info => Level::Info,
-        Severity::Hint => Level::Help,
+        Severity::Error => Level::ERROR,
+        Severity::Warning => Level::WARNING,
+        Severity::Info => Level::INFO,
+        Severity::Hint => Level::HELP,
     }
 }
