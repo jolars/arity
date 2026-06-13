@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use arity::cli::{Cli, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
 use arity::file_discovery::collect_r_files;
-use arity::formatter::{FormatStyle, check_paths_with_style, format_with_style};
+use arity::formatter::{ChangedFile, FormatStyle, check_paths_with_style, format_with_style};
 use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
 use arity::parser::{parse, reconstruct};
 use arity::rindex::build::{BuildOptions, PackageOutcome, build_index};
@@ -15,6 +15,8 @@ use arity::rindex::discover::{referenced_packages, with_default_packages};
 use arity::rindex::libpaths::LibrarySearch;
 use arity::rindex::provider::IndexedProvider;
 use clap::Parser;
+use similar::{ChangeTag, TextDiff};
+use std::io::IsTerminal;
 
 /// Autofix selection for `lint --fix`.
 #[derive(Debug, Clone, Copy)]
@@ -362,8 +364,12 @@ fn run_format_check(paths: &[PathBuf], style: FormatStyle) -> ExitCode {
             if result.changed_files.is_empty() {
                 ExitCode::SUCCESS
             } else {
-                for path in result.changed_files {
-                    eprintln!("would reformat: {}", path.display());
+                let use_color = should_colorize();
+                for (idx, file) in result.changed_files.iter().enumerate() {
+                    if idx > 0 {
+                        println!();
+                    }
+                    print_diff(file, use_color);
                 }
                 ExitCode::from(1)
             }
@@ -371,6 +377,49 @@ fn run_format_check(paths: &[PathBuf], style: FormatStyle) -> ExitCode {
         Err(err) => {
             eprintln!("error: {err}");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// Whether to emit ANSI color into the diff. Honors the `NO_COLOR` convention
+/// and only colorizes when stdout is a terminal.
+fn should_colorize() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && io::stdout().is_terminal()
+}
+
+/// Print a unified-style, per-file diff of the formatting change (rustfmt-like:
+/// a `Diff in <path>:<line>:` header followed by context-grouped hunks).
+fn print_diff(file: &ChangedFile, use_color: bool) {
+    const RED: &str = "\x1b[31m";
+    const GREEN: &str = "\x1b[32m";
+    const RESET: &str = "\x1b[0m";
+
+    let diff = TextDiff::from_lines(&file.original, &file.formatted);
+    for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
+        if idx > 0 {
+            println!("---");
+        }
+        let start = group[0].old_range().start + 1;
+        println!("Diff in {}:{}:", file.path.display(), start);
+        for op in group {
+            for change in diff.iter_changes(op) {
+                let (sign, color) = match change.tag() {
+                    ChangeTag::Delete => ("-", RED),
+                    ChangeTag::Insert => ("+", GREEN),
+                    ChangeTag::Equal => (" ", ""),
+                };
+                let value = change.value();
+                let newline = value.ends_with('\n');
+                let line = value.strip_suffix('\n').unwrap_or(value);
+                if use_color && !color.is_empty() {
+                    print!("{color}{sign}{line}{RESET}");
+                } else {
+                    print!("{sign}{line}");
+                }
+                if newline {
+                    println!();
+                }
+            }
         }
     }
 }

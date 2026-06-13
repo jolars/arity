@@ -215,8 +215,9 @@ fn cli_format_check_honors_configured_line_width() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("would reformat"), "stderr: {stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Diff in"), "stdout: {stdout}");
+    assert!(stdout.contains("a.R"), "stdout: {stdout}");
 }
 
 #[test]

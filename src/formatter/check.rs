@@ -8,7 +8,16 @@ use crate::file_discovery::{FileDiscoveryError, collect_r_files};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
     pub checked_files: usize,
-    pub changed_files: Vec<PathBuf>,
+    pub changed_files: Vec<ChangedFile>,
+}
+
+/// A file whose formatted output differs from its on-disk contents, carrying
+/// both versions so callers can render a diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedFile {
+    pub path: PathBuf,
+    pub original: String,
+    pub formatted: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,7 +105,11 @@ pub fn check_paths_with_style(
                 source: err,
             })?;
         if formatted != content {
-            changed_files.push(path);
+            changed_files.push(ChangedFile {
+                path,
+                original: content,
+                formatted,
+            });
         }
     }
 

@@ -54,7 +54,8 @@ pub enum Commands {
         #[arg(long)]
         verify: bool,
 
-        /// Check formatting of .R files under the provided paths without writing changes
+        /// Check formatting without writing changes; prints a diff for each file
+        /// that would be reformatted and exits non-zero if any differ
         #[arg(long)]
         check: bool,
 

@@ -59,7 +59,7 @@ Format .R files
 ###### **Options:**
 
 * `--verify` — Verify formatting idempotence for supported inputs (does not write files)
-* `--check` — Check formatting of .R files under the provided paths without writing changes
+* `--check` — Check formatting without writing changes; prints a diff for each file that would be reformatted and exits non-zero if any differ
 * `--line-width <N>` — Override the configured line width
 * `--indent-width <N>` — Override the configured indent width
 

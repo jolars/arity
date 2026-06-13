@@ -331,10 +331,30 @@ fn cli_format_check_reports_changed_files() {
     ]);
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("would reformat:"));
-    assert!(stderr.contains("changed.R"));
-    assert!(!stderr.contains("unchanged.R"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("changed.R"));
+    assert!(!stdout.contains("unchanged.R"));
+}
+
+#[test]
+fn cli_format_check_prints_diff() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let changed = dir.path().join("changed.R");
+    std::fs::write(&changed, "x<-1+2\n").expect("failed to write changed file");
+
+    let output = run_cli_no_stdin([
+        "format",
+        "--check",
+        changed.to_str().expect("temp file path should be utf-8"),
+    ]);
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // A unified-style diff: the original line removed, the formatted line added.
+    assert!(stdout.contains("-x<-1+2"));
+    assert!(stdout.contains("+x <- 1 + 2"));
+    // No ANSI color when piped (not a terminal).
+    assert!(!stdout.contains('\u{1b}'));
 }
 
 #[test]
