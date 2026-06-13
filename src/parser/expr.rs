@@ -846,7 +846,54 @@ fn parse_bracket_expr(
         }
 
         events.push(Event::Start(SyntaxKind::ARG));
-        if let Some(arg) = parse_expr_in_brackets(tokens, i, 0, diagnostics) {
+        last_arg_was_comment_only = false;
+
+        if is_named_arg(ctx, i) {
+            // Named subscript argument: `ident = expr` (e.g. `drop = FALSE`).
+            // `=` inside `[`/`[[` is named-argument syntax, never an assignment,
+            // so this parses flat (like a call argument), not as an
+            // ASSIGNMENT_EXPR.
+            events.push(Event::Tok(i)); // ident
+            let mut eq_idx = i + 1;
+            while matches!(
+                tokens.get(eq_idx).map(|t| &t.kind),
+                Some(TokKind::Whitespace | TokKind::Newline | TokKind::Comment)
+            ) {
+                eq_idx += 1;
+            }
+            for idx in (i + 1)..eq_idx {
+                events.push(Event::Tok(idx));
+            }
+            // `is_named_arg` guarantees an `=` at `eq_idx`.
+            events.push(Event::Tok(eq_idx)); // =
+            let val_start = eq_idx + 1;
+            let mut value_idx = val_start;
+            while matches!(
+                tokens.get(value_idx).map(|t| &t.kind),
+                Some(TokKind::Whitespace | TokKind::Newline | TokKind::Comment)
+            ) {
+                value_idx += 1;
+            }
+            if matches!(
+                tokens.get(value_idx).map(|t| &t.kind),
+                Some(TokKind::Comma) | None
+            ) || is_matching_subset_close(tokens, value_idx, node_kind)
+            {
+                // Empty value, e.g. `x[drop = ]`.
+                for idx in val_start..value_idx {
+                    events.push(Event::Tok(idx));
+                }
+                i = value_idx;
+            } else if let Some(val) = parse_expr_in_brackets(tokens, value_idx, 0, diagnostics) {
+                for idx in val_start..val.start {
+                    events.push(Event::Tok(idx));
+                }
+                events.extend(val.events);
+                i = val.end;
+            } else {
+                i = val_start;
+            }
+        } else if let Some(arg) = parse_expr_in_brackets(tokens, i, 0, diagnostics) {
             last_arg_was_comment_only = arg.end == arg.start + 1
                 && matches!(
                     tokens.get(arg.start).map(|t| &t.kind),

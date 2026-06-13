@@ -551,32 +551,66 @@ fn push_binding(
     id
 }
 
-/// Walk every recorded identifier read and, if it resolves to a binding in any
-/// enclosing scope, mark that binding as `read`. Used by `unused-binding`.
+/// Walk every recorded identifier read and mark the binding(s) it reaches as
+/// `read`. Used by `unused-binding`.
 fn resolve_reads(model: &mut SemanticModel) {
     for ident_idx in 0..model.idents.len() {
         let ident = model.idents[ident_idx].clone();
-        let resolved = {
-            let mut current = Some(ident.scope);
-            let mut found: Option<BindingId> = None;
-            while let Some(scope_id) = current {
-                let scope_ref = &model.scopes[scope_id.0 as usize];
-                for binding_id in &scope_ref.bindings {
-                    let binding = &model.bindings[binding_id.0 as usize];
-                    if binding.name == ident.name && binding.def_range != ident.range {
-                        found = Some(*binding_id);
-                        break;
-                    }
-                }
-                if found.is_some() {
-                    break;
-                }
-                current = scope_ref.parent;
-            }
-            found
-        };
-        if let Some(id) = resolved {
+        for id in reads_reached(model, &ident) {
             model.bindings[id.0 as usize].read = true;
         }
     }
+}
+
+/// The binding(s) a single identifier read marks as `read`, found by walking
+/// from the read's own scope outward.
+///
+/// R only introduces a new variable scope at a `function` (and the file top):
+/// `for`/`{}` blocks share their enclosing function's execution *frame*, where
+/// statements run in source order. So within the read's own frame — every scope
+/// up to and including the nearest enclosing `function`/file — a read can only
+/// refer to a same-name binding assigned *before* it. We resolve to the
+/// innermost frame scope that holds such a binding and mark *every* preceding
+/// one there: marking all (not just the nearest) keeps a reassignment
+/// conservative — in `x <- a; f(x); x <- b; f(x)` both `x`s have a later read,
+/// so neither is a false unused-binding.
+///
+/// Past the frame boundary lie *enclosing* functions, reached only through a
+/// closure, whose body runs when the closure is later called. Textual position
+/// carries no ordering there (the closure can read a binding defined after it),
+/// so the first match suffices.
+fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
+    let mut current = Some(ident.scope);
+    // Whether the scope under inspection still belongs to the read's own frame.
+    // It does until we step *past* the first `function`/file scope (a closure
+    // boundary).
+    let mut in_frame = true;
+    while let Some(scope_id) = current {
+        let scope_ref = &model.scopes[scope_id.0 as usize];
+        let matches = || {
+            scope_ref.bindings.iter().copied().filter(|id| {
+                let b = &model.bindings[id.0 as usize];
+                b.name == ident.name && b.def_range != ident.range
+            })
+        };
+
+        if in_frame {
+            let preceding: Vec<BindingId> = matches()
+                .filter(|id| model.bindings[id.0 as usize].def_range.start() < ident.range.start())
+                .collect();
+            if !preceding.is_empty() {
+                return preceding;
+            }
+        } else if let Some(id) = matches().next() {
+            return vec![id];
+        }
+
+        // The frame ends at the first `function`/file scope: its parent (if any)
+        // is an enclosing function, visible only via a closure.
+        if matches!(scope_ref.kind, ScopeKind::Function | ScopeKind::File) {
+            in_frame = false;
+        }
+        current = scope_ref.parent;
+    }
+    Vec::new()
 }

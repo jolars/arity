@@ -1,11 +1,13 @@
 use rowan::{NodeOrToken, SyntaxElement};
 
 use super::super::context::FormatContext;
+use super::super::core::is_trivia;
 use super::super::core::{
     FormatError, format_expr_segment, ir_expr_segment, ir_expr_with_optional_comment, ir_line,
 };
 use super::super::ir::Ir;
 use super::super::trivia::split_lines;
+use super::functions::{build_named_arg_ir, ir_arg_side, ir_curly_curly, single_node};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
 /// IR builder for unary expressions: operator directly prefixed to the operand.
@@ -473,7 +475,7 @@ fn collect_subset_ir_slots(
 ) -> Result<ArgSlots, FormatError> {
     let mut slots: Vec<ArgSlot> = Vec::new();
     let mut comments: Vec<String> = Vec::new();
-    let mut expr: Option<(Ir, Option<SyntaxNode>)> = None;
+    let mut expr: Option<(Ir, Option<SyntaxNode>, bool)> = None;
     let mut has_comment_only = false;
     let mut has_comment_prefixed = false;
 
@@ -482,12 +484,12 @@ fn collect_subset_ir_slots(
     // emitting one slot per comma.
     fn finalize(
         comments: &mut Vec<String>,
-        expr: &mut Option<(Ir, Option<SyntaxNode>)>,
+        expr: &mut Option<(Ir, Option<SyntaxNode>, bool)>,
         has_comment_prefixed: &mut bool,
     ) -> ArgSlot {
         let lead = std::mem::take(comments);
         match expr.take() {
-            Some((ir, node)) => {
+            Some((ir, node, ends_with_eq)) => {
                 if !lead.is_empty() {
                     *has_comment_prefixed = true;
                 }
@@ -505,9 +507,7 @@ fn collect_subset_ir_slots(
                 ArgSlot::Expr {
                     ir,
                     expr_node: node,
-                    // Subset named args are `ASSIGNMENT_EXPR` nodes, never the
-                    // raw value-less `name =` token shape this flag tracks.
-                    ends_with_eq: false,
+                    ends_with_eq,
                 }
             }
             None if lead.is_empty() => ArgSlot::Empty,
@@ -543,11 +543,12 @@ fn collect_subset_ir_slots(
                     }
                     has_comment_only = true;
                 } else {
-                    let (ir, node, prefixed) = ir_subset_argument(&arg_elements, indent, ctx)?;
+                    let (ir, node, prefixed, ends_with_eq) =
+                        ir_subset_argument(&arg_elements, indent, ctx)?;
                     if prefixed {
                         has_comment_prefixed = true;
                     }
-                    expr = Some((ir, node));
+                    expr = Some((ir, node, ends_with_eq));
                 }
             }
             NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMA => {
@@ -575,11 +576,14 @@ fn collect_subset_ir_slots(
 
 /// IR counterpart of [`format_subset_argument`]: the argument expression, the
 /// significant node (if any), and whether a leading comment prefixes it.
+/// Build IR for one subset argument. Returns the argument IR, the significant
+/// value node (if any), whether a leading comment prefixes it, and whether it is
+/// a value-less named arg (`name =`).
 fn ir_subset_argument(
     elements: &[SyntaxElement<RLanguage>],
     indent: usize,
     ctx: FormatContext,
-) -> Result<(Ir, Option<SyntaxNode>, bool), FormatError> {
+) -> Result<(Ir, Option<SyntaxNode>, bool, bool), FormatError> {
     let expr_start = elements.iter().position(|el| {
         !matches!(el, NodeOrToken::Token(tok) if matches!(
             tok.kind(),
@@ -591,11 +595,8 @@ fn ir_subset_argument(
             ir_expr_segment(elements, "subset argument", indent, ctx)?,
             None,
             false,
+            false,
         ));
-    };
-    let expr_node = match &elements[expr_start] {
-        NodeOrToken::Node(n) => Some(n.clone()),
-        NodeOrToken::Token(_) => None,
     };
     let leading_comments: Vec<String> = elements[..expr_start]
         .iter()
@@ -606,22 +607,70 @@ fn ir_subset_argument(
             _ => None,
         })
         .collect();
+
+    // Named subscript argument `name = value`: like a call argument, these are
+    // flat tokens (not an `ASSIGNMENT_EXPR`), so split on `=`. `expr_node` points
+    // at the value so a `name = { ... }` arg still hugs as a trailing block.
+    let eq_idx = elements[expr_start..]
+        .iter()
+        .position(|el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::ASSIGN_EQ))
+        .map(|rel| expr_start + rel);
+
+    let (body_ir, expr_node, ends_with_eq) = if let Some(eq_idx) = eq_idx {
+        let (name_ir, name_empty) = ir_arg_side(
+            &elements[expr_start..eq_idx],
+            "named subset arg name",
+            indent,
+            ctx,
+        )?;
+        let value_elements = &elements[eq_idx + 1..];
+        let value_significant: Vec<_> = value_elements
+            .iter()
+            .filter(|el| !is_trivia(el.kind()))
+            .cloned()
+            .collect();
+        let value_node = single_node(&value_significant);
+        let value_ir = if value_significant.is_empty() {
+            None
+        } else if let Some(curly) = ir_curly_curly(&value_significant, indent, ctx)? {
+            Some(curly)
+        } else {
+            Some(ir_expr_segment(
+                value_elements,
+                "named subset arg value",
+                indent,
+                ctx,
+            )?)
+        };
+        let ends_with_eq = value_significant.is_empty();
+        (
+            build_named_arg_ir(name_ir, name_empty, value_ir),
+            value_node,
+            ends_with_eq,
+        )
+    } else {
+        let expr_node = match &elements[expr_start] {
+            NodeOrToken::Node(n) => Some(n.clone()),
+            NodeOrToken::Token(_) => None,
+        };
+        let ir = if leading_comments.is_empty() {
+            ir_expr_segment(elements, "subset argument", indent, ctx)?
+        } else {
+            ir_expr_with_optional_comment(&elements[expr_start..], "subset argument", indent, ctx)?
+        };
+        (ir, expr_node, false)
+    };
+
     if leading_comments.is_empty() {
-        return Ok((
-            ir_expr_segment(elements, "subset argument", indent, ctx)?,
-            expr_node,
-            false,
-        ));
+        return Ok((body_ir, expr_node, false, ends_with_eq));
     }
-    let expr_ir =
-        ir_expr_with_optional_comment(&elements[expr_start..], "subset argument", indent, ctx)?;
     let mut parts: Vec<Ir> = Vec::new();
     for comment in &leading_comments {
         parts.push(Ir::verbatim_forced(comment.clone()));
         parts.push(Ir::hard_line());
     }
-    parts.push(expr_ir);
-    Ok((Ir::concat(parts), expr_node, true))
+    parts.push(body_ir);
+    Ok((Ir::concat(parts), expr_node, true, ends_with_eq))
 }
 
 fn build_subset_args_ir(data: &ArgSlots, open: &str, close: &str) -> Ir {

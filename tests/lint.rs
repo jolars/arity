@@ -58,6 +58,60 @@ fn lint_flags_unused_binding() {
 }
 
 #[test]
+fn reassigned_binding_read_after_each_assignment_is_not_unused() {
+    // A name assigned twice in one scope, with a read after each assignment, is
+    // used both times. The later binding's read must resolve to it, not to the
+    // first binding — otherwise the reassignment is a false unused-binding.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("reassign.R");
+    std::fs::write(
+        &path,
+        "f <- function() {\n  fit <- one()\n  use(fit)\n  fit <- two()\n  use(fit)\n}\nf()\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "reassign.R").contains(&"unused-binding"),
+        "reassign.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn s3method_registration_is_not_unused() {
+    // S3 methods registered via `S3method(generic, class)` are public API; the
+    // bound `generic.class` function must not be flagged unused even though
+    // nothing in the package reads it directly.
+    let result = lint_package(
+        "S3method(coef, SLOPE)\n",
+        "coef.SLOPE <- function(object, ...) object$coefficients\n",
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn named_subscript_argument_is_not_a_binding() {
+    // `drop = FALSE` inside `[` is a named argument to the subset operator, not
+    // a local assignment — it must not be reported as an unused binding.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("subset.R");
+    std::fs::write(&path, "f <- function(x, i) x[i, , drop = FALSE]\nf(1, 2)\n")
+        .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "subset.R").contains(&"unused-binding"),
+        "subset.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
 fn package_resolves_bindings_across_files() {
     // A package shares one namespace across R/*.R: `foo` defined in a.R both
     // resolves from b.R (no undefined-symbol) and counts as used (no

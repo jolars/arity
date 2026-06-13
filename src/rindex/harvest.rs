@@ -269,6 +269,20 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
             "export" | "exportMethods" | "exportClasses" => {
                 info.exports.extend(directive.args);
             }
+            "S3method" => {
+                // `S3method(generic, class)` registers the method `generic.class`;
+                // the three-arg form `S3method(generic, class, method)` binds the
+                // explicitly named `method` instead.
+                match directive.args.as_slice() {
+                    [_, _, method] => {
+                        info.exports.insert(method.clone());
+                    }
+                    [generic, class] => {
+                        info.exports.insert(format!("{generic}.{class}"));
+                    }
+                    _ => {}
+                }
+            }
             "exportPattern" | "exportClassPattern" => {
                 for arg in directive.args {
                     if let Some(re) = compile_r_pattern(&arg) {
@@ -339,6 +353,7 @@ const RECOGNIZED: &[&str] = &[
     "export",
     "importFrom",
     "import",
+    "S3method",
 ];
 
 impl<'a> NamespaceDirectives<'a> {
@@ -633,9 +648,31 @@ mod tests {
         assert!(exports.contains(&"foo".to_string()));
         assert!(exports.contains(&"bar".to_string()));
         assert!(exports.contains(&"show".to_string()));
-        // S3method is not a bare export.
+        // `S3method(generic, class)` registers the method `generic.class`, not
+        // the generic or class names on their own.
+        assert!(exports.contains(&"print.baz".to_string()));
         assert!(!exports.contains(&"print".to_string()));
         assert!(!exports.contains(&"baz".to_string()));
+    }
+
+    #[test]
+    fn s3method_registers_dotted_method_name() {
+        let ns = r#"
+            S3method(coef, SLOPE)
+            S3method(predict, "GaussianSLOPE")
+        "#;
+        let exports = resolve_exports(ns, &[]);
+        assert!(exports.contains(&"coef.SLOPE".to_string()));
+        assert!(exports.contains(&"predict.GaussianSLOPE".to_string()));
+    }
+
+    #[test]
+    fn s3method_three_arg_form_uses_explicit_method() {
+        // `S3method(generic, class, method)` binds `method`, not `generic.class`.
+        let ns = "S3method(print, foo, print_foo_impl)\n";
+        let exports = resolve_exports(ns, &[]);
+        assert!(exports.contains(&"print_foo_impl".to_string()));
+        assert!(!exports.contains(&"print.foo".to_string()));
     }
 
     #[test]

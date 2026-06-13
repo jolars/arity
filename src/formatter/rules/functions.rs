@@ -248,7 +248,7 @@ fn value_node_is_named_arg(node: &SyntaxNode) -> bool {
 /// Returns `None` for any other shape (`{{ 1 }}`, `{{ (x) }}`, multi-statement,
 /// ...), which then formats as ordinary nested blocks. Comment-bearing forms
 /// never reach here — they route to the legacy renderer via [`call_needs_legacy`].
-fn ir_curly_curly(
+pub(crate) fn ir_curly_curly(
     significant: &[SyntaxElement<RLanguage>],
     indent: usize,
     ctx: FormatContext,
@@ -492,7 +492,7 @@ fn ir_call_argument(
     })
 }
 
-fn single_node(significant: &[SyntaxElement<RLanguage>]) -> Option<SyntaxNode> {
+pub(crate) fn single_node(significant: &[SyntaxElement<RLanguage>]) -> Option<SyntaxNode> {
     match significant {
         [NodeOrToken::Node(n)] => Some(n.clone()),
         _ => None,
@@ -500,7 +500,7 @@ fn single_node(significant: &[SyntaxElement<RLanguage>]) -> Option<SyntaxNode> {
 }
 
 /// Format one side of a named argument; reports whether it was empty.
-fn ir_arg_side(
+pub(crate) fn ir_arg_side(
     elements: &[SyntaxElement<RLanguage>],
     context: &'static str,
     indent: usize,
@@ -518,7 +518,7 @@ fn ir_arg_side(
 /// `name = value`, with the spacing for the value-less variants
 /// (`name = `, `= value`, `=`). A value-less named arg keeps the trailing
 /// space after `=` (`fn(NULL = )`), matching air.
-fn build_named_arg_ir(name_ir: Ir, name_empty: bool, value_ir: Option<Ir>) -> Ir {
+pub(crate) fn build_named_arg_ir(name_ir: Ir, name_empty: bool, value_ir: Option<Ir>) -> Ir {
     match (name_empty, value_ir) {
         (false, Some(value)) => Ir::concat([name_ir, Ir::text(" = "), value]),
         (false, None) => Ir::concat([name_ir, Ir::text(" =")]),
