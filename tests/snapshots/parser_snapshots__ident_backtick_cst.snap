@@ -1,0 +1,64 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..101
+  ASSIGNMENT_EXPR@0..8
+    IDENT@0..3 "`x`"
+    WHITESPACE@3..4 " "
+    ASSIGN_LEFT@4..6 "<-"
+    WHITESPACE@6..7 " "
+    INT@7..8 "1"
+  NEWLINE@8..9 "\n"
+  ASSIGNMENT_EXPR@9..22
+    IDENT@9..17 "`my var`"
+    WHITESPACE@17..18 " "
+    ASSIGN_LEFT@18..20 "<-"
+    WHITESPACE@20..21 " "
+    INT@21..22 "2"
+  NEWLINE@22..23 "\n"
+  CALL_EXPR@23..53
+    IDENT@23..28 ".Call"
+    LPAREN@28..29 "("
+    ARG_LIST@29..52
+      ARG@29..41
+        IDENT@29..41 "`_SLOPE_foo`"
+      COMMA@41..42 ","
+      WHITESPACE@42..43 " "
+      ARG@43..44
+        IDENT@43..44 "x"
+      COMMA@44..45 ","
+      WHITESPACE@45..46 " "
+      ARG@46..52
+        IDENT@46..52 "lambda"
+    RPAREN@52..53 ")"
+  NEWLINE@53..54 "\n"
+  CALL_EXPR@54..68
+    IDENT@54..62 "`my fun`"
+    LPAREN@62..63 "("
+    ARG_LIST@63..67
+      ARG@63..64
+        INT@63..64 "1"
+      COMMA@64..65 ","
+      WHITESPACE@65..66 " "
+      ARG@66..67
+        INT@66..67 "2"
+    RPAREN@67..68 ")"
+  NEWLINE@68..69 "\n"
+  BINARY_EXPR@69..84
+    IDENT@69..71 "df"
+    DOLLAR@71..72 "$"
+    IDENT@72..84 "`weird name`"
+  NEWLINE@84..85 "\n"
+  CALL_EXPR@85..100
+    IDENT@85..89 "list"
+    LPAREN@89..90 "("
+    ARG_LIST@90..99
+      ARG@90..99
+        IDENT@90..95 "`a b`"
+        WHITESPACE@95..96 " "
+        ASSIGN_EQ@96..97 "="
+        WHITESPACE@97..98 " "
+        INT@98..99 "1"
+    RPAREN@99..100 ")"
+  NEWLINE@100..101 "\n"

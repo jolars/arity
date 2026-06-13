@@ -299,6 +299,32 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     end: i,
                 });
             }
+            '`' => {
+                // Backtick-quoted (non-syntactic) names are identifiers in every
+                // position a bare name can appear, so lex them as `Ident` with
+                // the backticks kept in the text. Backslash escapes are honored,
+                // mirroring the string lexer; an unterminated name runs to EOF so
+                // losslessness still holds.
+                let start = i;
+                i += 1;
+                while i < bytes.len() {
+                    let ch = bytes[i] as char;
+                    if ch == '\\' && i + 1 < bytes.len() {
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    if ch == '`' {
+                        break;
+                    }
+                }
+                out.push(Token {
+                    kind: TokKind::Ident,
+                    text: input[start..i].to_string(),
+                    start,
+                    end: i,
+                });
+            }
             _ => {
                 if c.is_ascii_whitespace() {
                     let start = i;
@@ -384,6 +410,29 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                         let start = i;
                         i += 3;
                         while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                            i += 1;
+                        }
+                        out.push(Token {
+                            kind: TokKind::Ident,
+                            text: input[start..i].to_string(),
+                            start,
+                            end: i,
+                        });
+                        continue;
+                    }
+
+                    // Any remaining dot run not immediately followed by a digit is
+                    // an identifier: `.`, `..`, and `..name` are all valid R names
+                    // (the `.()` in bquote, the magrittr `.`, etc.). A dot followed
+                    // by a digit (`.5`) is a numeric literal handled below.
+                    if !(i + 1 < bytes.len() && (bytes[i + 1] as char).is_ascii_digit()) {
+                        let start = i;
+                        i += 1;
+                        while i < bytes.len() {
+                            let ch = bytes[i] as char;
+                            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
+                                break;
+                            }
                             i += 1;
                         }
                         out.push(Token {
@@ -1009,6 +1058,31 @@ mod tests {
         assert_eq!(sig[5].kind, TokKind::Star);
         assert_eq!(sig[5].text, "*");
         assert_eq!(sig[6].kind, TokKind::Int);
+    }
+
+    #[test]
+    fn lexes_backtick_quoted_names_as_ident_tokens() {
+        let tokens = lex("`a b` <- `_x`(`if`)");
+        let sig: Vec<_> = tokens
+            .into_iter()
+            .filter(|t| !matches!(t.kind, TokKind::Whitespace))
+            .collect();
+        assert_eq!(sig[0].kind, TokKind::Ident);
+        assert_eq!(sig[0].text, "`a b`");
+        assert_eq!(sig[1].kind, TokKind::AssignLeft);
+        assert_eq!(sig[2].kind, TokKind::Ident);
+        assert_eq!(sig[2].text, "`_x`");
+        // A backtick name spelled like a keyword stays an identifier.
+        assert_eq!(sig[4].kind, TokKind::Ident);
+        assert_eq!(sig[4].text, "`if`");
+    }
+
+    #[test]
+    fn lexes_unterminated_backtick_name_to_end_of_input() {
+        let tokens = lex("`oops");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokKind::Ident);
+        assert_eq!(tokens[0].text, "`oops");
     }
 
     #[test]

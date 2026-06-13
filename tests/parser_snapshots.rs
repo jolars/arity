@@ -75,6 +75,8 @@ fn fixture_names() -> &'static [&'static str] {
         "expr_separators_tokens",
         "expr_unary",
         "expr_dotted_ident",
+        "ident_backtick",
+        "ident_bare_dot",
         "expr_missing_rhs",
         "expr_unexpected_prefix_op",
         "if_simple",

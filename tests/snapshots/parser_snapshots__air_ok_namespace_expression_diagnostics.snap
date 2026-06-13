@@ -2,15 +2,4 @@
 source: tests/parser_snapshots.rs
 expression: "format!(\"{:#?}\", output.diagnostics)"
 ---
-[
-    ParseDiagnostic {
-        message: "expected right-hand side for binary operator",
-        start: 13,
-        end: 15,
-    },
-    ParseDiagnostic {
-        message: "expected right-hand side for binary operator",
-        start: 20,
-        end: 23,
-    },
-]
+[]

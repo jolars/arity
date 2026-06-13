@@ -14,20 +14,16 @@ ROOT@0..114
     IDENT@6..7 "b"
   NEWLINE@7..8 "\n"
   NEWLINE@8..9 "\n"
-  ERROR@9..15
+  BINARY_EXPR@9..14
     IDENT@9..10 "a"
     DOLLAR@10..11 "$"
-    ERROR@11..12 "`"
-    IDENT@12..13 "b"
-    ERROR@13..14 "`"
-    NEWLINE@14..15 "\n"
-  ERROR@15..21
+    IDENT@11..14 "`b`"
+  NEWLINE@14..15 "\n"
+  BINARY_EXPR@15..20
     IDENT@15..16 "a"
     AT@16..17 "@"
-    ERROR@17..18 "`"
-    IDENT@18..19 "b"
-    ERROR@19..20 "`"
-    NEWLINE@20..21 "\n"
+    IDENT@17..20 "`b`"
+  NEWLINE@20..21 "\n"
   NEWLINE@21..22 "\n"
   BINARY_EXPR@22..27
     IDENT@22..23 "a"
