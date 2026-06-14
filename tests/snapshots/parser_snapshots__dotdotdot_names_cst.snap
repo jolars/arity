@@ -1,0 +1,50 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..74
+  CALL_EXPR@0..11
+    IDENT@0..9 "...length"
+    LPAREN@9..10 "("
+    ARG_LIST@10..10
+    RPAREN@10..11 ")"
+  NEWLINE@11..12 "\n"
+  CALL_EXPR@12..21
+    IDENT@12..18 "...elt"
+    LPAREN@18..19 "("
+    ARG_LIST@19..20
+      ARG@19..20
+        INT@19..20 "1"
+    RPAREN@20..21 ")"
+  NEWLINE@21..22 "\n"
+  CALL_EXPR@22..32
+    IDENT@22..30 "...names"
+    LPAREN@30..31 "("
+    ARG_LIST@31..31
+    RPAREN@31..32 ")"
+  NEWLINE@32..33 "\n"
+  CALL_EXPR@33..42
+    IDENT@33..37 "list"
+    LPAREN@37..38 "("
+    ARG_LIST@38..41
+      ARG@38..41
+        IDENT@38..41 "..."
+    RPAREN@41..42 ")"
+  NEWLINE@42..43 "\n"
+  ASSIGNMENT_EXPR@43..73
+    IDENT@43..44 "f"
+    WHITESPACE@44..45 " "
+    ASSIGN_LEFT@45..47 "<-"
+    WHITESPACE@47..48 " "
+    FUNCTION_EXPR@48..73
+      FUNCTION_KW@48..56 "function"
+      LPAREN@56..57 "("
+      IDENT@57..60 "..."
+      RPAREN@60..61 ")"
+      WHITESPACE@61..62 " "
+      CALL_EXPR@62..73
+        IDENT@62..71 "...length"
+        LPAREN@71..72 "("
+        ARG_LIST@72..72
+        RPAREN@72..73 ")"
+  NEWLINE@73..74 "\n"

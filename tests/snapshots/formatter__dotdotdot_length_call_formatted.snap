@@ -1,0 +1,8 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+f <- function(...) {
+  n <- ...length()
+  n
+}

@@ -393,13 +393,26 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                         && (bytes[i + 1] as char) == '.'
                         && (bytes[i + 2] as char) == '.'
                     {
+                        // `...` is the dots special, but it can also be the start
+                        // of a longer name (`...length`, `...elt`, `...names` are
+                        // base-R functions). Consume any trailing name characters
+                        // so the whole symbol lexes as one identifier; with none,
+                        // the text is just `...`.
+                        let start = i;
+                        i += 3;
+                        while i < bytes.len() {
+                            let ch = bytes[i] as char;
+                            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
+                                break;
+                            }
+                            i += 1;
+                        }
                         out.push(Token {
                             kind: TokKind::Ident,
-                            text: "...".to_string(),
-                            start: i,
-                            end: i + 3,
+                            text: input[start..i].to_string(),
+                            start,
+                            end: i,
                         });
-                        i += 3;
                         continue;
                     }
 
