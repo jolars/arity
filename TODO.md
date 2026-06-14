@@ -171,6 +171,17 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       index keys on *name*, so a sibling file that redefines the same top-level
       name is rewritten too. Still open: backtick-quoting of non-syntactic names,
       and renaming package-qualified names.
+- [ ] **Revisit: cross-file rename is name-keyed, not binding-aware.**
+      `rename_via_db` rewrites every workspace site of the *name* (mirroring
+      cross-file references), so a sibling file that independently redefines the
+      same top-level name is renamed along with the intended target --- a false
+      positive when the two are unrelated bindings. This is inherited from the
+      `project_defs`/`project_reads` reverse index, which is range-free and
+      name-only. Decide whether rename should be *stricter* than references here:
+      respect package/`source()` scope visibility (`ProjectScope` already models
+      it) so only sites that can actually see the renamed definition are touched,
+      and/or surface a conflict when a name is defined in more than one place.
+      Tracked separately because it also affects cross-file references.
 - [ ] **File rename** (`workspace/willRenameFiles` / `workspace/didRenameFiles`,
       advertised via `fileOperations` server capability). On an `.R` file move,
       rewrite `source("old/path.R")` string literals in dependents to the new
