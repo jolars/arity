@@ -1,0 +1,299 @@
+name: Smoke Test
+
+# Weekly Tier 0 corpus smoke test: clone a set of real R package repos, format
+# every .R file with arity, and assert losslessness + idempotence on each (the
+# `corpus` integration test). Regressions are filed as deduped GitHub issues.
+#
+# It does NOT check semantic preservation (that formatted code means the same);
+# that needs a trivia-stripped AST comparison and is deferred.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Sunday 04:00 UTC.
+    - cron: "0 4 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  corpus-scan:
+    name: Scan R Package Corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      failure_count: ${{ steps.summarize.outputs.failure_count }}
+    env:
+      # One `owner/repo` per line. Shallow-cloned at HEAD; the resolved SHA is
+      # recorded per failure for reproduction.
+      TARGET_REPOS: |
+        tidyverse/dplyr
+        tidyverse/ggplot2
+        tidyverse/tidyr
+        tidyverse/purrr
+        tidyverse/stringr
+        r-lib/rlang
+        r-lib/cli
+        r-lib/vctrs
+        r-lib/withr
+        r-lib/scales
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clone corpus and run smoke test
+        id: scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESULTS_DIR="$RUNNER_TEMP/arity-corpus-scan"
+          CORPUS_DIR="$RUNNER_TEMP/arity-corpus-repos"
+          mkdir -p "$RESULTS_DIR" "$CORPUS_DIR"
+
+          MANIFEST="$RESULTS_DIR/manifest.tsv"
+          RAW="$RESULTS_DIR/raw_failures.tsv"
+          FAILURES_TSV="$RESULTS_DIR/failures.tsv"
+
+          ARITY_SHA="$(git rev-parse HEAD)"
+          ARITY_VERSION="$(awk -F '"' '/^version = /{print $2; exit}' Cargo.toml)"
+
+          # Clone each repo, recording (dir_name, repo, sha).
+          : > "$MANIFEST"
+          while IFS= read -r repo; do
+            [ -z "$repo" ] && continue
+            dir_name="${repo//\//__}"
+            git clone --depth 1 "https://github.com/${repo}.git" "$CORPUS_DIR/$dir_name"
+            sha="$(git -C "$CORPUS_DIR/$dir_name" rev-parse HEAD)"
+            printf '%s\t%s\t%s\n' "$dir_name" "$repo" "$sha" >> "$MANIFEST"
+          done <<< "$TARGET_REPOS"
+
+          # Run the smoke test in CI mode: it writes a failure report and exits 0
+          # even on regressions, so this step stays green and the issue job runs.
+          ARITY_CORPUS="$CORPUS_DIR" ARITY_CORPUS_REPORT="$RAW" \
+            cargo test --release --test corpus -- --ignored --nocapture
+
+          # Enrich the raw report (relative-key \t category \t message) with the
+          # repo/sha each file came from, for issue creation.
+          printf 'repo\tfailure_type\tfile\tdetail\trepo_sha\tarity_sha\tarity_version\n' > "$FAILURES_TSV"
+          if [ -s "$RAW" ]; then
+            declare -A REPO_OF SHA_OF
+            while IFS=$'\t' read -r dir_name repo sha; do
+              [ -z "$dir_name" ] && continue
+              REPO_OF["$dir_name"]="$repo"
+              SHA_OF["$dir_name"]="$sha"
+            done < "$MANIFEST"
+
+            while IFS=$'\t' read -r key ftype detail; do
+              [ -z "$key" ] && continue
+              dir_name="${key%%/*}"
+              rel="${key#*/}"
+              printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "${REPO_OF[$dir_name]:-$dir_name}" \
+                "$ftype" \
+                "$rel" \
+                "$detail" \
+                "${SHA_OF[$dir_name]:-}" \
+                "$ARITY_SHA" \
+                "$ARITY_VERSION" \
+                >> "$FAILURES_TSV"
+            done < "$RAW"
+          fi
+
+      - name: Summarize scan results
+        id: summarize
+        shell: bash
+        run: |
+          set -euo pipefail
+          FAILURES_TSV="$RUNNER_TEMP/arity-corpus-scan/failures.tsv"
+          failure_count="$(($(wc -l < "$FAILURES_TSV") - 1))"
+          [ "$failure_count" -lt 0 ] && failure_count=0
+
+          echo "failure_count=$failure_count" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Arity corpus smoke test"
+            echo ""
+            echo "- Failure records: $failure_count"
+            if [ "$failure_count" -gt 0 ]; then
+              echo ""
+              echo "| repo | category | file |"
+              echo "| --- | --- | --- |"
+              tail -n +2 "$FAILURES_TSV" \
+                | awk -F '\t' '{printf "| %s | %s | `%s` |\n", $1, $2, $3}'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scan results artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: corpus-scan-results
+          path: ${{ runner.temp }}/arity-corpus-scan
+          if-no-files-found: error
+
+  corpus-issues:
+    name: Track Regression Issues
+    needs: corpus-scan
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Download scan results artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: corpus-scan-results
+          path: ${{ runner.temp }}/arity-corpus-scan
+
+      - name: Create or update regression issues
+        if: needs.corpus-scan.outputs.failure_count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          FAILURES_TSV="$RUNNER_TEMP/arity-corpus-scan/failures.tsv"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          existing_labels="$(gh label list --repo "$GITHUB_REPOSITORY" --limit 500 --json name --jq '.[].name')"
+
+          has_label() { grep -Fxq "$1" <<< "$existing_labels"; }
+          ensure_label() {
+            local name="$1" color="$2" desc="$3"
+            has_label "$name" && return 0
+            if gh label create "$name" --repo "$GITHUB_REPOSITORY" --color "$color" --description "$desc" >/dev/null 2>&1; then
+              existing_labels+=$'\n'"$name"
+            else
+              echo "warning: could not create label '$name'"
+            fi
+          }
+
+          # One issue per (repo, failure_type) pair.
+          tail -n +2 "$FAILURES_TSV" | awk -F '\t' '{print $1 "\t" $2}' | sort -u \
+          | while IFS=$'\t' read -r repo failure_type; do
+            [ -z "$repo" ] || [ -z "$failure_type" ] && continue
+
+            marker="arity-corpus-key:repo=${repo};type=${failure_type}"
+            title="CI: corpus regression in ${repo} (${failure_type})"
+            count="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {c++} END{print c+0}' "$FAILURES_TSV")"
+            samples="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {printf "- `%s`\n", $3; c++; if (c==10) exit}' "$FAILURES_TSV")"
+            repo_sha="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {print $5; exit}' "$FAILURES_TSV")"
+            arity_sha="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {print $6; exit}' "$FAILURES_TSV")"
+            arity_version="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {print $7; exit}' "$FAILURES_TSV")"
+
+            body_file="$RUNNER_TEMP/issue-body.md"
+            {
+              echo "<!-- $marker -->"
+              echo "# Corpus smoke-test regression"
+              echo ""
+              echo "- Target repository: \`$repo\`"
+              echo "- Failure category: \`$failure_type\`"
+              echo "- Failure records in this run: $count"
+              echo "- Workflow run: $RUN_URL"
+              [ -n "$repo_sha" ] && echo "- Target repository commit: \`$repo_sha\`"
+              [ -n "$arity_version" ] && echo "- Arity version: \`$arity_version\`"
+              [ -n "$arity_sha" ] && echo "- Arity commit: \`$arity_sha\`"
+              echo ""
+              echo "Sample files:"
+              echo "$samples"
+              echo ""
+              echo "Reproduce locally:"
+              echo ""
+              echo '```bash'
+              echo "git clone https://github.com/$repo.git"
+              echo "cd $(basename "$repo") && git checkout ${repo_sha:-HEAD}"
+              echo "# losslessness: arity parse --verify <FILE>"
+              echo "# idempotence:  arity format --verify <FILE>"
+              echo '```'
+              echo ""
+              echo "See the \`corpus-scan-results\` artifact for the full failure list."
+            } > "$body_file"
+
+            export ISSUE_TITLE="$title"
+            issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
+              --json number,title --jq '.[] | select(.title == env.ISSUE_TITLE) | .number' | head -n 1)"
+
+            if [ -n "$issue_number" ]; then
+              gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+            else
+              ensure_label "ci" "0366D6" "Continuous integration"
+              ensure_label "smoke-test" "5319E7" "Corpus smoke-test regressions"
+              case "$failure_type" in
+                idempotence) color="B60205" ;;
+                losslessness) color="D93F0B" ;;
+                panic) color="E11D21" ;;
+                *) color="6E7781" ;;
+              esac
+              ensure_label "$failure_type" "$color" "Corpus smoke-test failure category"
+
+              label_args=()
+              for label in "ci" "smoke-test" "$failure_type"; do
+                has_label "$label" && label_args+=(--label "$label")
+              done
+
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" \
+                "${label_args[@]}" --body-file "$body_file"
+            fi
+          done
+
+      - name: Comment on issues that no longer reproduce
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          FAILURES_TSV="$RUNNER_TEMP/arity-corpus-scan/failures.tsv"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # Markers that DID fail this run (skip these — handled above).
+          current_keys="$RUNNER_TEMP/current-keys.txt"
+          : > "$current_keys"
+          if [ -f "$FAILURES_TSV" ]; then
+            tail -n +2 "$FAILURES_TSV" \
+              | awk -F '\t' 'NF>=2 && $1!="" && $2!="" {printf "arity-corpus-key:repo=%s;type=%s\n", $1, $2}' \
+              | sort -u > "$current_keys"
+          fi
+
+          open_issues_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search 'in:body "arity-corpus-key:"' --limit 500 --json number,body)"
+
+          echo "$open_issues_json" | jq -c '.[]' | while IFS= read -r issue; do
+            number="$(jq -r '.number' <<< "$issue")"
+            body="$(jq -r '.body' <<< "$issue")"
+            marker="$(grep -Eo 'arity-corpus-key:repo=[^;]+;type=[^[:space:]<>]+' <<< "$body" | head -n 1 || true)"
+            [ -z "$marker" ] && continue
+            grep -Fxq "$marker" "$current_keys" && continue
+
+            # Don't repeat a green note if the last comment already is one.
+            latest="$(gh issue view "$number" --repo "$GITHUB_REPOSITORY" --json comments \
+              --jq '.comments | last | .body // ""')"
+            grep -Fq 'No longer reproducing' <<< "$latest" && continue
+
+            comment_file="$RUNNER_TEMP/green-comment.md"
+            {
+              echo "No longer reproducing in the latest scan."
+              echo ""
+              echo "- Marker: \`$marker\`"
+              echo "- Workflow run: $RUN_URL"
+              echo ""
+              echo "If this stays green over the next few weekly scans, this issue can be closed."
+            } > "$comment_file"
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$comment_file"
+          done
+
+      - name: Fail workflow when regressions are detected
+        if: needs.corpus-scan.outputs.failure_count != '0'
+        shell: bash
+        run: |
+          echo "Corpus smoke-test regressions detected: ${{ needs.corpus-scan.outputs.failure_count }}"
+          exit 1

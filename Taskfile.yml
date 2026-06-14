@@ -41,6 +41,11 @@ tasks:
     cmds:
       - cargo test --test air_compat -- --ignored --nocapture
 
+  corpus:
+    desc: Tier 0 corpus smoke test (losslessness + idempotence; set ARITY_CORPUS)
+    cmds:
+      - cargo test --test corpus -- --ignored --nocapture
+
   bench:
     desc: Benchmark formatter speed vs. air on large files (writes BENCH.md)
     cmds:
