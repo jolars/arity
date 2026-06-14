@@ -66,6 +66,7 @@ fn fixture_names() -> &'static [&'static str] {
         "air_value_string_value",
         "air_while_statement",
         "assignment_precedence",
+        "assignment_walrus",
         "assignment_rhs_breaks_before_lhs_subset",
         "if_else_block",
         "if_else_if_chain",

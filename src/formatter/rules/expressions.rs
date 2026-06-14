@@ -67,6 +67,7 @@ pub(crate) fn ir_assignment_expr(
                             | SyntaxKind::ASSIGN_RIGHT
                             | SyntaxKind::SUPER_ASSIGN_RIGHT
                             | SyntaxKind::ASSIGN_EQ
+                            | SyntaxKind::WALRUS
                     )
             )
         })
