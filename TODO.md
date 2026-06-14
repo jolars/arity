@@ -163,10 +163,14 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       def + all in-scope reads into a `WorkspaceEdit`, validate the new name
       against R's syntactic identifier rules (`is_syntactic_r_name`), and anchor
       the prepare→rename handshake on a `NodePtr` so it survives an edit (see the
-      cross-edit references prerequisite above). Still open: backtick-quoting of
-      non-syntactic names; renaming an exported/`source()`-d name cross-file
-      (rides the same reverse index as cross-file references and must edit every
-      dependent file atomically); and renaming package-qualified names.
+      cross-edit references prerequisite above). Cross-file rename has landed
+      (`src/lsp.rs` `rename_via_db`): a file-scope binding's reads (and a bare
+      workspace free read's def + reads) are gathered off the same reverse index
+      as cross-file references (`workspace_read_sites`/`workspace_def_sites`) and
+      returned as one multi-URI `WorkspaceEdit`. Like cross-file references, the
+      index keys on *name*, so a sibling file that redefines the same top-level
+      name is rewritten too. Still open: backtick-quoting of non-syntactic names,
+      and renaming package-qualified names.
 - [ ] **File rename** (`workspace/willRenameFiles` / `workspace/didRenameFiles`,
       advertised via `fileOperations` server capability). On an `.R` file move,
       rewrite `source("old/path.R")` string literals in dependents to the new

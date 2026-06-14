@@ -381,6 +381,19 @@ enum ReadJob {
         include_declaration: bool,
         sender: Sender<Message>,
     },
+    Rename {
+        id: RequestId,
+        path: PathBuf,
+        /// In-file edits land in this URI; cross-file edits carry their own.
+        uri: Uri,
+        text: String,
+        /// The cursor's byte offset, already resolved on the main thread (via the
+        /// `prepareRename` anchor when present, else the request position) so the
+        /// anchor state never crosses the thread boundary.
+        offset: usize,
+        new_name: String,
+        sender: Sender<Message>,
+    },
 }
 
 /// Messages from the lint thread back to the main loop.
@@ -747,10 +760,13 @@ impl GlobalState {
         }
     }
 
-    /// `textDocument/rename`: build an intra-file [`WorkspaceEdit`] renaming the
-    /// binding under the cursor. Prefers the stored `prepareRename` anchor (so the
-    /// rename targets the same binding even if the buffer was edited since
-    /// prepare), falling back to the request's position.
+    /// `textDocument/rename`: build a [`WorkspaceEdit`] renaming the binding under
+    /// the cursor and every dependent read of it across the workspace. The cursor
+    /// offset is resolved here on the main thread — preferring the stored
+    /// `prepareRename` anchor (so the rename targets the same binding even if the
+    /// buffer was edited since prepare), falling back to the request's position —
+    /// so only a plain offset crosses to the read pool, where [`rename_via_db`]
+    /// gathers the cross-file edits off a db snapshot.
     fn on_rename(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) = req.extract::<RenameParams>(Rename::METHOD) else {
@@ -765,28 +781,27 @@ impl GlobalState {
             return;
         };
 
-        let anchored = self
+        let offset = self
             .rename_anchors
             .get(&uri)
-            .and_then(|anchor| compute_rename_with_anchor(&text, anchor, &new_name));
-        let edits = anchored.or_else(|| {
-            let line_index = LineIndex::new(&text);
-            let offset = line_index.position_to_byte(position).min(text.len());
-            compute_rename(&text, offset, &new_name)
-        });
+            .and_then(|anchor| rename_cursor_offset(&text, anchor))
+            .unwrap_or_else(|| {
+                let line_index = LineIndex::new(&text);
+                line_index.position_to_byte(position).min(text.len())
+            });
         // A rename consumes its anchor; a fresh prepare precedes any next rename.
         self.rename_anchors.remove(&uri);
 
-        match edits {
-            Some(edits) if !edits.is_empty() => {
-                let workspace_edit = WorkspaceEdit {
-                    changes: Some(HashMap::from([(uri, edits)])),
-                    ..Default::default()
-                };
-                self.respond_ok(id, serde_json::to_value(workspace_edit).unwrap_or_default());
-            }
-            _ => self.respond_err(id, "rename is not available here"),
-        }
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::Rename {
+            id,
+            path,
+            uri,
+            text,
+            offset,
+            new_name,
+            sender: self.sender.clone(),
+        });
     }
 
     /// Hand a read-only job to the lint thread (db owner), which snapshots the db
@@ -800,6 +815,7 @@ impl GlobalState {
                 ReadJob::Hover { id, sender, .. } => (id, sender),
                 ReadJob::Definition { id, sender, .. } => (id, sender),
                 ReadJob::References { id, sender, .. } => (id, sender),
+                ReadJob::Rename { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
                 id,
@@ -1457,6 +1473,18 @@ fn run_read(snapshot: Analysis, job: ReadJob) {
                 references_via_db(&snapshot, &path, &uri, &text, position, include_declaration);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
+        ReadJob::Rename {
+            id,
+            path,
+            uri,
+            text,
+            offset,
+            new_name,
+            sender,
+        } => {
+            let result = rename_via_db(&snapshot, &path, &uri, &text, offset, &new_name);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
     }
 }
 
@@ -1724,6 +1752,127 @@ fn location_in(snapshot: &Analysis, path: &Path, range: TextRange) -> Option<Loc
     Some(Location {
         uri: target_uri,
         range: text_range_to_lsp_range(&target_index, range),
+    })
+}
+
+/// The [`TextEdit`] rewriting `range` to `new_name` in the workspace file at
+/// `path`, paired with that file's URI. The write mirror of [`location_in`]: the
+/// byte span is mapped through the file's *current* text via its own line index.
+/// `None` if the file isn't tracked or its path has no URI.
+fn text_edit_in(
+    snapshot: &Analysis,
+    path: &Path,
+    range: TextRange,
+    new_name: &str,
+) -> Option<(Uri, TextEdit)> {
+    let file = snapshot.lookup_file(path)?;
+    let target_uri = uri::from_path(path)?;
+    let target_index = LineIndex::new(snapshot.file_text(file));
+    Some((
+        target_uri,
+        TextEdit {
+            range: text_range_to_lsp_range(&target_index, range),
+            new_text: new_name.to_string(),
+        },
+    ))
+}
+
+/// Resolve `textDocument/rename` against a db `snapshot` — the write mirror of
+/// [`references_via_db`], in the same two phases, emitting a multi-URI
+/// [`WorkspaceEdit`] instead of `Location`s. Intra-file: the cursor names a local
+/// binding (or its definition), and every in-file read plus the definition is
+/// rewritten to `new_name` in `uri`. When that binding is *file-scope*, the
+/// workspace read index ([`Analysis::workspace_read_sites`]) adds the cross-file
+/// reads. Otherwise the cursor sits on a bare free read of a workspace name, and
+/// every read *and* definition of it across the workspace is rewritten.
+/// Namespaced (`pkg::name`) names and non-syntactic `new_name`s are declined.
+/// Snapshot reads are wrapped in [`salsa::Cancelled::catch`].
+fn rename_via_db(
+    snapshot: &Analysis,
+    path: &Path,
+    uri: &Uri,
+    text: &str,
+    offset: usize,
+    new_name: &str,
+) -> Option<WorkspaceEdit> {
+    if !is_syntactic_r_name(new_name) {
+        return None;
+    }
+    let line_index = LineIndex::new(text);
+    let off = TextSize::new(offset.min(text.len()) as u32);
+    let root = parse(text).cst;
+    let model = SemanticModel::build(&root);
+
+    let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+
+    // Intra-file: the cursor names a local binding (or sits on its definition).
+    if let Some(target) = resolve_local_target(&root, &model, off) {
+        changes.insert(
+            uri.clone(),
+            rename_edits(&model, &target, new_name, &line_index),
+        );
+        // Cross-file: a top-level binding can be free-read from sibling files.
+        // Nested locals are file-private, so they stay intra-file.
+        if model.binding_is_file_scope(target.binding) {
+            let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+                snapshot
+                    .workspace_read_sites(&target.name)
+                    .into_iter()
+                    // The current file's reads were rewritten intra-file above.
+                    .filter(|(read_path, _)| read_path != path)
+                    .filter_map(|(read_path, range)| {
+                        text_edit_in(snapshot, &read_path, range, new_name)
+                    })
+                    .collect::<Vec<_>>()
+            }))
+            .unwrap_or_default();
+            for (edit_uri, edit) in cross {
+                changes.entry(edit_uri).or_default().push(edit);
+            }
+        }
+        return finalize_rename(changes);
+    }
+
+    // The cursor sits on a bare free read of a workspace name (no local binding).
+    // A namespaced name is a package export with no in-tree sites to rewrite.
+    let token = pick_name_token(&root, off)?;
+    if token.kind() != SyntaxKind::IDENT
+        || matches!(
+            symbol_query_at(&root, off),
+            Some(SymbolQuery::Namespaced { .. })
+        )
+    {
+        return None;
+    }
+    let name = SmolStr::new(token.text());
+    let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        // Every read and definition of the name across the workspace, this file's
+        // own included — the read sites already cover the cursor's occurrence.
+        snapshot
+            .workspace_read_sites(&name)
+            .into_iter()
+            .chain(snapshot.workspace_def_sites(&name))
+            .filter_map(|(site_path, range)| text_edit_in(snapshot, &site_path, range, new_name))
+            .collect::<Vec<_>>()
+    }))
+    .unwrap_or_default();
+    for (edit_uri, edit) in cross {
+        changes.entry(edit_uri).or_default().push(edit);
+    }
+    finalize_rename(changes)
+}
+
+/// Sort and dedup each file's edits, dropping empties, and wrap them in a
+/// [`WorkspaceEdit`]. `None` when nothing is left to rewrite.
+fn finalize_rename(mut changes: HashMap<Uri, Vec<TextEdit>>) -> Option<WorkspaceEdit> {
+    changes.retain(|_, edits| {
+        edits.sort_by(|a, b| (a.range.start, a.range.end).cmp(&(b.range.start, b.range.end)));
+        edits.dedup();
+        !edits.is_empty()
+    });
+    (!changes.is_empty()).then(|| WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
     })
 }
 
@@ -3095,5 +3244,127 @@ mod tests {
 
         // Neither present → no roots (a single file opened outside a workspace).
         assert!(workspace_roots_from_params(&serde_json::json!({})).is_empty());
+    }
+
+    // --- cross-file rename (rename_via_db) --------------------------------
+
+    /// A workspace root valid on the host (absolute, so URI conversion works).
+    fn ws_root() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\s")
+        } else {
+            PathBuf::from("/s")
+        }
+    }
+
+    fn ws_path(name: &str) -> PathBuf {
+        ws_root().join(name)
+    }
+
+    /// A two-file workspace (`a.R`, `b.R`) seeded as members, snapshotted for a
+    /// read job. The names are flat scripts; the workspace index keys on name, so
+    /// this is enough to exercise cross-file rewriting.
+    fn rename_workspace(a_src: &str, b_src: &str) -> Analysis {
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&ws_path("a.R"), a_src.to_string());
+        let b = db.upsert_file(&ws_path("b.R"), b_src.to_string());
+        db.set_workspace_members(vec![a, b], vec![ws_root()]);
+        db.snapshot()
+    }
+
+    #[test]
+    fn rename_via_db_rewrites_a_definition_and_its_cross_file_reads() {
+        // a.R defines `foo`; b.R reads it. Renaming from the definition must edit
+        // both files in one WorkspaceEdit.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "bar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("rename is available on a file-scope definition");
+        let changes = edit.changes.expect("changes present");
+
+        let a_edits = changes
+            .get(&uri_a)
+            .expect("the definition in a.R is edited");
+        assert_eq!(a_edits.len(), 1);
+        assert_eq!(a_edits[0].new_text, "renamed");
+
+        let b_edits = changes
+            .get(&uri_b)
+            .expect("the cross-file read in b.R is edited");
+        assert_eq!(b_edits.len(), 1);
+        assert_eq!(b_edits[0].new_text, "renamed");
+    }
+
+    #[test]
+    fn rename_via_db_from_a_cross_file_read_rewrites_the_definition() {
+        // Cursor on the `foo()` read in b.R, which binds to no local: rename rides
+        // the workspace def + read indices, touching both files.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "bar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = b_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("b.R"), &uri_b, b_src, offset, "renamed")
+            .expect("rename is available on a workspace free read");
+        let changes = edit.changes.expect("changes present");
+
+        assert!(
+            changes.contains_key(&uri_a),
+            "the definition in a.R is edited"
+        );
+        assert!(changes.contains_key(&uri_b), "the read in b.R is edited");
+    }
+
+    #[test]
+    fn rename_via_db_keeps_a_nested_local_intra_file() {
+        // `x` is a local inside f's body, not a file-scope binding, so a same-named
+        // free read in another file is unrelated and must not be touched.
+        let a_src = "f <- function() {\n  x <- 1\n  x + 1\n}\n";
+        let b_src = "g <- function() x\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("x").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "y")
+            .expect("rename is available on the local");
+        let changes = edit.changes.expect("changes present");
+
+        assert_eq!(changes.len(), 1, "only a.R is touched");
+        let a_edits = changes.get(&uri_a).expect("the local def and read in a.R");
+        assert_eq!(a_edits.len(), 2, "definition plus the one read");
+        assert!(
+            !changes.contains_key(&uri_b),
+            "the sibling free read is unrelated"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_declines_a_non_syntactic_new_name() {
+        let a_src = "foo <- function() 1\n";
+        let b_src = "bar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        assert!(
+            rename_via_db(
+                &snapshot,
+                &ws_path("a.R"),
+                &uri_a,
+                a_src,
+                offset,
+                "new name"
+            )
+            .is_none(),
+            "a non-syntactic new name is withheld (backtick-quoting is out of scope)"
+        );
     }
 }
