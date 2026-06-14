@@ -1,0 +1,39 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..39
+  ASSIGNMENT_EXPR@0..20
+    IDENT@0..1 "x"
+    WHITESPACE@1..2 " "
+    ASSIGN_LEFT@2..4 "<-"
+    WHITESPACE@4..5 " "
+    BINARY_EXPR@5..20
+      IDENT@5..6 "a"
+      WHITESPACE@6..7 " "
+      PIPE@7..9 "|>"
+      WHITESPACE@9..10 " "
+      COMMENT@10..14 "# c1"
+      NEWLINE@14..15 "\n"
+      WHITESPACE@15..17 "  "
+      CALL_EXPR@17..20
+        IDENT@17..18 "b"
+        LPAREN@18..19 "("
+        ARG_LIST@19..19
+        RPAREN@19..20 ")"
+  NEWLINE@20..21 "\n"
+  ASSIGNMENT_EXPR@21..38
+    IDENT@21..22 "y"
+    WHITESPACE@22..23 " "
+    ASSIGN_LEFT@23..25 "<-"
+    WHITESPACE@25..26 " "
+    BINARY_EXPR@26..38
+      IDENT@26..27 "a"
+      WHITESPACE@27..28 " "
+      PLUS@28..29 "+"
+      WHITESPACE@29..30 " "
+      COMMENT@30..34 "# c2"
+      NEWLINE@34..35 "\n"
+      WHITESPACE@35..37 "  "
+      IDENT@37..38 "c"
+  NEWLINE@38..39 "\n"

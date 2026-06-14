@@ -1,0 +1,5 @@
+res <- x |> # remove trailing comma
+  f() |> # next
+  g()
+y <- a + # note
+  b

@@ -144,12 +144,20 @@ fn parse_expr_with_mode(
             }
 
             let rhs_start = op_idx + 1;
-            // A pending operator means the line is incomplete, so newlines
-            // before the RHS operand are not statement terminators — R skips
-            // them when looking for the operand.
-            let Some(rhs) =
-                parse_expr_with_mode(tokens, rhs_start, r_bp, diagnostics, true, inside_brackets)
-            else {
+            // A pending operator means the line is incomplete, so newlines and
+            // comments before the RHS operand are not statement terminators or
+            // operands — skip past them to the operand (R does the same). The
+            // skipped tokens stay in the tree as trivia between the operator and
+            // the operand, emitted by the event builder.
+            let rhs_operand = ctx.skip_ws_newlines_comments(rhs_start);
+            let Some(rhs) = parse_expr_with_mode(
+                tokens,
+                rhs_operand,
+                r_bp,
+                diagnostics,
+                true,
+                inside_brackets,
+            ) else {
                 push_token_diagnostic(diagnostics, "expected assignment right-hand side", op);
                 return Some(error_expr_to_line_end(tokens, lhs.start, rhs_start));
             };
@@ -166,11 +174,19 @@ fn parse_expr_with_mode(
         }
 
         let rhs_start = op_idx + 1;
-        // A pending operator means the line is incomplete, so newlines before
-        // the RHS operand are not statement terminators.
-        let Some(rhs) =
-            parse_expr_with_mode(tokens, rhs_start, r_bp, diagnostics, true, inside_brackets)
-        else {
+        // A pending operator means the line is incomplete, so newlines and
+        // comments before the RHS operand are not statement terminators or
+        // operands — skip past them to the operand (the skipped tokens remain
+        // in the tree as trivia between the operator and the operand).
+        let rhs_operand = ctx.skip_ws_newlines_comments(rhs_start);
+        let Some(rhs) = parse_expr_with_mode(
+            tokens,
+            rhs_operand,
+            r_bp,
+            diagnostics,
+            true,
+            inside_brackets,
+        ) else {
             push_token_diagnostic(
                 diagnostics,
                 "expected right-hand side for binary operator",

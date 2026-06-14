@@ -27,6 +27,10 @@ impl<'a> ParserCtx<'a> {
     pub(crate) fn skip_ws_and_newlines(&self, i: usize) -> usize {
         cursor::skip_ws_and_newlines(self.tokens, i)
     }
+
+    pub(crate) fn skip_ws_newlines_comments(&self, i: usize) -> usize {
+        cursor::skip_ws_newlines_comments(self.tokens, i)
+    }
 }
 
 pub(crate) fn push_token_diagnostic_ctx(

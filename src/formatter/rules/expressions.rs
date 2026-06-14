@@ -142,9 +142,12 @@ pub(crate) fn ir_binary_expr(
         NodeOrToken::Node(_) => unreachable!(),
     };
     let lhs = ir_binary_side(&elements[..op_idx], "binary lhs", indent, ctx)?;
-    let rhs = ir_binary_side(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
+    let (rhs_comments, rhs) = ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
+    let comment = comment_suffix(&rhs_comments);
 
-    // Sticky operators never wrap.
+    // Sticky operators never wrap --- unless a comment trails the operator, in
+    // which case we must break after it (a comment runs to end of line, so the
+    // operand cannot stay on the same line).
     if matches!(
         op_kind,
         SyntaxKind::COLON2
@@ -154,7 +157,16 @@ pub(crate) fn ir_binary_expr(
             | SyntaxKind::DOLLAR
             | SyntaxKind::AT
     ) {
-        return Ok(Ir::concat([lhs, Ir::text(op_text), rhs]));
+        if rhs_comments.is_empty() {
+            return Ok(Ir::concat([lhs, Ir::text(op_text), rhs]));
+        }
+        return Ok(Ir::concat([
+            lhs,
+            Ir::text(op_text),
+            comment,
+            Ir::indent(Ir::hard_line()),
+            rhs,
+        ]));
     }
 
     // Pipes always break after the operator, indenting the continuation. The
@@ -167,6 +179,7 @@ pub(crate) fn ir_binary_expr(
         return Ok(Ir::concat([
             lhs,
             Ir::text(format!(" {op_text}")),
+            comment,
             Ir::indent(Ir::concat([Ir::hard_line(), rhs])),
         ]));
     }
@@ -175,8 +188,21 @@ pub(crate) fn ir_binary_expr(
     // prior line so the continuation is R-valid (a leading operator on the
     // next line would be parsed as a separate unary statement outside
     // brackets). The right operand is indented one level.
-    let flat_op = format!(" {op_text} ");
     let broken_lead = format!(" {op_text}");
+
+    // A comment trailing the operator forces the broken form (the operand
+    // cannot share the comment's line).
+    if !rhs_comments.is_empty() {
+        return Ok(Ir::concat([
+            lhs,
+            Ir::text(broken_lead),
+            comment,
+            Ir::indent(Ir::hard_line()),
+            rhs,
+        ]));
+    }
+
+    let flat_op = format!(" {op_text} ");
     Ok(Ir::group(Ir::concat([
         lhs,
         Ir::if_break(
@@ -197,6 +223,47 @@ fn ir_binary_side(
         return Ok(curly_curly);
     }
     ir_expr_segment(elements, context, indent, ctx)
+}
+
+/// Builds a binary operand, splitting off any comments that appear *before* the
+/// operand (a trailing comment on the operator's line, e.g. `a |> # note` then
+/// the operand on the next line). Returns the comment texts in order plus the
+/// operand IR, built from the first significant element onward so the normal
+/// segment path still sees a single operand.
+fn ir_binary_rhs(
+    elements: &[SyntaxElement<RLanguage>],
+    context: &'static str,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<(Vec<String>, Ir), FormatError> {
+    let Some(first_significant) = elements
+        .iter()
+        .position(|el| !is_trivia(el.kind()) && el.kind() != SyntaxKind::COMMENT)
+    else {
+        // No operand: let the normal path raise the error.
+        return Ok((Vec::new(), ir_binary_side(elements, context, indent, ctx)?));
+    };
+    let comments: Vec<String> = elements[..first_significant]
+        .iter()
+        .filter_map(|el| match el {
+            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT => {
+                Some(tok.text().to_string())
+            }
+            _ => None,
+        })
+        .collect();
+    let operand = ir_binary_side(&elements[first_significant..], context, indent, ctx)?;
+    Ok((comments, operand))
+}
+
+/// A leading ` ` plus the comments joined by spaces, or nothing when there are
+/// none. Emitted on the operator's line, always followed by a forced break.
+fn comment_suffix(comments: &[String]) -> Ir {
+    if comments.is_empty() {
+        Ir::nil()
+    } else {
+        Ir::text(format!(" {}", comments.join(" ")))
+    }
 }
 
 /// A binary-operand curly-curly `{{ symbol }}`, rendered as a single-line atom on
