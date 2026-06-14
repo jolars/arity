@@ -443,6 +443,52 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                         });
                         continue;
                     }
+
+                    // A dot immediately followed by a digit is a fractional
+                    // numeric literal with no leading zero (`.5`, `.001`,
+                    // `.5e-3`, `.5i`). R has no dot-leading integer, so this is
+                    // always a float (or imaginary). Mirrors the fractional and
+                    // exponent handling in the digit-led number branch below.
+                    let start = i;
+                    i += 1; // consume the '.'
+                    while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                        i += 1;
+                    }
+
+                    if i < bytes.len() && matches!(bytes[i] as char, 'e' | 'E') {
+                        let exp_start = i;
+                        let mut j = i + 1;
+                        if j < bytes.len() && matches!(bytes[j] as char, '+' | '-') {
+                            j += 1;
+                        }
+                        let mut has_exp_digits = false;
+                        while j < bytes.len() && (bytes[j] as char).is_ascii_digit() {
+                            has_exp_digits = true;
+                            j += 1;
+                        }
+                        if has_exp_digits {
+                            i = j;
+                        } else {
+                            i = exp_start;
+                        }
+                    }
+
+                    let is_complex = i < bytes.len() && (bytes[i] as char) == 'i';
+                    if is_complex {
+                        i += 1;
+                    }
+
+                    out.push(Token {
+                        kind: if is_complex {
+                            TokKind::Complex
+                        } else {
+                            TokKind::Float
+                        },
+                        text: input[start..i].to_string(),
+                        start,
+                        end: i,
+                    });
+                    continue;
                 }
 
                 if i + 1 < bytes.len() && &input[i..i + 2] == "==" {

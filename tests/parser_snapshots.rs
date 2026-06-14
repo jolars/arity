@@ -46,6 +46,7 @@ fn fixture_names() -> &'static [&'static str] {
     &[
         "assignment_simple",
         "assignment_float",
+        "numeric_dot_leading",
         "assignment_string",
         "assignment_eq",
         "assignment_left2",
