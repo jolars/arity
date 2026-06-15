@@ -18,8 +18,8 @@ use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
 use crate::project::{
-    DefKind, SourceEdgeKey, project_defs, project_graph, project_reads, reverse_source_edges,
-    workspace_project,
+    DefKind, ReadBinding, SourceEdgeKey, TopLevelEvent, collect_top_level_events, project_defs,
+    project_graph, project_reads, reverse_source_edges, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
@@ -142,6 +142,7 @@ pub enum QueryKind {
     FileFreeReads,
     FileDefSites,
     SourceEdges,
+    TopLevelEvents,
     ReverseSourceEdges,
     WorkspaceProject,
     ProjectGraph,
@@ -354,6 +355,24 @@ pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Vec<SourceEdgeK
     let root = parsed_tree_root(db, file);
     let base_dir = file.path(db).as_deref().and_then(Path::parent);
     crate::project::collect_source_edge_keys(&root, base_dir)
+}
+
+/// The file's top-level execution sequence ([`collect_top_level_events`]): the
+/// ordered `define`/`source-edge`/`read` events load-order resolution consumes.
+/// Range-free — order is carried by `Vec` position — so it backdates across a
+/// body edit exactly like [`source_edges`]: editing inside a function body
+/// changes neither the order nor the names of the top-level events, so the
+/// re-extracted value compares equal and the memo (and `project_graph` above it)
+/// is reused.
+#[salsa::tracked(returns(ref))]
+pub fn top_level_events(db: &dyn IncrementalDb, file: SourceFile) -> Vec<TopLevelEvent> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::TopLevelEvents,
+        file: Some(file),
+    });
+    let root = parsed_tree_root(db, file);
+    let base_dir = file.path(db).as_deref().and_then(Path::parent);
+    collect_top_level_events(&root, base_dir, semantic_model(db, file))
 }
 
 #[salsa::db]
@@ -653,9 +672,23 @@ pub struct CrossFileBinding {
     /// `def_file`'s definition.
     pub readers: Vec<PathBuf>,
     /// The name is defined by more than one file in `def_file`'s component
-    /// (`cohort.len() > 1`). In R's flat per-component namespace this is a
-    /// redefinition, so a sound rename refuses rather than guessing.
+    /// (`cohort.len() > 1`). In R's flat per-component namespace these are
+    /// aliases of one slot (a redefinition). References over-reports the whole
+    /// cohort on this; rename is sound as a rename-all *unless* the picture is
+    /// incomplete (see `cohort_incomplete`).
     pub conflict: bool,
+    /// A multi-def cohort whose package picture is *incomplete* — an unanalyzed
+    /// or dropped (parse-error) `R/*.[RrSsQq]` member could define or read the
+    /// name, so renaming the visible aliases would half-rewrite the flat
+    /// namespace. A sound rename refuses; references still over-reports.
+    pub cohort_incomplete: bool,
+    /// A reader has a *top-level* read of the name that, under sequential
+    /// `source()` load order, does **not** bind to this cohort — it sits before
+    /// the `source()` that injects the def, binds to a different file, or is
+    /// poisoned by a dynamic/ambiguous source. Rewriting that reader would touch
+    /// a read that isn't this binding, and we can't selectively skip it without
+    /// per-read spans, so a sound rename refuses. References still over-reports.
+    pub order_ambiguous: bool,
     /// Some member has an unresolvable dynamic `source()`, so a hidden reader
     /// could exist. A sound rename refuses project-wide to avoid a missed read.
     pub project_has_dynamic_source: bool,
@@ -827,6 +860,21 @@ impl Analysis {
             .cloned()
             .collect();
         let conflict = cohort.len() > 1;
+        // A multi-def cohort is, by construction, all package siblings (the only
+        // multi-member source — `source()`-shadows and disjoint scripts are
+        // filtered out above), so every extra member shares def_file's package
+        // root. Lock that invariant: it is what makes rename-all sound and the
+        // package-completeness gate the right (and only needed) refusal.
+        debug_assert!(
+            cohort.len() <= 1
+                || cohort.iter().all(|d| d.as_path() == def_file
+                    || graph.package_siblings(def_file).contains(d.as_path())),
+            "multi-def cohort must be pure package siblings of def_file"
+        );
+        // Aliases of one flat slot rename together safely *iff* the package's
+        // member set is complete; otherwise an unanalyzed sibling could hide a
+        // def/read and the rename-all would be partial.
+        let cohort_incomplete = conflict && !graph.package_complete(def_file);
 
         // Readers: files that can see def_file, free-read the name, and don't
         // shadow it with their own top-level definition (those are cohort defs,
@@ -844,6 +892,22 @@ impl Analysis {
             })
             .unwrap_or_default();
 
+        // Order-aware refinement: a reader's *top-level* reads of the name must
+        // all bind to a cohort member under sequential load order. A read before
+        // the `source()` that injects the def (or one bound elsewhere / poisoned)
+        // would be wrongly co-renamed, and we can't skip it selectively without
+        // per-read spans — so flag the rename as ambiguous (it refuses). Reads in
+        // function bodies run against the final scope (`NoTopLevelRead`) and are
+        // resolved by the position-blind `seen_by` membership above.
+        let order_ambiguous =
+            readers
+                .iter()
+                .any(|reader| match graph.top_level_read_binding(reader, name) {
+                    ReadBinding::NoTopLevelRead => false,
+                    ReadBinding::Resolved(def) => !cohort.contains(&def),
+                    ReadBinding::Unresolved | ReadBinding::OrderUnknown => true,
+                });
+
         let project_has_dynamic_source = !reverse_source_edges(&self.0, project)
             .dynamic_sources
             .is_empty();
@@ -852,6 +916,8 @@ impl Analysis {
             cohort,
             readers,
             conflict,
+            cohort_incomplete,
+            order_ambiguous,
             project_has_dynamic_source,
         }
     }

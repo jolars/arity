@@ -211,8 +211,12 @@ impl Dcf {
     }
 }
 
-fn read_dcf(path: &Path) -> Result<Dcf> {
-    let text = std::fs::read_to_string(path).map_err(|e| HarvestError::Io(e.to_string()))?;
+/// Parse DCF (Debian Control File) text into its `(field, value)` pairs, in
+/// file order. A continuation line (one starting with whitespace) appends to the
+/// previous field's value, joined with `\n`. Shared by the DESCRIPTION readers
+/// (`harvest` for package metadata, `project::graph` for `Collate:`); kept
+/// IO-free so callers do their own `read_to_string`.
+pub(crate) fn parse_dcf(text: &str) -> Vec<(String, String)> {
     let mut fields: Vec<(String, String)> = Vec::new();
     for line in text.lines() {
         if line.starts_with([' ', '\t']) {
@@ -225,7 +229,14 @@ fn read_dcf(path: &Path) -> Result<Dcf> {
             fields.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
-    Ok(Dcf { fields })
+    fields
+}
+
+fn read_dcf(path: &Path) -> Result<Dcf> {
+    let text = std::fs::read_to_string(path).map_err(|e| HarvestError::Io(e.to_string()))?;
+    Ok(Dcf {
+        fields: parse_dcf(&text),
+    })
 }
 
 /// `Built:` looks like `R 4.5.3; ; 2025-...; unix` — pull the R version.
@@ -635,6 +646,16 @@ fn build_help(index: &AliasHelp, db: Option<&LazyLoadDb>, name: &str) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_dcf_folds_continuation_lines() {
+        let text = "Package: testpkg\nCollate:\n    a.R\n    b.R\nVersion: 1.0\n";
+        let fields = parse_dcf(text);
+        assert_eq!(fields[0], ("Package".to_string(), "testpkg".to_string()));
+        // The leading-whitespace lines append to `Collate`, joined with `\n`.
+        assert_eq!(fields[1], ("Collate".to_string(), "\na.R\nb.R".to_string()));
+        assert_eq!(fields[2], ("Version".to_string(), "1.0".to_string()));
+    }
 
     #[test]
     fn resolves_explicit_exports() {

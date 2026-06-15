@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use arity::incremental::{IncrementalDatabase, QueryKind, SourceFile, file_def_sites};
+use arity::incremental::{
+    IncrementalDatabase, QueryKind, SourceFile, file_def_sites, top_level_events,
+};
 use arity::project::{
     DefKind, Project, ProjectMember, external_resolution, project_defs, project_reads,
     reverse_source_edges, visible_symbols, workspace_project,
@@ -249,7 +251,7 @@ fn project_ab(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project
             package_root: Some(PathBuf::from("/pkg")),
         },
     ];
-    Project::new(db, members, Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new())
 }
 
 /// A two-script project where `a.R` sources `b.R`. No package root, so the only
@@ -274,7 +276,7 @@ fn project_scripts(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Pr
             package_root: None,
         },
     ];
-    Project::new(db, members, Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new())
 }
 
 #[test]
@@ -809,6 +811,64 @@ fn export_change_rebuilds_project_scope() {
 }
 
 #[test]
+fn body_edit_reruns_top_level_events_but_backdates() {
+    // The new order-bearing firewall: editing b.R's function *body* re-extracts
+    // its top-level event sequence (the tree changed), but the sequence is
+    // unchanged, so it backdates and the project graph above it is spared.
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+    {
+        let project = project_ab(&db, a, b);
+        let _ = top_level_events(&db, b);
+        let _ = visible_symbols(&db, project, b);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
+
+    let project = project_ab(&db, a, b);
+    let _ = top_level_events(&db, b);
+    let _ = visible_symbols(&db, project, b);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::TopLevelEvents),
+        Some(&1),
+        "the event sequence is re-extracted when the body changes"
+    );
+    assert_eq!(
+        counts.get(&QueryKind::ProjectGraph),
+        None,
+        "but the unchanged sequence backdates, sparing the project graph"
+    );
+}
+
+#[test]
+fn reordering_top_level_statements_rebuilds_project_graph() {
+    // Reordering two top-level reads leaves exports / free-reads / source-edges
+    // (all order-independent sets) unchanged — only the *ordered* top_level_events
+    // firewall differs. That alone must rebuild the graph, since load-order
+    // resolution depends on the order.
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "foo\nbar\n");
+    {
+        let project = project_ab(&db, a, b);
+        let _ = visible_symbols(&db, project, b);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "bar\nfoo\n");
+
+    let project = project_ab(&db, a, b);
+    let _ = visible_symbols(&db, project, b);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ProjectGraph),
+        Some(&1),
+        "reordered top-level events must rebuild the graph even though the sets are unchanged"
+    );
+}
+
+#[test]
 fn reinterning_same_membership_reuses_graph_memo() {
     // Interning a fresh `Project` from an unchanged membership snapshot yields
     // the same id, so the graph memo is reused — this is what keeps the scope
@@ -843,7 +903,7 @@ fn project_one<'db>(db: &'db IncrementalDatabase, file: SourceFile, path: &str) 
         path: PathBuf::from(path),
         package_root: None,
     }];
-    Project::new(db, members, Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new())
 }
 
 /// A harvested package index for `name` exporting `exports`.

@@ -8,15 +8,18 @@
 pub mod exports;
 pub mod graph;
 pub mod scope;
+pub mod sequence;
 pub mod source;
 
 pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads};
 pub use graph::{
-    DefIndex, ExternalResolution, Project, ProjectMember, ReadIndex, ReverseSources, Visibility,
-    external_resolution, project_defs, project_graph, project_reads, reverse_source_edges,
-    visible_symbols, workspace_project,
+    DefIndex, ExternalResolution, PackageCollation, Project, ProjectMember, ReadIndex,
+    ReverseSources, Visibility, external_resolution, project_defs, project_graph, project_reads,
+    reverse_source_edges, visible_symbols, workspace_project,
 };
-pub use scope::{FileFacts, FileScope, ProjectScope, package_root};
+pub use scope::{FileFacts, FileScope, ProjectScope, ReadBinding, package_root};
+pub use sequence::collect_top_level_events;
 pub use source::{
-    SourceEdge, SourceEdgeKey, SourceTarget, collect_source_edge_keys, collect_source_edges,
+    SourceEdge, SourceEdgeKey, SourceTarget, TopLevelEvent, collect_source_edge_keys,
+    collect_source_edges,
 };

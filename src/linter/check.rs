@@ -12,8 +12,8 @@ use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, SourceFile, parsed_tree_root, semantic_model,
 };
 use crate::project::{
-    ExternalResolution, FileScope, Project, ProjectMember, external_resolution, package_root,
-    visible_symbols, workspace_project,
+    ExternalResolution, FileScope, PackageCollation, Project, ProjectMember, external_resolution,
+    package_root, visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -211,9 +211,10 @@ fn intern_project<'db>(
     db: &'db dyn IncrementalDb,
     mut members: Vec<ProjectMember>,
     namespaces: Vec<(PathBuf, String)>,
+    collations: Vec<PackageCollation>,
 ) -> Project<'db> {
     members.sort_by(|a, b| a.path.cmp(&b.path));
-    Project::new(db, members, namespaces)
+    Project::new(db, members, namespaces, collations)
 }
 
 /// Run the resolved rules against a cleanly-parsed file, using the cached parse
@@ -288,6 +289,10 @@ pub struct PreparedProject {
     members: Vec<ProjectMember>,
     /// `(package_root, NAMESPACE text)` pairs, sorted by root.
     namespaces: Vec<(PathBuf, String)>,
+    /// Per package root, its completeness verdict, sorted by root. Snapshotted
+    /// from the interned [`Project`] (disk-derived in [`workspace_project`]) so
+    /// the read-phase re-interns it without touching disk.
+    collations: Vec<PackageCollation>,
 }
 
 /// Write-phase of cross-file linting (needs `&mut db`). Discovers the enclosing
@@ -323,12 +328,14 @@ pub fn prepare_document_in_project(
     let project = workspace_project(&*db);
     let members = project.members(&*db).clone();
     let namespaces = project.namespaces(&*db).clone();
+    let collations = project.collations(&*db).clone();
 
     Ok(Some(PreparedProject {
         active,
         rules,
         members,
         namespaces,
+        collations,
     }))
 }
 
@@ -382,7 +389,12 @@ pub fn analyze_prepared(
     // Intern the project here (read-phase): the membership snapshot is plain
     // owned data in `prepared`, so this is safe on a db clone, and an unchanged
     // set re-interns to the same id — keeping the project-graph memo warm.
-    let project = intern_project(db, prepared.members.clone(), prepared.namespaces.clone());
+    let project = intern_project(
+        db,
+        prepared.members.clone(),
+        prepared.namespaces.clone(),
+        prepared.collations.clone(),
+    );
     let active_path = analysis
         .file_path(prepared.active)
         .map(Path::to_path_buf)

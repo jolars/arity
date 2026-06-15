@@ -24,11 +24,12 @@ use smol_str::SmolStr;
 
 use crate::incremental::{
     IncrementalDb, LibraryIndex, QueryKind, QueryLogEntry, SourceFile, Workspace, file_def_sites,
-    file_exports, file_free_reads, loaded_names, parse_diagnostics, source_edges,
+    file_exports, file_free_reads, loaded_names, parse_diagnostics, source_edges, top_level_events,
 };
 use crate::project::exports::DefKind;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
+use crate::rindex::harvest::parse_dcf;
 use crate::rindex::provider::{package_indexed, resolve_origin};
 use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
 
@@ -42,17 +43,36 @@ pub struct ProjectMember {
     pub package_root: Option<PathBuf>,
 }
 
-/// A project as an interned membership snapshot: the set of member files plus
-/// the NAMESPACE texts of the packages they belong to. Interning dedups by
-/// value, so an unchanged membership yields the same id across lints (a body
-/// edit doesn't change the set) and the graph memo survives. Callers must sort
-/// `members` and `namespaces` for a stable, dedup-friendly key.
+/// One package root's collation/completeness verdict: whether the analyzed
+/// member set covers every R source file the package will load. Disk-derived
+/// (like the NAMESPACE texts) and frozen into the interned [`Project`], so the
+/// graph queries stay pure and backdate across body edits.
+///
+/// `complete == false` means a top-level def or read of a name could hide in an
+/// `R/*.[RrSsQq]` file we never analyzed (a dropped parse-error member, an
+/// unopened sibling, or a `Collate:` entry outside the set), so a multi-def
+/// cross-file rename over this package must refuse rather than half-rewrite the
+/// flat namespace.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PackageCollation {
+    pub root: PathBuf,
+    pub complete: bool,
+}
+
+/// A project as an interned membership snapshot: the set of member files, the
+/// NAMESPACE texts of the packages they belong to, and each package root's
+/// collation/completeness verdict. Interning dedups by value, so an unchanged
+/// membership yields the same id across lints (a body edit doesn't change the
+/// set) and the graph memo survives. Callers must sort `members`, `namespaces`,
+/// and `collations` for a stable, dedup-friendly key.
 #[salsa::interned]
 pub struct Project<'db> {
     #[returns(ref)]
     pub members: Vec<ProjectMember>,
     #[returns(ref)]
     pub namespaces: Vec<(PathBuf, String)>,
+    #[returns(ref)]
+    pub collations: Vec<PackageCollation>,
 }
 
 /// One file's owned view of its project: the names it can see, the names of its
@@ -89,6 +109,80 @@ pub(crate) fn read_namespaces(members: &[ProjectMember]) -> Vec<(PathBuf, String
     let mut namespaces: Vec<(PathBuf, String)> = namespaces.into_iter().collect();
     namespaces.sort_by(|a, b| a.0.cmp(&b.0));
     namespaces
+}
+
+/// The extensions R sources from a package's `R/` directory: `.[RrSsQq]`. Note
+/// this is broader than [`crate::file_discovery`]'s `.r`/`.R`-only filter — an
+/// `.S`/`.q` member that discovery never surfaced must still count toward the
+/// package's expected source set, or completeness would silently pass over it.
+const R_SOURCE_EXTS: [&str; 6] = ["R", "r", "S", "s", "Q", "q"];
+
+/// The R source file *names* (basenames within `R/`) a package at `root` will
+/// load: the union of the on-disk `R/*.[RrSsQq]` listing and any `Collate:`
+/// entries from `DESCRIPTION`. Union (not intersection) so neither a stale
+/// `Collate:` nor an unlisted file can shrink the expected set and let an
+/// incomplete package pass. Touches disk.
+fn expected_r_sources(root: &Path) -> BTreeSet<String> {
+    let mut expected: BTreeSet<String> = BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(root.join("R")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| R_SOURCE_EXTS.contains(&e))
+                && path.is_file()
+                && let Some(name) = path.file_name().and_then(|n| n.to_str())
+            {
+                expected.insert(name.to_string());
+            }
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(root.join("DESCRIPTION")) {
+        for (key, value) in parse_dcf(&text) {
+            // R picks an OS-specific `Collate@unix`/`Collate@windows` over plain
+            // `Collate`; we union every `Collate*` field, since over-including
+            // only tightens completeness (the safe direction).
+            if key.starts_with("Collate") {
+                for entry in value.split_whitespace() {
+                    let name = entry.trim_matches(['\'', '"']);
+                    if !name.is_empty() {
+                        expected.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    expected
+}
+
+/// Per distinct package root among `members`, whether the analyzed members cover
+/// its full R source set ([`expected_r_sources`]). Sorted by root and deduped,
+/// mirroring [`read_namespaces`]: disk work run inside [`workspace_project`],
+/// frozen into the interned [`Project`] key. A parse-error member is already
+/// dropped from `members` upstream, so it is simply absent from the analyzed set
+/// here and forces `complete = false` for its root — exactly the refuse we want.
+pub(crate) fn read_collations(members: &[ProjectMember]) -> Vec<PackageCollation> {
+    let mut analyzed: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+    for member in members {
+        if let Some(root) = &member.package_root
+            && let Some(name) = member.path.file_name().and_then(|n| n.to_str())
+        {
+            analyzed
+                .entry(root.clone())
+                .or_default()
+                .insert(name.to_string());
+        }
+    }
+    analyzed
+        .into_iter()
+        .map(|(root, analyzed_names)| {
+            let complete = expected_r_sources(&root)
+                .iter()
+                .all(|name| analyzed_names.contains(name));
+            PackageCollation { root, complete }
+        })
+        .collect()
 }
 
 /// Derive the interned [`Project`] from the explicit [`Workspace`] file-set,
@@ -129,7 +223,8 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
     };
     members.sort_by(|a, b| a.path.cmp(&b.path));
     let namespaces = read_namespaces(&members);
-    Project::new(db, members, namespaces)
+    let collations = read_collations(&members);
+    Project::new(db, members, namespaces, collations)
 }
 
 /// The cross-file scope for `project`, built from the per-file firewall queries.
@@ -155,12 +250,18 @@ pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
             exports: file_exports(db, m.file).clone(),
             free_reads: file_free_reads(db, m.file).clone(),
             source_edges: source_edges(db, m.file).clone(),
+            top_level_events: top_level_events(db, m.file).clone(),
             package_root: m.package_root.clone(),
         })
         .collect();
 
     let namespaces: HashMap<PathBuf, String> = project.namespaces(db).iter().cloned().collect();
-    ProjectScope::build(&facts, &namespaces)
+    let package_complete: HashMap<PathBuf, bool> = project
+        .collations(db)
+        .iter()
+        .map(|c| (c.root.clone(), c.complete))
+        .collect();
+    ProjectScope::build(&facts, &namespaces, &package_complete)
 }
 
 /// One file's [`Visibility`] within `project`. Depends only on [`project_graph`]
@@ -488,5 +589,25 @@ mod tests {
         // /s/gen.R is not itself a member, but its sourcer is still recorded.
         let rev = invert(&[("/s/a.R", vec![path_edge("/s/gen.R", false)])]);
         assert_eq!(sourcers(&rev, "/s/gen.R"), vec!["/s/a.R"]);
+    }
+
+    #[test]
+    fn expected_r_sources_unions_dir_glob_and_collate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir(root.join("R")).expect("R/");
+        std::fs::write(root.join("R/a.R"), "").expect("a.R");
+        std::fs::write(root.join("R/b.r"), "").expect("b.r"); // lowercase ext counts
+        std::fs::write(root.join("R/notes.md"), "").expect("notes.md"); // non-source ignored
+        std::fs::write(root.join("DESCRIPTION"), "Package: p\nCollate: a.R 'c.R'\n")
+            .expect("DESCRIPTION");
+
+        let expected = expected_r_sources(root);
+        assert!(expected.contains("a.R"), "dir-glob R source");
+        assert!(expected.contains("b.r"), "lowercase .r extension counts");
+        assert!(!expected.contains("notes.md"), "non-R file is excluded");
+        // From `Collate:` (quote-stripped), even though c.R is absent on disk —
+        // the union makes the package incomplete when c.R isn't analyzed.
+        assert!(expected.contains("c.R"), "Collate entry, quote-stripped");
     }
 }

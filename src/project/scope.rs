@@ -28,7 +28,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use crate::project::source::{SourceEdgeKey, SourceTarget};
+use crate::project::source::{SourceEdgeKey, SourceTarget, TopLevelEvent};
 use crate::rindex::harvest::parse_namespace;
 
 static EMPTY: BTreeSet<String> = BTreeSet::new();
@@ -48,6 +48,10 @@ pub struct FileFacts {
     pub free_reads: BTreeSet<String>,
     /// Top-level `source()` edges this file declares (range-free).
     pub source_edges: Vec<SourceEdgeKey>,
+    /// This file's top-level execution sequence (range-free, order-bearing): the
+    /// `define`/`source-edge`/`read` events used to resolve reads through
+    /// load order. See [`crate::project::collect_top_level_events`].
+    pub top_level_events: Vec<TopLevelEvent>,
     /// The package root this file belongs to, if any. Files sharing a root
     /// share one namespace.
     pub package_root: Option<PathBuf>,
@@ -75,6 +79,39 @@ pub struct ProjectScope {
     /// redefinition) — unlike `source()` edges, which only make a name *visible*
     /// and shadow by order. Absent for non-package files. Span-free.
     package_siblings: HashMap<PathBuf, HashSet<PathBuf>>,
+    /// Per package file: whether its package root's analyzed member set is
+    /// *complete* (covers every `R/*.[RrSsQq]` source the package loads). When
+    /// false, a def/read could hide in an unanalyzed sibling, so a flat-namespace
+    /// rename-all over this package's cohort must refuse. Absent (→ vacuously
+    /// complete) for non-package files.
+    package_complete: HashMap<PathBuf, bool>,
+    /// Per file: its top-level execution sequence, retained so load-order
+    /// resolution ([`Self::top_level_read_binding`]) can replay it. Span-free.
+    top_level_events: HashMap<PathBuf, Vec<TopLevelEvent>>,
+    /// Per file: its top-level binding names, retained so a sourced closure's
+    /// contribution of a name can be resolved during the order replay.
+    exports: HashMap<PathBuf, BTreeSet<String>>,
+    /// Per file: its range-free `source()` edges, retained so the order replay
+    /// can walk a sourced file's own (transitive, non-local) closure.
+    source_edges: HashMap<PathBuf, Vec<SourceEdgeKey>>,
+}
+
+/// Where a file's top-level reads of a name bind under sequential load order —
+/// the result of replaying the file's [`TopLevelEvent`] sequence. Produced by
+/// [`ProjectScope::top_level_read_binding`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadBinding {
+    /// Every top-level read of the name binds to this one def file.
+    Resolved(PathBuf),
+    /// There are top-level reads, but none has a live def at its point — they
+    /// bind to base R / nothing (the def isn't sourced yet).
+    Unresolved,
+    /// The name has no top-level read in the file: only function-body reads,
+    /// which run at call time against the final scope and are not position-gated.
+    NoTopLevelRead,
+    /// Top-level reads disagree, or one is poisoned by a dynamic/unanalyzed
+    /// source or by two files in a sourced closure defining the same name.
+    OrderUnknown,
 }
 
 /// One file's view of its project.
@@ -127,8 +164,15 @@ impl<'a> FileScope<'a> {
 
 impl ProjectScope {
     /// Resolve cross-file relationships for `files`. `namespaces` maps a package
-    /// root to its NAMESPACE file contents, when present.
-    pub fn build(files: &[FileFacts], namespaces: &HashMap<PathBuf, String>) -> Self {
+    /// root to its NAMESPACE file contents, when present. `package_complete` maps
+    /// a package root to whether its analyzed member set is complete (see
+    /// [`ProjectScope::package_complete`]); a root absent from the map is treated
+    /// as complete.
+    pub fn build(
+        files: &[FileFacts],
+        namespaces: &HashMap<PathBuf, String>,
+        package_complete: &HashMap<PathBuf, bool>,
+    ) -> Self {
         let by_path: HashMap<&Path, &FileFacts> =
             files.iter().map(|f| (f.path.as_path(), f)).collect();
 
@@ -156,6 +200,33 @@ impl ProjectScope {
                 package_siblings.insert(member.to_path_buf(), siblings);
             }
         }
+
+        // Per package file, its root's completeness verdict (a root absent from
+        // the map is vacuously complete). Only recorded for package files.
+        let package_complete: HashMap<PathBuf, bool> = files
+            .iter()
+            .filter_map(|f| {
+                let root = f.package_root.as_ref()?;
+                Some((
+                    f.path.clone(),
+                    package_complete.get(root).copied().unwrap_or(true),
+                ))
+            })
+            .collect();
+
+        // Per-file data retained for the load-order replay (`source()` position).
+        let top_level_events: HashMap<PathBuf, Vec<TopLevelEvent>> = files
+            .iter()
+            .map(|f| (f.path.clone(), f.top_level_events.clone()))
+            .collect();
+        let exports_by_path: HashMap<PathBuf, BTreeSet<String>> = files
+            .iter()
+            .map(|f| (f.path.clone(), f.exports.clone()))
+            .collect();
+        let source_edges_by_path: HashMap<PathBuf, Vec<SourceEdgeKey>> = files
+            .iter()
+            .map(|f| (f.path.clone(), f.source_edges.clone()))
+            .collect();
 
         // For each file, the set of *other* files it can see.
         let mut sees: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
@@ -263,6 +334,10 @@ impl ProjectScope {
             dynamic,
             sees,
             package_siblings,
+            package_complete,
+            top_level_events,
+            exports: exports_by_path,
+            source_edges: source_edges_by_path,
         }
     }
 
@@ -306,6 +381,108 @@ impl ProjectScope {
             Some(siblings) => siblings,
             None => &EMPTY_PATHS,
         }
+    }
+
+    /// Whether `path`'s package root has a *complete* analyzed member set — i.e.
+    /// every `R/*.[RrSsQq]` source the package loads was analyzed. Vacuously
+    /// `true` for a non-package file (it has no flat package namespace to be
+    /// incomplete over). A `false` here is what makes a multi-def package cohort
+    /// refuse rename instead of half-rewriting the namespace.
+    pub fn package_complete(&self, path: &Path) -> bool {
+        self.package_complete.get(path).copied().unwrap_or(true)
+    }
+
+    /// Resolve, by sequential load order, what `name`'s *top-level* reads in
+    /// `from_file` bind to. Replays the file's [`TopLevelEvent`] sequence: a
+    /// `source()` edge folds its (transitive, non-local) closure's defs of `name`
+    /// into the live binding, a later top-level def shadows it, and each
+    /// top-level read records the live binding at its point. A dynamic/unanalyzed
+    /// source poisons every later read; two closure files defining `name` make it
+    /// ambiguous. Function-body reads aren't in the sequence (they run against the
+    /// final scope), so a file with only those is [`ReadBinding::NoTopLevelRead`].
+    pub fn top_level_read_binding(&self, from_file: &Path, name: &str) -> ReadBinding {
+        let Some(events) = self.top_level_events.get(from_file) else {
+            return ReadBinding::NoTopLevelRead;
+        };
+        let mut live: Option<PathBuf> = None;
+        let mut name_ambiguous = false;
+        let mut poisoned = false;
+        let mut saw_read = false;
+        let mut resolved: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut saw_unresolved = false;
+        let mut saw_unknown = false;
+        for event in events {
+            match event {
+                TopLevelEvent::Define(n) if n == name => {
+                    live = Some(from_file.to_path_buf());
+                    name_ambiguous = false;
+                }
+                TopLevelEvent::SourceEdge(key) => match source_dependency(key) {
+                    Dependency::Skip => {}
+                    Dependency::Unresolved => poisoned = true,
+                    Dependency::Path(p) => {
+                        let mut definers = self.closure_definers(p, name);
+                        match definers.len() {
+                            0 => {}
+                            1 => {
+                                live = definers.pop();
+                                name_ambiguous = false;
+                            }
+                            _ => name_ambiguous = true,
+                        }
+                    }
+                },
+                TopLevelEvent::Read(n) if n == name => {
+                    saw_read = true;
+                    if poisoned || name_ambiguous {
+                        saw_unknown = true;
+                    } else if let Some(p) = &live {
+                        resolved.insert(p.clone());
+                    } else {
+                        saw_unresolved = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !saw_read {
+            return ReadBinding::NoTopLevelRead;
+        }
+        if saw_unknown {
+            return ReadBinding::OrderUnknown;
+        }
+        match (resolved.len(), saw_unresolved) {
+            (0, _) => ReadBinding::Unresolved,
+            (1, false) => ReadBinding::Resolved(resolved.into_iter().next().expect("len == 1")),
+            _ => ReadBinding::OrderUnknown,
+        }
+    }
+
+    /// The analyzed files in the transitive, non-local `source()` closure rooted
+    /// at `start` (including `start` itself) whose top-level exports include
+    /// `name`. Cycle-guarded with a `visited` set like [`ProjectScope::build`].
+    fn closure_definers(&self, start: &Path, name: &str) -> Vec<PathBuf> {
+        let mut definers: Vec<PathBuf> = Vec::new();
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        let mut stack: Vec<PathBuf> = vec![start.to_path_buf()];
+        while let Some(cur) = stack.pop() {
+            if !visited.insert(cur.clone()) {
+                continue;
+            }
+            if self.exports.get(&cur).is_some_and(|e| e.contains(name)) {
+                definers.push(cur.clone());
+            }
+            if let Some(edges) = self.source_edges.get(&cur) {
+                for edge in edges {
+                    if let SourceTarget::Path(target) = &edge.target
+                        && !edge.local
+                    {
+                        stack.push(target.clone());
+                    }
+                }
+            }
+        }
+        definers
     }
 }
 
@@ -374,6 +551,7 @@ mod tests {
             exports: set(exp),
             free_reads: set(reads),
             source_edges: edges,
+            top_level_events: Vec::new(),
             package_root: root.map(PathBuf::from),
         }
     }
@@ -384,9 +562,40 @@ mod tests {
         v
     }
 
+    fn read_ev(name: &str) -> TopLevelEvent {
+        TopLevelEvent::Read(name.to_string())
+    }
+    fn def_ev(name: &str) -> TopLevelEvent {
+        TopLevelEvent::Define(name.to_string())
+    }
+    fn src_ev(target: &str) -> TopLevelEvent {
+        TopLevelEvent::SourceEdge(source_path(target, false))
+    }
+    fn dyn_src_ev() -> TopLevelEvent {
+        TopLevelEvent::SourceEdge(dynamic_edge())
+    }
+
+    /// `FileFacts` carrying an explicit top-level event sequence (and matching
+    /// `source_edges`), for load-order resolution tests.
+    fn facts_seq(
+        path: &str,
+        exp: &[&str],
+        edges: Vec<SourceEdgeKey>,
+        events: Vec<TopLevelEvent>,
+    ) -> FileFacts {
+        FileFacts {
+            path: PathBuf::from(path),
+            exports: set(exp),
+            free_reads: BTreeSet::new(),
+            source_edges: edges,
+            top_level_events: events,
+            package_root: None,
+        }
+    }
+
     /// Build a scope with no NAMESPACE data.
     fn build_scope(files: &[FileFacts]) -> ProjectScope {
-        ProjectScope::build(files, &HashMap::new())
+        ProjectScope::build(files, &HashMap::new(), &HashMap::new())
     }
 
     #[test]
@@ -582,7 +791,7 @@ mod tests {
         // `foo` is exported, so it isn't unused even though no file reads it.
         let files = [facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "export(foo)\n")]);
-        let scope = ProjectScope::build(&files, &ns);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new());
         assert!(
             scope
                 .for_file(Path::new("/pkg/R/a.R"))
@@ -594,7 +803,7 @@ mod tests {
     fn namespace_import_from_resolves_name() {
         let files = [facts("/pkg/R/a.R", &[], &["filter"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\n")]);
-        let scope = ProjectScope::build(&files, &ns);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new());
         let a = scope.for_file(Path::new("/pkg/R/a.R"));
         assert!(a.resolves("filter"));
         assert!(!a.resolution_incomplete);
@@ -604,11 +813,130 @@ mod tests {
     fn namespace_wholesale_import_marks_resolution_incomplete() {
         let files = [facts("/pkg/R/a.R", &[], &["abort"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "import(rlang)\n")]);
-        let scope = ProjectScope::build(&files, &ns);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new());
         assert!(
             scope
                 .for_file(Path::new("/pkg/R/a.R"))
                 .resolution_incomplete
+        );
+    }
+
+    #[test]
+    fn read_before_source_is_unresolved() {
+        // b reads foo before sourcing a (which defines it): foo isn't live yet.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/a.R", false)],
+                vec![read_ev("foo"), src_ev("/s/a.R")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.top_level_read_binding(Path::new("/s/b.R"), "foo"),
+            ReadBinding::Unresolved
+        );
+    }
+
+    #[test]
+    fn read_after_source_resolves_to_the_sourced_def() {
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/a.R", false)],
+                vec![src_ev("/s/a.R"), read_ev("foo")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.top_level_read_binding(Path::new("/s/b.R"), "foo"),
+            ReadBinding::Resolved(PathBuf::from("/s/a.R"))
+        );
+    }
+
+    #[test]
+    fn local_def_after_source_shadows_the_sourced_def() {
+        // b sources a (foo), then defines its own foo: a later read binds to b.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &["foo"],
+                vec![source_path("/s/a.R", false)],
+                vec![src_ev("/s/a.R"), def_ev("foo"), read_ev("foo")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.top_level_read_binding(Path::new("/s/b.R"), "foo"),
+            ReadBinding::Resolved(PathBuf::from("/s/b.R"))
+        );
+    }
+
+    #[test]
+    fn dynamic_source_before_read_is_order_unknown() {
+        let files = [facts_seq(
+            "/s/b.R",
+            &[],
+            vec![dynamic_edge()],
+            vec![dyn_src_ev(), read_ev("foo")],
+        )];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.top_level_read_binding(Path::new("/s/b.R"), "foo"),
+            ReadBinding::OrderUnknown
+        );
+    }
+
+    #[test]
+    fn body_only_read_has_no_top_level_event() {
+        // b sources a but only reads foo inside a function body: no Read event, so
+        // it falls back to the final-scope (position-blind) model.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/a.R", false)],
+                vec![src_ev("/s/a.R")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.top_level_read_binding(Path::new("/s/b.R"), "foo"),
+            ReadBinding::NoTopLevelRead
+        );
+    }
+
+    #[test]
+    fn same_name_in_one_sourced_closure_is_order_unknown() {
+        // b sources d, which sources both a and c — both define foo. Which one
+        // wins is order-dependent inside the closure, so resolution gives up.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts("/s/c.R", &["foo"], &[], vec![], None),
+            facts(
+                "/s/d.R",
+                &[],
+                &[],
+                vec![source_path("/s/a.R", false), source_path("/s/c.R", false)],
+                None,
+            ),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/d.R", false)],
+                vec![src_ev("/s/d.R"), read_ev("foo")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.top_level_read_binding(Path::new("/s/b.R"), "foo"),
+            ReadBinding::OrderUnknown
         );
     }
 }

@@ -1817,10 +1817,12 @@ fn text_edit_in(
 ///
 /// Rename is *sound in both directions* (never rewrite an unrelated binding,
 /// never miss a read), so it **refuses** (`None`) when it cannot prove that:
-/// a name conflict within the component, any dynamic `source()` in the project
-/// (a hidden reader could be missed), or a bare read that resolves to zero or
-/// more than one visible definition. Namespaced (`pkg::name`) names and
-/// non-syntactic `new_name`s are declined. Snapshot reads are wrapped in
+/// an *incomplete* multi-def package cohort (a hidden alias/read could live in an
+/// unanalyzed member), any dynamic `source()` in the project (a hidden reader
+/// could be missed), or a bare read that resolves to zero or more than one
+/// visible definition. A *complete* multi-def package cohort renames all aliases
+/// (one flat namespace). Namespaced (`pkg::name`) names and non-syntactic
+/// `new_name`s are declined. Snapshot reads are wrapped in
 /// [`salsa::Cancelled::catch`].
 fn rename_via_db(
     snapshot: &Analysis,
@@ -1903,8 +1905,13 @@ fn rename_via_db(
 /// double edits); pass `None` to include every file.
 ///
 /// Returns `None` to **refuse the whole rename** when soundness can't be
-/// guaranteed: a name conflict within the component, or any dynamic `source()`
-/// in the project. (Cancellation also yields `None`.)
+/// guaranteed: an *incomplete* multi-def package cohort (a hidden alias/read
+/// could live in an unanalyzed member), a reader whose top-level read doesn't
+/// bind to this cohort under `source()` load order (`order_ambiguous`), or any
+/// dynamic `source()` in the project. A *complete* multi-def package cohort is
+/// **not** refused — its members are aliases of one flat-namespace slot, so
+/// rewriting every cohort def plus every reader is a sound rename-all.
+/// (Cancellation also yields `None`.)
 fn cross_file_rename_edits(
     snapshot: &Analysis,
     def_file: &Path,
@@ -1916,7 +1923,7 @@ fn cross_file_rename_edits(
         snapshot.cross_file_binding(def_file, name)
     }))
     .ok()?;
-    if binding.conflict || binding.project_has_dynamic_source {
+    if binding.cohort_incomplete || binding.order_ambiguous || binding.project_has_dynamic_source {
         return None;
     }
     let mut edits = Vec::new();
@@ -3470,6 +3477,36 @@ mod tests {
         (dir, db.snapshot(), a_path, b_path)
     }
 
+    /// A real on-disk package with a custom `DESCRIPTION` and an arbitrary set of
+    /// `R/<name>` files, each flagged whether to also *seed* it as a workspace
+    /// member. A file on disk but unseeded simulates an unanalyzed member; a
+    /// seeded file with a parse error is dropped by `workspace_project`. Both
+    /// make the package's analyzed set incomplete. Returns the snapshot and the
+    /// path of the first file (the rename anchor).
+    fn package_workspace(
+        description: &str,
+        files: &[(&str, &str, bool)],
+    ) -> (tempfile::TempDir, Analysis, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(root.join("DESCRIPTION"), description).expect("write DESCRIPTION");
+        let r_dir = root.join("R");
+        std::fs::create_dir(&r_dir).expect("create R/");
+        let mut db = IncrementalDatabase::default();
+        let mut members = Vec::new();
+        let mut first: Option<PathBuf> = None;
+        for (name, src, seed) in files {
+            let path = r_dir.join(name);
+            std::fs::write(&path, src).expect("write R file");
+            first.get_or_insert_with(|| path.clone());
+            if *seed {
+                members.push(db.upsert_file(&path, src.to_string()));
+            }
+        }
+        db.set_workspace_members(members, vec![root.to_path_buf()]);
+        (dir, db.snapshot(), first.expect("at least one file"))
+    }
+
     #[test]
     fn rename_via_db_rewrites_a_definition_and_its_cross_file_reads() {
         // a.R defines `foo`; b.R sources a.R and reads it. Renaming from the
@@ -3588,18 +3625,89 @@ mod tests {
     }
 
     #[test]
-    fn rename_via_db_refuses_on_intra_component_conflict() {
-        // Package siblings both define top-level `foo`: one flat namespace, a
-        // redefinition. A sound rename refuses rather than guess which wins.
-        let (_dir, snapshot, a_path, _b_path) =
+    fn rename_via_db_corenames_complete_package_multidef() {
+        // Package siblings both define top-level `foo`: one flat namespace, so
+        // they are aliases of one slot. The package is complete (both R files
+        // analyzed), so a rename-all is sound — rewrite *both* definitions.
+        let (_dir, snapshot, a_path, b_path) =
             rename_package("foo <- function() 1\n", "foo <- function() 2\n");
         let uri_a = uri::from_path(&a_path).unwrap();
+        let uri_b = uri::from_path(&b_path).unwrap();
         let a_src = "foo <- function() 1\n";
         let offset = a_src.find("foo").unwrap();
 
+        let edit = rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed")
+            .expect("complete package: multi-def rename is a sound rename-all");
+        let changes = edit.changes.expect("changes present");
         assert!(
-            rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed").is_none(),
-            "two defs of foo in one component: rename refuses"
+            changes.contains_key(&uri_a),
+            "a.R's definition of the alias is renamed"
+        );
+        assert!(
+            changes.contains_key(&uri_b),
+            "the sibling's definition of the same flat slot is renamed too"
+        );
+    }
+
+    /// Rename a.R's `foo` in a package where a.R + b.R both define `foo` (a
+    /// multi-def cohort). Returns whether the rename was offered.
+    fn package_multidef_rename_offered(description: &str, files: &[(&str, &str, bool)]) -> bool {
+        let (_dir, snapshot, a_path) = package_workspace(description, files);
+        let uri_a = uri::from_path(&a_path).unwrap();
+        let a_src = files[0].1;
+        let offset = a_src.find("foo").unwrap();
+        rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed").is_some()
+    }
+
+    #[test]
+    fn rename_via_db_refuses_multidef_with_unseeded_sibling() {
+        // a.R + b.R both define foo (seeded); c.R on disk also defines foo but is
+        // not analyzed. The package's R/ set isn't covered, so a rename-all could
+        // miss c.R's alias/reads — refuse.
+        assert!(
+            !package_multidef_rename_offered(
+                "Package: testpkg\n",
+                &[
+                    ("a.R", "foo <- function() 1\n", true),
+                    ("b.R", "foo <- function() 2\n", true),
+                    ("c.R", "foo <- function() 3\n", false),
+                ],
+            ),
+            "an unanalyzed R/ sibling makes the package incomplete: rename refuses"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_refuses_multidef_with_parse_error_sibling() {
+        // c.R is seeded but has a parse error, so `workspace_project` drops it —
+        // the analyzed set no longer covers R/, so the multi-def rename refuses.
+        assert!(
+            !package_multidef_rename_offered(
+                "Package: testpkg\n",
+                &[
+                    ("a.R", "foo <- function() 1\n", true),
+                    ("b.R", "foo <- function() 2\n", true),
+                    ("c.R", "foo <- function() {\n", true),
+                ],
+            ),
+            "a dropped parse-error member makes the package incomplete: rename refuses"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_refuses_multidef_when_collate_names_absent_file() {
+        // `Collate:` lists c.R, which is neither on disk nor analyzed. The
+        // expected source set (dir glob ∪ Collate) exceeds the analyzed set, so
+        // the package is incomplete and the multi-def rename refuses.
+        assert!(
+            !package_multidef_rename_offered(
+                "Package: testpkg\nCollate: a.R b.R c.R\n",
+                &[
+                    ("a.R", "foo <- function() 1\n", true),
+                    ("b.R", "foo <- function() 2\n", true),
+                ],
+            ),
+            "a Collate entry outside the analyzed set makes the package incomplete: rename refuses"
         );
     }
 
@@ -3616,6 +3724,66 @@ mod tests {
         assert!(
             rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
             "an unresolvable dynamic source forces a project-wide refusal"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_refuses_when_a_reader_reads_before_its_source() {
+        // b.R reads `foo` at top level *before* sourcing a.R, so that read binds
+        // to nothing (not a.R's foo). We can't co-rename it, and can't skip it
+        // selectively, so the whole rename refuses.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "before <- foo\nsource(\"a.R\")\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        assert!(
+            rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
+            "a pre-source top-level read makes the rename order-ambiguous: refuse"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_renames_a_top_level_read_after_the_source() {
+        // b.R reads `foo` at top level *after* sourcing a.R, so it binds to a.R's
+        // foo under load order: rename rewrites the definition and that read.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "source(\"a.R\")\nx <- foo\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("a post-source top-level read binds cleanly: rename is offered");
+        let changes = edit.changes.expect("changes present");
+        assert!(changes.contains_key(&uri_a), "the definition is renamed");
+        assert!(
+            changes.contains_key(&uri_b),
+            "the post-source top-level read is renamed"
+        );
+    }
+
+    #[test]
+    fn references_via_db_overreports_a_pre_source_read() {
+        // References is non-destructive, so where rename refuses on the
+        // order-ambiguous pre-source read, references still reports it.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "before <- foo\nsource(\"a.R\")\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let position = pos_at(a_src, a_src.find("foo").unwrap());
+
+        let locations =
+            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
+                .expect("references present");
+        let uris = ref_uris(&locations);
+        assert!(uris.contains(&uri_a));
+        assert!(
+            uris.contains(&uri_b),
+            "references over-reports the pre-source read rename refuses"
         );
     }
 
@@ -3800,9 +3968,9 @@ mod tests {
     }
 
     #[test]
-    fn references_via_db_reports_cohort_on_conflict() {
-        // Package siblings both define foo: rename refuses (conflict), but
-        // references over-reports the whole cohort non-destructively.
+    fn references_via_db_reports_cohort_for_package_multidef() {
+        // Package siblings both define foo: one flat slot. References reports the
+        // whole cohort (both defs) — the same answer rename now rewrites.
         let (_dir, snapshot, a_path, b_path) =
             rename_package("foo <- function() 1\n", "foo <- function() 2\n");
         let uri_a = uri::from_path(&a_path).unwrap();
@@ -3810,27 +3978,13 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let position = pos_at(a_src, a_src.find("foo").unwrap());
 
-        // rename refuses on the same input...
-        assert!(
-            rename_via_db(
-                &snapshot,
-                &a_path,
-                &uri_a,
-                a_src,
-                a_src.find("foo").unwrap(),
-                "renamed"
-            )
-            .is_none(),
-            "rename refuses the conflict"
-        );
-        // ...but references reports both defs.
         let locations = references_via_db(&snapshot, &a_path, &uri_a, a_src, position, true)
             .expect("references present");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a));
         assert!(
             uris.contains(&uri_b),
-            "references reports the conflicting sibling def"
+            "references reports the sibling def of the same flat slot"
         );
     }
 

@@ -68,6 +68,50 @@ impl SourceEdge {
     }
 }
 
+/// One event in a file's top-level execution sequence, range-free.
+///
+/// Order is carried by position in the enclosing `Vec`, never by a span — so a
+/// body edit that shifts offsets re-extracts to an *equal* sequence and the
+/// firewall this feeds backdates, exactly like [`SourceEdgeKey`]. It is to a
+/// span what [`crate::project::DefKind`] is to a value: the order-bearing,
+/// range-free projection cross-file load-order resolution consumes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum TopLevelEvent {
+    /// A top-level binding `name <- ...` becomes live at this point.
+    Define(String),
+    /// A top-level `source(...)`/`sys.source(...)` edge folds the target's
+    /// bindings into scope here.
+    SourceEdge(SourceEdgeKey),
+    /// A top-level *bare free read* of `name` observes the scope as of here.
+    /// Only file-scope-direct reads — a read inside a function/block body runs at
+    /// call time and sees the final post-execution scope, so it is not gated by
+    /// position and is omitted.
+    Read(String),
+}
+
+/// The [`SourceEdgeKey`] for a top-level `child` that is a `source(...)` or
+/// `sys.source(...)` call, else `None`. `sys.source` is mapped to
+/// [`SourceTarget::Dynamic`] (we don't model its argument resolution), so it
+/// poisons order resolution conservatively rather than being silently ignored.
+pub fn top_level_source_edge_key(
+    child: &SyntaxNode,
+    base_dir: Option<&Path>,
+) -> Option<SourceEdgeKey> {
+    let call = CallExpr::cast(child.clone())?;
+    let callee = call.callee_token()?;
+    if callee.kind() != SyntaxKind::IDENT {
+        return None;
+    }
+    match callee.text() {
+        "source" => Some(source_edge(&call, base_dir).key()),
+        "sys.source" => Some(SourceEdgeKey {
+            target: SourceTarget::Dynamic,
+            local: false,
+        }),
+        _ => None,
+    }
+}
+
 /// Collect top-level `source(...)` calls in `root`. `base_dir` is the directory
 /// of the file being scanned; relative literal targets are resolved against it.
 ///

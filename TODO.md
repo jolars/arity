@@ -226,22 +226,43 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       the renamed file, or downgrade to a warning. Localized to
       `cross_file_rename_edits` (`src/lsp.rs`).
 
-  - **Phase B --- load-order resolution.** Two ordering axes, biting in
-    different places. *Package collation order* (only for a package whose source
-    lives in the workspace --- the `package_root` members we analyze and rename;
-    installed deps are opaque `LibraryIndex` export sets, never reordered or
-    renamed): R sources `R/*.[RrSsQq]` in `Collate:` order (DESCRIPTION) else
-    C-locale alphabetical, last def wins --- but the namespace is fully built
-    before any function runs, so order only picks the live duplicate among
-    multiple defs, it never changes which reads resolve where. *`source()`
-    position*: executes sequentially in the target
-    env, so a read before the call doesn't see the injected binding and
-    local/sourced defs shadow by position --- this *does* affect read
-    resolution, and needs the source-edge span back (`SourceEdge` carries it;
-    the `SourceEdgeKey` firewall drops it). Give up conservatively on
-    `local=TRUE` (already `Dependency::Skip`), computed paths (already
-    `Unresolved`), non-top-level/conditional `source()`, `sys.source()`, and
-    `Collate:` over unanalyzed files.
+  - [x] **Phase B --- load-order resolution.** Landed, both ordering axes.
+    *Package collation order*: a workspace package is one flat namespace built
+    before any function runs, so multiple sibling defs of a name are aliases of
+    one slot --- a sound **rename-all**, not the blanket `conflict` refusal Phase
+    A used. `CrossFileBinding` now splits that into `cohort_incomplete`: a
+    multi-def cohort refuses only when the package's analyzed member set doesn't
+    cover its `R/*.[RrSsQq]` sources (`expected = dir glob ∪ Collate:`, computed
+    by `read_collations` and frozen into the interned `Project.collations`, so it
+    stays pure and backdates; `parse_dcf` lifted from `rindex::harvest`). Only the
+    *set* of collated files is needed --- order never changes which reads resolve
+    where. *`source()` position*: a new range-free, order-bearing per-file
+    firewall `top_level_events` (`Define`/`SourceEdge`/`Read`, order = `Vec`
+    position, span-free so it backdates across body edits like `source_edges`;
+    `collect_top_level_events` in `src/project/sequence.rs`) drives
+    `ProjectScope::top_level_read_binding`, a cycle-guarded replay resolving what
+    a file's *top-level* reads bind to under sequential execution.
+    `cross_file_binding` consumes it as `order_ambiguous`: rename refuses when a
+    reader's top-level read of the name doesn't bind to the cohort (sits before
+    the `source()` that injects the def, binds elsewhere, or is poisoned).
+    References over-reports as before. Give-ups: `local=TRUE`
+    (`Dependency::Skip`), computed paths (`Unresolved`), non-top-level/
+    conditional `source()` (only root children scanned), `sys.source()` (mapped
+    to `Dynamic` --- a deliberate tightening from silently ignored), same-name
+    across one sourced closure (`OrderUnknown`), and `Collate:`/unanalyzed package
+    members (`cohort_incomplete`). Took the on-demand route like Phase A: no new
+    *tracked* provenance query; `top_level_read_binding`/`package_complete` are
+    `ProjectScope` accessors read off the snapshot, and `visible_def_files` stays
+    position-blind (the readers refinement covers both the rename-from-def and
+    bare-read paths, since the reading file is always in the readers set).
+
+    - [ ] *Follow-up: precise per-reader range filtering (B2.4).* The first cut
+      **refuses** the whole rename when a reader has a top-level read of the name
+      that doesn't bind to the cohort. A precise version would rename the binding
+      (post-`source()`) reads and skip only the pre-`source()` ones, instead of
+      refusing --- but that needs order-aware span recovery in
+      `read_ranges_in` (`src/incremental.rs`), correlating each ident to its
+      provenance. Deferred; the current refusal is sound, just conservative.
 
   - **Salsa / incrementality (Tenet 2).** Several constraints, all learnable
     from the existing graph layer:
