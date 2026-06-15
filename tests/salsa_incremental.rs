@@ -692,6 +692,48 @@ fn workspace_read_sites_empty_without_a_workspace_or_match() {
 }
 
 #[test]
+fn cross_file_binding_scopes_to_a_source_connected_reader() {
+    // b sources a and reads foo; a defines foo. The binding's cohort is just a,
+    // and b is a reader because it can see a.
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
+    let b = db.upsert_file(
+        Path::new("/s/b.R"),
+        "source(\"a.R\")\nbar <- function() foo()\n".to_string(),
+    );
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+
+    let snapshot = db.snapshot();
+    let binding = snapshot.cross_file_binding(Path::new("/s/a.R"), "foo");
+    assert_eq!(binding.cohort, vec![PathBuf::from("/s/a.R")]);
+    assert_eq!(binding.readers, vec![PathBuf::from("/s/b.R")]);
+    assert!(!binding.conflict);
+    assert!(!binding.project_has_dynamic_source);
+}
+
+#[test]
+fn cross_file_binding_excludes_disjoint_same_name_def() {
+    // Two unconnected flat scripts each define foo. From a's perspective the
+    // cohort is a alone — b's foo is an unrelated binding — even though the
+    // global, name-keyed index lists both.
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
+    let b = db.upsert_file(Path::new("/s/b.R"), "foo <- function() 2\n".to_string());
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
+
+    let snapshot = db.snapshot();
+    assert_eq!(
+        snapshot.workspace_def_sites("foo").len(),
+        2,
+        "the global index is name-keyed and lists both"
+    );
+    let binding = snapshot.cross_file_binding(Path::new("/s/a.R"), "foo");
+    assert_eq!(binding.cohort, vec![PathBuf::from("/s/a.R")]);
+    assert!(binding.readers.is_empty());
+    assert!(!binding.conflict);
+}
+
+#[test]
 fn body_edit_does_not_rebuild_project_scope() {
     // The firewall: editing b.R's function *body* changes its semantic model but
     // not its top-level exports / free reads / source edges, so the cross-file

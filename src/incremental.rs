@@ -17,7 +17,10 @@ use rowan::TextRange;
 use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
-use crate::project::{DefKind, SourceEdgeKey, project_defs, project_reads, workspace_project};
+use crate::project::{
+    DefKind, SourceEdgeKey, project_defs, project_graph, project_reads, reverse_source_edges,
+    workspace_project,
+};
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
@@ -632,6 +635,32 @@ impl IncrementalDatabase {
 /// Handed to the language server's read jobs and the cross-file read-phase
 /// ([`analyze_prepared`](crate::linter::check::analyze_prepared)); the
 /// `&mut`-capable [`IncrementalDatabase`] stays private to the lint worker.
+/// The scope-aware resolution of a cross-file binding: the workspace partition a
+/// top-level name actually belongs to, as opposed to the global name-keyed view
+/// of [`Analysis::workspace_def_sites`]/[`Analysis::workspace_read_sites`].
+///
+/// Produced by [`Analysis::cross_file_binding`] for a `(def_file, name)` pair.
+/// Span-free (paths only); consumers recover spans per file via
+/// [`Analysis::def_range_in`]/[`Analysis::read_ranges_in`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CrossFileBinding {
+    /// Member files whose top-level definition of the name aliases `def_file`'s
+    /// — `def_file` itself plus the files sharing its flat-namespace component
+    /// (package siblings, or `source()`-connected scripts) that also define it.
+    pub cohort: Vec<PathBuf>,
+    /// Member files that can see `def_file`, free-read the name, and do not
+    /// shadow it with their own top-level definition — the reads that bind to
+    /// `def_file`'s definition.
+    pub readers: Vec<PathBuf>,
+    /// The name is defined by more than one file in `def_file`'s component
+    /// (`cohort.len() > 1`). In R's flat per-component namespace this is a
+    /// redefinition, so a sound rename refuses rather than guessing.
+    pub conflict: bool,
+    /// Some member has an unresolvable dynamic `source()`, so a hidden reader
+    /// could exist. A sound rename refuses project-wide to avoid a missed read.
+    pub project_has_dynamic_source: bool,
+}
+
 pub struct Analysis(IncrementalDatabase);
 
 impl Analysis {
@@ -756,6 +785,100 @@ impl Analysis {
                     .map(move |range| (path.clone(), range))
             })
             .collect()
+    }
+
+    /// Resolve the cross-file binding for the top-level `name` defined in
+    /// `def_file`, scoped to the visibility component instead of the global
+    /// name-keyed [`workspace_def_sites`](Self::workspace_def_sites)/
+    /// [`workspace_read_sites`](Self::workspace_read_sites) view.
+    ///
+    /// The cohort is `def_file` plus the files in its component
+    /// ([`ProjectScope::sees`](crate::project::ProjectScope::sees), in either
+    /// direction) that also define `name`; the readers are the files that can
+    /// see `def_file` ([`ProjectScope::seen_by`](crate::project::ProjectScope::seen_by)),
+    /// free-read `name`, and don't shadow it with their own top-level
+    /// definition. Span-free: spans are recovered per site downstream. A pure
+    /// read — the caller wraps it in [`salsa::Cancelled::catch`]. Empty when no
+    /// workspace is seeded.
+    pub fn cross_file_binding(&self, def_file: &Path, name: &str) -> CrossFileBinding {
+        if self.0.workspace().is_none() {
+            return CrossFileBinding::default();
+        }
+        let project = workspace_project(&self.0);
+        let graph = project_graph(&self.0, project);
+        let defs = project_defs(&self.0, project);
+        let reads = project_reads(&self.0, project);
+
+        let def_paths: BTreeSet<PathBuf> = defs
+            .by_name
+            .get(name)
+            .map(|sites| sites.iter().map(|(path, _kind)| path.clone()).collect())
+            .unwrap_or_default();
+
+        // Cohort: the defining files that share def_file's flat namespace slot —
+        // def_file plus its package siblings that also define the name. A
+        // `source()`-connected file that defines the same name is a *shadow*
+        // (visible but order-resolved), not an alias, so it stays out; and a
+        // disjoint script defining the same name is unrelated.
+        let siblings = graph.package_siblings(def_file);
+        let cohort: Vec<PathBuf> = def_paths
+            .iter()
+            .filter(|d| d.as_path() == def_file || siblings.contains(d.as_path()))
+            .cloned()
+            .collect();
+        let conflict = cohort.len() > 1;
+
+        // Readers: files that can see def_file, free-read the name, and don't
+        // shadow it with their own top-level definition (those are cohort defs,
+        // not external readers).
+        let seen_by = graph.seen_by(def_file);
+        let readers: Vec<PathBuf> = reads
+            .by_name
+            .get(name)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter(|r| seen_by.contains(r.as_path()) && !def_paths.contains(r.as_path()))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let project_has_dynamic_source = !reverse_source_edges(&self.0, project)
+            .dynamic_sources
+            .is_empty();
+
+        CrossFileBinding {
+            cohort,
+            readers,
+            conflict,
+            project_has_dynamic_source,
+        }
+    }
+
+    /// The member files that define top-level `name` and are visible from
+    /// `from_file` (its [`sees`](crate::project::ProjectScope::sees) set). Used to
+    /// resolve a bare free read to the definition it binds to: exactly one
+    /// visible def is an unambiguous resolution; zero or more than one is not. A
+    /// pure read — the caller wraps it in [`salsa::Cancelled::catch`].
+    pub fn visible_def_files(&self, from_file: &Path, name: &str) -> Vec<PathBuf> {
+        if self.0.workspace().is_none() {
+            return Vec::new();
+        }
+        let project = workspace_project(&self.0);
+        let graph = project_graph(&self.0, project);
+        let defs = project_defs(&self.0, project);
+        let seen = graph.sees(from_file);
+        defs.by_name
+            .get(name)
+            .map(|sites| {
+                sites
+                    .iter()
+                    .map(|(path, _kind)| path.clone())
+                    .filter(|path| seen.contains(path.as_path()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Re-resolve a [`NodePtr`] taken against `taken_at_text` to a node in

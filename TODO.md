@@ -198,13 +198,24 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   the renamed one), so when the static model is uncertain it must
   refuse-or-warn, not guess. Stage it:
 
-  - **Phase A --- component partitioning (no ordering).** Expose `sees`
-    reachability + package membership from `ProjectScope`; rewrite only the def
-    + reads within the target's reachable component, and skip a reader that
-    shadows the name with its own top-level def. This alone kills the
-    cross-component false positive. When a name is defined ≥2× *within* one
-    component, surface a conflict instead of silently resolving. Cheap and
-    span-free; the big correctness win.
+  - [x] **Phase A --- component partitioning (no ordering).** Landed.
+    `ProjectScope` now retains `sees` (the reachability relation) and a
+    `package_siblings` map, exposed via `sees`/`seen_by`/`package_siblings`
+    accessors (`src/project/scope.rs`), all span-free. `Analysis::cross_file_binding`
+    (`src/incremental.rs`) resolves a `(def_file, name)` to its `cohort` (def_file
+    + package siblings that also define it --- the flat-namespace aliases; a
+    `source()`-connected redefinition is a *shadow*, not an alias, so it stays
+    out), `readers` (files that can see def_file, free-read the name, and don't
+    shadow it), a `conflict` flag (≥2 defs in the component), and a
+    `project_has_dynamic_source` flag. `rename_via_db`/`references_via_db`
+    (`src/lsp.rs`) consume it through `cross_file_rename_edits` /
+    `cross_file_reference_locations`; a bare free read resolves via
+    `Analysis::visible_def_files`. Rename **refuses** (returns `None`) on
+    conflict, on any project dynamic source (chosen project-wide for soundness),
+    or on a bare read that resolves to ≠1 visible def; references is
+    non-destructive so it **over-reports** the cohort instead. Computed
+    on-demand off the read snapshot --- no new tracked query, so backdating is
+    untouched. This killed the cross-component false positive.
 
   - **Phase B --- load-order resolution.** Two ordering axes, biting in
     different places. *Package collation order* (only for a package whose source
@@ -239,12 +250,12 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       change anywhere re-runs the whole graph. Project what you need through a
       thin `Eq` firewall, the way `visible_symbols`/`Visibility` already does.
       The provenance map (name → defining file, order-resolved) is a *new* such
-      projection, fed by the top-level sequence; `sees`/component membership
-      (Phase A) is private inside `ProjectScope` today --- expose an accessor or
-      add a component-id `Eq` projection. (The rename/references handlers
-      themselves aren't tracked --- they run on a read snapshot --- so they may
-      instead read the graph on-demand and skip memoization; decide
-      deliberately.)
+      projection, fed by the top-level sequence. (Phase A took the on-demand
+      route: `sees`/`package_siblings` are exposed as `ProjectScope` accessors
+      and the handlers read the `no_eq` graph off the read snapshot rather than
+      memoizing --- fine because rename/references aren't tracked queries. If
+      Phase B wants a *tracked* consumer of order-resolved provenance, it must go
+      through a thin `Eq` projection instead, the way `visible_symbols` does.)
 
     - *Stays read-only.* Resolution consumes already-aggregated member firewalls
       + the graph, all readable on a snapshot, so rename/references stay on the

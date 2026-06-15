@@ -26,11 +26,15 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::harvest::parse_namespace;
 
 static EMPTY: BTreeSet<String> = BTreeSet::new();
+// `HashSet::new` isn't `const` (its hasher state isn't const-constructible), so
+// unlike `EMPTY` this needs lazy init.
+static EMPTY_PATHS: LazyLock<HashSet<PathBuf>> = LazyLock::new(HashSet::new);
 
 /// One file's contribution to cross-file resolution.
 #[derive(Debug, Clone)]
@@ -58,6 +62,19 @@ pub struct ProjectScope {
     used_by_others: HashMap<PathBuf, BTreeSet<String>>,
     /// Files whose cross-file visibility is incomplete (unresolved `source()`).
     dynamic: HashSet<PathBuf>,
+    /// Per file: the set of *other* files it can see (package siblings, plus the
+    /// transitive non-local `source()` closure). Directional: `a` sourcing `b`
+    /// puts `b` in `sees[a]` but not the reverse. The raw reachability relation
+    /// `visible`/`used_by_others` are derived from; retained so scope-aware
+    /// cross-file resolution (rename/references) can partition by visibility
+    /// component. Span-free, so it stays body-edit-stable.
+    sees: HashMap<PathBuf, HashSet<PathBuf>>,
+    /// Per package file: its co-members under the same package root (excluding
+    /// itself). Package siblings share one *flat* namespace, so two siblings
+    /// defining the same top-level name are the same binding slot (a
+    /// redefinition) — unlike `source()` edges, which only make a name *visible*
+    /// and shadow by order. Absent for non-package files. Span-free.
+    package_siblings: HashMap<PathBuf, HashSet<PathBuf>>,
 }
 
 /// One file's view of its project.
@@ -123,6 +140,20 @@ impl ProjectScope {
                     .entry(root.as_path())
                     .or_default()
                     .push(f.path.as_path());
+            }
+        }
+
+        // Each package file's co-members (excluding itself), for the flat
+        // shared-namespace relation that aliasing/conflict detection needs.
+        let mut package_siblings: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+        for members in package_members.values() {
+            for &member in members {
+                let siblings = members
+                    .iter()
+                    .filter(|&&other| other != member)
+                    .map(|&other| other.to_path_buf())
+                    .collect();
+                package_siblings.insert(member.to_path_buf(), siblings);
             }
         }
 
@@ -230,6 +261,8 @@ impl ProjectScope {
             visible,
             used_by_others,
             dynamic,
+            sees,
+            package_siblings,
         }
     }
 
@@ -240,6 +273,38 @@ impl ProjectScope {
             visible: self.visible.get(path).unwrap_or(&EMPTY),
             used_by_others: self.used_by_others.get(path).unwrap_or(&EMPTY),
             resolution_incomplete: self.dynamic.contains(path),
+        }
+    }
+
+    /// The set of *other* files `path` can see (package siblings + non-local
+    /// `source()` closure). Directional. Empty for files outside the analyzed
+    /// set.
+    pub fn sees(&self, path: &Path) -> &HashSet<PathBuf> {
+        match self.sees.get(path) {
+            Some(seen) => seen,
+            None => &EMPTY_PATHS,
+        }
+    }
+
+    /// The inverse of [`sees`](Self::sees): the files that can see `path` (i.e.
+    /// resolve `path`'s top-level bindings). For renaming a binding defined in
+    /// `path`, these are the files whose reads can bind to it.
+    pub fn seen_by(&self, path: &Path) -> HashSet<PathBuf> {
+        self.sees
+            .iter()
+            .filter(|(_, seen)| seen.contains(path))
+            .map(|(p, _)| p.clone())
+            .collect()
+    }
+
+    /// The package co-members of `path` (excluding itself), which share one flat
+    /// namespace with it. Empty for non-package files. Unlike [`sees`](Self::sees),
+    /// this is the *aliasing* relation: two siblings defining the same top-level
+    /// name are the same binding slot.
+    pub fn package_siblings(&self, path: &Path) -> &HashSet<PathBuf> {
+        match self.package_siblings.get(path) {
+            Some(siblings) => siblings,
+            None => &EMPTY_PATHS,
         }
     }
 }
@@ -399,6 +464,70 @@ mod tests {
             names(scope.for_file(Path::new("/s/a.R")).visible),
             vec!["bar", "baz"]
         );
+    }
+
+    #[test]
+    fn seen_by_is_inverse_of_sees() {
+        // a sources b: a sees b, so b is seen_by a; nobody sees a.
+        let files = [
+            facts(
+                "/s/a.R",
+                &["foo"],
+                &[],
+                vec![source_path("/s/b.R", false)],
+                None,
+            ),
+            facts("/s/b.R", &["bar"], &[], vec![], None),
+        ];
+        let scope = build_scope(&files);
+        assert!(
+            scope
+                .sees(Path::new("/s/a.R"))
+                .contains(Path::new("/s/b.R"))
+        );
+        assert!(scope.sees(Path::new("/s/b.R")).is_empty());
+        assert!(
+            scope
+                .seen_by(Path::new("/s/b.R"))
+                .contains(Path::new("/s/a.R"))
+        );
+        assert!(scope.seen_by(Path::new("/s/a.R")).is_empty());
+    }
+
+    #[test]
+    fn seen_by_includes_package_siblings_symmetrically() {
+        let files = [
+            facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg")),
+            facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
+        ];
+        let scope = build_scope(&files);
+        assert!(
+            scope
+                .sees(Path::new("/pkg/R/a.R"))
+                .contains(Path::new("/pkg/R/b.R"))
+        );
+        assert!(
+            scope
+                .sees(Path::new("/pkg/R/b.R"))
+                .contains(Path::new("/pkg/R/a.R"))
+        );
+        assert!(
+            scope
+                .seen_by(Path::new("/pkg/R/a.R"))
+                .contains(Path::new("/pkg/R/b.R"))
+        );
+    }
+
+    #[test]
+    fn seen_by_excludes_unconnected_file() {
+        // Two flat scripts, same export name, no edge: neither sees the other.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts("/s/b.R", &["foo"], &[], vec![], None),
+        ];
+        let scope = build_scope(&files);
+        assert!(scope.sees(Path::new("/s/a.R")).is_empty());
+        assert!(scope.seen_by(Path::new("/s/a.R")).is_empty());
     }
 
     #[test]

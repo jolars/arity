@@ -1652,15 +1652,22 @@ fn definition_via_db(
 }
 
 /// Resolve `textDocument/references` against a db `snapshot`. The inverse of
-/// [`definition_via_db`], in the same two phases. Intra-file: the cursor names a
-/// local binding (or its definition), and every in-file read of it is reported as
-/// a `Location` into `uri` (plus the definition when `include_declaration`). When
-/// that binding is *file-scope* (a top-level name a sibling file can read), the
-/// workspace read index ([`Analysis::workspace_read_sites`]) adds the cross-file
-/// reads. Otherwise the cursor sits on a bare free read of a workspace name, and
-/// every read of that name across the workspace is reported. Namespaced
-/// (`pkg::name`) and base-R names have no in-tree reads to find. Snapshot reads
-/// are wrapped in [`salsa::Cancelled::catch`].
+/// [`definition_via_db`] and the read mirror of [`rename_via_db`], in the same
+/// two phases, but **scope-aware**: cross-file reads come from the visibility
+/// component ([`cross_file_reference_locations`]), not every workspace site of the
+/// name. Intra-file: the cursor names a local binding (or its definition), and
+/// every in-file read of it is reported (plus the definition when
+/// `include_declaration`). When that binding is *file-scope*, the component adds
+/// the cross-file reads (and sibling definitions, when `include_declaration`).
+/// Otherwise the cursor sits on a bare free read, resolved to the definition(s)
+/// it can see ([`Analysis::visible_def_files`]); a unique resolution reports its
+/// component, and an ambiguous one reports the union.
+///
+/// Unlike rename, references is non-destructive, so it never refuses: it
+/// over-reports (the whole component even on a conflict / with a dynamic
+/// `source()`) rather than risk missing a reference. Namespaced (`pkg::name`) and
+/// base-R names have no in-tree reads. Snapshot reads are wrapped in
+/// [`salsa::Cancelled::catch`].
 fn references_via_db(
     snapshot: &Analysis,
     path: &Path,
@@ -1690,20 +1697,17 @@ fn references_via_db(
                 range: text_range_to_lsp_range(&line_index, occ.def),
             });
         }
-        // Cross-file: a top-level binding can be free-read from sibling files.
-        // Nested locals are file-private, so they stay intra-file.
+        // Cross-file: a top-level binding can be read from files that can see
+        // this one. Scope to that component; this file's own occurrences were
+        // collected above, so skip it. Nested locals stay intra-file.
         if model.binding_is_file_scope(target.binding) {
-            let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-                snapshot
-                    .workspace_read_sites(&target.name)
-                    .into_iter()
-                    // The current file's reads were collected intra-file above.
-                    .filter(|(read_path, _)| read_path != path)
-                    .filter_map(|(read_path, range)| location_in(snapshot, &read_path, range))
-                    .collect::<Vec<_>>()
-            }))
-            .unwrap_or_default();
-            locations.extend(cross);
+            locations.extend(cross_file_reference_locations(
+                snapshot,
+                path,
+                target.name.as_str(),
+                include_declaration,
+                Some(path),
+            ));
         }
         return (!locations.is_empty()).then_some(locations);
     }
@@ -1720,26 +1724,48 @@ fn references_via_db(
         return None;
     }
     let name = SmolStr::new(token.text());
-    let locations = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        // Every read of the name across the workspace, including this file's own.
-        let mut locs: Vec<Location> = snapshot
-            .workspace_read_sites(&name)
-            .into_iter()
-            .filter_map(|(read_path, range)| location_in(snapshot, &read_path, range))
-            .collect();
-        if include_declaration {
-            locs.extend(
-                snapshot
-                    .workspace_def_sites(&name)
-                    .into_iter()
-                    .filter_map(|(def_path, range)| location_in(snapshot, &def_path, range)),
-            );
-        }
-        locs
+    let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        snapshot.visible_def_files(path, name.as_str())
     }))
     .unwrap_or_default();
-
+    if visible_defs.is_empty() {
+        return None;
+    }
+    // A unique resolution reports its component; an ambiguous one reports the
+    // union (references over-reports rather than refuse). Include this file's own
+    // read (skip = None).
+    let mut locations: Vec<Location> = visible_defs
+        .iter()
+        .flat_map(|def_file| {
+            cross_file_reference_locations(
+                snapshot,
+                def_file,
+                name.as_str(),
+                include_declaration,
+                None,
+            )
+        })
+        .collect();
+    dedup_locations(&mut locations);
     (!locations.is_empty()).then_some(locations)
+}
+
+/// Sort and dedup `locations` (by URI then range) so a union of overlapping
+/// components doesn't report the same site twice.
+fn dedup_locations(locations: &mut Vec<Location>) {
+    locations.sort_by(|a, b| {
+        (a.uri.as_str(), pos_key(a.range.start), pos_key(a.range.end)).cmp(&(
+            b.uri.as_str(),
+            pos_key(b.range.start),
+            pos_key(b.range.end),
+        ))
+    });
+    locations.dedup();
+}
+
+/// A totally-ordered key for an LSP [`Position`].
+fn pos_key(position: Position) -> (u32, u32) {
+    (position.line, position.character)
 }
 
 /// A `Location` for `range` in the workspace file at `path`, mapping the byte
@@ -1782,11 +1808,20 @@ fn text_edit_in(
 /// [`WorkspaceEdit`] instead of `Location`s. Intra-file: the cursor names a local
 /// binding (or its definition), and every in-file read plus the definition is
 /// rewritten to `new_name` in `uri`. When that binding is *file-scope*, the
-/// workspace read index ([`Analysis::workspace_read_sites`]) adds the cross-file
-/// reads. Otherwise the cursor sits on a bare free read of a workspace name, and
-/// every read *and* definition of it across the workspace is rewritten.
-/// Namespaced (`pkg::name`) names and non-syntactic `new_name`s are declined.
-/// Snapshot reads are wrapped in [`salsa::Cancelled::catch`].
+/// cross-file rewrite is **scope-aware** ([`cross_file_rename_edits`]): only the
+/// visibility component is touched — package siblings / `source()`-closure
+/// readers that can actually see the definition — not every workspace site of the
+/// name. Otherwise the cursor sits on a bare free read, which is resolved to its
+/// single visible definition ([`Analysis::visible_def_files`]) and then renamed
+/// through the same component.
+///
+/// Rename is *sound in both directions* (never rewrite an unrelated binding,
+/// never miss a read), so it **refuses** (`None`) when it cannot prove that:
+/// a name conflict within the component, any dynamic `source()` in the project
+/// (a hidden reader could be missed), or a bare read that resolves to zero or
+/// more than one visible definition. Namespaced (`pkg::name`) names and
+/// non-syntactic `new_name`s are declined. Snapshot reads are wrapped in
+/// [`salsa::Cancelled::catch`].
 fn rename_via_db(
     snapshot: &Analysis,
     path: &Path,
@@ -1807,28 +1842,25 @@ fn rename_via_db(
 
     // Intra-file: the cursor names a local binding (or sits on its definition).
     if let Some(target) = resolve_local_target(&root, &model, off) {
-        changes.insert(
-            uri.clone(),
-            rename_edits(&model, &target, new_name, &line_index),
-        );
-        // Cross-file: a top-level binding can be free-read from sibling files.
-        // Nested locals are file-private, so they stay intra-file.
+        let intra = rename_edits(&model, &target, new_name, &line_index);
+        // Cross-file: a top-level binding can be free-read from files that can
+        // see this one. Scope to that component; refuse if it isn't safe. Nested
+        // locals are file-private, so they stay intra-file.
         if model.binding_is_file_scope(target.binding) {
-            let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-                snapshot
-                    .workspace_read_sites(&target.name)
-                    .into_iter()
-                    // The current file's reads were rewritten intra-file above.
-                    .filter(|(read_path, _)| read_path != path)
-                    .filter_map(|(read_path, range)| {
-                        text_edit_in(snapshot, &read_path, range, new_name)
-                    })
-                    .collect::<Vec<_>>()
-            }))
-            .unwrap_or_default();
+            // This file's own occurrences are `intra`; skip it cross-file.
+            let cross = cross_file_rename_edits(
+                snapshot,
+                path,
+                target.name.as_str(),
+                new_name,
+                Some(path),
+            )?;
+            changes.insert(uri.clone(), intra);
             for (edit_uri, edit) in cross {
                 changes.entry(edit_uri).or_default().push(edit);
             }
+        } else {
+            changes.insert(uri.clone(), intra);
         }
         return finalize_rename(changes);
     }
@@ -1845,21 +1877,164 @@ fn rename_via_db(
         return None;
     }
     let name = SmolStr::new(token.text());
-    let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        // Every read and definition of the name across the workspace, this file's
-        // own included — the read sites already cover the cursor's occurrence.
-        snapshot
-            .workspace_read_sites(&name)
-            .into_iter()
-            .chain(snapshot.workspace_def_sites(&name))
-            .filter_map(|(site_path, range)| text_edit_in(snapshot, &site_path, range, new_name))
-            .collect::<Vec<_>>()
+    // Resolve the bare read to the single definition it binds to. Zero (base R /
+    // package export / not visible) or more than one (ambiguous) → refuse.
+    let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        snapshot.visible_def_files(path, name.as_str())
     }))
     .unwrap_or_default();
+    let [def_file] = visible_defs.as_slice() else {
+        return None;
+    };
+    // Rename the whole component, the current file's read included (skip = None).
+    let cross = cross_file_rename_edits(snapshot, def_file, name.as_str(), new_name, None)?;
     for (edit_uri, edit) in cross {
         changes.entry(edit_uri).or_default().push(edit);
     }
     finalize_rename(changes)
+}
+
+/// The cross-file text edits renaming the top-level `name` defined in `def_file`
+/// to `new_name`, scoped to its visibility component via
+/// [`Analysis::cross_file_binding`]. Rewrites each cohort member's own
+/// definition and the reads bound to it ([`file_scope_occurrences_in`]) and each
+/// reader's free reads ([`Analysis::read_ranges_in`]). `skip` is the buffer whose
+/// occurrences the caller already rewrote intra-file (skipped here to avoid
+/// double edits); pass `None` to include every file.
+///
+/// Returns `None` to **refuse the whole rename** when soundness can't be
+/// guaranteed: a name conflict within the component, or any dynamic `source()`
+/// in the project. (Cancellation also yields `None`.)
+fn cross_file_rename_edits(
+    snapshot: &Analysis,
+    def_file: &Path,
+    name: &str,
+    new_name: &str,
+    skip: Option<&Path>,
+) -> Option<Vec<(Uri, TextEdit)>> {
+    let binding = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        snapshot.cross_file_binding(def_file, name)
+    }))
+    .ok()?;
+    if binding.conflict || binding.project_has_dynamic_source {
+        return None;
+    }
+    let mut edits = Vec::new();
+    // Cohort members: their own definition + the reads that bind to it (these
+    // resolve locally, so `read_ranges_in` — free reads only — would miss them).
+    for member in &binding.cohort {
+        if skip == Some(member.as_path()) {
+            continue;
+        }
+        let Some(file) = snapshot.lookup_file(member) else {
+            continue;
+        };
+        let member_model = snapshot.semantic_model(file);
+        let Some((def, reads)) = file_scope_occurrences_in(member_model, name) else {
+            continue;
+        };
+        for range in std::iter::once(def).chain(reads) {
+            if let Some(edit) = text_edit_in(snapshot, member, range, new_name) {
+                edits.push(edit);
+            }
+        }
+    }
+    // Readers: every free read of the name (it binds to `def_file`).
+    for reader in &binding.readers {
+        if skip == Some(reader.as_path()) {
+            continue;
+        }
+        for range in snapshot.read_ranges_in(snapshot.lookup_file(reader)?, name) {
+            if let Some(edit) = text_edit_in(snapshot, reader, range, new_name) {
+                edits.push(edit);
+            }
+        }
+    }
+    Some(edits)
+}
+
+/// The cross-file reference [`Location`]s for the top-level `name` defined in
+/// `def_file`, scoped to its visibility component via
+/// [`Analysis::cross_file_binding`] — the read mirror of
+/// [`cross_file_rename_edits`]. Reports each cohort member's reads (plus its
+/// definition when `include_declaration`) and each reader's free reads. `skip`
+/// is the buffer whose occurrences the caller already collected intra-file.
+///
+/// Unlike rename, references is *non-destructive*, so it never refuses: it
+/// reports the whole component even on a name conflict or with a dynamic
+/// `source()` present (over-reporting is acceptable, a missed/false edit is not).
+fn cross_file_reference_locations(
+    snapshot: &Analysis,
+    def_file: &Path,
+    name: &str,
+    include_declaration: bool,
+    skip: Option<&Path>,
+) -> Vec<Location> {
+    let Ok(binding) = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        snapshot.cross_file_binding(def_file, name)
+    })) else {
+        return Vec::new();
+    };
+    let mut locations = Vec::new();
+    for member in &binding.cohort {
+        if skip == Some(member.as_path()) {
+            continue;
+        }
+        let Some(file) = snapshot.lookup_file(member) else {
+            continue;
+        };
+        let Some((def, reads)) = file_scope_occurrences_in(snapshot.semantic_model(file), name)
+        else {
+            continue;
+        };
+        for range in reads.into_iter().chain(include_declaration.then_some(def)) {
+            if let Some(loc) = location_in(snapshot, member, range) {
+                locations.push(loc);
+            }
+        }
+    }
+    for reader in &binding.readers {
+        if skip == Some(reader.as_path()) {
+            continue;
+        }
+        let Some(file) = snapshot.lookup_file(reader) else {
+            continue;
+        };
+        for range in snapshot.read_ranges_in(file, name) {
+            if let Some(loc) = location_in(snapshot, reader, range) {
+                locations.push(loc);
+            }
+        }
+    }
+    locations
+}
+
+/// The definition range and the ranges of the reads bound to it for the
+/// file-scope binding named `name` in `model` (reads sorted and deduped). `None`
+/// when there is no such top-level binding. The sibling-file analogue of
+/// [`local_occurrences`]: used to rewrite/report a cohort member's own definition
+/// and the reads that resolve to it — which are *not* free reads, so
+/// [`Analysis::read_ranges_in`] would miss them.
+fn file_scope_occurrences_in(
+    model: &SemanticModel,
+    name: &str,
+) -> Option<(TextRange, Vec<TextRange>)> {
+    let (idx, _) = model.bindings().iter().enumerate().find(|(i, b)| {
+        matches!(b.kind, BindingKind::Local | BindingKind::Implicit)
+            && b.name.as_str() == name
+            && model.binding_is_file_scope(BindingId::from_index(*i))
+    })?;
+    let binding = BindingId::from_index(idx);
+    let def = model.bindings()[idx].def_range;
+    let mut reads: Vec<TextRange> = model
+        .idents()
+        .iter()
+        .filter(|ident| ident.name.as_str() == name && model.resolve_local(ident) == Some(binding))
+        .map(|ident| ident.range)
+        .collect();
+    reads.sort_by_key(|range| range.start());
+    reads.dedup();
+    Some((def, reads))
 }
 
 /// Sort and dedup each file's edits, dropping empties, and wrap them in a
@@ -3262,8 +3437,9 @@ mod tests {
     }
 
     /// A two-file workspace (`a.R`, `b.R`) seeded as members, snapshotted for a
-    /// read job. The names are flat scripts; the workspace index keys on name, so
-    /// this is enough to exercise cross-file rewriting.
+    /// read job. Flat scripts with no `source()` edge between them, so under the
+    /// scope-aware model they are *disjoint* — a shared top-level name in both is
+    /// two unrelated bindings.
     fn rename_workspace(a_src: &str, b_src: &str) -> Analysis {
         let mut db = IncrementalDatabase::default();
         let a = db.upsert_file(&ws_path("a.R"), a_src.to_string());
@@ -3272,12 +3448,34 @@ mod tests {
         db.snapshot()
     }
 
+    /// A real on-disk R package (`DESCRIPTION` + `R/`) with two member files,
+    /// seeded and snapshotted. Package siblings share one flat namespace, which
+    /// the scope layer derives from the `package_root` disk walk — so this can't
+    /// be faked with flat in-memory paths. The returned [`tempfile::TempDir`]
+    /// must be kept alive for the duration of the test.
+    fn rename_package(a_src: &str, b_src: &str) -> (tempfile::TempDir, Analysis, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: testpkg\n").expect("write DESCRIPTION");
+        let r_dir = root.join("R");
+        std::fs::create_dir(&r_dir).expect("create R/");
+        let a_path = r_dir.join("a.R");
+        let b_path = r_dir.join("b.R");
+        std::fs::write(&a_path, a_src).expect("write a.R");
+        std::fs::write(&b_path, b_src).expect("write b.R");
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&a_path, a_src.to_string());
+        let b = db.upsert_file(&b_path, b_src.to_string());
+        db.set_workspace_members(vec![a, b], vec![root.to_path_buf()]);
+        (dir, db.snapshot(), a_path, b_path)
+    }
+
     #[test]
     fn rename_via_db_rewrites_a_definition_and_its_cross_file_reads() {
-        // a.R defines `foo`; b.R reads it. Renaming from the definition must edit
-        // both files in one WorkspaceEdit.
+        // a.R defines `foo`; b.R sources a.R and reads it. Renaming from the
+        // definition must edit both files in one WorkspaceEdit.
         let a_src = "foo <- function() 1\n";
-        let b_src = "bar <- function() foo()\n";
+        let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
         let snapshot = rename_workspace(a_src, b_src);
         let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
@@ -3302,14 +3500,14 @@ mod tests {
 
     #[test]
     fn rename_via_db_from_a_cross_file_read_rewrites_the_definition() {
-        // Cursor on the `foo()` read in b.R, which binds to no local: rename rides
-        // the workspace def + read indices, touching both files.
+        // Cursor on the `foo()` read in b.R (which sources a.R), binding to no
+        // local: rename resolves the read to a.R's definition and touches both.
         let a_src = "foo <- function() 1\n";
-        let b_src = "bar <- function() foo()\n";
+        let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
         let snapshot = rename_workspace(a_src, b_src);
         let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
-        let offset = b_src.find("foo").unwrap();
+        let offset = b_src.find("foo()").unwrap();
 
         let edit = rename_via_db(&snapshot, &ws_path("b.R"), &uri_b, b_src, offset, "renamed")
             .expect("rename is available on a workspace free read");
@@ -3320,6 +3518,154 @@ mod tests {
             "the definition in a.R is edited"
         );
         assert!(changes.contains_key(&uri_b), "the read in b.R is edited");
+    }
+
+    #[test]
+    fn rename_via_db_does_not_corename_disjoint_same_name_defs() {
+        // Two unconnected flat scripts each define their own top-level `foo`.
+        // Renaming a.R's `foo` must NOT touch b.R's unrelated `foo`.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "foo <- function() 2\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("renaming a local file-scope def is fine");
+        let changes = edit.changes.expect("changes present");
+
+        assert!(changes.contains_key(&uri_a), "a.R's own foo is renamed");
+        assert!(
+            !changes.contains_key(&uri_b),
+            "b.R's unrelated foo must be left alone"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_corenames_package_siblings() {
+        // a.R defines `foo`; b.R (a package sibling, shared flat namespace) reads
+        // it. Both must be rewritten.
+        let (_dir, snapshot, a_path, b_path) =
+            rename_package("foo <- function() 1\n", "bar <- function() foo()\n");
+        let uri_a = uri::from_path(&a_path).unwrap();
+        let uri_b = uri::from_path(&b_path).unwrap();
+        let a_src = "foo <- function() 1\n";
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed")
+            .expect("rename available on a package-scope definition");
+        let changes = edit.changes.expect("changes present");
+
+        assert!(changes.contains_key(&uri_a), "a.R's definition is renamed");
+        assert!(
+            changes.contains_key(&uri_b),
+            "the package sibling's read is renamed"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_skips_reader_that_shadows_with_own_def() {
+        // b.R sources a.R but also defines its own top-level `foo`, so its `foo`
+        // read binds to its own def, not a.R's. Renaming a.R's foo must not touch
+        // b.R. (a.R alone defines foo within a.R's component, so no conflict.)
+        let a_src = "foo <- function() 1\n";
+        let b_src = "source(\"a.R\")\nfoo <- function() 2\nbar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("a.R's foo is the only def in a.R's component");
+        let changes = edit.changes.expect("changes present");
+
+        assert!(changes.contains_key(&uri_a), "a.R's definition is renamed");
+        assert!(
+            !changes.contains_key(&uri_b),
+            "b.R shadows foo with its own def, so it is untouched"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_refuses_on_intra_component_conflict() {
+        // Package siblings both define top-level `foo`: one flat namespace, a
+        // redefinition. A sound rename refuses rather than guess which wins.
+        let (_dir, snapshot, a_path, _b_path) =
+            rename_package("foo <- function() 1\n", "foo <- function() 2\n");
+        let uri_a = uri::from_path(&a_path).unwrap();
+        let a_src = "foo <- function() 1\n";
+        let offset = a_src.find("foo").unwrap();
+
+        assert!(
+            rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed").is_none(),
+            "two defs of foo in one component: rename refuses"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_refuses_when_dynamic_source_present() {
+        // A dynamic source() anywhere in the project could resolve to the renamed
+        // file at runtime, hiding a reader — so cross-file rename refuses.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "p <- \"x.R\"\nsource(p)\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        assert!(
+            rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
+            "an unresolvable dynamic source forces a project-wide refusal"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_bare_read_resolves_to_visible_def_only() {
+        // c.R sources a.R (which defines foo); a separate disjoint file also
+        // defines foo but c.R can't see it. A bare read in c.R resolves only to
+        // a.R, and rename touches a.R + c.R, not the disjoint file.
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&ws_path("a.R"), "foo <- function() 1\n".to_string());
+        let c = db.upsert_file(
+            &ws_path("c.R"),
+            "source(\"a.R\")\nbaz <- function() foo()\n".to_string(),
+        );
+        let d = db.upsert_file(&ws_path("d.R"), "foo <- function() 99\n".to_string());
+        db.set_workspace_members(vec![a, c, d], vec![ws_root()]);
+        let snapshot = db.snapshot();
+
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_c = uri::from_path(&ws_path("c.R")).unwrap();
+        let uri_d = uri::from_path(&ws_path("d.R")).unwrap();
+        let c_src = "source(\"a.R\")\nbaz <- function() foo()\n";
+        let offset = c_src.find("foo()").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("c.R"), &uri_c, c_src, offset, "renamed")
+            .expect("the bare read resolves to a.R's foo");
+        let changes = edit.changes.expect("changes present");
+
+        assert!(changes.contains_key(&uri_a), "a.R's def is renamed");
+        assert!(changes.contains_key(&uri_c), "c.R's read is renamed");
+        assert!(
+            !changes.contains_key(&uri_d),
+            "d.R's disjoint foo is invisible to c.R and untouched"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_bare_read_unresolved_returns_none() {
+        // b.R reads `foo` but can't see any definition of it (no edge to a.R).
+        // The bare read resolves to nothing, so rename refuses.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "bar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = b_src.find("foo").unwrap();
+
+        assert!(
+            rename_via_db(&snapshot, &ws_path("b.R"), &uri_b, b_src, offset, "renamed").is_none(),
+            "a bare read with no visible definition can't be renamed"
+        );
     }
 
     #[test]
@@ -3365,6 +3711,158 @@ mod tests {
             )
             .is_none(),
             "a non-syntactic new name is withheld (backtick-quoting is out of scope)"
+        );
+    }
+
+    // --- scope-aware cross-file references (references_via_db) -------------
+
+    fn pos_at(text: &str, offset: usize) -> Position {
+        LineIndex::new(text).byte_to_position(offset)
+    }
+
+    /// The set of distinct URIs touched by a reference result.
+    fn ref_uris(locations: &[Location]) -> std::collections::HashSet<&Uri> {
+        locations.iter().map(|loc| &loc.uri).collect()
+    }
+
+    #[test]
+    fn references_via_db_excludes_disjoint_same_name_defs() {
+        // Two unconnected scripts each define `foo`. References to a.R's foo must
+        // not include b.R's unrelated foo.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "foo <- function() 2\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let position = pos_at(a_src, a_src.find("foo").unwrap());
+
+        let locations =
+            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
+                .expect("the definition has at least itself");
+        let uris = ref_uris(&locations);
+        assert!(uris.contains(&uri_a));
+        assert!(!uris.contains(&uri_b), "b.R's foo is unrelated");
+    }
+
+    #[test]
+    fn references_via_db_includes_source_connected_reader() {
+        let a_src = "foo <- function() 1\n";
+        let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let position = pos_at(a_src, a_src.find("foo").unwrap());
+
+        let locations =
+            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
+                .expect("references present");
+        let uris = ref_uris(&locations);
+        assert!(uris.contains(&uri_a));
+        assert!(uris.contains(&uri_b), "the source-connected read is found");
+    }
+
+    #[test]
+    fn references_via_db_includes_package_siblings() {
+        let (_dir, snapshot, a_path, b_path) =
+            rename_package("foo <- function() 1\n", "bar <- function() foo()\n");
+        let uri_a = uri::from_path(&a_path).unwrap();
+        let uri_b = uri::from_path(&b_path).unwrap();
+        let a_src = "foo <- function() 1\n";
+        let position = pos_at(a_src, a_src.find("foo").unwrap());
+
+        let locations = references_via_db(&snapshot, &a_path, &uri_a, a_src, position, true)
+            .expect("references present");
+        let uris = ref_uris(&locations);
+        assert!(uris.contains(&uri_a));
+        assert!(uris.contains(&uri_b), "the package sibling's read is found");
+    }
+
+    #[test]
+    fn references_via_db_excludes_shadowing_reader() {
+        // b.R sources a.R but defines its own foo, so its read binds to its own
+        // def. References to a.R's foo must not include b.R.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "source(\"a.R\")\nfoo <- function() 2\nbar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let position = pos_at(a_src, a_src.find("foo").unwrap());
+
+        let locations =
+            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
+                .expect("references present");
+        let uris = ref_uris(&locations);
+        assert!(uris.contains(&uri_a));
+        assert!(
+            !uris.contains(&uri_b),
+            "b.R shadows foo, so it is not a reference to a.R's foo"
+        );
+    }
+
+    #[test]
+    fn references_via_db_reports_cohort_on_conflict() {
+        // Package siblings both define foo: rename refuses (conflict), but
+        // references over-reports the whole cohort non-destructively.
+        let (_dir, snapshot, a_path, b_path) =
+            rename_package("foo <- function() 1\n", "foo <- function() 2\n");
+        let uri_a = uri::from_path(&a_path).unwrap();
+        let uri_b = uri::from_path(&b_path).unwrap();
+        let a_src = "foo <- function() 1\n";
+        let position = pos_at(a_src, a_src.find("foo").unwrap());
+
+        // rename refuses on the same input...
+        assert!(
+            rename_via_db(
+                &snapshot,
+                &a_path,
+                &uri_a,
+                a_src,
+                a_src.find("foo").unwrap(),
+                "renamed"
+            )
+            .is_none(),
+            "rename refuses the conflict"
+        );
+        // ...but references reports both defs.
+        let locations = references_via_db(&snapshot, &a_path, &uri_a, a_src, position, true)
+            .expect("references present");
+        let uris = ref_uris(&locations);
+        assert!(uris.contains(&uri_a));
+        assert!(
+            uris.contains(&uri_b),
+            "references reports the conflicting sibling def"
+        );
+    }
+
+    #[test]
+    fn references_via_db_bare_read_resolves_to_visible_def_only() {
+        // c.R sources a.R (defines foo); d.R defines a disjoint foo c.R can't see.
+        // A bare read in c.R resolves to a.R only.
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&ws_path("a.R"), "foo <- function() 1\n".to_string());
+        let c = db.upsert_file(
+            &ws_path("c.R"),
+            "source(\"a.R\")\nbaz <- function() foo()\n".to_string(),
+        );
+        let d = db.upsert_file(&ws_path("d.R"), "foo <- function() 99\n".to_string());
+        db.set_workspace_members(vec![a, c, d], vec![ws_root()]);
+        let snapshot = db.snapshot();
+
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_c = uri::from_path(&ws_path("c.R")).unwrap();
+        let uri_d = uri::from_path(&ws_path("d.R")).unwrap();
+        let c_src = "source(\"a.R\")\nbaz <- function() foo()\n";
+        let position = pos_at(c_src, c_src.find("foo()").unwrap());
+
+        let locations =
+            references_via_db(&snapshot, &ws_path("c.R"), &uri_c, c_src, position, true)
+                .expect("the bare read resolves to a.R");
+        let uris = ref_uris(&locations);
+        assert!(uris.contains(&uri_a), "a.R's def is reported");
+        assert!(uris.contains(&uri_c), "c.R's read is reported");
+        assert!(
+            !uris.contains(&uri_d),
+            "d.R's disjoint foo is invisible to c.R"
         );
     }
 }
