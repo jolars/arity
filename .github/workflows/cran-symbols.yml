@@ -22,7 +22,7 @@ on:
         default: "500"
       days:
         description: "Number of recent CRAN-log days to rank over"
-        default: "7"
+        default: "30"
   schedule:
     # Weekly, Monday 04:00 UTC.
     - cron: "0 4 * * 1"
@@ -49,7 +49,7 @@ jobs:
           packages: pak
 
       - name: Rank top packages from CRAN logs
-        run: scripts/rank_cran_downloads.sh "${{ inputs.top_n || '500' }}" "${{ inputs.days || '7' }}"
+        run: scripts/rank_cran_downloads.sh "${{ inputs.top_n || '500' }}" "${{ inputs.days || '30' }}"
 
       - name: Install the top packages (best-effort, with system requirements)
         run: |
