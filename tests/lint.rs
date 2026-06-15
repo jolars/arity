@@ -171,6 +171,44 @@ fn dynamic_source_suppresses_undefined_symbol() {
     );
 }
 
+#[test]
+fn shadowed_builtin_flags_call_of_shadowed_name() {
+    // The footgun the rule targets: `c` shadows base `c`, then `c(2, 3)` calls
+    // the local instead of base. Fire.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("call.R");
+    std::fs::write(&path, "f <- function() {\n  c <- 1\n  c(2, 3)\n}\nf()\n")
+        .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        rules_for(&result, "call.R").contains(&"shadowed-builtin"),
+        "call.R: {:?}",
+        rules_for(&result, "call.R")
+    );
+}
+
+#[test]
+fn shadowed_builtin_ignores_value_use_of_shadowed_name() {
+    // `beta` shadows base `beta`, but is only ever indexed as a value
+    // (`beta[[i]]`), never called — there's no "I meant base::beta()" hazard, so
+    // the rule must stay silent.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("value.R");
+    std::fs::write(
+        &path,
+        "interp <- function(beta) {\n  beta[[1]] + beta[[2]]\n}\ninterp(x)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "value.R").contains(&"shadowed-builtin"),
+        "value use should not trigger shadowed-builtin: {:?}",
+        rules_for(&result, "value.R")
+    );
+}
+
 /// Write a minimal package (DESCRIPTION + NAMESPACE + R/a.R) and lint it.
 fn lint_package(namespace: &str, a_r: &str) -> LintResult {
     let dir = tempdir().expect("failed to create temp dir");
