@@ -1866,7 +1866,7 @@ fn rename_via_db(
 /// [`WorkspaceEdit`]. `None` when nothing is left to rewrite.
 fn finalize_rename(mut changes: HashMap<Uri, Vec<TextEdit>>) -> Option<WorkspaceEdit> {
     changes.retain(|_, edits| {
-        edits.sort_by(|a, b| (a.range.start, a.range.end).cmp(&(b.range.start, b.range.end)));
+        edits.sort_by_key(|a| (a.range.start, a.range.end));
         edits.dedup();
         !edits.is_empty()
     });
