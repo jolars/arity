@@ -75,7 +75,7 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
     );
     Ok(Ir::concat([
         Ir::text("{"),
-        Ir::indent(body),
+        Ir::indent(Ir::break_body(body)),
         Ir::hard_line(),
         Ir::text("}"),
     ]))

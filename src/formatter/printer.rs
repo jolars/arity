@@ -134,6 +134,9 @@ impl Printer {
                 Ir::Indent(inner) => {
                     stack.push((indent + self.indent_unit, mode, inner));
                 }
+                Ir::BreakBody(inner) => {
+                    stack.push((indent, Mode::Break, inner));
+                }
                 Ir::Line => match mode {
                     Mode::Flat => w.write_text(" "),
                     Mode::Break => w.newline(indent),
@@ -309,7 +312,10 @@ impl Printer {
                         stack.push(item);
                     }
                 }
-                Ir::Indent(inner) => stack.push(inner),
+                // Transparent to the flat simulation: a forced break inside still
+                // ends measurement via `HardLine`/`EmptyLine` (success under `hug`,
+                // failure otherwise), exactly as if the body were not wrapped.
+                Ir::Indent(inner) | Ir::BreakBody(inner) => stack.push(inner),
                 Ir::Line => {
                     if remaining == 0 {
                         return false;
@@ -374,7 +380,7 @@ impl Printer {
                         stack.push(item);
                     }
                 }
-                Ir::Indent(i) => stack.push(i),
+                Ir::Indent(i) | Ir::BreakBody(i) => stack.push(i),
                 Ir::Line => {
                     col += 1;
                     if col > self.line_width {
@@ -448,6 +454,12 @@ impl Printer {
                     }
                 }
                 Ir::Indent(i) => work.push((mode, i)),
+                // The body genuinely renders broken, whatever the surrounding
+                // (possibly hug-flat) mode: measure it that way so a breakable
+                // group inside is not mistaken for flat. This is the fix for a
+                // leftmost group breaking when a hug-flat block body sits to the
+                // right of the group being decided.
+                Ir::BreakBody(inner) => work.push((Mode::Break, inner)),
                 Ir::IfBreak { flat, broken } => {
                     work.push((mode, if mode == Mode::Break { broken } else { flat }));
                 }
@@ -518,6 +530,7 @@ impl Printer {
                     }
                 }
                 Ir::Indent(inner) => stack.push((mode, inner)),
+                Ir::BreakBody(inner) => stack.push((Mode::Break, inner)),
                 Ir::Line => match mode {
                     Mode::Flat => {
                         col += 1;

@@ -1290,7 +1290,7 @@ fn brace_wrap_body_with_comments(body: Ir, comments: &[String]) -> Ir {
     inner.push(body);
     Ir::concat([
         Ir::text("{"),
-        Ir::indent(Ir::concat(inner)),
+        Ir::indent(Ir::break_body(Ir::concat(inner))),
         Ir::hard_line(),
         Ir::text("}"),
     ])
@@ -1371,7 +1371,7 @@ fn function_braced_hug(head: Ir, params: Ir, block: Ir) -> Ir {
 fn brace_wrap_body(body: Ir) -> Ir {
     Ir::concat([
         Ir::text("{"),
-        Ir::indent(Ir::concat([Ir::hard_line(), body])),
+        Ir::indent(Ir::break_body(Ir::concat([Ir::hard_line(), body]))),
         Ir::hard_line(),
         Ir::text("}"),
     ])

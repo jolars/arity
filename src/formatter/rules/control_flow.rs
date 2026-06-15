@@ -647,7 +647,7 @@ fn synthetic_block_with_comments(items: Vec<Ir>, comments: &[String]) -> Ir {
     }
     Ir::concat([
         Ir::text("{"),
-        Ir::indent(Ir::concat(inner)),
+        Ir::indent(Ir::break_body(Ir::concat(inner))),
         Ir::hard_line(),
         Ir::text("}"),
     ])

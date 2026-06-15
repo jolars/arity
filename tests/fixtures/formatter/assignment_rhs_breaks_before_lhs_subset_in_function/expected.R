@@ -1,0 +1,6 @@
+interpolateCoefficients <- function(beta, intercepts, interpolation_list) {
+  for (i in seq_along(interpolation_list$left)) {
+    ip_intercepts[[i]] <- intercepts[[left]] * frac +
+      intercepts[[right]] * (1 - frac)
+  }
+}

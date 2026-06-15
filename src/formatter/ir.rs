@@ -35,6 +35,21 @@ pub(crate) enum Ir {
     EmptyLine,
     /// Increase the indent of everything inside by one `indent_width` step.
     Indent(Rc<Ir>),
+    /// Render `inner` in break mode regardless of the enclosing mode, while
+    /// staying *transparent* to flat fit-measurement (unlike [`Ir::Group`] with
+    /// `expand`, it never forces a parent's fit check to fail by itself).
+    ///
+    /// This exists for the body of a trailing block that hugs its prefix: a hug
+    /// [`Ir::Group`] is kept flat as long as the prefix up to the opening brace
+    /// fits, so its `inner` is rendered in `Mode::Flat` — but the block *body*
+    /// past that brace always lays out multi-line (its statements are separated
+    /// by [`Ir::HardLine`]s). Leaving the body in the hug's flat mode would
+    /// violate the invariant that a subtree containing a hard break is laid out
+    /// broken, and would poison the printer's rest-of-line fit measurement: a
+    /// breakable group inside the body would be mis-measured flat (see
+    /// `Printer::rest_fits`). Wrapping the body in `BreakBody` re-establishes the
+    /// break mode the body genuinely renders in.
+    BreakBody(Rc<Ir>),
     /// A break-decision boundary. The printer measures the flat rendering of
     /// `inner`; if it fits and contains no forced break, it prints flat,
     /// otherwise broken. `expand` forces broken unconditionally.
@@ -185,6 +200,12 @@ impl Ir {
         Ir::Indent(Rc::new(inner))
     }
 
+    /// Render `inner` in break mode, transparent to flat fit-measurement; see
+    /// [`Ir::BreakBody`].
+    pub(crate) fn break_body(inner: Ir) -> Ir {
+        Ir::BreakBody(Rc::new(inner))
+    }
+
     pub(crate) fn if_break(flat: Ir, broken: Ir) -> Ir {
         Ir::IfBreak {
             flat: Rc::new(flat),
@@ -225,7 +246,7 @@ impl Ir {
         match self {
             Ir::Group { .. } | Ir::ConditionalGroup(_) | Ir::ConditionalGroupAllLines(_) => true,
             Ir::Concat(items) => items.iter().any(Ir::contains_group),
-            Ir::Indent(inner) => inner.contains_group(),
+            Ir::Indent(inner) | Ir::BreakBody(inner) => inner.contains_group(),
             Ir::IfBreak { flat, broken } => flat.contains_group() || broken.contains_group(),
             Ir::Text(_)
             | Ir::Verbatim { .. }
@@ -260,7 +281,7 @@ impl Ir {
             Ir::HardLine | Ir::EmptyLine => true,
             Ir::Verbatim { force_break, .. } => *force_break,
             Ir::Concat(items) => items.iter().any(Ir::contains_forced_break),
-            Ir::Indent(inner) => inner.contains_forced_break(),
+            Ir::Indent(inner) | Ir::BreakBody(inner) => inner.contains_forced_break(),
             Ir::Group { inner, expand, .. } => *expand || inner.contains_forced_break(),
             // The flat-most candidate decides: if even it forces a break, the
             // conditional group always breaks; otherwise some layout is flat-able.
