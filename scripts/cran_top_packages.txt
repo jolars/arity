@@ -88,6 +88,7 @@ brew
 brio
 brms
 broom
+broom.mixed
 bslib
 ca
 caTools
@@ -111,6 +112,7 @@ clue
 cluster
 coda
 codetools
+collapse
 colorspace
 colourpicker
 commonmark
@@ -140,6 +142,7 @@ doParallel
 dotCall64
 downlit
 dplyr
+drc
 dtplyr
 duckdb
 dygraphs
@@ -157,6 +160,7 @@ farver
 fastDummies
 fastmap
 fastmatch
+fields
 filelock
 fitdistrplus
 flashClust
@@ -199,9 +203,11 @@ ggtext
 ggthemes
 gh
 gitcreds
+glmmTMB
 glmnet
 globals
 glue
+gmp
 goftest
 googledrive
 googlesheets4
@@ -340,6 +346,7 @@ pkgload
 plm
 plotly
 plotrix
+plumber
 plyr
 png
 polyclip
@@ -395,6 +402,7 @@ rmarkdown
 robustbase
 roxygen2
 rpart
+rpart.plot
 rprojroot
 rsample
 rsconnect
@@ -416,6 +424,7 @@ sessioninfo
 sf
 shape
 shiny
+shinyWidgets
 shinydashboard
 shinyjs
 shinystan
@@ -447,6 +456,7 @@ stringr
 styler
 survey
 survival
+survminer
 svglite
 sys
 sysfonts
