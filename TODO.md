@@ -217,6 +217,15 @@ landed; the second is still open but only matters for cross-edit-stable handles:
     on-demand off the read snapshot --- no new tracked query, so backdating is
     untouched. This killed the cross-component false positive.
 
+    - [ ] *Follow-up: the dynamic-source refusal is project-wide and blunt.* A
+      single unresolvable `source(var)` anywhere disables cross-file rename of
+      *all* top-level names (`project_has_dynamic_source` in
+      `cross_file_binding`). It's the soundest choice and is documented in the
+      `rename_via_db` doc-comment, but if it proves too aggressive in practice,
+      narrow it --- e.g. refuse only when a dynamic source could plausibly reach
+      the renamed file, or downgrade to a warning. Localized to
+      `cross_file_rename_edits` (`src/lsp.rs`).
+
   - **Phase B --- load-order resolution.** Two ordering axes, biting in
     different places. *Package collation order* (only for a package whose source
     lives in the workspace --- the `package_root` members we analyze and rename;
