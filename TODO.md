@@ -156,32 +156,89 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 ### Rename
 
-- [ ] **Rename symbol** (`textDocument/rename` + `textDocument/prepareRename`).
-      Intra-file rename of a *local* binding has landed (`src/lsp.rs`
+- [x] **Rename symbol** (`textDocument/rename` + `textDocument/prepareRename`).
+      Intra-file rename of a *local* binding (`src/lsp.rs`
       `compute_prepare_rename`/`compute_rename`): resolve the cursor to a
       `BindingId` (read site via `resolve_local`, or the def site), collect the
       def + all in-scope reads into a `WorkspaceEdit`, validate the new name
       against R's syntactic identifier rules (`is_syntactic_r_name`), and anchor
       the prepare→rename handshake on a `NodePtr` so it survives an edit (see the
-      cross-edit references prerequisite above). Cross-file rename has landed
-      (`src/lsp.rs` `rename_via_db`): a file-scope binding's reads (and a bare
-      workspace free read's def + reads) are gathered off the same reverse index
-      as cross-file references (`workspace_read_sites`/`workspace_def_sites`) and
-      returned as one multi-URI `WorkspaceEdit`. Like cross-file references, the
-      index keys on *name*, so a sibling file that redefines the same top-level
-      name is rewritten too. Still open: backtick-quoting of non-syntactic names,
-      and renaming package-qualified names.
-- [ ] **Revisit: cross-file rename is name-keyed, not binding-aware.**
-      `rename_via_db` rewrites every workspace site of the *name* (mirroring
-      cross-file references), so a sibling file that independently redefines the
-      same top-level name is renamed along with the intended target --- a false
-      positive when the two are unrelated bindings. This is inherited from the
-      `project_defs`/`project_reads` reverse index, which is range-free and
-      name-only. Decide whether rename should be *stricter* than references here:
-      respect package/`source()` scope visibility (`ProjectScope` already models
-      it) so only sites that can actually see the renamed definition are touched,
-      and/or surface a conflict when a name is defined in more than one place.
-      Tracked separately because it also affects cross-file references.
+      cross-edit references prerequisite above). Cross-file rename (`src/lsp.rs`
+      `rename_via_db`): a file-scope binding's reads (and a bare workspace free
+      read's def + reads) are gathered off the same reverse index as cross-file
+      references (`workspace_read_sites`/`workspace_def_sites`) and returned as
+      one multi-URI `WorkspaceEdit`. Remaining work is tracked below: the
+      cross-file path is name-keyed rather than scope-aware (see "scope-aware
+      cross-file resolution"); still open beyond that are backtick-quoting of
+      non-syntactic names and renaming package-qualified names.
+- [ ] **Scope-aware cross-file resolution** (rename *and* references). Today
+      `references_via_db`/`rename_via_db` resolve through
+      `workspace_read_sites`/`workspace_def_sites` →
+      `project_defs`/`project_reads`, which are range-free, name-only
+      `BTreeMap<name, set<path>>` indices. The visibility model (`ProjectScope`:
+      `sees`/`visible`/`used_by_others`) is *never consulted* on this path --- it
+      only backs the undefined-symbol/unused lints. So the workspace is treated
+      as one flat global namespace when R's top-level scope is really a set of
+      disjoint visibility islands (package members; directional `source()`
+      edges). Consequence: renaming a top-level `foo` rewrites *every* `foo` in
+      the workspace, including an unrelated sibling's --- a false positive. The
+      fix is one provenance-aware resolution primitive both handlers consume; in
+      R there's no module system, so cross-file binding identity genuinely *is*
+      "the name, within a visibility-connected component" --- the current code
+      keys on name over the wrong (global) scope. Rename carries two soundness
+      duties at once (never rewrite an unrelated binding; never miss a read of
+      the renamed one), so when the static model is uncertain it must
+      refuse-or-warn, not guess. Stage it:
+  - **Phase A --- component partitioning (no ordering).** Expose `sees`
+    reachability + package membership from `ProjectScope`; rewrite only the def
+    + reads within the target's reachable component, and skip a reader that
+    shadows the name with its own top-level def. This alone kills the
+    cross-component false positive. When a name is defined ≥2× *within* one
+    component, surface a conflict instead of silently resolving. Cheap and
+    span-free; the big correctness win.
+  - **Phase B --- load-order resolution.** Two ordering axes, biting in
+    different places. *Package collation order* (only for a package whose source
+    lives in the workspace --- the `package_root` members we analyze and rename;
+    installed deps are opaque `LibraryIndex` export sets, never reordered or
+    renamed): R sources `R/*.[RrSsQq]` in `Collate:` order (DESCRIPTION) else
+    C-locale alphabetical, last def wins --- but the namespace is fully built
+    before any function runs, so order only picks the live duplicate among
+    multiple defs, it never changes which reads resolve where. *`source()`
+    position*: executes sequentially in the target
+    env, so a read before the call doesn't see the injected binding and
+    local/sourced defs shadow by position --- this *does* affect read
+    resolution, and needs the source-edge span back (`SourceEdge` carries it;
+    the `SourceEdgeKey` firewall drops it). Give up conservatively on
+    `local=TRUE` (already `Dependency::Skip`), computed paths (already
+    `Unresolved`), non-top-level/conditional `source()`, `sys.source()`, and
+    `Collate:` over unanalyzed files.
+  - **Salsa / incrementality (Tenet 2).** Several constraints, all learnable
+    from the existing graph layer:
+    - *Don't break the firewall.* Phase B reintroduces position, which would
+      break the range-free firewall that lets `project_defs`/`project_reads`
+      backdate across body edits. Keep it by modeling a per-file *top-level
+      sequence* --- an ordered list of `define name`/`source-edge` events that
+      carries order but **not** spans --- so a body edit leaves it unchanged and
+      it backdates like today's firewalls; collation order is path-derived and
+      already stable.
+    - *Never depend a tracked query on `project_graph`.* It's `no_eq` (holds
+      non-`Eq` `HashMap`s) so it never backdates when it re-runs --- any export
+      change anywhere re-runs the whole graph. Project what you need through a
+      thin `Eq` firewall, the way `visible_symbols`/`Visibility` already does.
+      The provenance map (name → defining file, order-resolved) is a *new* such
+      projection, fed by the top-level sequence; `sees`/component membership
+      (Phase A) is private inside `ProjectScope` today --- expose an accessor or
+      add a component-id `Eq` projection. (The rename/references handlers
+      themselves aren't tracked --- they run on a read snapshot --- so they may
+      instead read the graph on-demand and skip memoization; decide
+      deliberately.)
+    - *Stays read-only.* Resolution consumes already-aggregated member firewalls
+      + the graph, all readable on a snapshot, so rename/references stay on the
+      read pool and need **no** writes --- no change to the single-writer lint
+      thread. Precondition: discovery has driven members into the db (it has).
+    - *Keep source() traversal in one pure query*, cycle-guarded with a
+      `visited` set like `ProjectScope::build` --- not mutually-recursive tracked
+      queries, which would pull in salsa's fixpoint machinery for no gain.
 - [ ] **File rename** (`workspace/willRenameFiles` / `workspace/didRenameFiles`,
       advertised via `fileOperations` server capability). On an `.R` file move,
       rewrite `source("old/path.R")` string literals in dependents to the new
