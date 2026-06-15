@@ -260,6 +260,17 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       resolution for bundled-but-not-installed packages is a smaller related
       follow-up.
 
+- [ ] Follow-up: prune packages that vanish from CRAN out of the bundled set.
+      The refresh is now **additive** --- `scripts/rank_cran_downloads.sh` unions
+      each run's top-N (30-day window) into `scripts/cran_top_packages.txt` and
+      never drops by ranking, and `scripts/dump_cran_symbols.R` preserves a
+      member's last-known exports when it can't be installed this run. So an
+      archived/removed package lingers with stale exports forever: there is no
+      "couldn't produce exports for N consecutive runs --> drop" counter yet. The
+      preserve path is the hook to build it on. Benign (extra coverage, never a
+      wrong answer, since bundled is the lowest-precision tier), so deferred until
+      dead packages actually accumulate.
+
 - [x] Thin `FileId` + file-source map (retire the `<mem>` hack). `SourceFile`
       now carries an opaque `FileId` and an *optional* path
       (`src/incremental.rs`): in-memory files have `None` (no more synthetic
