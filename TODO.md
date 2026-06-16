@@ -310,11 +310,13 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 ### Completion & signatures
 
-- [ ] **Completion** (`textDocument/completion` + `completionItem/resolve`).
-  Scope-aware locals + library exports from the index; `pkg::` triggers
-  member completion (the index already has per-package export lists with
-  formals + help). `resolve` lazily attaches docs/signature. Large surface;
-  probably the biggest single feature.
+- [x] **Completion** (`textDocument/completion` + `completionItem/resolve`).
+  Scope-aware locals + library exports from the index; `pkg::`/`pkg:::` triggers
+  member completion (with a bundled names-only fallback for unharvested
+  packages), plus base-R names. `resolve` lazily attaches docs/signature.
+  Name-only insertion (no snippet). See `src/lsp/completion.rs`. Follow-ups:
+  snippet/paren insertion, `$`/`@` member completion, fuzzy/case-insensitive
+  prefix matching, function-vs-variable kind for locals.
 
 - [ ] **Signature help** (`textDocument/signatureHelp`). Inside a call, show the
   callee's formals/usage. The index already carries `formals` and the

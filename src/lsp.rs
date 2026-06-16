@@ -67,29 +67,32 @@ use lsp_types::notification::{
     DidRenameFiles, Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest,
-    Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest, RangeFormatting, References,
-    Rename, Request as RequestTrait, WillRenameFiles,
+    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
+    FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
+    RangeFormatting, References, Rename, Request as RequestTrait, ResolveCompletionItem,
+    WillRenameFiles,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CodeActionResponse, Diagnostic as LspDiagnostic,
-    DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-    DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
+    CodeActionProviderCapability, CodeActionResponse, CompletionItem, CompletionItemKind,
+    CompletionList, CompletionOptions, CompletionParams, CompletionResponse,
+    Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
     DocumentRangeFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions, FoldingRange,
-    FoldingRangeKind, FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
-    PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams, RenameFilesParams,
-    RenameOptions, RenameParams, ServerCapabilities, ServerInfo, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
-    WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
+    Documentation, FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions,
+    FoldingRange, FoldingRangeKind, FoldingRangeParams, FoldingRangeProviderCapability,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
+    OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams,
+    RenameFilesParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
+    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
+    WorkspaceServerCapabilities,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
 use crate::ast::{AssignmentExpr, AstNode as _, BinaryExpr, FunctionExpr};
@@ -103,7 +106,10 @@ use crate::rindex::build::{BuildOptions, build_index};
 use crate::rindex::cache::{Cache, resolve_cache_root};
 use crate::rindex::discover::{referenced_in_source, with_default_packages};
 use crate::rindex::libpaths::LibrarySearch;
-use crate::rindex::provider::{CompositeProvider, IndexedProvider, resolve_origin};
+use crate::rindex::provider::{
+    CompositeProvider, IndexedProvider, base_names, base_package_of, bundled_exports,
+    resolve_origin,
+};
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
 use crate::semantic::{BindingId, BindingKind, PackageOrigin, SemanticModel};
 use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
@@ -111,6 +117,7 @@ use crate::text::LineIndex;
 use task_pool::{Spawner, TaskPool, read_pool_size};
 
 mod code_actions;
+mod completion;
 mod file_rename;
 mod folding;
 mod format;
@@ -125,6 +132,7 @@ mod symbols;
 mod uri;
 
 pub(crate) use code_actions::*;
+pub(crate) use completion::*;
 pub(crate) use file_rename::*;
 pub(crate) use format::*;
 pub(crate) use hover::*;
@@ -135,6 +143,7 @@ pub(crate) use settings::*;
 pub(crate) use state::*;
 
 pub use code_actions::compute_code_actions;
+pub use completion::{compute_completions, resolve_completion};
 pub use folding::compute_folding_ranges;
 pub use format::{compute_format_edits, compute_format_range_edits};
 pub use hover::compute_hover;

@@ -27,6 +27,19 @@ pub(crate) enum ReadJob {
         position: Position,
         sender: Sender<Message>,
     },
+    Completion {
+        id: RequestId,
+        path: PathBuf,
+        text: String,
+        position: Position,
+        sender: Sender<Message>,
+    },
+    ResolveCompletion {
+        id: RequestId,
+        // Boxed: `CompletionItem` is large and would bloat every `ReadJob`.
+        item: Box<CompletionItem>,
+        sender: Sender<Message>,
+    },
     Definition {
         id: RequestId,
         path: PathBuf,
@@ -103,6 +116,20 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             sender,
         } => {
             let result = hover_via_db(&snapshot, &path, &text, position);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::Completion {
+            id,
+            path,
+            text,
+            position,
+            sender,
+        } => {
+            let result = completion_via_db(&snapshot, &path, &text, position);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::ResolveCompletion { id, item, sender } => {
+            let result = resolve_completion(*item, &snapshot.library_data().unwrap_or_default());
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
         ReadJob::Definition {

@@ -79,6 +79,26 @@ pub fn is_base(name: &str) -> bool {
     BASE_R.is_base(name)
 }
 
+/// Iterate every base/default-package export name, for completion candidates.
+pub fn base_names() -> impl Iterator<Item = &'static SmolStr> {
+    let base: &'static StaticBaseR = &BASE_R;
+    base.base_names()
+}
+
+/// The default package that exports a base `name`, if any (for `resolve` to
+/// attach docs to a bare base-R completion once `base` is harvested).
+pub fn base_package_of(name: &str) -> Option<&'static SmolStr> {
+    let base: &'static StaticBaseR = &BASE_R;
+    base.package_of(name)
+}
+
+/// Iterate a bundled CRAN package's export names, if bundled — completion's
+/// member fallback when the package isn't locally harvested.
+pub fn bundled_exports(package: &str) -> Option<impl Iterator<Item = &'static SmolStr>> {
+    let bundled: &'static BundledPackages = &BUNDLED;
+    bundled.package_exports(package)
+}
+
 /// Resolves names against indexed, attached packages and holds the rich data.
 #[derive(Debug, Default)]
 pub struct IndexedProvider {

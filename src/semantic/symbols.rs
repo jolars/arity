@@ -123,6 +123,21 @@ impl StaticBaseR {
     }
 }
 
+impl StaticBaseR {
+    /// Iterate every name exported by a default package (for completion).
+    pub fn base_names(&self) -> impl Iterator<Item = &SmolStr> {
+        self.base_names.iter()
+    }
+
+    /// The default package that exports `name` (the first listed, when several
+    /// default packages export it), if any.
+    pub fn package_of(&self, name: &str) -> Option<&SmolStr> {
+        self.name_to_packages
+            .get(name)
+            .and_then(|pkgs| pkgs.first())
+    }
+}
+
 impl SymbolProvider for StaticBaseR {
     fn origin(&self, name: &str, loaded: &[LoadedPackage]) -> PackageOrigin {
         let mut candidates: Vec<SmolStr> = Vec::new();
@@ -212,6 +227,12 @@ impl BundledPackages {
             .get(package)
             .is_some_and(|set| set.contains(name))
     }
+
+    /// Iterate a bundled package's export names, if it is in the set (for
+    /// completion's member fallback when the package isn't locally harvested).
+    pub fn package_exports(&self, package: &str) -> Option<impl Iterator<Item = &SmolStr>> {
+        self.exports.get(package).map(|set| set.iter())
+    }
 }
 
 const PACKAGE_LISTS: &[(&str, &str)] = &[
@@ -273,6 +294,27 @@ mod tests {
         assert!(b.has_package("data.table"));
         assert!(b.exports("data.table", "fread"));
         assert!(!b.exports("data.table", "definitely_not_a_real_export"));
+    }
+
+    #[test]
+    fn base_names_enumerable_and_mapped() {
+        let p = StaticBaseR::new();
+        let names: HashSet<&SmolStr> = p.base_names().collect();
+        assert!(names.iter().any(|n| n.as_str() == "mean"));
+        assert_eq!(p.package_of("length").map(|s| s.as_str()), Some("base"));
+        assert!(p.package_of("not_a_real_symbol_xyz").is_none());
+    }
+
+    #[test]
+    fn bundled_package_exports_enumerable() {
+        let b = BundledPackages::new();
+        let names: Vec<String> = b
+            .package_exports("data.table")
+            .expect("data.table bundled")
+            .map(|s| s.to_string())
+            .collect();
+        assert!(names.iter().any(|n| n == "fread"));
+        assert!(b.package_exports("not_a_real_package_xyz").is_none());
     }
 
     #[test]

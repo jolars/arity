@@ -1,13 +1,29 @@
 use arity::formatter::{FormatStyle, format_with_style};
 use arity::lsp::{
-    compute_definition, compute_document_highlights, compute_document_symbols,
+    compute_completions, compute_definition, compute_document_highlights, compute_document_symbols,
     compute_folding_ranges, compute_format_edits, compute_format_range_edits,
     compute_prepare_rename, compute_references, compute_rename, compute_rename_with_anchor,
 };
+use arity::rindex::provider::IndexedProvider;
 use lsp_types::{
     DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Position, Range,
     SymbolKind, TextEdit,
 };
+
+#[test]
+fn completion_bare_includes_base_name() {
+    use lsp_types::CompletionResponse;
+    // With an empty index, base-R names still complete via the static layer.
+    let resp = compute_completions("me", 2, &IndexedProvider::empty()).expect("completions");
+    let labels: Vec<String> = match resp {
+        CompletionResponse::Array(items) => items,
+        CompletionResponse::List(list) => list.items,
+    }
+    .into_iter()
+    .map(|i| i.label)
+    .collect();
+    assert!(labels.contains(&"mean".to_string()), "{labels:?}");
+}
 
 #[test]
 fn reformats_unformatted_input_with_full_document_edit() {

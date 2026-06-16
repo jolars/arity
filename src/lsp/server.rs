@@ -56,6 +56,12 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        completion_provider: Some(CompletionOptions {
+            // `:` fires after the second colon of `::` for member completion.
+            trigger_characters: Some(vec![":".to_string()]),
+            resolve_provider: Some(true),
+            ..Default::default()
+        }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),

@@ -10,7 +10,9 @@ pub mod builder;
 pub mod scope;
 pub mod symbols;
 
-use rowan::TextRange;
+use std::collections::HashSet;
+
+use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
 
 pub use binding::{Binding, BindingId, BindingKind};
@@ -84,6 +86,45 @@ impl SemanticModel {
     /// (with duplicates preserved as encountered).
     pub fn referenced_packages(&self) -> &[SmolStr] {
         &self.referenced_packages
+    }
+
+    /// The innermost scope whose range contains `offset`. Falls back to the
+    /// file scope (id 0) when no narrower scope matches — every model has one.
+    /// Drives completion's scope-visible name enumeration.
+    pub fn innermost_scope_at(&self, offset: TextSize) -> ScopeId {
+        let mut best: Option<(ScopeId, TextSize)> = None;
+        for (idx, scope) in self.scopes.iter().enumerate() {
+            if !scope.range.contains_inclusive(offset) {
+                continue;
+            }
+            let len = scope.range.len();
+            match best {
+                Some((_, best_len)) if best_len <= len => {}
+                _ => best = Some((ScopeId::from_index(idx), len)),
+            }
+        }
+        best.map_or(ScopeId::from_index(0), |(id, _)| id)
+    }
+
+    /// Names visible from the scope enclosing `offset`, inner scopes shadowing
+    /// outer ones. Walks outward via `parent` from [`innermost_scope_at`],
+    /// collecting each scope's directly-declared bindings; the first (innermost)
+    /// occurrence of a name wins.
+    pub fn names_in_scope_at(&self, offset: TextSize) -> Vec<(SmolStr, BindingKind)> {
+        let mut seen: HashSet<SmolStr> = HashSet::new();
+        let mut out = Vec::new();
+        let mut current = Some(self.innermost_scope_at(offset));
+        while let Some(scope_id) = current {
+            let scope = self.scope(scope_id);
+            for binding in &scope.bindings {
+                let b = self.binding(*binding);
+                if seen.insert(b.name.clone()) {
+                    out.push((b.name.clone(), b.kind));
+                }
+            }
+            current = scope.parent;
+        }
+        out
     }
 
     /// Resolve a single identifier read against the scope tree. Walks
@@ -288,6 +329,29 @@ mod tests {
         assert!(!names.contains(&"x"));
         assert!(names.contains(&"y"));
         assert!(names.contains(&"f"));
+    }
+
+    #[test]
+    fn names_in_scope_at_respects_function_scope() {
+        // `a` (param of f) is visible inside f's body but not inside g; `b`
+        // (param of g) is visible inside g but not f. Both functions and the
+        // file-scope `f`/`g` are visible from within.
+        let src = "f <- function(a) {\n  a\n}\ng <- function(b) {\n  b\n}\n";
+        let m = model_of(src);
+        let names_at = |needle: &str| -> Vec<String> {
+            let offset = TextSize::new(src.find(needle).unwrap() as u32);
+            m.names_in_scope_at(offset)
+                .into_iter()
+                .map(|(n, _)| n.to_string())
+                .collect()
+        };
+        let in_f = names_at("  a");
+        assert!(in_f.contains(&"a".to_string()), "f sees param a: {in_f:?}");
+        assert!(!in_f.contains(&"b".to_string()), "f hides g's b: {in_f:?}");
+        assert!(in_f.contains(&"f".to_string()) && in_f.contains(&"g".to_string()));
+        let in_g = names_at("  b");
+        assert!(in_g.contains(&"b".to_string()), "g sees param b: {in_g:?}");
+        assert!(!in_g.contains(&"a".to_string()), "g hides f's a: {in_g:?}");
     }
 
     #[test]

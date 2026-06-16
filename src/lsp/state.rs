@@ -78,6 +78,8 @@ impl GlobalState {
             RangeFormatting::METHOD => self.on_range_formatting(req),
             CodeActionRequest::METHOD => self.on_code_action(req),
             HoverRequest::METHOD => self.on_hover(req),
+            Completion::METHOD => self.on_completion(req),
+            ResolveCompletionItem::METHOD => self.on_resolve_completion(req),
             GotoDefinition::METHOD => self.on_definition(req),
             References::METHOD => self.on_references(req),
             DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
@@ -212,6 +214,47 @@ impl GlobalState {
             path,
             text,
             position,
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `textDocument/completion`: scope-aware names + `pkg::` members. A
+    /// read-only job dispatched like hover; items carry only labels until
+    /// `completionItem/resolve` attaches docs.
+    fn on_completion(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<CompletionParams>(Completion::METHOD) else {
+            self.respond_err(id, "invalid completion params");
+            return;
+        };
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::Completion {
+            id,
+            path,
+            text,
+            position,
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `completionItem/resolve`: lazily attach docs/signature to a completion
+    /// item, using the identity stashed in its `data`. Needs the index, so it
+    /// runs as a read-only job (no document lookup).
+    fn on_resolve_completion(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, item)) = req.extract::<CompletionItem>(ResolveCompletionItem::METHOD) else {
+            self.respond_err(id, "invalid completionItem/resolve params");
+            return;
+        };
+        self.dispatch_read(ReadJob::ResolveCompletion {
+            id,
+            item: Box::new(item),
             sender: self.sender.clone(),
         });
     }
@@ -466,6 +509,8 @@ impl GlobalState {
                 ReadJob::Format { id, sender, .. } => (id, sender),
                 ReadJob::FormatRange { id, sender, .. } => (id, sender),
                 ReadJob::Hover { id, sender, .. } => (id, sender),
+                ReadJob::Completion { id, sender, .. } => (id, sender),
+                ReadJob::ResolveCompletion { id, sender, .. } => (id, sender),
                 ReadJob::Definition { id, sender, .. } => (id, sender),
                 ReadJob::References { id, sender, .. } => (id, sender),
                 ReadJob::Rename { id, sender, .. } => (id, sender),

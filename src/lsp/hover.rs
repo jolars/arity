@@ -159,18 +159,7 @@ pub(crate) fn render_hover_markdown(package: &str, entry: &SymbolEntry) -> Strin
     let mut out = String::new();
 
     // Signature: the `\usage` block if present, else a formals-derived call.
-    let usage = entry.help.as_ref().and_then(|h| h.usage.as_deref());
-    let signature = usage.map(str::to_string).or_else(|| {
-        entry.formals.as_ref().map(|formals| {
-            let args = formals
-                .iter()
-                .map(format_formal)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{}({})", entry.name, args)
-        })
-    });
-    if let Some(signature) = signature {
+    if let Some(signature) = signature_of(entry) {
         let _ = write!(out, "```r\n{signature}\n```\n");
     }
 
@@ -196,6 +185,22 @@ pub(crate) fn render_hover_markdown(package: &str, entry: &SymbolEntry) -> Strin
         }
     }
     out
+}
+
+/// A symbol's call signature: the `\usage` block when help carries one, else a
+/// formals-derived `name(args)`. Shared by hover and completion's `resolve`.
+pub(crate) fn signature_of(entry: &SymbolEntry) -> Option<String> {
+    let usage = entry.help.as_ref().and_then(|h| h.usage.as_deref());
+    usage.map(str::to_string).or_else(|| {
+        entry.formals.as_ref().map(|formals| {
+            let args = formals
+                .iter()
+                .map(format_formal)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}({})", entry.name, args)
+        })
+    })
 }
 
 pub(crate) fn format_formal(formal: &Formal) -> String {
