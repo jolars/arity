@@ -12,7 +12,6 @@
     pkgs.cargo-audit
     pkgs.cargo-deny
     pkgs.cargo-insta
-    pkgs.cmark
     pkgs.go-task
     pkgs.jarl
     pkgs.llvmPackages.bintools
@@ -26,14 +25,6 @@
     pkgs.hyperfine
     pkgs.yamlfmt
     pkgs.vsce
-    (pkgs.rWrapper.override {
-      packages = with pkgs.rPackages; [
-        knitr
-        rmarkdown
-        bookdown
-        languageserver
-      ];
-    })
   ];
 
   languages = {
@@ -49,6 +40,9 @@
       package = (
         pkgs.rWrapper.override {
           packages = with pkgs.rPackages; [
+            knitr
+            rmarkdown
+            bookdown
             languageserver
           ];
         }
@@ -69,8 +63,6 @@
 
     javascript = {
       enable = true;
-
-      # corepack.enable = true;
 
       pnpm = {
         enable = true;
