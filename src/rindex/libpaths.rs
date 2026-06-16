@@ -3,14 +3,22 @@
 //! `.libPaths()` is computed by R from environment variables, platform
 //! defaults, and project overlays (`renv`/`packrat`). We replicate the parts we
 //! can read off disk, in priority order, and probe each candidate for the
-//! requested package. The one place we ask R is for `R_HOME` when it is absent
-//! from the environment: `R RHOME` prints the home directory and evaluates no
-//! user code, so an editor-launched server (which often doesn't inherit
-//! `R_HOME`) can still find the *system* library where the default packages
-//! (`base`, `stats`, …) live. When discovery still misses (exotic layouts,
-//! custom `.Renviron`, R not on `PATH`), the user points us at the right
-//! directory via the `[index].library-paths` config (the highest-priority
-//! source).
+//! requested package.
+//!
+//! Two of R's library sources can't be recovered from disk, because they are
+//! *computed* at startup rather than stored: a launcher that injects
+//! `R_LIBS_SITE` into R's process (Nix `rWrapper`, conda, environment modules)
+//! and a `.Rprofile` that calls `.libPaths()`. For the former we ask R directly
+//! via two cheap probes that evaluate no user code: `R RHOME` for the system
+//! library (where `base`, `stats`, … live, so an editor-launched server that
+//! didn't inherit `R_HOME` still finds them), and `R --vanilla … .libPaths()`
+//! for the full resolved search path including launcher-injected directories.
+//! The latter (`.Rprofile`-driven, e.g. `renv`) is covered from the other
+//! direction by the project overlay scan.
+//!
+//! When discovery still misses (exotic layouts, R not on `PATH`), the user
+//! points us at the right directory via the `[index].library-paths` config (the
+//! highest-priority source).
 
 use std::path::{Path, PathBuf};
 
@@ -34,7 +42,8 @@ impl LibrarySearch {
             "R_HOME" => r_home.clone(),
             other => std::env::var(other).ok(),
         };
-        Self::assemble(project_root, configured, &env, home_dir())
+        let probed = probe_lib_paths();
+        Self::assemble(project_root, configured, &probed, &env, home_dir())
     }
 
     /// All candidate directories, in priority order, deduplicated.
@@ -55,6 +64,7 @@ impl LibrarySearch {
     fn assemble(
         project_root: Option<&Path>,
         configured: &[PathBuf],
+        probed: &[PathBuf],
         env: &dyn Fn(&str) -> Option<String>,
         home: Option<PathBuf>,
     ) -> Self {
@@ -77,7 +87,14 @@ impl LibrarySearch {
             }
         }
 
-        // 3. Environment variables (highest R priority among these is
+        // 3. R's own resolved `.libPaths()` (an `R` probe). The only source that
+        //    reflects launcher-injected directories (Nix `rWrapper`, conda),
+        //    which never reach the ambient environment or any file we can read.
+        for p in probed {
+            push(&mut dirs, p.clone());
+        }
+
+        // 4. Environment variables (highest R priority among these is
         //    R_LIBS_USER, then R_LIBS_SITE, then R_LIBS).
         for key in ["R_LIBS_USER", "R_LIBS_SITE", "R_LIBS"] {
             if let Some(val) = env(key) {
@@ -87,14 +104,14 @@ impl LibrarySearch {
             }
         }
 
-        // 4. Platform user-library defaults.
+        // 5. Platform user-library defaults.
         if let Some(home) = home.as_ref() {
             for p in default_user_libs(home) {
                 push(&mut dirs, p);
             }
         }
 
-        // 5. System library under R_HOME.
+        // 6. System library under R_HOME.
         if let Some(r_home) = env("R_HOME")
             && !r_home.is_empty()
         {
@@ -117,6 +134,35 @@ fn probe_r_home() -> Option<String> {
     }
     let home = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (!home.is_empty()).then_some(home)
+}
+
+/// Ask R for its resolved library search path (`.libPaths()`). Unlike reading
+/// `R_LIBS_*` from our own environment, this captures directories a launcher
+/// injects into R's process at startup — notably Nix's `rWrapper` and conda,
+/// which `setenv(R_LIBS_SITE, …)` inside a wrapper binary, so the value lives in
+/// neither the ambient shell nor any file we can read. `--vanilla` skips every
+/// user profile/environ file, so `.libPaths()` is the only thing evaluated (a
+/// builtin, no user code) — the same "no R user-code evaluation" line as
+/// [`probe_r_home`]. Returns an empty vec if R isn't on `PATH` or the probe
+/// fails.
+fn probe_lib_paths() -> Vec<PathBuf> {
+    let output = std::process::Command::new("R")
+        .args(["--vanilla", "-s", "-e", "cat(.libPaths(), sep=\"\\n\")"])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let Ok(text) = String::from_utf8(output.stdout) else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// Split an `R_LIBS*`-style path list on the platform separator.
@@ -210,9 +256,39 @@ mod tests {
     #[test]
     fn configured_paths_come_first() {
         let env = HashMap::new();
-        let search =
-            LibrarySearch::assemble(None, &[PathBuf::from("/custom/lib")], &env_from(&env), None);
+        let search = LibrarySearch::assemble(
+            None,
+            &[PathBuf::from("/custom/lib")],
+            &[],
+            &env_from(&env),
+            None,
+        );
         assert_eq!(search.dirs().first(), Some(&PathBuf::from("/custom/lib")));
+    }
+
+    #[test]
+    fn probed_lib_paths_follow_config_and_precede_env() {
+        // The `.libPaths()` probe is the only source that surfaces
+        // launcher-injected directories (Nix `rWrapper`, conda). They must rank
+        // below explicit config but above the ambient `R_LIBS_*` environment,
+        // which on such setups is stale or missing the real paths entirely.
+        let probed = [PathBuf::from("/nix/store/abc-r-dplyr/library")];
+        let mut env = HashMap::new();
+        env.insert("R_LIBS_SITE", "/ambient/site");
+        let search = LibrarySearch::assemble(
+            None,
+            &[PathBuf::from("/custom/lib")],
+            &probed,
+            &env_from(&env),
+            None,
+        );
+        let dirs = search.dirs();
+        let pos = |p: &str| dirs.iter().position(|d| d == Path::new(p));
+        let ci = pos("/custom/lib").expect("config dir present");
+        let pi = pos("/nix/store/abc-r-dplyr/library").expect("probed dir present");
+        let ei = pos("/ambient/site").expect("ambient env dir present");
+        assert!(ci < pi, "config should precede probed in {dirs:?}");
+        assert!(pi < ei, "probed should precede ambient env in {dirs:?}");
     }
 
     #[test]
@@ -227,7 +303,7 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("R_LIBS_USER", "/user/lib");
         env.insert("R_LIBS_SITE", site);
-        let search = LibrarySearch::assemble(None, &[], &env_from(&env), None);
+        let search = LibrarySearch::assemble(None, &[], &[], &env_from(&env), None);
         let dirs = search.dirs();
         assert!(dirs.contains(&PathBuf::from("/user/lib")));
         assert!(dirs.contains(&PathBuf::from("/site/a")));
@@ -247,7 +323,7 @@ mod tests {
         // system library where the default packages live.
         let mut env = HashMap::new();
         env.insert("R_HOME", "/opt/R");
-        let search = LibrarySearch::assemble(None, &[], &env_from(&env), None);
+        let search = LibrarySearch::assemble(None, &[], &[], &env_from(&env), None);
         assert!(
             search.dirs().contains(&PathBuf::from("/opt/R/library")),
             "system library missing from {:?}",
@@ -266,7 +342,7 @@ mod tests {
         let mut env = HashMap::new();
         let libdir_str = libdir.to_string_lossy().into_owned();
         env.insert("R_LIBS", libdir_str.as_str());
-        let search = LibrarySearch::assemble(None, &[], &env_from(&env), None);
+        let search = LibrarySearch::assemble(None, &[], &[], &env_from(&env), None);
         assert_eq!(search.find_package("magrittr"), Some(pkgdir));
         assert_eq!(search.find_package("nonexistent"), None);
     }
