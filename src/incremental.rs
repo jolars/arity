@@ -18,8 +18,9 @@ use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
 use crate::project::{
-    DefKind, ReadBinding, SourceEdgeKey, TopLevelEvent, collect_top_level_events, project_defs,
-    project_graph, project_reads, reverse_source_edges, workspace_project,
+    DefKind, ReadBinding, SourceEdgeKey, TopLevelEvent, collect_source_literal_edges,
+    collect_top_level_events, project_defs, project_graph, project_reads, relative_path,
+    reverse_source_edges, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
@@ -55,7 +56,7 @@ pub struct SourceFile {
 /// `.` / `..` segments. Purely textual — no symlink resolution, no existence
 /// check — so it is stable for not-yet-saved buffers and never blocks on I/O.
 /// `a.R`, `./a.R`, and `dir/../a.R` all map to the same key.
-fn normalize_path(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut out = PathBuf::new();
@@ -71,6 +72,18 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Render a path with forward slashes, the separator R source paths use on every
+/// platform. A lossy `to_string_lossy` is acceptable: a non-UTF-8 path can't have
+/// originated from a `source()` string literal we are rewriting.
+fn to_forward_slash(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if std::path::MAIN_SEPARATOR == '/' {
+        s.into_owned()
+    } else {
+        s.replace(std::path::MAIN_SEPARATOR, "/")
+    }
 }
 
 /// The path → input index plus the [`FileId`] allocator. Maps a *normalized*
@@ -945,6 +958,88 @@ impl Analysis {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Edits that rewrite `source("old")` literals in dependents when files are
+    /// renamed/moved (`workspace/willRenameFiles`). Each `(old, new)` pair is a
+    /// file rename; the result is `(sourcer path, literal token range, new
+    /// quoted literal)` triples, range-bearing so the LSP layer can position
+    /// them (it stays free of `lsp_types`, mirroring
+    /// [`cross_file_rename_edits`](crate::lsp)).
+    ///
+    /// Found via the reverse `source()` graph
+    /// ([`reverse_source_edges`]): its keys are the un-normalized resolved
+    /// targets, so matching against an incoming `old` path normalizes both sides
+    /// ([`normalize_path`]). A dynamic `source(var)` is never in the forward
+    /// `sourced_by` map, so it is left untouched. A pure read — the caller wraps
+    /// it in [`salsa::Cancelled::catch`].
+    pub fn source_rename_edits(
+        &self,
+        renames: &[(PathBuf, PathBuf)],
+    ) -> Vec<(PathBuf, TextRange, String)> {
+        if self.0.workspace().is_none() {
+            return Vec::new();
+        }
+        // Normalized old → new, dropping no-op renames.
+        let targets: Vec<(PathBuf, PathBuf)> = renames
+            .iter()
+            .map(|(old, new)| (normalize_path(old), normalize_path(new)))
+            .filter(|(old, new)| old != new)
+            .collect();
+        if targets.is_empty() {
+            return Vec::new();
+        }
+
+        let project = workspace_project(&self.0);
+        let rev = reverse_source_edges(&self.0, project);
+
+        // Candidate sourcers per normalized target: the reverse map keys are
+        // un-normalized, so normalize each before matching.
+        let mut sourcers: BTreeSet<PathBuf> = BTreeSet::new();
+        for (key, members) in &rev.sourced_by {
+            if targets.iter().any(|(old, _)| normalize_path(key) == *old) {
+                sourcers.extend(members.iter().cloned());
+            }
+        }
+
+        let mut edits = Vec::new();
+        for sourcer in sourcers {
+            let Some(file) = self.lookup_file(&sourcer) else {
+                continue;
+            };
+            let text = self.file_text(file);
+            let root = parse(text).cst;
+            let base_dir = sourcer.parent();
+            for edge in collect_source_literal_edges(&root, base_dir) {
+                let edge_norm = normalize_path(&edge.target);
+                let Some((_, new)) = targets.iter().find(|(old, _)| *old == edge_norm) else {
+                    continue;
+                };
+                // Preserve the original quote; recompute the spelling, keeping the
+                // relative/absolute shape the author wrote.
+                let new_spelling = if edge.was_relative {
+                    base_dir
+                        .map(normalize_path)
+                        .and_then(|dir| relative_path(&dir, new))
+                        .map(|rel| to_forward_slash(&rel))
+                        .unwrap_or_else(|| to_forward_slash(new))
+                } else {
+                    to_forward_slash(new)
+                };
+                let quote = edge.quote as char;
+                // No escaping: skip rather than corrupt if the path carries the
+                // quote byte (vanishingly rare for R source paths).
+                if new_spelling.as_bytes().contains(&edge.quote) {
+                    continue;
+                }
+                edits.push((
+                    sourcer.clone(),
+                    edge.literal_range,
+                    format!("{quote}{new_spelling}{quote}"),
+                ));
+            }
+        }
+        edits
     }
 
     /// Re-resolve a [`NodePtr`] taken against `taken_at_text` to a node in

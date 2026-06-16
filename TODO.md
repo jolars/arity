@@ -296,12 +296,17 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       `visited` set like `ProjectScope::build` --- not mutually-recursive tracked
       queries, which would pull in salsa's fixpoint machinery for no gain.
 
-- [ ] **File rename** (`workspace/willRenameFiles` / `workspace/didRenameFiles`,
-  advertised via `fileOperations` server capability). On an `.R` file move,
-  rewrite `source("old/path.R")` string literals in dependents to the new
-  path. Depends on `source_edges` already resolving those literals; needs
-  the reverse edge map (who sources me) and a string-literal edit that
-  preserves quoting.
+- [x] **File rename** (`workspace/willRenameFiles` / `workspace/didRenameFiles`,
+  advertised via the `fileOperations` server capability for `**/*.{R,r}`). Done:
+  `willRenameFiles` returns a `WorkspaceEdit` rewriting `source("old")` literals
+  in dependents (`Analysis::source_rename_edits` → `will_rename_via_db`), found
+  via `reverse_source_edges` (normalized on both sides, since its keys are
+  un-normalized) and rewritten with a new range-bearing extractor
+  (`collect_source_literal_edges`, `src/project/source.rs`) that preserves the
+  quote and recomputes the relative spelling (`relative_path`). `didRenameFiles`
+  refreshes db membership on the lint thread (`apply_file_renames`) and re-lints.
+  Dynamic `source(var)` targets are left untouched. Folder renames are still a
+  follow-up.
 
 ### Completion & signatures
 

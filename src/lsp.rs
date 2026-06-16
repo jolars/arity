@@ -64,12 +64,12 @@ use crossbeam_channel::{Receiver, Sender, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
     DidChangeConfiguration, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
-    Notification as NotificationTrait, PublishDiagnostics,
+    DidRenameFiles, Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
     CodeActionRequest, DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDefinition,
     HoverRequest, PrepareRenameRequest, RangeFormatting, References, Rename,
-    Request as RequestTrait,
+    Request as RequestTrait, WillRenameFiles,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -78,12 +78,14 @@ use lsp_types::{
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
     DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
     DocumentRangeFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
     HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
     OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams,
-    RenameOptions, RenameParams, ServerCapabilities, ServerInfo, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
-    WorkspaceEdit,
+    RenameFilesParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
+    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
+    WorkspaceServerCapabilities,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -173,7 +175,30 @@ fn server_capabilities() -> ServerCapabilities {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
         })),
+        workspace: Some(WorkspaceServerCapabilities {
+            workspace_folders: None,
+            file_operations: Some(WorkspaceFileOperationsServerCapabilities {
+                will_rename: Some(r_file_rename_registration()),
+                did_rename: Some(r_file_rename_registration()),
+                ..Default::default()
+            }),
+        }),
         ..Default::default()
+    }
+}
+
+/// Register `willRenameFiles`/`didRenameFiles` for `.R`/`.r` files only — a moved
+/// R source is the one rename that rewrites `source()` literals in dependents.
+fn r_file_rename_registration() -> FileOperationRegistrationOptions {
+    FileOperationRegistrationOptions {
+        filters: vec![FileOperationFilter {
+            scheme: Some("file".to_string()),
+            pattern: FileOperationPattern {
+                glob: "**/*.{R,r}".to_string(),
+                matches: None,
+                options: None,
+            },
+        }],
     }
 }
 
@@ -331,6 +356,12 @@ enum LintMsg {
     SeedWorkspace {
         roots: Vec<PathBuf>,
     },
+    /// Files were renamed on disk (`workspace/didRenameFiles`). Refresh the db's
+    /// membership so cross-file analysis tracks the new paths. Handled on the lint
+    /// thread, the sole db writer.
+    RenameFiles {
+        renames: Vec<(PathBuf, PathBuf)>,
+    },
 }
 
 /// A read-only request the lint thread services by cloning its salsa db and
@@ -392,6 +423,12 @@ enum ReadJob {
         /// anchor state never crosses the thread boundary.
         offset: usize,
         new_name: String,
+        sender: Sender<Message>,
+    },
+    WillRenameFiles {
+        id: RequestId,
+        /// `(old, new)` filesystem path pairs for the files being renamed.
+        renames: Vec<(PathBuf, PathBuf)>,
         sender: Sender<Message>,
     },
 }
@@ -478,6 +515,7 @@ impl GlobalState {
             DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
+            WillRenameFiles::METHOD => self.on_will_rename_files(req),
             _ => {
                 let resp = Response::new_err(
                     req.id,
@@ -804,6 +842,29 @@ impl GlobalState {
         });
     }
 
+    /// `workspace/willRenameFiles`: build a [`WorkspaceEdit`] that rewrites
+    /// `source("old")` literals in dependents to the renamed targets, so a file
+    /// move keeps cross-file `source()` references resolving. The editor applies
+    /// it atomically with the rename. Runs off a db snapshot on the read pool,
+    /// like [`on_rename`](Self::on_rename).
+    fn on_will_rename_files(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<RenameFilesParams>(WillRenameFiles::METHOD) else {
+            self.respond_err(id, "invalid willRenameFiles params");
+            return;
+        };
+        let renames = file_renames_to_paths(&params);
+        if renames.is_empty() {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        }
+        self.dispatch_read(ReadJob::WillRenameFiles {
+            id,
+            renames,
+            sender: self.sender.clone(),
+        });
+    }
+
     /// Hand a read-only job to the lint thread (db owner), which snapshots the db
     /// and runs it on the read pool. If that channel is gone (shutdown in flight),
     /// reply `null` so the client isn't left waiting.
@@ -816,6 +877,7 @@ impl GlobalState {
                 ReadJob::Definition { id, sender, .. } => (id, sender),
                 ReadJob::References { id, sender, .. } => (id, sender),
                 ReadJob::Rename { id, sender, .. } => (id, sender),
+                ReadJob::WillRenameFiles { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
                 id,
@@ -867,6 +929,14 @@ impl GlobalState {
                     self.rename_anchors.remove(&uri);
                     // Tell the client to clear stale diagnostics.
                     self.publish(uri, Vec::new(), None);
+                }
+            }
+            DidRenameFiles::METHOD => {
+                if let Ok(params) = not.extract::<RenameFilesParams>(DidRenameFiles::METHOD) {
+                    let renames = file_renames_to_paths(&params);
+                    if !renames.is_empty() {
+                        let _ = self.lint_tx.send(LintMsg::RenameFiles { renames });
+                    }
                 }
             }
             DidChangeConfiguration::METHOD => {
@@ -1150,6 +1220,7 @@ impl LintWorker {
         match msg {
             LintMsg::Request(req) => self.enqueue(*req),
             LintMsg::SeedWorkspace { roots } => self.seed_workspace(roots),
+            LintMsg::RenameFiles { renames } => self.rename_files(renames),
         }
     }
 
@@ -1170,6 +1241,15 @@ impl LintWorker {
             }
         }
         self.db.set_workspace_members(files, roots);
+    }
+
+    /// Refresh db membership after a `workspace/didRenameFiles`, then re-lint
+    /// every open document so `source()` edges re-resolve against the new graph.
+    /// The db mutation is [`apply_file_renames`].
+    fn rename_files(&mut self, renames: Vec<(PathBuf, PathBuf)>) {
+        if apply_file_renames(&mut self.db, &renames) {
+            let _ = self.out_tx.send(Outbound::RelintAll);
+        }
     }
 
     /// Add `req` to the pending queue, keeping the highest version per URI (guards
@@ -1483,6 +1563,14 @@ fn run_read(snapshot: Analysis, job: ReadJob) {
             sender,
         } => {
             let result = rename_via_db(&snapshot, &path, &uri, &text, offset, &new_name);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::WillRenameFiles {
+            id,
+            renames,
+            sender,
+        } => {
+            let result = will_rename_via_db(&snapshot, &renames);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
     }
@@ -2056,6 +2144,81 @@ fn finalize_rename(mut changes: HashMap<Uri, Vec<TextEdit>>) -> Option<Workspace
         changes: Some(changes),
         ..Default::default()
     })
+}
+
+/// Resolve `workspace/willRenameFiles` against a db `snapshot`: rewrite the
+/// `source("old")` literals in dependents to each renamed target, via
+/// [`Analysis::source_rename_edits`]. Each `(sourcer, literal range, new
+/// literal)` triple becomes a [`TextEdit`] positioned against the sourcer's
+/// tracked text (reusing [`text_edit_in`]); they are grouped per URI and wrapped
+/// like a rename. The salsa read is wrapped in [`salsa::Cancelled::catch`] (a
+/// write may race the snapshot), yielding `None` on cancellation.
+fn will_rename_via_db(
+    snapshot: &Analysis,
+    renames: &[(PathBuf, PathBuf)],
+) -> Option<WorkspaceEdit> {
+    let edits =
+        salsa::Cancelled::catch(AssertUnwindSafe(|| snapshot.source_rename_edits(renames))).ok()?;
+    let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+    for (sourcer, range, new_text) in edits {
+        if let Some((uri, edit)) = text_edit_in(snapshot, &sourcer, range, &new_text) {
+            changes.entry(uri).or_default().push(edit);
+        }
+    }
+    finalize_rename(changes)
+}
+
+/// Apply on-disk file renames to the db's workspace membership: track each new
+/// path (read from disk, where the move already landed) and swap it in for the
+/// old member. The old [`SourceFile`] input lingers — there is no removal
+/// primitive — but is dropped from the member set, so cross-file scope ignores
+/// it, the same posture as a closed file. Returns whether anything changed (so
+/// the caller can skip a needless re-lint). No-op when no workspace is seeded.
+fn apply_file_renames(db: &mut IncrementalDatabase, renames: &[(PathBuf, PathBuf)]) -> bool {
+    let Some(ws) = db.workspace() else {
+        return false;
+    };
+    let mut members: Vec<SourceFile> = ws.members(db).to_vec();
+    let roots = ws.roots(db).to_vec();
+
+    let mut changed = false;
+    for (old, new) in renames {
+        let Ok(text) = std::fs::read_to_string(new) else {
+            continue;
+        };
+        let new_file = db.upsert_file(new, text);
+        if let Some(old_file) = db.lookup_file(old) {
+            members.retain(|&f| f != old_file);
+        }
+        members.push(new_file);
+        changed = true;
+    }
+    if changed {
+        db.set_workspace_members(members, roots);
+    }
+    changed
+}
+
+/// Convert `RenameFilesParams` into `(old, new)` filesystem path pairs, dropping
+/// any entry whose URIs aren't parseable `file:` URIs.
+fn file_renames_to_paths(params: &RenameFilesParams) -> Vec<(PathBuf, PathBuf)> {
+    params
+        .files
+        .iter()
+        .filter_map(|f| {
+            let old = f
+                .old_uri
+                .parse::<Uri>()
+                .ok()
+                .and_then(|u| uri::to_path(&u))?;
+            let new = f
+                .new_uri
+                .parse::<Uri>()
+                .ok()
+                .and_then(|u| uri::to_path(&u))?;
+            Some((old, new))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -4018,5 +4181,134 @@ mod tests {
             !uris.contains(&uri_d),
             "d.R's disjoint foo is invisible to c.R"
         );
+    }
+
+    // --- file rename (will_rename_via_db / didRenameFiles) ----------------
+
+    /// The single edit a `WorkspaceEdit` makes to `uri`: `(range, new_text)`.
+    fn sole_edit(edit: &WorkspaceEdit, uri: &Uri) -> (Range, String) {
+        let edits = edit
+            .changes
+            .as_ref()
+            .and_then(|c| c.get(uri))
+            .unwrap_or_else(|| panic!("expected an edit in {uri:?}"));
+        assert_eq!(edits.len(), 1, "exactly one edit in {uri:?}");
+        (edits[0].range, edits[0].new_text.clone())
+    }
+
+    #[test]
+    fn will_rename_rewrites_dependent_source_literal() {
+        // b.R sources a.R; renaming a.R rewrites b.R's literal and edits nothing
+        // else (a.R itself has no incoming `source()` to rewrite).
+        let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
+        let snapshot = rename_workspace("foo <- function() 1\n", b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+
+        let edit = will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a_renamed.R"))])
+            .expect("the dependent literal is rewritten");
+        let (_, new_text) = sole_edit(&edit, &uri_b);
+        assert_eq!(new_text, "\"a_renamed.R\"");
+        assert!(
+            edit.changes.as_ref().unwrap().get(&uri_a).is_none(),
+            "the renamed file itself is not edited"
+        );
+    }
+
+    #[test]
+    fn will_rename_preserves_single_quotes() {
+        let b_src = "source('a.R')\n";
+        let snapshot = rename_workspace("foo <- function() 1\n", b_src);
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+
+        let edit =
+            will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a2.R"))]).expect("rewritten");
+        assert_eq!(sole_edit(&edit, &uri_b).1, "'a2.R'");
+    }
+
+    #[test]
+    fn will_rename_recomputes_relative_path_across_directories() {
+        // Move R/a.R into R/sub/; b.R's relative literal becomes "sub/a.R".
+        let (_dir, snapshot, a_path, b_path) = rename_package(
+            "foo <- function() 1\n",
+            "source(\"a.R\")\nbar <- function() foo()\n",
+        );
+        let uri_b = uri::from_path(&b_path).unwrap();
+        let new_a = a_path.parent().unwrap().join("sub").join("a.R");
+
+        let edit = will_rename_via_db(&snapshot, &[(a_path, new_a)]).expect("rewritten");
+        assert_eq!(sole_edit(&edit, &uri_b).1, "\"sub/a.R\"");
+    }
+
+    #[test]
+    fn will_rename_applies_a_batch_of_renames() {
+        // b.R sources both a.R and c.R; renaming both in one request rewrites both
+        // literals, merged and sorted into b.R's edit list.
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&ws_path("a.R"), "foo <- function() 1\n".to_string());
+        let c = db.upsert_file(&ws_path("c.R"), "qux <- function() 2\n".to_string());
+        let b = db.upsert_file(
+            &ws_path("b.R"),
+            "source(\"a.R\")\nsource(\"c.R\")\n".to_string(),
+        );
+        db.set_workspace_members(vec![a, b, c], vec![ws_root()]);
+        let snapshot = db.snapshot();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[
+                (ws_path("a.R"), ws_path("a2.R")),
+                (ws_path("c.R"), ws_path("c2.R")),
+            ],
+        )
+        .expect("both literals rewritten");
+        let edits = edit.changes.unwrap().remove(&uri_b).expect("b.R edited");
+        let texts: Vec<&str> = edits.iter().map(|e| e.new_text.as_str()).collect();
+        assert_eq!(texts, vec!["\"a2.R\"", "\"c2.R\""], "sorted by position");
+    }
+
+    #[test]
+    fn will_rename_leaves_dynamic_source_untouched() {
+        // A computed `source()` target can't be resolved, so it has no reverse
+        // edge and is never rewritten.
+        let snapshot = rename_workspace("foo <- function() 1\n", "source(paste0(d, \"a.R\"))\n");
+        assert!(
+            will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a2.R"))]).is_none(),
+            "a dynamic source() is not rewritten"
+        );
+    }
+
+    #[test]
+    fn will_rename_ignores_a_noop_rename() {
+        let snapshot = rename_workspace("foo <- function() 1\n", "source(\"a.R\")\n");
+        assert!(
+            will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a.R"))]).is_none(),
+            "renaming a file to itself produces no edits"
+        );
+    }
+
+    #[test]
+    fn apply_file_renames_swaps_membership() {
+        // didRenameFiles refresh: after a move, the new path is a tracked member
+        // and the old path is no longer one.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let old = root.join("a.R");
+        let new = root.join("b.R");
+        std::fs::write(&old, "foo <- function() 1\n").expect("write a.R");
+
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&old, "foo <- function() 1\n".to_string());
+        db.set_workspace_members(vec![a], vec![root.to_path_buf()]);
+
+        // The move lands on disk before didRenameFiles arrives.
+        std::fs::rename(&old, &new).expect("move a.R -> b.R");
+        assert!(apply_file_renames(&mut db, &[(old.clone(), new.clone())]));
+
+        let new_file = db.lookup_file(&new).expect("new path is tracked");
+        let members = db.workspace().unwrap().members(&db).to_vec();
+        assert!(members.contains(&new_file), "new path is a member");
+        assert!(!members.contains(&a), "old member is dropped from the set");
     }
 }

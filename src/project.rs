@@ -20,6 +20,6 @@ pub use graph::{
 pub use scope::{FileFacts, FileScope, ProjectScope, ReadBinding, package_root};
 pub use sequence::collect_top_level_events;
 pub use source::{
-    SourceEdge, SourceEdgeKey, SourceTarget, TopLevelEvent, collect_source_edge_keys,
-    collect_source_edges,
+    SourceEdge, SourceEdgeKey, SourceLiteralEdge, SourceTarget, TopLevelEvent,
+    collect_source_edge_keys, collect_source_edges, collect_source_literal_edges, relative_path,
 };

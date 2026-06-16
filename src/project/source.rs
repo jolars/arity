@@ -135,6 +135,101 @@ pub fn collect_source_edge_keys(root: &SyntaxNode, base_dir: Option<&Path>) -> V
         .collect()
 }
 
+/// A statically-resolved literal `source()` argument, carrying the byte range
+/// and quoting needed to rewrite it in place (file rename). Unlike
+/// [`SourceEdge`], whose `range` spans the whole call, [`Self::literal_range`]
+/// spans only the string token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceLiteralEdge {
+    /// Resolved target: `base_dir.join(spelling)` when relative and a base dir
+    /// is known, else the spelling verbatim. Un-normalized, like [`SourceEdge`].
+    pub target: PathBuf,
+    /// Range of the string token (including its quotes).
+    pub literal_range: TextRange,
+    /// The opening quote byte (`"`, `'`, or `` ` ``), preserved on rewrite.
+    pub quote: u8,
+    /// The inner text as written, without quotes.
+    pub spelling: String,
+    /// Whether the original spelling was a relative path.
+    pub was_relative: bool,
+}
+
+/// Collect top-level `source("literal")` edges with the string token's range and
+/// quoting — the form a file rename rewrites. Mirrors [`collect_source_edges`]
+/// but skips [`SourceTarget::Dynamic`] arguments (a computed path can't be
+/// rewritten) and named/positional `file` resolution is shared via
+/// [`source_file_value`].
+pub fn collect_source_literal_edges(
+    root: &SyntaxNode,
+    base_dir: Option<&Path>,
+) -> Vec<SourceLiteralEdge> {
+    root.children()
+        .filter_map(|child| source_call(&child))
+        .filter_map(|call| source_literal_edge(&call, base_dir))
+        .collect()
+}
+
+fn source_literal_edge(call: &CallExpr, base_dir: Option<&Path>) -> Option<SourceLiteralEdge> {
+    let (file_value, _local) = source_file_value(call);
+    let NodeOrToken::Token(token) = file_value? else {
+        return None;
+    };
+    if token.kind() != SyntaxKind::STRING {
+        return None;
+    }
+    let spelling = strip_quotes(token.text())?.to_string();
+    let quote = token.text().as_bytes()[0];
+    let path = PathBuf::from(&spelling);
+    let was_relative = path.is_relative();
+    let target = match base_dir {
+        Some(dir) if was_relative => dir.join(&path),
+        _ => path,
+    };
+    Some(SourceLiteralEdge {
+        target,
+        literal_range: token.text_range(),
+        quote,
+        spelling,
+        was_relative,
+    })
+}
+
+/// A relative path from `base_dir` to `target`, both assumed normalized
+/// (absolute, no `.`/`..` components). Drops the shared component prefix, emits
+/// one `..` per leftover `base_dir` component, then the leftover `target`
+/// components. Returns `None` when the two share no root (a leftover root or
+/// prefix on either side — e.g. distinct Windows drives), so the caller can fall
+/// back to an absolute spelling. Pure and platform-component based; the caller
+/// renders the result with forward slashes.
+pub fn relative_path(base_dir: &Path, target: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut base = base_dir.components().peekable();
+    let mut targ = target.components().peekable();
+    while let (Some(b), Some(t)) = (base.peek(), targ.peek()) {
+        if b == t {
+            base.next();
+            targ.next();
+        } else {
+            break;
+        }
+    }
+    let mut result = PathBuf::new();
+    for comp in base {
+        match comp {
+            Component::Normal(_) => result.push(".."),
+            Component::CurDir => {}
+            // A leftover root or prefix means the paths don't share a root, so no
+            // relative form is sensible. (`ParentDir` shouldn't appear in a
+            // normalized path, but is unrepresentable as a relative base step.)
+            Component::RootDir | Component::Prefix(_) | Component::ParentDir => return None,
+        }
+    }
+    for comp in targ {
+        result.push(comp.as_os_str());
+    }
+    Some(result)
+}
+
 /// The `CallExpr` if `node` is a call to the bare function `source`.
 fn source_call(node: &SyntaxNode) -> Option<CallExpr> {
     let call = CallExpr::cast(node.clone())?;
@@ -142,7 +237,10 @@ fn source_call(node: &SyntaxNode) -> Option<CallExpr> {
     (callee.kind() == SyntaxKind::IDENT && callee.text() == "source").then_some(call)
 }
 
-fn source_edge(call: &CallExpr, base_dir: Option<&Path>) -> SourceEdge {
+/// Walk a `source(...)` call's arguments, returning the element that supplies
+/// the `file` (first positional or named `file=`) and whether `local = TRUE` is
+/// set. Shared by [`source_edge`] and [`collect_source_literal_edges`].
+fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool) {
     let mut file_value: Option<SyntaxElement> = None;
     let mut local = false;
     let mut seen_positional = false;
@@ -164,7 +262,11 @@ fn source_edge(call: &CallExpr, base_dir: Option<&Path>) -> SourceEdge {
             }
         }
     }
+    (file_value, local)
+}
 
+fn source_edge(call: &CallExpr, base_dir: Option<&Path>) -> SourceEdge {
+    let (file_value, local) = source_file_value(call);
     let target = match file_value {
         Some(value) => target_from_value(&value, base_dir),
         None => SourceTarget::Dynamic,
@@ -320,5 +422,85 @@ mod tests {
     fn non_source_calls_are_ignored() {
         let e = edges("library(dplyr)\nprint(\"x.R\")\n", None);
         assert!(e.is_empty());
+    }
+
+    fn literal_edges(src: &str, base_dir: Option<&Path>) -> Vec<SourceLiteralEdge> {
+        collect_source_literal_edges(&parse(src).cst, base_dir)
+    }
+
+    #[test]
+    fn literal_edge_captures_range_and_quoting() {
+        let src = "source(\"helpers.R\")\n";
+        let base = PathBuf::from("/proj/R");
+        let e = literal_edges(src, Some(&base));
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].spelling, "helpers.R");
+        assert_eq!(e[0].quote, b'"');
+        assert!(e[0].was_relative);
+        assert_eq!(
+            e[0].target,
+            PathBuf::from("/proj/R/helpers.R"),
+            "relative literal resolves against base dir"
+        );
+        // The range slices exactly the quoted token, quotes included.
+        let range = e[0].literal_range;
+        assert_eq!(
+            &src[range.start().into()..range.end().into()],
+            "\"helpers.R\""
+        );
+    }
+
+    #[test]
+    fn literal_edge_preserves_single_quotes() {
+        let e = literal_edges("source('a.R')\n", None);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].quote, b'\'');
+        assert_eq!(e[0].spelling, "a.R");
+    }
+
+    #[test]
+    fn literal_edge_recognizes_named_file_argument() {
+        let e = literal_edges("source(file = \"setup.R\")\n", None);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].spelling, "setup.R");
+    }
+
+    #[test]
+    fn literal_edge_marks_absolute_spelling() {
+        let base = PathBuf::from("/proj");
+        let e = literal_edges("source(\"/abs/util.R\")\n", Some(&base));
+        assert_eq!(e.len(), 1);
+        assert!(!e[0].was_relative);
+        assert_eq!(e[0].target, PathBuf::from("/abs/util.R"));
+    }
+
+    #[test]
+    fn literal_edge_skips_dynamic_arguments() {
+        assert!(literal_edges("source(paste0(dir, \"x.R\"))\n", None).is_empty());
+        assert!(literal_edges("source(path)\n", None).is_empty());
+    }
+
+    #[test]
+    fn relative_path_same_directory() {
+        let r = relative_path(Path::new("/proj/R"), Path::new("/proj/R/a.R")).unwrap();
+        assert_eq!(r, PathBuf::from("a.R"));
+    }
+
+    #[test]
+    fn relative_path_child_directory() {
+        let r = relative_path(Path::new("/proj/R"), Path::new("/proj/R/sub/a.R")).unwrap();
+        assert_eq!(r, PathBuf::from("sub/a.R"));
+    }
+
+    #[test]
+    fn relative_path_parent_directory() {
+        let r = relative_path(Path::new("/proj/R/sub"), Path::new("/proj/R/a.R")).unwrap();
+        assert_eq!(r, PathBuf::from("../a.R"));
+    }
+
+    #[test]
+    fn relative_path_disjoint_subtree() {
+        let r = relative_path(Path::new("/proj/a/b"), Path::new("/proj/c/d.R")).unwrap();
+        assert_eq!(r, PathBuf::from("../../c/d.R"));
     }
 }
