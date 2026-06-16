@@ -67,9 +67,9 @@ use lsp_types::notification::{
     DidRenameFiles, Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDefinition,
-    HoverRequest, PrepareRenameRequest, RangeFormatting, References, Rename,
-    Request as RequestTrait, WillRenameFiles,
+    CodeActionRequest, DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest,
+    Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest, RangeFormatting, References,
+    Rename, Request as RequestTrait, WillRenameFiles,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -78,14 +78,14 @@ use lsp_types::{
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
     DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
     DocumentRangeFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
-    OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams,
-    RenameFilesParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
-    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
-    WorkspaceServerCapabilities,
+    FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions, FoldingRange,
+    FoldingRangeKind, FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
+    PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams, RenameFilesParams,
+    RenameOptions, RenameParams, ServerCapabilities, ServerInfo, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
+    WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -171,6 +171,7 @@ fn server_capabilities() -> ServerCapabilities {
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -513,6 +514,7 @@ impl GlobalState {
             References::METHOD => self.on_references(req),
             DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
             DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
+            FoldingRangeRequest::METHOD => self.on_folding_range(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
             WillRenameFiles::METHOD => self.on_will_rename_files(req),
@@ -759,6 +761,28 @@ impl GlobalState {
             let symbols = compute_document_symbols(&text);
             let response = DocumentSymbolResponse::Nested(symbols);
             let _ = sender.send(Message::Response(Response::new_ok(id, response)));
+        });
+    }
+
+    /// `textDocument/foldingRange`: foldable regions (brace blocks, multi-line
+    /// argument/parameter lists, parenthesized expressions, and comment runs).
+    /// A pure CST walk with no semantic model, so it runs straight on the read
+    /// pool like `on_document_symbol`.
+    fn on_folding_range(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<FoldingRangeParams>(FoldingRangeRequest::METHOD) else {
+            self.respond_err(id, "invalid foldingRange params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let ranges = compute_folding_ranges(&text);
+            let _ = sender.send(Message::Response(Response::new_ok(id, ranges)));
         });
     }
 
@@ -2615,6 +2639,101 @@ pub fn compute_document_highlights(
     );
     highlights.sort_by_key(|(range, _)| range.start());
     Some(highlights)
+}
+
+/// The foldable regions of `text`: brace blocks (function/`if`/`for`/`while`
+/// bodies and bare `{}`), multi-line argument/parameter and subscript lists,
+/// parenthesized expressions, and runs of standalone comment lines. A pure CST
+/// walk with no semantic model — single-file, never consults the workspace.
+///
+/// Each bracketed construct folds from the line of its opening delimiter to the
+/// line of its matching closing delimiter; only multi-line spans are emitted, so
+/// single-line constructs never fold. Comment runs (two or more standalone
+/// comment lines on consecutive lines) fold under [`FoldingRangeKind::Comment`].
+pub fn compute_folding_ranges(text: &str) -> Vec<FoldingRange> {
+    let root = parse(text).cst;
+    let line_index = LineIndex::new(text);
+    let line_of = |offset: TextSize| line_index.byte_to_position(u32::from(offset) as usize).line;
+    let mut ranges = Vec::new();
+
+    // Bracketed constructs: for each node carrying a delimiter pair, fold from the
+    // opening token to the matching closing token. The pair is unique to the node
+    // (rowan nesting), so this never double-counts.
+    for node in root.descendants() {
+        let Some((open, close)) = delimiter_pair(node.kind()) else {
+            continue;
+        };
+        let tokens = || node.children_with_tokens().filter_map(|el| el.into_token());
+        let Some(open_tok) = tokens().find(|t| t.kind() == open) else {
+            continue;
+        };
+        let Some(close_tok) = tokens().filter(|t| t.kind() == close).last() else {
+            continue;
+        };
+        let start_line = line_of(open_tok.text_range().start());
+        let end_line = line_of(close_tok.text_range().end());
+        if end_line > start_line {
+            ranges.push(FoldingRange {
+                start_line,
+                end_line,
+                ..Default::default()
+            });
+        }
+    }
+
+    // Comment runs: standalone comment lines (a comment that is the only non-trivia
+    // token on its line; trailing comments are excluded) grouped into maximal runs
+    // of consecutive lines. A run of two or more lines folds.
+    let mut standalone: Vec<u32> = Vec::new();
+    let mut code_on_line = false;
+    for token in root
+        .descendants_with_tokens()
+        .filter_map(|el| el.into_token())
+    {
+        match token.kind() {
+            SyntaxKind::NEWLINE => code_on_line = false,
+            SyntaxKind::WHITESPACE => {}
+            SyntaxKind::COMMENT => {
+                if !code_on_line {
+                    standalone.push(line_of(token.text_range().start()));
+                }
+            }
+            _ => code_on_line = true,
+        }
+    }
+    let mut i = 0;
+    while i < standalone.len() {
+        let mut j = i + 1;
+        while j < standalone.len() && standalone[j] == standalone[j - 1] + 1 {
+            j += 1;
+        }
+        if j - i >= 2 {
+            ranges.push(FoldingRange {
+                start_line: standalone[i],
+                end_line: standalone[j - 1],
+                kind: Some(FoldingRangeKind::Comment),
+                ..Default::default()
+            });
+        }
+        i = j;
+    }
+
+    ranges
+}
+
+/// The opening/closing delimiter token kinds for a foldable bracketed node, or
+/// `None` if the node is not delimiter-bounded. `FUNCTION_EXPR` folds on its
+/// parameter list `()`; the body block folds separately via its `BLOCK_EXPR`.
+fn delimiter_pair(kind: SyntaxKind) -> Option<(SyntaxKind, SyntaxKind)> {
+    Some(match kind {
+        SyntaxKind::BLOCK_EXPR => (SyntaxKind::LBRACE, SyntaxKind::RBRACE),
+        SyntaxKind::PAREN_EXPR | SyntaxKind::FUNCTION_EXPR | SyntaxKind::CALL_EXPR => {
+            (SyntaxKind::LPAREN, SyntaxKind::RPAREN)
+        }
+        SyntaxKind::SUBSET_EXPR => (SyntaxKind::LBRACK, SyntaxKind::RBRACK),
+        SyntaxKind::SUBSET2_EXPR => (SyntaxKind::LBRACK2, SyntaxKind::RBRACK2),
+        _ => return None,
+    })
 }
 
 /// The document-symbol outline for `text`: every function and variable binding,

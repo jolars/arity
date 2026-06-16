@@ -334,10 +334,11 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   arguments) from the same `SemanticModel`; degrades gracefully if omitted.
   Maybe omit and rely on native editor syntax highlighting.
 
-- [ ] **Folding ranges** (`textDocument/foldingRange`) and **selection ranges**
-  (`textDocument/selectionRange`). Pure CST walks --- brace blocks, function
-  bodies, call argument lists, comment runs. Cheap, no semantic model
-  needed.
+- [x] **Folding ranges** (`textDocument/foldingRange`). Pure CST walk ---
+  brace blocks, function/parameter and argument lists, parenthesized and
+  subscript expressions, comment runs. No semantic model needed.
+- [ ] **Selection ranges** (`textDocument/selectionRange`). Pure CST walk:
+  incremental scope expansion from the cursor outward through enclosing nodes.
 
 - [ ] **Call hierarchy** (`textDocument/prepareCallHierarchy` + incoming/
   outgoing). Caller/callee graph; rides the same cross-file reference index

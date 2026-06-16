@@ -1,10 +1,13 @@
 use arity::formatter::{FormatStyle, format_with_style};
 use arity::lsp::{
     compute_definition, compute_document_highlights, compute_document_symbols,
-    compute_format_edits, compute_format_range_edits, compute_prepare_rename, compute_references,
-    compute_rename, compute_rename_with_anchor,
+    compute_folding_ranges, compute_format_edits, compute_format_range_edits,
+    compute_prepare_rename, compute_references, compute_rename, compute_rename_with_anchor,
 };
-use lsp_types::{DocumentHighlightKind, DocumentSymbol, Position, Range, SymbolKind, TextEdit};
+use lsp_types::{
+    DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Position, Range,
+    SymbolKind, TextEdit,
+};
 
 #[test]
 fn reformats_unformatted_input_with_full_document_edit() {
@@ -418,4 +421,54 @@ fn document_symbol_ranges_target_the_name_and_enclose_the_statement() {
     // The full range encloses the whole `value <- 1` statement.
     assert_eq!(sym.range.start, Position::new(0, 0));
     assert_eq!(sym.range.end, Position::new(0, 10));
+}
+
+#[track_caller]
+fn fold_lines(ranges: &[FoldingRange]) -> Vec<(u32, u32)> {
+    ranges.iter().map(|r| (r.start_line, r.end_line)).collect()
+}
+
+#[test]
+fn folding_ranges_fold_a_multiline_function_body() {
+    let text = "f <- function() {\n  x + 1\n}\n";
+    let ranges = compute_folding_ranges(text);
+    // The `{` is on line 0, the `}` on line 2: a single block fold. The
+    // single-line parameter list `()` does not fold.
+    assert_eq!(fold_lines(&ranges), vec![(0, 2)]);
+    assert!(ranges[0].kind.is_none());
+}
+
+#[test]
+fn folding_ranges_skip_single_line_constructs() {
+    assert!(compute_folding_ranges("f <- function() 1\n").is_empty());
+    assert!(compute_folding_ranges("g(1, 2, 3)\n").is_empty());
+}
+
+#[test]
+fn folding_ranges_fold_a_multiline_call_argument_list() {
+    let text = "g(\n  1,\n  2\n)\n";
+    let ranges = compute_folding_ranges(text);
+    assert_eq!(fold_lines(&ranges), vec![(0, 3)]);
+}
+
+#[test]
+fn folding_ranges_fold_nested_blocks_independently() {
+    let text = "f <- function() {\n  if (a) {\n    b\n  }\n}\n";
+    let ranges = compute_folding_ranges(text);
+    let mut lines = fold_lines(&ranges);
+    lines.sort_unstable();
+    assert_eq!(lines, vec![(0, 4), (1, 3)]);
+}
+
+#[test]
+fn folding_ranges_fold_a_run_of_comments() {
+    let text = "# one\n# two\n# three\nx <- 1\n";
+    let ranges = compute_folding_ranges(text);
+    assert_eq!(fold_lines(&ranges), vec![(0, 2)]);
+    assert_eq!(ranges[0].kind, Some(FoldingRangeKind::Comment));
+}
+
+#[test]
+fn folding_ranges_ignore_a_lone_comment() {
+    assert!(compute_folding_ranges("# solo\nx <- 1\n").is_empty());
 }
