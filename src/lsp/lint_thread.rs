@@ -1,0 +1,574 @@
+use super::*;
+
+/// A lint request handed to the dedicated lint thread.
+pub(crate) struct LintRequest {
+    pub(crate) uri: Uri,
+    pub(crate) path: PathBuf,
+    pub(crate) text: String,
+    pub(crate) version: i32,
+    pub(crate) lint_config: LintConfig,
+    pub(crate) index_config: IndexConfig,
+}
+
+pub(crate) enum LintMsg {
+    // Boxed: `LintRequest` is much larger than the other variant, so boxing keeps
+    // the enum (and every channel slot) small.
+    Request(Box<LintRequest>),
+    /// Seed the explicit workspace file-set from the discovered roots (sent once
+    /// at startup). Handled on the lint thread, the sole db writer.
+    SeedWorkspace {
+        roots: Vec<PathBuf>,
+    },
+    /// Files were renamed on disk (`workspace/didRenameFiles`). Refresh the db's
+    /// membership so cross-file analysis tracks the new paths. Handled on the lint
+    /// thread, the sole db writer.
+    RenameFiles {
+        renames: Vec<(PathBuf, PathBuf)>,
+    },
+}
+
+/// Spawn the dedicated lint thread that owns the persistent salsa database.
+pub(crate) fn spawn_lint_thread(
+    lint_rx: Receiver<LintMsg>,
+    read_rx: Receiver<ReadJob>,
+    out_tx: Sender<Outbound>,
+    read_spawner: Spawner,
+) -> JoinHandle<()> {
+    let (build_tx, build_rx) = crossbeam_channel::unbounded::<IndexedProvider>();
+    let (done_tx, done_rx) = crossbeam_channel::unbounded::<AnalyzeDone>();
+    std::thread::Builder::new()
+        .name("arity-lint".to_string())
+        .spawn(move || {
+            // The single-thread index pool isolates the one unbounded-duration
+            // job (background package harvesting) from the read pool, so a long
+            // build can never starve a latency-sensitive read. Owned by the
+            // worker, so its thread lives exactly as long as the lint thread.
+            let mut worker = LintWorker {
+                db: IncrementalDatabase::default(),
+                index_loaded: HashSet::new(),
+                index_attempts: HashSet::new(),
+                out_tx,
+                build_tx,
+                done_tx,
+                inflight: None,
+                pending: HashMap::new(),
+                read_spawner,
+                index_pool: TaskPool::new("arity-index", 1),
+            };
+            worker.run(&lint_rx, &read_rx, &build_rx, &done_rx);
+        })
+        .expect("spawn lint thread")
+}
+
+/// Signal from a finished read-phase ([`LintWorker::start`]) back to the lint
+/// thread: the analyze for `uri`@`version` has completed (or unwound on
+/// cancellation) and dropped its db clone, so the in-flight slot is free.
+pub(crate) struct AnalyzeDone {
+    uri: Uri,
+    version: i32,
+}
+
+/// The single in-flight read-phase analyze, if any.
+pub(crate) struct InflightAnalyze {
+    uri: Uri,
+    version: i32,
+}
+
+/// What [`LintWorker::try_dispatch`] should do given the in-flight analyze and
+/// the pending queue. Pure decision (see [`decide`]) so it can be unit-tested.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DispatchAction {
+    /// Idle with nothing queued, or busy with no newer edit for the in-flight
+    /// URI: leave the in-flight analyze running and wait for its `done`.
+    Wait,
+    /// The slot is free; start a fresh analyze for this URI.
+    Start(Uri),
+    /// A strictly-newer edit for the *in-flight* URI arrived; cancel the running
+    /// analyze and start this URI. Only ever the in-flight URI — a different
+    /// pending URI must never cancel the in-flight one (it would drop that
+    /// file's diagnostics under `RelintAll`).
+    SupersedeAndStart(Uri),
+}
+
+/// Decide the next dispatch action. `inflight` is the running analyze's
+/// `(uri, version)`, if any; `pending` maps each queued URI to its latest
+/// version. Cancel only on a strictly-newer edit of the *same* URI.
+pub(crate) fn decide(inflight: Option<(&Uri, i32)>, pending: &HashMap<Uri, i32>) -> DispatchAction {
+    match inflight {
+        None => match pending.keys().next() {
+            Some(uri) => DispatchAction::Start(uri.clone()),
+            None => DispatchAction::Wait,
+        },
+        Some((uri, version)) => {
+            if pending.get(uri).is_some_and(|&v| v > version) {
+                DispatchAction::SupersedeAndStart(uri.clone())
+            } else {
+                DispatchAction::Wait
+            }
+        }
+    }
+}
+
+pub(crate) struct LintWorker {
+    db: IncrementalDatabase,
+    /// Workspace anchors whose index cache has already been loaded into the salsa
+    /// [`LibraryIndex`] singleton.
+    index_loaded: HashSet<PathBuf>,
+    /// Packages a background harvest has already been scheduled for this session
+    /// — never retried, so a not-installed package doesn't loop.
+    index_attempts: HashSet<SmolStr>,
+    out_tx: Sender<Outbound>,
+    /// A finished background harvest sends its freshly-loaded index here; the
+    /// lint thread (sole writer) installs it into salsa at HIGH durability.
+    build_tx: Sender<IndexedProvider>,
+    /// Read-phase workers signal completion here so the lint thread can free the
+    /// in-flight slot and dispatch the next pending lint.
+    done_tx: Sender<AnalyzeDone>,
+    /// The single in-flight read-phase analyze, if any. At most one runs at a
+    /// time: the write-phase needs exclusive `&mut db`, and salsa cancellation is
+    /// global, so a second concurrent analyze couldn't be cancelled selectively.
+    inflight: Option<InflightAnalyze>,
+    /// Coalesced lint queue: the latest pending request per URI. Persists across
+    /// `select!` iterations (it used to be a per-iteration local).
+    pending: HashMap<Uri, LintRequest>,
+    /// Submit-side handle onto the read pool, shared with the main loop. Used for
+    /// read jobs (formatting, hover) and the analyze read-phase.
+    read_spawner: Spawner,
+    /// Single-thread pool that isolates background package indexing — the one
+    /// unbounded-duration job — from the read pool.
+    index_pool: TaskPool,
+}
+
+impl LintWorker {
+    fn run(
+        &mut self,
+        lint_rx: &Receiver<LintMsg>,
+        read_rx: &Receiver<ReadJob>,
+        build_rx: &Receiver<IndexedProvider>,
+        done_rx: &Receiver<AnalyzeDone>,
+    ) {
+        loop {
+            select! {
+                recv(lint_rx) -> msg => {
+                    let Ok(msg) = msg else { break };
+                    // Coalesce: keep only the latest version per URI, so a fast
+                    // typist's stale edits are dropped before they're ever linted.
+                    // A `SeedWorkspace` is applied inline (it's the db writer).
+                    self.handle_lint_msg(msg);
+                    while let Ok(m) = lint_rx.try_recv() {
+                        self.handle_lint_msg(m);
+                    }
+                    self.try_dispatch();
+                }
+                recv(done_rx) -> done => {
+                    let Ok(done) = done else { continue };
+                    // Free the slot only if this `done` is for the *current*
+                    // in-flight analyze — a late `done` from a superseded one
+                    // (different version) must not clear the new analyze.
+                    if matches!(&self.inflight, Some(f) if f.uri == done.uri && f.version == done.version) {
+                        self.inflight = None;
+                    }
+                    self.try_dispatch();
+                }
+                recv(read_rx) -> job => {
+                    let Ok(job) = job else { continue };
+                    // Mint a short-lived read-only snapshot and run the job off the
+                    // lint thread. The clone is dropped inside `run_read`, so the
+                    // next write isn't blocked once the read finishes (or a racing
+                    // write trips `salsa::Cancelled`, handled by the fallback).
+                    let snapshot = self.db.snapshot();
+                    self.read_spawner.spawn(move || run_read(snapshot, job));
+                }
+                recv(build_rx) -> built => {
+                    let Ok(indexed) = built else { continue };
+                    // Sole writer installs the freshly-harvested index at HIGH
+                    // durability, then re-lints every open document against it.
+                    self.db.set_library_index(indexed);
+                    let _ = self.out_tx.send(Outbound::RelintAll);
+                }
+            }
+        }
+    }
+
+    /// Dispatch a lint-channel message: queue a request, or apply a workspace
+    /// seed inline (the lint thread is the sole db writer).
+    fn handle_lint_msg(&mut self, msg: LintMsg) {
+        match msg {
+            LintMsg::Request(req) => self.enqueue(*req),
+            LintMsg::SeedWorkspace { roots } => self.seed_workspace(roots),
+            LintMsg::RenameFiles { renames } => self.rename_files(renames),
+        }
+    }
+
+    /// Walk the workspace roots once and install the discovered `.R` files as the
+    /// explicit [`Workspace`](crate::incremental::Workspace) file-set, unioned with
+    /// anything already tracked. Pre-warms cross-file membership so later edits
+    /// don't re-walk (see [`seed_workspace_for`](crate::linter::check::seed_workspace_for)).
+    fn seed_workspace(&mut self, roots: Vec<PathBuf>) {
+        let discovered = collect_r_files(&roots).unwrap_or_default();
+        let mut files: Vec<SourceFile> = self
+            .db
+            .workspace()
+            .map(|ws| ws.members(&self.db).to_vec())
+            .unwrap_or_default();
+        for path in discovered {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                files.push(self.db.upsert_file(&path, text));
+            }
+        }
+        self.db.set_workspace_members(files, roots);
+    }
+
+    /// Refresh db membership after a `workspace/didRenameFiles`, then re-lint
+    /// every open document so `source()` edges re-resolve against the new graph.
+    /// The db mutation is [`apply_file_renames`].
+    fn rename_files(&mut self, renames: Vec<(PathBuf, PathBuf)>) {
+        if apply_file_renames(&mut self.db, &renames) {
+            let _ = self.out_tx.send(Outbound::RelintAll);
+        }
+    }
+
+    /// Add `req` to the pending queue, keeping the highest version per URI (guards
+    /// against an out-of-order lower version clobbering a newer one).
+    fn enqueue(&mut self, req: LintRequest) {
+        match self.pending.get(&req.uri) {
+            Some(existing) if existing.version >= req.version => {}
+            _ => {
+                self.pending.insert(req.uri.clone(), req);
+            }
+        }
+    }
+
+    /// Start lints until the slot is occupied or the queue is exhausted (see
+    /// [`decide`]). Cancels the in-flight analyze only when superseded by a newer
+    /// edit of the *same* URI. Loops because a [`start`](Self::start) that hits a
+    /// parse error spawns no worker (and thus no `done`), so the next pending URI
+    /// must be picked up here rather than stalling until the next event — this is
+    /// what keeps a multi-URI `RelintAll` draining.
+    fn try_dispatch(&mut self) {
+        loop {
+            let versions: HashMap<Uri, i32> = self
+                .pending
+                .iter()
+                .map(|(uri, req)| (uri.clone(), req.version))
+                .collect();
+            let inflight = self.inflight.as_ref().map(|f| (&f.uri, f.version));
+            let uri = match decide(inflight, &versions) {
+                DispatchAction::Wait => return,
+                DispatchAction::Start(uri) => uri,
+                DispatchAction::SupersedeAndStart(uri) => {
+                    // Explicit cancellation: the write-phase may be a no-op (an
+                    // unchanged `upsert_file` doesn't bump the revision), so we
+                    // can't rely on it to unwind the running analyze. Blocks until
+                    // the old clone drops; safe — this thread holds no clone.
+                    self.db.trigger_cancellation();
+                    self.inflight = None;
+                    uri
+                }
+            };
+            let Some(req) = self.pending.remove(&uri) else {
+                return;
+            };
+            // A spawned worker occupies the slot; stop. Otherwise (parse error /
+            // bad config) the slot is still free, so loop to the next pending URI.
+            if self.start(req) {
+                return;
+            }
+        }
+    }
+
+    /// Run one lint: the write-phase (`&mut db`, on this thread) then the
+    /// read-phase analyze on the read pool holding a db clone. Returning to
+    /// `select!` right after spawning keeps reads responsive (problem 2) and lets
+    /// a fresher edit cancel the analyze (problem 1).
+    ///
+    /// Returns `true` if a worker was spawned (the in-flight slot is now busy),
+    /// `false` if the buffer couldn't be linted (no worker, slot still free).
+    fn start(&mut self, req: LintRequest) -> bool {
+        let anchor = req
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        self.ensure_index(&anchor, &req.index_config);
+
+        // Write-phase: push the live buffer + sibling files into the persistent
+        // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
+        let active = self.db.upsert_file(&req.path, req.text.clone());
+        // Ensure the active file's project is in the workspace file-set. Lazy:
+        // only walks disk when the file isn't already a member (the initialize
+        // seed covers the common case), so discovery leaves the keystroke path.
+        let already_member = self
+            .db
+            .workspace()
+            .is_some_and(|ws| ws.members(&self.db).contains(&active));
+        if !already_member {
+            crate::linter::check::seed_workspace_for(&mut self.db, &req.path, active);
+        }
+        let prepared = match crate::linter::check::prepare_document_in_project(
+            &mut self.db,
+            &req.path,
+            active,
+            &req.lint_config,
+        ) {
+            Ok(Some(prepared)) => prepared,
+            // Parse errors (Ok(None)) or an unknown-rule config error (Err): clear
+            // any stale diagnostics and run no worker. Leaves the slot free.
+            Ok(None) | Err(_) => {
+                self.publish_empty(&req);
+                return false;
+            }
+        };
+
+        // `auto_build` reads the buffer + the current salsa index and mutates
+        // `index_attempts`, so it stays on the lint thread; it spawns its own
+        // background build, whose result is installed back here on `build_rx`.
+        if req.index_config.auto_build {
+            self.maybe_build(&anchor, &req.index_config, &req.text);
+        }
+
+        // Read-phase on the read pool, holding a db clone. A superseding edit (or any
+        // write) trips `salsa::Cancelled`, caught here so a cancelled analyze
+        // publishes nothing; the main loop's version gate is the backstop.
+        let snapshot = self.db.snapshot();
+        let out_tx = self.out_tx.clone();
+        let done_tx = self.done_tx.clone();
+        let uri = req.uri.clone();
+        let version = req.version;
+        let text = req.text;
+        self.inflight = Some(InflightAnalyze {
+            uri: uri.clone(),
+            version,
+        });
+
+        // The snapshot carries the salsa library index, so `analyze_prepared`
+        // resolves undefined symbols through it; this provider is only the
+        // fallback for rules that read static base-R facts (`is_base`).
+        let fallback = CompositeProvider::base_only();
+        self.read_spawner.spawn(move || {
+            let result = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+                crate::linter::check::analyze_prepared(&snapshot, &prepared, &fallback)
+            }));
+            if let Ok(diagnostics) = result {
+                let line_index = LineIndex::new(&text);
+                let diags: Vec<LspDiagnostic> = diagnostics
+                    .iter()
+                    .map(|d| to_lsp_diagnostic(d, &line_index))
+                    .collect();
+                let _ = out_tx.send(Outbound::Diagnostics {
+                    uri: uri.clone(),
+                    version,
+                    diags,
+                    findings: Arc::new(diagnostics),
+                });
+            }
+            // The clone MUST drop before we signal `done`: `trigger_cancellation`
+            // / the next write-phase blocks until it's gone, so a premature `done`
+            // could let the lint thread start a write that deadlocks on this clone.
+            drop(snapshot);
+            let _ = done_tx.send(AnalyzeDone { uri, version });
+        });
+        true
+    }
+
+    /// Publish empty diagnostics for `req` (clears any stale findings) without
+    /// running a worker. Used when the buffer can't be linted (parse error / bad
+    /// config), mirroring the old early-return that always sent diagnostics.
+    fn publish_empty(&self, req: &LintRequest) {
+        let _ = self.out_tx.send(Outbound::Diagnostics {
+            uri: req.uri.clone(),
+            version: req.version,
+            diags: Vec::new(),
+            findings: Arc::new(Vec::new()),
+        });
+    }
+
+    /// Load the index cache for `anchor` into the salsa [`LibraryIndex`] the
+    /// first time we see that workspace. Idempotent per anchor. Runs on the lint
+    /// thread (sole writer); the HIGH-durability set means subsequent keystrokes
+    /// don't revalidate the library subgraph.
+    fn ensure_index(&mut self, anchor: &Path, cfg: &IndexConfig) {
+        if self.index_loaded.contains(anchor) {
+            return;
+        }
+        let indexed = match resolve_cache_root(None, cfg.cache_dir.as_deref()) {
+            Ok(root) => IndexedProvider::from_cache(&Cache::new(root)),
+            Err(_) => IndexedProvider::empty(),
+        };
+        self.db.set_library_index(indexed);
+        self.index_loaded.insert(anchor.to_path_buf());
+    }
+
+    /// Spawn a background harvest for the document's unknown packages. On success
+    /// the freshly-loaded index is sent back on `build_tx` for the lint thread to
+    /// install. The "already indexed?" check reads the current salsa index.
+    fn maybe_build(&mut self, anchor: &Path, cfg: &IndexConfig, source: &str) {
+        let current = self.db.library_data();
+        let empty = IndexedProvider::empty();
+        let indexed = current.as_deref().unwrap_or(&empty);
+        let to_build = packages_to_build(&mut self.index_attempts, indexed, source);
+        if to_build.is_empty() {
+            return;
+        }
+        let Ok(cache_root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
+            return;
+        };
+        let cfg = cfg.clone();
+        let anchor = anchor.to_path_buf();
+        let build_tx = self.build_tx.clone();
+        self.index_pool.spawn(move || {
+            let now = now_unix_secs();
+            let cache = Cache::new(cache_root);
+            let search = LibrarySearch::discover(Some(&anchor), &cfg.library_paths);
+            let report = build_index(
+                &to_build,
+                &cache,
+                &search,
+                BuildOptions {
+                    help: cfg.help,
+                    force: false,
+                },
+                now,
+            );
+            if report.newly_indexed().next().is_some() {
+                let _ = build_tx.send(IndexedProvider::from_cache(&cache));
+            }
+        });
+    }
+}
+
+/// Packages to harvest for `source`: the always-attached default packages plus
+/// everything `source` references, minus what we already hold a *harvested*
+/// index for and minus what we've already attempted this session. Marks the
+/// returned packages as attempted so they aren't built twice.
+///
+/// The skip test is [`IndexedProvider::has_package`] (do we have the rich,
+/// harvested data?), not mere name-resolvability: the default packages and the
+/// bundled-CRAN packages resolve by name from static lists, but those carry no
+/// help or formals, so they still need a real harvest for hover and signatures.
+pub(crate) fn packages_to_build(
+    attempts: &mut HashSet<SmolStr>,
+    indexed: &IndexedProvider,
+    source: &str,
+) -> Vec<SmolStr> {
+    with_default_packages(referenced_in_source(source))
+        .into_iter()
+        .filter(|pkg| !indexed.has_package(pkg) && attempts.insert(pkg.clone()))
+        .collect()
+}
+
+pub(crate) fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decide_idle_starts_a_pending_uri() {
+        let a = uri_named("a.R");
+        let pending = HashMap::from([(a.clone(), 1)]);
+        assert_eq!(decide(None, &pending), DispatchAction::Start(a));
+    }
+
+    #[test]
+    fn decide_idle_empty_queue_waits() {
+        let pending: HashMap<Uri, i32> = HashMap::new();
+        assert_eq!(decide(None, &pending), DispatchAction::Wait);
+    }
+
+    #[test]
+    fn decide_supersedes_same_uri_newer_version() {
+        let a = uri_named("a.R");
+        let pending = HashMap::from([(a.clone(), 2)]);
+        assert_eq!(
+            decide(Some((&a, 1)), &pending),
+            DispatchAction::SupersedeAndStart(a)
+        );
+    }
+
+    #[test]
+    fn decide_waits_when_pending_same_uri_not_newer() {
+        // A duplicate / same-version request for the in-flight URI must not
+        // restart it.
+        let a = uri_named("a.R");
+        let pending = HashMap::from([(a.clone(), 1)]);
+        assert_eq!(decide(Some((&a, 1)), &pending), DispatchAction::Wait);
+    }
+
+    #[test]
+    fn decide_never_cancels_a_different_uri() {
+        // The core RelintAll guard: with A in flight and only *other* URIs
+        // queued, we wait for A's `done` — we never cancel A to start B/C, which
+        // would silently drop A's diagnostics.
+        let a = uri_named("a.R");
+        let pending = HashMap::from([(uri_named("b.R"), 5), (uri_named("c.R"), 9)]);
+        assert_eq!(decide(Some((&a, 1)), &pending), DispatchAction::Wait);
+    }
+
+    #[test]
+    fn decide_relint_all_drains_one_uri_at_a_time() {
+        // Simulate a multi-URI RelintAll: each file is dispatched only once the
+        // slot is free, and `decide` never returns SupersedeAndStart for a URI
+        // other than the in-flight one.
+        let (a, b, c) = (uri_named("a.R"), uri_named("b.R"), uri_named("c.R"));
+        let mut pending = HashMap::from([(a.clone(), 1), (b.clone(), 1), (c.clone(), 1)]);
+
+        // Idle: start some URI.
+        let DispatchAction::Start(first) = decide(None, &pending) else {
+            panic!("expected Start");
+        };
+        assert!(pending.contains_key(&first));
+        pending.remove(&first);
+
+        // Busy with `first`, two others still queued → wait, never supersede.
+        let action = decide(Some((&first, 1)), &pending);
+        assert_eq!(action, DispatchAction::Wait);
+
+        // first's `done` frees the slot; the next URI starts. Repeat to drain.
+        let mut started = vec![first];
+        while !pending.is_empty() {
+            let DispatchAction::Start(next) = decide(None, &pending) else {
+                panic!("expected Start");
+            };
+            pending.remove(&next);
+            started.push(next);
+        }
+        started.sort_by_key(|u| u.as_str().to_string());
+        assert_eq!(started, {
+            let mut all = vec![a, b, c];
+            all.sort_by_key(|u| u.as_str().to_string());
+            all
+        });
+    }
+
+    #[test]
+    fn packages_to_build_covers_defaults_and_unharvested_deps() {
+        let mut attempts = HashSet::new();
+        let indexed = indexed_dplyr();
+        // dplyr is already harvested (skipped). The default packages and any
+        // referenced-but-unharvested package (stats is a default; notarealpkg
+        // is neither default nor harvested) still need a build for rich data.
+        let src = "library(dplyr)\nlibrary(stats)\nlibrary(notarealpkg)\n";
+        let first = packages_to_build(&mut attempts, &indexed, src);
+        assert!(
+            !first.contains(&SmolStr::new("dplyr")),
+            "harvested dep skipped"
+        );
+        for default in crate::semantic::symbols::default_packages() {
+            assert!(
+                first.contains(&SmolStr::new(*default)),
+                "default package {default} should be built, got {first:?}"
+            );
+        }
+        assert!(first.contains(&SmolStr::new("notarealpkg")));
+        // A second pass returns nothing — every package was already attempted.
+        let second = packages_to_build(&mut attempts, &indexed, src);
+        assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
+    }
+}
