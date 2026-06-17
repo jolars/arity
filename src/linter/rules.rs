@@ -12,9 +12,9 @@
 //! 1. Create a module under `src/linter/rules/<category>/<id>.rs`.
 //! 2. Define a unit `pub struct` that implements [`Rule`] — subscribe to node
 //!    kinds via `interests` + `check`, or do a whole-file pass via `check_file`.
-//! 3. Add it to [`all_rules`] below.
-//! 4. Add the rule ID to [`ALL_RULE_IDS`] so `LintConfig::select` / `ignore`
-//!    can validate it.
+//! 3. Add it to [`all_rules`] below — the single source of truth. The set of
+//!    valid rule IDs ([`all_rule_ids`]) is derived from it, so there is no
+//!    second list to keep in sync.
 
 use std::path::Path;
 
@@ -26,6 +26,7 @@ use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use super::diagnostic::{Diagnostic, Severity};
 
 pub mod correctness;
+pub mod matchers;
 pub mod suspicious;
 
 /// All rules currently shipped.
@@ -34,19 +35,20 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::UndefinedSymbol),
         Box::new(correctness::UnusedBinding),
         Box::new(correctness::DuplicateFormal),
+        Box::new(correctness::DuplicatedArguments),
+        Box::new(correctness::EqualsNa),
         Box::new(suspicious::AssignmentInCondition),
         Box::new(suspicious::ShadowedBuiltin),
+        Box::new(suspicious::RedundantEquals),
+        Box::new(suspicious::RedundantIfelse),
     ]
 }
 
-/// All rule IDs, kept as a constant for `LintConfig` validation.
-pub const ALL_RULE_IDS: &[&str] = &[
-    "undefined-symbol",
-    "unused-binding",
-    "duplicate-formal",
-    "assignment-in-condition",
-    "shadowed-builtin",
-];
+/// Every shipped rule's ID, derived from [`all_rules`] so the two never drift.
+/// Used to validate `LintConfig::select` / `ignore`.
+pub fn all_rule_ids() -> Vec<&'static str> {
+    all_rules().iter().map(|r| r.id()).collect()
+}
 
 pub trait Rule: Send + Sync {
     fn id(&self) -> &'static str;
@@ -112,9 +114,10 @@ impl ResolvedRules {
     /// 3. Unknown rule IDs in `select` or `ignore` are returned via the second
     ///    element of the tuple so the caller can surface them.
     pub fn resolve(select: Option<&[String]>, ignore: &[String]) -> (Self, Vec<String>) {
+        let known = all_rule_ids();
         let mut unknown = Vec::new();
         for id in select.iter().flat_map(|v| v.iter()).chain(ignore.iter()) {
-            if !ALL_RULE_IDS.contains(&id.as_str()) {
+            if !known.contains(&id.as_str()) {
                 unknown.push(id.clone());
             }
         }

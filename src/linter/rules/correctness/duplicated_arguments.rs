@@ -1,0 +1,52 @@
+//! `duplicated-arguments`: a call supplying the same argument name twice
+//! (`f(a = 1, a = 2)`). The sibling of `duplicate-formal` on the call side.
+//! Not always a runtime error (`c(a = 1, a = 2)` is fine — `c` takes `...`), so
+//! it is a warning, not an error, and carries no autofix.
+
+use std::collections::HashSet;
+
+use rowan::ast::AstNode as _;
+
+use crate::ast::CallExpr;
+use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::rules::matchers;
+use crate::linter::rules::{Rule, RuleContext};
+use crate::syntax::{SyntaxElement, SyntaxKind};
+
+pub struct DuplicatedArguments;
+
+impl Rule for DuplicatedArguments {
+    fn id(&self) -> &'static str {
+        "duplicated-arguments"
+    }
+
+    fn interests(&self) -> &'static [SyntaxKind] {
+        &[SyntaxKind::CALL_EXPR]
+    }
+
+    fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+        let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
+            return;
+        };
+        let mut seen: HashSet<String> = HashSet::new();
+        for arg in matchers::args(&call) {
+            let (Some(name), Some(token)) = (arg.name, arg.name_token) else {
+                continue;
+            };
+            if !seen.insert(name.to_string()) {
+                sink.push(Diagnostic {
+                    rule: "duplicated-arguments",
+                    severity: Severity::Warning,
+                    path: Default::default(),
+                    range: token.text_range(),
+                    message: ViolationData::new(
+                        "duplicated-arguments",
+                        format!("argument `{name}` is supplied more than once in this call"),
+                    )
+                    .with_suggestion("Remove or rename the duplicate argument."),
+                    fix: None,
+                });
+            }
+        }
+    }
+}

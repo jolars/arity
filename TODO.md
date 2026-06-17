@@ -48,8 +48,9 @@ in-tree parser, not a drop-in jarl replacement.
 Adapt jarl's catalog (https://jarl.etiennebacher.com/rules) to arity's
 architecture, phased so high-value, low-effort rules land first and anything
 blocked on missing infrastructure is sequenced right after that infra. Five
-rules ship today: `undefined-symbol`, `unused-binding`, `duplicate-formal`
-(`correctness/`), `assignment-in-condition`, `shadowed-builtin` (`suspicious/`).
+rules ship today: `undefined-symbol`, `unused-binding`, `duplicate-formal`,
+`duplicated-arguments`, `equals-na` (`correctness/`), `assignment-in-condition`,
+`shadowed-builtin`, `redundant-equals`, `redundant-ifelse` (`suspicious/`).
 
 Cost model driving the order: a rule is **cheap** (`syn`) when it only needs the
 CST + AST + literal inspection; **medium** (`ns`) when it must confirm a callee
@@ -63,7 +64,7 @@ the linter's.
 `readability/`, `performance/`, `meta/` (suppression-directive rules), and
 `pkg/dplyr/` + `pkg/testthat/`. No `style/` dir --- pure layout is the
 formatter's. Public rule IDs stay flat kebab-case (category is a directory
-concern, as `ALL_RULE_IDS` already is).
+concern, as `all_rule_ids()` already is).
 
 #### Phase 0 --- Infrastructure (unblocks everything)
 
@@ -76,10 +77,12 @@ concern, as `ALL_RULE_IDS` already is).
       `Rule::check_file(ctx, sink)`, a once-per-file pass. New node-shape rules
       must subscribe via `interests`/`check` rather than walking the CST
       themselves.
-- [ ] **§I1 Matchers** (`src/linter/rules/matchers.rs`): `call_named`,
-      `callee_name`, `nth_arg`/`named_arg`, and literal classifiers
+- [x] **§I1 Matchers** (`src/linter/rules/matchers.rs`, landed): `call_named`,
+      `callee_name`, `is_callee` (moved out of `shadowed_builtin`), `args`/
+      `nth_arg`/`named_arg`, `binary_parts`, literal classifiers
       (`is_true`/`is_false`, `is_na`, `is_null`, `is_nan`, `is_bool_symbol` for
-      T/F). Reduces each syntactic rule to ~30 lines. **Blocks Phase 1.**
+      T/F), plus `element_text` and an `is_atom` precedence guard for negating
+      rewrites. Reduced each syntactic rule to ~30 lines.
 - [ ] **§I3 Namespace-confirmation helper**: a `RuleContext` method
       `resolves_to_base(call)` --- callee not shadowed locally
       (`model.resolve_local`) *and* `symbols.is_base`/`origin(...)`. Reuse
@@ -87,10 +90,9 @@ concern, as `ALL_RULE_IDS` already is).
 - [ ] **§I7 CLI `--select`/`--ignore`**: `LintConfig` already has the fields and
       `ResolvedRules::resolve` honors them --- verify/wire the flags in
       `src/cli.rs`. Lets users opt into noisier new rules early.
-- [ ] **Registration single source of truth**: replace the hand-synced
-      `all_rules()` + `ALL_RULE_IDS` pair with one table (macro or
-      `&[(&str, fn) -> Box<dyn Rule>]`) so IDs are derived. Do before Phase 2 to
-      avoid ~40 drift-prone entries.
+- [x] **Registration single source of truth** (landed). `all_rules()` is now
+      the sole list; `ALL_RULE_IDS` is replaced by `all_rule_ids()`, which
+      derives the valid-ID set from `all_rules()` so the two can't drift.
 
 #### Phase 1 --- High-signal, purely syntactic, safe fixes (`syn`)
 
@@ -98,15 +100,16 @@ Match a call/operator shape with deterministic fixes. Match bare names for now;
 harden against shadowing in Phase 4.
 
 - [ ] `browser` (suspicious, safe-delete) --- leftover debug call.
-- [ ] `equals-na` `x == NA` -> `is.na(x)` (correctness, safe); `equals-nan` ->
-      `is.nan` (safe); `equals-null` (correctness, none/unsafe --- `== NULL`
-      rewrite is less mechanical).
+- [x] `equals-na` `x == NA` -> `is.na(x)` (correctness, safe; landed --- `==`
+      form only). Still open: `equals-nan` -> `is.nan` (safe); `equals-null`
+      (correctness, none/unsafe --- `== NULL` rewrite is less mechanical).
 - [ ] `empty-assignment` (correctness, none).
-- [ ] `duplicated-arguments` `f(a = 1, a = 2)` (correctness, none) --- mirrors
-      `duplicate-formal`.
-- [ ] `redundant-equals` `x == TRUE` -> `x`, `x == FALSE` -> `!x` (suspicious,
-      safe).
-- [ ] `redundant-ifelse` `ifelse(c, TRUE, FALSE)` -> `c` (suspicious, safe).
+- [x] `duplicated-arguments` `f(a = 1, a = 2)` (correctness, none; landed) ---
+      mirrors `duplicate-formal`. Warning (not error): `c(a = 1, a = 2)` is legal.
+- [x] `redundant-equals` `x == TRUE` -> `x`, `x == FALSE` -> `!x` (suspicious,
+      safe; landed --- `!`-rewrite withheld for non-atom operands via `is_atom`).
+- [x] `redundant-ifelse` `ifelse(c, TRUE, FALSE)` -> `c`,
+      `ifelse(c, FALSE, TRUE)` -> `!c` (suspicious, safe; landed).
 - [ ] `true-false-symbol` `T`/`F` -> `TRUE`/`FALSE` (readability, **unsafe**
       until shadow-checked in Phase 4 --- T/F are rebindable). Token change, not
       layout, so linter-owned.

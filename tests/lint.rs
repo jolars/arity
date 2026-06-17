@@ -794,6 +794,102 @@ fn cli_fix_fixpoint_clears_multiple_unused_bindings() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 1 syntactic rules (built on §I1 matchers).
+// ---------------------------------------------------------------------------
+
+/// The fix carried by the single finding of `rule` in `src`, applied (safe-only).
+fn fixed_output(src: &str, rule: &str) -> String {
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == rule)
+        .unwrap_or_else(|| panic!("expected a {rule} finding"));
+    let fix = d.fix.as_ref().expect("finding should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Safe);
+    apply_fixes(src, std::slice::from_ref(fix), false).output
+}
+
+#[test]
+fn lint_flags_duplicated_arguments() {
+    let src = "f(a = 1, a = 2)\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(rules.contains(&"duplicated-arguments"), "got: {rules:?}");
+}
+
+#[test]
+fn duplicated_arguments_ignores_distinct_and_positional() {
+    let rules: Vec<&str> = diagnostics("f(a = 1, b = 2, 3, 4)\n")
+        .iter()
+        .map(|d| d.rule)
+        .collect();
+    assert!(!rules.contains(&"duplicated-arguments"), "got: {rules:?}");
+}
+
+#[test]
+fn redundant_equals_true_drops_comparison() {
+    assert_eq!(
+        fixed_output("if (x == TRUE) f()\n", "redundant-equals"),
+        "if (x) f()\n"
+    );
+    // Literal on either side.
+    assert_eq!(
+        fixed_output("print(TRUE == x)\n", "redundant-equals"),
+        "print(x)\n"
+    );
+}
+
+#[test]
+fn redundant_equals_false_negates() {
+    assert_eq!(
+        fixed_output("print(x == FALSE)\n", "redundant-equals"),
+        "print(!x)\n"
+    );
+}
+
+#[test]
+fn redundant_equals_withholds_fix_for_complex_operand() {
+    // `a + b == FALSE` parses as `(a + b) == FALSE`; `!a + b` would misparse, so
+    // the fix is withheld — but the finding is still reported.
+    let d = diagnostics("print(a + b == FALSE)\n")
+        .into_iter()
+        .find(|d| d.rule == "redundant-equals")
+        .expect("expected a redundant-equals finding");
+    assert!(d.fix.is_none(), "complex operand should withhold the fix");
+}
+
+#[test]
+fn equals_na_rewrites_to_is_na() {
+    assert_eq!(
+        fixed_output("if (x == NA) f()\n", "equals-na"),
+        "if (is.na(x)) f()\n"
+    );
+    assert_eq!(
+        fixed_output("print(NA == y)\n", "equals-na"),
+        "print(is.na(y))\n"
+    );
+}
+
+#[test]
+fn redundant_ifelse_collapses() {
+    assert_eq!(
+        fixed_output("print(ifelse(cond, TRUE, FALSE))\n", "redundant-ifelse"),
+        "print(cond)\n"
+    );
+    assert_eq!(
+        fixed_output("print(ifelse(cond, FALSE, TRUE))\n", "redundant-ifelse"),
+        "print(!cond)\n"
+    );
+}
+
+#[test]
+fn redundant_ifelse_ignores_non_constant_branches() {
+    let rules: Vec<&str> = diagnostics("print(ifelse(cond, a, b))\n")
+        .iter()
+        .map(|d| d.rule)
+        .collect();
+    assert!(!rules.contains(&"redundant-ifelse"), "got: {rules:?}");
+}
+
+// ---------------------------------------------------------------------------
 // Tenet 5: autofixes never introduce formatting errors.
 // `format` -> apply all fixes -> `format --check` must still pass.
 // ---------------------------------------------------------------------------
@@ -850,6 +946,16 @@ fn fixes_never_introduce_formatting_errors() {
         "f <- function() {\n  unused <- 1\n  g()\n}\n",
         "f <- function() {\n  unused <- 1\n  a()\n  b()\n}\n",
         "for (i in xs) {\n  unused <- 1\n  use(i)\n}\n",
+        // redundant-equals (`== TRUE` drop, `== FALSE` negate)
+        "print(x == TRUE)\n",
+        "print(x == FALSE)\n",
+        "print(TRUE == f(x))\n",
+        // equals-na (`== NA` → is.na)
+        "print(x == NA)\n",
+        "print(NA == g(y))\n",
+        // redundant-ifelse collapse
+        "print(ifelse(cond, TRUE, FALSE))\n",
+        "print(ifelse(cond, FALSE, TRUE))\n",
     ];
     for case in cases {
         assert_fix_is_format_stable(case);

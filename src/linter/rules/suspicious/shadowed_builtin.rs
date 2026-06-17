@@ -5,32 +5,12 @@
 //! you think you're calling base `c()`, but R uses your local. The two-step
 //! trigger keeps false positives down.
 
-use rowan::TextRange;
-use rowan::ast::AstNode;
-
-use crate::ast::CallExpr;
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::rules::matchers::is_callee;
 use crate::linter::rules::{Rule, RuleContext};
 use crate::semantic::BindingKind;
-use crate::syntax::{SyntaxKind, SyntaxNode};
 
 pub struct ShadowedBuiltin;
-
-/// Whether the identifier covering `range` sits in the callee position of a
-/// call (`name(…)`) — as opposed to a value read like `name[[i]]` or `name + 1`.
-/// This is the rule's "you meant the base function but got your local" trigger.
-fn is_callee(root: &SyntaxNode, range: TextRange) -> bool {
-    let rowan::SyntaxElement::Token(token) = root.covering_element(range) else {
-        return false;
-    };
-    let Some(parent) = token.parent() else {
-        return false;
-    };
-    parent.kind() == SyntaxKind::CALL_EXPR
-        && CallExpr::cast(parent)
-            .and_then(|call| call.callee_token())
-            .is_some_and(|callee| callee.text_range() == range)
-}
 
 impl Rule for ShadowedBuiltin {
     fn id(&self) -> &'static str {
