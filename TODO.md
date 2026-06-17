@@ -43,6 +43,161 @@ suppression directive style, annotate-snippets rendering) but stays its own
 project --- arity is a unified formatter + linter + LSP binary on arity's own
 in-tree parser, not a drop-in jarl replacement.
 
+### Rule roadmap
+
+Adapt jarl's catalog (https://jarl.etiennebacher.com/rules) to arity's
+architecture, phased so high-value, low-effort rules land first and anything
+blocked on missing infrastructure is sequenced right after that infra. Five
+rules ship today: `undefined-symbol`, `unused-binding`, `duplicate-formal`
+(`correctness/`), `assignment-in-condition`, `shadowed-builtin` (`suspicious/`).
+
+Cost model driving the order: a rule is **cheap** (`syn`) when it only needs the
+CST + AST + literal inspection; **medium** (`ns`) when it must confirm a callee
+resolves to base R (not a user redefinition) via `SymbolProvider`; **expensive**
+(`sem`) when it needs the `SemanticModel` (scopes/flow). Anything needing R
+evaluation or type inference is **out of scope** --- arity stays static. Pure
+layout (quotes, leading zero, spacing) is the **formatter's** job (Tenet 1), not
+the linter's.
+
+**Category directories.** Keep `correctness/` and `suspicious/`; add
+`readability/`, `performance/`, `meta/` (suppression-directive rules), and
+`pkg/dplyr/` + `pkg/testthat/`. No `style/` dir --- pure layout is the
+formatter's. Public rule IDs stay flat kebab-case (category is a directory
+concern, as `ALL_RULE_IDS` already is).
+
+#### Phase 0 --- Infrastructure (unblocks everything)
+
+- [ ] **§I1 Matchers** (`src/linter/rules/matchers.rs`): `call_named`,
+      `callee_name`, `nth_arg`/`named_arg`, and literal classifiers
+      (`is_true`/`is_false`, `is_na`, `is_null`, `is_nan`, `is_bool_symbol` for
+      T/F). Reduces each syntactic rule to ~30 lines. **Blocks Phase 1.**
+- [ ] **§I3 Namespace-confirmation helper**: a `RuleContext` method
+      `resolves_to_base(call)` --- callee not shadowed locally
+      (`model.resolve_local`) *and* `symbols.is_base`/`origin(...)`. Reuse
+      `shadowed_builtin`'s `is_callee`. **Blocks confident Phase 2.**
+- [ ] **§I7 CLI `--select`/`--ignore`**: `LintConfig` already has the fields and
+      `ResolvedRules::resolve` honors them --- verify/wire the flags in
+      `src/cli.rs`. Lets users opt into noisier new rules early.
+- [ ] **Registration single source of truth**: replace the hand-synced
+      `all_rules()` + `ALL_RULE_IDS` pair with one table (macro or
+      `&[(&str, fn) -> Box<dyn Rule>]`) so IDs are derived. Do before Phase 2 to
+      avoid ~40 drift-prone entries.
+
+#### Phase 1 --- High-signal, purely syntactic, safe fixes (`syn`)
+
+Match a call/operator shape with deterministic fixes. Match bare names for now;
+harden against shadowing in Phase 4.
+
+- [ ] `browser` (suspicious, safe-delete) --- leftover debug call.
+- [ ] `equals-na` `x == NA` -> `is.na(x)` (correctness, safe); `equals-nan` ->
+      `is.nan` (safe); `equals-null` (correctness, none/unsafe --- `== NULL`
+      rewrite is less mechanical).
+- [ ] `empty-assignment` (correctness, none).
+- [ ] `duplicated-arguments` `f(a = 1, a = 2)` (correctness, none) --- mirrors
+      `duplicate-formal`.
+- [ ] `redundant-equals` `x == TRUE` -> `x`, `x == FALSE` -> `!x` (suspicious,
+      safe).
+- [ ] `redundant-ifelse` `ifelse(c, TRUE, FALSE)` -> `c` (suspicious, safe).
+- [ ] `true-false-symbol` `T`/`F` -> `TRUE`/`FALSE` (readability, **unsafe**
+      until shadow-checked in Phase 4 --- T/F are rebindable). Token change, not
+      layout, so linter-owned.
+- [ ] `repeat` `while (TRUE)` -> `repeat` (suspicious, safe).
+- [ ] `vector-logic` `&`/`|` -> `&&`/`||` in `if`/`while` condition
+      (correctness, safe).
+- [ ] `comparison-negation` `!(a == b)` -> `a != b` (readability, safe);
+      `outer-negation` `!any(...)`/`!all(...)` De Morgan (readability, safe).
+- [ ] `implicit-assignment` (suspicious, none) --- scope to avoid overlap with
+      existing `assignment-in-condition`.
+
+#### Phase 2 --- Call-rewrite idioms, namespace-confirmed (`ns`)
+
+- [ ] **§I2 regex/string-literal helper** first: read a `STRING` token's
+      unquoted contents; classify regex metachars / single anchor (`^`/`$`).
+      Blocks `string-boundary`, `fixed-regex`.
+- [ ] `any-is-na` `any(is.na(x))` -> `anyNA(x)` (performance, safe) --- flagship.
+- [ ] `any-duplicated` `any(duplicated(x))` -> `anyDuplicated(x) > 0`
+      (performance, safe).
+- [ ] `lengths` `sapply(x, length)` -> `lengths(x)` (performance, safe).
+- [ ] `nzchar` `nchar(x) > 0` -> `nzchar(x)` (performance, safe).
+- [ ] `seq`/`seq2` `1:length(x)` -> `seq_along`, `1:n` -> `seq_len`
+      (performance, safe) --- off-by-one safety, high value.
+- [ ] `is-numeric` (correctness, safe); `class-equals` `class(x) == ...` ->
+      `inherits` (performance, unsafe --- `class()` is a vector).
+- [ ] `string-boundary` `grepl("^a", x)` -> `startsWith` (readability, safe when
+      fixed literal + single anchor); `fixed-regex` add `fixed = TRUE`
+      (performance, safe).
+- [ ] `sort` `sort(x)[1]` -> `min`, etc. (performance, unsafe).
+- [ ] `internal-function` `pkg:::fn` via
+      `BinaryExpr::namespace_access().internal` (correctness, none) --- cheap.
+
+#### Phase 3 --- SemanticModel rules + config plumbing
+
+- [ ] **§I4 per-rule config**: add a `[lint.rules.<id>]` TOML table + typed
+      per-rule struct in `src/config.rs`, threaded into rules via a
+      `config`/`&RuleConfig` field on `RuleContext`. **Blocks**
+      `undesirable-function`, `download-file`.
+- [ ] `unreachable-code` after `return()`/`stop()` (correctness, sem,
+      unsafe-delete).
+- [ ] `if-always-true` literal `if (TRUE/FALSE)` only --- no const-folding
+      (correctness, unsafe).
+- [ ] `unused-function` (suspicious, sem, none) --- reuse
+      `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
+- [ ] `duplicated-function-definition` (suspicious, sem, none).
+- [ ] `for-loop-index`/`for-loop-dup-index` (suspicious, sem, none).
+- [ ] `unnecessary-nesting` collapsible nested `if` / single-stmt block
+      (readability, sem, unsafe).
+- [ ] `coalesce` `if (is.null(x)) y else x` (performance, sem, unsafe) --- may
+      want §I5 multi-edit fix.
+- [ ] `undesirable-function` (suspicious, ns + config, none) --- needs §I4;
+      **default-off**. `download-file` (correctness, ns, none) --- low priority.
+
+#### Phase 4 --- Meta (suppression) rules + hardening
+
+- [ ] **§I6 suppression refactor**: have `SuppressionMap` expose the parsed
+      directive list (rule, range, has-reason, raw) and surface it on
+      `RuleContext` (`suppressions`). `outdated-suppression` also needs the
+      driver (`check.rs`/`run_rules`) to record which suppressions actually
+      matched a diagnostic --- a post-pass, not a per-rule concern.
+- [ ] `misnamed-suppression` (vs `ALL_RULE_IDS`, safe), `blanket-suppression`
+      (none), `unexplained-suppression` (none, **default-off**),
+      `outdated-suppression` (safe-delete). These subsume the reserved
+      `arity-ignore-unused` follow-up below.
+- [ ] **Hardening sub-pass**: upgrade Phase 1/2 fixes from bare-name to
+      `resolves_to_base`-confirmed + shadow-checked, graduating
+      `true-false-symbol` and call-rewrite rules Unsafe -> Safe and suppressing
+      FPs where `any`/`is.na` etc. are user-redefined.
+
+#### Phase 5 --- Package-aware rules
+
+Gated on the package being attached (`model.loaded_packages()`).
+
+- [ ] `pkg/testthat/` as one cohesive PR (shared `expect_*` matcher):
+      `expect-true-false`, `expect-length`, `expect-named`, `expect-null`,
+      `expect-type`, `expect-s3-class`, `expect-match`/`expect-no-match` (all ns,
+      safe). High value for test-heavy repos.
+- [ ] `pkg/dplyr/`: `dplyr-filter-out` `filter(!(x %in% y))` (ns, safe). Defer
+      `dplyr-group-by-ungroup` --- needs **§I8 pipe-chain abstraction**
+      (`%>%`/`|>` stage walk) that doesn't exist yet.
+
+#### Out of scope (recorded so they aren't silently dropped)
+
+- **Formatter's domain (Tenet 1):** `quotes`, `numeric_leading_zero`, spacing,
+  indentation, semicolons, trailing whitespace --- excluded from the linter.
+- **Needs R evaluation / type inference (arity is static):** `all_equal`,
+  `length_levels`, `length_test`, `matrix_apply`, `list2df`, `which_grepl`,
+  `grepv`, `sample_int`, `system_file`, `sprintf` arg-checking, full `coalesce`,
+  const-folded `if_always_true`. Implement only an exact-AST-shape subset where
+  one exists, else defer.
+- **Too noisy without opt-in:** `undesirable-function`, `unused-function`,
+  `unexplained-suppression` --- all **default-off**.
+
+#### `RuleContext`/`Rule` extensions implied above
+
+1. `RuleContext.config` (§I4). 2. `RuleContext.suppressions` (§I6).
+3. Registration single source of truth. 4. Multi-edit `Fix` (§I5) only when a
+non-contiguous fix is needed. 5. Optional `Rule::category()` for category-level
+`--select` later.
+
 ## Language Server
 
 Today the server advertises **formatting** (whole-document + range), **hover**
