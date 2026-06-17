@@ -682,10 +682,18 @@ impl GlobalState {
 
         let (config, source) = Config::resolve(None, false, &anchor)
             .map_err(|err| ConfigResolveError::Config(err.to_string()))?;
+        let style = resolve_format_style(&config, source.is_some(), &self.editor_settings);
+        let mut index = config.index;
+        // Network egress is a per-user/per-machine consent decision, so the sidecar
+        // URL comes from the environment, never the shared, committed arity.toml.
+        // Absent or empty → no fetching (arity stays offline).
+        index.remote_url = std::env::var("ARITY_REMOTE_URL")
+            .ok()
+            .filter(|s| !s.is_empty());
         let resolved = ResolvedSettings {
-            style: resolve_format_style(&config, source.is_some(), &self.editor_settings),
+            style,
             lint: config.lint,
-            index: config.index,
+            index,
         };
         self.config_cache.insert(anchor, resolved.clone());
         Ok(resolved)

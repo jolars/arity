@@ -99,8 +99,13 @@ pub struct IndexConfig {
     pub help: bool,
     /// Base URL of a downloadable CRAN symbol sidecar. When set, the LSP fetches
     /// names-only export lists for referenced-but-uninstalled packages over the
-    /// network (cached on disk). `None` (the default) keeps arity fully offline.
-    #[serde(default)]
+    /// network (cached on disk); `None` keeps arity fully offline.
+    ///
+    /// Deliberately **not** read from `arity.toml` (`#[serde(skip)]`): enabling
+    /// network egress is a per-user, per-machine consent decision, not a shared,
+    /// committed project setting. The LSP populates it from the `ARITY_REMOTE_URL`
+    /// environment variable instead (see `resolve_settings` in `src/lsp/state.rs`).
+    #[serde(skip)]
     pub remote_url: Option<String>,
 }
 
@@ -410,13 +415,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_index_remote_url() {
-        let config =
-            parse("[index]\nremote-url = \"https://sidecar.example/cran\"\n").expect("parse");
-        assert_eq!(
-            config.index.remote_url.as_deref(),
-            Some("https://sidecar.example/cran")
-        );
+    fn rejects_remote_url_in_config() {
+        // Enabling network egress is a per-user/per-machine consent decision, not a
+        // shared project setting: it lives in `ARITY_REMOTE_URL`, never arity.toml.
+        // A `remote-url` key in the shared config is rejected as unknown.
+        let err = parse("[index]\nremote-url = \"https://sidecar.example/cran\"\n")
+            .expect_err("remote-url is not a config key");
+        match err {
+            ConfigError::Parse { message, .. } => {
+                assert!(message.contains("remote-url"), "got: {message}");
+            }
+            other => panic!("expected Parse error, got {other:?}"),
+        }
     }
 
     #[test]

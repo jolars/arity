@@ -392,9 +392,11 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       lists in `resolve_origin`, carried in the salsa `LibraryIndex`'s `remote`
       field at HIGH durability (`src/incremental.rs`). The LSP lint thread fetches
       per-package export lists on demand over a CDN (`Sidecar` + `ureq`, gzip via
-      `flate2`), opt-in via `[index] remote-url` (`src/config.rs`, default off so
-      arity stays offline). Lifts the whole-file `undefined-symbol` suppression
-      for uninstalled, unbundled packages and feeds `pkg::`/bare completion.
+      `flate2`), opt-in via the `ARITY_REMOTE_URL` environment variable (a
+      per-user/per-machine consent decision, deliberately *not* in the shared
+      `arity.toml`; default off so arity stays offline). Lifts the whole-file
+      `undefined-symbol` suppression for uninstalled, unbundled packages and
+      feeds `pkg::`/bare completion.
       Remaining escalations:
   - [ ] Server pipeline + hosting (separate repo): install all of CRAN via PPM
         binaries, dump per-package names keyed by current version + a
