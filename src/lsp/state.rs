@@ -78,6 +78,7 @@ impl GlobalState {
             RangeFormatting::METHOD => self.on_range_formatting(req),
             CodeActionRequest::METHOD => self.on_code_action(req),
             HoverRequest::METHOD => self.on_hover(req),
+            SignatureHelpRequest::METHOD => self.on_signature_help(req),
             Completion::METHOD => self.on_completion(req),
             ResolveCompletionItem::METHOD => self.on_resolve_completion(req),
             GotoDefinition::METHOD => self.on_definition(req),
@@ -210,6 +211,33 @@ impl GlobalState {
         };
         let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
         self.dispatch_read(ReadJob::Hover {
+            id,
+            path,
+            text,
+            position,
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `textDocument/signatureHelp`: inside a call, show the callee's signature
+    /// and highlight the active parameter. A read-only job dispatched like hover;
+    /// resolution + active-parameter tracking run on the read pool. See
+    /// [`signature_help_via_db`].
+    fn on_signature_help(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<SignatureHelpParams>(SignatureHelpRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid signatureHelp params");
+            return;
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::SignatureHelp {
             id,
             path,
             text,
@@ -510,6 +538,7 @@ impl GlobalState {
                 ReadJob::FormatRange { id, sender, .. } => (id, sender),
                 ReadJob::Hover { id, sender, .. } => (id, sender),
                 ReadJob::Completion { id, sender, .. } => (id, sender),
+                ReadJob::SignatureHelp { id, sender, .. } => (id, sender),
                 ReadJob::ResolveCompletion { id, sender, .. } => (id, sender),
                 ReadJob::Definition { id, sender, .. } => (id, sender),
                 ReadJob::References { id, sender, .. } => (id, sender),

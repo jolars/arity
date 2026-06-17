@@ -70,7 +70,7 @@ use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
     FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
     RangeFormatting, References, Rename, Request as RequestTrait, ResolveCompletionItem,
-    WillRenameFiles,
+    SignatureHelpRequest, WillRenameFiles,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -84,18 +84,19 @@ use lsp_types::{
     FoldingRange, FoldingRangeKind, FoldingRangeParams, FoldingRangeProviderCapability,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
     HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
-    OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams,
-    RenameFilesParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
-    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
-    WorkspaceServerCapabilities,
+    OneOf, ParameterInformation, ParameterLabel, Position, PrepareRenameResponse,
+    PublishDiagnosticsParams, Range, ReferenceParams, RenameFilesParams, RenameOptions,
+    RenameParams, ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions,
+    SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
+    WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-use crate::ast::{AssignmentExpr, AstNode as _, BinaryExpr, FunctionExpr};
+use crate::ast::{ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::file_discovery::collect_r_files;
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
@@ -127,6 +128,7 @@ mod navigation;
 mod read_jobs;
 mod server;
 mod settings;
+mod signature;
 mod state;
 mod symbols;
 mod uri;
@@ -140,6 +142,7 @@ pub(crate) use lint_thread::*;
 pub(crate) use navigation::*;
 pub(crate) use read_jobs::*;
 pub(crate) use settings::*;
+pub(crate) use signature::*;
 pub(crate) use state::*;
 
 pub use code_actions::compute_code_actions;
@@ -152,6 +155,7 @@ pub use navigation::{
     compute_prepare_rename, compute_references, compute_rename, compute_rename_with_anchor,
 };
 pub use server::run;
+pub use signature::compute_signature_help;
 pub use symbols::compute_document_symbols;
 
 #[cfg(test)]

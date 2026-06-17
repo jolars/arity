@@ -318,10 +318,15 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   snippet/paren insertion, `$`/`@` member completion, fuzzy/case-insensitive
   prefix matching, function-vs-variable kind for locals.
 
-- [ ] **Signature help** (`textDocument/signatureHelp`). Inside a call, show the
+- [x] **Signature help** (`textDocument/signatureHelp`). Inside a call, show the
   callee's formals/usage. The index already carries `formals` and the
   `\usage` block (same data hover renders) --- the new work is detecting
   "inside call argument N" from the CST and tracking the active parameter.
+  Done in `src/lsp/signature.rs`: resolves the enclosing call's callee via the
+  shared hover index path, builds parameters from `formals` (with UTF-16 label
+  offsets) or falls back to the `\usage` label, and tracks the active parameter
+  by top-level commas with a `name = ` override. Follow-up: clamp the active
+  parameter into a `...` formal under R's variadic semantics.
 
 ### Diagnostics & misc protocol surface
 

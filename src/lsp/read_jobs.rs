@@ -34,6 +34,13 @@ pub(crate) enum ReadJob {
         position: Position,
         sender: Sender<Message>,
     },
+    SignatureHelp {
+        id: RequestId,
+        path: PathBuf,
+        text: String,
+        position: Position,
+        sender: Sender<Message>,
+    },
     ResolveCompletion {
         id: RequestId,
         // Boxed: `CompletionItem` is large and would bloat every `ReadJob`.
@@ -126,6 +133,16 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             sender,
         } => {
             let result = completion_via_db(&snapshot, &path, &text, position);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::SignatureHelp {
+            id,
+            path,
+            text,
+            position,
+            sender,
+        } => {
+            let result = signature_help_via_db(&snapshot, &path, &text, position);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
         ReadJob::ResolveCompletion { id, item, sender } => {
