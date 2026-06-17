@@ -18,9 +18,9 @@ use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
 use crate::project::{
-    DefKind, ReadBinding, SourceEdgeKey, TopLevelEvent, collect_source_literal_edges,
-    collect_top_level_events, project_defs, project_graph, project_reads, relative_path,
-    reverse_source_edges, workspace_project,
+    DefKind, PackageInfo, ReadBinding, SourceEdgeKey, TopLevelEvent, collect_source_literal_edges,
+    collect_top_level_events, discover_packages, project_defs, project_graph, project_reads,
+    relative_path, reverse_source_edges, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
@@ -145,6 +145,27 @@ pub struct Workspace {
     /// The workspace roots the members were discovered under.
     #[returns(ref)]
     pub roots: Vec<PathBuf>,
+}
+
+/// The disk-derived package metadata for the workspace's members, modeled as a
+/// salsa **singleton** input at `Durability::MEDIUM` — the per-root NAMESPACE
+/// texts, expected-source sets, and package-root markers that
+/// [`workspace_project`](crate::project::workspace_project) used to read from
+/// disk inside the tracked query (re-walking the filesystem on every keystroke).
+/// Lifting them into an input makes that query pure: a keystroke re-run does only
+/// in-memory work, and a future `didChangeWatchedFiles` watcher can invalidate a
+/// real NAMESPACE/DESCRIPTION/`R/` change by refreshing this input.
+///
+/// Populated in the write-phase by
+/// [`refresh_package_graph`](IncrementalDatabase::refresh_package_graph), which
+/// runs [`discover_packages`](crate::project::discover_packages) (the sole disk
+/// reader) over the current workspace members. Like every salsa input it never
+/// backdates, so the setter skips the write when the metadata is unchanged.
+#[salsa::input(singleton)]
+pub struct PackageGraph {
+    /// One entry per distinct package root among the members, sorted by root.
+    #[returns(ref)]
+    pub packages: Vec<PackageInfo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -510,7 +531,7 @@ impl IncrementalDatabase {
     ) -> Workspace {
         members.sort_by_key(|file| file.id(self));
         members.dedup();
-        match Workspace::try_get(self) {
+        let ws = match Workspace::try_get(self) {
             Some(ws) => {
                 if ws.members(self) != &members {
                     ws.set_members(self)
@@ -535,6 +556,52 @@ impl IncrementalDatabase {
                     .with_durability(Durability::MEDIUM)
                     .to(roots);
                 ws
+            }
+        };
+        // Keep the disk-derived package metadata in lockstep with membership, so
+        // `workspace_project` always sees a `PackageGraph` consistent with the
+        // members it derives from (no stale-root window).
+        self.refresh_package_graph();
+        ws
+    }
+
+    /// Re-read the workspace members' package metadata (NAMESPACE texts,
+    /// expected-source sets, package roots) from disk and install it as the
+    /// [`PackageGraph`] singleton, at `Durability::MEDIUM`. The **sole disk
+    /// reader** behind `workspace_project`: [`set_workspace_members`] calls it on
+    /// every membership change, and a future `didChangeWatchedFiles` watcher calls
+    /// it directly to pick up a NAMESPACE/DESCRIPTION/`R/` edit without touching
+    /// membership. The write is **skipped when the metadata is unchanged**, since
+    /// a salsa input always bumps its revision on a `set_*`.
+    pub fn refresh_package_graph(&mut self) -> PackageGraph {
+        let member_paths: Vec<PathBuf> = Workspace::try_get(self)
+            .map(|ws| {
+                ws.members(self)
+                    .iter()
+                    .filter_map(|file| file.path(self).clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let packages = discover_packages(&member_paths);
+        match PackageGraph::try_get(self) {
+            Some(graph) => {
+                if graph.packages(self) != &packages {
+                    graph
+                        .set_packages(self)
+                        .with_durability(Durability::MEDIUM)
+                        .to(packages);
+                }
+                graph
+            }
+            None => {
+                let graph = PackageGraph::new(self, packages.clone());
+                // Creation lands at default durability; re-set at MEDIUM so the
+                // first edit after seeding also skips revalidating the metadata.
+                graph
+                    .set_packages(self)
+                    .with_durability(Durability::MEDIUM)
+                    .to(packages);
+                graph
             }
         }
     }

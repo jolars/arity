@@ -23,8 +23,9 @@ use rowan::TextRange;
 use smol_str::SmolStr;
 
 use crate::incremental::{
-    IncrementalDb, LibraryIndex, QueryKind, QueryLogEntry, SourceFile, Workspace, file_def_sites,
-    file_exports, file_free_reads, loaded_names, parse_diagnostics, source_edges, top_level_events,
+    IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile, Workspace,
+    file_def_sites, file_exports, file_free_reads, loaded_names, parse_diagnostics, source_edges,
+    top_level_events,
 };
 use crate::project::exports::DefKind;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
@@ -57,6 +58,24 @@ pub struct ProjectMember {
 pub struct PackageCollation {
     pub root: PathBuf,
     pub complete: bool,
+}
+
+/// One package root's disk-derived metadata, carried as part of the
+/// [`PackageGraph`](crate::incremental::PackageGraph) salsa input so
+/// [`workspace_project`] can read it without touching the filesystem. Discovered
+/// in the write-phase by [`discover_packages`] (the sole disk reader), refreshed
+/// in lockstep with workspace membership, and a future `didChangeWatchedFiles`
+/// watcher's invalidation target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct PackageInfo {
+    /// The package root: a directory with `DESCRIPTION` + `R/` (see
+    /// [`package_root`]).
+    pub root: PathBuf,
+    /// The root's `NAMESPACE` text, or `None` when the file is absent.
+    pub namespace: Option<String>,
+    /// The R source *basenames* the package will load ([`expected_r_sources`]):
+    /// the union of the `R/*.[RrSsQq]` listing and any `DESCRIPTION` `Collate:`.
+    pub expected_sources: BTreeSet<String>,
 }
 
 /// A project as an interned membership snapshot: the set of member files, the
@@ -92,23 +111,42 @@ impl Visibility {
     }
 }
 
-/// Read the `NAMESPACE` of each distinct package root among `members`, returning
-/// `(root, text)` pairs sorted by root (deduped, missing files skipped). Disk
-/// work, run inside [`workspace_project`]; the result becomes part of the
-/// interned [`Project`] key.
-pub(crate) fn read_namespaces(members: &[ProjectMember]) -> Vec<(PathBuf, String)> {
-    let mut namespaces: HashMap<PathBuf, String> = HashMap::new();
-    for member in members {
-        if let Some(root) = &member.package_root
-            && !namespaces.contains_key(root)
-            && let Ok(text) = std::fs::read_to_string(root.join("NAMESPACE"))
-        {
-            namespaces.insert(root.clone(), text);
+/// Discover the [`PackageInfo`] for every distinct package root among
+/// `member_paths`, sorted by root. **The sole filesystem reader** behind the
+/// project graph: it walks each member to its [`package_root`] and, per root,
+/// reads `NAMESPACE` and computes [`expected_r_sources`]. Run in the write-phase
+/// (see [`refresh_package_graph`](crate::incremental::IncrementalDatabase::refresh_package_graph));
+/// the result is stored in the [`PackageGraph`](crate::incremental::PackageGraph)
+/// input so [`workspace_project`] stays pure.
+pub fn discover_packages(member_paths: &[PathBuf]) -> Vec<PackageInfo> {
+    let roots: BTreeSet<PathBuf> = member_paths
+        .iter()
+        .filter_map(|p| package_root(p))
+        .collect();
+    roots
+        .into_iter()
+        .map(|root| PackageInfo {
+            namespace: std::fs::read_to_string(root.join("NAMESPACE")).ok(),
+            expected_sources: expected_r_sources(&root),
+            root,
+        })
+        .collect()
+}
+
+/// The enclosing package root of `path` among the already-discovered `roots`:
+/// the deepest ancestor present in the set, or `None`. The pure counterpart of
+/// [`package_root`] — it touches no disk, reproducing the disk walk exactly
+/// because `roots` was built by [`discover_packages`] running [`package_root`]
+/// over the same member paths.
+fn package_root_in(path: &Path, roots: &BTreeSet<&PathBuf>) -> Option<PathBuf> {
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if roots.contains(&d.to_path_buf()) {
+            return Some(d.to_path_buf());
         }
+        dir = d.parent();
     }
-    let mut namespaces: Vec<(PathBuf, String)> = namespaces.into_iter().collect();
-    namespaces.sort_by(|a, b| a.0.cmp(&b.0));
-    namespaces
+    None
 }
 
 /// The extensions R sources from a package's `R/` directory: `.[RrSsQq]`. Note
@@ -156,35 +194,6 @@ fn expected_r_sources(root: &Path) -> BTreeSet<String> {
     expected
 }
 
-/// Per distinct package root among `members`, whether the analyzed members cover
-/// its full R source set ([`expected_r_sources`]). Sorted by root and deduped,
-/// mirroring [`read_namespaces`]: disk work run inside [`workspace_project`],
-/// frozen into the interned [`Project`] key. A parse-error member is already
-/// dropped from `members` upstream, so it is simply absent from the analyzed set
-/// here and forces `complete = false` for its root — exactly the refuse we want.
-pub(crate) fn read_collations(members: &[ProjectMember]) -> Vec<PackageCollation> {
-    let mut analyzed: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    for member in members {
-        if let Some(root) = &member.package_root
-            && let Some(name) = member.path.file_name().and_then(|n| n.to_str())
-        {
-            analyzed
-                .entry(root.clone())
-                .or_default()
-                .insert(name.to_string());
-        }
-    }
-    analyzed
-        .into_iter()
-        .map(|(root, analyzed_names)| {
-            let complete = expected_r_sources(&root)
-                .iter()
-                .all(|name| analyzed_names.contains(name));
-            PackageCollation { root, complete }
-        })
-        .collect()
-}
-
 /// Derive the interned [`Project`] from the explicit [`Workspace`] file-set,
 /// replacing the per-request disk walk and imperative interning. Membership is
 /// the workspace's cleanly-parsing, on-disk members, sorted by path; pathless
@@ -194,14 +203,21 @@ pub(crate) fn read_collations(members: &[ProjectMember]) -> Vec<PackageCollation
 /// Re-runs when the workspace input changes or a member's parse status flips, but
 /// backdates to the *same* interned `Project` id when the derived membership is
 /// unchanged, so a body edit doesn't rebuild [`project_graph`] (the existing
-/// interning firewall). `package_root`/NAMESPACE reads touch disk (model (a));
-/// carrying those as inputs so the query is fully pure is a follow-up.
+/// interning firewall). The query is **pure** (no disk): the per-root NAMESPACE
+/// texts, expected-source sets, and package-root markers come from the
+/// [`PackageGraph`](crate::incremental::PackageGraph) input (populated in the
+/// write-phase by [`discover_packages`]), so a keystroke re-run does only
+/// in-memory work and a watcher can invalidate disk changes correctly.
 #[salsa::tracked]
 pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::WorkspaceProject,
         file: None,
     });
+    let packages = PackageGraph::try_get(db);
+    let infos: &[PackageInfo] = packages.as_ref().map_or(&[], |g| g.packages(db));
+    let roots: BTreeSet<&PathBuf> = infos.iter().map(|p| &p.root).collect();
+
     let mut members: Vec<ProjectMember> = match Workspace::try_get(db) {
         Some(ws) => ws
             .members(db)
@@ -211,7 +227,7 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
                 if !parse_diagnostics(db, file).is_empty() {
                     return None;
                 }
-                let package_root = package_root(&path);
+                let package_root = package_root_in(&path, &roots);
                 Some(ProjectMember {
                     file,
                     path,
@@ -222,8 +238,43 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
         None => Vec::new(),
     };
     members.sort_by(|a, b| a.path.cmp(&b.path));
-    let namespaces = read_namespaces(&members);
-    let collations = read_collations(&members);
+
+    // NAMESPACE texts and completeness verdicts, restricted to the roots that
+    // actually have a member here — the same shapes the old disk passes built.
+    let by_root: HashMap<&PathBuf, &PackageInfo> = infos.iter().map(|p| (&p.root, p)).collect();
+    let mut analyzed: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+    for member in &members {
+        if let Some(root) = &member.package_root
+            && let Some(name) = member.path.file_name().and_then(|n| n.to_str())
+        {
+            analyzed
+                .entry(root.clone())
+                .or_default()
+                .insert(name.to_string());
+        }
+    }
+    let mut namespaces: Vec<(PathBuf, String)> = analyzed
+        .keys()
+        .filter_map(|root| {
+            by_root
+                .get(root)
+                .and_then(|info| info.namespace.clone())
+                .map(|text| (root.clone(), text))
+        })
+        .collect();
+    namespaces.sort_by(|a, b| a.0.cmp(&b.0));
+    let collations: Vec<PackageCollation> = analyzed
+        .into_iter()
+        .map(|(root, analyzed_names)| {
+            let complete = by_root.get(&root).is_some_and(|info| {
+                info.expected_sources
+                    .iter()
+                    .all(|name| analyzed_names.contains(name))
+            });
+            PackageCollation { root, complete }
+        })
+        .collect();
+
     Project::new(db, members, namespaces, collations)
 }
 

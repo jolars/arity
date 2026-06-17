@@ -13,9 +13,9 @@ pub mod source;
 
 pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads};
 pub use graph::{
-    DefIndex, ExternalResolution, PackageCollation, Project, ProjectMember, ReadIndex,
-    ReverseSources, Visibility, external_resolution, project_defs, project_graph, project_reads,
-    reverse_source_edges, visible_symbols, workspace_project,
+    DefIndex, ExternalResolution, PackageCollation, PackageInfo, Project, ProjectMember, ReadIndex,
+    ReverseSources, Visibility, discover_packages, external_resolution, project_defs,
+    project_graph, project_reads, reverse_source_edges, visible_symbols, workspace_project,
 };
 pub use scope::{FileFacts, FileScope, ProjectScope, ReadBinding, package_root};
 pub use sequence::collect_top_level_events;

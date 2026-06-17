@@ -374,13 +374,17 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   symbols, references, rename, file rename, call hierarchy) now have no index
   work left --- they sit on these queries.
 
-  - [ ] Follow-up (model (b)): `workspace_project` still reads
-    `package_root`/`NAMESPACE` from disk (model (a)), so a keystroke
-    re-runs it (it backdates to the same `Project`, so the graph is
-    spared). Carry per-root NAMESPACE text + package-root markers as
-    salsa inputs so the query is fully pure and a future
-    `didChangeWatchedFiles` watcher invalidates it correctly. Pairs with
-    the `vfs`/`SourceRoot` follow-up under *Thin `FileId`*.
+  - [x] Follow-up (model (b)): `workspace_project` is now **pure** — the
+    per-root NAMESPACE texts, expected-source sets, and package-root
+    markers live in a new `PackageGraph` salsa input (`src/incremental.rs`),
+    populated in the write-phase by `IncrementalDatabase::refresh_package_graph`
+    (the sole disk reader, via `project::discover_packages`) and refreshed in
+    lockstep with `set_workspace_members`. A keystroke re-run does only
+    in-memory work, and the public `refresh_package_graph` gives a future
+    `didChangeWatchedFiles` watcher a direct invalidation entry point. Purity
+    proof in `tests/salsa_incremental.rs`
+    (`workspace_project_is_pure_namespace_not_reread_on_keystroke`). Still
+    pairs with the `vfs`/`SourceRoot` follow-up under *Thin `FileId`*.
 
 - [ ] Full downloadable CRAN sidecar (escalation of the bundled lists above).
       Shape: per-package export lists keyed by package version, covering the

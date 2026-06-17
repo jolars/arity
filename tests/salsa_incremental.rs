@@ -1137,3 +1137,78 @@ fn resolve_ptr_reuses_the_cached_parse() {
         "resolve_ptr must not perturb the reparse path"
     );
 }
+
+#[test]
+fn workspace_project_is_pure_namespace_not_reread_on_keystroke() {
+    // Model (b): `workspace_project` reads package metadata from the PackageGraph
+    // salsa input, not from disk. A keystroke re-runs the query (parse-status
+    // dependency) but must NOT pick up an on-disk NAMESPACE change; only an
+    // explicit `refresh_package_graph` does.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir(root.join("R")).unwrap();
+    std::fs::write(root.join("DESCRIPTION"), "Package: foo\n").unwrap();
+    std::fs::write(root.join("NAMESPACE"), "export(foo)\n").unwrap();
+    let member_path = root.join("R/foo.R");
+    std::fs::write(&member_path, "foo <- function() 1\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let m = db.upsert_file(&member_path, "foo <- function() 1\n".to_string());
+    db.set_workspace_members(vec![m], vec![root.to_path_buf()]);
+
+    let before: Vec<_> = workspace_project(&db).namespaces(&db).clone();
+    assert_eq!(
+        before,
+        vec![(root.to_path_buf(), "export(foo)\n".to_string())],
+        "the seeded NAMESPACE must be visible via the derived project"
+    );
+
+    // Mutate NAMESPACE on disk WITHOUT refreshing, then do a keystroke that
+    // forces `workspace_project` to re-run.
+    std::fs::write(root.join("NAMESPACE"), "export(bar)\n").unwrap();
+    db.set_file_text(m, "foo <- function() 2\n");
+
+    let after: Vec<_> = workspace_project(&db).namespaces(&db).clone();
+    assert_eq!(
+        before, after,
+        "a keystroke must not re-read NAMESPACE from disk (query is pure)"
+    );
+
+    // An explicit refresh is the correct invalidation path: it re-reads disk and
+    // re-runs the query with the new metadata.
+    db.refresh_package_graph();
+    let refreshed: Vec<_> = workspace_project(&db).namespaces(&db).clone();
+    assert_eq!(
+        refreshed,
+        vec![(root.to_path_buf(), "export(bar)\n".to_string())],
+        "refresh_package_graph must pick up the on-disk NAMESPACE change"
+    );
+}
+
+#[test]
+fn refresh_package_graph_skips_write_when_unchanged() {
+    // The conditional setter: refreshing with identical on-disk metadata must not
+    // bump the revision, so `workspace_project` is not re-run.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir(root.join("R")).unwrap();
+    std::fs::write(root.join("DESCRIPTION"), "Package: foo\n").unwrap();
+    std::fs::write(root.join("NAMESPACE"), "export(foo)\n").unwrap();
+    let member_path = root.join("R/foo.R");
+    std::fs::write(&member_path, "foo <- function() 1\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let m = db.upsert_file(&member_path, "foo <- function() 1\n".to_string());
+    db.set_workspace_members(vec![m], vec![root.to_path_buf()]);
+    let _ = workspace_project(&db);
+
+    db.clear_query_log();
+    db.refresh_package_graph();
+    let _ = workspace_project(&db);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::WorkspaceProject),
+        None,
+        "an unchanged package-metadata refresh must not re-run workspace_project"
+    );
+}
