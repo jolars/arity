@@ -6,7 +6,7 @@ use rowan::NodeOrToken;
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
 use crate::linter::rules::{Rule, RuleContext};
-use crate::syntax::{SyntaxKind, SyntaxNode};
+use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 pub struct AssignmentInCondition;
 
@@ -19,46 +19,44 @@ impl Rule for AssignmentInCondition {
         Severity::Warning
     }
 
-    fn run(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
-        let mut out = Vec::new();
-        for node in ctx.root.descendants() {
-            match node.kind() {
-                SyntaxKind::IF_EXPR | SyntaxKind::WHILE_EXPR => {
-                    if let Some(assign) = direct_assignment_in_condition(&node) {
-                        // Only the bare `=` form gets an autofix (`=` → `==`);
-                        // `<-`/`<<-`/`:=` in a condition are too ambiguous to
-                        // rewrite automatically.
-                        let fix = assign
-                            .children_with_tokens()
-                            .find(|e| e.kind() == SyntaxKind::ASSIGN_EQ)
-                            .and_then(|e| e.into_token())
-                            .map(|tok| {
-                                let r = tok.text_range();
-                                Fix::safe(
-                                    usize::from(r.start()),
-                                    usize::from(r.end()),
-                                    "==",
-                                    "Replace `=` with `==`",
-                                )
-                            });
-                        out.push(Diagnostic {
-                            rule: "assignment-in-condition",
-                            severity: Severity::Warning,
-                            path: Default::default(),
-                            range: assign.text_range(),
-                            message: ViolationData::new(
-                                "assignment-in-condition",
-                                "assignment used as a condition; did you mean `==`?",
-                            )
-                            .with_suggestion("Replace `=` with `==` or move the assignment out."),
-                            fix,
-                        });
-                    }
-                }
-                _ => {}
-            }
+    fn interests(&self) -> &'static [SyntaxKind] {
+        &[SyntaxKind::IF_EXPR, SyntaxKind::WHILE_EXPR]
+    }
+
+    fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+        let Some(node) = el.as_node() else {
+            return;
+        };
+        if let Some(assign) = direct_assignment_in_condition(node) {
+            // Only the bare `=` form gets an autofix (`=` → `==`);
+            // `<-`/`<<-`/`:=` in a condition are too ambiguous to
+            // rewrite automatically.
+            let fix = assign
+                .children_with_tokens()
+                .find(|e| e.kind() == SyntaxKind::ASSIGN_EQ)
+                .and_then(|e| e.into_token())
+                .map(|tok| {
+                    let r = tok.text_range();
+                    Fix::safe(
+                        usize::from(r.start()),
+                        usize::from(r.end()),
+                        "==",
+                        "Replace `=` with `==`",
+                    )
+                });
+            sink.push(Diagnostic {
+                rule: "assignment-in-condition",
+                severity: Severity::Warning,
+                path: Default::default(),
+                range: assign.text_range(),
+                message: ViolationData::new(
+                    "assignment-in-condition",
+                    "assignment used as a condition; did you mean `==`?",
+                )
+                .with_suggestion("Replace `=` with `==` or move the assignment out."),
+                fix,
+            });
         }
-        out
     }
 }
 

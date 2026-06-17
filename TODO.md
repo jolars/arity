@@ -67,6 +67,15 @@ concern, as `ALL_RULE_IDS` already is).
 
 #### Phase 0 --- Infrastructure (unblocks everything)
 
+- [x] **§I0 Single-walk dispatch** (landed). Rules declare interest via
+      `Rule::interests() -> &[SyntaxKind]` and receive `Rule::check(element, ctx,
+      sink)` once per matching element during *one* shared
+      `descendants_with_tokens()` traversal (dispatch table is a flat
+      `Vec<Vec<usize>>` indexed by `kind as usize`, sized by `SyntaxKind::COUNT`).
+      Model-/comment-driven rules leave `interests` empty and override
+      `Rule::check_file(ctx, sink)`, a once-per-file pass. New node-shape rules
+      must subscribe via `interests`/`check` rather than walking the CST
+      themselves.
 - [ ] **§I1 Matchers** (`src/linter/rules/matchers.rs`): `call_named`,
       `callee_name`, `nth_arg`/`named_arg`, and literal classifiers
       (`is_true`/`is_false`, `is_na`, `is_null`, `is_nan`, `is_bool_symbol` for
@@ -193,6 +202,7 @@ Gated on the package being attached (`model.loaded_packages()`).
 
 #### `RuleContext`/`Rule` extensions implied above
 
+0. `Rule::interests`/`check`/`check_file` single-walk dispatch (§I0, landed).
 1. `RuleContext.config` (§I4). 2. `RuleContext.suppressions` (§I6).
 3. Registration single source of truth. 4. Multi-edit `Fix` (§I5) only when a
 non-contiguous fix is needed. 5. Optional `Rule::category()` for category-level

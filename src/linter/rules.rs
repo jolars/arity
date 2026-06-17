@@ -1,8 +1,17 @@
 //! Lint rule trait, registry, and per-file dispatch.
 //!
+//! Rules are run over a file in a single shared CST traversal: each rule
+//! declares the [`SyntaxKind`]s it cares about via [`Rule::interests`], and
+//! [`run_rules`] walks the tree once, calling [`Rule::check`] on every element
+//! whose kind a rule subscribed to. Rules that work off the whole file rather
+//! than node shape (semantic-model queries, comment directives) leave
+//! `interests` empty and override [`Rule::check_file`], which runs once per file
+//! after the walk.
+//!
 //! New rules:
 //! 1. Create a module under `src/linter/rules/<category>/<id>.rs`.
-//! 2. Define a unit `pub struct` that implements [`Rule`].
+//! 2. Define a unit `pub struct` that implements [`Rule`] — subscribe to node
+//!    kinds via `interests` + `check`, or do a whole-file pass via `check_file`.
 //! 3. Add it to [`all_rules`] below.
 //! 4. Add the rule ID to [`ALL_RULE_IDS`] so `LintConfig::select` / `ignore`
 //!    can validate it.
@@ -12,7 +21,7 @@ use std::path::Path;
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{SemanticModel, SymbolProvider};
-use crate::syntax::SyntaxNode;
+use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 use super::diagnostic::{Diagnostic, Severity};
 
@@ -47,7 +56,29 @@ pub trait Rule: Send + Sync {
     fn default_enabled(&self) -> bool {
         true
     }
-    fn run(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic>;
+
+    /// The `SyntaxKind`s this rule subscribes to. During [`run_rules`]' single
+    /// shared traversal, [`Rule::check`] is invoked once for every element whose
+    /// kind appears here. The default (`&[]`) opts out of node dispatch entirely
+    /// — appropriate for rules that work off the whole file via
+    /// [`Rule::check_file`].
+    fn interests(&self) -> &'static [SyntaxKind] {
+        &[]
+    }
+
+    /// Per-element callback, invoked for each CST element (node *or* token) whose
+    /// kind is in [`Rule::interests`]. Node-shape rules unwrap `el.as_node()`;
+    /// token rules unwrap `el.as_token()`. Push findings onto `sink`.
+    fn check(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+        let _ = (el, ctx, sink);
+    }
+
+    /// Whole-file pass, run once after the shared traversal. For rules driven by
+    /// the semantic model, cross-file scope, or comment directives rather than
+    /// node shape. The default is a no-op.
+    fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+        let _ = (ctx, sink);
+    }
 }
 
 pub struct RuleContext<'a> {
@@ -127,9 +158,35 @@ pub fn run_rules(
         resolution,
     };
     let mut all = Vec::new();
-    for rule in rules {
-        all.extend(rule.run(&ctx));
+
+    // Build the node-dispatch table: kind discriminant -> indices of subscribed
+    // rules. `SyntaxKind` is a contiguous `#[repr(u16)]`, so a flat Vec indexed
+    // by `kind as usize` beats a hash map.
+    let mut by_kind: Vec<Vec<usize>> = vec![Vec::new(); SyntaxKind::COUNT];
+    let mut any_node_rules = false;
+    for (i, rule) in rules.iter().enumerate() {
+        for kind in rule.interests() {
+            by_kind[*kind as usize].push(i);
+            any_node_rules = true;
+        }
     }
+
+    // Single shared traversal feeding every node-shape rule. Visits tokens too
+    // (`descendants_with_tokens`) so token-level rules can subscribe to e.g.
+    // `IDENT` or `COMMENT`.
+    if any_node_rules {
+        for el in root.descendants_with_tokens() {
+            for &i in &by_kind[el.kind() as usize] {
+                rules[i].check(&el, &ctx, &mut all);
+            }
+        }
+    }
+
+    // Whole-file pass for model-/comment-driven rules.
+    for rule in rules {
+        rule.check_file(&ctx, &mut all);
+    }
+
     all.sort_by(|a, b| {
         (u32::from(a.range.start()), u32::from(a.range.end()), a.rule).cmp(&(
             u32::from(b.range.start()),

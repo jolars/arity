@@ -41,8 +41,7 @@ impl Rule for ShadowedBuiltin {
         Severity::Warning
     }
 
-    fn run(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
-        let mut out = Vec::new();
+    fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         for (binding_idx, binding) in ctx.model.bindings().iter().enumerate() {
             if !matches!(binding.kind, BindingKind::Local | BindingKind::Param) {
                 continue;
@@ -66,7 +65,7 @@ impl Rule for ShadowedBuiltin {
             if !triggered {
                 continue;
             }
-            out.push(Diagnostic {
+            sink.push(Diagnostic {
                 rule: "shadowed-builtin",
                 severity: Severity::Warning,
                 path: Default::default(),
@@ -84,6 +83,5 @@ impl Rule for ShadowedBuiltin {
                 fix: None,
             });
         }
-        out
     }
 }

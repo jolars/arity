@@ -85,6 +85,14 @@ pub enum SyntaxKind {
     WALRUS,
 }
 
+impl SyntaxKind {
+    /// Number of distinct kinds, sized to the last variant. Used to allocate
+    /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
+    /// rule dispatch). Stays correct as long as `WALRUS` remains the last
+    /// variant.
+    pub const COUNT: usize = SyntaxKind::WALRUS as usize + 1;
+}
+
 impl From<SyntaxKind> for rowan::SyntaxKind {
     fn from(kind: SyntaxKind) -> Self {
         Self(kind as u16)

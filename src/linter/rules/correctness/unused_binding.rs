@@ -23,34 +23,35 @@ impl Rule for UnusedBinding {
         Severity::Warning
     }
 
-    fn run(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
+    fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let src = ctx.root.text().to_string();
-        ctx.model
-            .unused_local_bindings()
-            // A top-level binding read by a sibling file (same package or
-            // source-closure) is used cross-file, so it isn't unused.
-            .filter(|id| {
-                let b = ctx.model.binding(*id);
-                let top_level = ctx.model.scope(b.scope).kind == ScopeKind::File;
-                !(top_level && ctx.project.is_some_and(|p| p.used_elsewhere(&b.name)))
-            })
-            .map(|id| {
-                let b = ctx.model.binding(id);
-                let fix = deletion_fix(ctx.root, &src, &b.name, b.def_range);
-                Diagnostic {
-                    rule: "unused-binding",
-                    severity: Severity::Warning,
-                    path: Default::default(),
-                    range: b.def_range,
-                    message: ViolationData::new(
-                        "unused-binding",
-                        format!("local binding `{}` is assigned but never read", b.name),
-                    )
-                    .with_suggestion("Remove the assignment, or prefix the name with `.` to mark it intentional."),
-                    fix,
-                }
-            })
-            .collect()
+        sink.extend(
+            ctx.model
+                .unused_local_bindings()
+                // A top-level binding read by a sibling file (same package or
+                // source-closure) is used cross-file, so it isn't unused.
+                .filter(|id| {
+                    let b = ctx.model.binding(*id);
+                    let top_level = ctx.model.scope(b.scope).kind == ScopeKind::File;
+                    !(top_level && ctx.project.is_some_and(|p| p.used_elsewhere(&b.name)))
+                })
+                .map(|id| {
+                    let b = ctx.model.binding(id);
+                    let fix = deletion_fix(ctx.root, &src, &b.name, b.def_range);
+                    Diagnostic {
+                        rule: "unused-binding",
+                        severity: Severity::Warning,
+                        path: Default::default(),
+                        range: b.def_range,
+                        message: ViolationData::new(
+                            "unused-binding",
+                            format!("local binding `{}` is assigned but never read", b.name),
+                        )
+                        .with_suggestion("Remove the assignment, or prefix the name with `.` to mark it intentional."),
+                        fix,
+                    }
+                }),
+        );
     }
 }
 

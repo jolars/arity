@@ -27,25 +27,25 @@ impl Rule for UndefinedSymbol {
         true
     }
 
-    fn run(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
+    fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         match ctx.resolution {
             // Cross-file path: the salsa `external_resolution` query already
             // applied the conservative gates and the project + package masking,
             // memoized and backdated across edits. We only re-apply the cheap,
             // always-fresh per-occurrence local-binding check and re-attach the
             // diagnostic span — the resolved set is range-free.
-            Some(resolution) => ctx
-                .model
-                .idents()
-                .iter()
-                .filter(|ident| ctx.model.resolve_local(ident).is_none())
-                .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
-                .map(|ident| undefined(&ident.name, ident.range))
-                .collect(),
+            Some(resolution) => sink.extend(
+                ctx.model
+                    .idents()
+                    .iter()
+                    .filter(|ident| ctx.model.resolve_local(ident).is_none())
+                    .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
+                    .map(|ident| undefined(&ident.name, ident.range)),
+            ),
             // Single-file fallback (no project / no manifest): resolve inline
             // against the provided `SymbolProvider`, preserving the historical
             // behavior for one-shot checks and the LSP per-document path.
-            None => self.run_standalone(ctx),
+            None => self.run_standalone(ctx, sink),
         }
     }
 }
@@ -54,19 +54,18 @@ impl UndefinedSymbol {
     /// Inline resolution used when no salsa-backed [`ExternalResolution`] is
     /// available (single-file paths). Mirrors the cross-file path's logic using
     /// the [`RuleContext::symbols`] provider directly.
-    fn run_standalone(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
-        let mut out = Vec::new();
+    fn run_standalone(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let loaded = ctx.model.loaded_packages();
         // Conservative gate: bail out entirely if any attached package's exports
         // are unknown, since such a package could define the unresolved names.
         if loaded.iter().any(|p| !ctx.symbols.package_indexed(&p.name)) {
-            return out;
+            return;
         }
         // Conservative gate: incomplete cross-file visibility (an unresolved
         // `source()`, or a wholesale `import(pkg)`) could define any of the
         // names below.
         if ctx.project.is_some_and(|p| p.resolution_incomplete) {
-            return out;
+            return;
         }
         for ident in ctx.model.idents() {
             // Skip if it resolves to a local binding.
@@ -85,9 +84,8 @@ impl UndefinedSymbol {
             ) {
                 continue;
             }
-            out.push(undefined(&ident.name, ident.range));
+            sink.push(undefined(&ident.name, ident.range));
         }
-        out
     }
 }
 
