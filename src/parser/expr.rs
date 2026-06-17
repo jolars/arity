@@ -598,7 +598,7 @@ fn expr_root_kind(expr: &ExprParse) -> Option<SyntaxKind> {
     })
 }
 
-fn ident_is_special_constant(text: &str) -> bool {
+pub(crate) fn ident_is_special_constant(text: &str) -> bool {
     matches!(
         text,
         "NA" | "NULL"

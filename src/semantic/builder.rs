@@ -89,6 +89,12 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
     if name.starts_with('.') && name.chars().all(|c| c == '.' || c.is_ascii_digit()) {
         return;
     }
+    // Reserved literal constants (`TRUE`, `NA`, `NULL`, `Inf`, …) lex as IDENT
+    // but are values, not symbol references — never reads. (`T`/`F` are *not*
+    // here: they are rebindable base bindings.)
+    if crate::parser::expr::ident_is_special_constant(name) {
+        return;
+    }
     ctx.model.idents.push(IdentRef {
         name: SmolStr::new(name),
         range: tok.text_range(),

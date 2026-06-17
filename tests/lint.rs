@@ -809,6 +809,15 @@ fn fixed_output(src: &str, rule: &str) -> String {
 }
 
 #[test]
+fn undefined_symbol_ignores_reserved_constants() {
+    // Reserved literal constants are not symbol references; `undefined-symbol`
+    // must never flag them.
+    let src = "print(c(TRUE, FALSE, NA, NULL, Inf, NaN, NA_integer_))\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"undefined-symbol"), "got: {rules:?}");
+}
+
+#[test]
 fn lint_flags_duplicated_arguments() {
     let src = "f(a = 1, a = 2)\n";
     let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();

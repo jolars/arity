@@ -332,6 +332,27 @@ mod tests {
     }
 
     #[test]
+    fn reserved_constants_are_not_reads() {
+        // `TRUE`/`FALSE`/`NA`/`NULL`/`Inf`/`NaN`/`NA_*` are reserved literals,
+        // not symbol references — they must not be recorded as reads (else
+        // `undefined-symbol` flags them). `T`/`F` are rebindable base bindings,
+        // so they remain reads.
+        let m = model_of("print(c(TRUE, FALSE, NA, NULL, Inf, NaN, NA_integer_, T))");
+        let names: Vec<&str> = m.idents.iter().map(|i| i.name.as_str()).collect();
+        for constant in ["TRUE", "FALSE", "NA", "NULL", "Inf", "NaN", "NA_integer_"] {
+            assert!(
+                !names.contains(&constant),
+                "{constant} should not be a read"
+            );
+        }
+        assert!(
+            names.contains(&"T"),
+            "T is a rebindable binding, still a read"
+        );
+        assert!(names.contains(&"print"));
+    }
+
+    #[test]
     fn names_in_scope_at_respects_function_scope() {
         // `a` (param of f) is visible inside f's body but not inside g; `b`
         // (param of g) is visible inside g but not f. Both functions and the
