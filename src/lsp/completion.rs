@@ -60,19 +60,20 @@ pub(crate) fn completion_via_db(
     let line_index = LineIndex::new(text);
     let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
     let index = snapshot.library_data().unwrap_or_default();
+    let remote = snapshot.remote_exports().unwrap_or_default();
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
         if snapshot.file_text(file) != text {
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(completions_from_node(&root, offset, &index))
+        Some(completions_from_node(&root, offset, &index, &remote))
     }));
     match cached {
         Ok(Some(resp)) => resp,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            completions_from_node(&root, offset, &index)
+            completions_from_node(&root, offset, &index, &remote)
         }
     }
 }
@@ -86,7 +87,7 @@ pub fn compute_completions(
 ) -> Option<CompletionResponse> {
     let root = parse(text).cst;
     let offset = TextSize::new(offset.min(text.len()) as u32);
-    completions_from_node(&root, offset, indexed)
+    completions_from_node(&root, offset, indexed, &RemoteExports::new())
 }
 
 /// Attach documentation + signature to a resolved completion item, using the
@@ -123,6 +124,7 @@ pub(crate) fn completions_from_node(
     root: &SyntaxNode,
     offset: TextSize,
     indexed: &IndexedProvider,
+    remote: &RemoteExports,
 ) -> Option<CompletionResponse> {
     match classify_context(root, offset) {
         CompletionContext::None => None,
@@ -131,12 +133,12 @@ pub(crate) fn completions_from_node(
             internal,
             prefix,
         } => Some(build_response(
-            member_candidates(indexed, &package, internal),
+            member_candidates(indexed, remote, &package, internal),
             &prefix,
             true,
         )),
         CompletionContext::Bare { prefix, offset } => Some(build_response(
-            bare_candidates(root, offset, indexed),
+            bare_candidates(root, offset, indexed, remote),
             &prefix,
             false,
         )),
@@ -238,9 +240,16 @@ fn bare_context(root: &SyntaxNode, offset: TextSize) -> CompletionContext {
     }
 }
 
-/// Exported (or, for `:::`, all) symbols of `package`, falling back to the
-/// bundled names-only list when the package isn't locally harvested.
-fn member_candidates(indexed: &IndexedProvider, package: &str, internal: bool) -> Vec<Candidate> {
+/// Exported (or, for `:::`, all) symbols of `package`. Falls back through the
+/// names-only tiers when the package isn't locally harvested: the remote sidecar
+/// first, then the baked-in bundled list. The names-only tiers carry only
+/// exports, so `:::` cannot surface internals there.
+fn member_candidates(
+    indexed: &IndexedProvider,
+    remote: &RemoteExports,
+    package: &str,
+    internal: bool,
+) -> Vec<Candidate> {
     if let Some(pkg) = indexed.package(package) {
         return pkg
             .symbols
@@ -257,8 +266,13 @@ fn member_candidates(indexed: &IndexedProvider, package: &str, internal: bool) -
             })
             .collect();
     }
-    match bundled_exports(package) {
+    let names = remote
+        .package_exports(package)
+        .map(|it| it.collect::<Vec<_>>())
+        .or_else(|| bundled_exports(package).map(|it| it.collect::<Vec<_>>()));
+    match names {
         Some(names) => names
+            .into_iter()
             .map(|n| Candidate {
                 label: n.to_string(),
                 kind: CompletionItemKind::FUNCTION,
@@ -279,6 +293,7 @@ fn bare_candidates(
     root: &SyntaxNode,
     offset: TextSize,
     indexed: &IndexedProvider,
+    remote: &RemoteExports,
 ) -> Vec<Candidate> {
     let model = SemanticModel::build(root);
     let mut out: Vec<Candidate> = Vec::new();
@@ -310,8 +325,12 @@ fn bare_candidates(
                         },
                     }),
             );
-        } else if let Some(names) = bundled_exports(&pkg.name) {
-            out.extend(names.map(|n| Candidate {
+        } else if let Some(names) = remote
+            .package_exports(&pkg.name)
+            .map(|it| it.collect::<Vec<_>>())
+            .or_else(|| bundled_exports(&pkg.name).map(|it| it.collect::<Vec<_>>()))
+        {
+            out.extend(names.into_iter().map(|n| Candidate {
                 label: n.to_string(),
                 kind: CompletionItemKind::FUNCTION,
                 sort_group: 1,
@@ -509,6 +528,41 @@ mod tests {
         let got =
             labels(compute_completions(src, at_end(src, "::"), &IndexedProvider::empty()).unwrap());
         assert!(got.contains(&"fread".to_string()), "{got:?}");
+    }
+
+    fn remote(pkg: &str, names: &[&str]) -> RemoteExports {
+        let mut r = RemoteExports::new();
+        r.insert_package(pkg, names.iter().map(|n| SmolStr::new(*n)));
+        r
+    }
+
+    fn labels_with_remote(src: &str, needle: &str, remote: &RemoteExports) -> Vec<String> {
+        let root = parse(src).cst;
+        let offset = TextSize::new(at_end(src, needle) as u32);
+        labels(completions_from_node(&root, offset, &IndexedProvider::empty(), remote).unwrap())
+    }
+
+    #[test]
+    fn member_uses_remote_for_uninstalled_unbundled_package() {
+        // `tinytable` is neither harvested nor bundled; the remote sidecar backs
+        // `pkg::` member completion.
+        let got = labels_with_remote(
+            "tinytable::\n",
+            "::",
+            &remote("tinytable", &["tt", "theme_tt"]),
+        );
+        assert!(got.contains(&"tt".to_string()), "{got:?}");
+        assert!(got.contains(&"theme_tt".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn bare_uses_remote_for_attached_uninstalled_package() {
+        let got = labels_with_remote(
+            "library(tinytable)\ntt\n",
+            "\ntt",
+            &remote("tinytable", &["tt"]),
+        );
+        assert!(got.contains(&"tt".to_string()), "{got:?}");
     }
 
     #[test]

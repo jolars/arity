@@ -97,6 +97,11 @@ pub struct IndexConfig {
     /// Harvest help (titles in this phase). When false, only names are stored.
     #[serde(default = "default_true")]
     pub help: bool,
+    /// Base URL of a downloadable CRAN symbol sidecar. When set, the LSP fetches
+    /// names-only export lists for referenced-but-uninstalled packages over the
+    /// network (cached on disk). `None` (the default) keeps arity fully offline.
+    #[serde(default)]
+    pub remote_url: Option<String>,
 }
 
 impl Default for IndexConfig {
@@ -106,6 +111,7 @@ impl Default for IndexConfig {
             cache_dir: None,
             auto_build: true,
             help: true,
+            remote_url: None,
         }
     }
 }
@@ -393,6 +399,23 @@ mod tests {
         assert_eq!(
             config.lint.select.as_deref(),
             Some(&["unused-binding".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn index_remote_url_defaults_to_none() {
+        let config = parse("[index]\n").expect("parse");
+        assert_eq!(config.index.remote_url, None);
+        assert_eq!(config.index, IndexConfig::default());
+    }
+
+    #[test]
+    fn parses_index_remote_url() {
+        let config =
+            parse("[index]\nremote-url = \"https://sidecar.example/cran\"\n").expect("parse");
+        assert_eq!(
+            config.index.remote_url.as_deref(),
+            Some("https://sidecar.example/cran")
         );
     }
 

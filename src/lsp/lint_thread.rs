@@ -35,6 +35,7 @@ pub(crate) fn spawn_lint_thread(
     read_spawner: Spawner,
 ) -> JoinHandle<()> {
     let (build_tx, build_rx) = crossbeam_channel::unbounded::<IndexedProvider>();
+    let (remote_tx, remote_rx) = crossbeam_channel::unbounded::<RemoteExports>();
     let (done_tx, done_rx) = crossbeam_channel::unbounded::<AnalyzeDone>();
     std::thread::Builder::new()
         .name("arity-lint".to_string())
@@ -47,15 +48,18 @@ pub(crate) fn spawn_lint_thread(
                 db: IncrementalDatabase::default(),
                 index_loaded: HashSet::new(),
                 index_attempts: HashSet::new(),
+                remote_loaded: HashSet::new(),
+                remote_attempts: HashSet::new(),
                 out_tx,
                 build_tx,
+                remote_tx,
                 done_tx,
                 inflight: None,
                 pending: HashMap::new(),
                 read_spawner,
                 index_pool: TaskPool::new("arity-index", 1),
             };
-            worker.run(&lint_rx, &read_rx, &build_rx, &done_rx);
+            worker.run(&lint_rx, &read_rx, &build_rx, &remote_rx, &done_rx);
         })
         .expect("spawn lint thread")
 }
@@ -117,10 +121,19 @@ pub(crate) struct LintWorker {
     /// Packages a background harvest has already been scheduled for this session
     /// — never retried, so a not-installed package doesn't loop.
     index_attempts: HashSet<SmolStr>,
+    /// Workspace anchors whose remote-sidecar disk cache has already been warmed
+    /// into the salsa [`LibraryIndex`]'s `remote` field.
+    remote_loaded: HashSet<PathBuf>,
+    /// Packages a remote-sidecar fetch has already been attempted for this session
+    /// — never retried, so a package absent from the sidecar doesn't loop.
+    remote_attempts: HashSet<SmolStr>,
     out_tx: Sender<Outbound>,
     /// A finished background harvest sends its freshly-loaded index here; the
     /// lint thread (sole writer) installs it into salsa at HIGH durability.
     build_tx: Sender<IndexedProvider>,
+    /// A finished sidecar fetch sends its freshly-fetched names-only batch here;
+    /// the lint thread (sole writer) merges and reinstalls it at HIGH durability.
+    remote_tx: Sender<RemoteExports>,
     /// Read-phase workers signal completion here so the lint thread can free the
     /// in-flight slot and dispatch the next pending lint.
     done_tx: Sender<AnalyzeDone>,
@@ -145,6 +158,7 @@ impl LintWorker {
         lint_rx: &Receiver<LintMsg>,
         read_rx: &Receiver<ReadJob>,
         build_rx: &Receiver<IndexedProvider>,
+        remote_rx: &Receiver<RemoteExports>,
         done_rx: &Receiver<AnalyzeDone>,
     ) {
         loop {
@@ -184,6 +198,19 @@ impl LintWorker {
                     // Sole writer installs the freshly-harvested index at HIGH
                     // durability, then re-lints every open document against it.
                     self.db.set_library_index(indexed);
+                    let _ = self.out_tx.send(Outbound::RelintAll);
+                }
+                recv(remote_rx) -> fetched => {
+                    let Ok(fetched) = fetched else { continue };
+                    // Merge the freshly-fetched names into the live sidecar and
+                    // reinstall it (HIGH durability), then re-lint every document.
+                    let mut merged = self
+                        .db
+                        .remote_exports()
+                        .map(|a| (*a).clone())
+                        .unwrap_or_default();
+                    merged.merge_from(fetched);
+                    self.db.set_remote_exports(merged);
                     let _ = self.out_tx.send(Outbound::RelintAll);
                 }
             }
@@ -292,6 +319,7 @@ impl LintWorker {
             .unwrap_or_else(|| PathBuf::from("."));
 
         self.ensure_index(&anchor, &req.index_config);
+        self.ensure_remote(&anchor, &req.index_config);
 
         // Write-phase: push the live buffer + sibling files into the persistent
         // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
@@ -327,6 +355,9 @@ impl LintWorker {
         if req.index_config.auto_build {
             self.maybe_build(&anchor, &req.index_config, &req.text);
         }
+        // Fetch names-only exports for referenced packages the offline tiers don't
+        // cover, when a sidecar URL is configured. Background, like `maybe_build`.
+        self.maybe_fetch_remote(&anchor, &req.index_config, &req.text);
 
         // Read-phase on the read pool, holding a db clone. A superseding edit (or any
         // write) trips `salsa::Cancelled`, caught here so a cancelled analyze
@@ -436,6 +467,84 @@ impl LintWorker {
             }
         });
     }
+
+    /// Warm the remote sidecar's disk cache into the salsa [`LibraryIndex`]'s
+    /// `remote` field the first time we see a workspace, when a sidecar URL is
+    /// configured. Idempotent per anchor, network-free (disk only). Runs on the
+    /// lint thread (sole writer); HIGH durability means later keystrokes don't
+    /// revalidate resolution.
+    fn ensure_remote(&mut self, anchor: &Path, cfg: &IndexConfig) {
+        let Some(url) = cfg.remote_url.as_deref() else {
+            return;
+        };
+        if !self.remote_loaded.insert(anchor.to_path_buf()) {
+            return;
+        }
+        let Ok(root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
+            return;
+        };
+        let cached = Sidecar::http(url, &root).load_cached();
+        if !cached.is_empty() {
+            self.db.set_remote_exports(cached);
+        }
+    }
+
+    /// Spawn a background sidecar fetch for the document's referenced packages
+    /// that the offline tiers (base, harvested, bundled) don't already cover. On
+    /// success the fetched names-only batch is sent back on `remote_tx` for the
+    /// lint thread to merge and install. No-op unless a sidecar URL is configured.
+    fn maybe_fetch_remote(&mut self, anchor: &Path, cfg: &IndexConfig, source: &str) {
+        let Some(url) = cfg.remote_url.as_deref() else {
+            return;
+        };
+        let empty_index = IndexedProvider::empty();
+        let index = self.db.library_data();
+        let index = index.as_deref().unwrap_or(&empty_index);
+        let empty_remote = RemoteExports::new();
+        let remote = self.db.remote_exports();
+        let remote = remote.as_deref().unwrap_or(&empty_remote);
+        let to_fetch = packages_to_fetch(&mut self.remote_attempts, index, remote, source);
+        if to_fetch.is_empty() {
+            return;
+        }
+        let Ok(cache_root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
+            return;
+        };
+        let url = url.to_string();
+        let _ = anchor;
+        let remote_tx = self.remote_tx.clone();
+        self.index_pool.spawn(move || {
+            let mut sidecar = Sidecar::http(url, &cache_root);
+            let mut fetched = RemoteExports::new();
+            let mut any = false;
+            for pkg in to_fetch {
+                if let Some(names) = sidecar.package_names(&pkg) {
+                    fetched.insert_package(pkg, names);
+                    any = true;
+                }
+            }
+            if any {
+                let _ = remote_tx.send(fetched);
+            }
+        });
+    }
+}
+
+/// Packages to fetch from the sidecar for `source`: everything it references
+/// minus what the offline tiers already cover (base/default packages, locally
+/// harvested packages, and the bundled CRAN list — all captured by
+/// [`package_indexed`]) and minus what we've already attempted this session.
+/// Marks the returned packages as attempted so they aren't fetched twice.
+pub(crate) fn packages_to_fetch(
+    attempts: &mut HashSet<SmolStr>,
+    indexed: &IndexedProvider,
+    remote: &RemoteExports,
+    source: &str,
+) -> Vec<SmolStr> {
+    referenced_in_source(source)
+        .into_iter()
+        .filter(|pkg| !package_indexed(indexed, remote, pkg) && attempts.insert(pkg.clone()))
+        .collect()
 }
 
 /// Packages to harvest for `source`: the always-attached default packages plus
@@ -569,6 +678,31 @@ mod tests {
         assert!(first.contains(&SmolStr::new("notarealpkg")));
         // A second pass returns nothing — every package was already attempted.
         let second = packages_to_build(&mut attempts, &indexed, src);
+        assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
+    }
+
+    #[test]
+    fn packages_to_fetch_skips_offline_covered_and_marks_attempts() {
+        let mut attempts = HashSet::new();
+        let indexed = indexed_dplyr();
+        let mut remote = RemoteExports::new();
+        remote.insert_package("alreadyremote", [SmolStr::new("x")]);
+        // dplyr: locally harvested. data.table: bundled. stats: a default package.
+        // alreadyremote: already in the sidecar. notonremote: genuinely uncovered.
+        let src = "library(dplyr)\nlibrary(data.table)\nlibrary(stats)\nlibrary(alreadyremote)\nlibrary(notonremote)\n";
+        let first = packages_to_fetch(&mut attempts, &indexed, &remote, src);
+        assert!(
+            first.contains(&SmolStr::new("notonremote")),
+            "uncovered package fetched, got {first:?}"
+        );
+        for skip in ["dplyr", "data.table", "stats", "alreadyremote"] {
+            assert!(
+                !first.contains(&SmolStr::new(skip)),
+                "{skip} is offline-covered and must not be fetched, got {first:?}"
+            );
+        }
+        // Second pass: nothing left to attempt.
+        let second = packages_to_fetch(&mut attempts, &indexed, &remote, src);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }
 }

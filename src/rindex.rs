@@ -23,4 +23,5 @@ pub mod libpaths;
 pub mod provider;
 pub mod rd;
 pub mod rds;
+pub mod remote;
 pub mod schema;

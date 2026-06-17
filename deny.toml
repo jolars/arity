@@ -96,6 +96,15 @@ allow = [
   "Zlib",
   "MIT-0",
   "Unicode-3.0",
+  # Permissive licenses introduced by the `ureq`/`rustls` TLS stack that backs
+  # the downloadable CRAN symbol sidecar (`src/rindex/remote.rs`). All are
+  # OSI-approved, FSF Free/Libre, and functionally MIT-equivalent:
+  #   ISC                 — ring, rustls-webpki, untrusted
+  #   BSD-3-Clause        — subtle
+  #   CDLA-Permissive-2.0 — webpki-roots (the Mozilla CA bundle, a data license)
+  "ISC",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the

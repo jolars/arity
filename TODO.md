@@ -386,16 +386,29 @@ landed; the second is still open but only matters for cross-edit-stable handles:
     (`workspace_project_is_pure_namespace_not_reread_on_keystroke`). Still
     pairs with the `vfs`/`SourceRoot` follow-up under *Thin `FileId`*.
 
-- [ ] Full downloadable CRAN sidecar (escalation of the bundled lists above).
-      Shape: per-package export lists keyed by package version, covering the
-      long tail the bundled set omits. Carries an out-of-band cost (a
-      CRAN-processing pipeline + hosting + refresh cadence) the bundled lists
-      avoid; add it as an additive `SymbolProvider` layer when long-tail/CI
-      completeness is worth that. Would also let DESCRIPTION `Imports`/`Depends`
-      feed name resolution (the `import(pkg)` case currently only marks
-      resolution incomplete, in `src/project/scope.rs`). Names-only `pkg::name`
-      resolution for bundled-but-not-installed packages is a smaller related
-      follow-up.
+- [x] Downloadable CRAN sidecar — names-only client (escalation of the bundled
+      lists above). A dynamic, disk-cached, version-keyed `RemoteExports` tier
+      (`src/rindex/remote.rs`) sits between the harvested index and the bundled
+      lists in `resolve_origin`, carried in the salsa `LibraryIndex`'s `remote`
+      field at HIGH durability (`src/incremental.rs`). The LSP lint thread fetches
+      per-package export lists on demand over a CDN (`Sidecar` + `ureq`, gzip via
+      `flate2`), opt-in via `[index] remote-url` (`src/config.rs`, default off so
+      arity stays offline). Lifts the whole-file `undefined-symbol` suppression
+      for uninstalled, unbundled packages and feeds `pkg::`/bare completion.
+      Remaining escalations:
+  - [ ] Server pipeline + hosting (separate repo): install all of CRAN via PPM
+        binaries, dump per-package names keyed by current version + a
+        `pkg → version` manifest, publish gzipped to a CDN (Pages/Releases),
+        refresh weekly and additively. arity ships only the client + default URL.
+  - [ ] Full-metadata tier (formals + Rd docs) so hover/signature help work for
+        uninstalled packages — a richer payload reusing the same fetch path.
+  - [ ] Bulk/CI prefetch path (download-once snapshot, no per-file network).
+  - [ ] Pin-aware versions: resolve the project's actual version from
+        renv.lock/DESCRIPTION (needs CRAN Archive coverage); the URL/disk schema
+        is already version-keyed for this.
+  - [ ] Feed DESCRIPTION `Imports`/`Depends` and `import(pkg)` into the referenced
+        and resolved sets so the `resolution_incomplete` poison
+        (`src/project/scope.rs`) clears once the sidecar can enumerate exports.
 
 - [ ] Follow-up: prune packages that vanish from CRAN out of the bundled set.
   The refresh is now **additive** --- `scripts/rank_cran_downloads.sh` unions

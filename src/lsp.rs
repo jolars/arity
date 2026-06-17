@@ -109,8 +109,9 @@ use crate::rindex::discover::{referenced_in_source, with_default_packages};
 use crate::rindex::libpaths::LibrarySearch;
 use crate::rindex::provider::{
     CompositeProvider, IndexedProvider, base_names, base_package_of, bundled_exports,
-    resolve_origin,
+    package_indexed, resolve_origin,
 };
+use crate::rindex::remote::{RemoteExports, Sidecar};
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
 use crate::semantic::{BindingId, BindingKind, PackageOrigin, SemanticModel};
 use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};

@@ -9,6 +9,7 @@ use arity::project::{
     reverse_source_edges, visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
+use arity::rindex::remote::RemoteExports;
 use arity::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
 use arity::syntax::{NodePtr, SyntaxKind};
 
@@ -1051,6 +1052,97 @@ fn unindexed_attached_package_suppresses_resolution() {
         res.unresolved.is_empty(),
         "an unindexed attached package suppresses resolution: {:?}",
         res.unresolved
+    );
+}
+
+fn remote_exports(pkgs: &[(&str, &[&str])]) -> RemoteExports {
+    let mut r = RemoteExports::new();
+    for (pkg, names) in pkgs {
+        r.insert_package(*pkg, names.iter().map(|n| smol_str::SmolStr::new(*n)));
+    }
+    r
+}
+
+#[test]
+fn remote_sidecar_resolves_uninstalled_package() {
+    // The downloadable sidecar lifts the conservative whole-file suppression of
+    // `unindexed_attached_package_suppresses_resolution`: an attached package the
+    // sidecar knows is fully resolvable, so a real export resolves while a genuine
+    // non-export is reported undefined.
+    let mut db = IncrementalDatabase::default();
+    let path = "/proj/a.R";
+    let file = db.upsert_file(
+        Path::new(path),
+        "library(tinytable)\nfoo <- function() {\n  tt()\n  bogus()\n}\n".to_string(),
+    );
+
+    // Without the sidecar, tinytable is neither indexed nor bundled: suppressed.
+    let manifest = db.set_library_index(IndexedProvider::empty());
+    {
+        let project = project_one(&db, file, path);
+        let res = external_resolution(&db, manifest, project, file);
+        assert!(
+            res.unresolved.is_empty(),
+            "unindexed package suppresses the file: {:?}",
+            res.unresolved
+        );
+    }
+
+    // Install the sidecar: tinytable exports `tt` (but not `bogus`).
+    let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
+    let project = project_one(&db, file, path);
+    let res = external_resolution(&db, manifest, project, file);
+    assert!(
+        !res.unresolved.contains("tt"),
+        "tt resolves via the sidecar: {:?}",
+        res.unresolved
+    );
+    assert!(
+        res.unresolved.contains("bogus"),
+        "bogus is a genuine non-export: {:?}",
+        res.unresolved
+    );
+}
+
+#[test]
+fn body_edit_does_not_rerun_resolution_with_remote_installed() {
+    // The sidecar lives in the `remote` field of the HIGH-durability library
+    // index, so — exactly like the harvested `data` field — a keystroke (a LOW
+    // body edit) skips the resolution subgraph even when the sidecar is in play.
+    let mut db = IncrementalDatabase::default();
+    let path = "/proj/a.R";
+    let file = db.upsert_file(
+        Path::new(path),
+        "library(tinytable)\nfoo <- function() {\n  tt(1)\n}\n".to_string(),
+    );
+    db.set_library_index(IndexedProvider::empty());
+    let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
+    {
+        let project = project_one(&db, file, path);
+        let res = external_resolution(&db, manifest, project, file);
+        assert!(
+            !res.unresolved.contains("tt"),
+            "tt resolves before the edit: {:?}",
+            res.unresolved
+        );
+    }
+
+    db.clear_query_log();
+
+    // Body-only edit: free reads ({tt}) and loaded packages ({tinytable}) unchanged.
+    db.set_file_text(
+        file,
+        "library(tinytable)\nfoo <- function() {\n  tt(1)\n  2\n}\n",
+    );
+    let project = project_one(&db, file, path);
+    let _ = external_resolution(&db, manifest, project, file);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
+    assert_eq!(
+        counts.get(&QueryKind::ExternalResolution),
+        None,
+        "the remote sidecar is HIGH-durability; a body edit must not re-run resolution"
     );
 }
 

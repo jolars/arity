@@ -15,6 +15,7 @@ use std::sync::LazyLock;
 use smol_str::SmolStr;
 
 use crate::rindex::cache::Cache;
+use crate::rindex::remote::RemoteExports;
 use crate::rindex::schema::{PackageIndex, SymbolEntry};
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
@@ -27,17 +28,20 @@ static BASE_R: LazyLock<StaticBaseR> = LazyLock::new(StaticBaseR::new);
 /// The bundled top-N CRAN export lists. Also a compile-time constant, shared.
 static BUNDLED: LazyLock<BundledPackages> = LazyLock::new(BundledPackages::new);
 
-/// Resolve a bare `name` against R's default packages, the bundled CRAN lists,
-/// and the harvested `indexed` layer, honoring search-path masking: default
-/// packages attach first, then `loaded` packages in source order, and the last
-/// attacher masks. The version-exact installed index wins over the bundled list
-/// for a given package.
+/// Resolve a bare `name` against R's default packages, the harvested `indexed`
+/// layer, the network `remote` sidecar, and the bundled CRAN lists, honoring
+/// search-path masking: default packages attach first, then `loaded` packages in
+/// source order, and the last attacher masks. Per package the precedence is
+/// version-exact installed index → remote sidecar (names-only, all CRAN) →
+/// bundled list (names-only, baked-in top-N).
 ///
 /// This is the single masking implementation; both [`CompositeProvider`] and the
 /// salsa `external_resolution` query call it. The static layers are read from
-/// the shared [`BASE_R`]/[`BUNDLED`] singletons; only `indexed` varies.
+/// the shared [`BASE_R`]/[`BUNDLED`] singletons; `indexed` and `remote` vary at
+/// runtime.
 pub fn resolve_origin(
     indexed: &IndexedProvider,
+    remote: &RemoteExports,
     name: &str,
     loaded: &[LoadedPackage],
 ) -> PackageOrigin {
@@ -48,11 +52,13 @@ pub fn resolve_origin(
         PackageOrigin::Unknown => Vec::new(),
     };
     // Then `library()`-attached packages in source order; the last attacher
-    // masks. Prefer the version-exact installed index when present, otherwise
-    // fall back to the bundled CRAN export list.
+    // masks. Prefer the version-exact installed index, then the remote sidecar,
+    // and finally the baked-in bundled CRAN export list.
     for pkg in loaded {
         let exports_it = if indexed.has_package(&pkg.name) {
             indexed.exports(&pkg.name, name)
+        } else if remote.has_package(&pkg.name) {
+            remote.exports(&pkg.name, name)
         } else {
             BUNDLED.exports(&pkg.name, name)
         };
@@ -68,10 +74,14 @@ pub fn resolve_origin(
 }
 
 /// True if `pkg`'s exports are fully known — a default package, a harvested
-/// package, or a bundled CRAN package — so an unresolved name attributed to it
-/// is genuinely undefined rather than merely un-indexed.
-pub fn package_indexed(indexed: &IndexedProvider, pkg: &str) -> bool {
-    BASE_R.package_indexed(pkg) || indexed.has_package(pkg) || BUNDLED.has_package(pkg)
+/// package, a remote-sidecar package, or a bundled CRAN package — so an
+/// unresolved name attributed to it is genuinely undefined rather than merely
+/// un-indexed.
+pub fn package_indexed(indexed: &IndexedProvider, remote: &RemoteExports, pkg: &str) -> bool {
+    BASE_R.package_indexed(pkg)
+        || indexed.has_package(pkg)
+        || remote.has_package(pkg)
+        || BUNDLED.has_package(pkg)
 }
 
 /// True if `name` is exported by one of R's default packages.
@@ -175,6 +185,7 @@ impl IndexedProvider {
 #[derive(Debug)]
 pub struct CompositeProvider {
     indexed: IndexedProvider,
+    remote: RemoteExports,
 }
 
 impl CompositeProvider {
@@ -182,11 +193,21 @@ impl CompositeProvider {
     pub fn base_only() -> Self {
         CompositeProvider {
             indexed: IndexedProvider::empty(),
+            remote: RemoteExports::new(),
         }
     }
 
     pub fn with_index(indexed: IndexedProvider) -> Self {
-        CompositeProvider { indexed }
+        CompositeProvider {
+            indexed,
+            remote: RemoteExports::new(),
+        }
+    }
+
+    /// Attach a remote-sidecar tier (builder style).
+    pub fn with_remote(mut self, remote: RemoteExports) -> Self {
+        self.remote = remote;
+        self
     }
 
     /// The indexed layer, for callers that need the rich data (e.g. the LSP).
@@ -197,7 +218,7 @@ impl CompositeProvider {
 
 impl SymbolProvider for CompositeProvider {
     fn origin(&self, name: &str, loaded: &[LoadedPackage]) -> PackageOrigin {
-        resolve_origin(&self.indexed, name, loaded)
+        resolve_origin(&self.indexed, &self.remote, name, loaded)
     }
 
     fn is_base(&self, name: &str) -> bool {
@@ -205,7 +226,7 @@ impl SymbolProvider for CompositeProvider {
     }
 
     fn package_indexed(&self, pkg: &str) -> bool {
-        package_indexed(&self.indexed, pkg)
+        package_indexed(&self.indexed, &self.remote, pkg)
     }
 }
 
@@ -325,6 +346,66 @@ mod tests {
         )]));
         assert_eq!(
             p.origin("custom_installed_sym", &[loaded("data.table")]),
+            PackageOrigin::Resolved(SmolStr::new("data.table"))
+        );
+        assert_eq!(
+            p.origin("fread", &[loaded("data.table")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    fn remote(pkgs: &[(&str, &[&str])]) -> RemoteExports {
+        let mut r = RemoteExports::new();
+        for (pkg, names) in pkgs {
+            r.insert_package(*pkg, names.iter().map(|n| SmolStr::new(*n)));
+        }
+        r
+    }
+
+    #[test]
+    fn remote_resolves_uninstalled_unbundled_package() {
+        // `tinytable` is neither installed nor in the bundled top-N; the remote
+        // sidecar supplies its names so a real export resolves and `package_indexed`
+        // is true (so `undefined-symbol` fires on a genuine non-export).
+        let p = CompositeProvider::base_only().with_remote(remote(&[("tinytable", &["tt"])]));
+        assert!(p.package_indexed("tinytable"));
+        assert_eq!(
+            p.origin("tt", &[loaded("tinytable")]),
+            PackageOrigin::Resolved(SmolStr::new("tinytable"))
+        );
+        assert_eq!(
+            p.origin("not_a_real_export", &[loaded("tinytable")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    #[test]
+    fn installed_index_wins_over_remote() {
+        // A version-exact local index masks the names-only remote tier for the
+        // same package: the installed export resolves, a remote-only name does not.
+        let p = CompositeProvider::with_index(IndexedProvider::from_indices([pkg(
+            "tinytable",
+            &["installed_sym"],
+        )]))
+        .with_remote(remote(&[("tinytable", &["remote_only_sym"])]));
+        assert_eq!(
+            p.origin("installed_sym", &[loaded("tinytable")]),
+            PackageOrigin::Resolved(SmolStr::new("tinytable"))
+        );
+        assert_eq!(
+            p.origin("remote_only_sym", &[loaded("tinytable")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    #[test]
+    fn remote_wins_over_bundled() {
+        // The remote tier sits above the baked-in bundled list: for a bundled
+        // package, the remote names take precedence (fresher, version-aware).
+        // `fread` is a real bundled `data.table` export; the remote omits it.
+        let p = CompositeProvider::base_only().with_remote(remote(&[("data.table", &["new_sym"])]));
+        assert_eq!(
+            p.origin("new_sym", &[loaded("data.table")]),
             PackageOrigin::Resolved(SmolStr::new("data.table"))
         );
         assert_eq!(

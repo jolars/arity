@@ -23,6 +23,7 @@ use crate::project::{
     relative_path, reverse_source_edges, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
+use crate::rindex::remote::RemoteExports;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
 
@@ -105,21 +106,27 @@ impl FileSourceMap {
     }
 }
 
-/// The harvested package symbol index, modeled as a salsa **singleton** input at
-/// `Durability::HIGH`. Only the harvested layer ([`IndexedProvider`]) varies at
-/// runtime — R's default-package lists and the bundled CRAN exports are
-/// compile-time constants and stay out of salsa. Because the value is set at
-/// HIGH durability, a keystroke (a LOW write to a [`SourceFile`]) skips
-/// revalidating any query whose only changing dependency is this index: salsa's
-/// version vector compares the HIGH revision in one integer compare and finds it
-/// unmoved. The payload is held behind an `Arc` so a swap is a cheap pointer
-/// write; input fields are never compared for equality (salsa inputs do not
-/// backdate), so the non-`Update` `HashMap`/`SmolStr` inside `IndexedProvider`
-/// is fine here.
+/// The external package symbol knowledge, modeled as a salsa **singleton** input
+/// at `Durability::HIGH`. Two layers vary at runtime — the locally harvested
+/// index ([`IndexedProvider`], `data`) and the downloadable names-only CRAN
+/// sidecar ([`RemoteExports`], `remote`); R's default-package lists and the
+/// bundled CRAN exports are compile-time constants and stay out of salsa. Salsa
+/// tracks each input field independently, so the two layers invalidate
+/// separately even though they share one input. Because both are set at HIGH
+/// durability, a keystroke (a LOW write to a [`SourceFile`]) skips revalidating
+/// any query whose only changing dependency is this index: salsa's version
+/// vector compares the HIGH revision in one integer compare and finds it unmoved.
+/// Each payload is held behind an `Arc` so a swap is a cheap pointer write; input
+/// fields are never compared for equality (salsa inputs do not backdate), so the
+/// non-`Update` `HashMap`/`SmolStr` inside the payloads is fine here.
 #[salsa::input(singleton)]
 pub struct LibraryIndex {
     #[returns(ref)]
     pub data: Arc<IndexedProvider>,
+    /// The downloadable names-only CRAN sidecar, populated lazily in the
+    /// write-phase (empty when the feature is disabled or nothing fetched yet).
+    #[returns(ref)]
+    pub remote: Arc<RemoteExports>,
 }
 
 /// The explicit workspace file-set, modeled as a salsa **singleton** input at
@@ -485,31 +492,55 @@ impl IncrementalDatabase {
         file.set_text(self).to(text.into());
     }
 
-    /// Install (or replace) the harvested package index as the
-    /// [`LibraryIndex`] singleton, at `Durability::HIGH`. The sole writer (CLI
-    /// setup, the LSP lint thread) calls this; never a read snapshot. Creating
-    /// the singleton lands at default durability, so we immediately re-set the
-    /// field at HIGH — the first edit after creation then also skips the library
-    /// subgraph. Returns the singleton input handle.
-    pub fn set_library_index(&mut self, indexed: IndexedProvider) -> LibraryIndex {
-        let data = Arc::new(indexed);
+    /// Get the [`LibraryIndex`] singleton, creating an empty one if absent. Both
+    /// fields are set at `Durability::HIGH` on creation so the first edit
+    /// afterwards skips revalidating either subgraph.
+    fn library_index_or_empty(&mut self) -> LibraryIndex {
         match LibraryIndex::try_get(self) {
-            Some(index) => {
-                index
-                    .set_data(self)
-                    .with_durability(Durability::HIGH)
-                    .to(data);
-                index
-            }
+            Some(index) => index,
             None => {
-                let index = LibraryIndex::new(self, Arc::clone(&data));
+                let index = LibraryIndex::new(
+                    self,
+                    Arc::new(IndexedProvider::empty()),
+                    Arc::new(RemoteExports::new()),
+                );
                 index
                     .set_data(self)
                     .with_durability(Durability::HIGH)
-                    .to(data);
+                    .to(Arc::new(IndexedProvider::empty()));
+                index
+                    .set_remote(self)
+                    .with_durability(Durability::HIGH)
+                    .to(Arc::new(RemoteExports::new()));
                 index
             }
         }
+    }
+
+    /// Install (or replace) the harvested package index in the [`LibraryIndex`]
+    /// singleton's `data` field, at `Durability::HIGH`. The sole writer (CLI
+    /// setup, the LSP lint thread) calls this; never a read snapshot. Leaves the
+    /// `remote` sidecar field untouched. Returns the singleton input handle.
+    pub fn set_library_index(&mut self, indexed: IndexedProvider) -> LibraryIndex {
+        let index = self.library_index_or_empty();
+        index
+            .set_data(self)
+            .with_durability(Durability::HIGH)
+            .to(Arc::new(indexed));
+        index
+    }
+
+    /// Install (or replace) the downloadable names-only CRAN sidecar in the
+    /// [`LibraryIndex`] singleton's `remote` field, at `Durability::HIGH`. Leaves
+    /// the harvested `data` field untouched. The sole writer (the LSP lint
+    /// thread) calls this; never a read snapshot.
+    pub fn set_remote_exports(&mut self, remote: RemoteExports) -> LibraryIndex {
+        let index = self.library_index_or_empty();
+        index
+            .set_remote(self)
+            .with_durability(Durability::HIGH)
+            .to(Arc::new(remote));
+        index
     }
 
     /// The [`LibraryIndex`] singleton, if one has been installed. Read-only.
@@ -614,6 +645,12 @@ impl IncrementalDatabase {
     /// The harvested package index payload, if installed. A cheap `Arc` clone.
     pub fn library_data(&self) -> Option<Arc<IndexedProvider>> {
         LibraryIndex::try_get(self).map(|index| index.data(self).clone())
+    }
+
+    /// The downloadable names-only CRAN sidecar payload, if installed. A cheap
+    /// `Arc` clone (empty when nothing has been fetched).
+    pub fn remote_exports(&self) -> Option<Arc<RemoteExports>> {
+        LibraryIndex::try_get(self).map(|index| index.remote(self).clone())
     }
 
     /// Insert or update the input for `path`, reusing the existing `SourceFile`
@@ -1150,6 +1187,15 @@ impl Analysis {
         self.0
             .library_index()
             .map(|index| index.data(&self.0).clone())
+    }
+
+    /// The downloadable names-only CRAN sidecar payload, if installed. Completion
+    /// reads it from this snapshot to offer candidates for uninstalled packages,
+    /// so it sees exactly the sidecar the lint thread last set.
+    pub fn remote_exports(&self) -> Option<Arc<RemoteExports>> {
+        self.0
+            .library_index()
+            .map(|index| index.remote(&self.0).clone())
     }
 
     /// Borrow the underlying db as the salsa query trait, for read-phase free

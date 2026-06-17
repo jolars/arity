@@ -523,11 +523,15 @@ pub fn external_resolution<'db>(
     });
 
     let index: &crate::rindex::provider::IndexedProvider = manifest.data(db);
+    let remote: &crate::rindex::remote::RemoteExports = manifest.remote(db);
     let loaded = loaded_names(db, file);
 
     // Gate: an attached package whose exports we don't fully know could define
     // any of the unresolved names — suppress the whole file.
-    if loaded.iter().any(|pkg| !package_indexed(index, pkg)) {
+    if loaded
+        .iter()
+        .any(|pkg| !package_indexed(index, remote, pkg))
+    {
         return ExternalResolution::default();
     }
 
@@ -554,7 +558,7 @@ pub fn external_resolution<'db>(
         .filter(|name| !visibility.visible.contains(name.as_str()))
         .filter(|name| {
             matches!(
-                resolve_origin(index, name, &loaded_pkgs),
+                resolve_origin(index, remote, name, &loaded_pkgs),
                 PackageOrigin::Unknown
             )
         })
