@@ -138,6 +138,19 @@ pub(crate) fn rename_workspace(a_src: &str, b_src: &str) -> Analysis {
     db.snapshot()
 }
 
+/// A three-file flat workspace (`a.R`, `b.R`, `c.R`) seeded as members. Like
+/// [`rename_workspace`] but with a third file, for scenarios where one member
+/// carries a `source()` edge (often dynamic) that is unrelated to the renamed
+/// name.
+pub(crate) fn rename_workspace3(a_src: &str, b_src: &str, c_src: &str) -> Analysis {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(&ws_path("a.R"), a_src.to_string());
+    let b = db.upsert_file(&ws_path("b.R"), b_src.to_string());
+    let c = db.upsert_file(&ws_path("c.R"), c_src.to_string());
+    db.set_workspace_members(vec![a, b, c], vec![ws_root()]);
+    db.snapshot()
+}
+
 /// A real on-disk R package (`DESCRIPTION` + `R/`) with two member files,
 /// seeded and snapshotted. Package siblings share one flat namespace, which
 /// the scope layer derives from the `package_root` disk walk — so this can't

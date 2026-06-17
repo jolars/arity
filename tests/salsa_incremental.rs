@@ -711,7 +711,7 @@ fn cross_file_binding_scopes_to_a_source_connected_reader() {
     assert_eq!(binding.cohort, vec![PathBuf::from("/s/a.R")]);
     assert_eq!(binding.readers, vec![PathBuf::from("/s/b.R")]);
     assert!(!binding.conflict);
-    assert!(!binding.project_has_dynamic_source);
+    assert!(!binding.dynamic_source_risk);
 }
 
 #[test]

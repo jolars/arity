@@ -806,9 +806,13 @@ pub struct CrossFileBinding {
     /// a read that isn't this binding, and we can't selectively skip it without
     /// per-read spans, so a sound rename refuses. References still over-reports.
     pub order_ambiguous: bool,
-    /// Some member has an unresolvable dynamic `source()`, so a hidden reader
-    /// could exist. A sound rename refuses project-wide to avoid a missed read.
-    pub project_has_dynamic_source: bool,
+    /// A dynamic `source()` whose reachable scope includes a free-reader of the
+    /// name. The dynamic edge could load `def_file` (or a competing def) at
+    /// runtime, so that reader's read of the name might bind to — or be diverted
+    /// from — this definition, a site we cannot rewrite or skip soundly. Scoped
+    /// to *this name*: a dynamic source no file reading the name can reach is
+    /// irrelevant and does not block the rename. A sound rename refuses.
+    pub dynamic_source_risk: bool,
 }
 
 pub struct Analysis(IncrementalDatabase);
@@ -1025,9 +1029,23 @@ impl Analysis {
                     ReadBinding::Unresolved | ReadBinding::OrderUnknown => true,
                 });
 
-        let project_has_dynamic_source = !reverse_source_edges(&self.0, project)
-            .dynamic_sources
-            .is_empty();
+        // A dynamic `source()` in file `d` injects a hidden `d -> ?` edge. The
+        // files whose scope it could silently change are `d` plus everyone who
+        // already sees `d` (they transitively gain `d`'s unknown new visibility):
+        // `d`'s blast radius `{d} ∪ seen_by(d)`. It only threatens *this* rename
+        // if some free-reader of the name sits in that radius — then its read
+        // could bind to (or be diverted from) the renamed def at runtime. With no
+        // name-reader in reach there is nothing to miss or misrewrite, so a
+        // dynamic source elsewhere is irrelevant and must not block the rename.
+        let rev = reverse_source_edges(&self.0, project);
+        let dynamic_source_risk = !rev.dynamic_sources.is_empty()
+            && reads.by_name.get(name).is_some_and(|name_readers| {
+                name_readers.iter().any(|r| {
+                    rev.dynamic_sources
+                        .iter()
+                        .any(|d| r == d || graph.seen_by(d).contains(r.as_path()))
+                })
+            });
 
         CrossFileBinding {
             cohort,
@@ -1035,7 +1053,7 @@ impl Analysis {
             conflict,
             cohort_incomplete,
             order_ambiguous,
-            project_has_dynamic_source,
+            dynamic_source_risk,
         }
     }
 

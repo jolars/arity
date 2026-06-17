@@ -184,9 +184,9 @@ pub(crate) fn references_via_db(
 /// Rename is *sound in both directions* (never rewrite an unrelated binding,
 /// never miss a read), so it **refuses** (`None`) when it cannot prove that:
 /// an *incomplete* multi-def package cohort (a hidden alias/read could live in an
-/// unanalyzed member), any dynamic `source()` in the project (a hidden reader
-/// could be missed), or a bare read that resolves to zero or more than one
-/// visible definition. A *complete* multi-def package cohort renames all aliases
+/// unanalyzed member), a dynamic `source()` whose reachable scope includes a
+/// reader of the renamed name (a hidden reader could be missed), or a bare read
+/// that resolves to zero or more than one visible definition. A *complete* multi-def package cohort renames all aliases
 /// (one flat namespace). Namespaced (`pkg::name`) names and non-syntactic
 /// `new_name`s are declined. Snapshot reads are wrapped in
 /// [`salsa::Cancelled::catch`].
@@ -289,7 +289,7 @@ pub(crate) fn cross_file_rename_edits(
         snapshot.cross_file_binding(def_file, name)
     }))
     .ok()?;
-    if binding.cohort_incomplete || binding.order_ambiguous || binding.project_has_dynamic_source {
+    if binding.cohort_incomplete || binding.order_ambiguous || binding.dynamic_source_risk {
         return None;
     }
     let mut edits = Vec::new();
@@ -933,19 +933,61 @@ mod tests {
     }
 
     #[test]
-    fn rename_via_db_refuses_when_dynamic_source_present() {
-        // A dynamic source() anywhere in the project could resolve to the renamed
-        // file at runtime, hiding a reader — so cross-file rename refuses.
+    fn rename_via_db_refuses_when_a_dynamic_sourcer_reads_the_name() {
+        // b.R has a dynamic source() *and* free-reads `foo`: it could resolve to
+        // a.R at runtime, binding its `foo` read to the renamed definition. That
+        // is a hidden reader we cannot rewrite, so the rename refuses (the `r == d`
+        // arm of the name-keyed dynamic-source check).
         let a_src = "foo <- function() 1\n";
-        let b_src = "p <- \"x.R\"\nsource(p)\n";
+        let b_src = "p <- \"x.R\"\nsource(p)\nbar <- function() foo()\n";
         let snapshot = rename_workspace(a_src, b_src);
         let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
         assert!(
             rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
-            "an unresolvable dynamic source forces a project-wide refusal"
+            "a dynamic sourcer that reads the name could hide a reader of it: refuse"
         );
+    }
+
+    #[test]
+    fn rename_via_db_refuses_when_a_name_reader_reaches_a_dynamic_sourcer() {
+        // c.R free-reads `foo` and statically sources b.R, which has a dynamic
+        // source(). b.R could load a.R at runtime, so c.R would transitively see
+        // a.R's `foo` — a hidden reader. The dynamic sourcer itself never reads
+        // `foo`, so this exercises the `seen_by(d)` arm, not just `r == d`.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "p <- \"x.R\"\nsource(p)\n";
+        let c_src = "source(\"b.R\")\nbar <- function() foo()\n";
+        let snapshot = rename_workspace3(a_src, b_src, c_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        assert!(
+            rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
+            "a name-reader that can reach a dynamic sourcer could hide a read: refuse"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_allows_rename_with_an_unrelated_dynamic_source() {
+        // a.R defines `foo`; b.R sources a.R and reads it (a normal reader). c.R
+        // has a dynamic source() but never reads `foo`, and nothing sources c.R,
+        // so no reader of `foo` is in its reach. The dynamic source is irrelevant
+        // to renaming `foo`: it no longer blocks the rename project-wide.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
+        let c_src = "p <- \"x.R\"\nsource(p)\n";
+        let snapshot = rename_workspace3(a_src, b_src, c_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("an unrelated dynamic source must not block the rename");
+        let changes = edit.changes.expect("changes present");
+        assert_eq!(changes.get(&uri_a).expect("a.R definition edited").len(), 1);
+        assert_eq!(changes.get(&uri_b).expect("b.R read edited").len(), 1);
     }
 
     #[test]
