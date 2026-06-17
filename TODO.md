@@ -83,10 +83,12 @@ concern, as `all_rule_ids()` already is).
       (`is_true`/`is_false`, `is_na`, `is_null`, `is_nan`, `is_bool_symbol` for
       T/F), plus `element_text` and an `is_atom` precedence guard for negating
       rewrites. Reduced each syntactic rule to ~30 lines.
-- [ ] **§I3 Namespace-confirmation helper**: a `RuleContext` method
-      `resolves_to_base(call)` --- callee not shadowed locally
-      (`model.resolve_local`) *and* `symbols.is_base`/`origin(...)`. Reuse
-      `shadowed_builtin`'s `is_callee`. **Blocks confident Phase 2.**
+- [x] **§I3 Namespace-confirmation helper** (landed): `RuleContext::resolves_to_base`
+      confirms a bare call invokes base R --- simple-name callee that is a base
+      export (`symbols.is_base`), not namespace-qualified (`pkg::f`), not shadowed
+      by a local binding (`model.resolve_local` over the callee read), and not
+      masked by an attached package (effective `symbols.origin(...)` is a default
+      package). Unblocks confident Phase 2.
 - [ ] **§I7 CLI `--select`/`--ignore`**: `LintConfig` already has the fields and
       `ResolvedRules::resolve` honors them --- verify/wire the flags in
       `src/cli.rs`. Lets users opt into noisier new rules early.

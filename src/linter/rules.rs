@@ -18,9 +18,12 @@
 
 use std::path::Path;
 
+use rowan::ast::AstNode as _;
+
+use crate::ast::{BinaryExpr, CallExpr};
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
-use crate::semantic::{SemanticModel, SymbolProvider};
+use crate::semantic::{PackageOrigin, SemanticModel, SymbolProvider};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 use super::diagnostic::{Diagnostic, Severity};
@@ -97,6 +100,73 @@ pub struct RuleContext<'a> {
     /// result instead of re-running masking on every keystroke. `None` on the
     /// single-file paths, where the rule falls back to [`RuleContext::symbols`].
     pub resolution: Option<&'a ExternalResolution>,
+}
+
+impl RuleContext<'_> {
+    /// Whether `call`'s callee is confirmed to invoke a base-R function: a
+    /// simple name that is (a) exported by one of R's default packages, (b) not
+    /// shadowed by a local binding, and (c) not masked by an attached
+    /// non-default package. Computed/qualified callees (`pkg::f(...)`,
+    /// `x$f(...)`, `(g())(...)`) and anything we can't confirm return `false`,
+    /// keeping callers conservative — no rewrite when unsure (Tenets 3/5).
+    ///
+    /// This is the Phase 2 namespace-confirmation gate: a call-rewrite rule
+    /// matches the shape, then asks this before rewriting a bare name.
+    pub fn resolves_to_base(&self, call: &CallExpr) -> bool {
+        let Some(name) = matchers::callee_name(call) else {
+            return false;
+        };
+        if !self.symbols.is_base(&name) {
+            return false;
+        }
+        // A namespace-qualified callee (`pkg::f(...)`) is not a bare-name base
+        // call: `callee_token` unwraps `pkg::f(...)` to the bare `f`, so guard
+        // against it explicitly.
+        if is_namespace_qualified(call) {
+            return false;
+        }
+        // The callee read sits in `idents` at the callee token's range; if it
+        // resolves to a local binding, the base name is shadowed locally. This
+        // is the same `resolve_local` pairing `shadowed-builtin` uses, keyed off
+        // the call we already hold.
+        if let Some(callee) = call.callee_token() {
+            let range = callee.text_range();
+            let shadowed = self
+                .model
+                .idents()
+                .iter()
+                .any(|i| i.range == range && self.model.resolve_local(i).is_some());
+            if shadowed {
+                return false;
+            }
+        }
+        // Not masked by an attached non-default package.
+        origin_is_default(self.symbols.origin(&name, self.model.loaded_packages()))
+    }
+}
+
+/// Whether `call` is the call form of a namespace access (`pkg::f(...)` /
+/// `pkg:::f(...)`) — i.e. its `CALL_EXPR` is the RHS of a `::`/`:::` operator.
+fn is_namespace_qualified(call: &CallExpr) -> bool {
+    let Some(callee) = call.callee_token() else {
+        return false;
+    };
+    call.syntax()
+        .parent()
+        .and_then(BinaryExpr::cast)
+        .and_then(|bin| bin.namespace_access())
+        .is_some_and(|ns| ns.name_token.text_range() == callee.text_range())
+}
+
+/// Whether a resolved origin's effective package (the last/masking one under R's
+/// lookup rules) is one of R's default packages.
+fn origin_is_default(origin: PackageOrigin) -> bool {
+    let pkg = match &origin {
+        PackageOrigin::Resolved(pkg) => Some(pkg.as_str()),
+        PackageOrigin::Ambiguous(pkgs) => pkgs.last().map(|p| p.as_str()),
+        PackageOrigin::Unknown => None,
+    };
+    pkg.is_some_and(|p| crate::semantic::symbols::default_packages().contains(&p))
 }
 
 /// Configured set of rules and severities for a single linting run.
@@ -205,4 +275,67 @@ pub fn run_rules(
 /// that don't attach non-default packages.
 pub fn default_symbol_provider() -> CompositeProvider {
     CompositeProvider::base_only()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `resolves_to_base` for the first `CallExpr` in `src`, over the base-only
+    /// `StaticBaseR` provider (the single-file / LSP path).
+    fn resolves(src: &str) -> bool {
+        let root = crate::parser::parse(src).cst;
+        let model = SemanticModel::build(&root);
+        let symbols = crate::semantic::StaticBaseR::new();
+        let ctx = RuleContext {
+            path: Path::new("test.R"),
+            root: &root,
+            model: &model,
+            symbols: &symbols,
+            project: None,
+            resolution: None,
+        };
+        let call = root
+            .descendants()
+            .find_map(CallExpr::cast)
+            .expect("a call in the source");
+        ctx.resolves_to_base(&call)
+    }
+
+    #[test]
+    fn confirms_unshadowed_base_call() {
+        assert!(resolves("c(1, 2)"));
+        assert!(resolves("f <- function() sum(a)"));
+    }
+
+    #[test]
+    fn rejects_local_value_shadow() {
+        // The first call is `c(2, 3)`; the local `c <- 1` shadows base `c`.
+        assert!(!resolves("c <- 1\nc(2, 3)"));
+    }
+
+    #[test]
+    fn rejects_function_redefinition() {
+        assert!(!resolves("any <- function(x) x\nany(z)"));
+    }
+
+    #[test]
+    fn rejects_nested_scope_shadow() {
+        assert!(!resolves("f <- function() {\n  sum <- 1\n  sum(a)\n}"));
+    }
+
+    #[test]
+    fn rejects_non_base_name() {
+        assert!(!resolves("frobnicate(1)"));
+    }
+
+    #[test]
+    fn rejects_qualified_callee() {
+        assert!(!resolves("dplyr::filter(x)"));
+    }
+
+    #[test]
+    fn rejects_computed_callee() {
+        assert!(!resolves("(g())(1)"));
+    }
 }
