@@ -1065,6 +1065,31 @@ mod tests {
     }
 
     #[test]
+    fn rename_via_db_skips_body_read_bound_to_source_shadow() {
+        // b.R sources a.R then z.R, both defining `foo`; its function-body read
+        // of foo runs against the final scope, which binds foo to z.R (last
+        // sourced), not a.R. Renaming a.R's foo must not touch b.R's body read.
+        let a_src = "foo <- function() 1\n";
+        let z_src = "foo <- function() 2\n";
+        let b_src = "source(\"a.R\")\nsource(\"z.R\")\ng <- function() foo()\n";
+        let snapshot = rename_workspace_files(&[("a.R", a_src), ("z.R", z_src), ("b.R", b_src)]);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let uri_z = uri::from_path(&ws_path("z.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("a.R's foo is the only def in its cohort");
+        let changes = edit.changes.expect("changes present");
+        assert!(changes.contains_key(&uri_a), "a.R's definition is renamed");
+        assert!(
+            !changes.contains_key(&uri_b),
+            "the body read binds to z.R's shadow, not a.R"
+        );
+        assert!(!changes.contains_key(&uri_z), "z.R's own foo is untouched");
+    }
+
+    #[test]
     fn rename_via_db_refuses_on_ambiguous_closure_definers() {
         // b.R sources d.R, which sources both a.R and c.R — both define `foo`.
         // Which one is live at b.R's read is order-dependent inside the closure,

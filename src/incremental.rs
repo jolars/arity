@@ -1087,10 +1087,17 @@ impl Analysis {
     /// ([`ProjectScope::top_level_read_provenance`](crate::project::ProjectScope::top_level_read_provenance))
     /// and drop the top-level reads that bind elsewhere ([`ReadSite::Bound`] to a
     /// non-cohort file) or to nothing ([`ReadSite::Unbound`], e.g. a read before
-    /// the injecting `source()`). Function-body reads aren't in the sequence, so
-    /// they're kept by construction — sound because the reader is in `def_file`'s
-    /// `seen_by` component and doesn't shadow the name (it wouldn't be a reader
-    /// otherwise).
+    /// the injecting `source()`).
+    ///
+    /// Function-body reads aren't in the sequence — they run at call time against
+    /// the reader's *final* post-execution scope, so they all share one binding,
+    /// resolved once via
+    /// [`ProjectScope::final_scope_binding`](crate::project::ProjectScope::final_scope_binding).
+    /// They're co-renamed unless that final scope is a non-cohort shadow (the
+    /// reader sources the cohort def and *then* a later same-name def): a
+    /// [`ReadSite::Bound`] elsewhere drops them, while [`ReadSite::Unbound`] keeps
+    /// them (the package-sibling flat-namespace case — the def is the cohort), and
+    /// [`ReadSite::Unknown`] refuses the whole rename like a top-level `Unknown`.
     ///
     /// Reads inside a `source()` call's *own arguments* are likewise absent from
     /// the sequence (the edge is the event), so they too are kept as-is — a
@@ -1111,12 +1118,24 @@ impl Analysis {
         let project = workspace_project(&self.0);
         let graph = project_graph(&self.0, project);
 
-        // Fast path: no top-level read is position-gated against the cohort, so
-        // every free read of the name binds to it.
-        match graph.top_level_read_binding(reader, name) {
-            ReadBinding::NoTopLevelRead => return Some(all_reads),
-            ReadBinding::Resolved(def) if cohort.contains(&def) => return Some(all_reads),
-            _ => {}
+        // Function-body reads all bind to the reader's final post-execution
+        // scope. Resolve it once: an undecidable binding refuses the whole rename
+        // (like a top-level `Unknown`); a non-cohort shadow means those reads
+        // must be dropped, not co-renamed.
+        let final_site = graph.final_scope_binding(reader, name);
+        if matches!(final_site, ReadSite::Unknown) {
+            return None;
+        }
+        let skip_body = matches!(&final_site, ReadSite::Bound(def) if !cohort.contains(def));
+
+        // Fast path: body reads bind to the cohort and no top-level read is
+        // position-gated against it, so every free read of the name binds to it.
+        if !skip_body {
+            match graph.top_level_read_binding(reader, name) {
+                ReadBinding::NoTopLevelRead => return Some(all_reads),
+                ReadBinding::Resolved(def) if cohort.contains(&def) => return Some(all_reads),
+                _ => {}
+            }
         }
 
         // Slow path: resolve each top-level read separately. Build the reader's
@@ -1131,11 +1150,22 @@ impl Analysis {
         // A top-level read that binds elsewhere or to nothing must not be
         // co-renamed; an undecidable one forces the whole rename to refuse.
         let mut skip: Vec<TextRange> = Vec::new();
+        let mut top_level_ranges: Vec<TextRange> = Vec::new();
         for (range, site) in provenance {
+            top_level_ranges.push(range);
             match site {
                 ReadSite::Bound(def) if cohort.contains(&def) => {}
                 ReadSite::Bound(_) | ReadSite::Unbound => skip.push(range),
                 ReadSite::Unknown => return None,
+            }
+        }
+        // Body reads (every free read that isn't a classified top-level read)
+        // bind to the non-cohort final scope, so drop them too.
+        if skip_body {
+            for range in &all_reads {
+                if !top_level_ranges.contains(range) {
+                    skip.push(*range);
+                }
             }
         }
         Some(

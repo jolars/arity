@@ -543,6 +543,61 @@ impl ProjectScope {
         sites
     }
 
+    /// What `name` binds to in `from_file`'s *final* post-execution scope: the
+    /// same load-order replay as
+    /// [`top_level_read_binding`](Self::top_level_read_binding), read at
+    /// end-of-file rather than per top-level read. This is the binding a
+    /// **function-body** read of `name` sees — bodies run at call time against
+    /// the fully executed scope, so they aren't position-gated and a later
+    /// `source()` of a same-name def shadows an earlier one.
+    ///
+    /// [`ReadSite::Bound`] names the last live definer; [`ReadSite::Unbound`]
+    /// means nothing in the file's own sequence defines it (it then comes from a
+    /// package sibling's flat namespace, if at all — so a rename treats this as
+    /// "binds to the cohort"); [`ReadSite::Unknown`] means a dynamic/unanalyzed
+    /// source or two closure definers leave it undecidable. Span-free (reads the
+    /// stored `top_level_events`), so it backdates across body edits like the
+    /// other replays.
+    pub fn final_scope_binding(&self, from_file: &Path, name: &str) -> ReadSite {
+        let Some(events) = self.top_level_events.get(from_file) else {
+            return ReadSite::Unbound;
+        };
+        let mut live: Option<PathBuf> = None;
+        let mut name_ambiguous = false;
+        let mut poisoned = false;
+        for event in events {
+            match event {
+                TopLevelEvent::Define(n) if n == name => {
+                    live = Some(from_file.to_path_buf());
+                    name_ambiguous = false;
+                }
+                TopLevelEvent::SourceEdge(key) => match source_dependency(key) {
+                    Dependency::Skip => {}
+                    Dependency::Unresolved => poisoned = true,
+                    Dependency::Path(p) => {
+                        let mut definers = self.closure_definers(p, name);
+                        match definers.len() {
+                            0 => {}
+                            1 => {
+                                live = definers.pop();
+                                name_ambiguous = false;
+                            }
+                            _ => name_ambiguous = true,
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+        if poisoned || name_ambiguous {
+            ReadSite::Unknown
+        } else if let Some(p) = live {
+            ReadSite::Bound(p)
+        } else {
+            ReadSite::Unbound
+        }
+    }
+
     /// The analyzed files in the transitive, non-local `source()` closure rooted
     /// at `start` (including `start` itself) whose top-level exports include
     /// `name`. Cycle-guarded with a `visited` set like [`ProjectScope::build`].
@@ -1136,6 +1191,149 @@ mod tests {
         assert_eq!(
             scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
             vec![(span(2), ReadSite::Bound(PathBuf::from("/s/a.R")))]
+        );
+    }
+
+    // --- final-scope binding (`final_scope_binding`) ---
+
+    #[test]
+    fn final_scope_binds_to_the_last_sourced_definer() {
+        // b sources a then z, both defining foo: the final scope binds foo to z
+        // (last writer wins), so b's body reads bind to z, not a.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts("/s/z.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/a.R", false), source_path("/s/z.R", false)],
+                vec![src_ev("/s/a.R"), src_ev("/s/z.R")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Bound(PathBuf::from("/s/z.R"))
+        );
+    }
+
+    #[test]
+    fn final_scope_binds_to_the_sole_sourced_definer() {
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/a.R", false)],
+                vec![src_ev("/s/a.R")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Bound(PathBuf::from("/s/a.R"))
+        );
+    }
+
+    #[test]
+    fn final_scope_ignores_a_pre_source_read() {
+        // A read before the source doesn't move the final scope: still bound to a.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/a.R", false)],
+                vec![read_ev("foo"), src_ev("/s/a.R")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Bound(PathBuf::from("/s/a.R"))
+        );
+    }
+
+    #[test]
+    fn final_scope_is_unbound_without_a_definer() {
+        // No source edge or local def of foo in the file's own sequence: the def,
+        // if any, comes from a package sibling's flat namespace — treated as
+        // "binds to the cohort" by the rename caller.
+        let files = [facts_seq("/s/b.R", &[], vec![], vec![read_ev("foo")])];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Unbound
+        );
+    }
+
+    #[test]
+    fn final_scope_is_unbound_for_a_file_without_events() {
+        let scope = build_scope(&[]);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Unbound
+        );
+    }
+
+    #[test]
+    fn final_scope_is_unknown_under_a_dynamic_source() {
+        let files = [facts_seq(
+            "/s/b.R",
+            &[],
+            vec![dynamic_edge()],
+            vec![dyn_src_ev()],
+        )];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Unknown
+        );
+    }
+
+    #[test]
+    fn final_scope_is_unknown_with_two_closure_definers() {
+        // b sources d, which sources both a and c — both define foo: ambiguous.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts("/s/c.R", &["foo"], &[], vec![], None),
+            facts(
+                "/s/d.R",
+                &[],
+                &[],
+                vec![source_path("/s/a.R", false), source_path("/s/c.R", false)],
+                None,
+            ),
+            facts_seq(
+                "/s/b.R",
+                &[],
+                vec![source_path("/s/d.R", false)],
+                vec![src_ev("/s/d.R")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Unknown
+        );
+    }
+
+    #[test]
+    fn final_scope_local_def_shadows_a_sourced_def() {
+        // A local define of foo after the source rebinds the final scope to self.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts_seq(
+                "/s/b.R",
+                &["foo"],
+                vec![source_path("/s/a.R", false)],
+                vec![src_ev("/s/a.R"), def_ev("foo")],
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert_eq!(
+            scope.final_scope_binding(Path::new("/s/b.R"), "foo"),
+            ReadSite::Bound(PathBuf::from("/s/b.R"))
         );
     }
 }

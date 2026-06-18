@@ -460,24 +460,23 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       they aren't position-classified --- the same gap `top_level_read_binding`
       already had.
 
-    - [ ] *Follow-up: body reads bind to the final scope, which may be a shadow,
-      not the cohort.* A reader's **function-body** reads are treated as binding
-      to the renamed cohort (they run at call time against the final
-      post-execution scope, and the reader is in `seen_by(def_file)` and doesn't
-      shadow the name). But if the reader sources a cohort def **and then** a
-      later same-name def that is *not* in the cohort (a `source()`-shadow, e.g.
-      `source("a.R"); source("z.R")` where both define `foo`), its final scope
-      binds `foo` to `z.R`, not `a.R` --- so co-renaming the body read is wrong
-      (it isn't a reference to the cohort def). This predates B2.4 (the
-      position-blind `seen_by` membership assumed final scope == cohort) and
-      isn't narrowed by it: `reader_rename_ranges` keeps body reads by
-      construction, and `top_level_read_provenance` only classifies *top-level*
-      reads. A precise fix would resolve each body read against the reader's
-      final-scope binding (last-writer-wins across its `source()` closure) and
-      skip the ones that bind to a non-cohort shadow --- conceptually the same
-      replay as `top_level_read_provenance` but evaluated at end-of-file rather
-      than per-position. Rare (needs two same-name defs, one sourced-shadow, both
-      reachable from one reader); deferred. `references` over-reports it
+    - [x] *Follow-up: body reads bind to the final scope, which may be a shadow,
+      not the cohort.* Landed. Function-body reads run at call time against the
+      reader's final post-execution scope, so they all share one binding ---
+      previously assumed to be the cohort and kept by construction. When a reader
+      sources a cohort def **and then** a later same-name def outside the cohort
+      (a `source()`-shadow, e.g. `source("a.R"); source("z.R")` both defining
+      `foo`), the final scope binds `foo` to `z.R`, so co-renaming the body read
+      was wrong. New `ProjectScope::final_scope_binding` (`src/project/scope.rs`)
+      runs the same range-free load-order replay as `top_level_read_binding` but
+      reports the end-of-file binding as a single `ReadSite`
+      (`Bound`/`Unbound`/`Unknown`). `reader_rename_ranges` (`src/incremental.rs`)
+      resolves it once per reader: `Bound` to a non-cohort file drops the body
+      reads (every free read that isn't a classified top-level read), `Unknown`
+      refuses the whole rename (like a top-level `Unknown`), and `Unbound` keeps
+      them --- the package-sibling flat-namespace case, where the def *is* the
+      cohort and carries no `source()` event. Span-free, so the salsa firewall is
+      intact (backdates across body edits). `references` still over-reports
       harmlessly.
 
   - **Salsa / incrementality (Tenet 2).** Several constraints, all learnable
