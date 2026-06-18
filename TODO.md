@@ -551,10 +551,14 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   coalescing/versioning the lint thread already does. Additive alongside
   push.
   
-- [ ] **Semantic tokens** (`textDocument/semanticTokens`). Scope-aware
+- [x] **Semantic tokens** (`textDocument/semanticTokens/full`). Scope-aware
   highlighting (distinguish function calls, locals, package-qualified names,
   arguments) from the same `SemanticModel`; degrades gracefully if omitted.
-  Maybe omit and rely on native editor syntax highlighting.
+  v1 is *augment-only* (emits just the semantically-resolved identifiers:
+  function/variable/parameter/property/namespace, with a `definition`
+  modifier) and purely syntactic/scope (pure read-pool job, no salsa db). See
+  `src/lsp/semantic_tokens.rs`. Follow-ups: base-R/loaded-package
+  `defaultLibrary` modifier, `range`/delta variants, and `USER_OP` operators.
 
 - [x] **Folding ranges** (`textDocument/foldingRange`). Pure CST walk ---
   brace blocks, function/parameter and argument lists, parenthesized and

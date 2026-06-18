@@ -86,6 +86,7 @@ impl GlobalState {
             DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
             DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
             FoldingRangeRequest::METHOD => self.on_folding_range(req),
+            SemanticTokensFullRequest::METHOD => self.on_semantic_tokens(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
             WillRenameFiles::METHOD => self.on_will_rename_files(req),
@@ -423,6 +424,31 @@ impl GlobalState {
         self.read_spawner.spawn(move || {
             let ranges = compute_folding_ranges(&text);
             let _ = sender.send(Message::Response(Response::new_ok(id, ranges)));
+        });
+    }
+
+    /// `textDocument/semanticTokens/full`: scope-aware highlighting for the whole
+    /// document. A pure single-file CST walk (no workspace lookup), so like
+    /// document symbol and folding range it runs straight on the read pool rather
+    /// than through the lint thread. See [`compute_semantic_tokens`].
+    fn on_semantic_tokens(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<SemanticTokensParams>(SemanticTokensFullRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid semanticTokens params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let tokens = compute_semantic_tokens(&text);
+            let result = SemanticTokensResult::Tokens(tokens);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         });
     }
 

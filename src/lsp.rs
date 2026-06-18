@@ -70,7 +70,7 @@ use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
     FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
     RangeFormatting, References, Rename, Request as RequestTrait, ResolveCompletionItem,
-    SignatureHelpRequest, WillRenameFiles, WorkspaceSymbolRequest,
+    SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -86,11 +86,13 @@ use lsp_types::{
     HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
     OneOf, ParameterInformation, ParameterLabel, Position, PrepareRenameResponse,
     PublishDiagnosticsParams, Range, ReferenceParams, RenameFilesParams, RenameOptions,
-    RenameParams, ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions,
-    SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
-    WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
-    WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    RenameParams, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SignatureInformation,
+    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
+    WorkspaceServerCapabilities, WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -129,6 +131,7 @@ mod hover;
 mod lint_thread;
 mod navigation;
 mod read_jobs;
+mod semantic_tokens;
 mod server;
 mod settings;
 mod signature;
@@ -145,6 +148,7 @@ pub(crate) use hover::*;
 pub(crate) use lint_thread::*;
 pub(crate) use navigation::*;
 pub(crate) use read_jobs::*;
+pub(crate) use semantic_tokens::*;
 pub(crate) use settings::*;
 pub(crate) use signature::*;
 pub(crate) use state::*;
@@ -159,6 +163,7 @@ pub use navigation::{
     PreparedRename, RenameAnchor, compute_definition, compute_document_highlights,
     compute_prepare_rename, compute_references, compute_rename, compute_rename_with_anchor,
 };
+pub use semantic_tokens::compute_semantic_tokens;
 pub use server::run;
 pub use signature::compute_signature_help;
 pub use symbols::compute_document_symbols;
