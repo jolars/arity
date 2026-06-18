@@ -169,6 +169,22 @@ pub fn collect_source_literal_edges(
         .collect()
 }
 
+/// Whether a `source()` path spelling should be resolved against the base
+/// directory. Decided by the spelling alone, independent of the host OS, so the
+/// classification is identical on Unix and Windows: a leading `/` or `\`, a
+/// Windows drive prefix (`C:`), or a UNC prefix (`\\`) is rooted; everything
+/// else is relative. (Rust's `Path::is_relative` is platform-dependent --- it
+/// treats `/abs/util.R` as relative on Windows because it lacks a drive.)
+fn is_relative_spelling(spelling: &str) -> bool {
+    let bytes = spelling.as_bytes();
+    match bytes {
+        [b'/' | b'\\', ..] => false,
+        // Drive-letter prefix, e.g. `C:` or `C:\`.
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => false,
+        _ => true,
+    }
+}
+
 fn source_literal_edge(call: &CallExpr, base_dir: Option<&Path>) -> Option<SourceLiteralEdge> {
     let (file_value, _local) = source_file_value(call);
     let NodeOrToken::Token(token) = file_value? else {
@@ -180,7 +196,7 @@ fn source_literal_edge(call: &CallExpr, base_dir: Option<&Path>) -> Option<Sourc
     let spelling = strip_quotes(token.text())?.to_string();
     let quote = token.text().as_bytes()[0];
     let path = PathBuf::from(&spelling);
-    let was_relative = path.is_relative();
+    let was_relative = is_relative_spelling(&spelling);
     let target = match base_dir {
         Some(dir) if was_relative => dir.join(&path),
         _ => path,
@@ -472,6 +488,17 @@ mod tests {
         assert_eq!(e.len(), 1);
         assert!(!e[0].was_relative);
         assert_eq!(e[0].target, PathBuf::from("/abs/util.R"));
+    }
+
+    #[test]
+    fn relativity_classification_is_host_independent() {
+        // Decided by the spelling alone, identical on Unix and Windows.
+        assert!(is_relative_spelling("helpers.R"));
+        assert!(is_relative_spelling("sub/helpers.R"));
+        assert!(!is_relative_spelling("/abs/util.R"));
+        assert!(!is_relative_spelling("\\abs\\util.R"));
+        assert!(!is_relative_spelling("C:\\abs\\util.R"));
+        assert!(!is_relative_spelling("C:/abs/util.R"));
     }
 
     #[test]
