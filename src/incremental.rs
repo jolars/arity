@@ -18,9 +18,10 @@ use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
 use crate::project::{
-    DefKind, PackageInfo, ReadBinding, SourceEdgeKey, TopLevelEvent, collect_source_literal_edges,
-    collect_top_level_events, discover_packages, project_defs, project_graph, project_reads,
-    relative_path, reverse_source_edges, workspace_project,
+    DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
+    collect_source_literal_edges, collect_top_level_events, collect_top_level_events_spanned,
+    discover_packages, project_defs, project_graph, project_reads, relative_path,
+    reverse_source_edges, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
@@ -799,13 +800,6 @@ pub struct CrossFileBinding {
     /// name, so renaming the visible aliases would half-rewrite the flat
     /// namespace. A sound rename refuses; references still over-reports.
     pub cohort_incomplete: bool,
-    /// A reader has a *top-level* read of the name that, under sequential
-    /// `source()` load order, does **not** bind to this cohort — it sits before
-    /// the `source()` that injects the def, binds to a different file, or is
-    /// poisoned by a dynamic/ambiguous source. Rewriting that reader would touch
-    /// a read that isn't this binding, and we can't selectively skip it without
-    /// per-read spans, so a sound rename refuses. References still over-reports.
-    pub order_ambiguous: bool,
     /// A dynamic `source()` whose reachable scope includes a free-reader of the
     /// name. The dynamic edge could load `def_file` (or a competing def) at
     /// runtime, so that reader's read of the name might bind to — or be diverted
@@ -1050,22 +1044,6 @@ impl Analysis {
             })
             .unwrap_or_default();
 
-        // Order-aware refinement: a reader's *top-level* reads of the name must
-        // all bind to a cohort member under sequential load order. A read before
-        // the `source()` that injects the def (or one bound elsewhere / poisoned)
-        // would be wrongly co-renamed, and we can't skip it selectively without
-        // per-read spans — so flag the rename as ambiguous (it refuses). Reads in
-        // function bodies run against the final scope (`NoTopLevelRead`) and are
-        // resolved by the position-blind `seen_by` membership above.
-        let order_ambiguous =
-            readers
-                .iter()
-                .any(|reader| match graph.top_level_read_binding(reader, name) {
-                    ReadBinding::NoTopLevelRead => false,
-                    ReadBinding::Resolved(def) => !cohort.contains(&def),
-                    ReadBinding::Unresolved | ReadBinding::OrderUnknown => true,
-                });
-
         // A dynamic `source()` in file `d` injects a hidden `d -> ?` edge. The
         // files whose scope it could silently change are `d` plus everyone who
         // already sees `d` (they transitively gain `d`'s unknown new visibility):
@@ -1089,9 +1067,83 @@ impl Analysis {
             readers,
             conflict,
             cohort_incomplete,
-            order_ambiguous,
             dynamic_source_risk,
         }
+    }
+
+    /// The free-read spans of `name` in reader file `reader` that should be
+    /// co-renamed when renaming the binding owned by `cohort` — the order-aware
+    /// refinement that lets rename rewrite the reads that bind to the cohort and
+    /// *skip* the ones that don't, instead of refusing the whole rename. `None`
+    /// means the rename must refuse: the reader has a read whose binding can't be
+    /// decided (two static closure definers; the dynamic-source case is already
+    /// refused project-wide by [`CrossFileBinding::dynamic_source_risk`]).
+    ///
+    /// Fast path: when every top-level read already binds to the cohort
+    /// ([`ReadBinding::Resolved`] into it) or there are none
+    /// ([`ReadBinding::NoTopLevelRead`] — only function-body reads, which run
+    /// against the final scope), all free reads rename and no span walk is
+    /// needed. Otherwise replay the reader's spanned top-level sequence
+    /// ([`ProjectScope::top_level_read_provenance`](crate::project::ProjectScope::top_level_read_provenance))
+    /// and drop the top-level reads that bind elsewhere ([`ReadSite::Bound`] to a
+    /// non-cohort file) or to nothing ([`ReadSite::Unbound`], e.g. a read before
+    /// the injecting `source()`). Function-body reads aren't in the sequence, so
+    /// they're kept by construction — sound because the reader is in `def_file`'s
+    /// `seen_by` component and doesn't shadow the name (it wouldn't be a reader
+    /// otherwise).
+    ///
+    /// Reads inside a `source()` call's *own arguments* are likewise absent from
+    /// the sequence (the edge is the event), so they too are kept as-is — a
+    /// pre-existing modeling gap shared with `top_level_read_binding`, orthogonal
+    /// to the load-order refinement here and not narrowed by it. A pure read; the
+    /// caller wraps it in [`salsa::Cancelled::catch`].
+    pub fn reader_rename_ranges(
+        &self,
+        reader: &Path,
+        name: &str,
+        cohort: &[PathBuf],
+    ) -> Option<Vec<TextRange>> {
+        let file = self.lookup_file(reader)?;
+        let all_reads = self.read_ranges_in(file, name);
+        if self.0.workspace().is_none() {
+            return Some(all_reads);
+        }
+        let project = workspace_project(&self.0);
+        let graph = project_graph(&self.0, project);
+
+        // Fast path: no top-level read is position-gated against the cohort, so
+        // every free read of the name binds to it.
+        match graph.top_level_read_binding(reader, name) {
+            ReadBinding::NoTopLevelRead => return Some(all_reads),
+            ReadBinding::Resolved(def) if cohort.contains(&def) => return Some(all_reads),
+            _ => {}
+        }
+
+        // Slow path: resolve each top-level read separately. Build the reader's
+        // spanned sequence off its fresh tree+model so the spans index current
+        // text; the replay reuses the graph's range-free closure data.
+        let root = self.parsed_tree(file);
+        let model = self.semantic_model(file);
+        let base_dir = reader.parent();
+        let spanned = collect_top_level_events_spanned(&root, base_dir, model);
+        let provenance = graph.top_level_read_provenance(reader, name, &spanned);
+
+        // A top-level read that binds elsewhere or to nothing must not be
+        // co-renamed; an undecidable one forces the whole rename to refuse.
+        let mut skip: Vec<TextRange> = Vec::new();
+        for (range, site) in provenance {
+            match site {
+                ReadSite::Bound(def) if cohort.contains(&def) => {}
+                ReadSite::Bound(_) | ReadSite::Unbound => skip.push(range),
+                ReadSite::Unknown => return None,
+            }
+        }
+        Some(
+            all_reads
+                .into_iter()
+                .filter(|range| !skip.contains(range))
+                .collect(),
+        )
     }
 
     /// The member files that define top-level `name` and are visible from

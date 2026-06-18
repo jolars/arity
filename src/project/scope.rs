@@ -28,6 +28,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use rowan::TextRange;
+
 use crate::project::source::{SourceEdgeKey, SourceTarget, TopLevelEvent};
 use crate::rindex::harvest::parse_namespace;
 
@@ -112,6 +114,26 @@ pub enum ReadBinding {
     /// Top-level reads disagree, or one is poisoned by a dynamic/unanalyzed
     /// source or by two files in a sourced closure defining the same name.
     OrderUnknown,
+}
+
+/// What a *single* top-level read occurrence binds to under sequential load
+/// order — the per-read counterpart of [`ReadBinding`], produced with the read's
+/// span by [`ProjectScope::top_level_read_provenance`]. Where `ReadBinding`
+/// aggregates a file's reads into one verdict (forcing a whole-file refusal),
+/// this resolves each occurrence so an order-aware rename can co-rename the reads
+/// that bind to the cohort and skip the ones that don't.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadSite {
+    /// The read binds to this def file's top-level definition (live at its
+    /// point). Co-renamed iff that file is in the rename cohort.
+    Bound(PathBuf),
+    /// No def is live at the read's point — it binds to base R / nothing (e.g. a
+    /// read before the `source()` that injects the def). Never co-renamed.
+    Unbound,
+    /// The read is poisoned by a dynamic/unanalyzed source or by two closure
+    /// files defining the name: its binding can't be decided, so a sound rename
+    /// must refuse rather than guess.
+    Unknown,
 }
 
 /// One file's view of its project.
@@ -456,6 +478,69 @@ impl ProjectScope {
             (1, false) => ReadBinding::Resolved(resolved.into_iter().next().expect("len == 1")),
             _ => ReadBinding::OrderUnknown,
         }
+    }
+
+    /// The per-occurrence binding of each top-level read of `name` in
+    /// `from_file`, paired with its span. The span-aware refinement of
+    /// [`top_level_read_binding`](Self::top_level_read_binding): same load-order
+    /// replay (a `source()` edge folds its closure's def into the live binding, a
+    /// later top-level def shadows it, a dynamic/unanalyzed source poisons every
+    /// later read, two closure definers make it ambiguous), but instead of
+    /// aggregating it emits one [`ReadSite`] per read so an order-aware rename can
+    /// co-rename the cohort-bound reads and skip the rest.
+    ///
+    /// `spanned` is `from_file`'s own top-level sequence *with* read spans (from
+    /// [`crate::project::collect_top_level_events_spanned`] off the current
+    /// tree); the stored, range-free sequence can't supply spans. Cross-file
+    /// closure resolution still reads `self`'s range-free data, so the two views
+    /// agree on event order by construction. Reads of other names contribute
+    /// their `Define`/`SourceEdge` effect to the replay but emit no `ReadSite`.
+    pub fn top_level_read_provenance(
+        &self,
+        from_file: &Path,
+        name: &str,
+        spanned: &[(TopLevelEvent, Option<TextRange>)],
+    ) -> Vec<(TextRange, ReadSite)> {
+        let mut live: Option<PathBuf> = None;
+        let mut name_ambiguous = false;
+        let mut poisoned = false;
+        let mut sites: Vec<(TextRange, ReadSite)> = Vec::new();
+        for (event, span) in spanned {
+            match event {
+                TopLevelEvent::Define(n) if n == name => {
+                    live = Some(from_file.to_path_buf());
+                    name_ambiguous = false;
+                }
+                TopLevelEvent::SourceEdge(key) => match source_dependency(key) {
+                    Dependency::Skip => {}
+                    Dependency::Unresolved => poisoned = true,
+                    Dependency::Path(p) => {
+                        let mut definers = self.closure_definers(p, name);
+                        match definers.len() {
+                            0 => {}
+                            1 => {
+                                live = definers.pop();
+                                name_ambiguous = false;
+                            }
+                            _ => name_ambiguous = true,
+                        }
+                    }
+                },
+                TopLevelEvent::Read(n) if n == name => {
+                    let range = span.expect("a Read event always carries its span");
+                    let site = if poisoned || name_ambiguous {
+                        ReadSite::Unknown
+                    } else if let Some(p) = &live {
+                        ReadSite::Bound(p.clone())
+                    } else {
+                        ReadSite::Unbound
+                    };
+                    sites.push((range, site));
+                }
+                _ => {}
+            }
+        }
+        sites
     }
 
     /// The analyzed files in the transitive, non-local `source()` closure rooted
@@ -937,6 +1022,120 @@ mod tests {
         assert_eq!(
             scope.top_level_read_binding(Path::new("/s/b.R"), "foo"),
             ReadBinding::OrderUnknown
+        );
+    }
+
+    // --- per-read provenance (`top_level_read_provenance`) ---
+    //
+    // Spans are synthetic and arbitrary here (the replay just carries them
+    // through); only their *classification* matters. `n` keeps each read span
+    // distinct so a test can assert order.
+    fn span(n: u32) -> TextRange {
+        TextRange::new(n.into(), (n + 1).into())
+    }
+    fn s_read(name: &str, at: u32) -> (TopLevelEvent, Option<TextRange>) {
+        (read_ev(name), Some(span(at)))
+    }
+    fn s_def(name: &str) -> (TopLevelEvent, Option<TextRange>) {
+        (def_ev(name), None)
+    }
+    fn s_src(target: &str) -> (TopLevelEvent, Option<TextRange>) {
+        (src_ev(target), None)
+    }
+    fn s_dyn() -> (TopLevelEvent, Option<TextRange>) {
+        (dyn_src_ev(), None)
+    }
+
+    #[test]
+    fn provenance_read_before_source_is_unbound() {
+        let files = [facts("/s/a.R", &["foo"], &[], vec![], None)];
+        let scope = build_scope(&files);
+        let events = [s_read("foo", 1), s_src("/s/a.R")];
+        assert_eq!(
+            scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
+            vec![(span(1), ReadSite::Unbound)]
+        );
+    }
+
+    #[test]
+    fn provenance_read_after_source_binds_to_the_def() {
+        let files = [facts("/s/a.R", &["foo"], &[], vec![], None)];
+        let scope = build_scope(&files);
+        let events = [s_src("/s/a.R"), s_read("foo", 1)];
+        assert_eq!(
+            scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
+            vec![(span(1), ReadSite::Bound(PathBuf::from("/s/a.R")))]
+        );
+    }
+
+    #[test]
+    fn provenance_local_shadow_binds_to_self() {
+        let files = [facts("/s/a.R", &["foo"], &[], vec![], None)];
+        let scope = build_scope(&files);
+        let events = [s_src("/s/a.R"), s_def("foo"), s_read("foo", 1)];
+        assert_eq!(
+            scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
+            vec![(span(1), ReadSite::Bound(PathBuf::from("/s/b.R")))]
+        );
+    }
+
+    #[test]
+    fn provenance_dynamic_source_poisons_the_read() {
+        let scope = build_scope(&[]);
+        let events = [s_dyn(), s_read("foo", 1)];
+        assert_eq!(
+            scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
+            vec![(span(1), ReadSite::Unknown)]
+        );
+    }
+
+    #[test]
+    fn provenance_two_closure_definers_is_unknown() {
+        // d sources both a and c, which both define foo: ambiguous which wins.
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts("/s/c.R", &["foo"], &[], vec![], None),
+            facts(
+                "/s/d.R",
+                &[],
+                &[],
+                vec![source_path("/s/a.R", false), source_path("/s/c.R", false)],
+                None,
+            ),
+        ];
+        let scope = build_scope(&files);
+        let events = [s_src("/s/d.R"), s_read("foo", 1)];
+        assert_eq!(
+            scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
+            vec![(span(1), ReadSite::Unknown)]
+        );
+    }
+
+    #[test]
+    fn provenance_distinguishes_pre_and_post_source_reads() {
+        // The whole point: one read before the source (unbound) and one after
+        // (bound) resolve *separately*, where `top_level_read_binding` would
+        // collapse both into a single `OrderUnknown` refusal.
+        let files = [facts("/s/a.R", &["foo"], &[], vec![], None)];
+        let scope = build_scope(&files);
+        let events = [s_read("foo", 1), s_src("/s/a.R"), s_read("foo", 2)];
+        assert_eq!(
+            scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
+            vec![
+                (span(1), ReadSite::Unbound),
+                (span(2), ReadSite::Bound(PathBuf::from("/s/a.R"))),
+            ]
+        );
+    }
+
+    #[test]
+    fn provenance_ignores_reads_of_other_names() {
+        let files = [facts("/s/a.R", &["foo"], &[], vec![], None)];
+        let scope = build_scope(&files);
+        let events = [s_src("/s/a.R"), s_read("other", 1), s_read("foo", 2)];
+        assert_eq!(
+            scope.top_level_read_provenance(Path::new("/s/b.R"), "foo", &events),
+            vec![(span(2), ReadSite::Bound(PathBuf::from("/s/a.R")))]
         );
     }
 }

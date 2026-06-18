@@ -437,13 +437,48 @@ landed; the second is still open but only matters for cross-edit-stable handles:
     position-blind (the readers refinement covers both the rename-from-def and
     bare-read paths, since the reading file is always in the readers set).
 
-    - [ ] *Follow-up: precise per-reader range filtering (B2.4).* The first cut
-      **refuses** the whole rename when a reader has a top-level read of the name
-      that doesn't bind to the cohort. A precise version would rename the binding
-      (post-`source()`) reads and skip only the pre-`source()` ones, instead of
-      refusing --- but that needs order-aware span recovery in
-      `read_ranges_in` (`src/incremental.rs`), correlating each ident to its
-      provenance. Deferred; the current refusal is sound, just conservative.
+    - [x] *Follow-up: precise per-reader range filtering (B2.4).* Landed.
+      Instead of refusing the whole rename when a reader has a top-level read
+      that doesn't bind to the cohort, rename now rewrites the cohort-bound reads
+      (post-`source()` and function-body reads) and **skips** the rest. Order-aware
+      span recovery is done off the live tree+model at rename time, keeping the
+      range-free firewall intact: `collect_top_level_events_spanned`
+      (`src/project/sequence.rs`) produces the same sequence with read spans, and
+      `collect_top_level_events` is now its span-stripping projection (byte-identical
+      output by construction). `ProjectScope::top_level_read_provenance`
+      (`src/project/scope.rs`) replays it per occurrence into a new `ReadSite`
+      (`Bound(path)`/`Unbound`/`Unknown`), reusing the same `live`/`poisoned`/
+      `name_ambiguous` tracking as `top_level_read_binding`.
+      `Analysis::reader_rename_ranges` (`src/incremental.rs`) consumes it: a fast
+      path (all top-level reads bind to the cohort, or none exist) renames every
+      free read; otherwise it drops the `Unbound`/bound-elsewhere reads and
+      **refuses** (`None`) only on an undecidable `Unknown` read (two static
+      closure definers — the dynamic-source case is still refused project-wide by
+      `dynamic_source_risk`). The old aggregate `order_ambiguous` flag is gone.
+      `references` still over-reports. *Known limitation (pre-existing, unchanged):*
+      reads inside a `source()` call's own arguments aren't in the sequence, so
+      they aren't position-classified --- the same gap `top_level_read_binding`
+      already had.
+
+    - [ ] *Follow-up: body reads bind to the final scope, which may be a shadow,
+      not the cohort.* A reader's **function-body** reads are treated as binding
+      to the renamed cohort (they run at call time against the final
+      post-execution scope, and the reader is in `seen_by(def_file)` and doesn't
+      shadow the name). But if the reader sources a cohort def **and then** a
+      later same-name def that is *not* in the cohort (a `source()`-shadow, e.g.
+      `source("a.R"); source("z.R")` where both define `foo`), its final scope
+      binds `foo` to `z.R`, not `a.R` --- so co-renaming the body read is wrong
+      (it isn't a reference to the cohort def). This predates B2.4 (the
+      position-blind `seen_by` membership assumed final scope == cohort) and
+      isn't narrowed by it: `reader_rename_ranges` keeps body reads by
+      construction, and `top_level_read_provenance` only classifies *top-level*
+      reads. A precise fix would resolve each body read against the reader's
+      final-scope binding (last-writer-wins across its `source()` closure) and
+      skip the ones that bind to a non-cohort shadow --- conceptually the same
+      replay as `top_level_read_provenance` but evaluated at end-of-file rather
+      than per-position. Rare (needs two same-name defs, one sourced-shadow, both
+      reachable from one reader); deferred. `references` over-reports it
+      harmlessly.
 
   - **Salsa / incrementality (Tenet 2).** Several constraints, all learnable
     from the existing graph layer:

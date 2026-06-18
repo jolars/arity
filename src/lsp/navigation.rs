@@ -265,19 +265,22 @@ pub(crate) fn rename_via_db(
 /// The cross-file text edits renaming the top-level `name` defined in `def_file`
 /// to `new_name`, scoped to its visibility component via
 /// [`Analysis::cross_file_binding`]. Rewrites each cohort member's own
-/// definition and the reads bound to it ([`file_scope_occurrences_in`]) and each
-/// reader's free reads ([`Analysis::read_ranges_in`]). `skip` is the buffer whose
-/// occurrences the caller already rewrote intra-file (skipped here to avoid
-/// double edits); pass `None` to include every file.
+/// definition and the reads bound to it ([`file_scope_occurrences_in`]) and, per
+/// reader, the free reads that bind to the cohort under `source()` load order
+/// ([`Analysis::reader_rename_ranges`] — a reader's pre-source / bound-elsewhere
+/// reads are skipped, not refused). `skip` is the buffer whose occurrences the
+/// caller already rewrote intra-file (skipped here to avoid double edits); pass
+/// `None` to include every file.
 ///
 /// Returns `None` to **refuse the whole rename** when soundness can't be
 /// guaranteed: an *incomplete* multi-def package cohort (a hidden alias/read
-/// could live in an unanalyzed member), a reader whose top-level read doesn't
-/// bind to this cohort under `source()` load order (`order_ambiguous`), or any
-/// dynamic `source()` in the project. A *complete* multi-def package cohort is
-/// **not** refused — its members are aliases of one flat-namespace slot, so
-/// rewriting every cohort def plus every reader is a sound rename-all.
-/// (Cancellation also yields `None`.)
+/// could live in an unanalyzed member), any dynamic `source()` reaching a reader
+/// of the name (`dynamic_source_risk`), or a reader with a top-level read whose
+/// binding is undecidable (two static closure definers — `reader_rename_ranges`
+/// yields `None`). A *complete* multi-def package cohort is **not** refused — its
+/// members are aliases of one flat-namespace slot, so rewriting every cohort def
+/// plus every cohort-bound reader read is a sound rename-all. (Cancellation also
+/// yields `None`.)
 pub(crate) fn cross_file_rename_edits(
     snapshot: &Analysis,
     def_file: &Path,
@@ -289,7 +292,7 @@ pub(crate) fn cross_file_rename_edits(
         snapshot.cross_file_binding(def_file, name)
     }))
     .ok()?;
-    if binding.cohort_incomplete || binding.order_ambiguous || binding.dynamic_source_risk {
+    if binding.cohort_incomplete || binding.dynamic_source_risk {
         return None;
     }
     let mut edits = Vec::new();
@@ -312,12 +315,15 @@ pub(crate) fn cross_file_rename_edits(
             }
         }
     }
-    // Readers: every free read of the name (it binds to `def_file`).
+    // Readers: the free reads of the name that bind to the cohort under load
+    // order. A reader's pre-source / bound-elsewhere reads are skipped; an
+    // undecidable read makes `reader_rename_ranges` return `None` and refuses the
+    // whole rename (`?`).
     for reader in &binding.readers {
         if skip == Some(reader.as_path()) {
             continue;
         }
-        for range in snapshot.read_ranges_in(snapshot.lookup_file(reader)?, name) {
+        for range in snapshot.reader_rename_ranges(reader, name, &binding.cohort)? {
             if let Some(edit) = text_edit_in(snapshot, reader, range, new_name) {
                 edits.push(edit);
             }
@@ -991,19 +997,118 @@ mod tests {
     }
 
     #[test]
-    fn rename_via_db_refuses_when_a_reader_reads_before_its_source() {
+    fn rename_via_db_skips_a_pre_source_read() {
         // b.R reads `foo` at top level *before* sourcing a.R, so that read binds
-        // to nothing (not a.R's foo). We can't co-rename it, and can't skip it
-        // selectively, so the whole rename refuses.
+        // to nothing (not a.R's foo). Rename rewrites a.R's definition and leaves
+        // the pre-source read alone — b.R gets no edit (precise per-read
+        // filtering, where the coarse model refused the whole rename).
         let a_src = "foo <- function() 1\n";
         let b_src = "before <- foo\nsource(\"a.R\")\n";
         let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("the pre-source read is skipped, not refused");
+        let changes = edit.changes.expect("changes present");
+        assert_eq!(changes.get(&uri_a).expect("a.R definition edited").len(), 1);
+        assert!(
+            !changes.contains_key(&uri_b),
+            "the pre-source read binds to nothing, so b.R is untouched"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_mixed_reader_renames_only_the_post_source_read() {
+        // b.R reads `foo` before *and* after sourcing a.R: the pre-source read
+        // binds to nothing (skip), the post-source read binds to a.R's foo
+        // (rename). Exactly one edit in b.R, on the second occurrence.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "before <- foo\nsource(\"a.R\")\nafter <- foo\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("the post-source read is renamable even though a pre-source one isn't");
+        let changes = edit.changes.expect("changes present");
+        assert_eq!(changes.get(&uri_a).expect("a.R definition edited").len(), 1);
+        let b_edits = changes.get(&uri_b).expect("b.R post-source read edited");
+        assert_eq!(b_edits.len(), 1, "only the post-source read is renamed");
+        // The edit lands on the *second* `foo` occurrence (after the source).
+        let post_offset = b_src.rfind("foo").unwrap();
+        let post_pos = pos_at(b_src, post_offset);
+        assert_eq!(b_edits[0].range.start, post_pos);
+    }
+
+    #[test]
+    fn rename_via_db_renames_body_read_skips_pre_source_read() {
+        // b.R reads `foo` at top level before sourcing a.R (skip) and again inside
+        // a function body (run at call time against the final scope → binds to
+        // a.R's foo, rename). The body read is renamed; the pre-source one isn't.
+        let a_src = "foo <- function() 1\n";
+        let b_src = "before <- foo\nsource(\"a.R\")\ng <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
+            .expect("the body read binds to the final scope and renames");
+        let changes = edit.changes.expect("changes present");
+        let b_edits = changes.get(&uri_b).expect("b.R body read edited");
+        assert_eq!(b_edits.len(), 1, "only the body read is renamed");
+        let body_offset = b_src.rfind("foo").unwrap();
+        assert_eq!(b_edits[0].range.start, pos_at(b_src, body_offset));
+    }
+
+    #[test]
+    fn rename_via_db_refuses_on_ambiguous_closure_definers() {
+        // b.R sources d.R, which sources both a.R and c.R — both define `foo`.
+        // Which one is live at b.R's read is order-dependent inside the closure,
+        // so the read's binding is undecidable: the whole rename refuses.
+        let a_src = "foo <- function() 1\n";
+        let c_src = "foo <- function() 2\n";
+        let d_src = "source(\"a.R\")\nsource(\"c.R\")\n";
+        let b_src = "source(\"d.R\")\nx <- foo\n";
+        let snapshot = rename_workspace_files(&[
+            ("a.R", a_src),
+            ("c.R", c_src),
+            ("d.R", d_src),
+            ("b.R", b_src),
+        ]);
         let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
         assert!(
             rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
-            "a pre-source top-level read makes the rename order-ambiguous: refuse"
+            "an ambiguous (two-definer) closure read makes the rename refuse"
+        );
+    }
+
+    #[test]
+    fn rename_via_db_skips_a_clicked_pre_source_read() {
+        // The cursor sits *on* the pre-source read in b.R (a bare free read that
+        // resolves position-blind to a.R's foo). Rename rewrites the genuine
+        // references and leaves the clicked token — which binds to nothing — alone.
+        let a_src = "foo <- function() 1\nuse <- foo\n";
+        let b_src = "before <- foo\nsource(\"a.R\")\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = b_src.find("foo").unwrap();
+
+        let edit = rename_via_db(&snapshot, &ws_path("b.R"), &uri_b, b_src, offset, "renamed")
+            .expect("clicking a pre-source read still offers the rename for real references");
+        let changes = edit.changes.expect("changes present");
+        // a.R's definition and its own post-def read are renamed.
+        assert_eq!(changes.get(&uri_a).expect("a.R edited").len(), 2);
+        // b.R's clicked pre-source read is not a reference, so it is untouched.
+        assert!(
+            !changes.contains_key(&uri_b),
+            "the clicked pre-source token binds to nothing and is skipped"
         );
     }
 

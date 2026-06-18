@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use rowan::NodeOrToken;
+use rowan::{NodeOrToken, TextRange};
 
 use crate::project::source::{TopLevelEvent, top_level_source_edge_key};
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
@@ -39,7 +39,29 @@ pub fn collect_top_level_events(
     base_dir: Option<&Path>,
     model: &SemanticModel,
 ) -> Vec<TopLevelEvent> {
-    let mut events: Vec<TopLevelEvent> = Vec::new();
+    collect_top_level_events_spanned(root, base_dir, model)
+        .into_iter()
+        .map(|(event, _span)| event)
+        .collect()
+}
+
+/// The same sequence as [`collect_top_level_events`], but each event is paired
+/// with the span of the identifier that produced it: `Some` for a
+/// [`TopLevelEvent::Read`] (the read occurrence's range), `None` for a
+/// `Define`/`SourceEdge`. Stripping the spans yields exactly
+/// [`collect_top_level_events`]'s range-free output (which is what backs the
+/// salsa firewall) — the two stay in lockstep by construction.
+///
+/// Computed ad hoc at refactor time off a fresh tree+model (never a salsa
+/// query): order-aware rename uses the spans to correlate each top-level read to
+/// the binding it resolves to under load order. See
+/// [`crate::project::ProjectScope::top_level_read_provenance`].
+pub fn collect_top_level_events_spanned(
+    root: &SyntaxNode,
+    base_dir: Option<&Path>,
+    model: &SemanticModel,
+) -> Vec<(TopLevelEvent, Option<TextRange>)> {
+    let mut events: Vec<(TopLevelEvent, Option<TextRange>)> = Vec::new();
     // Iterate *elements* (nodes and tokens) so a bare top-level identifier
     // statement — a direct IDENT token of the root, not wrapped in a node — is
     // also seen as a read.
@@ -54,7 +76,10 @@ pub fn collect_top_level_events(
                     .find(|ident| ident.range == tok.text_range())
                     && model.resolve_local(ident).is_none()
                 {
-                    events.push(TopLevelEvent::Read(ident.name.to_string()));
+                    events.push((
+                        TopLevelEvent::Read(ident.name.to_string()),
+                        Some(ident.range),
+                    ));
                 }
             }
             NodeOrToken::Node(child) => extend_with_statement(&mut events, &child, base_dir, model),
@@ -69,7 +94,7 @@ pub fn collect_top_level_events(
 /// file-scope-direct free reads (in source order) followed by its file-scope
 /// definitions.
 fn extend_with_statement(
-    events: &mut Vec<TopLevelEvent>,
+    events: &mut Vec<(TopLevelEvent, Option<TextRange>)>,
     child: &SyntaxNode,
     base_dir: Option<&Path>,
     model: &SemanticModel,
@@ -77,7 +102,7 @@ fn extend_with_statement(
     // A `source()`/`sys.source()` call is one edge event; don't also emit reads
     // for its arguments.
     if let Some(key) = top_level_source_edge_key(child, base_dir) {
-        events.push(TopLevelEvent::SourceEdge(key));
+        events.push((TopLevelEvent::SourceEdge(key), None));
         return;
     }
     let range = child.text_range();
@@ -85,7 +110,7 @@ fn extend_with_statement(
     // File-scope-direct free reads within this statement, in source order. A
     // read inside a function/block body has a non-`File` scope and is skipped
     // (it runs at call time, against the final post-execution scope).
-    let mut reads: Vec<(rowan::TextSize, &str)> = model
+    let mut reads: Vec<(TextRange, &str)> = model
         .idents()
         .iter()
         .filter(|ident| {
@@ -93,13 +118,13 @@ fn extend_with_statement(
                 && range.contains_range(ident.range)
                 && model.resolve_local(ident).is_none()
         })
-        .map(|ident| (ident.range.start(), ident.name.as_str()))
+        .map(|ident| (ident.range, ident.name.as_str()))
         .collect();
-    reads.sort_by_key(|(start, _)| *start);
+    reads.sort_by_key(|(range, _)| range.start());
     events.extend(
         reads
             .into_iter()
-            .map(|(_, name)| TopLevelEvent::Read(name.to_string())),
+            .map(|(range, name)| (TopLevelEvent::Read(name.to_string()), Some(range))),
     );
 
     // File-scope definitions introduced by this statement (after its reads: the
@@ -109,7 +134,7 @@ fn extend_with_statement(
             && model.scope(binding.scope).kind == ScopeKind::File
             && range.contains_range(binding.def_range)
         {
-            events.push(TopLevelEvent::Define(binding.name.to_string()));
+            events.push((TopLevelEvent::Define(binding.name.to_string()), None));
         }
     }
 }
@@ -190,6 +215,59 @@ mod tests {
         // sequence must be byte-identical (the firewall/backdate precondition).
         let a = events("g <- function() 1\nsource(\"x.R\")\nbar\n");
         let b = events("g <- function() 1 + 2 + 3\nsource(\"x.R\")\nbar\n");
+        assert_eq!(a, b);
+    }
+
+    fn spanned(src: &str) -> Vec<(TopLevelEvent, Option<rowan::TextRange>)> {
+        let cst = parse(src).cst;
+        let model = SemanticModel::build(&cst);
+        collect_top_level_events_spanned(&cst, None, &model)
+    }
+
+    #[test]
+    fn stripping_spans_yields_the_range_free_sequence() {
+        // The spanned collector is the source of truth; the range-free one is its
+        // span-stripped projection. They must agree event-for-event.
+        let src = "x <- g(y)\nsource(\"a.R\")\nbar\n";
+        let stripped: Vec<TopLevelEvent> = spanned(src).into_iter().map(|(e, _)| e).collect();
+        assert_eq!(stripped, events(src));
+    }
+
+    #[test]
+    fn only_reads_carry_a_span() {
+        // Reads anchor to the identifier occurrence; defines and source edges are
+        // position-free (`None`).
+        for (event, span) in spanned("x <- g(y)\nsource(\"a.R\")\n") {
+            match event {
+                TopLevelEvent::Read(_) => assert!(span.is_some(), "a read carries its span"),
+                TopLevelEvent::Define(_) | TopLevelEvent::SourceEdge(_) => {
+                    assert!(span.is_none(), "a define/edge has no span")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn read_span_indexes_the_identifier() {
+        // The recovered span must cover exactly the read's text.
+        let src = "x <- foo\n";
+        let (event, span) = spanned(src)
+            .into_iter()
+            .find(|(e, _)| matches!(e, TopLevelEvent::Read(n) if n == "foo"))
+            .expect("a top-level read of foo");
+        assert_eq!(event, read("foo"));
+        let span = span.expect("a read span");
+        assert_eq!(&src[span], "foo");
+    }
+
+    #[test]
+    fn body_edit_leaves_the_spanned_sequence_events_unchanged() {
+        // A function-body edit shifts spans but must not change the *events* — the
+        // span-stripped projection (the firewall input) stays byte-identical.
+        let strip =
+            |s: &str| -> Vec<TopLevelEvent> { spanned(s).into_iter().map(|(e, _)| e).collect() };
+        let a = strip("g <- function() 1\nsource(\"x.R\")\nbar\n");
+        let b = strip("g <- function() 1 + 2 + 3\nsource(\"x.R\")\nbar\n");
         assert_eq!(a, b);
     }
 }

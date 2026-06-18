@@ -151,6 +151,20 @@ pub(crate) fn rename_workspace3(a_src: &str, b_src: &str, c_src: &str) -> Analys
     db.snapshot()
 }
 
+/// A flat workspace of arbitrarily many `(name, src)` members, seeded and
+/// snapshotted. Like [`rename_workspace`]/[`rename_workspace3`] but for
+/// scenarios needing four or more files (e.g. a sourced closure with two
+/// definers of the same name).
+pub(crate) fn rename_workspace_files(files: &[(&str, &str)]) -> Analysis {
+    let mut db = IncrementalDatabase::default();
+    let members: Vec<_> = files
+        .iter()
+        .map(|(name, src)| db.upsert_file(&ws_path(name), src.to_string()))
+        .collect();
+    db.set_workspace_members(members, vec![ws_root()]);
+    db.snapshot()
+}
+
 /// A real on-disk R package (`DESCRIPTION` + `R/`) with two member files,
 /// seeded and snapshotted. Package siblings share one flat namespace, which
 /// the scope layer derives from the `package_root` disk walk — so this can't

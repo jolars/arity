@@ -17,8 +17,8 @@ pub use graph::{
     ReverseSources, Visibility, discover_packages, external_resolution, project_defs,
     project_graph, project_reads, reverse_source_edges, visible_symbols, workspace_project,
 };
-pub use scope::{FileFacts, FileScope, ProjectScope, ReadBinding, package_root};
-pub use sequence::collect_top_level_events;
+pub use scope::{FileFacts, FileScope, ProjectScope, ReadBinding, ReadSite, package_root};
+pub use sequence::{collect_top_level_events, collect_top_level_events_spanned};
 pub use source::{
     SourceEdge, SourceEdgeKey, SourceLiteralEdge, SourceTarget, TopLevelEvent,
     collect_source_edge_keys, collect_source_edges, collect_source_literal_edges, relative_path,
