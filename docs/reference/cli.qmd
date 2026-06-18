@@ -80,6 +80,8 @@ Lint .R files
 * `--check` — Exit non-zero when any findings are reported (no effect on output)
 * `--fix` — Apply safe autofixes in place and report what remains
 * `--unsafe-fixes` — Also apply fixes that may change behavior (requires --fix)
+* `--select <RULE_ID>` — Only run these rules (overrides config `select`); repeatable or comma-separated
+* `--ignore <RULE_ID>` — Disable these rules (overrides config `ignore`); repeatable or comma-separated
 * `--output <OUTPUT>` — Output format
 
   Default value: `pretty`

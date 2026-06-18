@@ -63,11 +63,14 @@ fn main() -> ExitCode {
             check,
             fix,
             unsafe_fixes,
+            select,
+            ignore,
             output,
         } => run_lint(
             paths,
             check,
             FixOptions { fix, unsafe_fixes },
+            LintOverrides { select, ignore },
             output,
             &config_source,
         ),
@@ -215,6 +218,11 @@ struct ConfigSource {
 struct FormatOverrides {
     line_width: Option<u32>,
     indent_width: Option<u32>,
+}
+
+struct LintOverrides {
+    select: Vec<String>,
+    ignore: Vec<String>,
 }
 
 fn load_config(source: &ConfigSource, anchor: &Path) -> Result<Config, ConfigError> {
@@ -494,6 +502,7 @@ fn run_lint(
     paths: Vec<PathBuf>,
     check: bool,
     fix_opts: FixOptions,
+    overrides: LintOverrides,
     output: LintOutput,
     config_source: &ConfigSource,
 ) -> ExitCode {
@@ -501,13 +510,21 @@ fn run_lint(
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let config = match load_config(config_source, &anchor) {
+    let mut config = match load_config(config_source, &anchor) {
         Ok(config) => config,
         Err(err) => {
             eprintln!("error: {err}");
             return ExitCode::from(2);
         }
     };
+
+    // CLI flags override the configured rule selection when provided.
+    if !overrides.select.is_empty() {
+        config.lint.select = Some(overrides.select);
+    }
+    if !overrides.ignore.is_empty() {
+        config.lint.ignore = overrides.ignore;
+    }
 
     // Apply fixes in place first; the reporting pass below then re-reads from
     // disk and shows whatever findings remain.

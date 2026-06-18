@@ -89,9 +89,10 @@ concern, as `all_rule_ids()` already is).
       by a local binding (`model.resolve_local` over the callee read), and not
       masked by an attached package (effective `symbols.origin(...)` is a default
       package). Unblocks confident Phase 2.
-- [ ] **§I7 CLI `--select`/`--ignore`**: `LintConfig` already has the fields and
-      `ResolvedRules::resolve` honors them --- verify/wire the flags in
-      `src/cli.rs`. Lets users opt into noisier new rules early.
+- [x] **§I7 CLI `--select`/`--ignore`** (landed). `arity lint` now accepts
+      `--select`/`--ignore` (repeatable or comma-separated); CLI values replace
+      the configured `select`/`ignore`, applied before fixes. Unknown IDs error
+      via the existing `LintError::UnknownRule`. Covered by `tests/config.rs`.
 - [x] **Registration single source of truth** (landed). `all_rules()` is now
       the sole list; `ALL_RULE_IDS` is replaced by `all_rule_ids()`, which
       derives the valid-ID set from `all_rules()` so the two can't drift.

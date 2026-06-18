@@ -85,6 +85,14 @@ pub enum Commands {
         #[arg(long)]
         unsafe_fixes: bool,
 
+        /// Only run these rules (overrides config `select`); repeatable or comma-separated
+        #[arg(long, value_name = "RULE_ID", value_delimiter = ',')]
+        select: Vec<String>,
+
+        /// Disable these rules (overrides config `ignore`); repeatable or comma-separated
+        #[arg(long, value_name = "RULE_ID", value_delimiter = ',')]
+        ignore: Vec<String>,
+
         /// Output format
         #[arg(long, value_enum, default_value_t = LintOutput::Pretty)]
         output: LintOutput,

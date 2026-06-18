@@ -228,3 +228,100 @@ fn cli_invalid_override_value_errors() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("line-width"), "stderr: {stderr}");
 }
+
+// A fixture that trips two distinct default-enabled rules: `unused-binding`
+// (the `x <- 1` local is never read) and `equals-na` (the `a == NA` comparison).
+const LINT_TWO_RULES: &str = "f <- function(a) {\n  x <- 1\n  a == NA\n}\n";
+
+#[test]
+fn cli_lint_select_restricts_to_named_rule() {
+    let dir = tempdir().unwrap();
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, LINT_TWO_RULES).unwrap();
+
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        [
+            "lint",
+            "--output",
+            "concise",
+            "--select",
+            "equals-na",
+            r_file.to_str().unwrap(),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("equals-na"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("unused-binding"),
+        "selecting equals-na should suppress unused-binding; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_lint_ignore_suppresses_named_rule() {
+    let dir = tempdir().unwrap();
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, LINT_TWO_RULES).unwrap();
+
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        [
+            "lint",
+            "--output",
+            "concise",
+            "--ignore",
+            "unused-binding",
+            r_file.to_str().unwrap(),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unused-binding"),
+        "ignored rule should not fire; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("equals-na"),
+        "other rules should still fire; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_lint_select_accepts_comma_separated_list() {
+    let dir = tempdir().unwrap();
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, LINT_TWO_RULES).unwrap();
+
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        [
+            "lint",
+            "--output",
+            "concise",
+            "--select",
+            "equals-na,unused-binding",
+            r_file.to_str().unwrap(),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("equals-na"), "stderr: {stderr}");
+    assert!(stderr.contains("unused-binding"), "stderr: {stderr}");
+}
+
+#[test]
+fn cli_lint_unknown_selected_rule_errors() {
+    let dir = tempdir().unwrap();
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, LINT_TWO_RULES).unwrap();
+
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        ["lint", "--select", "no-such-rule", r_file.to_str().unwrap()],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown lint rule") && stderr.contains("no-such-rule"),
+        "stderr: {stderr}"
+    );
+}
