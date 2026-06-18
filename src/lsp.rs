@@ -70,7 +70,7 @@ use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
     FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
     RangeFormatting, References, Rename, Request as RequestTrait, ResolveCompletionItem,
-    SignatureHelpRequest, WillRenameFiles,
+    SignatureHelpRequest, WillRenameFiles, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -90,6 +90,7 @@ use lsp_types::{
     SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
     WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
+    WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -103,6 +104,7 @@ use crate::formatter::{FormatStyle, format_node, format_range, format_with_style
 use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
 use crate::linter::{Diagnostic, Severity};
 use crate::parser::{diff_edit, map_range_through_edit, parse};
+use crate::project::DefKind;
 use crate::rindex::build::{BuildOptions, build_index};
 use crate::rindex::cache::{Cache, resolve_cache_root};
 use crate::rindex::discover::{referenced_in_source, with_default_packages};
@@ -133,6 +135,7 @@ mod signature;
 mod state;
 mod symbols;
 mod uri;
+mod workspace_symbols;
 
 pub(crate) use code_actions::*;
 pub(crate) use completion::*;
@@ -145,6 +148,7 @@ pub(crate) use read_jobs::*;
 pub(crate) use settings::*;
 pub(crate) use signature::*;
 pub(crate) use state::*;
+pub(crate) use workspace_symbols::*;
 
 pub use code_actions::compute_code_actions;
 pub use completion::{compute_completions, resolve_completion};

@@ -89,6 +89,7 @@ impl GlobalState {
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
             WillRenameFiles::METHOD => self.on_will_rename_files(req),
+            WorkspaceSymbolRequest::METHOD => self.on_workspace_symbol(req),
             _ => {
                 let resp = Response::new_err(
                     req.id,
@@ -528,6 +529,25 @@ impl GlobalState {
         });
     }
 
+    /// `workspace/symbol`: fuzzy name search over the workspace's top-level
+    /// definitions. A read-only job dispatched to the lint thread like
+    /// definition/references; the query runs on the read pool against a db
+    /// snapshot. Unlike the position-based requests it isn't tied to an open
+    /// buffer, so it does no document lookup. See [`workspace_symbols_via_db`].
+    fn on_workspace_symbol(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<WorkspaceSymbolParams>(WorkspaceSymbolRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid workspaceSymbol params");
+            return;
+        };
+        self.dispatch_read(ReadJob::WorkspaceSymbol {
+            id,
+            query: params.query,
+            sender: self.sender.clone(),
+        });
+    }
+
     /// Hand a read-only job to the lint thread (db owner), which snapshots the db
     /// and runs it on the read pool. If that channel is gone (shutdown in flight),
     /// reply `null` so the client isn't left waiting.
@@ -544,6 +564,7 @@ impl GlobalState {
                 ReadJob::References { id, sender, .. } => (id, sender),
                 ReadJob::Rename { id, sender, .. } => (id, sender),
                 ReadJob::WillRenameFiles { id, sender, .. } => (id, sender),
+                ReadJob::WorkspaceSymbol { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
                 id,

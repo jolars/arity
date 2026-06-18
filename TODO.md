@@ -326,11 +326,18 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   document highlight. `R6`/`setClass` shapes deferred. Kind is `FUNCTION` vs
   `VARIABLE`; `detail` (signatures) is a follow-up.
 
-- [ ] **Workspace symbols** (`workspace/symbol`). Fuzzy name search across all
-  project files. Needs a persistent, queryable symbol index keyed by name
-  (aggregate `file_exports` across the workspace) plus project-wide file
-  discovery driven into salsa. This is the foundational cross-file index
-  that references, rename, and call hierarchy all reuse --- build it once.
+- [x] **Workspace symbols** (`workspace/symbol`). Fuzzy name search across all
+  project files (`src/lsp/workspace_symbols.rs` `workspace_symbols_via_db`).
+  Reuses the cross-file index that references and rename already built:
+  `Analysis::workspace_symbols` scans `project_defs` (the salsa-tracked,
+  name-keyed `DefIndex` aggregated across workspace members), filters names with
+  a dependency-free case-insensitive subsequence matcher, and recovers each
+  span per site via `def_range_in` against the file's current text. A db-backed
+  read job (like definition/references), so it runs on the read pool against a
+  snapshot. Returns modern `WorkspaceSymbol`s with full `Location`s; kind is
+  `FUNCTION` vs `VARIABLE`. Scope is file-scope top-level defs only (nested
+  locals excluded). Empty in single-file mode (no workspace seeded).
+  `container_name`/`detail` and a real fuzzy ranking are follow-ups.
 
 ### Rename
 

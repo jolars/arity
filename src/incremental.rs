@@ -894,6 +894,43 @@ impl Analysis {
             .collect()
     }
 
+    /// Every top-level workspace definition whose name satisfies `matches`, as
+    /// `(name, kind, member path, def span)`. The fuzzy, all-names generalization
+    /// of [`workspace_def_sites`](Self::workspace_def_sites): it scans the whole
+    /// [`project_defs`](crate::project::project_defs) index rather than a single
+    /// key, then recovers each span per site via
+    /// [`def_range_in`](Self::def_range_in) so it indexes that file's *current*
+    /// text. Empty when no workspace is seeded. Backs `workspace/symbol`. A pure
+    /// read — the caller wraps it in [`salsa::Cancelled::catch`].
+    ///
+    /// Names are filtered *before* the per-site span recovery so a short or empty
+    /// query never forces a semantic-model read for every symbol in the workspace.
+    pub fn workspace_symbols(
+        &self,
+        matches: impl Fn(&str) -> bool,
+    ) -> Vec<(String, DefKind, PathBuf, TextRange)> {
+        if self.0.workspace().is_none() {
+            return Vec::new();
+        }
+        let project = workspace_project(&self.0);
+        let index = project_defs(&self.0, project);
+        index
+            .by_name
+            .iter()
+            .filter(|(name, _)| matches(name))
+            .flat_map(|(name, sites)| sites.iter().map(move |site| (name, site)))
+            .filter_map(|(name, (path, kind))| {
+                let file = self.0.lookup_file(path)?;
+                Some((
+                    name.clone(),
+                    *kind,
+                    path.clone(),
+                    self.def_range_in(file, name)?,
+                ))
+            })
+            .collect()
+    }
+
     /// The free-read sites of `name` in `file`, read from the *fresh* semantic
     /// model so each span indexes the current text. A "free read" is an identifier
     /// occurrence that binds to no local binding — the same predicate

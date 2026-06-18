@@ -87,6 +87,12 @@ pub(crate) enum ReadJob {
         renames: Vec<(PathBuf, PathBuf)>,
         sender: Sender<Message>,
     },
+    WorkspaceSymbol {
+        id: RequestId,
+        /// The fuzzy name filter; an empty string requests every symbol.
+        query: String,
+        sender: Sender<Message>,
+    },
 }
 
 /// Service a read-only job against a db `snapshot`, replying to the client.
@@ -192,6 +198,11 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
         } => {
             let result = will_rename_via_db(&snapshot, &renames);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::WorkspaceSymbol { id, query, sender } => {
+            let symbols = workspace_symbols_via_db(&snapshot, &query);
+            let response = WorkspaceSymbolResponse::Nested(symbols);
+            let _ = sender.send(Message::Response(Response::new_ok(id, response)));
         }
     }
 }
