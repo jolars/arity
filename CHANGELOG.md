@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.5.0](https://github.com/jolars/arity/compare/v0.4.0...v0.5.0) (2026-06-18)
+
+### Features
+- **lsp:** add semantic tokens (full) ([`7f578d2`](https://github.com/jolars/arity/commit/7f578d2a159e82285edf7f52d8648987accb2cbc))
+- **lsp:** rename binding-only reads instead of refusing (B2.4) ([`b4643d8`](https://github.com/jolars/arity/commit/b4643d8a6a74cc794c19947e106ca403e37c29be))
+- **lsp:** add workspace/symbol fuzzy name search ([`56ba0dc`](https://github.com/jolars/arity/commit/56ba0dc8325814c15d3edf1862fd833a289e52bb))
+- **lint:** wire CLI --select/--ignore flags ([`a3f7844`](https://github.com/jolars/arity/commit/a3f7844cd2102b76b58604d71b07a55579e11631))
+- **lint:** add resolves_to_base namespace-confirmation helper ([`2bfb17f`](https://github.com/jolars/arity/commit/2bfb17fc54f1c2a9448d23c9aa191d141784526a))
+- **lint:** add §I1 matchers and first Phase 1 rule batch ([`e39e6ba`](https://github.com/jolars/arity/commit/e39e6ba3311cb3a54ab1332c49252a46067cef0d))
+- **lsp:** narrow dynamic-source refusal in cross-file rename ([`93f601b`](https://github.com/jolars/arity/commit/93f601b16fb1fc912a2a6782fbe4997e7445618c))
+- **index:** add opt-in downloadable CRAN symbol sidecar ([`84da1fb`](https://github.com/jolars/arity/commit/84da1fb13ef8cf3b8cb6625e0d38634eb100975f))
+- **lsp:** add signature help ([`85efe66`](https://github.com/jolars/arity/commit/85efe66f9caa5917285bb9f6a3697b532a6e4b57))
+- **lsp:** add completion ([`59d01fa`](https://github.com/jolars/arity/commit/59d01fa4fa763c108b0d3af78f3dc9a3f3f66826))
+- **lsp:** add folding range support ([`824ab9d`](https://github.com/jolars/arity/commit/824ab9d013106e43e0c229cb7ce38179d50d0556))
+- **lsp:** add file rename support ([`81f4752`](https://github.com/jolars/arity/commit/81f47523b7429fcd0ed08886b2aea83141d4d61f))
+- **lsp:** load-order resolution for cross-file rename/references ([`617ccb0`](https://github.com/jolars/arity/commit/617ccb0bb6dc36693db51e9f0ee65264a71eb9fe))
+- **lsp:** scope-aware cross-file rename and references ([`1aa7f8c`](https://github.com/jolars/arity/commit/1aa7f8c01ee32f5fc656ecca358b456f87f0e0e6))
+- **lsp:** cross-file symbol rename ([`3b12b12`](https://github.com/jolars/arity/commit/3b12b12f386dd5d5273fe5c461460424d60dec8b))
+- **cli:** add diff print to `--check` ([`16ebdf3`](https://github.com/jolars/arity/commit/16ebdf311411fa1a867b292a43feb735e8d9d50c))
+
+### Bug Fixes
+- **lsp:** bind reader body reads to final scope (B2.4) ([`0f367d5`](https://github.com/jolars/arity/commit/0f367d5f257533282bbcf0b8934978159d2e62d0))
+- **project:** classify source() path relativity host-independently ([`751406e`](https://github.com/jolars/arity/commit/751406eb44a1a4425090cb08cf250e9ef06ca4a1))
+- **semantic:** don't record reserved constants as reads ([`9848162`](https://github.com/jolars/arity/commit/98481622f1e82b9429b36692b42bd460944378ef))
+- **index:** probe .libPaths() for launcher-injected libraries ([`ed729f1`](https://github.com/jolars/arity/commit/ed729f1eed8489811e1a7288cecda5995ca8f765))
+- **linter:** only flag shadowed-builtin on call-position reads ([`fca8ef7`](https://github.com/jolars/arity/commit/fca8ef708757db4363a17036d11e0a0ea0e14a43))
+- **formatter:** don't break out `[[` unnecessarily ([`81543c8`](https://github.com/jolars/arity/commit/81543c846d92636986923003851116f0e1d4f786))
+- **ci:** default cran-symbols window to 30 days ([`c581c4b`](https://github.com/jolars/arity/commit/c581c4b90939ad949db7b66e24acae8d2e4e1788))
+- format trailing comments after binary and pipe operators ([`e9d41b2`](https://github.com/jolars/arity/commit/e9d41b29d42a8efb2fe4c1ecdd7449706058a8a6)), closes [#29](https://github.com/jolars/arity/issues/29) and [#30](https://github.com/jolars/arity/issues/30)
+- **parser:** lex ...-prefixed names as one identifier ([`c3a42b2`](https://github.com/jolars/arity/commit/c3a42b2bbfba73d2c809df5ec97067ed272b2575))
+- **parser:** lex dot-leading numeric literals ([`e5923fa`](https://github.com/jolars/arity/commit/e5923fa0a1e308e05c669846d0d747a286a9e8e8)), closes [#27](https://github.com/jolars/arity/issues/27)
+- **formatter:** format := (walrus) assignment operator ([`e80a0fc`](https://github.com/jolars/arity/commit/e80a0fc25d1c579d6641abcba6d92597cf182254)), closes [#26](https://github.com/jolars/arity/issues/26), [#28](https://github.com/jolars/arity/issues/28), [#31](https://github.com/jolars/arity/issues/31), and [#32](https://github.com/jolars/arity/issues/32)
+- **formatter:** break over-width if condition onto its own line ([`0b26da6`](https://github.com/jolars/arity/commit/0b26da6afa0f21794a2b49f5c33abd398dcfd77e))
+- **formatter:** don't break `[[` group ([`89e3eb7`](https://github.com/jolars/arity/commit/89e3eb7b3eed1bdc828ad2dd13d7077c9bb12f30))
+- **parser:** parse function parameter defaults as expressions ([`5cd36e1`](https://github.com/jolars/arity/commit/5cd36e119a06af8ab4de1d4ab63d42babc80b92d))
+- **parser:** lex backtick-quoted and bare-dot names ([`2a6252a`](https://github.com/jolars/arity/commit/2a6252ab2ab1fb080453af5b0616eff4240cf0a7))
+- **linter:** eliminate unused-binding false positives ([`c941fcb`](https://github.com/jolars/arity/commit/c941fcb9d638920b5dbfb1e1b19ef57f280bf922))
+
+### Performance Improvements
+- **incremental:** make workspace_project pure via PackageGraph input ([`0409a6a`](https://github.com/jolars/arity/commit/0409a6aca8515c218532c85f99a003b5d0618d2d))
+
 ## [0.4.0](https://github.com/jolars/arity/compare/v0.3.0...v0.4.0) (2026-06-12)
 
 ### Features
