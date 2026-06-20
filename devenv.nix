@@ -14,6 +14,7 @@
     pkgs.cargo-insta
     pkgs.go-task
     pkgs.jarl
+    pkgs.mdbook
     pkgs.llvmPackages.bintools
     pkgs.prettier
     pkgs.quartoMinimal

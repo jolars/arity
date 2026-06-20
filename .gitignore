@@ -49,3 +49,6 @@ devenv.local.yaml
 .task
 /test.R
 /images/trials
+
+# mdBook build output
+/book/book

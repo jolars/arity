@@ -1,0 +1,9 @@
+[book]
+title = "Arity"
+description = "Language server, formatter, and linter for R"
+authors = ["Johan Larsson"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/jolars/arity"

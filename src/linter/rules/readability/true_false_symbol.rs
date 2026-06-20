@@ -14,13 +14,31 @@
 //! [`resolve_local`]: crate::semantic::SemanticModel::resolve_local
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 
 pub struct TrueFalseSymbol;
+
+const EXAMPLES: &[Example] = &[Example {
+    caption: "`T` and `F` used as boolean shorthand:",
+    source: "x <- T\ny <- F\n",
+}];
 
 impl Rule for TrueFalseSymbol {
     fn id(&self) -> &'static str {
         "true-false-symbol"
+    }
+
+    fn description(&self) -> &'static str {
+        "Prefer the reserved literals `TRUE`/`FALSE` over the rebindable base \
+         symbols `T`/`F`.\n\n`T` and `F` are ordinary base-R bindings, not \
+         reserved words — `T <- FALSE` is legal — so relying on them as boolean \
+         shorthand is fragile. The fix is withheld when the name resolves to a \
+         local binding, since that is the user's own variable rather than the \
+         shorthand."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        EXAMPLES
     }
 
     fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {

@@ -61,6 +61,18 @@ tasks:
     cmds:
       - cd docs && quarto preview --no-browser
 
+  docs-rules:
+    desc: Regenerate the mdBook rule reference from rule metadata
+    cmds:
+      - cargo run --example docgen
+
+  book-preview:
+    desc: Regenerate rule pages and serve the mdBook locally
+    deps:
+      - docs-rules
+    cmds:
+      - mdbook serve book --open
+
   audit:
     desc: Run security audit
     cmds:
