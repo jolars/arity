@@ -70,20 +70,3 @@ tasks:
     desc: Run cargo deny to check for vulnerabilities and issues
     cmds:
       - cargo deny check
-
-  logo:
-    desc: Regenerate the generative logo from scripts/logo.R
-    sources:
-      - scripts/logo.R
-    generates:
-      - images/logo-generated.svg
-    cmds:
-      - Rscript scripts/logo.R
-
-  logo-watch:
-    desc: Watch scripts/logo.R and regenerate the logo on changes
-    watch: true
-    sources:
-      - scripts/logo.R
-    cmds:
-      - Rscript scripts/logo.R
