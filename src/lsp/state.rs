@@ -6,6 +6,42 @@ pub(crate) struct Document {
     version: i32,
 }
 
+/// A `textDocument/diagnostic` request awaiting fresh findings: the buffer had no
+/// current cached findings when the pull arrived, so the request is parked here
+/// (keyed by URI) until the lint thread reports back. See
+/// [`GlobalState::on_document_diagnostic`].
+pub(crate) struct PendingPull {
+    id: RequestId,
+}
+
+/// An internal, already-decided document diagnostic report ready to serialize.
+pub(crate) enum DiagnosticReport {
+    /// A full set of items with an optional `resultId`.
+    Full(Vec<LspDiagnostic>, Option<String>),
+    /// The previously delivered report (with this `resultId`) is still accurate.
+    Unchanged(String),
+}
+
+/// Which kind of report to return for a pull. `Unchanged` is only valid when the
+/// client supplied a `previousResultId` that equals the current one — a server
+/// "can only return `unchanged` if result ids are provided" (LSP 3.17).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DiagnosticReportKind {
+    Full,
+    Unchanged,
+}
+
+/// Decide a pull's report kind: `Unchanged` iff both ids are present and equal.
+pub(crate) fn report_kind(
+    previous_result_id: Option<&str>,
+    current_id: Option<&str>,
+) -> DiagnosticReportKind {
+    match (previous_result_id, current_id) {
+        (Some(prev), Some(cur)) if prev == cur => DiagnosticReportKind::Unchanged,
+        _ => DiagnosticReportKind::Full,
+    }
+}
+
 /// Messages from the lint thread back to the main loop.
 pub(crate) enum Outbound {
     /// Diagnostics for `uri` at `version`; published only if still current. The
@@ -34,6 +70,24 @@ pub(crate) struct GlobalState {
     /// so the follow-up `rename` re-locates the cursor even if the buffer changed
     /// since prepare (the "anchor that survives typing"). Cleared on rename/close.
     rename_anchors: HashMap<Uri, RenameAnchor>,
+    /// True when the client supports the pull diagnostic model: we suppress push
+    /// (no `publishDiagnostics`) and answer `textDocument/diagnostic` instead.
+    pull_mode: bool,
+    /// Pull requests parked while the lint thread computes fresh findings, keyed
+    /// by URI. Drained on the next `Outbound::Diagnostics` for that URI (or on
+    /// close, with an empty report, so a request never hangs).
+    pending_pull: HashMap<Uri, Vec<PendingPull>>,
+    /// The opaque `resultId` of the report most recently delivered per URI. Bumped
+    /// every time findings are cached (a *lint generation*, not the document
+    /// version), so a cross-file change that leaves the version untouched still
+    /// yields a fresh id — `unchanged` is only returned when this matches the
+    /// client's `previousResultId`.
+    report_ids: HashMap<Uri, String>,
+    /// Monotonic source for [`report_ids`](Self::report_ids).
+    result_seq: u64,
+    /// Monotonic id source for server→client requests (`workspace/diagnostic/
+    /// refresh`); the client's responses are ignored by the main loop.
+    next_req_id: i32,
     config_cache: HashMap<PathBuf, ResolvedSettings>,
     /// Editor-pushed formatter defaults; the fallback when no `arity.toml` is
     /// found. Updated by `workspace/didChangeConfiguration`.
@@ -58,11 +112,17 @@ impl GlobalState {
         read_tx: Sender<ReadJob>,
         read_spawner: Spawner,
         editor_settings: EditorSettings,
+        pull_mode: bool,
     ) -> Self {
         Self {
             documents: HashMap::new(),
             findings: HashMap::new(),
             rename_anchors: HashMap::new(),
+            pull_mode,
+            pending_pull: HashMap::new(),
+            report_ids: HashMap::new(),
+            result_seq: 0,
+            next_req_id: 0,
             config_cache: HashMap::new(),
             editor_settings,
             sender,
@@ -77,6 +137,7 @@ impl GlobalState {
             Formatting::METHOD => self.on_formatting(req),
             RangeFormatting::METHOD => self.on_range_formatting(req),
             CodeActionRequest::METHOD => self.on_code_action(req),
+            DocumentDiagnosticRequest::METHOD => self.on_document_diagnostic(req),
             HoverRequest::METHOD => self.on_hover(req),
             SignatureHelpRequest::METHOD => self.on_signature_help(req),
             Completion::METHOD => self.on_completion(req),
@@ -200,6 +261,59 @@ impl GlobalState {
             let actions = compute_code_actions(&text, &path, &lint, &uri, range);
             let _ = sender.send(Message::Response(Response::new_ok(id, actions)));
         });
+    }
+
+    /// `textDocument/diagnostic`: the pull counterpart of pushed diagnostics.
+    /// Serves the most recent lint's findings (cached per URI by version, like the
+    /// code-action fast path) when they're current; otherwise parks the request in
+    /// [`pending_pull`](Self::pending_pull) and triggers a lint, answering once the
+    /// findings arrive in [`on_outbound`](Self::on_outbound). Returns `unchanged`
+    /// when the client's `previousResultId` still matches the cached report id.
+    fn on_document_diagnostic(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<DocumentDiagnosticParams>(DocumentDiagnosticRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid diagnostic params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some((text, version)) = self
+            .documents
+            .get(&uri)
+            .map(|d| (d.text.clone(), d.version))
+        else {
+            // Unknown document (never opened, or already closed): an empty report.
+            self.respond_diagnostic(id, DiagnosticReport::Full(Vec::new(), None));
+            return;
+        };
+
+        // Warm path: the cached findings still describe the live buffer, so the
+        // report is a pure lookup (their byte ranges index `text`).
+        if matches!(self.findings.get(&uri), Some((v, _)) if *v == version) {
+            let result_id = self.report_ids.get(&uri).cloned();
+            let report =
+                match report_kind(params.previous_result_id.as_deref(), result_id.as_deref()) {
+                    DiagnosticReportKind::Unchanged => DiagnosticReport::Unchanged(
+                        result_id.expect("unchanged implies a known result id"),
+                    ),
+                    DiagnosticReportKind::Full => {
+                        let (_, findings) = self.findings.get(&uri).expect("present above");
+                        let items = findings_to_items(findings, &text);
+                        DiagnosticReport::Full(items, result_id)
+                    }
+                };
+            self.respond_diagnostic(id, report);
+            return;
+        }
+
+        // Cold path: no current findings yet (a pull before the lint caught up).
+        // Park the request and lint; `on_outbound` answers it with fresh results.
+        self.pending_pull
+            .entry(uri.clone())
+            .or_default()
+            .push(PendingPull { id });
+        self.send_lint(uri);
     }
 
     fn on_hover(&mut self, req: Request) {
@@ -711,9 +825,17 @@ impl GlobalState {
                     let uri = params.text_document.uri;
                     self.documents.remove(&uri);
                     self.findings.remove(&uri);
+                    self.report_ids.remove(&uri);
                     self.rename_anchors.remove(&uri);
-                    // Tell the client to clear stale diagnostics.
-                    self.publish(uri, Vec::new(), None);
+                    // Resolve any parked pulls with an empty report so they don't
+                    // hang now that the buffer is gone.
+                    for PendingPull { id } in self.pending_pull.remove(&uri).unwrap_or_default() {
+                        self.respond_diagnostic(id, DiagnosticReport::Full(Vec::new(), None));
+                    }
+                    if !self.pull_mode {
+                        // Tell the client to clear stale diagnostics.
+                        self.publish(uri, Vec::new(), None);
+                    }
                 }
             }
             DidRenameFiles::METHOD => {
@@ -752,15 +874,46 @@ impl GlobalState {
                 diags,
                 findings,
             } => {
-                if matches!(self.documents.get(&uri), Some(d) if d.version == version) {
-                    self.findings.insert(uri.clone(), (version, findings));
+                // Stale results (a newer edit superseded this lint) are dropped:
+                // the newer version's lint will produce its own `Outbound`.
+                if !matches!(self.documents.get(&uri), Some(d) if d.version == version) {
+                    return;
+                }
+                // Cache findings (code actions still need them) and mint a fresh
+                // report id for this lint generation.
+                self.findings.insert(uri.clone(), (version, findings));
+                let result_id = self.bump_result_id();
+                self.report_ids.insert(uri.clone(), result_id.clone());
+
+                // Answer any parked pulls for this URI; otherwise deliver via the
+                // active channel (pull clients re-pull on their own cadence).
+                let pending = self.pending_pull.remove(&uri).unwrap_or_default();
+                for PendingPull { id } in pending {
+                    self.respond_diagnostic(
+                        id,
+                        DiagnosticReport::Full(diags.clone(), Some(result_id.clone())),
+                    );
+                }
+                if !self.pull_mode {
                     self.publish(uri, diags, Some(version));
                 }
             }
             Outbound::RelintAll => {
-                let uris: Vec<Uri> = self.documents.keys().cloned().collect();
-                for uri in uris {
-                    self.send_lint(uri);
+                if self.pull_mode {
+                    // Diagnostics may have changed without any document edit (a new
+                    // index/sibling). Invalidate caches so a re-pull recomputes,
+                    // then ask pull clients to re-request.
+                    let uris: Vec<Uri> = self.documents.keys().cloned().collect();
+                    for uri in &uris {
+                        self.findings.remove(uri);
+                        self.report_ids.remove(uri);
+                    }
+                    self.send_workspace_refresh();
+                } else {
+                    let uris: Vec<Uri> = self.documents.keys().cloned().collect();
+                    for uri in uris {
+                        self.send_lint(uri);
+                    }
                 }
             }
         }
@@ -828,6 +981,54 @@ impl GlobalState {
         let _ = self.sender.send(Message::Notification(not));
     }
 
+    /// Next opaque `resultId` for a pull report (a monotonic lint generation).
+    fn bump_result_id(&mut self) -> String {
+        self.result_seq += 1;
+        self.result_seq.to_string()
+    }
+
+    /// Respond to a `textDocument/diagnostic` request with a decided report.
+    fn respond_diagnostic(&self, id: RequestId, report: DiagnosticReport) {
+        let result: DocumentDiagnosticReportResult = match report {
+            DiagnosticReport::Full(items, result_id) => {
+                DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                    related_documents: None,
+                    full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                        result_id,
+                        items,
+                    },
+                })
+                .into()
+            }
+            DiagnosticReport::Unchanged(result_id) => {
+                DocumentDiagnosticReport::Unchanged(RelatedUnchangedDocumentDiagnosticReport {
+                    related_documents: None,
+                    unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                        result_id,
+                    },
+                })
+                .into()
+            }
+        };
+        match serde_json::to_value(result) {
+            Ok(value) => self.respond_ok(id, value),
+            Err(_) => self.respond_err(id, "failed to serialize diagnostic report"),
+        }
+    }
+
+    /// Ask pull clients to re-request diagnostics (server→client request). Sent
+    /// when cross-file context changed without a document edit (a fresh index or
+    /// sibling); the client's response is ignored by the main loop.
+    fn send_workspace_refresh(&mut self) {
+        self.next_req_id += 1;
+        let req = Request::new(
+            RequestId::from(self.next_req_id),
+            WorkspaceDiagnosticRefresh::METHOD.to_string(),
+            serde_json::Value::Null,
+        );
+        let _ = self.sender.send(Message::Request(req));
+    }
+
     fn respond_ok(&self, id: RequestId, value: serde_json::Value) {
         let _ = self
             .sender
@@ -837,5 +1038,29 @@ impl GlobalState {
     fn respond_err(&self, id: RequestId, message: &str) {
         let resp = Response::new_err(id, ErrorCode::InvalidParams as i32, message.to_string());
         let _ = self.sender.send(Message::Response(resp));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_kind_unchanged_only_when_ids_match() {
+        // Both present and equal → the client's report is still accurate.
+        assert_eq!(
+            report_kind(Some("3"), Some("3")),
+            DiagnosticReportKind::Unchanged
+        );
+        // Different ids → a fresh full report.
+        assert_eq!(
+            report_kind(Some("2"), Some("3")),
+            DiagnosticReportKind::Full
+        );
+        // No previousResultId (first pull) → full, even if we have a current id.
+        assert_eq!(report_kind(None, Some("3")), DiagnosticReportKind::Full);
+        // No current id (nothing cached yet) → full, never unchanged.
+        assert_eq!(report_kind(Some("3"), None), DiagnosticReportKind::Full);
+        assert_eq!(report_kind(None, None), DiagnosticReportKind::Full);
     }
 }

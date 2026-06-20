@@ -177,9 +177,44 @@ pub(crate) fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnosti
     }
 }
 
+/// Convert a lint's findings into LSP diagnostics against `text` (the source the
+/// findings' byte ranges index). Used by the pull-diagnostic path; the push path
+/// maps the same way inline in the lint thread.
+pub(crate) fn findings_to_items(findings: &[Diagnostic], text: &str) -> Vec<LspDiagnostic> {
+    let idx = LineIndex::new(text);
+    findings
+        .iter()
+        .map(|d| to_lsp_diagnostic(d, &idx))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn findings_to_items_maps_range_severity_and_code() {
+        use crate::linter::ViolationData;
+        // "line0\nWARN\n": the finding spans bytes 6..10 (the second line).
+        let text = "line0\nWARN\n";
+        let findings = vec![Diagnostic {
+            rule: "demo-rule",
+            severity: Severity::Warning,
+            path: test_path().to_path_buf(),
+            range: TextRange::new(TextSize::from(6), TextSize::from(10)),
+            message: ViolationData::new("demo-rule", "a demo finding"),
+            fix: None,
+        }];
+        let items = findings_to_items(&findings, text);
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(item.range.start, Position::new(1, 0));
+        assert_eq!(item.range.end, Position::new(1, 4));
+        assert_eq!(item.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(item.source.as_deref(), Some("arity"));
+        assert_eq!(item.message, "a demo finding");
+        assert!(matches!(&item.code, Some(NumberOrString::String(c)) if c == "demo-rule"));
+    }
 
     // --- db read path -----------------------------------------------------
 

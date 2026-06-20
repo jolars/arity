@@ -12,6 +12,9 @@ pub fn run() -> Result<(), DynError> {
         .map(EditorSettings::from_client_value)
         .unwrap_or_default();
     let workspace_roots = workspace_roots_from_params(&params);
+    // If the client supports the pull model, suppress push for this session and
+    // serve diagnostics on demand instead (avoids duplicate diagnostics).
+    let pull_mode = client_supports_pull(&params);
     let init_result = InitializeResult {
         capabilities: server_capabilities(),
         server_info: Some(ServerInfo {
@@ -21,7 +24,7 @@ pub fn run() -> Result<(), DynError> {
     };
     connection.initialize_finish(id, serde_json::to_value(init_result)?)?;
 
-    main_loop(connection, editor_settings, workspace_roots)?;
+    main_loop(connection, editor_settings, workspace_roots, pull_mode)?;
     io_threads.join()?;
     Ok(())
 }
@@ -48,6 +51,17 @@ pub(crate) fn workspace_roots_from_params(params: &serde_json::Value) -> Vec<Pat
         roots.push(path);
     }
     roots
+}
+
+/// Whether the client declared support for the pull diagnostic model in its
+/// `initialize` capabilities (`textDocument.diagnostic`). When true we suppress
+/// push and answer `textDocument/diagnostic` on demand instead.
+pub(crate) fn client_supports_pull(params: &serde_json::Value) -> bool {
+    params
+        .get("capabilities")
+        .and_then(|c| c.get("textDocument"))
+        .and_then(|t| t.get("diagnostic"))
+        .is_some_and(|d| d.is_object())
 }
 
 pub(crate) fn server_capabilities() -> ServerCapabilities {
@@ -87,6 +101,15 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
         })),
+        diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
+            identifier: Some("arity".to_string()),
+            // Editing one file can change another's diagnostics (cross-file lint).
+            inter_file_dependencies: true,
+            // We serve per-document pull only; a cross-file/index change asks the
+            // client to re-pull via `workspace/diagnostic/refresh` instead.
+            workspace_diagnostics: false,
+            work_done_progress_options: Default::default(),
+        })),
         workspace: Some(WorkspaceServerCapabilities {
             workspace_folders: None,
             file_operations: Some(WorkspaceFileOperationsServerCapabilities {
@@ -121,6 +144,7 @@ pub(crate) fn main_loop(
     connection: Connection,
     editor_settings: EditorSettings,
     workspace_roots: Vec<PathBuf>,
+    pull_mode: bool,
 ) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
@@ -149,6 +173,7 @@ pub(crate) fn main_loop(
         read_tx,
         read_pool.spawner(),
         editor_settings,
+        pull_mode,
     );
 
     loop {
@@ -199,5 +224,31 @@ mod tests {
 
         // Neither present → no roots (a single file opened outside a workspace).
         assert!(workspace_roots_from_params(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn advertises_pull_diagnostic_provider() {
+        let DiagnosticServerCapabilities::Options(opts) = server_capabilities()
+            .diagnostic_provider
+            .expect("diagnostic provider advertised")
+        else {
+            panic!("expected plain DiagnosticOptions");
+        };
+        assert_eq!(opts.identifier.as_deref(), Some("arity"));
+        assert!(opts.inter_file_dependencies);
+        assert!(!opts.workspace_diagnostics);
+    }
+
+    #[test]
+    fn detects_client_pull_support() {
+        let with = serde_json::json!({
+            "capabilities": { "textDocument": { "diagnostic": { "dynamicRegistration": false } } }
+        });
+        assert!(client_supports_pull(&with));
+
+        // No `diagnostic` capability, or a non-object value, means push-only.
+        let without = serde_json::json!({ "capabilities": { "textDocument": { "hover": {} } } });
+        assert!(!client_supports_pull(&without));
+        assert!(!client_supports_pull(&serde_json::json!({})));
     }
 }

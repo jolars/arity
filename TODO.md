@@ -549,11 +549,13 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 ### Diagnostics & misc protocol surface
 
-- [ ] **Pull diagnostics** (`textDocument/diagnostic` + `workspace/diagnostic`).
-  The server currently *pushes* diagnostics from the lint thread; the pull
-  model (LSP 3.17) lets clients request on demand and is friendlier to the
-  coalescing/versioning the lint thread already does. Additive alongside
-  push.
+- [x] **Pull diagnostics** (`textDocument/diagnostic`). The server pushes
+  diagnostics from the lint thread; the pull model (LSP 3.17) lets clients
+  request on demand and is friendlier to the coalescing/versioning the lint
+  thread already does. Document pull is implemented and auto-suppresses push for
+  pull-capable clients; cross-file/index changes drive a re-pull via
+  `workspace/diagnostic/refresh`. Full `workspace/diagnostic` (reports across
+  closed files) is not implemented (`workspace_diagnostics: false`).
   
 - [x] **Semantic tokens** (`textDocument/semanticTokens/full`). Scope-aware
   highlighting (distinguish function calls, locals, package-qualified names,
