@@ -10,7 +10,7 @@ use rowan::ast::AstNode as _;
 use crate::ast::CallExpr;
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::matchers;
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct DuplicatedArguments;
@@ -18,6 +18,20 @@ pub struct DuplicatedArguments;
 impl Rule for DuplicatedArguments {
     fn id(&self) -> &'static str {
         "duplicated-arguments"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag a call that supplies the same argument name more than once \
+         (`f(a = 1, a = 2)`). The call-side sibling of `duplicate-formal`; \
+         reported as a warning with no autofix, since it isn't always a runtime \
+         error."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "The argument `a` is supplied twice:",
+            source: "list(a = 1, a = 2)\n",
+        }]
     }
 
     fn interests(&self) -> &'static [SyntaxKind] {

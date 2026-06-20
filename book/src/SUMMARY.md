@@ -7,4 +7,13 @@
 
 - [CLI Reference](reference/cli.md)
 - [Lint rules](reference/rules.md)
+  - [undefined-symbol](reference/rules/undefined-symbol.md)
+  - [unused-binding](reference/rules/unused-binding.md)
+  - [duplicate-formal](reference/rules/duplicate-formal.md)
+  - [duplicated-arguments](reference/rules/duplicated-arguments.md)
+  - [equals-na](reference/rules/equals-na.md)
+  - [assignment-in-condition](reference/rules/assignment-in-condition.md)
+  - [shadowed-builtin](reference/rules/shadowed-builtin.md)
+  - [redundant-equals](reference/rules/redundant-equals.md)
+  - [redundant-ifelse](reference/rules/redundant-ifelse.md)
   - [true-false-symbol](reference/rules/true-false-symbol.md)

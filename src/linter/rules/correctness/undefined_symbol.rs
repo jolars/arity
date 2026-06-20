@@ -9,7 +9,7 @@
 //! positive.
 
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::semantic::PackageOrigin;
 
 pub struct UndefinedSymbol;
@@ -17,6 +17,20 @@ pub struct UndefinedSymbol;
 impl Rule for UndefinedSymbol {
     fn id(&self) -> &'static str {
         "undefined-symbol"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag an identifier read that resolves to no in-scope binding and no \
+         known package export.\n\nGated for safety: the rule stays silent for a \
+         whole file unless every `library()`-attached package is indexed, since \
+         an un-indexed package could export the otherwise-unresolved name."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "`subtotal` resolves to nothing:",
+            source: "total <- subtotal\n",
+        }]
     }
 
     fn default_severity(&self) -> Severity {

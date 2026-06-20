@@ -5,7 +5,7 @@
 use rowan::NodeOrToken;
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 pub struct AssignmentInCondition;
@@ -13,6 +13,19 @@ pub struct AssignmentInCondition;
 impl Rule for AssignmentInCondition {
     fn id(&self) -> &'static str {
         "assignment-in-condition"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag an assignment (`<-`, `=`, `<<-`, `:=`) used as the direct \
+         condition of an `if`/`while`. The bare `=` form (often a `==` typo) is \
+         autofixed to `==`; the others are reported without a fix."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "`=` where `==` was meant:",
+            source: "if (x = 5) print(x)\n",
+        }]
     }
 
     fn default_severity(&self) -> Severity {

@@ -8,7 +8,7 @@
 use rowan::TextRange;
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::semantic::ScopeKind;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -17,6 +17,19 @@ pub struct UnusedBinding;
 impl Rule for UnusedBinding {
     fn id(&self) -> &'static str {
         "unused-binding"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag a local binding that is never read in the same file. Function \
+         parameters, `for`-loop variables, and names beginning with `.` are \
+         exempt, since those are meaningful even when unused."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "`x` is assigned but never used:",
+            source: "x <- 1\ny <- 2\nprint(y)\n",
+        }]
     }
 
     fn default_severity(&self) -> Severity {

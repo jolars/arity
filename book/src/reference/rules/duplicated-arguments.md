@@ -1,0 +1,18 @@
+# `duplicated-arguments`
+
+Flag a call that supplies the same argument name more than once (`f(a = 1, a = 2)`). The call-side sibling of `duplicate-formal`; reported as a warning with no autofix, since it isn't always a runtime error.
+
+The argument `a` is supplied twice:
+
+```r
+list(a = 1, a = 2)
+```
+
+```text
+warning: duplicated-arguments
+ --> example.R:1:13
+  |
+1 | list(a = 1, a = 2)
+  |             ^ argument `a` is supplied more than once in this call
+  = help: Remove or rename the duplicate argument.
+```

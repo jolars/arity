@@ -5,7 +5,7 @@ use rowan::ast::AstNode as _;
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
 use crate::linter::rules::matchers;
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct RedundantIfelse;
@@ -13,6 +13,18 @@ pub struct RedundantIfelse;
 impl Rule for RedundantIfelse {
     fn id(&self) -> &'static str {
         "redundant-ifelse"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag `ifelse(c, TRUE, FALSE)` (which is just `c`) and \
+         `ifelse(c, FALSE, TRUE)` (which is `!c`)."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "An `ifelse` that returns its own condition:",
+            source: "flag <- ifelse(cond, TRUE, FALSE)\n",
+        }]
     }
 
     fn interests(&self) -> &'static [SyntaxKind] {

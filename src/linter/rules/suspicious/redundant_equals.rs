@@ -3,7 +3,7 @@
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
 use crate::linter::rules::matchers;
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct RedundantEquals;
@@ -11,6 +11,18 @@ pub struct RedundantEquals;
 impl Rule for RedundantEquals {
     fn id(&self) -> &'static str {
         "redundant-equals"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag comparison to a logical literal: `x == TRUE` is just `x`, and \
+         `x == FALSE` is `!x`."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "Comparing to `TRUE`:",
+            source: "if (ready == TRUE) go()\n",
+        }]
     }
 
     fn interests(&self) -> &'static [SyntaxKind] {

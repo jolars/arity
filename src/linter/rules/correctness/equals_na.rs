@@ -4,7 +4,7 @@
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
 use crate::linter::rules::matchers;
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct EqualsNa;
@@ -12,6 +12,18 @@ pub struct EqualsNa;
 impl Rule for EqualsNa {
     fn id(&self) -> &'static str {
         "equals-na"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag `x == NA`, which is always `NA` rather than `TRUE`/`FALSE` — \
+         almost always a mistake for `is.na(x)`, which is the autofix."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "Comparing to `NA` with `==`:",
+            source: "x == NA\n",
+        }]
     }
 
     fn interests(&self) -> &'static [SyntaxKind] {

@@ -1,0 +1,24 @@
+# `redundant-equals`
+
+Flag comparison to a logical literal: `x == TRUE` is just `x`, and `x == FALSE` is `!x`.
+
+Comparing to `TRUE`:
+
+```r
+if (ready == TRUE) go()
+```
+
+```text
+warning: redundant-equals
+ --> example.R:1:5
+  |
+1 | if (ready == TRUE) go()
+  |     ^^^^^^^^^^^^^ comparison with a logical literal is redundant
+  = help: Use the expression directly, or negate it.
+```
+
+After applying the fix:
+
+```r
+if (ready) go()
+```

@@ -7,7 +7,7 @@
 
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::matchers::is_callee;
-use crate::linter::rules::{Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::semantic::BindingKind;
 
 pub struct ShadowedBuiltin;
@@ -15,6 +15,19 @@ pub struct ShadowedBuiltin;
 impl Rule for ShadowedBuiltin {
     fn id(&self) -> &'static str {
         "shadowed-builtin"
+    }
+
+    fn description(&self) -> &'static str {
+        "Flag a local binding whose name is exported by a default R package when \
+         that name is later used as a call in the same scope (`c <- 1; \
+         c(2, 3)`). The two-step trigger keeps false positives down."
+    }
+
+    fn examples(&self) -> &'static [Example] {
+        &[Example {
+            caption: "Shadowing base `c()` and then calling it:",
+            source: "c <- 1\nc(2, 3)\n",
+        }]
     }
 
     fn default_severity(&self) -> Severity {
