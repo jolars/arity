@@ -1,0 +1,44 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..108
+  ROXYGEN_BLOCK@0..85
+    ROXYGEN_LINE@0..64
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..64
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..9 "param"
+        WHITESPACE@9..10 " "
+        ROXYGEN_TAG_ARG@10..11 "x"
+        WHITESPACE@11..12 " "
+        ROXYGEN_TEXT@12..64 "A number that is docu ..."
+    NEWLINE@64..65 "\n"
+    ROXYGEN_LINE@65..85
+      ROXYGEN_MARKER@65..67 "#'"
+      WHITESPACE@67..68 " "
+      ROXYGEN_TAG@68..85
+        ROXYGEN_AT@68..69 "@"
+        ROXYGEN_TAG_NAME@69..74 "param"
+        WHITESPACE@74..75 " "
+        ROXYGEN_TAG_ARG@75..76 "y"
+        WHITESPACE@76..77 " "
+        ROXYGEN_TEXT@77..85 "Another."
+  NEWLINE@85..86 "\n"
+  ASSIGNMENT_EXPR@86..107
+    IDENT@86..87 "f"
+    WHITESPACE@87..88 " "
+    ASSIGN_LEFT@88..90 "<-"
+    WHITESPACE@90..91 " "
+    FUNCTION_EXPR@91..107
+      FUNCTION_KW@91..99 "function"
+      LPAREN@99..100 "("
+      IDENT@100..101 "x"
+      COMMA@101..102 ","
+      WHITESPACE@102..103 " "
+      IDENT@103..104 "y"
+      RPAREN@104..105 ")"
+      WHITESPACE@105..106 " "
+      IDENT@106..107 "x"
+  NEWLINE@107..108 "\n"

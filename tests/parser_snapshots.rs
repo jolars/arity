@@ -155,6 +155,18 @@ fn fixture_names() -> &'static [&'static str] {
         "air_ok_semicolons_semicolon_start_of_file_01",
         "air_ok_semicolons_semicolon_start_of_file_02",
         "air_ok_semicolons_semicolons",
+        "roxygen_simple",
+        "roxygen_block",
+        "roxygen_blank_line",
+        "roxygen_tag_param",
+        "roxygen_tag_examples",
+        "roxygen_multi_hash",
+        "roxygen_not_roxygen",
+        "roxygen_shebang",
+        "roxygen_mixed_run",
+        "roxygen_loose_in_call",
+        "roxygen_crlf",
+        "roxygen_eof_no_newline",
     ]
 }
 

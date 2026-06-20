@@ -1,0 +1,16 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..60
+  COMMENT@0..34 "# ' not roxygen (hash ..."
+  NEWLINE@34..35 "\n"
+  COMMENT@35..52 "# regular comment"
+  NEWLINE@52..53 "\n"
+  ASSIGNMENT_EXPR@53..59
+    IDENT@53..54 "f"
+    WHITESPACE@54..55 " "
+    ASSIGN_LEFT@55..57 "<-"
+    WHITESPACE@57..58 " "
+    INT@58..59 "1"
+  NEWLINE@59..60 "\n"

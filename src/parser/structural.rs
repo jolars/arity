@@ -9,10 +9,9 @@ use crate::syntax::SyntaxKind;
 
 fn skip_clause_trivia(tokens: &[Token], mut i: usize) -> usize {
     let ctx = ParserCtx::new(tokens);
-    while matches!(
-        ctx.token(i).map(|t| &t.kind),
-        Some(TokKind::Whitespace | TokKind::Newline | TokKind::Comment)
-    ) {
+    while ctx.token(i).is_some_and(|t| {
+        matches!(t.kind, TokKind::Whitespace | TokKind::Newline) || t.kind.is_comment_like()
+    }) {
         i += 1;
     }
     i

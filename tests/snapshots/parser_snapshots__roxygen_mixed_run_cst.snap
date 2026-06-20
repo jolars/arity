@@ -1,0 +1,26 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..67
+  ROXYGEN_BLOCK@0..14
+    ROXYGEN_LINE@0..14
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..14 "first block"
+  NEWLINE@14..15 "\n"
+  COMMENT@15..43 "# interrupting plain  ..."
+  NEWLINE@43..44 "\n"
+  ROXYGEN_BLOCK@44..59
+    ROXYGEN_LINE@44..59
+      ROXYGEN_MARKER@44..46 "#'"
+      WHITESPACE@46..47 " "
+      ROXYGEN_TEXT@47..59 "second block"
+  NEWLINE@59..60 "\n"
+  ASSIGNMENT_EXPR@60..66
+    IDENT@60..61 "f"
+    WHITESPACE@61..62 " "
+    ASSIGN_LEFT@62..64 "<-"
+    WHITESPACE@64..65 " "
+    INT@65..66 "1"
+  NEWLINE@66..67 "\n"

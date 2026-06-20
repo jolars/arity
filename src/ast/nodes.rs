@@ -41,6 +41,74 @@ ast_node!(ForExpr, SyntaxKind::FOR_EXPR);
 ast_node!(WhileExpr, SyntaxKind::WHILE_EXPR);
 ast_node!(FunctionExpr, SyntaxKind::FUNCTION_EXPR);
 ast_node!(BlockExpr, SyntaxKind::BLOCK_EXPR);
+ast_node!(RoxygenBlock, SyntaxKind::ROXYGEN_BLOCK);
+ast_node!(RoxygenLine, SyntaxKind::ROXYGEN_LINE);
+ast_node!(RoxygenTag, SyntaxKind::ROXYGEN_TAG);
+
+/// The first direct child token of `node` with the given `kind`.
+fn first_child_token(node: &SyntaxNode, kind: SyntaxKind) -> Option<SyntaxToken<RLanguage>> {
+    node.children_with_tokens()
+        .find_map(|element| match element {
+            SyntaxElement::Token(token) if token.kind() == kind => Some(token),
+            _ => None,
+        })
+}
+
+impl RoxygenBlock {
+    /// The roxygen lines of this block, in source order.
+    pub fn lines(&self) -> impl Iterator<Item = RoxygenLine> + '_ {
+        self.0.children().filter_map(RoxygenLine::cast)
+    }
+}
+
+impl RoxygenLine {
+    /// The `#'` marker token (the `#+'` run).
+    pub fn marker(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(&self.0, SyntaxKind::ROXYGEN_MARKER)
+    }
+
+    /// The tag on this line, if it is a tag line (`#' @tag ...`).
+    pub fn tag(&self) -> Option<RoxygenTag> {
+        self.0.children().find_map(RoxygenTag::cast)
+    }
+
+    /// The untagged prose text token directly under the line, if any.
+    pub fn text(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(&self.0, SyntaxKind::ROXYGEN_TEXT)
+    }
+
+    /// A blank `#'` line (a paragraph separator): only a marker, no content.
+    pub fn is_blank(&self) -> bool {
+        self.tag().is_none() && self.text().is_none()
+    }
+}
+
+impl RoxygenTag {
+    /// The `@` token.
+    pub fn at(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(&self.0, SyntaxKind::ROXYGEN_AT)
+    }
+
+    /// The tag name (e.g. `param`, `examples`), without the leading `@`.
+    pub fn name(&self) -> Option<SmolStr> {
+        first_child_token(&self.0, SyntaxKind::ROXYGEN_TAG_NAME).map(|t| SmolStr::new(t.text()))
+    }
+
+    /// The name argument for arg-bearing tags (e.g. `x` in `@param x ...`).
+    pub fn arg(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(&self.0, SyntaxKind::ROXYGEN_TAG_ARG)
+    }
+
+    /// The remaining prose content of the tag, if any.
+    pub fn text(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(&self.0, SyntaxKind::ROXYGEN_TEXT)
+    }
+
+    /// Whether this is an `@examples`/`@examplesIf` tag (embedded R code).
+    pub fn is_examples(&self) -> bool {
+        matches!(self.name().as_deref(), Some("examples" | "examplesIf"))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForExprParts {

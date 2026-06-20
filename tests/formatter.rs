@@ -143,6 +143,8 @@ fn fixture_names() -> &'static [&'static str] {
         "braced_curly_curly_basics",
         "braced_curly_curly_advanced",
         "braced_curly_curly_negative_non_symbol",
+        "roxygen_block_passthrough",
+        "roxygen_indented_in_block",
     ]
 }
 

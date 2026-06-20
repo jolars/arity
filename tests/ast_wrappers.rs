@@ -1,6 +1,6 @@
 use arity::ast::{
     ArgList, AssignmentExpr, AstNode, BinaryExpr, BlockExpr, CallExpr, ForExpr, FunctionExpr,
-    IfExpr,
+    IfExpr, RoxygenBlock,
 };
 use arity::parser::parse;
 use arity::syntax::SyntaxKind;
@@ -229,4 +229,49 @@ fn for_expr_accessors_capture_post_clause_comments() {
     assert_eq!(post_comments.len(), 1);
     assert_eq!(post_comments[0].kind(), SyntaxKind::COMMENT);
     assert!(for_expr.body_element().is_none());
+}
+
+fn first_roxygen_block(src: &str) -> RoxygenBlock {
+    let parsed = parse(src);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "parse: {:?}",
+        parsed.diagnostics
+    );
+    parsed
+        .cst
+        .descendants()
+        .find_map(RoxygenBlock::cast)
+        .expect("a roxygen block")
+}
+
+#[test]
+fn roxygen_block_lines_classify_blank_prose_and_tags() {
+    let block = first_roxygen_block(
+        "#' Title\n#'\n#' @param x A number.\n#' @examples\nf <- function(x) x\n",
+    );
+    let lines: Vec<_> = block.lines().collect();
+    assert_eq!(lines.len(), 4);
+
+    // Prose line: a text token, no tag, not blank.
+    assert_eq!(lines[0].marker().unwrap().text(), "#'");
+    assert_eq!(lines[0].text().unwrap().text(), "Title");
+    assert!(lines[0].tag().is_none());
+    assert!(!lines[0].is_blank());
+
+    // Blank `#'` line: marker only.
+    assert!(lines[1].is_blank());
+    assert!(lines[1].text().is_none());
+
+    // `@param x ...`: tag with name + arg + trailing text.
+    let param = lines[2].tag().expect("param tag");
+    assert_eq!(param.name().as_deref(), Some("param"));
+    assert_eq!(param.arg().unwrap().text(), "x");
+    assert_eq!(param.text().unwrap().text(), "A number.");
+    assert!(!param.is_examples());
+
+    // `@examples`: an examples tag with no arg/text.
+    let examples = lines[3].tag().expect("examples tag");
+    assert!(examples.is_examples());
+    assert!(examples.arg().is_none());
 }

@@ -52,11 +52,16 @@ pub fn compute_folding_ranges(text: &str) -> Vec<FoldingRange> {
         match token.kind() {
             SyntaxKind::NEWLINE => code_on_line = false,
             SyntaxKind::WHITESPACE => {}
-            SyntaxKind::COMMENT => {
+            // A roxygen line's leading `#'` marker stands in for a comment here,
+            // so runs of `#'` lines fold as comment runs like they did when
+            // roxygen lines were plain `COMMENT` tokens. Other roxygen
+            // sub-tokens on the line are immaterial: the marker already fired.
+            SyntaxKind::COMMENT | SyntaxKind::ROXYGEN_MARKER => {
                 if !code_on_line {
                     standalone.push(line_of(token.text_range().start()));
                 }
             }
+            kind if kind.is_roxygen_token() => {}
             _ => code_on_line = true,
         }
     }

@@ -34,6 +34,30 @@
 
 - [ ] Roxygen syntax formatting
 
+  - [x] **Parsing foundation (CST-native).** Roxygen lines (`#'`, per roxygen2's
+    `^#+'`) are lexed into sub-tokens (`ROXYGEN_MARKER`/`ROXYGEN_AT`/
+    `ROXYGEN_TAG_NAME`/`ROXYGEN_TAG_ARG`/`ROXYGEN_TEXT`) and grouped by the parser
+    into `ROXYGEN_BLOCK` → `ROXYGEN_LINE` → `ROXYGEN_TAG` nodes
+    (`src/parser/roxygen.rs`, hooked into the `core.rs` root loop and
+    `expr.rs` `parse_block_expr`). Arg-bearing tags (`@param`, `@field`, …) split
+    out the name as `ROXYGEN_TAG_ARG`. Typed wrappers `RoxygenBlock`/`Line`/`Tag`
+    (`src/ast/nodes.rs`). Losslessness holds (clean CRLF/EOF handling); the
+    formatter emits blocks byte-identically for now (no content transform yet).
+    Edits inside a roxygen line fall back to block/full reparse (roxygen tokens
+    only arise from the `#'` lexer path, so token reparse can't relex them in
+    isolation). Air leaves roxygen untouched, so the eventual transforms are a
+    conscious divergence under Tenet 1.
+    - *Known degradation:* a `#'` line inside an expression (e.g. call args) is
+      emitted as loose tokens and may draw a parse diagnostic; real roxygen only
+      sits at statement level. Pinned by `roxygen_loose_in_call`.
+  - [ ] **Transforms (future rounds), consuming the CST above:** (1) normalize
+    `#'` + single space; (2) reflow prose (`ROXYGEN_TEXT`) to line width;
+    (3) hanging-indent continuation under `ROXYGEN_TAG_ARG`; (4) run arity's own
+    formatter on embedded R in `@examples`/`@examplesIf`. Record the air
+    divergence in `tests/air_compat_allowlist.toml` when the first transform
+    ships. LSP follow-ups: fold/semantic-token/completion awareness for roxygen
+    (folding already preserved; completion may trigger inside `#'` lines).
+
 ## Linter
 
 Closest precedent: **jarl** (`etiennebacher/jarl`, Rust + rowan + air-parser,

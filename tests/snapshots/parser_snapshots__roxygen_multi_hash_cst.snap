@@ -1,0 +1,18 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..29
+  ROXYGEN_BLOCK@0..21
+    ROXYGEN_LINE@0..21
+      ROXYGEN_MARKER@0..3 "##'"
+      WHITESPACE@3..4 " "
+      ROXYGEN_TEXT@4..21 "Old-style marker."
+  NEWLINE@21..22 "\n"
+  ASSIGNMENT_EXPR@22..28
+    IDENT@22..23 "f"
+    WHITESPACE@23..24 " "
+    ASSIGN_LEFT@24..26 "<-"
+    WHITESPACE@26..27 " "
+    INT@27..28 "1"
+  NEWLINE@28..29 "\n"

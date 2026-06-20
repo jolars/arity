@@ -368,6 +368,23 @@ pub(super) fn format_expr_segment(
 /// A single statement line as IR, without the leading indentation (the caller
 /// supplies that structurally via [`Ir::Indent`] and line breaks). An empty
 /// (blank) line yields [`Ir::Nil`].
+/// A roxygen block reproduces each `#'` line verbatim, one per output line at
+/// the current indent (mirroring how a plain comment line is emitted). This is
+/// the parsing-foundation behavior: structure is in the CST, but content is not
+/// yet transformed, so output is byte-identical to the source's roxygen lines.
+fn ir_roxygen_block(node: &SyntaxNode) -> Ir {
+    let mut items: Vec<Ir> = Vec::new();
+    for child in node.children() {
+        if child.kind() == SyntaxKind::ROXYGEN_LINE {
+            if !items.is_empty() {
+                items.push(Ir::hard_line());
+            }
+            items.push(Ir::text(child.text().to_string()));
+        }
+    }
+    Ir::concat(items)
+}
+
 pub(super) fn ir_line(
     line: &[SyntaxElement<RLanguage>],
     indent: usize,
@@ -386,6 +403,12 @@ pub(super) fn ir_line(
         && token.kind() == SyntaxKind::COMMENT
     {
         return Ok(Ir::text(token.text().to_string()));
+    }
+
+    if let [NodeOrToken::Node(node)] = significant.as_slice()
+        && node.kind() == SyntaxKind::ROXYGEN_BLOCK
+    {
+        return Ok(ir_roxygen_block(node));
     }
 
     if significant.len() == 2

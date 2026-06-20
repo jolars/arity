@@ -12,3 +12,5 @@ tests/fixtures/parser/crlf_*/* -text
 tests/fixtures/parser/lf_*/* -text
 tests/fixtures/parser/*_crlf_*/* -text
 tests/fixtures/parser/*_lf_*/* -text
+tests/fixtures/parser/*_crlf/* -text
+tests/fixtures/parser/*_lf/* -text

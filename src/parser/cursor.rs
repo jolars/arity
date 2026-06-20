@@ -21,10 +21,9 @@ pub(crate) fn skip_ws_and_newlines(tokens: &[Token], mut i: usize) -> usize {
 /// is pending (after an infix operator), where an intervening comment is trivia
 /// before the operand rather than an operand in its own right.
 pub(crate) fn skip_ws_newlines_comments(tokens: &[Token], mut i: usize) -> usize {
-    while matches!(
-        tokens.get(i).map(|t| &t.kind),
-        Some(TokKind::Whitespace | TokKind::Newline | TokKind::Comment)
-    ) {
+    while tokens.get(i).is_some_and(|t| {
+        matches!(t.kind, TokKind::Whitespace | TokKind::Newline) || t.kind.is_comment_like()
+    }) {
         i += 1;
     }
     i

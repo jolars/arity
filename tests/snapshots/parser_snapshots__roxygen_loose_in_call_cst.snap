@@ -1,0 +1,28 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..42
+  ASSIGNMENT_EXPR@0..41
+    IDENT@0..1 "x"
+    WHITESPACE@1..2 " "
+    ASSIGN_LEFT@2..4 "<-"
+    WHITESPACE@4..5 " "
+    CALL_EXPR@5..41
+      IDENT@5..6 "f"
+      LPAREN@6..7 "("
+      ARG_LIST@7..40
+        NEWLINE@7..8 "\n"
+        WHITESPACE@8..10 "  "
+        ARG@10..12
+          ROXYGEN_MARKER@10..12 "#'"
+        WHITESPACE@12..13 " "
+        ARG@13..35
+          ROXYGEN_TEXT@13..35 "weird mid-call roxygen"
+        NEWLINE@35..36 "\n"
+        WHITESPACE@36..38 "  "
+        ARG@38..39
+          INT@38..39 "1"
+        NEWLINE@39..40 "\n"
+      RPAREN@40..41 ")"
+  NEWLINE@41..42 "\n"

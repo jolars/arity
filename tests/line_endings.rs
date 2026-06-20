@@ -40,6 +40,28 @@ fn parser_round_trips_lf_fixture() {
     );
 }
 
+#[test]
+fn parser_round_trips_crlf_roxygen() {
+    let input = fixture_text("roxygen_crlf");
+    assert!(
+        input.contains("\r\n"),
+        "roxygen CRLF fixture should contain \\r\\n"
+    );
+
+    let parsed = parse(&input);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "roxygen CRLF fixture should parse cleanly, got diagnostics: {:#?}",
+        parsed.diagnostics
+    );
+    // The `\r\n` must stay a single NEWLINE token and never leak into roxygen
+    // content (the sub-tokenizer leaves the carriage return to the main lexer).
+    assert!(
+        reconstruct(&input) == input,
+        "roxygen CRLF fixture should round-trip losslessly"
+    );
+}
+
 fn fixture_text(name: &str) -> String {
     let path = Path::new("tests")
         .join("fixtures")

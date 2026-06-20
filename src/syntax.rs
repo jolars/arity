@@ -83,14 +83,39 @@ pub enum SyntaxKind {
     COMPLEX,
     QUESTION,
     WALRUS,
+    // Roxygen tokens (leaves). A roxygen line (`#'` …) is sub-tokenized so its
+    // structure lives in the CST; the texts of these tokens tile the line's
+    // bytes exactly (losslessness).
+    ROXYGEN_MARKER,
+    ROXYGEN_AT,
+    ROXYGEN_TAG_NAME,
+    ROXYGEN_TAG_ARG,
+    ROXYGEN_TEXT,
+    // Roxygen nodes.
+    ROXYGEN_BLOCK,
+    ROXYGEN_LINE,
+    ROXYGEN_TAG,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `WALRUS` remains the last
+    /// rule dispatch). Stays correct as long as `ROXYGEN_TAG` remains the last
     /// variant.
-    pub const COUNT: usize = SyntaxKind::WALRUS as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_TAG as usize + 1;
+
+    /// A roxygen line's bytes are carried by these leaf tokens, which stand in
+    /// for the single `COMMENT` token a non-roxygen comment line uses.
+    pub fn is_roxygen_token(self) -> bool {
+        matches!(
+            self,
+            SyntaxKind::ROXYGEN_MARKER
+                | SyntaxKind::ROXYGEN_AT
+                | SyntaxKind::ROXYGEN_TAG_NAME
+                | SyntaxKind::ROXYGEN_TAG_ARG
+                | SyntaxKind::ROXYGEN_TEXT
+        )
+    }
 }
 
 impl From<SyntaxKind> for rowan::SyntaxKind {
@@ -180,6 +205,14 @@ impl Language for RLanguage {
             70 => SyntaxKind::COMPLEX,
             71 => SyntaxKind::QUESTION,
             72 => SyntaxKind::WALRUS,
+            73 => SyntaxKind::ROXYGEN_MARKER,
+            74 => SyntaxKind::ROXYGEN_AT,
+            75 => SyntaxKind::ROXYGEN_TAG_NAME,
+            76 => SyntaxKind::ROXYGEN_TAG_ARG,
+            77 => SyntaxKind::ROXYGEN_TEXT,
+            78 => SyntaxKind::ROXYGEN_BLOCK,
+            79 => SyntaxKind::ROXYGEN_LINE,
+            80 => SyntaxKind::ROXYGEN_TAG,
             _ => SyntaxKind::ERROR,
         }
     }

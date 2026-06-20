@@ -1,0 +1,76 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..150
+  ROXYGEN_BLOCK@0..130
+    ROXYGEN_LINE@0..8
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..8 "Title"
+    NEWLINE@8..9 "\n"
+    ROXYGEN_LINE@9..11
+      ROXYGEN_MARKER@9..11 "#'"
+    NEWLINE@11..12 "\n"
+    ROXYGEN_LINE@12..35
+      ROXYGEN_MARKER@12..14 "#'"
+      WHITESPACE@14..15 " "
+      ROXYGEN_TEXT@15..35 "Description spanning"
+    NEWLINE@35..36 "\n"
+    ROXYGEN_LINE@36..54
+      ROXYGEN_MARKER@36..38 "#'"
+      WHITESPACE@38..39 " "
+      ROXYGEN_TEXT@39..54 "multiple lines."
+    NEWLINE@54..55 "\n"
+    ROXYGEN_LINE@55..76
+      ROXYGEN_MARKER@55..57 "#'"
+      WHITESPACE@57..58 " "
+      ROXYGEN_TAG@58..76
+        ROXYGEN_AT@58..59 "@"
+        ROXYGEN_TAG_NAME@59..64 "param"
+        WHITESPACE@64..65 " "
+        ROXYGEN_TAG_ARG@65..66 "x"
+        WHITESPACE@66..67 " "
+        ROXYGEN_TEXT@67..76 "A number."
+    NEWLINE@76..77 "\n"
+    ROXYGEN_LINE@77..98
+      ROXYGEN_MARKER@77..79 "#'"
+      WHITESPACE@79..80 " "
+      ROXYGEN_TAG@80..98
+        ROXYGEN_AT@80..81 "@"
+        ROXYGEN_TAG_NAME@81..87 "return"
+        WHITESPACE@87..88 " "
+        ROXYGEN_TEXT@88..98 "The value."
+    NEWLINE@98..99 "\n"
+    ROXYGEN_LINE@99..111
+      ROXYGEN_MARKER@99..101 "#'"
+      WHITESPACE@101..102 " "
+      ROXYGEN_TAG@102..111
+        ROXYGEN_AT@102..103 "@"
+        ROXYGEN_TAG_NAME@103..111 "examples"
+    NEWLINE@111..112 "\n"
+    ROXYGEN_LINE@112..119
+      ROXYGEN_MARKER@112..114 "#'"
+      WHITESPACE@114..115 " "
+      ROXYGEN_TEXT@115..119 "f(1)"
+    NEWLINE@119..120 "\n"
+    ROXYGEN_LINE@120..130
+      ROXYGEN_MARKER@120..122 "#'"
+      WHITESPACE@122..123 " "
+      ROXYGEN_TAG@123..130
+        ROXYGEN_AT@123..124 "@"
+        ROXYGEN_TAG_NAME@124..130 "export"
+  NEWLINE@130..131 "\n"
+  ASSIGNMENT_EXPR@131..149
+    IDENT@131..132 "f"
+    WHITESPACE@132..133 " "
+    ASSIGN_LEFT@133..135 "<-"
+    WHITESPACE@135..136 " "
+    FUNCTION_EXPR@136..149
+      FUNCTION_KW@136..144 "function"
+      LPAREN@144..145 "("
+      IDENT@145..146 "x"
+      RPAREN@146..147 ")"
+      WHITESPACE@147..148 " "
+      IDENT@148..149 "x"
+  NEWLINE@149..150 "\n"

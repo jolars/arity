@@ -8,6 +8,7 @@ pub(crate) mod expr;
 pub(crate) mod lexer;
 pub(crate) mod recovery;
 pub mod reparse;
+pub(crate) mod roxygen;
 pub(crate) mod structural;
 pub(crate) mod tree_builder;
 

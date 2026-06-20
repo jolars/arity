@@ -88,5 +88,10 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::Whitespace => SyntaxKind::WHITESPACE,
         TokKind::Newline => SyntaxKind::NEWLINE,
         TokKind::Unknown => SyntaxKind::ERROR,
+        TokKind::RoxygenMarker => SyntaxKind::ROXYGEN_MARKER,
+        TokKind::RoxygenAt => SyntaxKind::ROXYGEN_AT,
+        TokKind::RoxygenTagName => SyntaxKind::ROXYGEN_TAG_NAME,
+        TokKind::RoxygenTagArg => SyntaxKind::ROXYGEN_TAG_ARG,
+        TokKind::RoxygenText => SyntaxKind::ROXYGEN_TEXT,
     }
 }

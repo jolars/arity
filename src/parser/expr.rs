@@ -436,6 +436,11 @@ fn parse_prefix(
         | TokKind::InKw
         | TokKind::LBrack
         | TokKind::LBrack2
+        | TokKind::RoxygenMarker
+        | TokKind::RoxygenAt
+        | TokKind::RoxygenTagName
+        | TokKind::RoxygenTagArg
+        | TokKind::RoxygenText
         | TokKind::Unknown => None,
     }
 }
@@ -483,6 +488,15 @@ fn parse_block_expr(
                 events.push(Event::Tok(idx));
             }
             i = next + 1;
+            continue;
+        }
+
+        if tok.kind == TokKind::RoxygenMarker {
+            // Emit the leading whitespace gap, then the grouped block.
+            for idx in i..next {
+                events.push(Event::Tok(idx));
+            }
+            i = crate::parser::roxygen::emit_roxygen_block(tokens, next, &mut events);
             continue;
         }
 

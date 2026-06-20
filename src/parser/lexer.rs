@@ -58,6 +58,30 @@ pub(crate) enum TokKind {
     Whitespace,
     Newline,
     Unknown,
+    // Roxygen line sub-tokens (see `crate::parser::roxygen`).
+    RoxygenMarker,
+    RoxygenAt,
+    RoxygenTagName,
+    RoxygenTagArg,
+    RoxygenText,
+}
+
+impl TokKind {
+    /// Comment-like trivia: a plain comment, or any sub-token of a roxygen
+    /// line. Used by trivia-skip loops so a roxygen line appearing where a
+    /// comment could (mid-expression) is skipped like one rather than tripping
+    /// the parser.
+    pub(crate) fn is_comment_like(&self) -> bool {
+        matches!(
+            self,
+            TokKind::Comment
+                | TokKind::RoxygenMarker
+                | TokKind::RoxygenAt
+                | TokKind::RoxygenTagName
+                | TokKind::RoxygenTagArg
+                | TokKind::RoxygenText
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,16 +131,32 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
             }
             '#' => {
                 let start = i;
-                i += 1;
-                while i < bytes.len() && (bytes[i] as char) != '\n' {
-                    i += 1;
+                let mut j = i + 1;
+                while j < bytes.len() && (bytes[j] as char) != '\n' {
+                    j += 1;
                 }
-                out.push(Token {
-                    kind: TokKind::Comment,
-                    text: input[start..i].to_string(),
-                    start,
-                    end: i,
-                });
+                // `j` is at the line's `\n` or EOF; the full comment text is
+                // `input[start..j]` (it may end with a `\r` under CRLF).
+                let line = &input[start..j];
+                if crate::parser::roxygen::is_roxygen_comment(line) {
+                    // Leave a trailing `\r` (and the `\n`) to the main loop so
+                    // CRLF stays one Newline token and roxygen content is clean.
+                    let content_end = if line.ends_with('\r') { j - 1 } else { j };
+                    crate::parser::roxygen::lex_roxygen_line(
+                        &mut out,
+                        &input[start..content_end],
+                        start,
+                    );
+                    i = content_end;
+                } else {
+                    out.push(Token {
+                        kind: TokKind::Comment,
+                        text: line.to_string(),
+                        start,
+                        end: j,
+                    });
+                    i = j;
+                }
             }
             '~' => {
                 out.push(Token {

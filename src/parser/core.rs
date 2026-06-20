@@ -29,6 +29,11 @@ pub fn parse(text: &str) -> ParseOutput {
             continue;
         }
 
+        if tokens[i].kind == TokKind::RoxygenMarker {
+            i = crate::parser::roxygen::emit_roxygen_block(&tokens, i, &mut root_events);
+            continue;
+        }
+
         if let Some(expr) = parse_expr(&tokens, i, 0, &mut diagnostics) {
             root_events.extend(expr.events);
             i = expr.end;

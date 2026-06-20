@@ -1,0 +1,23 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..39
+  ROXYGEN_BLOCK@0..17
+    ROXYGEN_LINE@0..17
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..17 "A short title."
+  NEWLINE@17..18 "\n"
+  ASSIGNMENT_EXPR@18..38
+    IDENT@18..19 "f"
+    WHITESPACE@19..20 " "
+    ASSIGN_LEFT@20..22 "<-"
+    WHITESPACE@22..23 " "
+    FUNCTION_EXPR@23..38
+      FUNCTION_KW@23..31 "function"
+      LPAREN@31..32 "("
+      RPAREN@32..33 ")"
+      WHITESPACE@33..34 " "
+      IDENT@34..38 "NULL"
+  NEWLINE@38..39 "\n"

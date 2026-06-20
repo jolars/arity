@@ -179,6 +179,11 @@ const TOKEN_REPARSE_KINDS: &[SyntaxKind] = &[
     SyntaxKind::STRING,
     SyntaxKind::COMMENT,
     SyntaxKind::WHITESPACE,
+    // Roxygen leaves are deliberately absent: they only arise from the `#'`-line
+    // lexer path, so relexing one in isolation (`lex("A number.")`) never yields
+    // a roxygen token and the single-token guard would always bail. Edits inside
+    // a roxygen line therefore fall back to block reparse (when the block sits in
+    // a `{}` body) or a full reparse — correct, just not token-incremental.
 ];
 
 fn reparse_token(
