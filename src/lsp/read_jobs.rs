@@ -93,6 +93,28 @@ pub(crate) enum ReadJob {
         query: String,
         sender: Sender<Message>,
     },
+    PrepareCallHierarchy {
+        id: RequestId,
+        path: PathBuf,
+        /// An intra-file item reports back into this URI; cross-file items carry
+        /// their own.
+        uri: Uri,
+        text: String,
+        position: Position,
+        sender: Sender<Message>,
+    },
+    IncomingCalls {
+        id: RequestId,
+        /// The prepared item, round-tripped from the client; the target function
+        /// is recovered from its `uri` + `name`.
+        item: Box<CallHierarchyItem>,
+        sender: Sender<Message>,
+    },
+    OutgoingCalls {
+        id: RequestId,
+        item: Box<CallHierarchyItem>,
+        sender: Sender<Message>,
+    },
 }
 
 /// Service a read-only job against a db `snapshot`, replying to the client.
@@ -203,6 +225,25 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             let symbols = workspace_symbols_via_db(&snapshot, &query);
             let response = WorkspaceSymbolResponse::Nested(symbols);
             let _ = sender.send(Message::Response(Response::new_ok(id, response)));
+        }
+        ReadJob::PrepareCallHierarchy {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            sender,
+        } => {
+            let result = prepare_call_hierarchy_via_db(&snapshot, &path, &uri, &text, position);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::IncomingCalls { id, item, sender } => {
+            let result = incoming_calls_via_db(&snapshot, &item);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::OutgoingCalls { id, item, sender } => {
+            let result = outgoing_calls_via_db(&snapshot, &item);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
     }
 }

@@ -67,15 +67,18 @@ use lsp_types::notification::{
     DidRenameFiles, Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
+    CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
     FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
     RangeFormatting, References, Rename, Request as RequestTrait, ResolveCompletionItem,
     SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles, WorkspaceSymbolRequest,
 };
 use lsp_types::{
-    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CodeActionResponse, CompletionItem, CompletionItemKind,
-    CompletionList, CompletionOptions, CompletionParams, CompletionResponse,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CallHierarchyServerCapability, CodeAction, CodeActionKind, CodeActionOrCommand,
+    CodeActionParams, CodeActionProviderCapability, CodeActionResponse, CompletionItem,
+    CompletionItemKind, CompletionList, CompletionOptions, CompletionParams, CompletionResponse,
     Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DocumentFormattingParams, DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
@@ -122,6 +125,7 @@ use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::LineIndex;
 use task_pool::{Spawner, TaskPool, read_pool_size};
 
+mod call_hierarchy;
 mod code_actions;
 mod completion;
 mod file_rename;
@@ -140,6 +144,7 @@ mod symbols;
 mod uri;
 mod workspace_symbols;
 
+pub(crate) use call_hierarchy::*;
 pub(crate) use code_actions::*;
 pub(crate) use completion::*;
 pub(crate) use file_rename::*;

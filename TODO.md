@@ -570,9 +570,27 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 - [ ] **Selection ranges** (`textDocument/selectionRange`). Pure CST walk:
   incremental scope expansion from the cursor outward through enclosing nodes.
 
-- [ ] **Call hierarchy** (`textDocument/prepareCallHierarchy` + incoming/
+- [x] **Call hierarchy** (`textDocument/prepareCallHierarchy` + incoming/
   outgoing). Caller/callee graph; rides the same cross-file reference index
-  as workspace symbols and references.
+  as workspace symbols and references. Done in `src/lsp/call_hierarchy.rs`:
+  `prepare` parses the live buffer and resolves the cursor to the top-level
+  function it names (intra-file binding else `workspace_def_sites`), filtered to
+  function defs; `incoming`/`outgoing` work off the db snapshot, recovering the
+  target from the round-tripped item's `uri` + `name` (no `data` payload).
+  Incoming walks the visibility component (`cross_file_binding`) for
+  callee-position reference sites and groups them by enclosing top-level
+  function; outgoing walks the function body's `CALL_EXPR`s, resolving each
+  callee intra-file then via `visible_def_files`.
+  - **v1 scope:** items are **top-level (file-scope) functions only** — the
+    names the cross-file index keys on; a call inside a nested function is
+    attributed to its enclosing top-level function. Edges are strict
+    *callee-position* uses `F(...)`, never value uses (`lapply(xs, F)`).
+  - **Known limitations / follow-ups:** nested/local functions are not items
+    (so calls *to* a nested function don't appear as outgoing edges, and a
+    nested function never appears as a caller/callee item); call sites at script
+    top-level (inside no function) are dropped from incoming; ambiguous
+    cross-file callees (a name visibly defined in >1 sibling) resolve to the
+    first sorted def; string/backtick callees (`` `+`(…) ``) are skipped.
 
 - [ ] **Inlay hints** (`textDocument/inlayHint`). E.g. argument-name hints at
   call sites (matching positional args to index formals). Speculative. Not

@@ -91,6 +91,9 @@ impl GlobalState {
             Rename::METHOD => self.on_rename(req),
             WillRenameFiles::METHOD => self.on_will_rename_files(req),
             WorkspaceSymbolRequest::METHOD => self.on_workspace_symbol(req),
+            CallHierarchyPrepare::METHOD => self.on_prepare_call_hierarchy(req),
+            CallHierarchyIncomingCalls::METHOD => self.on_incoming_calls(req),
+            CallHierarchyOutgoingCalls::METHOD => self.on_outgoing_calls(req),
             _ => {
                 let resp = Response::new_err(
                     req.id,
@@ -574,6 +577,72 @@ impl GlobalState {
         });
     }
 
+    /// `textDocument/prepareCallHierarchy`: resolve the cursor to the top-level
+    /// function(s) it names, returning items the client round-trips back to
+    /// incoming/outgoing. A read-only job dispatched like definition; the live
+    /// buffer is parsed on the read pool. See [`prepare_call_hierarchy_via_db`].
+    fn on_prepare_call_hierarchy(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<CallHierarchyPrepareParams>(CallHierarchyPrepare::METHOD)
+        else {
+            self.respond_err(id, "invalid prepareCallHierarchy params");
+            return;
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::PrepareCallHierarchy {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `callHierarchy/incomingCalls`: the top-level functions that call the item's
+    /// function. The item carries its own identity (`uri` + `name`), so unlike the
+    /// position-based requests this does no document lookup and works off the db
+    /// snapshot, like `workspace/symbol`. See [`incoming_calls_via_db`].
+    fn on_incoming_calls(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<CallHierarchyIncomingCallsParams>(CallHierarchyIncomingCalls::METHOD)
+        else {
+            self.respond_err(id, "invalid incomingCalls params");
+            return;
+        };
+        self.dispatch_read(ReadJob::IncomingCalls {
+            id,
+            item: Box::new(params.item),
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `callHierarchy/outgoingCalls`: the top-level functions the item's function
+    /// calls. Like incoming, served off the db snapshot from the item's identity.
+    /// See [`outgoing_calls_via_db`].
+    fn on_outgoing_calls(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<CallHierarchyOutgoingCallsParams>(CallHierarchyOutgoingCalls::METHOD)
+        else {
+            self.respond_err(id, "invalid outgoingCalls params");
+            return;
+        };
+        self.dispatch_read(ReadJob::OutgoingCalls {
+            id,
+            item: Box::new(params.item),
+            sender: self.sender.clone(),
+        });
+    }
+
     /// Hand a read-only job to the lint thread (db owner), which snapshots the db
     /// and runs it on the read pool. If that channel is gone (shutdown in flight),
     /// reply `null` so the client isn't left waiting.
@@ -591,6 +660,9 @@ impl GlobalState {
                 ReadJob::Rename { id, sender, .. } => (id, sender),
                 ReadJob::WillRenameFiles { id, sender, .. } => (id, sender),
                 ReadJob::WorkspaceSymbol { id, sender, .. } => (id, sender),
+                ReadJob::PrepareCallHierarchy { id, sender, .. } => (id, sender),
+                ReadJob::IncomingCalls { id, sender, .. } => (id, sender),
+                ReadJob::OutgoingCalls { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
                 id,
