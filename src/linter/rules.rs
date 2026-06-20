@@ -30,6 +30,7 @@ use super::diagnostic::{Diagnostic, Severity};
 
 pub mod correctness;
 pub mod matchers;
+pub mod readability;
 pub mod suspicious;
 
 /// All rules currently shipped.
@@ -44,6 +45,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::ShadowedBuiltin),
         Box::new(suspicious::RedundantEquals),
         Box::new(suspicious::RedundantIfelse),
+        Box::new(readability::TrueFalseSymbol),
     ]
 }
 

@@ -898,6 +898,80 @@ fn redundant_ifelse_ignores_non_constant_branches() {
     assert!(!rules.contains(&"redundant-ifelse"), "got: {rules:?}");
 }
 
+/// Apply every `rule` fix in `src` (safe-only) in one pass.
+fn fixed_output_all(src: &str, rule: &str) -> String {
+    let diags = diagnostics(src);
+    let fixes: Vec<_> = diags
+        .iter()
+        .filter(|d| d.rule == rule)
+        .map(|d| d.fix.clone().expect("finding should carry a fix"))
+        .collect();
+    assert!(!fixes.is_empty(), "expected at least one {rule} finding");
+    apply_fixes(src, &fixes, false).output
+}
+
+#[test]
+fn true_false_symbol_rewrites_value_positions() {
+    assert_eq!(fixed_output("x <- T\n", "true-false-symbol"), "x <- TRUE\n");
+    assert_eq!(
+        fixed_output("if (F) 1\n", "true-false-symbol"),
+        "if (FALSE) 1\n"
+    );
+}
+
+#[test]
+fn true_false_symbol_rewrites_multiple_sites() {
+    assert_eq!(
+        fixed_output_all("c(T, F, T)\n", "true-false-symbol"),
+        "c(TRUE, FALSE, TRUE)\n"
+    );
+}
+
+#[test]
+fn true_false_symbol_ignores_name_positions() {
+    // Named-arg names, `$` members, and list names are not value reads.
+    for src in ["f(T = 1)\n", "df$T\n", "list(F = 1)\n"] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"true-false-symbol"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn true_false_symbol_ignores_reserved_literals() {
+    for src in ["x <- TRUE\n", "c(NA, NULL, FALSE)\n"] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"true-false-symbol"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn true_false_symbol_skips_locally_rebound() {
+    // A read that resolves to a same-file binding is the user's variable, not
+    // the boolean shorthand — flagging it would be a false positive.
+    for src in ["T <- FALSE\nif (T) 1\n", "function(T) T\n"] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"true-false-symbol"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn true_false_symbol_flags_reads_in_unbound_scope() {
+    // No local `T` in scope, so the function-body read is the base symbol.
+    assert_eq!(
+        fixed_output("f <- function() T\n", "true-false-symbol"),
+        "f <- function() TRUE\n"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Tenet 5: autofixes never introduce formatting errors.
 // `format` -> apply all fixes -> `format --check` must still pass.
@@ -965,6 +1039,10 @@ fn fixes_never_introduce_formatting_errors() {
         // redundant-ifelse collapse
         "print(ifelse(cond, TRUE, FALSE))\n",
         "print(ifelse(cond, FALSE, TRUE))\n",
+        // true-false-symbol (`T`/`F` → `TRUE`/`FALSE`)
+        "x <- T\n",
+        "if (F) g()\n",
+        "c(T, F, T)\n",
     ];
     for case in cases {
         assert_fix_is_format_stable(case);

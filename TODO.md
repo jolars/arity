@@ -113,9 +113,13 @@ harden against shadowing in Phase 4.
       safe; landed --- `!`-rewrite withheld for non-atom operands via `is_atom`).
 - [x] `redundant-ifelse` `ifelse(c, TRUE, FALSE)` -> `c`,
       `ifelse(c, FALSE, TRUE)` -> `!c` (suspicious, safe; landed).
-- [ ] `true-false-symbol` `T`/`F` -> `TRUE`/`FALSE` (readability, **unsafe**
-      until shadow-checked in Phase 4 --- T/F are rebindable). Token change, not
-      layout, so linter-owned.
+- [x] `true-false-symbol` `T`/`F` -> `TRUE`/`FALSE` (readability, safe; landed).
+      Graduated early rather than deferred to the Phase 4 hardening sub-pass:
+      `SemanticModel::idents()` already keeps `T`/`F` as reads (excluding
+      name-positions and reserved literals) and `resolve_local()` is
+      scope-accurate, so the rule reports/fixes only reads that resolve to base
+      R and skips locally-rebound `T`/`F`. The same-span token swap never alters
+      layout, so the fix is `Safe`.
 - [ ] `repeat` `while (TRUE)` -> `repeat` (suspicious, safe).
 - [ ] `vector-logic` `&`/`|` -> `&&`/`||` in `if`/`while` condition
       (correctness, safe).
@@ -178,9 +182,9 @@ harden against shadowing in Phase 4.
       `outdated-suppression` (safe-delete). These subsume the reserved
       `arity-ignore-unused` follow-up below.
 - [ ] **Hardening sub-pass**: upgrade Phase 1/2 fixes from bare-name to
-      `resolves_to_base`-confirmed + shadow-checked, graduating
-      `true-false-symbol` and call-rewrite rules Unsafe -> Safe and suppressing
-      FPs where `any`/`is.na` etc. are user-redefined.
+      `resolves_to_base`-confirmed + shadow-checked, graduating the call-rewrite
+      rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
+      user-redefined. (`true-false-symbol` already shipped shadow-checked.)
 
 #### Phase 5 --- Package-aware rules
 
