@@ -3,8 +3,8 @@
 //! Run with `cargo run --example docgen`. For each rule that carries examples,
 //! this renders the same markdown the snapshot test pins
 //! ([`arity::linter::docs::render_rule_doc`]) and writes it under the mdBook
-//! source tree. It also stamps the crate version into `version.md`, replacing
-//! the Quarto `pre-render.lua` filter.
+//! source tree. It also stamps the crate version into `version.md`, included by
+//! the introduction page.
 //!
 //! Living as an `examples/` target (not a `[[bin]]`) keeps arity a single,
 //! publishable crate: `examples/` is outside the Cargo `include` whitelist, so
@@ -30,7 +30,7 @@ fn main() -> io::Result<()> {
         write_if_changed(&path, &page)?;
     }
 
-    // Version injection (replaces docs/filters/pre-render.lua for mdBook).
+    // Version stamp, included by the introduction page.
     let version = format!("arity v{}\n", env!("CARGO_PKG_VERSION"));
     write_if_changed(Path::new("book/src/version.md"), &version)?;
 

@@ -17,7 +17,6 @@
     pkgs.mdbook
     pkgs.llvmPackages.bintools
     pkgs.prettier
-    pkgs.quartoMinimal
     pkgs.air-formatter
     pkgs.ruff
     pkgs.shfmt
@@ -41,9 +40,6 @@
       package = (
         pkgs.rWrapper.override {
           packages = with pkgs.rPackages; [
-            knitr
-            rmarkdown
-            bookdown
             languageserver
           ];
         }

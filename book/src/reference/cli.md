@@ -1,9 +1,3 @@
----
-title: CLI Reference
-description: >-
-  Comprehensive reference for the Arity CLI, including all commands and options.
----
-
 # Command-Line Help for `arity`
 
 This document contains the help content for the `arity` command-line program.

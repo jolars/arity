@@ -77,22 +77,29 @@ cargo clippy --all-targets --all-features -- -D warnings   # lint; warnings are 
 cargo fmt -- --check              # rustfmt check (keep changes rustfmt-clean)
 ```
 
-CLI usage (also how CI checks `docs/`):
+CLI usage:
 
 ```sh
 cargo run -- parse <file.R>                  # print CST; stdin if no file
 cat file.R | cargo run -- parse --verify --quiet   # losslessness round-trip check
 cargo run -- format <file.R>                 # format to stdout (stdin if omitted)
-cargo run -- format --check docs/            # check without writing (multi-path requires --check)
+cargo run -- format --check <path>           # check without writing (multi-path requires --check)
 cargo run -- format --verify <file.R>        # check idempotence; does not write
-cargo run -- lint --check docs/              # lint currently REQUIRES --check
+cargo run -- lint --check <path>             # lint currently REQUIRES --check
 ```
+
+The documentation site (`book/`) is an mdBook. Its reference pages are
+generated: `build.rs` writes `book/src/reference/cli.md` from the clap CLI, and
+`cargo run --example docgen` renders the per-rule pages (and `version.md`) by
+running the real linter on each rule's examples. `mdbook build book` then builds
+the site; `.github/workflows/docs.yml` deploys it to GitHub Pages. The rendered
+rule docs are pinned by `tests/rule_docs.rs` so they can't drift from behavior.
 
 Snapshot tests use `insta`: review/accept with `cargo insta review` /
 `cargo insta accept`. Logging honors `RUST_LOG` (e.g.
 `RUST_LOG=debug cargo test`) via `env_logger`. `task <name>` (Taskfile.yml)
 wraps the above: `lint`, `format`, `test`, `test-debug`, `audit`, `deny`,
-`docs-preview`.
+`docs-gen`, `docs-build`, `docs-preview`.
 
 ## Architecture
 
@@ -153,7 +160,7 @@ module doc for the full rationale.
 
 - Treat CI as the source of truth for quality gates (`.github/workflows/`):
   cross-platform build/test, `cargo-audit` + `cargo-deny`, clippy `-D warnings`,
-  rustfmt check, and `format --check docs/` + `lint --check docs/`.
+  and the rustfmt check.
 - Formatter output must be **idempotent** (`format(format(x)) == format(x)`);
   the formatter and parser test suites guard losslessness + idempotence ---
   byte-identical output is the bar for "behavior-preserving" refactors.
@@ -190,5 +197,3 @@ it pass. For a bug, always start by adding a failing test that reproduces it
   conventions (e.g. `just test`, `air.toml`) --- do not apply those to arity.
 - `style/` --- vendored copy of the tidyverse R style guide (the formatter's
   target style).
-- `docs/` --- Quarto site (`task docs-preview`); CI formats/lints it as a
-  corpus.

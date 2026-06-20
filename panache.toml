@@ -5,5 +5,10 @@ extend-exclude = [
   "AIR_COMPAT.md",
   "BENCH.md",
   "ARCHITECTURE_AUDIT.md",
-  "docs/reference/cli.qmd",
+  # Generated mdBook pages (clap reference + per-rule docs); not hand-written prose.
+  "book/src/reference/cli.md",
+  "book/src/reference/rules/**",
+  "book/src/version.md",
+  # mdBook's SUMMARY.md is structural (one chapter per line); prose reflow breaks it.
+  "book/src/SUMMARY.md",
 ]

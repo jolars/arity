@@ -61,9 +61,9 @@ fn generate_cli_markdown() -> Result<()> {
     }
 
     let cmd = Cli::command();
-    let docs_dir = PathBuf::from("docs/reference");
+    let docs_dir = PathBuf::from("book/src/reference");
 
-    // Only proceed if the docs directory exists (it isn't shipped in the crate).
+    // Only proceed if the mdBook source exists (it isn't shipped in the crate).
     if !docs_dir.exists() {
         return Ok(());
     }
@@ -74,15 +74,8 @@ fn generate_cli_markdown() -> Result<()> {
 
     let markdown = clap_markdown::help_markdown_command_custom(&cmd, &opts);
 
-    let mut document = String::new();
-    document.push_str("---\n");
-    document.push_str("title: CLI Reference\n");
-    document.push_str("description: >-\n  Comprehensive reference for the Arity CLI, including all commands and options.\n");
-    document.push_str("---\n\n");
-    document.push_str(&markdown);
-
-    let output_path = docs_dir.join("cli.qmd");
-    fs::write(&output_path, &document)?;
+    let output_path = docs_dir.join("cli.md");
+    fs::write(&output_path, &markdown)?;
     println!("Generated CLI markdown: {output_path:?}");
 
     Ok(())

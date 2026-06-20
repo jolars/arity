@@ -1,0 +1,5 @@
+/* Center the logo on the introduction page. */
+.arity-logo {
+  display: block;
+  margin: 0 auto 1rem;
+}

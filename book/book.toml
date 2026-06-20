@@ -6,4 +6,12 @@ language = "en"
 src = "src"
 
 [output.html]
+site-url = "https://arity.cc/"
 git-repository-url = "https://github.com/jolars/arity"
+edit-url-template = "https://github.com/jolars/arity/edit/main/book/{path}"
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["theme/arity.css"]
+
+[output.html.search]
+enable = true

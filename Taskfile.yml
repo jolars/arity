@@ -56,22 +56,24 @@ tasks:
     cmds:
       - cargo bench --bench parse
 
-  docs-preview:
-    desc: Preview documentation site locally
-    cmds:
-      - cd docs && quarto preview --no-browser
-
-  docs-rules:
-    desc: Regenerate the mdBook rule reference from rule metadata
+  docs-gen:
+    desc: Regenerate generated mdBook pages (CLI reference + rule docs)
     cmds:
       - cargo run --example docgen
 
-  book-preview:
-    desc: Regenerate rule pages and serve the mdBook locally
+  docs-preview:
+    desc: Regenerate generated pages and serve the mdBook locally
     deps:
-      - docs-rules
+      - docs-gen
     cmds:
       - mdbook serve book --open
+
+  docs-build:
+    desc: Regenerate generated pages and build the mdBook
+    deps:
+      - docs-gen
+    cmds:
+      - mdbook build book
 
   audit:
     desc: Run security audit
