@@ -36,7 +36,7 @@ jobs:
     name: Refresh bundled exports
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup R
         uses: r-lib/actions/setup-r@v2
