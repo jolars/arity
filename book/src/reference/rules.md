@@ -10,6 +10,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`duplicate-formal`](rules/duplicate-formal.md)
 - [`duplicated-arguments`](rules/duplicated-arguments.md)
 - [`equals-na`](rules/equals-na.md)
+- [`vector-logic`](rules/vector-logic.md)
 
 ## Suspicious
 

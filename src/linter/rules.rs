@@ -41,6 +41,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::DuplicateFormal),
         Box::new(correctness::DuplicatedArguments),
         Box::new(correctness::EqualsNa),
+        Box::new(correctness::VectorLogic),
         Box::new(suspicious::AssignmentInCondition),
         Box::new(suspicious::ShadowedBuiltin),
         Box::new(suspicious::RedundantEquals),

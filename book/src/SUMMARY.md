@@ -12,6 +12,7 @@
   - [duplicate-formal](reference/rules/duplicate-formal.md)
   - [duplicated-arguments](reference/rules/duplicated-arguments.md)
   - [equals-na](reference/rules/equals-na.md)
+  - [vector-logic](reference/rules/vector-logic.md)
   - [assignment-in-condition](reference/rules/assignment-in-condition.md)
   - [shadowed-builtin](reference/rules/shadowed-builtin.md)
   - [redundant-equals](reference/rules/redundant-equals.md)

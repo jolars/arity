@@ -170,8 +170,11 @@ harden against shadowing in Phase 4.
       only the reserved literal `TRUE` (rebindable `T` left to
       `true-false-symbol`); the fix replaces the `while (TRUE)` header with
       `repeat` and is withheld when the clause carries a comment.
-- [ ] `vector-logic` `&`/`|` -> `&&`/`||` in `if`/`while` condition
-      (correctness, safe).
+- [x] `vector-logic` `&`/`|` -> `&&`/`||` in `if`/`while` condition
+      (correctness, safe; landed). Flags only operators in conditional context
+      --- the walk descends from the condition through parens, `!`, and
+      `&&`/`||`/`&`/`|`, but stops at a function call (`if (any(a | b))` is left
+      alone). The fix doubles the operator token, a tight format-clean edit.
 - [ ] `comparison-negation` `!(a == b)` -> `a != b` (readability, safe);
       `outer-negation` `!any(...)`/`!all(...)` De Morgan (readability, safe).
 - [ ] `implicit-assignment` (suspicious, none) --- scope to avoid overlap with

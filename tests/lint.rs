@@ -1007,6 +1007,55 @@ fn repeat_withholds_fix_for_commented_condition() {
     assert!(d.fix.is_none(), "commented clause should withhold the fix");
 }
 
+#[test]
+fn vector_logic_rewrites_scalar_operators() {
+    assert_eq!(
+        fixed_output("if (a & b) f()\n", "vector-logic"),
+        "if (a && b) f()\n"
+    );
+    assert_eq!(
+        fixed_output("while (a | b) f()\n", "vector-logic"),
+        "while (a || b) f()\n"
+    );
+}
+
+#[test]
+fn vector_logic_reaches_through_logical_scaffolding() {
+    // `&`/`|` reachable through `&&`/`||`, `!`, and parens are all flagged; the
+    // outer scalar operators are left alone.
+    assert_eq!(
+        fixed_output_all("if (x && (a | b)) f()\n", "vector-logic"),
+        "if (x && (a || b)) f()\n"
+    );
+    assert_eq!(
+        fixed_output_all("if (!(a & b)) f()\n", "vector-logic"),
+        "if (!(a && b)) f()\n"
+    );
+    // Two operators in one condition → two fixes.
+    assert_eq!(
+        fixed_output_all("if (a & b & c) f()\n", "vector-logic"),
+        "if (a && b && c) f()\n"
+    );
+}
+
+#[test]
+fn vector_logic_ignores_function_call_context() {
+    // Inside a call the value is no longer a scalar condition, so vector logic
+    // is appropriate — don't flag it.
+    for src in [
+        "if (any(a | b)) f()\n",
+        "if (all(a & b)) f()\n",
+        "x <- a & b\n",
+        "if (a && b) f()\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"vector-logic"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tenet 5: autofixes never introduce formatting errors.
 // `format` -> apply all fixes -> `format --check` must still pass.
@@ -1081,6 +1130,11 @@ fn fixes_never_introduce_formatting_errors() {
         // repeat (`while (TRUE)` → `repeat`)
         "while (TRUE) f()\n",
         "while (TRUE) {\n  f()\n}\n",
+        // vector-logic (`&`/`|` → `&&`/`||` in a condition)
+        "if (a & b) f()\n",
+        "while (a | b) f()\n",
+        "if (x && (a | b)) f()\n",
+        "if (a & b & c) f()\n",
     ];
     for case in cases {
         assert_fix_is_format_stable(case);
