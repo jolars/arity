@@ -48,6 +48,8 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::RedundantIfelse),
         Box::new(suspicious::Repeat),
         Box::new(readability::TrueFalseSymbol),
+        Box::new(readability::ComparisonNegation),
+        Box::new(readability::OuterNegation),
     ]
 }
 

@@ -19,3 +19,5 @@
   - [redundant-ifelse](reference/rules/redundant-ifelse.md)
   - [repeat](reference/rules/repeat.md)
   - [true-false-symbol](reference/rules/true-false-symbol.md)
+  - [comparison-negation](reference/rules/comparison-negation.md)
+  - [outer-negation](reference/rules/outer-negation.md)

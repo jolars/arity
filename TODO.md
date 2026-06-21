@@ -8,6 +8,13 @@
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
 
+- [ ] `!` precedence bug: `!a == b` parses as `(!a) == b`, but real R binds `!`
+  *looser* than the comparison operators, so it is `!(a == b)`
+  (`quote(!a == b)` has `!` at the top). The Pratt table gives `!` too high a
+  binding power relative to `<`/`>`/`==`/`!=`/`<=`/`>=`. Fixing it lets
+  `comparison-negation` also match the unparenthesized form (it currently
+  matches only `!(a == b)` to sidestep this). Add an `air_parser_harness` case.
+
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`): rowan-style `reparse_token` → `reparse_block` →
   full-reparse fallback (cf. rust-analyzer `reparsing.rs`), splicing reused
@@ -247,8 +254,17 @@ harden against shadowing in Phase 4.
       --- the walk descends from the condition through parens, `!`, and
       `&&`/`||`/`&`/`|`, but stops at a function call (`if (any(a | b))` is left
       alone). The fix doubles the operator token, a tight format-clean edit.
-- [ ] `comparison-negation` `!(a == b)` -> `a != b` (readability, safe);
-      `outer-negation` `!any(...)`/`!all(...)` De Morgan (readability, safe).
+- [x] `comparison-negation` `!(a == b)` -> `a != b` (readability, safe; landed).
+      Matches only the explicitly parenthesized form: arity's parser currently
+      mis-binds the bare `!a == b` as `(!a) == b` (real R is `!(a == b)`), a
+      parser precedence bug tracked in the `## Parser` section --- the paren form
+      sidesteps it. The replacement (a comparison) binds tighter than the `!` it
+      replaces, so no parent guard is needed; fix withheld on a commented clause.
+- [x] `outer-negation` `any(!x)` -> `!all(x)`, `all(!x)` -> `!any(x)` De Morgan
+      (readability, safe; landed). Direction matches lintr's `outer_negation`
+      (pull negation out). Fires only when every positional arg is `!`-negated
+      (`na.rm` preserved). The rewrite drops a primary to a `!`-expr, so the fix
+      is withheld in parent contexts that bind tighter than `!` (`is_safe_context`).
 - [ ] `implicit-assignment` (suspicious, none) --- scope to avoid overlap with
       existing `assignment-in-condition`.
 

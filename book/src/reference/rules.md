@@ -23,3 +23,5 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 ## Readability
 
 - [`true-false-symbol`](rules/true-false-symbol.md)
+- [`comparison-negation`](rules/comparison-negation.md)
+- [`outer-negation`](rules/outer-negation.md)

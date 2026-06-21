@@ -1057,6 +1057,112 @@ fn vector_logic_ignores_function_call_context() {
     }
 }
 
+#[test]
+fn comparison_negation_flips_operator() {
+    assert_eq!(
+        fixed_output("!(a == b)\n", "comparison-negation"),
+        "a != b\n"
+    );
+    assert_eq!(
+        fixed_output("if (!(x < y)) f()\n", "comparison-negation"),
+        "if (x >= y) f()\n"
+    );
+    // Every comparison operator has a negation.
+    assert_eq!(
+        fixed_output("!(a != b)\n", "comparison-negation"),
+        "a == b\n"
+    );
+    assert_eq!(
+        fixed_output("!(a <= b)\n", "comparison-negation"),
+        "a > b\n"
+    );
+    assert_eq!(
+        fixed_output("!(a > b)\n", "comparison-negation"),
+        "a <= b\n"
+    );
+    assert_eq!(
+        fixed_output("!(a >= b)\n", "comparison-negation"),
+        "a < b\n"
+    );
+}
+
+#[test]
+fn comparison_negation_ignores_non_comparison() {
+    // `!` of a non-comparison (logical, arithmetic, a bare paren) is not this
+    // rule's business.
+    for src in ["!(a & b)\n", "!(a + b)\n", "!(x)\n", "!x\n"] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"comparison-negation"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn comparison_negation_withholds_fix_for_commented_clause() {
+    // A comment inside the parens would be dropped by the rewrite, so the fix is
+    // withheld — but the finding is still reported.
+    let d = diagnostics("!(a == b # note\n)\n")
+        .into_iter()
+        .find(|d| d.rule == "comparison-negation")
+        .expect("expected a comparison-negation finding");
+    assert!(d.fix.is_none(), "commented clause should withhold the fix");
+}
+
+#[test]
+fn outer_negation_pulls_negation_out() {
+    assert_eq!(
+        fixed_output("if (any(!x)) f()\n", "outer-negation"),
+        "if (!all(x)) f()\n"
+    );
+    assert_eq!(
+        fixed_output("flag <- all(!x)\n", "outer-negation"),
+        "flag <- !any(x)\n"
+    );
+    // Multiple negated args: every one loses its `!`.
+    assert_eq!(
+        fixed_output("z <- any(!a, !b)\n", "outer-negation"),
+        "z <- !all(a, b)\n"
+    );
+    // `na.rm` is passed through untouched.
+    assert_eq!(
+        fixed_output("flag <- any(!x, na.rm = TRUE)\n", "outer-negation"),
+        "flag <- !all(x, na.rm = TRUE)\n"
+    );
+}
+
+#[test]
+fn outer_negation_ignores_unnegated_and_mixed() {
+    for src in [
+        "if (any(x)) f()\n",      // nothing negated
+        "z <- any(!a, b)\n",      // mixed: not a clean De Morgan
+        "z <- any(x, !y)\n",      // mixed
+        "z <- sum(!x)\n",         // not any/all
+        "z <- any(other = !x)\n", // a non-`na.rm` named arg
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"outer-negation"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn outer_negation_withholds_fix_in_tight_context() {
+    // `any(!x)` is a primary; `!all(x)` binds looser, so a parent that binds
+    // tighter than `!` (here `==`) would misparse. Withhold the fix, still report.
+    let d = diagnostics("z <- any(!x) == y\n")
+        .into_iter()
+        .find(|d| d.rule == "outer-negation")
+        .expect("expected an outer-negation finding");
+    assert!(
+        d.fix.is_none(),
+        "tight parent context should withhold the fix"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Autofix correctness: a fix is a textual edit, so the bar is that applying it
 // leaves code that still parses. It does NOT owe line-width — layout is the
@@ -1144,6 +1250,13 @@ fn fixed_output_is_parseable_and_clean() {
         "while (a | b) f()\n",
         "if (x && (a | b)) f()\n",
         "if (a & b & c) f()\n",
+        // comparison-negation (`!(a == b)` → `a != b`)
+        "print(!(a == b))\n",
+        "if (!(x < y)) f()\n",
+        // outer-negation (`any(!x)` → `!all(x)`)
+        "if (any(!x)) f()\n",
+        "flag <- all(!x)\n",
+        "z <- any(!a, !b)\n",
     ];
     for case in cases {
         assert_fixed_output_is_clean(case);
