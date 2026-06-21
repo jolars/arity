@@ -4,9 +4,9 @@ expression: render_rule_doc(rule.as_ref())
 ---
 # `comparison-negation`
 
-Flag a negated comparison — `!(a == b)`, `!(x < y)` — which reads more clearly as the opposite comparison (`a != b`, `x >= y`).
+Flag a negated comparison — `!(a == b)`, `!x < y` — which reads more clearly as the opposite comparison (`a != b`, `x >= y`).
 
-The fix is withheld when a comment inside the parentheses would otherwise be lost.
+The fix is withheld when a comment in the operand would otherwise be lost.
 
 Negating an equality test:
 

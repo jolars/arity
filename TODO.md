@@ -8,12 +8,13 @@
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
 
-- [ ] `!` precedence bug: `!a == b` parses as `(!a) == b`, but real R binds `!`
-  *looser* than the comparison operators, so it is `!(a == b)`
-  (`quote(!a == b)` has `!` at the top). The Pratt table gives `!` too high a
-  binding power relative to `<`/`>`/`==`/`!=`/`<=`/`>=`. Fixing it lets
-  `comparison-negation` also match the unparenthesized form (it currently
-  matches only `!(a == b)` to sidestep this). Add an `air_parser_harness` case.
+- [x] `!` precedence bug (landed): `!a == b` parsed as `(!a) == b`, but real R
+  binds `!` *looser* than the comparison/arithmetic operators (just above
+  `&&`/`||`), so it is `!(a == b)` (`quote(!a == b)` has `!` at the top). Fixed
+  by giving unary `!` its own right-binding power (70, between the And tier 60/61
+  and the Relational tier 80/81) in `parse_prefix`, instead of sharing the high
+  power of unary `+`/`-`. Pinned by `tests/fixtures/parser/expr_not_precedence`.
+  `comparison-negation` now also matches the unparenthesized `!a == b`.
 
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`): rowan-style `reparse_token` → `reparse_block` →
@@ -255,10 +256,11 @@ harden against shadowing in Phase 4.
       `&&`/`||`/`&`/`|`, but stops at a function call (`if (any(a | b))` is left
       alone). The fix doubles the operator token, a tight format-clean edit.
 - [x] `comparison-negation` `!(a == b)` -> `a != b` (readability, safe; landed).
-      Matches only the explicitly parenthesized form: arity's parser currently
-      mis-binds the bare `!a == b` as `(!a) == b` (real R is `!(a == b)`), a
-      parser precedence bug tracked in the `## Parser` section --- the paren form
-      sidesteps it. The replacement (a comparison) binds tighter than the `!` it
+      Matches both the parenthesized `!(a == b)` and the bare `!a == b` (the `!`
+      precedence bug that previously blocked the bare form is now fixed; see the
+      `## Parser` section). The replacement (a comparison) binds tighter than the
+      `!` it replaces, so no parent guard is needed; fix withheld on a commented
+      operand. The replacement (a comparison) binds tighter than the `!` it
       replaces, so no parent guard is needed; fix withheld on a commented clause.
 - [x] `outer-negation` `any(!x)` -> `!all(x)`, `all(!x)` -> `!any(x)` De Morgan
       (readability, safe; landed). Direction matches lintr's `outer_negation`

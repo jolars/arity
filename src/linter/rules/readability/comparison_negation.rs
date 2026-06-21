@@ -1,15 +1,14 @@
 //! `comparison-negation`: negating a comparison is clearer written as the
 //! opposite comparison — `!(a == b)` is `a != b`, `!(x < y)` is `x >= y`.
 //!
-//! Only the explicitly parenthesized form `!(<lhs> <cmp> <rhs>)` is matched.
-//! R's real precedence makes the unparenthesized `!a == b` mean `!(a == b)`
-//! too, but arity's parser currently mis-binds that as `(!a) == b` (a parser
-//! precedence bug, tracked separately); matching the paren form sidesteps it
-//! and is exactly what the roadmap specifies. The rewrite swaps the comparison
-//! operator and drops the `!` and parens. The result (a comparison) binds
-//! *tighter* than the `!` it replaces, so it never needs new parens in any
-//! parent context — no parent guard is required. The fix is withheld when a
-//! comment inside the parens would be dropped.
+//! Both the parenthesized form `!(<lhs> <cmp> <rhs>)` and the bare `!a == b`
+//! are matched: R binds `!` looser than the comparison operators, so `!a == b`
+//! already means `!(a == b)` (the operand of the `!` is the whole comparison).
+//! The rewrite swaps the comparison operator and drops the `!` (and the parens,
+//! when present). The result (a comparison) binds *tighter* than the `!` it
+//! replaces, so it never needs new parens in any parent context — no parent
+//! guard is required. The fix is withheld when a comment in the operand would
+//! be dropped.
 
 use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
 use crate::linter::rules::matchers;
@@ -29,9 +28,9 @@ impl Rule for ComparisonNegation {
     }
 
     fn description(&self) -> &'static str {
-        "Flag a negated comparison — `!(a == b)`, `!(x < y)` — which reads more \
+        "Flag a negated comparison — `!(a == b)`, `!x < y` — which reads more \
          clearly as the opposite comparison (`a != b`, `x >= y`).\n\nThe fix is \
-         withheld when a comment inside the parentheses would otherwise be lost."
+         withheld when a comment in the operand would otherwise be lost."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -53,18 +52,23 @@ impl Rule for ComparisonNegation {
         if op.kind() != SyntaxKind::BANG {
             return;
         }
-        // The operand must be a parenthesized comparison.
-        let Some(paren) = unary
-            .children()
-            .find(|n| n.kind() == SyntaxKind::PAREN_EXPR)
-        else {
+        // The operand is the comparison — either bare (`!a == b`) or wrapped in
+        // parens (`!(a == b)`).
+        let Some(operand) = unary.children().next() else {
             return;
         };
-        let Some(inner) = paren
-            .children()
-            .find(|n| n.kind() == SyntaxKind::BINARY_EXPR)
-        else {
-            return;
+        let inner = match operand.kind() {
+            SyntaxKind::BINARY_EXPR => operand,
+            SyntaxKind::PAREN_EXPR => {
+                let Some(b) = operand
+                    .children()
+                    .find(|n| n.kind() == SyntaxKind::BINARY_EXPR)
+                else {
+                    return;
+                };
+                b
+            }
+            _ => return,
         };
         let Some((lhs, cmp, rhs)) = matchers::binary_parts(&inner) else {
             return;

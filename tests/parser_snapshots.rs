@@ -77,6 +77,7 @@ fn fixture_names() -> &'static [&'static str] {
         "expr_newline_binary_break",
         "expr_separators_tokens",
         "expr_unary",
+        "expr_not_precedence",
         "expr_dotted_ident",
         "ident_backtick",
         "ident_bare_dot",

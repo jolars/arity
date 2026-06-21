@@ -1087,6 +1087,17 @@ fn comparison_negation_flips_operator() {
 }
 
 #[test]
+fn comparison_negation_flips_unparenthesized_form() {
+    // R binds `!` looser than the comparison operators, so `!a == b` already
+    // means `!(a == b)` — flag it too.
+    assert_eq!(fixed_output("!a == b\n", "comparison-negation"), "a != b\n");
+    assert_eq!(
+        fixed_output("x <- !a < b\n", "comparison-negation"),
+        "x <- a >= b\n"
+    );
+}
+
+#[test]
 fn comparison_negation_ignores_non_comparison() {
     // `!` of a non-comparison (logical, arithmetic, a bare paren) is not this
     // rule's business.
@@ -1253,6 +1264,7 @@ fn fixed_output_is_parseable_and_clean() {
         // comparison-negation (`!(a == b)` → `a != b`)
         "print(!(a == b))\n",
         "if (!(x < y)) f()\n",
+        "flag <- !a == b\n",
         // outer-negation (`any(!x)` → `!all(x)`)
         "if (any(!x)) f()\n",
         "flag <- all(!x)\n",

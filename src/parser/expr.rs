@@ -284,9 +284,19 @@ fn parse_prefix(
             // parse as `~(x + y)` and `? x + y` as `?(x + y)`. Match the infix
             // right-binding power so every higher-precedence infix folds into
             // the operand.
+            //
+            // Unary `!` binds *looser* than the comparison and arithmetic
+            // operators but tighter than `&&`/`||` (R's precedence table): `!a ==
+            // b` is `!(a == b)` and `!a + b` is `!(a + b)`, while `!a & b` is
+            // `(!a) & b`. Its right-binding power sits between the And tier
+            // (60/61) and the Relational tier (80/81) so relational and tighter
+            // infixes fold into the operand and the logical operators do not.
+            // Unary `+`/`-`, by contrast, bind tightly (just below `^`), so they
+            // keep the high right-binding power.
             let rbp = match tok.kind {
                 TokKind::Tilde => 41,
                 TokKind::Question => 1,
+                TokKind::Bang => 70,
                 _ => 130,
             };
             let operand_start = i + 1;
