@@ -50,12 +50,23 @@
     - *Known degradation:* a `#'` line inside an expression (e.g. call args) is
       emitted as loose tokens and may draw a parse diagnostic; real roxygen only
       sits at statement level. Pinned by `roxygen_loose_in_call`.
-  - [ ] **Transforms (future rounds), consuming the CST above:** (1) normalize
-    `#'` + single space; (2) reflow prose (`ROXYGEN_TEXT`) to line width;
-    (3) hanging-indent continuation under `ROXYGEN_TAG_ARG`; (4) run arity's own
-    formatter on embedded R in `@examples`/`@examplesIf`. Record the air
-    divergence in `tests/air_compat_allowlist.toml` when the first transform
-    ships. LSP follow-ups: fold/semantic-token/completion awareness for roxygen
+  - [ ] **Transforms (future rounds), consuming the CST above:**
+    - [x] (1) normalize the marker + a single space (`normalize_roxygen_line`
+      in `src/formatter/core.rs`): one space after the marker before content,
+      trailing whitespace trimmed, blank lines collapse to the bare marker. The
+      marker bytes are kept verbatim (`##'` is *not* collapsed) and tag-internal
+      spacing is left for transform (3). Fixtures `roxygen_normalize_space`,
+      `roxygen_trailing_space`, `roxygen_blank_trailing`,
+      `roxygen_tag_marker_space`, `roxygen_multi_hash_kept`. No air-compat
+      allowlist entry needed: air leaves roxygen untouched, so it preserves
+      arity's normalized output and the fixed-point gauge sees no divergence.
+    - [ ] (2) reflow prose (`ROXYGEN_TEXT`) to line width;
+    - [ ] (3) hanging-indent continuation under `ROXYGEN_TAG_ARG` (and normalize
+      tag-internal spacing);
+    - [ ] (4) run arity's own formatter on embedded R in
+      `@examples`/`@examplesIf`.
+
+    LSP follow-ups: fold/semantic-token/completion awareness for roxygen
     (folding already preserved; completion may trigger inside `#'` lines).
 
 ## Linter

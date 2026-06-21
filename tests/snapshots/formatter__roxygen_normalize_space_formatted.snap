@@ -1,0 +1,7 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' no space
+#' extra spaces
+f <- function(x) x

@@ -1,0 +1,6 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' foo
+f <- function(x) x
