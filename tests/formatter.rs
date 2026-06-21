@@ -173,6 +173,11 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_tag_reflow_idempotent",
         "roxygen_tag_alone_passthrough",
         "roxygen_tag_examples_unchanged",
+        "roxygen_examples_format",
+        "roxygen_examples_multiline",
+        "roxygen_examplesif_format",
+        "roxygen_examples_dontrun_passthrough",
+        "roxygen_examples_idempotent",
     ]
 }
 

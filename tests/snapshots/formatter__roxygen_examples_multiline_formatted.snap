@@ -1,0 +1,10 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' @examples
+#' g <- function() {
+#'   x <- 1
+#'   x + 1
+#' }
+g <- function() NULL

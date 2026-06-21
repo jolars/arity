@@ -1,0 +1,7 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' @examplesIf interactive()
+#' run_thing(a, b)
+f <- function() NULL

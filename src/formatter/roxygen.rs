@@ -1,5 +1,6 @@
 //! Roxygen block formatting: marker normalization (transform 1), prose reflow
-//! (transform 2), and tag-prose hanging-indent reflow (transform 3).
+//! (transform 2), tag-prose hanging-indent reflow (transform 3), and embedded-R
+//! formatting in `@examples`/`@examplesIf` bodies (transform 4).
 //!
 //! A `ROXYGEN_BLOCK` is emitted one `#'` line per output line. Consecutive plain
 //! prose lines are grouped into a paragraph and greedily re-wrapped to the line
@@ -7,18 +8,25 @@
 //! kept atomic. A tag line *with inline prose* (e.g. `@param x <prose>`) plus the
 //! plain-prose lines that follow it form a single reflow unit: the tag header
 //! stays on the first line and continuation lines hang-indent two extra spaces
-//! under it (the tidyverse style), with internal tag spacing normalized. Tag
-//! lines whose content is not prose (`@examples`/`@examplesIf` bodies,
-//! `@usage`/`@eval`/`@evalRd` code, `@section Title:` headings, and namespace
-//! directives), blank separators, fenced code blocks, and other structured lines
-//! (lists, tables, headers, blockquotes) are passed through marker-normalized but
-//! never reflowed — the conservative gate that keeps reflow correct without a
-//! full Markdown parse.
+//! under it (the tidyverse style), with internal tag spacing normalized.
+//!
+//! An `@examples`/`@examplesIf` body is treated as embedded R: the body lines are
+//! collected, stripped of their markers, run through arity's own formatter, and
+//! re-prefixed (transform 4). If the body does not parse cleanly (e.g. it wraps R
+//! in Rd macros like `\dontrun{}`, which are not valid R), the whole body falls
+//! back to marker-normalized passthrough, byte-for-byte. Other non-prose tag
+//! content (`@usage`/`@eval`/`@evalRd` code, `@section Title:` headings, and
+//! namespace directives), blank separators, fenced code blocks, and other
+//! structured lines (lists, tables, headers, blockquotes) are passed through
+//! marker-normalized but never reflowed — the conservative gate that keeps reflow
+//! correct without a full Markdown parse.
 
 use rowan::NodeOrToken;
 
 use super::context::FormatContext;
+use super::core::format_with_style;
 use super::ir::Ir;
+use super::style::FormatStyle;
 use crate::ast::{AstNode, RoxygenLine, RoxygenTag};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
@@ -30,19 +38,29 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
     let mut items: Vec<Ir> = Vec::new();
     let mut para = Paragraph::default();
     let mut tag_unit: Option<TagUnit> = None;
+    let mut example = ExampleBody::default();
     let mut in_examples = false;
     let mut in_fence = false;
     let lw = style.line_width;
 
-    // Flush both pending accumulators (only one is ever non-empty at a time).
+    // Flush all pending accumulators (only one is ever non-empty at a time).
     macro_rules! flush_pending {
         () => {{
             para.flush(&mut items, indent_cols, lw);
             flush_tag_unit(&mut tag_unit, &mut items, lw);
+            example.flush(&mut items, indent_cols, style);
         }};
     }
 
     for line in node.children().filter_map(RoxygenLine::cast) {
+        // While collecting an `@examples` body, every non-tag line is embedded R
+        // and belongs to the body (blank/fenced/structured lines included); a tag
+        // line ends the body and falls through to the tag branch, which flushes.
+        if in_examples && line.tag().is_none() {
+            example.push_line(&line);
+            continue;
+        }
+
         let content = content_text(&line);
         let is_fence = is_fence_marker(&content);
 
@@ -81,9 +99,9 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
             continue;
         }
 
-        // Blank separator, an `@examples` body line, or a structured line:
-        // passthrough, and a boundary.
-        if line.is_blank() || in_examples || is_structured(&content) {
+        // Blank separator or a structured line: passthrough, and a boundary.
+        // (`@examples` body lines are captured at the top of the loop.)
+        if line.is_blank() || is_structured(&content) {
             flush_pending!();
             emit_normalized(&mut items, &line);
             continue;
@@ -240,6 +258,77 @@ impl TagUnit {
 fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: usize) {
     if let Some(unit) = unit.take() {
         unit.flush(items, line_width);
+    }
+}
+
+/// A run of `@examples`/`@examplesIf` body lines awaiting embedded-R formatting
+/// (transform 4). The lines are kept so they can be re-emitted verbatim
+/// (marker-normalized) if the collected source fails to parse as R.
+#[derive(Default)]
+struct ExampleBody {
+    marker: Option<String>,
+    lines: Vec<RoxygenLine>,
+}
+
+impl ExampleBody {
+    fn push_line(&mut self, line: &RoxygenLine) {
+        if self.marker.is_none() {
+            self.marker = Some(marker_text(line));
+        }
+        self.lines.push(line.clone());
+    }
+
+    /// Format the collected body as embedded R and emit it re-prefixed, clearing
+    /// the buffer. The body is formatted with a line-width budget reduced by the
+    /// marker prefix and indentation so the `#'`-prefixed lines respect the line
+    /// width (Tenet 1). On a parse error — or a blank-only body — the original
+    /// lines are passed through marker-normalized instead.
+    fn flush(&mut self, items: &mut Vec<Ir>, indent_cols: usize, style: FormatStyle) {
+        if self.lines.is_empty() {
+            return;
+        }
+        let lines = std::mem::take(&mut self.lines);
+        let marker = self.marker.take().unwrap_or_else(|| "#'".to_string());
+
+        let source = lines
+            .iter()
+            .map(content_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // A blank-only body has nothing to format; keep it as-is.
+        if source.trim().is_empty() {
+            for line in &lines {
+                emit_normalized(items, line);
+            }
+            return;
+        }
+
+        let budget = style
+            .line_width
+            .saturating_sub(indent_cols + marker.len() + 1)
+            .max(1);
+        let body_style = FormatStyle {
+            line_width: budget,
+            indent_width: style.indent_width,
+        };
+
+        match format_with_style(&source, body_style) {
+            Ok(formatted) => {
+                for code in formatted.lines() {
+                    if code.is_empty() {
+                        push_line(items, marker.clone());
+                    } else {
+                        push_line(items, format!("{marker} {code}"));
+                    }
+                }
+            }
+            Err(_) => {
+                for line in &lines {
+                    emit_normalized(items, line);
+                }
+            }
+        }
     }
 }
 

@@ -132,8 +132,22 @@
       `roxygen_tag_marker_space` now asserts the normalized spacing). No
       air-compat allowlist entry: air leaves roxygen untouched, so the
       fixed-point gauge sees no divergence.
-    - [ ] (4) run arity's own formatter on embedded R in
-      `@examples`/`@examplesIf`.
+    - [x] (4) run arity's own formatter on embedded R in
+      `@examples`/`@examplesIf` (`ExampleBody` in `src/formatter/roxygen.rs`).
+      The body lines are collected, stripped of their markers (reusing
+      `content_text`), formatted as one R source unit via `format_with_style`,
+      and re-prefixed. The body line-width budget is reduced by the marker prefix
+      and indentation so the `#'`-prefixed output respects the line width
+      (Tenet 1). **Conservative fallback**: a body that does not parse cleanly as
+      R falls back to the current marker-normalized passthrough, byte-for-byte —
+      this covers Rd-macro wrappers (`\dontrun{}`/`\donttest{}`/`\dontshow{}`,
+      not valid R: `\` lexes as the lambda token, so a following identifier is a
+      parse error) and any other unparseable example. Idempotent by construction
+      (extraction inverts prefixing; the embedded formatter is itself idempotent
+      at a fixed width). Fixtures `roxygen_examples_{format,multiline,idempotent,
+      dontrun_passthrough}` and `roxygen_examplesif_format`. No air-compat
+      allowlist entry: air leaves roxygen untouched, so it preserves arity's
+      formatted output and the fixed-point gauge sees no divergence.
 
     LSP follow-ups: fold/semantic-token/completion awareness for roxygen
     (folding already preserved; completion may trigger inside `#'` lines).
