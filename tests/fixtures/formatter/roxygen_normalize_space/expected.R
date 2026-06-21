@@ -1,3 +1,2 @@
-#' no space
-#' extra spaces
+#' no space extra spaces
 f <- function(x) x

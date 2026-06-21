@@ -62,14 +62,7 @@ pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize) {
     if bytes[pos] == b'@' && bytes.get(pos + 1).is_some_and(u8::is_ascii_alphabetic) {
         lex_roxygen_tag(out, text, start, pos);
     } else {
-        push(
-            out,
-            TokKind::RoxygenText,
-            text,
-            start,
-            pos,
-            text.len() - pos,
-        );
+        lex_roxygen_prose(out, text, start, pos);
     }
 }
 
@@ -119,14 +112,170 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
         pos = take_ws(out, text, start, pos);
     }
 
+    lex_roxygen_prose(out, text, start, pos);
+}
+
+/// Sub-tokenize `text[pos..]` (a roxygen line's prose remainder) into an
+/// alternating sequence of `RoxygenText` runs and protected-span tokens: inline
+/// code `` `…` ``, Rd macros `\code{…}`/`\link[pkg]{…}`, and markdown links
+/// `[text](url)`/`[func()]`. The pushed tokens' texts tile `text[pos..]` exactly.
+///
+/// Recognizers are conservative and line-scoped: any malformed or unterminated
+/// span stays inside the surrounding prose run (so the round-trip is unaffected
+/// either way, and reflow only ever treats a *complete* span as atomic).
+fn lex_roxygen_prose(out: &mut Vec<Token>, text: &str, start: usize, pos: usize) {
+    let bytes = text.as_bytes();
+    let mut run_start = pos;
+    let mut i = pos;
+    while i < bytes.len() {
+        let span = match bytes[i] {
+            b'`' => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenCode, end)),
+            b'\\' => scan_rd_macro(bytes, i).map(|end| (TokKind::RoxygenRdMacro, end)),
+            b'[' => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
+            _ => None,
+        };
+        if let Some((kind, end)) = span {
+            // Flush the prose run preceding the span, then the span itself.
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, kind, text, start, i, end - i);
+            i = end;
+            run_start = i;
+        } else {
+            // Not a span start: advance one whole UTF-8 char. The recognized
+            // starts (`` ` ``, `\`, `[`) are all ASCII, so this only skips over
+            // ordinary prose bytes.
+            i += utf8_len(bytes[i]);
+        }
+    }
     push(
         out,
         TokKind::RoxygenText,
         text,
         start,
-        pos,
-        text.len() - pos,
+        run_start,
+        bytes.len() - run_start,
     );
+}
+
+/// Length in bytes of the UTF-8 char whose leading byte is `b`.
+fn utf8_len(b: u8) -> usize {
+    match b {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        _ => 4,
+    }
+}
+
+/// Count the run of consecutive `c` bytes starting at `i`.
+fn run_len(bytes: &[u8], i: usize, c: u8) -> usize {
+    let mut j = i;
+    while j < bytes.len() && bytes[j] == c {
+        j += 1;
+    }
+    j - i
+}
+
+/// A CommonMark inline-code span at `bytes[i] == b'`'`: an opening backtick run
+/// of length `n`, closed by the next run of *exactly* `n` backticks on the line.
+/// Returns the index past the closing run, or `None` if unterminated.
+fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
+    let n = run_len(bytes, i, b'`');
+    let mut j = i + n;
+    while j < bytes.len() {
+        if bytes[j] == b'`' {
+            let m = run_len(bytes, j, b'`');
+            if m == n {
+                return Some(j + m);
+            }
+            j += m;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// An Rd macro at `bytes[i] == b'\\'`: `\name`, an optional balanced `[…]`, then
+/// a required balanced `{…}`. Returns the index past the closing `}`, or `None`
+/// when there is no name or the braces are unbalanced on the line.
+fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
+    let name_start = i + 1;
+    let mut j = name_start;
+    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+        j += 1;
+    }
+    if j == name_start {
+        return None; // `\\`, `\{`, `\n`, … are not macro calls
+    }
+    if bytes.get(j) == Some(&b'[') {
+        j = scan_balanced(bytes, j, b'[', b']')?;
+    }
+    if bytes.get(j) != Some(&b'{') {
+        return None;
+    }
+    scan_balanced(bytes, j, b'{', b'}')
+}
+
+/// A markdown link at `bytes[i] == b'['`: a balanced `[…]`, then either `(…)`
+/// (inline link), `[…]` (reference link), or — for a bare `[…]` — an autolink
+/// whose content is a `func()`/`pkg::func()` code reference. Returns the index
+/// past the link, or `None` if it is not a recognized link shape.
+fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
+    let after_text = scan_balanced(bytes, i, b'[', b']')?;
+    match bytes.get(after_text) {
+        Some(&b'(') => scan_balanced(bytes, after_text, b'(', b')'),
+        Some(&b'[') => scan_balanced(bytes, after_text, b'[', b']'),
+        _ => is_autolink_content(&bytes[i + 1..after_text - 1]).then_some(after_text),
+    }
+}
+
+/// Whether `content` (the bytes inside `[…]`) is a function-autolink reference:
+/// a (possibly namespaced) identifier followed by `()`, e.g. `func()` or
+/// `pkg::func()`. Conservative so bracketed prose like `[1]`/`[note]` stays text.
+fn is_autolink_content(content: &[u8]) -> bool {
+    let Some(name) = content.strip_suffix(b"()") else {
+        return false;
+    };
+    !name.is_empty()
+        && name.iter().any(u8::is_ascii_alphanumeric)
+        && name
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':'))
+}
+
+/// Scan a balanced delimited run starting at `bytes[i] == open`, tracking nesting
+/// and skipping Rd backslash escapes (`\}` etc.). Returns the index past the
+/// matching `close`, or `None` if it is unbalanced before end of input.
+fn scan_balanced(bytes: &[u8], i: usize, open: u8, close: u8) -> Option<usize> {
+    debug_assert_eq!(bytes[i], open);
+    let mut depth = 0usize;
+    let mut j = i;
+    while j < bytes.len() {
+        let b = bytes[j];
+        if b == b'\\' {
+            j += 2; // skip the escaped byte
+        } else if b == open {
+            depth += 1;
+            j += 1;
+        } else if b == close {
+            depth -= 1;
+            j += 1;
+            if depth == 0 {
+                return Some(j);
+            }
+        } else {
+            j += 1;
+        }
+    }
+    None
 }
 
 /// Push `text[off..off + len]` as a token of `kind` at absolute offset
@@ -227,6 +376,9 @@ fn emit_line_body(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> us
             | TokKind::RoxygenTagName
             | TokKind::RoxygenTagArg
             | TokKind::RoxygenText
+            | TokKind::RoxygenCode
+            | TokKind::RoxygenRdMacro
+            | TokKind::RoxygenMdLink
             | TokKind::Whitespace => {
                 events.push(Event::Tok(i));
                 i += 1;
@@ -417,5 +569,225 @@ mod tests {
             ]
         );
         assert_lossless("#' Title");
+    }
+
+    /// Texts of the protected-span (and surrounding text) tokens on the line.
+    fn prose_texts(input: &str) -> Vec<(TokKind, String)> {
+        lex(input)
+            .into_iter()
+            .filter(|t| {
+                matches!(
+                    t.kind,
+                    TokKind::RoxygenText
+                        | TokKind::RoxygenCode
+                        | TokKind::RoxygenRdMacro
+                        | TokKind::RoxygenMdLink
+                )
+            })
+            .map(|t| (t.kind, t.text))
+            .collect()
+    }
+
+    #[test]
+    fn inline_code_span() {
+        assert_eq!(
+            prose_texts("#' Use `x + y` now\n"),
+            vec![
+                (TokKind::RoxygenText, "Use ".into()),
+                (TokKind::RoxygenCode, "`x + y`".into()),
+                (TokKind::RoxygenText, " now".into()),
+            ]
+        );
+        assert_lossless("#' Use `x + y` now\n");
+    }
+
+    #[test]
+    fn inline_code_multi_backtick_fence() {
+        // A double-backtick span may contain a single backtick.
+        assert_eq!(
+            prose_texts("#' ``a `b` c`` end\n"),
+            vec![
+                (TokKind::RoxygenCode, "``a `b` c``".into()),
+                (TokKind::RoxygenText, " end".into()),
+            ]
+        );
+        assert_lossless("#' ``a `b` c`` end\n");
+    }
+
+    #[test]
+    fn rd_macro_span() {
+        assert_eq!(
+            prose_texts("#' See \\code{f} here\n"),
+            vec![
+                (TokKind::RoxygenText, "See ".into()),
+                (TokKind::RoxygenRdMacro, "\\code{f}".into()),
+                (TokKind::RoxygenText, " here".into()),
+            ]
+        );
+        assert_lossless("#' See \\code{f} here\n");
+    }
+
+    #[test]
+    fn rd_macro_with_pkg_option() {
+        assert_eq!(
+            prose_texts("#' \\link[pkg]{f}\n"),
+            vec![(TokKind::RoxygenRdMacro, "\\link[pkg]{f}".into())]
+        );
+        assert_lossless("#' \\link[pkg]{f}\n");
+    }
+
+    #[test]
+    fn rd_macro_nested_braces() {
+        assert_eq!(
+            prose_texts("#' \\code{f(g())} x\n"),
+            vec![
+                (TokKind::RoxygenRdMacro, "\\code{f(g())}".into()),
+                (TokKind::RoxygenText, " x".into()),
+            ]
+        );
+        assert_lossless("#' \\code{f(g())} x\n");
+    }
+
+    #[test]
+    fn md_inline_link() {
+        assert_eq!(
+            prose_texts("#' see [the docs](https://x.y) now\n"),
+            vec![
+                (TokKind::RoxygenText, "see ".into()),
+                (TokKind::RoxygenMdLink, "[the docs](https://x.y)".into()),
+                (TokKind::RoxygenText, " now".into()),
+            ]
+        );
+        assert_lossless("#' see [the docs](https://x.y) now\n");
+    }
+
+    #[test]
+    fn md_function_autolink() {
+        assert_eq!(
+            prose_texts("#' Call [func()] and [pkg::g()].\n"),
+            vec![
+                (TokKind::RoxygenText, "Call ".into()),
+                (TokKind::RoxygenMdLink, "[func()]".into()),
+                (TokKind::RoxygenText, " and ".into()),
+                (TokKind::RoxygenMdLink, "[pkg::g()]".into()),
+                (TokKind::RoxygenText, ".".into()),
+            ]
+        );
+        assert_lossless("#' Call [func()] and [pkg::g()].\n");
+    }
+
+    #[test]
+    fn md_reference_link() {
+        assert_eq!(
+            prose_texts("#' a [text][ref] b\n"),
+            vec![
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenMdLink, "[text][ref]".into()),
+                (TokKind::RoxygenText, " b".into()),
+            ]
+        );
+        assert_lossless("#' a [text][ref] b\n");
+    }
+
+    #[test]
+    fn bracketed_prose_is_not_a_link() {
+        // Citations / plain brackets are not autolinks; stay one prose run.
+        assert_eq!(
+            prose_texts("#' see [1] and [a note]\n"),
+            vec![(TokKind::RoxygenText, "see [1] and [a note]".into())]
+        );
+        assert_lossless("#' see [1] and [a note]\n");
+    }
+
+    #[test]
+    fn unterminated_code_stays_prose() {
+        assert_eq!(
+            prose_texts("#' a ` b c\n"),
+            vec![(TokKind::RoxygenText, "a ` b c".into())]
+        );
+        assert_lossless("#' a ` b c\n");
+    }
+
+    #[test]
+    fn unbalanced_macro_stays_prose() {
+        assert_eq!(
+            prose_texts("#' \\code{ oops\n"),
+            vec![(TokKind::RoxygenText, "\\code{ oops".into())]
+        );
+        assert_lossless("#' \\code{ oops\n");
+    }
+
+    #[test]
+    fn backslash_without_name_stays_prose() {
+        // `\\` escape and `\{` are not macro calls.
+        assert_eq!(
+            prose_texts("#' a \\\\ b \\{ c\n"),
+            vec![(TokKind::RoxygenText, "a \\\\ b \\{ c".into())]
+        );
+        assert_lossless("#' a \\\\ b \\{ c\n");
+    }
+
+    #[test]
+    fn spans_inside_tag_prose() {
+        // Protected spans are recognized after a tag arg too.
+        assert_eq!(
+            prose_texts("#' @param x A \\code{value} to use\n"),
+            vec![
+                (TokKind::RoxygenText, "A ".into()),
+                (TokKind::RoxygenRdMacro, "\\code{value}".into()),
+                (TokKind::RoxygenText, " to use".into()),
+            ]
+        );
+        assert_lossless("#' @param x A \\code{value} to use\n");
+    }
+
+    #[test]
+    fn mixed_inline_markup_is_lossless() {
+        assert_lossless("#' Use `x`, \\link[base]{sum}, and [g()] per [d](u).\n");
+    }
+
+    #[test]
+    fn utf8_prose_around_spans_is_lossless() {
+        assert_lossless("#' café `x` naïve \\code{f} résumé\n");
+    }
+
+    /// Dependency-free fuzz: every concatenation of these fragments (which are
+    /// rich in markup delimiters, including malformed ones) must round-trip. The
+    /// recognizers are the riskiest new code, so this exhaustively walks short
+    /// combinations rather than relying on a proptest dependency.
+    #[test]
+    fn prose_recognizers_round_trip_exhaustively() {
+        // Fragments mixing well-formed and malformed markup, brackets, escapes,
+        // backticks, and multibyte prose.
+        let frags = [
+            "a ",
+            "`x`",
+            "`",
+            "``",
+            "\\code{f}",
+            "\\code{",
+            "\\",
+            "\\\\",
+            "[g()]",
+            "[d](u)",
+            "[",
+            "]",
+            "[1]",
+            "{",
+            "}",
+            "café ",
+            " ",
+            "::",
+            "()",
+        ];
+        for &a in &frags {
+            for &b in &frags {
+                for &c in &frags {
+                    let input = format!("#' {a}{b}{c}\n");
+                    let joined: String = lex(&input).into_iter().map(|t| t.text).collect();
+                    assert_eq!(joined, input, "not lossless for {input:?}");
+                }
+            }
+        }
     }
 }

@@ -152,6 +152,20 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_blank_trailing",
         "roxygen_tag_marker_space",
         "roxygen_multi_hash_kept",
+        "roxygen_reflow_basic",
+        "roxygen_reflow_join_short_lines",
+        "roxygen_reflow_indented_in_function",
+        "roxygen_reflow_multi_paragraph",
+        "roxygen_reflow_blank_boundaries",
+        "roxygen_reflow_atomic_inline_code",
+        "roxygen_reflow_atomic_rd_macro",
+        "roxygen_reflow_atomic_md_link",
+        "roxygen_reflow_long_word",
+        "roxygen_reflow_idempotent",
+        "roxygen_bail_list",
+        "roxygen_bail_code_fence",
+        "roxygen_bail_examples_body",
+        "roxygen_tag_line_prose_unchanged",
     ]
 }
 

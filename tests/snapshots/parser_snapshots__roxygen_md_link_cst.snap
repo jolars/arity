@@ -1,0 +1,26 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..77
+  ROXYGEN_BLOCK@0..57
+    ROXYGEN_LINE@0..57
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..7 "See "
+      ROXYGEN_MD_LINK@7..47 "[the manual](https:// ..."
+      ROXYGEN_TEXT@47..57 " for more."
+  NEWLINE@57..58 "\n"
+  ASSIGNMENT_EXPR@58..76
+    IDENT@58..59 "f"
+    WHITESPACE@59..60 " "
+    ASSIGN_LEFT@60..62 "<-"
+    WHITESPACE@62..63 " "
+    FUNCTION_EXPR@63..76
+      FUNCTION_KW@63..71 "function"
+      LPAREN@71..72 "("
+      IDENT@72..73 "x"
+      RPAREN@73..74 ")"
+      WHITESPACE@74..75 " "
+      IDENT@75..76 "x"
+  NEWLINE@76..77 "\n"

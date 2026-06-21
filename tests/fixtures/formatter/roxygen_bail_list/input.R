@@ -1,0 +1,4 @@
+#' Steps:
+#' - first item that is reasonably long but must not be reflowed
+#' - second item that likewise stays exactly on its own source line
+f <- function(x) x

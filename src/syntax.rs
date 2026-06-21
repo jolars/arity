@@ -91,6 +91,13 @@ pub enum SyntaxKind {
     ROXYGEN_TAG_NAME,
     ROXYGEN_TAG_ARG,
     ROXYGEN_TEXT,
+    // Roxygen protected-span leaves: inline markup carved out of a `ROXYGEN_TEXT`
+    // run so the formatter can treat each as an atomic unit during prose reflow
+    // (and a future linter can resolve the code references inside them). Each
+    // holds its whole span, delimiters included, so the run still tiles exactly.
+    ROXYGEN_CODE,
+    ROXYGEN_RD_MACRO,
+    ROXYGEN_MD_LINK,
     // Roxygen nodes.
     ROXYGEN_BLOCK,
     ROXYGEN_LINE,
@@ -114,6 +121,9 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_TAG_NAME
                 | SyntaxKind::ROXYGEN_TAG_ARG
                 | SyntaxKind::ROXYGEN_TEXT
+                | SyntaxKind::ROXYGEN_CODE
+                | SyntaxKind::ROXYGEN_RD_MACRO
+                | SyntaxKind::ROXYGEN_MD_LINK
         )
     }
 }
@@ -210,9 +220,12 @@ impl Language for RLanguage {
             75 => SyntaxKind::ROXYGEN_TAG_NAME,
             76 => SyntaxKind::ROXYGEN_TAG_ARG,
             77 => SyntaxKind::ROXYGEN_TEXT,
-            78 => SyntaxKind::ROXYGEN_BLOCK,
-            79 => SyntaxKind::ROXYGEN_LINE,
-            80 => SyntaxKind::ROXYGEN_TAG,
+            78 => SyntaxKind::ROXYGEN_CODE,
+            79 => SyntaxKind::ROXYGEN_RD_MACRO,
+            80 => SyntaxKind::ROXYGEN_MD_LINK,
+            81 => SyntaxKind::ROXYGEN_BLOCK,
+            82 => SyntaxKind::ROXYGEN_LINE,
+            83 => SyntaxKind::ROXYGEN_TAG,
             _ => SyntaxKind::ERROR,
         }
     }

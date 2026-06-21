@@ -1,0 +1,4 @@
+#' See
+#' https://example.org/a/very/long/url/that/cannot/be/broken/across/lines/at/all
+#' here.
+f <- function(x) x

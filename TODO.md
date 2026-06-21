@@ -63,7 +63,7 @@
       sits at statement level. Pinned by `roxygen_loose_in_call`.
   - [ ] **Transforms (future rounds), consuming the CST above:**
     - [x] (1) normalize the marker + a single space (`normalize_roxygen_line`
-      in `src/formatter/core.rs`): one space after the marker before content,
+      in `src/formatter/roxygen.rs`): one space after the marker before content,
       trailing whitespace trimmed, blank lines collapse to the bare marker. The
       marker bytes are kept verbatim (`##'` is *not* collapsed) and tag-internal
       spacing is left for transform (3). Fixtures `roxygen_normalize_space`,
@@ -71,7 +71,39 @@
       `roxygen_tag_marker_space`, `roxygen_multi_hash_kept`. No air-compat
       allowlist entry needed: air leaves roxygen untouched, so it preserves
       arity's normalized output and the fixed-point gauge sees no divergence.
-    - [ ] (2) reflow prose (`ROXYGEN_TEXT`) to line width;
+    - [x] (2) reflow prose (`ROXYGEN_TEXT`) to line width (`ir_roxygen_block`
+      in `src/formatter/roxygen.rs`): consecutive plain-prose lines are grouped
+      into a paragraph (bounded by blank lines, tag lines, and structured lines)
+      and greedily width-filled (`wrap_chunks`) to `line_width`, accounting for
+      the marker + nesting-indent prefix consumed per line. On by default, the
+      natural continuation of transform (1). **CST enrichment (parser layer):**
+      to keep markup atomic *by construction* (Tenet 3), the prose lexer now
+      carves protected spans out of `ROXYGEN_TEXT` runs into three new leaf
+      kinds — `ROXYGEN_CODE` (`` `…` ``), `ROXYGEN_RD_MACRO`
+      (`\code{…}`/`\link[pkg]{…}`), `ROXYGEN_MD_LINK` (`[t](u)`/`[func()]`) —
+      via conservative, line-scoped, byte-exact recognizers in
+      `lex_roxygen_prose` (`src/parser/roxygen.rs`); malformed/unterminated
+      markup stays prose, so losslessness holds by construction (fuzz +
+      `tests/fixtures/parser/roxygen_{inline_code,rd_link,rd_link_pkg,rd_code,md_link,md_autolink,mixed_inline,nested_braces,unterminated_code,unbalanced_macro,backtick_in_macro}`).
+      Reflow builds **breakable chunks** (a chunk = maximal run with no breakable
+      whitespace; spans glued in, so `[g()].` stays one chunk) and treats each
+      span as atomic. **Passthrough** (marker-normalized, not reflowed): tag
+      lines, blank separators, `@examples`/`@examplesIf` bodies, fenced code
+      blocks, and structured lines (lists, tables, ATX headers, blockquotes). A
+      paragraph is kept verbatim when a chunk could migrate to a line start and
+      reparse as a list/header marker, preserving idempotence. Fixtures
+      `roxygen_reflow_*` (basic, join_short_lines, indented_in_function,
+      multi_paragraph, blank_boundaries, atomic_{inline_code,rd_macro,md_link},
+      long_word, idempotent) and `roxygen_bail_{list,code_fence,examples_body}` +
+      `roxygen_tag_line_prose_unchanged` (locks the transform-3 boundary).
+      No air-compat allowlist entry: air leaves roxygen untouched, so it
+      preserves arity's reflowed output and the fixed-point gauge sees no
+      divergence. Incremental path unchanged (roxygen edits already fall back to
+      block/full reparse; oracle corpus extended with markup-edit cases). Tag
+      prose (`@param x <prose>`) is intentionally *not* flowed yet (transform 3).
+      *Future (linter):* the protected-span leaf tokens have the same byte spans
+      as the richer nodes a future roxygen-code-reference lint would need
+      (resolve `\link{f}`/`[func()]`), so promoting tokens→nodes is additive.
     - [ ] (3) hanging-indent continuation under `ROXYGEN_TAG_ARG` (and normalize
       tag-internal spacing);
     - [ ] (4) run arity's own formatter on embedded R in

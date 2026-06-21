@@ -77,9 +77,19 @@ impl RoxygenLine {
         first_child_token(&self.0, SyntaxKind::ROXYGEN_TEXT)
     }
 
-    /// A blank `#'` line (a paragraph separator): only a marker, no content.
+    /// A blank `#'` line (a paragraph separator): only a marker, no content —
+    /// no tag and no content token (prose text or a protected markup span).
     pub fn is_blank(&self) -> bool {
-        self.tag().is_none() && self.text().is_none()
+        self.tag().is_none()
+            && !self.0.children_with_tokens().any(|el| {
+                matches!(
+                    el.kind(),
+                    SyntaxKind::ROXYGEN_TEXT
+                        | SyntaxKind::ROXYGEN_CODE
+                        | SyntaxKind::ROXYGEN_RD_MACRO
+                        | SyntaxKind::ROXYGEN_MD_LINK
+                )
+            })
     }
 }
 

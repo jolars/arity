@@ -167,6 +167,17 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_loose_in_call",
         "roxygen_crlf",
         "roxygen_eof_no_newline",
+        "roxygen_inline_code",
+        "roxygen_rd_link",
+        "roxygen_rd_link_pkg",
+        "roxygen_rd_code",
+        "roxygen_md_link",
+        "roxygen_md_autolink",
+        "roxygen_mixed_inline",
+        "roxygen_nested_braces",
+        "roxygen_unterminated_code",
+        "roxygen_unbalanced_macro",
+        "roxygen_backtick_in_macro",
     ]
 }
 

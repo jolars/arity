@@ -1,0 +1,36 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..64
+  ROXYGEN_BLOCK@0..37
+    ROXYGEN_LINE@0..37
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..7 "Use "
+      ROXYGEN_CODE@7..14 "`x + y`"
+      ROXYGEN_TEXT@14..33 " to add, then call "
+      ROXYGEN_CODE@33..36 "`f`"
+      ROXYGEN_TEXT@36..37 "."
+  NEWLINE@37..38 "\n"
+  ASSIGNMENT_EXPR@38..63
+    IDENT@38..39 "f"
+    WHITESPACE@39..40 " "
+    ASSIGN_LEFT@40..42 "<-"
+    WHITESPACE@42..43 " "
+    FUNCTION_EXPR@43..63
+      FUNCTION_KW@43..51 "function"
+      LPAREN@51..52 "("
+      IDENT@52..53 "x"
+      COMMA@53..54 ","
+      WHITESPACE@54..55 " "
+      IDENT@55..56 "y"
+      RPAREN@56..57 ")"
+      WHITESPACE@57..58 " "
+      BINARY_EXPR@58..63
+        IDENT@58..59 "x"
+        WHITESPACE@59..60 " "
+        PLUS@60..61 "+"
+        WHITESPACE@61..62 " "
+        IDENT@62..63 "y"
+  NEWLINE@63..64 "\n"

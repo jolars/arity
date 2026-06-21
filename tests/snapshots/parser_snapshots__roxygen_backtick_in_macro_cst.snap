@@ -1,0 +1,28 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..61
+  ROXYGEN_BLOCK@0..41
+    ROXYGEN_LINE@0..41
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..15 "Double span "
+      ROXYGEN_CODE@15..26 "``a `b` c``"
+      ROXYGEN_TEXT@26..32 " then "
+      ROXYGEN_RD_MACRO@32..40 "\\code{d}"
+      ROXYGEN_TEXT@40..41 "."
+  NEWLINE@41..42 "\n"
+  ASSIGNMENT_EXPR@42..60
+    IDENT@42..43 "f"
+    WHITESPACE@43..44 " "
+    ASSIGN_LEFT@44..46 "<-"
+    WHITESPACE@46..47 " "
+    FUNCTION_EXPR@47..60
+      FUNCTION_KW@47..55 "function"
+      LPAREN@55..56 "("
+      IDENT@56..57 "x"
+      RPAREN@57..58 ")"
+      WHITESPACE@58..59 " "
+      IDENT@59..60 "x"
+  NEWLINE@60..61 "\n"

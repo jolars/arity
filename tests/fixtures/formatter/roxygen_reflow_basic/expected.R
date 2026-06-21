@@ -1,0 +1,4 @@
+#' This function does something useful, and the description here is quite long
+#' so that it spans several physical input lines that the formatter should
+#' rejoin and rewrap.
+f <- function(x) x

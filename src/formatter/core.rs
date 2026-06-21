@@ -368,54 +368,6 @@ pub(super) fn format_expr_segment(
 /// A single statement line as IR, without the leading indentation (the caller
 /// supplies that structurally via [`Ir::Indent`] and line breaks). An empty
 /// (blank) line yields [`Ir::Nil`].
-/// A roxygen block emits one normalized `#'` line per output line at the current
-/// indent (mirroring how a plain comment line is emitted). The only content
-/// transform applied so far is marker normalization (see [`normalize_roxygen_line`]);
-/// prose reflow, tag-arg indentation, and embedded-`@examples` formatting are
-/// future rounds.
-fn ir_roxygen_block(node: &SyntaxNode) -> Ir {
-    let mut items: Vec<Ir> = Vec::new();
-    for child in node.children() {
-        if child.kind() == SyntaxKind::ROXYGEN_LINE {
-            if !items.is_empty() {
-                items.push(Ir::hard_line());
-            }
-            items.push(Ir::text(normalize_roxygen_line(&child)));
-        }
-    }
-    Ir::concat(items)
-}
-
-/// Normalize one `#'` line: the marker verbatim, then a single space before the
-/// content (a tag node or prose text), with trailing whitespace trimmed. A blank
-/// line (marker only, or marker followed by whitespace) yields just the marker.
-///
-/// Only the whitespace directly between the marker and the content is touched;
-/// tag-internal spacing lives inside the `ROXYGEN_TAG` node and is preserved
-/// verbatim (its normalization is a later transform).
-fn normalize_roxygen_line(line: &SyntaxNode) -> String {
-    let mut marker = String::new();
-    let mut content = String::new();
-    for el in line.children_with_tokens() {
-        match el {
-            NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MARKER => {
-                marker = t.text().to_string();
-            }
-            // The lone whitespace token sitting directly under the line, between
-            // marker and content; drop it before any content has accumulated.
-            NodeOrToken::Token(t) if t.kind() == SyntaxKind::WHITESPACE && content.is_empty() => {}
-            NodeOrToken::Token(t) => content.push_str(t.text()),
-            NodeOrToken::Node(n) => content.push_str(&n.text().to_string()),
-        }
-    }
-    let content = content.trim_end();
-    if content.is_empty() {
-        marker
-    } else {
-        format!("{marker} {content}")
-    }
-}
-
 pub(super) fn ir_line(
     line: &[SyntaxElement<RLanguage>],
     indent: usize,
@@ -439,7 +391,7 @@ pub(super) fn ir_line(
     if let [NodeOrToken::Node(node)] = significant.as_slice()
         && node.kind() == SyntaxKind::ROXYGEN_BLOCK
     {
-        return Ok(ir_roxygen_block(node));
+        return Ok(super::roxygen::ir_roxygen_block(node, indent, ctx));
     }
 
     if significant.len() == 2

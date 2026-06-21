@@ -1,0 +1,28 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..66
+  ROXYGEN_BLOCK@0..46
+    ROXYGEN_LINE@0..46
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..8 "Call "
+      ROXYGEN_MD_LINK@8..16 "[mean()]"
+      ROXYGEN_TEXT@16..20 " or "
+      ROXYGEN_MD_LINK@20..37 "[stats::median()]"
+      ROXYGEN_TEXT@37..46 " instead."
+  NEWLINE@46..47 "\n"
+  ASSIGNMENT_EXPR@47..65
+    IDENT@47..48 "f"
+    WHITESPACE@48..49 " "
+    ASSIGN_LEFT@49..51 "<-"
+    WHITESPACE@51..52 " "
+    FUNCTION_EXPR@52..65
+      FUNCTION_KW@52..60 "function"
+      LPAREN@60..61 "("
+      IDENT@61..62 "x"
+      RPAREN@62..63 ")"
+      WHITESPACE@63..64 " "
+      IDENT@64..65 "x"
+  NEWLINE@65..66 "\n"

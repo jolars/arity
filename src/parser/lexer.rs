@@ -64,6 +64,9 @@ pub(crate) enum TokKind {
     RoxygenTagName,
     RoxygenTagArg,
     RoxygenText,
+    RoxygenCode,
+    RoxygenRdMacro,
+    RoxygenMdLink,
 }
 
 impl TokKind {
@@ -80,6 +83,9 @@ impl TokKind {
                 | TokKind::RoxygenTagName
                 | TokKind::RoxygenTagArg
                 | TokKind::RoxygenText
+                | TokKind::RoxygenCode
+                | TokKind::RoxygenRdMacro
+                | TokKind::RoxygenMdLink
         )
     }
 }

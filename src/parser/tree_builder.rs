@@ -93,5 +93,8 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::RoxygenTagName => SyntaxKind::ROXYGEN_TAG_NAME,
         TokKind::RoxygenTagArg => SyntaxKind::ROXYGEN_TAG_ARG,
         TokKind::RoxygenText => SyntaxKind::ROXYGEN_TEXT,
+        TokKind::RoxygenCode => SyntaxKind::ROXYGEN_CODE,
+        TokKind::RoxygenRdMacro => SyntaxKind::ROXYGEN_RD_MACRO,
+        TokKind::RoxygenMdLink => SyntaxKind::ROXYGEN_MD_LINK,
     }
 }

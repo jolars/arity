@@ -441,6 +441,9 @@ fn parse_prefix(
         | TokKind::RoxygenTagName
         | TokKind::RoxygenTagArg
         | TokKind::RoxygenText
+        | TokKind::RoxygenCode
+        | TokKind::RoxygenRdMacro
+        | TokKind::RoxygenMdLink
         | TokKind::Unknown => None,
     }
 }

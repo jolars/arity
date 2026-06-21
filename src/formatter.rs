@@ -4,6 +4,7 @@ pub mod core;
 pub(crate) mod ir;
 pub(crate) mod printer;
 pub(crate) mod render;
+pub(crate) mod roxygen;
 pub(crate) mod rules;
 pub mod style;
 pub(crate) mod trivia;
