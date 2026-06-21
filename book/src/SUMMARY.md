@@ -16,4 +16,5 @@
   - [shadowed-builtin](reference/rules/shadowed-builtin.md)
   - [redundant-equals](reference/rules/redundant-equals.md)
   - [redundant-ifelse](reference/rules/redundant-ifelse.md)
+  - [repeat](reference/rules/repeat.md)
   - [true-false-symbol](reference/rules/true-false-symbol.md)

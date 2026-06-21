@@ -972,6 +972,41 @@ fn true_false_symbol_flags_reads_in_unbound_scope() {
     );
 }
 
+#[test]
+fn repeat_rewrites_while_true() {
+    assert_eq!(fixed_output("while (TRUE) f()\n", "repeat"), "repeat f()\n");
+    assert_eq!(
+        fixed_output("while (TRUE) {\n  f()\n}\n", "repeat"),
+        "repeat {\n  f()\n}\n"
+    );
+}
+
+#[test]
+fn repeat_ignores_conditional_loops() {
+    for src in [
+        "while (cond) f()\n",
+        "while (x > 0) f()\n",
+        "while (T) f()\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"repeat"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn repeat_withholds_fix_for_commented_condition() {
+    // A comment inside the clause would be dropped by the rewrite, so the fix is
+    // withheld — but the finding is still reported.
+    let d = diagnostics("while ( # forever\n  TRUE\n) f()\n")
+        .into_iter()
+        .find(|d| d.rule == "repeat")
+        .expect("expected a repeat finding");
+    assert!(d.fix.is_none(), "commented clause should withhold the fix");
+}
+
 // ---------------------------------------------------------------------------
 // Tenet 5: autofixes never introduce formatting errors.
 // `format` -> apply all fixes -> `format --check` must still pass.
@@ -1043,6 +1078,9 @@ fn fixes_never_introduce_formatting_errors() {
         "x <- T\n",
         "if (F) g()\n",
         "c(T, F, T)\n",
+        // repeat (`while (TRUE)` → `repeat`)
+        "while (TRUE) f()\n",
+        "while (TRUE) {\n  f()\n}\n",
     ];
     for case in cases {
         assert_fix_is_format_stable(case);

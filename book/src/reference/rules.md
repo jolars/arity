@@ -17,6 +17,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`shadowed-builtin`](rules/shadowed-builtin.md)
 - [`redundant-equals`](rules/redundant-equals.md)
 - [`redundant-ifelse`](rules/redundant-ifelse.md)
+- [`repeat`](rules/repeat.md)
 
 ## Readability
 

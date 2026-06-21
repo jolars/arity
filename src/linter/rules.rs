@@ -45,6 +45,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::ShadowedBuiltin),
         Box::new(suspicious::RedundantEquals),
         Box::new(suspicious::RedundantIfelse),
+        Box::new(suspicious::Repeat),
         Box::new(readability::TrueFalseSymbol),
     ]
 }

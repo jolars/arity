@@ -166,7 +166,10 @@ harden against shadowing in Phase 4.
       scope-accurate, so the rule reports/fixes only reads that resolve to base
       R and skips locally-rebound `T`/`F`. The same-span token swap never alters
       layout, so the fix is `Safe`.
-- [ ] `repeat` `while (TRUE)` -> `repeat` (suspicious, safe).
+- [x] `repeat` `while (TRUE)` -> `repeat` (suspicious, safe; landed). Matches
+      only the reserved literal `TRUE` (rebindable `T` left to
+      `true-false-symbol`); the fix replaces the `while (TRUE)` header with
+      `repeat` and is withheld when the clause carries a comment.
 - [ ] `vector-logic` `&`/`|` -> `&&`/`||` in `if`/`while` condition
       (correctness, safe).
 - [ ] `comparison-negation` `!(a == b)` -> `a != b` (readability, safe);

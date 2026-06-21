@@ -4,9 +4,11 @@
 mod assignment_in_condition;
 mod redundant_equals;
 mod redundant_ifelse;
+mod repeat_loop;
 mod shadowed_builtin;
 
 pub use assignment_in_condition::AssignmentInCondition;
 pub use redundant_equals::RedundantEquals;
 pub use redundant_ifelse::RedundantIfelse;
+pub use repeat_loop::Repeat;
 pub use shadowed_builtin::ShadowedBuiltin;
