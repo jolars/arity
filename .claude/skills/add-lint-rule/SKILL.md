@@ -2,7 +2,7 @@
 name: add-lint-rule
 description: Add a new built-in lint rule to the arity linter — implement it
   against the single-walk dispatch, register it in the one source of truth, add
-  TDD fixtures plus the Tenet-5 format-stability case, and wire up the
+  TDD fixtures plus the autofix-correctness (parse-clean) case, and wire up the
   snapshot-pinned generated docs and the two hand-maintained book indexes.
 ---
 
@@ -22,12 +22,16 @@ check the item off when done.
   in a rule. If the CST does not expose what you need, add a typed wrapper in
   `src/ast/nodes.rs` (re-exported from `src/ast.rs`) rather than re-lexing or
   re-parsing inside the rule.
-- **Tenet 5 --- autofixes never introduce formatting errors.** A fix need not
-  fully format unformatted input, but `format` → `lint --fix` → `format --check`
-  must pass. Make the edit format-clean *by construction* (tight span,
-  whitespace-preserving), or **withhold the fix** for that shape (still report
-  the finding). Never run the formatter inside `--fix`. This is enforced by
-  `tests/lint.rs::fixes_never_introduce_formatting_errors`.
+- **Autofix correctness (Tenet 1 corollary) --- a fix is a textual edit, never a
+  formatter.** The bar is *correctness*, not formatting: applying the fix must
+  leave code that still **parses** and stays **lossless** (no misbinding
+  `!a + b`, no dropped comments). Make the edit correct *by construction* (tight
+  span, atom-guarded, whitespace-preserving), or **withhold the fix** for that
+  shape (still report the finding). A fix does **not** owe line-width --- layout
+  is the formatter's job and the pipeline is fix-then-format; never run the
+  formatter inside `--fix`. Enforced by
+  `tests/lint.rs::fixed_output_is_parseable_and_clean` (the curated cases are
+  width-safe, so they also stay format-clean).
 
 ## Cost model (drives which infra you may touch)
 
@@ -66,9 +70,9 @@ the rule's correctness actually requires.
   `loaded_packages`) for `sem`-tier rules.
 - `tests/lint.rs` --- integration tests + helpers: `diagnostics(src)`,
   `fixed_output(src, rule)` (single safe fix applied),
-  `fixed_output_all(src,   rule)` (all of a rule's fixes), and the Tenet-5
-  harness `assert_fix_is_format_stable` /
-  `fixes_never_introduce_formatting_errors`.
+  `fixed_output_all(src,   rule)` (all of a rule's fixes), and the
+  autofix-correctness harness `assert_fixed_output_is_clean` /
+  `fixed_output_is_parseable_and_clean`.
 - `examples/docgen.rs` --- generates `book/src/reference/rules/<id>.md` from
   `render_rule_doc` (and stamps `version.md`). Run with
   `cargo run --example   docgen`. It only writes per-rule pages; it does **not**
@@ -106,10 +110,11 @@ the rule's correctness actually requires.
      `check_file(ctx, sink)` (a once-per-file pass). **Never walk the CST
      yourself from a node-shape rule.**
    - **Fix safety** --- ship `Fix::safe` only when the edit is unambiguous and
-     format-clean by construction; otherwise `Fix::unsafe_` (applied only under
-     `--unsafe-fixes`), or withhold the fix entirely and still report (Tenet 5).
-     A negating/dropping rewrite needs an atom operand --- guard with
-     `matchers::is_atom` (see `redundant-ifelse`, `redundant-equals`).
+     correct (parse-clean, lossless) by construction; otherwise `Fix::unsafe_`
+     (applied only under `--unsafe-fixes`), or withhold the fix entirely and
+     still report (autofix correctness). A negating/dropping rewrite needs an
+     atom operand --- guard with `matchers::is_atom` (see `redundant-ifelse`,
+     `redundant-equals`).
 
 3. **Write the failing test first** (TDD per `AGENTS.md`) in `tests/lint.rs`:
    - Positive case via `fixed_output`/`fixed_output_all` (asserts the fix
@@ -118,8 +123,8 @@ the rule's correctness actually requires.
      (e.g. fix withheld on a complex operand / commented clause --- assert
      `d.fix.is_none()`).
    - Add the canonical shape(s) to the `cases` array in
-     `fixes_never_introduce_formatting_errors` so Tenet 5 is checked. Run it and
-     watch it fail before implementing.
+     `fixed_output_is_parseable_and_clean` so autofix correctness is checked
+     (keep the shapes width-safe). Run it and watch it fail before implementing.
 
 4. **Implement the rule** in `src/linter/rules/<category>/<id>.rs`:
    - Module doc comment explaining what it flags, why, and any safety reasoning.
@@ -179,7 +184,8 @@ the rule's correctness actually requires.
 
 - **Do** reach for `matchers::*` and typed AST wrappers before raw CST walking;
   add a matcher when a shape recurs.
-- **Do** keep spans tight and fixes format-clean by construction, or withhold.
+- **Do** keep spans tight and fixes parse-clean/lossless by construction, or
+  withhold.
 - **Do** make `examples()` snippets that genuinely trigger the rule --- the docs
   tests reject a plausible-but-inert example.
 - **Don't** add a second registration list or an `if`-guard; `all_rules()` is
@@ -187,8 +193,9 @@ the rule's correctness actually requires.
 - **Don't** implement a formatting/layout preference as a lint rule (Tenet 1).
 - **Don't** work around a parser/CST gap inside the rule (Tenet 3) --- fix or
   extend the parser/AST instead.
-- **Don't** run the formatter inside a fix, or ship a fix that can make
-  formatted code unformatted (Tenet 5).
+- **Don't** run the formatter inside a fix (Tenet 1: the formatter is the sole
+  layout authority), or ship a fix that produces broken or lossy code (autofix
+  correctness). A fix needn't satisfy line-width --- that's the formatter's job.
 - **Don't** hand-edit `book/src/reference/rules/<id>.md` --- regenerate via
   `docgen`. (But the two indexes *are* hand-edited.)
 
@@ -202,5 +209,5 @@ When done, report:
 3. New files (rule module) and updated files (`<category>.rs`, `rules.rs`
    `all_rules()`, `tests/lint.rs`, the generated `rules/<id>.md` + accepted
    snapshot, `rules.md`, `SUMMARY.md`, `TODO.md`).
-4. Targeted test names plus the Tenet-5 case added.
+4. Targeted test names plus the autofix-correctness case added.
 5. Full-gate results: `cargo test`, clippy `-D warnings`, `cargo fmt --check`.

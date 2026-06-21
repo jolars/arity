@@ -91,8 +91,8 @@ fn deletion_fix(root: &SyntaxNode, src: &str, name: &str, def_range: TextRange) 
         return None;
     }
 
-    // Tenet 5: never produce output the formatter would rewrite. Inside a
-    // block, a pure deletion is unsafe when it would leave the block empty
+    // Autofix correctness: never produce output the formatter would rewrite.
+    // Inside a block, a pure deletion is unsafe when it would leave the block empty
     // (`{\n}` → `{}`) or shrink a function body to a single statement (which
     // flattens to a bare body). Withhold the fix for those shapes — the
     // finding is still reported.
@@ -136,7 +136,7 @@ fn block_statement_count(block: &SyntaxNode) -> usize {
 /// content line's indentation. When the statement is the last content in the
 /// file, preceding blank lines are absorbed too. Together with the block guards
 /// in [`deletion_fix`], this keeps the deletion format-clean by construction
-/// (tenet 5).
+/// (the autofix-correctness discipline).
 fn deletion_span(src: &str, range: TextRange) -> (usize, usize) {
     let bytes = src.as_bytes();
 

@@ -23,7 +23,11 @@ includes `R`.
    formatter's rules and the layout engine. Push back against attempts to
    hard-code special cases or exceptions for specific constructs. Unlike air
    (arity's closest relative), arity does **not** honor "persistent line breaks"
-   --- the input's existing line breaks never influence the result.
+   --- the input's existing line breaks never influence the result. Because the
+   formatter is the **sole authority on layout**, autofixes are textual edits
+   that never invoke it: a fix decides *what* to rewrite, never *how to lay it
+   out*. Producing well-formatted output after a fix is a separate format pass's
+   job, not the fixer's (see the autofix-correctness note under the linter).
 2. **Incremental parsing is first-class**, not an afterthought. Parser/CST work
    must keep the `salsa`-based incremental reparse path (`src/incremental.rs`)
    viable.
@@ -33,14 +37,6 @@ includes `R`.
 4. **Losslessness is the parser's job.** The parser must preserve all text
    (whitespace, comments, etc.) so that `reconstruct(text)` is always `text`.
    The formatter can assume the CST is lossless and focus on formatting logic.
-5. **Autofixes never introduce formatting errors.** A lint fix is not a
-   formatter and need not fully format unformatted input, but it must never make
-   formatted code unformatted: `format` → `lint --fix` → `format --check` must
-   pass. This is a correctness property of each fix, enforced by an automated
-   test (`tests/lint.rs`), not by formatting at fix time. When a fix would
-   introduce a formatting error, fix it in the rule --- make the edit
-   format-clean by construction, or withhold the fix for that shape (the finding
-   is still reported). Don't run the formatter inside `--fix`.
 
 ## Air compatibility (soft target)
 
@@ -141,6 +137,19 @@ not yet ported (see `TODO.md` follow-ups).
 **Linter** (`src/linter/`): `check_paths` walks files, parses, and reports
 `LintStatus` (`Clean` / `Findings` / `ParseDiagnostics`); parse diagnostics
 block linting a file. Largely a placeholder ahead of Phase 6.
+
+*Autofix correctness.* A fix is a textual edit, so the bar it must clear is
+**correctness, not formatting**: applying it must leave code that still parses
+and is still lossless --- never broken syntax (e.g. a negating rewrite that
+misbinds, `!a + b`) or dropped trivia (e.g. a relocation that loses a comment).
+When an edit can't meet that bar for some shape, make it correct by construction
+(tight span, atom-guarded) or **withhold the fix for that shape** --- the finding
+is still reported. A fix does **not** owe line-width: it may leave a line the
+formatter would re-break, because layout is the formatter's job (Tenet 1), and
+the intended pipeline is fix-then-format, not fix-alone. The withhold/atom-guard
+discipline is what keeps the current rules' fixes safe; `tests/lint.rs` checks
+that fixed output parses (and stays format-clean on the curated width-safe
+cases).
 
 **Language server** (`src/lsp.rs`, CLI `arity lsp`): a stdio JSON-RPC server on
 the `lsp-server` crate (rust-analyzer's transport) --- offers formatting, pushed

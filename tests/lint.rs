@@ -760,8 +760,9 @@ fn cli_fix_unsafe_clears_top_level_findings() {
 #[test]
 fn cli_fix_withholds_unsafe_deletion_that_would_empty_a_block() {
     // Deleting the sole statement of a block would leave `{\n}`, which the
-    // formatter rewrites to `{}` — so the deletion is withheld (tenet 5). The
-    // finding is still reported (exit 1) and the file stays format-clean.
+    // formatter rewrites to `{}` — withholding here is the autofix-correctness
+    // discipline (correct-by-construction or withhold). The finding is still
+    // reported (exit 1) and the file stays format-clean.
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("fix.R");
     std::fs::write(&path, "if (cond) {\n  unused <- 2\n}\n").expect("failed to write file");
@@ -1057,13 +1058,19 @@ fn vector_logic_ignores_function_call_context() {
 }
 
 // ---------------------------------------------------------------------------
-// Tenet 5: autofixes never introduce formatting errors.
-// `format` -> apply all fixes -> `format --check` must still pass.
+// Autofix correctness: a fix is a textual edit, so the bar is that applying it
+// leaves code that still parses. It does NOT owe line-width — layout is the
+// formatter's job (Tenet 1), the pipeline is fix-then-format. The curated cases
+// below are all width-safe, so on them the stronger `format --check`-clean
+// property also holds, which makes it a useful regression guard for *local*
+// layout (spacing/indent) — but that is scoped to width-safe edits, not a
+// universal guarantee.
 // ---------------------------------------------------------------------------
 
 /// Format `input` to canonical form, apply every available fix to a fixpoint,
-/// then assert the result still parses and is format-clean.
-fn assert_fix_is_format_stable(input: &str) {
+/// then assert the result still parses. For these width-safe cases, also assert
+/// it stays format-clean (a local-layout regression guard, not a width promise).
+fn assert_fixed_output_is_clean(input: &str) {
     use arity::formatter::{FormatStyle, format_with_style};
     use arity::parser::parse;
 
@@ -1085,19 +1092,21 @@ fn assert_fix_is_format_stable(input: &str) {
         content = out.output;
     }
 
+    // The guaranteed invariant: fixed output still parses.
     assert!(
         parse(&content).diagnostics.is_empty(),
         "fixed output must parse cleanly:\n{content:?}"
     );
+    // Scoped check: on these width-safe cases, local layout stays clean too.
     let reformatted = format_with_style(&content, style).expect("fixed output should format");
     assert_eq!(
         content, reformatted,
-        "a fix introduced a formatting error (tenet 5).\nstarted from:\n{clean}\n--- after fixes ---\n{content}\n--- but format produces ---\n{reformatted}"
+        "a fix introduced a local-layout error on a width-safe case.\nstarted from:\n{clean}\n--- after fixes ---\n{content}\n--- but format produces ---\n{reformatted}"
     );
 }
 
 #[test]
-fn fixes_never_introduce_formatting_errors() {
+fn fixed_output_is_parseable_and_clean() {
     let cases = [
         // assignment-in-condition (`=` → `==`)
         "if (x = 1) print(x)\n",
@@ -1137,7 +1146,7 @@ fn fixes_never_introduce_formatting_errors() {
         "if (a & b & c) f()\n",
     ];
     for case in cases {
-        assert_fix_is_format_stable(case);
+        assert_fixed_output_is_clean(case);
     }
 }
 
