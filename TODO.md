@@ -30,7 +30,7 @@
 
 ## Formatter
 
-- [ ] Tibbles
+- [ ] Tribbles
 
 - [ ] Trailing comments are not line suffixes (width-counted). A same-line
   trailing comment counts toward its line's width for fit measurement, so a long
