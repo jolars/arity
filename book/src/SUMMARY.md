@@ -22,3 +22,4 @@
   - [comparison-negation](reference/rules/comparison-negation.md)
   - [outer-negation](reference/rules/outer-negation.md)
   - [any-is-na](reference/rules/any-is-na.md)
+  - [any-duplicated](reference/rules/any-duplicated.md)

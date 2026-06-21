@@ -52,6 +52,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(readability::ComparisonNegation),
         Box::new(readability::OuterNegation),
         Box::new(performance::AnyIsNa),
+        Box::new(performance::AnyDuplicated),
     ]
 }
 

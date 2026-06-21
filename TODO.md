@@ -285,8 +285,14 @@ harden against shadowing in Phase 4.
       withheld when a comment outside the preserved inner argument would be
       dropped (a stray comment parses as a value-less `ARG`, so matching is on
       value-bearing args).
-- [ ] `any-duplicated` `any(duplicated(x))` -> `anyDuplicated(x) > 0`
-      (performance, safe).
+- [x] `any-duplicated` `any(duplicated(x))` -> `anyDuplicated(x) > 0`
+      (performance, `ns`, safe). Fires only on the clean single-positional-arg
+      shape and namespace-confirms both `any` and `duplicated` resolve to base R.
+      Unlike `any-is-na`, the replacement is a *comparison* (binds looser than the
+      `any(...)` call it replaces), so the fix is withheld in a context that binds
+      tighter than a comparison (arithmetic, indexing, `$`/`@`, ...) where the bare
+      rewrite would misparse, and also when a comment outside the preserved inner
+      argument would be dropped. The finding is still reported in both cases.
 - [ ] `lengths` `sapply(x, length)` -> `lengths(x)` (performance, safe).
 - [ ] `nzchar` `nchar(x) > 0` -> `nzchar(x)` (performance, safe).
 - [ ] `seq`/`seq2` `1:length(x)` -> `seq_along`, `1:n` -> `seq_len`

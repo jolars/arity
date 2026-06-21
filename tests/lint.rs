@@ -1237,6 +1237,87 @@ fn any_is_na_withholds_fix_for_dropped_comment() {
     assert!(d.fix.is_none(), "dropped comment should withhold the fix");
 }
 
+#[test]
+fn any_duplicated_rewrites_to_anyduplicated() {
+    assert_eq!(
+        fixed_output("if (any(duplicated(x))) f()\n", "any-duplicated"),
+        "if (anyDuplicated(x) > 0) f()\n"
+    );
+    // The inner argument is preserved verbatim, whatever its shape.
+    assert_eq!(
+        fixed_output("flag <- any(duplicated(df$col))\n", "any-duplicated"),
+        "flag <- anyDuplicated(df$col) > 0\n"
+    );
+}
+
+#[test]
+fn any_duplicated_ignores_other_shapes() {
+    for src in [
+        "anyDuplicated(x)\n",                 // already the idiom
+        "any(x)\n",                           // not duplicated
+        "duplicated(x)\n",                    // duplicated without any
+        "any(duplicated(x), na.rm = TRUE)\n", // extra arg — not the clean shape
+        "any(duplicated(x), y)\n",            // extra positional arg
+        "any(duplicated(x) | other)\n",       // arg is a binary expr, not duplicated()
+        "any(duplicated(x, y))\n",            // duplicated with two args
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"any-duplicated"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn any_duplicated_skips_shadowed_callees() {
+    // A user redefinition of either callee means the call no longer invokes base
+    // R, so the rewrite would be wrong — don't flag.
+    for src in [
+        "any <- function(...) TRUE\nany(duplicated(x))\n",
+        "duplicated <- function(x) x\nany(duplicated(x))\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"any-duplicated"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn any_duplicated_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved inner argument would be dropped by the
+    // rewrite, so the fix is withheld — but the finding is still reported.
+    let d = diagnostics("any(duplicated(x) # note\n)\n")
+        .into_iter()
+        .find(|d| d.rule == "any-duplicated")
+        .expect("expected an any-duplicated finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
+fn any_duplicated_withholds_fix_in_tight_context() {
+    // The replacement `anyDuplicated(x) > 0` is a comparison, which binds looser
+    // than arithmetic/indexing. In a parent that binds tighter than a comparison
+    // the bare rewrite would misparse, so the fix is withheld there — but the
+    // finding is still reported.
+    for src in [
+        "any(duplicated(x)) + 1\n", // arithmetic operand
+        "-any(duplicated(x))\n",    // unary minus
+        "any(duplicated(x))[1]\n",  // subset
+    ] {
+        let d = diagnostics(src)
+            .into_iter()
+            .find(|d| d.rule == "any-duplicated")
+            .unwrap_or_else(|| panic!("expected an any-duplicated finding for {src:?}"));
+        assert!(
+            d.fix.is_none(),
+            "{src:?}: tight context should withhold the fix"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Autofix correctness: a fix is a textual edit, so the bar is that applying it
 // leaves code that still parses. It does NOT owe line-width — layout is the
@@ -1335,6 +1416,9 @@ fn fixed_output_is_parseable_and_clean() {
         // any-is-na (`any(is.na(x))` → `anyNA(x)`)
         "if (any(is.na(x))) f()\n",
         "flag <- any(is.na(df$col))\n",
+        // any-duplicated (`any(duplicated(x))` → `anyDuplicated(x) > 0`)
+        "if (any(duplicated(x))) f()\n",
+        "flag <- any(duplicated(df$col))\n",
     ];
     for case in cases {
         assert_fixed_output_is_clean(case);
