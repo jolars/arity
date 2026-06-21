@@ -32,6 +32,17 @@
 
 - [ ] Tibbles
 
+- [ ] Trailing comments are not line suffixes (width-counted). A same-line
+  trailing comment counts toward its line's width for fit measurement, so a long
+  comment can force an otherwise-fitting group to break (e.g.
+  `isFALSE(getOption("dplyr.show_progress", default = TRUE)) || # ...` breaks the
+  `getOption(...)` call). air treats trailing comments as zero-width line
+  suffixes and leaves the call inline. Pre-existing (visible without any `if`);
+  surfaced while fixing #37 (condition-level comments). Fix is a printer-level
+  line-suffix concept; broad, so deferred. Fixtures
+  `if_condition_trailing_comment` (records the divergence) and
+  `if_condition_comment_forms` (matches air).
+
 - [ ] Roxygen syntax formatting
 
   - [x] **Parsing foundation (CST-native).** Roxygen lines (`#'`, per roxygen2's

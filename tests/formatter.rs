@@ -88,6 +88,8 @@ fn fixture_names() -> &'static [&'static str] {
         "if_else_interstitial_comment_bare",
         "if_else_trailing_comment_after_block",
         "if_else_trailing_comment_after_bare",
+        "if_condition_trailing_comment",
+        "if_condition_comment_forms",
         "if_value_position_wide_bare_braces",
         "if_else_wide_bare_branches",
         "if_comment_wide_branch",

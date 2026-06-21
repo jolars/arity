@@ -3,7 +3,7 @@ use rowan::{NodeOrToken, SyntaxElement, SyntaxToken};
 use super::super::context::FormatContext;
 use super::super::core::{
     FormatError, ir_block_expr_with_prefixed_comments, ir_expr_element, ir_expr_segment,
-    ir_expr_with_optional_comment, is_trivia,
+    ir_expr_with_optional_comment, is_trivia, snippet_from_elements,
 };
 use super::super::ir::Ir;
 use super::super::printer::Printer;
@@ -270,7 +270,7 @@ fn ir_if_expr_impl(
     // like `while`: when it cannot stay inline it drops onto its own indented line
     // rather than hugging `if (` and trailing `)) {`. Built at `indent + 1` to
     // match that dropped position.
-    let condition = ir_expr_segment(&condition_elements, "if condition", indent + 1, ctx)?;
+    let condition = ir_condition_segment(&condition_elements, "if condition", indent + 1, ctx)?;
     let header = ir_condition_header("if (", condition);
     // Comment relocation (IR port of `format_if_then_branch_with_comments` +
     // `prepend_comments_to_branch`). A comment trailing the then-block's `}` on
@@ -541,6 +541,94 @@ fn ir_condition_header(open: &'static str, condition: Ir) -> Ir {
     ]))
 }
 
+/// Build the IR for a parenthesized condition (`if`/`while`), tolerating
+/// condition-level comments.
+///
+/// The bare-expression case (no comments between `(` and `)`) is byte-for-byte
+/// the old [`ir_expr_segment`] call: a single significant element built as native
+/// IR. The added capability is comments that sit at the condition level---a
+/// comment trailing the condition on the same source line (`if (x # note\n)`),
+/// own-line comments after it, or leading comments before it. Each comment is
+/// emitted as a force-break verbatim chunk, so the enclosing
+/// [`ir_condition_header`] group cannot stay flat (a comment can never share the
+/// `)` line) and the condition drops onto its own indented line, mirroring `air`.
+///
+/// Comments interior to the condition *expression* (e.g. after a `||` operator)
+/// are handled by the expression builder itself and never reach this level; this
+/// only concerns comments that are direct siblings of the condition expression.
+fn ir_condition_segment(
+    elements: &[SyntaxElement<RLanguage>],
+    context: &'static str,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<Ir, FormatError> {
+    let significant: Vec<_> = elements
+        .iter()
+        .filter(|el| !is_trivia(el.kind()))
+        .cloned()
+        .collect();
+
+    // Fast path: a bare condition expression, identical to the old behavior.
+    if let [only] = significant.as_slice()
+        && only.kind() != SyntaxKind::COMMENT
+    {
+        return ir_expr_element(only, indent, ctx);
+    }
+
+    // Otherwise we permit exactly one non-comment element (the condition
+    // expression) surrounded by any number of comment siblings.
+    let non_comment_count = significant
+        .iter()
+        .filter(|el| el.kind() != SyntaxKind::COMMENT)
+        .count();
+    if non_comment_count != 1 {
+        return Err(FormatError::AmbiguousConstruct {
+            context,
+            snippet: snippet_from_elements(elements),
+        });
+    }
+
+    // Walk the raw elements so we can tell a same-line trailing comment from an
+    // own-line one by whether a newline intervened since the previous token.
+    let mut parts: Vec<Ir> = Vec::new();
+    let mut emitted_expr = false;
+    let mut newline_since_prev = false;
+    for el in elements {
+        match el.kind() {
+            SyntaxKind::WHITESPACE => {}
+            SyntaxKind::NEWLINE => newline_since_prev = true,
+            SyntaxKind::COMMENT => {
+                let text = el
+                    .as_token()
+                    .expect("comment is a token")
+                    .text()
+                    .to_string();
+                if !emitted_expr {
+                    // Leading comment: its own line above the expression.
+                    parts.push(Ir::verbatim_forced(text));
+                    parts.push(Ir::hard_line());
+                } else if newline_since_prev {
+                    // Own-line comment after the expression.
+                    parts.push(Ir::hard_line());
+                    parts.push(Ir::verbatim_forced(text));
+                } else {
+                    // Trailing comment on the expression's last line.
+                    parts.push(Ir::text(" "));
+                    parts.push(Ir::verbatim_forced(text));
+                }
+                newline_since_prev = false;
+            }
+            _ => {
+                parts.push(ir_expr_element(el, indent, ctx)?);
+                emitted_expr = true;
+                newline_since_prev = false;
+            }
+        }
+    }
+
+    Ok(Ir::concat(parts))
+}
+
 /// The `while (cond)` header as IR (the condition wraps onto its own indented
 /// line when it cannot stay inline), shared by [`ir_while_expr`] and the
 /// external-body handler.
@@ -549,7 +637,7 @@ fn ir_while_header(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    let condition = ir_expr_segment(
+    let condition = ir_condition_segment(
         &parts.condition_elements,
         "while loop condition",
         indent + 1,
@@ -894,7 +982,7 @@ pub(crate) fn try_format_if_with_external_body(
     // synthetic block led by that comment. The condition is native IR wrapped in
     // the same soft-line group as `ir_if_expr_impl`, so an over-width condition
     // drops onto its own indented line rather than hugging `if (`.
-    let condition = ir_expr_segment(&condition_elements, "if condition", indent + 1, ctx)?;
+    let condition = ir_condition_segment(&condition_elements, "if condition", indent + 1, ctx)?;
     let body_expr = ir_expr_element(&body_element, indent + 1, ctx)?;
     let body = synthetic_block(vec![Ir::text(then_comment), body_expr]);
     let header = Ir::concat([ir_condition_header("if (", condition), Ir::text(" "), body]);
