@@ -2,5 +2,5 @@
 source: tests/formatter.rs
 expression: formatted
 ---
-#' @param x desc
+#' @param x short desc
 f <- function(x) x

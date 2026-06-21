@@ -104,8 +104,34 @@
       *Future (linter):* the protected-span leaf tokens have the same byte spans
       as the richer nodes a future roxygen-code-reference lint would need
       (resolve `\link{f}`/`[func()]`), so promoting tokens→nodes is additive.
-    - [ ] (3) hanging-indent continuation under `ROXYGEN_TAG_ARG` (and normalize
-      tag-internal spacing);
+    - [x] (3) hanging-indent reflow of tag prose (`TagUnit` in
+      `src/formatter/roxygen.rs`). A tag line carrying inline prose
+      (`@param x <prose>`, `@return <prose>`, `@seealso <prose>`, …) plus the
+      plain-prose lines that follow it form **one reflow unit**: the normalized
+      header (`@tag [arg]`, single-spaced — the "normalize tag-internal spacing"
+      half) stays on the first line, and continuation lines hang-indent **two
+      extra spaces** under `#'` (the tidyverse rule, `style/documentation.qmd`
+      "Indents and line breaks"; applies to all description tags, not just
+      arg-bearing ones). Absorbing the following lines is **forced by
+      idempotence**: a `#'   …` continuation reparses as a separate plain-prose
+      line whose leading whitespace the formatter drops, so without re-joining,
+      `format(format(x))` would detach and de-indent it. `wrap_chunks_hanging`
+      wraps with a narrower first-line budget (room beside the header) and the
+      hanging-indent budget for continuations; protected spans stay atomic
+      (reuses the transform-2 chunker via `chunk_elements`). **Passthrough**
+      (header spacing normalized, never reflowed): `@examples`/`@examplesIf`
+      bodies (transform 4), code tags (`@usage`/`@eval`/`@evalRd`), the
+      `@section Title:` heading shape, namespace/identifier directives
+      (`NON_PROSE_TAGS`), bare tags (`@export`), and tags written form-2 (tag
+      alone on its line, body unindented). The transform-2 `is_unsafe_line_start`
+      guard carries over: a prose chunk that could migrate to a continuation-line
+      start and reparse as a list/header marker bails the unit to verbatim,
+      marker-normalized lines. Fixtures `roxygen_tag_reflow_{param,return,seealso,
+      absorb,idempotent}`, `roxygen_tag_normalize_spacing`,
+      `roxygen_tag_alone_passthrough`, `roxygen_tag_examples_unchanged` (and
+      `roxygen_tag_marker_space` now asserts the normalized spacing). No
+      air-compat allowlist entry: air leaves roxygen untouched, so the
+      fixed-point gauge sees no divergence.
     - [ ] (4) run arity's own formatter on embedded R in
       `@examples`/`@examplesIf`.
 

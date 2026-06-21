@@ -1,0 +1,6 @@
+#' @description
+#' The map function transforms the input, returning a vector the same length as the input value here.
+#'
+#' @section Tidy data:
+#' When applied to a data frame here.
+f <- function() NULL

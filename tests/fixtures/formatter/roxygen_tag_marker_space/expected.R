@@ -1,2 +1,2 @@
-#' @param  x  desc
+#' @param x desc
 f <- function(x) x

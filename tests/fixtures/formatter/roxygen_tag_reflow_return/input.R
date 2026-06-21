@@ -1,0 +1,2 @@
+#' @return A list with the processed results, including all intermediate values that were computed during the call and retained for inspection.
+f <- function() NULL

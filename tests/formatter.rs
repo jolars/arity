@@ -165,7 +165,14 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_bail_list",
         "roxygen_bail_code_fence",
         "roxygen_bail_examples_body",
-        "roxygen_tag_line_prose_unchanged",
+        "roxygen_tag_reflow_param",
+        "roxygen_tag_reflow_return",
+        "roxygen_tag_reflow_seealso",
+        "roxygen_tag_reflow_absorb",
+        "roxygen_tag_normalize_spacing",
+        "roxygen_tag_reflow_idempotent",
+        "roxygen_tag_alone_passthrough",
+        "roxygen_tag_examples_unchanged",
     ]
 }
 
