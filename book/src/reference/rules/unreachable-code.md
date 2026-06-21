@@ -1,0 +1,23 @@
+# `unreachable-code`
+
+Flag statements that follow an unconditional `return()` or `stop()` in a block — once either runs, nothing after it in the same block can be reached, so the trailing code is dead.
+
+The rule fires only when the terminator is a direct statement of the block (a `return()`/`stop()` guarded by an `if` leaves the tail reachable) and only when the callee resolves to base R; a local redefinition is left alone. `return` is additionally required to sit inside a function. The deletion fix is unsafe, and withheld when it would drop a comment.
+
+A statement after `return()` can never run:
+
+```r
+f <- function() {
+  return(1)
+  2
+}
+```
+
+```text
+warning: unreachable-code
+ --> example.R:3:3
+  |
+3 |   2
+  |   ^ code after `return()` can never be reached
+  = help: Remove the unreachable code, or fix the control flow.
+```

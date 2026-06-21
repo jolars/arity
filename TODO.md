@@ -312,8 +312,11 @@ harden against shadowing in Phase 4.
       per-rule struct in `src/config.rs`, threaded into rules via a
       `config`/`&RuleConfig` field on `RuleContext`. **Blocks**
       `undesirable-function`, `download-file`.
-- [ ] `unreachable-code` after `return()`/`stop()` (correctness, sem,
-      unsafe-delete).
+- [x] `unreachable-code` after `return()`/`stop()` (correctness, ns,
+      unsafe-delete; landed) --- flags statements following an unconditional
+      base-R `return()`/`stop()` that is a direct block statement (`return`
+      gated on an enclosing function); namespace-confirmed, fix withheld when it
+      would drop a comment. Both-branches-return (needs CFG) is out of scope.
 - [ ] `if-always-true` literal `if (TRUE/FALSE)` only --- no const-folding
       (correctness, unsafe).
 - [ ] `unused-function` (suspicious, sem, none) --- reuse

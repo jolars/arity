@@ -11,6 +11,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`duplicated-arguments`](rules/duplicated-arguments.md)
 - [`equals-na`](rules/equals-na.md)
 - [`vector-logic`](rules/vector-logic.md)
+- [`unreachable-code`](rules/unreachable-code.md)
 
 ## Suspicious
 

@@ -1318,6 +1318,113 @@ fn any_duplicated_withholds_fix_in_tight_context() {
     }
 }
 
+#[test]
+fn unreachable_code_flags_after_return_and_stop() {
+    // A statement after an unconditional `return()` in a function body can never
+    // run; the finding spans it and the (unsafe) fix deletes it.
+    let src = "f <- function() {\n  return(1)\n  2\n}\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "unreachable-code")
+        .expect("expected an unreachable-code finding");
+    let fix = d.fix.as_ref().expect("should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Unsafe);
+    assert_eq!(
+        apply_fixes(src, std::slice::from_ref(fix), true).output,
+        "f <- function() {\n  return(1)\n}\n"
+    );
+
+    // `stop()` halts anywhere, so it works in a bare block too.
+    let src = "{\n  stop()\n  f()\n}\n";
+    let fix = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "unreachable-code")
+        .and_then(|d| d.fix)
+        .expect("expected an unreachable-code fix");
+    assert_eq!(
+        apply_fixes(src, std::slice::from_ref(&fix), true).output,
+        "{\n  stop()\n}\n"
+    );
+}
+
+#[test]
+fn unreachable_code_covers_all_trailing_statements() {
+    // Every statement after the terminator is unreachable; one finding spans them
+    // all and the fix removes the lot.
+    let src = "f <- function() {\n  return(1)\n  a()\n  b()\n}\n";
+    let fix = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "unreachable-code")
+        .and_then(|d| d.fix)
+        .expect("expected an unreachable-code fix");
+    assert_eq!(
+        apply_fixes(src, std::slice::from_ref(&fix), true).output,
+        "f <- function() {\n  return(1)\n}\n"
+    );
+}
+
+#[test]
+fn unreachable_code_ignores_reachable_shapes() {
+    for src in [
+        // terminator is the last statement — nothing after it
+        "f <- function() {\n  g()\n  return(1)\n}\n",
+        // `return()` guarded by `if` is not a direct statement; the tail is reachable
+        "f <- function() {\n  if (x) return(1)\n  2\n}\n",
+        // `return()` outside any function is not the unreachable-after-return shape
+        "{\n  return(1)\n  2\n}\n",
+        // not a terminating call
+        "f <- function() {\n  g()\n  2\n}\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"unreachable-code"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn unreachable_code_skips_shadowed_terminators() {
+    // A user redefinition of `return`/`stop` means the call no longer terminates,
+    // so the following code is reachable — don't flag.
+    for src in [
+        "stop <- function(...) NULL\nf <- function() {\n  stop()\n  g()\n}\n",
+        "f <- function() {\n  return <- function(x) x\n  return(1)\n  2\n}\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"unreachable-code"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn unreachable_code_withholds_fix_for_dropped_comment() {
+    // Deleting the unreachable region would drop a comment between two of the
+    // unreachable statements, so the fix is withheld — the finding still reports.
+    let src = "f <- function() {\n  return(1)\n  a()\n  # mid\n  b()\n}\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "unreachable-code")
+        .expect("expected an unreachable-code finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+
+    // A comment between the terminator and the first unreachable statement is
+    // preserved by the deletion (which starts at that statement), so the fix is
+    // still offered there.
+    let src = "f <- function() {\n  return(1)\n  # keep me\n  g()\n}\n";
+    let fix = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "unreachable-code")
+        .and_then(|d| d.fix)
+        .expect("expected a fix that preserves the leading comment");
+    assert_eq!(
+        apply_fixes(src, std::slice::from_ref(&fix), true).output,
+        "f <- function() {\n  return(1)\n  # keep me\n}\n"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Autofix correctness: a fix is a textual edit, so the bar is that applying it
 // leaves code that still parses. It does NOT owe line-width — layout is the
@@ -1419,6 +1526,9 @@ fn fixed_output_is_parseable_and_clean() {
         // any-duplicated (`any(duplicated(x))` → `anyDuplicated(x) > 0`)
         "if (any(duplicated(x))) f()\n",
         "flag <- any(duplicated(df$col))\n",
+        // unreachable-code deletion (after `return()`/`stop()`)
+        "f <- function() {\n  g()\n  return(1)\n  2\n}\nf()\n",
+        "{\n  stop()\n  f()\n}\n",
     ];
     for case in cases {
         assert_fixed_output_is_clean(case);

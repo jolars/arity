@@ -267,6 +267,71 @@ fn token_name(token: &SyntaxToken) -> SmolStr {
     SmolStr::new(token.text())
 }
 
+// --- deletion spans --------------------------------------------------------
+
+/// Widen a statement's (or run of statements') range to swallow its leading
+/// indentation, its own line terminator, and any wholly-blank lines that follow
+/// — but not the next content line's indentation. When the range is the last
+/// content in the file, preceding blank lines are absorbed too. This keeps a
+/// whole-statement deletion format-clean by construction (the autofix-correctness
+/// discipline): no orphaned blank line, no stranded indentation.
+pub fn deletion_span(src: &str, range: rowan::TextRange) -> (usize, usize) {
+    let bytes = src.as_bytes();
+
+    // Leading indentation on the statement's line.
+    let mut start = usize::from(range.start());
+    while start > 0 && matches!(bytes[start - 1], b' ' | b'\t') {
+        start -= 1;
+    }
+
+    // Trailing horizontal whitespace, then the statement's own newline.
+    let mut end = usize::from(range.end());
+    while end < bytes.len() && matches!(bytes[end], b' ' | b'\t') {
+        end += 1;
+    }
+    end = consume_newline(bytes, end);
+
+    // Absorb any fully-blank lines that follow, stopping before the next
+    // line that carries content (so its indentation survives).
+    loop {
+        let mut probe = end;
+        while probe < bytes.len() && matches!(bytes[probe], b' ' | b'\t') {
+            probe += 1;
+        }
+        let after_nl = consume_newline(bytes, probe);
+        if after_nl == probe {
+            break; // line has content (or EOF) — keep it intact
+        }
+        end = after_nl;
+    }
+
+    // If nothing but whitespace follows (the statement was the last content),
+    // also pull back over preceding blank lines so we don't leave a trailing
+    // blank, keeping the previous content line's own terminator.
+    if end == bytes.len() {
+        let mut prev = start;
+        while prev > 0 && matches!(bytes[prev - 1], b' ' | b'\t' | b'\n' | b'\r') {
+            prev -= 1;
+        }
+        start = if prev > 0 {
+            consume_newline(bytes, prev)
+        } else {
+            0
+        };
+    }
+
+    (start, end)
+}
+
+/// Advance past a single `\n` or `\r\n` at `i`, else return `i` unchanged.
+fn consume_newline(bytes: &[u8], i: usize) -> usize {
+    match bytes.get(i) {
+        Some(b'\n') => i + 1,
+        Some(b'\r') if bytes.get(i + 1) == Some(&b'\n') => i + 2,
+        _ => i,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
