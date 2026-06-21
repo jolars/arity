@@ -21,3 +21,4 @@
   - [true-false-symbol](reference/rules/true-false-symbol.md)
   - [comparison-negation](reference/rules/comparison-negation.md)
   - [outer-negation](reference/rules/outer-negation.md)
+  - [any-is-na](reference/rules/any-is-na.md)

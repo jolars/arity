@@ -275,7 +275,16 @@ harden against shadowing in Phase 4.
 - [ ] **§I2 regex/string-literal helper** first: read a `STRING` token's
       unquoted contents; classify regex metachars / single anchor (`^`/`$`).
       Blocks `string-boundary`, `fixed-regex`.
-- [ ] `any-is-na` `any(is.na(x))` -> `anyNA(x)` (performance, safe) --- flagship.
+- [x] `any-is-na` `any(is.na(x))` -> `anyNA(x)` (performance, safe; landed) ---
+      flagship. First rule in the new `performance/` category. Fires only on the
+      clean shape (`any` with one positional arg that is `is.na` with one
+      positional arg), namespace-confirmed via `resolves_to_base` on *both*
+      callees (a local/qualified/masked redefinition of either is left alone),
+      so the fix is `Safe`. The replacement `anyNA(...)` is a primary like the
+      `any(...)` it replaces, so no precedence guard is needed; the fix is
+      withheld when a comment outside the preserved inner argument would be
+      dropped (a stray comment parses as a value-less `ARG`, so matching is on
+      value-bearing args).
 - [ ] `any-duplicated` `any(duplicated(x))` -> `anyDuplicated(x) > 0`
       (performance, safe).
 - [ ] `lengths` `sapply(x, length)` -> `lengths(x)` (performance, safe).

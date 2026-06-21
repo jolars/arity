@@ -1175,6 +1175,69 @@ fn outer_negation_withholds_fix_in_tight_context() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2 call-rewrite idioms (namespace-confirmed).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn any_is_na_rewrites_to_anyna() {
+    assert_eq!(
+        fixed_output("if (any(is.na(x))) f()\n", "any-is-na"),
+        "if (anyNA(x)) f()\n"
+    );
+    // The inner argument is preserved verbatim, whatever its shape.
+    assert_eq!(
+        fixed_output("flag <- any(is.na(df$col))\n", "any-is-na"),
+        "flag <- anyNA(df$col)\n"
+    );
+}
+
+#[test]
+fn any_is_na_ignores_other_shapes() {
+    for src in [
+        "anyNA(x)\n",                    // already the idiom
+        "any(x)\n",                      // not is.na
+        "is.na(x)\n",                    // is.na without any
+        "any(is.na(x), na.rm = TRUE)\n", // extra arg — not the clean shape
+        "any(is.na(x), y)\n",            // extra positional arg
+        "any(is.na(x) | other)\n",       // arg is a binary expr, not is.na()
+        "any(is.na(x, y))\n",            // is.na with two args
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"any-is-na"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn any_is_na_skips_shadowed_callees() {
+    // A user redefinition of either callee means the call no longer invokes base
+    // R, so the rewrite would be wrong — don't flag.
+    for src in [
+        "any <- function(...) TRUE\nany(is.na(x))\n",
+        "is.na <- function(x) x\nany(is.na(x))\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"any-is-na"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn any_is_na_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved inner argument would be dropped by the
+    // rewrite, so the fix is withheld — but the finding is still reported.
+    let d = diagnostics("any(is.na(x) # note\n)\n")
+        .into_iter()
+        .find(|d| d.rule == "any-is-na")
+        .expect("expected an any-is-na finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+// ---------------------------------------------------------------------------
 // Autofix correctness: a fix is a textual edit, so the bar is that applying it
 // leaves code that still parses. It does NOT owe line-width — layout is the
 // formatter's job (Tenet 1), the pipeline is fix-then-format. The curated cases
@@ -1269,6 +1332,9 @@ fn fixed_output_is_parseable_and_clean() {
         "if (any(!x)) f()\n",
         "flag <- all(!x)\n",
         "z <- any(!a, !b)\n",
+        // any-is-na (`any(is.na(x))` → `anyNA(x)`)
+        "if (any(is.na(x))) f()\n",
+        "flag <- any(is.na(df$col))\n",
     ];
     for case in cases {
         assert_fixed_output_is_clean(case);
