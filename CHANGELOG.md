@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.6.0](https://github.com/jolars/arity/compare/v0.5.0...v0.6.0) (2026-06-22)
+
+### Features
+- **cli:** add global --color, --quiet, --verbose flags ([`1bef2ae`](https://github.com/jolars/arity/commit/1bef2ae5a673533705f4e6a78cd750e8bf7d5951))
+- **cli:** add completions and init subcommands ([`ea055bc`](https://github.com/jolars/arity/commit/ea055bcae6b235f78163b37923d43e799ad15137))
+- **cli:** lint reads stdin, drop no-op --check flag ([`5237c95`](https://github.com/jolars/arity/commit/5237c957a4f73ab4c8fb0e2bb130b590eb0d8d2b))
+- **config:** add top-level exclude/default-exclude file filtering ([`8a3c661`](https://github.com/jolars/arity/commit/8a3c6615da9352c55480f8a4dfc95e70fd691e67))
+- **config:** add format.line-ending (auto/lf/crlf/native) ([`033937a`](https://github.com/jolars/arity/commit/033937a05e4b77ce5ba091cac3bbbd75fcaa3508))
+- **linter:** add unreachable-code rule (after return()/stop()) ([`52eb74b`](https://github.com/jolars/arity/commit/52eb74b2381c014cd6c74009e90937307448bb56))
+- **linter:** add any-duplicated rule (any(duplicated(x)) -> anyDuplicated(x) > 0) ([`e3d6348`](https://github.com/jolars/arity/commit/e3d63484fac7ca37f785e88946fac3ab658a8bfe))
+- **linter:** add any-is-na rule (any(is.na(x)) -> anyNA(x)) ([`3d8590d`](https://github.com/jolars/arity/commit/3d8590d8e32e57c2a76cfb17aa3b83f1d02ea6e9))
+- **linter:** add comparison-negation and outer-negation rules ([`caeda1a`](https://github.com/jolars/arity/commit/caeda1a83337dd0e8fcc412efd11abbae002fdd4))
+- **roxygen:** format embedded R in @examples bodies ([`8715ad4`](https://github.com/jolars/arity/commit/8715ad4c32a8bae37c87cb4e9f3789d6052540b6))
+- **roxygen:** hanging-indent reflow of tag prose ([`8e52c62`](https://github.com/jolars/arity/commit/8e52c62103ae6f7ed326e7947ab7b2250059c116))
+- **roxygen:** reflow prose to line width ([`b5e92c5`](https://github.com/jolars/arity/commit/b5e92c59c239a3bd5c8c87598e7ad251e6b1926e))
+- **linter:** add vector-logic rule (&/| -> &&/|| in conditions) ([`2e74063`](https://github.com/jolars/arity/commit/2e74063337ea09f77c657e51824794dadc09d80f))
+- **linter:** add repeat rule (while (TRUE) -> repeat) ([`93cff91`](https://github.com/jolars/arity/commit/93cff91a15bf5964a8b77744bc40197db5eb62e8))
+- **formatter:** normalize roxygen marker + single space ([`52b96f6`](https://github.com/jolars/arity/commit/52b96f67cca167a81ef8aad653d8148b6ccc47de))
+- **parser:** parse roxygen doc comments into the CST ([`23fe61f`](https://github.com/jolars/arity/commit/23fe61f634398d499539ed61ed292e8413696022))
+- **linter:** generate rule docs from rule metadata ([`e8ef3db`](https://github.com/jolars/arity/commit/e8ef3dba090acb6d2b9bf89fa969f829633f676e))
+- **lsp:** add pull diagnostics support ([`e8da220`](https://github.com/jolars/arity/commit/e8da220f84a5210095e85d2efdc6c579d0c5b531))
+- **lsp:** add call hierarchy support ([`24d52f3`](https://github.com/jolars/arity/commit/24d52f3acfa2e02c750ee18324996b1a5db77ed1))
+- **lint:** add true-false-symbol rule ([`1a37cfa`](https://github.com/jolars/arity/commit/1a37cfa96be2952653c482b5bbf09b3058d039f6))
+
+### Bug Fixes
+- **formatter:** preserve trailing blank lines in roxygen examples ([`7ca4fd1`](https://github.com/jolars/arity/commit/7ca4fd17dc1fe501145fe580f3e1c7e16098baac))
+- **parser:** bind unary `!` looser than comparison operators ([`a386bc4`](https://github.com/jolars/arity/commit/a386bc4489aaf3bb6f7357e09b9add8cdaadc41a))
+- **formatter:** handle comments in if/while conditions ([`5ba6f02`](https://github.com/jolars/arity/commit/5ba6f02ee2af6a6e3e01f9176bef8f315089c39f)), fixes [#37](https://github.com/jolars/arity/issues/37)
+
 ## [0.5.0](https://github.com/jolars/arity/compare/v0.4.0...v0.5.0) (2026-06-18)
 
 ### Features
