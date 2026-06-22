@@ -52,3 +52,4 @@ devenv.local.yaml
 
 # mdBook build output
 /book/book
+roxygen2-ref

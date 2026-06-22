@@ -249,6 +249,323 @@ fn oracle_tree(rscript: &Path, driver: &Path, input: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+// --- harvested corpus (opt-in, allowlist-gated) ---------------------------
+//
+// The dir corpus above is small and hand-curated, so every case is accounted for
+// (preserving, or blocked with a rationale). The *harvested* corpus is large
+// (hundreds of standalone blocks mined from roxygen2's own test suite by
+// `scripts/harvest-roxygen-corpus.R`), so per-case blocking would be absurd.
+// Instead it follows fatou's parser-parity model: it is gated **opt-in** by an
+// allowlist of slugs that are currently fixed-point-preserving. The regression
+// guard (`roxygen_harvested_allowlist`) fails only if an *allowlisted* slug
+// regresses; everything not yet allowlisted is simply the **backlog** that the
+// report (`roxygen_harvested_report`) surfaces --- never a build failure. Both
+// need R, so both are `#[ignore]`d; once the pinned CST-to-Rd projector exists,
+// the projector-parity analog of this becomes a pure-Rust CI gate.
+
+const HARVEST_CORPUS_REL: &str = "tests/oracle/corpus/roxygen.jsonl";
+const HARVEST_ALLOWLIST_REL: &str = "tests/oracle/roxygen-allowlist.txt";
+
+#[derive(serde::Deserialize)]
+struct HarvestCase {
+    slug: String,
+    input: String,
+}
+
+/// A harvested slug's fixed-point outcome.
+#[derive(PartialEq)]
+enum HOutcome {
+    /// roxygen2 renders the same Rd from the raw block and from its formatting.
+    Pass,
+    /// Formatting changed the rendered Rd (or broke rendering) --- the backlog.
+    Divergent,
+    /// arity could not format the block.
+    SkippedArity,
+    /// roxygen2 could not render the raw block (unexpected post-harvest).
+    SkippedR,
+}
+
+fn manifest_path(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+}
+
+fn load_harvest_corpus() -> Vec<HarvestCase> {
+    let path = manifest_path(HARVEST_CORPUS_REL);
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("parse roxygen.jsonl line"))
+        .collect()
+}
+
+/// Reads a slug-list file (one slug per line; `#` comments and blanks ignored).
+fn read_slug_file(rel: &str) -> std::collections::BTreeSet<String> {
+    let path = manifest_path(rel);
+    let mut set = std::collections::BTreeSet::new();
+    let Ok(text) = fs::read_to_string(&path) else {
+        return set;
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        set.insert(line.to_string());
+    }
+    set
+}
+
+/// Runs the driver's `trees-batch` op over `inputs`, returning one entry per
+/// input aligned by index: `Some(tree_text)` or `None` (roxygen2 errored, i.e.
+/// the `!ERROR` marker). Returns an all-`None` vector if the driver itself fails.
+fn batch_trees(rscript: &Path, driver: &Path, inputs: &[String]) -> Vec<Option<String>> {
+    let mut result = vec![None; inputs.len()];
+    let payload = serde_json::to_string(inputs).expect("serialize batch payload");
+    let mut child = match Command::new(rscript)
+        .arg(driver)
+        .arg("trees-batch")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return result,
+    };
+    if child
+        .stdin
+        .take()
+        .and_then(|mut s| s.write_all(payload.as_bytes()).ok())
+        .is_none()
+    {
+        return result;
+    }
+    let Ok(out) = child.wait_with_output() else {
+        return result;
+    };
+    if !out.status.success() {
+        return result;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // Parse `@@@<i>` group headers; body lines until the next header form the
+    // group. `!ERROR` as the sole body means roxygen2 could not render input i.
+    let mut current: Option<usize> = None;
+    let mut body: Vec<&str> = Vec::new();
+    let flush = |idx: Option<usize>, body: &[&str], result: &mut [Option<String>]| {
+        if let Some(i) = idx
+            && i < result.len()
+        {
+            let joined = body.join("\n");
+            result[i] = if joined.trim() == "!ERROR" {
+                None
+            } else {
+                Some(joined)
+            };
+        }
+    };
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("@@@") {
+            flush(current, &body, &mut result);
+            current = rest.trim().parse::<usize>().ok();
+            body.clear();
+        } else {
+            body.push(line);
+        }
+    }
+    flush(current, &body, &mut result);
+    result
+}
+
+/// Computes the fixed-point outcome for every harvested case (one batched R call
+/// for the raw inputs, one for the formatted inputs).
+fn evaluate_harvest(
+    rscript: &Path,
+    driver: &Path,
+    corpus: &[HarvestCase],
+) -> Vec<(String, HOutcome)> {
+    let raw_inputs: Vec<String> = corpus.iter().map(|c| c.input.clone()).collect();
+
+    let mut fmt_inputs: Vec<String> = Vec::with_capacity(corpus.len());
+    let mut arity_ok: Vec<bool> = Vec::with_capacity(corpus.len());
+    for c in corpus {
+        match format(&c.input) {
+            Ok(out) => {
+                fmt_inputs.push(out);
+                arity_ok.push(true);
+            }
+            Err(_) => {
+                fmt_inputs.push(String::new());
+                arity_ok.push(false);
+            }
+        }
+    }
+
+    let orig = batch_trees(rscript, driver, &raw_inputs);
+    let fmt = batch_trees(rscript, driver, &fmt_inputs);
+
+    corpus
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let outcome = if !arity_ok[i] {
+                HOutcome::SkippedArity
+            } else {
+                match (&orig[i], &fmt[i]) {
+                    (None, _) => HOutcome::SkippedR,
+                    (Some(_), None) => HOutcome::Divergent,
+                    (Some(a), Some(b)) => {
+                        if a == b {
+                            HOutcome::Pass
+                        } else {
+                            HOutcome::Divergent
+                        }
+                    }
+                }
+            };
+            (c.slug.clone(), outcome)
+        })
+        .collect()
+}
+
+/// Regression guard: every allowlisted slug must still be fixed-point-preserving,
+/// and must still exist in the corpus. Non-allowlisted slugs are the backlog and
+/// are *not* required to pass. `#[ignore]`d (needs R); skips cleanly if R absent.
+#[test]
+#[ignore = "roxygen2 harvested-corpus allowlist guard; run via `task roxygen-harvest`"]
+fn roxygen_harvested_allowlist() {
+    let Some(rscript) = locate_rscript() else {
+        eprintln!("roxygen-harvest: `Rscript` not found; skipping (not a failure).");
+        return;
+    };
+    let driver = manifest_path("tests/oracle/roxygen_oracle.R");
+    let corpus = load_harvest_corpus();
+    let allow = read_slug_file(HARVEST_ALLOWLIST_REL);
+    if allow.is_empty() {
+        eprintln!("roxygen-harvest: empty allowlist; nothing to guard.");
+        return;
+    }
+
+    let outcomes = evaluate_harvest(&rscript, &driver, &corpus);
+    let by_slug: BTreeMap<&str, &HOutcome> =
+        outcomes.iter().map(|(s, o)| (s.as_str(), o)).collect();
+
+    let mut regressions: Vec<&str> = Vec::new();
+    let mut missing: Vec<&str> = Vec::new();
+    for slug in &allow {
+        match by_slug.get(slug.as_str()) {
+            None => missing.push(slug),
+            Some(HOutcome::Pass) => {}
+            Some(_) => regressions.push(slug),
+        }
+    }
+    assert!(
+        regressions.is_empty() && missing.is_empty(),
+        "roxygen-harvest allowlist guard failed:\n  {} regressed (no longer Rd-preserving): {:?}\n  \
+         {} absent from corpus (stale allowlist entry): {:?}\n  \
+         Re-seed via `task roxygen-harvest` after a deliberate change.",
+        regressions.len(),
+        regressions,
+        missing.len(),
+        missing,
+    );
+}
+
+/// Triage report over the whole harvested corpus: prints PASS/DIVERGENT/SKIP per
+/// slug (greppable: `PASS <slug>` lines re-seed the allowlist), a summary, and
+/// writes `ROXYGEN_HARVEST.md`. `#[ignore]`d (needs R).
+#[test]
+#[ignore = "roxygen2 harvested-corpus report; run via `task roxygen-harvest`"]
+fn roxygen_harvested_report() {
+    let Some(rscript) = locate_rscript() else {
+        eprintln!("roxygen-harvest: `Rscript` not found; skipping (not a failure).");
+        return;
+    };
+    let driver = manifest_path("tests/oracle/roxygen_oracle.R");
+    let corpus = load_harvest_corpus();
+    if corpus.is_empty() {
+        eprintln!("roxygen-harvest: empty corpus; run scripts/harvest-roxygen-corpus.R.");
+        return;
+    }
+    let allow = read_slug_file(HARVEST_ALLOWLIST_REL);
+    let outcomes = evaluate_harvest(&rscript, &driver, &corpus);
+
+    let (mut pass, mut divergent, mut skipped_arity, mut skipped_r) = (0, 0, 0, 0);
+    for (_, o) in &outcomes {
+        match o {
+            HOutcome::Pass => pass += 1,
+            HOutcome::Divergent => divergent += 1,
+            HOutcome::SkippedArity => skipped_arity += 1,
+            HOutcome::SkippedR => skipped_r += 1,
+        }
+    }
+    let allowlisted_pass = outcomes
+        .iter()
+        .filter(|(s, o)| *o == HOutcome::Pass && allow.contains(s))
+        .count();
+
+    // Greppable PASS lines for re-seeding the allowlist.
+    for (slug, o) in &outcomes {
+        if *o == HOutcome::Pass {
+            println!("PASS {slug}");
+        }
+    }
+
+    let mut md = String::new();
+    md.push_str("# roxygen2 oracle (harvested corpus)\n\n");
+    md.push_str(
+        "_Generated by `task roxygen-harvest` (`tests/roxygen_oracle.rs`). Do not edit by hand._\n\n",
+    );
+    md.push_str(
+        "Standalone roxygen blocks mined from roxygen2's own test suite \
+         (`scripts/harvest-roxygen-corpus.R`). Each is checked for the fixed point \
+         `roxygen2(arity_format(x)) == roxygen2(x)`. Gated **opt-in** by \
+         `tests/oracle/roxygen-allowlist.txt`: allowlisted slugs are guarded against \
+         regression; **DIVERGENT** slugs are the backlog (grow the formatter/parser, then \
+         ratchet them into the allowlist). Not a build gate (needs R; `#[ignore]`d).\n\n",
+    );
+    md.push_str(&format!(
+        "- **Corpus:** {} cases (`{HARVEST_CORPUS_REL}`)\n",
+        corpus.len()
+    ));
+    md.push_str(&format!(
+        "- **Preserving:** {pass}  ({allowlisted_pass} allowlisted)  ·  **Divergent (backlog):** {divergent}\n"
+    ));
+    md.push_str(&format!(
+        "- **Skipped:** {skipped_arity} (arity could not format) + {skipped_r} (roxygen2 could not render)\n\n"
+    ));
+
+    let mut divergent_slugs: Vec<&str> = outcomes
+        .iter()
+        .filter(|(_, o)| *o == HOutcome::Divergent)
+        .map(|(s, _)| s.as_str())
+        .collect();
+    divergent_slugs.sort_unstable();
+    if !divergent_slugs.is_empty() {
+        md.push_str("## Divergent (backlog)\n\n");
+        md.push_str(
+            "These slugs change the rendered Rd when formatted --- the work to pick off.\n\n",
+        );
+        md.push_str("| Slug |\n|---|\n");
+        for s in &divergent_slugs {
+            md.push_str(&format!("| `{s}` |\n"));
+        }
+        md.push('\n');
+    }
+
+    let out_path = manifest_path(".claude/skills/roxygen-parity/ROXYGEN_HARVEST.md");
+    fs::write(&out_path, &md).expect("write ROXYGEN_HARVEST.md");
+
+    println!(
+        "\nroxygen-harvest: {} cases -> {pass} preserving ({allowlisted_pass} allowlisted), \
+         {divergent} divergent (backlog), {skipped_arity}+{skipped_r} skipped. Wrote {}",
+        corpus.len(),
+        out_path.display(),
+    );
+}
+
 // --- allowlist ------------------------------------------------------------
 
 /// Loads the deviations allowlist: `key = "reason"` lines (a simple TOML subset,

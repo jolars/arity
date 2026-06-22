@@ -13,6 +13,11 @@
 #                   stdout = canonical Rd-tree S-expression, one line per topic
 #   block-to-rd     stdin = R source; stdout = raw Rd text per topic (debugging)
 #   rd-to-tree      stdin = Rd text; stdout = canonical Rd-tree S-expression
+#   trees-batch     stdin = JSON array of R-source strings; stdout = one group per
+#                   element, each `@@@<i>` followed by that element's block-to-tree
+#                   lines (or `@@@<i>` then `!ERROR` if roxygen2 could not process
+#                   it). Loads roxygen2 once for the whole batch (the harvested
+#                   corpus would otherwise pay per-case process startup).
 #
 # The canonical serialization (rd_to_canonical) is what makes the comparison
 # robust: it parses Rd with tools::parse_Rd and drops everything cosmetic ---
@@ -169,7 +174,32 @@ block_to_topics <- function(src) {
   topics[order(names(topics))]
 }
 
+# Canonical tree text for one block's topics, sorted by topic name, joined into a
+# single string (one `name\t(Rd ...)` line per topic). Returns NULL on error.
+block_trees <- function(src) {
+  tryCatch({
+    topics <- block_to_topics(src)
+    lines <- vapply(names(topics), function(nm) {
+      paste0(nm, "\t", rd_to_canonical(format(topics[[nm]])))
+    }, character(1))
+    paste(lines, collapse = "\n")
+  }, error = function(e) NULL)
+}
+
 main <- function() {
+  if (identical(op, "trees-batch")) {
+    src <- read_stdin()
+    inputs <- jsonlite::fromJSON(src, simplifyVector = TRUE)
+    out <- character(0)
+    for (i in seq_along(inputs)) {
+      out <- c(out, paste0("@@@", i - 1L))
+      trees <- block_trees(inputs[[i]])
+      out <- c(out, if (is.null(trees)) "!ERROR" else trees)
+    }
+    cat(paste(out, collapse = "\n"), "\n", sep = "")
+    return(invisible())
+  }
+
   src <- read_stdin()
 
   if (identical(op, "rd-to-tree")) {

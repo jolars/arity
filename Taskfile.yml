@@ -47,9 +47,24 @@ tasks:
       - cargo test --test corpus -- --ignored --nocapture
 
   roxygen-oracle:
-    desc: Measure roxygen2 Rd-preservation fixed point (writes ROXYGEN_ORACLE.md; needs R + roxygen2)
+    desc: Measure roxygen2 Rd-preservation fixed point on the curated corpus (writes ROXYGEN_ORACLE.md; needs R + roxygen2)
     cmds:
-      - cargo test --test roxygen_oracle -- --ignored --nocapture
+      - cargo test --test roxygen_oracle -- --ignored --nocapture roxygen_oracle_report
+
+  roxygen-harvest:
+    desc: Triage the harvested roxygen corpus + guard the allowlist (writes ROXYGEN_HARVEST.md; needs R + roxygen2)
+    cmds:
+      - cargo test --test roxygen_oracle -- --ignored --nocapture roxygen_harvested
+
+  roxygen-harvest-seed:
+    desc: Re-seed the harvested-corpus allowlist from current PASS slugs (needs R + roxygen2)
+    cmds:
+      - |
+        cargo test --test roxygen_oracle -- --ignored --nocapture roxygen_harvested_report 2>/dev/null \
+          | grep '^PASS ' | awk '{print $2}' | sort > /tmp/roxygen-pass.txt
+        { grep -E '^#|^$' tests/oracle/roxygen-allowlist.txt; cat /tmp/roxygen-pass.txt; } \
+          > /tmp/roxygen-allowlist.txt && mv /tmp/roxygen-allowlist.txt tests/oracle/roxygen-allowlist.txt
+        echo "seeded $(wc -l < /tmp/roxygen-pass.txt) PASS slugs into the allowlist"
 
   bench:
     desc: Benchmark formatter speed vs. air on large files (writes BENCH.md)

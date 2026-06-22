@@ -256,6 +256,16 @@
       `is_unsafe_line_start` guard; it does **not** require a separate Markdown
       renderer — arity still only needs the structure to decide reflow boundaries
       and embedded-R extents, not to emit HTML.
+    - *Backlog driver (landed).* A harvested oracle corpus
+      (`tests/oracle/corpus/roxygen.jsonl`, 217 standalone blocks mined from roxygen2's
+      own tests by `scripts/harvest-roxygen-corpus.R`) measures the fixed point
+      `roxygen2(format(x)) == roxygen2(x)` per case, gated opt-in by
+      `tests/oracle/roxygen-allowlist.txt` (fatou `parser-parity` model). Baseline:
+      **212 preserving / 4 divergent / 1 skipped**. The 4 divergent slugs are this
+      bullet's concrete pick-off list, all `@md` block structure: nested lists
+      (`rx-91e67e79`), multi-line `\preformatted{}` (`rx-0a1710c0`), raw-HTML block
+      (`rx-daf9322f`), inline raw HTML (`rx-299f50fb`). Run `task roxygen-harvest`;
+      ratchet fixes in via `task roxygen-harvest-seed`. Use the `roxygen-parity` skill.
 
 ## Linter
 

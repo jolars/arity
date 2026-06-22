@@ -1,0 +1,217 @@
+{"slug":"rx-019cbcce","input":"#' A1\n#' @return A\na1 <- function(x) {}\n\n#' A2\na2 <- function() {}\n\n#' B\n#' @return B\nb <- function(x) {}\n\n#' C\n#' @inherit a2\n#' @inherit b\n#' @inherit a1\nc <- function(y) {}\n"}
+{"slug":"rx-0273da0d","input":"#' Title\nB3 <- setRefClass('B3')\n"}
+{"slug":"rx-031cfdcb","input":"#' Title\n#'\n#' Link\n#' text \\link[=fcn]{broken across lines} preserve\n#' whitespace, even when\n#' \\link[=fcn]{broken across several lines},\n#' or with varying\n#' \\link[=fcn]{amounts of interspersed whitespace}.\nfoo <- function() {}\n"}
+{"slug":"rx-03328a0f","input":"#' @title a\n#' @name a\n#' @concept test1\n#' @concept test2\nNULL\n"}
+{"slug":"rx-0605d020","input":"#' Title\n#'\n#' [link % text](https://foo.bar/link%20target)\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-06b4cb5d","input":"#' @aliases a b a\n#' @title a\n#' @name a\nNULL\n"}
+{"slug":"rx-06ccbaf8","input":"#' A\n#' @param a first\n#' @param z last\na <- function(a=1, z=2) {}\n"}
+{"slug":"rx-0785e975","input":"#' A.\n#'\n#' B\n#'\n#' @return ABC\na <- function(x) {}\n\n#' @title C\n#' @inherit a description\nb <- function(y) {}\n"}
+{"slug":"rx-08798830","input":"#' @name a\n#' @title a\n#' @example Rd-example-3.R\nNULL\n"}
+{"slug":"rx-08f2930b","input":"#' Title\n#'\n#' @param y Y\n#' @param x,z X,Z\n#' @param w W\nb <- function(x, y, z, w) {}\n"}
+{"slug":"rx-0960279a","input":"#' Title.\na <- function() {}\n"}
+{"slug":"rx-0a1710c0","input":"#' Title\n#'\n#' Description with some *keywords* included.\n#' So far so good. \\preformatted{ *these are not\n#'   emphasised*. Or are they?\n#' }\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-0abe949f","input":"#' Would be title\n#' @title Overridden title\n#' @name a\nNULL\n"}
+{"slug":"rx-0c6356ed","input":"#' Foo\n#'\n#' @section A: 1\n#' @section B: 2\nfoo <- function(x) x\n\n#' @rdname foo\n#' @section C: 3\nbar <- function(x) x\n"}
+{"slug":"rx-0d100638","input":"#' Title\n#'\n#' Description.\n#'\n#' ```{verbatim}\n#' #| file = testthat::test_path(\"example.Rmd\")\n#' ```\n#' @md\n#' @name x\nNULL\n"}
+{"slug":"rx-0d625269","input":"#' A1\n#' @inherit base::mean\na1 <- function(x) {}\n"}
+{"slug":"rx-0e62093a","input":"#' @name a\n#' @title a\nNULL\n"}
+{"slug":"rx-12e2b08e","input":"foo <- function() '@export a'\n#' @eval foo()\n#' @name a\n#' @title a\nNULL\n"}
+{"slug":"rx-14ee096f","input":"#' Title\n#'\n#'\n#' Description\n#'\n#'\n#'\nfoo <- function(x) {}\n"}
+{"slug":"rx-16f78b2f","input":"#' Title\n#'\n#' Description. It has \\rd \\commands.\nfoo <- function() {}\n"}
+{"slug":"rx-17ccf135","input":"#' Title.\na = function() {}\n"}
+{"slug":"rx-19538816","input":"#' @name %a%\n#' @aliases a\n#' @title a\nNULL\n"}
+{"slug":"rx-197a9ca1","input":"setGeneric('mean')\n\n#' Title\nsetClass('a')\n\n#' @describeIn a mean method\nsetMethod('mean', 'a', function(x) 1)\n"}
+{"slug":"rx-199d568b","input":"#' Title.\n#'\na <- setRefClass('a')\n"}
+{"slug":"rx-1ab7ff88","input":"#' Whether a number is odd\nis.odd <- function(a) {}\n"}
+{"slug":"rx-1b26c2a4","input":"#' @title Title **with bold**\n#'\n#' @description Description **with bold**\n#'\n#' @details Details **with bold**\n#'\n#' @references References **with bold**\n#'\n#' @note Note **with bold**\n#'\n#' @seealso See also **with bold**\n#'\n#' @return Return **with bold**\n#'\n#' @author Author **with bold**\n#'\n#' @section Foobar:\n#' With some **bold text**.\n#'\n#' @format Format **with bold**\n#'\n#' @source Source **with bold**\n#'\n#' @param param Param **with bold**\n#'\n#' @slot slot Slot **with bold**\n#'\n#' @field field Field **with bold**\n#'\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-1b4ef7c7","input":"#' Title\n#'\n#' Description, see [`foobar`].\n#' Also [`this_too`].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-1b57cfd9","input":"f <- function(){\n  .a <- 0\n  function(x = 1){\n    .a <<- .a + x\n    .a\n  }\n}\n\n#' Addition function.\nf2 <- f()\nrm(f)\n"}
+{"slug":"rx-1c052e9b","input":"#' foo\nfoo <- 100\n\n#' @describeIn foo infix\n`%foo%` <- function(x, y) foo(x, y)\n\n#' @describeIn foo replacement for foo\n`foo<-` <- function(x, value) 10\n"}
+{"slug":"rx-1c0f4ac0","input":"#' Description with sentence.\n#'\n#' That continueth.\n#' @name a\nNULL\n"}
+{"slug":"rx-1d254ef7","input":"#' foo\n#' @family a\nfoo <- function() {}\n\n#' bar\n#' @family a\nbar <- 1:10\n"}
+{"slug":"rx-1e42720c","input":"#' Title\n#'\n#' Description with some `code` included. `More code.`\nfoo <- function() {}\n"}
+{"slug":"rx-1f8d80d5","input":"nms <- paste(letters[1:3], collapse = ',')\n#' @evalNamespace sprintf('export(%s)', nms)\n#' @name a\n#' @title a\nNULL\n"}
+{"slug":"rx-21fd7c2f","input":"#' Title\n#' Description `r paste0('\\x60', 'bar', '\\x60')`\n#' @md\nfoo <- function() NULL\n"}
+{"slug":"rx-22032f49","input":"#' Class\n#'\nsetClass('foo1', slots = c(id = 'character'), where = .GlobalEnv)\n\n#' @describeIn foo1 generic\nsetGeneric('m_id', function(x) standardGeneric('m_id'))\n\n#' @describeIn foo1 function\nsetMethod('m_id', 'foo1', function(x) x@id)\n"}
+{"slug":"rx-22825405","input":"#' Title\n#'\n#' Description, see \\link[=abc-class]{abc}.\nfoo <- function() {}\n"}
+{"slug":"rx-24af68b8","input":"#' Foo\n#'\n#' This.\n#'\n#' OBTW.\nfoo <- function(x = '%') x\n\n#' @rdname foo\n#' @description And that.\n#' @details ORLY?\nbar <- function(y = '%') y\n"}
+{"slug":"rx-24b3bfd6","input":"#' Title\n#'\n#' @details\n#'\n#' ```{r}\n#' a <- 1\n#'\n#' b <- 2\n#' ```\n#'\n#' ```{r}\n#' c <- 3\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"slug":"rx-24ced03e","input":"#' Title\n#'\n#' Description\n#'\n#' Details1\n#'\n#' Details2\n#'\n#' @details Details3\n#'\n#' Details4\nfoo <- function(x) {}\n"}
+{"slug":"rx-24ef0d37","input":"#' Title\n#'\n#' @details Details\n#'\n#' ```{r eval = FALSE}\n#' this - would - fail - to - eval\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"slug":"rx-270b730c","input":"#' Title\n#'\n#' Description, see [name][dest].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-2900ecd5","input":"#' Title\n#'\n#' ```{r}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() { }\n"}
+{"slug":"rx-299f50fb","input":"#' Title\n#'\n#' This is a paragraph containing a manually inserted image\n#' before-<img src='foo.png'>-after\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-29d590cf","input":"#' Title\n#'\n#' ![](example.svg \"Plot title 1\")\n#' ![](example.pdf \"Plot title 2\")\n#' ![](example.PNG \"Plot title 3\")\n#' @md\nfoo <- function() { }\n"}
+{"slug":"rx-2a68ab3f","input":"#' Title\n#'\n#' Description, see [function()].\n#' And also [object].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-2dcb2349","input":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(x) {}\n"}
+{"slug":"rx-2e54a81b","input":"#' Title\n#'\n#' Link\n#' text \\href{http://www.someurl.com}{broken across lines} preserve\n#' whitespace, even when\n#' \\href{http://www.someurl.com}{broken across several lines},\n#' or with varying\n#' \\href{http://www.someurl.com}{amounts of interspersed whitespace}.\nfoo <- function() {}\n"}
+{"slug":"rx-2e977f39","input":"#' A.\n#' @section A:1\n#' @section B:1\na <- function(x) {}\n\n#' D\n#'\n#' @section A:2\n#' @inherit a sections\nb <- function(y) {}\n"}
+{"slug":"rx-2eca83dc","input":"#' Title\n#'\n#' Description with some\n#' 1. numbered\n#' 2. list\n#'\n#' And then another one:\n#' 1. item 1\n#' 1. item 2\n#' 1. item 3\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-2f9c6114","input":"#' A\n#'\n#' @param y Y\n#' @param x X\n#' @rdname rd\na <- function(x, y) {}\n"}
+{"slug":"rx-31cc7b20","input":"#' Title\n#'\n#' @param x x\n#' @param y x\nx <- function(x, y) {}\n\n#' Title\n#'\n#' @inheritParams x\n#' @param y y\ny <- function(x, y) {}\n"}
+{"slug":"rx-3228e1fc","input":"#' Title\n#'\n#' @export\nx <- setRefClass('X')\n"}
+{"slug":"rx-33fd2d33","input":"#' Title\n#'\n#' Description with some\n#' * itemized\n#' * list\n#'\n#' And then another one:\n#' * item 1\n#' * item 2\n#' * item 3\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-34622883","input":"#' Title\n#'\n#' @format NULL\nx <- list(a = 1, b = 2)\n"}
+{"slug":"rx-352621d6","input":"#' A.\n#'\n#' @seealso ABC\na <- function(x) {}\n\n#' B\n#'\n#' @inherit a\nb <- function(y) {}\n"}
+{"slug":"rx-375ab9f1","input":"#' Title\n#'\n#' Description, see [pkg::linktos4-class] as well.\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-383f2ca3","input":"#' Title\n#'\n#' Link\n#' text [broken\n#' across lines](http://www.someurl.com) preserve\n#' whitespace, even when\n#' [broken across\n#' several\n#' lines](http://www.someurl.com),\n#' or with varying\n#' [amounts \n#'   of  \n#' interspersed   \n#'   whitespace](http://www.someurl.com).\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-38ac9ffb","input":"#' @keywords a b\n#' @title a\n#' @name a\nNULL\n"}
+{"slug":"rx-3950ab1d","input":"#' Title\n#'\n#' @param connect_args `[named list]`\\cr Connection arguments\n#' Description, see `[foobar]`.\n#' Also `[this_too]`.\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-3a7d3931","input":"#' Title.\n#'\n#' In another package: [and this one][desc::desc].\n#' [name words][desc::desc].\n#'\n#' @md\n#' @name markdown-test\nfoo <- function() {}\n"}
+{"slug":"rx-3c528f59","input":"#' Title\n#'\n#' Description, see [`code link text`][func].\n#' And also [`code as well`](https://external.com).\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-3d22b1a9","input":"#' @rawRd #this is a comment\n#' @name a\n#' @title a\nNULL\n"}
+{"slug":"rx-40503905","input":"#' Title\n#'\n#' Description with some \\strong{bold} included. \\strong{More bold.}\nfoo <- function() {}\n"}
+{"slug":"rx-418f7793","input":"#' Title\n#'\n#' Description with some _emphasis_ included. _More emph._\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-41db756e","input":"#' Title\n#'\n#' Description with some \\code{code} included. \\verb{More code.}\nfoo <- function() {}\n"}
+{"slug":"rx-41e06b64","input":"#' @title Title \\strong{with bold}\n#'\n#' @description Description \\strong{with bold}\n#'\n#' @details Details \\strong{with bold}\n#'\n#' @references References \\strong{with bold}\n#'\n#' @note Note \\strong{with bold}\n#'\n#' @seealso See also \\strong{with bold}\n#'\n#' @return Return \\strong{with bold}\n#'\n#' @author Author \\strong{with bold}\n#'\n#' @section Foobar:\n#' With some \\strong{bold text}.\n#'\n#' @format Format \\strong{with bold}\n#'\n#' @source Source \\strong{with bold}\n#'\n#' @param param Param \\strong{with bold}\n#'\n#' @slot slot Slot \\strong{with bold}\n#'\n#' @field field Field \\strong{with bold}\nfoo <- function() {}\n"}
+{"slug":"rx-44eb4ad9","input":"#' Title\n#'\n#' Description\n#'\n#' Details with a plot: ![](example.jpg \"Plot title\")\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-44ef6b90","input":"#' A\n#' @param a,z Two arguments\na <- function(a=1, z=2) {}\n"}
+{"slug":"rx-45045875","input":"#' A.\n#'\n#' B\n#'\n#' C\n#'\n#' @return ABC\na <- function(x) {}\n\n#' D\n#'\n#' E\n#'\n#' @inherit a details\nb <- function(y) {}\n"}
+{"slug":"rx-4916c016","input":"#' Foo\nfoo <- function(x = '%') x\n\n#' @rdname foo\nbar <- function(y = '%') y\n"}
+{"slug":"rx-49a38f56","input":"#' @importFrom magrittr %>%\n#' @export\nmagrittr::`%>%`\n"}
+{"slug":"rx-4adb1f22","input":"#' Title\n#'\n#' See [11pkg::function()], [11pkg::object].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-4c5c90ac","input":"#' `SELECT <name> FROM <table>`\n#' @md\nf <- function() 1\n"}
+{"slug":"rx-4d550c68","input":"#' Title\n#'\n#' Description.\n#'\n#' @param `_arg1` should not be code. But `this should`.\n#' @param `_arg2` should not be code, either. `But this.`\n#'\n#' @md\nfoo <- function(`_arg1`, `_arg2`) {}\n"}
+{"slug":"rx-4d59d472","input":"#' Title.\n#'\n#' @docType data\na <- data.frame(a = 1:10)\n"}
+{"slug":"rx-50c1514c","input":"#' @title a\n#' @encoding test\n#' @name a\nNULL\n"}
+{"slug":"rx-526b1dca","input":"#' Wrapper around original\n#'\n#' @inherit original\n#' @inheritDotParams original\n#' @param y some more specific description\n#' @export\nwrapper <- function(x = 'some_value', y = 'some other value', ...) {\n  original(x = x, y = y, ...)\n}\n\n#' Original function\n#'\n#' @param x x description\n#' @param y y description\n#' @param z z description\n#' @export\noriginal <- function(x, y, z, ...) {}\n"}
+{"slug":"rx-528eee33","input":"#' Title\n#'\n#' @format abc\n#'\nx <- list(a = 1, b = 2)\n"}
+{"slug":"rx-53695cf4","input":"#' Title\n#'\n#' Description.\n#'\n#' @param `_arg1` should not be code. But \\verb{this should}.\n#' @param `_arg2` should not be code, either. \\verb{But this.}\n#'\nfoo <- function(`_arg1`, `_arg2`) {}\n"}
+{"slug":"rx-55b6980b","input":"#' @title Title `r structure('default', class = 'foo')`\n#'\n#' @details Details\n#'\n#' ```{r}\n#' structure('default', class = 'foo')\n#' ```\n#'\n#' @md\n#' @name bar\nNULL\n"}
+{"slug":"rx-561b9e7d","input":"#' Title\n#'\n#' Description\n#'\n#' Details with a plot: \\figure{example.jpg}{Plot title}\nfoo <- function() {}\n"}
+{"slug":"rx-56294ccd","input":"#' A\n#' @usage a(a=2)\na <- function(a=1) {}\n"}
+{"slug":"rx-56403ae7","input":"#' A.\n#'\n#' @return ABC\na <- function(x) {}\n\n#' B\n#'\n#' @inherit a\nb <- function(y) {}\n"}
+{"slug":"rx-5658bbc0","input":"#' Foo\n#'\n#' @param x x\n#' @param \\dots foo\nfoo <- function(x, ...) {}\n\n#' Bar\n#'\n#' @inheritParams foo\n#' @param \\dots bar\nbar <- function(x=1, ...) {}\n"}
+{"slug":"rx-56b8de71","input":"#' Title\n#'\n#' See \\code{\\link[11pkg:function]{11pkg::function()}}, \\link[11pkg:object]{11pkg::object}.\nfoo <- function() {}\n"}
+{"slug":"rx-58680046","input":"#' Title\n#' @description NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"slug":"rx-59249308","input":"#' Foo\n#'\n#' @param x x\n#' @param y y\nfoo <- function(x, y) {}\n\n#' Bar\n#'\n#' @inheritDotParams foo\nbar <- function(...) {}\n"}
+{"slug":"rx-594296d4","input":"#' Title\nf <- function(x) UseMethod('f')\n\n#' @describeIn f Method for a\n#'\nf.a <- function(x) 1\n"}
+{"slug":"rx-59e70a3d","input":"#' Title\n#'\n#' ```\n#' r <- 1:10\n#' ```\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-5ac40b37","input":"#' @name a\n#' @title a\n#' @examples\n#' TRUE\n#' @examples\n#' FALSE\nNULL\n"}
+{"slug":"rx-5ccbfbc7","input":"#' Title\n#'\n#' @inheritParams digest::sha1\nwrapper <- function(algo) {}\n"}
+{"slug":"rx-5f6291f3","input":"#' Foo\n#'\n#' Description\n#'\n#' Details\n#'\n#' @param x x\n#' @param y y\n#' @author Hadley\n#' @source my mind\n#' @note my note\n#' @format my format\n#' @examples\n#' x <- 1\nfoo <- function(x, y) {}\n\n#' @inherit foo\nbar <- function(x, y) {}\n"}
+{"slug":"rx-602f341e","input":"#' Dummy page to test roxygen's markdown formatting\n#'\n#' Links are very tricky, so I'll put in some links here:\n#' Link to a function: [roxygenize()].\n#' Link to an object: [roxygenize] (we just treat it like an object here).\n#'\n#' Link to another package, function: [desc::desc()].\n#' Link to another package, non-function: [desc::desc].\n#'\n#' Link with link text: [this great function][roxygenize()],\n#' [`roxygenize`][roxygenize()], or [that great function][roxygenize].\n#'\n#' In another package: [and this one][desc::desc].\n#'\n#' @md\n#' @name markdown-test\n#' @keywords internal\nNULL\n"}
+{"slug":"rx-63a849b8","input":"#' A\n#' @name b\na <- function() {}\n"}
+{"slug":"rx-68267ba1","input":"#' foo1\n#' @family a\nfoo1 <- function() {}\n\n#' foo2\n#' @family a\nfoo2 <- function() {}\n\n#' Foo3\n#' @family a\nFoo3 <- function() {}\n\n#' foo\n#' @family a\nfoo <- function() {}\n"}
+{"slug":"rx-696e1568","input":"z <- 10\n#' @evalRd as.character(z * 2)\n#' @name a\n#' @title a\nNULL\n"}
+{"slug":"rx-6bf81779","input":"#' Title\n'%a%' <- function(x, y) x + y\n"}
+{"slug":"rx-6c6eb02a","input":"#' Title\nboo <- function() structure(list(), class = 'boo')\n\n#' @describeIn boo mean method\n#'\nmean.boo <- function(x) 1\n"}
+{"slug":"rx-6d0a5015","input":"#' Title\n#'\n#' @description NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"slug":"rx-6d618bdc","input":"#' Title\n#'\n#' Description, see \\code{\\link[=escape_rd_for_md]{escape_rd_for_md()}}.\n#'\n#' And also \\link{object}.\nfoo <- function() {}\n"}
+{"slug":"rx-6e121306","input":"#' Title\n#'\n#' Description, see \\link[stringr:bar111]{name words}.\nfoo <- function() {}\n"}
+{"slug":"rx-6f8d66ee","input":"#' Title.\n`myfunction` <- function(...) {}\n"}
+{"slug":"rx-6f982a08","input":"#' x\n#' @rdname xy\nx <- 'x'\n"}
+{"slug":"rx-701f0be6","input":"#' Title\n#'\n#' Description, see \\code{\\link{foobar}}.\n#' Also \\code{\\link{this_too}}.\nfoo <- function() {}\n"}
+{"slug":"rx-72858140","input":"#' Title\n#'\n#' Description, see [terms][terms.object].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-72dd9c22","input":"#' My mean\n#'\n#' @inheritParams base::mean\nmymean <- function(x, trim) {}\n"}
+{"slug":"rx-738b19f8","input":"#' Is a number odd?\nis.odd <- function(a) {}\n"}
+{"slug":"rx-73a5b650","input":"#' @name a\n#' @title a\n#' @examplesIf foo::bar()\n#' maybe-run-this-code\n#' @examplesIf foobar()\n#' and-this\n#' and-that\nNULL\n"}
+{"slug":"rx-74b7a077","input":"setClass('foo2', where = .GlobalEnv)\nsetClass('foo3', where = .GlobalEnv)\n\n#' bar1\nsetGeneric('bar1', function(x, y) standardGeneric('bar1'))\n\n#' @describeIn bar1 method1\nsetMethod('bar1', c('foo2', 'foo3'), function(x, y) 1)\n#' @describeIn bar1 method2\nsetMethod('bar1', c('foo3', 'foo2'), function(x, y) 1)\n"}
+{"slug":"rx-74cb8b0a","input":"#' A.\n#'\n#' B\n#'\n#' @return ABC\na <- function(x) {}\n\n#' C\n#' @inherit a description\nb <- function(y) {}\n"}
+{"slug":"rx-7743ba62","input":"#' Title\n#'\n#' Description, see [some thing](http://www.someurl.com).\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-78a740f0","input":"#' foo\n#' @family a\nfoo <- function() {}\n\n#' foo\n#' @family b\n#' @family a\nbar <- function() {}\n\n#' foo\n#' @family b\nbaz <- function() {}\n"}
+{"slug":"rx-79f2234b","input":"#' Title\n#'\n#' Description, see \\link[=terms.object]{terms}.\nfoo <- function() {}\n"}
+{"slug":"rx-7c43a0df","input":"#' Title\n#' @aliases f2 f3\n#'\n#' @family many aliases\nf <- function() {}\n\n#' Title\n#' @aliases g2 g3\n#'\n#' @family many aliases\ng <- function() {}\n"}
+{"slug":"rx-7d213d14","input":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(x, y) {}\n"}
+{"slug":"rx-7ff86b7e","input":"#' A.\n#'\n#' @param x X\na <- function(x) {}\n\n#' B\n#'\n#' @param y Y\nb <- function(y) {}\n\n#' C\n#'\n#' @inheritParams a\n#' @inheritParams b\nc <- function(x, y) {}\n"}
+{"slug":"rx-820d120d","input":"#' Title\n#'\n#' Description, see [`name`][dest],\n#' [`function`][function()],\n#' [`filter`][stats::filter()],\n#' [`bar`][pkg::bar],\n#' [`terms`][terms.object],\n#' [`abc`][abc-class].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-8399a92a","input":"#' Title\n#'\n#' Description with some \\emph{emphasis} included. \\emph{More emph.}\nfoo <- function() {}\n"}
+{"slug":"rx-852ee490","input":"#' Title\n#'\n#' Description, see \\linkS4class{linktos4} as well.\nfoo <- function() {}\n"}
+{"slug":"rx-853d2f8f","input":"#' Important class.\n#'\n#' @slot a slot a\n#' @slot b slot b\nsetClass('test')\n"}
+{"slug":"rx-862f18c8","input":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(.x, .y) {}\n"}
+{"slug":"rx-868cbfae","input":"#' Title\n#'\n#' Description, see \\link[pkg:linktos4-class]{pkg::linktos4} as well.\nfoo <- function() {}\n"}
+{"slug":"rx-872a28a8","input":"nms <- paste(letters[1:3], collapse = ',')\n#' @evalNamespace sprintf('export(%s)',\n#'                        nms)\n#' @name a\n#' @title a\nNULL\n"}
+{"slug":"rx-8770c410","input":"#' @title Title `r 1 + 1`\n#' @description Description `r 2 + 2`\n#' @md\nfoo <- function() NULL\n"}
+{"slug":"rx-8b0368c8","input":"#' foo\n#' @family a\nfoo <- function() {}\n\n#' bar\n#' @family a\nbar <- function() {}\n"}
+{"slug":"rx-8c9662d6","input":"#' Title\n#'\n#' @description\n#' Before\n#'\n#' ```\n#' x %in% 1:10\n#' ```\n#'\n#' After\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-8cb185a5","input":"#' @aliases NULL b c b\n#' @title a\n#' @name a\nNULL\n"}
+{"slug":"rx-8d2d58d4","input":"#' title\n#' @name a\nNULL\n"}
+{"slug":"rx-8d53bbdb","input":"#' Title.\na <- function(a='%\\\\') {}\n"}
+{"slug":"rx-8f26e3d9","input":"#' Title\n#'\n#' Description, see \\url{http://acme.com} for details.\n#' And here is a named link: \\href{http://igraph.org}{igraph}.\n#' Here is another kind of link: \\url{https://log.r-hub.io}.\nfoo <- function() {}\n"}
+{"slug":"rx-8f9c159b","input":"a <- data.frame(a = 1:10)\n#' Title.\n'a'\n"}
+{"slug":"rx-91c234d1","input":"#' Title\n#'\n#' @export\n#' @name x\nNULL\n"}
+{"slug":"rx-91e67e79","input":"#' Title\n#'\n#' Description with some\n#' 1. numbered\n#'    * itemized\n#'    * sublist\n#' 2. list\n#'\n#' And then another one:\n#' * item 1\n#' * item 2\n#'    * sublist\n#'    * within\n#' * item 3\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-93452c15","input":"#' Description\na <- function(x) {\n  #' @param x an integer\n  stopifnot(is.integer(x))\n}; #' @seealso somewhere\n"}
+{"slug":"rx-959fc227","input":"#' Title\n#'\n#' Description with some\n#' \\enumerate{\n#' \\item numbered\n#'   \\itemize{\n#'      \\item itemized\n#'      \\item sublist\n#'   }\n#' \\item list\n#' }\n#'\n#' And then another one:\n#' \\itemize{\n#' \\item item 1\n#' \\item item 2\n#'    \\itemize{\n#'      \\item sublist\n#'      \\item within\n#'    }\n#' \\item item 3\n#' }\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-95dd50a4","input":"#' Title\n#'\n#' Description, see [abc][abc-class].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-97f3c02e","input":"#' Zap generic\n#'\n#' @param x Object to zap.\nzap <- function(x) UseMethod('zap')\n\n#' @describeIn zap method\nzap.numeric <- function(x) {}\n\n#' @describeIn zap method\nzap.character <- function(x) {}\n\n#' @describeIn zap function (method for different generic)\nprint.qux <- function(x) {}\n\n#' @describeIn zap function\nzap_helper <- function(x) {}\n"}
+{"slug":"rx-988f4367","input":"#' @name a\n#' @title a\n#' @example Rd-example-1.R\n#' @examples a <- 2\n#' @example Rd-example-2.R\nNULL\n"}
+{"slug":"rx-9a1e30f6","input":"#' Title\n#'\n#' Description with some `code` included. `More code.`\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-9bc8257d","input":"#' Description\na <- function(x) {\n  #' @param x an integer\n  stopifnot(is.integer(x))\n\n  #' @seealso somewhere\n}\n"}
+{"slug":"rx-9c4d3a8c","input":"#' Title\n#'\n#' @details NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"slug":"rx-9dbd25a8","input":"#' Title\n#' @details NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"slug":"rx-9ffae298","input":"#' Title\n#' @family Long family name\n#'\nlong_function_name_________________________1 <- function() {}\n\n#' Title\n#' @family Long family name\nlong_function_name_________________________2 <- function() {}\n\n#' Title\n#' @family Long family name\n#'\nlong_function_name_________________________3 <- function() {}\n\n#' Title\n#' @family Long family name\nlong_function_name_________________________4 <- function() {}\n"}
+{"slug":"rx-a2c3b8d5","input":"#' Class constructor\n#'\n#' @param x x\nfoo <- function(x) {}\n\n#' @describeIn foo method\nprint.foo <- function(x) {}\n\n#' @describeIn foo method\nformat.foo <- function(x) {}\n\n#' @describeIn foo function (method for different class)\nformat.bar <- function(x) {}\n\n#' @describeIn foo function\nis_foo <- function(x) {}\n"}
+{"slug":"rx-a35bbddc","input":"#' Title\nsetGeneric('f', function(x) standardGeneric('f'))\n\n#' @describeIn f Method for a\nsetMethod(f, signature('a'), function(x) 1)\n"}
+{"slug":"rx-a6ac1b4d","input":"#' @title Title\n#' @details Details\n#' ```{r lorem}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() NULL\n"}
+{"slug":"rx-a6f06852","input":"#' Title\n#' @family Long family name\nf <- function() {}\n\n#' Title\n#' @family Long family name\n'%+%' <- function(a, b) {}\n"}
+{"slug":"rx-a77de068","input":"#' A.\n#' @param .x,x X\na <- function(x, .x) {}\n\n#' B\n#' @inheritParams a\nb <- function(x, .x) {}\n"}
+{"slug":"rx-abce3716","input":"#' foo\n#' @family a\nfoo <- function() {}\n"}
+{"slug":"rx-ac585ae8","input":"#' Title\n#'\n#' \\href{https://foo.bar/link%20target}{link % text}\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-ac70c0e1","input":"#' Title.\n\"myfunction\" <- function(...) {}\n"}
+{"slug":"rx-aef0e809","input":"#' T1\n#' @name a\nNULL\n\n#' T2\n#' @name a\nNULL\n"}
+{"slug":"rx-b4d952be","input":"#' @name a\n#' @title a\n#' @backref back/ref.file\n#' @backref root.file\nNULL\n"}
+{"slug":"rx-b52d3ff0","input":"#' Title.\n\"my function\" <- function(...) {}\n"}
+{"slug":"rx-b590b059","input":"#' A.\n#'\n#' @param x X\na <- function(x) {}\n\n#' B\n#'\n#' @inheritParams a\nb <- function(x) {}\n\n#' C\n#'\n#' @inheritParams a\n#' @rdname b\nc <- function(.x) {}\n"}
+{"slug":"rx-b8082617","input":"#' Title\n#'\n#' Description. It has \\rd \\commands.\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-b95dd9ab","input":"#' Regular\nmean.foo <- function(x) 'foo'\n"}
+{"slug":"rx-bc412afe","input":"#' Title\n#'\n#' Description with some\n#' \\enumerate{\n#' \\item numbered\n#' \\item list\n#' }\n#'\n#' And then another one:\n#' \\enumerate{\n#' \\item item 1\n#' \\item item 2\n#' \\item item 3\n#' }\nfoo <- function() {}\n"}
+{"slug":"rx-bc912df3","input":"#' @title My title\n#' @description My description\n#' @param x value\na <- function(x) {}\n"}
+{"slug":"rx-c0242234","input":"#' @aliases a b\n#' @title a\n#' @name a\nNULL\n"}
+{"slug":"rx-c074153a","input":"#' Power\n#' @param x base\n#' @param exp exponent\npower <- function(x, exp) x ^ exp\n\n#' @describeIn power Square a number\nsquare <- function(x) power(x, 2)\n\n#' @describeIn power Cube a number\ncube <- function(x) power(x, 3)\n"}
+{"slug":"rx-c1b21a25","input":"#' Foo\n#'\n#' @param x x\n#' @param y y1\nfoo <- function(x, y) {}\n\n#' Bar\n#'\n#' @param y y2\n#' @param z z\nbar <- function(z) {}\n\n#' Foobar\n#'\n#' @inheritDotParams foo\n#' @inheritDotParams bar\nfoobar <- function(...) {}\n"}
+{"slug":"rx-c605f27d","input":"#' Title\n#'\n#' Description, see \\link[=dest]{name}.\nfoo <- function() {}\n"}
+{"slug":"rx-c6df0b29","input":"nms <- letters[1:2]\n#' @evalNamespace paste0('export(', nms, ')')\n#' @name a\n#' @title a\nNULL\n"}
+{"slug":"rx-c7d5eb01","input":"#' A.\n#'\n#' @param x X\na <- function(x) {}\n\n#' B\n#'\n#' @param .y Y\nb <- function(.y) {}\n\n#' C\n#'\n#' @inheritParams a\n#' @inheritParams b\nc <- function(.x, y) {}\n"}
+{"slug":"rx-cb6ee994","input":"#' Description\na <- function(x) {\n  #' @param x an integer\n  stopifnot(is.integer(x))\n}\n"}
+{"slug":"rx-cbcc255c","input":"#' Title.\na <- data.frame(a = 1:10)\n"}
+{"slug":"rx-cc0ae196","input":"#' Title\n#'\n#' line1\n#'    pre `r \"1\"` 2 `r 1+2` post\n#'\n#' no workaround needed `r 'here'`\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-ccc39f20","input":"#' Dummy page to test roxygen's markdown formatting\n#'\n#' Links are very tricky, so I'll put in some links here:\n#' Link to a function: \\code{\\link[=roxygenize]{roxygenize()}}.\n#' Link to an object: \\link{roxygenize} (we just treat it like an object here).\n#'\n#' Link to another package, function: \\code{\\link[desc:desc]{desc::desc()}}.\n#' Link to another package, non-function: \\link[desc:desc]{desc::desc}.\n#'\n#' Link with link text: \\link[=roxygenize]{this great function},\n#' \\code{\\link[=roxygenize]{roxygenize}}, or \\link[=roxygenize]{that great function}.\n#'\n#' In another package: \\link[desc:desc]{and this one}.\n#'\n#' @name markdown-test\n#' @keywords internal\nNULL\n"}
+{"slug":"rx-cf428841","input":"#' Title\n#' @details NULL\n#' @details desc\n#' @format NULL\nfoobar <- 1:10\n"}
+{"slug":"rx-d137d24e","input":"#' Title.\n#' @usage %\\\na <- function(a) {}\n"}
+{"slug":"rx-d1580cb6","input":"#' Title\n#'\n#' Description with some `code` included. `More code.`\n#' @noMd\nfoo <- function() {}\n"}
+{"slug":"rx-d1d88c74","input":"#' @aliases NULL\n#' @title a\n#' @name a\nNULL\n"}
+{"slug":"rx-d34df056","input":"#' Title\n#'\n#' Description, see \\code{\\link[=func]{code link text}}.\n#' And also \\href{https://external.com}{\\verb{code as well}}.\nfoo <- function() {}\n"}
+{"slug":"rx-d3d2c071","input":"#' @name a\n#' @title a\n#'\n#' @example Rd-example-1.R\n#' @example Rd-example-2.R\nNULL\n"}
+{"slug":"rx-d4e0e632","input":"#' Title\n#'\n#' @param connect_args \\verb{[named list]}\\cr Connection arguments\n#' Description, see \\verb{[foobar]}.\n#' Also \\verb{[this_too]}.\nfoo <- function() {}\n"}
+{"slug":"rx-d4e3f08f","input":"#' Title.\n#'\n#' @name abc\n#' @docType data\n#' @usage data(abc)\nNULL\n"}
+{"slug":"rx-d55651e1","input":"#' Important class.\n#'\n#' @field a field a\n#'\n#' @field b field b\n#'\nsetRefClass('test')\n"}
+{"slug":"rx-d58b849a","input":"#' @title Title\n#' @description List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"slug":"rx-d791aabe","input":"#' Title\n#'\n#' Description, see \\href{http://www.someurl.com}{some thing}.\nfoo <- function() {}\n"}
+{"slug":"rx-daf9322f","input":"#' Title\n#'\n#' <p>This is a paragraph<\/p>\n#' <p>This is another paragraph<\/p>\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-db08ab08","input":"#' @title Title\n#' @details List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"slug":"rx-dd2506bf","input":"#' Title\n#'\n#' @description\n#' Before\n#' ```r\n#' x %in% 1:10\n#' ```\n#' After\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-de1bee56","input":"#' @name a\n#' @title a\n#' @author A\nNULL\n\n#' @name b\n#' @rdname a\n#' @author A\nNULL\n\n#' @name c\n#' @rdname a\n#' @author B\nNULL\n"}
+{"slug":"rx-de3ac450","input":"#' Class constructor with disambiguated class\n#'\n#' @param x x\nbaz <- function(x) {}\n\n#' @describeIn baz method\nprint.roxygen2_baz <- function(x) {}\n\n#' @describeIn baz function (method for another class)\nformat.quuz_baz <- function(x) {}\n"}
+{"slug":"rx-deb9d202","input":"#' foo object\nfoo <- list(bar = function(a) a)\nfoo$bar(a = 1)\n"}
+{"slug":"rx-e02bf95c","input":"#' Class ABC\nsetRefClass('ABC', methods = list(\n  f = function() {\n  'This function has a docstring'\n  1\n  }\n))\n"}
+{"slug":"rx-e0e631c5","input":"#' Title\n#'\n#' @details Details `r x <- 10; x`\n#'\n#' ```{r}\n#' y <- x + 10\n#' y\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"slug":"rx-e0fc1b98","input":"#' A\n#' @usage NULL\na <- function(a=1) {}\n"}
+{"slug":"rx-e2097b28","input":"#' Title\n#'\n#' Description with some **bold** included. **More bold.**\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-e65dc76d","input":"#' A.\n#'\n#' @param x X\n#' @param y Y\na <- function(x, y) {}\n\n#' B1\n#'\n#' @param y B\n#' @inheritParams a\nb1 <- function(x, y) {}\n\n#' B2\n#'\n#' @inheritParams a\n#' @param y B\nb2 <- function(x, y) {}\n\n#' C1\n#'\n#' @param x C\n#' @inheritParams a\nc1 <- function(x, y) {}\n\n#' C2\n#'\n#' @inheritParams a\n#' @param x C\nc2<- function(x, y) {}\n"}
+{"slug":"rx-e6cf4d24","input":"#' Title\n#' @name f\nNULL\n\n#' @describeIn f A\nf2 <- function(x) 1\n"}
+{"slug":"rx-e94c960b","input":"#' title\n#'\n#' description\n#'\n#' details\n#' @name a\nNULL\n"}
+{"slug":"rx-e94fa7ce","input":"#' Title.\n\"f\" <- function(a = 1, b = 2, c = a + b) {}\n"}
+{"slug":"rx-eb12b6b6","input":"#' Title\n#'\n#' Link\n#' text [broken\n#' across lines][fcn] preserve\n#' whitespace, even when\n#' [broken across\n#' several\n#' lines][fcn],\n#' or with varying\n#' [amounts \n#'   of  \n#' interspersed   \n#'   whitespace][fcn].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-ec3673c5","input":"#' @rdname bar\n#' @details 2\n#' @order 2\nfoo <- function() {}\n\n#' @rdname bar\n#' @details 1\n#' @order 1\nbar <- function() {}\n\n#' @title Title\n#' @name bar\nNULL\n"}
+{"slug":"rx-ecc2691b","input":"#' A.\n#' @section A:1\n#' @section B:1\na <- function(x) {}\n\n#' D\n#'\n#' @inheritSection a B\nb <- function(y) {}\n"}
+{"slug":"rx-ee37a674","input":"#' Title\nf <- function(x) 1\n\n#' @describeIn f A\nf2 <- function(x) 1\n"}
+{"slug":"rx-ee685ce2","input":"#' Title\n#'\n#' Description, see \\code{\\link[=function]{function()}}.\n#' And also \\link{object}.\nfoo <- function() {}\n"}
+{"slug":"rx-efc349c1","input":"#' @name a\n#' @aliases %a%\n#' @title a\nNULL\n"}
+{"slug":"rx-f4658690","input":"#' Title.\n#'\n#' In another package: \\link[desc:desc]{and this one}.\n#' \\link[desc:desc]{name words}.\n#'\n#' @name markdown-test\nfoo <- function() {}\n"}
+{"slug":"rx-f4a69eef","input":"#' @title a\n#' @note test\n#' @author test\n#' @seealso test\n#' @references test\n#' @name a\nNULL\n"}
+{"slug":"rx-f5812049","input":"#' Class Blob\nABCD <- setRefClass('ABC', methods = list(\n  draw = function(x = 1) {\n    \"2\"\n    x\n  })\n)\n"}
+{"slug":"rx-f5b4d104","input":"#' Title\nsetRefClass('B2')\n"}
+{"slug":"rx-f6927028","input":"#' Title\n#' @format %\nx <- list(a = 1, b = 2)\n"}
+{"slug":"rx-f70019e3","input":"#' @name a\n#' @title a\n#'\n#' @example Rd-example-4.txt\nNULL\n"}
+{"slug":"rx-f97e8917","input":"#' Title\n#'\n#' Description, see [http://acme.com]() for details.\n#' And here is a named link: [igraph](http://igraph.org).\n#' Here is another kind of link: <https://log.r-hub.io>.\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-fa223117","input":"#' Title\n#' @description NULL\n#' @description desc\n#' @format NULL\nfoobar <- 1:10\n"}
+{"slug":"rx-fa3f3d1c","input":"foo <- function() c('@name a', '@title a')\n#' @eval foo()\nNULL\n"}
+{"slug":"rx-fa6eeb19","input":"#' Title\n#'\n#' Description, see [escape_rd_for_md()].\n#'\n#' And also [object].\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-fabb4413","input":"#' Title\n#'\n#' Description, see \\code{\\link[=dest]{name}},\n#' \\code{\\link[=function]{function}},\n#' \\code{\\link[stats:filter]{filter}},\n#' \\code{\\link[pkg:bar]{bar}},\n#' \\code{\\link[=terms.object]{terms}},\n#' \\code{\\link[=abc-class]{abc}}.\nfoo <- function() {}\n"}
+{"slug":"rx-fb5d2ad5","input":"#' Title\n#'\n#' @description\n#' Before\n#' ```\n#' x %in% 1:10\n#' ```\n#' After\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-fbcaa173","input":"#' A.\n#'\n#' @param y Y\n#' @param x X\na <- function(x, y) {}\n\n#' B\n#'\n#' @param y Y\nb <- function(x, y) {}\n\n#' C\n#'\n#' @param x X\nc <- function(x, y) {}\n\n#' D\n#'\n#' @inheritParams b\n#' @param z Z\nd <- function(x, y, z) {}\n\n#' E\n#'\n#' @inheritParams c\n#' @param y Y\ne <- function(x, y, z) {}\n"}
+{"slug":"rx-fc7d6dad","input":"#' C\n#'\n#' @inheritParams b\nc <- function(x) {}\n\n#' B\n#'\n#' @inheritParams a\nb <- function(x) {}\n\n#' A.\n#'\n#' @param x X\na <- function(x) {}\n"}
+{"slug":"rx-fc8242e3","input":"#' Title\n#'\n#' Description with some\n#' \\itemize{\n#' \\item itemized\n#' \\item list\n#' }\n#'\n#' And then another one:\n#' \\itemize{\n#' \\item item 1\n#' \\item item 2\n#' \\item item 3\n#' }\nfoo <- function() {}\n"}
+{"slug":"rx-fd84eacf","input":"#' Title\n#'\n#' Description, see [linktos4-class] as well.\n#' @md\nfoo <- function() {}\n"}
+{"slug":"rx-febd6ff8","input":"#' Foo\n#'\n#' @inheritParams bar\n#' @inheritDotParams baz\nfoo <- function(x, ...) {}\n\n#' Bar\n#'\n#' @param x x\n#' @param ... dots\nbar <- function(x, ...) {}\n\n#' Baz\n#'\n#' @param y y\n#' @param z z\nbaz <- function(y, z) {}\n"}
