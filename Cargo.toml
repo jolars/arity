@@ -2,11 +2,13 @@
 name = "arity"
 version = "0.5.0"
 edition = "2024"
+rust-version = "1.88"
 readme = "README.md"
 description = "An LSP, formatter, and linter for R"
 license = "MIT"
 repository = "https://github.com/jolars/arity"
 homepage = "https://arity.cc"
+documentation = "https://arity.cc"
 authors = ["Johan Larsson <johan@jolars.co>"]
 include = ["/src/**/*", "/build.rs", "/README.md", "/LICENSE"]
 keywords = ["r", "language-server", "formatter", "linter"]
