@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use smol_str::SmolStr;
 
-use crate::file_discovery::{FileDiscoveryError, collect_r_files};
+use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
 use crate::parser::parse;
 use crate::semantic::SemanticModel;
 
@@ -17,7 +17,7 @@ use crate::semantic::SemanticModel;
 pub fn referenced_packages(
     paths: &[std::path::PathBuf],
 ) -> Result<Vec<SmolStr>, FileDiscoveryError> {
-    let files = collect_r_files(paths)?;
+    let files = collect_r_files(paths, &ExcludeFilter::none())?;
     let mut set: BTreeSet<SmolStr> = BTreeSet::new();
     for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else {

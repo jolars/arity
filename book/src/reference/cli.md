@@ -56,6 +56,7 @@ Format .R files
 * `--check` — Check formatting without writing changes; prints a diff for each file that would be reformatted and exits non-zero if any differ
 * `--line-width <N>` — Override the configured line width
 * `--indent-width <N>` — Override the configured indent width
+* `--exclude <PATTERN>` — Additional gitignore-style exclude patterns (repeatable or comma-separated); augments the configured `exclude`
 
 
 
@@ -76,6 +77,7 @@ Lint .R files
 * `--unsafe-fixes` — Also apply fixes that may change behavior (requires --fix)
 * `--select <RULE_ID>` — Only run these rules (overrides config `select`); repeatable or comma-separated
 * `--ignore <RULE_ID>` — Disable these rules (overrides config `ignore`); repeatable or comma-separated
+* `--exclude <PATTERN>` — Additional gitignore-style exclude patterns (repeatable or comma-separated); augments the configured `exclude`
 * `--output <OUTPUT>` — Output format
 
   Default value: `pretty`

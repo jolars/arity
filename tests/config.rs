@@ -325,3 +325,62 @@ fn cli_lint_unknown_selected_rule_errors() {
         "stderr: {stderr}"
     );
 }
+
+// A misformatted file the formatter would rewrite (used to prove exclusion).
+const MISFORMATTED: &str = "x<-1\n";
+
+#[test]
+fn cli_format_check_skips_configured_exclude() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("arity.toml"), "exclude = [\"skip/\"]\n").unwrap();
+    fs::create_dir(dir.path().join("skip")).unwrap();
+    fs::write(dir.path().join("skip").join("bad.R"), MISFORMATTED).unwrap();
+    // Only the excluded file is misformatted, so the check passes.
+    fs::write(dir.path().join("good.R"), "x <- 1\n").unwrap();
+
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "--check", "."]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_format_check_skips_default_excluded_generated_file() {
+    let dir = tempdir().unwrap();
+    // No config: the built-in default-exclude set still applies. A clean,
+    // non-excluded file keeps the discovered set non-empty.
+    fs::write(dir.path().join("good.R"), "x <- 1\n").unwrap();
+    fs::write(dir.path().join("RcppExports.R"), MISFORMATTED).unwrap();
+
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "--check", "."]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_format_check_exclude_flag_augments() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("good.R"), "x <- 1\n").unwrap();
+    fs::create_dir(dir.path().join("gen")).unwrap();
+    fs::write(dir.path().join("gen").join("a.R"), MISFORMATTED).unwrap();
+
+    // Without --exclude the misformatted file is reported (exit 1)...
+    let reported = run_cli_in_no_stdin(dir.path(), ["format", "--check", "."]);
+    assert_eq!(reported.status.code(), Some(1));
+
+    // ...with --exclude it is skipped (exit 0).
+    let excluded = run_cli_in_no_stdin(dir.path(), ["format", "--check", "--exclude", "gen/", "."]);
+    assert_eq!(
+        excluded.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&excluded.stderr)
+    );
+}

@@ -20,9 +20,19 @@ const MAX_WIDTH: u32 = 1000;
 const DEFAULT_LINE_WIDTH: u32 = 80;
 const DEFAULT_INDENT_WIDTH: u32 = 2;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
+    /// Additional gitignore-style patterns to exclude from file discovery,
+    /// resolved relative to the directory containing this `arity.toml`. Applies
+    /// to *both* `format` and `lint` (which share one file walk), so it is a
+    /// top-level key, not nested under `[format]`.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Whether to also apply the built-in default exclude set
+    /// ([`DEFAULT_EXCLUDE`]). Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub default_exclude: bool,
     #[serde(default)]
     pub format: FormatConfig,
     #[serde(default)]
@@ -30,6 +40,31 @@ pub struct Config {
     #[serde(default)]
     pub index: IndexConfig,
 }
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            exclude: Vec::new(),
+            default_exclude: true,
+            format: FormatConfig::default(),
+            lint: LintConfig::default(),
+            index: IndexConfig::default(),
+        }
+    }
+}
+
+/// Built-in exclude patterns applied unless `default-exclude = false`. These are
+/// generated or vendored files that should never be reformatted or linted. The
+/// set mirrors air's defaults so the two tools agree on what to skip.
+pub const DEFAULT_EXCLUDE: &[&str] = &[
+    ".git/",
+    "renv/",
+    "revdep/",
+    "cpp11.R",
+    "RcppExports.R",
+    "extendr-wrappers.R",
+    "import-standalone-*.R",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -448,6 +483,32 @@ mod tests {
     }
 
     #[test]
+    fn exclude_defaults_are_empty_and_default_exclude_on() {
+        let config = Config::default();
+        assert!(config.exclude.is_empty());
+        assert!(config.default_exclude);
+    }
+
+    #[test]
+    fn parses_top_level_exclude() {
+        let config = parse("exclude = [\"vendor/\", \"*.gen.R\"]\ndefault-exclude = false\n")
+            .expect("parse");
+        assert_eq!(
+            config.exclude,
+            vec!["vendor/".to_string(), "*.gen.R".to_string()]
+        );
+        assert!(!config.default_exclude);
+    }
+
+    #[test]
+    fn rejects_exclude_under_format() {
+        // `exclude` is a top-level key (it governs both format and lint), never
+        // nested under `[format]`.
+        let err = parse("[format]\nexclude = [\"x\"]\n").expect_err("exclude is top-level");
+        assert!(matches!(err, ConfigError::Parse { .. }));
+    }
+
+    #[test]
     fn accepts_empty_lint_section() {
         let config = parse("[lint]\n").expect("parse");
         assert_eq!(config.lint, LintConfig::default());
@@ -466,6 +527,49 @@ mod tests {
             config.lint.select.as_deref(),
             Some(&["unused-binding".to_string()][..])
         );
+    }
+
+    #[test]
+    fn parses_index_section() {
+        let config = parse(concat!(
+            "[index]\n",
+            "library-paths = [\"/opt/R/lib\", \"~/rlibs\"]\n",
+            "cache-dir = \"/tmp/arity-cache\"\n",
+            "auto-build = false\n",
+            "help = false\n",
+        ))
+        .expect("parse");
+        assert_eq!(
+            config.index.library_paths,
+            vec![PathBuf::from("/opt/R/lib"), PathBuf::from("~/rlibs")]
+        );
+        assert_eq!(
+            config.index.cache_dir.as_deref(),
+            Some(Path::new("/tmp/arity-cache"))
+        );
+        assert!(!config.index.auto_build);
+        assert!(!config.index.help);
+    }
+
+    #[test]
+    fn index_section_defaults() {
+        let config = parse("[index]\n").expect("parse");
+        assert_eq!(config.index, IndexConfig::default());
+        assert!(config.index.auto_build);
+        assert!(config.index.help);
+        assert!(config.index.library_paths.is_empty());
+        assert_eq!(config.index.cache_dir, None);
+    }
+
+    #[test]
+    fn rejects_unknown_field_in_index() {
+        let err = parse("[index]\nlibrary-path = [\"/x\"]\n").expect_err("unknown field");
+        match err {
+            ConfigError::Parse { message, .. } => {
+                assert!(message.contains("library-path"), "got: {message}");
+            }
+            other => panic!("expected Parse error, got {other:?}"),
+        }
     }
 
     #[test]

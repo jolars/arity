@@ -232,7 +232,8 @@ impl LintWorker {
     /// anything already tracked. Pre-warms cross-file membership so later edits
     /// don't re-walk (see [`seed_workspace_for`](crate::linter::check::seed_workspace_for)).
     fn seed_workspace(&mut self, roots: Vec<PathBuf>) {
-        let discovered = collect_r_files(&roots).unwrap_or_default();
+        let discovered = collect_r_files(&roots, &crate::file_discovery::ExcludeFilter::none())
+            .unwrap_or_default();
         let mut files: Vec<SourceFile> = self
             .db
             .workspace()

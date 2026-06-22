@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use arity::cli::{Cli, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
-use arity::file_discovery::collect_r_files;
+use arity::file_discovery::{ExcludeFilter, collect_r_files};
 use arity::formatter::{ChangedFile, FormatStyle, check_paths_with_style, format_with_style};
 use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
 use arity::parser::{parse, reconstruct};
@@ -48,6 +48,7 @@ fn main() -> ExitCode {
             check,
             line_width,
             indent_width,
+            exclude,
         } => run_format(
             paths,
             verify,
@@ -56,6 +57,7 @@ fn main() -> ExitCode {
                 line_width,
                 indent_width,
             },
+            exclude,
             &config_source,
         ),
         Commands::Lint {
@@ -65,12 +67,14 @@ fn main() -> ExitCode {
             unsafe_fixes,
             select,
             ignore,
+            exclude,
             output,
         } => run_lint(
             paths,
             check,
             FixOptions { fix, unsafe_fixes },
             LintOverrides { select, ignore },
+            exclude,
             output,
             &config_source,
         ),
@@ -230,20 +234,71 @@ fn load_config(source: &ConfigSource, anchor: &Path) -> Result<Config, ConfigErr
     Ok(config)
 }
 
-fn resolve_format_style(
+/// Like [`load_config`] but also returns the loaded file's path (if any), needed
+/// to root exclude patterns relative to the directory containing `arity.toml`.
+fn load_config_with_source(
     source: &ConfigSource,
-    overrides: &FormatOverrides,
     anchor: &Path,
+) -> Result<(Config, Option<PathBuf>), ConfigError> {
+    Config::resolve(source.explicit.as_deref(), source.no_config, anchor)
+}
+
+/// Build the file-discovery exclude filter from the resolved config plus any
+/// `--exclude` CLI patterns. Patterns resolve relative to the directory holding
+/// `arity.toml` (or `anchor` when there is no config file).
+fn build_exclude_filter(
+    config: &Config,
+    config_path: Option<&Path>,
+    anchor: &Path,
+    cli_excludes: &[String],
+) -> Result<ExcludeFilter, ExitCode> {
+    let root = config_path
+        .and_then(Path::parent)
+        .unwrap_or(anchor)
+        .to_path_buf();
+    let mut patterns = config.exclude.clone();
+    patterns.extend(cli_excludes.iter().cloned());
+    ExcludeFilter::new(&root, &patterns, config.default_exclude).map_err(|err| {
+        eprintln!("error: {err}");
+        ExitCode::from(2)
+    })
+}
+
+/// Apply `--line-width`/`--indent-width` overrides over a loaded config and
+/// validate, yielding the resolved [`FormatStyle`].
+fn format_style_with_overrides(
+    config: &Config,
+    overrides: &FormatOverrides,
 ) -> Result<FormatStyle, ConfigError> {
-    let mut config = load_config(source, anchor)?;
+    let mut format = config.format.clone();
     if let Some(width) = overrides.line_width {
-        config.format.line_width = width;
+        format.line_width = width;
     }
     if let Some(width) = overrides.indent_width {
-        config.format.indent_width = width;
+        format.indent_width = width;
     }
-    config.format.validate(None)?;
-    Ok(FormatStyle::from(&config.format))
+    format.validate(None)?;
+    Ok(FormatStyle::from(&format))
+}
+
+/// Resolve both the formatter style and the exclude filter for the `format`
+/// command from a single config load. Prints and returns an exit code on error.
+fn resolve_format_setup(
+    source: &ConfigSource,
+    overrides: &FormatOverrides,
+    cli_excludes: &[String],
+    anchor: &Path,
+) -> Result<(FormatStyle, ExcludeFilter), ExitCode> {
+    let (config, config_path) = load_config_with_source(source, anchor).map_err(|err| {
+        eprintln!("error: {err}");
+        ExitCode::from(2)
+    })?;
+    let style = format_style_with_overrides(&config, overrides).map_err(|err| {
+        eprintln!("error: {err}");
+        ExitCode::from(2)
+    })?;
+    let exclude = build_exclude_filter(&config, config_path.as_deref(), anchor, cli_excludes)?;
+    Ok((style, exclude))
 }
 
 fn run_parse(file: Option<PathBuf>, quiet: bool, verify: bool) -> ExitCode {
@@ -284,40 +339,28 @@ fn run_format(
     verify: bool,
     check: bool,
     overrides: FormatOverrides,
+    cli_excludes: Vec<String>,
     config_source: &ConfigSource,
 ) -> ExitCode {
+    let anchor = match cwd_anchor() {
+        Ok(anchor) => anchor,
+        Err(code) => return code,
+    };
+    let (style, exclude) =
+        match resolve_format_setup(config_source, &overrides, &cli_excludes, &anchor) {
+            Ok(setup) => setup,
+            Err(code) => return code,
+        };
+
     if check {
         if verify {
             eprintln!("error: --verify cannot be combined with --check");
             return ExitCode::from(2);
         }
-        let anchor = match cwd_anchor() {
-            Ok(anchor) => anchor,
-            Err(code) => return code,
-        };
-        let style = match resolve_format_style(config_source, &overrides, &anchor) {
-            Ok(style) => style,
-            Err(err) => {
-                eprintln!("error: {err}");
-                return ExitCode::from(2);
-            }
-        };
-        return run_format_check(&paths, style);
+        return run_format_check(&paths, style, &exclude);
     }
 
     if paths.is_empty() {
-        let anchor = match cwd_anchor() {
-            Ok(anchor) => anchor,
-            Err(code) => return code,
-        };
-        let style = match resolve_format_style(config_source, &overrides, &anchor) {
-            Ok(style) => style,
-            Err(err) => {
-                eprintln!("error: {err}");
-                return ExitCode::from(2);
-            }
-        };
-
         let input = match read_input(None) {
             Ok(input) => input,
             Err(err) => {
@@ -352,22 +395,11 @@ fn run_format(
         return ExitCode::SUCCESS;
     }
 
-    let anchor = match cwd_anchor() {
-        Ok(anchor) => anchor,
-        Err(code) => return code,
-    };
-    let style = match resolve_format_style(config_source, &overrides, &anchor) {
-        Ok(style) => style,
-        Err(err) => {
-            eprintln!("error: {err}");
-            return ExitCode::from(2);
-        }
-    };
-    run_format_write_paths(&paths, verify, style)
+    run_format_write_paths(&paths, verify, style, &exclude)
 }
 
-fn run_format_check(paths: &[PathBuf], style: FormatStyle) -> ExitCode {
-    match check_paths_with_style(paths, style) {
+fn run_format_check(paths: &[PathBuf], style: FormatStyle, exclude: &ExcludeFilter) -> ExitCode {
+    match check_paths_with_style(paths, style, exclude) {
         Ok(result) => {
             if result.changed_files.is_empty() {
                 ExitCode::SUCCESS
@@ -432,8 +464,13 @@ fn print_diff(file: &ChangedFile, use_color: bool) {
     }
 }
 
-fn run_format_write_paths(paths: &[PathBuf], verify: bool, style: FormatStyle) -> ExitCode {
-    let files = match arity::file_discovery::collect_r_files(paths) {
+fn run_format_write_paths(
+    paths: &[PathBuf],
+    verify: bool,
+    style: FormatStyle,
+    exclude: &ExcludeFilter,
+) -> ExitCode {
+    let files = match arity::file_discovery::collect_r_files(paths, exclude) {
         Ok(files) => files,
         Err(arity::file_discovery::FileDiscoveryError::NonRFilePath { path }) => {
             eprintln!(
@@ -503,6 +540,7 @@ fn run_lint(
     check: bool,
     fix_opts: FixOptions,
     overrides: LintOverrides,
+    cli_excludes: Vec<String>,
     output: LintOutput,
     config_source: &ConfigSource,
 ) -> ExitCode {
@@ -510,8 +548,8 @@ fn run_lint(
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let mut config = match load_config(config_source, &anchor) {
-        Ok(config) => config,
+    let (mut config, config_path) = match load_config_with_source(config_source, &anchor) {
+        Ok(loaded) => loaded,
         Err(err) => {
             eprintln!("error: {err}");
             return ExitCode::from(2);
@@ -526,16 +564,23 @@ fn run_lint(
         config.lint.ignore = overrides.ignore;
     }
 
+    let exclude =
+        match build_exclude_filter(&config, config_path.as_deref(), &anchor, &cli_excludes) {
+            Ok(exclude) => exclude,
+            Err(code) => return code,
+        };
+
     // Apply fixes in place first; the reporting pass below then re-reads from
     // disk and shows whatever findings remain.
     if fix_opts.fix
-        && let Some(code) = apply_fixes_to_paths(&paths, &config.lint, fix_opts.unsafe_fixes)
+        && let Some(code) =
+            apply_fixes_to_paths(&paths, &config.lint, fix_opts.unsafe_fixes, &exclude)
     {
         return code;
     }
 
     let index = lint_index(&config);
-    match arity::linter::check_paths_with_index(&paths, &config.lint, index) {
+    match arity::linter::check_paths_with_index(&paths, &config.lint, &exclude, index) {
         Ok(result) => {
             let mut has_parse_blockers = false;
             let mut all_findings = Vec::new();
@@ -594,8 +639,9 @@ fn apply_fixes_to_paths(
     paths: &[PathBuf],
     config: &LintConfig,
     include_unsafe: bool,
+    exclude: &ExcludeFilter,
 ) -> Option<ExitCode> {
-    let files = match collect_r_files(paths) {
+    let files = match collect_r_files(paths, exclude) {
         Ok(files) => files,
         Err(err) => {
             eprintln!("error: {}", arity::linter::LintError::from(err));

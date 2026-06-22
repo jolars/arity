@@ -66,6 +66,11 @@ pub enum Commands {
         /// Override the configured indent width
         #[arg(long, value_name = "N")]
         indent_width: Option<u32>,
+
+        /// Additional gitignore-style exclude patterns (repeatable or
+        /// comma-separated); augments the configured `exclude`
+        #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
+        exclude: Vec<String>,
     },
     /// Lint .R files
     Lint {
@@ -92,6 +97,11 @@ pub enum Commands {
         /// Disable these rules (overrides config `ignore`); repeatable or comma-separated
         #[arg(long, value_name = "RULE_ID", value_delimiter = ',')]
         ignore: Vec<String>,
+
+        /// Additional gitignore-style exclude patterns (repeatable or
+        /// comma-separated); augments the configured `exclude`
+        #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
+        exclude: Vec<String>,
 
         /// Output format
         #[arg(long, value_enum, default_value_t = LintOutput::Pretty)]

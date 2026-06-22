@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::LintConfig;
-use crate::file_discovery::{FileDiscoveryError, collect_r_files};
+use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, SourceFile, parsed_tree_root, semantic_model,
 };
@@ -98,7 +98,12 @@ pub fn check_paths_with_config(
     paths: &[PathBuf],
     config: &LintConfig,
 ) -> Result<LintResult, LintError> {
-    check_paths_with_index(paths, config, IndexedProvider::empty())
+    check_paths_with_index(
+        paths,
+        config,
+        &ExcludeFilter::none(),
+        IndexedProvider::empty(),
+    )
 }
 
 /// Like [`check_paths_with_config`] but with a caller-supplied harvested package
@@ -108,6 +113,7 @@ pub fn check_paths_with_config(
 pub fn check_paths_with_index(
     paths: &[PathBuf],
     config: &LintConfig,
+    exclude: &ExcludeFilter,
     indexed: IndexedProvider,
 ) -> Result<LintResult, LintError> {
     if paths.is_empty() {
@@ -119,7 +125,7 @@ pub fn check_paths_with_index(
         return Err(LintError::UnknownRule { rule });
     }
 
-    let files = collect_r_files(paths).map_err(LintError::from)?;
+    let files = collect_r_files(paths, exclude).map_err(LintError::from)?;
     if files.is_empty() {
         return Err(LintError::NoRFiles);
     }
@@ -359,7 +365,9 @@ pub fn seed_workspace_for(db: &mut IncrementalDatabase, path: &Path, active: Sou
     let search_dir =
         package_root(path).or_else(|| path.parent().filter(|p| p.is_dir()).map(Path::to_path_buf));
     if let Some(dir) = search_dir {
-        for sibling in collect_r_files(std::slice::from_ref(&dir)).unwrap_or_default() {
+        for sibling in
+            collect_r_files(std::slice::from_ref(&dir), &ExcludeFilter::none()).unwrap_or_default()
+        {
             if sibling == path {
                 continue;
             }

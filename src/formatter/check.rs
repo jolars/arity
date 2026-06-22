@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::{FormatError, FormatStyle, format_with_style};
-use crate::file_discovery::{FileDiscoveryError, collect_r_files};
+use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
@@ -74,18 +74,19 @@ impl From<FileDiscoveryError> for CheckError {
 }
 
 pub fn check_paths(paths: &[PathBuf]) -> Result<CheckResult, CheckError> {
-    check_paths_with_style(paths, FormatStyle::default())
+    check_paths_with_style(paths, FormatStyle::default(), &ExcludeFilter::none())
 }
 
 pub fn check_paths_with_style(
     paths: &[PathBuf],
     style: FormatStyle,
+    exclude: &ExcludeFilter,
 ) -> Result<CheckResult, CheckError> {
     if paths.is_empty() {
         return Err(CheckError::MissingPaths);
     }
 
-    let files = collect_r_files(paths).map_err(CheckError::from)?;
+    let files = collect_r_files(paths, exclude).map_err(CheckError::from)?;
     if files.is_empty() {
         return Err(CheckError::NoRFiles);
     }
