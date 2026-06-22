@@ -10,7 +10,12 @@ ROOT@0..74
       ROXYGEN_TEXT@3..7 "Use "
       ROXYGEN_CODE@7..10 "`x`"
       ROXYGEN_TEXT@10..12 ", "
-      ROXYGEN_RD_MACRO@12..28 "\\link[base]{sum}"
+      ROXYGEN_RD_MACRO@12..28
+        ROXYGEN_RD_MACRO_NAME@12..17 "\\link"
+        ROXYGEN_RD_MACRO_OPT@17..23 "[base]"
+        ROXYGEN_RD_MACRO_DELIM@23..24 "{"
+        ROXYGEN_TEXT@24..27 "sum"
+        ROXYGEN_RD_MACRO_DELIM@27..28 "}"
       ROXYGEN_TEXT@28..34 ", and "
       ROXYGEN_MD_LINK@34..39 "[g()]"
       ROXYGEN_TEXT@39..44 " per "

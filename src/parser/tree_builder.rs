@@ -2,6 +2,7 @@ use rowan::GreenNodeBuilder;
 
 use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
+use crate::parser::roxygen::{is_verbatim_rd_macro, scan_balanced, scan_rd_macro};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 pub(crate) fn build_tree(tokens: &[Token], events: &[Event]) -> SyntaxNode {
@@ -22,7 +23,89 @@ pub(crate) fn build_tree(tokens: &[Token], events: &[Event]) -> SyntaxNode {
 }
 
 fn push_token(builder: &mut GreenNodeBuilder<'_>, tok: &Token) {
-    builder.token(syntax_kind_for(&tok.kind).into(), tok.text.as_str());
+    // An Rd macro is materialized as a *node* (not a leaf): its content is
+    // sub-parsed so the CST models what `tools::parse_Rd` parses (nested macros
+    // become child nodes), which the projector then translates faithfully.
+    if matches!(tok.kind, TokKind::RoxygenRdMacro) {
+        build_rd_macro(builder, &tok.text);
+    } else {
+        builder.token(syntax_kind_for(&tok.kind).into(), tok.text.as_str());
+    }
+}
+
+/// Expand a `RoxygenRdMacro` token's text into a structured `ROXYGEN_RD_MACRO`
+/// node, mirroring `tools::parse_Rd`: a `\name` head, an optional `[…]` option,
+/// `{`/`}` delimiters, and content that is either verbatim (`VERB` macros, e.g.
+/// `\url`) or sub-parsed so nested `\macro` calls become child nodes. The emitted
+/// leaves tile `text` exactly (losslessness). `text` is a complete, well-formed
+/// macro span — the lexer only produces the token when `scan_rd_macro` succeeded.
+fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
+    builder.start_node(SyntaxKind::ROXYGEN_RD_MACRO.into());
+    let bytes = text.as_bytes();
+
+    // `\name` (backslash plus the alphabetic run after it).
+    let mut j = 1;
+    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+        j += 1;
+    }
+    builder.token(SyntaxKind::ROXYGEN_RD_MACRO_NAME.into(), &text[..j]);
+    let name = &text[1..j];
+
+    // Optional `[…]` option group (e.g. the `[pkg]` in `\link[pkg]{x}`).
+    if bytes.get(j) == Some(&b'[') {
+        let opt_end = scan_balanced(bytes, j, b'[', b']').unwrap_or(bytes.len());
+        builder.token(SyntaxKind::ROXYGEN_RD_MACRO_OPT.into(), &text[j..opt_end]);
+        j = opt_end;
+    }
+
+    if bytes.get(j) == Some(&b'{') {
+        // The span ends at the matching `}` (the lexer slices exactly that), so
+        // the content is everything between the opening brace and the last byte.
+        builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "{");
+        let content = &text[j + 1..text.len() - 1];
+        if is_verbatim_rd_macro(name) {
+            if !content.is_empty() {
+                builder.token(SyntaxKind::ROXYGEN_RD_MACRO_VERB.into(), content);
+            }
+        } else {
+            build_rd_content(builder, content);
+        }
+        builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "}");
+    } else if j < text.len() {
+        // Defensive: a span without the expected brace keeps its remainder whole
+        // so the round-trip is preserved (the lexer should never emit this shape).
+        builder.token(SyntaxKind::ROXYGEN_TEXT.into(), &text[j..]);
+    }
+
+    builder.finish_node();
+}
+
+/// Sub-parse the content of a latexlike Rd macro into alternating `ROXYGEN_TEXT`
+/// runs and nested `ROXYGEN_RD_MACRO` nodes. Only a `\macro` call is structural;
+/// everything else (including `\}` escapes and stray backslashes) is literal text.
+fn build_rd_content(builder: &mut GreenNodeBuilder<'_>, content: &str) {
+    let bytes = content.as_bytes();
+    let mut run_start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && let Some(end) = scan_rd_macro(bytes, i)
+        {
+            if run_start < i {
+                builder.token(SyntaxKind::ROXYGEN_TEXT.into(), &content[run_start..i]);
+            }
+            build_rd_macro(builder, &content[i..end]);
+            i = end;
+            run_start = i;
+        } else {
+            // `\` is ASCII, so advancing one byte keeps `run_start`/`i` on char
+            // boundaries (we only ever slice at a `\` or the ends).
+            i += 1;
+        }
+    }
+    if run_start < bytes.len() {
+        builder.token(SyntaxKind::ROXYGEN_TEXT.into(), &content[run_start..]);
+    }
 }
 
 /// The `SyntaxKind` a lexed token of `kind` is materialized as in the CST. The

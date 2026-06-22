@@ -1,0 +1,64 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..149
+  ROXYGEN_BLOCK@0..129
+    ROXYGEN_LINE@0..65
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TEXT@3..7 "See "
+      ROXYGEN_RD_MACRO@7..24
+        ROXYGEN_RD_MACRO_NAME@7..12 "\\code"
+        ROXYGEN_RD_MACRO_DELIM@12..13 "{"
+        ROXYGEN_RD_MACRO@13..23
+          ROXYGEN_RD_MACRO_NAME@13..18 "\\link"
+          ROXYGEN_RD_MACRO_DELIM@18..19 "{"
+          ROXYGEN_TEXT@19..22 "add"
+          ROXYGEN_RD_MACRO_DELIM@22..23 "}"
+        ROXYGEN_RD_MACRO_DELIM@23..24 "}"
+      ROXYGEN_TEXT@24..29 " and "
+      ROXYGEN_RD_MACRO@29..42
+        ROXYGEN_RD_MACRO_NAME@29..34 "\\emph"
+        ROXYGEN_RD_MACRO_DELIM@34..35 "{"
+        ROXYGEN_TEXT@35..41 "stress"
+        ROXYGEN_RD_MACRO_DELIM@41..42 "}"
+      ROXYGEN_TEXT@42..50 ", visit "
+      ROXYGEN_RD_MACRO@50..64
+        ROXYGEN_RD_MACRO_NAME@50..54 "\\url"
+        ROXYGEN_RD_MACRO_DELIM@54..55 "{"
+        ROXYGEN_RD_MACRO_VERB@55..63 "http://x"
+        ROXYGEN_RD_MACRO_DELIM@63..64 "}"
+      ROXYGEN_TEXT@64..65 "."
+    NEWLINE@65..66 "\n"
+    ROXYGEN_LINE@66..129
+      ROXYGEN_MARKER@66..68 "#'"
+      WHITESPACE@68..69 " "
+      ROXYGEN_TEXT@69..79 "Cross-ref "
+      ROXYGEN_RD_MACRO@79..95
+        ROXYGEN_RD_MACRO_NAME@79..84 "\\link"
+        ROXYGEN_RD_MACRO_OPT@84..91 "[stats]"
+        ROXYGEN_RD_MACRO_DELIM@91..92 "{"
+        ROXYGEN_TEXT@92..94 "lm"
+        ROXYGEN_RD_MACRO_DELIM@94..95 "}"
+      ROXYGEN_TEXT@95..109 " and verbatim "
+      ROXYGEN_RD_MACRO@109..128
+        ROXYGEN_RD_MACRO_NAME@109..114 "\\samp"
+        ROXYGEN_RD_MACRO_DELIM@114..115 "{"
+        ROXYGEN_RD_MACRO_VERB@115..127 "a \\code{b} c"
+        ROXYGEN_RD_MACRO_DELIM@127..128 "}"
+      ROXYGEN_TEXT@128..129 "."
+  NEWLINE@129..130 "\n"
+  ASSIGNMENT_EXPR@130..148
+    IDENT@130..131 "f"
+    WHITESPACE@131..132 " "
+    ASSIGN_LEFT@132..134 "<-"
+    WHITESPACE@134..135 " "
+    FUNCTION_EXPR@135..148
+      FUNCTION_KW@135..143 "function"
+      LPAREN@143..144 "("
+      IDENT@144..145 "x"
+      RPAREN@145..146 ")"
+      WHITESPACE@146..147 " "
+      IDENT@147..148 "x"
+  NEWLINE@148..149 "\n"

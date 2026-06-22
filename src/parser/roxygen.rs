@@ -203,10 +203,24 @@ fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
     None
 }
 
+/// Inline Rd macros whose `{…}` content is **verbatim** (`VERB` in
+/// `tools::parse_Rd`): the body is raw text and nested `\macro` markup is *not*
+/// parsed. Confirmed against `parse_Rd` (see the projector's `rd_macros` work).
+/// Latexlike macros (`\code`, `\emph`, `\strong`, `\link`, …) are everything
+/// else --- their content is sub-parsed, so nested macros become child nodes.
+const VERBATIM_RD_MACROS: &[&str] = &["url", "verb", "samp", "env", "kbd", "option"];
+
+/// Whether the macro named `name` (without the leading `\`) takes verbatim
+/// `{…}` content. Used both when building the CST (don't recurse into a verbatim
+/// body) and when projecting it (emit `VERB`, not coalesced `TEXT`).
+pub(crate) fn is_verbatim_rd_macro(name: &str) -> bool {
+    VERBATIM_RD_MACROS.contains(&name)
+}
+
 /// An Rd macro at `bytes[i] == b'\\'`: `\name`, an optional balanced `[…]`, then
 /// a required balanced `{…}`. Returns the index past the closing `}`, or `None`
 /// when there is no name or the braces are unbalanced on the line.
-fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
+pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
     let name_start = i + 1;
     let mut j = name_start;
     while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
@@ -254,7 +268,7 @@ fn is_autolink_content(content: &[u8]) -> bool {
 /// Scan a balanced delimited run starting at `bytes[i] == open`, tracking nesting
 /// and skipping Rd backslash escapes (`\}` etc.). Returns the index past the
 /// matching `close`, or `None` if it is unbalanced before end of input.
-fn scan_balanced(bytes: &[u8], i: usize, open: u8, close: u8) -> Option<usize> {
+pub(crate) fn scan_balanced(bytes: &[u8], i: usize, open: u8, close: u8) -> Option<usize> {
     debug_assert_eq!(bytes[i], open);
     let mut depth = 0usize;
     let mut j = i;

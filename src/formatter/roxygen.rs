@@ -563,10 +563,13 @@ fn is_non_prose_tag(tag: &RoxygenTag) -> bool {
 fn tag_has_prose(tag: &RoxygenTag) -> bool {
     tag.syntax()
         .children_with_tokens()
-        .any(|el| el.as_token().is_some_and(|t| is_tag_prose_kind(t.kind())))
+        .any(|el| is_tag_prose_kind(el.kind()))
 }
 
-/// Whether `kind` is a roxygen prose leaf (plain text or a protected span).
+/// Whether `kind` is a roxygen prose element (plain text or a protected span).
+/// `ROXYGEN_RD_MACRO` is a *node* (its content is sub-parsed) while the others
+/// are leaf tokens; `el.kind()` reports the same kind for either, so callers
+/// match on the element's kind rather than requiring a token.
 fn is_tag_prose_kind(kind: SyntaxKind) -> bool {
     matches!(
         kind,
@@ -595,10 +598,11 @@ fn tag_header(tag: &RoxygenTag) -> Option<String> {
 fn tag_rest_verbatim(tag: &RoxygenTag) -> String {
     let mut s = String::new();
     for el in tag.syntax().children_with_tokens() {
-        if let NodeOrToken::Token(t) = el
-            && is_tag_prose_kind(t.kind())
-        {
-            s.push_str(t.text());
+        if is_tag_prose_kind(el.kind()) {
+            match el {
+                NodeOrToken::Token(t) => s.push_str(t.text()),
+                NodeOrToken::Node(n) => s.push_str(&n.text().to_string()),
+            }
         }
     }
     s.trim().to_string()
@@ -610,7 +614,7 @@ fn tag_prose_chunks(tag: &RoxygenTag, out: &mut Vec<String>) {
     let prose = tag
         .syntax()
         .children_with_tokens()
-        .filter(|el| el.as_token().is_some_and(|t| is_tag_prose_kind(t.kind())));
+        .filter(|el| is_tag_prose_kind(el.kind()));
     chunk_elements(prose, out);
 }
 

@@ -8,7 +8,11 @@ ROOT@0..50
       ROXYGEN_MARKER@0..2 "#'"
       WHITESPACE@2..3 " "
       ROXYGEN_TEXT@3..7 "See "
-      ROXYGEN_RD_MACRO@7..17 "\\link{sum}"
+      ROXYGEN_RD_MACRO@7..17
+        ROXYGEN_RD_MACRO_NAME@7..12 "\\link"
+        ROXYGEN_RD_MACRO_DELIM@12..13 "{"
+        ROXYGEN_TEXT@13..16 "sum"
+        ROXYGEN_RD_MACRO_DELIM@16..17 "}"
       ROXYGEN_TEXT@17..30 " for details."
   NEWLINE@30..31 "\n"
   ASSIGNMENT_EXPR@31..49

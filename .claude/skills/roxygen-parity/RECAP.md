@@ -21,6 +21,12 @@ reads this first.
   content with `...`. Don't try to match example text.
 - **Cosmetic ≠ semantic.** The fixed-point check won't catch layout bugs (a reflowed
   `\describe` renders identical Rd); that's the projector parity gate's job.
+- **`ROXYGEN_RD_MACRO` is a NODE, not a leaf** (since 2026-06-22e). Code that classifies
+  it must use `el.kind()` (works for node or token), never `as_token()`. The macro token
+  is still lexed atomically; the *tree builder* (`push_token`) expands it. Verbatim macros
+  (`VERBATIM_RD_MACROS` in `parser/roxygen.rs`: `url,verb,samp,env,kbd,option`) don't
+  recurse — body is one `…_VERB` leaf → projector emits `(VERB …)`. New verbatim macro in
+  backlog? add it there (confirm via `parse_Rd`: a `{VERB}` child = verbatim).
 - **Mode-keyed parse.** Markdown structure exists in the CST only when `@md` is on;
   the CST (and projected Rd) differs by mode — pin both modes where relevant.
 - **Two corpora, two disciplines.** *Curated* dir corpus = strict (every case allowlisted
@@ -63,8 +69,9 @@ gate now exist and are the **primary driver** (parser-first, structural, CI-safe
 corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset**
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
-they stay in the R↔R fixed-point net, not false-positive backlog). Baseline:
-**42 matching (allowlisted), 116 divergent (backlog)** of 158 pinned cases. The
+they stay in the R↔R fixed-point net, not false-positive backlog). Baseline (after
+inline Rd macros, 2026-06-22e): **56 matching (allowlisted), 102 divergent (backlog)**
+of 158 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics — exactly the
 re-pointing, now a real 116-case worklist. Tasks: `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -85,32 +92,39 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-22d)
+## Latest session (2026-06-22e)
 
-**Filtered bulk-pin: turned the projector backlog into a real 116-case worklist**
-(user: "why aren't we backlogging the whole corpus and picking it off?"). The harvested
-corpus suits the R↔R fixed-point check (feature resolution cancels) but *not* the
-CST↔roxygen2 projector for cases that resolve content from elsewhere — `@inherit`,
-`@template`, `@eval`, `@example` (external file), inline `` `r` ``, or multiple topics —
-which would be permanent false-positive backlog. So: added `projector_eligible` +
-a `projector-pins` op to the R driver (eligible = exactly 1 topic AND no
-out-of-scope tag; per-case `tryCatch`; `capture.output` to swallow roxygen2's stray
-stdout). Minted `tests/oracle/corpus/roxygen-sections.jsonl` (**151/217 eligible**).
-Extended `tests/roxygen_projector.rs` to evaluate both pin sources; tasks
-`roxygen-projector-pins` + `roxygen-projector-seed`; seeded **42 matching** into the
-allowlist (2 curated + 40 harvested). **116 divergent** remain (the worklist). All
-guardrails green.
+**Inline Rd macros: `ROXYGEN_RD_MACRO` is now a structured CST node, projector emits
+nested Rd.** Closed the `rd_macros` curated case (the recap's ranked target). The lexer
+still carves the macro span as one `RoxygenRdMacro` token (all its fuzz/round-trip tests
+intact); the **tree builder** (`push_token` → `build_rd_macro`/`build_rd_content`) now
+expands that token into a `ROXYGEN_RD_MACRO` *node* with new leaves
+`ROXYGEN_RD_MACRO_{NAME,OPT,DELIM,VERB}` (syntax.rs +4 kinds, COUNT bumped, both
+`kind_from_raw` arms). Content is sub-parsed for nested `\macro` calls; **verbatim**
+macros (`url,verb,samp,env,kbd,option` — `VERBATIM_RD_MACROS`, confirmed against
+`parse_Rd`) keep their body as one `…_VERB` leaf (no recursion). The projector
+(`project_rd.rs`) was rewritten from string-bodies to an `Inline{Text,Macro}` sequence:
+prose coalesces to `(TEXT …)`, macros recurse to `(\code (\link (TEXT "add")))`, `[pkg]`
+dropped, verbatim → `(VERB …)`. Formatter kept atomic (3 token-only predicates →
+kind-based, since `chunk_elements` already glues a node's text). **42→56 matching,
+116→102 backlog, 0 regressions**; +1 curated case (`rd_macros`) and 13 harvested cases
+ratcheted. New fixture `roxygen_rd_macro_nested`; 6 macro CST snapshots updated
+(leaf→node). Curated fixed-point still 7/7. All guardrails green; committed.
 
-**Next:** pick the highest-leverage root cause from the 116 (start by eyeballing
-`ROXYGEN_PROJECTOR.md` for the most common shape — likely **inline Rd macros**
-`\code`/`\link`/`\emph`, i.e. `rd_macros`, since the skeleton flattens every span to
-text). Model it as a CST node in `src/parser/roxygen.rs`, grow a faithful projector arm,
-re-seed (`task roxygen-projector-seed`), guardrails, commit. **Fix the parser, never the
-projector.** Multi-topic harvested cases are a deliberate future relaxation (emit
-per-topic groups) — not in scope yet.
+**Next (ranked):** the remaining curated divergences are all **multi-line block / list
+structure** the CST doesn't model yet — pick the simplest first: **`\itemize`/`\enumerate`**
+(`itemize_enumerate`), single-arg `\item` lists spanning many `#'` lines as one atomic
+nested unit; then **multi-arg `\item{term}{def}`** for `\describe` (`describe_format`),
+then `\tabular` (`tabular`, `\tab`/`\cr` cells), then markdown lists under `@md`
+(`markdown_list`). These are block macros across line boundaries (TODO.md "Block macros"
+bullet) — bigger than inline: needs block grouping in `src/parser/roxygen.rs`, not just a
+token expansion. **Fix the parser, never the projector.**
 
 ## Earlier sessions
 
+- **2026-06-22d:** Filtered bulk-pin (`58ad5e4`): turned the projector backlog into a real
+  116-case worklist. Added `projector_eligible` + `projector-pins` op (eligible = 1 topic,
+  no out-of-scope tag); minted `roxygen-sections.jsonl` (151/217); seeded 42 matching.
 - **2026-06-22c:** Built the Phase 1 projector skeleton (`7473f2f`): section-level
   granularity (excluding roclet scaffolding, settled with the user), `block-to-sections`
   driver op, `src/roxygen/project_rd.rs`, pure-Rust pinned gate, curated `.rdtree` pins,

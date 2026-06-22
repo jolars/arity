@@ -8,7 +8,11 @@ ROOT@0..54
       ROXYGEN_MARKER@0..2 "#'"
       WHITESPACE@2..3 " "
       ROXYGEN_TEXT@3..11 "Returns "
-      ROXYGEN_RD_MACRO@11..22 "\\code{TRUE}"
+      ROXYGEN_RD_MACRO@11..22
+        ROXYGEN_RD_MACRO_NAME@11..16 "\\code"
+        ROXYGEN_RD_MACRO_DELIM@16..17 "{"
+        ROXYGEN_TEXT@17..21 "TRUE"
+        ROXYGEN_RD_MACRO_DELIM@21..22 "}"
       ROXYGEN_TEXT@22..34 " when ready."
   NEWLINE@34..35 "\n"
   ASSIGNMENT_EXPR@35..53

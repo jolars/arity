@@ -20,17 +20,19 @@
 //! `\usage` (the formals), and the `\arguments` wrapper that groups `@param`
 //! (the `block-to-sections` op drops the same set, so the two stay aligned).
 //!
-//! ## Current reach (the skeleton)
+//! ## Current reach
 //!
-//! This is intentionally minimal: a section body is projected as a single
-//! coalesced `TEXT` atom of its CST content. So a **plain-prose** section
-//! matches its pin, while a section the CST does not yet model structurally ---
-//! a multi-line `\describe`/`\itemize`/`\tabular`, or any inline Rd macro /
-//! markdown that roxygen2 translates into nested nodes (`*x*` → `\emph{x}`) ---
-//! projects as flat text and therefore **diverges**. Those divergences are the
-//! backlog: each is closed by teaching the *parser* the structure, then the
-//! projector grows a faithful arm for the new nodes. Never patch the projector
-//! to make a case pass.
+//! A section body is projected as a *sequence* of inline atoms: prose runs
+//! coalesce into whitespace-normalized `(TEXT …)`, and inline Rd macros
+//! (`\code`/`\link`/`\emph`/`\url`/…, including nesting, a dropped `[pkg]`
+//! option, and verbatim `(VERB …)` bodies) surface as nested subtrees from the
+//! CST's `ROXYGEN_RD_MACRO` nodes. A section the CST does not yet model
+//! structurally --- a multi-line `\describe`/`\itemize`/`\tabular`, or markdown
+//! that roxygen2 translates into nodes under a resolved `@md` mode (`*x*` →
+//! `\emph{x}`) --- still projects as flat text and therefore **diverges**. Those
+//! divergences are the backlog: each is closed by teaching the *parser* the
+//! structure, then the projector grows a faithful arm for the new nodes. Never
+//! patch the projector to make a case pass.
 
 use rowan::NodeOrToken;
 
@@ -56,16 +58,25 @@ pub fn project_to_rd(text: &str) -> String {
     sections.join("\n")
 }
 
+/// One inline element of a section body: a run of prose text (coalesced and
+/// whitespace-normalized at serialization) or an Rd macro node (projected as a
+/// nested subtree). Modeling the body as a *sequence* — rather than one flat
+/// string — is what lets inline `\code`/`\link`/… surface as structure.
+enum Inline {
+    Text(String),
+    Macro(SyntaxNode),
+}
+
 /// One topic's worth of sections from a single roxygen block.
 fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     // Intro paragraphs (prose before the first tag) and the tag sections.
-    let mut intro_paras: Vec<String> = Vec::new();
-    let mut cur_para = String::new();
-    let mut tag_sections: Vec<(String, String)> = Vec::new();
+    let mut intro_paras: Vec<Vec<Inline>> = Vec::new();
+    let mut cur_para: Vec<Inline> = Vec::new();
+    let mut tag_sections: Vec<(String, Vec<Inline>)> = Vec::new();
     let mut in_intro = true;
 
-    let flush_para = |cur: &mut String, paras: &mut Vec<String>| {
-        if !cur.trim().is_empty() {
+    let flush_para = |cur: &mut Vec<Inline>, paras: &mut Vec<Vec<Inline>>| {
+        if !inlines_blank(cur) {
             paras.push(std::mem::take(cur));
         } else {
             cur.clear();
@@ -77,22 +88,22 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             in_intro = false;
             flush_para(&mut cur_para, &mut intro_paras);
             let name = tag.name().map(|n| n.to_string()).unwrap_or_default();
-            tag_sections.push((name, tag_body(&tag)));
+            tag_sections.push((name, tag_inlines(&tag)));
         } else if line.is_blank() {
             if in_intro {
                 flush_para(&mut cur_para, &mut intro_paras);
             } else if let Some((_, body)) = tag_sections.last_mut() {
-                body.push(' '); // paragraph break inside a section body
+                body.push(Inline::Text(" ".to_string())); // paragraph break
             }
         } else {
-            // A prose continuation line.
-            let content = line_content(&line);
+            // A prose continuation line: a space joins it to the prior line.
+            let inl = line_inlines(&line);
             if in_intro {
-                cur_para.push(' ');
-                cur_para.push_str(&content);
+                cur_para.push(Inline::Text(" ".to_string()));
+                cur_para.extend(inl);
             } else if let Some((_, body)) = tag_sections.last_mut() {
-                body.push(' ');
-                body.push_str(&content);
+                body.push(Inline::Text(" ".to_string()));
+                body.extend(inl);
             }
         }
     }
@@ -110,10 +121,10 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         push_section(out, "title", first);
     }
     if !has_explicit_desc && !intro_paras.is_empty() {
-        let desc = if intro_paras.len() >= 2 {
-            intro_paras[1..].join(" ")
+        let desc: Vec<Inline> = if intro_paras.len() >= 2 {
+            join_paras(&intro_paras[1..])
         } else {
-            intro_paras[0].clone()
+            join_paras(&intro_paras[0..1])
         };
         push_section(out, "description", &desc);
     }
@@ -123,10 +134,28 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     }
 }
 
+/// Flatten paragraphs into a single inline run, with a space between each (the
+/// canonical serializer collapses the paragraph break to one space anyway).
+fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
+    let mut out: Vec<Inline> = Vec::new();
+    for (i, p) in paras.iter().enumerate() {
+        if i > 0 {
+            out.push(Inline::Text(" ".to_string()));
+        }
+        for inl in p {
+            out.push(match inl {
+                Inline::Text(s) => Inline::Text(s.clone()),
+                Inline::Macro(n) => Inline::Macro(n.clone()),
+            });
+        }
+    }
+    out
+}
+
 /// Map a tag to its Rd section macro and push the projected subtree. Tags that
 /// roxygen2 does not turn into a parser-owned section (`@param`/`@field` feed the
 /// excluded `\arguments`; `@export`/`@md`/`@name`/… are directives) are skipped.
-fn project_tag_section(name: &str, body: &str, out: &mut Vec<String>) {
+fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
     match name {
         // Direct prose → section-macro mappings.
         "description" => push_section(out, "description", body),
@@ -139,9 +168,12 @@ fn project_tag_section(name: &str, body: &str, out: &mut Vec<String>) {
         "note" => push_section(out, "note", body),
         "author" => push_section(out, "author", body),
         "title" => push_section(out, "title", body),
-        // `@section Title: body` → \section{Title}{body}.
+        // `@section Title: body` → \section{Title}{body}. The split is textual;
+        // macros in the heading are an out-of-scope edge (it would diverge, which
+        // is the right backlog signal).
         "section" => {
-            let (heading, rest) = body.split_once(':').unwrap_or((body, ""));
+            let raw = inlines_raw_text(body);
+            let (heading, rest) = raw.split_once(':').unwrap_or((&raw, ""));
             let mut inner = String::new();
             if let Some(a) = text_atom(heading) {
                 inner.push_str(&a);
@@ -161,13 +193,113 @@ fn project_tag_section(name: &str, body: &str, out: &mut Vec<String>) {
     }
 }
 
-/// Push `(\<macro> <TEXT atom>)` for a prose section, or `(\<macro>)` when the
-/// body is empty.
-fn push_section(out: &mut Vec<String>, macro_name: &str, body: &str) {
-    match text_atom(body) {
-        Some(atom) => out.push(format!("(\\{macro_name} {atom})")),
-        None => out.push(format!("(\\{macro_name})")),
+/// Push `(\<macro> <atoms…>)` for a prose section, or `(\<macro>)` when the body
+/// has no content (after coalescing).
+fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline]) {
+    let atoms = serialize_inlines(body);
+    if atoms.is_empty() {
+        out.push(format!("(\\{macro_name})"));
+    } else {
+        out.push(format!("(\\{macro_name} {})", atoms.join(" ")));
     }
+}
+
+/// Serialize an inline run into the canonical atom sequence: maximal prose runs
+/// coalesce into one whitespace-normalized `(TEXT …)`, and each macro becomes a
+/// nested subtree — mirroring the R driver's `serialize_children`.
+fn serialize_inlines(body: &[Inline]) -> Vec<String> {
+    let mut atoms: Vec<String> = Vec::new();
+    let mut run = String::new();
+    for inl in body {
+        match inl {
+            Inline::Text(s) => run.push_str(s),
+            Inline::Macro(node) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(serialize_macro(node));
+            }
+        }
+    }
+    if let Some(atom) = text_atom(&run) {
+        atoms.push(atom);
+    }
+    atoms
+}
+
+/// Project one `ROXYGEN_RD_MACRO` node into `(\name <children…>)`: the `[opt]` and
+/// `{`/`}` delimiters are dropped, prose text coalesces into `(TEXT …)`, verbatim
+/// content becomes `(VERB …)` (no whitespace collapse), and nested macros recurse.
+fn serialize_macro(node: &SyntaxNode) -> String {
+    let mut head = String::new();
+    let mut atoms: Vec<String> = Vec::new();
+    let mut run = String::new();
+    let flush = |run: &mut String, atoms: &mut Vec<String>| {
+        if let Some(atom) = text_atom(run) {
+            atoms.push(atom);
+        }
+        run.clear();
+    };
+    for el in node.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_RD_MACRO_NAME => {
+                head = el
+                    .as_token()
+                    .map(|t| t.text().to_string())
+                    .unwrap_or_default();
+            }
+            SyntaxKind::ROXYGEN_RD_MACRO_VERB => {
+                flush(&mut run, &mut atoms);
+                let raw = el
+                    .as_token()
+                    .map(|t| t.text().to_string())
+                    .unwrap_or_default();
+                atoms.push(format!("(VERB {})", encode_text(&raw)));
+            }
+            SyntaxKind::ROXYGEN_RD_MACRO => {
+                flush(&mut run, &mut atoms);
+                if let Some(n) = el.as_node() {
+                    atoms.push(serialize_macro(n));
+                }
+            }
+            // Delimiters and the dropped option carry no projected content; any
+            // other leaf (text) is prose.
+            SyntaxKind::ROXYGEN_RD_MACRO_DELIM | SyntaxKind::ROXYGEN_RD_MACRO_OPT => {}
+            _ => {
+                if let Some(t) = el.as_token() {
+                    run.push_str(t.text());
+                }
+            }
+        }
+    }
+    flush(&mut run, &mut atoms);
+    if atoms.is_empty() {
+        format!("({head})")
+    } else {
+        format!("({head} {})", atoms.join(" "))
+    }
+}
+
+/// Whether an inline run holds no projectable content (only whitespace text).
+fn inlines_blank(body: &[Inline]) -> bool {
+    body.iter().all(|inl| match inl {
+        Inline::Text(s) => s.trim().is_empty(),
+        Inline::Macro(_) => false,
+    })
+}
+
+/// The raw source text of an inline run (text verbatim, macros as their CST
+/// text), used for the textual `@section` heading split.
+fn inlines_raw_text(body: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in body {
+        match inl {
+            Inline::Text(t) => s.push_str(t),
+            Inline::Macro(n) => s.push_str(&n.text().to_string()),
+        }
+    }
+    s
 }
 
 fn prefix_space(s: &str) -> String {
@@ -206,10 +338,12 @@ fn encode_text(s: &str) -> String {
     out
 }
 
-/// The content of a prose line: every element after the `#'` marker and the
-/// single marker→content whitespace.
-fn line_content(line: &RoxygenLine) -> String {
-    let mut s = String::new();
+/// The inline elements of a prose line: everything after the `#'` marker and the
+/// single marker→content whitespace. An Rd macro becomes an `Inline::Macro`; all
+/// other content (plain text and — in the absence of resolved markdown — inline
+/// code and link spans, which are literal Rd prose) becomes `Inline::Text`.
+fn line_inlines(line: &RoxygenLine) -> Vec<Inline> {
+    let mut out = Vec::new();
     let mut seen = false;
     for el in line.syntax().children_with_tokens() {
         match el.kind() {
@@ -217,55 +351,45 @@ fn line_content(line: &RoxygenLine) -> String {
             SyntaxKind::WHITESPACE if !seen => continue,
             _ => seen = true,
         }
-        append_element_text(&mut s, &el);
+        push_inline(&mut out, el);
     }
-    s
+    out
 }
 
-/// The prose body of a tag line: everything after the `@`, the tag name, and an
-/// arg-bearing tag's argument (and the leading whitespace before the prose).
-fn tag_body(tag: &RoxygenTag) -> String {
-    let mut s = String::new();
+/// The inline elements of a tag line: everything after the `@`, the tag name, and
+/// an arg-bearing tag's argument (and the leading whitespace before the prose).
+fn tag_inlines(tag: &RoxygenTag) -> Vec<Inline> {
+    let mut out = Vec::new();
     let mut seen_prose = false;
     for el in tag.syntax().children_with_tokens() {
-        let NodeOrToken::Token(t) = &el else {
-            continue;
-        };
-        match t.kind() {
+        match el.kind() {
             SyntaxKind::ROXYGEN_AT | SyntaxKind::ROXYGEN_TAG_NAME | SyntaxKind::ROXYGEN_TAG_ARG => {
                 continue;
             }
             SyntaxKind::WHITESPACE => {
                 if seen_prose {
-                    s.push_str(t.text());
+                    push_inline(&mut out, el);
                 }
             }
-            k if is_prose_kind(k) => {
+            _ => {
                 seen_prose = true;
-                s.push_str(t.text());
+                push_inline(&mut out, el);
             }
-            _ => {}
         }
     }
-    s
+    out
 }
 
-fn append_element_text(s: &mut String, el: &NodeOrToken<SyntaxNode, crate::syntax::SyntaxToken>) {
+/// Append `el` to an inline run: a macro node as `Inline::Macro`, anything else
+/// as `Inline::Text` of its source text.
+fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax::SyntaxToken>) {
     match el {
-        NodeOrToken::Token(t) => s.push_str(t.text()),
-        NodeOrToken::Node(n) => s.push_str(&n.text().to_string()),
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_RD_MACRO => {
+            out.push(Inline::Macro(n));
+        }
+        NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
+        NodeOrToken::Token(t) => out.push(Inline::Text(t.text().to_string())),
     }
-}
-
-/// Whether `kind` is a roxygen prose leaf (plain text or a protected span).
-fn is_prose_kind(kind: SyntaxKind) -> bool {
-    matches!(
-        kind,
-        SyntaxKind::ROXYGEN_TEXT
-            | SyntaxKind::ROXYGEN_CODE
-            | SyntaxKind::ROXYGEN_RD_MACRO
-            | SyntaxKind::ROXYGEN_MD_LINK
-    )
 }
 
 #[cfg(test)]
@@ -307,6 +431,29 @@ mod tests {
     fn examples_body_is_a_placeholder() {
         let src = "#' T\n#' @examples\n#' f(1)\n#' @name d\nNULL\n";
         assert!(project_to_rd(src).contains("(\\examples ...)"));
+    }
+
+    #[test]
+    fn projects_inline_rd_macros() {
+        // Nested latexlike macros, a dropped `[pkg]` option, and a verbatim
+        // `\url` (VERB, not coalesced TEXT) — the faithful translation of the
+        // CST macro nodes into roxygen2's Rd section shape.
+        let src = "#' T\n\
+                   #'\n\
+                   #' See \\code{\\link{add}} and \\emph{e}, plus \\url{http://x}\n\
+                   #' and \\link[stats]{lm} end.\n\
+                   #' @name d\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\description (TEXT \"See\") (\\code (\\link (TEXT \"add\"))) \
+                 (TEXT \"and\") (\\emph (TEXT \"e\")) (TEXT \", plus\") \
+                 (\\url (VERB \"http://x\")) (TEXT \"and\") (\\link (TEXT \"lm\")) \
+                 (TEXT \"end.\"))"
+            ),
+            "got: {out}"
+        );
     }
 
     #[test]

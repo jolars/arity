@@ -8,7 +8,11 @@ ROOT@0..57
       ROXYGEN_MARKER@0..2 "#'"
       WHITESPACE@2..3 " "
       ROXYGEN_TEXT@3..17 "Equivalent to "
-      ROXYGEN_RD_MACRO@17..31 "\\code{f(g(x))}"
+      ROXYGEN_RD_MACRO@17..31
+        ROXYGEN_RD_MACRO_NAME@17..22 "\\code"
+        ROXYGEN_RD_MACRO_DELIM@22..23 "{"
+        ROXYGEN_TEXT@23..30 "f(g(x))"
+        ROXYGEN_RD_MACRO_DELIM@30..31 "}"
       ROXYGEN_TEXT@31..37 " here."
   NEWLINE@37..38 "\n"
   ASSIGNMENT_EXPR@38..56

@@ -190,8 +190,13 @@
       Rd, not a replacement for it. So Rd macros are always in scope, independent
       of `@md`. The parser needs a real Rd sub-grammar, not just markdown:
       - *Inline macros* (`\code{}`, `\emph{}`, `\strong{}`, `\link[pkg]{name}`,
-        `\url{}`, `\href{}{}`) — today's line-scoped `ROXYGEN_RD_MACRO` leaf is
-        only this case, and only when balanced on one line.
+        `\url{}`, `\href{}{}`) — **done** (single-arg, line-scoped):
+        `ROXYGEN_RD_MACRO` is now a *node* whose content is sub-parsed
+        (`ROXYGEN_RD_MACRO_{NAME,OPT,DELIM,VERB}` leaves, nesting, verbatim
+        bodies for `\url`/`\verb`/`\samp`/…), and the projector emits the
+        faithful nested Rd (`\code{\link{x}}` → `(\code (\link (TEXT "x")))`,
+        `[pkg]` dropped, `\url` → `(VERB …)`). Multi-arg (`\href{}{}`) still
+        below.
       - *Multi-argument macros* (`\item{term}{def}`, `\link[pkg]{name}`,
         `\method{generic}{class}`, `\href{url}{text}`) — multiple adjacent brace
         groups, not one.

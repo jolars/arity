@@ -102,14 +102,22 @@ pub enum SyntaxKind {
     ROXYGEN_BLOCK,
     ROXYGEN_LINE,
     ROXYGEN_TAG,
+    // Inline Rd-macro structure. A `ROXYGEN_RD_MACRO` is materialized as a *node*
+    // (not a leaf) whose children carve the macro into its parts so the CST models
+    // what `tools::parse_Rd` parses: `\code{\link{x}}` becomes nested macro nodes,
+    // not flat text. These leaves tile the macro span exactly (losslessness).
+    ROXYGEN_RD_MACRO_NAME,  // the `\name` head (backslash included)
+    ROXYGEN_RD_MACRO_OPT,   // a `[...]` option group (e.g. `\link[pkg]{x}`)
+    ROXYGEN_RD_MACRO_DELIM, // a `{` or `}` content delimiter
+    ROXYGEN_RD_MACRO_VERB,  // verbatim content of a VERB macro (`\url`, `\verb`, …)
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_TAG` remains the last
-    /// variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_TAG as usize + 1;
+    /// rule dispatch). Stays correct as long as `ROXYGEN_RD_MACRO_VERB` remains
+    /// the last variant.
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_RD_MACRO_VERB as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -226,6 +234,10 @@ impl Language for RLanguage {
             81 => SyntaxKind::ROXYGEN_BLOCK,
             82 => SyntaxKind::ROXYGEN_LINE,
             83 => SyntaxKind::ROXYGEN_TAG,
+            84 => SyntaxKind::ROXYGEN_RD_MACRO_NAME,
+            85 => SyntaxKind::ROXYGEN_RD_MACRO_OPT,
+            86 => SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+            87 => SyntaxKind::ROXYGEN_RD_MACRO_VERB,
             _ => SyntaxKind::ERROR,
         }
     }

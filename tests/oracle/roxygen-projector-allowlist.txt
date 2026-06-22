@@ -11,7 +11,9 @@
 # divergence means the CST is wrong --- never patch the projector to pass.
 examples
 param_prose
+rd_macros
 rx-0273da0d
+rx-031cfdcb
 rx-06ccbaf8
 rx-08f2930b
 rx-0960279a
@@ -23,17 +25,25 @@ rx-1ab7ff88
 rx-1b57cfd9
 rx-1c0f4ac0
 rx-1e42720c
+rx-22825405
 rx-3228e1fc
 rx-3950ab1d
+rx-40503905
 rx-44ef6b90
 rx-4d550c68
 rx-528eee33
 rx-53695cf4
 rx-56294ccd
+rx-56b8de71
 rx-63a849b8
 rx-6bf81779
+rx-6e121306
 rx-6f8d66ee
+rx-701f0be6
 rx-738b19f8
+rx-79f2234b
+rx-8399a92a
+rx-868cbfae
 rx-8d2d58d4
 rx-8d53bbdb
 rx-91c234d1
@@ -43,6 +53,7 @@ rx-ac70c0e1
 rx-b52d3ff0
 rx-b95dd9ab
 rx-bc912df3
+rx-c605f27d
 rx-cb6ee994
 rx-d137d24e
 rx-d1580cb6
@@ -50,4 +61,7 @@ rx-d4e0e632
 rx-d4e3f08f
 rx-e0fc1b98
 rx-e94fa7ce
+rx-ee685ce2
+rx-f4658690
 rx-f5b4d104
+rx-fabb4413
