@@ -1,6 +1,8 @@
-//! Stdio-based LSP server (built on `lsp-server`): formatting, pushed
-//! diagnostics, quick-fix code actions, and hover backed by the introspection
-//! index.
+//! Stdio-based LSP server (built on `lsp-server`): formatting (whole-document
+//! and range), pushed and pull diagnostics, quick-fix code actions, hover,
+//! completion, signature help, go-to-definition and references, rename, document
+//! and workspace symbols, semantic tokens, folding ranges, and call hierarchy,
+//! backed by the introspection index and a per-file semantic model.
 //!
 //! Architecture (see the dedicated-lint-thread design): the main loop owns no
 //! salsa database. A dedicated thread owns the persistent [`IncrementalDatabase`]

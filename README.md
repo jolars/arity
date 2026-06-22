@@ -1,10 +1,35 @@
 # Arity <img src='https://raw.githubusercontent.com/jolars/arity/refs/heads/main/images/logo.png' align="right" width="139" />
 
+[![Build and
+Test](https://github.com/jolars/arity/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/jolars/arity/actions/workflows/build-and-test.yml)
+[![Crates.io](https://img.shields.io/crates/v/arity.svg?logo=rust)](https://crates.io/crates/arity)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Arity is a language server, formatter, and linter for the R programming
-language. It is designed to provide a seamless development experience for R
-programmers by integrating with popular code editors and IDEs.
+language, built in Rust on a lossless, incremental parser. It provides a fast,
+deterministic development experience that integrates with popular code editors
+and IDEs.
+
+- **Formatter** --- deterministic, rule-based formatting toward the tidyverse
+  style guide, with idempotent output and roxygen support.
+- **Linter** --- a growing set of correctness, readability, and performance
+  rules, many with safe autofixes.
+- **Language server** --- formatting, diagnostics with quick fixes, hover,
+  completion, signature help, go-to-definition and references, rename, document
+  and workspace symbols, semantic tokens, folding, and call hierarchy.
+
+Runs on Linux, macOS, and Windows (x86_64 and arm64).
 
 ## Installation
+
+Arity is available from several sources:
+
+- **crates.io** --- `cargo install arity`
+- **npm** --- `npm install -g arity-cli` (bundles a prebuilt binary)
+- **PyPI** --- `uv tool install arity` / `pipx install arity`
+- **Prebuilt binaries** --- from the [releases
+  page](https://github.com/jolars/arity/releases)
+- **VS Code / Open VSX** --- the **Arity** extension (also works in Positron)
 
 ### From npm
 
@@ -46,26 +71,30 @@ To lint your code, you can use:
 `arity lint` reads from stdin when given no paths, and exits non-zero when it
 reports any findings.
 
+## Configuration
+
+Arity reads an optional `arity.toml`, discovered by walking up from each file's
+directory to the repository root. Run `arity init` to scaffold a commented
+starter file. See the [configuration
+reference](https://arity.cc/reference/configuration.html) for every key.
+
 ## Editor integration
 
 `arity lsp` starts a stdio-based language server offering formatting,
 diagnostics with quick fixes, hover, completion, signature help,
 go-to-definition and references, rename, document and workspace symbols,
-semantic tokens, folding, and call hierarchy. Configuration is read from
-`arity.toml` discovered from each file's parent directory, matching the CLI.
+semantic tokens, folding, and call hierarchy.
 
-Helix example (`~/.config/helix/languages.toml`):
+The **Arity** extension for VS Code / Open VSX (and Positron) bundles the binary
+and starts the server automatically. For Neovim, Helix, and other editors, see
+the [editor setup guide](https://arity.cc/guide/editors.html).
 
-```toml
-[language-server.arity]
-command = "arity"
-args = ["lsp"]
+## Documentation
 
-[[language]]
-name = "r"
-language-servers = ["arity"]
-formatter = { command = "arity", args = ["format"] }
-```
+Full documentation lives at [arity.cc](https://arity.cc):
 
-Neovim (with `nvim-lspconfig` or a custom client) should launch `arity lsp` for
-files with the `r` filetype and request formatting via `vim.lsp.buf.format()`.
+- [Getting started](https://arity.cc/getting-started.html)
+- [Editor setup](https://arity.cc/guide/editors.html)
+- [Configuration](https://arity.cc/reference/configuration.html)
+- [CLI reference](https://arity.cc/reference/cli.html)
+- [Lint rules](https://arity.cc/reference/rules.html)
