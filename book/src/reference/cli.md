@@ -22,6 +22,20 @@ Arity: a language server, formatter, and linter for R
 
 * `--config <PATH>` — Path to an explicit `arity.toml` (skips discovery)
 * `--no-config` — Ignore any discovered `arity.toml` and use built-in defaults
+* `--color <WHEN>` — When to use color in output
+
+  Default value: `auto`
+
+  Possible values:
+  - `auto`:
+    Colorize when writing to a terminal and `NO_COLOR` is unset (default)
+  - `always`:
+    Always colorize
+  - `never`:
+    Never colorize
+
+* `-q`, `--quiet` — Suppress informational output (errors are still shown)
+* `-v`, `--verbose` — Print extra informational output (e.g. per-command summaries)
 
 
 

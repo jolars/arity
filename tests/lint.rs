@@ -572,6 +572,20 @@ fn cli_lint_stdin_fix_writes_to_stdout() {
 }
 
 #[test]
+fn cli_lint_color_flag_controls_ansi() {
+    let always = run_cli_stdin(["--color", "always", "lint"], "x == NA\n");
+    assert!(
+        String::from_utf8_lossy(&always.stderr).contains('\u{1b}'),
+        "--color always should emit ANSI escapes"
+    );
+    let never = run_cli_stdin(["--color", "never", "lint"], "x == NA\n");
+    assert!(
+        !String::from_utf8_lossy(&never.stderr).contains('\u{1b}'),
+        "--color never should emit no ANSI escapes"
+    );
+}
+
+#[test]
 fn cli_lint_emits_json_output() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("dup.R");

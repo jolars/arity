@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use arity::cli::{Cli, Commands, LintOutput};
+use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
 use arity::file_discovery::{ExcludeFilter, collect_r_files};
 use arity::formatter::{ChangedFile, FormatStyle, check_paths_with_style, format_with_style};
@@ -35,6 +35,11 @@ fn main() -> ExitCode {
         explicit: cli.config.clone(),
         no_config: cli.no_config,
     };
+    let out = OutputOptions {
+        quiet: cli.quiet,
+        verbose: cli.verbose,
+        color: cli.color,
+    };
 
     match cli.command {
         Commands::Parse {
@@ -59,6 +64,7 @@ fn main() -> ExitCode {
             },
             exclude,
             &config_source,
+            out,
         ),
         Commands::Lint {
             paths,
@@ -70,13 +76,16 @@ fn main() -> ExitCode {
             exclude,
             output,
         } => run_lint(
-            paths,
-            stdin_filename,
-            FixOptions { fix, unsafe_fixes },
-            LintOverrides { select, ignore },
-            exclude,
-            output,
+            LintInvocation {
+                paths,
+                stdin_filename,
+                fix: FixOptions { fix, unsafe_fixes },
+                overrides: LintOverrides { select, ignore },
+                excludes: exclude,
+                output,
+            },
             &config_source,
+            out,
         ),
         Commands::Index {
             paths,
@@ -96,7 +105,25 @@ fn main() -> ExitCode {
         ),
         Commands::Lsp => run_lsp(),
         Commands::Completions { shell } => run_completions(shell),
-        Commands::Init { force } => run_init(force),
+        Commands::Init { force } => run_init(force, out),
+    }
+}
+
+/// Cross-cutting output preferences from the global flags.
+#[derive(Debug, Clone, Copy)]
+struct OutputOptions {
+    quiet: bool,
+    verbose: bool,
+    color: ColorChoice,
+}
+
+/// Whether to emit ANSI color, given the `--color` choice and whether the target
+/// stream is a terminal. `auto` also honors the `NO_COLOR` convention.
+fn color_enabled(choice: ColorChoice, is_terminal: bool) -> bool {
+    match choice {
+        ColorChoice::Always => true,
+        ColorChoice::Never => false,
+        ColorChoice::Auto => std::env::var_os("NO_COLOR").is_none() && is_terminal,
     }
 }
 
@@ -244,7 +271,7 @@ const STARTER_CONFIG: &str = "\
 # ignore = []        # rules to disable
 ";
 
-fn run_init(force: bool) -> ExitCode {
+fn run_init(force: bool, out: OutputOptions) -> ExitCode {
     let anchor = match cwd_anchor() {
         Ok(anchor) => anchor,
         Err(code) => return code,
@@ -259,7 +286,9 @@ fn run_init(force: bool) -> ExitCode {
     }
     match fs::write(&path, STARTER_CONFIG) {
         Ok(()) => {
-            println!("Wrote {}", path.display());
+            if !out.quiet {
+                println!("Wrote {}", path.display());
+            }
             ExitCode::SUCCESS
         }
         Err(err) => {
@@ -396,6 +425,7 @@ fn run_format(
     overrides: FormatOverrides,
     cli_excludes: Vec<String>,
     config_source: &ConfigSource,
+    out: OutputOptions,
 ) -> ExitCode {
     let anchor = match cwd_anchor() {
         Ok(anchor) => anchor,
@@ -412,7 +442,7 @@ fn run_format(
             eprintln!("error: --verify cannot be combined with --check");
             return ExitCode::from(2);
         }
-        return run_format_check(&paths, style, &exclude);
+        return run_format_check(&paths, style, &exclude, out);
     }
 
     if paths.is_empty() {
@@ -450,16 +480,24 @@ fn run_format(
         return ExitCode::SUCCESS;
     }
 
-    run_format_write_paths(&paths, verify, style, &exclude)
+    run_format_write_paths(&paths, verify, style, &exclude, out)
 }
 
-fn run_format_check(paths: &[PathBuf], style: FormatStyle, exclude: &ExcludeFilter) -> ExitCode {
+fn run_format_check(
+    paths: &[PathBuf],
+    style: FormatStyle,
+    exclude: &ExcludeFilter,
+    out: OutputOptions,
+) -> ExitCode {
     match check_paths_with_style(paths, style, exclude) {
         Ok(result) => {
             if result.changed_files.is_empty() {
+                if out.verbose {
+                    eprintln!("{} file(s) already formatted", result.checked_files);
+                }
                 ExitCode::SUCCESS
             } else {
-                let use_color = should_colorize();
+                let use_color = color_enabled(out.color, io::stdout().is_terminal());
                 for (idx, file) in result.changed_files.iter().enumerate() {
                     if idx > 0 {
                         println!();
@@ -474,12 +512,6 @@ fn run_format_check(paths: &[PathBuf], style: FormatStyle, exclude: &ExcludeFilt
             ExitCode::from(2)
         }
     }
-}
-
-/// Whether to emit ANSI color into the diff. Honors the `NO_COLOR` convention
-/// and only colorizes when stdout is a terminal.
-fn should_colorize() -> bool {
-    std::env::var_os("NO_COLOR").is_none() && io::stdout().is_terminal()
 }
 
 /// Print a unified-style, per-file diff of the formatting change (rustfmt-like:
@@ -524,6 +556,7 @@ fn run_format_write_paths(
     verify: bool,
     style: FormatStyle,
     exclude: &ExcludeFilter,
+    out: OutputOptions,
 ) -> ExitCode {
     let files = match arity::file_discovery::collect_r_files(paths, exclude) {
         Ok(files) => files,
@@ -544,6 +577,8 @@ fn run_format_write_paths(
         return ExitCode::from(2);
     }
 
+    let total = files.len();
+    let mut reformatted_count = 0usize;
     for path in files {
         let input = match fs::read_to_string(&path) {
             Ok(input) => input,
@@ -579,26 +614,48 @@ fn run_format_write_paths(
             }
             continue;
         }
-        if formatted != input
-            && let Err(err) = fs::write(&path, formatted)
-        {
-            eprintln!("error: failed to write {}: {err}", path.display());
-            return ExitCode::from(2);
+        if formatted != input {
+            if let Err(err) = fs::write(&path, formatted) {
+                eprintln!("error: failed to write {}: {err}", path.display());
+                return ExitCode::from(2);
+            }
+            reformatted_count += 1;
+            if out.verbose {
+                eprintln!("Formatted {}", path.display());
+            }
         }
+    }
+
+    if out.verbose && !verify {
+        eprintln!("{reformatted_count} of {total} file(s) reformatted");
     }
 
     ExitCode::SUCCESS
 }
 
-fn run_lint(
+/// The `lint` command's options, as parsed from the CLI.
+struct LintInvocation {
     paths: Vec<PathBuf>,
     stdin_filename: Option<PathBuf>,
-    fix_opts: FixOptions,
+    fix: FixOptions,
     overrides: LintOverrides,
-    cli_excludes: Vec<String>,
+    excludes: Vec<String>,
     output: LintOutput,
+}
+
+fn run_lint(
+    invocation: LintInvocation,
     config_source: &ConfigSource,
+    out: OutputOptions,
 ) -> ExitCode {
+    let LintInvocation {
+        paths,
+        stdin_filename,
+        fix: fix_opts,
+        overrides,
+        excludes: cli_excludes,
+        output,
+    } = invocation;
     let anchor = match cwd_anchor() {
         Ok(anchor) => anchor,
         Err(code) => return code,
@@ -621,7 +678,7 @@ fn run_lint(
 
     // No paths: lint a single document read from stdin.
     if paths.is_empty() {
-        return run_lint_stdin(&config.lint, fix_opts, stdin_filename, output);
+        return run_lint_stdin(&config.lint, fix_opts, stdin_filename, output, out);
     }
 
     let exclude =
@@ -634,7 +691,7 @@ fn run_lint(
     // disk and shows whatever findings remain.
     if fix_opts.fix
         && let Some(code) =
-            apply_fixes_to_paths(&paths, &config.lint, fix_opts.unsafe_fixes, &exclude)
+            apply_fixes_to_paths(&paths, &config.lint, fix_opts.unsafe_fixes, &exclude, out)
     {
         return code;
     }
@@ -664,7 +721,9 @@ fn run_lint(
 
             if !all_findings.is_empty() {
                 let source_for = |path: &PathBuf| fs::read_to_string(path).ok();
-                emit_findings(&all_findings, output, &source_for);
+                emit_findings(&all_findings, output, out.color, &source_for);
+            } else if out.verbose {
+                eprintln!("{} file(s) checked, no findings", result.reports.len());
             }
 
             let has_findings = !all_findings.is_empty();
@@ -689,6 +748,7 @@ fn apply_fixes_to_paths(
     config: &LintConfig,
     include_unsafe: bool,
     exclude: &ExcludeFilter,
+    out: OutputOptions,
 ) -> Option<ExitCode> {
     let files = match collect_r_files(paths, exclude) {
         Ok(files) => files,
@@ -700,7 +760,11 @@ fn apply_fixes_to_paths(
     for path in files {
         match fix_file(&path, config, include_unsafe) {
             Ok(0) => {}
-            Ok(n) => eprintln!("{}: {n} fix{} applied", path.display(), plural(n)),
+            Ok(n) => {
+                if !out.quiet {
+                    eprintln!("{}: {n} fix{} applied", path.display(), plural(n));
+                }
+            }
             Err(err) => {
                 eprintln!("error: failed to fix {}: {err}", path.display());
                 return Some(ExitCode::from(2));
@@ -755,6 +819,7 @@ fn fix_source(
 fn emit_findings(
     findings: &[arity::linter::Diagnostic],
     output: LintOutput,
+    color: ColorChoice,
     source_for: &dyn Fn(&PathBuf) -> Option<String>,
 ) {
     let mode = match output {
@@ -762,7 +827,9 @@ fn emit_findings(
         LintOutput::Concise => OutputMode::Concise,
         LintOutput::Json => OutputMode::Json,
     };
-    let rendered = render_findings(findings, mode, source_for);
+    // Human output goes to stderr; JSON to stdout.
+    let use_color = color_enabled(color, io::stderr().is_terminal());
+    let rendered = render_findings(findings, mode, use_color, source_for);
     if matches!(mode, OutputMode::Json) {
         println!("{rendered}");
     } else {
@@ -779,6 +846,7 @@ fn run_lint_stdin(
     fix_opts: FixOptions,
     stdin_filename: Option<PathBuf>,
     output: LintOutput,
+    out: OutputOptions,
 ) -> ExitCode {
     let input = match read_input(None) {
         Ok(input) => input,
@@ -808,7 +876,7 @@ fn run_lint_stdin(
         return ExitCode::SUCCESS;
     }
     let source_for = |p: &PathBuf| (p == &path).then(|| content.clone());
-    emit_findings(&findings, output, &source_for);
+    emit_findings(&findings, output, out.color, &source_for);
     ExitCode::from(1)
 }
 

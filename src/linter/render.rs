@@ -26,12 +26,13 @@ pub enum OutputMode {
 pub fn render_findings(
     diagnostics: &[Diagnostic],
     mode: OutputMode,
+    use_color: bool,
     source_for: &dyn Fn(&PathBuf) -> Option<String>,
 ) -> String {
     match mode {
         OutputMode::Json => render_json(diagnostics),
         OutputMode::Concise => render_concise(diagnostics, source_for),
-        OutputMode::Pretty => render_pretty(diagnostics, source_for),
+        OutputMode::Pretty => render_pretty(diagnostics, use_color, source_for),
     }
 }
 
@@ -75,9 +76,14 @@ fn render_concise(
 
 fn render_pretty(
     diagnostics: &[Diagnostic],
+    use_color: bool,
     source_for: &dyn Fn(&PathBuf) -> Option<String>,
 ) -> String {
-    let renderer = Renderer::plain();
+    let renderer = if use_color {
+        Renderer::styled()
+    } else {
+        Renderer::plain()
+    };
     let mut by_path: BTreeMap<&PathBuf, Vec<&Diagnostic>> = BTreeMap::new();
     for d in diagnostics {
         by_path.entry(&d.path).or_default().push(d);

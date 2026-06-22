@@ -25,8 +25,32 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_config: bool,
 
+    /// When to use color in output
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto, global = true, value_name = "WHEN")]
+    pub color: ColorChoice,
+
+    /// Suppress informational output (errors are still shown)
+    #[arg(long, short = 'q', global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
+
+    /// Print extra informational output (e.g. per-command summaries)
+    #[arg(long, short = 'v', global = true)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Commands,
+}
+
+/// When to colorize output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum ColorChoice {
+    /// Colorize when writing to a terminal and `NO_COLOR` is unset (default).
+    #[default]
+    Auto,
+    /// Always colorize.
+    Always,
+    /// Never colorize.
+    Never,
 }
 
 #[derive(Subcommand)]

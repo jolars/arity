@@ -54,7 +54,7 @@ pub fn render_rule_doc(rule: &dyn Rule) -> String {
         let diagnostics =
             check_document(&example_path(), example.source, &config).unwrap_or_default();
         let source = example.source.to_string();
-        let rendered = render_findings(&diagnostics, OutputMode::Pretty, &|path| {
+        let rendered = render_findings(&diagnostics, OutputMode::Pretty, false, &|path| {
             (path == &example_path()).then(|| source.clone())
         });
         let _ = writeln!(out);
