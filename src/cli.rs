@@ -132,8 +132,20 @@ pub enum Commands {
         #[arg(long)]
         quiet: bool,
     },
-    /// Run the language server over stdio (formatting only)
+    /// Run the language server over stdio
     Lsp,
+    /// Generate a shell completion script (write it to stdout)
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Write a starter `arity.toml` to the current directory
+    Init {
+        /// Overwrite an existing `arity.toml`
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]

@@ -14,7 +14,9 @@ Arity: a language server, formatter, and linter for R
 * `format` — Format .R files
 * `lint` — Lint .R files
 * `index` — Build or refresh the installed-package introspection index
-* `lsp` — Run the language server over stdio (formatting only)
+* `lsp` — Run the language server over stdio
+* `completions` — Generate a shell completion script (write it to stdout)
+* `init` — Write a starter `arity.toml` to the current directory
 
 ###### **Options:**
 
@@ -116,9 +118,36 @@ Build or refresh the installed-package introspection index
 
 ## `arity lsp`
 
-Run the language server over stdio (formatting only)
+Run the language server over stdio
 
 **Usage:** `arity lsp`
+
+
+
+## `arity completions`
+
+Generate a shell completion script (write it to stdout)
+
+**Usage:** `arity completions <SHELL>`
+
+###### **Arguments:**
+
+* `<SHELL>` — Shell to generate completions for
+
+  Possible values: `bash`, `elvish`, `fish`, `powershell`, `zsh`
+
+
+
+
+## `arity init`
+
+Write a starter `arity.toml` to the current directory
+
+**Usage:** `arity init [OPTIONS]`
+
+###### **Options:**
+
+* `--force` — Overwrite an existing `arity.toml`
 
 
 

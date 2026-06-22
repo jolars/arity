@@ -384,3 +384,56 @@ fn cli_format_check_exclude_flag_augments() {
         String::from_utf8_lossy(&excluded.stderr)
     );
 }
+
+#[test]
+fn cli_completions_emits_script() {
+    let output = run_cli(["completions", "bash"], "");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("_arity"), "stdout: {stdout}");
+}
+
+#[test]
+fn cli_init_writes_parseable_starter_config() {
+    let dir = tempdir().unwrap();
+    let out = run_cli_in_no_stdin(dir.path(), ["init"]);
+    assert_eq!(out.status.code(), Some(0));
+    let written = dir.path().join("arity.toml");
+    assert!(written.is_file());
+
+    // The starter config must parse: format a file using it as the config.
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, "x<-1\n").unwrap();
+    let fmt = run_cli_in_no_stdin(
+        dir.path(),
+        [
+            "format",
+            "--config",
+            written.to_str().unwrap(),
+            r_file.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        fmt.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&fmt.stderr)
+    );
+    assert_eq!(fs::read_to_string(&r_file).unwrap(), "x <- 1\n");
+}
+
+#[test]
+fn cli_init_refuses_to_overwrite_without_force() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("arity.toml"), "[format]\nline-width = 70\n").unwrap();
+    let out = run_cli_in_no_stdin(dir.path(), ["init"]);
+    assert_eq!(out.status.code(), Some(2));
+    // The existing config is left untouched.
+    assert_eq!(
+        fs::read_to_string(dir.path().join("arity.toml")).unwrap(),
+        "[format]\nline-width = 70\n"
+    );
+    // ...but --force overwrites it.
+    let forced = run_cli_in_no_stdin(dir.path(), ["init", "--force"]);
+    assert_eq!(forced.status.code(), Some(0));
+}

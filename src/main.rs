@@ -95,6 +95,8 @@ fn main() -> ExitCode {
             &config_source,
         ),
         Commands::Lsp => run_lsp(),
+        Commands::Completions { shell } => run_completions(shell),
+        Commands::Init { force } => run_init(force),
     }
 }
 
@@ -209,6 +211,59 @@ fn run_lsp() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: language server exited: {err}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_completions(shell: clap_complete::Shell) -> ExitCode {
+    let mut cmd = <Cli as clap::CommandFactory>::command();
+    let bin_name = cmd.get_name().to_string();
+    clap_complete::generate(shell, &mut cmd, bin_name, &mut io::stdout());
+    ExitCode::SUCCESS
+}
+
+/// A commented starter `arity.toml` showing every key at its default.
+const STARTER_CONFIG: &str = "\
+# arity configuration. All keys are optional; values shown are the defaults.
+# See https://arity.cc for the full reference.
+
+# Gitignore-style patterns to skip (in addition to the built-in default set:
+# .git/, renv/, revdep/, cpp11.R, RcppExports.R, extendr-wrappers.R,
+# import-standalone-*.R). Applies to both `format` and `lint`.
+# exclude = []
+# default-exclude = true
+
+[format]
+# line-width = 80
+# indent-width = 2
+# line-ending = \"auto\"  # auto | lf | crlf | native
+
+[lint]
+# select = [\"...\"]  # if set, only these rules run
+# ignore = []        # rules to disable
+";
+
+fn run_init(force: bool) -> ExitCode {
+    let anchor = match cwd_anchor() {
+        Ok(anchor) => anchor,
+        Err(code) => return code,
+    };
+    let path = anchor.join(arity::config::CONFIG_FILE_NAME);
+    if path.exists() && !force {
+        eprintln!(
+            "error: {} already exists; pass --force to overwrite",
+            path.display()
+        );
+        return ExitCode::from(2);
+    }
+    match fs::write(&path, STARTER_CONFIG) {
+        Ok(()) => {
+            println!("Wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("error: failed to write {}: {err}", path.display());
             ExitCode::from(2)
         }
     }
