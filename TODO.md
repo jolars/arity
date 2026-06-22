@@ -180,9 +180,35 @@
     structure re-derived by the formatter" into a *complete* roxygen2 parser whose
     CST models block structure too: paragraphs, ordered/unordered lists (and
     nesting), fenced/indented code blocks, ATX/setext headings, block quotes,
-    tables, and the `@examples`/`@usage`/etc. bodies. The formatter (and a future
-    linter/LSP) then consumes one structural model instead of re-deriving it from
-    text with string heuristics.
+    tables, **block-level Rd macros** (see the Rd bullet below), and the
+    `@examples`/`@usage`/etc. bodies. The formatter (and a future linter/LSP) then
+    consumes one structural model instead of re-deriving it from text with string
+    heuristics.
+    - *A roxygen block is Rd-first, markdown-second.* The block's native language
+      is **Rd** (R documentation markup — the same syntax as `.Rd` files);
+      markdown (when enabled) is a convenience layer roxygen2 *translates into*
+      Rd, not a replacement for it. So Rd macros are always in scope, independent
+      of `@md`. The parser needs a real Rd sub-grammar, not just markdown:
+      - *Inline macros* (`\code{}`, `\emph{}`, `\strong{}`, `\link[pkg]{name}`,
+        `\url{}`, `\href{}{}`) — today's line-scoped `ROXYGEN_RD_MACRO` leaf is
+        only this case, and only when balanced on one line.
+      - *Multi-argument macros* (`\item{term}{def}`, `\link[pkg]{name}`,
+        `\method{generic}{class}`, `\href{url}{text}`) — multiple adjacent brace
+        groups, not one.
+      - *Block macros that span many `#'` lines with nested content*
+        (`\describe{ \item{}{} … }`, `\enumerate{ \item … }`, `\itemize{}`,
+        `\tabular{rl}{ … \tab … \cr }`). These must be recognized as one atomic,
+        non-reflowed unit across line boundaries — **the bug the current heuristic
+        formatter exhibits**: a `\describe{…}` after `@format` is treated as loose
+        prose chunks and reflowed into a single run-on paragraph (its nested
+        `\item{}{}` lines rewrapped), because the inline recognizer can't see a
+        multi-line, nested-brace span.
+      - *Verbatim / non-prose content* (`\deqn{}`/`\eqn{}` carry LaTeX-ish math,
+        `\preformatted{}`/`\verb{}` carry literal text, `\tabular` cells use
+        `\tab`/`\cr` separators) — never reflow or markdown-interpret the interior.
+      - *Comments and escapes* (`%` begins an Rd comment to end of line; `\%`,
+        `\{`, `\}`, `\\` are escapes) — relevant to both losslessness and where a
+        macro argument actually ends.
     - *Motivation — single source of truth.* Block structure is currently
       reconstructed twice in `src/formatter/roxygen.rs`: a classifier
       (`is_structured`/`starts_ordered_list_item`) decides what a *line* is, and a
@@ -196,16 +222,18 @@
       A real block CST makes that class of bug structurally impossible: the
       formatter reflows *prose nodes* and never guesses whether a chunk might
       reparse as a marker.
-    - *Flavor — confirm before implementing.* roxygen2's markdown is **not**
-      hand-rolled: it delegates to the `commonmark` R package (a binding to
-      `cmark`/`cmark-gfm`), then post-processes the result into Rd. So the base
-      grammar is CommonMark, but (a) the exact extension set roxygen enables
-      (tables, autolinks, strikethrough, …) must be pinned against roxygen2's
-      actual `commonmark::markdown_*` call, and (b) roxygen layers its own
-      inline translation on top (`` `code` `` → `\code{}`, `[fn()]`/`[text][dest]`
-      → `\link`, `\(`…`\)`/`$`…`$` math, `@`-tag boundaries). Settle the precise
-      flavor (extensions + roxygen deltas) as the first step, because it decides
-      the grammar.
+    - *Markdown flavor — confirm before implementing.* When markdown is on,
+      roxygen2's markdown is **not** hand-rolled: it delegates to the `commonmark`
+      R package (a binding to `cmark`/`cmark-gfm`), then translates the result
+      into Rd (`` `code` `` → `\code{}`, `[fn()]`/`[text][dest]` → `\link`, etc.).
+      So the markdown layer's base grammar is CommonMark, but the exact extension
+      set roxygen enables (tables, autolinks, strikethrough, …) must be pinned
+      against roxygen2's actual `commonmark::markdown_*` call. Settle the precise
+      flavor as an early step, because — together with the Rd grammar above — it
+      decides what the parser accepts. Note markdown and Rd **coexist** in one
+      block (markdown prose can contain inline `\emph{}`; an Rd `\item` body can
+      contain markdown), so the grammar is genuinely the union, not a mode switch
+      between two disjoint languages.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`. arity
       today has **no** markdown-mode awareness (it treats every block as
