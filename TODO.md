@@ -40,6 +40,21 @@
 
 - [ ] Tribbles
 
+- [ ] `line-ending` config (landed for whole-document `format_node`) is **not**
+  applied by `format_range` (`src/formatter/core.rs`), which always emits `\n`.
+  Range/on-type formatting in a CRLF document via the LSP can therefore splice LF
+  into a CRLF buffer (mixed endings). Thread the source/ending into `format_range`
+  like `format_node` does. Low urgency: the CLI `format` path (whole-document) is
+  correct; this only affects LSP range edits in CRLF files.
+
+- [ ] `exclude`/`default-exclude` (landed for the CLI `format`/`lint` walk via
+  `ExcludeFilter` in `src/file_discovery.rs`) is **not** consulted by LSP
+  workspace seeding (`src/lsp/lint_thread.rs` `seed_workspace`), salsa sibling
+  discovery (`src/linter/check.rs`), or `arity index` package discovery
+  (`src/rindex/discover.rs`) — all pass `ExcludeFilter::none()`. Wire the resolved
+  config's excludes through those paths so excluded files don't get indexed/linted
+  in-editor either.
+
 - [ ] Trailing comments are not line suffixes (width-counted). A same-line
   trailing comment counts toward its line's width for fit measurement, so a long
   comment can force an otherwise-fitting group to break (e.g.
