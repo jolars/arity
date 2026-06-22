@@ -100,8 +100,11 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         }
 
         // Blank separator or a structured line: passthrough, and a boundary.
-        // (`@examples` body lines are captured at the top of the loop.)
-        if line.is_blank() || is_structured(&content) {
+        // (`@examples` body lines are captured at the top of the loop.) A line
+        // continues open prose when a tag unit or paragraph is mid-flight; that
+        // gates ordered-list recognition (a non-`1` marker can't interrupt it).
+        let in_paragraph = tag_unit.is_some() || !para.lines.is_empty();
+        if line.is_blank() || is_structured(&content, in_paragraph) {
             flush_pending!();
             emit_normalized(&mut items, &line);
             continue;
@@ -627,7 +630,10 @@ fn is_fence_marker(content: &str) -> bool {
 
 /// Whether `content` (a line's trimmed content) is a structured line that must
 /// not be reflowed: a list item, blockquote, ATX header, table row, or fence.
-fn is_structured(content: &str) -> bool {
+/// `in_paragraph` is whether this line continues open prose (a paragraph or a
+/// tag unit), which gates ordered-list recognition (see
+/// `starts_ordered_list_item`).
+fn is_structured(content: &str, in_paragraph: bool) -> bool {
     content.starts_with("- ")
         || content.starts_with("* ")
         || content.starts_with("+ ")
@@ -635,16 +641,34 @@ fn is_structured(content: &str) -> bool {
         || content.starts_with('#')
         || is_fence_marker(content)
         || content.contains('|')
-        || is_ordered_list_marker(content)
+        || starts_ordered_list_item(content, in_paragraph)
 }
 
-/// Whether `content` begins with an ordered-list marker: digits then `.`/`)`
-/// then a space (e.g. `1. ` or `12) `).
-fn is_ordered_list_marker(content: &str) -> bool {
-    let digits = content.bytes().take_while(u8::is_ascii_digit).count();
-    digits > 0
-        && matches!(content.as_bytes().get(digits), Some(b'.' | b')'))
-        && content.as_bytes().get(digits + 1) == Some(&b' ')
+/// Whether `content` opens an ordered-list item that markdown would honor in
+/// this position. The marker must be followed by a space; and — per CommonMark —
+/// an ordered list whose start number is not 1 *cannot interrupt a paragraph*,
+/// so a non-`1` marker only opens a list when it is not continuing open prose
+/// (`in_paragraph` is false). This keeps a year like `2008.` mid-sentence from
+/// being mistaken for a list (the common false positive).
+fn starts_ordered_list_item(content: &str, in_paragraph: bool) -> bool {
+    match ordered_marker(content) {
+        Some((n, len)) if content.as_bytes().get(len) == Some(&b' ') => !in_paragraph || n == 1,
+        _ => false,
+    }
+}
+
+/// If `s` begins with an ordered-list marker — a run of ASCII digits (CommonMark
+/// caps it at nine) followed by `.` or `)` — return the start number and the
+/// marker's byte length (digits + delimiter). `None` otherwise.
+fn ordered_marker(s: &str) -> Option<(u64, usize)> {
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits > 9 {
+        return None;
+    }
+    match s.as_bytes().get(digits) {
+        Some(b'.' | b')') => Some((s[..digits].parse().ok()?, digits + 1)),
+        _ => None,
+    }
 }
 
 /// Whether a chunk placed at the start of a wrapped line could reparse as a
@@ -655,14 +679,17 @@ fn is_unsafe_line_start(chunk: &str) -> bool {
         || chunk.starts_with('#')
         || chunk.starts_with("```")
         || chunk.starts_with("~~~")
-        || is_bare_ordered_marker(chunk)
+        || is_unsafe_ordered_marker(chunk)
 }
 
-/// Whether `chunk` is a bare ordered-list marker (`1.`, `12)`): digits then a
-/// single `.`/`)`.
-fn is_bare_ordered_marker(chunk: &str) -> bool {
-    let digits = chunk.bytes().take_while(u8::is_ascii_digit).count();
-    digits > 0 && digits + 1 == chunk.len() && matches!(chunk.as_bytes()[digits], b'.' | b')')
+/// Whether `chunk` is a bare ordered-list marker that would interrupt a
+/// paragraph if it migrated to a continuation-line start. A migrated chunk always
+/// lands mid-paragraph, where (per CommonMark) only a `1.`/`1)` marker opens a
+/// list; a higher start number is inert there and safe to move. Mirrors the
+/// `n == 1` gate in `starts_ordered_list_item` so the guard and the reparse
+/// classifier agree.
+fn is_unsafe_ordered_marker(chunk: &str) -> bool {
+    matches!(ordered_marker(chunk), Some((1, len)) if len == chunk.len())
 }
 
 /// Normalize one `#'` line: the marker verbatim, then a single space before the
