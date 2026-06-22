@@ -175,6 +175,60 @@
     LSP follow-ups: fold/semantic-token/completion awareness for roxygen
     (folding already preserved; completion may trigger inside `#'` lines).
 
+  - [ ] **Full roxygen2 + markdown parser (CST-native block structure).** Evolve
+    the parsing foundation above from "tags + inline protected spans, with block
+    structure re-derived by the formatter" into a *complete* roxygen2 parser whose
+    CST models block structure too: paragraphs, ordered/unordered lists (and
+    nesting), fenced/indented code blocks, ATX/setext headings, block quotes,
+    tables, and the `@examples`/`@usage`/etc. bodies. The formatter (and a future
+    linter/LSP) then consumes one structural model instead of re-deriving it from
+    text with string heuristics.
+    - *Motivation — single source of truth.* Block structure is currently
+      reconstructed twice in `src/formatter/roxygen.rs`: a classifier
+      (`is_structured`/`starts_ordered_list_item`) decides what a *line* is, and a
+      migration guard (`is_unsafe_line_start`) decides what a reflowed *chunk* may
+      become — and the two must be kept in lockstep by hand or idempotence breaks.
+      That coupling is exactly what produced the "`2008.` mid-sentence treated as
+      an ordered-list marker, so the `@source` paragraph bailed to verbatim" bug
+      (fixed by collapsing both onto a shared `ordered_marker` predicate + the
+      CommonMark "a non-`1` ordered list can't interrupt a paragraph" rule;
+      fixtures `roxygen_{tag_reflow_year_in_prose,reflow_year_not_list_item,bail_ordered_list}`).
+      A real block CST makes that class of bug structurally impossible: the
+      formatter reflows *prose nodes* and never guesses whether a chunk might
+      reparse as a marker.
+    - *Flavor — confirm before implementing.* roxygen2's markdown is **not**
+      hand-rolled: it delegates to the `commonmark` R package (a binding to
+      `cmark`/`cmark-gfm`), then post-processes the result into Rd. So the base
+      grammar is CommonMark, but (a) the exact extension set roxygen enables
+      (tables, autolinks, strikethrough, …) must be pinned against roxygen2's
+      actual `commonmark::markdown_*` call, and (b) roxygen layers its own
+      inline translation on top (`` `code` `` → `\code{}`, `[fn()]`/`[text][dest]`
+      → `\link`, `\(`…`\)`/`$`…`$` math, `@`-tag boundaries). Settle the precise
+      flavor (extensions + roxygen deltas) as the first step, because it decides
+      the grammar.
+    - *Markdown mode is opt-in.* roxygen markdown is only active under
+      `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`. arity
+      today has **no** markdown-mode awareness (it treats every block as
+      markdown-ish with conservative gates). A real parser must decide whether to
+      read `@md`/`DESCRIPTION` (a project-config input, like the package-graph
+      work under the LSP section) or keep assuming markdown everywhere — and own
+      that decision explicitly.
+    - *Hard constraints (the reason this is non-trivial).* Must preserve
+      losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
+      context-sensitive, whitespace-significant grammar (lazy continuation lines,
+      tight/loose lists, setext underlines, trailing-space hard breaks); must fit
+      the salsa incremental pipeline (Tenet 2) — today roxygen edits already fall
+      back to block/full reparse, which a richer grammar can keep but should not
+      regress; and the inline protected-span leaves
+      (`ROXYGEN_CODE`/`ROXYGEN_RD_MACRO`/`ROXYGEN_MD_LINK`) already carved by
+      `lex_roxygen_prose` are the precedent and the inline layer to build the
+      block layer *over* (promoting tokens → nodes is additive, as already noted
+      under transform 2).
+    - *Scope note.* This subsumes the formatter's `is_structured` family and the
+      `is_unsafe_line_start` guard; it does **not** require a separate Markdown
+      renderer — arity still only needs the structure to decide reflow boundaries
+      and embedded-R extents, not to emit HTML.
+
 ## Linter
 
 Closest precedent: **jarl** (`etiennebacher/jarl`, Rust + rowan + air-parser,
