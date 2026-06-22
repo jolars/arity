@@ -85,6 +85,7 @@ blob
 bookdown
 boot
 brew
+bridgesampling
 brio
 brms
 broom
@@ -186,11 +187,13 @@ gargle
 gdtools
 generics
 gert
+ggdist
 ggforce
 ggfun
 ggiraph
 ggnewscale
 ggplot2
+ggplot2movies
 ggplotify
 ggpubr
 ggraph
@@ -393,6 +396,7 @@ repr
 reprex
 repurrrsive
 reshape2
+restfulr
 reticulate
 rex
 rgl
@@ -407,6 +411,7 @@ rprojroot
 rsample
 rsconnect
 rstan
+rstanarm
 rstantools
 rstatix
 rstudioapi
@@ -422,6 +427,7 @@ selectr
 seriation
 sessioninfo
 sf
+sfheaders
 shape
 shiny
 shinyWidgets
@@ -435,6 +441,8 @@ slam
 slider
 snakecase
 snow
+snowflakeauth
+sodium
 sourcetools
 sp
 spData
@@ -500,6 +508,7 @@ waldo
 warp
 webp
 websocket
+webutils
 whisker
 withr
 wk
