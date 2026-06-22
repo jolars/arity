@@ -175,6 +175,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_tag_examples_unchanged",
         "roxygen_examples_format",
         "roxygen_examples_multiline",
+        "roxygen_examples_trailing_blank",
         "roxygen_examplesif_format",
         "roxygen_examples_dontrun_passthrough",
         "roxygen_examples_idempotent",

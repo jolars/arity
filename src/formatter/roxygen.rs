@@ -290,11 +290,16 @@ impl ExampleBody {
         let lines = std::mem::take(&mut self.lines);
         let marker = self.marker.take().unwrap_or_else(|| "#'".to_string());
 
-        let source = lines
+        // Trailing blank lines are separators before the next tag (or block end),
+        // not code: the embedded-R formatter would strip them, so peel them off
+        // and re-emit them marker-normalized after the formatted body.
+        let body_end = lines
             .iter()
-            .map(content_text)
-            .collect::<Vec<_>>()
-            .join("\n");
+            .rposition(|l| !l.is_blank())
+            .map_or(0, |i| i + 1);
+        let (body, trailing) = lines.split_at(body_end);
+
+        let source = body.iter().map(content_text).collect::<Vec<_>>().join("\n");
 
         // A blank-only body has nothing to format; keep it as-is.
         if source.trim().is_empty() {
@@ -327,10 +332,13 @@ impl ExampleBody {
                 }
             }
             Err(_) => {
-                for line in &lines {
+                for line in body {
                     emit_normalized(items, line);
                 }
             }
+        }
+        for line in trailing {
+            emit_normalized(items, line);
         }
     }
 }
