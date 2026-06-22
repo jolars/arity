@@ -245,7 +245,75 @@ block_sections <- function(src) {
   }, error = function(e) NULL)
 }
 
+# Tags whose rendered Rd is NOT a pure function of the block's own text: they
+# resolve content from another topic, run code, or splice external files. The
+# CST↔roxygen2 projector cannot (and should not) reproduce them, so a case using
+# any of them is out of the projector's scope and is excluded from the pins ---
+# it remains covered by the R↔R fixed-point net instead. Prefix match catches the
+# families (@inherit* / @template* / @eval*). Anchored to a roxygen tag line so a
+# mid-prose mention does not trip it (and any over-match merely excludes a case,
+# which is the safe direction).
+# `@example` (singular) splices an external file; the `example\\b` branch matches
+# it without catching the in-scope `@examples` (plural, inline --- no boundary
+# before its trailing `s`).
+OUT_OF_SCOPE_TAG_RE <- paste0(
+  "(^|\n)[ \t]*#+'[ \t]*",
+  "@(inherit|template|eval|includeRmd|describeIn|rdname|example\\b)"
+)
+
+# Eligible iff the block is a single self-contained topic the projector can be
+# held responsible for: roxygen2 yields exactly one topic and the block uses no
+# out-of-scope tag. Returns the sorted section pin string, or NULL if ineligible,
+# unrenderable, or it errors (e.g. inline `r` code evaluation --- also a feature
+# the projector does not reproduce). The whole evaluation is guarded so one bad
+# case can never abort a batch.
+projector_eligible <- function(src) {
+  if (grepl(OUT_OF_SCOPE_TAG_RE, src, perl = TRUE)) {
+    return(NULL)
+  }
+  tryCatch({
+    topics <- block_to_topics(src)
+    if (length(topics) != 1L) {
+      NULL
+    } else {
+      secs <- topic_sections(format(topics[[1L]]))
+      paste(sort(secs), collapse = "\n")
+    }
+  }, error = function(e) NULL)
+}
+
 main <- function() {
+  if (identical(op, "projector-pins")) {
+    # stdin = the harvested corpus JSONL (one {slug, input} per line); stdout =
+    # JSONL {slug, sections} for the *eligible* subset only (see
+    # projector_eligible). This mints tests/oracle/corpus/roxygen-sections.jsonl,
+    # the harvested half of the projector-parity gate's pins.
+    con <- file("stdin", "r")
+    on.exit(close(con))
+    lines <- readLines(con, warn = FALSE)
+    out <- character(0)
+    for (line in lines) {
+      if (!nzchar(trimws(line))) {
+        next
+      }
+      obj <- jsonlite::fromJSON(line, simplifyVector = TRUE)
+      # roxygen2/parse_Rd occasionally writes stray output to stdout while
+      # processing a block; capture and discard it so only our JSONL reaches the
+      # pins file.
+      secs <- NULL
+      invisible(utils::capture.output(secs <- projector_eligible(obj$input)))
+      if (is.null(secs)) {
+        next
+      }
+      out <- c(out, as.character(jsonlite::toJSON(
+        list(slug = obj$slug, sections = secs),
+        auto_unbox = TRUE
+      )))
+    }
+    writeLines(out[nzchar(out)])
+    return(invisible())
+  }
+
   if (identical(op, "sections-batch")) {
     src <- read_stdin()
     inputs <- jsonlite::fromJSON(src, simplifyVector = TRUE)

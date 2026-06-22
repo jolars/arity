@@ -57,19 +57,25 @@ section.
 Phase 0 **done**. **Phase 1 skeleton done:** the projector + pinned projector-parity
 gate now exist and are the **primary driver** (parser-first, structural, CI-safe).
 `src/roxygen/project_rd.rs` projects the CST to the parser-owned Rd section subtrees;
-`tests/roxygen_projector.rs` diffs that against per-case `<stem>.rdtree` pins
-(minted by the R driver's `block-to-sections` op) — pure Rust, **no R, runs in plain
-`cargo test`**. Allowlist-gated like the harvested corpus
-(`tests/oracle/roxygen-projector-allowlist.txt`). Baseline on the curated corpus:
-**2 matching (allowlisted: `examples`, `param_prose`), 5 divergent (backlog)**. The 5
-divergences are now **structural/parser** gaps, not fixed-point cosmetics — exactly the
-re-pointing. Tasks: `task roxygen-projector` (the gate) + `task roxygen-projector-refresh`
-(re-mint pins). Report: `ROXYGEN_PROJECTOR.md` (this dir).
+`tests/roxygen_projector.rs` diffs that against roxygen2 section pins — pure Rust,
+**no R, runs in plain `cargo test`**, allowlist-gated
+(`tests/oracle/roxygen-projector-allowlist.txt`). **Two pin sources:** the curated dir
+corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset**
+(`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
+`@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
+they stay in the R↔R fixed-point net, not false-positive backlog). Baseline:
+**42 matching (allowlisted), 116 divergent (backlog)** of 158 pinned cases. The
+divergences are **structural/parser** gaps, not fixed-point cosmetics — exactly the
+re-pointing, now a real 116-case worklist. Tasks: `task roxygen-projector` (the gate),
+`task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
+(harvested pins only), `task roxygen-projector-seed` (re-seed allowlist from matches).
+Report: `ROXYGEN_PROJECTOR.md` (this dir).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
-   the fixed-point check is blind to. Curated corpus.
+   the fixed-point check is blind to. Curated corpus + harvested projector-eligible
+   subset (151 cases). The 116 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 7/7 preserving, 0
    blocked. *Meaning, not layout.*
@@ -79,42 +85,36 @@ re-pointing. Tasks: `task roxygen-projector` (the gate) + `task roxygen-projecto
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-22c)
+## Latest session (2026-06-22d)
 
-**Built the Phase 1 projector skeleton — the parser-first structural gate** (user
-redirect: the loop had drifted onto the fixed-point harvested check, which is
-cosmetic-blind and R-dependent, so it could be satisfied by tuning formatter heuristics
-instead of growing the CST). Decision locked with the user: project at the **section-body**
-level, **excluding** roclet-*generated* scaffolding (`\name`/`\alias`/`\usage`/the
-`\arguments` wrapper) — those are generation, not parsing, so reproducing them would make
-the projector a roclet reimplementation rather than a faithful encoding translation.
-Landed: (1) `block-to-sections` + `sections-batch` ops in the R driver (drop the
-roclet-only macro set); (2) `src/roxygen/project_rd.rs` — faithful minimal projector
-(intro→title/description; prose tags `@details`/`@return`→`\value`/`@seealso`/`@source`/
-`@format`/`@section`/…; `@examples` placeholder; a section body is one coalesced `TEXT`,
-so block structure and inline-macro/markdown translation diverge by construction);
-(3) `tests/roxygen_projector.rs` — pure-Rust pinned gate, allowlist-gated; (4) curated
-`.rdtree` pins + `roxygen-projector-allowlist.txt` (seeded `examples`, `param_prose`);
-(5) tasks `roxygen-projector` / `roxygen-projector-refresh`. Baseline 2 match / 5 backlog.
-All guardrails green.
+**Filtered bulk-pin: turned the projector backlog into a real 116-case worklist**
+(user: "why aren't we backlogging the whole corpus and picking it off?"). The harvested
+corpus suits the R↔R fixed-point check (feature resolution cancels) but *not* the
+CST↔roxygen2 projector for cases that resolve content from elsewhere — `@inherit`,
+`@template`, `@eval`, `@example` (external file), inline `` `r` ``, or multiple topics —
+which would be permanent false-positive backlog. So: added `projector_eligible` +
+a `projector-pins` op to the R driver (eligible = exactly 1 topic AND no
+out-of-scope tag; per-case `tryCatch`; `capture.output` to swallow roxygen2's stray
+stdout). Minted `tests/oracle/corpus/roxygen-sections.jsonl` (**151/217 eligible**).
+Extended `tests/roxygen_projector.rs` to evaluate both pin sources; tasks
+`roxygen-projector-pins` + `roxygen-projector-seed`; seeded **42 matching** into the
+allowlist (2 curated + 40 harvested). **116 divergent** remain (the worklist). All
+guardrails green.
 
-**The 5 curated backlog cases** (now ranked structural/parser targets, not fixed-point):
-- `rd_macros` — **inline Rd macros** (`\code{}`/`\emph{}`/`\strong{}`/`\url{}`/`\link[pkg]{}`)
-  → nested nodes. Smallest first step: promote the single-line `ROXYGEN_RD_MACRO` leaf to a
-  node (plan Phase 1's macro-promotion), project it faithfully. **Best first target.**
-- `describe_format`, `itemize_enumerate`, `tabular` — **multi-line block Rd macros**
-  (`\describe`/`\itemize`/`\enumerate`/`\tabular`); brace-balanced across `#'` lines (plan
-  Phase 2). The motivating `\describe` reflow bug lives here.
-- `markdown_list` — **markdown→Rd** (`*x*`→`\emph`, `` `x` ``→`\verb`, `- ` list→`\itemize`),
-  needs `@md` mode-keyed parse (plan Phase 3).
-
-**Next:** `rd_macros` (inline Rd macro promotion). Probe the target shape
-(`… | Rscript tests/oracle/roxygen_oracle.R block-to-sections`), model the macro as a CST
-node in `src/parser/roxygen.rs` (+ syntax/tree_builder/ast), grow a faithful projector arm,
-confirm the case matches its pin (`task roxygen-projector`), add `rd_macros` to the
-projector allowlist, guardrails, commit. **Fix the parser, never the projector.**
+**Next:** pick the highest-leverage root cause from the 116 (start by eyeballing
+`ROXYGEN_PROJECTOR.md` for the most common shape — likely **inline Rd macros**
+`\code`/`\link`/`\emph`, i.e. `rd_macros`, since the skeleton flattens every span to
+text). Model it as a CST node in `src/parser/roxygen.rs`, grow a faithful projector arm,
+re-seed (`task roxygen-projector-seed`), guardrails, commit. **Fix the parser, never the
+projector.** Multi-topic harvested cases are a deliberate future relaxation (emit
+per-topic groups) — not in scope yet.
 
 ## Earlier sessions
+
+- **2026-06-22c:** Built the Phase 1 projector skeleton (`7473f2f`): section-level
+  granularity (excluding roclet scaffolding, settled with the user), `block-to-sections`
+  driver op, `src/roxygen/project_rd.rs`, pure-Rust pinned gate, curated `.rdtree` pins,
+  tasks, docs reframed (projector = primary driver; fixed-point = secondary net).
 
 - **2026-06-22b:** Grew the **harvested** backlog (user redirect: corpus-first,
   allowlist-gated like fatou). Cloned roxygen2 v7.3.3 → `roxygen2-ref/`;

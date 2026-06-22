@@ -52,7 +52,7 @@ tasks:
       - cargo test --test roxygen_projector -- --nocapture
 
   roxygen-projector-refresh:
-    desc: Re-mint the curated corpus's .rdtree section pins from roxygen2 (needs R + roxygen2; run after a deliberate parser change)
+    desc: Re-mint ALL projector section pins from roxygen2 -- curated .rdtree + harvested roxygen-sections.jsonl (needs R + roxygen2; run after a deliberate parser change)
     cmds:
       - |
         for r in tests/oracle/corpus/roxygen/*.R; do
@@ -60,6 +60,26 @@ tasks:
           Rscript tests/oracle/roxygen_oracle.R block-to-sections < "$r" > "$pin" \
             && echo "minted $pin" || echo "SKIP $r (roxygen2 could not process)"
         done
+      - task: roxygen-projector-pins
+
+  roxygen-projector-pins:
+    desc: Mint the harvested corpus's projector-eligible section pins (tests/oracle/corpus/roxygen-sections.jsonl; needs R + roxygen2)
+    cmds:
+      - |
+        Rscript tests/oracle/roxygen_oracle.R projector-pins \
+          < tests/oracle/corpus/roxygen.jsonl > tests/oracle/corpus/roxygen-sections.jsonl
+        echo "minted $(wc -l < tests/oracle/corpus/roxygen-sections.jsonl) eligible pins of $(grep -vc '^$' tests/oracle/corpus/roxygen.jsonl) harvested"
+
+  roxygen-projector-seed:
+    desc: Re-seed the projector allowlist from currently-matching cases (pure Rust, no R; preserves the header)
+    cmds:
+      - |
+        cargo test --test roxygen_projector -- --nocapture 2>/dev/null \
+          | grep '^PASS ' | awk '{print $2}' | sort > /tmp/roxygen-projector-pass.txt
+        { grep -E '^#|^$' tests/oracle/roxygen-projector-allowlist.txt; cat /tmp/roxygen-projector-pass.txt; } \
+          > /tmp/roxygen-projector-allowlist.txt \
+          && mv /tmp/roxygen-projector-allowlist.txt tests/oracle/roxygen-projector-allowlist.txt
+        echo "seeded $(wc -l < /tmp/roxygen-projector-pass.txt) matching cases into the projector allowlist"
 
   roxygen-oracle:
     desc: Measure roxygen2 Rd-preservation fixed point on the curated corpus (writes ROXYGEN_ORACLE.md; needs R + roxygen2)

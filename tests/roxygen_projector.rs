@@ -1,13 +1,19 @@
 //! Projector-parity gate --- the primary, **CI-safe** roxygen2 conformance
 //! engine (the build target of the `roxygen-parity` effort).
 //!
-//! For each curated corpus case (`tests/oracle/corpus/roxygen/<name>.R`) we
-//! project arity's CST to the parser-owned Rd section subtrees
+//! For each case we project arity's CST to the parser-owned Rd section subtrees
 //! (`arity::roxygen::project_rd::project_to_rd`) and diff it against a **pinned**
-//! `<name>.rdtree`, minted once from roxygen2 by `task roxygen-projector-refresh`
-//! (the R driver's `block-to-sections` op). *Pinned ⇒ no R at test time ⇒ this
-//! runs in plain `cargo test`* and is a hard gate, unlike the R-dependent
-//! `#[ignore]`d fixed-point oracle (`tests/roxygen_oracle.rs`).
+//! roxygen2 section tree. Two corpora feed it:
+//!   * the **curated** dir corpus --- `tests/oracle/corpus/roxygen/<stem>.R` vs a
+//!     committed `<stem>.rdtree`;
+//!   * the **harvested** corpus's *projector-eligible* subset ---
+//!     `tests/oracle/corpus/roxygen.jsonl` (single-topic, self-contained blocks;
+//!     `@inherit`/`@template`/`@eval`/… are filtered out as resolve-from-elsewhere)
+//!     vs the minted `tests/oracle/corpus/roxygen-sections.jsonl`.
+//!
+//! Pins are minted from roxygen2 by `task roxygen-projector-refresh`. *Pinned ⇒ no
+//! R at test time ⇒ this runs in plain `cargo test`* and is a hard gate, unlike
+//! the R-dependent `#[ignore]`d fixed-point oracle (`tests/roxygen_oracle.rs`).
 //!
 //! Crucially this compares **structure**, so it sees what the semantic
 //! fixed-point check is blind to: a `\describe` the CST never modeled as a block,
@@ -22,13 +28,30 @@
 //! in). An allowlisted case that regresses --- or whose pin is missing --- fails
 //! the build. Non-allowlisted divergences are the backlog, never a failure.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use arity::roxygen::project_rd::project_to_rd;
 
 const ALLOWLIST_REL: &str = "tests/oracle/roxygen-projector-allowlist.txt";
+/// Harvested corpus inputs (`{slug, input}` per line) and their minted section
+/// pins (`{slug, sections}`, the projector-eligible subset). See
+/// `tests/oracle/roxygen_oracle.R`'s `projector-pins` op.
+const HARVEST_CORPUS_REL: &str = "tests/oracle/corpus/roxygen.jsonl";
+const HARVEST_PINS_REL: &str = "tests/oracle/corpus/roxygen-sections.jsonl";
+
+#[derive(serde::Deserialize)]
+struct HarvestInput {
+    slug: String,
+    input: String,
+}
+
+#[derive(serde::Deserialize)]
+struct HarvestPin {
+    slug: String,
+    sections: String,
+}
 
 #[derive(PartialEq)]
 enum Outcome {
@@ -86,14 +109,26 @@ fn read_allowlist() -> BTreeSet<String> {
     set
 }
 
-fn evaluate() -> Vec<Report> {
+/// Reads a JSONL file into `T` per non-blank line.
+fn load_jsonl<T: serde::de::DeserializeOwned>(rel: &str) -> Vec<T> {
+    let Ok(text) = fs::read_to_string(manifest_path(rel)) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("parse jsonl line"))
+        .collect()
+}
+
+/// The curated dir corpus: `<stem>.R` against its `<stem>.rdtree` pin.
+fn evaluate_curated() -> Vec<Report> {
     collect_corpus()
         .into_iter()
         .map(|(key, r_path, pin_path)| {
             let src = fs::read_to_string(&r_path).unwrap_or_default();
             let projected = project_to_rd(&src);
             let outcome = match fs::read_to_string(&pin_path) {
-                // The pin file carries a trailing newline from the R driver;
+                // The .rdtree pin carries a trailing newline from the R driver;
                 // the projector emits none. Compare trimmed.
                 Ok(pin) if pin.trim_end_matches('\n') == projected => Outcome::Match,
                 Ok(_) => Outcome::Divergent,
@@ -102,6 +137,37 @@ fn evaluate() -> Vec<Report> {
             Report { key, outcome }
         })
         .collect()
+}
+
+/// The harvested corpus's projector-eligible subset: each pinned slug's input
+/// projected and compared to its minted `sections` pin (no trailing newline, so
+/// compared directly). Slugs without a corpus input are skipped.
+fn evaluate_harvested() -> Vec<Report> {
+    let inputs: BTreeMap<String, String> = load_jsonl::<HarvestInput>(HARVEST_CORPUS_REL)
+        .into_iter()
+        .map(|c| (c.slug, c.input))
+        .collect();
+    load_jsonl::<HarvestPin>(HARVEST_PINS_REL)
+        .into_iter()
+        .filter_map(|pin| {
+            let input = inputs.get(&pin.slug)?;
+            let outcome = if project_to_rd(input) == pin.sections {
+                Outcome::Match
+            } else {
+                Outcome::Divergent
+            };
+            Some(Report {
+                key: pin.slug,
+                outcome,
+            })
+        })
+        .collect()
+}
+
+fn evaluate() -> Vec<Report> {
+    let mut reports = evaluate_curated();
+    reports.extend(evaluate_harvested());
+    reports
 }
 
 #[test]
@@ -119,6 +185,14 @@ fn projector_parity() {
     }
 
     write_report(&reports, &allow, matched, divergent, unpinned);
+
+    // Greppable lines for re-seeding the allowlist (`task roxygen-projector-seed`):
+    // every currently-matching case, allowlisted or not.
+    for r in &reports {
+        if r.outcome == Outcome::Match {
+            println!("PASS {}", r.key);
+        }
+    }
 
     // Regression guard: every allowlisted case must still match its pin (and the
     // pin must still exist). Non-allowlisted divergences are the backlog.
@@ -164,13 +238,14 @@ fn write_report(
          Do not edit by hand._\n\n",
     );
     md.push_str(
-        "The **primary, CI-safe** conformance gate: `project_to_rd(parse(x))` vs a pinned \
-         `<name>.rdtree` minted from roxygen2 (`block-to-sections`). It compares Rd **structure**, \
-         so it catches what the semantic fixed-point oracle cannot --- a `\\describe`/`\\itemize`/\
-         `\\tabular` the CST has not modeled as a block, or markdown still flat prose. \
-         Allowlisted cases (`tests/oracle/roxygen-projector-allowlist.txt`) are guarded against \
-         regression; **divergent** cases are the backlog: close them in the *parser*, then ratchet \
-         in.\n\n",
+        "The **primary, CI-safe** conformance gate: `project_to_rd(parse(x))` vs roxygen2 \
+         section pins, over the curated dir corpus (`<stem>.rdtree`) and the harvested \
+         corpus's projector-eligible subset (`roxygen-sections.jsonl`). It compares Rd \
+         **structure**, so it catches what the semantic fixed-point oracle cannot --- a \
+         `\\describe`/`\\itemize`/`\\tabular` the CST has not modeled as a block, or markdown \
+         still flat prose. Allowlisted cases (`tests/oracle/roxygen-projector-allowlist.txt`) \
+         are guarded against regression; **divergent** cases are the backlog: close them in the \
+         *parser*, then ratchet in (`task roxygen-projector-seed`).\n\n",
     );
     md.push_str(&format!(
         "- **Matching (pinned):** {matched}  ({} allowlisted)\n",

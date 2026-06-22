@@ -262,15 +262,19 @@
       heuristics. `src/roxygen/project_rd.rs` projects the CST to the parser-owned
       Rd **section subtrees** (excluding roclet-*generated* scaffolding —
       `\name`/`\alias`/`\usage`/the `\arguments` wrapper); `tests/roxygen_projector.rs`
-      diffs that against pinned `<stem>.rdtree` files (minted by the R driver's
-      `block-to-sections` op) — **pure Rust, no R, runs in plain `cargo test`**,
-      allowlist-gated (`roxygen-projector-allowlist.txt`). Curated baseline:
-      **2 matching / 5 divergent**. The 5 divergences are this bullet's ranked
-      pick-off list: `rd_macros` (inline Rd macros → nodes; smallest), then
-      `describe_format`/`itemize_enumerate`/`tabular` (multi-line block Rd macros —
-      the `\describe` reflow bug), then `markdown_list` (`@md` markdown→Rd). Run
-      `task roxygen-projector`; re-mint pins with `task roxygen-projector-refresh`;
-      ratchet a fixed case into the allowlist. Use the `roxygen-parity` skill.
+      diffs that against pinned roxygen2 section trees — **pure Rust, no R, runs in
+      plain `cargo test`**, allowlist-gated (`roxygen-projector-allowlist.txt`). Two
+      pin sources: the curated dir corpus (`<stem>.rdtree`) and the **harvested
+      corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
+      single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
+      out as resolve-from-elsewhere, kept in the fixed-point net instead). Baseline:
+      **42 matching / 116 divergent** of 158 pinned. The 116 divergences are the
+      worklist; the curated five name the shapes — `rd_macros` (inline Rd macros →
+      nodes; smallest), `describe_format`/`itemize_enumerate`/`tabular` (multi-line
+      block Rd macros — the `\describe` reflow bug), `markdown_list` (`@md`
+      markdown→Rd). Run `task roxygen-projector`; re-mint with
+      `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
+      Use the `roxygen-parity` skill.
     - *Coverage net — harvested fixed-point (landed, secondary).* A harvested oracle
       corpus (`tests/oracle/corpus/roxygen.jsonl`, 217 standalone blocks mined from
       roxygen2's own tests by `scripts/harvest-roxygen-corpus.R`) measures the fixed
