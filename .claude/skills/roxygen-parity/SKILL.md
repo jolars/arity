@@ -14,9 +14,11 @@ description: >-
 ---
 
 Use this skill to advance arity's roxygen2 parser parity, work the oracle
-backlog, or "take the next gap." The full roadmap is the plan at
-`~/.claude/plans/i-want-to-start-snoopy-haven.md` and the `TODO.md` roxygen
-section; this skill is the per-session loop within it.
+backlog, or "take the next gap." **Read `RECAP.md` (this directory) first** — it
+holds the latest session, persistent traps, settled decisions, and the ranked next
+target. The roadmap is `TODO.md` (roxygen section); the full design rationale is the
+plan at `~/.claude/plans/i-want-to-start-snoopy-haven.md` (local). This skill is the
+per-session loop within them.
 
 ## Why strict (read first)
 
@@ -63,16 +65,8 @@ preserving in the fixed-point check --- that is exactly why the projector parity
 gate (which compares *structure*, so it sees the un-atomic `\describe`) is the
 real driver.
 
-## Current status
-
-Phase 0 is **done**: `devenv.nix` declares `roxygen2` + `commonmark`; the R
-driver, seed corpus (`tests/oracle/corpus/roxygen/*.R`), the strict fixed-point
-harness, `tests/roxygen_oracle_blocked.toml`, `task roxygen-oracle`, and
-`ROXYGEN_ORACLE.md` exist; baseline 100% Rd-preserving. **Next build target
-(Phase 1):** the CST nodes for inline/multi-arg Rd macros,
-`src/roxygen/project_rd.rs`, and the pinned projector-parity gate
-(`expected.rdtree` per fixture, `allowlist` + `blocked`, running in plain
-`cargo test`).
+Current phase, baseline, and the ranked next target live in `RECAP.md` (not
+duplicated here, so this skill stays timeless).
 
 ## Failure buckets (classify before fixing)
 
@@ -90,8 +84,8 @@ harness, `tests/roxygen_oracle_blocked.toml`, `task roxygen-oracle`, and
 
 ## Workflow (per session)
 
-1. **Read the plan** (`~/.claude/plans/i-want-to-start-snoopy-haven.md`) for the
-   phase you're in and the next target. Prefer a user-named target.
+1. **Read `RECAP.md`** (traps, settled decisions, latest session, ranked next
+   target). Prefer a user-named target.
 
 2. **Baseline:** `cargo test` is green; `task roxygen-oracle` passes (or note
    the blocked set). "No regression" = still green at the end.
@@ -130,11 +124,22 @@ harness, `tests/roxygen_oracle_blocked.toml`, `task roxygen-oracle`, and
    task roxygen-oracle   # needs R
    ```
 
-10. **Update `TODO.md`** (mark the grammar bullet, trim the backlog) and the
-    plan's phase status. **Commit** (Conventional Commits; `feat(parser)` for
-    new capability, `test(roxygen)` for test-infra-only; the pre-commit hook
-    runs clippy + rustfmt + panache-format --- never `--no-verify`). Don't push
-    unless asked; commit straight to `main` (trunk-based).
+10. **Update `RECAP.md`** (write the new "Latest session", demote the old one to a
+    one-liner under "Earlier sessions", refresh the ranked next target and any new
+    trap) and **`TODO.md`** (mark the grammar bullet, trim the backlog). **Commit**
+    (Conventional Commits; `feat(parser)` for new capability, `test(roxygen)` for
+    test-infra-only; the pre-commit hook runs clippy + rustfmt + panache-format ---
+    never `--no-verify`). Don't push unless asked; commit straight to `main`
+    (trunk-based).
+
+## Session boundaries
+
+`RECAP.md` is the handoff — a committed target with `RECAP.md` updated (the end of
+step 10) is a **clean stop**, so nothing load-bearing lives only in chat. One
+target per context window is the intended cadence; the rolling log exists so the
+next session re-reads `RECAP.md` (step 1) and continues on a lean context. Only
+continue mid-target within one context (uncommitted work, a half-applied fix, a
+failing test you're chasing).
 
 ## Key files
 
@@ -150,6 +155,9 @@ harness, `tests/roxygen_oracle_blocked.toml`, `task roxygen-oracle`, and
 - `tests/oracle/roxygen_oracle.R` --- the R driver (oracle + pin minting).
 - `tests/oracle/corpus/roxygen/` --- corpus;
   `tests/roxygen_oracle_blocked.toml`.
+- `.claude/skills/roxygen-parity/RECAP.md` --- rolling session log (read first).
+- `.claude/skills/roxygen-parity/ROXYGEN_ORACLE.md` --- generated report (regenerated
+  by `task roxygen-oracle`; tracked, do not hand-edit).
 
 ## Traps
 
@@ -161,11 +169,11 @@ harness, `tests/roxygen_oracle_blocked.toml`, `task roxygen-oracle`, and
   the canonical serializer, coalesce only genuine **character** TEXT leaves
   (prose); never merge across list-wrapped groups, or `\item{term}{def}`
   collapses to one atom. (`is_text_leaf` in `roxygen_oracle.R` is the guard.)
-- **`hardbreaks = TRUE`but soft-wrapping prose is semantically safe** ---
+- **`hardbreaks = TRUE` but soft-wrapping prose is semantically safe** ---
   roxygen2 inserts no `\cr` for a soft-wrapped paragraph, so wrapping must
   canonicalize identically (coalesce TEXT runs). A *real* hard break (trailing
   ``  `` / `\\`) is a distinct node --- preserve it.
-- **`\examples`bodies are reformatted R** (Tenet 1), so the serializer replaces
+- **`\examples` bodies are reformatted R** (Tenet 1), so the serializer replaces
   their content with `...`. Don't try to match example text.
 - **Cosmetic ≠ semantic.** Don't expect the fixed-point check to catch layout
   bugs; that's the projector parity gate's job.

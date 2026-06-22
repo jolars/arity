@@ -130,7 +130,8 @@ fn roxygen_oracle_report() {
     let report = render_report(&reports, &blocked, &corpus_label());
     print!("{report}");
 
-    let out_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("ROXYGEN_ORACLE.md");
+    let out_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(".claude/skills/roxygen-parity/ROXYGEN_ORACLE.md");
     fs::write(&out_path, &report).expect("write ROXYGEN_ORACLE.md");
     eprintln!("roxygen-oracle: wrote {}", out_path.display());
 
