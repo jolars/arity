@@ -13,6 +13,20 @@
 #                   stdout = canonical Rd-tree S-expression, one line per topic
 #   block-to-rd     stdin = R source; stdout = raw Rd text per topic (debugging)
 #   rd-to-tree      stdin = Rd text; stdout = canonical Rd-tree S-expression
+#   block-to-sections  stdin = R source; stdout = the *parser-owned* section
+#                   subtrees, one canonical S-expression per line, sorted. Drops
+#                   roclet-*generated* macros (\name, \alias, \usage, the
+#                   \arguments wrapper, \docType, …) that arity's parser neither
+#                   models nor should --- this is what the pure-Rust CST->Rd
+#                   projector (src/roxygen/project_rd.rs) is compared against, so
+#                   it stays a faithful encoding translation, never a roclet
+#                   reimplementation. Sorted because section order in the Rd tree
+#                   is roxygen2's emission order (not document order), which the
+#                   projector deliberately does not replicate; the gate compares a
+#                   set of section subtrees.
+#   sections-batch  stdin = JSON array of R-source strings; stdout = one group per
+#                   element (`@@@<i>` then that element's block-to-sections lines,
+#                   or `!ERROR`). The block-to-sections analog of trees-batch.
 #   trees-batch     stdin = JSON array of R-source strings; stdout = one group per
 #                   element, each `@@@<i>` followed by that element's block-to-tree
 #                   lines (or `@@@<i>` then `!ERROR` if roxygen2 could not process
@@ -186,7 +200,65 @@ block_trees <- function(src) {
   }, error = function(e) NULL)
 }
 
+# Macros roxygen2 *generates* during rendering rather than parsing out of the
+# block: the object name/aliases, the usage synopsis built from the formals, the
+# \arguments wrapper that groups @param/@field items, and topic metadata. arity's
+# parser is not responsible for these (they are generation, not parsing), so the
+# projector excludes them and the section pins must too --- otherwise the gate
+# would force a roxygen2-roclet reimplementation into a "faithful" projector.
+ROCLET_ONLY <- c(
+  "\\name", "\\alias", "\\usage", "\\arguments", "\\docType",
+  "\\keyword", "\\concept", "\\encoding", "\\Rdversion", "\\RdOpts"
+)
+
+# The parser-owned section subtrees of one topic's Rd, each a canonical
+# S-expression, with the roclet-generated macros dropped. Order is not preserved
+# (see the header note); the caller sorts.
+topic_sections <- function(rd_text) {
+  tf <- tempfile(fileext = ".Rd")
+  on.exit(unlink(tf))
+  writeLines(rd_text, tf)
+  rd <- tools::parse_Rd(tf)
+  out <- character(0)
+  for (nd in rd) {
+    tag <- node_tag(nd)
+    if (identical(tag, "COMMENT") || tag %in% ROCLET_ONLY) {
+      next
+    }
+    s <- serialize_node(nd)
+    if (nzchar(s)) {
+      out <- c(out, s)
+    }
+  }
+  out
+}
+
+# All parser-owned sections across a block's topics, sorted, one per line.
+# Returns NULL on error (so the harness records the case as skipped).
+block_sections <- function(src) {
+  tryCatch({
+    topics <- block_to_topics(src)
+    secs <- unlist(lapply(names(topics), function(nm) {
+      topic_sections(format(topics[[nm]]))
+    }))
+    paste(sort(secs), collapse = "\n")
+  }, error = function(e) NULL)
+}
+
 main <- function() {
+  if (identical(op, "sections-batch")) {
+    src <- read_stdin()
+    inputs <- jsonlite::fromJSON(src, simplifyVector = TRUE)
+    out <- character(0)
+    for (i in seq_along(inputs)) {
+      out <- c(out, paste0("@@@", i - 1L))
+      secs <- block_sections(inputs[[i]])
+      out <- c(out, if (is.null(secs)) "!ERROR" else secs)
+    }
+    cat(paste(out, collapse = "\n"), "\n", sep = "")
+    return(invisible())
+  }
+
   if (identical(op, "trees-batch")) {
     src <- read_stdin()
     inputs <- jsonlite::fromJSON(src, simplifyVector = TRUE)
@@ -204,6 +276,15 @@ main <- function() {
 
   if (identical(op, "rd-to-tree")) {
     cat(rd_to_canonical(src), "\n", sep = "")
+    return(invisible())
+  }
+
+  if (identical(op, "block-to-sections")) {
+    secs <- block_sections(src)
+    if (is.null(secs)) {
+      stop("roxygen2 could not process the block")
+    }
+    cat(secs, "\n", sep = "")
     return(invisible())
   }
 

@@ -1,0 +1,4 @@
+(\description (TEXT "Add two numbers"))
+(\examples ...)
+(\title (TEXT "Add two numbers"))
+(\value (TEXT "Their sum."))

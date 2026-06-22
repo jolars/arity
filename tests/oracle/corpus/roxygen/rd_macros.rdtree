@@ -1,0 +1,3 @@
+(\description (TEXT "See") (\code (\link (TEXT "add"))) (TEXT "and") (\emph (TEXT "emphasis")) (TEXT ", plus") (\url (VERB "https://example.com")) (TEXT ". Use") (\strong (TEXT "strong")) (TEXT "text and a") (\link (TEXT "lm")) (TEXT "cross-reference, written long enough to be a candidate for prose reflow at a typical line width."))
+(\title (TEXT "Linking and inline markup"))
+(\value (TEXT "Nothing."))

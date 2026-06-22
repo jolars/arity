@@ -1,0 +1,4 @@
+(\description (TEXT "A paragraph with") (\emph (TEXT "emphasis")) (TEXT ",") (\strong (TEXT "strong")) (TEXT "text, and") (\verb (VERB "inline code")) (TEXT ", written long enough that it could plausibly be rewrapped by a formatter at some width."))
+(\details (TEXT "Steps:") (\itemize (\item) (TEXT "first step") (\item) (TEXT "second step") (\item) (TEXT "third step")))
+(\title (TEXT "Title of the function"))
+(\value (TEXT "Nothing useful."))

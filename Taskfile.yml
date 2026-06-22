@@ -46,6 +46,21 @@ tasks:
     cmds:
       - cargo test --test corpus -- --ignored --nocapture
 
+  roxygen-projector:
+    desc: Projector-parity gate -- CST->Rd sections vs pinned .rdtree (writes ROXYGEN_PROJECTOR.md; pure Rust, no R, the CI-safe conformance gate)
+    cmds:
+      - cargo test --test roxygen_projector -- --nocapture
+
+  roxygen-projector-refresh:
+    desc: Re-mint the curated corpus's .rdtree section pins from roxygen2 (needs R + roxygen2; run after a deliberate parser change)
+    cmds:
+      - |
+        for r in tests/oracle/corpus/roxygen/*.R; do
+          pin="${r%.R}.rdtree"
+          Rscript tests/oracle/roxygen_oracle.R block-to-sections < "$r" > "$pin" \
+            && echo "minted $pin" || echo "SKIP $r (roxygen2 could not process)"
+        done
+
   roxygen-oracle:
     desc: Measure roxygen2 Rd-preservation fixed point on the curated corpus (writes ROXYGEN_ORACLE.md; needs R + roxygen2)
     cmds:

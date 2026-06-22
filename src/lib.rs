@@ -9,6 +9,7 @@ pub mod lsp;
 pub mod parser;
 pub mod project;
 pub mod rindex;
+pub mod roxygen;
 pub mod semantic;
 pub mod syntax;
 pub mod text;

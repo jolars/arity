@@ -41,57 +41,87 @@ reads this first.
 
 Mode-keyed parse (one `markdown_default` salsa input; `@md`/`@noMd` per-block
 override; loose-file default ON). CommonMark reference-spec two-pass (block tree →
-inlines); **no crate dependency** (panache secondary). Projector test-only
-`pub(crate)` but the **primary conformance engine**. Markdown = CommonMark core + GFM
-`table`, `hardbreaks = TRUE`. Full design rationale:
+inlines); **no crate dependency** (panache secondary). Projector is the **primary
+conformance engine** (now built, Phase 1 skeleton); `pub` rather than `pub(crate)`
+because the gate lives in an integration-test crate (`tests/roxygen_projector.rs`),
+but it remains a **test-only faithful diagnostic** — no user-facing CLI, never patched
+to pass. **Projection granularity: section-body subtrees, excluding roclet-generated
+scaffolding** (`\name`/`\alias`/`\usage`/`\arguments`) — settled with the user
+(2026-06-22c); the `block-to-sections` op drops the same set so the two stay aligned.
+Markdown = CommonMark core + GFM `table`, `hardbreaks = TRUE`. Full design rationale:
 `~/.claude/plans/i-want-to-start-snoopy-haven.md` (local); roadmap: `TODO.md` roxygen
 section.
 
 ## Progress
 
-Phase 0 **done**. **Two corpora now:** (1) the small **curated** dir corpus
-(`tests/oracle/corpus/roxygen/*.R`, 7 cases) — strict, allowlist-or-`blocked`, 100%
-Rd-preserving, 0 blocked; (2) the large **harvested** corpus
-(`tests/oracle/corpus/roxygen.jsonl`, 217 cases mined from roxygen2's own tests) — gated
-**opt-in** by `tests/oracle/roxygen-allowlist.txt`, fatou-style: **212 preserving
-(allowlisted), 4 divergent (the backlog), 1 skipped**. The 4 divergent slugs are the
-concrete pick-off list. Projector + pinned projector-parity gate: **still not built**
-(Phase 1) — but the harvested fixed-point gate already drives parser/formatter growth
-without it. Reports: `task roxygen-oracle` → `ROXYGEN_ORACLE.md`; `task roxygen-harvest`
-→ `ROXYGEN_HARVEST.md` (both in this dir).
+Phase 0 **done**. **Phase 1 skeleton done:** the projector + pinned projector-parity
+gate now exist and are the **primary driver** (parser-first, structural, CI-safe).
+`src/roxygen/project_rd.rs` projects the CST to the parser-owned Rd section subtrees;
+`tests/roxygen_projector.rs` diffs that against per-case `<stem>.rdtree` pins
+(minted by the R driver's `block-to-sections` op) — pure Rust, **no R, runs in plain
+`cargo test`**. Allowlist-gated like the harvested corpus
+(`tests/oracle/roxygen-projector-allowlist.txt`). Baseline on the curated corpus:
+**2 matching (allowlisted: `examples`, `param_prose`), 5 divergent (backlog)**. The 5
+divergences are now **structural/parser** gaps, not fixed-point cosmetics — exactly the
+re-pointing. Tasks: `task roxygen-projector` (the gate) + `task roxygen-projector-refresh`
+(re-mint pins). Report: `ROXYGEN_PROJECTOR.md` (this dir).
 
-## Latest session (2026-06-22b)
+**Three checks, three roles** (don't conflate):
+1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
+   parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
+   the fixed-point check is blind to. Curated corpus.
+2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
+   `#[ignore]`d) — strict semantic preservation of the formatter; 7/7 preserving, 0
+   blocked. *Meaning, not layout.*
+3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
+   `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
+   (212 preserving, 4 divergent, 1 skipped). A coverage net, **not** the parser driver
+   (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
+   `task roxygen-harvest`.
 
-Grew the corpus into a real backlog (user redirect: corpus-first, allowlist-gated like
-fatou's `parser-parity`, not block-everything). Cloned roxygen2 v7.3.3 to `roxygen2-ref/`
-(gitignored reference, like `air/`); pin in `tests/oracle/.roxygen2-source`. New
-`scripts/harvest-roxygen-corpus.R` walks the roxygen2 test suite's ASTs for
-`roc_proc_text(rd_roclet(), "…")` source strings, dedents, drops unrenderable, dedups,
-and emits slug-keyed JSONL (slug = `rx-`+sha1 prefix, stable across re-harvest → allowlist
-survives). Added a `trees-batch` op to the driver (one R process for the whole corpus →
-5 s, not ~10 min). Extended `tests/roxygen_oracle.rs`: `roxygen_harvested_report` (triage
-+ greppable `PASS <slug>` + writes `ROXYGEN_HARVEST.md`) and `roxygen_harvested_allowlist`
-(regression guard: only allowlisted slugs must stay preserving; backlog ≠ failure). Tasks
-`roxygen-harvest` + `roxygen-harvest-seed`. Seeded 212 PASS slugs. All guardrails green;
-curated corpus untouched (still strict 7/7).
+## Latest session (2026-06-22c)
 
-**The 4 divergent backlog slugs** (all `@md` block-structure — the "full markdown/Rd block
-parser" TODO item; arity reflows what should stay atomic/nested):
-- `rx-91e67e79` — **nested markdown lists** (ordered w/ itemized sublist, mixed) — best
-  first target (high value, pure structure).
-- `rx-0a1710c0` — multi-line `\preformatted{}` whose body looks like markdown (must stay
-  verbatim).
-- `rx-daf9322f` — raw HTML **block** (`<p>…</p>` lines).
-- `rx-299f50fb` — inline raw HTML (`<img …>`) mid-paragraph.
+**Built the Phase 1 projector skeleton — the parser-first structural gate** (user
+redirect: the loop had drifted onto the fixed-point harvested check, which is
+cosmetic-blind and R-dependent, so it could be satisfied by tuning formatter heuristics
+instead of growing the CST). Decision locked with the user: project at the **section-body**
+level, **excluding** roclet-*generated* scaffolding (`\name`/`\alias`/`\usage`/the
+`\arguments` wrapper) — those are generation, not parsing, so reproducing them would make
+the projector a roclet reimplementation rather than a faithful encoding translation.
+Landed: (1) `block-to-sections` + `sections-batch` ops in the R driver (drop the
+roclet-only macro set); (2) `src/roxygen/project_rd.rs` — faithful minimal projector
+(intro→title/description; prose tags `@details`/`@return`→`\value`/`@seealso`/`@source`/
+`@format`/`@section`/…; `@examples` placeholder; a section body is one coalesced `TEXT`,
+so block structure and inline-macro/markdown translation diverge by construction);
+(3) `tests/roxygen_projector.rs` — pure-Rust pinned gate, allowlist-gated; (4) curated
+`.rdtree` pins + `roxygen-projector-allowlist.txt` (seeded `examples`, `param_prose`);
+(5) tasks `roxygen-projector` / `roxygen-projector-refresh`. Baseline 2 match / 5 backlog.
+All guardrails green.
 
-**Next:** pick `rx-91e67e79` (nested lists). Inspect `format()` output vs raw, find where
-the reflow breaks nesting, fix in the formatter (or parser if structural), confirm the
-slug flips to PASS, re-seed the allowlist (`task roxygen-harvest-seed`), guardrails,
-commit. The projector (Phase 1) is still the eventual CI-safe engine, but the harvested
-gate is the active driver now.
+**The 5 curated backlog cases** (now ranked structural/parser targets, not fixed-point):
+- `rd_macros` — **inline Rd macros** (`\code{}`/`\emph{}`/`\strong{}`/`\url{}`/`\link[pkg]{}`)
+  → nested nodes. Smallest first step: promote the single-line `ROXYGEN_RD_MACRO` leaf to a
+  node (plan Phase 1's macro-promotion), project it faithfully. **Best first target.**
+- `describe_format`, `itemize_enumerate`, `tabular` — **multi-line block Rd macros**
+  (`\describe`/`\itemize`/`\enumerate`/`\tabular`); brace-balanced across `#'` lines (plan
+  Phase 2). The motivating `\describe` reflow bug lives here.
+- `markdown_list` — **markdown→Rd** (`*x*`→`\emph`, `` `x` ``→`\verb`, `- ` list→`\itemize`),
+  needs `@md` mode-keyed parse (plan Phase 3).
+
+**Next:** `rd_macros` (inline Rd macro promotion). Probe the target shape
+(`… | Rscript tests/oracle/roxygen_oracle.R block-to-sections`), model the macro as a CST
+node in `src/parser/roxygen.rs` (+ syntax/tree_builder/ast), grow a faithful projector arm,
+confirm the case matches its pin (`task roxygen-projector`), add `rd_macros` to the
+projector allowlist, guardrails, commit. **Fix the parser, never the projector.**
 
 ## Earlier sessions
 
+- **2026-06-22b:** Grew the **harvested** backlog (user redirect: corpus-first,
+  allowlist-gated like fatou). Cloned roxygen2 v7.3.3 → `roxygen2-ref/`;
+  `scripts/harvest-roxygen-corpus.R` mines 217 slug-keyed blocks from roxygen2's tests;
+  `trees-batch` driver op; `roxygen_harvested_{report,allowlist}`; tasks
+  `roxygen-harvest{,-seed}`; seeded 212 PASS. (This built the broad fixed-point net — now
+  reframed as a coverage backlog, *not* the parser driver; the projector is.)
 - **2026-06-22a:** Planned the effort; built + committed Phase 0 (`acfd0b6`): R driver,
   seed curated corpus, strict fixed-point harness, `blocked.toml`, `task roxygen-oracle`,
   devenv R. Reframed soft → strict, adopted fatou's allowlist+blocked model (`b39e3d3`).

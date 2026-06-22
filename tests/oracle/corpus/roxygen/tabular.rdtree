@@ -1,0 +1,3 @@
+(\description (TEXT "Rd tabular content"))
+(\details (\tabular (TEXT "rl") (GRP (TEXT "a") (\tab) (TEXT "the first row") (\cr) (TEXT "b") (\tab) (TEXT "the second row") (\cr))))
+(\title (TEXT "Rd tabular content"))

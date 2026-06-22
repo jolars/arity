@@ -1,14 +1,15 @@
 ---
 name: roxygen-parity
 description: >-
-  Grow arity's roxygen2 + markdown CST toward roxygen2 itself using the
-  differential oracle. roxygen2 renders #' blocks to .Rd; the projector at
-  src/roxygen/project_rd.rs walks arity's CST and emits the same Rd-tree shape,
-  and the harness in tests/roxygen_oracle.rs diffs each fixture against a pinned
-  expected tree (allowlist) or records a deliberate divergence (blocked). Use
-  this skill to pick the next gap from the corpus, add the grammar plus projector
-  support, lock it with a fixture + pinned tree, and ratchet the now-passing case
-  into the allowlist. The projector is a test-only faithful diagnostic: a
+  Grow arity's roxygen2 + markdown CST toward roxygen2 itself using a strict
+  differential oracle (parser work, not formatting). roxygen2 renders #' blocks to
+  .Rd. Use this skill to pick the next gap from the corpus, add the grammar plus
+  projector support, lock it with a fixture + pinned tree, and ratchet the
+  now-passing case into the allowlist. The projector at src/roxygen/project_rd.rs
+  walks arity's CST
+  and emits the parser-owned Rd section subtrees; the pure-Rust gate in
+  tests/roxygen_projector.rs diffs that against a pinned <stem>.rdtree (no R, plain
+  cargo test), allowlist-gated. The projector is a test-only faithful diagnostic: a
   divergence means the CST (or the encoding translation) is wrong — never patch
   the projector to make a case pass; fix the parser.
 ---
@@ -33,31 +34,41 @@ unaccounted divergence is RED.
 
 ## The oracle in one paragraph
 
-`parse(text)` → lossless rowan CST. `project_to_rd(&cst)` (planned,
-`src/roxygen/project_rd.rs`) projects it into roxygen2's Rd-tree shape --- e.g.
-`(\format (TEXT "...") (\describe (\item (TEXT "a") (TEXT "first"))))` ---
-translating only *encoding* differences and leaving genuine *modeling*
-divergences faithful so they surface. The R driver
-`tests/oracle/roxygen_oracle.R` is the source of truth: `block-to-tree` runs
-`roxygen2::roc_proc_text(rd_roclet(), src)` → `format()` → `tools::parse_Rd` → a
-canonical S-expression (drops srcref, the `% Generated` header, and prose
-line-wrapping; `\examples` bodies become `...`). The grammar is **Rd-first,
+`parse(text)` → lossless rowan CST. `project_to_rd(text)`
+(`src/roxygen/project_rd.rs`, built) projects it into roxygen2's Rd **section**
+shape --- e.g. `(\format (TEXT "...") (\describe (\item (TEXT "a") (TEXT "first"))))`
+--- translating only *encoding* differences and leaving genuine *modeling*
+divergences faithful so they surface, while **excluding** roclet-*generated*
+scaffolding (`\name`/`\alias`/`\usage`/`\arguments`). The R driver
+`tests/oracle/roxygen_oracle.R` is the source of truth: `block-to-sections` runs
+`roxygen2::roc_proc_text(rd_roclet(), src)` → `format()` → `tools::parse_Rd` → the
+parser-owned section subtrees as a canonical, sorted S-expression (drops srcref, the
+`% Generated` header, prose line-wrapping, and the roclet-only macros; `\examples`
+bodies become `...`). (`block-to-tree` is the whole-topic variant the fixed-point
+net still uses.) The grammar is **Rd-first,
 markdown-second** (markdown only under the resolved `@md` mode); markdown is
 CommonMark core + the GFM `table` extension, `hardbreaks = TRUE`.
 
 ## Two checks (don't conflate them)
 
-1. **Projector parity --- the primary engine, a CI-safe hard gate (planned, the
-   build target).** `project_to_rd(parse(x))` vs a **pinned** `expected.rdtree`
-   minted once by roxygen2 and committed per fixture. *Pinned ⇒ no R at test
-   time ⇒ plain `cargo test`.* R only **refreshes** pins (a script; pinned to a
-   roxygen2 version in `.roxygen2-source`). This is what grows the parser.
-2. **Formatter fixed-point --- a strict correctness check (exists today,
+1. **Projector parity --- the primary engine, a CI-safe hard gate (EXISTS, Phase 1
+   skeleton; `tests/roxygen_projector.rs`).** `project_to_rd(parse(x))`
+   (`src/roxygen/project_rd.rs`) vs a **pinned** `<stem>.rdtree` minted once by
+   roxygen2 and committed per curated case. *Pinned ⇒ no R at test time ⇒ plain
+   `cargo test`* (`task roxygen-projector`). R only **refreshes** pins
+   (`task roxygen-projector-refresh`, the driver's `block-to-sections` op; roxygen2
+   version in `.roxygen2-source`). It compares **section-body subtrees**, excluding
+   roclet-*generated* scaffolding (`\name`/`\alias`/`\usage`/`\arguments`) — those
+   are generation, not parsing. This is what grows the parser; allowlist-gated by
+   `tests/oracle/roxygen-projector-allowlist.txt`.
+2. **Formatter fixed-point --- a secondary correctness net (exists,
    `tests/roxygen_oracle.rs`).** `roxygen2(format(x)) == roxygen2(x)` at tree
    level: formatting must never change rendered Rd. `#[ignore]`d only because it
    shells out to R; **strict** (asserts) when R is present; accepted divergences
-   in `tests/roxygen_oracle_blocked.toml`. Its pure-Rust analog once the
-   projector exists is `project(parse(x)) == project(parse(format(x)))` (no R).
+   in `tests/roxygen_oracle_blocked.toml`. **Cosmetic-blind by design** (a reflowed
+   `\describe` renders identical Rd → passes here), so it is *not* the parser-growth
+   driver — the projector is. Its pure-Rust analog is
+   `project(parse(x)) == project(parse(format(x)))` (no R).
 
 It checks **meaning, not layout.** A cosmetic defect that renders to the *same*
 Rd (e.g. a `\describe{}` reflowed into a run-on in non-markdown mode) is
@@ -87,11 +98,12 @@ duplicated here, so this skill stays timeless).
 1. **Read `RECAP.md`** (traps, settled decisions, latest session, ranked next
    target). Prefer a user-named target.
 
-2. **Baseline:** `cargo test` is green; `task roxygen-oracle` passes (curated dir
-   corpus, strict — or note the blocked set); `task roxygen-harvest` guards the
-   harvested corpus's allowlist and reports its backlog (the **divergent** slugs).
-   "No regression" = still green + the allowlist count holds-or-grows at the end.
-   The harvested backlog (`ROXYGEN_HARVEST.md`) is the usual source of next targets.
+2. **Baseline:** `cargo test` is green — this includes `task roxygen-projector`
+   (the pure-Rust projector-parity gate; **the primary driver**), whose
+   `ROXYGEN_PROJECTOR.md` backlog (the **divergent** curated cases) is the usual
+   source of next targets. Optionally, with R: `task roxygen-oracle` (curated
+   fixed-point, strict) and `task roxygen-harvest` (broad coverage net). "No
+   regression" = still green + the projector allowlist count holds-or-grows at the end.
 
 3. **Probe roxygen2 for the exact target shape** before coding --- it is the
    oracle:
@@ -111,20 +123,23 @@ duplicated here, so this skill stays timeless).
    review + accept the snapshot (`cargo insta review`). **Read the CST before
    accepting.**
 
-7. **Wire into the oracle corpus + pin** --- add the case under
-   `tests/oracle/corpus/roxygen/`, mint its `expected.rdtree` from roxygen2 (the
-   refresh script), and confirm `project_to_rd(parse(x))` matches it exactly.
+7. **Wire into the projector corpus + pin** --- add the case as
+   `tests/oracle/corpus/roxygen/<stem>.R`, mint its `<stem>.rdtree` from roxygen2
+   (`task roxygen-projector-refresh`), and confirm `project_to_rd(parse(x))`
+   matches it exactly (`task roxygen-projector`). Grow a **faithful** projector arm
+   for any new node — never widen the projector to paper over a CST gap.
 
-8. **Ratchet** --- move the now-passing case into the allowlist; for a genuine
-   deliberate divergence, `blocked` it with a rationale instead. Pass count must
-   go **up** (or hold); unaccounted divergences must stay 0.
+8. **Ratchet** --- add the now-matching case's stem to
+   `tests/oracle/roxygen-projector-allowlist.txt`. Matching count must go **up** (or
+   hold); allowlisted regressions must stay 0. (The curated fixed-point corpus keeps
+   its `blocked` discipline for deliberate semantic divergences.)
 
 9. **Guardrails:**
    ```sh
-   cargo test
+   cargo test                 # includes the projector gate (no R)
    cargo clippy --all-targets --all-features -- -D warnings
    cargo fmt -- --check
-   task roxygen-oracle   # needs R
+   task roxygen-oracle        # optional, needs R (fixed-point net)
    ```
 
 10. **Update `RECAP.md`** (write the new "Latest session", demote the old one to a
@@ -152,12 +167,19 @@ failing test you're chasing).
 - `src/parser/tree_builder.rs` --- `TokKind` → `SyntaxKind` (single source of
   truth).
 - `src/ast/nodes.rs` --- typed wrappers (`ast_node!`).
-- `src/roxygen/project_rd.rs` --- the projector (**to build**). Faithful; never
-  patched to pass.
-- `tests/roxygen_oracle.rs` --- harness: curated `roxygen_oracle_report` (strict) +
-  harvested `roxygen_harvested_{report,allowlist}` (opt-in). `#[ignore]`d; skip-if-no-R.
-- `tests/oracle/roxygen_oracle.R` --- the R driver (`block-to-tree`/`rd-to-tree`/
-  `trees-batch` (batched harvest) + pin minting).
+- `src/roxygen/project_rd.rs` --- the projector (**built, Phase 1 skeleton**).
+  Faithful encoding translation; never patched to pass. The growth site for new
+  faithful arms as the parser learns structure.
+- `tests/roxygen_projector.rs` --- **the primary gate** (pure Rust, no R, plain
+  `cargo test`): `project_to_rd(parse(x))` vs pinned `<stem>.rdtree`, allowlist-gated;
+  writes `ROXYGEN_PROJECTOR.md`.
+- `tests/oracle/roxygen-projector-allowlist.txt` --- projector allowlist (by file
+  stem); `tests/oracle/corpus/roxygen/<stem>.rdtree` --- the pins.
+- `tests/roxygen_oracle.rs` --- secondary R harness: curated `roxygen_oracle_report`
+  (strict) + harvested `roxygen_harvested_{report,allowlist}` (opt-in). `#[ignore]`d;
+  skip-if-no-R.
+- `tests/oracle/roxygen_oracle.R` --- the R driver (`block-to-sections`/`sections-batch`
+  for projector pins; `block-to-tree`/`rd-to-tree`/`trees-batch` for fixed-point).
 - `tests/oracle/corpus/roxygen/` --- **curated** dir corpus (strict);
   `tests/roxygen_oracle_blocked.toml`.
 - `tests/oracle/corpus/roxygen.jsonl` --- **harvested** corpus (slug-keyed), gated by

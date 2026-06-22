@@ -1,0 +1,4 @@
+(\description (TEXT "A dataset used to exercise the roxygen oracle."))
+(\format (TEXT "A data frame with two columns:") (\describe (\item (TEXT "a") (TEXT "the first column, described at some length to exercise wrapping")) (\item (TEXT "b") (TEXT "the second column"))))
+(\source (TEXT "Somewhere reputable."))
+(\title (TEXT "Example dataset"))

@@ -256,16 +256,33 @@
       `is_unsafe_line_start` guard; it does **not** require a separate Markdown
       renderer — arity still only needs the structure to decide reflow boundaries
       and embedded-R extents, not to emit HTML.
-    - *Backlog driver (landed).* A harvested oracle corpus
-      (`tests/oracle/corpus/roxygen.jsonl`, 217 standalone blocks mined from roxygen2's
-      own tests by `scripts/harvest-roxygen-corpus.R`) measures the fixed point
-      `roxygen2(format(x)) == roxygen2(x)` per case, gated opt-in by
-      `tests/oracle/roxygen-allowlist.txt` (fatou `parser-parity` model). Baseline:
-      **212 preserving / 4 divergent / 1 skipped**. The 4 divergent slugs are this
-      bullet's concrete pick-off list, all `@md` block structure: nested lists
-      (`rx-91e67e79`), multi-line `\preformatted{}` (`rx-0a1710c0`), raw-HTML block
-      (`rx-daf9322f`), inline raw HTML (`rx-299f50fb`). Run `task roxygen-harvest`;
-      ratchet fixes in via `task roxygen-harvest-seed`. Use the `roxygen-parity` skill.
+    - *Primary driver — projector parity (Phase 1 skeleton landed).* This is
+      **parser work**: the gate compares the *CST's structure* to roxygen2, so it
+      forces the structure into the parser rather than rewarding formatter
+      heuristics. `src/roxygen/project_rd.rs` projects the CST to the parser-owned
+      Rd **section subtrees** (excluding roclet-*generated* scaffolding —
+      `\name`/`\alias`/`\usage`/the `\arguments` wrapper); `tests/roxygen_projector.rs`
+      diffs that against pinned `<stem>.rdtree` files (minted by the R driver's
+      `block-to-sections` op) — **pure Rust, no R, runs in plain `cargo test`**,
+      allowlist-gated (`roxygen-projector-allowlist.txt`). Curated baseline:
+      **2 matching / 5 divergent**. The 5 divergences are this bullet's ranked
+      pick-off list: `rd_macros` (inline Rd macros → nodes; smallest), then
+      `describe_format`/`itemize_enumerate`/`tabular` (multi-line block Rd macros —
+      the `\describe` reflow bug), then `markdown_list` (`@md` markdown→Rd). Run
+      `task roxygen-projector`; re-mint pins with `task roxygen-projector-refresh`;
+      ratchet a fixed case into the allowlist. Use the `roxygen-parity` skill.
+    - *Coverage net — harvested fixed-point (landed, secondary).* A harvested oracle
+      corpus (`tests/oracle/corpus/roxygen.jsonl`, 217 standalone blocks mined from
+      roxygen2's own tests by `scripts/harvest-roxygen-corpus.R`) measures the fixed
+      point `roxygen2(format(x)) == roxygen2(x)` per case, gated opt-in by
+      `tests/oracle/roxygen-allowlist.txt`. Baseline **212 preserving / 4 divergent /
+      1 skipped**. This is a broad *semantic*-preservation net for the formatter, **not**
+      the parser-growth driver: it is cosmetic-blind (a reflowed `\describe` renders
+      identical Rd, so it passes here) and R-dependent (`#[ignore]`d). Its 4 divergent
+      `@md` slugs (nested lists `rx-91e67e79`, `\preformatted{}` `rx-0a1710c0`, raw-HTML
+      block `rx-daf9322f`, inline raw HTML `rx-299f50fb`) are downstream of the same
+      block-structure work. Run `task roxygen-harvest`; ratchet via
+      `task roxygen-harvest-seed`.
 
 ## Linter
 

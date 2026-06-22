@@ -1,0 +1,3 @@
+(\description (TEXT "Rd lists outside markdown mode"))
+(\details (\itemize (\item) (TEXT "First bullet, long enough to be a wrapping candidate at most widths.") (\item) (TEXT "Second bullet.")) (\enumerate (\item) (TEXT "Step one.") (\item) (TEXT "Step two.")))
+(\title (TEXT "Rd lists outside markdown mode"))

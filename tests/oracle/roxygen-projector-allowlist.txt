@@ -1,0 +1,10 @@
+# roxygen2 projector-parity allowlist --- curated corpus cases (by file stem,
+# tests/oracle/corpus/roxygen/<stem>.R) whose CST projection currently matches
+# the pinned <stem>.rdtree. Guarded against regression by `roxygen_projector.rs`
+# (pure Rust, no R, runs in plain `cargo test`).
+#
+# Divergent cases in ROXYGEN_PROJECTOR.md are the backlog: close the structural
+# gap in the *parser*, refresh/keep the pin, then add the stem here. A faithful
+# divergence means the CST is wrong --- never patch the projector to pass.
+examples
+param_prose

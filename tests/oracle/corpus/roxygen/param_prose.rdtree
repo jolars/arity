@@ -1,0 +1,3 @@
+(\description (TEXT "Compute a summary"))
+(\title (TEXT "Compute a summary"))
+(\value (TEXT "A summary object."))
