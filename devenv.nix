@@ -41,6 +41,11 @@
         pkgs.rWrapper.override {
           packages = with pkgs.rPackages; [
             languageserver
+            # roxygen2 + commonmark back the roxygen oracle harness
+            # (tests/roxygen_oracle.rs / tests/oracle/roxygen_oracle.R). Declared
+            # explicitly rather than relying on languageserver pulling them in.
+            roxygen2
+            commonmark
           ];
         }
       );

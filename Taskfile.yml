@@ -46,6 +46,11 @@ tasks:
     cmds:
       - cargo test --test corpus -- --ignored --nocapture
 
+  roxygen-oracle:
+    desc: Measure roxygen2 Rd-preservation fixed point (writes ROXYGEN_ORACLE.md; needs R + roxygen2)
+    cmds:
+      - cargo test --test roxygen_oracle -- --ignored --nocapture
+
   bench:
     desc: Benchmark formatter speed vs. air on large files (writes BENCH.md)
     cmds:
