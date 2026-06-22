@@ -454,7 +454,6 @@ fn cli_lint_check_passes_when_no_findings() {
 
     let output = run_cli([
         "lint",
-        "--check",
         dir.path().to_str().expect("temp dir path should be utf-8"),
     ]);
 
@@ -474,7 +473,6 @@ fn cli_lint_reports_concise_output() {
 
     let output = run_cli([
         "lint",
-        "--check",
         "--output=concise",
         dir.path().to_str().expect("temp dir path should be utf-8"),
     ]);
@@ -496,7 +494,6 @@ fn cli_lint_reports_pretty_output_by_default() {
 
     let output = run_cli([
         "lint",
-        "--check",
         dir.path().to_str().expect("temp dir path should be utf-8"),
     ]);
 
@@ -531,7 +528,6 @@ fn cli_lint_reports_parse_diagnostics_pathway() {
 
     let output = run_cli([
         "lint",
-        "--check",
         dir.path().to_str().expect("temp dir path should be utf-8"),
     ]);
 
@@ -542,12 +538,37 @@ fn cli_lint_reports_parse_diagnostics_pathway() {
 }
 
 #[test]
-fn cli_lint_requires_paths() {
+fn cli_lint_empty_stdin_is_clean() {
+    // With no paths and empty stdin there is nothing to lint: exit 0.
     let output = run_cli(["lint"]);
-    assert!(!output.status.success());
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_lint_reads_stdin_findings() {
+    let output = run_cli_stdin(
+        ["lint", "--stdin-filename", "buf.R", "--output=concise"],
+        "x == NA\n",
+    );
+    assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("at least one input path"));
+    assert!(
+        stderr.contains("buf.R:1:1:") && stderr.contains("equals-na"),
+        "got stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_lint_stdin_fix_writes_to_stdout() {
+    // `--fix` over stdin emits the fixed source to stdout (like `format`).
+    let output = run_cli_stdin(["lint", "--fix"], "any(is.na(x))\n");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout, "anyNA(x)\n");
 }
 
 #[test]
@@ -558,7 +579,6 @@ fn cli_lint_emits_json_output() {
 
     let output = run_cli([
         "lint",
-        "--check",
         "--output=json",
         dir.path().to_str().expect("temp dir path should be utf-8"),
     ]);
@@ -1543,4 +1563,22 @@ fn run_cli<const N: usize>(args: [&str; N]) -> std::process::Output {
         .stderr(Stdio::piped())
         .output()
         .expect("failed to run cli")
+}
+
+fn run_cli_stdin<const N: usize>(args: [&str; N], stdin_input: &str) -> std::process::Output {
+    use std::io::Write as _;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_arity"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn cli");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin_input.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("failed to wait for cli")
 }

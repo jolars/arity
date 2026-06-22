@@ -73,14 +73,17 @@ pub enum Commands {
         exclude: Vec<String>,
     },
     /// Lint .R files
+    ///
+    /// Reads stdin when no paths are given. Exit codes: 0 = no findings,
+    /// 1 = findings (or files blocked by parse errors), 2 = usage/IO error.
     Lint {
-        /// Input file or path
+        /// Input file(s) or path(s) (stdin if omitted)
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
 
-        /// Exit non-zero when any findings are reported (no effect on output)
-        #[arg(long)]
-        check: bool,
+        /// Filename to report for stdin input (for diagnostics)
+        #[arg(long, value_name = "PATH")]
+        stdin_filename: Option<PathBuf>,
 
         /// Apply safe autofixes in place and report what remains
         #[arg(long)]

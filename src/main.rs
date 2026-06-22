@@ -62,7 +62,7 @@ fn main() -> ExitCode {
         ),
         Commands::Lint {
             paths,
-            check,
+            stdin_filename,
             fix,
             unsafe_fixes,
             select,
@@ -71,7 +71,7 @@ fn main() -> ExitCode {
             output,
         } => run_lint(
             paths,
-            check,
+            stdin_filename,
             FixOptions { fix, unsafe_fixes },
             LintOverrides { select, ignore },
             exclude,
@@ -537,7 +537,7 @@ fn run_format_write_paths(
 
 fn run_lint(
     paths: Vec<PathBuf>,
-    check: bool,
+    stdin_filename: Option<PathBuf>,
     fix_opts: FixOptions,
     overrides: LintOverrides,
     cli_excludes: Vec<String>,
@@ -562,6 +562,11 @@ fn run_lint(
     }
     if !overrides.ignore.is_empty() {
         config.lint.ignore = overrides.ignore;
+    }
+
+    // No paths: lint a single document read from stdin.
+    if paths.is_empty() {
+        return run_lint_stdin(&config.lint, fix_opts, stdin_filename, output);
     }
 
     let exclude =
@@ -603,21 +608,10 @@ fn run_lint(
             }
 
             if !all_findings.is_empty() {
-                let mode = match output {
-                    LintOutput::Pretty => OutputMode::Pretty,
-                    LintOutput::Concise => OutputMode::Concise,
-                    LintOutput::Json => OutputMode::Json,
-                };
                 let source_for = |path: &PathBuf| fs::read_to_string(path).ok();
-                let rendered = render_findings(&all_findings, mode, &source_for);
-                if matches!(mode, OutputMode::Json) {
-                    println!("{rendered}");
-                } else {
-                    eprint!("{rendered}");
-                }
+                emit_findings(&all_findings, output, &source_for);
             }
 
-            let _ = check;
             let has_findings = !all_findings.is_empty();
             if has_parse_blockers || has_findings {
                 ExitCode::from(1)
@@ -664,7 +658,24 @@ fn apply_fixes_to_paths(
 /// Run the fixpoint loop on a single file and write it back if anything changed.
 /// Returns the number of individual fixes applied.
 fn fix_file(path: &Path, config: &LintConfig, include_unsafe: bool) -> io::Result<usize> {
-    let mut content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(path)?;
+    let (fixed, total) = fix_source(path, &content, config, include_unsafe);
+    if total > 0 {
+        fs::write(path, &fixed)?;
+    }
+    Ok(total)
+}
+
+/// Apply safe (and optionally unsafe) autofixes to `content` to a fixpoint,
+/// returning the rewritten source and the number of fixes applied. `path` is a
+/// label only — no disk access.
+fn fix_source(
+    path: &Path,
+    content: &str,
+    config: &LintConfig,
+    include_unsafe: bool,
+) -> (String, usize) {
+    let mut content = content.to_string();
     let mut total = 0usize;
     for _ in 0..MAX_FIX_ITERATIONS {
         let Ok(diagnostics) = check_document(path, &content, config) else {
@@ -681,10 +692,69 @@ fn fix_file(path: &Path, config: &LintConfig, include_unsafe: bool) -> io::Resul
         total += outcome.applied;
         content = outcome.output;
     }
-    if total > 0 {
-        fs::write(path, &content)?;
+    (content, total)
+}
+
+/// Map the CLI output choice to the renderer's [`OutputMode`] and emit the
+/// findings: JSON goes to stdout (machine-readable), human formats to stderr.
+fn emit_findings(
+    findings: &[arity::linter::Diagnostic],
+    output: LintOutput,
+    source_for: &dyn Fn(&PathBuf) -> Option<String>,
+) {
+    let mode = match output {
+        LintOutput::Pretty => OutputMode::Pretty,
+        LintOutput::Concise => OutputMode::Concise,
+        LintOutput::Json => OutputMode::Json,
+    };
+    let rendered = render_findings(findings, mode, source_for);
+    if matches!(mode, OutputMode::Json) {
+        println!("{rendered}");
+    } else {
+        eprint!("{rendered}");
     }
-    Ok(total)
+}
+
+/// Lint a single document read from stdin. With `--fix`, the fixed source is
+/// written to stdout (mirroring `format`'s stdin behavior) and remaining
+/// findings are reported; otherwise findings are reported and the source is not
+/// echoed. Returns exit 1 when findings remain.
+fn run_lint_stdin(
+    config: &LintConfig,
+    fix_opts: FixOptions,
+    stdin_filename: Option<PathBuf>,
+    output: LintOutput,
+) -> ExitCode {
+    let input = match read_input(None) {
+        Ok(input) => input,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::from(2);
+        }
+    };
+    let path = stdin_filename.unwrap_or_else(|| PathBuf::from("-"));
+
+    let content = if fix_opts.fix {
+        let (fixed, _) = fix_source(&path, &input, config, fix_opts.unsafe_fixes);
+        print!("{fixed}");
+        fixed
+    } else {
+        input
+    };
+
+    let findings = match check_document(&path, &content, config) {
+        Ok(findings) => findings,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::from(2);
+        }
+    };
+    if findings.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let source_for = |p: &PathBuf| (p == &path).then(|| content.clone());
+    emit_findings(&findings, output, &source_for);
+    ExitCode::from(1)
 }
 
 fn plural(n: usize) -> &'static str {

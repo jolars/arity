@@ -41,14 +41,18 @@ To format your code, you can use:
 
 To lint your code, you can use:
 
-- `arity lint --check <path> [<path> ...]`
+- `arity lint <path> [<path> ...]`
+
+`arity lint` reads from stdin when given no paths, and exits non-zero when it
+reports any findings.
 
 ## Editor integration
 
-`arity lsp` starts a stdio-based language server. It currently advertises only
-formatting (`textDocument/formatting`); diagnostics and other capabilities are
-not implemented yet. Configuration is read from `arity.toml` discovered from
-each file's parent directory, matching the CLI.
+`arity lsp` starts a stdio-based language server offering formatting,
+diagnostics with quick fixes, hover, completion, signature help,
+go-to-definition and references, rename, document and workspace symbols,
+semantic tokens, folding, and call hierarchy. Configuration is read from
+`arity.toml` discovered from each file's parent directory, matching the CLI.
 
 Helix example (`~/.config/helix/languages.toml`):
 

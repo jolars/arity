@@ -64,15 +64,17 @@ Format .R files
 
 Lint .R files
 
+Reads stdin when no paths are given. Exit codes: 0 = no findings, 1 = findings (or files blocked by parse errors), 2 = usage/IO error.
+
 **Usage:** `arity lint [OPTIONS] [PATH]...`
 
 ###### **Arguments:**
 
-* `<PATH>` — Input file or path
+* `<PATH>` — Input file(s) or path(s) (stdin if omitted)
 
 ###### **Options:**
 
-* `--check` — Exit non-zero when any findings are reported (no effect on output)
+* `--stdin-filename <PATH>` — Filename to report for stdin input (for diagnostics)
 * `--fix` — Apply safe autofixes in place and report what remains
 * `--unsafe-fixes` — Also apply fixes that may change behavior (requires --fix)
 * `--select <RULE_ID>` — Only run these rules (overrides config `select`); repeatable or comma-separated

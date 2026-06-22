@@ -81,7 +81,7 @@ cat file.R | cargo run -- parse --verify --quiet   # losslessness round-trip che
 cargo run -- format <file.R>                 # format to stdout (stdin if omitted)
 cargo run -- format --check <path>           # check without writing (multi-path requires --check)
 cargo run -- format --verify <file.R>        # check idempotence; does not write
-cargo run -- lint --check <path>             # lint currently REQUIRES --check
+cargo run -- lint <path>                     # lint (stdin if no path); exits 1 on findings
 ```
 
 The documentation site (`book/`) is an mdBook. Its reference pages are

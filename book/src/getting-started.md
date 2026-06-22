@@ -37,10 +37,10 @@ Check formatting without writing changes:
 arity format --check file.R
 ```
 
-Lint a file:
+Lint a file (or pipe from stdin):
 
 ```bash
-arity lint --check file.R
+arity lint file.R
 ```
 
 Run the language server over stdio (for editor integration):
