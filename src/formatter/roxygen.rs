@@ -308,9 +308,12 @@ impl ExampleBody {
             .line_width
             .saturating_sub(indent_cols + marker.len() + 1)
             .max(1);
+        // Only the width budget differs; `.lines()` below strips the embedded
+        // output's newlines, so its line ending is immaterial (the outer pass
+        // applies the configured one).
         let body_style = FormatStyle {
             line_width: budget,
-            indent_width: style.indent_width,
+            ..style
         };
 
         match format_with_style(&source, body_style) {

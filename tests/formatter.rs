@@ -230,6 +230,7 @@ fn wraps_binary_expression_when_width_is_exceeded() {
     let style = FormatStyle {
         line_width: 17,
         indent_width: 2,
+        ..FormatStyle::default()
     };
     let expected = "alpha <- beta +\n  gamma_delta\n";
     let formatted = format_with_style(input, style).expect("format should succeed");
@@ -256,6 +257,7 @@ fn wraps_call_arguments_when_width_is_exceeded() {
     let style = FormatStyle {
         line_width: 22,
         indent_width: 2,
+        ..FormatStyle::default()
     };
     let expected = "call(\n  first_arg,\n  second_argument,\n  third\n)\n";
     let formatted = format_with_style(input, style).expect("format should succeed");
@@ -271,6 +273,7 @@ fn preserves_trailing_comments_when_wrapping_calls() {
     let style = FormatStyle {
         line_width: 18,
         indent_width: 2,
+        ..FormatStyle::default()
     };
     let expected = "fn_name(\n  argument,\n  second\n) # keep\n";
     let formatted = format_with_style(input, style).expect("format should succeed");
@@ -286,6 +289,7 @@ fn block_contents_are_width_aware() {
     let style = FormatStyle {
         line_width: 20,
         indent_width: 2,
+        ..FormatStyle::default()
     };
     let expected = "if (x) {\n  total <- alpha +\n    gamma_delta\n}\n";
     let formatted = format_with_style(input, style).expect("format should succeed");

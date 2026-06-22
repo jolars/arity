@@ -20,7 +20,7 @@ pub(crate) fn format_edits_via_db(
             return Some(None);
         }
         let root = snapshot.parsed_tree(file);
-        let formatted = format_node(&root, style, text.ends_with('\n')).ok();
+        let formatted = format_node(&root, style, text).ok();
         Some(formatted.map(|formatted| edits_for_formatted(text, formatted)))
     }));
     match cached {

@@ -11,4 +11,4 @@ pub(crate) mod trivia;
 
 pub use check::{ChangedFile, CheckError, CheckResult, check_paths, check_paths_with_style};
 pub use core::{FormatError, RangeFormatted, format, format_node, format_range, format_with_style};
-pub use style::FormatStyle;
+pub use style::{FormatStyle, LineEnding};

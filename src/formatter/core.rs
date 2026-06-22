@@ -13,7 +13,7 @@ use super::rules::expressions::{
     ir_assignment_expr, ir_binary_expr, ir_paren_expr, ir_subset_expr, ir_unary_expr,
 };
 use super::rules::functions::{ir_call_expr, ir_function_expr};
-use super::style::FormatStyle;
+use super::style::{FormatStyle, apply_line_ending};
 use super::trivia::{is_trivia as is_trivia_kind, split_lines};
 use crate::ast::{
     AssignmentExpr, AstNode, BinaryExpr, BlockExpr, CallExpr, ForExpr, FunctionExpr, IfExpr,
@@ -74,28 +74,33 @@ pub fn format_with_style(input: &str, style: FormatStyle) -> Result<String, Form
         });
     }
 
-    format_node(&parse_output.cst, style, input.ends_with('\n'))
+    format_node(&parse_output.cst, style, input)
 }
 
 /// Format an already-parsed CST. The caller is responsible for rejecting input
 /// that failed to parse (the diagnostics live next to the green tree in the
 /// salsa cache, not on the node); this entry only guards against stray `ERROR`
-/// tokens. `trailing_newline` preserves a final newline the source had.
+/// tokens. `source` is the original text the CST was parsed from: its trailing
+/// newline is preserved, and (for `line-ending = "auto"`) its first line ending
+/// selects the output's newline style.
 ///
 /// Used by the language server's read path, which formats off the cached parse
 /// tree in its salsa database rather than re-parsing the buffer.
 pub fn format_node(
     root: &SyntaxNode,
     style: FormatStyle,
-    trailing_newline: bool,
+    source: &str,
 ) -> Result<String, FormatError> {
     validate_supported_tokens(root)?;
     let ctx = FormatContext::new(style);
     let mut formatted = format_root(root, ctx)?;
-    if trailing_newline && !formatted.ends_with('\n') {
+    if source.ends_with('\n') && !formatted.ends_with('\n') {
         formatted.push('\n');
     }
-    Ok(formatted)
+    Ok(apply_line_ending(
+        &formatted,
+        style.line_ending.resolve(source),
+    ))
 }
 
 /// A region reformatted by [`format_range`]: the byte range to replace and the
@@ -594,8 +599,47 @@ mod tests {
         ] {
             let via_text = format_with_style(input, style);
             let parsed = parse(input);
-            let via_node = format_node(&parsed.cst, style, input.ends_with('\n'));
+            let via_node = format_node(&parsed.cst, style, input);
             assert_eq!(via_text, via_node, "mismatch for {input:?}");
         }
+    }
+
+    #[test]
+    fn line_ending_auto_mirrors_source() {
+        use crate::formatter::LineEnding;
+        let style = FormatStyle {
+            line_ending: LineEnding::Auto,
+            ..FormatStyle::default()
+        };
+        // A CRLF source round-trips to CRLF output; an LF source stays LF.
+        assert_eq!(
+            format_with_style("x<-1\r\ny<-2\r\n", style).unwrap(),
+            "x <- 1\r\ny <- 2\r\n"
+        );
+        assert_eq!(
+            format_with_style("x<-1\ny<-2\n", style).unwrap(),
+            "x <- 1\ny <- 2\n"
+        );
+    }
+
+    #[test]
+    fn line_ending_explicit_overrides_source() {
+        use crate::formatter::LineEnding;
+        let crlf = FormatStyle {
+            line_ending: LineEnding::Crlf,
+            ..FormatStyle::default()
+        };
+        assert_eq!(
+            format_with_style("x<-1\ny<-2\n", crlf).unwrap(),
+            "x <- 1\r\ny <- 2\r\n"
+        );
+        let lf = FormatStyle {
+            line_ending: LineEnding::Lf,
+            ..FormatStyle::default()
+        };
+        assert_eq!(
+            format_with_style("x<-1\r\ny<-2\r\n", lf).unwrap(),
+            "x <- 1\ny <- 2\n"
+        );
     }
 }

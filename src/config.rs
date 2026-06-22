@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::formatter::FormatStyle;
+use crate::formatter::{FormatStyle, LineEnding};
 
 pub const CONFIG_FILE_NAME: &str = "arity.toml";
 
@@ -38,6 +38,9 @@ pub struct FormatConfig {
     pub line_width: u32,
     #[serde(default = "default_indent_width")]
     pub indent_width: u32,
+    /// The newline style the formatter emits. See [`LineEndingConfig`].
+    #[serde(default)]
+    pub line_ending: LineEndingConfig,
 }
 
 impl Default for FormatConfig {
@@ -45,6 +48,35 @@ impl Default for FormatConfig {
         Self {
             line_width: DEFAULT_LINE_WIDTH,
             indent_width: DEFAULT_INDENT_WIDTH,
+            line_ending: LineEndingConfig::default(),
+        }
+    }
+}
+
+/// The `line-ending` key under `[format]`. A thin, serde-named mirror of
+/// [`LineEnding`] (the formatter's own type), kept separate so the TOML spelling
+/// (`kebab-case`) is a config concern, not baked into the formatter API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineEndingConfig {
+    /// Detect per file from the source; default `\n` when none is present.
+    #[default]
+    Auto,
+    /// Always `\n` (Unix).
+    Lf,
+    /// Always `\r\n` (Windows).
+    Crlf,
+    /// `\n` on Unix, `\r\n` on Windows.
+    Native,
+}
+
+impl From<LineEndingConfig> for LineEnding {
+    fn from(value: LineEndingConfig) -> Self {
+        match value {
+            LineEndingConfig::Auto => LineEnding::Auto,
+            LineEndingConfig::Lf => LineEnding::Lf,
+            LineEndingConfig::Crlf => LineEnding::Crlf,
+            LineEndingConfig::Native => LineEnding::Native,
         }
     }
 }
@@ -130,6 +162,7 @@ impl From<&FormatConfig> for FormatStyle {
         FormatStyle {
             line_width: config.line_width as usize,
             indent_width: config.indent_width as usize,
+            line_ending: config.line_ending.into(),
         }
     }
 }
@@ -317,6 +350,34 @@ mod tests {
         let style = FormatStyle::from(&config.format);
         assert_eq!(style.indent_width, 4);
         assert_eq!(style.line_width, 80);
+    }
+
+    #[test]
+    fn line_ending_defaults_to_auto() {
+        let config = parse("[format]\n").expect("parse");
+        assert_eq!(config.format.line_ending, LineEndingConfig::Auto);
+        let style = FormatStyle::from(&config.format);
+        assert_eq!(style.line_ending, LineEnding::Auto);
+    }
+
+    #[test]
+    fn parses_line_ending_variants() {
+        for (key, expected) in [
+            ("auto", LineEndingConfig::Auto),
+            ("lf", LineEndingConfig::Lf),
+            ("crlf", LineEndingConfig::Crlf),
+            ("native", LineEndingConfig::Native),
+        ] {
+            let text = format!("[format]\nline-ending = \"{key}\"\n");
+            let config = parse(&text).unwrap_or_else(|e| panic!("parse {key}: {e}"));
+            assert_eq!(config.format.line_ending, expected, "for {key}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_line_ending() {
+        let err = parse("[format]\nline-ending = \"mac\"\n").expect_err("unknown variant");
+        assert!(matches!(err, ConfigError::Parse { .. }));
     }
 
     #[test]

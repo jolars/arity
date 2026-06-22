@@ -575,6 +575,7 @@ impl Printer {
 
 #[cfg(test)]
 mod tests {
+    use super::super::style::LineEnding;
     use super::*;
 
     /// A block that always breaks: `{`, an indented body, then `}`.
@@ -614,6 +615,7 @@ mod tests {
         let style = FormatStyle {
             line_width: 5,
             indent_width: 2,
+            line_ending: LineEnding::Lf,
         };
         let printer = Printer::new(style);
         assert_eq!(
@@ -670,6 +672,7 @@ mod tests {
         let style = FormatStyle {
             line_width: 10,
             indent_width: 2,
+            line_ending: LineEnding::Lf,
         };
         let printer = Printer::new(style);
         let ir = Ir::conditional_group([nested_breakable_group(20)]);
@@ -684,6 +687,7 @@ mod tests {
         let style = FormatStyle {
             line_width: 5,
             indent_width: 2,
+            line_ending: LineEnding::Lf,
         };
         let printer = Printer::new(style);
         // Candidate: `verylong` then a Line. In Flat: `verylong ` overflows;
@@ -701,6 +705,7 @@ mod tests {
         let style = FormatStyle {
             line_width: 6,
             indent_width: 2,
+            line_ending: LineEnding::Lf,
         };
         let printer = Printer::new(style);
         // c0 doesn't fit; c1 fits; c2 (fallback) never reached.
@@ -716,6 +721,7 @@ mod tests {
         let style = FormatStyle {
             line_width: 4,
             indent_width: 2,
+            line_ending: LineEnding::Lf,
         };
         let printer = Printer::new(style);
         // Neither earlier candidate fits; the last is rendered broken (its
