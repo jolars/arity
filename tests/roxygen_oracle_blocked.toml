@@ -1,0 +1,20 @@
+# roxygen2 oracle blocked list (see tests/roxygen_oracle.rs).
+#
+# A roxygen-oracle divergence means arity's formatting changed what roxygen2
+# RENDERS --- a behavior-preservation bug, not a soft "deviation." The default
+# expectation is that every corpus case is Rd-preserving; an unaccounted
+# divergence FAILS the check (when R is present).
+#
+# This file is the escape hatch: cases where the divergence is a deliberate,
+# defensible choice (or a known bug deferred to a tracked phase) are BLOCKED here,
+# each with a one-line rationale, so the gate stays green while the divergence
+# stays visible and accounted for. Prefer fixing the formatter (so the case
+# becomes preserving and leaves this file) over blocking it.
+#
+# Format: one `key = "rationale"` line per blocked case, where `key` is the corpus
+# file stem (default corpus) or the corpus-relative path (custom
+# ROXYGEN_ORACLE_CORPUS). Hand-parsed as a tiny TOML subset; `#` comments and a
+# `[section]` header line are ignored.
+
+[blocked]
+# (none --- every corpus case is currently Rd-preserving)

@@ -1,10 +1,16 @@
-//! roxygen2 differential oracle (NOT a quality gate).
+//! roxygen2 differential oracle (a strict correctness check).
 //!
 //! roxygen2 turns `#'` blocks into `.Rd`. This harness uses that as a one-
-//! directional oracle for arity's roxygen handling, in the spirit of the
-//! air-compat gauge (`tests/air_compat.rs`). It is `#[ignore]`d --- it does not
-//! run in `cargo test` and never fails the build --- and it skips cleanly when
-//! R/roxygen2 is not installed. Invoke it explicitly:
+//! directional oracle for arity's roxygen handling. Unlike the air-compat gauge
+//! (`tests/air_compat.rs`), which is a *soft* target subordinate to Tenet 1, this
+//! is a **correctness invariant**: if arity's formatting changes what roxygen2
+//! renders, arity silently altered the documentation --- a behavior-preservation
+//! bug, of the same family as a losslessness or idempotence failure. A divergence
+//! is not "a tension to record"; it must be fixed, or explicitly **blocked** in
+//! `tests/roxygen_oracle_blocked.toml` with a rationale. The check is `#[ignore]`d
+//! only because it shells out to R/roxygen2 (absent in the base CI), *not* because
+//! divergence is acceptable: when R is present it is strict and **fails on any
+//! unaccounted divergence**. It skips cleanly when R is missing. Invoke it:
 //!
 //! ```sh
 //! task roxygen-oracle
@@ -80,7 +86,7 @@ fn roxygen_oracle_report() {
         return;
     }
 
-    let allowlist = load_allowlist();
+    let blocked = load_blocked();
     let mut reports: Vec<FileReport> = Vec::new();
 
     for (key, path) in &corpus {
@@ -121,12 +127,30 @@ fn roxygen_oracle_report() {
         });
     }
 
-    let report = render_report(&reports, &allowlist, &corpus_label());
+    let report = render_report(&reports, &blocked, &corpus_label());
     print!("{report}");
 
     let out_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("ROXYGEN_ORACLE.md");
     fs::write(&out_path, &report).expect("write ROXYGEN_ORACLE.md");
     eprintln!("roxygen-oracle: wrote {}", out_path.display());
+
+    // Strict gate: R was available, so any divergence that is not explicitly
+    // blocked is a behavior-preservation bug. Fail loudly (the report is already
+    // written for triage). Block a case in `roxygen_oracle_blocked.toml` only
+    // when the divergence is a deliberate, documented choice.
+    let unaccounted: Vec<&str> = reports
+        .iter()
+        .filter(|r| matches!(r.outcome, Outcome::Divergent) && !blocked.contains_key(&r.key))
+        .map(|r| r.key.as_str())
+        .collect();
+    assert!(
+        unaccounted.is_empty(),
+        "roxygen-oracle: {} unaccounted divergence(s) --- arity's formatting changed the \
+         rendered Rd for: {}. Fix the formatter, or block each in \
+         tests/roxygen_oracle_blocked.toml with a rationale.",
+        unaccounted.len(),
+        unaccounted.join(", "),
+    );
 }
 
 // --- corpus ---------------------------------------------------------------
@@ -227,11 +251,12 @@ fn oracle_tree(rscript: &Path, driver: &Path, input: &str) -> Option<String> {
 // --- allowlist ------------------------------------------------------------
 
 /// Loads the deviations allowlist: `key = "reason"` lines (a simple TOML subset,
-/// hand-parsed to avoid a dev-dependency), mirroring `air_compat_allowlist.toml`.
-fn load_allowlist() -> BTreeMap<String, String> {
+/// hand-parsed to avoid a dev-dependency). Keys map a corpus case to the reason
+/// its divergence is an accepted, deliberate choice rather than a bug.
+fn load_blocked() -> BTreeMap<String, String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("roxygen_oracle_allowlist.toml");
+        .join("roxygen_oracle_blocked.toml");
     let mut map = BTreeMap::new();
     let Ok(text) = fs::read_to_string(&path) else {
         return map;
@@ -255,14 +280,14 @@ fn load_allowlist() -> BTreeMap<String, String> {
 
 fn render_report(
     reports: &[FileReport],
-    allowlist: &BTreeMap<String, String>,
+    blocked: &BTreeMap<String, String>,
     corpus_label: &str,
 ) -> String {
     let mut preserving = 0usize;
     let mut skipped_arity = 0usize;
     let mut skipped_r = 0usize;
-    let mut intentional: Vec<(&str, &str)> = Vec::new();
-    let mut unexplained: Vec<&str> = Vec::new();
+    let mut blocked_hits: Vec<(&str, &str)> = Vec::new();
+    let mut unaccounted: Vec<&str> = Vec::new();
 
     for r in reports {
         match r.outcome {
@@ -270,16 +295,16 @@ fn render_report(
             Outcome::SkippedArity => skipped_arity += 1,
             Outcome::SkippedR => skipped_r += 1,
             Outcome::Divergent => {
-                if let Some(reason) = allowlist.get(&r.key) {
-                    intentional.push((&r.key, reason));
+                if let Some(reason) = blocked.get(&r.key) {
+                    blocked_hits.push((&r.key, reason));
                 } else {
-                    unexplained.push(&r.key);
+                    unaccounted.push(&r.key);
                 }
             }
         }
     }
 
-    let measured = preserving + intentional.len() + unexplained.len();
+    let measured = preserving + blocked_hits.len() + unaccounted.len();
     let preserve_pct = if measured == 0 {
         100.0
     } else {
@@ -290,21 +315,21 @@ fn render_report(
     s.push_str("# roxygen2 oracle (differential)\n\n");
     s.push_str("_Generated by `task roxygen-oracle` (`tests/roxygen_oracle.rs`). Do not edit by hand._\n\n");
     s.push_str(
-        "This is a **soft gauge, not a quality gate**. It measures the semantic fixed point \
-         `roxygen2(arity_format(x)) == roxygen2(x)` at the Rd parse-tree level: whether arity's \
-         formatting preserves what roxygen2 renders. It measures *meaning*, not layout --- a \
-         cosmetic defect that renders to the same Rd (e.g. a reflowed `\\describe{}` in non-markdown \
-         mode) shows up here as preserving; catching those is the formatter fixtures' and the future \
-         CST-to-Rd projector's job.\n\n",
+        "A **strict correctness check** (not a soft target): it asserts the semantic fixed point \
+         `roxygen2(arity_format(x)) == roxygen2(x)` at the Rd parse-tree level --- arity's \
+         formatting must never change what roxygen2 renders. An unaccounted divergence **fails** \
+         (when R is present). It checks *meaning*, not layout: a cosmetic defect that renders to the \
+         same Rd (e.g. a reflowed `\\describe{}` in non-markdown mode) is preserving here --- those \
+         are the formatter fixtures' and the future (pinned, CI-safe) CST-to-Rd projector's job.\n\n",
     );
     s.push_str(&format!("- **Corpus:** {corpus_label}\n"));
     s.push_str(&format!(
         "- **Rd-preserving:** {preserve_pct:.1}%  ({preserving}/{measured} files)\n"
     ));
     s.push_str(&format!(
-        "- **Intentional divergences:** {}  ·  **Unexplained divergences:** {}\n",
-        intentional.len(),
-        unexplained.len()
+        "- **Blocked divergences:** {}  ·  **Unaccounted divergences (gate failures):** {}\n",
+        blocked_hits.len(),
+        unaccounted.len()
     ));
     if skipped_arity + skipped_r > 0 {
         s.push_str(&format!(
@@ -313,27 +338,28 @@ fn render_report(
     }
     s.push('\n');
 
-    if !unexplained.is_empty() {
-        unexplained.sort_unstable();
-        s.push_str("## Unexplained divergences (triage queue)\n\n");
+    if !unaccounted.is_empty() {
+        unaccounted.sort_unstable();
+        s.push_str("## Unaccounted divergences (gate failures)\n\n");
         s.push_str(
-            "Each is **either a bug to fix** (arity's formatting changed the rendered docs --- \
-             that should not happen) **or a deliberate, defensible choice to record** (add it to \
-             `tests/roxygen_oracle_allowlist.toml` with a reason).\n\n",
+            "**These fail the check.** arity's formatting changed the rendered Rd --- that must not \
+             happen. Fix the formatter so the case becomes preserving, or, if the divergence is a \
+             deliberate and documented choice, block it in `tests/roxygen_oracle_blocked.toml` with \
+             a rationale.\n\n",
         );
         s.push_str("| File |\n|---|\n");
-        for key in &unexplained {
+        for key in &unaccounted {
             s.push_str(&format!("| `{key}` |\n"));
         }
         s.push('\n');
     }
 
-    if !intentional.is_empty() {
-        intentional.sort_by(|a, b| a.0.cmp(b.0));
-        s.push_str("## Recorded intentional divergences\n\n");
-        s.push_str("Listed in `tests/roxygen_oracle_allowlist.toml`.\n\n");
-        s.push_str("| File | Reason |\n|---|---|\n");
-        for (key, reason) in &intentional {
+    if !blocked_hits.is_empty() {
+        blocked_hits.sort_by(|a, b| a.0.cmp(b.0));
+        s.push_str("## Blocked divergences (accepted, with rationale)\n\n");
+        s.push_str("Listed in `tests/roxygen_oracle_blocked.toml`.\n\n");
+        s.push_str("| File | Rationale |\n|---|---|\n");
+        for (key, reason) in &blocked_hits {
             s.push_str(&format!("| `{key}` | {reason} |\n"));
         }
         s.push('\n');
