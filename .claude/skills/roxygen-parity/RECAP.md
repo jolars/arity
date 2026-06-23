@@ -157,8 +157,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-`@md` block lists, 2026-06-23 Stage 6): **65 matching (all allowlisted), 94 divergent
-(backlog)** of 159 pinned cases. The
+the title-as-description fallback, 2026-06-23 Stage 7): **76 matching (all allowlisted),
+83 divergent (backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -179,53 +179,50 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — Stage 6: `@md` block lists (`\itemize`/`\enumerate`)
+## Latest session (2026-06-23) — Stage 7: title-as-description fallback
 
-**Second markdown win, first markdown *block* structure.** Under an explicit `@md`
-block, a `-`/`*`/`+` list → `\itemize` and a `1.`/`1)` list → `\enumerate`, each item a
-name-only `\item` ahead of its content — the other half of curated `markdown_list`, which
-now matches its pin. Projector **64→65 matching** (curated `markdown_list`), all
-allowlisted; **0 regressions**; curated fixed-point 8/8; harvested unchanged (212/4).
-User asked up front "is this a hack?" — the design was chosen to *not* be: the CST leaves
-hold real source bytes (`-`, the text), the projector merely *maps* node-kind → `\itemize`
-(faithful encoding, as roxygen2 itself does), and the formatter does no markdown parsing
-(atomic passthrough). The one genuine fork — how the block builder learns it's in `@md`
-mode — was resolved by **mode-keyed lexing** (the lexer is the single mode source, exactly
-as `@md` inline already works), *not* by re-scanning tokens for `@md` in the block builder
-(which would be a second source of truth). Files by bucket:
-- **Parser gap** (`src/parser/roxygen.rs`, `src/syntax.rs`, `lexer.rs`, `tree_builder.rs`,
-  `expr.rs`): new `RoxygenMdListMarker` TokKind + `ROXYGEN_MD_LIST_MARKER` leaf and
-  `ROXYGEN_MD_LIST`/`ROXYGEN_MD_LIST_ITEM` nodes (appended; COUNT now refs
-  `ROXYGEN_MD_LIST_ITEM`). `scan_md_list_marker` carves a line-start bullet/ordered marker
-  **punctuation only** (trailing space stays in the text run, so a non-list marker chunks
-  for reflow exactly as the plain text it stands in for — the no-baseline-regression trick).
-  `emit_md_list` builds the node over consecutive marker lines (markers/newlines/indent
-  threaded as trivia), gated by `is_md_list_start` which applies the CommonMark **interrupt
-  rule** (`md_list_marker_can_interrupt`: a bullet always, an ordered list only if start
-  == 1) — a non-interrupting marker stays inline prose.
-- **Projector gap** (`src/roxygen/project_rd.rs`): `Inline::MdList(SyntaxNode)` variant;
-  `serialize_md_list` picks `\itemize`/`\enumerate` from the first item's marker and emits
-  a name-only `(\item)` per item; `md_list_item_inlines` reuses the prose inline machinery.
-  A stray `ROXYGEN_MD_LIST_MARKER` token (interrupt rule kept it inline) projects as text.
-- **Formatter** (`src/formatter/roxygen.rs`): `ROXYGEN_MD_LIST` joins the block-macro
-  atomic-passthrough path in `physical_lines`; `emit_md_list` (formatter) marker-normalizes
-  each line — byte-identical to today's `is_structured` passthrough, so the format-stability
-  baseline is unchanged (verified). `is_blank`/`is_tag_prose_kind` gained the marker leaf.
-- **Tests:** parser fixture `roxygen_md_list` (bullet + ordered); lexer tests
-  (`md_list_marker_recognized_under_md_mode`, `md_list_marker_off_without_md_directive`,
-  `md_list_marker_requires_space_and_is_not_emphasis`); projector tests
-  (`md_block_lists_project_itemize_and_enumerate`, `md_block_list_is_off_without_md_tag`).
+**Projector-only win, biggest single cluster yet (11 cases).** roxygen2 reuses the
+title as the description whenever there is no explicit `@description` *and* the intro
+supplies no description paragraph — including the case where the title comes from an
+explicit `@title` tag with **no intro prose at all** (e.g. `#' @title a` + `@name`).
+The projector already did this fallback for *intro-derived* titles (a single intro
+paragraph duplicates into the description), but the empty-intro/explicit-`@title` path
+emitted no `\description` at all. One projector arm closed 11 harvested cases at once.
 
-**Next (ranked) — settle the loose-file/`DESCRIPTION` default-ON decision**, currently
-deferred (only explicit per-block `@md` enables markdown; flipping the default reinterprets
-every block, so it needs its own re-bless pass). *Or* pick the next cluster from the
-harvested projector backlog (`ROXYGEN_PROJECTOR.md`, 94 divergent) — candidates: markdown
-**nested** lists (this session's known gap), fenced code blocks, ATX headings, or the
-remaining Rd block macros. Note nested lists currently project flat (in-list indentation
-dropped) — un-allowlisted backlog, never a passing-but-wrong gate entry.
+- **Bucket: projector gap** (the CST is fine; the divergence was a missing faithful
+  derivation). `src/roxygen/project_rd.rs::project_block`: replaced the
+  `has_explicit_title` bool with an `explicit_title` lookup, and gave the
+  description-derivation an `else` branch — when there are no intro paragraphs, the
+  description falls back to the explicit `@title` body (`join_paras(slice::from_ref)`).
+  The 2+/single-intro branches are byte-identical to before, so no allowlisted case
+  could regress (the new output only appears where nothing was emitted before).
+- **Why faithful, not compensating:** this is roxygen2's own documented title→description
+  rule ("if you only provide a title it is used for both"), not papering over a CST gap.
+  Confirmed against the oracle (`block-to-sections` on `#' @title Hello` → `\description`
+  + `\title`).
+- **Projector 65→76 matching** (all allowlisted via `task roxygen-projector-seed`), **83
+  divergent**; **0 regressions**; full `cargo test` green; clippy + fmt clean. Did not
+  run the R fixed-point net (projector-only change, formatter untouched).
+- **Test:** projector unit test `explicit_title_without_description_duplicates_into_description`
+  (TDD: written failing first). No new parser fixture — no parser/CST change.
+
+**Next (ranked):** pick the next cluster from the 83-case backlog. The previously-noted
+candidates still stand — markdown **nested** lists (projects flat today; in-list indent
+dropped), fenced code blocks, ATX headings, or the remaining Rd block macros
+(`\preformatted`, `\figure`, `\out`, `\href` two-arg, `\if`/conditional). Also still
+open: the loose-file/`DESCRIPTION` markdown **default-ON** decision. Use the throwaway
+`examples/rxdiff.rs`-style dump (input/projected/pin per divergent case) to spot the
+next cluster — sort by input length for the cheapest wins, or group by the macro heads
+present in the pin but missing from the projection.
 
 ## Earlier sessions
 
+- **2026-06-23 (Stage 6, `@md` block lists):** first markdown *block* structure. Under
+  `@md`, `-`/`*`/`+` → `\itemize`, `1.`/`1)` → `\enumerate`, name-only `\item` per item.
+  Mode-keyed lexing (new `RoxygenMdListMarker` TokKind, punctuation-only carve so a
+  non-list marker chunks identically → no baseline regression); `emit_md_list` builds
+  `ROXYGEN_MD_LIST`/`_ITEM` applying the CommonMark interrupt rule; projector
+  `Inline::MdList` → `serialize_md_list`. Closed `markdown_list` (64→65).
 - **2026-06-23 (Stage 5, `@md` inline foundation):** first markdown win —
   `*x*`→`\emph`, `**x**`→`\strong`, code span → `\code`/`\verb` (roxygen2's `can_parse`,
   replicated via arity-parseability). New `resolve_roxygen_block` mode infra (lexer is the

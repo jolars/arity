@@ -113,22 +113,32 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         }
     }
 
-    let has_explicit_title = tag_sections.iter().any(|(n, _)| n == "title");
+    let explicit_title = tag_sections.iter().find(|(n, _)| n == "title");
     let has_explicit_desc = tag_sections.iter().any(|(n, _)| n == "description");
 
     // Intro-derived \title and \description (roxygen2's rule: first paragraph is
     // the title; the rest is the description, or the title duplicated when the
     // intro is a single paragraph). An explicit @title/@description tag wins.
-    if !has_explicit_title && let Some(first) = intro_paras.first() {
+    if explicit_title.is_none()
+        && let Some(first) = intro_paras.first()
+    {
         push_section(out, "title", first);
     }
-    if !has_explicit_desc && !intro_paras.is_empty() {
-        let desc: Vec<Inline> = if intro_paras.len() >= 2 {
-            join_paras(&intro_paras[1..])
+    if !has_explicit_desc {
+        // roxygen2's title-as-description fallback: with no explicit
+        // @description, the description is the trailing intro paragraphs, or —
+        // when the intro is a single paragraph or absent — the title duplicated
+        // (the title being the first intro paragraph, else the explicit @title).
+        let desc: Option<Vec<Inline>> = if intro_paras.len() >= 2 {
+            Some(join_paras(&intro_paras[1..]))
+        } else if !intro_paras.is_empty() {
+            Some(join_paras(&intro_paras[0..1]))
         } else {
-            join_paras(&intro_paras[0..1])
+            explicit_title.map(|(_, body)| join_paras(std::slice::from_ref(body)))
         };
-        push_section(out, "description", &desc);
+        if let Some(desc) = desc {
+            push_section(out, "description", &desc);
+        }
     }
 
     for (name, body) in &tag_sections {
@@ -646,6 +656,17 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"A longer description.\"))\n\
              (\\title (TEXT \"Example dataset\"))"
+        );
+    }
+
+    #[test]
+    fn explicit_title_without_description_duplicates_into_description() {
+        // roxygen2's title-as-description fallback: an explicit `@title` with no
+        // intro prose and no `@description` reuses the title as the description.
+        let src = "#' @title a\n#' @name a\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"a\"))\n(\\title (TEXT \"a\"))"
         );
     }
 

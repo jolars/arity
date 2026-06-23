@@ -299,11 +299,11 @@
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **64 matching / 95 divergent** of 159 pinned (was 42; `rd_macros`,
-      `itemize_enumerate`, `describe_format`, `tabular`, then `@md` inline closed).
-      The remaining divergences are the worklist; the curated cases name the shapes —
-      `markdown_list` still diverges on its markdown *block list* (its inline now
-      projects). Run
+      **76 matching / 83 divergent** of 159 pinned (was 42; `rd_macros`,
+      `itemize_enumerate`, `describe_format`, `tabular`, `@md` inline + block lists,
+      then the title-as-description fallback — an explicit `@title` with no intro
+      and no `@description` reuses the title as the description, closing 11 harvested
+      cases — closed). The remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
       Use the `roxygen-parity` skill.
