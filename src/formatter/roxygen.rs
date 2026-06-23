@@ -27,8 +27,115 @@ use super::context::FormatContext;
 use super::core::format_with_style;
 use super::ir::Ir;
 use super::style::FormatStyle;
-use crate::ast::{AstNode, RoxygenLine, RoxygenTag};
+use crate::ast::{AstNode, RoxygenTag};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
+
+/// One physical `#'` line, reconstructed from the logical CST for layout.
+///
+/// The parser models a roxygen block as *logical* content (sections, paragraphs,
+/// block macros) with `#'` markers and newlines threaded in as trivia. The
+/// formatter, however, emits one `#'` line per output line and reflows within the
+/// line width, so it works from a physical-line view: a read-only re-segmentation
+/// of the block's leaves at their marker/newline trivia. Each line carries its
+/// marker, its tag (if a tag line), and the content elements after the marker
+/// (inline Rd-macro nodes and the tag node kept atomic). Inter-line indentation
+/// before a marker is dropped — the formatter computes its own indent.
+#[derive(Clone, Default)]
+struct PhysicalLine {
+    marker: Option<SyntaxToken>,
+    tag: Option<RoxygenTag>,
+    elements: Vec<NodeOrToken<SyntaxNode, SyntaxToken>>,
+}
+
+impl PhysicalLine {
+    /// The `#'` marker token of this line, if present.
+    fn marker(&self) -> Option<&SyntaxToken> {
+        self.marker.as_ref()
+    }
+
+    /// The tag heading this line (`#' @tag ...`), if any.
+    fn tag(&self) -> Option<RoxygenTag> {
+        self.tag.clone()
+    }
+
+    /// A blank `#'` line (a paragraph separator): no tag and no prose content
+    /// (text or a protected markup span).
+    fn is_blank(&self) -> bool {
+        self.tag.is_none()
+            && !self.elements.iter().any(|el| {
+                matches!(
+                    el.kind(),
+                    SyntaxKind::ROXYGEN_TEXT
+                        | SyntaxKind::ROXYGEN_CODE
+                        | SyntaxKind::ROXYGEN_RD_MACRO
+                        | SyntaxKind::ROXYGEN_MD_LINK
+                )
+            })
+    }
+}
+
+/// Reconstruct the physical `#'` lines of a `ROXYGEN_BLOCK` for layout: walk the
+/// block's leaves in source order (descending through `ROXYGEN_SECTION` /
+/// `ROXYGEN_PARAGRAPH`, keeping `ROXYGEN_TAG` and `ROXYGEN_RD_MACRO` atomic) and
+/// split at each marker (line start) and newline (line end). Indentation before a
+/// marker is inter-line trivia and is dropped.
+fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
+    let mut elements = Vec::new();
+    collect_logical_elements(block, &mut elements);
+
+    let mut lines = Vec::new();
+    let mut cur = PhysicalLine::default();
+    for el in elements {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_MARKER => {
+                if cur.marker.is_some() {
+                    lines.push(std::mem::take(&mut cur));
+                }
+                cur.marker = el.into_token();
+            }
+            SyntaxKind::NEWLINE => {
+                if cur.marker.is_some() {
+                    lines.push(std::mem::take(&mut cur));
+                }
+            }
+            // Trivia before this line's marker (continuation indentation) is not
+            // part of any line.
+            _ if cur.marker.is_none() => {}
+            SyntaxKind::ROXYGEN_TAG => {
+                cur.tag = el.as_node().cloned().and_then(RoxygenTag::cast);
+                cur.elements.push(el);
+            }
+            _ => cur.elements.push(el),
+        }
+    }
+    if cur.marker.is_some() {
+        lines.push(cur);
+    }
+    lines
+}
+
+/// Flatten a roxygen block into its logical leaves in source order, descending
+/// through the structural `ROXYGEN_SECTION` / `ROXYGEN_PARAGRAPH` grouping but
+/// keeping `ROXYGEN_TAG` and `ROXYGEN_RD_MACRO` nodes atomic (a tag header or an
+/// inline/block macro is one unit of line content).
+fn collect_logical_elements(
+    node: &SyntaxNode,
+    out: &mut Vec<NodeOrToken<SyntaxNode, SyntaxToken>>,
+) {
+    for el in node.children_with_tokens() {
+        match el {
+            NodeOrToken::Node(n)
+                if matches!(
+                    n.kind(),
+                    SyntaxKind::ROXYGEN_SECTION | SyntaxKind::ROXYGEN_PARAGRAPH
+                ) =>
+            {
+                collect_logical_elements(&n, out);
+            }
+            other => out.push(other),
+        }
+    }
+}
 
 /// Build the IR for a `ROXYGEN_BLOCK` at the given nesting `indent`.
 pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatContext) -> Ir {
@@ -52,7 +159,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         }};
     }
 
-    for line in node.children().filter_map(RoxygenLine::cast) {
+    for line in physical_lines(node) {
         // While collecting an `@examples` body, every non-tag line is embedded R
         // and belongs to the body (blank/fenced/structured lines included); a tag
         // line ends the body and falls through to the tag branch, which flushes.
@@ -144,11 +251,11 @@ struct Paragraph {
     /// run with no breakable whitespace; protected spans are glued in).
     chunks: Vec<String>,
     /// The source lines, kept for the verbatim fallback.
-    lines: Vec<RoxygenLine>,
+    lines: Vec<PhysicalLine>,
 }
 
 impl Paragraph {
-    fn push_line(&mut self, line: &RoxygenLine) {
+    fn push_line(&mut self, line: &PhysicalLine) {
         line_chunks(line, &mut self.chunks);
         self.lines.push(line.clone());
     }
@@ -195,11 +302,11 @@ struct TagUnit {
     /// Breakable prose chunks (the tag's own prose plus absorbed continuations).
     chunks: Vec<String>,
     /// Source lines (tag line first), kept for the verbatim fallback.
-    lines: Vec<RoxygenLine>,
+    lines: Vec<PhysicalLine>,
 }
 
 impl TagUnit {
-    fn new(line: &RoxygenLine, tag: &RoxygenTag, indent_cols: usize) -> Self {
+    fn new(line: &PhysicalLine, tag: &RoxygenTag, indent_cols: usize) -> Self {
         let mut chunks = Vec::new();
         tag_prose_chunks(tag, &mut chunks);
         TagUnit {
@@ -212,7 +319,7 @@ impl TagUnit {
     }
 
     /// Absorb a following plain-prose line as continuation text.
-    fn push_continuation(&mut self, line: &RoxygenLine) {
+    fn push_continuation(&mut self, line: &PhysicalLine) {
         line_chunks(line, &mut self.chunks);
         self.lines.push(line.clone());
     }
@@ -270,11 +377,11 @@ fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: u
 #[derive(Default)]
 struct ExampleBody {
     marker: Option<String>,
-    lines: Vec<RoxygenLine>,
+    lines: Vec<PhysicalLine>,
 }
 
 impl ExampleBody {
-    fn push_line(&mut self, line: &RoxygenLine) {
+    fn push_line(&mut self, line: &PhysicalLine) {
         if self.marker.is_none() {
             self.marker = Some(marker_text(line));
         }
@@ -417,7 +524,7 @@ fn wrap_chunks(chunks: &[String], budget: usize) -> Vec<String> {
 /// Prose whitespace (inside `ROXYGEN_TEXT`) is a break opportunity; protected
 /// spans are glued to whatever abuts them (so `[g()].` stays one chunk). The
 /// line boundary itself ends a chunk.
-fn line_chunks(line: &RoxygenLine, out: &mut Vec<String>) {
+fn line_chunks(line: &PhysicalLine, out: &mut Vec<String>) {
     chunk_elements(content_elements(line), out);
 }
 
@@ -453,26 +560,28 @@ where
 }
 
 /// The content elements of a line: everything after the marker and the single
-/// marker→content whitespace (which the formatter drops).
+/// marker→content whitespace (which the formatter drops). The marker itself is
+/// already held apart in `PhysicalLine::marker`, so only the leading whitespace
+/// needs skipping.
 fn content_elements(
-    line: &RoxygenLine,
+    line: &PhysicalLine,
 ) -> impl Iterator<Item = NodeOrToken<SyntaxNode, crate::syntax::SyntaxToken>> + '_ {
     let mut seen_content = false;
-    line.syntax()
-        .children_with_tokens()
+    line.elements
+        .iter()
         .filter(move |el| match el.kind() {
-            SyntaxKind::ROXYGEN_MARKER => false,
             SyntaxKind::WHITESPACE if !seen_content => false,
             _ => {
                 seen_content = true;
                 true
             }
         })
+        .cloned()
 }
 
 /// The trimmed text content of a line (everything after the marker), used for
 /// structured-line classification.
-fn content_text(line: &RoxygenLine) -> String {
+fn content_text(line: &PhysicalLine) -> String {
     let mut s = String::new();
     for el in content_elements(line) {
         match el {
@@ -484,7 +593,7 @@ fn content_text(line: &RoxygenLine) -> String {
 }
 
 /// The `#'` marker text of a line (defaulting to `#'` if somehow absent).
-fn marker_text(line: &RoxygenLine) -> String {
+fn marker_text(line: &PhysicalLine) -> String {
     line.marker()
         .map(|t| t.text().to_string())
         .unwrap_or_else(|| "#'".to_string())
@@ -494,8 +603,8 @@ fn marker_text(line: &RoxygenLine) -> String {
 /// content verbatim, trailing whitespace trimmed; a blank line is just the
 /// marker. Boundary lines (tags, blanks, structured, fenced, examples) take
 /// this path.
-fn emit_normalized(items: &mut Vec<Ir>, line: &RoxygenLine) {
-    push_line(items, normalize_roxygen_line(line.syntax()));
+fn emit_normalized(items: &mut Vec<Ir>, line: &PhysicalLine) {
+    push_line(items, normalize_roxygen_line(line));
 }
 
 /// Emit a tag line that is not reflowed (a code/example body, a structured
@@ -503,7 +612,7 @@ fn emit_normalized(items: &mut Vec<Ir>, line: &RoxygenLine) {
 /// internal spacing normalized: marker, header (`@tag [arg]`, single-spaced),
 /// then the remaining content verbatim. Falls back to plain marker
 /// normalization if the tag has no name (malformed).
-fn emit_tag_passthrough(items: &mut Vec<Ir>, line: &RoxygenLine, tag: &RoxygenTag) {
+fn emit_tag_passthrough(items: &mut Vec<Ir>, line: &PhysicalLine, tag: &RoxygenTag) {
     let Some(header) = tag_header(tag) else {
         emit_normalized(items, line);
         return;
@@ -704,17 +813,11 @@ fn is_unsafe_ordered_marker(chunk: &str) -> bool {
 /// Only the whitespace directly between the marker and the content is touched;
 /// tag-internal spacing lives inside the `ROXYGEN_TAG` node and is preserved
 /// verbatim (its normalization is a later transform).
-fn normalize_roxygen_line(line: &SyntaxNode) -> String {
-    let mut marker = String::new();
+fn normalize_roxygen_line(line: &PhysicalLine) -> String {
+    let marker = marker_text(line);
     let mut content = String::new();
-    for el in line.children_with_tokens() {
+    for el in content_elements(line) {
         match el {
-            NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MARKER => {
-                marker = t.text().to_string();
-            }
-            // The lone whitespace token sitting directly under the line, between
-            // marker and content; drop it before any content has accumulated.
-            NodeOrToken::Token(t) if t.kind() == SyntaxKind::WHITESPACE && content.is_empty() => {}
             NodeOrToken::Token(t) => content.push_str(t.text()),
             NodeOrToken::Node(n) => content.push_str(&n.text().to_string()),
         }

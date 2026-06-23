@@ -4,25 +4,24 @@ expression: tree
 ---
 ROOT@0..150
   ROXYGEN_BLOCK@0..130
-    ROXYGEN_LINE@0..8
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..8 "Title"
-    NEWLINE@8..9 "\n"
-    ROXYGEN_LINE@9..11
+    ROXYGEN_SECTION@0..55
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
       ROXYGEN_MARKER@9..11 "#'"
-    NEWLINE@11..12 "\n"
-    ROXYGEN_LINE@12..35
-      ROXYGEN_MARKER@12..14 "#'"
-      WHITESPACE@14..15 " "
-      ROXYGEN_TEXT@15..35 "Description spanning"
-    NEWLINE@35..36 "\n"
-    ROXYGEN_LINE@36..54
-      ROXYGEN_MARKER@36..38 "#'"
-      WHITESPACE@38..39 " "
-      ROXYGEN_TEXT@39..54 "multiple lines."
-    NEWLINE@54..55 "\n"
-    ROXYGEN_LINE@55..76
+      NEWLINE@11..12 "\n"
+      ROXYGEN_PARAGRAPH@12..55
+        ROXYGEN_MARKER@12..14 "#'"
+        WHITESPACE@14..15 " "
+        ROXYGEN_TEXT@15..35 "Description spanning"
+        NEWLINE@35..36 "\n"
+        ROXYGEN_MARKER@36..38 "#'"
+        WHITESPACE@38..39 " "
+        ROXYGEN_TEXT@39..54 "multiple lines."
+        NEWLINE@54..55 "\n"
+    ROXYGEN_SECTION@55..77
       ROXYGEN_MARKER@55..57 "#'"
       WHITESPACE@57..58 " "
       ROXYGEN_TAG@58..76
@@ -32,8 +31,8 @@ ROOT@0..150
         ROXYGEN_TAG_ARG@65..66 "x"
         WHITESPACE@66..67 " "
         ROXYGEN_TEXT@67..76 "A number."
-    NEWLINE@76..77 "\n"
-    ROXYGEN_LINE@77..98
+      NEWLINE@76..77 "\n"
+    ROXYGEN_SECTION@77..99
       ROXYGEN_MARKER@77..79 "#'"
       WHITESPACE@79..80 " "
       ROXYGEN_TAG@80..98
@@ -41,20 +40,20 @@ ROOT@0..150
         ROXYGEN_TAG_NAME@81..87 "return"
         WHITESPACE@87..88 " "
         ROXYGEN_TEXT@88..98 "The value."
-    NEWLINE@98..99 "\n"
-    ROXYGEN_LINE@99..111
+      NEWLINE@98..99 "\n"
+    ROXYGEN_SECTION@99..120
       ROXYGEN_MARKER@99..101 "#'"
       WHITESPACE@101..102 " "
       ROXYGEN_TAG@102..111
         ROXYGEN_AT@102..103 "@"
         ROXYGEN_TAG_NAME@103..111 "examples"
-    NEWLINE@111..112 "\n"
-    ROXYGEN_LINE@112..119
-      ROXYGEN_MARKER@112..114 "#'"
-      WHITESPACE@114..115 " "
-      ROXYGEN_TEXT@115..119 "f(1)"
-    NEWLINE@119..120 "\n"
-    ROXYGEN_LINE@120..130
+      NEWLINE@111..112 "\n"
+      ROXYGEN_PARAGRAPH@112..120
+        ROXYGEN_MARKER@112..114 "#'"
+        WHITESPACE@114..115 " "
+        ROXYGEN_TEXT@115..119 "f(1)"
+        NEWLINE@119..120 "\n"
+    ROXYGEN_SECTION@120..130
       ROXYGEN_MARKER@120..122 "#'"
       WHITESPACE@122..123 " "
       ROXYGEN_TAG@123..130

@@ -4,10 +4,11 @@ expression: tree
 ---
 ROOT@0..39
   ROXYGEN_BLOCK@0..17
-    ROXYGEN_LINE@0..17
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..17 "A short title."
+    ROXYGEN_SECTION@0..17
+      ROXYGEN_PARAGRAPH@0..17
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..17 "A short title."
   NEWLINE@17..18 "\n"
   ASSIGNMENT_EXPR@18..38
     IDENT@18..19 "f"

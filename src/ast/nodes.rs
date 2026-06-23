@@ -42,7 +42,8 @@ ast_node!(WhileExpr, SyntaxKind::WHILE_EXPR);
 ast_node!(FunctionExpr, SyntaxKind::FUNCTION_EXPR);
 ast_node!(BlockExpr, SyntaxKind::BLOCK_EXPR);
 ast_node!(RoxygenBlock, SyntaxKind::ROXYGEN_BLOCK);
-ast_node!(RoxygenLine, SyntaxKind::ROXYGEN_LINE);
+ast_node!(RoxygenSection, SyntaxKind::ROXYGEN_SECTION);
+ast_node!(RoxygenParagraph, SyntaxKind::ROXYGEN_PARAGRAPH);
 ast_node!(RoxygenTag, SyntaxKind::ROXYGEN_TAG);
 
 /// The first direct child token of `node` with the given `kind`.
@@ -55,41 +56,23 @@ fn first_child_token(node: &SyntaxNode, kind: SyntaxKind) -> Option<SyntaxToken<
 }
 
 impl RoxygenBlock {
-    /// The roxygen lines of this block, in source order.
-    pub fn lines(&self) -> impl Iterator<Item = RoxygenLine> + '_ {
-        self.0.children().filter_map(RoxygenLine::cast)
+    /// The logical sections of this block, in source order: the intro section
+    /// (untagged leading prose) and one section per `@tag`.
+    pub fn sections(&self) -> impl Iterator<Item = RoxygenSection> + '_ {
+        self.0.children().filter_map(RoxygenSection::cast)
     }
 }
 
-impl RoxygenLine {
-    /// The `#'` marker token (the `#+'` run).
-    pub fn marker(&self) -> Option<SyntaxToken<RLanguage>> {
-        first_child_token(&self.0, SyntaxKind::ROXYGEN_MARKER)
-    }
-
-    /// The tag on this line, if it is a tag line (`#' @tag ...`).
+impl RoxygenSection {
+    /// The tag heading this section, if it is a tag section (`@details`, …); the
+    /// intro section has none.
     pub fn tag(&self) -> Option<RoxygenTag> {
         self.0.children().find_map(RoxygenTag::cast)
     }
 
-    /// The untagged prose text token directly under the line, if any.
-    pub fn text(&self) -> Option<SyntaxToken<RLanguage>> {
-        first_child_token(&self.0, SyntaxKind::ROXYGEN_TEXT)
-    }
-
-    /// A blank `#'` line (a paragraph separator): only a marker, no content —
-    /// no tag and no content token (prose text or a protected markup span).
-    pub fn is_blank(&self) -> bool {
-        self.tag().is_none()
-            && !self.0.children_with_tokens().any(|el| {
-                matches!(
-                    el.kind(),
-                    SyntaxKind::ROXYGEN_TEXT
-                        | SyntaxKind::ROXYGEN_CODE
-                        | SyntaxKind::ROXYGEN_RD_MACRO
-                        | SyntaxKind::ROXYGEN_MD_LINK
-                )
-            })
+    /// The prose paragraphs of this section, in source order.
+    pub fn paragraphs(&self) -> impl Iterator<Item = RoxygenParagraph> + '_ {
+        self.0.children().filter_map(RoxygenParagraph::cast)
     }
 }
 

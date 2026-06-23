@@ -36,7 +36,7 @@
 
 use rowan::NodeOrToken;
 
-use crate::ast::{AstNode, RoxygenBlock, RoxygenLine, RoxygenTag};
+use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenTag};
 use crate::parser::parse;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -68,47 +68,33 @@ enum Inline {
 }
 
 /// One topic's worth of sections from a single roxygen block.
+///
+/// The block already owns logical structure: its children are `ROXYGEN_SECTION`s
+/// (the intro, then one per `@tag`), each holding a `ROXYGEN_TAG` heading and/or
+/// `ROXYGEN_PARAGRAPH`s. So the projector is a direct walk — the line-reassembly
+/// state machine the line-flat CST forced is gone. A tag section's body is the
+/// tag's own inline prose followed by its paragraphs (continuation and
+/// paragraph-break both collapse to a single space under `norm_ws`).
 fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
-    // Intro paragraphs (prose before the first tag) and the tag sections.
     let mut intro_paras: Vec<Vec<Inline>> = Vec::new();
-    let mut cur_para: Vec<Inline> = Vec::new();
     let mut tag_sections: Vec<(String, Vec<Inline>)> = Vec::new();
-    let mut in_intro = true;
 
-    let flush_para = |cur: &mut Vec<Inline>, paras: &mut Vec<Vec<Inline>>| {
-        if !inlines_blank(cur) {
-            paras.push(std::mem::take(cur));
-        } else {
-            cur.clear();
-        }
-    };
-
-    for line in block.lines() {
-        if let Some(tag) = line.tag() {
-            in_intro = false;
-            flush_para(&mut cur_para, &mut intro_paras);
+    for section in block.sections() {
+        if let Some(tag) = section.tag() {
             let name = tag.name().map(|n| n.to_string()).unwrap_or_default();
-            tag_sections.push((name, tag_inlines(&tag)));
-        } else if line.is_blank() {
-            if in_intro {
-                flush_para(&mut cur_para, &mut intro_paras);
-            } else if let Some((_, body)) = tag_sections.last_mut() {
-                body.push(Inline::Text(" ".to_string())); // paragraph break
+            let mut body = tag_inlines(&tag);
+            for para in section.paragraphs() {
+                if !body.is_empty() {
+                    body.push(Inline::Text(" ".to_string()));
+                }
+                body.extend(paragraph_inlines(&para));
             }
+            tag_sections.push((name, body));
         } else {
-            // A prose continuation line: a space joins it to the prior line.
-            let inl = line_inlines(&line);
-            if in_intro {
-                cur_para.push(Inline::Text(" ".to_string()));
-                cur_para.extend(inl);
-            } else if let Some((_, body)) = tag_sections.last_mut() {
-                body.push(Inline::Text(" ".to_string()));
-                body.extend(inl);
+            for para in section.paragraphs() {
+                intro_paras.push(paragraph_inlines(&para));
             }
         }
-    }
-    if in_intro {
-        flush_para(&mut cur_para, &mut intro_paras);
     }
 
     let has_explicit_title = tag_sections.iter().any(|(n, _)| n == "title");
@@ -281,14 +267,6 @@ fn serialize_macro(node: &SyntaxNode) -> String {
     }
 }
 
-/// Whether an inline run holds no projectable content (only whitespace text).
-fn inlines_blank(body: &[Inline]) -> bool {
-    body.iter().all(|inl| match inl {
-        Inline::Text(s) => s.trim().is_empty(),
-        Inline::Macro(_) => false,
-    })
-}
-
 /// The raw source text of an inline run (text verbatim, macros as their CST
 /// text), used for the textual `@section` heading split.
 fn inlines_raw_text(body: &[Inline]) -> String {
@@ -338,20 +316,20 @@ fn encode_text(s: &str) -> String {
     out
 }
 
-/// The inline elements of a prose line: everything after the `#'` marker and the
-/// single marker→content whitespace. An Rd macro becomes an `Inline::Macro`; all
-/// other content (plain text and — in the absence of resolved markdown — inline
-/// code and link spans, which are literal Rd prose) becomes `Inline::Text`.
-fn line_inlines(line: &RoxygenLine) -> Vec<Inline> {
+/// The inline elements of a prose paragraph: its text and inline Rd-macro
+/// content, with the threaded `#'` markers dropped and inter-line newlines turned
+/// into a joining space (continuation lines fold into one run). An Rd macro
+/// becomes an `Inline::Macro`; all other content (plain text and — in the absence
+/// of resolved markdown — inline code and link spans, which are literal Rd prose)
+/// becomes `Inline::Text`. Whitespace is collapsed downstream by `norm_ws`.
+fn paragraph_inlines(para: &RoxygenParagraph) -> Vec<Inline> {
     let mut out = Vec::new();
-    let mut seen = false;
-    for el in line.syntax().children_with_tokens() {
+    for el in para.syntax().children_with_tokens() {
         match el.kind() {
-            SyntaxKind::ROXYGEN_MARKER => continue,
-            SyntaxKind::WHITESPACE if !seen => continue,
-            _ => seen = true,
+            SyntaxKind::ROXYGEN_MARKER => {} // trivia: never prose
+            SyntaxKind::NEWLINE => out.push(Inline::Text(" ".to_string())), // line join
+            _ => push_inline(&mut out, el),
         }
-        push_inline(&mut out, el);
     }
     out
 }

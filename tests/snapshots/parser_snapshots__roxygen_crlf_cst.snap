@@ -4,12 +4,13 @@ expression: tree
 ---
 ROOT@0..45
   ROXYGEN_BLOCK@0..23
-    ROXYGEN_LINE@0..8
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..8 "Title"
-    NEWLINE@8..10 "\r\n"
-    ROXYGEN_LINE@10..23
+    ROXYGEN_SECTION@0..10
+      ROXYGEN_PARAGRAPH@0..10
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..10 "\r\n"
+    ROXYGEN_SECTION@10..23
       ROXYGEN_MARKER@10..12 "#'"
       WHITESPACE@12..13 " "
       ROXYGEN_TAG@13..23

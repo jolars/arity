@@ -4,10 +4,11 @@ expression: tree
 ---
 ROOT@0..53
   ROXYGEN_BLOCK@0..33
-    ROXYGEN_LINE@0..33
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..33 "A lone ` backtick sta ..."
+    ROXYGEN_SECTION@0..33
+      ROXYGEN_PARAGRAPH@0..33
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..33 "A lone ` backtick sta ..."
   NEWLINE@33..34 "\n"
   ASSIGNMENT_EXPR@34..52
     IDENT@34..35 "f"

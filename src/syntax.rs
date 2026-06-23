@@ -100,6 +100,11 @@ pub enum SyntaxKind {
     ROXYGEN_MD_LINK,
     // Roxygen nodes.
     ROXYGEN_BLOCK,
+    /// Reserved: the legacy physical-line node. No longer emitted since the
+    /// CST re-model (a roxygen block now owns logical content --- sections and
+    /// paragraphs --- with `#'` markers and newlines threaded in as trivia, the
+    /// way rowan/rust-analyzer trees attach whitespace). Kept in the enum so the
+    /// `as u16` discriminants of the later variants stay stable.
     ROXYGEN_LINE,
     ROXYGEN_TAG,
     // Inline Rd-macro structure. A `ROXYGEN_RD_MACRO` is materialized as a *node*
@@ -110,14 +115,21 @@ pub enum SyntaxKind {
     ROXYGEN_RD_MACRO_OPT,   // a `[...]` option group (e.g. `\link[pkg]{x}`)
     ROXYGEN_RD_MACRO_DELIM, // a `{` or `}` content delimiter
     ROXYGEN_RD_MACRO_VERB,  // verbatim content of a VERB macro (`\url`, `\verb`, …)
+    // Roxygen logical-content nodes (the CST re-model). A block's children are
+    // `ROXYGEN_SECTION`s (the intro prose, then one per `@tag`); a section's prose
+    // is grouped into `ROXYGEN_PARAGRAPH`s between blank-line separators. Markers,
+    // the marker→content whitespace, and inter-line newlines live as trivia leaves
+    // threaded into the enclosing node.
+    ROXYGEN_SECTION,
+    ROXYGEN_PARAGRAPH,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_RD_MACRO_VERB` remains
-    /// the last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_RD_MACRO_VERB as usize + 1;
+    /// rule dispatch). Stays correct as long as `ROXYGEN_PARAGRAPH` remains the
+    /// last variant.
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_PARAGRAPH as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -238,6 +250,8 @@ impl Language for RLanguage {
             85 => SyntaxKind::ROXYGEN_RD_MACRO_OPT,
             86 => SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
             87 => SyntaxKind::ROXYGEN_RD_MACRO_VERB,
+            88 => SyntaxKind::ROXYGEN_SECTION,
+            89 => SyntaxKind::ROXYGEN_PARAGRAPH,
             _ => SyntaxKind::ERROR,
         }
     }

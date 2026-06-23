@@ -4,18 +4,19 @@ expression: tree
 ---
 ROOT@0..61
   ROXYGEN_BLOCK@0..41
-    ROXYGEN_LINE@0..41
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..15 "Double span "
-      ROXYGEN_CODE@15..26 "``a `b` c``"
-      ROXYGEN_TEXT@26..32 " then "
-      ROXYGEN_RD_MACRO@32..40
-        ROXYGEN_RD_MACRO_NAME@32..37 "\\code"
-        ROXYGEN_RD_MACRO_DELIM@37..38 "{"
-        ROXYGEN_TEXT@38..39 "d"
-        ROXYGEN_RD_MACRO_DELIM@39..40 "}"
-      ROXYGEN_TEXT@40..41 "."
+    ROXYGEN_SECTION@0..41
+      ROXYGEN_PARAGRAPH@0..41
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..15 "Double span "
+        ROXYGEN_CODE@15..26 "``a `b` c``"
+        ROXYGEN_TEXT@26..32 " then "
+        ROXYGEN_RD_MACRO@32..40
+          ROXYGEN_RD_MACRO_NAME@32..37 "\\code"
+          ROXYGEN_RD_MACRO_DELIM@37..38 "{"
+          ROXYGEN_TEXT@38..39 "d"
+          ROXYGEN_RD_MACRO_DELIM@39..40 "}"
+        ROXYGEN_TEXT@40..41 "."
   NEWLINE@41..42 "\n"
   ASSIGNMENT_EXPR@42..60
     IDENT@42..43 "f"

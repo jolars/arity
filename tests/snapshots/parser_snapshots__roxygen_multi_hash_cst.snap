@@ -4,10 +4,11 @@ expression: tree
 ---
 ROOT@0..29
   ROXYGEN_BLOCK@0..21
-    ROXYGEN_LINE@0..21
-      ROXYGEN_MARKER@0..3 "##'"
-      WHITESPACE@3..4 " "
-      ROXYGEN_TEXT@4..21 "Old-style marker."
+    ROXYGEN_SECTION@0..21
+      ROXYGEN_PARAGRAPH@0..21
+        ROXYGEN_MARKER@0..3 "##'"
+        WHITESPACE@3..4 " "
+        ROXYGEN_TEXT@4..21 "Old-style marker."
   NEWLINE@21..22 "\n"
   ASSIGNMENT_EXPR@22..28
     IDENT@22..23 "f"

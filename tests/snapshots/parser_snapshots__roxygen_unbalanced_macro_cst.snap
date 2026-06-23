@@ -4,10 +4,11 @@ expression: tree
 ---
 ROOT@0..56
   ROXYGEN_BLOCK@0..36
-    ROXYGEN_LINE@0..36
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..36 "An unbalanced \\code{  ..."
+    ROXYGEN_SECTION@0..36
+      ROXYGEN_PARAGRAPH@0..36
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..36 "An unbalanced \\code{  ..."
   NEWLINE@36..37 "\n"
   ASSIGNMENT_EXPR@37..55
     IDENT@37..38 "f"

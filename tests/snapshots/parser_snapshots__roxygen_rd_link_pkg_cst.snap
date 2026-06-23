@@ -4,17 +4,18 @@ expression: tree
 ---
 ROOT@0..56
   ROXYGEN_BLOCK@0..36
-    ROXYGEN_LINE@0..36
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..9 "Wraps "
-      ROXYGEN_RD_MACRO@9..25
-        ROXYGEN_RD_MACRO_NAME@9..14 "\\link"
-        ROXYGEN_RD_MACRO_OPT@14..20 "[base]"
-        ROXYGEN_RD_MACRO_DELIM@20..21 "{"
-        ROXYGEN_TEXT@21..24 "sum"
-        ROXYGEN_RD_MACRO_DELIM@24..25 "}"
-      ROXYGEN_TEXT@25..36 " from base."
+    ROXYGEN_SECTION@0..36
+      ROXYGEN_PARAGRAPH@0..36
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..9 "Wraps "
+        ROXYGEN_RD_MACRO@9..25
+          ROXYGEN_RD_MACRO_NAME@9..14 "\\link"
+          ROXYGEN_RD_MACRO_OPT@14..20 "[base]"
+          ROXYGEN_RD_MACRO_DELIM@20..21 "{"
+          ROXYGEN_TEXT@21..24 "sum"
+          ROXYGEN_RD_MACRO_DELIM@24..25 "}"
+        ROXYGEN_TEXT@25..36 " from base."
   NEWLINE@36..37 "\n"
   ASSIGNMENT_EXPR@37..55
     IDENT@37..38 "f"

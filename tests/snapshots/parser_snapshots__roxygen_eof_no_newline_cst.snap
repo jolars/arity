@@ -11,7 +11,8 @@ ROOT@0..40
     INT@5..6 "1"
   NEWLINE@6..7 "\n"
   ROXYGEN_BLOCK@7..40
-    ROXYGEN_LINE@7..40
-      ROXYGEN_MARKER@7..9 "#'"
-      WHITESPACE@9..10 " "
-      ROXYGEN_TEXT@10..40 "trailing doc, no fina ..."
+    ROXYGEN_SECTION@7..40
+      ROXYGEN_PARAGRAPH@7..40
+        ROXYGEN_MARKER@7..9 "#'"
+        WHITESPACE@9..10 " "
+        ROXYGEN_TEXT@10..40 "trailing doc, no fina ..."

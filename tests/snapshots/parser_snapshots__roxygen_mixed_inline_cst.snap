@@ -4,23 +4,24 @@ expression: tree
 ---
 ROOT@0..74
   ROXYGEN_BLOCK@0..54
-    ROXYGEN_LINE@0..54
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..7 "Use "
-      ROXYGEN_CODE@7..10 "`x`"
-      ROXYGEN_TEXT@10..12 ", "
-      ROXYGEN_RD_MACRO@12..28
-        ROXYGEN_RD_MACRO_NAME@12..17 "\\link"
-        ROXYGEN_RD_MACRO_OPT@17..23 "[base]"
-        ROXYGEN_RD_MACRO_DELIM@23..24 "{"
-        ROXYGEN_TEXT@24..27 "sum"
-        ROXYGEN_RD_MACRO_DELIM@27..28 "}"
-      ROXYGEN_TEXT@28..34 ", and "
-      ROXYGEN_MD_LINK@34..39 "[g()]"
-      ROXYGEN_TEXT@39..44 " per "
-      ROXYGEN_MD_LINK@44..53 "[docs](u)"
-      ROXYGEN_TEXT@53..54 "."
+    ROXYGEN_SECTION@0..54
+      ROXYGEN_PARAGRAPH@0..54
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..7 "Use "
+        ROXYGEN_CODE@7..10 "`x`"
+        ROXYGEN_TEXT@10..12 ", "
+        ROXYGEN_RD_MACRO@12..28
+          ROXYGEN_RD_MACRO_NAME@12..17 "\\link"
+          ROXYGEN_RD_MACRO_OPT@17..23 "[base]"
+          ROXYGEN_RD_MACRO_DELIM@23..24 "{"
+          ROXYGEN_TEXT@24..27 "sum"
+          ROXYGEN_RD_MACRO_DELIM@27..28 "}"
+        ROXYGEN_TEXT@28..34 ", and "
+        ROXYGEN_MD_LINK@34..39 "[g()]"
+        ROXYGEN_TEXT@39..44 " per "
+        ROXYGEN_MD_LINK@44..53 "[docs](u)"
+        ROXYGEN_TEXT@53..54 "."
   NEWLINE@54..55 "\n"
   ASSIGNMENT_EXPR@55..73
     IDENT@55..56 "f"

@@ -4,18 +4,18 @@ expression: tree
 ---
 ROOT@0..38
   ROXYGEN_BLOCK@0..30
-    ROXYGEN_LINE@0..8
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..8 "Title"
-    NEWLINE@8..9 "\n"
-    ROXYGEN_LINE@9..11
+    ROXYGEN_SECTION@0..30
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
       ROXYGEN_MARKER@9..11 "#'"
-    NEWLINE@11..12 "\n"
-    ROXYGEN_LINE@12..30
-      ROXYGEN_MARKER@12..14 "#'"
-      WHITESPACE@14..15 " "
-      ROXYGEN_TEXT@15..30 "Body paragraph."
+      NEWLINE@11..12 "\n"
+      ROXYGEN_PARAGRAPH@12..30
+        ROXYGEN_MARKER@12..14 "#'"
+        WHITESPACE@14..15 " "
+        ROXYGEN_TEXT@15..30 "Body paragraph."
   NEWLINE@30..31 "\n"
   ASSIGNMENT_EXPR@31..37
     IDENT@31..32 "f"

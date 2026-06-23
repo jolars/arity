@@ -4,12 +4,13 @@ expression: tree
 ---
 ROOT@0..77
   ROXYGEN_BLOCK@0..57
-    ROXYGEN_LINE@0..57
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..7 "See "
-      ROXYGEN_MD_LINK@7..47 "[the manual](https:// ..."
-      ROXYGEN_TEXT@47..57 " for more."
+    ROXYGEN_SECTION@0..57
+      ROXYGEN_PARAGRAPH@0..57
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..7 "See "
+        ROXYGEN_MD_LINK@7..47 "[the manual](https:// ..."
+        ROXYGEN_TEXT@47..57 " for more."
   NEWLINE@57..58 "\n"
   ASSIGNMENT_EXPR@58..76
     IDENT@58..59 "f"

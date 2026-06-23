@@ -246,32 +246,29 @@ fn first_roxygen_block(src: &str) -> RoxygenBlock {
 }
 
 #[test]
-fn roxygen_block_lines_classify_blank_prose_and_tags() {
+fn roxygen_block_sections_classify_intro_and_tags() {
     let block = first_roxygen_block(
         "#' Title\n#'\n#' @param x A number.\n#' @examples\nf <- function(x) x\n",
     );
-    let lines: Vec<_> = block.lines().collect();
-    assert_eq!(lines.len(), 4);
+    // The block owns logical sections: the intro (untagged prose), then one
+    // section per `@tag`.
+    let sections: Vec<_> = block.sections().collect();
+    assert_eq!(sections.len(), 3);
 
-    // Prose line: a text token, no tag, not blank.
-    assert_eq!(lines[0].marker().unwrap().text(), "#'");
-    assert_eq!(lines[0].text().unwrap().text(), "Title");
-    assert!(lines[0].tag().is_none());
-    assert!(!lines[0].is_blank());
-
-    // Blank `#'` line: marker only.
-    assert!(lines[1].is_blank());
-    assert!(lines[1].text().is_none());
+    // Intro section: no tag heading, a single prose paragraph (the blank `#'`
+    // line is a separator, not its own paragraph).
+    assert!(sections[0].tag().is_none());
+    assert_eq!(sections[0].paragraphs().count(), 1);
 
     // `@param x ...`: tag with name + arg + trailing text.
-    let param = lines[2].tag().expect("param tag");
+    let param = sections[1].tag().expect("param tag");
     assert_eq!(param.name().as_deref(), Some("param"));
     assert_eq!(param.arg().unwrap().text(), "x");
     assert_eq!(param.text().unwrap().text(), "A number.");
     assert!(!param.is_examples());
 
     // `@examples`: an examples tag with no arg/text.
-    let examples = lines[3].tag().expect("examples tag");
+    let examples = sections[2].tag().expect("examples tag");
     assert!(examples.is_examples());
     assert!(examples.arg().is_none());
 }

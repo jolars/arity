@@ -4,22 +4,21 @@ expression: tree
 ---
 ROOT@0..48
   ROXYGEN_BLOCK@0..28
-    ROXYGEN_LINE@0..12
+    ROXYGEN_SECTION@0..28
       ROXYGEN_MARKER@0..2 "#'"
       WHITESPACE@2..3 " "
       ROXYGEN_TAG@3..12
         ROXYGEN_AT@3..4 "@"
         ROXYGEN_TAG_NAME@4..12 "examples"
-    NEWLINE@12..13 "\n"
-    ROXYGEN_LINE@13..20
-      ROXYGEN_MARKER@13..15 "#'"
-      WHITESPACE@15..16 " "
-      ROXYGEN_TEXT@16..20 "g(1)"
-    NEWLINE@20..21 "\n"
-    ROXYGEN_LINE@21..28
-      ROXYGEN_MARKER@21..23 "#'"
-      WHITESPACE@23..24 " "
-      ROXYGEN_TEXT@24..28 "g(2)"
+      NEWLINE@12..13 "\n"
+      ROXYGEN_PARAGRAPH@13..28
+        ROXYGEN_MARKER@13..15 "#'"
+        WHITESPACE@15..16 " "
+        ROXYGEN_TEXT@16..20 "g(1)"
+        NEWLINE@20..21 "\n"
+        ROXYGEN_MARKER@21..23 "#'"
+        WHITESPACE@23..24 " "
+        ROXYGEN_TEXT@24..28 "g(2)"
   NEWLINE@28..29 "\n"
   ASSIGNMENT_EXPR@29..47
     IDENT@29..30 "g"

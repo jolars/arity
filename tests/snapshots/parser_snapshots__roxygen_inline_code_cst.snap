@@ -4,14 +4,15 @@ expression: tree
 ---
 ROOT@0..64
   ROXYGEN_BLOCK@0..37
-    ROXYGEN_LINE@0..37
-      ROXYGEN_MARKER@0..2 "#'"
-      WHITESPACE@2..3 " "
-      ROXYGEN_TEXT@3..7 "Use "
-      ROXYGEN_CODE@7..14 "`x + y`"
-      ROXYGEN_TEXT@14..33 " to add, then call "
-      ROXYGEN_CODE@33..36 "`f`"
-      ROXYGEN_TEXT@36..37 "."
+    ROXYGEN_SECTION@0..37
+      ROXYGEN_PARAGRAPH@0..37
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..7 "Use "
+        ROXYGEN_CODE@7..14 "`x + y`"
+        ROXYGEN_TEXT@14..33 " to add, then call "
+        ROXYGEN_CODE@33..36 "`f`"
+        ROXYGEN_TEXT@36..37 "."
   NEWLINE@37..38 "\n"
   ASSIGNMENT_EXPR@38..63
     IDENT@38..39 "f"
