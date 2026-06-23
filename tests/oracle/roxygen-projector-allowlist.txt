@@ -9,6 +9,7 @@
 # Divergent cases in ROXYGEN_PROJECTOR.md are the backlog: close the structural
 # gap in the *parser*, refresh/keep the pin, then add the id here. A faithful
 # divergence means the CST is wrong --- never patch the projector to pass.
+describe_format
 examples
 itemize_enumerate
 param_prose

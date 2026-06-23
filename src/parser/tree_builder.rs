@@ -2,7 +2,9 @@ use rowan::GreenNodeBuilder;
 
 use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
-use crate::parser::roxygen::{is_verbatim_rd_macro, scan_balanced, scan_rd_macro};
+use crate::parser::roxygen::{
+    is_two_arg_rd_macro, is_verbatim_rd_macro, scan_balanced, scan_rd_macro,
+};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 pub(crate) fn build_tree(tokens: &[Token], events: &[Event]) -> SyntaxNode {
@@ -59,11 +61,16 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
         j = opt_end;
     }
 
-    if bytes.get(j) == Some(&b'{') {
-        // The span ends at the matching `}` (the lexer slices exactly that), so
-        // the content is everything between the opening brace and the last byte.
+    // Each `{…}` argument group becomes a `{` DELIM, sub-parsed (or verbatim)
+    // content, and a `}` DELIM. A two-argument macro (`\item{term}{desc}`) has a
+    // second adjacent group; every other macro stops after the first. The group
+    // ends are found by scanning, so the slices tile `text` exactly.
+    while bytes.get(j) == Some(&b'{') {
+        let Some(group_end) = scan_balanced(bytes, j, b'{', b'}') else {
+            break; // unbalanced: fall through to the defensive remainder
+        };
         builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "{");
-        let content = &text[j + 1..text.len() - 1];
+        let content = &text[j + 1..group_end - 1];
         if is_verbatim_rd_macro(name) {
             if !content.is_empty() {
                 builder.token(SyntaxKind::ROXYGEN_RD_MACRO_VERB.into(), content);
@@ -72,9 +79,15 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
             build_rd_content(builder, content);
         }
         builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "}");
-    } else if j < text.len() {
-        // Defensive: a span without the expected brace keeps its remainder whole
-        // so the round-trip is preserved (the lexer should never emit this shape).
+        j = group_end;
+        if !is_two_arg_rd_macro(name) {
+            break;
+        }
+    }
+    if j < text.len() {
+        // Defensive: a span without the expected brace (or an unbalanced one)
+        // keeps its remainder whole so the round-trip is preserved (the lexer
+        // should never emit this shape for a well-formed macro).
         builder.token(SyntaxKind::ROXYGEN_TEXT.into(), &text[j..]);
     }
 

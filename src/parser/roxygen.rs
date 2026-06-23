@@ -217,9 +217,27 @@ pub(crate) fn is_verbatim_rd_macro(name: &str) -> bool {
     VERBATIM_RD_MACROS.contains(&name)
 }
 
+/// Inline Rd macros that take **two** adjacent `{…}` argument groups, the way
+/// `tools::parse_Rd` does: `\item{term}{description}` (in `\describe`/`\value`/
+/// `\arguments`). A one-argument macro like `\code` consumes only its first
+/// group, so a trailing `\code{x}{y}`'s `{y}` stays literal --- the arity is per
+/// macro. Extensible (`\section`/`\tabular`/`\href`/… are future targets, several
+/// of which surface as block macros instead). A braceless `\item` (under
+/// `\itemize`/`\enumerate`) never reaches here: it has no `{`, so it is not a
+/// macro token at all.
+const TWO_ARG_RD_MACROS: &[&str] = &["item"];
+
+/// Whether the macro named `name` (without the leading `\`) takes two `{…}`
+/// argument groups. Drives both the lexer (consume the second group into one
+/// token) and the tree builder (emit both groups as children).
+pub(crate) fn is_two_arg_rd_macro(name: &str) -> bool {
+    TWO_ARG_RD_MACROS.contains(&name)
+}
+
 /// An Rd macro at `bytes[i] == b'\\'`: `\name`, an optional balanced `[…]`, then
-/// a required balanced `{…}`. Returns the index past the closing `}`, or `None`
-/// when there is no name or the braces are unbalanced on the line.
+/// a required balanced `{…}` (and a second `{…}` for a two-argument macro like
+/// `\item`). Returns the index past the last consumed `}`, or `None` when there
+/// is no name or the first braces are unbalanced on the line.
 pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
     let name_start = i + 1;
     let mut j = name_start;
@@ -229,13 +247,23 @@ pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
     if j == name_start {
         return None; // `\\`, `\{`, `\n`, … are not macro calls
     }
+    let name = std::str::from_utf8(&bytes[name_start..j]).unwrap_or_default();
     if bytes.get(j) == Some(&b'[') {
         j = scan_balanced(bytes, j, b'[', b']')?;
     }
     if bytes.get(j) != Some(&b'{') {
         return None;
     }
-    scan_balanced(bytes, j, b'{', b'}')
+    let mut end = scan_balanced(bytes, j, b'{', b'}')?;
+    // A two-argument macro pulls its adjacent second `{…}` group into the same
+    // token; an unbalanced or absent second group leaves `end` after the first.
+    if is_two_arg_rd_macro(name)
+        && bytes.get(end) == Some(&b'{')
+        && let Some(second) = scan_balanced(bytes, end, b'{', b'}')
+    {
+        end = second;
+    }
+    Some(end)
 }
 
 /// A markdown link at `bytes[i] == b'['`: a balanced `[…]`, then either `(…)`

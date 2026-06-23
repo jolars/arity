@@ -247,12 +247,19 @@ fn serialize_macro(node: &SyntaxNode) -> String {
                     atoms.push(serialize_macro(n));
                 }
             }
-            // Delimiters, the dropped option, and the `#'` markers threaded into a
-            // multi-line block macro carry no projected content; any other leaf
-            // (text, and the collapsed newline/whitespace trivia) is prose.
-            SyntaxKind::ROXYGEN_RD_MACRO_DELIM
-            | SyntaxKind::ROXYGEN_RD_MACRO_OPT
-            | SyntaxKind::ROXYGEN_MARKER => {}
+            // A closing `}` ends an argument group: flush the run so adjacent
+            // groups stay separate atoms (`\item{a}{b}` → `(\item (TEXT "a")
+            // (TEXT "b"))`, never coalesced --- parse_Rd models each `{…}` as its
+            // own list). The opening `{` carries no content.
+            SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
+                if el.as_token().is_some_and(|t| t.text() == "}") {
+                    flush(&mut run, &mut atoms);
+                }
+            }
+            // The dropped option and the `#'` markers threaded into a multi-line
+            // block macro carry no projected content; any other leaf (text, and
+            // the collapsed newline/whitespace trivia) is prose.
+            SyntaxKind::ROXYGEN_RD_MACRO_OPT | SyntaxKind::ROXYGEN_MARKER => {}
             _ => {
                 if let Some(t) = el.as_token() {
                     run.push_str(t.text());
@@ -474,23 +481,26 @@ mod tests {
     }
 
     #[test]
-    fn multiline_describe_item_second_arg_still_diverges() {
-        // A multi-line `\describe` now forms a block macro (Stage 2), but its
-        // `\item{term}{def}` takes *two* brace groups --- modeling the second as
-        // an `\item` child is Stage 3. Until then the `{def}` group leaks as a
-        // sibling `(TEXT "{first}")` instead of roxygen2's
-        // `(\item (TEXT "a") (TEXT "first"))`. Asserted so the gap can't silently
-        // change.
+    fn multiline_describe_item_projects_two_args() {
+        // A multi-line `\describe` whose `\item{term}{def}` takes *two* brace
+        // groups (Stage 3): the lexer pulls both groups into one macro token, the
+        // tree builder emits both as `\item` children, and the projector flushes
+        // at each closing `}` so they stay separate atoms ---
+        // `(\item (TEXT "a") (TEXT "first"))`, byte-identical to roxygen2.
         let src = "#' T\n\
                    #' @format A frame:\n\
                    #' \\describe{\n\
                    #'   \\item{a}{first}\n\
+                   #'   \\item{b}{second}\n\
                    #' }\n\
                    #' @name d\n\
                    NULL\n";
         let out = project_to_rd(src);
         assert!(
-            out.contains("(\\describe (\\item (TEXT \"a\")) (TEXT \"{first}\"))"),
+            out.contains(
+                "(\\describe (\\item (TEXT \"a\") (TEXT \"first\")) \
+                 (\\item (TEXT \"b\") (TEXT \"second\")))"
+            ),
             "got: {out}"
         );
     }

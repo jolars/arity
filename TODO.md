@@ -196,7 +196,13 @@
         below.
       - *Multi-argument macros* (`\item{term}{def}`, `\link[pkg]{name}`,
         `\method{generic}{class}`, `\href{url}{text}`) — multiple adjacent brace
-        groups, not one.
+        groups, not one. **`\item{term}{def}` landed (Stage 3, 2026-06-23):**
+        `is_two_arg_rd_macro` (currently `item`) makes the lexer pull a second
+        adjacent `{…}` into one macro token, the tree builder emits both groups as
+        `\item` children, and the projector flushes at each closing `}` so the two
+        groups stay separate atoms (`(\item (TEXT "a") (TEXT "first"))`);
+        `describe_format` matches its pin. `\href`/`\method`/`\section` extend the
+        set when needed.
       - *Block macros that span many `#'` lines with nested content.*
         **`\itemize`/`\enumerate` landed (Stage 2, 2026-06-23):** a `\name{` whose
         group is unbalanced on its line opens a `ROXYGEN_RD_MACRO` node spanning
@@ -204,11 +210,11 @@
         as a name-only child; the projector reuses `serialize_macro`, and the
         formatter passes the node through verbatim (it had reflowed it into a
         run-on — that bug is fixed; `itemize_enumerate` matches its pin).
-        **Still open:** `\describe{ \item{term}{def} … }` (needs the multi-arg
-        `\item` second `{def}` group → an `\item` child, see below) and
-        `\tabular{rl}{ … \tab … \cr }` (the lexer extracts the balanced `{rl}`
-        column-spec as an inline macro token, so the trailing body `{` isn't seen
-        as an opener — Stage 3+).
+        **`\describe{ \item{term}{def} … }` landed (Stage 3, 2026-06-23):** the
+        multi-arg `\item` (above) closes it; `describe_format` matches its pin.
+        **Still open:** `\tabular{rl}{ … \tab … \cr }` (the lexer extracts the
+        balanced `{rl}` column-spec as an inline macro token, so the trailing body
+        `{` isn't seen as an opener — needs a `\name{arg}{` recognizer).
       - *Verbatim / non-prose content* (`\deqn{}`/`\eqn{}` carry LaTeX-ish math,
         `\preformatted{}`/`\verb{}` carry literal text, `\tabular` cells use
         `\tab`/`\cr` separators) — never reflow or markdown-interpret the interior.

@@ -58,6 +58,17 @@ reads this first.
   the **projector** walks `sections()`/`paragraphs()`. There is a committed **format-stability
   baseline** (`tests/roxygen-format-baseline.jsonl`, via `tests/roxygen_format_stability.rs`);
   any intended formatter change must re-bless it (`BLESS_ROXYGEN_FORMAT=1`) **with review**.
+- **Macro arity is per-macro, not greedy (since 2026-06-23, Stage 3).** `\code{x}{y}`
+  is `\code{x}` + a literal `{y}` LIST (parse_Rd: `\code` takes one arg), but
+  `\item{a}{b}` is a single two-arg `\item`. So the lexer (`scan_rd_macro`) consumes a
+  second adjacent `{…}` group **only** for `is_two_arg_rd_macro` (`TWO_ARG_RD_MACROS` in
+  `parser/roxygen.rs`, currently just `item`); the tree builder (`build_rd_macro`) loops
+  over `{…}` groups emitting `{`/content/`}` per group; the projector (`serialize_macro`)
+  flushes the text run at each **closing** `}` DELIM so adjacent groups stay separate
+  atoms (`(\item (TEXT "a") (TEXT "b"))`, never coalesced). A braceless `\item` (under
+  `\itemize`) never reaches this — it has no `{`, so it's a name-only macro, not a token.
+  New 2-arg macro (`\href`/`\method`/`\section`/`\tabular`-cell)? add it to that set,
+  confirm the arity via `parse_Rd` (a trailing `{…}` tagged `LIST` = NOT consumed).
 - **Mode-keyed parse.** Markdown structure exists in the CST only when `@md` is on;
   the CST (and projected Rd) differs by mode — pin both modes where relevant.
 - **Two corpora, two disciplines.** *Curated* dir corpus = strict (every case allowlisted
@@ -101,7 +112,7 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-`\itemize`/`\enumerate`, 2026-06-23 Stage 2): **57 matching (all allowlisted), 101 divergent
+`\describe` `\item{term}{def}`, 2026-06-23 Stage 3): **58 matching (all allowlisted), 100 divergent
 (backlog)** of 158 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
@@ -113,7 +124,7 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (151 cases). The 101 divergences are the worklist.
+   subset (151 cases). The 100 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 7/7 preserving, 0
    blocked. *Meaning, not layout.*
@@ -123,46 +134,46 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — Stage 2: `\itemize`/`\enumerate` block macros
+## Latest session (2026-06-23) — Stage 3: `\describe` multi-arg `\item{term}{def}`
 
-**First capability win on the new logical CST.** Closed `itemize_enumerate` (projector
-**56→57 matching**, all allowlisted; **0 regressions**). Multi-line block Rd macros now
-parse, project, and format. Files by bucket:
-- **Parser gap** (`src/parser/roxygen.rs`, the growth site): `is_block_macro_line`/
-  `is_block_macro_opener` detect a `\name{` unbalanced on its line; `emit_block_macro` builds
-  the node across `#'` lines, threading marker/newline/indent trivia (`Event::Tok`) and
-  splitting `RoxygenText` into `Event::Leaf` synthetic leaves via `emit_block_open`/
-  `emit_block_content` (brace-less `\item` → name-only macro, depth-1 `}` → close delim, nested
-  inline `\code{}` passes through as a whole token the tree builder expands). New
-  `Event::Leaf(SyntaxKind,String)` variant (`events.rs`; `tree_builder.rs` `match event`).
-- **Projector gap** (`src/roxygen/project_rd.rs`): `serialize_macro` now skips threaded
-  `ROXYGEN_MARKER`; `section_body_parts` walks paragraphs + block-macro section children in
-  order so a tag/intro section's body picks up the macro. Pin already existed; case ratcheted
-  into `roxygen-projector-allowlist.txt`.
-- **Formatter** (`src/formatter/roxygen.rs`): `PhysicalLine.block_macro` + `is_block_macro`
-  (a `ROXYGEN_RD_MACRO` containing a marker) → atomic passthrough. Fixed the run-on-reflow bug
-  for 7 prose corpus cases (now byte-identical to their well-formed source; re-blessed
-  `roxygen-format-baseline.jsonl`). `\dontrun{}` in `@examples` is parsed as a block macro too
-  but emitted **flush** (`emit_block_macro_examples`), so the `roxygen_examples_dontrun_passthrough`
-  fixture is unchanged (example code stays copy-pasteable). **Not** justified by air — air ignores
-  roxygen entirely; the layout is arity's own deterministic rule (see the traps).
-- **Tests:** new parser fixture `roxygen_block_macro` (pins the CST incl. nested inline
-  `\code`); projector unit test `multiline_itemize_projects_nested`; `\describe` unit test
-  re-scoped to the precise Stage-3 gap (`\item{a}{first}` → `(\item (TEXT "a")) (TEXT "{first}")`,
-  second `{def}` group not yet an `\item` child). Full suite green (705 tests), clippy+fmt clean,
-  R fixed-point 7/7 + harvested 212/4 unchanged.
+**Closed `describe_format`** (projector **57→58 matching**, all allowlisted; **0
+regressions**). The `\describe` block already parsed (Stage 2); the gap was the *second*
+`{def}` brace group leaking as a sibling `(TEXT "{first}")`. Now `\item{a}{first}` →
+`(\item (TEXT "a") (TEXT "first"))`, byte-identical to roxygen2. Files by bucket:
+- **Parser gap** (`src/parser/roxygen.rs`): new `TWO_ARG_RD_MACROS`/`is_two_arg_rd_macro`
+  (currently just `item`); `scan_rd_macro` consumes a second adjacent `{…}` group for a
+  two-arg macro, so `\item{a}{first}` is **one** `RoxygenRdMacro` token (was `\item{a}` +
+  sibling text `{first}`). Arity is per-macro — confirmed via `parse_Rd` that `\code{x}{y}`
+  is `\code{x}` + a `{y}` LIST (`\code` = 1 arg), so greedy-consume-all would be wrong.
+- **Parser gap** (`src/parser/tree_builder.rs`): `build_rd_macro` now loops over `{…}`
+  groups (was a single hard-coded group ending at `text.len()-1`), emitting `{`/content/`}`
+  per group and stopping after the first unless `is_two_arg_rd_macro`. Losslessness-safe:
+  group ends found via `scan_balanced`, unbalanced groups fall to the defensive remainder.
+- **Projector gap** (`src/roxygen/project_rd.rs`): `serialize_macro` flushes the text run at
+  each **closing** `}` DELIM, so adjacent argument groups stay separate atoms (parse_Rd
+  models each `{…}` as its own LIST). Opening `{` unchanged. Pin already existed
+  (`describe_format.rdtree`); case ratcheted into the allowlist.
+- **Tests:** new parser fixture `roxygen_describe_item` (pins the two-group `\item` CST);
+  projector unit test renamed/rewritten `multiline_describe_item_projects_two_args` (was the
+  diverging-shape pin). Full suite green (441 lib + integration), clippy+fmt clean, R
+  fixed-point 7/7, harvested unchanged.
 
-**Next (ranked) — Stage 3: `\describe` multi-arg `\item{term}{def}`.** `\describe` already forms
-a block macro; the gap is the *second* `{def}` brace group. `serialize_macro` must treat a
-multi-arg macro's adjacent `{…}` groups as a list (`(\item (TEXT "a") (TEXT "first"))`), and the
-parser must keep both groups as `\item` children (today the lexer extracts the balanced first
-`\item{a}` as an inline macro token and the trailing `{first}` lands as sibling text). Then
-**`\tabular`** (the `\tabular{rl}{` opener: a balanced `{rl}` arg followed by the body `{` — the
-lexer eats `\tabular{rl}` as an inline token, so `is_block_macro_opener` never fires; needs a
-`\name{arg}{` recognizer), with `\tab`/`\cr` separators. Then **markdown lists under `@md`**.
+**Next (ranked) — `\tabular{rl}{ … \tab … \cr }`.** The lexer eats the balanced `{rl}`
+column-spec as an inline macro token, so the trailing body `{` isn't seen as a block opener
+(`is_block_macro_opener` only fires on a `\name{` whose *first* group is unbalanced). Needs a
+`\name{arg}{` recognizer that treats a balanced-arg-then-unbalanced-body as a block opener,
+with `\tab`/`\cr` cell/row separators inside. Curated pin is `tabular.rdtree`. After that:
+**markdown lists under `@md`** (mode-keyed `-`/`*`/`1.` → `\itemize`/`\enumerate`).
 
 ## Earlier sessions
 
+- **2026-06-23 (Stage 2, `\itemize`/`\enumerate`):** first capability win on the logical CST.
+  `is_block_macro_opener`/`emit_block_macro` build a multi-line `ROXYGEN_RD_MACRO` across `#'`
+  lines (markers/newlines/indent threaded as trivia via new `Event::Leaf`); brace-less `\item`
+  → name-only macro child. Projector `section_body_parts` walks block-macro section children;
+  formatter passes the node through atomically (`is_block_macro`, prose-indent vs
+  examples-flush), fixing a run-on-reflow bug for 7 prose cases (re-blessed format baseline).
+  Closed `itemize_enumerate` (56→57). New fixture `roxygen_block_macro`.
 - **2026-06-23 (CST re-model, Stage 1):** dissolved `ROXYGEN_LINE`; `ROXYGEN_BLOCK` →
   `ROXYGEN_SECTION`* → `ROXYGEN_TAG`/`ROXYGEN_PARAGRAPH`* with markers/newlines as trivia
   (`3a0846a`; Stage-0 baseline harness `882889a`). Pure re-shape, byte-identical formatter

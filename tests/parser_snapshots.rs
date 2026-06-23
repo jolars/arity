@@ -178,6 +178,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_nested_braces",
         "roxygen_rd_macro_nested",
         "roxygen_block_macro",
+        "roxygen_describe_item",
         "roxygen_unterminated_code",
         "roxygen_unbalanced_macro",
         "roxygen_backtick_in_macro",
