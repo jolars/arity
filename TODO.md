@@ -332,6 +332,41 @@
       block `rx-daf9322f`, inline raw HTML `rx-299f50fb`) are downstream of the same
       block-structure work. Run `task roxygen-harvest`; ratchet via
       `task roxygen-harvest-seed`.
+    - *Parser architecture — refactor BEFORE the next markdown push (links/tables/
+      nested lists).* The roxygen parser is sound but its phase discipline has eroded
+      as it grew; `src/parser/roxygen.rs` is now ~1700 lines, the largest file in the
+      parser. Do these while it's that size, not after it doubles. Ranked:
+      1. **Unify the `TokKind` line-body classification (highest correctness ROI).**
+         A new roxygen line-body kind must currently be hand-added to *every* matcher
+         — `classify_line`, `is_line_body_kind`, the block-macro inline-span arm
+         (all `roxygen.rs`), `expr.rs`'s atom fallthrough, `tree_builder`'s
+         `syntax_kind_for`, `lexer.rs`'s `is_comment_like`, `syntax.rs`'s
+         `is_roxygen_token`, plus the formatter's `is_blank`/`is_tag_prose_kind`. The
+         `matches!` lists are **silent** (Rust exhaustiveness can't catch a miss); this
+         already shipped a bug once (Stage 5: a `@param` description vanished at an
+         unknown token). Collapse them onto one classification source (a property/trait
+         on `TokKind`, or one predicate fn) so adding a kind is a single
+         compiler-policed edit. This is the thing most likely to cause a *silent*
+         correctness regression as markdown grows.
+      2. **Split `roxygen.rs` along its real phase boundaries.** It conflates four
+         phases the R parser keeps separate: sub-lexing, block grouping (event
+         emission), line classification, and Rd-macro/markdown *structure building*.
+         The `emit_block_*`/`emit_md_list` family is a hand-rolled recursive-descent
+         parser inside nominal "lexing" that can't reuse `core.rs`/`cursor.rs`/
+         `recovery.rs` and reinvents cursor + recovery ad hoc. Carve sub-lexer /
+         block-grouper / structure-builder into modules, ideally over the shared
+         cursor/recovery infra.
+      3. **Watch the block-opener Form A/Form B split.** Because the lexer greedily
+         eats balanced `{…}` groups, `is_block_macro_line` has two structurally
+         different entry forms and macro-arity logic is split lexer↔tree-builder
+         (`scan_rd_macro` ↔ `build_rd_macro`). Correct but intricate; a *third* form
+         appearing is the signal to reconsider the lex-time greediness.
+      - *Lower-stakes, documented known-gaps (revisit only if forced).* Roxygen is
+        non-incremental — edits fall back to block/full reparse (`reparse.rs`; Tenet 2
+        gap, but doc comments are statement-level so a full reparse is cheap), and
+        roxygen owns ~⅓ of all `SyntaxKind`s (69/213); the markdown roadmap will keep
+        inflating both. The projector being `pub` only to reach a test crate is an
+        accepted minor layering smell.
 
 ## Linter
 

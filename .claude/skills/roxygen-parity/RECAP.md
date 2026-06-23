@@ -233,7 +233,13 @@ becoming `\item{\code{name}}{def}` where the name is verbatim R-code (`RCODE`, l
   (CST unchanged — existing tag-arg parsing already covered). Full `cargo test` green
   (458 lib + all integration); clippy + fmt clean.
 
-**Next (ranked):** the largest remaining cluster is **markdown links** (≈10 cases:
+**Next (ranked):** **Strongly consider a parser refactor before the next markdown push**
+(architecture review, 2026-06-23 — see `TODO.md` "Parser architecture — refactor BEFORE
+the next markdown push"). `roxygen.rs` is ~1700 lines with eroded phase discipline; the
+top item is unifying the scattered `TokKind` line-body `matches!` lists onto one
+compiler-policed classifier (they're silent today and already shipped one bug). Markdown
+links will widen exactly those matchers, so doing the refactor first de-risks the cluster.
+Otherwise, the largest remaining parity cluster is **markdown links** (≈10 cases:
 rx-270b730c/rx-95dd50a4/rx-72858140/rx-2a68ab3f/rx-4adb1f22/rx-fd84eacf/rx-375ab9f1
 `[text]`/`[text][dest]`/`[fn()]`/`[pkg::obj]` → `\link`/`\code{\link}`; rx-7743ba62/
 rx-0605d020 `[text](url)` → `\href` (the `\href` projector arm now exists — only the
