@@ -4,6 +4,10 @@
 # R fixtures should use LF by default for consistent snapshots
 tests/fixtures/**/*.R eol=lf
 
+# Oracle corpus + baselines must use LF so format/projector baselines (which
+# are blessed on LF) stay byte-identical on every platform, Windows included.
+tests/oracle/** eol=lf
+
 # Snapshot files should always use LF
 tests/**/snapshots/**/* eol=lf
 
