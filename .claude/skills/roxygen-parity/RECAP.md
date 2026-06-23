@@ -27,8 +27,31 @@ reads this first.
   (`VERBATIM_RD_MACROS` in `parser/roxygen.rs`: `url,verb,samp,env,kbd,option`) don't
   recurse — body is one `…_VERB` leaf → projector emits `(VERB …)`. New verbatim macro in
   backlog? add it there (confirm via `parse_Rd`: a `{VERB}` child = verbatim).
+- **Block Rd macros span lines via threaded trivia (since 2026-06-23, Stage 2).** A
+  `\name{` whose group is *unbalanced on its line* opens a multi-line `ROXYGEN_RD_MACRO`
+  (the lexer extracts a *balanced* `\name{…}` as a single inline macro token, so a
+  `RoxygenText` starting `\name{` is necessarily a multi-line opener — `is_block_macro_opener`).
+  The node owns its opening marker **and** the inter-line `#'`/newline/indent as trivia;
+  brace-less `\item`/`\cr`/… (a `\name` not followed by `{`) is a **name-only** child;
+  closing `}` at depth 1 is the delim (greedy + lossless if unterminated). Built by
+  splitting `RoxygenText` tokens into `Event::Leaf(kind,text)` synthetic leaves (new Event
+  variant; tree builder + projector untouched otherwise). **Formatter = atomic passthrough**
+  (not reflow), context-keyed: in a **prose** section `emit_block_macro` preserves the in-macro
+  indentation (a `\itemize` list; splits `node.text()` on `\n`, drops only the inter-line
+  indent before continuation markers); inside **`@examples`** a block macro wraps example R
+  (`\dontrun{}`/`\donttest{}`/…) so `emit_block_macro_examples` emits it **flush**
+  (marker-normalized) — example code is copy-pasted, so no list-indentation (user call, 2026-06-23).
+  **Justification is Tenet 1, NOT air:** air does **not** format roxygen content at all (it leaves
+  `#'` comments byte-for-byte untouched — verified), so it is **not an oracle** for any roxygen
+  layout choice and the air-compat fixed point is satisfied by the roxygen portion no matter what
+  we emit. The rule (don't reflow a block macro; prose-indent vs examples-flush) is arity's own,
+  idempotent, preserving well-formed input. *(Open: a Tenet-1-pure **canonical** re-indent for
+  prose lists — preserve-source means input indentation leaks into output; deferred.)*
+  **`format <file>` writes in place — use `format < file` to avoid clobbering corpus fixtures.**
 - **The roxygen CST is logical, not line-based (since 2026-06-23).** `ROXYGEN_BLOCK` →
   `ROXYGEN_SECTION`* (intro + one per `@tag`) → `ROXYGEN_TAG` and/or `ROXYGEN_PARAGRAPH`*.
+  A **block macro is a direct `ROXYGEN_SECTION` child** (a sibling of paragraphs, not inside
+  one); the projector's `section_body_parts` walks paragraphs+block-macros in document order.
   `#'` markers, marker→content whitespace, and inter-line newlines are **trivia** threaded
   into the enclosing node. `ROXYGEN_LINE`/`RoxygenLine` no longer exist (reserved enum
   variant only). The **formatter** reconstructs physical lines from trivia (`physical_lines`);
@@ -77,11 +100,11 @@ gate now exist and are the **primary driver** (parser-first, structural, CI-safe
 corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset**
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
-they stay in the R↔R fixed-point net, not false-positive backlog). Baseline (after
-inline Rd macros, 2026-06-22e): **56 matching (allowlisted), 102 divergent (backlog)**
-of 158 pinned cases. The
-divergences are **structural/parser** gaps, not fixed-point cosmetics — exactly the
-re-pointing, now a real 116-case worklist. Tasks: `task roxygen-projector` (the gate),
+they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
+`\itemize`/`\enumerate`, 2026-06-23 Stage 2): **57 matching (all allowlisted), 101 divergent
+(backlog)** of 158 pinned cases. The
+divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
+`task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
 (harvested pins only), `task roxygen-projector-seed` (re-seed allowlist from matches).
 Report: `ROXYGEN_PROJECTOR.md` (this dir).
@@ -90,7 +113,7 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (151 cases). The 116 divergences are the worklist.
+   subset (151 cases). The 101 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 7/7 preserving, 0
    blocked. *Meaning, not layout.*
@@ -100,60 +123,53 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — CST re-model (logical content, line node dissolved)
+## Latest session (2026-06-23) — Stage 2: `\itemize`/`\enumerate` block macros
 
-**The roxygen CST is no longer line-flat.** Approved plan:
-`~/.claude/plans/cozy-swinging-patterson.md` (local). Motivated by panache's embedded-YAML
-model (markers as `Trivia(LinePrefix)`, structure over the logical content stream) and the
-fact that rowan/rust-analyzer trees are never line-based. `ROXYGEN_LINE` is **dissolved**
-(kept as a reserved, unemitted enum variant for discriminant stability). A `ROXYGEN_BLOCK`
-now owns **logical content**: children are `ROXYGEN_SECTION` (the intro, then one per
-`@tag`), and a section's prose is grouped into `ROXYGEN_PARAGRAPH`s between blank lines.
-`#'` markers, the marker→content whitespace, and inter-line newlines are **trivia threaded
-into the enclosing node** (losslessness intact). syntax.rs +2 node kinds (`ROXYGEN_SECTION`
-88, `ROXYGEN_PARAGRAPH` 89), COUNT bumped. AST: `RoxygenLine` → `RoxygenSection`
-(`tag()`/`paragraphs()`) + `RoxygenParagraph`; `RoxygenBlock::sections()`. Parser
-(`emit_roxygen_block`) rewritten to a section/paragraph state machine (`classify_line` →
-Tag/Blank/Prose; `emit_tag_line`/`emit_line_tokens`). **No block-macro parsing yet** — a
-multi-line `\itemize` is still flat prose here (Stage 2).
+**First capability win on the new logical CST.** Closed `itemize_enumerate` (projector
+**56→57 matching**, all allowlisted; **0 regressions**). Multi-line block Rd macros now
+parse, project, and format. Files by bucket:
+- **Parser gap** (`src/parser/roxygen.rs`, the growth site): `is_block_macro_line`/
+  `is_block_macro_opener` detect a `\name{` unbalanced on its line; `emit_block_macro` builds
+  the node across `#'` lines, threading marker/newline/indent trivia (`Event::Tok`) and
+  splitting `RoxygenText` into `Event::Leaf` synthetic leaves via `emit_block_open`/
+  `emit_block_content` (brace-less `\item` → name-only macro, depth-1 `}` → close delim, nested
+  inline `\code{}` passes through as a whole token the tree builder expands). New
+  `Event::Leaf(SyntaxKind,String)` variant (`events.rs`; `tree_builder.rs` `match event`).
+- **Projector gap** (`src/roxygen/project_rd.rs`): `serialize_macro` now skips threaded
+  `ROXYGEN_MARKER`; `section_body_parts` walks paragraphs + block-macro section children in
+  order so a tag/intro section's body picks up the macro. Pin already existed; case ratcheted
+  into `roxygen-projector-allowlist.txt`.
+- **Formatter** (`src/formatter/roxygen.rs`): `PhysicalLine.block_macro` + `is_block_macro`
+  (a `ROXYGEN_RD_MACRO` containing a marker) → atomic passthrough. Fixed the run-on-reflow bug
+  for 7 prose corpus cases (now byte-identical to their well-formed source; re-blessed
+  `roxygen-format-baseline.jsonl`). `\dontrun{}` in `@examples` is parsed as a block macro too
+  but emitted **flush** (`emit_block_macro_examples`), so the `roxygen_examples_dontrun_passthrough`
+  fixture is unchanged (example code stays copy-pasteable). **Not** justified by air — air ignores
+  roxygen entirely; the layout is arity's own deterministic rule (see the traps).
+- **Tests:** new parser fixture `roxygen_block_macro` (pins the CST incl. nested inline
+  `\code`); projector unit test `multiline_itemize_projects_nested`; `\describe` unit test
+  re-scoped to the precise Stage-3 gap (`\item{a}{first}` → `(\item (TEXT "a")) (TEXT "{first}")`,
+  second `{def}` group not yet an `\item` child). Full suite green (705 tests), clippy+fmt clean,
+  R fixed-point 7/7 + harvested 212/4 unchanged.
 
-**Done as a staged, always-green migration:**
-- **Stage 0** (`882889a`, `test(roxygen)`): a differential format-stability harness
-  (`tests/roxygen_format_stability.rs`) pins `format(input)` byte-for-byte over the whole
-  roxygen corpus (224 cases) to a committed baseline (`tests/oracle/roxygen-format-baseline.jsonl`).
-  Re-bless with `BLESS_ROXYGEN_FORMAT=1`. This is the guardrail that proves the re-shape
-  didn't move formatter output.
-- **Stage 1** (`3a0846a`, `refactor(parser)`): the cutover above. **Pure re-shape, zero
-  behavior change** — formatter output byte-identical (Stage-0 harness + 37 fixtures),
-  projector output identical (**56 matching / 102 backlog unchanged**), losslessness +
-  idempotence green. The **formatter** keeps its line-oriented reflow engine, fed by a
-  `PhysicalLine` view *reconstructed from marker/newline trivia* (`physical_lines` /
-  `collect_logical_elements` in `formatter/roxygen.rs`; `RoxygenLine` → `PhysicalLine`).
-  The **projector** `project_block` walks sections/paragraphs directly (`paragraph_inlines`;
-  the line-reassembly state machine gone). 22 parser CST snapshots regenerated;
-  `ast_wrappers` test rewritten to `sections()`/`paragraphs()`. clippy + fmt clean.
-
-**Next (ranked) — Stage 2: `\itemize`/`\enumerate` block macros.** Close `itemize_enumerate`
-(the pin wants `(\itemize (\item) (TEXT …) (\item) (TEXT …))`). Now tractable because the
-block grouping site is the new logical parser. Plan: a `ROXYGEN_RD_MACRO` node (reuse the
-inline kind) that spans `#'` lines, with brace-less `\item` as a name-only
-`ROXYGEN_RD_MACRO` child and the trailing text a sibling; markers/newlines threaded as
-trivia. **Open design problem (handle first):** the lexer emits `\item First bullet…` as one
-`RoxygenText` token, and `\itemize{`/`}` as `RoxygenText` too (unbalanced ⇒ `scan_rd_macro`
-returns None). Splitting `\item` off its text, and carving `\itemize{`/`}` into NAME/DELIM,
-needs a **tree-builder path generalizing `build_rd_macro` to a multi-token, trivia-interleaved
-span** — the parser's `Event::Tok(idx)` references whole tokens and can't split them. Decide
-that mechanism before coding. Then: projector grows a section-level block-macro arm
-(`serialize_macro` already emits the nested shape); formatter routes block-macro nodes to
-**atomic passthrough** (not reflow). **NB:** the current formatter *reflows* the multi-line
-`\itemize` into a mangled run-on (a latent bug the projector gate exists to catch), so Stage 2
-will legitimately change `itemize_enumerate`'s formatted output — **review + re-bless** the
-Stage-0 baseline for the affected cases (it's a fix, not a regression). Then `\describe`
-(`describe_format`, multi-arg `\item{term}{def}` → `GRP`), `\tabular`, markdown under `@md`.
-**Fix the parser, never the projector.**
+**Next (ranked) — Stage 3: `\describe` multi-arg `\item{term}{def}`.** `\describe` already forms
+a block macro; the gap is the *second* `{def}` brace group. `serialize_macro` must treat a
+multi-arg macro's adjacent `{…}` groups as a list (`(\item (TEXT "a") (TEXT "first"))`), and the
+parser must keep both groups as `\item` children (today the lexer extracts the balanced first
+`\item{a}` as an inline macro token and the trailing `{first}` lands as sibling text). Then
+**`\tabular`** (the `\tabular{rl}{` opener: a balanced `{rl}` arg followed by the body `{` — the
+lexer eats `\tabular{rl}` as an inline token, so `is_block_macro_opener` never fires; needs a
+`\name{arg}{` recognizer), with `\tab`/`\cr` separators. Then **markdown lists under `@md`**.
 
 ## Earlier sessions
 
+- **2026-06-23 (CST re-model, Stage 1):** dissolved `ROXYGEN_LINE`; `ROXYGEN_BLOCK` →
+  `ROXYGEN_SECTION`* → `ROXYGEN_TAG`/`ROXYGEN_PARAGRAPH`* with markers/newlines as trivia
+  (`3a0846a`; Stage-0 baseline harness `882889a`). Pure re-shape, byte-identical formatter
+  output (37 fixtures), projector unchanged (56/102), losslessness+idempotence green. Formatter
+  reconstructs physical lines from trivia (`physical_lines`/`collect_logical_elements`);
+  projector walks sections/paragraphs. Approved plan `~/.claude/plans/cozy-swinging-patterson.md`.
+  This unblocked Stage 2.
 - **2026-06-22e:** Inline Rd macros as structured `ROXYGEN_RD_MACRO` *nodes* (`be0521b`):
   tree builder (`build_rd_macro`/`build_rd_content`) expands the macro token into
   NAME/OPT/DELIM/VERB leaves + nested macros; projector emits nested Rd via the

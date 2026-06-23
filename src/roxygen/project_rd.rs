@@ -36,7 +36,7 @@
 
 use rowan::NodeOrToken;
 
-use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenTag};
+use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
 use crate::parser::parse;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -83,17 +83,15 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         if let Some(tag) = section.tag() {
             let name = tag.name().map(|n| n.to_string()).unwrap_or_default();
             let mut body = tag_inlines(&tag);
-            for para in section.paragraphs() {
+            for part in section_body_parts(&section) {
                 if !body.is_empty() {
                     body.push(Inline::Text(" ".to_string()));
                 }
-                body.extend(paragraph_inlines(&para));
+                body.extend(part);
             }
             tag_sections.push((name, body));
         } else {
-            for para in section.paragraphs() {
-                intro_paras.push(paragraph_inlines(&para));
-            }
+            intro_paras.extend(section_body_parts(&section));
         }
     }
 
@@ -249,9 +247,12 @@ fn serialize_macro(node: &SyntaxNode) -> String {
                     atoms.push(serialize_macro(n));
                 }
             }
-            // Delimiters and the dropped option carry no projected content; any
-            // other leaf (text) is prose.
-            SyntaxKind::ROXYGEN_RD_MACRO_DELIM | SyntaxKind::ROXYGEN_RD_MACRO_OPT => {}
+            // Delimiters, the dropped option, and the `#'` markers threaded into a
+            // multi-line block macro carry no projected content; any other leaf
+            // (text, and the collapsed newline/whitespace trivia) is prose.
+            SyntaxKind::ROXYGEN_RD_MACRO_DELIM
+            | SyntaxKind::ROXYGEN_RD_MACRO_OPT
+            | SyntaxKind::ROXYGEN_MARKER => {}
             _ => {
                 if let Some(t) = el.as_token() {
                     run.push_str(t.text());
@@ -314,6 +315,26 @@ fn encode_text(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// The body parts of a section in document order, excluding its `@tag` heading:
+/// each prose `ROXYGEN_PARAGRAPH` becomes its inline run, and each block
+/// `ROXYGEN_RD_MACRO` child (a multi-line `\itemize`/`\enumerate`/…) becomes a
+/// single-element `Inline::Macro` group. A block macro is a *direct* section
+/// child (a sibling of the paragraphs), so it is picked up here rather than via
+/// `paragraphs()`.
+fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
+    section
+        .syntax()
+        .children()
+        .filter_map(|n| match n.kind() {
+            SyntaxKind::ROXYGEN_PARAGRAPH => {
+                RoxygenParagraph::cast(n).map(|p| paragraph_inlines(&p))
+            }
+            SyntaxKind::ROXYGEN_RD_MACRO => Some(vec![Inline::Macro(n)]),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The inline elements of a prose paragraph: its text and inline Rd-macro
@@ -435,10 +456,31 @@ mod tests {
     }
 
     #[test]
-    fn multiline_describe_projects_flat_so_it_diverges() {
-        // The CST does not yet model a multi-line \describe as a block, so the
-        // projector emits flat text --- which will NOT match roxygen2's nested
-        // pin. This is the backlog signal, asserted so it can't silently change.
+    fn multiline_itemize_projects_nested() {
+        // A multi-line `\itemize` block macro: each `\item` is a name-only nested
+        // macro, its trailing prose a sibling `(TEXT …)` --- the pinned shape, from
+        // the kind-based `serialize_macro` walking the block-macro node.
+        let src = "#' @details\n\
+                   #' \\itemize{\n\
+                   #'   \\item one\n\
+                   #'   \\item two\n\
+                   #' }\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (\\itemize (\\item) (TEXT \"one\") (\\item) (TEXT \"two\")))"
+        );
+    }
+
+    #[test]
+    fn multiline_describe_item_second_arg_still_diverges() {
+        // A multi-line `\describe` now forms a block macro (Stage 2), but its
+        // `\item{term}{def}` takes *two* brace groups --- modeling the second as
+        // an `\item` child is Stage 3. Until then the `{def}` group leaks as a
+        // sibling `(TEXT "{first}")` instead of roxygen2's
+        // `(\item (TEXT "a") (TEXT "first"))`. Asserted so the gap can't silently
+        // change.
         let src = "#' T\n\
                    #' @format A frame:\n\
                    #' \\describe{\n\
@@ -447,10 +489,9 @@ mod tests {
                    #' @name d\n\
                    NULL\n";
         let out = project_to_rd(src);
-        assert!(out.contains("\\format"));
         assert!(
-            !out.contains("(\\describe"),
-            "skeleton must not fake block structure: {out}"
+            out.contains("(\\describe (\\item (TEXT \"a\")) (TEXT \"{first}\"))"),
+            "got: {out}"
         );
     }
 }

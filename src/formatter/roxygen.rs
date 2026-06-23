@@ -45,6 +45,10 @@ struct PhysicalLine {
     marker: Option<SyntaxToken>,
     tag: Option<RoxygenTag>,
     elements: Vec<NodeOrToken<SyntaxNode, SyntaxToken>>,
+    /// A multi-line block Rd macro (`\itemize{ … }`) occupying this "line": it owns
+    /// its own `#'` markers and newlines internally, so it is emitted as atomic
+    /// marker-preserving passthrough rather than reflowed.
+    block_macro: Option<SyntaxNode>,
 }
 
 impl PhysicalLine {
@@ -87,6 +91,19 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
     let mut cur = PhysicalLine::default();
     for el in elements {
         match el.kind() {
+            // A block macro owns its own marker/newline trivia; it is a self-
+            // contained multi-line unit, so close any pending line and emit it on
+            // its own. (Checked before the marker-less drop below — its opening
+            // marker is *inside* the node, so `cur.marker` is still `None` here.)
+            SyntaxKind::ROXYGEN_RD_MACRO if el.as_node().is_some_and(is_block_macro) => {
+                if cur.marker.is_some() || !cur.elements.is_empty() {
+                    lines.push(std::mem::take(&mut cur));
+                }
+                lines.push(PhysicalLine {
+                    block_macro: el.as_node().cloned(),
+                    ..PhysicalLine::default()
+                });
+            }
             SyntaxKind::ROXYGEN_MARKER => {
                 if cur.marker.is_some() {
                     lines.push(std::mem::take(&mut cur));
@@ -112,6 +129,60 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
         lines.push(cur);
     }
     lines
+}
+
+/// Whether `node` is a *block* Rd macro: a `ROXYGEN_RD_MACRO` spanning multiple
+/// `#'` lines, which it owns as threaded `ROXYGEN_MARKER` trivia. An inline macro
+/// (`\code{f}`) never contains a marker, so the presence of one is the
+/// distinguisher between atomic passthrough and ordinary inline reflow.
+fn is_block_macro(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::ROXYGEN_RD_MACRO
+        && node
+            .children_with_tokens()
+            .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
+}
+
+/// Emit a block Rd macro as atomic, marker-preserving passthrough: its own source
+/// lines, each on its own output line. The node's text already carries the `#'`
+/// markers (the opening one and the continuations) and the in-macro indentation;
+/// only the inter-line indentation *before* a continuation marker is dropped (the
+/// formatter recomputes the block's own indent), matching the fenced-code and
+/// air-compatible verbatim treatment of Rd lists.
+fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    let text = node.text().to_string();
+    for (i, seg) in text.split('\n').enumerate() {
+        let line = if i == 0 { seg } else { seg.trim_start() };
+        push_line(items, line.trim_end().to_string());
+    }
+}
+
+/// Emit a block Rd macro that wraps example R inside `@examples` (`\dontrun{}`,
+/// `\donttest{}`, …): each line marker-normalized (marker, one space, content),
+/// dropping the in-macro indentation so the example code is flush and
+/// copy-pasteable rather than carrying prose-list indentation. (Formatting the R
+/// *inside* the wrapper is future work; the node delimits exactly where it is.)
+fn emit_block_macro_examples(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
+/// Marker-normalize a raw `#'` line string: drop surrounding whitespace (the
+/// inter-line indentation), then emit the `#+'` marker, a single space, and the
+/// trimmed content (or the bare marker when the content is empty).
+fn normalize_marker_text(raw: &str) -> String {
+    let s = raw.trim();
+    let hashes = s.len() - s.trim_start_matches('#').len();
+    if hashes == 0 || !s[hashes..].starts_with('\'') {
+        return s.to_string();
+    }
+    let marker = &s[..hashes + 1];
+    let content = s[hashes + 1..].trim();
+    if content.is_empty() {
+        marker.to_string()
+    } else {
+        format!("{marker} {content}")
+    }
 }
 
 /// Flatten a roxygen block into its logical leaves in source order, descending
@@ -160,6 +231,22 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
     }
 
     for line in physical_lines(node) {
+        // A block Rd macro is atomic passthrough: flush pending accumulators, then
+        // emit it without reflowing. In a prose section its in-macro indentation is
+        // preserved (a `\itemize` list); inside an `@examples` body it wraps
+        // example R (`\dontrun{}`/`\donttest{}`/…), which is meant to be
+        // copy-pasted, so it is emitted *flush* (marker-normalized, no extra
+        // indent). `in_examples` stays set — more example lines may follow.
+        if let Some(macro_node) = &line.block_macro {
+            flush_pending!();
+            if in_examples {
+                emit_block_macro_examples(&mut items, macro_node);
+            } else {
+                emit_block_macro(&mut items, macro_node);
+            }
+            continue;
+        }
+
         // While collecting an `@examples` body, every non-tag line is embedded R
         // and belongs to the body (blank/fenced/structured lines included); a tag
         // line ends the body and falls through to the tag branch, which flushes.

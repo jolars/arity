@@ -10,9 +10,10 @@ pub(crate) fn build_tree(tokens: &[Token], events: &[Event]) -> SyntaxNode {
     builder.start_node(SyntaxKind::ROOT.into());
 
     for event in events {
-        match *event {
-            Event::Start(kind) => builder.start_node(kind.into()),
-            Event::Tok(idx) => push_token(&mut builder, &tokens[idx]),
+        match event {
+            Event::Start(kind) => builder.start_node((*kind).into()),
+            Event::Tok(idx) => push_token(&mut builder, &tokens[*idx]),
+            Event::Leaf(kind, text) => builder.token((*kind).into(), text),
             Event::Finish => builder.finish_node(),
         }
     }

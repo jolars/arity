@@ -205,14 +205,18 @@
       - *Multi-argument macros* (`\item{term}{def}`, `\link[pkg]{name}`,
         `\method{generic}{class}`, `\href{url}{text}`) — multiple adjacent brace
         groups, not one.
-      - *Block macros that span many `#'` lines with nested content*
-        (`\describe{ \item{}{} … }`, `\enumerate{ \item … }`, `\itemize{}`,
-        `\tabular{rl}{ … \tab … \cr }`). These must be recognized as one atomic,
-        non-reflowed unit across line boundaries — **the bug the current heuristic
-        formatter exhibits**: a `\describe{…}` after `@format` is treated as loose
-        prose chunks and reflowed into a single run-on paragraph (its nested
-        `\item{}{}` lines rewrapped), because the inline recognizer can't see a
-        multi-line, nested-brace span.
+      - *Block macros that span many `#'` lines with nested content.*
+        **`\itemize`/`\enumerate` landed (Stage 2, 2026-06-23):** a `\name{` whose
+        group is unbalanced on its line opens a `ROXYGEN_RD_MACRO` node spanning
+        `#'` lines (markers/newlines threaded as trivia), with brace-less `\item`
+        as a name-only child; the projector reuses `serialize_macro`, and the
+        formatter passes the node through verbatim (it had reflowed it into a
+        run-on — that bug is fixed; `itemize_enumerate` matches its pin).
+        **Still open:** `\describe{ \item{term}{def} … }` (needs the multi-arg
+        `\item` second `{def}` group → an `\item` child, see below) and
+        `\tabular{rl}{ … \tab … \cr }` (the lexer extracts the balanced `{rl}`
+        column-spec as an inline macro token, so the trailing body `{` isn't seen
+        as an opener — Stage 3+).
       - *Verbatim / non-prose content* (`\deqn{}`/`\eqn{}` carry LaTeX-ish math,
         `\preformatted{}`/`\verb{}` carry literal text, `\tabular` cells use
         `\tab`/`\cr` separators) — never reflow or markdown-interpret the interior.
@@ -277,12 +281,12 @@
       pin sources: the curated dir corpus (`<stem>.rdtree`) and the **harvested
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
-      out as resolve-from-elsewhere, kept in the fixed-point net instead). Baseline:
-      **42 matching / 116 divergent** of 158 pinned. The 116 divergences are the
-      worklist; the curated five name the shapes — `rd_macros` (inline Rd macros →
-      nodes; smallest), `describe_format`/`itemize_enumerate`/`tabular` (multi-line
-      block Rd macros — the `\describe` reflow bug), `markdown_list` (`@md`
-      markdown→Rd). Run `task roxygen-projector`; re-mint with
+      out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
+      **57 matching / 101 divergent** of 158 pinned (was 42; `rd_macros` then
+      `itemize_enumerate` closed). The remaining divergences are the worklist; the
+      curated cases name the shapes — `describe_format` (multi-arg `\item{}{}`),
+      `tabular` (balanced-arg opener), `markdown_list` (`@md` markdown→Rd). Run
+      `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
       Use the `roxygen-parity` skill.
     - *Coverage net — harvested fixed-point (landed, secondary).* A harvested oracle

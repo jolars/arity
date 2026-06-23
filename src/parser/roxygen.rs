@@ -372,11 +372,22 @@ pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Ve
                     events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
                     section_open = true;
                 }
-                if !para_open {
-                    events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
-                    para_open = true;
+                if is_block_macro_line(tokens, i) {
+                    // A block Rd macro (`\itemize{ … }` across lines) is a direct
+                    // section child, not paragraph prose: close any open paragraph
+                    // and emit the macro as a sibling.
+                    if para_open {
+                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                        para_open = false;
+                    }
+                    i = emit_block_macro(tokens, i, events);
+                } else {
+                    if !para_open {
+                        events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
+                        para_open = true;
+                    }
+                    i = emit_line_tokens(tokens, i, events);
                 }
-                i = emit_line_tokens(tokens, i, events);
             }
         }
 
@@ -500,6 +511,214 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
     }
     events.push(Event::Finish); // ROXYGEN_TAG
     i
+}
+
+/// Whether the prose line whose marker is at `start` opens a **block** Rd macro
+/// --- a `\name{ … }` whose group does not close on the line, so it spans
+/// following `#'` lines. The lexer extracts a *balanced* inline `\name{…}` as a
+/// `RoxygenRdMacro` token; a `RoxygenText` content token beginning with `\name{`
+/// is therefore necessarily an unbalanced (multi-line) opener.
+fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    matches!(
+        tokens.get(content),
+        Some(tok) if tok.kind == TokKind::RoxygenText && is_block_macro_opener(&tok.text)
+    )
+}
+
+/// Whether `text` begins with an unbalanced `\name{` block-macro opener.
+fn is_block_macro_opener(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.first() != Some(&b'\\') {
+        return false;
+    }
+    let mut k = 1;
+    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
+        k += 1;
+    }
+    k > 1 && bytes.get(k) == Some(&b'{') && scan_balanced(bytes, k, b'{', b'}').is_none()
+}
+
+/// Emit a multi-line block Rd macro as a `ROXYGEN_RD_MACRO` node spanning `#'`
+/// lines. The node owns its opening line's marker and the inter-line markers,
+/// newlines, and indentation as threaded trivia (losslessness); its body is a
+/// sequence of brace-less name-only `\item`/`\cr`/… macros, nested inline macros,
+/// and prose, ending at the matching `}` (or, for an unterminated macro, at the
+/// next tag opener or block end — greedy and lossless, no close delimiter).
+/// Returns the token index just past the last consumed content (at its trailing
+/// `Newline` / non-roxygen token / EOF), leaving line separation to the caller.
+fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_RD_MACRO));
+
+    // Opening line: marker and the marker→content whitespace, threaded inside.
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+
+    let mut depth = 0usize;
+    let mut closed = false;
+
+    // Opening `\name{` content token: split off the name and brace, then parse any
+    // trailing same-line content.
+    if let Some(tok) = tokens.get(i) {
+        emit_block_open(events, &tok.text, &mut depth, &mut closed);
+        i += 1;
+    }
+
+    'consume: while !closed {
+        // Remaining content tokens on the current line.
+        while let Some(tok) = tokens.get(i) {
+            match tok.kind {
+                TokKind::RoxygenText => {
+                    emit_block_content(events, &tok.text, &mut depth, &mut closed);
+                    i += 1;
+                }
+                // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`): pass
+                // the whole token through; the tree builder expands a macro token.
+                TokKind::RoxygenCode | TokKind::RoxygenRdMacro | TokKind::RoxygenMdLink => {
+                    events.push(Event::Tok(i));
+                    i += 1;
+                }
+                _ => break,
+            }
+            if closed {
+                break 'consume;
+            }
+        }
+
+        // Line boundary: fold a continuation (`\n`, optional indentation, `#'`)
+        // into the node unless the next line is a tag opener or not a roxygen line.
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            break;
+        }
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
+            break;
+        }
+        if matches!(classify_line(tokens, m), LineKind::Tag) {
+            break;
+        }
+        // `\n` + indentation + `#'` threaded as trivia, then the marker→content ws.
+        for idx in i..=m {
+            events.push(Event::Tok(idx));
+        }
+        i = m + 1;
+        while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+    }
+
+    events.push(Event::Finish); // ROXYGEN_RD_MACRO
+    i
+}
+
+/// Emit the opening `\name{` of a block macro: a `ROXYGEN_RD_MACRO_NAME`, the
+/// `{` delimiter (setting brace depth to 1), then any trailing same-line content.
+fn emit_block_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, closed: &mut bool) {
+    let bytes = text.as_bytes();
+    let mut k = 1;
+    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
+        k += 1;
+    }
+    events.push(Event::Leaf(
+        SyntaxKind::ROXYGEN_RD_MACRO_NAME,
+        text[..k].to_string(),
+    ));
+    // `is_block_macro_opener` guarantees `bytes[k] == b'{'`.
+    events.push(Event::Leaf(
+        SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+        "{".to_string(),
+    ));
+    *depth = 1;
+    emit_block_content(events, &text[k + 1..], depth, closed);
+}
+
+/// Parse one `RoxygenText` token's worth of block-macro body, emitting leaves:
+/// brace-less name-only macros (`\item`, `\cr`, …, a `\name` not followed by
+/// `{`), the closing `}` delimiter when it returns brace depth to zero (setting
+/// `closed`), and prose runs as `ROXYGEN_TEXT`. Tracks `depth` across calls so a
+/// group can open and close on different `#'` lines.
+fn emit_block_content(events: &mut Vec<Event>, text: &str, depth: &mut usize, closed: &mut bool) {
+    let bytes = text.as_bytes();
+    let mut run_start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                let name_start = i + 1;
+                let mut k = name_start;
+                while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
+                    k += 1;
+                }
+                if k == name_start {
+                    // An escape (`\\`, `\{`, `\}`, `\%`): two literal bytes that
+                    // never affect brace depth.
+                    i = (i + 2).min(bytes.len());
+                } else if bytes.get(k) == Some(&b'{') {
+                    // An unbalanced nested `\name{` opener (nested block macro,
+                    // out of scope): leave it as text; the `{` is depth-counted.
+                    i = k;
+                } else {
+                    // A brace-less name-only macro.
+                    push_text(events, &text[run_start..i]);
+                    events.push(Event::Start(SyntaxKind::ROXYGEN_RD_MACRO));
+                    events.push(Event::Leaf(
+                        SyntaxKind::ROXYGEN_RD_MACRO_NAME,
+                        text[i..k].to_string(),
+                    ));
+                    events.push(Event::Finish);
+                    i = k;
+                    // The whitespace separating it from its sibling text is its own
+                    // leaf (kept out of the text run).
+                    let ws = i;
+                    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+                        i += 1;
+                    }
+                    if i > ws {
+                        events.push(Event::Leaf(SyntaxKind::WHITESPACE, text[ws..i].to_string()));
+                    }
+                    run_start = i;
+                }
+            }
+            b'{' => {
+                *depth += 1;
+                i += 1;
+            }
+            b'}' if *depth <= 1 => {
+                push_text(events, &text[run_start..i]);
+                events.push(Event::Leaf(
+                    SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+                    "}".to_string(),
+                ));
+                *depth = 0;
+                *closed = true;
+                run_start = i + 1;
+                push_text(events, &text[run_start..]);
+                return;
+            }
+            b'}' => {
+                *depth -= 1;
+                i += 1;
+            }
+            b => i += utf8_len(b),
+        }
+    }
+    push_text(events, &text[run_start..]);
+}
+
+/// Push a non-empty `ROXYGEN_TEXT` leaf for a prose run.
+fn push_text(events: &mut Vec<Event>, text: &str) {
+    if !text.is_empty() {
+        events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, text.to_string()));
+    }
 }
 
 #[cfg(test)]

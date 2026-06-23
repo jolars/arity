@@ -4,6 +4,12 @@ use crate::syntax::SyntaxKind;
 pub(crate) enum Event {
     Start(SyntaxKind),
     Tok(usize),
+    /// A synthetic leaf: a `(kind, text)` pair built by the parser rather than
+    /// referencing a whole lexed token. Used where a single lexed token must be
+    /// split into several CST leaves — e.g. carving a multi-line block Rd macro's
+    /// `\itemize{` text into a `ROXYGEN_RD_MACRO_NAME` and a delimiter. The
+    /// emitted texts must tile the original tokens exactly (losslessness).
+    Leaf(SyntaxKind, String),
     Finish,
 }
 

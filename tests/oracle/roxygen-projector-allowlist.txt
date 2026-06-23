@@ -10,6 +10,7 @@
 # gap in the *parser*, refresh/keep the pin, then add the id here. A faithful
 # divergence means the CST is wrong --- never patch the projector to pass.
 examples
+itemize_enumerate
 param_prose
 rd_macros
 rx-0273da0d
