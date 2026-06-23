@@ -599,11 +599,16 @@ fn build_assignment_expr(lhs: ExprParse, op_idx: usize, rhs: ExprParse) -> ExprP
     build_binary_like_expr(SyntaxKind::ASSIGNMENT_EXPR, lhs, op_idx, rhs)
 }
 
-/// Returns true if tokens starting at `i` match the pattern `ident =` (named argument),
-/// where `=` is not `==`.
+/// Returns true if tokens starting at `i` match the pattern `name =` (named
+/// argument), where `=` is not `==`. The name may be an identifier or a string
+/// literal: inside an argument list `=` is always named-argument syntax (never
+/// assignment), and R accepts a string as the name (`c("SE" = 13)`).
 fn is_named_arg(ctx: &ParserCtx<'_>, i: usize) -> bool {
     let tokens = ctx.tokens();
-    if !matches!(tokens.get(i).map(|t| &t.kind), Some(TokKind::Ident)) {
+    if !matches!(
+        tokens.get(i).map(|t| &t.kind),
+        Some(TokKind::Ident | TokKind::String)
+    ) {
         return false;
     }
     let mut next = i + 1;

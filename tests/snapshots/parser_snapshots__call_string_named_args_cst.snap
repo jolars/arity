@@ -1,0 +1,49 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..42
+  CALL_EXPR@0..12
+    IDENT@0..1 "c"
+    LPAREN@1..2 "("
+    ARG_LIST@2..11
+      ARG@2..11
+        STRING@2..6 "\"SE\""
+        WHITESPACE@6..7 " "
+        ASSIGN_EQ@7..8 "="
+        WHITESPACE@8..9 " "
+        INT@9..11 "13"
+    RPAREN@11..12 ")"
+  NEWLINE@12..13 "\n"
+  CALL_EXPR@13..30
+    IDENT@13..14 "f"
+    LPAREN@14..15 "("
+    ARG_LIST@15..29
+      ARG@15..22
+        STRING@15..18 "\"a\""
+        WHITESPACE@18..19 " "
+        ASSIGN_EQ@19..20 "="
+        WHITESPACE@20..21 " "
+        INT@21..22 "1"
+      COMMA@22..23 ","
+      WHITESPACE@23..24 " "
+      ARG@24..29
+        IDENT@24..25 "b"
+        WHITESPACE@25..26 " "
+        ASSIGN_EQ@26..27 "="
+        WHITESPACE@27..28 " "
+        INT@28..29 "2"
+    RPAREN@29..30 ")"
+  NEWLINE@30..31 "\n"
+  SUBSET_EXPR@31..41
+    IDENT@31..32 "x"
+    LBRACK@32..33 "["
+    ARG_LIST@33..40
+      ARG@33..40
+        STRING@33..36 "\"i\""
+        WHITESPACE@36..37 " "
+        ASSIGN_EQ@37..38 "="
+        WHITESPACE@38..39 " "
+        INT@39..40 "1"
+    RBRACK@40..41 "]"
+  NEWLINE@41..42 "\n"

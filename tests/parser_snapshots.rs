@@ -109,6 +109,7 @@ fn fixture_names() -> &'static [&'static str] {
         "call_simple",
         "call_lambda_and_dot_named",
         "call_named_args",
+        "call_string_named_args",
         "call_named_args_without_rhs",
         "call_mixed_args",
         "stmt_semicolon_separator",

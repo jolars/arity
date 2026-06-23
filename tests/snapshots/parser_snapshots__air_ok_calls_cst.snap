@@ -169,215 +169,199 @@ ROOT@0..468
     LPAREN@145..146 "("
     ARG_LIST@146..155
       ARG@146..155
-        ASSIGNMENT_EXPR@146..155
-          STRING@146..151 "\"arg\""
-          WHITESPACE@151..152 " "
-          ASSIGN_EQ@152..153 "="
-          WHITESPACE@153..154 " "
-          INT@154..155 "1"
+        STRING@146..151 "\"arg\""
+        WHITESPACE@151..152 " "
+        ASSIGN_EQ@152..153 "="
+        WHITESPACE@153..154 " "
+        INT@154..155 "1"
     RPAREN@155..156 ")"
   NEWLINE@156..157 "\n"
-  CALL_EXPR@157..468
+  CALL_EXPR@157..168
     IDENT@157..159 "fn"
     LPAREN@159..160 "("
-    ARG_LIST@160..468
-      ARG@160..169
-        ERROR@160..169
-          STRING@160..165 "\"arg\""
-          WHITESPACE@165..166 " "
-          ASSIGN_EQ@166..167 "="
-          RPAREN@167..168 ")"
-          NEWLINE@168..169 "\n"
-      NEWLINE@169..170 "\n"
-      ARG@170..183
-        COMMENT@170..183 "# Comma tests"
-      NEWLINE@183..184 "\n"
-      ARG@184..189
-        CALL_EXPR@184..189
-          IDENT@184..186 "fn"
-          LPAREN@186..187 "("
-          ARG_LIST@187..188
-            ARG@187..187
-            COMMA@187..188 ","
-          RPAREN@188..189 ")"
-      NEWLINE@189..190 "\n"
-      ARG@190..197
-        CALL_EXPR@190..197
-          IDENT@190..192 "fn"
-          LPAREN@192..193 "("
-          ARG_LIST@193..196
-            ARG@193..193
-            COMMA@193..194 ","
-            ARG@194..194
-            COMMA@194..195 ","
-            ARG@195..195
-            COMMA@195..196 ","
-          RPAREN@196..197 ")"
-      NEWLINE@197..198 "\n"
-      ARG@198..210
-        CALL_EXPR@198..210
-          IDENT@198..200 "fn"
-          LPAREN@200..201 "("
-          ARG_LIST@201..209
-            ARG@201..201
-            COMMA@201..202 ","
-            ARG@202..202
-            COMMA@202..203 ","
-            ARG@203..204
-              IDENT@203..204 "a"
-            COMMA@204..205 ","
-            ARG@205..205
-            COMMA@205..206 ","
-            ARG@206..207
-              IDENT@206..207 "b"
-            COMMA@207..208 ","
-            ARG@208..208
-            COMMA@208..209 ","
-          RPAREN@209..210 ")"
-      NEWLINE@210..211 "\n"
-      NEWLINE@211..212 "\n"
-      ARG@212..227
-        COMMENT@212..227 "# Comment tests"
-      NEWLINE@227..228 "\n"
-      ARG@228..245
-        CALL_EXPR@228..245
-          IDENT@228..230 "fn"
-          LPAREN@230..231 "("
-          ARG_LIST@231..244
-            NEWLINE@231..232 "\n"
-            WHITESPACE@232..234 "  "
-            ARG@234..243
-              COMMENT@234..243 "# comment"
-            NEWLINE@243..244 "\n"
-          RPAREN@244..245 ")"
-      NEWLINE@245..246 "\n"
-      ARG@246..265
-        CALL_EXPR@246..265
-          IDENT@246..248 "fn"
-          LPAREN@248..249 "("
-          ARG_LIST@249..264
-            ARG@249..249
-            COMMA@249..250 ","
-            NEWLINE@250..251 "\n"
-            WHITESPACE@251..253 "  "
-            ARG@253..262
-              COMMENT@253..262 "# comment"
-            NEWLINE@262..263 "\n"
-            COMMA@263..264 ","
-          RPAREN@264..265 ")"
-      NEWLINE@265..266 "\n"
-      ARG@266..302
-        CALL_EXPR@266..302
-          IDENT@266..268 "fn"
-          LPAREN@268..269 "("
-          ARG_LIST@269..301
-            NEWLINE@269..270 "\n"
-            WHITESPACE@270..272 "  "
-            ARG@272..273
-              IDENT@272..273 "a"
-            COMMA@273..274 ","
-            WHITESPACE@274..275 " "
-            ARG@275..285
-              COMMENT@275..285 "# comment1"
-            NEWLINE@285..286 "\n"
-            WHITESPACE@286..288 "  "
-            ARG@288..289
-              IDENT@288..289 "b"
-            WHITESPACE@289..290 " "
-            ARG@290..300
-              COMMENT@290..300 "# comment2"
-            NEWLINE@300..301 "\n"
-          RPAREN@301..302 ")"
-      NEWLINE@302..303 "\n"
-      ARG@303..353
-        CALL_EXPR@303..353
-          IDENT@303..305 "fn"
-          LPAREN@305..306 "("
-          ARG_LIST@306..352
-            NEWLINE@306..307 "\n"
-            WHITESPACE@307..309 "  "
-            ARG@309..340
-              IDENT@309..310 "a"
-              WHITESPACE@310..311 " "
-              COMMENT@311..321 "# comment1"
-              NEWLINE@321..322 "\n"
-              WHITESPACE@322..324 "  "
-              ASSIGN_EQ@324..325 "="
-              WHITESPACE@325..326 " "
-              COMMENT@326..336 "# comment2"
-              NEWLINE@336..337 "\n"
-              WHITESPACE@337..339 "  "
-              INT@339..340 "1"
-            WHITESPACE@340..341 " "
-            ARG@341..351
-              COMMENT@341..351 "# comment3"
-            NEWLINE@351..352 "\n"
-          RPAREN@352..353 ")"
-      NEWLINE@353..354 "\n"
-      NEWLINE@354..355 "\n"
-      ARG@355..368
-        CALL_EXPR@355..368
-          BLOCK_EXPR@355..361
-            LBRACE@355..356 "{"
-            IDENT@356..360 "expr"
-            RBRACE@360..361 "}"
-          LPAREN@361..362 "("
-          ARG_LIST@362..367
-            ARG@362..367
-              IDENT@362..363 "a"
-              WHITESPACE@363..364 " "
-              ASSIGN_EQ@364..365 "="
-              WHITESPACE@365..366 " "
-              INT@366..367 "1"
-          RPAREN@367..368 ")"
-      NEWLINE@368..369 "\n"
-      NEWLINE@369..370 "\n"
-      ARG@370..418
-        COMMENT@370..418 "# `NULL` argument nam ..."
-      NEWLINE@418..419 "\n"
-      ARG@419..435
-        CALL_EXPR@419..435
-          IDENT@419..421 "fn"
-          LPAREN@421..422 "("
-          ARG_LIST@422..434
-            NEWLINE@422..423 "\n"
-            WHITESPACE@423..425 "  "
-            ARG@425..433
-              IDENT@425..429 "NULL"
-              WHITESPACE@429..430 " "
-              ASSIGN_EQ@430..431 "="
-              WHITESPACE@431..432 " "
-              INT@432..433 "1"
-            NEWLINE@433..434 "\n"
-          RPAREN@434..435 ")"
-      NEWLINE@435..436 "\n"
-      ARG@436..451
-        CALL_EXPR@436..451
-          IDENT@436..438 "fn"
-          LPAREN@438..439 "("
-          ARG_LIST@439..450
-            NEWLINE@439..440 "\n"
-            WHITESPACE@440..442 "  "
-            ARG@442..450
-              IDENT@442..446 "NULL"
-              WHITESPACE@446..447 " "
-              ASSIGN_EQ@447..448 "="
-              WHITESPACE@448..449 " "
-              NEWLINE@449..450 "\n"
-          RPAREN@450..451 ")"
-      NEWLINE@451..452 "\n"
-      ARG@452..468
-        CALL_EXPR@452..468
-          IDENT@452..454 "fn"
-          LPAREN@454..455 "("
-          ARG_LIST@455..467
-            NEWLINE@455..456 "\n"
-            WHITESPACE@456..458 "  "
-            ARG@458..465
-              IDENT@458..462 "NULL"
-              WHITESPACE@462..463 " "
-              ASSIGN_EQ@463..464 "="
-              WHITESPACE@464..465 " "
-            COMMA@465..466 ","
-            NEWLINE@466..467 "\n"
-          RPAREN@467..468 ")"
+    ARG_LIST@160..167
+      ARG@160..167
+        STRING@160..165 "\"arg\""
+        WHITESPACE@165..166 " "
+        ASSIGN_EQ@166..167 "="
+    RPAREN@167..168 ")"
+  NEWLINE@168..169 "\n"
+  NEWLINE@169..170 "\n"
+  COMMENT@170..183 "# Comma tests"
+  NEWLINE@183..184 "\n"
+  CALL_EXPR@184..189
+    IDENT@184..186 "fn"
+    LPAREN@186..187 "("
+    ARG_LIST@187..188
+      ARG@187..187
+      COMMA@187..188 ","
+    RPAREN@188..189 ")"
+  NEWLINE@189..190 "\n"
+  CALL_EXPR@190..197
+    IDENT@190..192 "fn"
+    LPAREN@192..193 "("
+    ARG_LIST@193..196
+      ARG@193..193
+      COMMA@193..194 ","
+      ARG@194..194
+      COMMA@194..195 ","
+      ARG@195..195
+      COMMA@195..196 ","
+    RPAREN@196..197 ")"
+  NEWLINE@197..198 "\n"
+  CALL_EXPR@198..210
+    IDENT@198..200 "fn"
+    LPAREN@200..201 "("
+    ARG_LIST@201..209
+      ARG@201..201
+      COMMA@201..202 ","
+      ARG@202..202
+      COMMA@202..203 ","
+      ARG@203..204
+        IDENT@203..204 "a"
+      COMMA@204..205 ","
+      ARG@205..205
+      COMMA@205..206 ","
+      ARG@206..207
+        IDENT@206..207 "b"
+      COMMA@207..208 ","
+      ARG@208..208
+      COMMA@208..209 ","
+    RPAREN@209..210 ")"
+  NEWLINE@210..211 "\n"
+  NEWLINE@211..212 "\n"
+  COMMENT@212..227 "# Comment tests"
+  NEWLINE@227..228 "\n"
+  CALL_EXPR@228..245
+    IDENT@228..230 "fn"
+    LPAREN@230..231 "("
+    ARG_LIST@231..244
+      NEWLINE@231..232 "\n"
+      WHITESPACE@232..234 "  "
+      ARG@234..243
+        COMMENT@234..243 "# comment"
+      NEWLINE@243..244 "\n"
+    RPAREN@244..245 ")"
+  NEWLINE@245..246 "\n"
+  CALL_EXPR@246..265
+    IDENT@246..248 "fn"
+    LPAREN@248..249 "("
+    ARG_LIST@249..264
+      ARG@249..249
+      COMMA@249..250 ","
+      NEWLINE@250..251 "\n"
+      WHITESPACE@251..253 "  "
+      ARG@253..262
+        COMMENT@253..262 "# comment"
+      NEWLINE@262..263 "\n"
+      COMMA@263..264 ","
+    RPAREN@264..265 ")"
+  NEWLINE@265..266 "\n"
+  CALL_EXPR@266..302
+    IDENT@266..268 "fn"
+    LPAREN@268..269 "("
+    ARG_LIST@269..301
+      NEWLINE@269..270 "\n"
+      WHITESPACE@270..272 "  "
+      ARG@272..273
+        IDENT@272..273 "a"
+      COMMA@273..274 ","
+      WHITESPACE@274..275 " "
+      ARG@275..285
+        COMMENT@275..285 "# comment1"
+      NEWLINE@285..286 "\n"
+      WHITESPACE@286..288 "  "
+      ARG@288..289
+        IDENT@288..289 "b"
+      WHITESPACE@289..290 " "
+      ARG@290..300
+        COMMENT@290..300 "# comment2"
+      NEWLINE@300..301 "\n"
+    RPAREN@301..302 ")"
+  NEWLINE@302..303 "\n"
+  CALL_EXPR@303..353
+    IDENT@303..305 "fn"
+    LPAREN@305..306 "("
+    ARG_LIST@306..352
+      NEWLINE@306..307 "\n"
+      WHITESPACE@307..309 "  "
+      ARG@309..340
+        IDENT@309..310 "a"
+        WHITESPACE@310..311 " "
+        COMMENT@311..321 "# comment1"
+        NEWLINE@321..322 "\n"
+        WHITESPACE@322..324 "  "
+        ASSIGN_EQ@324..325 "="
+        WHITESPACE@325..326 " "
+        COMMENT@326..336 "# comment2"
+        NEWLINE@336..337 "\n"
+        WHITESPACE@337..339 "  "
+        INT@339..340 "1"
+      WHITESPACE@340..341 " "
+      ARG@341..351
+        COMMENT@341..351 "# comment3"
+      NEWLINE@351..352 "\n"
+    RPAREN@352..353 ")"
+  NEWLINE@353..354 "\n"
+  NEWLINE@354..355 "\n"
+  CALL_EXPR@355..368
+    BLOCK_EXPR@355..361
+      LBRACE@355..356 "{"
+      IDENT@356..360 "expr"
+      RBRACE@360..361 "}"
+    LPAREN@361..362 "("
+    ARG_LIST@362..367
+      ARG@362..367
+        IDENT@362..363 "a"
+        WHITESPACE@363..364 " "
+        ASSIGN_EQ@364..365 "="
+        WHITESPACE@365..366 " "
+        INT@366..367 "1"
+    RPAREN@367..368 ")"
+  NEWLINE@368..369 "\n"
+  NEWLINE@369..370 "\n"
+  COMMENT@370..418 "# `NULL` argument nam ..."
+  NEWLINE@418..419 "\n"
+  CALL_EXPR@419..435
+    IDENT@419..421 "fn"
+    LPAREN@421..422 "("
+    ARG_LIST@422..434
+      NEWLINE@422..423 "\n"
+      WHITESPACE@423..425 "  "
+      ARG@425..433
+        IDENT@425..429 "NULL"
+        WHITESPACE@429..430 " "
+        ASSIGN_EQ@430..431 "="
+        WHITESPACE@431..432 " "
+        INT@432..433 "1"
+      NEWLINE@433..434 "\n"
+    RPAREN@434..435 ")"
+  NEWLINE@435..436 "\n"
+  CALL_EXPR@436..451
+    IDENT@436..438 "fn"
+    LPAREN@438..439 "("
+    ARG_LIST@439..450
+      NEWLINE@439..440 "\n"
+      WHITESPACE@440..442 "  "
+      ARG@442..450
+        IDENT@442..446 "NULL"
+        WHITESPACE@446..447 " "
+        ASSIGN_EQ@447..448 "="
+        WHITESPACE@448..449 " "
+        NEWLINE@449..450 "\n"
+    RPAREN@450..451 ")"
+  NEWLINE@451..452 "\n"
+  CALL_EXPR@452..468
+    IDENT@452..454 "fn"
+    LPAREN@454..455 "("
+    ARG_LIST@455..467
+      NEWLINE@455..456 "\n"
+      WHITESPACE@456..458 "  "
+      ARG@458..465
+        IDENT@458..462 "NULL"
+        WHITESPACE@462..463 " "
+        ASSIGN_EQ@463..464 "="
+        WHITESPACE@464..465 " "
+      COMMA@465..466 ","
+      NEWLINE@466..467 "\n"
+    RPAREN@467..468 ")"
