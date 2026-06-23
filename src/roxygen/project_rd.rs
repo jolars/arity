@@ -113,8 +113,16 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         }
     }
 
-    let explicit_title = tag_sections.iter().find(|(n, _)| n == "title");
-    let has_explicit_desc = tag_sections.iter().any(|(n, _)| n == "description");
+    // A tag whose value is the literal "NULL" is suppressed by roxygen2's
+    // `rd_section()` sentinel (`R/field.R`), so it does not count as an explicit
+    // title/description — a suppressed `@description NULL` re-triggers the
+    // title-as-description fallback (`topics_add_default_description`).
+    let explicit_title = tag_sections
+        .iter()
+        .find(|(n, b)| n == "title" && !is_null_section(b));
+    let has_explicit_desc = tag_sections
+        .iter()
+        .any(|(n, b)| n == "description" && !is_null_section(b));
 
     // Intro-derived \title and \description (roxygen2's rule: first paragraph is
     // the title; the rest is the description, or the title duplicated when the
@@ -170,6 +178,14 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
 /// roxygen2 does not turn into a parser-owned section (`@param`/`@field` feed the
 /// excluded `\arguments`; `@export`/`@md`/`@name`/… are directives) are skipped.
 fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
+    // roxygen2's `rd_section()` drops any section whose value is the literal
+    // string "NULL" (`R/field.R`), a sentinel to suppress that field (e.g.
+    // `@format NULL` to override an auto-generated data `\format`). This applies
+    // to every prose tag that maps to a plain-string `rd_section`; `@section`
+    // (a two-part value) and the excluded `@param`/… are unaffected.
+    if NULL_SUPPRESSIBLE.contains(&name) && is_null_section(body) {
+        return;
+    }
     match name {
         // Direct prose → section-macro mappings.
         "description" => push_section(out, "description", body),
@@ -205,6 +221,32 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
         // Everything else is roclet scaffolding or an excluded section.
         _ => {}
     }
+}
+
+/// The prose tags whose section is a plain-string `rd_section` and is therefore
+/// suppressed when its value is the literal "NULL" (roxygen2's `R/field.R`
+/// sentinel). `@section` is excluded: its value is a (title, body) pair, never the
+/// bare string "NULL".
+const NULL_SUPPRESSIBLE: &[&str] = &[
+    "description",
+    "details",
+    "return",
+    "seealso",
+    "source",
+    "format",
+    "references",
+    "note",
+    "author",
+    "title",
+];
+
+/// Whether a tag body is roxygen2's "NULL" suppression sentinel: it coalesces to
+/// exactly one `(TEXT "NULL")` atom (a plain-string value of "NULL", any
+/// surrounding whitespace already normalized away), with no macro or markdown
+/// structure that would make the value something other than that string.
+fn is_null_section(body: &[Inline]) -> bool {
+    let atoms = serialize_inlines(body);
+    atoms.len() == 1 && atoms[0] == "(TEXT \"NULL\")"
 }
 
 /// Push `(\<macro> <atoms…>)` for a prose section, or `(\<macro>)` when the body
@@ -667,6 +709,24 @@ mod tests {
         assert_eq!(
             project_to_rd(src),
             "(\\description (TEXT \"a\"))\n(\\title (TEXT \"a\"))"
+        );
+    }
+
+    #[test]
+    fn null_tag_value_suppresses_section() {
+        // roxygen2's `rd_section()` treats a value of the literal string "NULL" as
+        // a sentinel that suppresses the section (`R/field.R`). `@format NULL` and
+        // `@details NULL` emit no section at all; `@description NULL` suppresses the
+        // explicit description, which re-triggers the title-as-description fallback.
+        let src = "#' Title\n\
+                   #' @description NULL\n\
+                   #' @details NULL\n\
+                   #' @format NULL\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n(\\title (TEXT \"Title\"))"
         );
     }
 
