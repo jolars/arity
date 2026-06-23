@@ -1,0 +1,224 @@
+{"key":"curated/describe_format","formatted":"#' Example dataset\n#'\n#' A dataset used to exercise the roxygen oracle.\n#'\n#' @format A data frame with two columns: \\describe{ \\item{a}{the first column,\n#'   described at some length to exercise wrapping} \\item{b}{the second column}\n#'   }\n#' @source Somewhere reputable.\n#' @name example_data\nNULL\n"}
+{"key":"curated/examples","formatted":"#' Add two numbers\n#'\n#' @param x,y Numbers to add.\n#' @return Their sum.\n#' @examples\n#' add(1, 2)\n#' add(3, 4)\n#' @export\nadd <- function(x, y) x + y\n"}
+{"key":"curated/itemize_enumerate","formatted":"#' Rd lists outside markdown mode\n#'\n#' @details\n#' \\itemize{ \\item First bullet, long enough to be a wrapping candidate at most\n#' widths. \\item Second bullet. } \\enumerate{ \\item Step one. \\item Step two. }\n#' @name rd_lists\nNULL\n"}
+{"key":"curated/markdown_list","formatted":"#' Title of the function\n#'\n#' @description\n#' A paragraph with *emphasis*, **strong** text, and `inline code`, written long\n#' enough that it could plausibly be rewrapped by a formatter at some width.\n#'\n#' @details\n#' Steps:\n#'\n#' - first step\n#' - second step\n#' - third step\n#'\n#' @md\n#' @param x A value.\n#' @return Nothing useful.\n#' @export\ndo_thing <- function(x) invisible(x)\n"}
+{"key":"curated/param_prose","formatted":"#' Compute a summary\n#'\n#' @param data A data frame whose columns will be summarized in a manner that is\n#'   intentionally described across multiple physical lines to exercise the\n#'   hanging-indent prose reflow.\n#' @param na.rm Logical; should missing values be removed before computation?\n#' @return A summary object.\ncompute_summary <- function(data, na.rm = FALSE) NULL\n"}
+{"key":"curated/rd_macros","formatted":"#' Linking and inline markup\n#'\n#' See \\code{\\link{add}} and \\emph{emphasis}, plus \\url{https://example.com}.\n#' Use \\strong{strong} text and a \\link[stats]{lm} cross-reference, written long\n#' enough to be a candidate for prose reflow at a typical line width.\n#'\n#' @return Nothing.\nmarkup_demo <- function() NULL\n"}
+{"key":"curated/tabular","formatted":"#' Rd tabular content\n#'\n#' @details\n#' \\tabular{rl}{ a \\tab the first row \\cr b \\tab the second row \\cr }\n#' @name rd_tabular\nNULL\n"}
+{"key":"harvest/rx-019cbcce","formatted":"#' A1\n#' @return A\na1 <- function(x) {}\n\n#' A2\na2 <- function() {}\n\n#' B\n#' @return B\nb <- function(x) {}\n\n#' C\n#' @inherit a2\n#' @inherit b\n#' @inherit a1\nc <- function(y) {}\n"}
+{"key":"harvest/rx-0273da0d","formatted":"#' Title\nB3 <- setRefClass('B3')\n"}
+{"key":"harvest/rx-031cfdcb","formatted":"#' Title\n#'\n#' Link text \\link[=fcn]{broken across lines} preserve whitespace, even when\n#' \\link[=fcn]{broken across several lines}, or with varying\n#' \\link[=fcn]{amounts of interspersed whitespace}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-03328a0f","formatted":"#' @title a\n#' @name a\n#' @concept test1\n#' @concept test2\nNULL\n"}
+{"key":"harvest/rx-0605d020","formatted":"#' Title\n#'\n#' [link % text](https://foo.bar/link%20target)\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-06b4cb5d","formatted":"#' @aliases a b a\n#' @title a\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-06ccbaf8","formatted":"#' A\n#' @param a first\n#' @param z last\na <- function(a = 1, z = 2) {}\n"}
+{"key":"harvest/rx-0785e975","formatted":"#' A.\n#'\n#' B\n#'\n#' @return ABC\na <- function(x) {}\n\n#' @title C\n#' @inherit a description\nb <- function(y) {}\n"}
+{"key":"harvest/rx-08798830","formatted":"#' @name a\n#' @title a\n#' @example Rd-example-3.R\nNULL\n"}
+{"key":"harvest/rx-08f2930b","formatted":"#' Title\n#'\n#' @param y Y\n#' @param x,z X,Z\n#' @param w W\nb <- function(x, y, z, w) {}\n"}
+{"key":"harvest/rx-0960279a","formatted":"#' Title.\na <- function() {}\n"}
+{"key":"harvest/rx-0a1710c0","formatted":"#' Title\n#'\n#' Description with some *keywords* included. So far so good. \\preformatted{\n#' *these are not emphasised*. Or are they? }\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-0abe949f","formatted":"#' Would be title\n#' @title Overridden title\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-0c6356ed","formatted":"#' Foo\n#'\n#' @section A: 1\n#' @section B: 2\nfoo <- function(x) x\n\n#' @rdname foo\n#' @section C: 3\nbar <- function(x) x\n"}
+{"key":"harvest/rx-0d100638","formatted":"#' Title\n#'\n#' Description.\n#'\n#' ```{verbatim}\n#' #| file = testthat::test_path(\"example.Rmd\")\n#' ```\n#' @md\n#' @name x\nNULL\n"}
+{"key":"harvest/rx-0d625269","formatted":"#' A1\n#' @inherit base::mean\na1 <- function(x) {}\n"}
+{"key":"harvest/rx-0e62093a","formatted":"#' @name a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-12e2b08e","formatted":"foo <- function() '@export a'\n#' @eval foo()\n#' @name a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-14ee096f","formatted":"#' Title\n#'\n#'\n#' Description\n#'\n#'\n#'\nfoo <- function(x) {}\n"}
+{"key":"harvest/rx-16f78b2f","formatted":"#' Title\n#'\n#' Description. It has \\rd \\commands.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-17ccf135","formatted":"#' Title.\na = function() {}\n"}
+{"key":"harvest/rx-19538816","formatted":"#' @name %a%\n#' @aliases a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-197a9ca1","formatted":"setGeneric('mean')\n\n#' Title\nsetClass('a')\n\n#' @describeIn a mean method\nsetMethod('mean', 'a', function(x) 1)\n"}
+{"key":"harvest/rx-199d568b","formatted":"#' Title.\n#'\na <- setRefClass('a')\n"}
+{"key":"harvest/rx-1ab7ff88","formatted":"#' Whether a number is odd\nis.odd <- function(a) {}\n"}
+{"key":"harvest/rx-1b26c2a4","formatted":"#' @title Title **with bold**\n#'\n#' @description Description **with bold**\n#'\n#' @details Details **with bold**\n#'\n#' @references References **with bold**\n#'\n#' @note Note **with bold**\n#'\n#' @seealso See also **with bold**\n#'\n#' @return Return **with bold**\n#'\n#' @author Author **with bold**\n#'\n#' @section Foobar:\n#' With some **bold text**.\n#'\n#' @format Format **with bold**\n#'\n#' @source Source **with bold**\n#'\n#' @param param Param **with bold**\n#'\n#' @slot slot Slot **with bold**\n#'\n#' @field field Field **with bold**\n#'\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-1b4ef7c7","formatted":"#' Title\n#'\n#' Description, see [`foobar`]. Also [`this_too`].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-1b57cfd9","formatted":"f <- function() {\n  .a <- 0\n  function(x = 1) {\n    .a <<- .a + x\n    .a\n  }\n}\n\n#' Addition function.\nf2 <- f()\nrm(f)\n"}
+{"key":"harvest/rx-1c052e9b","formatted":"#' foo\nfoo <- 100\n\n#' @describeIn foo infix\n`%foo%` <- function(x, y) foo(x, y)\n\n#' @describeIn foo replacement for foo\n`foo<-` <- function(x, value) 10\n"}
+{"key":"harvest/rx-1c0f4ac0","formatted":"#' Description with sentence.\n#'\n#' That continueth.\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-1d254ef7","formatted":"#' foo\n#' @family a\nfoo <- function() {}\n\n#' bar\n#' @family a\nbar <- 1:10\n"}
+{"key":"harvest/rx-1e42720c","formatted":"#' Title\n#'\n#' Description with some `code` included. `More code.`\nfoo <- function() {}\n"}
+{"key":"harvest/rx-1f8d80d5","formatted":"nms <- paste(letters[1:3], collapse = ',')\n#' @evalNamespace sprintf('export(%s)', nms)\n#' @name a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-21fd7c2f","formatted":"#' Title Description `r paste0('\\x60', 'bar', '\\x60')`\n#' @md\nfoo <- function() NULL\n"}
+{"key":"harvest/rx-22032f49","formatted":"#' Class\n#'\nsetClass('foo1', slots = c(id = 'character'), where = .GlobalEnv)\n\n#' @describeIn foo1 generic\nsetGeneric('m_id', function(x) standardGeneric('m_id'))\n\n#' @describeIn foo1 function\nsetMethod('m_id', 'foo1', function(x) x@id)\n"}
+{"key":"harvest/rx-22825405","formatted":"#' Title\n#'\n#' Description, see \\link[=abc-class]{abc}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-24af68b8","formatted":"#' Foo\n#'\n#' This.\n#'\n#' OBTW.\nfoo <- function(x = '%') x\n\n#' @rdname foo\n#' @description And that.\n#' @details ORLY?\nbar <- function(y = '%') y\n"}
+{"key":"harvest/rx-24b3bfd6","formatted":"#' Title\n#'\n#' @details\n#'\n#' ```{r}\n#' a <- 1\n#'\n#' b <- 2\n#' ```\n#'\n#' ```{r}\n#' c <- 3\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"key":"harvest/rx-24ced03e","formatted":"#' Title\n#'\n#' Description\n#'\n#' Details1\n#'\n#' Details2\n#'\n#' @details Details3\n#'\n#' Details4\nfoo <- function(x) {}\n"}
+{"key":"harvest/rx-24ef0d37","formatted":"#' Title\n#'\n#' @details Details\n#'\n#' ```{r eval = FALSE}\n#' this - would - fail - to - eval\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"key":"harvest/rx-270b730c","formatted":"#' Title\n#'\n#' Description, see [name][dest].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-2900ecd5","formatted":"#' Title\n#'\n#' ```{r}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-299f50fb","formatted":"#' Title\n#'\n#' This is a paragraph containing a manually inserted image before-<img\n#' src='foo.png'>-after\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-29d590cf","formatted":"#' Title\n#'\n#' ![](example.svg \"Plot title 1\") ![](example.pdf \"Plot title 2\")\n#' ![](example.PNG \"Plot title 3\")\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-2a68ab3f","formatted":"#' Title\n#'\n#' Description, see [function()]. And also [object].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-2dcb2349","formatted":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(x) {}\n"}
+{"key":"harvest/rx-2e54a81b","formatted":"#' Title\n#'\n#' Link text \\href{http://www.someurl.com}{broken across lines} preserve\n#' whitespace, even when \\href{http://www.someurl.com}{broken across several\n#' lines}, or with varying \\href{http://www.someurl.com}{amounts of interspersed\n#' whitespace}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-2e977f39","formatted":"#' A.\n#' @section A:1\n#' @section B:1\na <- function(x) {}\n\n#' D\n#'\n#' @section A:2\n#' @inherit a sections\nb <- function(y) {}\n"}
+{"key":"harvest/rx-2eca83dc","formatted":"#' Title\n#'\n#' Description with some\n#' 1. numbered\n#' 2. list\n#'\n#' And then another one:\n#' 1. item 1\n#' 1. item 2\n#' 1. item 3\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-2f9c6114","formatted":"#' A\n#'\n#' @param y Y\n#' @param x X\n#' @rdname rd\na <- function(x, y) {}\n"}
+{"key":"harvest/rx-31cc7b20","formatted":"#' Title\n#'\n#' @param x x\n#' @param y x\nx <- function(x, y) {}\n\n#' Title\n#'\n#' @inheritParams x\n#' @param y y\ny <- function(x, y) {}\n"}
+{"key":"harvest/rx-3228e1fc","formatted":"#' Title\n#'\n#' @export\nx <- setRefClass('X')\n"}
+{"key":"harvest/rx-33fd2d33","formatted":"#' Title\n#'\n#' Description with some\n#' * itemized\n#' * list\n#'\n#' And then another one:\n#' * item 1\n#' * item 2\n#' * item 3\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-34622883","formatted":"#' Title\n#'\n#' @format NULL\nx <- list(a = 1, b = 2)\n"}
+{"key":"harvest/rx-352621d6","formatted":"#' A.\n#'\n#' @seealso ABC\na <- function(x) {}\n\n#' B\n#'\n#' @inherit a\nb <- function(y) {}\n"}
+{"key":"harvest/rx-375ab9f1","formatted":"#' Title\n#'\n#' Description, see [pkg::linktos4-class] as well.\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-383f2ca3","formatted":"#' Title\n#'\n#' Link text [broken across lines](http://www.someurl.com) preserve whitespace,\n#' even when [broken across several lines](http://www.someurl.com), or with\n#' varying [amounts of interspersed whitespace](http://www.someurl.com).\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-38ac9ffb","formatted":"#' @keywords a b\n#' @title a\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-3950ab1d","formatted":"#' Title\n#'\n#' @param connect_args `[named list]`\\cr Connection arguments Description, see\n#'   `[foobar]`. Also `[this_too]`.\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-3a7d3931","formatted":"#' Title.\n#'\n#' In another package: [and this one][desc::desc]. [name words][desc::desc].\n#'\n#' @md\n#' @name markdown-test\nfoo <- function() {}\n"}
+{"key":"harvest/rx-3c528f59","formatted":"#' Title\n#'\n#' Description, see [`code link text`][func]. And also\n#' [`code as well`](https://external.com).\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-3d22b1a9","formatted":"#' @rawRd #this is a comment\n#' @name a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-40503905","formatted":"#' Title\n#'\n#' Description with some \\strong{bold} included. \\strong{More bold.}\nfoo <- function() {}\n"}
+{"key":"harvest/rx-418f7793","formatted":"#' Title\n#'\n#' Description with some _emphasis_ included. _More emph._\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-41db756e","formatted":"#' Title\n#'\n#' Description with some \\code{code} included. \\verb{More code.}\nfoo <- function() {}\n"}
+{"key":"harvest/rx-41e06b64","formatted":"#' @title Title \\strong{with bold}\n#'\n#' @description Description \\strong{with bold}\n#'\n#' @details Details \\strong{with bold}\n#'\n#' @references References \\strong{with bold}\n#'\n#' @note Note \\strong{with bold}\n#'\n#' @seealso See also \\strong{with bold}\n#'\n#' @return Return \\strong{with bold}\n#'\n#' @author Author \\strong{with bold}\n#'\n#' @section Foobar:\n#' With some \\strong{bold text}.\n#'\n#' @format Format \\strong{with bold}\n#'\n#' @source Source \\strong{with bold}\n#'\n#' @param param Param \\strong{with bold}\n#'\n#' @slot slot Slot \\strong{with bold}\n#'\n#' @field field Field \\strong{with bold}\nfoo <- function() {}\n"}
+{"key":"harvest/rx-44eb4ad9","formatted":"#' Title\n#'\n#' Description\n#'\n#' Details with a plot: ![](example.jpg \"Plot title\")\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-44ef6b90","formatted":"#' A\n#' @param a,z Two arguments\na <- function(a = 1, z = 2) {}\n"}
+{"key":"harvest/rx-45045875","formatted":"#' A.\n#'\n#' B\n#'\n#' C\n#'\n#' @return ABC\na <- function(x) {}\n\n#' D\n#'\n#' E\n#'\n#' @inherit a details\nb <- function(y) {}\n"}
+{"key":"harvest/rx-4916c016","formatted":"#' Foo\nfoo <- function(x = '%') x\n\n#' @rdname foo\nbar <- function(y = '%') y\n"}
+{"key":"harvest/rx-49a38f56","formatted":"#' @importFrom magrittr %>%\n#' @export\nmagrittr::`%>%`\n"}
+{"key":"harvest/rx-4adb1f22","formatted":"#' Title\n#'\n#' See [11pkg::function()], [11pkg::object].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-4c5c90ac","formatted":"#' `SELECT <name> FROM <table>`\n#' @md\nf <- function() 1\n"}
+{"key":"harvest/rx-4d550c68","formatted":"#' Title\n#'\n#' Description.\n#'\n#' @param `_arg1` should not be code. But `this should`.\n#' @param `_arg2` should not be code, either. `But this.`\n#'\n#' @md\nfoo <- function(`_arg1`, `_arg2`) {}\n"}
+{"key":"harvest/rx-4d59d472","formatted":"#' Title.\n#'\n#' @docType data\na <- data.frame(a = 1:10)\n"}
+{"key":"harvest/rx-50c1514c","formatted":"#' @title a\n#' @encoding test\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-526b1dca","formatted":"#' Wrapper around original\n#'\n#' @inherit original\n#' @inheritDotParams original\n#' @param y some more specific description\n#' @export\nwrapper <- function(x = 'some_value', y = 'some other value', ...) {\n  original(x = x, y = y, ...)\n}\n\n#' Original function\n#'\n#' @param x x description\n#' @param y y description\n#' @param z z description\n#' @export\noriginal <- function(x, y, z, ...) {}\n"}
+{"key":"harvest/rx-528eee33","formatted":"#' Title\n#'\n#' @format abc\n#'\nx <- list(a = 1, b = 2)\n"}
+{"key":"harvest/rx-53695cf4","formatted":"#' Title\n#'\n#' Description.\n#'\n#' @param `_arg1` should not be code. But \\verb{this should}.\n#' @param `_arg2` should not be code, either. \\verb{But this.}\n#'\nfoo <- function(`_arg1`, `_arg2`) {}\n"}
+{"key":"harvest/rx-55b6980b","formatted":"#' @title Title `r structure('default', class = 'foo')`\n#'\n#' @details Details\n#'\n#' ```{r}\n#' structure('default', class = 'foo')\n#' ```\n#'\n#' @md\n#' @name bar\nNULL\n"}
+{"key":"harvest/rx-561b9e7d","formatted":"#' Title\n#'\n#' Description\n#'\n#' Details with a plot: \\figure{example.jpg}{Plot title}\nfoo <- function() {}\n"}
+{"key":"harvest/rx-56294ccd","formatted":"#' A\n#' @usage a(a=2)\na <- function(a = 1) {}\n"}
+{"key":"harvest/rx-56403ae7","formatted":"#' A.\n#'\n#' @return ABC\na <- function(x) {}\n\n#' B\n#'\n#' @inherit a\nb <- function(y) {}\n"}
+{"key":"harvest/rx-5658bbc0","formatted":"#' Foo\n#'\n#' @param x x\n#' @param \\dots foo\nfoo <- function(x, ...) {}\n\n#' Bar\n#'\n#' @inheritParams foo\n#' @param \\dots bar\nbar <- function(x = 1, ...) {}\n"}
+{"key":"harvest/rx-56b8de71","formatted":"#' Title\n#'\n#' See \\code{\\link[11pkg:function]{11pkg::function()}},\n#' \\link[11pkg:object]{11pkg::object}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-58680046","formatted":"#' Title\n#' @description NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"key":"harvest/rx-59249308","formatted":"#' Foo\n#'\n#' @param x x\n#' @param y y\nfoo <- function(x, y) {}\n\n#' Bar\n#'\n#' @inheritDotParams foo\nbar <- function(...) {}\n"}
+{"key":"harvest/rx-594296d4","formatted":"#' Title\nf <- function(x) UseMethod('f')\n\n#' @describeIn f Method for a\n#'\nf.a <- function(x) 1\n"}
+{"key":"harvest/rx-59e70a3d","formatted":"#' Title\n#'\n#' ```\n#' r <- 1:10\n#' ```\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-5ac40b37","formatted":"#' @name a\n#' @title a\n#' @examples\n#' TRUE\n#' @examples\n#' FALSE\nNULL\n"}
+{"key":"harvest/rx-5ccbfbc7","formatted":"#' Title\n#'\n#' @inheritParams digest::sha1\nwrapper <- function(algo) {}\n"}
+{"key":"harvest/rx-5f6291f3","formatted":"#' Foo\n#'\n#' Description\n#'\n#' Details\n#'\n#' @param x x\n#' @param y y\n#' @author Hadley\n#' @source my mind\n#' @note my note\n#' @format my format\n#' @examples\n#' x <- 1\nfoo <- function(x, y) {}\n\n#' @inherit foo\nbar <- function(x, y) {}\n"}
+{"key":"harvest/rx-602f341e","formatted":"#' Dummy page to test roxygen's markdown formatting\n#'\n#' Links are very tricky, so I'll put in some links here: Link to a function:\n#' [roxygenize()]. Link to an object: [roxygenize] (we just treat it like an\n#' object here).\n#'\n#' Link to another package, function: [desc::desc()]. Link to another package,\n#' non-function: [desc::desc].\n#'\n#' Link with link text: [this great function][roxygenize()],\n#' [`roxygenize`][roxygenize()], or [that great function][roxygenize].\n#'\n#' In another package: [and this one][desc::desc].\n#'\n#' @md\n#' @name markdown-test\n#' @keywords internal\nNULL\n"}
+{"key":"harvest/rx-63a849b8","formatted":"#' A\n#' @name b\na <- function() {}\n"}
+{"key":"harvest/rx-68267ba1","formatted":"#' foo1\n#' @family a\nfoo1 <- function() {}\n\n#' foo2\n#' @family a\nfoo2 <- function() {}\n\n#' Foo3\n#' @family a\nFoo3 <- function() {}\n\n#' foo\n#' @family a\nfoo <- function() {}\n"}
+{"key":"harvest/rx-696e1568","formatted":"z <- 10\n#' @evalRd as.character(z * 2)\n#' @name a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-6bf81779","formatted":"#' Title\n'%a%' <- function(x, y) x + y\n"}
+{"key":"harvest/rx-6c6eb02a","formatted":"#' Title\nboo <- function() structure(list(), class = 'boo')\n\n#' @describeIn boo mean method\n#'\nmean.boo <- function(x) 1\n"}
+{"key":"harvest/rx-6d0a5015","formatted":"#' Title\n#'\n#' @description NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"key":"harvest/rx-6d618bdc","formatted":"#' Title\n#'\n#' Description, see \\code{\\link[=escape_rd_for_md]{escape_rd_for_md()}}.\n#'\n#' And also \\link{object}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-6e121306","formatted":"#' Title\n#'\n#' Description, see \\link[stringr:bar111]{name words}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-6f8d66ee","formatted":"#' Title.\n`myfunction` <- function(...) {}\n"}
+{"key":"harvest/rx-6f982a08","formatted":"#' x\n#' @rdname xy\nx <- 'x'\n"}
+{"key":"harvest/rx-701f0be6","formatted":"#' Title\n#'\n#' Description, see \\code{\\link{foobar}}. Also \\code{\\link{this_too}}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-72858140","formatted":"#' Title\n#'\n#' Description, see [terms][terms.object].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-72dd9c22","formatted":"#' My mean\n#'\n#' @inheritParams base::mean\nmymean <- function(x, trim) {}\n"}
+{"key":"harvest/rx-738b19f8","formatted":"#' Is a number odd?\nis.odd <- function(a) {}\n"}
+{"key":"harvest/rx-73a5b650","formatted":"#' @name a\n#' @title a\n#' @examplesIf foo::bar()\n#' maybe - run - this - code\n#' @examplesIf foobar()\n#' and - this\n#' and - that\nNULL\n"}
+{"key":"harvest/rx-74b7a077","formatted":"setClass('foo2', where = .GlobalEnv)\nsetClass('foo3', where = .GlobalEnv)\n\n#' bar1\nsetGeneric('bar1', function(x, y) standardGeneric('bar1'))\n\n#' @describeIn bar1 method1\nsetMethod('bar1', c('foo2', 'foo3'), function(x, y) 1)\n#' @describeIn bar1 method2\nsetMethod('bar1', c('foo3', 'foo2'), function(x, y) 1)\n"}
+{"key":"harvest/rx-74cb8b0a","formatted":"#' A.\n#'\n#' B\n#'\n#' @return ABC\na <- function(x) {}\n\n#' C\n#' @inherit a description\nb <- function(y) {}\n"}
+{"key":"harvest/rx-7743ba62","formatted":"#' Title\n#'\n#' Description, see [some thing](http://www.someurl.com).\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-78a740f0","formatted":"#' foo\n#' @family a\nfoo <- function() {}\n\n#' foo\n#' @family b\n#' @family a\nbar <- function() {}\n\n#' foo\n#' @family b\nbaz <- function() {}\n"}
+{"key":"harvest/rx-79f2234b","formatted":"#' Title\n#'\n#' Description, see \\link[=terms.object]{terms}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-7c43a0df","formatted":"#' Title\n#' @aliases f2 f3\n#'\n#' @family many aliases\nf <- function() {}\n\n#' Title\n#' @aliases g2 g3\n#'\n#' @family many aliases\ng <- function() {}\n"}
+{"key":"harvest/rx-7d213d14","formatted":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(x, y) {}\n"}
+{"key":"harvest/rx-7ff86b7e","formatted":"#' A.\n#'\n#' @param x X\na <- function(x) {}\n\n#' B\n#'\n#' @param y Y\nb <- function(y) {}\n\n#' C\n#'\n#' @inheritParams a\n#' @inheritParams b\nc <- function(x, y) {}\n"}
+{"key":"harvest/rx-820d120d","formatted":"#' Title\n#'\n#' Description, see [`name`][dest], [`function`][function()],\n#' [`filter`][stats::filter()], [`bar`][pkg::bar], [`terms`][terms.object],\n#' [`abc`][abc-class].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-8399a92a","formatted":"#' Title\n#'\n#' Description with some \\emph{emphasis} included. \\emph{More emph.}\nfoo <- function() {}\n"}
+{"key":"harvest/rx-852ee490","formatted":"#' Title\n#'\n#' Description, see \\linkS4class{linktos4} as well.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-853d2f8f","formatted":"#' Important class.\n#'\n#' @slot a slot a\n#' @slot b slot b\nsetClass('test')\n"}
+{"key":"harvest/rx-862f18c8","formatted":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(.x, .y) {}\n"}
+{"key":"harvest/rx-868cbfae","formatted":"#' Title\n#'\n#' Description, see \\link[pkg:linktos4-class]{pkg::linktos4} as well.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-872a28a8","formatted":"nms <- paste(letters[1:3], collapse = ',')\n#' @evalNamespace sprintf('export(%s)',\n#' nms)\n#' @name a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-8770c410","formatted":"#' @title Title `r 1 + 1`\n#' @description Description `r 2 + 2`\n#' @md\nfoo <- function() NULL\n"}
+{"key":"harvest/rx-8b0368c8","formatted":"#' foo\n#' @family a\nfoo <- function() {}\n\n#' bar\n#' @family a\nbar <- function() {}\n"}
+{"key":"harvest/rx-8c9662d6","formatted":"#' Title\n#'\n#' @description\n#' Before\n#'\n#' ```\n#' x %in% 1:10\n#' ```\n#'\n#' After\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-8cb185a5","formatted":"#' @aliases NULL b c b\n#' @title a\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-8d2d58d4","formatted":"#' title\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-8d53bbdb","formatted":"#' Title.\na <- function(a = '%\\\\') {}\n"}
+{"key":"harvest/rx-8f26e3d9","formatted":"#' Title\n#'\n#' Description, see \\url{http://acme.com} for details. And here is a named link:\n#' \\href{http://igraph.org}{igraph}. Here is another kind of link:\n#' \\url{https://log.r-hub.io}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-8f9c159b","formatted":"a <- data.frame(a = 1:10)\n#' Title.\n'a'\n"}
+{"key":"harvest/rx-91c234d1","formatted":"#' Title\n#'\n#' @export\n#' @name x\nNULL\n"}
+{"key":"harvest/rx-91e67e79","formatted":"#' Title\n#'\n#' Description with some\n#' 1. numbered\n#' * itemized\n#' * sublist\n#' 2. list\n#'\n#' And then another one:\n#' * item 1\n#' * item 2\n#' * sublist\n#' * within\n#' * item 3\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-93452c15","formatted":"#' Description\na <- function(x) {\n  #' @param x an integer\n  stopifnot(is.integer(x))\n}\n#' @seealso somewhere\n"}
+{"key":"harvest/rx-959fc227","formatted":"#' Title\n#'\n#' Description with some \\enumerate{ \\item numbered \\itemize{ \\item itemized\n#' \\item sublist } \\item list }\n#'\n#' And then another one: \\itemize{ \\item item 1 \\item item 2 \\itemize{ \\item\n#' sublist \\item within } \\item item 3 }\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-95dd50a4","formatted":"#' Title\n#'\n#' Description, see [abc][abc-class].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-97f3c02e","formatted":"#' Zap generic\n#'\n#' @param x Object to zap.\nzap <- function(x) UseMethod('zap')\n\n#' @describeIn zap method\nzap.numeric <- function(x) {}\n\n#' @describeIn zap method\nzap.character <- function(x) {}\n\n#' @describeIn zap function (method for different generic)\nprint.qux <- function(x) {}\n\n#' @describeIn zap function\nzap_helper <- function(x) {}\n"}
+{"key":"harvest/rx-988f4367","formatted":"#' @name a\n#' @title a\n#' @example Rd-example-1.R\n#' @examples a <- 2\n#' @example Rd-example-2.R\nNULL\n"}
+{"key":"harvest/rx-9a1e30f6","formatted":"#' Title\n#'\n#' Description with some `code` included. `More code.`\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-9bc8257d","formatted":"#' Description\na <- function(x) {\n  #' @param x an integer\n  stopifnot(is.integer(x))\n\n  #' @seealso somewhere\n}\n"}
+{"key":"harvest/rx-9c4d3a8c","formatted":"#' Title\n#'\n#' @details NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"key":"harvest/rx-9dbd25a8","formatted":"#' Title\n#' @details NULL\n#' @format NULL\nfoobar <- 1:10\n"}
+{"key":"harvest/rx-9ffae298","formatted":"#' Title\n#' @family Long family name\n#'\nlong_function_name_________________________1 <- function() {}\n\n#' Title\n#' @family Long family name\nlong_function_name_________________________2 <- function() {}\n\n#' Title\n#' @family Long family name\n#'\nlong_function_name_________________________3 <- function() {}\n\n#' Title\n#' @family Long family name\nlong_function_name_________________________4 <- function() {}\n"}
+{"key":"harvest/rx-a2c3b8d5","formatted":"#' Class constructor\n#'\n#' @param x x\nfoo <- function(x) {}\n\n#' @describeIn foo method\nprint.foo <- function(x) {}\n\n#' @describeIn foo method\nformat.foo <- function(x) {}\n\n#' @describeIn foo function (method for different class)\nformat.bar <- function(x) {}\n\n#' @describeIn foo function\nis_foo <- function(x) {}\n"}
+{"key":"harvest/rx-a35bbddc","formatted":"#' Title\nsetGeneric('f', function(x) standardGeneric('f'))\n\n#' @describeIn f Method for a\nsetMethod(f, signature('a'), function(x) 1)\n"}
+{"key":"harvest/rx-a6ac1b4d","formatted":"#' @title Title\n#' @details Details\n#' ```{r lorem}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() NULL\n"}
+{"key":"harvest/rx-a6f06852","formatted":"#' Title\n#' @family Long family name\nf <- function() {}\n\n#' Title\n#' @family Long family name\n'%+%' <- function(a, b) {}\n"}
+{"key":"harvest/rx-a77de068","formatted":"#' A.\n#' @param .x,x X\na <- function(x, .x) {}\n\n#' B\n#' @inheritParams a\nb <- function(x, .x) {}\n"}
+{"key":"harvest/rx-abce3716","formatted":"#' foo\n#' @family a\nfoo <- function() {}\n"}
+{"key":"harvest/rx-ac585ae8","formatted":"#' Title\n#'\n#' \\href{https://foo.bar/link%20target}{link % text}\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-ac70c0e1","formatted":"#' Title.\n\"myfunction\" <- function(...) {}\n"}
+{"key":"harvest/rx-aef0e809","formatted":"#' T1\n#' @name a\nNULL\n\n#' T2\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-b4d952be","formatted":"#' @name a\n#' @title a\n#' @backref back/ref.file\n#' @backref root.file\nNULL\n"}
+{"key":"harvest/rx-b52d3ff0","formatted":"#' Title.\n\"my function\" <- function(...) {}\n"}
+{"key":"harvest/rx-b590b059","formatted":"#' A.\n#'\n#' @param x X\na <- function(x) {}\n\n#' B\n#'\n#' @inheritParams a\nb <- function(x) {}\n\n#' C\n#'\n#' @inheritParams a\n#' @rdname b\nc <- function(.x) {}\n"}
+{"key":"harvest/rx-b8082617","formatted":"#' Title\n#'\n#' Description. It has \\rd \\commands.\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-b95dd9ab","formatted":"#' Regular\nmean.foo <- function(x) 'foo'\n"}
+{"key":"harvest/rx-bc412afe","formatted":"#' Title\n#'\n#' Description with some \\enumerate{ \\item numbered \\item list }\n#'\n#' And then another one: \\enumerate{ \\item item 1 \\item item 2 \\item item 3 }\nfoo <- function() {}\n"}
+{"key":"harvest/rx-bc912df3","formatted":"#' @title My title\n#' @description My description\n#' @param x value\na <- function(x) {}\n"}
+{"key":"harvest/rx-c0242234","formatted":"#' @aliases a b\n#' @title a\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-c074153a","formatted":"#' Power\n#' @param x base\n#' @param exp exponent\npower <- function(x, exp) x^exp\n\n#' @describeIn power Square a number\nsquare <- function(x) power(x, 2)\n\n#' @describeIn power Cube a number\ncube <- function(x) power(x, 3)\n"}
+{"key":"harvest/rx-c1b21a25","formatted":"#' Foo\n#'\n#' @param x x\n#' @param y y1\nfoo <- function(x, y) {}\n\n#' Bar\n#'\n#' @param y y2\n#' @param z z\nbar <- function(z) {}\n\n#' Foobar\n#'\n#' @inheritDotParams foo\n#' @inheritDotParams bar\nfoobar <- function(...) {}\n"}
+{"key":"harvest/rx-c605f27d","formatted":"#' Title\n#'\n#' Description, see \\link[=dest]{name}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-c6df0b29","formatted":"nms <- letters[1:2]\n#' @evalNamespace paste0('export(', nms, ')')\n#' @name a\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-c7d5eb01","formatted":"#' A.\n#'\n#' @param x X\na <- function(x) {}\n\n#' B\n#'\n#' @param .y Y\nb <- function(.y) {}\n\n#' C\n#'\n#' @inheritParams a\n#' @inheritParams b\nc <- function(.x, y) {}\n"}
+{"key":"harvest/rx-cb6ee994","formatted":"#' Description\na <- function(x) {\n  #' @param x an integer\n  stopifnot(is.integer(x))\n}\n"}
+{"key":"harvest/rx-cbcc255c","formatted":"#' Title.\na <- data.frame(a = 1:10)\n"}
+{"key":"harvest/rx-cc0ae196","formatted":"#' Title\n#'\n#' line1 pre `r \"1\"` 2 `r 1+2` post\n#'\n#' no workaround needed `r 'here'`\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-ccc39f20","formatted":"#' Dummy page to test roxygen's markdown formatting\n#'\n#' Links are very tricky, so I'll put in some links here: Link to a function:\n#' \\code{\\link[=roxygenize]{roxygenize()}}. Link to an object: \\link{roxygenize}\n#' (we just treat it like an object here).\n#'\n#' Link to another package, function: \\code{\\link[desc:desc]{desc::desc()}}.\n#' Link to another package, non-function: \\link[desc:desc]{desc::desc}.\n#'\n#' Link with link text: \\link[=roxygenize]{this great function},\n#' \\code{\\link[=roxygenize]{roxygenize}}, or\n#' \\link[=roxygenize]{that great function}.\n#'\n#' In another package: \\link[desc:desc]{and this one}.\n#'\n#' @name markdown-test\n#' @keywords internal\nNULL\n"}
+{"key":"harvest/rx-cf428841","formatted":"#' Title\n#' @details NULL\n#' @details desc\n#' @format NULL\nfoobar <- 1:10\n"}
+{"key":"harvest/rx-d137d24e","formatted":"#' Title.\n#' @usage %\\\na <- function(a) {}\n"}
+{"key":"harvest/rx-d1580cb6","formatted":"#' Title\n#'\n#' Description with some `code` included. `More code.`\n#' @noMd\nfoo <- function() {}\n"}
+{"key":"harvest/rx-d1d88c74","formatted":"#' @aliases NULL\n#' @title a\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-d34df056","formatted":"#' Title\n#'\n#' Description, see \\code{\\link[=func]{code link text}}. And also\n#' \\href{https://external.com}{\\verb{code as well}}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-d3d2c071","formatted":"#' @name a\n#' @title a\n#'\n#' @example Rd-example-1.R\n#' @example Rd-example-2.R\nNULL\n"}
+{"key":"harvest/rx-d4e0e632","formatted":"#' Title\n#'\n#' @param connect_args \\verb{[named list]}\\cr Connection arguments Description,\n#'   see \\verb{[foobar]}. Also \\verb{[this_too]}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-d4e3f08f","formatted":"#' Title.\n#'\n#' @name abc\n#' @docType data\n#' @usage data(abc)\nNULL\n"}
+{"key":"harvest/rx-d55651e1","formatted":"#' Important class.\n#'\n#' @field a field a\n#'\n#' @field b field b\n#'\nsetRefClass('test')\n"}
+{"key":"harvest/rx-d58b849a","formatted":"#' @title Title\n#' @description List: \\itemize{ \\item item1 \\item item2 }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"key":"harvest/rx-d791aabe","formatted":"#' Title\n#'\n#' Description, see \\href{http://www.someurl.com}{some thing}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-daf9322f","formatted":"#' Title\n#'\n#' <p>This is a paragraph</p> <p>This is another paragraph</p>\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-db08ab08","formatted":"#' @title Title\n#' @details List: \\itemize{ \\item item1 \\item item2 }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"key":"harvest/rx-dd2506bf","formatted":"#' Title\n#'\n#' @description\n#' Before\n#' ```r\n#' x %in% 1:10\n#' ```\n#' After\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-de1bee56","formatted":"#' @name a\n#' @title a\n#' @author A\nNULL\n\n#' @name b\n#' @rdname a\n#' @author A\nNULL\n\n#' @name c\n#' @rdname a\n#' @author B\nNULL\n"}
+{"key":"harvest/rx-de3ac450","formatted":"#' Class constructor with disambiguated class\n#'\n#' @param x x\nbaz <- function(x) {}\n\n#' @describeIn baz method\nprint.roxygen2_baz <- function(x) {}\n\n#' @describeIn baz function (method for another class)\nformat.quuz_baz <- function(x) {}\n"}
+{"key":"harvest/rx-deb9d202","formatted":"#' foo object\nfoo <- list(bar = function(a) a)\nfoo$bar(a = 1)\n"}
+{"key":"harvest/rx-e02bf95c","formatted":"#' Class ABC\nsetRefClass(\n  'ABC',\n  methods = list(\n    f = function() {\n      'This function has a docstring'\n      1\n    }\n  )\n)\n"}
+{"key":"harvest/rx-e0e631c5","formatted":"#' Title\n#'\n#' @details Details `r x <- 10; x`\n#'\n#' ```{r}\n#' y <- x + 10\n#' y\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"key":"harvest/rx-e0fc1b98","formatted":"#' A\n#' @usage NULL\na <- function(a = 1) {}\n"}
+{"key":"harvest/rx-e2097b28","formatted":"#' Title\n#'\n#' Description with some **bold** included. **More bold.**\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-e65dc76d","formatted":"#' A.\n#'\n#' @param x X\n#' @param y Y\na <- function(x, y) {}\n\n#' B1\n#'\n#' @param y B\n#' @inheritParams a\nb1 <- function(x, y) {}\n\n#' B2\n#'\n#' @inheritParams a\n#' @param y B\nb2 <- function(x, y) {}\n\n#' C1\n#'\n#' @param x C\n#' @inheritParams a\nc1 <- function(x, y) {}\n\n#' C2\n#'\n#' @inheritParams a\n#' @param x C\nc2 <- function(x, y) {}\n"}
+{"key":"harvest/rx-e6cf4d24","formatted":"#' Title\n#' @name f\nNULL\n\n#' @describeIn f A\nf2 <- function(x) 1\n"}
+{"key":"harvest/rx-e94c960b","formatted":"#' title\n#'\n#' description\n#'\n#' details\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-e94fa7ce","formatted":"#' Title.\n\"f\" <- function(a = 1, b = 2, c = a + b) {}\n"}
+{"key":"harvest/rx-eb12b6b6","formatted":"#' Title\n#'\n#' Link text [broken across lines][fcn] preserve whitespace, even when [broken\n#' across several lines][fcn], or with varying [amounts of interspersed\n#' whitespace][fcn].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-ec3673c5","formatted":"#' @rdname bar\n#' @details 2\n#' @order 2\nfoo <- function() {}\n\n#' @rdname bar\n#' @details 1\n#' @order 1\nbar <- function() {}\n\n#' @title Title\n#' @name bar\nNULL\n"}
+{"key":"harvest/rx-ecc2691b","formatted":"#' A.\n#' @section A:1\n#' @section B:1\na <- function(x) {}\n\n#' D\n#'\n#' @inheritSection a B\nb <- function(y) {}\n"}
+{"key":"harvest/rx-ee37a674","formatted":"#' Title\nf <- function(x) 1\n\n#' @describeIn f A\nf2 <- function(x) 1\n"}
+{"key":"harvest/rx-ee685ce2","formatted":"#' Title\n#'\n#' Description, see \\code{\\link[=function]{function()}}. And also \\link{object}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-efc349c1","formatted":"#' @name a\n#' @aliases %a%\n#' @title a\nNULL\n"}
+{"key":"harvest/rx-f4658690","formatted":"#' Title.\n#'\n#' In another package: \\link[desc:desc]{and this one}.\n#' \\link[desc:desc]{name words}.\n#'\n#' @name markdown-test\nfoo <- function() {}\n"}
+{"key":"harvest/rx-f4a69eef","formatted":"#' @title a\n#' @note test\n#' @author test\n#' @seealso test\n#' @references test\n#' @name a\nNULL\n"}
+{"key":"harvest/rx-f5812049","formatted":"#' Class Blob\nABCD <- setRefClass(\n  'ABC',\n  methods = list(\n    draw = function(x = 1) {\n      \"2\"\n      x\n    }\n  )\n)\n"}
+{"key":"harvest/rx-f5b4d104","formatted":"#' Title\nsetRefClass('B2')\n"}
+{"key":"harvest/rx-f6927028","formatted":"#' Title\n#' @format %\nx <- list(a = 1, b = 2)\n"}
+{"key":"harvest/rx-f70019e3","formatted":"#' @name a\n#' @title a\n#'\n#' @example Rd-example-4.txt\nNULL\n"}
+{"key":"harvest/rx-f97e8917","formatted":"#' Title\n#'\n#' Description, see [http://acme.com]() for details. And here is a named link:\n#' [igraph](http://igraph.org). Here is another kind of link:\n#' <https://log.r-hub.io>.\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-fa223117","formatted":"#' Title\n#' @description NULL\n#' @description desc\n#' @format NULL\nfoobar <- 1:10\n"}
+{"key":"harvest/rx-fa3f3d1c","formatted":"foo <- function() c('@name a', '@title a')\n#' @eval foo()\nNULL\n"}
+{"key":"harvest/rx-fa6eeb19","formatted":"#' Title\n#'\n#' Description, see [escape_rd_for_md()].\n#'\n#' And also [object].\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-fabb4413","formatted":"#' Title\n#'\n#' Description, see \\code{\\link[=dest]{name}},\n#' \\code{\\link[=function]{function}}, \\code{\\link[stats:filter]{filter}},\n#' \\code{\\link[pkg:bar]{bar}}, \\code{\\link[=terms.object]{terms}},\n#' \\code{\\link[=abc-class]{abc}}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-fb5d2ad5","formatted":"#' Title\n#'\n#' @description\n#' Before\n#' ```\n#' x %in% 1:10\n#' ```\n#' After\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-fbcaa173","formatted":"#' A.\n#'\n#' @param y Y\n#' @param x X\na <- function(x, y) {}\n\n#' B\n#'\n#' @param y Y\nb <- function(x, y) {}\n\n#' C\n#'\n#' @param x X\nc <- function(x, y) {}\n\n#' D\n#'\n#' @inheritParams b\n#' @param z Z\nd <- function(x, y, z) {}\n\n#' E\n#'\n#' @inheritParams c\n#' @param y Y\ne <- function(x, y, z) {}\n"}
+{"key":"harvest/rx-fc7d6dad","formatted":"#' C\n#'\n#' @inheritParams b\nc <- function(x) {}\n\n#' B\n#'\n#' @inheritParams a\nb <- function(x) {}\n\n#' A.\n#'\n#' @param x X\na <- function(x) {}\n"}
+{"key":"harvest/rx-fc8242e3","formatted":"#' Title\n#'\n#' Description with some \\itemize{ \\item itemized \\item list }\n#'\n#' And then another one: \\itemize{ \\item item 1 \\item item 2 \\item item 3 }\nfoo <- function() {}\n"}
+{"key":"harvest/rx-fd84eacf","formatted":"#' Title\n#'\n#' Description, see [linktos4-class] as well.\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-febd6ff8","formatted":"#' Foo\n#'\n#' @inheritParams bar\n#' @inheritDotParams baz\nfoo <- function(x, ...) {}\n\n#' Bar\n#'\n#' @param x x\n#' @param ... dots\nbar <- function(x, ...) {}\n\n#' Baz\n#'\n#' @param y y\n#' @param z z\nbaz <- function(y, z) {}\n"}
