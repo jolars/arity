@@ -1,0 +1,65 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..145
+  ROXYGEN_BLOCK@0..139
+    ROXYGEN_SECTION@0..25
+      ROXYGEN_PARAGRAPH@0..22
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..21 "Rd tabular content"
+        NEWLINE@21..22 "\n"
+      ROXYGEN_MARKER@22..24 "#'"
+      NEWLINE@24..25 "\n"
+    ROXYGEN_SECTION@25..120
+      ROXYGEN_MARKER@25..27 "#'"
+      WHITESPACE@27..28 " "
+      ROXYGEN_TAG@28..36
+        ROXYGEN_AT@28..29 "@"
+        ROXYGEN_TAG_NAME@29..36 "details"
+      NEWLINE@36..37 "\n"
+      ROXYGEN_RD_MACRO@37..119
+        ROXYGEN_MARKER@37..39 "#'"
+        WHITESPACE@39..40 " "
+        ROXYGEN_RD_MACRO_NAME@40..48 "\\tabular"
+        ROXYGEN_RD_MACRO_DELIM@48..49 "{"
+        ROXYGEN_TEXT@49..51 "rl"
+        ROXYGEN_RD_MACRO_DELIM@51..52 "}"
+        ROXYGEN_RD_MACRO_DELIM@52..53 "{"
+        NEWLINE@53..54 "\n"
+        ROXYGEN_MARKER@54..56 "#'"
+        WHITESPACE@56..59 "   "
+        ROXYGEN_TEXT@59..61 "a "
+        ROXYGEN_RD_MACRO@61..65
+          ROXYGEN_RD_MACRO_NAME@61..65 "\\tab"
+        WHITESPACE@65..66 " "
+        ROXYGEN_TEXT@66..80 "the first row "
+        ROXYGEN_RD_MACRO@80..83
+          ROXYGEN_RD_MACRO_NAME@80..83 "\\cr"
+        NEWLINE@83..84 "\n"
+        ROXYGEN_MARKER@84..86 "#'"
+        WHITESPACE@86..89 "   "
+        ROXYGEN_TEXT@89..91 "b "
+        ROXYGEN_RD_MACRO@91..95
+          ROXYGEN_RD_MACRO_NAME@91..95 "\\tab"
+        WHITESPACE@95..96 " "
+        ROXYGEN_TEXT@96..111 "the second row "
+        ROXYGEN_RD_MACRO@111..114
+          ROXYGEN_RD_MACRO_NAME@111..114 "\\cr"
+        NEWLINE@114..115 "\n"
+        ROXYGEN_MARKER@115..117 "#'"
+        WHITESPACE@117..118 " "
+        ROXYGEN_RD_MACRO_DELIM@118..119 "}"
+      NEWLINE@119..120 "\n"
+    ROXYGEN_SECTION@120..139
+      ROXYGEN_MARKER@120..122 "#'"
+      WHITESPACE@122..123 " "
+      ROXYGEN_TAG@123..139
+        ROXYGEN_AT@123..124 "@"
+        ROXYGEN_TAG_NAME@124..128 "name"
+        WHITESPACE@128..129 " "
+        ROXYGEN_TEXT@129..139 "rd_tabular"
+  NEWLINE@139..140 "\n"
+  IDENT@140..144 "NULL"
+  NEWLINE@144..145 "\n"

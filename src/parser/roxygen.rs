@@ -219,17 +219,23 @@ pub(crate) fn is_verbatim_rd_macro(name: &str) -> bool {
 
 /// Inline Rd macros that take **two** adjacent `{…}` argument groups, the way
 /// `tools::parse_Rd` does: `\item{term}{description}` (in `\describe`/`\value`/
-/// `\arguments`). A one-argument macro like `\code` consumes only its first
-/// group, so a trailing `\code{x}{y}`'s `{y}` stays literal --- the arity is per
-/// macro. Extensible (`\section`/`\tabular`/`\href`/… are future targets, several
-/// of which surface as block macros instead). A braceless `\item` (under
-/// `\itemize`/`\enumerate`) never reaches here: it has no `{`, so it is not a
-/// macro token at all.
-const TWO_ARG_RD_MACROS: &[&str] = &["item"];
+/// `\arguments`) and `\tabular{format}{content}`. A one-argument macro like
+/// `\code` consumes only its first group, so a trailing `\code{x}{y}`'s `{y}`
+/// stays literal --- the arity is per macro. Extensible (`\section`/`\href`/… are
+/// future targets, several of which surface as block macros instead). A braceless
+/// `\item` (under `\itemize`/`\enumerate`) never reaches here: it has no `{`, so
+/// it is not a macro token at all.
+///
+/// These are also the macros whose `{…}` arguments `parse_Rd` models as *list*
+/// wrappers (so a multi-atom argument projects to a `(GRP …)`), as opposed to
+/// latexlike macros (`\code`, `\emph`, …) whose single argument's content is
+/// inlined directly. The projector keys its GRP rule on this set.
+const TWO_ARG_RD_MACROS: &[&str] = &["item", "tabular"];
 
 /// Whether the macro named `name` (without the leading `\`) takes two `{…}`
-/// argument groups. Drives both the lexer (consume the second group into one
-/// token) and the tree builder (emit both groups as children).
+/// argument groups. Drives the lexer (consume the second group into one token),
+/// the tree builder (emit both groups as children), and the projector (each
+/// group is a list argument --- a multi-atom one becomes a `(GRP …)`).
 pub(crate) fn is_two_arg_rd_macro(name: &str) -> bool {
     TWO_ARG_RD_MACROS.contains(&name)
 }
@@ -542,16 +548,51 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
 }
 
 /// Whether the prose line whose marker is at `start` opens a **block** Rd macro
-/// --- a `\name{ … }` whose group does not close on the line, so it spans
-/// following `#'` lines. The lexer extracts a *balanced* inline `\name{…}` as a
-/// `RoxygenRdMacro` token; a `RoxygenText` content token beginning with `\name{`
-/// is therefore necessarily an unbalanced (multi-line) opener.
+/// across following `#'` lines. Two shapes:
+///
+/// * `\name{ …` (Form A): a single `RoxygenText` content token beginning with
+///   `\name{` whose group does not close on the line. The lexer extracts a
+///   *balanced* inline `\name{…}` as a `RoxygenRdMacro` token, so a `RoxygenText`
+///   starting `\name{` is necessarily an unbalanced (multi-line) opener.
+/// * `\name{arg}{ …` (Form B): a *balanced* `RoxygenRdMacro` token for a
+///   structural macro (`\tabular{format}`, `\item{term}`) immediately followed by
+///   a `RoxygenText` that opens an unbalanced `{` body --- the macro's last
+///   argument spans following lines.
 fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
     let content = line_content_start(tokens, start);
-    matches!(
-        tokens.get(content),
-        Some(tok) if tok.kind == TokKind::RoxygenText && is_block_macro_opener(&tok.text)
-    )
+    match tokens.get(content) {
+        Some(tok) if tok.kind == TokKind::RoxygenText => is_block_macro_opener(&tok.text),
+        Some(tok) if tok.kind == TokKind::RoxygenRdMacro => {
+            rd_macro_name(&tok.text).is_some_and(is_two_arg_rd_macro)
+                && matches!(
+                    tokens.get(content + 1),
+                    Some(next)
+                        if next.kind == TokKind::RoxygenText && opens_unbalanced_brace(&next.text)
+                )
+        }
+        _ => false,
+    }
+}
+
+/// The macro name (without the leading `\`) of a `\name…` span, or `None` when
+/// `text` does not begin with `\` followed by an alphabetic run.
+fn rd_macro_name(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    if bytes.first() != Some(&b'\\') {
+        return None;
+    }
+    let mut k = 1;
+    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
+        k += 1;
+    }
+    (k > 1).then(|| &text[1..k])
+}
+
+/// Whether `text` is an unbalanced `{`-opener: it starts with `{` whose group
+/// does not close within the line (so it spans following `#'` lines).
+fn opens_unbalanced_brace(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.first() == Some(&b'{') && scan_balanced(bytes, 0, b'{', b'}').is_none()
 }
 
 /// Whether `text` begins with an unbalanced `\name{` block-macro opener.
@@ -590,11 +631,25 @@ fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> 
     let mut depth = 0usize;
     let mut closed = false;
 
-    // Opening `\name{` content token: split off the name and brace, then parse any
-    // trailing same-line content.
-    if let Some(tok) = tokens.get(i) {
-        emit_block_open(events, &tok.text, &mut depth, &mut closed);
-        i += 1;
+    // Opening content. Form A: a `RoxygenText` `\name{ …` --- split off the name
+    // and brace, then parse trailing same-line content. Form B: a balanced
+    // `RoxygenRdMacro` `\name{arg}` followed by a `RoxygenText` `{ …` body opener
+    // --- emit the macro's name and leading argument group(s) as leaves, then open
+    // the body brace.
+    match tokens.get(i) {
+        Some(tok) if tok.kind == TokKind::RoxygenText => {
+            emit_block_open(events, &tok.text, &mut depth, &mut closed);
+            i += 1;
+        }
+        Some(tok) if tok.kind == TokKind::RoxygenRdMacro => {
+            emit_block_open_arg_macro(events, &tok.text);
+            i += 1;
+            if let Some(next) = tokens.get(i) {
+                emit_block_body_open(events, &next.text, &mut depth, &mut closed);
+                i += 1;
+            }
+        }
+        _ => {}
     }
 
     'consume: while !closed {
@@ -667,6 +722,69 @@ fn emit_block_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, close
     ));
     *depth = 1;
     emit_block_content(events, &text[k + 1..], depth, closed);
+}
+
+/// Emit the leading `\name{arg}…` of a Form-B block macro from a *balanced*
+/// `RoxygenRdMacro` token (`\tabular{rl}`): a `ROXYGEN_RD_MACRO_NAME`, an optional
+/// `[opt]`, and each balanced `{…}` argument group as `{`/content/`}` leaves (the
+/// content a single `ROXYGEN_TEXT` --- a format/term argument carries no nested
+/// markup in practice). The leaves tile `text` exactly. The body `{` that follows
+/// is opened separately by [`emit_block_body_open`].
+fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) {
+    let bytes = text.as_bytes();
+    let mut k = 1;
+    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
+        k += 1;
+    }
+    events.push(Event::Leaf(
+        SyntaxKind::ROXYGEN_RD_MACRO_NAME,
+        text[..k].to_string(),
+    ));
+    let mut j = k;
+    if bytes.get(j) == Some(&b'[')
+        && let Some(opt_end) = scan_balanced(bytes, j, b'[', b']')
+    {
+        events.push(Event::Leaf(
+            SyntaxKind::ROXYGEN_RD_MACRO_OPT,
+            text[j..opt_end].to_string(),
+        ));
+        j = opt_end;
+    }
+    while bytes.get(j) == Some(&b'{') {
+        let Some(group_end) = scan_balanced(bytes, j, b'{', b'}') else {
+            break;
+        };
+        events.push(Event::Leaf(
+            SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+            "{".to_string(),
+        ));
+        let content = &text[j + 1..group_end - 1];
+        if !content.is_empty() {
+            events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, content.to_string()));
+        }
+        events.push(Event::Leaf(
+            SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+            "}".to_string(),
+        ));
+        j = group_end;
+    }
+    // Defensive remainder (a malformed token the gate should never admit).
+    if j < text.len() {
+        events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, text[j..].to_string()));
+    }
+}
+
+/// Open a Form-B block macro's body brace from a `RoxygenText` `{ …` token: emit
+/// the `{` delimiter (setting brace depth to 1), then parse any trailing same-line
+/// body content. The gate guarantees `text` begins with `{`.
+fn emit_block_body_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, closed: &mut bool) {
+    debug_assert_eq!(text.as_bytes().first(), Some(&b'{'));
+    events.push(Event::Leaf(
+        SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+        "{".to_string(),
+    ));
+    *depth = 1;
+    emit_block_content(events, &text[1..], depth, closed);
 }
 
 /// Parse one `RoxygenText` token's worth of block-macro body, emitting leaves:

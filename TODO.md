@@ -212,9 +212,13 @@
         run-on — that bug is fixed; `itemize_enumerate` matches its pin).
         **`\describe{ \item{term}{def} … }` landed (Stage 3, 2026-06-23):** the
         multi-arg `\item` (above) closes it; `describe_format` matches its pin.
-        **Still open:** `\tabular{rl}{ … \tab … \cr }` (the lexer extracts the
-        balanced `{rl}` column-spec as an inline macro token, so the trailing body
-        `{` isn't seen as an opener — needs a `\name{arg}{` recognizer).
+        **`\tabular{rl}{ … \tab … \cr }` landed (Stage 4, 2026-06-23):** a balanced
+        `RoxygenRdMacro` for a structural macro (`is_two_arg_rd_macro`, now also
+        `tabular`) immediately followed by an unbalanced `{` body opens the block
+        (`emit_block_open_arg_macro` decomposes `\tabular{rl}` into name + format
+        group leaves, `emit_block_body_open` opens the body), with `\tab`/`\cr` as
+        name-only children. The projector GRP-wraps a structural macro's multi-atom
+        argument (`(\tabular (TEXT "rl") (GRP …))`); `tabular` matches its pin.
       - *Verbatim / non-prose content* (`\deqn{}`/`\eqn{}` carry LaTeX-ish math,
         `\preformatted{}`/`\verb{}` carry literal text, `\tabular` cells use
         `\tab`/`\cr` separators) — never reflow or markdown-interpret the interior.
@@ -280,10 +284,10 @@
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **57 matching / 101 divergent** of 158 pinned (was 42; `rd_macros` then
-      `itemize_enumerate` closed). The remaining divergences are the worklist; the
-      curated cases name the shapes — `describe_format` (multi-arg `\item{}{}`),
-      `tabular` (balanced-arg opener), `markdown_list` (`@md` markdown→Rd). Run
+      **59 matching / 99 divergent** of 158 pinned (was 42; `rd_macros`,
+      `itemize_enumerate`, `describe_format`, then `tabular` closed). The remaining
+      divergences are the worklist; the curated cases name the shapes —
+      `markdown_list` (`@md` markdown→Rd). Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
       Use the `roxygen-parity` skill.

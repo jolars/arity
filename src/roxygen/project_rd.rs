@@ -38,6 +38,7 @@ use rowan::NodeOrToken;
 
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
 use crate::parser::parse;
+use crate::parser::roxygen::is_two_arg_rd_macro;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 /// Project `text` to the parser-owned Rd section subtrees, one canonical
@@ -215,15 +216,37 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
 /// Project one `ROXYGEN_RD_MACRO` node into `(\name <children…>)`: the `[opt]` and
 /// `{`/`}` delimiters are dropped, prose text coalesces into `(TEXT …)`, verbatim
 /// content becomes `(VERB …)` (no whitespace collapse), and nested macros recurse.
+///
+/// A *structural* macro (`\item`, `\tabular` --- [`is_two_arg_rd_macro`]) models
+/// each `{…}` argument as a list, so a multi-atom argument projects to a
+/// `(GRP …)` wrapper (`\tabular{rl}{a \tab b}` → `(\tabular (TEXT "rl") (GRP …))`)
+/// while a single-atom argument unwraps (`\item{a}{first}` → `(\item (TEXT "a")
+/// (TEXT "first"))`). A latexlike macro (`\code`, `\emph`, …) inlines its single
+/// argument's atoms directly, never wrapping.
 fn serialize_macro(node: &SyntaxNode) -> String {
     let mut head = String::new();
-    let mut atoms: Vec<String> = Vec::new();
+    let mut structural = false;
+    let mut out_atoms: Vec<String> = Vec::new();
+    let mut group: Vec<String> = Vec::new();
     let mut run = String::new();
-    let flush = |run: &mut String, atoms: &mut Vec<String>| {
+    // Flush the pending prose run into the current argument group as one (TEXT …).
+    let flush = |run: &mut String, group: &mut Vec<String>| {
         if let Some(atom) = text_atom(run) {
-            atoms.push(atom);
+            group.push(atom);
         }
         run.clear();
+    };
+    // Finalize a `{…}` argument group at its closing `}`: a structural macro's
+    // multi-atom argument becomes a `(GRP …)` (parse_Rd models it as a list);
+    // everything else (a single-atom argument, or a latexlike macro's inlined
+    // content) splices its atoms in directly.
+    let finalize = |group: &mut Vec<String>, out: &mut Vec<String>, structural: bool| {
+        if structural && group.len() > 1 {
+            out.push(format!("(GRP {})", group.join(" ")));
+            group.clear();
+        } else {
+            out.append(group);
+        }
     };
     for el in node.children_with_tokens() {
         match el.kind() {
@@ -232,28 +255,29 @@ fn serialize_macro(node: &SyntaxNode) -> String {
                     .as_token()
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
+                structural = is_two_arg_rd_macro(head.trim_start_matches('\\'));
             }
             SyntaxKind::ROXYGEN_RD_MACRO_VERB => {
-                flush(&mut run, &mut atoms);
+                flush(&mut run, &mut group);
                 let raw = el
                     .as_token()
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
-                atoms.push(format!("(VERB {})", encode_text(&raw)));
+                group.push(format!("(VERB {})", encode_text(&raw)));
             }
             SyntaxKind::ROXYGEN_RD_MACRO => {
-                flush(&mut run, &mut atoms);
+                flush(&mut run, &mut group);
                 if let Some(n) = el.as_node() {
-                    atoms.push(serialize_macro(n));
+                    group.push(serialize_macro(n));
                 }
             }
-            // A closing `}` ends an argument group: flush the run so adjacent
-            // groups stay separate atoms (`\item{a}{b}` → `(\item (TEXT "a")
-            // (TEXT "b"))`, never coalesced --- parse_Rd models each `{…}` as its
-            // own list). The opening `{` carries no content.
+            // A closing `}` ends an argument group: flush the run, then finalize
+            // the group (GRP-wrapping a structural macro's multi-atom argument).
+            // The opening `{` carries no content.
             SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
                 if el.as_token().is_some_and(|t| t.text() == "}") {
-                    flush(&mut run, &mut atoms);
+                    flush(&mut run, &mut group);
+                    finalize(&mut group, &mut out_atoms, structural);
                 }
             }
             // The dropped option and the `#'` markers threaded into a multi-line
@@ -267,11 +291,13 @@ fn serialize_macro(node: &SyntaxNode) -> String {
             }
         }
     }
-    flush(&mut run, &mut atoms);
-    if atoms.is_empty() {
+    // Defensive: trailing content with no closing brace (a malformed macro).
+    flush(&mut run, &mut group);
+    finalize(&mut group, &mut out_atoms, structural);
+    if out_atoms.is_empty() {
         format!("({head})")
     } else {
-        format!("({head} {})", atoms.join(" "))
+        format!("({head} {})", out_atoms.join(" "))
     }
 }
 
@@ -500,6 +526,31 @@ mod tests {
             out.contains(
                 "(\\describe (\\item (TEXT \"a\") (TEXT \"first\")) \
                  (\\item (TEXT \"b\") (TEXT \"second\")))"
+            ),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn multiline_tabular_projects_format_and_grp_body() {
+        // A multi-line `\tabular{format}{content}`: the format arg projects to a
+        // single `(TEXT …)`, the multi-row body to a `(GRP …)` (parse_Rd models
+        // each `\tabular` argument as a list, so a multi-atom one wraps), with
+        // `\tab`/`\cr` as name-only macros --- byte-identical to roxygen2.
+        let src = "#' T\n\
+                   #' @details\n\
+                   #' \\tabular{rl}{\n\
+                   #'   a \\tab the first row \\cr\n\
+                   #'   b \\tab the second row \\cr\n\
+                   #' }\n\
+                   #' @name d\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\details (\\tabular (TEXT \"rl\") \
+                 (GRP (TEXT \"a\") (\\tab) (TEXT \"the first row\") (\\cr) \
+                 (TEXT \"b\") (\\tab) (TEXT \"the second row\") (\\cr))))"
             ),
             "got: {out}"
         );
