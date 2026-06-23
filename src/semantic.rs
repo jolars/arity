@@ -17,7 +17,9 @@ use smol_str::SmolStr;
 
 pub use binding::{Binding, BindingId, BindingKind};
 pub use scope::{Scope, ScopeId, ScopeKind};
-pub use symbols::{LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider};
+pub use symbols::{
+    LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, meta_package_members,
+};
 
 use crate::syntax::SyntaxNode;
 

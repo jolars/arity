@@ -19,6 +19,7 @@ use crate::rindex::remote::RemoteExports;
 use crate::rindex::schema::{PackageIndex, SymbolEntry};
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
+    meta_package_members,
 };
 
 /// R's default-package export lists. A compile-time constant (baked-in symbol
@@ -54,16 +55,24 @@ pub fn resolve_origin(
     // Then `library()`-attached packages in source order; the last attacher
     // masks. Prefer the version-exact installed index, then the remote sidecar,
     // and finally the baked-in bundled CRAN export list.
-    for pkg in loaded {
-        let exports_it = if indexed.has_package(&pkg.name) {
-            indexed.exports(&pkg.name, name)
-        } else if remote.has_package(&pkg.name) {
-            remote.exports(&pkg.name, name)
+    let mut consider = |pkg: &str| {
+        let exports_it = if indexed.has_package(pkg) {
+            indexed.exports(pkg, name)
+        } else if remote.has_package(pkg) {
+            remote.exports(pkg, name)
         } else {
-            BUNDLED.exports(&pkg.name, name)
+            BUNDLED.exports(pkg, name)
         };
-        if exports_it && !candidates.contains(&pkg.name) {
-            candidates.push(pkg.name.clone());
+        if exports_it && !candidates.iter().any(|c| c == pkg) {
+            candidates.push(SmolStr::new(pkg));
+        }
+    };
+    for pkg in loaded {
+        consider(&pkg.name);
+        // A meta-package (e.g. tidyverse) also attaches its core members, whose
+        // exports must resolve even though they aren't the meta-package's own.
+        for member in meta_package_members(&pkg.name) {
+            consider(member);
         }
     }
     match candidates.len() {
@@ -410,6 +419,32 @@ mod tests {
         );
         assert_eq!(
             p.origin("fread", &[loaded("data.table")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    #[test]
+    fn meta_package_attaches_resolve_member_exports() {
+        // `library(tidyverse)` attaches tibble, dplyr, etc. via `.onAttach`.
+        // Those members are not tidyverse's own exports, but their names must
+        // still resolve. No local index: the bundled CRAN lists back the members.
+        let p = CompositeProvider::base_only();
+        // `tibble` is exported (and re-exported) by tidyverse's core members; it
+        // must resolve to *some* package rather than staying Unknown. (Several
+        // members re-export it, so the exact origin is legitimately Ambiguous —
+        // the rule only fires on Unknown.)
+        assert!(matches!(
+            p.origin("tibble", &[loaded("tidyverse")]),
+            PackageOrigin::Resolved(_) | PackageOrigin::Ambiguous(_)
+        ));
+        // `across` is a dplyr export, also attached by tidyverse.
+        assert_eq!(
+            p.origin("across", &[loaded("tidyverse")]),
+            PackageOrigin::Resolved(SmolStr::new("dplyr"))
+        );
+        // A genuinely unknown name still stays Unknown so the rule can fire.
+        assert_eq!(
+            p.origin("not_a_real_export_xyz", &[loaded("tidyverse")]),
             PackageOrigin::Unknown
         );
     }

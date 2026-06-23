@@ -45,6 +45,32 @@ pub struct LoadedPackage {
     pub range: TextRange,
 }
 
+/// Core packages a *meta-package* attaches at load time via its `.onAttach`
+/// hook. R's `library(tidyverse)` puts these on the search path too, but they
+/// are not in the meta-package's own export list, so we model the attachment
+/// explicitly — otherwise e.g. `tibble()` (exported by tibble, attached by
+/// tidyverse) would resolve to nothing. Returns an empty slice for ordinary
+/// packages. The members must themselves be resolvable (default / harvested /
+/// remote / bundled) for their exports to actually resolve.
+pub fn meta_package_members(name: &str) -> &'static [&'static str] {
+    // tidyverse 2.0 core set (attached by `library(tidyverse)`).
+    const TIDYVERSE: &[&str] = &[
+        "dplyr",
+        "forcats",
+        "ggplot2",
+        "lubridate",
+        "purrr",
+        "readr",
+        "stringr",
+        "tibble",
+        "tidyr",
+    ];
+    match name {
+        "tidyverse" => TIDYVERSE,
+        _ => &[],
+    }
+}
+
 /// Where a bare function/identifier name resolves to within the attached
 /// packages. Mirrors jarl's enum of the same name.
 #[derive(Debug, Clone, PartialEq, Eq)]

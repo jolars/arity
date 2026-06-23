@@ -957,6 +957,28 @@ landed; the second is still open but only matters for cross-edit-stable handles:
         and resolved sets so the `resolution_incomplete` poison
         (`src/project/scope.rs`) clears once the sidecar can enumerate exports.
 
+- [x] Meta-package attachment (Option A — static table, landed). A meta-package
+  like `tidyverse` attaches a fixed set of core packages (dplyr, ggplot2,
+  tibble, …) via its `.onAttach` hook; those names are *not* in the
+  meta-package's own export list, so `library(tidyverse); tibble(...)` used to
+  false-positive on `undefined-symbol`. `meta_package_members`
+  (`src/semantic/symbols.rs`) maps a meta-package → its attached core set;
+  `resolve_origin` (`src/rindex/provider.rs`) expands each loaded meta-package
+  with its members before masking, and both conservative gates
+  (`external_resolution` in `src/project/graph.rs`, `run_standalone` in
+  `undefined_symbol.rs`) require every member be indexed too. Members resolve
+  against the bundled/remote/harvested tiers as usual (all nine tidyverse core
+  packages are already bundled). The set is `.onAttach`-driven, *not* `Depends`,
+  so it genuinely needs the curated table.
+  - [ ] Follow-up (Option B — harvest-time attach capture). The static table is
+    correct but hand-maintained and offline-only. When a package is actually
+    installed/harvested, detect what it attaches (diff `search()` across a clean
+    `library()` call) and record `attaches: Vec<SmolStr>` in `PackageIndex`
+    (`src/rindex/schema.rs`, bump `SCHEMA_VERSION`); `resolve_origin` would
+    prefer the harvested attach set over the static table for installed
+    meta-packages, leaving the table as the offline fallback. Generalizes beyond
+    tidyverse (tidymodels, fastverse, …) without growing the curated list.
+
 - [ ] Follow-up: prune packages that vanish from CRAN out of the bundled set.
   The refresh is now **additive** --- `scripts/rank_cran_downloads.sh` unions
   each run's top-N (30-day window) into `scripts/cran_top_packages.txt` and
