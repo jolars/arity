@@ -1,0 +1,3 @@
+(\description (TEXT "Inline markdown foundation"))
+(\details (TEXT "Text with") (\emph (TEXT "emphasis")) (TEXT ",") (\strong (TEXT "strong")) (TEXT "words,") (\verb (VERB "inline code")) (TEXT ", and") (\code (RCODE "a + b")) (TEXT "code."))
+(\title (TEXT "Inline markdown foundation"))

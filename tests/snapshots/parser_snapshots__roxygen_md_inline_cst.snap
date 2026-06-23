@@ -1,0 +1,52 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..152
+  ROXYGEN_BLOCK@0..146
+    ROXYGEN_SECTION@0..33
+      ROXYGEN_PARAGRAPH@0..30
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..29 "Inline markdown found ..."
+        NEWLINE@29..30 "\n"
+      ROXYGEN_MARKER@30..32 "#'"
+      NEWLINE@32..33 "\n"
+    ROXYGEN_SECTION@33..121
+      ROXYGEN_MARKER@33..35 "#'"
+      WHITESPACE@35..36 " "
+      ROXYGEN_TAG@36..44
+        ROXYGEN_AT@36..37 "@"
+        ROXYGEN_TAG_NAME@37..44 "details"
+      NEWLINE@44..45 "\n"
+      ROXYGEN_PARAGRAPH@45..121
+        ROXYGEN_MARKER@45..47 "#'"
+        WHITESPACE@47..48 " "
+        ROXYGEN_TEXT@48..58 "Text with "
+        ROXYGEN_MD_EMPH@58..68 "*emphasis*"
+        ROXYGEN_TEXT@68..70 ", "
+        ROXYGEN_MD_STRONG@70..80 "**strong**"
+        ROXYGEN_TEXT@80..88 " words, "
+        ROXYGEN_MD_CODE@88..101 "`inline code`"
+        ROXYGEN_TEXT@101..107 ", and "
+        ROXYGEN_MD_CODE@107..114 "`a + b`"
+        ROXYGEN_TEXT@114..120 " code."
+        NEWLINE@120..121 "\n"
+    ROXYGEN_SECTION@121..128
+      ROXYGEN_MARKER@121..123 "#'"
+      WHITESPACE@123..124 " "
+      ROXYGEN_TAG@124..127
+        ROXYGEN_AT@124..125 "@"
+        ROXYGEN_TAG_NAME@125..127 "md"
+      NEWLINE@127..128 "\n"
+    ROXYGEN_SECTION@128..146
+      ROXYGEN_MARKER@128..130 "#'"
+      WHITESPACE@130..131 " "
+      ROXYGEN_TAG@131..146
+        ROXYGEN_AT@131..132 "@"
+        ROXYGEN_TAG_NAME@132..136 "name"
+        WHITESPACE@136..137 " "
+        ROXYGEN_TEXT@137..146 "inline_md"
+  NEWLINE@146..147 "\n"
+  IDENT@147..151 "NULL"
+  NEWLINE@151..152 "\n"

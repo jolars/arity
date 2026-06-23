@@ -12,6 +12,7 @@
 describe_format
 examples
 itemize_enumerate
+markdown_inline
 param_prose
 rd_macros
 rx-0273da0d
@@ -31,7 +32,9 @@ rx-22825405
 rx-3228e1fc
 rx-3950ab1d
 rx-40503905
+rx-418f7793
 rx-44ef6b90
+rx-4c5c90ac
 rx-4d550c68
 rx-528eee33
 rx-53695cf4
@@ -49,6 +52,7 @@ rx-868cbfae
 rx-8d2d58d4
 rx-8d53bbdb
 rx-91c234d1
+rx-9a1e30f6
 rx-9bc8257d
 rx-abce3716
 rx-ac70c0e1
@@ -62,6 +66,7 @@ rx-d1580cb6
 rx-d4e0e632
 rx-d4e3f08f
 rx-e0fc1b98
+rx-e2097b28
 rx-e94fa7ce
 rx-ee685ce2
 rx-f4658690

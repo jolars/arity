@@ -153,6 +153,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_tag_marker_space",
         "roxygen_multi_hash_kept",
         "roxygen_reflow_basic",
+        "roxygen_md_inline_reflow",
         "roxygen_reflow_join_short_lines",
         "roxygen_reflow_indented_in_function",
         "roxygen_reflow_multi_paragraph",

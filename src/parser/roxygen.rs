@@ -39,10 +39,84 @@ pub(crate) fn is_roxygen_comment(text: &str) -> bool {
     after_hashes.len() < text.len() && after_hashes.starts_with('\'')
 }
 
+/// Resolve the markdown mode of the roxygen block whose first line begins at
+/// `input[start]` (the `#` of a roxygen comment), and report the byte offset of
+/// that block's final line's terminating newline (or `input.len()` at EOF).
+///
+/// The mode is **off by default** (Rd-first); an `@md` directive line in the
+/// block turns it on and an `@noMd` line turns it off (the last one in the block
+/// wins, matching roxygen2's block-level toggle). The loose-file global default
+/// is intentionally *not* honored yet — only an explicit per-block `@md` enables
+/// markdown — so no existing block changes meaning.
+///
+/// A block is a maximal run of roxygen-comment lines; a continuation line may
+/// carry leading indentation before its `#'` (mirroring the parser's block
+/// grouping). The returned end offset lets the caller cache one resolution per
+/// block: every line of the block starts before it, and the next block's first
+/// line starts at or after it.
+pub(crate) fn resolve_roxygen_block(input: &str, start: usize) -> (bool, usize) {
+    let bytes = input.as_bytes();
+    let mut md = false;
+    let mut pos = start;
+    loop {
+        let line_end = line_run_end(bytes, pos);
+        let content_end = if input[pos..line_end].ends_with('\r') {
+            line_end - 1
+        } else {
+            line_end
+        };
+        if let Some(on) = roxygen_md_directive(&input[pos..content_end]) {
+            md = on;
+        }
+        // A continuation line: skip the `\n`, then optional indentation, and check
+        // for another roxygen marker. Anything else ends the block at `line_end`.
+        if line_end >= bytes.len() {
+            return (md, line_end);
+        }
+        let mut next = line_end + 1;
+        while next < bytes.len() && matches!(bytes[next], b' ' | b'\t') {
+            next += 1;
+        }
+        if next < bytes.len()
+            && bytes[next] == b'#'
+            && is_roxygen_comment(&input[next..line_run_end(bytes, next)])
+        {
+            pos = next;
+        } else {
+            return (md, line_end);
+        }
+    }
+}
+
+/// The end (exclusive) of the line starting at `i`: the next `\n`, or EOF.
+fn line_run_end(bytes: &[u8], i: usize) -> usize {
+    let mut j = i;
+    while j < bytes.len() && bytes[j] != b'\n' {
+        j += 1;
+    }
+    j
+}
+
+/// Whether `line` (a roxygen line's text, starting at `#`, no trailing newline)
+/// is an `@md` / `@noMd` mode directive: `Some(true)` for `@md`, `Some(false)`
+/// for `@noMd`, `None` otherwise. The tag must stand alone after the marker
+/// (roxygen2 errors on a directive line carrying other content).
+fn roxygen_md_directive(line: &str) -> Option<bool> {
+    let after_hashes = line.trim_start_matches('#');
+    let body = after_hashes.strip_prefix('\'')?.trim();
+    match body {
+        "@md" => Some(true),
+        "@noMd" => Some(false),
+        _ => None,
+    }
+}
+
 /// Sub-tokenize a roxygen line into `out`. `text` is the line's content with no
-/// trailing newline or `\r`; `start` is its absolute byte offset. The pushed
-/// tokens' texts concatenate to exactly `text`.
-pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize) {
+/// trailing newline or `\r`; `start` is its absolute byte offset; `md` is the
+/// block's resolved markdown mode (see [`resolve_roxygen_block`]), which keys
+/// the inline grammar (markdown emphasis/strong/code is recognized only when
+/// `md` is on). The pushed tokens' texts concatenate to exactly `text`.
+pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize, md: bool) {
     debug_assert!(is_roxygen_comment(text));
     let bytes = text.as_bytes();
 
@@ -60,13 +134,13 @@ pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize) {
     // A tag opens with `@` immediately followed by a letter, so `@@` (escape),
     // `@ ` and `@1` are ordinary text.
     if bytes[pos] == b'@' && bytes.get(pos + 1).is_some_and(u8::is_ascii_alphabetic) {
-        lex_roxygen_tag(out, text, start, pos);
+        lex_roxygen_tag(out, text, start, pos, md);
     } else {
-        lex_roxygen_prose(out, text, start, pos);
+        lex_roxygen_prose(out, text, start, pos, md);
     }
 }
 
-fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usize) {
+fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usize, md: bool) {
     let bytes = text.as_bytes();
 
     // `@`
@@ -112,7 +186,7 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
         pos = take_ws(out, text, start, pos);
     }
 
-    lex_roxygen_prose(out, text, start, pos);
+    lex_roxygen_prose(out, text, start, pos, md);
 }
 
 /// Sub-tokenize `text[pos..]` (a roxygen line's prose remainder) into an
@@ -123,13 +197,19 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
 /// Recognizers are conservative and line-scoped: any malformed or unterminated
 /// span stays inside the surrounding prose run (so the round-trip is unaffected
 /// either way, and reflow only ever treats a *complete* span as atomic).
-fn lex_roxygen_prose(out: &mut Vec<Token>, text: &str, start: usize, pos: usize) {
+fn lex_roxygen_prose(out: &mut Vec<Token>, text: &str, start: usize, pos: usize, md: bool) {
     let bytes = text.as_bytes();
     let mut run_start = pos;
     let mut i = pos;
     while i < bytes.len() {
+        // Under a resolved `@md` mode the inline grammar gains markdown emphasis/
+        // strong runs, and a backtick span is a *markdown* code span (projected to
+        // `\code`/`\verb`) rather than a literal Rd backtick run. Without `@md` the
+        // span set is the pure-Rd one (`*x*` and `` `x` `` stay literal prose).
         let span = match bytes[i] {
+            b'`' if md => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenMdCode, end)),
             b'`' => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenCode, end)),
+            b'*' | b'_' if md => scan_md_emphasis(bytes, i),
             b'\\' => scan_rd_macro(bytes, i).map(|end| (TokKind::RoxygenRdMacro, end)),
             b'[' => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
             _ => None,
@@ -198,6 +278,69 @@ fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
             j += m;
         } else {
             j += 1;
+        }
+    }
+    None
+}
+
+/// A markdown emphasis (`*…*`/`_…_`) or strong (`**…**`/`__…__`) span at
+/// `bytes[i] in {*, _}`, recognized only under a resolved `@md` mode. Returns the
+/// token kind (`RoxygenMdStrong` for a two-delimiter run, `RoxygenMdEmph` for a
+/// one-delimiter run) and the index past the closing delimiter run, or `None`
+/// when this is not a valid span (so it stays literal prose — losslessness holds
+/// either way).
+///
+/// A pragmatic CommonMark subset sufficient for the inline foundation: the
+/// opening run is 1 (emphasis) or 2 (strong) delimiters — a 3+ run is the
+/// ambiguous combined form and bails. The opener must be left-flanking (followed
+/// by a non-space) and the closer right-flanking (preceded by a non-space), and
+/// an `_` run may not sit intraword (CommonMark forbids `snake_case` emphasis).
+/// Nested/mismatched runs that don't satisfy this bail to text — a faithful
+/// *under*-recognition, never a wrong structure.
+fn scan_md_emphasis(bytes: &[u8], i: usize) -> Option<(TokKind, usize)> {
+    let delim = bytes[i];
+    let open_len = run_len(bytes, i, delim);
+    if open_len >= 3 {
+        return None; // combined emph+strong — out of foundation scope
+    }
+    let n = open_len; // 1 → emphasis, 2 → strong
+    let content_start = i + n;
+    // Opener must be left-flanking: a non-whitespace char follows the run.
+    if bytes
+        .get(content_start)
+        .is_none_or(|b| b.is_ascii_whitespace())
+    {
+        return None;
+    }
+    // `_` cannot open intraword: the char before the run must not be alphanumeric.
+    if delim == b'_' && i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
+        return None;
+    }
+    let mut j = content_start;
+    while j < bytes.len() {
+        if bytes[j] == delim {
+            let run = run_len(bytes, j, delim);
+            // A closer of at least `n` delimiters that is right-flanking (the
+            // preceding char is non-space) and, for `_`, not intraword.
+            let close_end = j + n;
+            if run >= n
+                && j > content_start
+                && !bytes[j - 1].is_ascii_whitespace()
+                && (delim != b'_'
+                    || bytes
+                        .get(close_end)
+                        .is_none_or(|b| !b.is_ascii_alphanumeric()))
+            {
+                let kind = if n == 2 {
+                    TokKind::RoxygenMdStrong
+                } else {
+                    TokKind::RoxygenMdEmph
+                };
+                return Some((kind, close_end));
+            }
+            j += run;
+        } else {
+            j += utf8_len(bytes[j]);
         }
     }
     None
@@ -480,7 +623,10 @@ fn classify_line(tokens: &[Token], start: usize) -> LineKind {
             TokKind::RoxygenText
             | TokKind::RoxygenCode
             | TokKind::RoxygenRdMacro
-            | TokKind::RoxygenMdLink => return LineKind::Prose,
+            | TokKind::RoxygenMdLink
+            | TokKind::RoxygenMdEmph
+            | TokKind::RoxygenMdStrong
+            | TokKind::RoxygenMdCode => return LineKind::Prose,
             TokKind::Whitespace => i += 1,
             _ => break,
         }
@@ -510,6 +656,9 @@ fn is_line_body_kind(kind: &TokKind) -> bool {
             | TokKind::RoxygenCode
             | TokKind::RoxygenRdMacro
             | TokKind::RoxygenMdLink
+            | TokKind::RoxygenMdEmph
+            | TokKind::RoxygenMdStrong
+            | TokKind::RoxygenMdCode
             | TokKind::Whitespace
     )
 }
@@ -660,9 +809,15 @@ fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> 
                     emit_block_content(events, &tok.text, &mut depth, &mut closed);
                     i += 1;
                 }
-                // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`): pass
-                // the whole token through; the tree builder expands a macro token.
-                TokKind::RoxygenCode | TokKind::RoxygenRdMacro | TokKind::RoxygenMdLink => {
+                // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`, or a
+                // resolved markdown emphasis/strong/code leaf): pass the whole token
+                // through; the tree builder expands a macro token.
+                TokKind::RoxygenCode
+                | TokKind::RoxygenRdMacro
+                | TokKind::RoxygenMdLink
+                | TokKind::RoxygenMdEmph
+                | TokKind::RoxygenMdStrong
+                | TokKind::RoxygenMdCode => {
                     events.push(Event::Tok(i));
                     i += 1;
                 }
@@ -1060,6 +1215,9 @@ mod tests {
                         | TokKind::RoxygenCode
                         | TokKind::RoxygenRdMacro
                         | TokKind::RoxygenMdLink
+                        | TokKind::RoxygenMdEmph
+                        | TokKind::RoxygenMdStrong
+                        | TokKind::RoxygenMdCode
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1077,6 +1235,55 @@ mod tests {
             ]
         );
         assert_lossless("#' Use `x + y` now\n");
+    }
+
+    #[test]
+    fn md_inline_recognized_under_md_mode() {
+        // With an `@md` directive in the block, emphasis/strong runs and a
+        // markdown code span are carved out as their own leaves.
+        let src = "#' a *one*, **two**, and `three` end.\n#' @md\n";
+        assert_eq!(
+            prose_texts(src),
+            vec![
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenMdEmph, "*one*".into()),
+                (TokKind::RoxygenText, ", ".into()),
+                (TokKind::RoxygenMdStrong, "**two**".into()),
+                (TokKind::RoxygenText, ", and ".into()),
+                (TokKind::RoxygenMdCode, "`three`".into()),
+                (TokKind::RoxygenText, " end.".into()),
+            ]
+        );
+        assert_lossless(src);
+    }
+
+    #[test]
+    fn md_inline_off_without_md_directive() {
+        // No `@md`: the markdown delimiters stay literal prose and a backtick span
+        // is the pure-Rd `ROXYGEN_CODE`, not a markdown code span.
+        assert_eq!(
+            prose_texts("#' a *one* and `code` end\n"),
+            vec![
+                (TokKind::RoxygenText, "a *one* and ".into()),
+                (TokKind::RoxygenCode, "`code`".into()),
+                (TokKind::RoxygenText, " end".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn md_emphasis_flanking_rejects_false_positives() {
+        // Under `@md`, whitespace-flanked `*` and intraword `_` are not emphasis
+        // (CommonMark flanking) --- they stay literal text, so the line is one run.
+        let src = "#' a * b * c and snake_case_name here\n#' @md\n";
+        assert_eq!(
+            prose_texts(src),
+            vec![(
+                TokKind::RoxygenText,
+                "a * b * c and snake_case_name here".into(),
+            )]
+        );
+        assert_lossless(src);
     }
 
     #[test]

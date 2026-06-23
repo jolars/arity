@@ -66,6 +66,19 @@ pub fn project_to_rd(text: &str) -> String {
 enum Inline {
     Text(String),
     Macro(SyntaxNode),
+    /// A markdown inline leaf resolved under `@md` mode — emphasis, strong, or a
+    /// code span — carrying its delimiter-stripped inner content. Emphasis/strong
+    /// project to `\emph`/`\strong` over `(TEXT …)`; a code span projects to
+    /// `\code` or `\verb` per roxygen2's R-parseability rule (see [`md_code_atom`]).
+    Md(MdInline, String),
+}
+
+/// The kind of a resolved markdown inline leaf.
+#[derive(Clone, Copy)]
+enum MdInline {
+    Emph,
+    Strong,
+    Code,
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -131,6 +144,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
             out.push(match inl {
                 Inline::Text(s) => Inline::Text(s.clone()),
                 Inline::Macro(n) => Inline::Macro(n.clone()),
+                Inline::Md(k, s) => Inline::Md(*k, s.clone()),
             });
         }
     }
@@ -204,6 +218,13 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(serialize_macro(node));
+            }
+            Inline::Md(kind, content) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(serialize_md_inline(*kind, content));
             }
         }
     }
@@ -309,6 +330,10 @@ fn inlines_raw_text(body: &[Inline]) -> String {
         match inl {
             Inline::Text(t) => s.push_str(t),
             Inline::Macro(n) => s.push_str(&n.text().to_string()),
+            // The `@section` heading split is textual; a markdown leaf's inner
+            // content stands in for its source (delimiters are immaterial to the
+            // `:` split, and markup in a heading is already an out-of-scope edge).
+            Inline::Md(_, content) => s.push_str(content),
         }
     }
     s
@@ -420,8 +445,105 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
             out.push(Inline::Macro(n));
         }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
+        // Markdown inline leaves (emitted only under `@md`): carve off their
+        // delimiters and carry the inner content; the kind chooses the Rd macro.
+        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_EMPH => {
+            out.push(Inline::Md(MdInline::Emph, strip_delim(t.text(), 1)));
+        }
+        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_STRONG => {
+            out.push(Inline::Md(MdInline::Strong, strip_delim(t.text(), 2)));
+        }
+        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_CODE => {
+            out.push(Inline::Md(MdInline::Code, strip_code_span(t.text())));
+        }
         NodeOrToken::Token(t) => out.push(Inline::Text(t.text().to_string())),
     }
+}
+
+/// Strip `n` leading and `n` trailing delimiter bytes from an emphasis/strong
+/// span (`*x*` → `x`, `**x**` → `x`). The span always has at least `2*n`
+/// delimiter bytes around non-empty content (the lexer guarantees it).
+fn strip_delim(text: &str, n: usize) -> String {
+    text.get(n..text.len() - n).unwrap_or("").to_string()
+}
+
+/// The content of a markdown code span: drop the matched backtick runs, then
+/// apply CommonMark's single-space trim (if the inner text both starts and ends
+/// with a space but is not all spaces, one space is removed from each end).
+fn strip_code_span(text: &str) -> String {
+    let ticks = text.bytes().take_while(|&b| b == b'`').count();
+    let inner = text
+        .get(ticks..text.len() - ticks)
+        .unwrap_or("")
+        .replace('\n', " ");
+    if inner.len() >= 2
+        && inner.starts_with(' ')
+        && inner.ends_with(' ')
+        && !inner.trim().is_empty()
+    {
+        inner[1..inner.len() - 1].to_string()
+    } else {
+        inner
+    }
+}
+
+/// Project a resolved markdown inline leaf into its Rd atom: `\emph`/`\strong`
+/// wrap whitespace-normalized `(TEXT …)`, while a code span becomes `\code` or
+/// `\verb` per [`md_code_atom`].
+fn serialize_md_inline(kind: MdInline, content: &str) -> String {
+    match kind {
+        MdInline::Emph => format!("(\\emph {})", text_atom(content).unwrap_or_default()),
+        MdInline::Strong => format!("(\\strong {})", text_atom(content).unwrap_or_default()),
+        MdInline::Code => md_code_atom(content),
+    }
+}
+
+/// roxygen2 renders a markdown code span as `\code{…}` when its content parses as
+/// a single R expression (or is one of a fixed set of operator/keyword tokens),
+/// and `\verb{…}` otherwise (`R/markdown.R`'s `mdxml_code`/`can_parse`). The
+/// projector replicates the decision with arity's own parser: parseable ⇒
+/// `(\code (RCODE …))`, else `(\verb (VERB …))`. Both bodies are verbatim (no
+/// whitespace collapse).
+fn md_code_atom(content: &str) -> String {
+    if code_span_is_r(content) {
+        format!("(\\code (RCODE {}))", encode_text(content))
+    } else {
+        format!("(\\verb (VERB {}))", encode_text(content))
+    }
+}
+
+/// Operator and keyword tokens roxygen2's `can_parse` treats as `\code` even
+/// though they are not complete expressions on their own (`R/markdown.R`'s
+/// `special`).
+const SPECIAL_CODE: &[&str] = &[
+    "-", ":", "::", ":::", "!", "!=", "(", "[", "[[", "@", "*", "/", "&", "&&", "%*%", "%/%", "%%",
+    "%in%", "%o%", "%x%", "^", "+", "<", "<=", "=", "==", ">", ">=", "|", "||", "~", "$", "for",
+    "function", "if", "repeat", "while",
+];
+
+/// Whether `code` parses as a single R expression, the way roxygen2's `can_parse`
+/// (rlang's `parse_expr`) does: exactly one complete top-level expression with no
+/// parse diagnostics, or a `special` token. arity's lenient recovery would accept
+/// two adjacent symbols (`inline code`) as two expressions, so the one-expression
+/// count is what discriminates `\code` from `\verb`.
+fn code_span_is_r(code: &str) -> bool {
+    if SPECIAL_CODE.contains(&code) {
+        return true;
+    }
+    let out = crate::parser::parse(code);
+    if !out.diagnostics.is_empty() {
+        return false;
+    }
+    out.cst
+        .children_with_tokens()
+        .filter(|el| {
+            !matches!(
+                el.kind(),
+                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
+            )
+        })
+        .count()
+        == 1
 }
 
 #[cfg(test)]
@@ -553,6 +675,48 @@ mod tests {
                  (TEXT \"b\") (\\tab) (TEXT \"the second row\") (\\cr))))"
             ),
             "got: {out}"
+        );
+    }
+
+    #[test]
+    fn md_inline_projects_emph_strong_and_code_vs_verb() {
+        // Under a resolved `@md` mode the inline grammar gains emphasis/strong and
+        // markdown code spans. A code span renders as `\code` when its content
+        // parses as a single R expression (`a + b`) and `\verb` otherwise (`inline
+        // code` is two symbols) --- roxygen2's `can_parse` rule, replicated with
+        // arity's own parser.
+        let src = "#' T\n\
+                   #' @details\n\
+                   #' Text with *emphasis*, **strong** words, `inline code`, and `a + b` code.\n\
+                   #' @md\n\
+                   #' @name d\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\details (TEXT \"Text with\") (\\emph (TEXT \"emphasis\")) (TEXT \",\") \
+                 (\\strong (TEXT \"strong\")) (TEXT \"words,\") (\\verb (VERB \"inline code\")) \
+                 (TEXT \", and\") (\\code (RCODE \"a + b\")) (TEXT \"code.\"))"
+            ),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn md_inline_is_off_without_md_tag() {
+        // No `@md`: markdown is not resolved, so `*emphasis*` and `` `code` `` stay
+        // literal Rd prose (one coalesced `(TEXT …)`, delimiters included) --- the
+        // CST, and thus the projection, is mode-keyed.
+        let src = "#' T\n\
+                   #' @details\n\
+                   #' Text with *emphasis* and `code` here.\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\details (TEXT \"Text with *emphasis* and `code` here.\"))"),
+            "got: {}",
+            project_to_rd(src)
         );
     }
 }

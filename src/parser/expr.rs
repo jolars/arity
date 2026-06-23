@@ -454,6 +454,9 @@ fn parse_prefix(
         | TokKind::RoxygenCode
         | TokKind::RoxygenRdMacro
         | TokKind::RoxygenMdLink
+        | TokKind::RoxygenMdEmph
+        | TokKind::RoxygenMdStrong
+        | TokKind::RoxygenMdCode
         | TokKind::Unknown => None,
     }
 }

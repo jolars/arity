@@ -86,7 +86,20 @@ reads this first.
   the balanced `{rl}` as the inline macro token, which is why the trailing `{` is a
   separate `RoxygenText` and the body opener lives in Form B, not Form A.
 - **Mode-keyed parse.** Markdown structure exists in the CST only when `@md` is on;
-  the CST (and projected Rd) differs by mode — pin both modes where relevant.
+  the CST (and projected Rd) differs by mode — pin both modes where relevant. **Mode is
+  resolved per-block** by `resolve_roxygen_block` (lexer scans the `#'` run for `@md`/`@noMd`,
+  default off; loose-file default-ON deferred) and threaded as `md: bool` into the prose
+  lexer. **`@md` inline landed (Stage 5, 2026-06-23):** `*x*`/`**x**`/`` `x` `` →
+  `ROXYGEN_MD_EMPH`/`STRONG`/`CODE` leaves; projector `\code`-vs-`\verb` = arity-parseability
+  (one top-level expr, no diagnostics, or `SPECIAL_CODE`) mirroring roxygen2's `can_parse`.
+- **A new roxygen line-body TokKind must be added to *every* line-body matcher** or tag/prose
+  lines silently truncate at the unknown token (this bit Stage 5: a `@param` line's description
+  vanished, its continuations became phantom intro paragraphs → extra `\title`/`\description`).
+  The set: `classify_line`, `is_line_body_kind`, the block-macro consumer's inline-span arm
+  (all `src/parser/roxygen.rs`), `expr.rs`'s atom-parser fallthrough, `tree_builder`'s
+  `syntax_kind_for`, `lexer.rs`'s `is_comment_like`, `syntax.rs`'s `is_roxygen_token`, plus the
+  formatter's `is_blank`/`is_tag_prose_kind`. Rust exhaustiveness catches the enum matches; the
+  `matches!` lists are silent — grep an existing roxygen leaf kind to find them all.
 - **Two corpora, two disciplines.** *Curated* dir corpus = strict (every case allowlisted
   or `blocked`). *Harvested* JSONL corpus = opt-in allowlist; un-allowlisted divergences
   are just the **backlog**, never a build failure, never need a rationale. Don't `blocked`
@@ -128,8 +141,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-`\tabular`, 2026-06-23 Stage 4): **59 matching (all allowlisted), 99 divergent
-(backlog)** of 158 pinned cases. The
+`@md` inline, 2026-06-23 Stage 5): **64 matching (all allowlisted), 95 divergent
+(backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -140,9 +153,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (151 cases). The 100 divergences are the worklist.
+   subset (151 cases). The 95 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 7/7 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 8/8 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -150,41 +163,63 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — Stage 4: `\tabular{rl}{ … \tab … \cr }`
+## Latest session (2026-06-23) — Stage 5: `@md` inline foundation (emph/strong/code)
 
-**Closed `tabular`** (projector **58→59 matching**, all allowlisted; **0 regressions**).
-The block was unmodeled: the lexer eats the balanced `{rl}` column-spec as an inline
-`RoxygenRdMacro` token, so the trailing body `{` was a stray `RoxygenText` and the rows
-flat prose (the formatter even reflowed them into a one-line run-on — now fixed). Now
-`\tabular{rl}{ … }` → `(\tabular (TEXT "rl") (GRP (TEXT "a") (\tab) (TEXT "the first
-row") (\cr) …))`, byte-identical to roxygen2. Files by bucket:
-- **Parser gap** (`src/parser/roxygen.rs`): added `tabular` to `TWO_ARG_RD_MACROS`.
-  `is_block_macro_line` gained **Form B** (a balanced structural `RoxygenRdMacro` followed
-  by an `opens_unbalanced_brace` `RoxygenText` — helpers `rd_macro_name`,
-  `opens_unbalanced_brace`). `emit_block_macro` dispatches on opener kind:
-  `emit_block_open_arg_macro` decomposes `\tabular{rl}` into NAME + format-group leaves,
-  `emit_block_body_open` opens the body `{` at depth 1. `\tab`/`\cr` fall out as existing
-  name-only children. Lossless + idempotent (verified).
-- **Projector gap** (`src/roxygen/project_rd.rs`): `serialize_macro` now segments atoms
-  **per `{…}` group** and, for a structural macro (`is_two_arg_rd_macro`), wraps a
-  multi-atom argument in `(GRP …)` while unwrapping a single-atom one. Latexlike macros
-  inline directly (unchanged). This is the faithful parse_Rd encoding (each structural arg
-  is a list). No regression: the only prior structural macro (`\item`) was pinned with
-  single-atom args, which still unwrap.
-- **Tests:** new parser fixture `roxygen_tabular` (pins the block CST + clean diagnostics);
-  projector unit test `multiline_tabular_projects_format_and_grp_body`. Re-blessed
-  `curated/tabular` in the format-stability baseline (the old run-on reflow → correct
-  multi-line passthrough). Full suite green (442 lib + integration), clippy+fmt clean, R
-  fixed-point 7/7, harvested unchanged (212/4).
+**First markdown win.** Taught the parser markdown *inline* under an explicit `@md`
+block: `*x*`→`\emph`, `**x**`→`\strong`, and a markdown code span → `\code` **or**
+`\verb`. Projector **59→64 matching** (curated `markdown_inline` + 4 harvested:
+`rx-418f7793`, `rx-4c5c90ac`, `rx-9a1e30f6`, `rx-e2097b28`), all allowlisted; **0
+regressions**; curated fixed-point 7→8/8; harvested unchanged (212/4). User-scoped this
+session to **inline only** (block lists deferred) and to **explicit `@md` only** (the
+settled loose-file default-ON is *not* honored yet, so no existing block changes meaning).
+Files by bucket:
+- **Mode resolution (new infra)** (`src/parser/lexer.rs`, `src/parser/roxygen.rs`):
+  `resolve_roxygen_block(input, start) -> (md, end)` scans the contiguous `#'` block once
+  for an `@md`/`@noMd` directive (last wins; default off); the lexer caches it
+  (`rox_md`/`rox_block_end`) and threads `md: bool` through
+  `lex_roxygen_line`/`lex_roxygen_tag`/`lex_roxygen_prose`. **Mode-keyed lexing:** under
+  `md`, `` `x` ``→`RoxygenMdCode`, `*`/`_` runs→`scan_md_emphasis`; without `md`, the
+  pure-Rd span set (unchanged → zero regression).
+- **Parser gap** (`src/parser/roxygen.rs`, `src/syntax.rs`, `tree_builder.rs`, `lexer.rs`,
+  `expr.rs`): new leaf kinds `ROXYGEN_MD_EMPH`/`STRONG`/`CODE` (appended after
+  `ROXYGEN_PARAGRAPH`; COUNT now refs `ROXYGEN_MD_CODE`). `scan_md_emphasis` is a pragmatic
+  CommonMark-flanking subset: a 1- or 2-delimiter run (3+ bails), opener left-flanking
+  (non-space follows), closer right-flanking (non-space precedes), `_` not intraword.
+  Bail-to-text on anything else (under-recognition, never wrong structure; losslessness
+  holds regardless).
+- **Projector gap** (`src/roxygen/project_rd.rs`): `Inline::Md(MdInline, String)` variant;
+  `push_inline` strips delimiters (`strip_delim`/`strip_code_span` with CommonMark's single
+  surrounding-space trim). `\code` vs `\verb` replicates roxygen2's `can_parse`
+  (`R/markdown.R`): `code_span_is_r` = arity parses it as **exactly one** non-trivia
+  top-level element with **no diagnostics**, or it's in `SPECIAL_CODE` (the ported operator/
+  keyword list). arity's lenient recovery accepts `inline code` as *two* exprs → `\verb`,
+  while `a + b` is one → `\code`. Faithful encoding rule, not a CST concern.
+- **Formatter** (`src/formatter/roxygen.rs`): md leaves glue atomically in
+  `chunk_elements` already (the `_ => cur.push_str` arm), so reflow keeps spans whole —
+  **no reflow change**. Only the prose classifiers `is_blank`/`is_tag_prose_kind` needed the
+  3 kinds. New format fixture `roxygen_md_inline_reflow` (long line wraps, spans atomic);
+  blessed `curated/markdown_inline` into the baseline (**only** new key — verified no
+  existing case changed).
+- **Tests:** parser fixture `roxygen_md_inline`; lexer tests
+  (`md_inline_recognized_under_md_mode`, `md_inline_off_without_md_directive`,
+  `md_emphasis_flanking_rejects_false_positives`); projector tests
+  (`md_inline_projects_emph_strong_and_code_vs_verb`, `md_inline_is_off_without_md_tag`).
 
-**Next (ranked) — markdown lists under `@md`.** Mode-keyed `-`/`*`/`1.` →
-`\itemize`/`\enumerate` (curated pin `markdown_list`); the CST only grows markdown
-structure when `@md` resolves on, so pin both modes. After that, the remaining curated
-shapes are exhausted — pull the next cluster from the harvested projector backlog
-(`ROXYGEN_PROJECTOR.md`, 99 divergent).
+**Next (ranked) — markdown *block lists* under `@md`.** `-`/`*`/`1.` →
+`\itemize`/`\enumerate` (the other half of curated `markdown_list`, which still diverges on
+its list). Mode infra is now in place; build the block layer over the inline leaves. After
+that, settle the **loose-file default-ON** decision (currently deferred — flipping it
+reinterprets every block, so it needs its own re-bless pass). Then pull the next cluster
+from the harvested projector backlog (`ROXYGEN_PROJECTOR.md`, 95 divergent).
 
 ## Earlier sessions
 
+- **2026-06-23 (Stage 4, `\tabular{rl}{ … \tab … \cr }`):** closed `tabular` (58→59). Lexer
+  eats the balanced `{rl}` as an inline macro token, so `is_block_macro_line` gained **Form B**
+  (balanced structural `RoxygenRdMacro` + unbalanced-`{` `RoxygenText`); `emit_block_open_arg_macro`
+  decomposes `\tabular{rl}` into NAME + format-group leaves. Projector `serialize_macro` segments
+  per `{…}` group and GRP-wraps a structural macro's multi-atom arg. Fixtures `roxygen_tabular`,
+  `multiline_tabular_projects_format_and_grp_body`.
 - **2026-06-23 (Stage 3, `\describe` `\item{term}{def}`):** closed `describe_format` (57→58).
   New `TWO_ARG_RD_MACROS`/`is_two_arg_rd_macro` (then just `item`): `scan_rd_macro` pulls a
   second adjacent `{…}` into one token, `build_rd_macro` loops over groups, the projector

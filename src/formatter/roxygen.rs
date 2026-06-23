@@ -73,6 +73,9 @@ impl PhysicalLine {
                         | SyntaxKind::ROXYGEN_CODE
                         | SyntaxKind::ROXYGEN_RD_MACRO
                         | SyntaxKind::ROXYGEN_MD_LINK
+                        | SyntaxKind::ROXYGEN_MD_EMPH
+                        | SyntaxKind::ROXYGEN_MD_STRONG
+                        | SyntaxKind::ROXYGEN_MD_CODE
                 )
             })
     }
@@ -773,6 +776,9 @@ fn is_tag_prose_kind(kind: SyntaxKind) -> bool {
             | SyntaxKind::ROXYGEN_CODE
             | SyntaxKind::ROXYGEN_RD_MACRO
             | SyntaxKind::ROXYGEN_MD_LINK
+            | SyntaxKind::ROXYGEN_MD_EMPH
+            | SyntaxKind::ROXYGEN_MD_STRONG
+            | SyntaxKind::ROXYGEN_MD_CODE
     )
 }
 

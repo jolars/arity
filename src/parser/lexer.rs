@@ -67,6 +67,10 @@ pub(crate) enum TokKind {
     RoxygenCode,
     RoxygenRdMacro,
     RoxygenMdLink,
+    // Markdown inline spans, emitted only under a resolved `@md` block mode.
+    RoxygenMdEmph,
+    RoxygenMdStrong,
+    RoxygenMdCode,
 }
 
 impl TokKind {
@@ -86,6 +90,9 @@ impl TokKind {
                 | TokKind::RoxygenCode
                 | TokKind::RoxygenRdMacro
                 | TokKind::RoxygenMdLink
+                | TokKind::RoxygenMdEmph
+                | TokKind::RoxygenMdStrong
+                | TokKind::RoxygenMdCode
         )
     }
 }
@@ -102,6 +109,12 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
     let mut out = Vec::new();
     let mut i = 0usize;
     let bytes = input.as_bytes();
+    // The resolved markdown mode of the roxygen block currently being lexed, and
+    // the byte offset past that block. Resolved once per block (see
+    // `resolve_roxygen_block`) and reused for every line until `i` reaches the
+    // block end, so a `@md` directive anywhere in a block keys the whole block.
+    let mut rox_md = false;
+    let mut rox_block_end = 0usize;
 
     while i < bytes.len() {
         let c = bytes[i] as char;
@@ -145,6 +158,13 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                 // `input[start..j]` (it may end with a `\r` under CRLF).
                 let line = &input[start..j];
                 if crate::parser::roxygen::is_roxygen_comment(line) {
+                    // Resolve the markdown mode once per block: when this line
+                    // starts a new block (`i` is past the cached block's end),
+                    // scan the whole block for an `@md`/`@noMd` directive.
+                    if start >= rox_block_end {
+                        (rox_md, rox_block_end) =
+                            crate::parser::roxygen::resolve_roxygen_block(input, start);
+                    }
                     // Leave a trailing `\r` (and the `\n`) to the main loop so
                     // CRLF stays one Newline token and roxygen content is clean.
                     let content_end = if line.ends_with('\r') { j - 1 } else { j };
@@ -152,6 +172,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                         &mut out,
                         &input[start..content_end],
                         start,
+                        rox_md,
                     );
                     i = content_end;
                 } else {

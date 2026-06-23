@@ -122,14 +122,26 @@ pub enum SyntaxKind {
     // threaded into the enclosing node.
     ROXYGEN_SECTION,
     ROXYGEN_PARAGRAPH,
+    // Markdown inline leaves, emitted **only** under a resolved `@md` block mode
+    // (Rd-first, markdown-second). Like the other protected-span leaves they hold
+    // their whole span (delimiters included) so the run tiles exactly, but their
+    // *kind* is what records the resolved mode: in non-markdown mode `*x*` and
+    // `` `x` `` stay literal `ROXYGEN_TEXT`/`ROXYGEN_CODE`, so the CST (and the
+    // projected Rd) differ by mode. The projector maps emphasis/strong to
+    // `\emph`/`\strong`, and a code span to `\code` or `\verb` per roxygen2's
+    // R-parseability rule. Appended here (not beside `ROXYGEN_CODE`) to keep the
+    // earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_EMPH,
+    ROXYGEN_MD_STRONG,
+    ROXYGEN_MD_CODE,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_PARAGRAPH` remains the
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_CODE` remains the
     /// last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_PARAGRAPH as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_CODE as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -144,6 +156,9 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_CODE
                 | SyntaxKind::ROXYGEN_RD_MACRO
                 | SyntaxKind::ROXYGEN_MD_LINK
+                | SyntaxKind::ROXYGEN_MD_EMPH
+                | SyntaxKind::ROXYGEN_MD_STRONG
+                | SyntaxKind::ROXYGEN_MD_CODE
         )
     }
 }
@@ -252,6 +267,9 @@ impl Language for RLanguage {
             87 => SyntaxKind::ROXYGEN_RD_MACRO_VERB,
             88 => SyntaxKind::ROXYGEN_SECTION,
             89 => SyntaxKind::ROXYGEN_PARAGRAPH,
+            90 => SyntaxKind::ROXYGEN_MD_EMPH,
+            91 => SyntaxKind::ROXYGEN_MD_STRONG,
+            92 => SyntaxKind::ROXYGEN_MD_CODE,
             _ => SyntaxKind::ERROR,
         }
     }

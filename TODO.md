@@ -251,12 +251,19 @@
       contain markdown), so the grammar is genuinely the union, not a mode switch
       between two disjoint languages.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
-      `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`. arity
-      today has **no** markdown-mode awareness (it treats every block as
-      markdown-ish with conservative gates). A real parser must decide whether to
-      read `@md`/`DESCRIPTION` (a project-config input, like the package-graph
-      work under the LSP section) or keep assuming markdown everywhere — and own
-      that decision explicitly.
+      `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
+      **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`
+      (`src/parser/roxygen.rs`) scans the contiguous `#'` block for an `@md`/`@noMd`
+      directive (last wins; default off), the lexer caches it per block and threads
+      `md: bool` into the prose lexer, so lexing is mode-keyed. **Inline markdown
+      landed:** under `@md`, `*x*`→`\emph`, `**x**`→`\strong`, and a code span →
+      `\code`/`\verb` per roxygen2's `can_parse` (arity-parseability) rule; new
+      `ROXYGEN_MD_EMPH`/`STRONG`/`CODE` leaves; `markdown_inline` matches its pin.
+      Still **deferred:** the settled loose-file/`DESCRIPTION` **default-ON** (only an
+      explicit per-block `@md` enables markdown today — flipping the default
+      reinterprets every block, so it needs its own re-bless pass), and markdown
+      *block* structure (lists `-`/`*`/`1.` → `\itemize`/`\enumerate`, the remaining
+      half of `markdown_list`).
     - *Hard constraints (the reason this is non-trivial).* Must preserve
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,
@@ -284,10 +291,11 @@
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **59 matching / 99 divergent** of 158 pinned (was 42; `rd_macros`,
-      `itemize_enumerate`, `describe_format`, then `tabular` closed). The remaining
-      divergences are the worklist; the curated cases name the shapes —
-      `markdown_list` (`@md` markdown→Rd). Run
+      **64 matching / 95 divergent** of 159 pinned (was 42; `rd_macros`,
+      `itemize_enumerate`, `describe_format`, `tabular`, then `@md` inline closed).
+      The remaining divergences are the worklist; the curated cases name the shapes —
+      `markdown_list` still diverges on its markdown *block list* (its inline now
+      projects). Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
       Use the `roxygen-parity` skill.
