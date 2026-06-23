@@ -694,6 +694,35 @@ fn undefined_symbol_still_gated_for_unbundled_package() {
     assert!(msgs.is_empty(), "gate should suppress, got {msgs:?}");
 }
 
+#[test]
+fn undefined_symbol_skips_data_masked_columns() {
+    // Inside dplyr's data-masking `mutate()`, a bare name like `a` is a column
+    // reference evaluated in the data mask, not an undefined symbol. The rule
+    // must not flag data-masked bare names.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "dplyr",
+        &["mutate", "tibble"],
+    )]));
+    let msgs = undefined_with("library(dplyr)\ntibble(a = 1) |> mutate(b = a + 1)\n", &p);
+    assert!(
+        msgs.is_empty(),
+        "data-masked `a` must not be flagged, got {msgs:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_still_flags_outside_data_mask() {
+    // Masking suppresses only the masked argument expressions: a genuine typo
+    // elsewhere (and a typo'd verb name) is still flagged.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "dplyr",
+        &["mutate"],
+    )]));
+    let msgs = undefined_with("library(dplyr)\nbogus()\nmutate(df, b = a + 1)\n", &p);
+    assert_eq!(msgs.len(), 1, "only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
 // ---------------------------------------------------------------------------
 // Autofix
 // ---------------------------------------------------------------------------

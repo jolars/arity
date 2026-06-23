@@ -36,6 +36,7 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
         model: &mut model,
         function_depth: 0,
         suppress_read: None,
+        mask_depth: 0,
     };
     walk_generic(&mut ctx, root, file_scope);
     resolve_reads(&mut model);
@@ -51,6 +52,13 @@ struct BuildCtx<'a> {
     /// package-name argument of a `library()`/`require()` call so the bare
     /// package name isn't recorded as an undefined read.
     suppress_read: Option<TextRange>,
+    /// How many data-masking call arguments deep we are. Reads recorded while
+    /// `mask_depth > 0` are flagged [`IdentRef::data_masked`] — a bare name there
+    /// may be a data-frame column, so `undefined-symbol` leaves it alone. Once
+    /// inside a masked argument it stays masked through the whole subtree (the
+    /// mask is the evaluation environment for the entire expression), the
+    /// conservative direction for a false-positive-only rule.
+    mask_depth: usize,
 }
 
 fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -99,6 +107,7 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
         name: SmolStr::new(name),
         range: tok.text_range(),
         scope,
+        data_masked: ctx.mask_depth > 0,
     });
 }
 
@@ -298,7 +307,40 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         ctx.suppress_read = prev;
         return;
     }
+
+    // A data-masking verb (e.g. `mutate`) evaluates its arguments in the data
+    // mask, where a bare name may be a column. Walk the callee unmasked (a
+    // typo'd verb name is still a genuine undefined read) but mask the argument
+    // list so its bare reads aren't flagged.
+    if call_is_data_masking(node) {
+        for el in node.children_with_tokens() {
+            match el {
+                NodeOrToken::Node(child) if child.kind() == SyntaxKind::ARG_LIST => {
+                    ctx.mask_depth += 1;
+                    walk_node(ctx, &child, scope);
+                    ctx.mask_depth -= 1;
+                }
+                NodeOrToken::Node(child) => walk_node(ctx, &child, scope),
+                NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
+                    record_ident_read(ctx, &tok, scope);
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+
     walk_generic(ctx, node, scope);
+}
+
+/// Whether the `CALL_EXPR` `node`'s callee names a data-masking function. The
+/// callee is the first non-trivia IDENT token directly under the call — which,
+/// given how `pkg::fn(args)` parses (the `CALL_EXPR` nests *under* the `::`),
+/// is the bare function name for both `mutate(...)` and `dplyr::mutate(...)`.
+fn call_is_data_masking(node: &SyntaxNode) -> bool {
+    CallExpr::cast(node.clone())
+        .and_then(|call| call_callee_ident(&call))
+        .is_some_and(|name| crate::semantic::is_data_masking_callee(&name))
 }
 
 fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -336,6 +378,9 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                         NodeOrToken::Token(_) => {}
                         NodeOrToken::Node(child) if child.kind() == SyntaxKind::CALL_EXPR => {
                             // Skip the first IDENT (callee); recurse into everything else.
+                            // Mask the arguments when the qualified callee is a
+                            // data-masking verb (`dplyr::mutate(...)`).
+                            let masked = call_is_data_masking(child);
                             let mut skipped_callee = false;
                             for cel in child.children_with_tokens() {
                                 match cel {
@@ -345,7 +390,13 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                                         skipped_callee = true;
                                     }
                                     NodeOrToken::Node(grandchild) => {
+                                        if masked {
+                                            ctx.mask_depth += 1;
+                                        }
                                         walk_node(ctx, &grandchild, scope);
+                                        if masked {
+                                            ctx.mask_depth -= 1;
+                                        }
                                     }
                                     _ => {}
                                 }

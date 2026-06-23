@@ -71,6 +71,38 @@ pub fn meta_package_members(name: &str) -> &'static [&'static str] {
     }
 }
 
+/// Whether a call to `name` evaluates (some of) its arguments under R's
+/// data-masking / tidy-evaluation rules, where a bare identifier resolves to a
+/// data-frame column rather than an in-scope binding or package export.
+///
+/// Identifiers inside such a call's arguments cannot be judged "undefined"
+/// statically — the column set is data-dependent — so `undefined-symbol`
+/// suppresses them (see the builder's `mask_depth`). The match is name-only
+/// (the last `::` segment), independent of which package is actually attached:
+/// over-matching only ever *suppresses* a finding, the conservative direction
+/// for a rule whose sole risk is false positives.
+pub fn is_data_masking_callee(name: &str) -> bool {
+    matches!(
+        name,
+        // base R
+        "with" | "within" | "subset" | "transform"
+        // dplyr data-masking verbs
+        | "mutate" | "transmute" | "summarise" | "summarize" | "filter" | "arrange"
+        | "group_by" | "reframe" | "slice" | "slice_head" | "slice_tail" | "slice_min"
+        | "slice_max" | "slice_sample" | "count" | "add_count" | "tally" | "add_tally"
+        | "distinct" | "rename" | "rename_with" | "select" | "relocate" | "pull"
+        | "group_split"
+        // tidyr data-masking / tidyselect
+        | "pivot_longer" | "pivot_wider" | "nest" | "unnest" | "separate"
+        | "separate_wider_delim" | "separate_wider_position" | "separate_wider_regex"
+        | "unite" | "drop_na" | "fill" | "replace_na" | "extract" | "gather" | "spread"
+        | "complete" | "expand" | "crossing" | "nesting" | "chop" | "unchop" | "pack"
+        | "unpack" | "hoist"
+        // ggplot2
+        | "aes"
+    )
+}
+
 /// Where a bare function/identifier name resolves to within the attached
 /// packages. Mirrors jarl's enum of the same name.
 #[derive(Debug, Clone, PartialEq, Eq)]

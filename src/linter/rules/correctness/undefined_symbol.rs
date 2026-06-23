@@ -52,6 +52,9 @@ impl Rule for UndefinedSymbol {
                 ctx.model
                     .idents()
                     .iter()
+                    // A data-masked read may be a data-frame column, not an
+                    // undefined symbol — never flag it (see the builder).
+                    .filter(|ident| !ident.data_masked)
                     .filter(|ident| ctx.model.resolve_local(ident).is_none())
                     .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
                     .map(|ident| undefined(&ident.name, ident.range)),
@@ -89,6 +92,11 @@ impl UndefinedSymbol {
             return;
         }
         for ident in ctx.model.idents() {
+            // A data-masked read may be a data-frame column, not an undefined
+            // symbol — never flag it (see the builder's `mask_depth`).
+            if ident.data_masked {
+                continue;
+            }
             // Skip if it resolves to a local binding.
             if ctx.model.resolve_local(ident).is_some() {
                 continue;

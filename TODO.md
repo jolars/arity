@@ -957,6 +957,26 @@ landed; the second is still open but only matters for cross-edit-stable handles:
         and resolved sets so the `resolution_incomplete` poison
         (`src/project/scope.rs`) clears once the sidecar can enumerate exports.
 
+- [x] Data-masking / tidy-eval suppression (landed). A bare name in a
+  data-masking verb's arguments (`mutate(b = a + 1)`) resolves to a data-frame
+  *column*, not a binding or export, so flagging it is a false positive. The
+  builder (`src/semantic/builder.rs`) tracks a `mask_depth`: a call whose callee
+  is in `is_data_masking_callee` (`src/semantic/symbols.rs` — base `with`/
+  `within`/`subset`/`transform`, the dplyr verbs, tidyr/tidyselect, ggplot2
+  `aes`) walks its callee unmasked (so a typo'd verb is still flagged) but its
+  argument list with `mask_depth` bumped; reads recorded there carry
+  `IdentRef::data_masked`, which both `undefined-symbol` paths skip. The read is
+  still recorded so an enclosing binding used only inside a masked expression
+  isn't mis-flagged unused. Match is name-only and over-masks conservatively
+  (the whole arg subtree, nested calls included) — over-matching only ever
+  suppresses, the safe direction for a false-positive-only rule.
+  - [ ] Follow-ups: data.table's `dt[i, j, by]` masking is `[`-shaped, not a
+    call, so it's unhandled. Masking is not package-gated (a user's own
+    non-NSE `filter`/`transform` under-flags its args); gate on the verb's
+    package actually being attached if that proves too coarse. Mask carries
+    into inline `function(...)` bodies inside a masked arg (lexically those
+    aren't masked) — deliberately conservative for now.
+
 - [x] Meta-package attachment (Option A — static table, landed). A meta-package
   like `tidyverse` attaches a fixed set of core packages (dplyr, ggplot2,
   tibble, …) via its `.onAttach` hook; those names are *not* in the

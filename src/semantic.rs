@@ -18,7 +18,8 @@ use smol_str::SmolStr;
 pub use binding::{Binding, BindingId, BindingKind};
 pub use scope::{Scope, ScopeId, ScopeKind};
 pub use symbols::{
-    LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, meta_package_members,
+    LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, is_data_masking_callee,
+    meta_package_members,
 };
 
 use crate::syntax::SyntaxNode;
@@ -29,6 +30,12 @@ pub struct IdentRef {
     pub name: SmolStr,
     pub range: TextRange,
     pub scope: ScopeId,
+    /// The read sits inside the masked arguments of a data-masking call (e.g. a
+    /// dplyr verb), so a bare name here may be a data-frame column rather than a
+    /// binding or package export. `undefined-symbol` skips these; the read is
+    /// still recorded so it can mark an enclosing binding used (see
+    /// [`is_data_masking_callee`]).
+    pub data_masked: bool,
 }
 
 /// Per-file semantic information derived from the CST.
@@ -302,6 +309,35 @@ mod tests {
         let m = model_of("x <- x + 1");
         let x_binding = m.bindings.iter().find(|b| b.name == "x").unwrap();
         assert!(x_binding.read);
+    }
+
+    #[test]
+    fn data_masking_call_args_marked_masked() {
+        // Bare names in a data-masking verb's argument expressions are columns
+        // in the data mask, recorded as reads but flagged `data_masked` so
+        // `undefined-symbol` won't treat them as undefined.
+        let m = model_of("mutate(df, b = a + 1)");
+        let a = m.idents().iter().find(|i| i.name == "a").unwrap();
+        assert!(a.data_masked, "column read `a` should be data-masked");
+        let df = m.idents().iter().find(|i| i.name == "df").unwrap();
+        assert!(df.data_masked, "data argument `df` should be data-masked");
+        // The callee itself is not masked: a typo'd verb name stays flaggable.
+        let mutate = m.idents().iter().find(|i| i.name == "mutate").unwrap();
+        assert!(!mutate.data_masked, "callee should not be data-masked");
+    }
+
+    #[test]
+    fn data_masking_propagates_to_qualified_call() {
+        // `pkg::mutate(...)` masks its arguments just like the bare form.
+        let m = model_of("dplyr::mutate(df, b = a + 1)");
+        let a = m.idents().iter().find(|i| i.name == "a").unwrap();
+        assert!(a.data_masked, "column read `a` should be data-masked");
+    }
+
+    #[test]
+    fn non_masking_call_args_not_masked() {
+        let m = model_of("paste(a, b)");
+        assert!(m.idents().iter().all(|i| !i.data_masked));
     }
 
     #[test]
