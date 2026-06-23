@@ -70,13 +70,18 @@
 
   - [x] **Parsing foundation (CST-native).** Roxygen lines (`#'`, per roxygen2's
     `^#+'`) are lexed into sub-tokens (`ROXYGEN_MARKER`/`ROXYGEN_AT`/
-    `ROXYGEN_TAG_NAME`/`ROXYGEN_TAG_ARG`/`ROXYGEN_TEXT`) and grouped by the parser
-    into `ROXYGEN_BLOCK` → `ROXYGEN_LINE` → `ROXYGEN_TAG` nodes
-    (`src/parser/roxygen.rs`, hooked into the `core.rs` root loop and
-    `expr.rs` `parse_block_expr`). Arg-bearing tags (`@param`, `@field`, …) split
-    out the name as `ROXYGEN_TAG_ARG`. Typed wrappers `RoxygenBlock`/`Line`/`Tag`
+    `ROXYGEN_TAG_NAME`/`ROXYGEN_TAG_ARG`/`ROXYGEN_TEXT`). **CST re-model (2026-06-23):**
+    a block is no longer line-flat — the parser builds **logical content**
+    `ROXYGEN_BLOCK` → `ROXYGEN_SECTION` (intro + one per `@tag`) →
+    `ROXYGEN_TAG`/`ROXYGEN_PARAGRAPH`, with `#'` markers and inter-line newlines as
+    trivia (rowan/rust-analyzer style), so block macros spanning `#'` lines become
+    representable (`src/parser/roxygen.rs`, hooked into the `core.rs` root loop and
+    `expr.rs` `parse_block_expr`). `ROXYGEN_LINE`/`RoxygenLine` dissolved (reserved
+    enum variant). Arg-bearing tags (`@param`, `@field`, …) split out the name as
+    `ROXYGEN_TAG_ARG`. Typed wrappers `RoxygenBlock`/`Section`/`Paragraph`/`Tag`
     (`src/ast/nodes.rs`). Losslessness holds (clean CRLF/EOF handling); the
-    formatter emits blocks byte-identically for now (no content transform yet).
+    formatter reconstructs physical lines from trivia and emits blocks
+    byte-identically (pinned by `tests/roxygen_format_stability.rs`).
     Edits inside a roxygen line fall back to block/full reparse (roxygen tokens
     only arise from the `#'` lexer path, so token reparse can't relex them in
     isolation). Air leaves roxygen untouched, so the eventual transforms are a

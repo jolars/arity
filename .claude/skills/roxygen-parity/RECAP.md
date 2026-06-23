@@ -27,6 +27,14 @@ reads this first.
   (`VERBATIM_RD_MACROS` in `parser/roxygen.rs`: `url,verb,samp,env,kbd,option`) don't
   recurse — body is one `…_VERB` leaf → projector emits `(VERB …)`. New verbatim macro in
   backlog? add it there (confirm via `parse_Rd`: a `{VERB}` child = verbatim).
+- **The roxygen CST is logical, not line-based (since 2026-06-23).** `ROXYGEN_BLOCK` →
+  `ROXYGEN_SECTION`* (intro + one per `@tag`) → `ROXYGEN_TAG` and/or `ROXYGEN_PARAGRAPH`*.
+  `#'` markers, marker→content whitespace, and inter-line newlines are **trivia** threaded
+  into the enclosing node. `ROXYGEN_LINE`/`RoxygenLine` no longer exist (reserved enum
+  variant only). The **formatter** reconstructs physical lines from trivia (`physical_lines`);
+  the **projector** walks `sections()`/`paragraphs()`. There is a committed **format-stability
+  baseline** (`tests/roxygen-format-baseline.jsonl`, via `tests/roxygen_format_stability.rs`);
+  any intended formatter change must re-bless it (`BLESS_ROXYGEN_FORMAT=1`) **with review**.
 - **Mode-keyed parse.** Markdown structure exists in the CST only when `@md` is on;
   the CST (and projected Rd) differs by mode — pin both modes where relevant.
 - **Two corpora, two disciplines.** *Curated* dir corpus = strict (every case allowlisted
@@ -92,36 +100,64 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-22e)
+## Latest session (2026-06-23) — CST re-model (logical content, line node dissolved)
 
-**Inline Rd macros: `ROXYGEN_RD_MACRO` is now a structured CST node, projector emits
-nested Rd.** Closed the `rd_macros` curated case (the recap's ranked target). The lexer
-still carves the macro span as one `RoxygenRdMacro` token (all its fuzz/round-trip tests
-intact); the **tree builder** (`push_token` → `build_rd_macro`/`build_rd_content`) now
-expands that token into a `ROXYGEN_RD_MACRO` *node* with new leaves
-`ROXYGEN_RD_MACRO_{NAME,OPT,DELIM,VERB}` (syntax.rs +4 kinds, COUNT bumped, both
-`kind_from_raw` arms). Content is sub-parsed for nested `\macro` calls; **verbatim**
-macros (`url,verb,samp,env,kbd,option` — `VERBATIM_RD_MACROS`, confirmed against
-`parse_Rd`) keep their body as one `…_VERB` leaf (no recursion). The projector
-(`project_rd.rs`) was rewritten from string-bodies to an `Inline{Text,Macro}` sequence:
-prose coalesces to `(TEXT …)`, macros recurse to `(\code (\link (TEXT "add")))`, `[pkg]`
-dropped, verbatim → `(VERB …)`. Formatter kept atomic (3 token-only predicates →
-kind-based, since `chunk_elements` already glues a node's text). **42→56 matching,
-116→102 backlog, 0 regressions**; +1 curated case (`rd_macros`) and 13 harvested cases
-ratcheted. New fixture `roxygen_rd_macro_nested`; 6 macro CST snapshots updated
-(leaf→node). Curated fixed-point still 7/7. All guardrails green; committed.
+**The roxygen CST is no longer line-flat.** Approved plan:
+`~/.claude/plans/cozy-swinging-patterson.md` (local). Motivated by panache's embedded-YAML
+model (markers as `Trivia(LinePrefix)`, structure over the logical content stream) and the
+fact that rowan/rust-analyzer trees are never line-based. `ROXYGEN_LINE` is **dissolved**
+(kept as a reserved, unemitted enum variant for discriminant stability). A `ROXYGEN_BLOCK`
+now owns **logical content**: children are `ROXYGEN_SECTION` (the intro, then one per
+`@tag`), and a section's prose is grouped into `ROXYGEN_PARAGRAPH`s between blank lines.
+`#'` markers, the marker→content whitespace, and inter-line newlines are **trivia threaded
+into the enclosing node** (losslessness intact). syntax.rs +2 node kinds (`ROXYGEN_SECTION`
+88, `ROXYGEN_PARAGRAPH` 89), COUNT bumped. AST: `RoxygenLine` → `RoxygenSection`
+(`tag()`/`paragraphs()`) + `RoxygenParagraph`; `RoxygenBlock::sections()`. Parser
+(`emit_roxygen_block`) rewritten to a section/paragraph state machine (`classify_line` →
+Tag/Blank/Prose; `emit_tag_line`/`emit_line_tokens`). **No block-macro parsing yet** — a
+multi-line `\itemize` is still flat prose here (Stage 2).
 
-**Next (ranked):** the remaining curated divergences are all **multi-line block / list
-structure** the CST doesn't model yet — pick the simplest first: **`\itemize`/`\enumerate`**
-(`itemize_enumerate`), single-arg `\item` lists spanning many `#'` lines as one atomic
-nested unit; then **multi-arg `\item{term}{def}`** for `\describe` (`describe_format`),
-then `\tabular` (`tabular`, `\tab`/`\cr` cells), then markdown lists under `@md`
-(`markdown_list`). These are block macros across line boundaries (TODO.md "Block macros"
-bullet) — bigger than inline: needs block grouping in `src/parser/roxygen.rs`, not just a
-token expansion. **Fix the parser, never the projector.**
+**Done as a staged, always-green migration:**
+- **Stage 0** (`882889a`, `test(roxygen)`): a differential format-stability harness
+  (`tests/roxygen_format_stability.rs`) pins `format(input)` byte-for-byte over the whole
+  roxygen corpus (224 cases) to a committed baseline (`tests/oracle/roxygen-format-baseline.jsonl`).
+  Re-bless with `BLESS_ROXYGEN_FORMAT=1`. This is the guardrail that proves the re-shape
+  didn't move formatter output.
+- **Stage 1** (`3a0846a`, `refactor(parser)`): the cutover above. **Pure re-shape, zero
+  behavior change** — formatter output byte-identical (Stage-0 harness + 37 fixtures),
+  projector output identical (**56 matching / 102 backlog unchanged**), losslessness +
+  idempotence green. The **formatter** keeps its line-oriented reflow engine, fed by a
+  `PhysicalLine` view *reconstructed from marker/newline trivia* (`physical_lines` /
+  `collect_logical_elements` in `formatter/roxygen.rs`; `RoxygenLine` → `PhysicalLine`).
+  The **projector** `project_block` walks sections/paragraphs directly (`paragraph_inlines`;
+  the line-reassembly state machine gone). 22 parser CST snapshots regenerated;
+  `ast_wrappers` test rewritten to `sections()`/`paragraphs()`. clippy + fmt clean.
+
+**Next (ranked) — Stage 2: `\itemize`/`\enumerate` block macros.** Close `itemize_enumerate`
+(the pin wants `(\itemize (\item) (TEXT …) (\item) (TEXT …))`). Now tractable because the
+block grouping site is the new logical parser. Plan: a `ROXYGEN_RD_MACRO` node (reuse the
+inline kind) that spans `#'` lines, with brace-less `\item` as a name-only
+`ROXYGEN_RD_MACRO` child and the trailing text a sibling; markers/newlines threaded as
+trivia. **Open design problem (handle first):** the lexer emits `\item First bullet…` as one
+`RoxygenText` token, and `\itemize{`/`}` as `RoxygenText` too (unbalanced ⇒ `scan_rd_macro`
+returns None). Splitting `\item` off its text, and carving `\itemize{`/`}` into NAME/DELIM,
+needs a **tree-builder path generalizing `build_rd_macro` to a multi-token, trivia-interleaved
+span** — the parser's `Event::Tok(idx)` references whole tokens and can't split them. Decide
+that mechanism before coding. Then: projector grows a section-level block-macro arm
+(`serialize_macro` already emits the nested shape); formatter routes block-macro nodes to
+**atomic passthrough** (not reflow). **NB:** the current formatter *reflows* the multi-line
+`\itemize` into a mangled run-on (a latent bug the projector gate exists to catch), so Stage 2
+will legitimately change `itemize_enumerate`'s formatted output — **review + re-bless** the
+Stage-0 baseline for the affected cases (it's a fix, not a regression). Then `\describe`
+(`describe_format`, multi-arg `\item{term}{def}` → `GRP`), `\tabular`, markdown under `@md`.
+**Fix the parser, never the projector.**
 
 ## Earlier sessions
 
+- **2026-06-22e:** Inline Rd macros as structured `ROXYGEN_RD_MACRO` *nodes* (`be0521b`):
+  tree builder (`build_rd_macro`/`build_rd_content`) expands the macro token into
+  NAME/OPT/DELIM/VERB leaves + nested macros; projector emits nested Rd via the
+  `Inline{Text,Macro}` sequence. 42→56 matching; closed `rd_macros`.
 - **2026-06-22d:** Filtered bulk-pin (`58ad5e4`): turned the projector backlog into a real
   116-case worklist. Added `projector_eligible` + `projector-pins` op (eligible = 1 topic,
   no out-of-scope tag); minted `roxygen-sections.jsonl` (151/217); seeded 42 matching.
