@@ -195,7 +195,7 @@
         `[pkg]` dropped, `\url` → `(VERB …)`). A `\code` body's *plain text*
         projects as verbatim `(RCODE …)`, not `(TEXT …)` (Stage 9, 2026-06-23):
         parse_Rd tags `\code` content as R code (whitespace preserved, split at
-        newlines). Multi-arg (`\href{}{}`) still below.
+        newlines).
       - *Multi-argument macros* (`\item{term}{def}`, `\link[pkg]{name}`,
         `\method{generic}{class}`, `\href{url}{text}`) — multiple adjacent brace
         groups, not one. **`\item{term}{def}` landed (Stage 3, 2026-06-23):**
@@ -203,8 +203,12 @@
         adjacent `{…}` into one macro token, the tree builder emits both groups as
         `\item` children, and the projector flushes at each closing `}` so the two
         groups stay separate atoms (`(\item (TEXT "a") (TEXT "first"))`);
-        `describe_format` matches its pin. `\href`/`\method`/`\section` extend the
-        set when needed.
+        `describe_format` matches its pin. **`\href{url}{text}` landed (Stage 10,
+        2026-06-23):** added to `is_two_arg_rd_macro`, but with a *per-argument*
+        encoding — new `is_verbatim_rd_arg` makes the first arg (the URL) verbatim
+        `(VERB …)` while the second (the link text) is sub-parsed like any latexlike
+        body (`(\href (VERB "url") (GRP …))`); +5 projector cases. `\method`/`\section`
+        extend the set when needed.
       - *Block macros that span many `#'` lines with nested content.*
         **`\itemize`/`\enumerate` landed (Stage 2, 2026-06-23):** a `\name{` whose
         group is unbalanced on its line opens a `ROXYGEN_RD_MACRO` node spanning

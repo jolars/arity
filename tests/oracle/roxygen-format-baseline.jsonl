@@ -52,7 +52,7 @@
 {"key":"harvest/rx-29d590cf","formatted":"#' Title\n#'\n#' ![](example.svg \"Plot title 1\") ![](example.pdf \"Plot title 2\")\n#' ![](example.PNG \"Plot title 3\")\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2a68ab3f","formatted":"#' Title\n#'\n#' Description, see [function()]. And also [object].\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2dcb2349","formatted":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(x) {}\n"}
-{"key":"harvest/rx-2e54a81b","formatted":"#' Title\n#'\n#' Link text \\href{http://www.someurl.com}{broken across lines} preserve\n#' whitespace, even when \\href{http://www.someurl.com}{broken across several\n#' lines}, or with varying \\href{http://www.someurl.com}{amounts of interspersed\n#' whitespace}.\nfoo <- function() {}\n"}
+{"key":"harvest/rx-2e54a81b","formatted":"#' Title\n#'\n#' Link text \\href{http://www.someurl.com}{broken across lines} preserve\n#' whitespace, even when\n#' \\href{http://www.someurl.com}{broken across several lines}, or with varying\n#' \\href{http://www.someurl.com}{amounts of interspersed whitespace}.\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2e977f39","formatted":"#' A.\n#' @section A:1\n#' @section B:1\na <- function(x) {}\n\n#' D\n#'\n#' @section A:2\n#' @inherit a sections\nb <- function(y) {}\n"}
 {"key":"harvest/rx-2eca83dc","formatted":"#' Title\n#'\n#' Description with some\n#' 1. numbered\n#' 2. list\n#'\n#' And then another one:\n#' 1. item 1\n#' 1. item 2\n#' 1. item 3\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2f9c6114","formatted":"#' A\n#'\n#' @param y Y\n#' @param x X\n#' @rdname rd\na <- function(x, y) {}\n"}

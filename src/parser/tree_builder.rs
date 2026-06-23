@@ -3,7 +3,7 @@ use rowan::GreenNodeBuilder;
 use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
 use crate::parser::roxygen::{
-    is_two_arg_rd_macro, is_verbatim_rd_macro, scan_balanced, scan_rd_macro,
+    is_two_arg_rd_macro, is_verbatim_rd_arg, scan_balanced, scan_rd_macro,
 };
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -65,13 +65,17 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
     // content, and a `}` DELIM. A two-argument macro (`\item{term}{desc}`) has a
     // second adjacent group; every other macro stops after the first. The group
     // ends are found by scanning, so the slices tile `text` exactly.
+    let mut arg_index = 0;
     while bytes.get(j) == Some(&b'{') {
         let Some(group_end) = scan_balanced(bytes, j, b'{', b'}') else {
             break; // unbalanced: fall through to the defensive remainder
         };
         builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "{");
         let content = &text[j + 1..group_end - 1];
-        if is_verbatim_rd_macro(name) {
+        // Verbatim is per *argument*, not per macro: `\href`'s first arg (the URL)
+        // is `VERB` while its second (the link text) is sub-parsed like any
+        // latexlike body.
+        if is_verbatim_rd_arg(name, arg_index) {
             if !content.is_empty() {
                 builder.token(SyntaxKind::ROXYGEN_RD_MACRO_VERB.into(), content);
             }
@@ -80,6 +84,7 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
         }
         builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "}");
         j = group_end;
+        arg_index += 1;
         if !is_two_arg_rd_macro(name) {
             break;
         }

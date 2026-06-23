@@ -803,6 +803,27 @@ mod tests {
     }
 
     #[test]
+    fn href_projects_verbatim_url_and_latexlike_text() {
+        // `\href{url}{text}` is a two-arg *structural* macro with a per-argument
+        // encoding: parse_Rd tags the first argument (the URL) as verbatim `VERB`
+        // and sub-parses the second (the link text) like any latexlike body, so a
+        // multi-atom link text wraps in `(GRP …)` and nested macros recurse.
+        let src = "#' T\n\
+                   #'\n\
+                   #' See \\href{http://a.com/x y}{click \\emph{here} now}.\n\
+                   #' @name d\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\description (TEXT \"See\") (\\href (VERB \"http://a.com/x y\") \
+                 (GRP (TEXT \"click\") (\\emph (TEXT \"here\")) (TEXT \"now\"))) (TEXT \".\"))"
+            ),
+            "got: {out}"
+        );
+    }
+
+    #[test]
     fn multiline_itemize_projects_nested() {
         // A multi-line `\itemize` block macro: each `\item` is a name-only nested
         // macro, its trailing prose a sibling `(TEXT …)` --- the pinned shape, from

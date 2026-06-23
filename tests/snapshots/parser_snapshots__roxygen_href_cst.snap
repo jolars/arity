@@ -1,0 +1,42 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..96
+  ROXYGEN_BLOCK@0..74
+    ROXYGEN_SECTION@0..74
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+      ROXYGEN_MARKER@9..11 "#'"
+      NEWLINE@11..12 "\n"
+      ROXYGEN_PARAGRAPH@12..74
+        ROXYGEN_MARKER@12..14 "#'"
+        WHITESPACE@14..15 " "
+        ROXYGEN_TEXT@15..32 "Description, see "
+        ROXYGEN_RD_MACRO@32..73
+          ROXYGEN_RD_MACRO_NAME@32..37 "\\href"
+          ROXYGEN_RD_MACRO_DELIM@37..38 "{"
+          ROXYGEN_RD_MACRO_VERB@38..60 "http://www.someurl.com"
+          ROXYGEN_RD_MACRO_DELIM@60..61 "}"
+          ROXYGEN_RD_MACRO_DELIM@61..62 "{"
+          ROXYGEN_TEXT@62..72 "some thing"
+          ROXYGEN_RD_MACRO_DELIM@72..73 "}"
+        ROXYGEN_TEXT@73..74 "."
+  NEWLINE@74..75 "\n"
+  ASSIGNMENT_EXPR@75..95
+    IDENT@75..78 "foo"
+    WHITESPACE@78..79 " "
+    ASSIGN_LEFT@79..81 "<-"
+    WHITESPACE@81..82 " "
+    FUNCTION_EXPR@82..95
+      FUNCTION_KW@82..90 "function"
+      LPAREN@90..91 "("
+      RPAREN@91..92 ")"
+      WHITESPACE@92..93 " "
+      BLOCK_EXPR@93..95
+        LBRACE@93..94 "{"
+        RBRACE@94..95 "}"
+  NEWLINE@95..96 "\n"
