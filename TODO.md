@@ -47,7 +47,7 @@
   like `format_node` does. Low urgency: the CLI `format` path (whole-document) is
   correct; this only affects LSP range edits in CRLF files.
 
-- [ ] `exclude`/`default-exclude` (landed for the CLI `format`/`lint` walk via
+- [ ] `exclude`/`extend-exclude` (landed for the CLI `format`/`lint` walk via
   `ExcludeFilter` in `src/file_discovery.rs`) is **not** consulted by LSP
   workspace seeding (`src/lsp/lint_thread.rs` `seed_workspace`), salsa sibling
   discovery (`src/linter/check.rs`), or `arity index` package discovery
