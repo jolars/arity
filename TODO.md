@@ -192,8 +192,10 @@
         (`ROXYGEN_RD_MACRO_{NAME,OPT,DELIM,VERB}` leaves, nesting, verbatim
         bodies for `\url`/`\verb`/`\samp`/…), and the projector emits the
         faithful nested Rd (`\code{\link{x}}` → `(\code (\link (TEXT "x")))`,
-        `[pkg]` dropped, `\url` → `(VERB …)`). Multi-arg (`\href{}{}`) still
-        below.
+        `[pkg]` dropped, `\url` → `(VERB …)`). A `\code` body's *plain text*
+        projects as verbatim `(RCODE …)`, not `(TEXT …)` (Stage 9, 2026-06-23):
+        parse_Rd tags `\code` content as R code (whitespace preserved, split at
+        newlines). Multi-arg (`\href{}{}`) still below.
       - *Multi-argument macros* (`\item{term}{def}`, `\link[pkg]{name}`,
         `\method{generic}{class}`, `\href{url}{text}`) — multiple adjacent brace
         groups, not one. **`\item{term}{def}` landed (Stage 3, 2026-06-23):**

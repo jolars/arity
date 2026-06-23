@@ -133,6 +133,14 @@ reads this first.
   body) pair) is NOT suppressed. Value is trimmed first. A suppressed `@description NULL`
   re-fires the title-as-description fallback. Data-object auto-`\format` (roxygen2
   *evaluates* the object for class/dims) is **out of scope** — not statically derivable.
+- **`\code` is the one latexlike macro whose plain text is `RCODE`, not `TEXT` (since
+  2026-06-23, Stage 9).** parse_Rd tags a `\code{…}` body as verbatim R code: no
+  `norm_ws`, and split at newlines (each `\n` stays on the atom it ends). `serialize_macro`'s
+  `flush` keys on `head == "\\code"` → `rcode_atoms`. Every *other* latexlike text macro
+  (`\emph`/`\strong`/`\command`/…) is `TEXT`; the verbatim macros (`\verb`/`\samp`/`\url`/…)
+  are `VERB`. A *nested* macro inside `\code` still recurses (`\code{\link{x}}` →
+  `(\code (\link …))`). Confirm a new macro's body tag via `block-to-sections`: a `{RCODE}`
+  child = R-code body.
 - **pre-commit `panache-format` reformats `.md`** and mangles long inline-code spans
   on wrap; put commands in fenced blocks.
 
@@ -163,8 +171,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-the `@tag NULL` suppression sentinel, 2026-06-23 Stage 8): **83 matching (all allowlisted),
-76 divergent (backlog)** of 159 pinned cases. The
+`\code`-body RCODE, 2026-06-23 Stage 9): **86 matching (all allowlisted),
+73 divergent (backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -175,7 +183,7 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (151 cases). The 76 divergences are the worklist.
+   subset (151 cases). The 73 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 8/8 preserving, 0
    blocked. *Meaning, not layout.*
@@ -185,49 +193,58 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — Stage 8: `@tag NULL` suppression sentinel
+## Latest session (2026-06-23) — Stage 9: `\code` body projects as `RCODE`
 
-**Projector-only win, 7 cases.** roxygen2's `rd_section()` (`roxygen2-ref/R/field.R:21`)
-treats a section value of the literal string `"NULL"` as a sentinel that **suppresses
-the section entirely** — `@format NULL` (override an auto-generated data `\format`),
-`@details NULL`, `@description NULL`, etc. emit no section. The projector was emitting
-`(\format (TEXT "NULL"))` etc. A suppressed `@description NULL` then **re-triggers the
-title-as-description fallback** (`topics_add_default_description` runs after sections are
-built and only fires when no description section exists), so `@description NULL` →
-`\description` = title.
+**Projector-only win, 3 cases.** parse_Rd tags a `\code{…}` body's *plain text* as
+verbatim R code → `(\code (RCODE "…"))`, not the whitespace-normalized `(TEXT …)`
+every other latexlike macro emits. (`\verb`/`\samp`/`\url`/… already produced VERB;
+a nested macro inside `\code` still recurses, e.g. `\code{\link{x}}` →
+`(\code (\link (TEXT "x")))`. Only `\code`'s *textual* segments are RCODE — confirmed
+via `block-to-sections`: among `\code/\emph/\verb/\samp/\command/\preformatted`, only
+`\code` yields RCODE; `\emph`/`\command` give TEXT, the rest VERB.)
 
-- **Bucket: projector gap** (the CST is fine; faithful derivation missing).
-  `src/roxygen/project_rd.rs`: new `NULL_SUPPRESSIBLE` set (the prose tags that map to a
-  plain-string `rd_section`: description/details/return/seealso/source/format/references/
-  note/author/title) + `is_null_section` helper (body coalesces to exactly one
-  `(TEXT "NULL")` atom). `project_tag_section` returns early for a suppressible NULL tag;
-  `project_block`'s `explicit_title`/`has_explicit_desc` now ignore a NULL-valued tag so
-  the title fallback re-fires. `@section` is excluded (its value is a (title, body) pair,
-  never the bare string "NULL" — confirmed: `@section NULL` is *not* suppressed).
-- **Why faithful, not compensating:** mirrors `rd_section()`'s documented sentinel; the
-  value is trimmed before the check (`@format   NULL  ` also suppresses — confirmed via
-  the oracle `block-to-sections`).
-- **Projector 76→83 matching** (all allowlisted via `task roxygen-projector-seed`), **76
-  divergent**; **0 regressions**; full `cargo test` green; clippy + fmt clean. Did not run
-  the R fixed-point net (projector-only change, formatter untouched).
-- **Test:** projector unit test `null_tag_value_suppresses_section` (TDD: failing first).
-  No new parser fixture — no parser/CST change. Closed slugs: rx-34622883, rx-58680046,
-  rx-6d0a5015, rx-9c4d3a8c, rx-9dbd25a8, rx-cf428841, rx-fa223117 (last two: a NULL
-  `@details`/`@description` *alongside* a real one — NULL suppressed, real kept).
+- **Bucket: projector gap** (the CST is fine — `\code{code}` is already a
+  `ROXYGEN_RD_MACRO` with a `ROXYGEN_TEXT` body; only the projection encoding was
+  wrong). `src/roxygen/project_rd.rs`: `serialize_macro`'s `flush` closure now takes a
+  `code: bool` (`head == "\\code"`); when set it emits `rcode_atoms(run)` (new helper)
+  instead of `text_atom`. **RCODE is verbatim** (no `norm_ws`) and **splits at
+  newlines**, attaching each `\n` to the atom it ends (`\code{a\nb}` →
+  `(RCODE "a\n") (RCODE "b")`, mirroring parse_Rd; matches the `\verb` multiline split).
+- **Why faithful, not compensating:** mirrors parse_Rd's documented `\code`→RCODE
+  tagging; the markdown code-span path (`md_code_atom`) already emits the same
+  `(\code (RCODE …))`, so this aligns the literal-Rd path with it. No pin anywhere uses
+  `(\code (TEXT …))` (verified) — the only literal-`\code` curated case (`rd_macros`)
+  has a *nested* `\link` body, never plain text, so it was unaffected.
+- **Projector 83→86 matching** (all allowlisted via `task roxygen-projector-seed`),
+  **73 divergent**; **0 regressions**; full `cargo test` green; clippy + fmt clean. Did
+  not run the R fixed-point net (projector-only change, formatter untouched).
+- **Test:** projector unit test `code_macro_body_projects_as_rcode` (TDD: failing
+  first). No new parser fixture — no parser/CST change. Closed slugs: rx-41db756e
+  (`\code{code}` + `\verb{…}`), rx-d58b849a, rx-db08ab08 (both `Inline \code{code} and
+  \emph{emphasis}` alongside an `\itemize`).
 
-**Next (ranked):** pick the next cluster from the 76-case backlog. **Out of scope (do not
-chase):** the data-object auto-`\format` cases (rx-cbcc255c, rx-8f9c159b, rx-4d59d472,
-rx-deb9d202: `(\format (TEXT "An object of class") (\code (RCODE "data.frame")) …)`) —
-roxygen2 *evaluates* the object to compute class/dimensions, not statically derivable.
-Live candidates: markdown **nested** lists (projects flat today; in-list indent dropped),
-fenced code blocks (` ```{r} `), ATX headings, the remaining Rd block macros
-(`\preformatted`, `\figure`, `\out`, `\href` two-arg, `\if`), `@rawRd` (top-level raw
-text, rx-3d22b1a9), multi-block `@name` merge (rx-aef0e809: same-name blocks concatenate
-descriptions). Also open: loose-file/`DESCRIPTION` markdown **default-ON**. To spot the
-next cluster, re-create a throwaway `examples/rxdiff.rs` (dump input/projected/pin per
-divergent harvested case, sorted by input length) — it was removed at session end.
+**Next (ranked):** the largest remaining cluster is **markdown links** (≈10 cases:
+rx-270b730c/rx-95dd50a4/rx-72858140/rx-2a68ab3f/rx-4adb1f22/rx-fd84eacf/rx-375ab9f1
+`[text]`/`[text][dest]`/`[fn()]`/`[pkg::obj]` → `\link`/`\code{\link}`; rx-7743ba62/
+rx-0605d020 `[text](url)` → `\href`; rx-1b4ef7c7 `[`code`]` → `\code{\link}`) — under
+`@md` only; complex (CommonMark link parsing + roxygen2's `[x]`→`\link` resolution).
+Cleaner small wins: **`\href{url}{text}`** two-arg (rx-d791aabe, rx-ac585ae8 — note the
+*first* arg is VERB, second TEXT: a new per-arg encoding) and **@slot/@field →
+`\section{Slots/Fields}{\describe …}`** (rx-853d2f8f, rx-d55651e1 — needs modeling those
+tags). **Out of scope:** data-object auto-`\format` (rx-cbcc255c/rx-8f9c159b/rx-4d59d472/
+rx-deb9d202 — roxygen2 evaluates the object) and ```{r}``` code blocks that evaluate R
+(rx-2900ecd5/rx-a6ac1b4d — produce `#> [1] 2`). To re-triage, recreate the throwaway
+`examples/rxdiff.rs` (dump input/projected/pin per divergent harvested case, sorted by
+input length; removed at session end).
 
 ## Earlier sessions
+
+- **2026-06-23 (Stage 8, `@tag NULL` suppression sentinel):** projector-only, 7 cases.
+  roxygen2's `rd_section()` treats a section value of literal `"NULL"` as a sentinel that
+  suppresses the section; a suppressed `@description NULL` re-fires the title-as-description
+  fallback. New `NULL_SUPPRESSIBLE` set + `is_null_section` in `project_rd.rs`; `@section`
+  excluded (value is a title/body pair). 76→83 matching. Data-object auto-`\format` is out
+  of scope (roxygen2 evaluates the object).
 
 - **2026-06-23 (Stage 7, title-as-description fallback):** projector-only, 11 cases.
   roxygen2 reuses the title as the description when there is no `@description` and no

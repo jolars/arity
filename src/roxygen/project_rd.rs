@@ -314,9 +314,14 @@ fn serialize_macro(node: &SyntaxNode) -> String {
     let mut out_atoms: Vec<String> = Vec::new();
     let mut group: Vec<String> = Vec::new();
     let mut run = String::new();
-    // Flush the pending prose run into the current argument group as one (TEXT …).
-    let flush = |run: &mut String, group: &mut Vec<String>| {
-        if let Some(atom) = text_atom(run) {
+    // Flush the pending text run into the current argument group. A `\code` macro
+    // tags its textual content as verbatim `(RCODE …)` (parse_Rd treats `\code`
+    // bodies as R code, preserving whitespace and splitting at newlines); every
+    // other macro coalesces prose into one whitespace-normalized `(TEXT …)`.
+    let flush = |run: &mut String, group: &mut Vec<String>, code: bool| {
+        if code {
+            group.extend(rcode_atoms(run));
+        } else if let Some(atom) = text_atom(run) {
             group.push(atom);
         }
         run.clear();
@@ -343,7 +348,7 @@ fn serialize_macro(node: &SyntaxNode) -> String {
                 structural = is_two_arg_rd_macro(head.trim_start_matches('\\'));
             }
             SyntaxKind::ROXYGEN_RD_MACRO_VERB => {
-                flush(&mut run, &mut group);
+                flush(&mut run, &mut group, head == "\\code");
                 let raw = el
                     .as_token()
                     .map(|t| t.text().to_string())
@@ -351,7 +356,7 @@ fn serialize_macro(node: &SyntaxNode) -> String {
                 group.push(format!("(VERB {})", encode_text(&raw)));
             }
             SyntaxKind::ROXYGEN_RD_MACRO => {
-                flush(&mut run, &mut group);
+                flush(&mut run, &mut group, head == "\\code");
                 if let Some(n) = el.as_node() {
                     group.push(serialize_macro(n));
                 }
@@ -361,7 +366,7 @@ fn serialize_macro(node: &SyntaxNode) -> String {
             // The opening `{` carries no content.
             SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
                 if el.as_token().is_some_and(|t| t.text() == "}") {
-                    flush(&mut run, &mut group);
+                    flush(&mut run, &mut group, head == "\\code");
                     finalize(&mut group, &mut out_atoms, structural);
                 }
             }
@@ -377,7 +382,7 @@ fn serialize_macro(node: &SyntaxNode) -> String {
         }
     }
     // Defensive: trailing content with no closing brace (a malformed macro).
-    flush(&mut run, &mut group);
+    flush(&mut run, &mut group, head == "\\code");
     finalize(&mut group, &mut out_atoms, structural);
     if out_atoms.is_empty() {
         format!("({head})")
@@ -416,6 +421,24 @@ fn prefix_space(s: &str) -> String {
 fn text_atom(body: &str) -> Option<String> {
     let t = norm_ws(body);
     (!t.is_empty()).then(|| format!("(TEXT {})", encode_text(&t)))
+}
+
+/// The verbatim `(RCODE …)` atoms for a `\code` body. parse_Rd keeps `\code`
+/// content verbatim (no whitespace collapse) but splits it at newlines, attaching
+/// each `\n` to the atom it ends (`\code{a\nb}` → `(RCODE "a\n") (RCODE "b")`). An
+/// empty body yields no atom.
+fn rcode_atoms(body: &str) -> Vec<String> {
+    let mut atoms = Vec::new();
+    let mut rest = body;
+    while let Some(idx) = rest.find('\n') {
+        let (seg, tail) = rest.split_at(idx + 1);
+        atoms.push(format!("(RCODE {})", encode_text(seg)));
+        rest = tail;
+    }
+    if !rest.is_empty() {
+        atoms.push(format!("(RCODE {})", encode_text(rest)));
+    }
+    atoms
 }
 
 /// Collapse every whitespace run to a single space and trim (the R `norm_ws`).
@@ -754,6 +777,26 @@ mod tests {
                  (TEXT \"and\") (\\emph (TEXT \"e\")) (TEXT \", plus\") \
                  (\\url (VERB \"http://x\")) (TEXT \"and\") (\\link (TEXT \"lm\")) \
                  (TEXT \"end.\"))"
+            ),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn code_macro_body_projects_as_rcode() {
+        // parse_Rd tags a `\code` body as verbatim R code: its plain text becomes
+        // `(RCODE …)`, not the whitespace-normalized `(TEXT …)` every other
+        // latexlike macro produces (`\verb` stays VERB; a nested macro recurses).
+        let src = "#' T\n\
+                   #'\n\
+                   #' Some \\code{code} and \\verb{More code.}\n\
+                   #' @name d\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\description (TEXT \"Some\") (\\code (RCODE \"code\")) (TEXT \"and\") \
+                 (\\verb (VERB \"More code.\")))"
             ),
             "got: {out}"
         );
