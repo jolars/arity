@@ -71,6 +71,11 @@ pub(crate) enum TokKind {
     RoxygenMdEmph,
     RoxygenMdStrong,
     RoxygenMdCode,
+    /// A markdown list item's leading marker (`-`/`*`/`+` or `1.`/`1)`), at a
+    /// line's content start under a resolved `@md` mode. Excludes the trailing
+    /// space (kept in the following text run) so a marker that does not form a
+    /// list reflows like the plain text it stands in for.
+    RoxygenMdListMarker,
 }
 
 impl TokKind {
@@ -93,6 +98,7 @@ impl TokKind {
                 | TokKind::RoxygenMdEmph
                 | TokKind::RoxygenMdStrong
                 | TokKind::RoxygenMdCode
+                | TokKind::RoxygenMdListMarker
         )
     }
 }

@@ -134,14 +134,30 @@ pub enum SyntaxKind {
     ROXYGEN_MD_EMPH,
     ROXYGEN_MD_STRONG,
     ROXYGEN_MD_CODE,
+    /// A markdown list item's leading marker (`-`/`*`/`+` or `1.`/`1)`), emitted
+    /// **only** under a resolved `@md` block mode and only at a line's content
+    /// start. Like the other markdown leaves it holds its literal source (the
+    /// bullet/number punctuation, *without* the trailing space, so a marker that
+    /// does not form a list — see the CommonMark interrupt rule — chunks for
+    /// reflow exactly as the plain text it stands in for). The projector maps the
+    /// enclosing `ROXYGEN_MD_LIST` to `\itemize`/`\enumerate` and each item to a
+    /// name-only `\item`.
+    ROXYGEN_MD_LIST_MARKER,
+    // Markdown block-list nodes (resolved `@md` mode only). A `ROXYGEN_MD_LIST`
+    // groups consecutive `ROXYGEN_MD_LIST_ITEM`s; each item owns its marker leaf
+    // and inline content. `#'` markers, the marker→content whitespace, and
+    // inter-line newlines are threaded in as trivia (losslessness), the way the
+    // block Rd macros thread them.
+    ROXYGEN_MD_LIST,
+    ROXYGEN_MD_LIST_ITEM,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_CODE` remains the
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_LIST_ITEM` remains the
     /// last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_CODE as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_LIST_ITEM as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -159,6 +175,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_EMPH
                 | SyntaxKind::ROXYGEN_MD_STRONG
                 | SyntaxKind::ROXYGEN_MD_CODE
+                | SyntaxKind::ROXYGEN_MD_LIST_MARKER
         )
     }
 }
@@ -270,6 +287,9 @@ impl Language for RLanguage {
             90 => SyntaxKind::ROXYGEN_MD_EMPH,
             91 => SyntaxKind::ROXYGEN_MD_STRONG,
             92 => SyntaxKind::ROXYGEN_MD_CODE,
+            93 => SyntaxKind::ROXYGEN_MD_LIST_MARKER,
+            94 => SyntaxKind::ROXYGEN_MD_LIST,
+            95 => SyntaxKind::ROXYGEN_MD_LIST_ITEM,
             _ => SyntaxKind::ERROR,
         }
     }

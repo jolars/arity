@@ -136,7 +136,10 @@ pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize, m
     if bytes[pos] == b'@' && bytes.get(pos + 1).is_some_and(u8::is_ascii_alphabetic) {
         lex_roxygen_tag(out, text, start, pos, md);
     } else {
-        lex_roxygen_prose(out, text, start, pos, md);
+        // A prose line's content begins a fresh markdown block, so a leading list
+        // marker is recognized here (`line_start`); a tag line's content is not a
+        // block start, so its prose never opens a list.
+        lex_roxygen_prose(out, text, start, pos, md, true);
     }
 }
 
@@ -186,7 +189,7 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
         pos = take_ws(out, text, start, pos);
     }
 
-    lex_roxygen_prose(out, text, start, pos, md);
+    lex_roxygen_prose(out, text, start, pos, md, false);
 }
 
 /// Sub-tokenize `text[pos..]` (a roxygen line's prose remainder) into an
@@ -197,10 +200,36 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
 /// Recognizers are conservative and line-scoped: any malformed or unterminated
 /// span stays inside the surrounding prose run (so the round-trip is unaffected
 /// either way, and reflow only ever treats a *complete* span as atomic).
-fn lex_roxygen_prose(out: &mut Vec<Token>, text: &str, start: usize, pos: usize, md: bool) {
+fn lex_roxygen_prose(
+    out: &mut Vec<Token>,
+    text: &str,
+    start: usize,
+    pos: usize,
+    md: bool,
+    line_start: bool,
+) {
     let bytes = text.as_bytes();
     let mut run_start = pos;
     let mut i = pos;
+    // Under `@md`, a prose line whose content begins with a list marker carves it
+    // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
+    // run). Whether the marker actually forms a list is a block-level decision
+    // (the CommonMark interrupt rule), made later in `emit_roxygen_block`.
+    if md
+        && line_start
+        && let Some(marker_end) = scan_md_list_marker(bytes, pos)
+    {
+        push(
+            out,
+            TokKind::RoxygenMdListMarker,
+            text,
+            start,
+            pos,
+            marker_end - pos,
+        );
+        run_start = marker_end;
+        i = marker_end;
+    }
     while i < bytes.len() {
         // Under a resolved `@md` mode the inline grammar gains markdown emphasis/
         // strong runs, and a backtick span is a *markdown* code span (projected to
@@ -344,6 +373,51 @@ fn scan_md_emphasis(bytes: &[u8], i: usize) -> Option<(TokKind, usize)> {
         }
     }
     None
+}
+
+/// A markdown list-item marker at a line's content start: a bullet (`-`/`*`/`+`)
+/// or an ordered marker (a run of up to nine ASCII digits then `.`/`)`), in
+/// either case followed by a space/tab or the end of the line (CommonMark).
+/// Returns the byte length of the marker *punctuation only* — the trailing space
+/// is left in the following prose run, so a marker that turns out not to form a
+/// list (the interrupt rule fails) reflows exactly like the plain text it stands
+/// in for. `None` when the content does not open a list item.
+fn scan_md_list_marker(bytes: &[u8], i: usize) -> Option<usize> {
+    let marker_end = match bytes.get(i)? {
+        b'-' | b'*' | b'+' => i + 1,
+        b'0'..=b'9' => {
+            let mut j = i;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j - i > 9 {
+                return None; // CommonMark caps the start number at nine digits
+            }
+            match bytes.get(j) {
+                Some(b'.' | b')') => j + 1,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    match bytes.get(marker_end) {
+        None | Some(b' ' | b'\t') => Some(marker_end),
+        _ => None,
+    }
+}
+
+/// Whether a `RoxygenMdListMarker`'s text may *interrupt an open paragraph* per
+/// CommonMark: a bullet always may, an ordered marker only when its start number
+/// is 1. (At a fresh block position any marker opens a list; this gate applies
+/// only mid-paragraph.)
+fn md_list_marker_can_interrupt(marker: &str) -> bool {
+    match marker.as_bytes().first() {
+        Some(b'-' | b'*' | b'+') => true,
+        _ => {
+            let digits = marker.trim_end_matches(['.', ')']);
+            digits.parse::<u64>().map(|n| n == 1).unwrap_or(false)
+        }
+    }
 }
 
 /// Inline Rd macros whose `{…}` content is **verbatim** (`VERB` in
@@ -549,7 +623,15 @@ pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Ve
                     events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
                     section_open = true;
                 }
-                if is_block_macro_line(tokens, i) {
+                if is_md_list_start(tokens, i, para_open) {
+                    // A markdown list (`@md` mode) is a direct section child, like
+                    // a block macro: close any open paragraph and build the list.
+                    if para_open {
+                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                        para_open = false;
+                    }
+                    i = emit_md_list(tokens, i, events);
+                } else if is_block_macro_line(tokens, i) {
                     // A block Rd macro (`\itemize{ … }` across lines) is a direct
                     // section child, not paragraph prose: close any open paragraph
                     // and emit the macro as a sibling.
@@ -626,7 +708,8 @@ fn classify_line(tokens: &[Token], start: usize) -> LineKind {
             | TokKind::RoxygenMdLink
             | TokKind::RoxygenMdEmph
             | TokKind::RoxygenMdStrong
-            | TokKind::RoxygenMdCode => return LineKind::Prose,
+            | TokKind::RoxygenMdCode
+            | TokKind::RoxygenMdListMarker => return LineKind::Prose,
             TokKind::Whitespace => i += 1,
             _ => break,
         }
@@ -659,6 +742,7 @@ fn is_line_body_kind(kind: &TokKind) -> bool {
             | TokKind::RoxygenMdEmph
             | TokKind::RoxygenMdStrong
             | TokKind::RoxygenMdCode
+            | TokKind::RoxygenMdListMarker
             | TokKind::Whitespace
     )
 }
@@ -757,6 +841,87 @@ fn is_block_macro_opener(text: &str) -> bool {
     k > 1 && bytes.get(k) == Some(&b'{') && scan_balanced(bytes, k, b'{', b'}').is_none()
 }
 
+/// Whether the prose line whose marker is at `start` opens a **markdown list**
+/// (`@md` mode): its content begins with a `RoxygenMdListMarker` leaf, and —
+/// when it would interrupt an open paragraph (`para_open`) — the CommonMark
+/// interrupt rule admits it (a bullet always, an ordered marker only if its
+/// start number is 1). A marker that fails the gate stays inline prose (its
+/// `RoxygenMdListMarker` leaf renders as literal text).
+fn is_md_list_start(tokens: &[Token], start: usize, para_open: bool) -> bool {
+    let content = line_content_start(tokens, start);
+    match tokens.get(content) {
+        Some(tok) if tok.kind == TokKind::RoxygenMdListMarker => {
+            !para_open || md_list_marker_can_interrupt(&tok.text)
+        }
+        _ => false,
+    }
+}
+
+/// Whether the line whose marker is at `marker` continues a markdown list: its
+/// content begins with a `RoxygenMdListMarker`. (Inside a list, any marker line
+/// is another item — the interrupt rule applies only to *starting* a list.)
+fn is_md_list_continuation(tokens: &[Token], marker: usize) -> bool {
+    let content = line_content_start(tokens, marker);
+    tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdListMarker)
+}
+
+/// Emit a `ROXYGEN_MD_LIST` node spanning the consecutive markdown-list lines
+/// beginning at `start` (a `RoxygenMarker` whose content opens a list item).
+/// Each item is a `ROXYGEN_MD_LIST_ITEM` holding its `RoxygenMdListMarker` leaf
+/// and inline content; the `#'` markers, the marker→content whitespace, and the
+/// inter-line newlines/indentation are threaded in as trivia at the list level
+/// (losslessness), the way the block Rd macros thread them. The trailing newline
+/// after the final item is left to the caller. Returns the token index just past
+/// the last consumed content.
+fn emit_md_list(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST));
+
+    let mut i = start;
+    loop {
+        // `i` is at a `RoxygenMarker` of a list-item line. The marker and the
+        // marker→content whitespace are threaded at the list level (trivia).
+        events.push(Event::Tok(i));
+        i += 1;
+        while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+
+        // The item: its `RoxygenMdListMarker` leaf, then its inline content.
+        events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST_ITEM));
+        events.push(Event::Tok(i)); // RoxygenMdListMarker
+        i += 1;
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+        events.push(Event::Finish); // ROXYGEN_MD_LIST_ITEM
+
+        // Continuation: a following list-item line folds its `\n` and leading
+        // indentation in as trivia, leaving its marker for the next iteration.
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            break;
+        }
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker)
+            || !is_md_list_continuation(tokens, m)
+        {
+            break;
+        }
+        for idx in i..m {
+            events.push(Event::Tok(idx));
+        }
+        i = m;
+    }
+
+    events.push(Event::Finish); // ROXYGEN_MD_LIST
+    i
+}
+
 /// Emit a multi-line block Rd macro as a `ROXYGEN_RD_MACRO` node spanning `#'`
 /// lines. The node owns its opening line's marker and the inter-line markers,
 /// newlines, and indentation as threaded trivia (losslessness); its body is a
@@ -817,7 +982,8 @@ fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> 
                 | TokKind::RoxygenMdLink
                 | TokKind::RoxygenMdEmph
                 | TokKind::RoxygenMdStrong
-                | TokKind::RoxygenMdCode => {
+                | TokKind::RoxygenMdCode
+                | TokKind::RoxygenMdListMarker => {
                     events.push(Event::Tok(i));
                     i += 1;
                 }
@@ -1218,6 +1384,7 @@ mod tests {
                         | TokKind::RoxygenMdEmph
                         | TokKind::RoxygenMdStrong
                         | TokKind::RoxygenMdCode
+                        | TokKind::RoxygenMdListMarker
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1255,6 +1422,62 @@ mod tests {
             ]
         );
         assert_lossless(src);
+    }
+
+    #[test]
+    fn md_list_marker_recognized_under_md_mode() {
+        // A bullet or ordered marker at a line's content start is carved off as a
+        // `RoxygenMdListMarker` (punctuation only; the trailing space stays in the
+        // following text run).
+        let bullet = "#' - first step\n#' @md\n";
+        assert_eq!(
+            prose_texts(bullet),
+            vec![
+                (TokKind::RoxygenMdListMarker, "-".into()),
+                (TokKind::RoxygenText, " first step".into()),
+            ]
+        );
+        assert_lossless(bullet);
+        let ordered = "#' 1. one\n#' @md\n";
+        assert_eq!(
+            prose_texts(ordered),
+            vec![
+                (TokKind::RoxygenMdListMarker, "1.".into()),
+                (TokKind::RoxygenText, " one".into()),
+            ]
+        );
+        assert_lossless(ordered);
+    }
+
+    #[test]
+    fn md_list_marker_off_without_md_directive() {
+        // No `@md`: a leading `-` stays literal prose, no list marker token.
+        assert_eq!(
+            prose_texts("#' - first step\n"),
+            vec![(TokKind::RoxygenText, "- first step".into())]
+        );
+    }
+
+    #[test]
+    fn md_list_marker_requires_space_and_is_not_emphasis() {
+        // Under `@md`, a `*` at line start followed by a non-space is emphasis, not
+        // a list marker; `-3` (no space) is plain text; `* item` is a bullet.
+        let src = "#' * a *b* c\n#' @md\n";
+        assert_eq!(
+            prose_texts(src),
+            vec![
+                (TokKind::RoxygenMdListMarker, "*".into()),
+                (TokKind::RoxygenText, " a ".into()),
+                (TokKind::RoxygenMdEmph, "*b*".into()),
+                (TokKind::RoxygenText, " c".into()),
+            ]
+        );
+        assert_lossless(src);
+        // A bare `-3` (no space after the marker) is not a list item.
+        assert_eq!(
+            prose_texts("#' -3 degrees\n#' @md\n"),
+            vec![(TokKind::RoxygenText, "-3 degrees".into())]
+        );
     }
 
     #[test]

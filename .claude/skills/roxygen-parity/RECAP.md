@@ -85,6 +85,22 @@ reads this first.
   group leaves) then `emit_block_body_open` (open the body `{`, depth 1). The lexer eats
   the balanced `{rl}` as the inline macro token, which is why the trailing `{` is a
   separate `RoxygenText` and the body opener lives in Form B, not Form A.
+- **Markdown *block* structure is mode-keyed via the lexer, not the block builder (since
+  2026-06-23, Stage 6).** A `-`/`*`/`+` or `1.`/`1)` marker at a line's content start under
+  `@md` is carved by the *lexer* as a `RoxygenMdListMarker` (punctuation only — the trailing
+  space stays in the following text run, so a marker that does **not** form a list chunks for
+  reflow identically to the plain text it stands in for → no format-baseline regression). The
+  block builder (`emit_md_list`) forms `ROXYGEN_MD_LIST`/`ROXYGEN_MD_LIST_ITEM` from the token
+  kind alone (the token's existence implies `@md`), applying the CommonMark **interrupt rule**
+  (`is_md_list_start`/`md_list_marker_can_interrupt`: a bullet always interrupts an open
+  paragraph, an ordered list only when start == 1; otherwise the marker stays inline prose and
+  the projector renders its leaf as text). **Do NOT re-derive `@md` mode in the block builder**
+  by scanning tokens — that is a second source of truth (a hack); the lexer (`resolve_roxygen_block`)
+  is the single mode source, and mode reaches the block layer baked into token kinds. **Nested
+  lists are not modeled** (in-list indentation is consumed as marker→content trivia and dropped),
+  so a nested list projects *flat* — leave it un-allowlisted backlog, never patch it to a
+  passing-but-wrong entry. Projector arm: `Inline::MdList` → `serialize_md_list`
+  (`\itemize`/`\enumerate` from the first item's marker, name-only `(\item)` per item).
 - **Mode-keyed parse.** Markdown structure exists in the CST only when `@md` is on;
   the CST (and projected Rd) differs by mode — pin both modes where relevant. **Mode is
   resolved per-block** by `resolve_roxygen_block` (lexer scans the `#'` run for `@md`/`@noMd`,
@@ -141,7 +157,7 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-`@md` inline, 2026-06-23 Stage 5): **64 matching (all allowlisted), 95 divergent
+`@md` block lists, 2026-06-23 Stage 6): **65 matching (all allowlisted), 94 divergent
 (backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
@@ -163,56 +179,59 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — Stage 5: `@md` inline foundation (emph/strong/code)
+## Latest session (2026-06-23) — Stage 6: `@md` block lists (`\itemize`/`\enumerate`)
 
-**First markdown win.** Taught the parser markdown *inline* under an explicit `@md`
-block: `*x*`→`\emph`, `**x**`→`\strong`, and a markdown code span → `\code` **or**
-`\verb`. Projector **59→64 matching** (curated `markdown_inline` + 4 harvested:
-`rx-418f7793`, `rx-4c5c90ac`, `rx-9a1e30f6`, `rx-e2097b28`), all allowlisted; **0
-regressions**; curated fixed-point 7→8/8; harvested unchanged (212/4). User-scoped this
-session to **inline only** (block lists deferred) and to **explicit `@md` only** (the
-settled loose-file default-ON is *not* honored yet, so no existing block changes meaning).
-Files by bucket:
-- **Mode resolution (new infra)** (`src/parser/lexer.rs`, `src/parser/roxygen.rs`):
-  `resolve_roxygen_block(input, start) -> (md, end)` scans the contiguous `#'` block once
-  for an `@md`/`@noMd` directive (last wins; default off); the lexer caches it
-  (`rox_md`/`rox_block_end`) and threads `md: bool` through
-  `lex_roxygen_line`/`lex_roxygen_tag`/`lex_roxygen_prose`. **Mode-keyed lexing:** under
-  `md`, `` `x` ``→`RoxygenMdCode`, `*`/`_` runs→`scan_md_emphasis`; without `md`, the
-  pure-Rd span set (unchanged → zero regression).
-- **Parser gap** (`src/parser/roxygen.rs`, `src/syntax.rs`, `tree_builder.rs`, `lexer.rs`,
-  `expr.rs`): new leaf kinds `ROXYGEN_MD_EMPH`/`STRONG`/`CODE` (appended after
-  `ROXYGEN_PARAGRAPH`; COUNT now refs `ROXYGEN_MD_CODE`). `scan_md_emphasis` is a pragmatic
-  CommonMark-flanking subset: a 1- or 2-delimiter run (3+ bails), opener left-flanking
-  (non-space follows), closer right-flanking (non-space precedes), `_` not intraword.
-  Bail-to-text on anything else (under-recognition, never wrong structure; losslessness
-  holds regardless).
-- **Projector gap** (`src/roxygen/project_rd.rs`): `Inline::Md(MdInline, String)` variant;
-  `push_inline` strips delimiters (`strip_delim`/`strip_code_span` with CommonMark's single
-  surrounding-space trim). `\code` vs `\verb` replicates roxygen2's `can_parse`
-  (`R/markdown.R`): `code_span_is_r` = arity parses it as **exactly one** non-trivia
-  top-level element with **no diagnostics**, or it's in `SPECIAL_CODE` (the ported operator/
-  keyword list). arity's lenient recovery accepts `inline code` as *two* exprs → `\verb`,
-  while `a + b` is one → `\code`. Faithful encoding rule, not a CST concern.
-- **Formatter** (`src/formatter/roxygen.rs`): md leaves glue atomically in
-  `chunk_elements` already (the `_ => cur.push_str` arm), so reflow keeps spans whole —
-  **no reflow change**. Only the prose classifiers `is_blank`/`is_tag_prose_kind` needed the
-  3 kinds. New format fixture `roxygen_md_inline_reflow` (long line wraps, spans atomic);
-  blessed `curated/markdown_inline` into the baseline (**only** new key — verified no
-  existing case changed).
-- **Tests:** parser fixture `roxygen_md_inline`; lexer tests
-  (`md_inline_recognized_under_md_mode`, `md_inline_off_without_md_directive`,
-  `md_emphasis_flanking_rejects_false_positives`); projector tests
-  (`md_inline_projects_emph_strong_and_code_vs_verb`, `md_inline_is_off_without_md_tag`).
+**Second markdown win, first markdown *block* structure.** Under an explicit `@md`
+block, a `-`/`*`/`+` list → `\itemize` and a `1.`/`1)` list → `\enumerate`, each item a
+name-only `\item` ahead of its content — the other half of curated `markdown_list`, which
+now matches its pin. Projector **64→65 matching** (curated `markdown_list`), all
+allowlisted; **0 regressions**; curated fixed-point 8/8; harvested unchanged (212/4).
+User asked up front "is this a hack?" — the design was chosen to *not* be: the CST leaves
+hold real source bytes (`-`, the text), the projector merely *maps* node-kind → `\itemize`
+(faithful encoding, as roxygen2 itself does), and the formatter does no markdown parsing
+(atomic passthrough). The one genuine fork — how the block builder learns it's in `@md`
+mode — was resolved by **mode-keyed lexing** (the lexer is the single mode source, exactly
+as `@md` inline already works), *not* by re-scanning tokens for `@md` in the block builder
+(which would be a second source of truth). Files by bucket:
+- **Parser gap** (`src/parser/roxygen.rs`, `src/syntax.rs`, `lexer.rs`, `tree_builder.rs`,
+  `expr.rs`): new `RoxygenMdListMarker` TokKind + `ROXYGEN_MD_LIST_MARKER` leaf and
+  `ROXYGEN_MD_LIST`/`ROXYGEN_MD_LIST_ITEM` nodes (appended; COUNT now refs
+  `ROXYGEN_MD_LIST_ITEM`). `scan_md_list_marker` carves a line-start bullet/ordered marker
+  **punctuation only** (trailing space stays in the text run, so a non-list marker chunks
+  for reflow exactly as the plain text it stands in for — the no-baseline-regression trick).
+  `emit_md_list` builds the node over consecutive marker lines (markers/newlines/indent
+  threaded as trivia), gated by `is_md_list_start` which applies the CommonMark **interrupt
+  rule** (`md_list_marker_can_interrupt`: a bullet always, an ordered list only if start
+  == 1) — a non-interrupting marker stays inline prose.
+- **Projector gap** (`src/roxygen/project_rd.rs`): `Inline::MdList(SyntaxNode)` variant;
+  `serialize_md_list` picks `\itemize`/`\enumerate` from the first item's marker and emits
+  a name-only `(\item)` per item; `md_list_item_inlines` reuses the prose inline machinery.
+  A stray `ROXYGEN_MD_LIST_MARKER` token (interrupt rule kept it inline) projects as text.
+- **Formatter** (`src/formatter/roxygen.rs`): `ROXYGEN_MD_LIST` joins the block-macro
+  atomic-passthrough path in `physical_lines`; `emit_md_list` (formatter) marker-normalizes
+  each line — byte-identical to today's `is_structured` passthrough, so the format-stability
+  baseline is unchanged (verified). `is_blank`/`is_tag_prose_kind` gained the marker leaf.
+- **Tests:** parser fixture `roxygen_md_list` (bullet + ordered); lexer tests
+  (`md_list_marker_recognized_under_md_mode`, `md_list_marker_off_without_md_directive`,
+  `md_list_marker_requires_space_and_is_not_emphasis`); projector tests
+  (`md_block_lists_project_itemize_and_enumerate`, `md_block_list_is_off_without_md_tag`).
 
-**Next (ranked) — markdown *block lists* under `@md`.** `-`/`*`/`1.` →
-`\itemize`/`\enumerate` (the other half of curated `markdown_list`, which still diverges on
-its list). Mode infra is now in place; build the block layer over the inline leaves. After
-that, settle the **loose-file default-ON** decision (currently deferred — flipping it
-reinterprets every block, so it needs its own re-bless pass). Then pull the next cluster
-from the harvested projector backlog (`ROXYGEN_PROJECTOR.md`, 95 divergent).
+**Next (ranked) — settle the loose-file/`DESCRIPTION` default-ON decision**, currently
+deferred (only explicit per-block `@md` enables markdown; flipping the default reinterprets
+every block, so it needs its own re-bless pass). *Or* pick the next cluster from the
+harvested projector backlog (`ROXYGEN_PROJECTOR.md`, 94 divergent) — candidates: markdown
+**nested** lists (this session's known gap), fenced code blocks, ATX headings, or the
+remaining Rd block macros. Note nested lists currently project flat (in-list indentation
+dropped) — un-allowlisted backlog, never a passing-but-wrong gate entry.
 
 ## Earlier sessions
+
+- **2026-06-23 (Stage 5, `@md` inline foundation):** first markdown win —
+  `*x*`→`\emph`, `**x**`→`\strong`, code span → `\code`/`\verb` (roxygen2's `can_parse`,
+  replicated via arity-parseability). New `resolve_roxygen_block` mode infra (lexer is the
+  single mode source, threads `md: bool`); `ROXYGEN_MD_EMPH`/`STRONG`/`CODE` leaves;
+  `scan_md_emphasis` (CommonMark-flanking subset, bail-to-text). Projector 59→64; closed
+  `markdown_inline` + 4 harvested. Fixtures `roxygen_md_inline`, `roxygen_md_inline_reflow`.
 
 - **2026-06-23 (Stage 4, `\tabular{rl}{ … \tab … \cr }`):** closed `tabular` (58→59). Lexer
   eats the balanced `{rl}` as an inline macro token, so `is_block_macro_line` gained **Form B**

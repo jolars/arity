@@ -13,6 +13,7 @@ describe_format
 examples
 itemize_enumerate
 markdown_inline
+markdown_list
 param_prose
 rd_macros
 rx-0273da0d

@@ -76,6 +76,7 @@ impl PhysicalLine {
                         | SyntaxKind::ROXYGEN_MD_EMPH
                         | SyntaxKind::ROXYGEN_MD_STRONG
                         | SyntaxKind::ROXYGEN_MD_CODE
+                        | SyntaxKind::ROXYGEN_MD_LIST_MARKER
                 )
             })
     }
@@ -99,6 +100,18 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             // its own. (Checked before the marker-less drop below — its opening
             // marker is *inside* the node, so `cur.marker` is still `None` here.)
             SyntaxKind::ROXYGEN_RD_MACRO if el.as_node().is_some_and(is_block_macro) => {
+                if cur.marker.is_some() || !cur.elements.is_empty() {
+                    lines.push(std::mem::take(&mut cur));
+                }
+                lines.push(PhysicalLine {
+                    block_macro: el.as_node().cloned(),
+                    ..PhysicalLine::default()
+                });
+            }
+            // A markdown list (`@md` mode) likewise owns its `#'` markers and
+            // newlines internally; it is atomic passthrough (marker-normalized,
+            // never reflowed across items).
+            SyntaxKind::ROXYGEN_MD_LIST => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
                 }
@@ -165,6 +178,17 @@ fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// copy-pasteable rather than carrying prose-list indentation. (Formatting the R
 /// *inside* the wrapper is future work; the node delimits exactly where it is.)
 fn emit_block_macro_examples(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
+/// Emit a markdown list (`@md` mode) as atomic passthrough, each `#'` line
+/// marker-normalized (marker, one space, trimmed content). The node owns its own
+/// `#'` markers and newlines; only the inter-line indentation is dropped. (A
+/// canonical re-indent that models nesting is future work — see `emit_block_macro`,
+/// which preserves in-macro indentation for Rd lists.)
+fn emit_md_list(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
         push_line(items, normalize_marker_text(seg));
     }
@@ -242,7 +266,12 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         // indent). `in_examples` stays set — more example lines may follow.
         if let Some(macro_node) = &line.block_macro {
             flush_pending!();
-            if in_examples {
+            if macro_node.kind() == SyntaxKind::ROXYGEN_MD_LIST {
+                // A markdown list is marker-normalized per line (the in-list
+                // indentation that distinguishes nesting is not yet modeled, so
+                // dropping it matches today's structured-passthrough output).
+                emit_md_list(&mut items, macro_node);
+            } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {
                 emit_block_macro(&mut items, macro_node);
@@ -779,6 +808,7 @@ fn is_tag_prose_kind(kind: SyntaxKind) -> bool {
             | SyntaxKind::ROXYGEN_MD_EMPH
             | SyntaxKind::ROXYGEN_MD_STRONG
             | SyntaxKind::ROXYGEN_MD_CODE
+            | SyntaxKind::ROXYGEN_MD_LIST_MARKER
     )
 }
 

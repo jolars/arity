@@ -71,6 +71,10 @@ enum Inline {
     /// project to `\emph`/`\strong` over `(TEXT …)`; a code span projects to
     /// `\code` or `\verb` per roxygen2's R-parseability rule (see [`md_code_atom`]).
     Md(MdInline, String),
+    /// A markdown block list resolved under `@md` mode (a `ROXYGEN_MD_LIST` node).
+    /// Projects to `\itemize`/`\enumerate` with a name-only `\item` per item ahead
+    /// of its content (see [`serialize_md_list`]).
+    MdList(SyntaxNode),
 }
 
 /// The kind of a resolved markdown inline leaf.
@@ -145,6 +149,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
                 Inline::Text(s) => Inline::Text(s.clone()),
                 Inline::Macro(n) => Inline::Macro(n.clone()),
                 Inline::Md(k, s) => Inline::Md(*k, s.clone()),
+                Inline::MdList(n) => Inline::MdList(n.clone()),
             });
         }
     }
@@ -225,6 +230,13 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(serialize_md_inline(*kind, content));
+            }
+            Inline::MdList(node) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(serialize_md_list(node));
             }
         }
     }
@@ -329,7 +341,7 @@ fn inlines_raw_text(body: &[Inline]) -> String {
     for inl in body {
         match inl {
             Inline::Text(t) => s.push_str(t),
-            Inline::Macro(n) => s.push_str(&n.text().to_string()),
+            Inline::Macro(n) | Inline::MdList(n) => s.push_str(&n.text().to_string()),
             // The `@section` heading split is textual; a markdown leaf's inner
             // content stands in for its source (delimiters are immaterial to the
             // `:` split, and markup in a heading is already an out-of-scope edge).
@@ -390,6 +402,7 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
                 RoxygenParagraph::cast(n).map(|p| paragraph_inlines(&p))
             }
             SyntaxKind::ROXYGEN_RD_MACRO => Some(vec![Inline::Macro(n)]),
+            SyntaxKind::ROXYGEN_MD_LIST => Some(vec![Inline::MdList(n)]),
             _ => None,
         })
         .collect()
@@ -456,6 +469,9 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_CODE => {
             out.push(Inline::Md(MdInline::Code, strip_code_span(t.text())));
         }
+        // A `ROXYGEN_MD_LIST_MARKER` that reached an inline run (rather than a
+        // `ROXYGEN_MD_LIST`) is a marker that did not form a list — the CommonMark
+        // interrupt rule kept it inline. roxygen2 renders it as literal text.
         NodeOrToken::Token(t) => out.push(Inline::Text(t.text().to_string())),
     }
 }
@@ -496,6 +512,58 @@ fn serialize_md_inline(kind: MdInline, content: &str) -> String {
         MdInline::Strong => format!("(\\strong {})", text_atom(content).unwrap_or_default()),
         MdInline::Code => md_code_atom(content),
     }
+}
+
+/// Project a `ROXYGEN_MD_LIST` node into `(\itemize …)` or `(\enumerate …)`: each
+/// `ROXYGEN_MD_LIST_ITEM` contributes a name-only `(\item)` followed by its
+/// content atoms (the same inline serialization as prose), mirroring roxygen2's
+/// translation of a markdown list into an Rd `\itemize`/`\enumerate`. The list is
+/// ordered iff its first item's marker is a number.
+fn serialize_md_list(node: &SyntaxNode) -> String {
+    let head = if md_list_is_ordered(node) {
+        "\\enumerate"
+    } else {
+        "\\itemize"
+    };
+    let mut atoms: Vec<String> = Vec::new();
+    for item in node
+        .children()
+        .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+    {
+        atoms.push("(\\item)".to_string());
+        atoms.extend(serialize_inlines(&md_list_item_inlines(&item)));
+    }
+    if atoms.is_empty() {
+        format!("({head})")
+    } else {
+        format!("({head} {})", atoms.join(" "))
+    }
+}
+
+/// Whether a `ROXYGEN_MD_LIST` is ordered (`\enumerate`): its first item's
+/// `ROXYGEN_MD_LIST_MARKER` begins with a digit (`1.`/`1)`), as opposed to a
+/// bullet (`-`/`*`/`+`).
+fn md_list_is_ordered(node: &SyntaxNode) -> bool {
+    node.descendants_with_tokens()
+        .filter_map(|el| el.into_token())
+        .find(|t| t.kind() == SyntaxKind::ROXYGEN_MD_LIST_MARKER)
+        .is_some_and(|t| t.text().starts_with(|c: char| c.is_ascii_digit()))
+}
+
+/// The inline elements of a markdown list item: its content after the marker
+/// leaf, with the threaded `#'` markers dropped and inter-line newlines turned
+/// into joining spaces (the same treatment as a prose paragraph). The
+/// `ROXYGEN_MD_LIST_MARKER` leaf itself is the item bullet, not content.
+fn md_list_item_inlines(item: &SyntaxNode) -> Vec<Inline> {
+    let mut out = Vec::new();
+    for el in item.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_MD_LIST_MARKER | SyntaxKind::ROXYGEN_MARKER => {}
+            SyntaxKind::NEWLINE => out.push(Inline::Text(" ".to_string())),
+            _ => push_inline(&mut out, el),
+        }
+    }
+    out
 }
 
 /// roxygen2 renders a markdown code span as `\code{…}` when its content parses as
@@ -699,6 +767,55 @@ mod tests {
                  (TEXT \", and\") (\\code (RCODE \"a + b\")) (TEXT \"code.\"))"
             ),
             "got: {out}"
+        );
+    }
+
+    #[test]
+    fn md_block_lists_project_itemize_and_enumerate() {
+        // Under a resolved `@md` mode, a `-`/`*`/`+` list projects to `\itemize`
+        // and a `1.`/`1)` list to `\enumerate`, each item a name-only `\item`
+        // ahead of its content --- roxygen2's translation of a markdown list into
+        // Rd, replicated from the `ROXYGEN_MD_LIST` node.
+        let src = "#' T\n\
+                   #' @details\n\
+                   #' Bullets:\n\
+                   #'\n\
+                   #' - first\n\
+                   #' - second\n\
+                   #'\n\
+                   #' Numbered:\n\
+                   #'\n\
+                   #' 1. one\n\
+                   #' 2. two\n\
+                   #' @md\n\
+                   #' @name d\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\details (TEXT \"Bullets:\") \
+                 (\\itemize (\\item) (TEXT \"first\") (\\item) (TEXT \"second\")) \
+                 (TEXT \"Numbered:\") \
+                 (\\enumerate (\\item) (TEXT \"one\") (\\item) (TEXT \"two\")))"
+            ),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn md_block_list_is_off_without_md_tag() {
+        // No `@md`: the `-` lines stay literal Rd prose (no `\itemize`), one
+        // coalesced `(TEXT …)` --- the CST, and thus the projection, is mode-keyed.
+        let src = "#' T\n\
+                   #' @details\n\
+                   #' - first\n\
+                   #' - second\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"- first - second\"))"),
+            "got: {}",
+            project_to_rd(src)
         );
     }
 

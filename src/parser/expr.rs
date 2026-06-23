@@ -457,6 +457,7 @@ fn parse_prefix(
         | TokKind::RoxygenMdEmph
         | TokKind::RoxygenMdStrong
         | TokKind::RoxygenMdCode
+        | TokKind::RoxygenMdListMarker
         | TokKind::Unknown => None,
     }
 }

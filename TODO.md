@@ -259,11 +259,19 @@
       landed:** under `@md`, `*x*`→`\emph`, `**x**`→`\strong`, and a code span →
       `\code`/`\verb` per roxygen2's `can_parse` (arity-parseability) rule; new
       `ROXYGEN_MD_EMPH`/`STRONG`/`CODE` leaves; `markdown_inline` matches its pin.
-      Still **deferred:** the settled loose-file/`DESCRIPTION` **default-ON** (only an
-      explicit per-block `@md` enables markdown today — flipping the default
-      reinterprets every block, so it needs its own re-bless pass), and markdown
-      *block* structure (lists `-`/`*`/`1.` → `\itemize`/`\enumerate`, the remaining
-      half of `markdown_list`).
+      **Block lists landed (Stage 6, 2026-06-23):** under `@md`, a `-`/`*`/`+`
+      list → `\itemize` and a `1.`/`1)` list → `\enumerate`, each item a name-only
+      `\item` ahead of its content. The lexer carves a line-start `RoxygenMdListMarker`
+      (mode-keyed, punctuation only), `emit_md_list` builds a `ROXYGEN_MD_LIST` of
+      `ROXYGEN_MD_LIST_ITEM`s (markers/newlines threaded as trivia), applying the
+      CommonMark interrupt rule (an ordered list ≠ 1 can't interrupt a paragraph —
+      its marker stays inline text); the projector adds an `Inline::MdList` arm and
+      the formatter passes the list through marker-normalized. `markdown_list`
+      matches its pin. Still **deferred:** the settled loose-file/`DESCRIPTION`
+      **default-ON** (only an explicit per-block `@md` enables markdown today —
+      flipping the default reinterprets every block, so it needs its own re-bless
+      pass), and **nested** lists (in-list indentation is dropped, so a nested list
+      projects flat — un-allowlisted backlog, never a passing-but-wrong gate entry).
     - *Hard constraints (the reason this is non-trivial).* Must preserve
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,
