@@ -96,6 +96,11 @@ enum MdInline {
 fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     let mut intro_paras: Vec<Vec<Inline>> = Vec::new();
     let mut tag_sections: Vec<(String, Vec<Inline>)> = Vec::new();
+    // `@slot` (S4) and `@field` (reference class) each aggregate every tag of a
+    // topic into one Slots/Fields section, so they are collected here as
+    // (name, definition) pairs rather than projected per-tag.
+    let mut slots: Vec<(String, Vec<Inline>)> = Vec::new();
+    let mut fields: Vec<(String, Vec<Inline>)> = Vec::new();
 
     for section in block.sections() {
         if let Some(tag) = section.tag() {
@@ -107,7 +112,17 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
                 }
                 body.extend(part);
             }
-            tag_sections.push((name, body));
+            match name.as_str() {
+                "slot" | "field" => {
+                    let arg = tag.arg().map(|t| t.text().to_string()).unwrap_or_default();
+                    if name == "slot" {
+                        slots.push((arg, body));
+                    } else {
+                        fields.push((arg, body));
+                    }
+                }
+                _ => tag_sections.push((name, body)),
+            }
         } else {
             intro_paras.extend(section_body_parts(&section));
         }
@@ -152,6 +167,40 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     for (name, body) in &tag_sections {
         project_tag_section(name, body, out);
     }
+
+    // The aggregated `@slot`/`@field` sections (roxygen2's Slots/Fields).
+    if !slots.is_empty() {
+        out.push(describe_section("Slots", &slots));
+    }
+    if !fields.is_empty() {
+        out.push(describe_section("Fields", &fields));
+    }
+}
+
+/// Project the aggregated `@slot`/`@field` tags of a topic into a single
+/// `\section{<title>}{\describe{\item{\code{name}}{def}…}}`. roxygen2 collects
+/// every `@slot` (S4) and `@field` (reference class) into one Slots/Fields
+/// section; each tag becomes a `\describe` item whose term is the verbatim
+/// `\code{name}` (the name is R-code, tagged `RCODE` like a `\code` body) and
+/// whose definition is the tag's prose.
+fn describe_section(title: &str, items: &[(String, Vec<Inline>)]) -> String {
+    let mut item_atoms: Vec<String> = Vec::new();
+    for (name, def) in items {
+        let code_atoms = rcode_atoms(name);
+        let term = if code_atoms.is_empty() {
+            "(\\code)".to_string()
+        } else {
+            format!("(\\code {})", code_atoms.join(" "))
+        };
+        let mut parts = vec![term];
+        parts.extend(serialize_inlines(def));
+        item_atoms.push(format!("(\\item {})", parts.join(" ")));
+    }
+    format!(
+        "(\\section (TEXT {}) (\\describe {}))",
+        encode_text(title),
+        item_atoms.join(" ")
+    )
 }
 
 /// Flatten paragraphs into a single inline run, with a space between each (the
@@ -175,8 +224,9 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
 }
 
 /// Map a tag to its Rd section macro and push the projected subtree. Tags that
-/// roxygen2 does not turn into a parser-owned section (`@param`/`@field` feed the
-/// excluded `\arguments`; `@export`/`@md`/`@name`/… are directives) are skipped.
+/// roxygen2 does not turn into a parser-owned section (`@param` feeds the excluded
+/// `\arguments`; `@export`/`@md`/`@name`/… are directives) are skipped. The
+/// aggregating `@slot`/`@field` tags are handled by [`describe_section`], not here.
 fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
     // roxygen2's `rd_section()` drops any section whose value is the literal
     // string "NULL" (`R/field.R`), a sentinel to suppress that field (e.g.
@@ -942,6 +992,47 @@ mod tests {
                  (\\itemize (\\item) (TEXT \"first\") (\\item) (TEXT \"second\")) \
                  (TEXT \"Numbered:\") \
                  (\\enumerate (\\item) (TEXT \"one\") (\\item) (TEXT \"two\")))"
+            ),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn slot_tags_aggregate_into_slots_section() {
+        // roxygen2 collects every `@slot` of an S4 class into a single
+        // `\section{Slots}{\describe{…}}`, each slot a `\describe` item whose term
+        // is the verbatim `\code{name}` and whose definition is the tag's prose.
+        let src = "#' Important class.\n\
+                   #'\n\
+                   #' @slot a slot a\n\
+                   #' @slot b slot b\n\
+                   setClass('test')\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\section (TEXT \"Slots\") (\\describe \
+                 (\\item (\\code (RCODE \"a\")) (TEXT \"slot a\")) \
+                 (\\item (\\code (RCODE \"b\")) (TEXT \"slot b\"))))"
+            ),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn field_tags_aggregate_into_fields_section() {
+        // The reference-class analog of `@slot`: every `@field` aggregates into a
+        // single `\section{Fields}{\describe{…}}` with the same item shape.
+        let src = "#' Important class.\n\
+                   #'\n\
+                   #' @field a field a\n\
+                   #' @field b field b\n\
+                   setRefClass('test')\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\section (TEXT \"Fields\") (\\describe \
+                 (\\item (\\code (RCODE \"a\")) (TEXT \"field a\")) \
+                 (\\item (\\code (RCODE \"b\")) (TEXT \"field b\"))))"
             ),
             "got: {out}"
         );

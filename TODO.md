@@ -209,6 +209,12 @@
         `(VERB …)` while the second (the link text) is sub-parsed like any latexlike
         body (`(\href (VERB "url") (GRP …))`); +5 projector cases. `\method`/`\section`
         extend the set when needed.
+      - *Aggregating section tags* (`@slot`, `@field`) — **done (Stage 11,
+        2026-06-23, projector-only):** every `@slot` (S4) / `@field` (reference
+        class) of a topic aggregates into one `\section{Slots|Fields}{\describe{…}}`,
+        each tag a `\item{\code{name}}{def}` (the name verbatim `RCODE`). The CST
+        already modeled the tag arg + prose; `describe_section` in `project_rd.rs`
+        synthesizes the aggregate. +2 projector cases (rx-853d2f8f, rx-d55651e1).
       - *Block macros that span many `#'` lines with nested content.*
         **`\itemize`/`\enumerate` landed (Stage 2, 2026-06-23):** a `\name{` whose
         group is unbalanced on its line opens a `ROXYGEN_RD_MACRO` node spanning

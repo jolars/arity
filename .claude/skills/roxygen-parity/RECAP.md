@@ -183,8 +183,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-`\href` per-arg verbatim, 2026-06-23 Stage 10): **91 matching (all allowlisted),
-68 divergent (backlog)** of 159 pinned cases. The
+`@slot`/`@field` aggregation, 2026-06-23 Stage 11): **93 matching (all allowlisted),
+66 divergent (backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -195,7 +195,7 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (151 cases). The 68 divergences are the worklist.
+   subset (151 cases). The 66 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 8/8 preserving, 0
    blocked. *Meaning, not layout.*
@@ -205,57 +205,54 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — Stage 10: `\href{url}{text}` per-arg verbatim
+## Latest session (2026-06-23) — Stage 11: `@slot`/`@field` aggregate to `\section{Slots/Fields}`
 
-**Parser + projector win, +5 cases.** `\href` is a two-arg structural macro, but
-with a *per-argument* encoding parse_Rd does not share with `\item`/`\tabular`: the
-first arg (the URL) is verbatim `VERB`, the second (the link text) is sub-parsed
-latexlike. Confirmed via `block-to-sections`: `\href{http://a/x y}{click \emph{here}
-now}` → `(\href (VERB "http://a/x y") (GRP (TEXT "click") (\emph (TEXT "here"))
-(TEXT "now")))`.
+**Projector-only win, +2 cases.** `@slot` (S4) and `@field` (reference class) are
+*aggregating* section tags: roxygen2 collects **every** `@slot` (resp. `@field`) of a
+topic into a single `\section{Slots}{\describe{…}}` (resp. `\section{Fields}`), each tag
+becoming `\item{\code{name}}{def}` where the name is verbatim R-code (`RCODE`, like a
+`\code` body). Confirmed via `block-to-sections`: `@slot a slot a` + `@slot b slot b` →
+`(\section (TEXT "Slots") (\describe (\item (\code (RCODE "a")) (TEXT "slot a")) (\item
+(\code (RCODE "b")) (TEXT "slot b"))))`.
 
-- **Bucket: parser gap** (the lexer consumed only the first `{…}`, leaving the link
-  text as loose `{…}.` prose). Fix in `src/parser/roxygen.rs` + `tree_builder.rs`:
-  added `href` to `TWO_ARG_RD_MACROS` (lexer pulls the second group, projector treats
-  it as structural → GRP-wraps a multi-atom arg) **and** a new
-  `is_verbatim_rd_arg(name, index)` so the tree builder's `build_rd_macro` recurse
-  decision is **per group** (tracks `arg_index`): `\href` arg 0 → `VERB`, arg 1 →
-  `build_rd_content`. The fully-verbatim macros (`\url`/`\verb`/…) are verbatim at any
-  index, so existing behavior is unchanged.
-- **Projector: zero change** — it already emits `(VERB …)` for the `ROXYGEN_RD_MACRO_VERB`
-  leaf the tree builder now produces and GRP-wraps a structural macro's multi-atom arg.
-  Faithful by construction.
-- **Formatter: a Tenet-1 improvement fell out.** A balanced `\href{…}{…}` is now one
-  atomic macro token, so the printer no longer reflows *inside* it (it had split a
-  multi-line link text mid-macro). Re-blessed the format baseline for the one affected
-  case (rx-2e54a81b); idempotent + lossless + fixed-point-preserving (harvest PASS).
-- **Projector 86→91 matching** (all allowlisted via `task roxygen-projector-seed`),
-  **68 divergent**; **0 regressions**. Beyond the two targeted href cases (rx-d791aabe,
-  rx-ac585ae8 `@md`), 3 bonus cases that were blocked only on the `\href` text leak now
-  pass: rx-2e54a81b (multi-line hrefs), rx-8f26e3d9 (`\href` + `\url`), rx-d34df056
-  (`\href{…}{\verb{…}}` — nested macro in arg 2, proving latexlike sub-parsing).
-- **Tests:** projector unit test `href_projects_verbatim_url_and_latexlike_text` (TDD:
-  failing first); parser fixture `roxygen_href` (CST + diagnostics snapshots, lossless).
-  Full `cargo test` green; clippy + fmt clean; curated fixed-point 8/8; harvest 212
-  preserving (unchanged).
+- **Bucket: projector gap.** The CST already models the tag fully (`ROXYGEN_TAG_NAME`
+  "slot", `ROXYGEN_TAG_ARG` = name, `ROXYGEN_TEXT` = prose) — no parser change. Fix in
+  `src/roxygen/project_rd.rs`: `project_block` now diverts `slot`/`field` tags into two
+  ordered `(name, def)` vecs (via `tag.arg()` for the name + the usual `tag_inlines` +
+  `section_body_parts` for the def), and a new `describe_section` helper synthesizes the
+  aggregate `\section{…}{\describe …}` after the per-tag loop. The name reuses
+  `rcode_atoms` so it's `\code{RCODE}`, byte-identical to the pin.
+- **Faithful, not compensating:** the aggregate matches roxygen2's documented S4/RC
+  roclet behavior; this is an encoding/aggregation translation of structure the CST
+  already owns, not a roclet reimplementation. Edge cases (no name, no def) guarded but
+  not in corpus → backlog if they ever appear.
+- **Projector 91→93 matching** (all allowlisted via `task roxygen-projector-seed`),
+  **66 divergent**; **0 regressions**. Closed rx-853d2f8f (`@slot`), rx-d55651e1 (`@field`).
+- **Tests:** projector unit tests `slot_tags_aggregate_into_slots_section` +
+  `field_tags_aggregate_into_fields_section` (TDD: failing first). No new parser fixture
+  (CST unchanged — existing tag-arg parsing already covered). Full `cargo test` green
+  (458 lib + all integration); clippy + fmt clean.
 
 **Next (ranked):** the largest remaining cluster is **markdown links** (≈10 cases:
 rx-270b730c/rx-95dd50a4/rx-72858140/rx-2a68ab3f/rx-4adb1f22/rx-fd84eacf/rx-375ab9f1
 `[text]`/`[text][dest]`/`[fn()]`/`[pkg::obj]` → `\link`/`\code{\link}`; rx-7743ba62/
-rx-0605d020 `[text](url)` → `\href`; rx-1b4ef7c7 `[`code`]` → `\code{\link}`) — under
-`@md` only; complex (CommonMark link parsing + roxygen2's `[x]`→`\link` resolution).
-Note rx-7743ba62/rx-0605d020 (`[text](url)` → `\href`) now have a working `\href`
-projector arm — only the markdown link *parsing* is missing. Cleaner small win:
-**@slot/@field → `\section{Slots/Fields}{\describe …}`** (rx-853d2f8f, rx-d55651e1 —
-needs modeling those tags). **Out of scope:** data-object auto-`\format`
-(rx-cbcc255c/rx-8f9c159b/rx-4d59d472/
-rx-deb9d202 — roxygen2 evaluates the object) and ```{r}``` code blocks that evaluate R
-(rx-2900ecd5/rx-a6ac1b4d — produce `#> [1] 2`). To re-triage, recreate the throwaway
-`examples/rxdiff.rs` (dump input/projected/pin per divergent harvested case, sorted by
-input length; removed at session end).
+rx-0605d020 `[text](url)` → `\href` (the `\href` projector arm now exists — only the
+markdown link *parsing* is missing); rx-1b4ef7c7 `` [`code`] `` → `\code{\link}`) —
+under `@md` only; complex (CommonMark link parsing + roxygen2's `[x]`→`\link`
+resolution). **Out of scope:** data-object auto-`\format`
+(rx-cbcc255c/rx-8f9c159b/rx-4d59d472/rx-deb9d202 — roxygen2 evaluates the object) and
+```{r}``` code blocks that evaluate R (rx-2900ecd5/rx-a6ac1b4d → `#> [1] 2`). To
+re-triage, recreate the throwaway `examples/rxdiff.rs` (dump input/projected/pin per
+divergent harvested case, sorted by input length; removed at session end).
 
 ## Earlier sessions
 
+- **2026-06-23 (Stage 10, `\href{url}{text}` per-arg verbatim):** parser + projector,
+  +5 cases. `\href` is a two-arg structural macro with a *per-argument* encoding: arg 0
+  (URL) verbatim `VERB`, arg 1 (link text) sub-parsed latexlike. New
+  `is_verbatim_rd_arg(name, index)` drives the tree builder's per-group recurse decision;
+  projector unchanged. Also stopped the formatter reflowing inside a balanced `\href`
+  (re-blessed format baseline for rx-2e54a81b). 86→91 matching.
 - **2026-06-23 (Stage 9, `\code` body → `RCODE`):** projector-only, 3 cases. parse_Rd
   tags a `\code{…}` body's plain text as verbatim R code → `(\code (RCODE …))`, not the
   whitespace-normalized `(TEXT …)`; `serialize_macro`'s `flush` keys on `head == "\\code"`
