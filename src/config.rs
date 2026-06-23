@@ -23,16 +23,21 @@ const DEFAULT_INDENT_WIDTH: u32 = 2;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
-    /// Additional gitignore-style patterns to exclude from file discovery,
-    /// resolved relative to the directory containing this `arity.toml`. Applies
-    /// to *both* `format` and `lint` (which share one file walk), so it is a
-    /// top-level key, not nested under `[format]`.
-    #[serde(default)]
+    /// Gitignore-style patterns to exclude from file discovery, resolved
+    /// relative to the directory containing this `arity.toml`. Applies to *both*
+    /// `format` and `lint` (which share one file walk), so it is a top-level
+    /// key, not nested under `[format]`.
+    ///
+    /// Setting this **replaces** the built-in [`DEFAULT_EXCLUDE`] set (it
+    /// defaults to that set); use [`extend_exclude`](Self::extend_exclude) to
+    /// add patterns without dropping the defaults.
+    #[serde(default = "default_exclude")]
     pub exclude: Vec<String>,
-    /// Whether to also apply the built-in default exclude set
-    /// ([`DEFAULT_EXCLUDE`]). Defaults to `true`.
-    #[serde(default = "default_true")]
-    pub default_exclude: bool,
+    /// Gitignore-style patterns to exclude *in addition to*
+    /// [`exclude`](Self::exclude). Unlike `exclude`, this never replaces the
+    /// defaults, so it is the right key for project-specific additions.
+    #[serde(default)]
+    pub extend_exclude: Vec<String>,
     #[serde(default)]
     pub format: FormatConfig,
     #[serde(default)]
@@ -44,8 +49,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            exclude: Vec::new(),
-            default_exclude: true,
+            exclude: default_exclude(),
+            extend_exclude: Vec::new(),
             format: FormatConfig::default(),
             lint: LintConfig::default(),
             index: IndexConfig::default(),
@@ -53,9 +58,10 @@ impl Default for Config {
     }
 }
 
-/// Built-in exclude patterns applied unless `default-exclude = false`. These are
-/// generated or vendored files that should never be reformatted or linted. The
-/// set mirrors air's defaults so the two tools agree on what to skip.
+/// Built-in exclude patterns, applied as the default value of `exclude` (and so
+/// dropped when `exclude` is set explicitly). These are generated or vendored
+/// files that should never be reformatted or linted. The set mirrors air's
+/// defaults so the two tools agree on what to skip.
 pub const DEFAULT_EXCLUDE: &[&str] = &[
     ".git/",
     "renv/",
@@ -190,6 +196,12 @@ impl Default for IndexConfig {
 
 fn default_true() -> bool {
     true
+}
+
+/// The default value of `exclude`: the built-in [`DEFAULT_EXCLUDE`] set as owned
+/// strings. Setting `exclude` in the config replaces this wholesale.
+fn default_exclude() -> Vec<String> {
+    DEFAULT_EXCLUDE.iter().map(|p| p.to_string()).collect()
 }
 
 impl From<&FormatConfig> for FormatStyle {
@@ -483,21 +495,31 @@ mod tests {
     }
 
     #[test]
-    fn exclude_defaults_are_empty_and_default_exclude_on() {
+    fn exclude_defaults_to_builtin_set_and_extend_is_empty() {
         let config = Config::default();
-        assert!(config.exclude.is_empty());
-        assert!(config.default_exclude);
+        assert_eq!(config.exclude, default_exclude());
+        assert!(config.extend_exclude.is_empty());
     }
 
     #[test]
-    fn parses_top_level_exclude() {
-        let config = parse("exclude = [\"vendor/\", \"*.gen.R\"]\ndefault-exclude = false\n")
-            .expect("parse");
+    fn parses_top_level_exclude_and_extend_exclude() {
+        let config =
+            parse("exclude = [\"vendor/\", \"*.gen.R\"]\nextend-exclude = [\"generated/\"]\n")
+                .expect("parse");
+        // `exclude` replaces the built-in defaults wholesale.
         assert_eq!(
             config.exclude,
             vec!["vendor/".to_string(), "*.gen.R".to_string()]
         );
-        assert!(!config.default_exclude);
+        assert_eq!(config.extend_exclude, vec!["generated/".to_string()]);
+    }
+
+    #[test]
+    fn extend_exclude_keeps_defaults() {
+        // Setting only `extend-exclude` leaves `exclude` at the default set.
+        let config = parse("extend-exclude = [\"generated/\"]\n").expect("parse");
+        assert_eq!(config.exclude, default_exclude());
+        assert_eq!(config.extend_exclude, vec!["generated/".to_string()]);
     }
 
     #[test]

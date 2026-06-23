@@ -92,7 +92,7 @@ pub enum Commands {
         indent_width: Option<u32>,
 
         /// Additional gitignore-style exclude patterns (repeatable or
-        /// comma-separated); augments the configured `exclude`
+        /// comma-separated); augments the configured `exclude`/`extend-exclude`
         #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
         exclude: Vec<String>,
     },
@@ -126,7 +126,7 @@ pub enum Commands {
         ignore: Vec<String>,
 
         /// Additional gitignore-style exclude patterns (repeatable or
-        /// comma-separated); augments the configured `exclude`
+        /// comma-separated); augments the configured `exclude`/`extend-exclude`
         #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
         exclude: Vec<String>,
 

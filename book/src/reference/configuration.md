@@ -23,13 +23,13 @@ On the command line:
 These govern file discovery for **both** `format` and `lint`, which share one
 file walk.
 
-  | Key               | Type             | Default | Description                                                                                                                                    |
-  | ----------------- | ---------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `exclude`         | array of strings | `[]`    | Additional [gitignore-style](https://git-scm.com/docs/gitignore) patterns to skip, resolved relative to the directory containing `arity.toml`. |
-  | `default-exclude` | boolean          | `true`  | Whether to also apply the built-in default exclude set (below).                                                                                |
+  | Key              | Type             | Default      | Description                                                                                                                                                                           |
+  | ---------------- | ---------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `exclude`        | array of strings | built-in set | [gitignore-style](https://git-scm.com/docs/gitignore) patterns to skip, resolved relative to the directory containing `arity.toml`. Setting it **replaces** the built-in set (below). |
+  | `extend-exclude` | array of strings | `[]`         | Like `exclude`, but **added to** `exclude` rather than replacing it. Use this to skip extra paths while keeping the built-in defaults.                                                |
 
-The built-in default exclude set (generated or vendored files that should not be
-reformatted or linted) is:
+The built-in default exclude set (the default value of `exclude`; generated or
+vendored files that should not be reformatted or linted) is:
 
 ```
 .git/
@@ -44,11 +44,14 @@ import-standalone-*.R
 Excludes apply only to directory walks. A file named **explicitly** on the
 command line is always processed, even if it matches an exclude pattern. The CLI
 flag `--exclude <PATTERN>` (on `format` and `lint`) adds to the configured
-`exclude` for a single run.
+`exclude`/`extend-exclude` for a single run.
 
 ```toml
-exclude = ["vendor/", "*.gen.R"]
-default-exclude = true
+# Keep the built-in defaults and also skip these:
+extend-exclude = ["vendor/", "*.gen.R"]
+
+# Or replace the built-in defaults entirely:
+# exclude = ["vendor/", "*.gen.R"]
 ```
 
 ## `[format]`

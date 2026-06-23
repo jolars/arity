@@ -365,6 +365,47 @@ fn cli_format_check_skips_default_excluded_generated_file() {
 }
 
 #[test]
+fn cli_format_check_exclude_replaces_default_set() {
+    let dir = tempdir().unwrap();
+    // Setting `exclude` drops the built-in defaults, so a misformatted,
+    // normally-default-excluded file is now discovered and reported.
+    fs::write(dir.path().join("arity.toml"), "exclude = [\"skip/\"]\n").unwrap();
+    fs::write(dir.path().join("RcppExports.R"), MISFORMATTED).unwrap();
+
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "--check", "."]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_format_check_extend_exclude_keeps_default_set() {
+    let dir = tempdir().unwrap();
+    // `extend-exclude` adds to the defaults rather than replacing them, so both
+    // the default-excluded file and the extra pattern are skipped.
+    fs::write(
+        dir.path().join("arity.toml"),
+        "extend-exclude = [\"gen/\"]\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("good.R"), "x <- 1\n").unwrap();
+    fs::write(dir.path().join("RcppExports.R"), MISFORMATTED).unwrap();
+    fs::create_dir(dir.path().join("gen")).unwrap();
+    fs::write(dir.path().join("gen").join("a.R"), MISFORMATTED).unwrap();
+
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "--check", "."]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn cli_format_check_exclude_flag_augments() {
     let dir = tempdir().unwrap();
     fs::write(dir.path().join("good.R"), "x <- 1\n").unwrap();

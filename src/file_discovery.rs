@@ -4,8 +4,6 @@ use std::path::{Path, PathBuf};
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
-use crate::config::DEFAULT_EXCLUDE;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileDiscoveryError {
     NonRFilePath { path: PathBuf },
@@ -50,19 +48,17 @@ impl ExcludeFilter {
         Self { matcher: None }
     }
 
-    /// Compile `patterns` (plus the built-in [`DEFAULT_EXCLUDE`] set when
-    /// `use_defaults`) into a matcher rooted at `root`.
-    pub fn new(root: &Path, patterns: &[String], use_defaults: bool) -> Result<Self, ExcludeError> {
-        if patterns.is_empty() && !use_defaults {
+    /// Compile `patterns` into a matcher rooted at `root`. The built-in
+    /// [`DEFAULT_EXCLUDE`](crate::config::DEFAULT_EXCLUDE) set is no longer
+    /// applied here: it lives as the default
+    /// value of the config's `exclude` key, so callers pass the fully-resolved
+    /// pattern list (`exclude` + `extend-exclude` + any CLI patterns).
+    pub fn new(root: &Path, patterns: &[String]) -> Result<Self, ExcludeError> {
+        if patterns.is_empty() {
             return Ok(Self::none());
         }
         let mut builder = GitignoreBuilder::new(root);
-        let defaults = if use_defaults { DEFAULT_EXCLUDE } else { &[] };
-        for pattern in defaults
-            .iter()
-            .map(|p| p.to_string())
-            .chain(patterns.iter().cloned())
-        {
+        for pattern in patterns.iter().cloned() {
             if let Err(err) = builder.add_line(None, &pattern) {
                 return Err(ExcludeError {
                     pattern,
@@ -166,6 +162,16 @@ mod tests {
         fs::write(path, "x <- 1\n").unwrap();
     }
 
+    /// The built-in default exclude set as owned strings. Callers now resolve
+    /// the defaults themselves (they are the default value of the config's
+    /// `exclude` key), so the tests pass them in explicitly.
+    fn defaults() -> Vec<String> {
+        crate::config::DEFAULT_EXCLUDE
+            .iter()
+            .map(|p| p.to_string())
+            .collect()
+    }
+
     #[test]
     fn excludes_default_generated_files() {
         let dir = tempdir().unwrap();
@@ -175,7 +181,7 @@ mod tests {
         touch(&root.join("R").join("import-standalone-types.R"));
         touch(&root.join("renv").join("activate.R"));
 
-        let filter = ExcludeFilter::new(root, &[], true).unwrap();
+        let filter = ExcludeFilter::new(root, &defaults()).unwrap();
         let files = collect_r_files(&[root.to_path_buf()], &filter).unwrap();
         let names: Vec<_> = files
             .iter()
@@ -185,24 +191,27 @@ mod tests {
     }
 
     #[test]
-    fn user_patterns_augment_defaults() {
+    fn extra_patterns_apply_alongside_defaults() {
         let dir = tempdir().unwrap();
         let root = dir.path();
         touch(&root.join("keep.R"));
         touch(&root.join("vendor").join("thing.R"));
 
-        let filter = ExcludeFilter::new(root, &["vendor/".to_string()], true).unwrap();
+        let mut patterns = defaults();
+        patterns.push("vendor/".to_string());
+        let filter = ExcludeFilter::new(root, &patterns).unwrap();
         let files = collect_r_files(&[root.to_path_buf()], &filter).unwrap();
         assert_eq!(files, vec![root.join("keep.R")]);
     }
 
     #[test]
-    fn default_exclude_can_be_disabled() {
+    fn empty_pattern_list_excludes_nothing() {
         let dir = tempdir().unwrap();
         let root = dir.path();
         touch(&root.join("RcppExports.R"));
 
-        let filter = ExcludeFilter::new(root, &[], false).unwrap();
+        // An empty `exclude` (with no `extend-exclude`) drops the defaults too.
+        let filter = ExcludeFilter::new(root, &[]).unwrap();
         let files = collect_r_files(&[root.to_path_buf()], &filter).unwrap();
         assert_eq!(files, vec![root.join("RcppExports.R")]);
     }
@@ -215,7 +224,7 @@ mod tests {
         touch(&rcpp);
 
         // Named directly, an excluded file is still processed.
-        let filter = ExcludeFilter::new(root, &[], true).unwrap();
+        let filter = ExcludeFilter::new(root, &defaults()).unwrap();
         let files = collect_r_files(std::slice::from_ref(&rcpp), &filter).unwrap();
         assert_eq!(files, vec![rcpp]);
     }

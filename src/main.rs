@@ -255,11 +255,11 @@ const STARTER_CONFIG: &str = "\
 # arity configuration. All keys are optional; values shown are the defaults.
 # See https://arity.cc for the full reference.
 
-# Gitignore-style patterns to skip (in addition to the built-in default set:
-# .git/, renv/, revdep/, cpp11.R, RcppExports.R, extendr-wrappers.R,
-# import-standalone-*.R). Applies to both `format` and `lint`.
-# exclude = []
-# default-exclude = true
+# Gitignore-style patterns to skip; applies to both `format` and `lint`.
+# `exclude` replaces the built-in default set (shown below); use
+# `extend-exclude` to add patterns while keeping the defaults.
+# exclude = [\".git/\", \"renv/\", \"revdep/\", \"cpp11.R\", \"RcppExports.R\", \"extendr-wrappers.R\", \"import-standalone-*.R\"]
+# extend-exclude = []
 
 [format]
 # line-width = 80
@@ -341,8 +341,9 @@ fn build_exclude_filter(
         .unwrap_or(anchor)
         .to_path_buf();
     let mut patterns = config.exclude.clone();
+    patterns.extend(config.extend_exclude.iter().cloned());
     patterns.extend(cli_excludes.iter().cloned());
-    ExcludeFilter::new(&root, &patterns, config.default_exclude).map_err(|err| {
+    ExcludeFilter::new(&root, &patterns).map_err(|err| {
         eprintln!("error: {err}");
         ExitCode::from(2)
     })
