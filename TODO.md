@@ -8,14 +8,6 @@
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
 
-- [x] `!` precedence bug (landed): `!a == b` parsed as `(!a) == b`, but real R
-  binds `!` *looser* than the comparison/arithmetic operators (just above
-  `&&`/`||`), so it is `!(a == b)` (`quote(!a == b)` has `!` at the top). Fixed
-  by giving unary `!` its own right-binding power (70, between the And tier 60/61
-  and the Relational tier 80/81) in `parse_prefix`, instead of sharing the high
-  power of unary `+`/`-`. Pinned by `tests/fixtures/parser/expr_not_precedence`.
-  `comparison-negation` now also matches the unparenthesized `!a == b`.
-
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`): rowan-style `reparse_token` → `reparse_block` →
   full-reparse fallback (cf. rust-analyzer `reparsing.rs`), splicing reused
