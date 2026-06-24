@@ -398,30 +398,34 @@ fn scan_md_list_marker(bytes: &[u8], i: usize) -> Option<usize> {
 }
 
 /// A markdown link at `bytes[i] == b'['`: a balanced `[…]`, then either `(…)`
-/// (inline link), `[…]` (reference link), or — for a bare `[…]` — an autolink
-/// whose content is a `func()`/`pkg::func()` code reference. Returns the index
-/// past the link, or `None` if it is not a recognized link shape.
+/// (inline link `[text](url)`), `[…]` (reference link `[text][ref]`), or — for a
+/// bare `[…]` — a *shortcut* link `[dest]`. Returns the index past the link, or
+/// `None` if it is not a recognized link shape.
+///
+/// roxygen2 turns **every** bracketed span into a link reference
+/// (`get_md_linkrefs` in `markdown-link.R`: any non-empty bracket-free content,
+/// not followed by `[` or `{`), so a bare `[note]`/`[see this]`/`[pkg::obj]`
+/// resolves to `\link{…}` just like `[func()]`. The followed-by-`{` exclusion
+/// keeps a pandoc-style `[x]{…}` (and a literal `\foo{…}` written under `@md`)
+/// out — see [`is_shortcut_content`].
 fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
     let after_text = scan_balanced(bytes, i, b'[', b']')?;
     match bytes.get(after_text) {
         Some(&b'(') => scan_balanced(bytes, after_text, b'(', b')'),
         Some(&b'[') => scan_balanced(bytes, after_text, b'[', b']'),
-        _ => is_autolink_content(&bytes[i + 1..after_text - 1]).then_some(after_text),
+        // A bare `[…]` followed by `{` is not a link (roxygen2's lookahead).
+        Some(&b'{') => None,
+        _ => is_shortcut_content(&bytes[i + 1..after_text - 1]).then_some(after_text),
     }
 }
 
-/// Whether `content` (the bytes inside `[…]`) is a function-autolink reference:
-/// a (possibly namespaced) identifier followed by `()`, e.g. `func()` or
-/// `pkg::func()`. Conservative so bracketed prose like `[1]`/`[note]` stays text.
-fn is_autolink_content(content: &[u8]) -> bool {
-    let Some(name) = content.strip_suffix(b"()") else {
-        return false;
-    };
-    !name.is_empty()
-        && name.iter().any(u8::is_ascii_alphanumeric)
-        && name
-            .iter()
-            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':'))
+/// Whether `content` (the bytes inside a bare `[…]`) is a markdown shortcut-link
+/// reference. roxygen2's `get_md_linkrefs` regex accepts any non-empty span that
+/// contains no brackets (`[^\]\[]+`), so spaces, digits, and `::` are all fine
+/// (`[note]`, `[see this]`, `[pkg::obj]`); only an empty or bracket-bearing span
+/// is rejected (the latter so nested `[a[b]c]` re-scans the inner `[b]`).
+fn is_shortcut_content(content: &[u8]) -> bool {
+    !content.is_empty() && !content.iter().any(|&b| matches!(b, b'[' | b']'))
 }
 
 /// An Rd macro at `bytes[i] == b'\\'`: `\name`, an optional balanced `[…]`, then
@@ -907,13 +911,34 @@ mod tests {
     }
 
     #[test]
-    fn bracketed_prose_is_not_a_link() {
-        // Citations / plain brackets are not autolinks; stay one prose run.
+    fn bracketed_prose_is_literal_without_md() {
+        // Without `@md`, brackets are literal Rd prose, not links — they stay one
+        // prose run. (Under `@md` roxygen2 treats every `[…]` as a link; see
+        // `md_shortcut_link`.)
         assert_eq!(
             prose_texts("#' see [1] and [a note]\n"),
             vec![(TokKind::RoxygenText, "see [1] and [a note]".into())]
         );
         assert_lossless("#' see [1] and [a note]\n");
+    }
+
+    #[test]
+    fn md_shortcut_link() {
+        // Under `@md`, any bracket-free `[…]` is a shortcut link — words, digits,
+        // spaces, and `::` all qualify — but a `[…]{` is excluded.
+        assert_eq!(
+            prose_texts("#' see [note], [see this], [pkg::obj] but [x]{y}\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "see ".into()),
+                (TokKind::RoxygenMdLink, "[note]".into()),
+                (TokKind::RoxygenText, ", ".into()),
+                (TokKind::RoxygenMdLink, "[see this]".into()),
+                (TokKind::RoxygenText, ", ".into()),
+                (TokKind::RoxygenMdLink, "[pkg::obj]".into()),
+                (TokKind::RoxygenText, " but [x]{y}".into()),
+            ]
+        );
+        assert_lossless("#' see [note], [see this], [pkg::obj] but [x]{y}\n#' @md\n");
     }
 
     #[test]

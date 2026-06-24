@@ -75,10 +75,11 @@ enum Inline {
     /// Projects to `\itemize`/`\enumerate` with a name-only `\item` per item ahead
     /// of its content (see [`serialize_md_list`]).
     MdList(SyntaxNode),
-    /// An inline markdown link `[text](url)` resolved under `@md` mode, carrying
-    /// the raw leaf text. Projects to `\href{url}{text}` — the URL verbatim, the
-    /// display text prose (see [`serialize_md_link`]). Only the inline form reaches
-    /// this variant; reference/shortcut links stay `Text` (still backlog).
+    /// A markdown link resolved under `@md` mode, carrying the raw leaf text. The
+    /// inline `[text](url)` form projects to `\href{url}{text}`; the reference
+    /// (`[text][ref]`) and shortcut (`[dest]`) forms resolve to an `\link`/
+    /// `\linkS4class` (optionally `\code`-wrapped) per roxygen2's `parse_link`
+    /// (see [`resolve_md_link`]).
     MdLink(String),
 }
 
@@ -351,7 +352,7 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                     atoms.push(atom);
                 }
                 run.clear();
-                atoms.push(serialize_md_link(raw));
+                atoms.push(resolve_md_link(raw).unwrap_or_default());
             }
         }
     }
@@ -610,12 +611,13 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_CODE => {
             out.push(Inline::Md(MdInline::Code, strip_code_span(t.text())));
         }
-        // An inline `[text](url)` link projects to `\href`; the reference/shortcut
-        // forms (which the lexer also tokenizes as `ROXYGEN_MD_LINK`) resolve to a
-        // link *target*, not a `\href`, so they stay literal prose for now.
+        // A markdown link leaf: the inline `[text](url)` form projects to `\href`;
+        // the reference (`[text][ref]`) and shortcut (`[dest]`) forms resolve to an
+        // `\link`/`\linkS4class` (optionally `\code`-wrapped) per roxygen2's
+        // `parse_link` (see [`resolve_md_link`]). A leaf that resolves to nothing
+        // (an unrecognized shape) falls through to literal prose.
         NodeOrToken::Token(t)
-            if t.kind() == SyntaxKind::ROXYGEN_MD_LINK
-                && parse_inline_md_link(t.text()).is_some() =>
+            if t.kind() == SyntaxKind::ROXYGEN_MD_LINK && resolve_md_link(t.text()).is_some() =>
         {
             out.push(Inline::MdLink(t.text().to_string()));
         }
@@ -664,39 +666,118 @@ fn serialize_md_inline(kind: MdInline, content: &str) -> String {
     }
 }
 
-/// Project an inline markdown link `[text](url)` into roxygen2's `\href`:
-/// `(\href (VERB <url>) (TEXT <text>))`. The URL is verbatim (no whitespace
-/// collapse), the display text is whitespace-normalized prose. Only the inline
-/// form reaches here ([`parse_inline_md_link`] gates `push_inline`); an empty
-/// display text contributes no atom.
-fn serialize_md_link(raw: &str) -> String {
-    let (text, url) = parse_inline_md_link(raw).unwrap_or_default();
-    let mut atoms = vec![format!("(VERB {})", encode_text(&url))];
-    if let Some(atom) = text_atom(&text) {
+/// Resolve a `ROXYGEN_MD_LINK` leaf into its Rd atom, mirroring roxygen2's
+/// `parse_link` (`markdown-link.R`). Three forms:
+///
+/// - **inline** `[text](url)` → `(\href (VERB url) (TEXT text))`;
+/// - **reference** `[text][ref]` → `(\link (TEXT text))` — the has-link-text
+///   branch (always `\link`, `\code`-wrapped iff the display text is a code span);
+/// - **shortcut** `[dest]` → `(\link …)`/`(\linkS4class …)`, `\code`-wrapped when
+///   `dest` is a code span or ends in `()`.
+///
+/// The `\link[…]`/`\linkS4class[…]` *topic option* is dropped by roxygen2's
+/// section serializer, so only the macro head, the display text, and the
+/// `\code`-wrap survive. Package resolution (`resolve_link_package`) is inherently
+/// non-static, so the projector models exactly what roxygen2 does with no
+/// resolvable package context (the corpus's `current_package == ""`): a package
+/// prefix in the display text comes only from an explicit `pkg::` in the link.
+///
+/// Returns `None` for an unrecognized shape (the leaf then stays literal prose).
+fn resolve_md_link(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let text_end = scan_delimited(bytes, 0, b'[', b']')?;
+    let text = &raw[1..text_end - 1];
+    match bytes.get(text_end) {
+        Some(&b'(') => {
+            let url_end = scan_delimited(bytes, text_end, b'(', b')')?;
+            (url_end == bytes.len()).then(|| href_atom(text, &raw[text_end + 1..url_end - 1]))
+        }
+        Some(&b'[') => {
+            let ref_end = scan_delimited(bytes, text_end, b'[', b']')?;
+            (ref_end == bytes.len()).then(|| ref_link_atom(text, &raw[text_end + 1..ref_end - 1]))
+        }
+        // A bare `[dest]` is the whole leaf (the lexer carves nothing after it).
+        None => Some(shortcut_link_atom(text)),
+        _ => None,
+    }
+}
+
+/// An inline `[text](url)` link → `(\href (VERB url) (TEXT text))`: the URL is
+/// verbatim (no whitespace collapse), the display text whitespace-normalized
+/// prose (an empty display contributes no atom).
+fn href_atom(text: &str, url: &str) -> String {
+    let mut atoms = vec![format!("(VERB {})", encode_text(url))];
+    if let Some(atom) = text_atom(text) {
         atoms.push(atom);
     }
     format!("(\\href {})", atoms.join(" "))
 }
 
-/// Split a `ROXYGEN_MD_LINK` leaf of inline form `[text](url)` into its display
-/// text and URL. Returns `None` for the reference (`[text][ref]`) and shortcut
-/// (`[name]`) forms — also tokenized as `ROXYGEN_MD_LINK` — which roxygen2
-/// resolves to a link *target* rather than a `\href`.
-fn parse_inline_md_link(raw: &str) -> Option<(String, String)> {
-    let bytes = raw.as_bytes();
-    let text_end = scan_delimited(bytes, 0, b'[', b']')?;
-    if bytes.get(text_end) != Some(&b'(') {
-        return None;
+/// A reference link `[text][ref]` (explicit link text) → always `\link` over the
+/// display text, `\code`-wrapped iff the display is a single code span. When the
+/// display text equals the destination, roxygen2 treats the text as
+/// auto-generated and falls back to the shortcut path.
+fn ref_link_atom(text: &str, dest: &str) -> String {
+    let (display, is_code) = unwrap_code_span(text);
+    if norm_ws(display) == norm_ws(dest) {
+        return shortcut_link_atom(dest);
     }
-    let url_end = scan_delimited(bytes, text_end, b'(', b')')?;
-    // The whole leaf must be exactly the link; a trailing remainder would be a
-    // different shape the lexer would not have tokenized as one link.
-    (url_end == bytes.len()).then(|| {
-        (
-            raw[1..text_end - 1].to_string(),
-            raw[text_end + 1..url_end - 1].to_string(),
-        )
-    })
+    code_wrap(
+        format!("(\\link {})", text_atom(display).unwrap_or_default()),
+        is_code,
+    )
+}
+
+/// A shortcut link `[dest]` (no explicit link text) → roxygen2's `!has_link_text`
+/// branch: `\linkS4class` for an `-class` destination without a package, else
+/// `\link`; `\code`-wrapped when the destination is a code span or a `()` call.
+/// The display text is `pkg::` + the object (with any `-class` suffix dropped).
+fn shortcut_link_atom(dest: &str) -> String {
+    let (dest, code_span) = unwrap_code_span(dest);
+    let is_code = code_span || dest.ends_with("()");
+    let (pkg, fun) = match dest.rsplit_once("::") {
+        Some((p, f)) => (Some(p), f),
+        None => (None, dest),
+    };
+    let s4 = dest.ends_with("-class");
+    let body = if s4 {
+        fun.strip_suffix("-class").unwrap_or(fun)
+    } else {
+        fun
+    };
+    let head = if s4 && pkg.is_none() {
+        "\\linkS4class"
+    } else {
+        "\\link"
+    };
+    let display = match pkg {
+        Some(p) => format!("{p}::{body}"),
+        None => body.to_string(),
+    };
+    code_wrap(
+        format!("({head} {})", text_atom(&display).unwrap_or_default()),
+        is_code,
+    )
+}
+
+/// Wrap an atom in `(\code …)` when `is_code`, else return it unchanged.
+fn code_wrap(inner: String, is_code: bool) -> String {
+    if is_code {
+        format!("(\\code {inner})")
+    } else {
+        inner
+    }
+}
+
+/// If `s` is a single-backtick code span (`` `x` ``), return its inner text and
+/// `true`; otherwise return `s` unchanged and `false`.
+fn unwrap_code_span(s: &str) -> (&str, bool) {
+    let b = s.as_bytes();
+    if b.len() >= 2 && b[0] == b'`' && b[b.len() - 1] == b'`' {
+        (&s[1..s.len() - 1], true)
+    } else {
+        (s, false)
+    }
 }
 
 /// Index just past the balanced `close` byte matching the `open` at `start`, or

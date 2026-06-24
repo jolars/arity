@@ -114,7 +114,20 @@ reads this first.
   blocks where roxygen2 keeps the markup literal. The `[`-link recognizer slipped this and
   was fixed 2026-06-24c (it carved `ROXYGEN_MD_LINK` even with markdown off); audit any
   *new* inline recognizer the same way. **`@md` inline link `[text](url)` landed (Stage 12):**
-  → `\href` via projector `Inline::MdLink` (`parse_inline_md_link`/`serialize_md_link`).
+  → `\href` via projector `Inline::MdLink`.
+- **Under `@md`, roxygen2 treats *every* bracket-free `[…]` as a link (since Stage 13,
+  2026-06-24d).** `get_md_linkrefs` (`markdown-link.R`) injects a reference definition for
+  any `[content]` (no nested brackets) **not followed by `[` or `{`**, so `[note]`/`[1]`/
+  `[see this]` all resolve to `\link`s — the lexer's `is_shortcut_content` mirrors this
+  (the `Some(&b'{') => None` arm is the followed-by-`{` exclusion). The projector's
+  `resolve_md_link` ports `parse_link`'s three forms (inline→`\href`, reference→`\link`,
+  shortcut→`\link`/`\linkS4class`/`\code{\link}`). **Two static-faithfulness facts:** (1) the
+  section serializer **drops the `\link[=dest]`/`[pkg:file]` topic option**, so the projector
+  only emits macro head + display text + `\code`-wrap (it never resolves a topic *file*);
+  (2) `resolve_link_package` is non-static, so a `pkg::` prefix in the display comes **only**
+  from an explicit `::` — faithful to roxygen2 run with `current_package == ""` (the corpus
+  context). A real package would gain a `pkg::` display prefix via topic resolution; that is
+  correctly **not** modeled (no installed-package introspection in a static projector).
 - **A new roxygen line-body TokKind must be added to *every* line-body matcher** or tag/prose
   lines silently truncate at the unknown token (this bit Stage 5: a `@param` line's description
   vanished, its continuations became phantom intro paragraphs → extra `\title`/`\description`).
@@ -190,8 +203,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-`@md` inline links, 2026-06-24c Stage 12): **95 matching (all allowlisted),
-64 divergent (backlog)** of 159 pinned cases. The
+`@md` reference + shortcut links, 2026-06-24d Stage 13): **105 matching (all
+allowlisted), 54 divergent (backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -212,56 +225,59 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24c) — `@md` inline links `[text](url)` → `\href`
+## Latest session (2026-06-24d) — `@md` reference + shortcut links → `\link`
 
-**Construct:** inline markdown links under `@md`. roxygen2 translates `[text](url)`
-→ `\href{url}{text}` = `(\href (VERB url) (TEXT text))` — URL verbatim, display text
-prose. Closed **rx-7743ba62** (`[some thing](http://…)`) and **rx-0605d020**
-(`[link % text](https://…/link%20target)` — `%` in both text and URL survive).
+**Construct:** the rest of the markdown-link cluster — *reference* `[text][dest]`
+and *shortcut* `[obj]`/`[func()]`/`` [`code`] ``/`[name-class]`/`[pkg::obj]` links
+under `@md`. roxygen2 resolves these to a link *target* (`\link`/`\linkS4class`,
+optionally `\code`-wrapped), not a `\href`. Closed **10 cases** (the 8 ranked +
+rx-3a7d3931 reference-with-pkg, rx-820d120d code-span-display reference cluster).
 
-**Two-bucket fix:**
-- **Parser gap (lexer mode-gating bug):** the `b'['` link recognizer at
-  `roxygen/lex.rs:244` was **not** `if md`-gated (unlike `*`/`_`/`` ` ``/list-markers),
-  so `[x](y)` was carved as `ROXYGEN_MD_LINK` even in non-`@md` blocks — where roxygen2
-  keeps the brackets as **literal Rd prose**. That made `ROXYGEN_MD_LINK`'s existence
-  *not* imply `@md`, breaking the "token's existence implies @md" invariant the rest of
-  the md grammar relies on, and would have mis-projected non-md bracket text as `\href`.
-  Gated it (`b'[' if md`). Fallout (all correctness-aligned): added `#' @md` to the 3
-  mislabeled lexer tests + 3 fixtures (`roxygen_md_link`/`md_autolink`/`mixed_inline` —
-  they always *intended* md), added a guard test `link_shape_is_literal_text_without_md`,
-  re-accepted the 3 CST snapshots (mixed_inline's `` `x` `` also correctly flips
-  `ROXYGEN_CODE`→`ROXYGEN_MD_CODE` under md).
-- **Projector gap:** new `Inline::MdLink(String)` variant + `push_inline` arm gated on
-  `parse_inline_md_link(text).is_some()` (so only the *inline* `[text](url)` form is
-  intercepted; reference/shortcut links stay `Inline::Text`, unchanged backlog).
-  `serialize_md_link` emits `(\href (VERB url) (TEXT text))`; `scan_delimited` is a local
-  ASCII balanced-bracket scanner (projector stays self-contained, no parser-internal dep).
+**Root cause = roxygen2 treats *every* bracket as a link.** `get_md_linkrefs`
+(`markdown-link.R`) injects a link-reference definition for **any** bracket-free
+`[…]` not followed by `[` or `{`, so `[note]`/`[see this]`/`[1]` all become
+`\link`s. Two-bucket fix:
+- **Parser gap (lexer too narrow):** `is_autolink_content` only accepted `func()`.
+  Replaced with `is_shortcut_content` (any non-empty, bracket-free span) + a
+  `Some(&b'{') => None` arm for the followed-by-`{` exclusion. Now a bare
+  `[anything]` carves as `ROXYGEN_MD_LINK` under `@md`.
+- **Projector gap:** `parse_inline_md_link`/`serialize_md_link` (inline-only)
+  became `resolve_md_link` — a faithful port of `parse_link`. Dispatches the three
+  forms; `shortcut_link_atom` does the `!has_link_text` branch (is_code from `()`
+  or a code span, `s4` from `-class`, `pkg` from explicit `::`, display = `pkg::` +
+  obj with `-class` stripped, head = `\linkS4class` iff s4 && no-pkg else `\link`),
+  `ref_link_atom` does the has-link-text branch (always `\link`, `\code`-wrap iff
+  display is a code span).
 
-**Trap surfaced (new):** a markdown *inline* recognizer in the lexer must be `if md`-gated
-just like emphasis/code, or its leaf kind stops implying `@md` and the projector (which
-keys structure off leaf kind, never re-deriving mode) mis-fires in non-md blocks. The link
-recognizer was the one that slipped. Check any *future* inline md recognizer the same way.
+**Key faithfulness call:** the section serializer **drops the `\link[=dest]`/
+`[pkg:file]` topic option**, so the projector only needs the macro head, the
+display text, and the `\code`-wrap — it never resolves a topic *file*. And
+`resolve_link_package` is non-static (needs installed pkgs), so a `pkg::` prefix
+in the display comes **only** from an explicit `::`; this matches roxygen2 run with
+`current_package == ""` (the corpus's context). Recorded as a trap.
 
-**Result:** projector **93→95 matching** (all allowlisted), 66→64 divergent, 0
-regressions. `cargo test` green (459 lib + integration), clippy + fmt clean, format
-baseline **untouched**, curated fixed-point 8/8, harvested fixed-point 212/4 **unchanged**.
-Files: `src/roxygen/project_rd.rs` (projector arm), `src/parser/roxygen/lex.rs` (gate +
-tests), 3 fixtures + 3 snapshots, allowlist (+2), TODO.
+**Result:** projector **95→105 matching** (all allowlisted via re-seed), 64→54
+divergent, 0 regressions. `cargo test` 460 green, clippy + fmt clean, **format
+baseline untouched** (no re-bless), curated fixed-point 8/8, harvested 212/4
+unchanged. Files: `src/parser/roxygen/lex.rs` (lexer widen + 1 test, 1 renamed),
+`src/roxygen/project_rd.rs` (resolver), fixture `roxygen_md_shortcut_link` (+2
+snapshots), allowlist (+10), TODO.
 
-**Next (ranked):** the rest of the markdown-link cluster — the *reference/shortcut* forms,
-which need roxygen2's **topic resolution** (a separate, hairier root cause than inline
-links): `[text][dest]`→`\link{text}` (rx-270b730c/rx-95dd50a4/rx-72858140);
-`[name]`/`[func()]`→`\link{name}`/`\code{\link{…}}` (rx-2a68ab3f/rx-4adb1f22);
-`[name-class]`→`\linkS4class{name}` and `[pkg::name-class]`→`\link{pkg::name}` (`-class`
-stripped from display; rx-fd84eacf/rx-375ab9f1); `` [`code`] ``→`\code{\link}`
-(rx-1b4ef7c7). **Note the resolution heuristics** (probed this session): a `()` suffix
-wraps in `\code` and is stripped from the link *target* but kept in display; `-class`
-without a package → `\linkS4class` (display drops `-class`), with a package → plain
-`\link`; the serializer **drops the `\link[=dest]`/`[pkg:obj]` option**, so the projector
-mainly needs the right macro head + display text. The lexer must first **widen
-`scan_md_link`** to recognize plain shortcut `[name]`/`[name-class]`/`` [`code`] `` (today
-`is_autolink_content` only accepts `func()`). **Out of scope:** data-object auto-`\format`
-(rx-cbcc255c/…, roxygen2 evaluates the object) and ```{r}``` eval blocks (rx-2900ecd5/…).
+**Next (ranked):** down to 54 divergent. The remaining link-ish/markdown gaps that
+need roxygen2 *evaluation* are **out of scope** (data-object auto-`\format`
+rx-cbcc255c/…, ```{r}``` eval blocks rx-2900ecd5/…). Good in-scope candidates:
+re-scan the 54-case backlog with `ROXYGEN_PROJECTOR.md` + `block-to-sections` to
+find the next single-root-cause cluster (likely **markdown tables** — the GFM
+`table` extension is in the settled grammar but not yet parsed — or **nested
+markdown lists**, currently projected flat). Probe a few backlog stems first.
+
+## Earlier sessions
+
+- **2026-06-24c (`@md` inline links `[text](url)` → `\href`):** projector +2
+  (rx-7743ba62/rx-0605d020). Fixed a lexer mode-gating bug (the `[`-recognizer fired
+  even without `@md`, mislabeling literal Rd brackets); gated it `b'[' if md`. New
+  `Inline::MdLink` arm; `serialize_md_link` → `(\href (VERB url) (TEXT text))`.
+  93→95 matching. **Trap:** every md *inline* recognizer must be `if md`-gated.
 
 ## Earlier sessions
 

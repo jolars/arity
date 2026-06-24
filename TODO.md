@@ -284,12 +284,18 @@
       text))`, URL verbatim). The lexer's `[`-recognizer is now **mode-gated** (it
       was firing in non-`@md` mode too, mislabeling literal Rd brackets as
       `ROXYGEN_MD_LINK` — fixed to match `*`/`` ` ``/list-markers, so a link's
-      existence implies `@md`); the projector adds an `Inline::MdLink` arm
-      (`parse_inline_md_link` + `serialize_md_link`). rx-7743ba62/rx-0605d020 match
-      their pins. Still **backlog:** the *reference* (`[text][dest]`) and *shortcut*
-      (`[name]`/`[func()]`/`[name-class]`/`` [`code`] ``) forms, which resolve to a
-      `\link`/`\linkS4class`/`\code{\link}` *target* (roxygen2's topic resolution,
-      not a `\href`). Still **deferred:** the settled loose-file/`DESCRIPTION`
+      existence implies `@md`); the projector adds an `Inline::MdLink` arm.
+      rx-7743ba62/rx-0605d020 match their pins. **Reference + shortcut links landed
+      (Stage 13, 2026-06-24d):** the lexer now carves *any* bracket-free `[…]` not
+      followed by `{` (mirroring roxygen2's `get_md_linkrefs` regex), and the
+      projector's `resolve_md_link` replicates `parse_link` (`markdown-link.R`):
+      shortcut `[obj]`→`\link{obj}`, `[func()]`/`` [`code`] ``→`\code{\link{…}}`,
+      `[name-class]`→`\linkS4class{name}` (`\link{pkg::name}` with a package),
+      reference `[text][dest]`→`\link{text}` (the dropped `\link[…]` topic option
+      means only head + display + `\code`-wrap survive). +10 projector cases.
+      Static-context faithful: package resolution is non-static, so a `pkg::` prefix
+      comes only from an explicit `::` (the corpus's `current_package == ""`). Still
+      **deferred:** the settled loose-file/`DESCRIPTION`
       **default-ON** (only an explicit per-block `@md` enables markdown today —
       flipping the default reinterprets every block, so it needs its own re-bless
       pass), and **nested** lists (in-list indentation is dropped, so a nested list

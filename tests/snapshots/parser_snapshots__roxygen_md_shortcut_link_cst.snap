@@ -1,0 +1,46 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..127
+  ROXYGEN_BLOCK@0..107
+    ROXYGEN_SECTION@0..101
+      ROXYGEN_PARAGRAPH@0..101
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..7 "See "
+        ROXYGEN_MD_LINK@7..15 "[object]"
+        ROXYGEN_TEXT@15..17 ", "
+        ROXYGEN_MD_LINK@17..25 "[func()]"
+        ROXYGEN_TEXT@25..31 ", and "
+        ROXYGEN_MD_LINK@31..42 "[obj-class]"
+        ROXYGEN_TEXT@42..48 " here."
+        NEWLINE@48..49 "\n"
+        ROXYGEN_MARKER@49..51 "#'"
+        WHITESPACE@51..52 " "
+        ROXYGEN_TEXT@52..57 "Also "
+        ROXYGEN_MD_LINK@57..69 "[text][dest]"
+        ROXYGEN_TEXT@69..74 " and "
+        ROXYGEN_MD_LINK@74..99 "[`code`][stats::filte ..."
+        ROXYGEN_TEXT@99..100 "."
+        NEWLINE@100..101 "\n"
+    ROXYGEN_SECTION@101..107
+      ROXYGEN_MARKER@101..103 "#'"
+      WHITESPACE@103..104 " "
+      ROXYGEN_TAG@104..107
+        ROXYGEN_AT@104..105 "@"
+        ROXYGEN_TAG_NAME@105..107 "md"
+  NEWLINE@107..108 "\n"
+  ASSIGNMENT_EXPR@108..126
+    IDENT@108..109 "f"
+    WHITESPACE@109..110 " "
+    ASSIGN_LEFT@110..112 "<-"
+    WHITESPACE@112..113 " "
+    FUNCTION_EXPR@113..126
+      FUNCTION_KW@113..121 "function"
+      LPAREN@121..122 "("
+      IDENT@122..123 "x"
+      RPAREN@123..124 ")"
+      WHITESPACE@124..125 " "
+      IDENT@125..126 "x"
+  NEWLINE@126..127 "\n"
