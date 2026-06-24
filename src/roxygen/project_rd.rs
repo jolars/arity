@@ -313,6 +313,19 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
         return;
     }
     match name {
+        // `@rawRd` injects its content verbatim into the Rd file at top level;
+        // roxygen2 does not wrap it in a section macro. parse_Rd then splits it
+        // into a sequence of top-level Rd nodes, each a section in its own right.
+        // arity's roxygen lexer already recognizes inline Rd macros in prose, so
+        // serializing the body yields the same atom granularity (a prose run, a
+        // `\emph`, …); each atom is pushed as a bare top-level section. (The
+        // content is raw Rd, never markdown — under `@md`, markdown leaves in the
+        // body would mis-project; that is a parser-side gap, deferred.)
+        "rawRd" => {
+            for atom in serialize_inlines(body) {
+                out.push(atom);
+            }
+        }
         // Direct prose → section-macro mappings.
         "description" => push_section(out, "description", body),
         "details" => push_section(out, "details", body),

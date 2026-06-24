@@ -18,6 +18,7 @@ markdown_inline
 markdown_list
 markdown_url
 param_prose
+rawrd
 rd_macros
 rx-0273da0d
 rx-031cfdcb
@@ -57,6 +58,7 @@ rx-38ac9ffb
 rx-3950ab1d
 rx-3a7d3931
 rx-3c528f59
+rx-3d22b1a9
 rx-40503905
 rx-418f7793
 rx-41db756e

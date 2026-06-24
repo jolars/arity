@@ -241,7 +241,11 @@ block_sections <- function(src) {
     secs <- unlist(lapply(names(topics), function(nm) {
       topic_sections(format(topics[[nm]]))
     }))
-    paste(sort(secs), collapse = "\n")
+    # `method = "radix"` sorts in C-locale byte order, matching the Rust
+    # projector's byte-order sort and making the pins locale-independent. (Most
+    # sections head with `(\<macro>`, so this only matters once a section heads
+    # with something else — e.g. a bare top-level `(TEXT …)` from `@rawRd`.)
+    paste(sort(secs, method = "radix"), collapse = "\n")
   }, error = function(e) NULL)
 }
 
@@ -277,7 +281,11 @@ projector_eligible <- function(src) {
       NULL
     } else {
       secs <- topic_sections(format(topics[[1L]]))
-      paste(sort(secs), collapse = "\n")
+      # `method = "radix"` sorts in C-locale byte order, matching the Rust
+    # projector's byte-order sort and making the pins locale-independent. (Most
+    # sections head with `(\<macro>`, so this only matters once a section heads
+    # with something else — e.g. a bare top-level `(TEXT …)` from `@rawRd`.)
+    paste(sort(secs, method = "radix"), collapse = "\n")
     }
   }, error = function(e) NULL)
 }

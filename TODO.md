@@ -390,8 +390,12 @@
       `sourceCode` class), then **URL autolinks + empty-dest links** (`<url>`/`[url]()`
       → `\url`), then **inline raw HTML** (`<img …>`/`</span>` → `\if{html}{\out{<tag>}}`,
       `mdxml_html_inline`), then **block raw HTML** (`<p>…</p>` line-start, CommonMark
-      start condition 6 → one `\if{html}{\out{<verb-per-line>}}`, `mdxml_html_block`)
-      — closed). Now **137 matching / 25 divergent** of 162 pinned.
+      start condition 6 → one `\if{html}{\out{<verb-per-line>}}`, `mdxml_html_block`),
+      then **`@rawRd`** (content injected verbatim as bare top-level Rd nodes, no
+      wrapping section macro; also switched the driver's section sort to
+      `method = "radix"` so pins are byte-order/locale-independent, matching the
+      Rust projector — the first non-`(\…)`-headed section exposed the gap)
+      — closed). Now **139 matching / 24 divergent** of 163 pinned.
       The remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.

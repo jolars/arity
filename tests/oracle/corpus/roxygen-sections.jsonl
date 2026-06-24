@@ -42,7 +42,7 @@
 {"slug":"rx-3950ab1d","sections":"(\\description (TEXT \"Title\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-3a7d3931","sections":"(\\description (TEXT \"In another package:\") (\\link (TEXT \"and this one\")) (TEXT \".\") (\\link (TEXT \"name words\")) (TEXT \".\"))\n(\\title (TEXT \"Title.\"))"}
 {"slug":"rx-3c528f59","sections":"(\\description (TEXT \"Description, see\") (\\code (\\link (TEXT \"code link text\"))) (TEXT \". And also\") (\\href (VERB \"https://external.com\") (\\verb (VERB \"code as well\"))) (TEXT \".\"))\n(\\title (TEXT \"Title\"))"}
-{"slug":"rx-3d22b1a9","sections":"(\\description (TEXT \"a\"))\n(\\title (TEXT \"a\"))\n(TEXT \"#this is a comment\")"}
+{"slug":"rx-3d22b1a9","sections":"(TEXT \"#this is a comment\")\n(\\description (TEXT \"a\"))\n(\\title (TEXT \"a\"))"}
 {"slug":"rx-40503905","sections":"(\\description (TEXT \"Description with some\") (\\strong (TEXT \"bold\")) (TEXT \"included.\") (\\strong (TEXT \"More bold.\")))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-418f7793","sections":"(\\description (TEXT \"Description with some\") (\\emph (TEXT \"emphasis\")) (TEXT \"included.\") (\\emph (TEXT \"More emph.\")))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-41db756e","sections":"(\\description (TEXT \"Description with some\") (\\code (RCODE \"code\")) (TEXT \"included.\") (\\verb (VERB \"More code.\")))\n(\\title (TEXT \"Title\"))"}

@@ -1,0 +1,3 @@
+(TEXT "# A literal hash, not an Rd comment.")
+(\description (TEXT "A title"))
+(\title (TEXT "A title"))

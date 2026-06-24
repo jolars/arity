@@ -135,6 +135,20 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   slot. `section_body_parts` groups by paragraph (a block macro abutting prose = same para; a
   section-level blank-`#'` `ROXYGEN_MARKER` = break). Title-as-description fallback when no
   description exists. Don't revert to per-node parts (folds a trailing list into the wrong section).
+- **Section pins sort in byte order, not locale collation.** The driver's
+  `block_sections`/`projector_eligible` use `sort(secs, method = "radix")` (C-locale
+  byte order) to match the Rust projector's `sections.sort()`. Latent until a section
+  heads with something other than `(\…)` — a bare top-level `(TEXT …)`/`(GRP …)` from
+  `@rawRd` sorts before `(\…)` by byte (`T`=0x54 < `\`=0x5C) but *after* under most
+  UTF-8 locales. Any new bare-headed section ⇒ confirm the pin is byte-sorted.
+- **`@rawRd` is bare top-level Rd, not a wrapped section.** roxygen2 injects the
+  content verbatim; parse_Rd splits it into top-level nodes (each a "section").
+  Projector arm: `serialize_inlines(body)` pushed atom-by-atom, no `(\macro …)` wrap.
+  arity already lexes inline Rd macros in prose, so valid top-level Rd projects
+  faithfully; invalid top-level Rd (an inline `\emph` at top level) makes parse_Rd
+  error-recover (flatten to TEXT) while arity keeps the macro → divergence (don't
+  curate such a case). Under `@md` the body would carry md leaves (rawRd is never
+  markdown) → mis-projects; parser-side gap, deferred.
 - **A prose section whose trimmed value is literal `"NULL"` is suppressed** (`rd_section()`
   sentinel; `NULL_SUPPRESSIBLE`). `@section` (title+body pair) is NOT suppressed; a suppressed
   `@description NULL` re-fires the title fallback. Data-object auto-`\format` (roxygen2 *evaluates*
@@ -167,8 +181,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-block raw HTML → `\if{html}{\out}`, 2026-06-24o): **137 matching (all
-allowlisted), 25 divergent (backlog)** of 162 pinned cases. The
+`@rawRd` → bare top-level Rd, 2026-06-24p): **139 matching (all
+allowlisted), 24 divergent (backlog)** of 163 pinned cases. The
 divergences are now almost all roxygen2-*evaluation* gaps (out of scope); the
 in-scope remainder is `@format %`. Tasks:
 `task roxygen-projector` (the gate),
@@ -180,9 +194,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (162 pinned cases). The 25 divergences are the worklist.
+   subset (163 pinned cases). The 24 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 11/11 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 12/12 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -190,53 +204,42 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24o) — block raw HTML `<p>…</p>` → `\if{html}{\out{…}}`
+## Latest session (2026-06-24p) — `@rawRd` → bare top-level Rd nodes
 
-**Construct:** under `@md`, a line whose content starts with a CommonMark
-**HTML-block start condition 6** (a block-level tag like `<p>`) opens an HTML block
-that runs to the next blank line, swallowing following lines (even plain prose).
-roxygen2's `mdxml_html_block` renders the whole block as ONE
-`(\if (TEXT "html") (\out (VERB "\n") (VERB "<p>…</p>\n") …))` — a leading `\n` VERB
-then one VERB per line (parse_Rd splits the verbatim `\out` body at newlines). Closed
-**1 harvested case** (rx-daf9322f) + new curated `markdown_html_block`.
+**Construct:** `@rawRd <content>` injects its content verbatim into the Rd file at
+top level (no wrapping section macro); parse_Rd then splits it into a sequence of
+top-level Rd nodes, each a "section". arity already lexes inline Rd macros in prose,
+so the body serializes at the same atom granularity. Closed **1 harvested case**
+(rx-3d22b1a9) + new curated `rawrd`.
 
-**Bucket: parser gap (+ faithful projector arm).** New `ROXYGEN_MD_HTML_BLOCK`
-**node** (SyntaxKind 100, the new last variant) — the block analog of
-`ROXYGEN_MD_CODE_BLOCK`, **not** a leaf. The opener token is new TokKind
-`RoxygenMdHtmlBlock` carving the **whole line** at line-start under `@md`
-(`scan_md_html_block` in `lex.rs`, condition 6 only, against a `BLOCK_TAGS` set),
-mapped to a `ROXYGEN_TEXT` leaf in the tree builder (verbatim content; the node is
-built by the grouping phase). `emit_md_html_block` (`build.rs`) gathers the opener +
-following **Prose** lines until a blank line / tag / non-roxygen (mirrors
-`emit_md_code_block` but the terminator is a blank line, not a closing fence);
-`group.rs` dispatches it as a direct section child **before** the fence check.
-Projector: `section_body_parts` collects the node → `Inline::MdHtmlBlock` →
-`serialize_md_html_block` (reconstruct lines via `strip_marker`, prepend `\n`, split
-into `verb_atoms` — the VERB analog of `rcode_atoms`). Wired the new TokKind through
-`roxygen_role` (single source) + `expr.rs` + `tree_builder.rs`; node kind bumped
-`COUNT`/`kind_from_raw`; formatter atomic passthrough (`emit_md_html_block` in
-`formatter/roxygen.rs`, marker-normalized).
+**Bucket: projector gap (the parser already models `@rawRd` as a tag).** New arm in
+`project_tag_section`: `"rawRd" => for atom in serialize_inlines(body) { out.push(atom) }`
+— each serialized atom pushed as a *bare* top-level section, never `(\macro …)`-wrapped
+(the only `@rawRd`-specific difference from a prose tag). Sorting then exposed a latent
+**locale-collation** bug: the pin's `(TEXT "#…")` (from `@rawRd`) is the first section
+*not* headed by `(\…)`, and R's locale `sort()` placed it after the `(\…)` sections
+while the Rust projector's byte-order `.sort()` placed it first. Fixed by switching the
+driver's two `sort(secs)` calls (`block_sections`, `projector_eligible`) to
+`method = "radix"` (C-locale byte order) — now both sides are byte-order, pins are
+locale-independent, and **only rx-3d22b1a9 re-minted** (every other pin heads with
+`(\<lowercase>`, identical under either order).
 
-**Tenet-1 note:** the block is now atomic — the old baseline reflowed the two
-`<p>` lines onto **one** line (inline-HTML prose tiling); the new output keeps each
-HTML line verbatim on its own line. Re-blessed the one affected format-baseline case
-(rx-daf9322f) — same justification as the inline raw-HTML re-bless.
+**Faithfulness note:** valid top-level Rd projects faithfully; *invalid* top-level Rd
+(an inline `\emph` at top level) makes parse_Rd error-recover (flatten to TEXT) while
+arity keeps the macro → divergence, so the curated case uses plain text (`# A literal
+hash, not an Rd comment.` — documenting that `#` is literal in Rd, not a comment). The
+`@md`-rawRd case (md leaves in a raw-Rd body) is a deferred parser-side gap.
 
-**Result:** projector **135→137 matching** (137 allowlisted), 26→25 divergent, 0
-regressions, 162 pinned (+1 curated `markdown_html_block`). `cargo test` fully green
-(incl. parser snapshots + re-blessed format-stability baseline), clippy + fmt clean,
-curated fixed-point **11/11** preserving. Files: `src/syntax.rs`,
-`src/parser/lexer.rs`, `src/parser/tree_builder.rs`, `src/parser/expr.rs`,
-`src/parser/roxygen/lex.rs` (`scan_md_html_block` + `is_html_block_tag` + 3 unit
-tests, prose_texts filter), `src/parser/roxygen/build.rs`
-(`is_md_html_block_start`/`emit_md_html_block`), `src/parser/roxygen/group.rs`
-(dispatch), `src/roxygen/project_rd.rs` (`Inline::MdHtmlBlock` +
-`serialize_md_html_block`/`verb_atoms`), `src/formatter/roxygen.rs`, new fixture
-`tests/fixtures/parser/roxygen_md_html_block/` (+ snapshots), curated
-`markdown_html_block.{R,rdtree}`, re-blessed `roxygen-format-baseline.jsonl`,
-allowlist (+2 via re-seed), TODO, RECAP.
+**Result:** projector **137→139 matching** (139 allowlisted), 25→24 divergent, 0
+regressions, 163 pinned (+1 curated `rawrd`). `cargo test` fully green (incl. re-blessed
+format-stability baseline for the new corpus key), clippy + fmt clean, curated
+fixed-point **12/12** preserving. Files: `src/roxygen/project_rd.rs` (`rawRd` arm),
+`tests/oracle/roxygen_oracle.R` (radix sort, both call sites),
+`tests/oracle/corpus/roxygen-sections.jsonl` (rx-3d22b1a9 re-sorted), new curated
+`tests/oracle/corpus/roxygen/rawrd.{R,rdtree}`, re-blessed
+`roxygen-format-baseline.jsonl`, allowlist (+2 via re-seed), TODO, RECAP.
 
-**Next (ranked):** down to 25 divergent, almost all roxygen2-*evaluation* gaps
+**Next (ranked):** down to 24 divergent, almost all roxygen2-*evaluation* gaps
 (out of scope: ` ```{r} ` eval blocks rx-2900ecd5/24b3bfd6/24ef0d37/a6ac1b4d/
 e0e631c5/55b6980b, inline `` `r …` `` rx-21fd7c2f/8770c410/cc0ae196, data-object
 auto-`\format` rx-4d59d472/cbcc255c/deb9d202, RefClass docstrings rx-e02bf95c/
@@ -255,6 +258,12 @@ stay literal/inline (faithful under-handling).
 
 ## Earlier sessions
 
+- **2026-06-24o (block raw HTML `<p>…</p>` → `\if{html}{\out{…}}`):** parser+projector,
+  +1 (rx-daf9322f) + curated `markdown_html_block`. New `ROXYGEN_MD_HTML_BLOCK` node
+  (SyntaxKind 100, block analog of `ROXYGEN_MD_CODE_BLOCK`); `scan_md_html_block` carves
+  a line-start CommonMark **start-condition-6** opener under `@md`, `emit_md_html_block`
+  swallows following prose to the next blank line; projector `serialize_md_html_block`
+  → one `\if{html}{\out{<verb-per-line>}}`. Atomic block re-blessed the one baseline. 137.
 - **2026-06-24n (inline raw HTML `<tag>` → `\if{html}{\out{<tag>}}`):** parser+projector,
   +1 (rx-299f50fb). New `RoxygenMdHtml` leaf (`ROXYGEN_MD_HTML`, SyntaxKind 99);
   `scan_md_html_inline` chained after `scan_md_autolink` at `b'<' if md` (autolink claims
@@ -277,31 +286,21 @@ stay literal/inline (faithful under-handling).
   a `ROXYGEN_MD_CODE_BLOCK` section child; projector `Inline::MdCodeBlock` emits the
   3-atom `\if{html}{\out{<div…>}}`/`\preformatted`/`\if{html}{\out{</div>}}`
   (`mdxml_code_block`). Formatter atomic passthrough, baseline unchanged. 126→131.
-- **2026-06-24j (brace-less unknown macros → `(UNKNOWN …)`):** parser+projector, +2
-  (rx-16f78b2f non-md, rx-b8082617 md). A brace-less `\word` not in the built-in Rd
-  keyword table (new `is_known_rd_macro`/`KNOWN_RD_MACROS`, verified vs R 4.5)
-  projects to `(UNKNOWN "\\word")`; `scan_rd_macro` carves it only when unknown (a
-  known brace-less name stays literal prose). 124→126.
-- **2026-06-24i (`@section` body inline macros + GRP-wrap):** projector-only, +2
-  (rx-41e06b64 non-md, rx-1b26c2a4 md). `@section Title: body` → `\section{Title}{body}`;
-  body sub-parses inline macros, two-arg structural GRP-wrap of a multi-atom arg.
-  `split_section_title` + `grp_arg`, −`inlines_raw_text`; also routed `describe_section`'s
-  `\item` def through `grp_arg`. 122→124.
+- **2026-06-24j (brace-less unknown macros → `(UNKNOWN …)`):** +2. A brace-less `\word`
+  not in `KNOWN_RD_MACROS` (R 4.5 table) → `(UNKNOWN "\\word")`; `scan_rd_macro` carves
+  only when unknown (known brace-less stays literal). 124→126.
+- **2026-06-24i (`@section` body inline macros + GRP-wrap):** projector-only, +2.
+  `@section Title: body` → `\section{Title}{body}`, body sub-parses inline macros, 2-arg
+  structural GRP-wrap. `split_section_title` + `grp_arg`. 122→124.
 - **2026-06-24h (multiple `@examples` aggregate into one `\examples`):** projector-only,
-  +3 (2 harvested rx-5ac40b37/rx-73a5b650 + curated `examples_merge`). `@examples`/
-  `@examplesIf` is an aggregating field; moved the examples arm out of per-tag dispatch
-  into `project_block` (a `has_examples` flag → one `(\examples ...)`). 119→122.
-- **2026-06-24g (digit-bearing Rd macro names, `\linkS4class`):** +1 case
-  (rx-852ee490). Rd command names are `[A-Za-z][A-Za-z0-9]*`; six duplicated name
-  scans truncated at a digit. Replaced all with one shared `rd_macro_name_end`
-  helper (the single source of truth for where a `\name` ends). Projector unchanged.
-  118→119.
-- **2026-06-24f (images `![](…)` + Rd `\figure` → `\figure`):** +3 cases. The Rd
-  `\figure{path}{caption}` is a two-arg verbatim macro; a markdown image
-  `![alt](url "title")` lexes to `ROXYGEN_MD_IMAGE` (`scan_md_image`, inline form
-  only). `resolve_md_image` ports `mdxml_image`: alt dropped, `\figure{url}{title}`,
-  wrapped per the extension-keyed `get_image_format` (svg→html, pdf→pdf,
-  raster/unknown→bare). 115→118.
+  +3 (+ curated `examples_merge`). Aggregating field → `has_examples` flag in
+  `project_block` → one `(\examples ...)`. 119→122.
+- **2026-06-24g (digit-bearing Rd macro names, `\linkS4class`):** +1. Rd names are
+  `[A-Za-z][A-Za-z0-9]*`; six duplicated scans truncated at a digit → one shared
+  `rd_macro_name_end`. Projector unchanged. 118→119.
+- **2026-06-24f (images `![](…)` + Rd `\figure` → `\figure`):** +3. `\figure{path}{cap}`
+  is 2-arg verbatim; `![alt](url "title")` → `ROXYGEN_MD_IMAGE` (`scan_md_image`, inline
+  only); `resolve_md_image` ports `mdxml_image` (alt dropped, extension-keyed wrap). 115→118.
 - **2026-06-24e (intro paragraph split, title/description/details):** roxygen2's
   `parse_description` splits the intro on `\n\n` — 1st para = title, 2nd =
   description, rest = details (folded with explicit `@details` only when leftover
