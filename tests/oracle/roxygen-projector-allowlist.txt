@@ -15,6 +15,7 @@ examples_merge
 itemize_enumerate
 markdown_inline
 markdown_list
+markdown_url
 param_prose
 rd_macros
 rx-0273da0d
@@ -133,6 +134,7 @@ rx-efc349c1
 rx-f4658690
 rx-f4a69eef
 rx-f5b4d104
+rx-f97e8917
 rx-fa223117
 rx-fa6eeb19
 rx-fabb4413

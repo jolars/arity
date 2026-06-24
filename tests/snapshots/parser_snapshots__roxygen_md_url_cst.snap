@@ -1,0 +1,36 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..93
+  ROXYGEN_BLOCK@0..73
+    ROXYGEN_SECTION@0..67
+      ROXYGEN_PARAGRAPH@0..67
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..7 "See "
+        ROXYGEN_MD_LINK@7..29 "<https://log.r-hub.io>"
+        ROXYGEN_TEXT@29..34 " and "
+        ROXYGEN_MD_LINK@34..53 "[http://acme.com]()"
+        ROXYGEN_TEXT@53..66 " for details."
+        NEWLINE@66..67 "\n"
+    ROXYGEN_SECTION@67..73
+      ROXYGEN_MARKER@67..69 "#'"
+      WHITESPACE@69..70 " "
+      ROXYGEN_TAG@70..73
+        ROXYGEN_AT@70..71 "@"
+        ROXYGEN_TAG_NAME@71..73 "md"
+  NEWLINE@73..74 "\n"
+  ASSIGNMENT_EXPR@74..92
+    IDENT@74..75 "f"
+    WHITESPACE@75..76 " "
+    ASSIGN_LEFT@76..78 "<-"
+    WHITESPACE@78..79 " "
+    FUNCTION_EXPR@79..92
+      FUNCTION_KW@79..87 "function"
+      LPAREN@87..88 "("
+      IDENT@88..89 "x"
+      RPAREN@89..90 ")"
+      WHITESPACE@90..91 " "
+      IDENT@91..92 "x"
+  NEWLINE@92..93 "\n"

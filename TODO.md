@@ -333,6 +333,15 @@
       backlog), and the projector's name-only branch keys on the same table. +2
       projector cases (rx-16f78b2f non-md, rx-b8082617 md). Zero-arg name-only
       *rendering* in prose (`\cr`→`(\cr)`) is deferred (never in-scope today).
+      **URL autolinks + empty-dest links landed (Stage 18, 2026-06-24l):** the
+      lexer now carves a CommonMark absolute-URI autolink `<scheme:…>`
+      (`scan_md_autolink`, mode-gated, reusing the `ROXYGEN_MD_LINK` kind; raw
+      HTML `<p>`/`<img …>` has no scheme `:` so it stays literal), and the
+      projector mirrors roxygen2's `mdxml_link`: a destination that is empty *or*
+      equal to the link text → `\url{text}`, else `\href` (`<url>` and `[url]()`
+      both → `\url`). +1 projector case (rx-f97e8917) + curated `markdown_url`.
+      Inline-link-text sub-parsing (a code span inside `[…](url)` → `\verb`,
+      rx-3c528f59) and email autolinks remain backlog.
     - *Hard constraints (the reason this is non-trivial).* Must preserve
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,
@@ -360,7 +369,7 @@
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **131 matching / 29 divergent** of 160 pinned (was 42; `rd_macros`,
+      **133 matching / 28 divergent** of 161 pinned (was 42; `rd_macros`,
       `itemize_enumerate`, `describe_format`, `tabular`, `@md` inline + block lists,
       the title-as-description fallback, the `@tag NULL` suppression sentinel,
       `\code`-body RCODE, `\href` per-arg verbatim, `@slot`/`@field` aggregation,
@@ -372,7 +381,8 @@
       aggregating into one `\examples`**, `@section` body inline macros, brace-less
       unknown macros, then **markdown fenced code blocks** (` ``` `/` ```r ` →
       `\if{html}{\out{<div…>}} \preformatted{…} \if{html}{\out{</div>}}`, info →
-      `sourceCode` class) — closed). Now **131 matching / 29 divergent** of 160 pinned.
+      `sourceCode` class), then **URL autolinks + empty-dest links** (`<url>`/`[url]()`
+      → `\url`) — closed). Now **133 matching / 28 divergent** of 161 pinned.
       The remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.

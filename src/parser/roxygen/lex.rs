@@ -263,6 +263,7 @@ fn lex_roxygen_prose(
             b'\\' => scan_rd_macro(bytes, i).map(|end| (TokKind::RoxygenRdMacro, end)),
             b'!' if md => scan_md_image(bytes, i).map(|end| (TokKind::RoxygenMdImage, end)),
             b'[' if md => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
+            b'<' if md => scan_md_autolink(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
             _ => None,
         };
         if let Some((kind, end)) = span {
@@ -482,6 +483,40 @@ fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
 /// is rejected (the latter so nested `[a[b]c]` re-scans the inner `[b]`).
 fn is_shortcut_content(content: &[u8]) -> bool {
     !content.is_empty() && !content.iter().any(|&b| matches!(b, b'[' | b']'))
+}
+
+/// A CommonMark absolute-URI autolink at `bytes[i] == b'<'`: `<scheme:body>` where
+/// the scheme is 2–32 chars beginning with an ASCII letter, then ASCII letters,
+/// digits, `+`, `.`, or `-`; the body runs to the next `>` and may not contain a
+/// space, `<`, or an ASCII control character. Returns the index past `>`, or
+/// `None` when it is not a valid autolink — so raw HTML (`<p>`, `<img …>`, no
+/// scheme `:`) and email autolinks (no `:`, out of scope) stay literal prose.
+/// roxygen2's `mdxml_link` renders such a link (whose destination equals its text)
+/// as `\url{…}`.
+fn scan_md_autolink(bytes: &[u8], i: usize) -> Option<usize> {
+    let scheme_start = i + 1;
+    if !bytes.get(scheme_start).is_some_and(u8::is_ascii_alphabetic) {
+        return None;
+    }
+    let mut j = scheme_start + 1;
+    while j < bytes.len()
+        && matches!(bytes[j], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-')
+    {
+        j += 1;
+    }
+    if !(2..=32).contains(&(j - scheme_start)) || bytes.get(j) != Some(&b':') {
+        return None;
+    }
+    j += 1;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'>' => return Some(j + 1),
+            b' ' | b'<' => return None,
+            c if c.is_ascii_control() => return None,
+            _ => j += 1,
+        }
+    }
+    None
 }
 
 /// An Rd macro at `bytes[i] == b'\\'`: `\name`, an optional balanced `[…]`, then
@@ -993,6 +1028,31 @@ mod tests {
             ]
         );
         assert_lossless("#' Call [func()] and [pkg::g()].\n#' @md\n");
+    }
+
+    #[test]
+    fn md_url_autolink() {
+        // A `<scheme:…>` autolink carves as a `RoxygenMdLink` under `@md`; raw HTML
+        // (`<p>`, no scheme `:`) does not.
+        assert_eq!(
+            prose_texts("#' see <https://x.y/a> and <p>lit</p>\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "see ".into()),
+                (TokKind::RoxygenMdLink, "<https://x.y/a>".into()),
+                (TokKind::RoxygenText, " and <p>lit</p>".into()),
+            ]
+        );
+        assert_lossless("#' see <https://x.y/a> and <p>lit</p>\n#' @md\n");
+    }
+
+    #[test]
+    fn autolink_shape_is_literal_text_without_md() {
+        // `<url>` is an autolink only under `@md`; without it, `<` is literal prose.
+        assert_eq!(
+            prose_texts("#' see <https://x.y/a> now\n"),
+            vec![(TokKind::RoxygenText, "see <https://x.y/a> now".into())]
+        );
+        assert_lossless("#' see <https://x.y/a> now\n");
     }
 
     #[test]

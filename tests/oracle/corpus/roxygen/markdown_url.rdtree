@@ -1,0 +1,2 @@
+(\description (TEXT "See the homepage") (\url (VERB "https://example.org/home")) (TEXT "for the project. A bare reference") (\url (VERB "https://example.org/bare")) (TEXT "also becomes a URL, while a named link") (\href (VERB "https://example.org/docs") (TEXT "the docs")) (TEXT "stays an href."))
+(\title (TEXT "Markdown URLs and autolinks"))

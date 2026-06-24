@@ -109,7 +109,7 @@ reads this first.
   `ROXYGEN_MD_EMPH`/`STRONG`/`CODE` leaves; projector `\code`-vs-`\verb` = arity-parseability
   (one top-level expr, no diagnostics, or `SPECIAL_CODE`) mirroring roxygen2's `can_parse`.
   **Every markdown *inline* recognizer in the lexer MUST be `if md`-gated** (`*`/`_`/`` ` ``/
-  the `[`-link/list-markers) — else its leaf kind stops implying `@md`, and the projector
+  the `[`-link/`<`-autolink/list-markers) — else its leaf kind stops implying `@md`, and the projector
   (which keys structure off leaf kind and never re-derives mode) mis-fires in non-`@md`
   blocks where roxygen2 keeps the markup literal. The `[`-link recognizer slipped this and
   was fixed 2026-06-24c (it carved `ROXYGEN_MD_LINK` even with markdown off); audit any
@@ -272,8 +272,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-markdown fenced code blocks, 2026-06-24k): **131 matching (all
-allowlisted), 29 divergent (backlog)** of 160 pinned cases. The
+URL autolinks + empty-dest links, 2026-06-24l): **133 matching (all
+allowlisted), 28 divergent (backlog)** of 161 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -284,9 +284,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (160 pinned cases). The 29 divergences are the worklist.
+   subset (161 pinned cases). The 28 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 9/9 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 10/10 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -294,48 +294,58 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24k) — markdown fenced code blocks → `\preformatted` triple
+## Latest session (2026-06-24l) — URL autolinks `<url>` + empty-dest links → `\url`
 
-**Construct:** under `@md`, a fenced code block (` ``` ` / ` ```r `) projects to
-roxygen2's three-atom `\if{html}{\out{<div class="sourceCode[ <info>]">}}` /
-`\preformatted{<code>}` / `\if{html}{\out{</div>}}` (`mdxml_code_block`). First
-markdown *block* structure since md-lists. Closed **5 cases** (4 plain:
-rx-59e70a3d intro, rx-8c9662d6/rx-fb5d2ad5 desc no-info, rx-dd2506bf desc info-`r`;
-**bonus** rx-0d100638 — a ` ```{verbatim} ` block, which roxygen2 does *not* eval).
+**Construct:** the faithful general-link path of roxygen2's `mdxml_link` (the
+*non-`R:`* branch, distinct from `parse_link`'s shortcut/reference path): a
+destination that is **empty or equal to the link text** projects to `\url{text}`,
+otherwise `\href{url}{text}`. So a CommonMark autolink `<https://x>` (dest==text)
+**and** an empty-dest inline link `[http://x]()` both → `(\url (VERB …))`. Closed
+**1 harvested case** (rx-f97e8917) + new curated `markdown_url`.
 
-**Buckets: parser gap + projector gap (both faithful).** New mode-keyed lexer carve
-(`RoxygenMdFence`, `scan_md_fence`) before the list-marker carve; new block builder
-(`emit_md_code_block` + `is_md_code_block_start`) pairing opener↔closer into a
-`ROXYGEN_MD_CODE_BLOCK` node (direct section child); projector `Inline::MdCodeBlock`
-→ `serialize_md_code_block` (3 atoms) + `md_code_block_parts`/`strip_marker` (info
-from opener fence, code = marker-stripped content lines + trailing `\n`). Formatter
-routes the node like `ROXYGEN_MD_LIST` (atomic passthrough), byte-identical to the
-old textual `is_fence` path → **format baseline unchanged**. Full plumbing: 2 new
-`SyntaxKind`s (`ROXYGEN_MD_CODE_BLOCK` node + `ROXYGEN_MD_FENCE` leaf, COUNT bumped),
-`TokKind::RoxygenMdFence` (+role/`syntax_kind_for`/exhaustive matches).
+**Buckets: parser gap + projector gap (both faithful).** Lexer: new
+`scan_md_autolink` carves a CommonMark absolute-URI autolink `<scheme:body>`
+(scheme 2–32 chars, leading letter; body has no space/`<`/control before `>`)
+under `@md`, **reusing the `ROXYGEN_MD_LINK` kind** — so raw HTML (`<p>`,
+`<img …>`: no scheme `:`) and email autolinks (no `:`) stay literal, and the leaf
+still implies `@md` (single mode source). Dispatch arm `b'<' if md` (mode-gated,
+per the trap). Projector: `resolve_md_link` gains an autolink branch
+(`<…>`→`url_atom`), and the inline `[text](url)` arm now routes through
+`inline_link_atom` (empty/equal dest → `url_atom`, else `href_atom`). New
+`url_atom`/`inline_link_atom` helpers.
 
-**Result:** projector **126→131 matching** (131 allowlisted), 34→29 divergent, 0
-regressions. `cargo test` fully green (all 22 suites incl. format-stability baseline),
-clippy + fmt clean, curated fixed-point 9/9, harvested fixed-point 212 preserving
-(both unchanged). Files: `src/parser/lexer.rs` (TokKind+role), `src/syntax.rs`
-(2 kinds+plumbing), `src/parser/tree_builder.rs`, `src/parser/expr.rs`,
-`src/parser/roxygen/lex.rs` (`scan_md_fence`+carve+3 tests+`prose_texts`),
-`src/parser/roxygen/build.rs` (`emit_md_code_block`), `src/parser/roxygen/group.rs`
-(dispatch), `src/formatter/roxygen.rs` (passthrough arm), `src/roxygen/project_rd.rs`
-(arm+serializer), new fixture `roxygen_md_code_block` (+2 snapshots), allowlist
-(+5 via re-seed), TODO, RECAP.
+**Result:** projector **131→133 matching** (133 allowlisted), 29→28 divergent, 0
+regressions, 161 pinned. `cargo test` fully green (all 22 suites incl. the
+format-stability baseline — re-blessed for the **added** `curated/markdown_url`
+case only; rx-f97e8917's existing format byte-identical, no value drift),
+clippy + fmt clean, curated fixed-point **10/10** preserving. Files:
+`src/parser/roxygen/lex.rs` (`scan_md_autolink`+carve arm+2 tests),
+`src/roxygen/project_rd.rs` (autolink branch + `url_atom`/`inline_link_atom`),
+new fixture `roxygen_md_url` (+2 snapshots, +`parser_snapshots.rs` registration),
+new curated `markdown_url.R`/`.rdtree`, allowlist (+2 via re-seed), format
+baseline (+1 line), TODO, RECAP.
 
-**Next (ranked):** down to 29 divergent. Cleanest structural target: **nested
+**Next (ranked):** down to 28 divergent. Cleanest structural target: **nested
 markdown/Rd lists** (rx-91e67e79 md, rx-959fc227 Rd; both project flat — in-list
-indentation is dropped as marker→content trivia). Other clusters in the backlog:
-raw-HTML blocks/`\out` (rx-daf9322f, rx-299f50fb), `\preformatted{}` direct Rd
-(rx-0a1710c0). Possible small follow-up: **zero-arg name-only macros in prose**
-(`\cr`/`\dots`/`\R` → `(\cr)`) — table already in place. Still out of scope:
-roxygen2-*evaluation* gaps (data-object auto-`\format`, ` ```{r} ` eval blocks,
-inline `` `r …` ``).
+indentation is dropped as marker→content trivia). Smaller in-scope wins still on
+the link cluster: **inline-link-text sub-parsing** (a code span inside `[…](url)`
+→ `\verb`/`\code`, rx-3c528f59 — needs the projector to recurse markdown inlines
+through the opaque `ROXYGEN_MD_LINK` leaf's text, since the inner span isn't
+separately lexed) and **links broken across lines** (rx-383f2ca3 inline,
+rx-eb12b6b6 reference — soft-wrapped link text). Other clusters: raw-HTML
+blocks/`\out` (rx-daf9322f, rx-299f50fb), `\preformatted{}` direct Rd (rx-0a1710c0),
+`@format %` Rd-comment (rx-f6927028). Still out of scope: roxygen2-*evaluation*
+gaps (data-object auto-`\format`, ` ```{r} ` eval blocks, inline `` `r …` ``).
 
 ## Earlier sessions
 
+- **2026-06-24k (markdown fenced code blocks → `\preformatted` triple):**
+  parser+projector, +5 (rx-59e70a3d, rx-8c9662d6, rx-fb5d2ad5, rx-dd2506bf,
+  bonus rx-0d100638 `{verbatim}`). Mode-keyed `RoxygenMdFence`/`scan_md_fence`
+  carve before the list-marker carve; `emit_md_code_block` pairs opener↔closer into
+  a `ROXYGEN_MD_CODE_BLOCK` section child; projector `Inline::MdCodeBlock` emits the
+  3-atom `\if{html}{\out{<div…>}}`/`\preformatted`/`\if{html}{\out{</div>}}`
+  (`mdxml_code_block`). Formatter atomic passthrough, baseline unchanged. 126→131.
 - **2026-06-24j (brace-less unknown macros → `(UNKNOWN …)`):** parser+projector, +2
   (rx-16f78b2f non-md, rx-b8082617 md). A brace-less `\word` not in the built-in Rd
   keyword table (new `is_known_rd_macro`/`KNOWN_RD_MACROS`, verified vs R 4.5)
@@ -392,51 +402,20 @@ inline `` `r …` ``).
   wildcard-free `TokKind::roxygen_role` (`lexer.rs`) for the lexer/parser side;
   `SyntaxKind::is_roxygen_prose_content` (`syntax.rs`) for the formatter side. Pure
   refactor, byte-identical (projector 93/66 unmoved). +78/−78 across 4 source files.
-- **2026-06-23 (Stage 11, `@slot`/`@field` aggregate to `\section{Slots/Fields}`):**
-  projector-only, +2 cases. `@slot` (S4)/`@field` (RC) are *aggregating* tags: roxygen2
-  collects every one of a topic into a single `\section{Slots}{\describe{…}}`, each tag →
-  `\item{\code{RCODE name}}{def}`. CST already modeled it; `project_block` diverts
-  `slot`/`field` into ordered `(name, def)` vecs and a new `describe_section` synthesizes
-  the aggregate. 91→93 matching, 0 regressions.
-- **2026-06-23 (Stage 10, `\href{url}{text}` per-arg verbatim):** parser+projector, +5.
-  Two-arg structural macro, per-arg encoding (arg 0 URL `VERB`, arg 1 latexlike); new
-  `is_verbatim_rd_arg`; formatter stops reflowing inside a balanced `\href`. 86→91.
-- **2026-06-23 (Stage 9, `\code` body → `RCODE`):** projector-only, 3. parse_Rd tags a
-  `\code{…}` body as verbatim R code; `flush` keys on `head == "\\code"` → `rcode_atoms`.
-  83→86.
-- **2026-06-23 (Stage 8, `@tag NULL` suppression sentinel):** projector-only, 7.
-  `rd_section()` drops a literal `"NULL"` value (`NULL_SUPPRESSIBLE`+`is_null_section`);
-  re-fires title-as-description; `@section` excluded. 76→83.
-- **2026-06-23 (Stage 7, title-as-description fallback):** projector-only, 11. Reuse the
-  title as description when none exists (incl. explicit `@title`); `explicit_title` lookup.
-  65→76.
-- **2026-06-23 (Stage 6, `@md` block lists):** first markdown *block* structure
-  (`-`→`\itemize`, `1.`→`\enumerate`). Mode-keyed `RoxygenMdListMarker`; `emit_md_list`
-  applies the CommonMark interrupt rule; `Inline::MdList`→`serialize_md_list`. 64→65.
-- **2026-06-23 (Stage 5, `@md` inline foundation):** `*x*`→`\emph`, `**x**`→`\strong`,
-  code span → `\code`/`\verb` (`can_parse` via arity-parseability). `resolve_roxygen_block`
-  mode infra (lexer single mode source); `scan_md_emphasis` bail-to-text. 59→64.
-- **2026-06-23 (Stage 4, `\tabular{rl}{ … \tab … \cr }`):** closed `tabular` (58→59);
-  `is_block_macro_line` Form B (balanced structural macro + unbalanced-`{` text);
-  `serialize_macro` GRP-wraps a structural macro's multi-atom arg. (Mechanics in traps.)
-- **2026-06-23 (Stage 3, `\describe` `\item{term}{def}`):** closed `describe_format` (57→58);
-  `TWO_ARG_RD_MACROS`/per-group flush so adjacent `{…}` groups stay separate atoms.
-- **2026-06-23 (Stage 2, `\itemize`/`\enumerate`):** first capability win on the logical CST;
-  multi-line `ROXYGEN_RD_MACRO` via `Event::Leaf` trivia threading; fixed a run-on-reflow bug
-  for 7 prose cases (re-blessed baseline). Closed `itemize_enumerate` (56→57).
-- **2026-06-23 (CST re-model, Stage 1):** dissolved `ROXYGEN_LINE`; `ROXYGEN_BLOCK` →
-  `ROXYGEN_SECTION`* → `ROXYGEN_TAG`/`ROXYGEN_PARAGRAPH`* with markers/newlines as trivia
-  (`3a0846a`). Byte-identical, projector unchanged (56/102); unblocked Stage 2.
-- **2026-06-22e:** Inline Rd macros as structured `ROXYGEN_RD_MACRO` *nodes* (`be0521b`):
-  `build_rd_macro`/`build_rd_content` expand the macro token into NAME/OPT/DELIM/VERB
-  leaves + nested macros; projector emits nested Rd. 42→56 matching; closed `rd_macros`.
-- **2026-06-22d:** Filtered bulk-pin (`58ad5e4`): `projector_eligible` + `projector-pins`
-  op (eligible = 1 topic, no out-of-scope tag); minted `roxygen-sections.jsonl` (151/217);
-  seeded 42 matching — turned the backlog into a real worklist.
-- **2026-06-22c:** Built the Phase 1 projector skeleton (`7473f2f`): section-level
-  granularity (excluding roclet scaffolding), `block-to-sections` op, `project_rd.rs`,
-  pure-Rust pinned gate, curated `.rdtree` pins.
-- **2026-06-22b:** Grew the **harvested** backlog (`scripts/harvest-roxygen-corpus.R` mines
-  217 slug-keyed blocks from roxygen2 v7.3.3's tests; `trees-batch` op; seeded 212 PASS).
-- **2026-06-22a:** Phase 0 (`acfd0b6`): R driver, seed curated corpus, strict fixed-point
-  harness, `blocked.toml`, devenv R; reframed soft → strict (fatou allowlist+blocked model).
+- **2026-06-23 (Stages 1–11, condensed; mechanics in traps + TODO):** Stage 1 CST
+  re-model (`ROXYGEN_LINE` dissolved → `ROXYGEN_SECTION`/`ROXYGEN_PARAGRAPH`, trivia
+  threading; byte-identical); Stage 2 `\itemize`/`\enumerate` (multi-line `ROXYGEN_RD_MACRO`
+  via `Event::Leaf`); Stage 3 `\describe` `\item{term}{def}` (`TWO_ARG_RD_MACROS`,
+  per-group flush); Stage 4 `\tabular` (Form B opener, GRP-wrap); Stage 5 `@md` inline
+  (`*`→`\emph`, `**`→`\strong`, code→`\code`/`\verb`; mode infra); Stage 6 `@md` block
+  lists (`RoxygenMdListMarker`, interrupt rule); Stage 7 title-as-description fallback;
+  Stage 8 `@tag NULL` suppression (`NULL_SUPPRESSIBLE`); Stage 9 `\code` body→`RCODE`;
+  Stage 10 `\href` per-arg verbatim (`is_verbatim_rd_arg`); Stage 11 `@slot`/`@field`
+  aggregate→`\section{Slots/Fields}` (`describe_section`). 56→93 matching.
+- **2026-06-22 (Phase 0 + Phase 1 skeleton, condensed):** Phase 0 (`acfd0b6`): R driver,
+  curated corpus, strict fixed-point harness, `blocked.toml`, devenv R; soft→strict reframe.
+  Then the harvested backlog (`harvest-roxygen-corpus.R`, 217 slug-keyed blocks, 212 PASS);
+  the Phase 1 projector skeleton (`7473f2f`: section-level granularity, `block-to-sections`,
+  `project_rd.rs`, pure-Rust pinned gate); filtered bulk-pin (`58ad5e4`: `projector_eligible`,
+  `roxygen-sections.jsonl` 151/217, seeded 42); inline Rd macros as `ROXYGEN_RD_MACRO` nodes
+  (`be0521b`: NAME/OPT/DELIM/VERB leaves + nesting; 42→56, closed `rd_macros`).

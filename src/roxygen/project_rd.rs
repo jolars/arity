@@ -825,12 +825,18 @@ fn serialize_md_inline(kind: MdInline, content: &str) -> String {
 /// Returns `None` for an unrecognized shape (the leaf then stays literal prose).
 fn resolve_md_link(raw: &str) -> Option<String> {
     let bytes = raw.as_bytes();
+    // A CommonMark autolink `<scheme:…>` whose destination equals its text →
+    // `\url{…}` (roxygen2's `mdxml_link` `dest == xml_text(xml)` branch).
+    if bytes.first() == Some(&b'<') {
+        return Some(url_atom(raw.strip_prefix('<')?.strip_suffix('>')?));
+    }
     let text_end = scan_delimited(bytes, 0, b'[', b']')?;
     let text = &raw[1..text_end - 1];
     match bytes.get(text_end) {
         Some(&b'(') => {
             let url_end = scan_delimited(bytes, text_end, b'(', b')')?;
-            (url_end == bytes.len()).then(|| href_atom(text, &raw[text_end + 1..url_end - 1]))
+            (url_end == bytes.len())
+                .then(|| inline_link_atom(text, &raw[text_end + 1..url_end - 1]))
         }
         Some(&b'[') => {
             let ref_end = scan_delimited(bytes, text_end, b'[', b']')?;
@@ -840,6 +846,22 @@ fn resolve_md_link(raw: &str) -> Option<String> {
         None => Some(shortcut_link_atom(text)),
         _ => None,
     }
+}
+
+/// An inline `[text](url)` link, mirroring roxygen2's `mdxml_link`: an empty
+/// destination — or one equal to the rendered link text — projects to `\url{text}`
+/// (the destination is auto-generated from the text); otherwise `\href{url}{text}`.
+fn inline_link_atom(text: &str, url: &str) -> String {
+    if url.is_empty() || norm_ws(url) == norm_ws(text) {
+        url_atom(text)
+    } else {
+        href_atom(text, url)
+    }
+}
+
+/// A bare URL → `(\url (VERB url))` (roxygen2's `\url{…}`; the URL is verbatim).
+fn url_atom(url: &str) -> String {
+    format!("(\\url (VERB {}))", encode_text(url))
 }
 
 /// An inline `[text](url)` link → `(\href (VERB url) (TEXT text))`: the URL is
