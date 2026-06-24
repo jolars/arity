@@ -99,10 +99,10 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
                     ..PhysicalLine::default()
                 });
             }
-            // A markdown list (`@md` mode) likewise owns its `#'` markers and
-            // newlines internally; it is atomic passthrough (marker-normalized,
-            // never reflowed across items).
-            SyntaxKind::ROXYGEN_MD_LIST => {
+            // A markdown list or fenced code block (`@md` mode) likewise owns its
+            // `#'` markers and newlines internally; it is atomic passthrough
+            // (marker-normalized, never reflowed across items/lines).
+            SyntaxKind::ROXYGEN_MD_LIST | SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
                 }
@@ -185,6 +185,18 @@ fn emit_md_list(items: &mut Vec<Ir>, node: &SyntaxNode) {
     }
 }
 
+/// Emit a markdown fenced code block (`@md` mode) as atomic passthrough, each
+/// `#'` line marker-normalized (marker, one space, trimmed content). Mirrors the
+/// pre-node textual fence path (`is_fence`/`emit_normalized`): the fence lines
+/// and verbatim code lines are emitted as-is, never reflowed. (Code indentation
+/// beyond the marker is dropped, matching that prior behavior; a canonical
+/// re-indent is future work, as for the Rd-list and markdown-list passthroughs.)
+fn emit_md_code_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
 /// Marker-normalize a raw `#'` line string: drop surrounding whitespace (the
 /// inter-line indentation), then emit the `#+'` marker, a single space, and the
 /// trimmed content (or the bare marker when the content is empty).
@@ -262,6 +274,10 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 // indentation that distinguishes nesting is not yet modeled, so
                 // dropping it matches today's structured-passthrough output).
                 emit_md_list(&mut items, macro_node);
+            } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_CODE_BLOCK {
+                // A fenced code block is atomic passthrough, each line marker-
+                // normalized — byte-identical to the pre-node textual fence path.
+                emit_md_code_block(&mut items, macro_node);
             } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {

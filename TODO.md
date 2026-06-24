@@ -360,7 +360,7 @@
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **122 matching / 38 divergent** of 160 pinned (was 42; `rd_macros`,
+      **131 matching / 29 divergent** of 160 pinned (was 42; `rd_macros`,
       `itemize_enumerate`, `describe_format`, `tabular`, `@md` inline + block lists,
       the title-as-description fallback, the `@tag NULL` suppression sentinel,
       `\code`-body RCODE, `\href` per-arg verbatim, `@slot`/`@field` aggregation,
@@ -368,9 +368,12 @@
       (roxygen2's `parse_description`: 1st intro paragraph = title, 2nd =
       description, the rest = details merged with explicit `@details`; body parts
       grouped by blank `#'` lines), markdown images + Rd `\figure`, digit-bearing
-      Rd macro names (`\linkS4class`), then **multiple `@examples`/`@examplesIf`
-      aggregating into one `\examples`** — closed). The
-      remaining divergences are the worklist. Run
+      Rd macro names (`\linkS4class`), **multiple `@examples`/`@examplesIf`
+      aggregating into one `\examples`**, `@section` body inline macros, brace-less
+      unknown macros, then **markdown fenced code blocks** (` ``` `/` ```r ` →
+      `\if{html}{\out{<div…>}} \preformatted{…} \if{html}{\out{</div>}}`, info →
+      `sourceCode` class) — closed). Now **131 matching / 29 divergent** of 160 pinned.
+      The remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
       Use the `roxygen-parity` skill.

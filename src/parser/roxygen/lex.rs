@@ -212,6 +212,26 @@ fn lex_roxygen_prose(
     let bytes = text.as_bytes();
     let mut run_start = pos;
     let mut i = pos;
+    // Under `@md`, a prose line whose content begins with a code fence (3+
+    // backticks) carves the *whole* remaining line off as a `RoxygenMdFence`
+    // leaf (an opener with its info string, or a bare closer). The block builder
+    // pairs an opener with its closer into a `ROXYGEN_MD_CODE_BLOCK`; the leaf's
+    // existence implies `@md` (the single mode source is the lexer), so the
+    // builder keys off the token kind, never re-deriving mode.
+    if md
+        && line_start
+        && let Some(fence_end) = scan_md_fence(bytes, pos)
+    {
+        push(
+            out,
+            TokKind::RoxygenMdFence,
+            text,
+            start,
+            pos,
+            fence_end - pos,
+        );
+        return;
+    }
     // Under `@md`, a prose line whose content begins with a list marker carves it
     // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
     // run). Whether the marker actually forms a list is a block-level decision
@@ -365,6 +385,24 @@ fn scan_md_emphasis(bytes: &[u8], i: usize) -> Option<(TokKind, usize)> {
         }
     }
     None
+}
+
+/// A markdown code fence at a line's content start: a run of three or more
+/// backticks (the opener may carry an info string after the run). CommonMark
+/// forbids a backtick inside a backtick fence's info string, so the whole
+/// remaining line is the fence iff no backtick follows the opening run — which
+/// also keeps an inline code span (`` `x` ``) that merely starts the line from
+/// being mistaken for a fence. Returns the index past the fence (the end of the
+/// line content), or `None` when the content does not open/close a fence.
+fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
+    if run_len(bytes, i, b'`') < 3 {
+        return None;
+    }
+    let info = i + run_len(bytes, i, b'`');
+    if bytes[info..].contains(&b'`') {
+        return None;
+    }
+    Some(bytes.len())
 }
 
 /// A markdown list-item marker at a line's content start: a bullet (`-`/`*`/`+`)
@@ -708,6 +746,7 @@ mod tests {
                         | TokKind::RoxygenMdStrong
                         | TokKind::RoxygenMdCode
                         | TokKind::RoxygenMdListMarker
+                        | TokKind::RoxygenMdFence
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -801,6 +840,55 @@ mod tests {
             prose_texts("#' -3 degrees\n#' @md\n"),
             vec![(TokKind::RoxygenText, "-3 degrees".into())]
         );
+    }
+
+    #[test]
+    fn md_fence_recognized_under_md_mode() {
+        // Under `@md`, a line whose content opens a code fence (3+ backticks)
+        // carves the whole remaining content off as a `RoxygenMdFence` leaf — the
+        // opener with its info string, and the bare closer.
+        let opener = "#' ```r\n#' @md\n";
+        assert_eq!(
+            prose_texts(opener),
+            vec![(TokKind::RoxygenMdFence, "```r".into())]
+        );
+        assert_lossless(opener);
+        let closer = "#' ```\n#' @md\n";
+        assert_eq!(
+            prose_texts(closer),
+            vec![(TokKind::RoxygenMdFence, "```".into())]
+        );
+        assert_lossless(closer);
+    }
+
+    #[test]
+    fn md_fence_off_without_md_directive() {
+        // No `@md`: a leading ```` ``` ```` stays literal prose (no fence leaf).
+        assert_eq!(
+            prose_texts("#' ```r\n"),
+            vec![(TokKind::RoxygenText, "```r".into())]
+        );
+    }
+
+    #[test]
+    fn md_fence_requires_three_backticks_and_no_inner_backtick() {
+        // A two-backtick run is not a fence; and a 3-backtick run followed by
+        // another backtick is an inline code span at line start, not a fence
+        // (CommonMark forbids a backtick in a backtick fence's info string).
+        let two = "#' `` not a fence\n#' @md\n";
+        assert_eq!(
+            prose_texts(two),
+            vec![(TokKind::RoxygenText, "`` not a fence".into())]
+        );
+        let inline = "#' ```code``` inline\n#' @md\n";
+        assert_eq!(
+            prose_texts(inline),
+            vec![
+                (TokKind::RoxygenMdCode, "```code```".into()),
+                (TokKind::RoxygenText, " inline".into()),
+            ]
+        );
+        assert_lossless(inline);
     }
 
     #[test]

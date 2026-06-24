@@ -157,14 +157,26 @@ pub enum SyntaxKind {
     /// per roxygen2's extension-keyed `get_image_format` rule. Appended last to
     /// keep the earlier variants' `as u16` discriminants stable.
     ROXYGEN_MD_IMAGE,
+    /// A markdown fenced code block (resolved `@md` mode only): a
+    /// `ROXYGEN_MD_FENCE` opener leaf, the verbatim code lines, and a
+    /// `ROXYGEN_MD_FENCE` closer leaf, with the `#'` markers, marker→content
+    /// whitespace, and inter-line newlines threaded in as trivia (losslessness),
+    /// the way the block Rd macros and markdown lists thread them. The projector
+    /// maps it to roxygen2's `\if{html}{\out{<div…>}} \preformatted{…}
+    /// \if{html}{\out{</div>}}` triple. Appended last to keep the earlier
+    /// variants' `as u16` discriminants stable.
+    ROXYGEN_MD_CODE_BLOCK,
+    /// A fenced-code-block delimiter line (3+ backticks plus an optional info
+    /// string), a leaf inside a `ROXYGEN_MD_CODE_BLOCK`.
+    ROXYGEN_MD_FENCE,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
     /// rule dispatch). Stays correct as long as `ROXYGEN_MD_IMAGE` remains the
-    /// last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_IMAGE as usize + 1;
+    /// last variant. (`ROXYGEN_MD_FENCE` is the current last variant.)
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_FENCE as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -184,6 +196,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_CODE
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
                 | SyntaxKind::ROXYGEN_MD_IMAGE
+                | SyntaxKind::ROXYGEN_MD_FENCE
         )
     }
 
@@ -203,6 +216,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_CODE
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
                 | SyntaxKind::ROXYGEN_MD_IMAGE
+                | SyntaxKind::ROXYGEN_MD_FENCE
         )
     }
 }
@@ -318,6 +332,8 @@ impl Language for RLanguage {
             94 => SyntaxKind::ROXYGEN_MD_LIST,
             95 => SyntaxKind::ROXYGEN_MD_LIST_ITEM,
             96 => SyntaxKind::ROXYGEN_MD_IMAGE,
+            97 => SyntaxKind::ROXYGEN_MD_CODE_BLOCK,
+            98 => SyntaxKind::ROXYGEN_MD_FENCE,
             _ => SyntaxKind::ERROR,
         }
     }

@@ -79,6 +79,12 @@ pub(crate) enum TokKind {
     /// space (kept in the following text run) so a marker that does not form a
     /// list reflows like the plain text it stands in for.
     RoxygenMdListMarker,
+    /// A markdown fenced-code-block delimiter line (a run of 3+ backticks, plus
+    /// an optional info string), at a line's content start under a resolved
+    /// `@md` mode. The whole remaining line content is the token (the opener
+    /// carries the info string, the closer is backticks only). The block builder
+    /// pairs an opener with its closer into a `ROXYGEN_MD_CODE_BLOCK`.
+    RoxygenMdFence,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -113,9 +119,8 @@ impl TokKind {
             RoxygenTagName => Some(RoxygenRole::TagName),
             RoxygenTagArg => Some(RoxygenRole::TagArg),
             RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdImage
-            | RoxygenMdEmph | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker => {
-                Some(RoxygenRole::Content)
-            }
+            | RoxygenMdEmph | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker
+            | RoxygenMdFence => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

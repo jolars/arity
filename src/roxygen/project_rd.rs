@@ -87,6 +87,11 @@ enum Inline {
     /// `\if{html}{…}`/`\if{pdf}{…}` per roxygen2's extension-keyed image-format
     /// rule (see [`resolve_md_image`]).
     MdImage(String),
+    /// A markdown fenced code block resolved under `@md` mode (a
+    /// `ROXYGEN_MD_CODE_BLOCK` node). Projects to roxygen2's three-atom
+    /// `\if{html}{\out{<div…>}}` / `\preformatted{…}` / `\if{html}{\out{</div>}}`
+    /// sequence (see [`serialize_md_code_block`]).
+    MdCodeBlock(SyntaxNode),
 }
 
 /// The kind of a resolved markdown inline leaf.
@@ -277,6 +282,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
                 Inline::MdList(n) => Inline::MdList(n.clone()),
                 Inline::MdLink(s) => Inline::MdLink(s.clone()),
                 Inline::MdImage(s) => Inline::MdImage(s.clone()),
+                Inline::MdCodeBlock(n) => Inline::MdCodeBlock(n.clone()),
             });
         }
     }
@@ -415,6 +421,13 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 if let Some(atom) = resolve_md_image(raw) {
                     atoms.push(atom);
                 }
+            }
+            Inline::MdCodeBlock(node) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.extend(serialize_md_code_block(node));
             }
         }
     }
@@ -639,13 +652,15 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
         match el.kind() {
             SyntaxKind::ROXYGEN_PARAGRAPH
             | SyntaxKind::ROXYGEN_RD_MACRO
-            | SyntaxKind::ROXYGEN_MD_LIST => {
+            | SyntaxKind::ROXYGEN_MD_LIST
+            | SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
                 let Some(node) = el.into_node() else { continue };
                 let inlines = match node.kind() {
                     SyntaxKind::ROXYGEN_PARAGRAPH => RoxygenParagraph::cast(node)
                         .map(|p| paragraph_inlines(&p))
                         .unwrap_or_default(),
                     SyntaxKind::ROXYGEN_MD_LIST => vec![Inline::MdList(node)],
+                    SyntaxKind::ROXYGEN_MD_CODE_BLOCK => vec![Inline::MdCodeBlock(node)],
                     _ => vec![Inline::Macro(node)],
                 };
                 if !cur.is_empty() {
@@ -1053,6 +1068,72 @@ fn serialize_md_list(node: &SyntaxNode) -> String {
     } else {
         format!("({head} {})", atoms.join(" "))
     }
+}
+
+/// Project a `ROXYGEN_MD_CODE_BLOCK` node into roxygen2's three-atom fenced-code
+/// rendering (`mdxml_code_block`, `R/markdown.R`): an opening
+/// `\if{html}{\out{<div class="sourceCode[ <info>]">}}`, a `\preformatted{<code>}`,
+/// and a closing `\if{html}{\out{</div>}}`. The `<div>` class carries the fence's
+/// info string (empty → bare `sourceCode`); the code is the verbatim block content
+/// with a trailing newline (commonmark's `xml_text`). The body's `%`/`{`/`}` are
+/// `escape_verb`-escaped by roxygen2 but `parse_Rd` decodes them, so the pins (and
+/// thus the projector) carry the raw characters.
+fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
+    let (info, code) = md_code_block_parts(node);
+    let class = if info.is_empty() {
+        "sourceCode".to_string()
+    } else {
+        format!("sourceCode {info}")
+    };
+    let html = encode_text("html");
+    vec![
+        format!(
+            "(\\if (TEXT {html}) (\\out (VERB {})))",
+            encode_text(&format!("<div class=\"{class}\">"))
+        ),
+        format!("(\\preformatted (VERB {}))", encode_text(&code)),
+        format!(
+            "(\\if (TEXT {html}) (\\out (VERB {})))",
+            encode_text("</div>")
+        ),
+    ]
+}
+
+/// Extract a fenced code block's `(info, code)` from its node. The info string is
+/// the opener `ROXYGEN_MD_FENCE` leaf with its leading backtick run stripped and
+/// trimmed (matching commonmark's `info` attribute). The code is every line
+/// between the opener and closer fence lines, each with its `#'` marker and the
+/// single following space stripped, joined by newlines with a trailing newline
+/// (commonmark's `xml_text` for a code block).
+fn md_code_block_parts(node: &SyntaxNode) -> (String, String) {
+    let text = node.text().to_string();
+    let lines: Vec<&str> = text.split('\n').collect();
+    // The opener is the first line, the closer the last; the code is in between.
+    let info = lines
+        .first()
+        .map(|l| strip_marker(l).trim_start_matches('`').trim().to_string())
+        .unwrap_or_default();
+    let body = if lines.len() > 2 {
+        &lines[1..lines.len() - 1]
+    } else {
+        &[]
+    };
+    let mut code = String::new();
+    for line in body {
+        code.push_str(strip_marker(line));
+        code.push('\n');
+    }
+    (info, code)
+}
+
+/// Strip a `#'` line's marker prefix and the single following space, returning the
+/// line's content. Tolerates leading indentation before the marker (inter-line
+/// trivia) and a multi-`#` marker.
+fn strip_marker(line: &str) -> &str {
+    let trimmed = line.trim_start();
+    let after_hashes = trimmed.trim_start_matches('#');
+    let body = after_hashes.strip_prefix('\'').unwrap_or(after_hashes);
+    body.strip_prefix(' ').unwrap_or(body)
 }
 
 /// Whether a `ROXYGEN_MD_LIST` is ordered (`\enumerate`): its first item's

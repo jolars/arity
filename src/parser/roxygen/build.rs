@@ -162,6 +162,82 @@ pub(super) fn emit_md_list(tokens: &[Token], start: usize, events: &mut Vec<Even
     i
 }
 
+/// Whether the prose line whose marker is at `start` opens a **markdown fenced
+/// code block** (`@md` mode): its content begins with a `RoxygenMdFence` leaf.
+/// The leaf is carved only under a resolved `@md` mode, so its presence is the
+/// single mode signal (the builder never re-derives mode).
+pub(super) fn is_md_code_block_start(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdFence)
+}
+
+/// Emit a `ROXYGEN_MD_CODE_BLOCK` node spanning the fenced code block beginning
+/// at `start` (a `RoxygenMarker` whose content is a `RoxygenMdFence` opener).
+/// The node owns the opener fence leaf, each verbatim code line's body tokens,
+/// and the closing fence leaf; the `#'` markers, the marker→content whitespace,
+/// and the inter-line newlines/indentation are threaded in as trivia at the
+/// block level (losslessness), the way the block Rd macros and markdown lists
+/// thread them. An unterminated block ends at the next tag opener / block end
+/// (greedy and lossless, no closing fence). The trailing newline after the last
+/// consumed line is left to the caller. Returns the token index just past it.
+pub(super) fn emit_md_code_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_CODE_BLOCK));
+
+    // Opening line: marker, marker→content whitespace, then the opener fence.
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    if tokens.get(i).map(|t| &t.kind) == Some(&TokKind::RoxygenMdFence) {
+        events.push(Event::Tok(i)); // opener fence
+        i += 1;
+    }
+
+    loop {
+        // Line boundary: fold a continuation (`\n`, indentation, `#'`) into the
+        // node unless the next line is not a roxygen line or is a tag opener
+        // (an unterminated block stops there).
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            break;
+        }
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
+            break;
+        }
+        if matches!(classify_line(tokens, m), LineKind::Tag) {
+            break;
+        }
+        // `\n` + indentation + `#'` threaded as trivia, then the marker→content ws.
+        for idx in i..=m {
+            events.push(Event::Tok(idx));
+        }
+        i = m + 1;
+        while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+        // A closing fence ends the block; any other line is verbatim code (its
+        // body tokens threaded through). Both consume the whole line's content.
+        let is_closer = tokens.get(i).map(|t| &t.kind) == Some(&TokKind::RoxygenMdFence);
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+        if is_closer {
+            break;
+        }
+    }
+
+    events.push(Event::Finish); // ROXYGEN_MD_CODE_BLOCK
+    i
+}
+
 /// Emit a multi-line block Rd macro as a `ROXYGEN_RD_MACRO` node spanning `#'`
 /// lines. The node owns its opening line's marker and the inter-line markers,
 /// newlines, and indentation as threaded trivia (losslessness); its body is a
