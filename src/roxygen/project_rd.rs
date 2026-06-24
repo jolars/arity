@@ -75,6 +75,11 @@ enum Inline {
     /// Projects to `\itemize`/`\enumerate` with a name-only `\item` per item ahead
     /// of its content (see [`serialize_md_list`]).
     MdList(SyntaxNode),
+    /// An inline markdown link `[text](url)` resolved under `@md` mode, carrying
+    /// the raw leaf text. Projects to `\href{url}{text}` — the URL verbatim, the
+    /// display text prose (see [`serialize_md_link`]). Only the inline form reaches
+    /// this variant; reference/shortcut links stay `Text` (still backlog).
+    MdLink(String),
 }
 
 /// The kind of a resolved markdown inline leaf.
@@ -217,6 +222,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
                 Inline::Macro(n) => Inline::Macro(n.clone()),
                 Inline::Md(k, s) => Inline::Md(*k, s.clone()),
                 Inline::MdList(n) => Inline::MdList(n.clone()),
+                Inline::MdLink(s) => Inline::MdLink(s.clone()),
             });
         }
     }
@@ -340,6 +346,13 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 run.clear();
                 atoms.push(serialize_md_list(node));
             }
+            Inline::MdLink(raw) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(serialize_md_link(raw));
+            }
         }
     }
     if let Some(atom) = text_atom(&run) {
@@ -453,6 +466,9 @@ fn inlines_raw_text(body: &[Inline]) -> String {
             // content stands in for its source (delimiters are immaterial to the
             // `:` split, and markup in a heading is already an out-of-scope edge).
             Inline::Md(_, content) => s.push_str(content),
+            // A link leaf stands in as its raw source for the textual heading
+            // split (links in a heading are an out-of-scope edge anyway).
+            Inline::MdLink(raw) => s.push_str(raw),
         }
     }
     s
@@ -594,6 +610,15 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_CODE => {
             out.push(Inline::Md(MdInline::Code, strip_code_span(t.text())));
         }
+        // An inline `[text](url)` link projects to `\href`; the reference/shortcut
+        // forms (which the lexer also tokenizes as `ROXYGEN_MD_LINK`) resolve to a
+        // link *target*, not a `\href`, so they stay literal prose for now.
+        NodeOrToken::Token(t)
+            if t.kind() == SyntaxKind::ROXYGEN_MD_LINK
+                && parse_inline_md_link(t.text()).is_some() =>
+        {
+            out.push(Inline::MdLink(t.text().to_string()));
+        }
         // A `ROXYGEN_MD_LIST_MARKER` that reached an inline run (rather than a
         // `ROXYGEN_MD_LIST`) is a marker that did not form a list — the CommonMark
         // interrupt rule kept it inline. roxygen2 renders it as literal text.
@@ -637,6 +662,62 @@ fn serialize_md_inline(kind: MdInline, content: &str) -> String {
         MdInline::Strong => format!("(\\strong {})", text_atom(content).unwrap_or_default()),
         MdInline::Code => md_code_atom(content),
     }
+}
+
+/// Project an inline markdown link `[text](url)` into roxygen2's `\href`:
+/// `(\href (VERB <url>) (TEXT <text>))`. The URL is verbatim (no whitespace
+/// collapse), the display text is whitespace-normalized prose. Only the inline
+/// form reaches here ([`parse_inline_md_link`] gates `push_inline`); an empty
+/// display text contributes no atom.
+fn serialize_md_link(raw: &str) -> String {
+    let (text, url) = parse_inline_md_link(raw).unwrap_or_default();
+    let mut atoms = vec![format!("(VERB {})", encode_text(&url))];
+    if let Some(atom) = text_atom(&text) {
+        atoms.push(atom);
+    }
+    format!("(\\href {})", atoms.join(" "))
+}
+
+/// Split a `ROXYGEN_MD_LINK` leaf of inline form `[text](url)` into its display
+/// text and URL. Returns `None` for the reference (`[text][ref]`) and shortcut
+/// (`[name]`) forms — also tokenized as `ROXYGEN_MD_LINK` — which roxygen2
+/// resolves to a link *target* rather than a `\href`.
+fn parse_inline_md_link(raw: &str) -> Option<(String, String)> {
+    let bytes = raw.as_bytes();
+    let text_end = scan_delimited(bytes, 0, b'[', b']')?;
+    if bytes.get(text_end) != Some(&b'(') {
+        return None;
+    }
+    let url_end = scan_delimited(bytes, text_end, b'(', b')')?;
+    // The whole leaf must be exactly the link; a trailing remainder would be a
+    // different shape the lexer would not have tokenized as one link.
+    (url_end == bytes.len()).then(|| {
+        (
+            raw[1..text_end - 1].to_string(),
+            raw[text_end + 1..url_end - 1].to_string(),
+        )
+    })
+}
+
+/// Index just past the balanced `close` byte matching the `open` at `start`, or
+/// `None` if `start` is not `open` or the group never closes. Brackets are ASCII,
+/// so a byte scan is sufficient.
+fn scan_delimited(bytes: &[u8], start: usize, open: u8, close: u8) -> Option<usize> {
+    if bytes.get(start) != Some(&open) {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        if b == open {
+            depth += 1;
+        } else if b == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i + 1);
+            }
+        }
+    }
+    None
 }
 
 /// Project a `ROXYGEN_MD_LIST` node into `(\itemize …)` or `(\enumerate …)`: each

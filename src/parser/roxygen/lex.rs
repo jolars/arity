@@ -241,7 +241,7 @@ fn lex_roxygen_prose(
             b'`' => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenCode, end)),
             b'*' | b'_' if md => scan_md_emphasis(bytes, i),
             b'\\' => scan_rd_macro(bytes, i).map(|end| (TokKind::RoxygenRdMacro, end)),
-            b'[' => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
+            b'[' if md => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
             _ => None,
         };
         if let Some((kind, end)) = span {
@@ -854,20 +854,20 @@ mod tests {
     #[test]
     fn md_inline_link() {
         assert_eq!(
-            prose_texts("#' see [the docs](https://x.y) now\n"),
+            prose_texts("#' see [the docs](https://x.y) now\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "see ".into()),
                 (TokKind::RoxygenMdLink, "[the docs](https://x.y)".into()),
                 (TokKind::RoxygenText, " now".into()),
             ]
         );
-        assert_lossless("#' see [the docs](https://x.y) now\n");
+        assert_lossless("#' see [the docs](https://x.y) now\n#' @md\n");
     }
 
     #[test]
     fn md_function_autolink() {
         assert_eq!(
-            prose_texts("#' Call [func()] and [pkg::g()].\n"),
+            prose_texts("#' Call [func()] and [pkg::g()].\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "Call ".into()),
                 (TokKind::RoxygenMdLink, "[func()]".into()),
@@ -876,20 +876,34 @@ mod tests {
                 (TokKind::RoxygenText, ".".into()),
             ]
         );
-        assert_lossless("#' Call [func()] and [pkg::g()].\n");
+        assert_lossless("#' Call [func()] and [pkg::g()].\n#' @md\n");
     }
 
     #[test]
     fn md_reference_link() {
         assert_eq!(
-            prose_texts("#' a [text][ref] b\n"),
+            prose_texts("#' a [text][ref] b\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "a ".into()),
                 (TokKind::RoxygenMdLink, "[text][ref]".into()),
                 (TokKind::RoxygenText, " b".into()),
             ]
         );
-        assert_lossless("#' a [text][ref] b\n");
+        assert_lossless("#' a [text][ref] b\n#' @md\n");
+    }
+
+    #[test]
+    fn link_shape_is_literal_text_without_md() {
+        // A `[text](url)` shape is a markdown link only under `@md`; without it the
+        // brackets are literal Rd prose, so no `RoxygenMdLink` is carved.
+        assert_eq!(
+            prose_texts("#' see [the docs](https://x.y) now\n"),
+            vec![(
+                TokKind::RoxygenText,
+                "see [the docs](https://x.y) now".into()
+            )]
+        );
+        assert_lossless("#' see [the docs](https://x.y) now\n");
     }
 
     #[test]

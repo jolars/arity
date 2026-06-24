@@ -2,26 +2,33 @@
 source: tests/parser_snapshots.rs
 expression: tree
 ---
-ROOT@0..77
-  ROXYGEN_BLOCK@0..57
-    ROXYGEN_SECTION@0..57
-      ROXYGEN_PARAGRAPH@0..57
+ROOT@0..84
+  ROXYGEN_BLOCK@0..64
+    ROXYGEN_SECTION@0..58
+      ROXYGEN_PARAGRAPH@0..58
         ROXYGEN_MARKER@0..2 "#'"
         WHITESPACE@2..3 " "
         ROXYGEN_TEXT@3..7 "See "
         ROXYGEN_MD_LINK@7..47 "[the manual](https:// ..."
         ROXYGEN_TEXT@47..57 " for more."
-  NEWLINE@57..58 "\n"
-  ASSIGNMENT_EXPR@58..76
-    IDENT@58..59 "f"
-    WHITESPACE@59..60 " "
-    ASSIGN_LEFT@60..62 "<-"
-    WHITESPACE@62..63 " "
-    FUNCTION_EXPR@63..76
-      FUNCTION_KW@63..71 "function"
-      LPAREN@71..72 "("
-      IDENT@72..73 "x"
-      RPAREN@73..74 ")"
-      WHITESPACE@74..75 " "
-      IDENT@75..76 "x"
-  NEWLINE@76..77 "\n"
+        NEWLINE@57..58 "\n"
+    ROXYGEN_SECTION@58..64
+      ROXYGEN_MARKER@58..60 "#'"
+      WHITESPACE@60..61 " "
+      ROXYGEN_TAG@61..64
+        ROXYGEN_AT@61..62 "@"
+        ROXYGEN_TAG_NAME@62..64 "md"
+  NEWLINE@64..65 "\n"
+  ASSIGNMENT_EXPR@65..83
+    IDENT@65..66 "f"
+    WHITESPACE@66..67 " "
+    ASSIGN_LEFT@67..69 "<-"
+    WHITESPACE@69..70 " "
+    FUNCTION_EXPR@70..83
+      FUNCTION_KW@70..78 "function"
+      LPAREN@78..79 "("
+      IDENT@79..80 "x"
+      RPAREN@80..81 ")"
+      WHITESPACE@81..82 " "
+      IDENT@82..83 "x"
+  NEWLINE@83..84 "\n"
