@@ -11,6 +11,7 @@
 # divergence means the CST is wrong --- never patch the projector to pass.
 describe_format
 examples
+examples_merge
 itemize_enumerate
 markdown_inline
 markdown_list
@@ -63,6 +64,7 @@ rx-561b9e7d
 rx-56294ccd
 rx-56b8de71
 rx-58680046
+rx-5ac40b37
 rx-602f341e
 rx-63a849b8
 rx-6bf81779
@@ -73,6 +75,7 @@ rx-6f8d66ee
 rx-701f0be6
 rx-72858140
 rx-738b19f8
+rx-73a5b650
 rx-7743ba62
 rx-79f2234b
 rx-820d120d

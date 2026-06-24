@@ -215,6 +215,11 @@
         each tag a `\item{\code{name}}{def}` (the name verbatim `RCODE`). The CST
         already modeled the tag arg + prose; `describe_section` in `project_rd.rs`
         synthesizes the aggregate. +2 projector cases (rx-853d2f8f, rx-d55651e1).
+        **`@examples`/`@examplesIf` aggregation landed (2026-06-24h,
+        projector-only):** every examples tag of a topic concatenates into a single
+        `\examples`; `project_block` records a `has_examples` flag and emits one
+        `(\examples ...)` (body is reformatted R → placeholder). +2 projector cases
+        (rx-5ac40b37, rx-73a5b650).
       - *Block macros that span many `#'` lines with nested content.*
         **`\itemize`/`\enumerate` landed (Stage 2, 2026-06-23):** a `\name{` whose
         group is unbalanced on its line opens a `ROXYGEN_RD_MACRO` node spanning
@@ -342,14 +347,16 @@
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **115 matching / 44 divergent** of 159 pinned (was 42; `rd_macros`,
+      **122 matching / 38 divergent** of 160 pinned (was 42; `rd_macros`,
       `itemize_enumerate`, `describe_format`, `tabular`, `@md` inline + block lists,
       the title-as-description fallback, the `@tag NULL` suppression sentinel,
       `\code`-body RCODE, `\href` per-arg verbatim, `@slot`/`@field` aggregation,
-      `@md` inline + reference + shortcut links, then the **intro paragraph split**
+      `@md` inline + reference + shortcut links, the **intro paragraph split**
       (roxygen2's `parse_description`: 1st intro paragraph = title, 2nd =
       description, the rest = details merged with explicit `@details`; body parts
-      grouped by blank `#'` lines) — closing 10 harvested cases — closed). The
+      grouped by blank `#'` lines), markdown images + Rd `\figure`, digit-bearing
+      Rd macro names (`\linkS4class`), then **multiple `@examples`/`@examplesIf`
+      aggregating into one `\examples`** — closed). The
       remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.

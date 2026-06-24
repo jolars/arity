@@ -113,6 +113,10 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     // (name, definition) pairs rather than projected per-tag.
     let mut slots: Vec<(String, Vec<Inline>)> = Vec::new();
     let mut fields: Vec<(String, Vec<Inline>)> = Vec::new();
+    // `@examples`/`@examplesIf` is an aggregating field: every examples tag of a
+    // topic concatenates into a single `\examples` section. The body is
+    // reformatted R, so the projector only records *that* one exists.
+    let mut has_examples = false;
 
     for section in block.sections() {
         if let Some(tag) = section.tag() {
@@ -133,6 +137,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
                         fields.push((arg, body));
                     }
                 }
+                "examples" | "examplesIf" => has_examples = true,
                 _ => tag_sections.push((name, body)),
             }
         } else {
@@ -217,6 +222,11 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     }
     if !fields.is_empty() {
         out.push(describe_section("Fields", &fields));
+    }
+
+    // The single aggregated `\examples` section (body reformatted R → placeholder).
+    if has_examples {
+        out.push("(\\examples ...)".to_string());
     }
 }
 
@@ -311,8 +321,8 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
             }
             out.push(format!("(\\section{})", prefix_space(&inner)));
         }
-        // The body is reformatted R; the oracle compares only its presence.
-        "examples" | "examplesIf" => out.push("(\\examples ...)".to_string()),
+        // `@examples`/`@examplesIf` is an aggregating field, emitted once by
+        // `project_block`, so it never reaches this per-tag dispatch.
         // Everything else is roclet scaffolding or an excluded section.
         _ => {}
     }
@@ -1226,6 +1236,27 @@ mod tests {
     fn examples_body_is_a_placeholder() {
         let src = "#' T\n#' @examples\n#' f(1)\n#' @name d\nNULL\n";
         assert!(project_to_rd(src).contains("(\\examples ...)"));
+    }
+
+    #[test]
+    fn multiple_examples_tags_merge_into_one_section() {
+        // roxygen2's `@examples`/`@examplesIf` is an aggregating field: every
+        // examples tag of a topic concatenates into a *single* `\examples`
+        // section, so the projector emits exactly one `(\examples ...)` no matter
+        // how many tags appear.
+        let src = "#' @name a\n\
+                   #' @title a\n\
+                   #' @examples\n\
+                   #' TRUE\n\
+                   #' @examples\n\
+                   #' FALSE\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"a\"))\n\
+             (\\examples ...)\n\
+             (\\title (TEXT \"a\"))"
+        );
     }
 
     #[test]
