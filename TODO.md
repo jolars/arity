@@ -219,7 +219,14 @@
         projector-only):** every examples tag of a topic concatenates into a single
         `\examples`; `project_block` records a `has_examples` flag and emits one
         `(\examples ...)` (body is reformatted R → placeholder). +2 projector cases
-        (rx-5ac40b37, rx-73a5b650).
+        (rx-5ac40b37, rx-73a5b650). **`@section Title: body` body inlines landed
+        (2026-06-24i, projector-only):** parse_Rd models `\section` as a two-arg
+        structural macro, so the `section` arm now splits on the first `:`
+        (`split_section_title`) and sub-parses both sides as inlines, GRP-wrapping a
+        multi-atom argument (`grp_arg`) while a single-atom title stays bare
+        (`(\section (TEXT "Foobar") (GRP (TEXT "With some") (\strong …) (TEXT ".")))`);
+        the same `grp_arg` now wraps the `@slot`/`@field` `\item` definition when its
+        prose carries a macro. +2 projector cases (rx-41e06b64, rx-1b26c2a4).
       - *Block macros that span many `#'` lines with nested content.*
         **`\itemize`/`\enumerate` landed (Stage 2, 2026-06-23):** a `\name{` whose
         group is unbalanced on its line opens a `ROXYGEN_RD_MACRO` node spanning

@@ -255,55 +255,55 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24h) — multiple `@examples` aggregate into one `\examples`
+## Latest session (2026-06-24i) — `@section` body inline macros + GRP-wrap
 
-**Construct:** `@examples`/`@examplesIf` is an *aggregating* field — every examples
-tag of a topic concatenates into a single `\examples` section. arity emitted one
-`(\examples ...)` per tag, so a block with two `@examples` produced two. Closed
-**2 cases** (rx-5ac40b37 two `@examples`, rx-73a5b650 two `@examplesIf`): both were
-fully correct except the duplicated `\examples`.
+**Construct:** `@section Title: body` projects to `\section{Title}{body}`. The body
+sub-parses inline macros/markdown and, because parse_Rd models `\section` as a
+two-arg *structural* macro, GRP-wraps a multi-atom argument while a single-atom title
+stays bare — `(\section (TEXT "Foobar") (GRP (TEXT "With some") (\strong (TEXT "bold
+text")) (TEXT ".")))`. Closed **2 cases** (rx-41e06b64 non-md, rx-1b26c2a4 md), each
+otherwise fully correct.
 
-**Bucket: projector gap (faithful translation).** The CST already models each
-examples tag as its own section; roxygen2 aggregates them, so the projector should
-too. Moved the examples arm out of the per-tag `project_tag_section` dispatch and
-into `project_block`: a `has_examples` flag set in the tag-classification match,
-then a single `(\examples ...)` emitted at the end (alongside the `@slot`/`@field`
-aggregates). Body is reformatted R, so the projector only records *that* one exists
-(the placeholder), exactly like before — no parser change.
+**Bucket: projector gap (faithful translation), pure.** The CST already modeled the
+`@section` body as a paragraph with the inline macro (no parser change). The old
+`section` arm did a *textual* `:` split on `inlines_raw_text` and flattened the body
+to one raw `(TEXT …)`. Replaced it: `split_section_title` splits the inline run at the
+first `:` (it lives in a prose `Inline::Text`; macros carry no separator), each side
+goes through `serialize_inlines`, and a new `grp_arg` helper applies the structural
+GRP rule (`[] → ""`, `[one] → bare`, `many → (GRP …)`). Removed the now-unused
+`inlines_raw_text`. **Second gap surfaced by the same cases:** `describe_section`
+(the `@slot`/`@field` Slots/Fields aggregate) spliced the `\item` *definition* (a
+two-arg `\item`'s second structural arg) directly — fine when single-atom, wrong once
+the def carried a macro. Routed it through the same `grp_arg`.
 
-**Result:** projector **119→122 matching** (122 allowlisted), 40→38 divergent, 0
-regressions. The +3 is the 2 harvested slugs plus a new curated lock-in fixture
-`examples_merge` (minted pin; re-blessed the format baseline for its new key; it
-also lifts the curated fixed-point net to 9/9). `cargo test` green (464 unit + all
-suites), clippy + fmt clean. Files: `src/roxygen/project_rd.rs` (aggregate examples
-+ unit test), curated `tests/oracle/corpus/roxygen/examples_merge.{R,rdtree}`,
-allowlist (+3 via re-seed), format baseline (+1 key), TODO, RECAP.
+**Result:** projector **122→124 matching** (124 allowlisted), 38→36 divergent, 0
+regressions. `cargo test` green (465 unit + all suites), clippy + fmt clean, curated
+fixed-point still 9/9. Files: `src/roxygen/project_rd.rs` (rewrote `section` arm,
+GRP-wrap `\item` def, +`split_section_title`/`grp_arg`, −`inlines_raw_text`, unit
+test), allowlist (+2 via re-seed), TODO, RECAP. **No parser/fixture change** (CST
+unchanged), so the lock-in is the unit test + the two pinned harvested cases.
 
-**Next (ranked):** down to 38 divergent. Cleanest remaining small win: **brace-less
+**Next (ranked):** down to 36 divergent. Cleanest remaining small win: **brace-less
 unknown macros** (rx-16f78b2f non-md, rx-b8082617 md): `\rd \commands` →
 `(UNKNOWN "\\rd") (UNKNOWN "\\commands")`. parse_Rd tags any unrecognized `\word`
-(even brace-less) as `UNKNOWN`; arity currently leaves a brace-less `\word` as
-literal text. Needs (a) the lexer to emit a brace-less `\word` as a macro-ish token,
-(b) a known-vs-unknown decision (a known brace-less macro like `\dots`/`\cr` is a
-name-only macro, an unknown one is `UNKNOWN`), (c) a projector `UNKNOWN` arm; scope
-a known-macro table. Another **projector-only** pair: **`@section` body inline
-macros + GRP-wrap** (rx-41e06b64 non-md, rx-1b26c2a4 md) — both fully correct
-*except* the `@section` body, which the projector currently flattens to raw text
-(`(\section (TEXT "Foobar") (TEXT "With some \\strong{bold text}."))`) instead of
-sub-parsing inline macros/markdown and GRP-wrapping the multi-atom body
-(`(\section (TEXT "Foobar") (GRP (TEXT "With some") (\strong (TEXT "bold text"))
-(TEXT ".")))`). The `@section` arm in `project_tag_section` does a textual `:` split
-and never serializes the body as inlines — that's the gap. Bigger structural target
-still open: **nested markdown/Rd lists** (rx-91e67e79 md, rx-959fc227 Rd; both
-project flat — in-list indentation is dropped as trivia). Plain **fenced code
-blocks** without `{…}` (no knitr eval) are a 4-case cluster (rx-59e70a3d,
-rx-8c9662d6, rx-dd2506bf, rx-fb5d2ad5) → `\if{html}{\out{<div…>}} \preformatted{…}
-\if{html}{\out{</div>}}`, but needs markdown fenced-block parsing. Still out of
-scope: roxygen2-*evaluation* gaps (data-object auto-`\format`, ```{r}``` eval
-blocks, inline `` `r …` ``).
+(even brace-less) as `UNKNOWN`; arity currently leaves a brace-less `\word` as literal
+text. Needs (a) the lexer to emit a brace-less `\word` as a macro-ish token, (b) a
+known-vs-unknown decision (a known brace-less macro like `\dots`/`\cr` is a name-only
+macro; an unknown one is `UNKNOWN`), (c) a projector `UNKNOWN` arm; scope a
+known-macro table. Bigger structural target still open: **nested markdown/Rd lists**
+(rx-91e67e79 md, rx-959fc227 Rd; both project flat — in-list indentation dropped as
+trivia). Plain **fenced code blocks** without `{…}` (no knitr eval) are a 4-case
+cluster (rx-59e70a3d, rx-8c9662d6, rx-dd2506bf, rx-fb5d2ad5) → `\if{html}{\out{<div…>}}
+\preformatted{…} \if{html}{\out{</div>}}`, but needs markdown fenced-block parsing.
+Still out of scope: roxygen2-*evaluation* gaps (data-object auto-`\format`, ```{r}```
+eval blocks, inline `` `r …` ``).
 
 ## Earlier sessions
 
+- **2026-06-24h (multiple `@examples` aggregate into one `\examples`):** projector-only,
+  +3 (2 harvested rx-5ac40b37/rx-73a5b650 + curated `examples_merge`). `@examples`/
+  `@examplesIf` is an aggregating field; moved the examples arm out of per-tag dispatch
+  into `project_block` (a `has_examples` flag → one `(\examples ...)`). 119→122.
 - **2026-06-24g (digit-bearing Rd macro names, `\linkS4class`):** +1 case
   (rx-852ee490). Rd command names are `[A-Za-z][A-Za-z0-9]*`; six duplicated name
   scans truncated at a digit. Replaced all with one shared `rd_macro_name_end`

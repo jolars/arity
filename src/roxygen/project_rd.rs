@@ -245,8 +245,13 @@ fn describe_section(title: &str, items: &[(String, Vec<Inline>)]) -> String {
         } else {
             format!("(\\code {})", code_atoms.join(" "))
         };
+        // The definition is `\item`'s second (structural) argument: a multi-atom
+        // prose+macro run is `(GRP …)`-wrapped, a single atom stays bare.
         let mut parts = vec![term];
-        parts.extend(serialize_inlines(def));
+        let def_arg = grp_arg(&serialize_inlines(def));
+        if !def_arg.is_empty() {
+            parts.push(def_arg);
+        }
         item_atoms.push(format!("(\\item {})", parts.join(" ")));
     }
     format!(
@@ -303,21 +308,21 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
         "note" => push_section(out, "note", body),
         "author" => push_section(out, "author", body),
         "title" => push_section(out, "title", body),
-        // `@section Title: body` → \section{Title}{body}. The split is textual;
-        // macros in the heading are an out-of-scope edge (it would diverge, which
-        // is the right backlog signal).
+        // `@section Title: body` → \section{Title}{body}. roxygen2 splits the
+        // field value on its first `:`; parse_Rd then models `\section` as a
+        // two-arg structural macro, so each side sub-parses inline macros/markdown
+        // and a multi-atom argument is `(GRP …)`-wrapped while a single-atom one
+        // stays bare (the same rule `serialize_macro` applies to `\item`/`\tabular`).
         "section" => {
-            let raw = inlines_raw_text(body);
-            let (heading, rest) = raw.split_once(':').unwrap_or((&raw, ""));
-            let mut inner = String::new();
-            if let Some(a) = text_atom(heading) {
-                inner.push_str(&a);
-            }
-            if let Some(a) = text_atom(rest) {
+            let (heading, content) = split_section_title(body);
+            let title = serialize_inlines(&heading);
+            let body = serialize_inlines(&content);
+            let mut inner = grp_arg(&title);
+            if !body.is_empty() {
                 if !inner.is_empty() {
                     inner.push(' ');
                 }
-                inner.push_str(&a);
+                inner.push_str(&grp_arg(&body));
             }
             out.push(format!("(\\section{})", prefix_space(&inner)));
         }
@@ -512,24 +517,47 @@ fn serialize_macro(node: &SyntaxNode) -> String {
     }
 }
 
-/// The raw source text of an inline run (text verbatim, macros as their CST
-/// text), used for the textual `@section` heading split.
-fn inlines_raw_text(body: &[Inline]) -> String {
-    let mut s = String::new();
+/// Split an `@section` body at roxygen2's title separator (the first literal `:`,
+/// which lives in a prose `Inline::Text` run) into `(title, content)` inline runs.
+/// The `:` is dropped; everything before it is the heading, everything after the
+/// body. Macros/markdown carry no `:` separator, so only `Inline::Text` is scanned.
+fn split_section_title(body: &[Inline]) -> (Vec<Inline>, Vec<Inline>) {
+    let mut title: Vec<Inline> = Vec::new();
+    let mut content: Vec<Inline> = Vec::new();
+    let mut split = false;
     for inl in body {
-        match inl {
-            Inline::Text(t) => s.push_str(t),
-            Inline::Macro(n) | Inline::MdList(n) => s.push_str(&n.text().to_string()),
-            // The `@section` heading split is textual; a markdown leaf's inner
-            // content stands in for its source (delimiters are immaterial to the
-            // `:` split, and markup in a heading is already an out-of-scope edge).
-            Inline::Md(_, content) => s.push_str(content),
-            // A link/image leaf stands in as its raw source for the textual
-            // heading split (markup in a heading is an out-of-scope edge anyway).
-            Inline::MdLink(raw) | Inline::MdImage(raw) => s.push_str(raw),
+        if split {
+            content.push(inl.clone());
+            continue;
         }
+        if let Inline::Text(t) = inl
+            && let Some(idx) = t.find(':')
+        {
+            if idx > 0 {
+                title.push(Inline::Text(t[..idx].to_string()));
+            }
+            let after = &t[idx + 1..];
+            if !after.is_empty() {
+                content.push(Inline::Text(after.to_string()));
+            }
+            split = true;
+            continue;
+        }
+        title.push(inl.clone());
     }
-    s
+    (title, content)
+}
+
+/// Render a structural macro argument from its serialized atoms: a multi-atom
+/// argument is `(GRP …)`-wrapped (parse_Rd models it as a list), a single-atom one
+/// stays bare, and an empty one yields nothing. Mirrors `serialize_macro`'s
+/// `finalize`, used for the `\section` title/body arguments.
+fn grp_arg(atoms: &[String]) -> String {
+    match atoms {
+        [] => String::new(),
+        [one] => one.clone(),
+        many => format!("(GRP {})", many.join(" ")),
+    }
 }
 
 fn prefix_space(s: &str) -> String {
@@ -1145,6 +1173,26 @@ mod tests {
             "(\\description (TEXT \"description\"))\n\
              (\\details (TEXT \"details\"))\n\
              (\\title (TEXT \"title\"))"
+        );
+    }
+
+    #[test]
+    fn section_body_serializes_inline_macros_with_grp_wrap() {
+        // `@section Title: body` → \section{Title}{body}; parse_Rd models \section
+        // as a two-arg structural macro, so the body sub-parses inline macros and
+        // GRP-wraps its multi-atom argument while the single-atom title stays bare.
+        let src = "#' Title\n\
+                   #'\n\
+                   #' Description.\n\
+                   #' @section Foobar:\n\
+                   #' With some \\strong{bold text}.\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Description.\"))\n\
+             (\\section (TEXT \"Foobar\") (GRP (TEXT \"With some\") (\\strong (TEXT \"bold text\")) (TEXT \".\")))\n\
+             (\\title (TEXT \"Title\"))"
         );
     }
 
