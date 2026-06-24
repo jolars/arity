@@ -310,8 +310,15 @@
       **deferred:** the settled loose-file/`DESCRIPTION`
       **default-ON** (only an explicit per-block `@md` enables markdown today —
       flipping the default reinterprets every block, so it needs its own re-bless
-      pass), and **nested** lists (in-list indentation is dropped, so a nested list
-      projects flat — un-allowlisted backlog, never a passing-but-wrong gate entry).
+      pass), and **markdown** nested lists (in-list indentation is dropped, so a
+      nested `*`/`1.` list projects flat — un-allowlisted backlog `rx-91e67e79`,
+      never a passing-but-wrong gate entry). **Nested *Rd* block macros landed
+      (2026-06-24q):** an unbalanced nested `\name{` opener inside a block macro's
+      body (`\itemize{` inside `\enumerate{`) now opens a child `ROXYGEN_RD_MACRO`
+      via a `BodyFrame` stack in `emit_block_content` (replacing the flat brace-depth
+      counter); the projector already recursed, so +1 (rx-959fc227) + curated
+      `rd_nested_list`. Rd nesting is brace-driven (indentation-independent), so this
+      is distinct from the still-deferred markdown nested list.
       **Images + `\figure` landed (Stage 14, 2026-06-24f):** the Rd `\figure{path}{caption}`
       macro is now a two-arg macro with both args verbatim (`TWO_ARG_RD_MACROS` +
       `is_verbatim_rd_arg`), and a markdown image `![alt](url "title")` lexes to a new

@@ -12,6 +12,17 @@ use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
 use crate::syntax::SyntaxKind;
 
+/// One open brace group inside a block macro's body, tracked so the body's
+/// closing braces are matched to the right opener. A `Macro` frame is a *nested*
+/// block macro (`\itemize{ … }` opening across lines inside its parent): we
+/// emitted a `ROXYGEN_RD_MACRO` for it, so its closing `}` finalizes that node.
+/// A `Plain` frame is a bare `{` in prose: literal text on both ends, tracked
+/// only so its `}` is not mistaken for the enclosing macro's terminator.
+enum BodyFrame {
+    Macro,
+    Plain,
+}
+
 /// Whether the prose line whose marker is at `start` opens a **block** Rd macro
 /// across following `#'` lines. Two shapes:
 ///
@@ -321,7 +332,9 @@ pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<
         i += 1;
     }
 
-    let mut depth = 0usize;
+    // The body's open brace groups (the parent macro's own body is the empty-stack
+    // baseline, so a `}` at an empty stack terminates it).
+    let mut frames: Vec<BodyFrame> = Vec::new();
     let mut closed = false;
 
     // Opening content. Form A: a `RoxygenText` `\name{ …` --- split off the name
@@ -331,14 +344,14 @@ pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<
     // the body brace.
     match tokens.get(i) {
         Some(tok) if tok.kind == TokKind::RoxygenText => {
-            emit_block_open(events, &tok.text, &mut depth, &mut closed);
+            emit_block_open(events, &tok.text, &mut frames, &mut closed);
             i += 1;
         }
         Some(tok) if tok.kind == TokKind::RoxygenRdMacro => {
             emit_block_open_arg_macro(events, &tok.text);
             i += 1;
             if let Some(next) = tokens.get(i) {
-                emit_block_body_open(events, &next.text, &mut depth, &mut closed);
+                emit_block_body_open(events, &next.text, &mut frames, &mut closed);
                 i += 1;
             }
         }
@@ -350,7 +363,7 @@ pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<
         while let Some(tok) = tokens.get(i) {
             match &tok.kind {
                 TokKind::RoxygenText => {
-                    emit_block_content(events, &tok.text, &mut depth, &mut closed);
+                    emit_block_content(events, &tok.text, &mut frames, &mut closed);
                     i += 1;
                 }
                 // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`, or a
@@ -394,13 +407,27 @@ pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<
         }
     }
 
+    // An unterminated macro (ended by a tag opener / block end, no closing `}`)
+    // may leave nested macros open: close each so the event stream stays balanced.
+    for frame in frames.into_iter().rev() {
+        if matches!(frame, BodyFrame::Macro) {
+            events.push(Event::Finish); // nested ROXYGEN_RD_MACRO
+        }
+    }
+
     events.push(Event::Finish); // ROXYGEN_RD_MACRO
     i
 }
 
 /// Emit the opening `\name{` of a block macro: a `ROXYGEN_RD_MACRO_NAME`, the
-/// `{` delimiter (setting brace depth to 1), then any trailing same-line content.
-fn emit_block_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, closed: &mut bool) {
+/// `{` delimiter, then any trailing same-line content. The parent body is the
+/// empty-frame baseline ([`emit_block_content`]).
+fn emit_block_open(
+    events: &mut Vec<Event>,
+    text: &str,
+    frames: &mut Vec<BodyFrame>,
+    closed: &mut bool,
+) {
     let bytes = text.as_bytes();
     let k = super::rd_macro_name_end(bytes, 1);
     events.push(Event::Leaf(
@@ -412,8 +439,7 @@ fn emit_block_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, close
         SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
         "{".to_string(),
     ));
-    *depth = 1;
-    emit_block_content(events, &text[k + 1..], depth, closed);
+    emit_block_content(events, &text[k + 1..], frames, closed);
 }
 
 /// Emit the leading `\name{arg}…` of a Form-B block macro from a *balanced*
@@ -464,24 +490,35 @@ fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) {
 }
 
 /// Open a Form-B block macro's body brace from a `RoxygenText` `{ …` token: emit
-/// the `{` delimiter (setting brace depth to 1), then parse any trailing same-line
-/// body content. The gate guarantees `text` begins with `{`.
-fn emit_block_body_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, closed: &mut bool) {
+/// the `{` delimiter, then parse any trailing same-line body content. The gate
+/// guarantees `text` begins with `{`; the body is the empty-frame baseline.
+fn emit_block_body_open(
+    events: &mut Vec<Event>,
+    text: &str,
+    frames: &mut Vec<BodyFrame>,
+    closed: &mut bool,
+) {
     debug_assert_eq!(text.as_bytes().first(), Some(&b'{'));
     events.push(Event::Leaf(
         SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
         "{".to_string(),
     ));
-    *depth = 1;
-    emit_block_content(events, &text[1..], depth, closed);
+    emit_block_content(events, &text[1..], frames, closed);
 }
 
 /// Parse one `RoxygenText` token's worth of block-macro body, emitting leaves:
 /// brace-less name-only macros (`\item`, `\cr`, …, a `\name` not followed by
-/// `{`), the closing `}` delimiter when it returns brace depth to zero (setting
-/// `closed`), and prose runs as `ROXYGEN_TEXT`. Tracks `depth` across calls so a
-/// group can open and close on different `#'` lines.
-fn emit_block_content(events: &mut Vec<Event>, text: &str, depth: &mut usize, closed: &mut bool) {
+/// `{`), *nested* block macros (`\name{ … }` opening across lines, modeled as a
+/// child `ROXYGEN_RD_MACRO`), the closing `}` delimiter that terminates the
+/// enclosing macro (setting `closed`), and prose runs as `ROXYGEN_TEXT`. The open
+/// brace `frames` are tracked across calls, so a group can open and close on
+/// different `#'` lines.
+fn emit_block_content(
+    events: &mut Vec<Event>,
+    text: &str,
+    frames: &mut Vec<BodyFrame>,
+    closed: &mut bool,
+) {
     let bytes = text.as_bytes();
     let mut run_start = 0usize;
     let mut i = 0usize;
@@ -492,12 +529,26 @@ fn emit_block_content(events: &mut Vec<Event>, text: &str, depth: &mut usize, cl
                 let k = super::rd_macro_name_end(bytes, name_start);
                 if k == name_start {
                     // An escape (`\\`, `\{`, `\}`, `\%`): two literal bytes that
-                    // never affect brace depth.
+                    // never open a brace group.
                     i = (i + 2).min(bytes.len());
                 } else if bytes.get(k) == Some(&b'{') {
-                    // An unbalanced nested `\name{` opener (nested block macro,
-                    // out of scope): leave it as text; the `{` is depth-counted.
-                    i = k;
+                    // An unbalanced nested `\name{` opener: a nested block macro
+                    // whose body spans following `#'` lines. Open a child
+                    // `ROXYGEN_RD_MACRO`; its matching `}` (its `Macro` frame)
+                    // finalizes it.
+                    push_text(events, &text[run_start..i]);
+                    events.push(Event::Start(SyntaxKind::ROXYGEN_RD_MACRO));
+                    events.push(Event::Leaf(
+                        SyntaxKind::ROXYGEN_RD_MACRO_NAME,
+                        text[i..k].to_string(),
+                    ));
+                    events.push(Event::Leaf(
+                        SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+                        "{".to_string(),
+                    ));
+                    frames.push(BodyFrame::Macro);
+                    i = k + 1;
+                    run_start = i;
                 } else {
                     // A brace-less name-only macro.
                     push_text(events, &text[run_start..i]);
@@ -520,26 +571,39 @@ fn emit_block_content(events: &mut Vec<Event>, text: &str, depth: &mut usize, cl
                     run_start = i;
                 }
             }
+            // A bare `{` in prose: literal text on both ends, tracked only so its
+            // matching `}` is not mistaken for the enclosing macro's terminator.
             b'{' => {
-                *depth += 1;
+                frames.push(BodyFrame::Plain);
                 i += 1;
             }
-            b'}' if *depth <= 1 => {
-                push_text(events, &text[run_start..i]);
-                events.push(Event::Leaf(
-                    SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
-                    "}".to_string(),
-                ));
-                *depth = 0;
-                *closed = true;
-                run_start = i + 1;
-                push_text(events, &text[run_start..]);
-                return;
-            }
-            b'}' => {
-                *depth -= 1;
-                i += 1;
-            }
+            b'}' => match frames.pop() {
+                // No open group: this `}` terminates the enclosing block macro.
+                None => {
+                    push_text(events, &text[run_start..i]);
+                    events.push(Event::Leaf(
+                        SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+                        "}".to_string(),
+                    ));
+                    *closed = true;
+                    run_start = i + 1;
+                    push_text(events, &text[run_start..]);
+                    return;
+                }
+                // Closes a nested block macro: finalize its `ROXYGEN_RD_MACRO`.
+                Some(BodyFrame::Macro) => {
+                    push_text(events, &text[run_start..i]);
+                    events.push(Event::Leaf(
+                        SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+                        "}".to_string(),
+                    ));
+                    events.push(Event::Finish); // nested ROXYGEN_RD_MACRO
+                    i += 1;
+                    run_start = i;
+                }
+                // Closes a bare prose group: the `}` stays literal text.
+                Some(BodyFrame::Plain) => i += 1,
+            },
             b => i += utf8_len(b),
         }
     }

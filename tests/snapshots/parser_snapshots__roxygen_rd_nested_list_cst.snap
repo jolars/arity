@@ -1,0 +1,72 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..149
+  ROXYGEN_BLOCK@0..143
+    ROXYGEN_SECTION@0..133
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..11
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..11 "details"
+      NEWLINE@11..12 "\n"
+      ROXYGEN_RD_MACRO@12..132
+        ROXYGEN_MARKER@12..14 "#'"
+        WHITESPACE@14..15 " "
+        ROXYGEN_RD_MACRO_NAME@15..25 "\\enumerate"
+        ROXYGEN_RD_MACRO_DELIM@25..26 "{"
+        NEWLINE@26..27 "\n"
+        ROXYGEN_MARKER@27..29 "#'"
+        WHITESPACE@29..32 "   "
+        ROXYGEN_RD_MACRO@32..37
+          ROXYGEN_RD_MACRO_NAME@32..37 "\\item"
+        WHITESPACE@37..38 " "
+        ROXYGEN_TEXT@38..46 "numbered"
+        NEWLINE@46..47 "\n"
+        ROXYGEN_MARKER@47..49 "#'"
+        WHITESPACE@49..52 "   "
+        ROXYGEN_RD_MACRO@52..111
+          ROXYGEN_RD_MACRO_NAME@52..60 "\\itemize"
+          ROXYGEN_RD_MACRO_DELIM@60..61 "{"
+          NEWLINE@61..62 "\n"
+          ROXYGEN_MARKER@62..64 "#'"
+          WHITESPACE@64..69 "     "
+          ROXYGEN_RD_MACRO@69..74
+            ROXYGEN_RD_MACRO_NAME@69..74 "\\item"
+          WHITESPACE@74..75 " "
+          ROXYGEN_TEXT@75..83 "itemized"
+          NEWLINE@83..84 "\n"
+          ROXYGEN_MARKER@84..86 "#'"
+          WHITESPACE@86..91 "     "
+          ROXYGEN_RD_MACRO@91..96
+            ROXYGEN_RD_MACRO_NAME@91..96 "\\item"
+          WHITESPACE@96..97 " "
+          ROXYGEN_TEXT@97..104 "sublist"
+          NEWLINE@104..105 "\n"
+          ROXYGEN_MARKER@105..107 "#'"
+          WHITESPACE@107..110 "   "
+          ROXYGEN_RD_MACRO_DELIM@110..111 "}"
+        NEWLINE@111..112 "\n"
+        ROXYGEN_MARKER@112..114 "#'"
+        WHITESPACE@114..117 "   "
+        ROXYGEN_RD_MACRO@117..122
+          ROXYGEN_RD_MACRO_NAME@117..122 "\\item"
+        WHITESPACE@122..123 " "
+        ROXYGEN_TEXT@123..127 "list"
+        NEWLINE@127..128 "\n"
+        ROXYGEN_MARKER@128..130 "#'"
+        WHITESPACE@130..131 " "
+        ROXYGEN_RD_MACRO_DELIM@131..132 "}"
+      NEWLINE@132..133 "\n"
+    ROXYGEN_SECTION@133..143
+      ROXYGEN_MARKER@133..135 "#'"
+      WHITESPACE@135..136 " "
+      ROXYGEN_TAG@136..143
+        ROXYGEN_AT@136..137 "@"
+        ROXYGEN_TAG_NAME@137..141 "name"
+        WHITESPACE@141..142 " "
+        ROXYGEN_TEXT@142..143 "x"
+  NEWLINE@143..144 "\n"
+  IDENT@144..148 "NULL"
+  NEWLINE@148..149 "\n"
