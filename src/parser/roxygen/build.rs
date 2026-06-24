@@ -46,10 +46,7 @@ fn rd_macro_name(text: &str) -> Option<&str> {
     if bytes.first() != Some(&b'\\') {
         return None;
     }
-    let mut k = 1;
-    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
-        k += 1;
-    }
+    let k = super::rd_macro_name_end(bytes, 1);
     (k > 1).then(|| &text[1..k])
 }
 
@@ -66,10 +63,7 @@ fn is_block_macro_opener(text: &str) -> bool {
     if bytes.first() != Some(&b'\\') {
         return false;
     }
-    let mut k = 1;
-    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
-        k += 1;
-    }
+    let k = super::rd_macro_name_end(bytes, 1);
     k > 1 && bytes.get(k) == Some(&b'{') && scan_balanced(bytes, k, b'{', b'}').is_none()
 }
 
@@ -269,10 +263,7 @@ pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<
 /// `{` delimiter (setting brace depth to 1), then any trailing same-line content.
 fn emit_block_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, closed: &mut bool) {
     let bytes = text.as_bytes();
-    let mut k = 1;
-    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
-        k += 1;
-    }
+    let k = super::rd_macro_name_end(bytes, 1);
     events.push(Event::Leaf(
         SyntaxKind::ROXYGEN_RD_MACRO_NAME,
         text[..k].to_string(),
@@ -294,10 +285,7 @@ fn emit_block_open(events: &mut Vec<Event>, text: &str, depth: &mut usize, close
 /// is opened separately by [`emit_block_body_open`].
 fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) {
     let bytes = text.as_bytes();
-    let mut k = 1;
-    while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
-        k += 1;
-    }
+    let k = super::rd_macro_name_end(bytes, 1);
     events.push(Event::Leaf(
         SyntaxKind::ROXYGEN_RD_MACRO_NAME,
         text[..k].to_string(),
@@ -362,10 +350,7 @@ fn emit_block_content(events: &mut Vec<Event>, text: &str, depth: &mut usize, cl
         match bytes[i] {
             b'\\' => {
                 let name_start = i + 1;
-                let mut k = name_start;
-                while k < bytes.len() && bytes[k].is_ascii_alphabetic() {
-                    k += 1;
-                }
+                let k = super::rd_macro_name_end(bytes, name_start);
                 if k == name_start {
                     // An escape (`\\`, `\{`, `\}`, `\%`): two literal bytes that
                     // never affect brace depth.

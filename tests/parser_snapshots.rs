@@ -172,6 +172,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_inline_code",
         "roxygen_rd_link",
         "roxygen_rd_link_pkg",
+        "roxygen_rd_link_s4class",
         "roxygen_rd_code",
         "roxygen_md_link",
         "roxygen_md_autolink",

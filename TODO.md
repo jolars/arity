@@ -308,7 +308,13 @@
       wrapped in `\if{html}{…}`/`\if{pdf}{…}` per the extension-keyed `get_image_format`
       rule (svg→html, pdf→pdf, raster/unknown→bare). +3 projector cases (rx-29d590cf,
       rx-44eb4ad9, rx-561b9e7d). Reference/shortcut images (`![alt][ref]`/`![alt]`) are
-      backlog (inline form only).
+      backlog (inline form only). **Digit-bearing macro names landed (Stage 15,
+      2026-06-24g):** an Rd command name is `[A-Za-z][A-Za-z0-9]*`, so `\linkS4class`
+      now lexes as one macro (the name scan stopped at the digit `4`, dropping the
+      macro to literal text). New shared `rd_macro_name_end` helper unifies the six
+      duplicated name scans (lexer + tree builder + block builders). +1 projector
+      case (rx-852ee490). Brace-less *unknown* macros (`\rd`→`(UNKNOWN …)`,
+      rx-16f78b2f/rx-b8082617) are still backlog.
     - *Hard constraints (the reason this is non-trivial).* Must preserve
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,

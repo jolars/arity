@@ -452,10 +452,7 @@ fn is_shortcut_content(content: &[u8]) -> bool {
 /// is no name or the first braces are unbalanced on the line.
 pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
     let name_start = i + 1;
-    let mut j = name_start;
-    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
-        j += 1;
-    }
+    let mut j = super::rd_macro_name_end(bytes, name_start);
     if j == name_start {
         return None; // `\\`, `\{`, `\n`, … are not macro calls
     }

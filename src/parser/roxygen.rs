@@ -103,6 +103,22 @@ pub(crate) fn scan_balanced(bytes: &[u8], i: usize, open: u8, close: u8) -> Opti
     None
 }
 
+/// The end index of an Rd macro name starting at `bytes[start]` (the byte *after*
+/// the leading `\`). An Rd command name is `[A-Za-z][A-Za-z0-9]*`: a leading
+/// letter then any letters or digits (e.g. `\linkS4class`). Returns `start` when
+/// no valid name begins there (`\\`, `\{`, `\4`, end of input). The single source
+/// of truth for where a `\name` ends, shared by the lexer and the tree builder.
+pub(crate) fn rd_macro_name_end(bytes: &[u8], start: usize) -> usize {
+    let mut k = start;
+    if bytes.get(k).is_some_and(u8::is_ascii_alphabetic) {
+        k += 1;
+        while k < bytes.len() && bytes[k].is_ascii_alphanumeric() {
+            k += 1;
+        }
+    }
+    k
+}
+
 /// Length in bytes of the UTF-8 char whose leading byte is `b`.
 fn utf8_len(b: u8) -> usize {
     match b {

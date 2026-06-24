@@ -1,0 +1,39 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..85
+  ROXYGEN_BLOCK@0..63
+    ROXYGEN_SECTION@0..63
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+      ROXYGEN_MARKER@9..11 "#'"
+      NEWLINE@11..12 "\n"
+      ROXYGEN_PARAGRAPH@12..63
+        ROXYGEN_MARKER@12..14 "#'"
+        WHITESPACE@14..15 " "
+        ROXYGEN_TEXT@15..32 "Description, see "
+        ROXYGEN_RD_MACRO@32..54
+          ROXYGEN_RD_MACRO_NAME@32..44 "\\linkS4class"
+          ROXYGEN_RD_MACRO_DELIM@44..45 "{"
+          ROXYGEN_TEXT@45..53 "linktos4"
+          ROXYGEN_RD_MACRO_DELIM@53..54 "}"
+        ROXYGEN_TEXT@54..63 " as well."
+  NEWLINE@63..64 "\n"
+  ASSIGNMENT_EXPR@64..84
+    IDENT@64..67 "foo"
+    WHITESPACE@67..68 " "
+    ASSIGN_LEFT@68..70 "<-"
+    WHITESPACE@70..71 " "
+    FUNCTION_EXPR@71..84
+      FUNCTION_KW@71..79 "function"
+      LPAREN@79..80 "("
+      RPAREN@80..81 ")"
+      WHITESPACE@81..82 " "
+      BLOCK_EXPR@82..84
+        LBRACE@82..83 "{"
+        RBRACE@83..84 "}"
+  NEWLINE@84..85 "\n"

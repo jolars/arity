@@ -140,6 +140,13 @@ reads this first.
   images stay backlog. The Rd `\figure{path}{caption}` route is a separate
   **two-arg verbatim** macro (`TWO_ARG_RD_MACROS` + `is_verbatim_rd_arg`) — same
   output shape via the generic `serialize_macro`.
+- **Rd macro names allow digits** (`[A-Za-z][A-Za-z0-9]*`, since 2026-06-24g) — e.g.
+  `\linkS4class`. The leading char is a letter, the rest letters *or* digits. There is
+  **one** source of truth for where a `\name` ends: `rd_macro_name_end(bytes, start)` in
+  the `roxygen` parent module. The lexer (`scan_rd_macro`), the tree builder
+  (`build_rd_macro`), and the four block builders in `build.rs` all route through it — a
+  *new* name scan must too, or a digit-bearing macro silently truncates (name cut at the
+  digit → macro unrecognized → falls through to literal `TEXT`).
 - **A new roxygen line-body TokKind must be added to *every* line-body matcher** or tag/prose
   lines silently truncate at the unknown token (this bit Stage 5: a `@param` line's description
   vanished, its continuations became phantom intro paragraphs → extra `\title`/`\description`).
@@ -226,8 +233,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-images + `\figure`, 2026-06-24f): **118 matching (all
-allowlisted), 41 divergent (backlog)** of 159 pinned cases. The
+digit-bearing macro names, 2026-06-24g): **119 matching (all
+allowlisted), 40 divergent (backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -238,7 +245,7 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (151 cases). The 41 divergences are the worklist.
+   subset (151 cases). The 40 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 8/8 preserving, 0
    blocked. *Meaning, not layout.*
@@ -248,53 +255,57 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24f) — images `![](…)` + Rd `\figure` → `\figure`
+## Latest session (2026-06-24g) — digit-bearing Rd macro names (`\linkS4class`)
 
-**Construct:** roxygen2's `\figure` macro, reached two ways: a literal Rd
-`\figure{path}{caption}` and a markdown image `![alt](url "title")` (under `@md`).
-Closed **3 cases** (rx-561b9e7d Rd, rx-44eb4ad9 raster image, rx-29d590cf the
-extension-keyed `\if` cluster). Both ways render `(\figure (VERB url) (VERB title))`.
+**Construct:** Rd command names are `[A-Za-z][A-Za-z0-9]*` — a leading letter then
+letters *or digits*. arity's name scans all stopped at the first non-alphabetic
+char, so `\linkS4class{linktos4}` had its name truncated at the `4`; the macro
+wasn't recognized at all and fell through to literal `TEXT`. Closed **1 case**
+(rx-852ee490): `\linkS4class{linktos4}` → `(\linkS4class (TEXT "linktos4"))`.
 
-**Two buckets, two fixes:**
-- **Parser gap (Rd `\figure`).** Added `figure` to `TWO_ARG_RD_MACROS` and made
-  `is_verbatim_rd_arg` return true for it (both args VERB). `\figure{a}{b}` now
-  builds two VERB args; a bare `\figure{a}` stays one-arg. Pure config in
-  `src/parser/roxygen.rs`; the projector's generic `serialize_macro` already
-  emits the right shape (single-atom args → no GRP).
-- **Parser + projector gap (markdown image).** New `ROXYGEN_MD_IMAGE` leaf
-  (TokKind + SyntaxKind, appended last) carved by `scan_md_image` (`lex.rs`,
-  `b'!' if md` arm, **inline form only** — requires `![…](…)`). Projector arm
-  `Inline::MdImage` → `resolve_md_image` ports roxygen2's `mdxml_image`
-  (`markdown.R`): alt **dropped**, `\figure{url}{title}` (title omitted when
-  empty), wrapped per `get_image_format` — `default_image_formats` regexes give
-  svg→`\if{html}{…}`, pdf→`\if{pdf}{…}`, raster (jpg/jpeg/gif/png) or unknown→bare.
+**Bucket: parser gap.** Six duplicated `while … is_ascii_alphabetic` name scans
+(lexer `scan_rd_macro`; tree builder `build_rd_macro`; build.rs `rd_macro_name`,
+`is_block_macro_opener`, `emit_block_open`, `emit_block_open_arg_macro`,
+`build_rd_content`'s nested-macro arm) each truncated at a digit. Replaced all with
+one shared `rd_macro_name_end(bytes, start)` helper in the `roxygen` parent module
+(`pub(crate)`, the single source of truth for where a `\name` ends): leading char
+must be a letter, rest alphanumeric. The projector needed **no change** —
+`\linkS4class` is a plain latexlike macro, so the generic `serialize_macro` already
+produces the right shape once the parser models it.
 
-**Trap recorded:** see "image format is extension-keyed" below — the `\if` wrapper
-is *not* arbitrary; it mirrors roxygen2's two-regex `get_image_format`, and a raster
-ext matches **both** sets → "all" → bare `\figure` (only single-set matches wrap).
+**Result:** projector **118→119 matching** (all allowlisted via re-seed), 41→40
+divergent, 0 regressions. `cargo test` green (22 suites), clippy + fmt clean,
+curated fixed-point 8/8. Files: `src/parser/roxygen.rs` (new `rd_macro_name_end`),
+`src/parser/roxygen/lex.rs`, `src/parser/roxygen/build.rs`, `src/parser/tree_builder.rs`
+(all six scans routed through the helper), fixture `roxygen_rd_link_s4class`,
+allowlist (+1), TODO, RECAP.
 
-**Result:** projector **115→118 matching** (all allowlisted via re-seed), 44→41
-divergent, 0 regressions. `cargo test` green, clippy + fmt clean, curated
-fixed-point 8/8, harvested 212 preserving (unchanged), format-stability stable
-(MD_IMAGE is one atomic prose chunk, same reflow as the old `!`+link). Files:
-`src/parser/roxygen.rs` (2-arg/verbatim config), `src/parser/lexer.rs`
-(`RoxygenMdImage` TokKind + role), `src/parser/roxygen/lex.rs` (`scan_md_image`),
-`src/parser/tree_builder.rs`, `src/parser/expr.rs`, `src/syntax.rs`
-(`ROXYGEN_MD_IMAGE` + COUNT + maps), `src/roxygen/project_rd.rs` (`resolve_md_image`
-+ `image_format`), 2 fixtures (`roxygen_md_image`, `roxygen_rd_figure`),
-allowlist (+3), TODO, RECAP.
+**Trap recorded:** see "Rd macro names allow digits" below.
 
-**Next (ranked):** down to 41 divergent. Still out of scope: roxygen2-*evaluation*
-gaps (data-object auto-`\format` rx-cbcc255c/rx-4d59d472, ```{r}``` eval blocks
-rx-2900ecd5/rx-24b3bfd6/…, inline `` `r …` `` rx-21fd7c2f/rx-8770c410). Best
-in-scope cluster left: **nested markdown/Rd lists** (rx-91e67e79, rx-959fc227 —
-projected flat; also harvested-fixed-point divergent), the one structural gap the
-mode-keyed list builder still drops (in-list indentation is consumed as trivia).
-The GFM **table** extension is in the settled grammar but no corpus case isolates
-it cleanly. Probe stems with `block-to-sections` first.
+**Next (ranked):** down to 40 divergent. Cleanest remaining small win: **brace-less
+unknown macros** (rx-16f78b2f non-md, rx-b8082617 md): `\rd \commands` →
+`(UNKNOWN "\\rd") (UNKNOWN "\\commands")`. parse_Rd tags any unrecognized `\word`
+(even brace-less) as `UNKNOWN`; arity currently leaves a brace-less `\word` as
+literal text. Needs (a) the lexer to emit a brace-less `\word` as a macro-ish token,
+(b) a known-vs-unknown decision (a known brace-less macro like `\dots`/`\cr` is a
+name-only macro, an unknown one is `UNKNOWN`), (c) a projector `UNKNOWN` arm — so
+it's riskier than this session's pure name-grammar fix; scope a known-macro table.
+Bigger structural target still open: **nested markdown/Rd lists** (rx-91e67e79 md,
+rx-959fc227 Rd; both project flat — in-list indentation is dropped as trivia). Plain
+**fenced code blocks** without `{…}` (no knitr eval) are a 4-case cluster
+(rx-59e70a3d, rx-8c9662d6, rx-dd2506bf, rx-fb5d2ad5) → `\if{html}{\out{<div…>}}
+\preformatted{…} \if{html}{\out{</div>}}`, but needs markdown fenced-block parsing.
+Still out of scope: roxygen2-*evaluation* gaps (data-object auto-`\format`, ```{r}```
+eval blocks, inline `` `r …` ``).
 
 ## Earlier sessions
 
+- **2026-06-24f (images `![](…)` + Rd `\figure` → `\figure`):** +3 cases. The Rd
+  `\figure{path}{caption}` is a two-arg verbatim macro; a markdown image
+  `![alt](url "title")` lexes to `ROXYGEN_MD_IMAGE` (`scan_md_image`, inline form
+  only). `resolve_md_image` ports `mdxml_image`: alt dropped, `\figure{url}{title}`,
+  wrapped per the extension-keyed `get_image_format` (svg→html, pdf→pdf,
+  raster/unknown→bare). 115→118.
 - **2026-06-24e (intro paragraph split, title/description/details):** roxygen2's
   `parse_description` splits the intro on `\n\n` — 1st para = title, 2nd =
   description, rest = details (folded with explicit `@details` only when leftover

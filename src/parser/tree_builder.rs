@@ -3,7 +3,7 @@ use rowan::GreenNodeBuilder;
 use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
 use crate::parser::roxygen::{
-    is_two_arg_rd_macro, is_verbatim_rd_arg, scan_balanced, scan_rd_macro,
+    is_two_arg_rd_macro, is_verbatim_rd_arg, rd_macro_name_end, scan_balanced, scan_rd_macro,
 };
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -46,11 +46,8 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
     builder.start_node(SyntaxKind::ROXYGEN_RD_MACRO.into());
     let bytes = text.as_bytes();
 
-    // `\name` (backslash plus the alphabetic run after it).
-    let mut j = 1;
-    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
-        j += 1;
-    }
+    // `\name` (backslash plus the `[A-Za-z][A-Za-z0-9]*` run after it).
+    let mut j = rd_macro_name_end(bytes, 1);
     builder.token(SyntaxKind::ROXYGEN_RD_MACRO_NAME.into(), &text[..j]);
     let name = &text[1..j];
 
