@@ -272,9 +272,10 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-URL autolinks + empty-dest links, 2026-06-24l): **133 matching (all
-allowlisted), 28 divergent (backlog)** of 161 pinned cases. The
-divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
+inline-link-text code-span sub-render, 2026-06-24m): **134 matching (all
+allowlisted), 27 divergent (backlog)** of 161 pinned cases. The
+divergences are now almost all roxygen2-*evaluation* gaps (out of scope); the
+in-scope remainder is the raw-HTML cluster (`\out`). Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
 (harvested pins only), `task roxygen-projector-seed` (re-seed allowlist from matches).
@@ -284,7 +285,7 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (161 pinned cases). The 28 divergences are the worklist.
+   subset (161 pinned cases). The 27 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 10/10 preserving, 0
    blocked. *Meaning, not layout.*
@@ -294,51 +295,59 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24l) — URL autolinks `<url>` + empty-dest links → `\url`
+## Latest session (2026-06-24m) — inline-link-text code-span sub-render → `\verb`/`\code`
 
-**Construct:** the faithful general-link path of roxygen2's `mdxml_link` (the
-*non-`R:`* branch, distinct from `parse_link`'s shortcut/reference path): a
-destination that is **empty or equal to the link text** projects to `\url{text}`,
-otherwise `\href{url}{text}`. So a CommonMark autolink `<https://x>` (dest==text)
-**and** an empty-dest inline link `[http://x]()` both → `(\url (VERB …))`. Closed
-**1 harvested case** (rx-f97e8917) + new curated `markdown_url`.
+**Construct:** roxygen2 renders a link's markdown *children*, so an **inline**
+`[`code`](url)` carries the rendered code span as its `\href` **text argument**
+(`(\href (VERB url) (\verb (VERB "code")))`), distinct from a **reference**
+`[`code`][ref]` where the always-`\code` wrap goes around the whole `\link`
+(`(\code (\link (TEXT "code")))`). Closed **1 harvested case** (rx-3c528f59).
 
-**Buckets: parser gap + projector gap (both faithful).** Lexer: new
-`scan_md_autolink` carves a CommonMark absolute-URI autolink `<scheme:body>`
-(scheme 2–32 chars, leading letter; body has no space/`<`/control before `>`)
-under `@md`, **reusing the `ROXYGEN_MD_LINK` kind** — so raw HTML (`<p>`,
-`<img …>`: no scheme `:`) and email autolinks (no `:`) stay literal, and the leaf
-still implies `@md` (single mode source). Dispatch arm `b'<' if md` (mode-gated,
-per the trap). Projector: `resolve_md_link` gains an autolink branch
-(`<…>`→`url_atom`), and the inline `[text](url)` arm now routes through
-`inline_link_atom` (empty/equal dest → `url_atom`, else `href_atom`). New
-`url_atom`/`inline_link_atom` helpers.
+**Bucket: projector gap (faithful).** Projector-ONLY — the CST is unchanged (the
+link is already one opaque `ROXYGEN_MD_LINK` leaf; the inner span isn't separately
+lexed, so the projector re-parses the display text). The reference/shortcut path
+(`ref_link_atom`/`shortcut_link_atom`) already unwrapped a code span and
+`code_wrap`'d; only the **inline** `href_atom` emitted the display via plain
+`text_atom` (kept the literal backticks). New `link_display_atom(text)`: a single
+code span → `md_code_atom` (`\verb`/`\code` per `code_span_is_r`), else `text_atom`;
+`href_atom` routes its text arg through it. **Mixed** inline sub-render (emph/strong
+in link text) stays backlog — faithful under-handling (`unwrap_code_span` only fires
+for a whole-text single span), never a wrong structure.
 
-**Result:** projector **131→133 matching** (133 allowlisted), 29→28 divergent, 0
-regressions, 161 pinned. `cargo test` fully green (all 22 suites incl. the
-format-stability baseline — re-blessed for the **added** `curated/markdown_url`
-case only; rx-f97e8917's existing format byte-identical, no value drift),
-clippy + fmt clean, curated fixed-point **10/10** preserving. Files:
-`src/parser/roxygen/lex.rs` (`scan_md_autolink`+carve arm+2 tests),
-`src/roxygen/project_rd.rs` (autolink branch + `url_atom`/`inline_link_atom`),
-new fixture `roxygen_md_url` (+2 snapshots, +`parser_snapshots.rs` registration),
-new curated `markdown_url.R`/`.rdtree`, allowlist (+2 via re-seed), format
-baseline (+1 line), TODO, RECAP.
+**Result:** projector **133→134 matching** (134 allowlisted), 28→27 divergent, 0
+regressions, 161 pinned. `cargo test` fully green (all suites incl. the
+format-stability baseline — **no re-bless**: parser/formatter untouched), clippy +
+fmt clean, curated fixed-point **10/10** preserving. Files:
+`src/roxygen/project_rd.rs` (`link_display_atom` + `href_atom` reroute + 1 unit
+test `inline_link_code_span_text_subrenders`), allowlist (+1 via re-seed), TODO,
+RECAP. No new fixture (the harvested pin + unit test cover it; projector-only, no
+new CST shape to snapshot).
 
-**Next (ranked):** down to 28 divergent. Cleanest structural target: **nested
-markdown/Rd lists** (rx-91e67e79 md, rx-959fc227 Rd; both project flat — in-list
-indentation is dropped as marker→content trivia). Smaller in-scope wins still on
-the link cluster: **inline-link-text sub-parsing** (a code span inside `[…](url)`
-→ `\verb`/`\code`, rx-3c528f59 — needs the projector to recurse markdown inlines
-through the opaque `ROXYGEN_MD_LINK` leaf's text, since the inner span isn't
-separately lexed) and **links broken across lines** (rx-383f2ca3 inline,
-rx-eb12b6b6 reference — soft-wrapped link text). Other clusters: raw-HTML
-blocks/`\out` (rx-daf9322f, rx-299f50fb), `\preformatted{}` direct Rd (rx-0a1710c0),
-`@format %` Rd-comment (rx-f6927028). Still out of scope: roxygen2-*evaluation*
-gaps (data-object auto-`\format`, ` ```{r} ` eval blocks, inline `` `r …` ``).
+**Next (ranked):** down to 27 divergent, almost all roxygen2-*evaluation* gaps
+(out of scope: ` ```{r} ` eval blocks rx-2900ecd5/24b3bfd6/24ef0d37/a6ac1b4d/
+e0e631c5/55b6980b, inline `` `r …` `` rx-21fd7c2f/8770c410/cc0ae196, data-object
+auto-`\format` rx-4d59d472/cbcc255c/deb9d202, RefClass docstrings rx-e02bf95c/
+f5812049). The remaining **in-scope** targets: **raw HTML** under `@md` —
+block `<p>…</p>` → `(\if (TEXT "html") (\out (VERB "\n") (VERB …)))` (rx-daf9322f,
+`mdxml_html_block`) and inline `<img …>` → `(\if (TEXT "html") (\out (VERB …)))`
+(rx-299f50fb, `mdxml_html_inline`); both need a CommonMark HTML recognizer in the
+lexer (block: the 7 start conditions; inline: tag forms) — the cleanest next
+structural cluster. **`@format %`** (rx-f6927028, `(\format)` empty) needs Rd
+`%`-comment handling but a *broad* non-md lexer carve fires in ~6 excluded roclet
+fields (`@name %a%`, `@usage %\`, `@importFrom …%>%`) and risks the reflow-merge
+hazard (a `%`-to-EOL leaf could absorb the next prose line on reflow) — scope it
+tightly or defer. **Nested lists** (rx-91e67e79 md, rx-959fc227 Rd) and
+**links broken across lines** (rx-383f2ca3, rx-eb12b6b6) are parser gaps
+(in-list indentation dropped / line-scoped lexer), deferred. `\preformatted{}`
+mid-line block macro (rx-0a1710c0) needs a non-line-start block-macro opener.
 
 ## Earlier sessions
 
+- **2026-06-24l (URL autolinks `<url>` + empty-dest links → `\url`):** parser+projector,
+  +1 (rx-f97e8917) + curated `markdown_url`. `scan_md_autolink` carves a CommonMark
+  absolute-URI autolink `<scheme:body>` under `@md` (reusing `ROXYGEN_MD_LINK`; raw HTML
+  has no scheme `:` → stays literal); projector `resolve_md_link` autolink branch +
+  `inline_link_atom` (empty/equal dest → `url_atom`, else `href_atom`). 131→133.
 - **2026-06-24k (markdown fenced code blocks → `\preformatted` triple):**
   parser+projector, +5 (rx-59e70a3d, rx-8c9662d6, rx-fb5d2ad5, rx-dd2506bf,
   bonus rx-0d100638 `{verbatim}`). Mode-keyed `RoxygenMdFence`/`scan_md_fence`

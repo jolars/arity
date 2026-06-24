@@ -340,8 +340,14 @@
       projector mirrors roxygen2's `mdxml_link`: a destination that is empty *or*
       equal to the link text → `\url{text}`, else `\href` (`<url>` and `[url]()`
       both → `\url`). +1 projector case (rx-f97e8917) + curated `markdown_url`.
-      Inline-link-text sub-parsing (a code span inside `[…](url)` → `\verb`,
-      rx-3c528f59) and email autolinks remain backlog.
+      **Inline-link-text code-span sub-render landed (Stage 19, 2026-06-24m):**
+      roxygen2 renders a link's markdown *children*, so an inline `[`code`](url)`
+      now carries the rendered span as its `\href` text arg
+      (`(\href (VERB url) (\verb (VERB "code")))`) via the new `link_display_atom`
+      (a single code span → `md_code_atom`'s `\verb`/`\code`, else plain `(TEXT …)`);
+      the reference path's always-`\code` wrap was already correct. +1 projector
+      case (rx-3c528f59). General *mixed* inline sub-rendering in link text
+      (emphasis/strong) and email autolinks remain backlog.
     - *Hard constraints (the reason this is non-trivial).* Must preserve
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,

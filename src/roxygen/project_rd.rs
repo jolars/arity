@@ -864,15 +864,31 @@ fn url_atom(url: &str) -> String {
     format!("(\\url (VERB {}))", encode_text(url))
 }
 
-/// An inline `[text](url)` link → `(\href (VERB url) (TEXT text))`: the URL is
-/// verbatim (no whitespace collapse), the display text whitespace-normalized
-/// prose (an empty display contributes no atom).
+/// An inline `[text](url)` link → `(\href (VERB url) <text>)`: the URL is verbatim
+/// (no whitespace collapse), the display rendered by [`link_display_atom`] (a code
+/// span sub-renders to `\verb`/`\code`; other text is whitespace-normalized prose,
+/// an empty display contributing no atom).
 fn href_atom(text: &str, url: &str) -> String {
     let mut atoms = vec![format!("(VERB {})", encode_text(url))];
-    if let Some(atom) = text_atom(text) {
+    if let Some(atom) = link_display_atom(text) {
         atoms.push(atom);
     }
     format!("(\\href {})", atoms.join(" "))
+}
+
+/// The display-text atom for an inline `[text](url)` link. roxygen2 renders the
+/// link's markdown *children*, so a single code-span text becomes `\verb`/`\code`
+/// (via [`md_code_atom`], mirroring `mdxml_code`) rather than literal prose; any
+/// other text is whitespace-normalized `(TEXT …)` (`None` when blank). General
+/// inline sub-rendering of *mixed* markdown in link text (e.g. emphasis) is not
+/// yet modeled — such a text stays plain prose (faithful under-handling, backlog).
+fn link_display_atom(text: &str) -> Option<String> {
+    let (inner, is_code) = unwrap_code_span(text);
+    if is_code {
+        Some(md_code_atom(inner))
+    } else {
+        text_atom(text)
+    }
 }
 
 /// A reference link `[text][ref]` (explicit link text) → always `\link` over the
@@ -1479,6 +1495,29 @@ mod tests {
                  (GRP (TEXT \"click\") (\\emph (TEXT \"here\")) (TEXT \"now\"))) (TEXT \".\"))"
             ),
             "got: {out}"
+        );
+    }
+
+    #[test]
+    fn inline_link_code_span_text_subrenders() {
+        // roxygen2 renders the markdown *children* of a link, so a code-span link
+        // text becomes `\verb`/`\code` (via `mdxml_code`) rather than literal
+        // prose. An **inline** `[text](url)` carries that rendered span as its
+        // `\href` text argument; a **reference** `[text][ref]` keeps the always-
+        // `\code` wrap around the whole `\link` (the has-link-text branch).
+        let src = "#' Title\n\
+                   #'\n\
+                   #' Description, see [`code link text`][func].\n\
+                   #' And also [`code as well`](https://external.com).\n\
+                   #' @md\n\
+                   foo <- function() {}\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Description, see\") \
+             (\\code (\\link (TEXT \"code link text\"))) (TEXT \". And also\") \
+             (\\href (VERB \"https://external.com\") (\\verb (VERB \"code as well\"))) \
+             (TEXT \".\"))\n\
+             (\\title (TEXT \"Title\"))"
         );
     }
 
