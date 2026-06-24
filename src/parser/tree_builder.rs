@@ -202,5 +202,8 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::RoxygenMdListMarker => SyntaxKind::ROXYGEN_MD_LIST_MARKER,
         TokKind::RoxygenMdFence => SyntaxKind::ROXYGEN_MD_FENCE,
         TokKind::RoxygenMdHtml => SyntaxKind::ROXYGEN_MD_HTML,
+        // The HTML-block opener line is verbatim text inside a
+        // `ROXYGEN_MD_HTML_BLOCK`; the block node is built by the grouping phase.
+        TokKind::RoxygenMdHtmlBlock => SyntaxKind::ROXYGEN_TEXT,
     }
 }

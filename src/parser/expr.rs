@@ -461,6 +461,7 @@ fn parse_prefix(
         | TokKind::RoxygenMdListMarker
         | TokKind::RoxygenMdFence
         | TokKind::RoxygenMdHtml
+        | TokKind::RoxygenMdHtmlBlock
         | TokKind::Unknown => None,
     }
 }

@@ -7,8 +7,8 @@
 //! block-level Rd-macro / markdown constructs to [`super::build`].
 
 use super::build::{
-    emit_block_macro, emit_md_code_block, emit_md_list, is_block_macro_line,
-    is_md_code_block_start, is_md_list_start,
+    emit_block_macro, emit_md_code_block, emit_md_html_block, emit_md_list, is_block_macro_line,
+    is_md_code_block_start, is_md_html_block_start, is_md_list_start,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -67,7 +67,16 @@ pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Ve
                     events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
                     section_open = true;
                 }
-                if is_md_code_block_start(tokens, i) {
+                if is_md_html_block_start(tokens, i) {
+                    // A markdown HTML block (`@md` mode) is a direct section child,
+                    // like a block macro: close any open paragraph and emit the
+                    // HTML block as a sibling.
+                    if para_open {
+                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                        para_open = false;
+                    }
+                    i = emit_md_html_block(tokens, i, events);
+                } else if is_md_code_block_start(tokens, i) {
                     // A markdown fenced code block (`@md` mode) is a direct
                     // section child, like a block macro: close any open paragraph
                     // and emit the code block as a sibling.

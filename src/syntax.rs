@@ -175,14 +175,23 @@ pub enum SyntaxKind {
     /// `\if{html}{\out{<tag>}}` (`mdxml_html_inline`). Appended last to keep the
     /// earlier variants' `as u16` discriminants stable.
     ROXYGEN_MD_HTML,
+    /// A markdown **HTML block** (resolved `@md` mode only): a run of `#'` lines
+    /// opened by a CommonMark HTML-block start (condition 6 — a block-level tag at
+    /// line start) and continuing to the next blank line, with the `#'` markers,
+    /// marker→content whitespace, and inter-line newlines threaded in as trivia
+    /// (losslessness), the way the fenced code block threads them. Its line content
+    /// is verbatim `ROXYGEN_TEXT`; the projector reconstructs the block text and
+    /// maps it to roxygen2's `\if{html}{\out{…}}` (`mdxml_html_block`). Appended
+    /// last to keep the earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_HTML_BLOCK,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_HTML` remains the
-    /// last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_HTML as usize + 1;
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_HTML_BLOCK` remains
+    /// the last variant.
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_HTML_BLOCK as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -343,6 +352,7 @@ impl Language for RLanguage {
             97 => SyntaxKind::ROXYGEN_MD_CODE_BLOCK,
             98 => SyntaxKind::ROXYGEN_MD_FENCE,
             99 => SyntaxKind::ROXYGEN_MD_HTML,
+            100 => SyntaxKind::ROXYGEN_MD_HTML_BLOCK,
             _ => SyntaxKind::ERROR,
         }
     }

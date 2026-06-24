@@ -102,7 +102,9 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             // A markdown list or fenced code block (`@md` mode) likewise owns its
             // `#'` markers and newlines internally; it is atomic passthrough
             // (marker-normalized, never reflowed across items/lines).
-            SyntaxKind::ROXYGEN_MD_LIST | SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
+            SyntaxKind::ROXYGEN_MD_LIST
+            | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
+            | SyntaxKind::ROXYGEN_MD_HTML_BLOCK => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
                 }
@@ -197,6 +199,15 @@ fn emit_md_code_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
     }
 }
 
+/// Emit a markdown HTML block (`@md` mode) as atomic passthrough, each `#'` line
+/// marker-normalized (marker, one space, trimmed content). The node owns its own
+/// `#'` markers and newlines; the raw HTML is never reflowed across lines.
+fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
 /// Marker-normalize a raw `#'` line string: drop surrounding whitespace (the
 /// inter-line indentation), then emit the `#+'` marker, a single space, and the
 /// trimmed content (or the bare marker when the content is empty).
@@ -278,6 +289,10 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 // A fenced code block is atomic passthrough, each line marker-
                 // normalized — byte-identical to the pre-node textual fence path.
                 emit_md_code_block(&mut items, macro_node);
+            } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_HTML_BLOCK {
+                // An HTML block is atomic passthrough (verbatim raw HTML), each
+                // line marker-normalized — never reflowed across lines.
+                emit_md_html_block(&mut items, macro_node);
             } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {

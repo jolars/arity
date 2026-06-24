@@ -93,8 +93,8 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   mis-fires in non-`@md` blocks. (The `[`-link slipped this once; audit every new recognizer.)
 - **Inline landed:** emphasis/strong/code (`\emph`/`\strong`/`\code`-vs-`\verb` per
   arity-parseability = roxygen2 `can_parse`), links, images, raw HTML. **Block landed:** lists,
-  fenced code blocks. **Nested lists NOT modeled** (in-list indent dropped → projects flat;
-  backlog, never patch to passing-but-wrong).
+  fenced code blocks, HTML blocks. **Nested lists NOT modeled** (in-list indent dropped →
+  projects flat; backlog, never patch to passing-but-wrong).
 - **Links: under `@md` *every* bracket-free `[…]` not followed by `[`/`{` is a link**
   (`get_md_linkrefs`; `is_shortcut_content` mirrors it). `resolve_md_link` ports `parse_link`
   (inline→`\href`, reference/shortcut→`\link`/`\linkS4class`, `\code`-wrapped per code-span/`()`).
@@ -110,11 +110,19 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   <info>]">}}` / `\preformatted{<code+\n>}` / `\if{html}{\out{</div>}}` (`%`/`{`/`}` raw,
   parse_Rd decodes). Atomic passthrough, baseline unchanged. Out of scope: ` ```{r} `
   knitr-eval blocks (roxygen2 evaluates).
+- **HTML blocks** (`ROXYGEN_MD_HTML_BLOCK` node, the block analog of the fenced code block):
+  `scan_md_html_block` carves a line-start opener (CommonMark start **condition 6** only — a
+  block-level tag from `BLOCK_TAGS`, before the fence carve) as a `RoxygenMdHtmlBlock`→`TEXT`
+  leaf; `emit_md_html_block` gathers the opener + following **Prose** lines until a blank line
+  /tag/non-roxygen (the block swallows plain prose, per condition 6). Projector
+  `serialize_md_html_block` → ONE `(\if (TEXT "html") (\out <verb-per-line>))` with a leading
+  `(VERB "\n")` (`verb_atoms` splits at newlines, the VERB analog of `rcode_atoms`). Atomic
+  passthrough; idempotent. Conditions 1–5/7 stay literal/inline (faithful under-handling, backlog).
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): `<tag>` →
   `(\if (TEXT "html") (\out (VERB <tag>)))` (`mdxml_html_inline`). Mirrors CommonMark Raw-HTML
   grammar **precisely** — over-recognition emits a spurious `\out`; comment/PI/declaration/CDATA
-  forms stay literal (backlog). **Block HTML** (`<p>…</p>` line-start, multi-line, rx-daf9322f)
-  still backlog — needs a line-start block recognizer.
+  forms stay literal (backlog). A line-start block-level tag is the **block** path above (carved
+  first); a non-block tag (`<span>`) or a tag mid-prose stays inline.
 - **List markers** (`scan_md_list_marker`): punctuation only (trailing space stays in text → a
   non-list marker reflows like plain text). `emit_md_list` applies the CommonMark interrupt rule
   (a bullet always interrupts; an ordered list only when start == 1; else stays inline prose →
@@ -159,10 +167,10 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-inline raw HTML → `\if{html}{\out}`, 2026-06-24n): **135 matching (all
-allowlisted), 26 divergent (backlog)** of 161 pinned cases. The
+block raw HTML → `\if{html}{\out}`, 2026-06-24o): **137 matching (all
+allowlisted), 25 divergent (backlog)** of 162 pinned cases. The
 divergences are now almost all roxygen2-*evaluation* gaps (out of scope); the
-in-scope remainder is block raw HTML (`<p>…</p>`) plus `@format %`. Tasks:
+in-scope remainder is `@format %`. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
 (harvested pins only), `task roxygen-projector-seed` (re-seed allowlist from matches).
@@ -172,70 +180,87 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (161 pinned cases). The 26 divergences are the worklist.
+   subset (162 pinned cases). The 25 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 10/10 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 11/11 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
-   (212 preserving, 4 divergent, 1 skipped). A coverage net, **not** the parser driver
+   (214 preserving, 2 divergent, 1 skipped). A coverage net, **not** the parser driver
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24n) — inline raw HTML `<tag>` → `\if{html}{\out{<tag>}}`
+## Latest session (2026-06-24o) — block raw HTML `<p>…</p>` → `\if{html}{\out{…}}`
 
-**Construct:** under `@md`, a raw inline-HTML tag (`before-<img src='foo.png'>-after`)
-renders to `(\if (TEXT "html") (\out (VERB "<img src='foo.png'>")))` per roxygen2's
-`mdxml_html_inline`, tiling around the surrounding prose. Closed **1 harvested case**
-(rx-299f50fb).
+**Construct:** under `@md`, a line whose content starts with a CommonMark
+**HTML-block start condition 6** (a block-level tag like `<p>`) opens an HTML block
+that runs to the next blank line, swallowing following lines (even plain prose).
+roxygen2's `mdxml_html_block` renders the whole block as ONE
+`(\if (TEXT "html") (\out (VERB "\n") (VERB "<p>…</p>\n") …))` — a leading `\n` VERB
+then one VERB per line (parse_Rd splits the verbatim `\out` body at newlines). Closed
+**1 harvested case** (rx-daf9322f) + new curated `markdown_html_block`.
 
-**Bucket: parser gap (+ faithful projector arm).** New `RoxygenMdHtml` leaf
-(`ROXYGEN_MD_HTML`, SyntaxKind 99). Lexer `scan_md_html_inline` (`lex.rs`) is chained
-**after** `scan_md_autolink` at the `b'<' if md` arm — autolink claims `<scheme:…>`,
-raw HTML the rest. The recognizer mirrors the **CommonMark "Raw HTML" grammar
-precisely** (open tag with `name`/quoted+unquoted attrs, close tag) because
-over-recognition would emit a spurious `\out` where roxygen2 keeps literal;
-comment/PI/declaration/CDATA forms stay literal (faithful under-handling, backlog).
-Projector: collect `ROXYGEN_MD_HTML` → `Inline::MdHtml(raw)` → `html_inline_atom`.
-Wired the new TokKind through `roxygen_role` (single source) + the two explicit
-matchers (`expr.rs`, `tree_builder.rs`) + the two `is_roxygen_*` lists (`syntax.rs`).
+**Bucket: parser gap (+ faithful projector arm).** New `ROXYGEN_MD_HTML_BLOCK`
+**node** (SyntaxKind 100, the new last variant) — the block analog of
+`ROXYGEN_MD_CODE_BLOCK`, **not** a leaf. The opener token is new TokKind
+`RoxygenMdHtmlBlock` carving the **whole line** at line-start under `@md`
+(`scan_md_html_block` in `lex.rs`, condition 6 only, against a `BLOCK_TAGS` set),
+mapped to a `ROXYGEN_TEXT` leaf in the tree builder (verbatim content; the node is
+built by the grouping phase). `emit_md_html_block` (`build.rs`) gathers the opener +
+following **Prose** lines until a blank line / tag / non-roxygen (mirrors
+`emit_md_code_block` but the terminator is a blank line, not a closing fence);
+`group.rs` dispatches it as a direct section child **before** the fence check.
+Projector: `section_body_parts` collects the node → `Inline::MdHtmlBlock` →
+`serialize_md_html_block` (reconstruct lines via `strip_marker`, prepend `\n`, split
+into `verb_atoms` — the VERB analog of `rcode_atoms`). Wired the new TokKind through
+`roxygen_role` (single source) + `expr.rs` + `tree_builder.rs`; node kind bumped
+`COUNT`/`kind_from_raw`; formatter atomic passthrough (`emit_md_html_block` in
+`formatter/roxygen.rs`, marker-normalized).
 
-**Tenet-1 note:** the atomic leaf stops the formatter reflowing **inside** a tag
-(the old baseline split `…image before-<img\n#' src='foo.png'>-after` at the space
-in the tag); the new output breaks *before* `before-<img…>`, keeping the tag intact.
-Re-blessed the one affected format-baseline case (rx-299f50fb) — same justification
-as the `\href` atomic-token re-bless.
+**Tenet-1 note:** the block is now atomic — the old baseline reflowed the two
+`<p>` lines onto **one** line (inline-HTML prose tiling); the new output keeps each
+HTML line verbatim on its own line. Re-blessed the one affected format-baseline case
+(rx-daf9322f) — same justification as the inline raw-HTML re-bless.
 
-**Result:** projector **134→135 matching** (135 allowlisted), 27→26 divergent, 0
-regressions, 161 pinned. `cargo test` fully green (incl. parser snapshots +
-re-blessed format-stability baseline), clippy + fmt clean, curated fixed-point
-**10/10** preserving. Files: `src/syntax.rs`, `src/parser/lexer.rs`,
-`src/parser/tree_builder.rs`, `src/parser/expr.rs`, `src/parser/roxygen/lex.rs`
-(`scan_md_html_inline` + 3 unit tests), `src/roxygen/project_rd.rs`
-(`Inline::MdHtml` + `html_inline_atom`), new fixture
-`tests/fixtures/parser/roxygen_md_html_inline/` (+ snapshots), re-blessed
-`roxygen-format-baseline.jsonl`, allowlist (+1 via re-seed), TODO, RECAP.
+**Result:** projector **135→137 matching** (137 allowlisted), 26→25 divergent, 0
+regressions, 162 pinned (+1 curated `markdown_html_block`). `cargo test` fully green
+(incl. parser snapshots + re-blessed format-stability baseline), clippy + fmt clean,
+curated fixed-point **11/11** preserving. Files: `src/syntax.rs`,
+`src/parser/lexer.rs`, `src/parser/tree_builder.rs`, `src/parser/expr.rs`,
+`src/parser/roxygen/lex.rs` (`scan_md_html_block` + `is_html_block_tag` + 3 unit
+tests, prose_texts filter), `src/parser/roxygen/build.rs`
+(`is_md_html_block_start`/`emit_md_html_block`), `src/parser/roxygen/group.rs`
+(dispatch), `src/roxygen/project_rd.rs` (`Inline::MdHtmlBlock` +
+`serialize_md_html_block`/`verb_atoms`), `src/formatter/roxygen.rs`, new fixture
+`tests/fixtures/parser/roxygen_md_html_block/` (+ snapshots), curated
+`markdown_html_block.{R,rdtree}`, re-blessed `roxygen-format-baseline.jsonl`,
+allowlist (+2 via re-seed), TODO, RECAP.
 
-**Next (ranked):** down to 26 divergent, almost all roxygen2-*evaluation* gaps
+**Next (ranked):** down to 25 divergent, almost all roxygen2-*evaluation* gaps
 (out of scope: ` ```{r} ` eval blocks rx-2900ecd5/24b3bfd6/24ef0d37/a6ac1b4d/
 e0e631c5/55b6980b, inline `` `r …` `` rx-21fd7c2f/8770c410/cc0ae196, data-object
 auto-`\format` rx-4d59d472/cbcc255c/deb9d202, RefClass docstrings rx-e02bf95c/
-f5812049). The remaining **in-scope** targets: **block raw HTML** under `@md` —
-`<p>…</p>` at line start, multi-line, → `(\if (TEXT "html") (\out (VERB "\n")
-(VERB "<p>…</p>\n") …))` (rx-daf9322f, `mdxml_html_block`); needs a *line-start*
-block recognizer (the 7 CommonMark start conditions, ends at blank line) — a
-different shape than this session's inline span (carve whole lines like the fence,
-pair in the block builder). **`@format %`** (rx-f6927028, `(\format)` empty) needs Rd
-`%`-comment handling but a *broad* non-md lexer carve fires in ~6 excluded roclet
-fields (`@name %a%`, `@usage %\`, `@importFrom …%>%`) and risks the reflow-merge
-hazard (a `%`-to-EOL leaf could absorb the next prose line on reflow) — scope it
-tightly or defer. **Nested lists** (rx-91e67e79 md, rx-959fc227 Rd) and
-**links broken across lines** (rx-383f2ca3, rx-eb12b6b6) are parser gaps
-(in-list indentation dropped / line-scoped lexer), deferred. `\preformatted{}`
-mid-line block macro (rx-0a1710c0) needs a non-line-start block-macro opener.
+f5812049). The remaining **in-scope** target: **`@format %`** (rx-f6927028,
+`(\format)` empty) needs Rd `%`-comment handling but a *broad* non-md lexer carve
+fires in ~6 excluded roclet fields (`@name %a%`, `@usage %\`, `@importFrom …%>%`)
+and risks the reflow-merge hazard (a `%`-to-EOL leaf could absorb the next prose
+line on reflow) — scope it tightly or defer. **Nested lists** (rx-91e67e79 md,
+rx-959fc227 Rd) and **links broken across lines** (rx-383f2ca3, rx-eb12b6b6) are
+parser gaps (in-list indentation dropped / line-scoped lexer), deferred.
+`\preformatted{}` mid-line block macro (rx-0a1710c0) needs a non-line-start
+block-macro opener. **Block HTML follow-ups (backlog):** only CommonMark condition
+6 is modeled — conditions 1–5 (`<script>`/`<pre>`/comment/PI/declaration/CDATA, each
+with a non-blank-line terminator) and condition 7 (a complete tag alone on a line)
+stay literal/inline (faithful under-handling).
 
 ## Earlier sessions
 
+- **2026-06-24n (inline raw HTML `<tag>` → `\if{html}{\out{<tag>}}`):** parser+projector,
+  +1 (rx-299f50fb). New `RoxygenMdHtml` leaf (`ROXYGEN_MD_HTML`, SyntaxKind 99);
+  `scan_md_html_inline` chained after `scan_md_autolink` at `b'<' if md` (autolink claims
+  `<scheme:…>`, raw HTML the rest), mirroring the CommonMark Raw-HTML grammar precisely
+  (comment/PI/declaration/CDATA stay literal). Projector `Inline::MdHtml` → `html_inline_atom`.
+  Atomic leaf stops mid-tag reflow (re-blessed baseline). 134→135.
 - **2026-06-24m (inline-link-text code-span sub-render → `\verb`/`\code`):** projector-only,
   +1 (rx-3c528f59). An **inline** `[`code`](url)` carries the rendered code span as its
   `\href` text arg (`(\href (VERB url) (\verb …))`); new `link_display_atom` routes

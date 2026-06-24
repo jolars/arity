@@ -2,6 +2,7 @@
 {"key":"curated/examples","formatted":"#' Add two numbers\n#'\n#' @param x,y Numbers to add.\n#' @return Their sum.\n#' @examples\n#' add(1, 2)\n#' add(3, 4)\n#' @export\nadd <- function(x, y) x + y\n"}
 {"key":"curated/examples_merge","formatted":"#' @name a\n#' @title a\n#' @examples\n#' TRUE\n#' @examples\n#' FALSE\nNULL\n"}
 {"key":"curated/itemize_enumerate","formatted":"#' Rd lists outside markdown mode\n#'\n#' @details\n#' \\itemize{\n#'   \\item First bullet, long enough to be a wrapping candidate at most widths.\n#'   \\item Second bullet.\n#' }\n#' \\enumerate{\n#'   \\item Step one.\n#'   \\item Step two.\n#' }\n#' @name rd_lists\nNULL\n"}
+{"key":"curated/markdown_html_block","formatted":"#' Markdown HTML block\n#'\n#' <p>This is a paragraph</p>\n#' <p>This is another paragraph</p>\n#' @md\nfoo <- function() {}\n"}
 {"key":"curated/markdown_inline","formatted":"#' Inline markdown foundation\n#'\n#' @details\n#' Text with *emphasis*, **strong** words, `inline code`, and `a + b` code.\n#' @md\n#' @name inline_md\nNULL\n"}
 {"key":"curated/markdown_list","formatted":"#' Title of the function\n#'\n#' @description\n#' A paragraph with *emphasis*, **strong** text, and `inline code`, written long\n#' enough that it could plausibly be rewrapped by a formatter at some width.\n#'\n#' @details\n#' Steps:\n#'\n#' - first step\n#' - second step\n#' - third step\n#'\n#' @md\n#' @param x A value.\n#' @return Nothing useful.\n#' @export\ndo_thing <- function(x) invisible(x)\n"}
 {"key":"curated/markdown_url","formatted":"#' Markdown URLs and autolinks\n#'\n#' See the homepage <https://example.org/home> for the project. A bare reference\n#' [https://example.org/bare]() also becomes a URL, while a named link\n#' [the docs](https://example.org/docs) stays an href.\n#' @md\nfoo <- function() {}\n"}
@@ -188,7 +189,7 @@
 {"key":"harvest/rx-d55651e1","formatted":"#' Important class.\n#'\n#' @field a field a\n#'\n#' @field b field b\n#'\nsetRefClass('test')\n"}
 {"key":"harvest/rx-d58b849a","formatted":"#' @title Title\n#' @description List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
 {"key":"harvest/rx-d791aabe","formatted":"#' Title\n#'\n#' Description, see \\href{http://www.someurl.com}{some thing}.\nfoo <- function() {}\n"}
-{"key":"harvest/rx-daf9322f","formatted":"#' Title\n#'\n#' <p>This is a paragraph</p> <p>This is another paragraph</p>\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-daf9322f","formatted":"#' Title\n#'\n#' <p>This is a paragraph</p>\n#' <p>This is another paragraph</p>\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-db08ab08","formatted":"#' @title Title\n#' @details List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
 {"key":"harvest/rx-dd2506bf","formatted":"#' Title\n#'\n#' @description\n#' Before\n#' ```r\n#' x %in% 1:10\n#' ```\n#' After\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-de1bee56","formatted":"#' @name a\n#' @title a\n#' @author A\nNULL\n\n#' @name b\n#' @rdname a\n#' @author A\nNULL\n\n#' @name c\n#' @rdname a\n#' @author B\nNULL\n"}

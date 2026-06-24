@@ -96,6 +96,10 @@ enum Inline {
     /// text (`<img …>`, `</span>`). Projects to roxygen2's
     /// `\if{html}{\out{<tag>}}` (`mdxml_html_inline`; see [`html_inline_atom`]).
     MdHtml(String),
+    /// A markdown HTML block resolved under `@md` mode (a `ROXYGEN_MD_HTML_BLOCK`
+    /// node). Projects to roxygen2's `\if{html}{\out{…}}` with one verbatim line
+    /// per `VERB` (`mdxml_html_block`; see [`serialize_md_html_block`]).
+    MdHtmlBlock(SyntaxNode),
 }
 
 /// The kind of a resolved markdown inline leaf.
@@ -288,6 +292,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
                 Inline::MdImage(s) => Inline::MdImage(s.clone()),
                 Inline::MdCodeBlock(n) => Inline::MdCodeBlock(n.clone()),
                 Inline::MdHtml(s) => Inline::MdHtml(s.clone()),
+                Inline::MdHtmlBlock(n) => Inline::MdHtmlBlock(n.clone()),
             });
         }
     }
@@ -440,6 +445,13 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(html_inline_atom(raw));
+            }
+            Inline::MdHtmlBlock(node) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(serialize_md_html_block(node));
             }
         }
     }
@@ -665,7 +677,8 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
             SyntaxKind::ROXYGEN_PARAGRAPH
             | SyntaxKind::ROXYGEN_RD_MACRO
             | SyntaxKind::ROXYGEN_MD_LIST
-            | SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
+            | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
+            | SyntaxKind::ROXYGEN_MD_HTML_BLOCK => {
                 let Some(node) = el.into_node() else { continue };
                 let inlines = match node.kind() {
                     SyntaxKind::ROXYGEN_PARAGRAPH => RoxygenParagraph::cast(node)
@@ -673,6 +686,7 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
                         .unwrap_or_default(),
                     SyntaxKind::ROXYGEN_MD_LIST => vec![Inline::MdList(node)],
                     SyntaxKind::ROXYGEN_MD_CODE_BLOCK => vec![Inline::MdCodeBlock(node)],
+                    SyntaxKind::ROXYGEN_MD_HTML_BLOCK => vec![Inline::MdHtmlBlock(node)],
                     _ => vec![Inline::Macro(node)],
                 };
                 if !cur.is_empty() {
@@ -1152,6 +1166,44 @@ fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
             encode_text("</div>")
         ),
     ]
+}
+
+/// Project a `ROXYGEN_MD_HTML_BLOCK` node into roxygen2's `\if{html}{\out{…}}`
+/// (`mdxml_html_block`, `R/markdown.R`): the block's verbatim text — a leading
+/// newline then each line with a trailing newline — goes into a single `\out`
+/// inside an `\if{html}{…}`. parse_Rd splits the verbatim `\out` body at newlines
+/// into one `VERB` per line (the leading `\n` becomes a bare `(VERB "\n")`). The
+/// block lines are reconstructed from the node text with each `#'` marker and the
+/// single following space stripped (like the fenced code block).
+fn serialize_md_html_block(node: &SyntaxNode) -> String {
+    let text = node.text().to_string();
+    let mut body = String::from("\n");
+    for line in text.split('\n') {
+        body.push_str(strip_marker(line));
+        body.push('\n');
+    }
+    format!(
+        "(\\if (TEXT {}) (\\out {}))",
+        encode_text("html"),
+        verb_atoms(&body).join(" ")
+    )
+}
+
+/// The verbatim `(VERB …)` atoms for an `\out` body, splitting at newlines and
+/// attaching each `\n` to the atom it ends (parse_Rd's verbatim splitting, the
+/// `VERB` analog of [`rcode_atoms`]).
+fn verb_atoms(body: &str) -> Vec<String> {
+    let mut atoms = Vec::new();
+    let mut rest = body;
+    while let Some(idx) = rest.find('\n') {
+        let (seg, tail) = rest.split_at(idx + 1);
+        atoms.push(format!("(VERB {})", encode_text(seg)));
+        rest = tail;
+    }
+    if !rest.is_empty() {
+        atoms.push(format!("(VERB {})", encode_text(rest)));
+    }
+    atoms
 }
 
 /// Project a raw inline-HTML leaf into roxygen2's `\if{html}{\out{<tag>}}`

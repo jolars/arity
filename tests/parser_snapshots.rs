@@ -188,6 +188,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_inline",
         "roxygen_md_image",
         "roxygen_md_html_inline",
+        "roxygen_md_html_block",
         "roxygen_md_list",
         "roxygen_md_code_block",
         "roxygen_rd_figure",

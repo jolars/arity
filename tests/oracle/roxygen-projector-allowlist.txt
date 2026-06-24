@@ -13,6 +13,7 @@ describe_format
 examples
 examples_merge
 itemize_enumerate
+markdown_html_block
 markdown_inline
 markdown_list
 markdown_url
@@ -125,6 +126,7 @@ rx-d4e3f08f
 rx-d55651e1
 rx-d58b849a
 rx-d791aabe
+rx-daf9322f
 rx-db08ab08
 rx-dd2506bf
 rx-e0fc1b98

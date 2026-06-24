@@ -238,6 +238,69 @@ pub(super) fn emit_md_code_block(tokens: &[Token], start: usize, events: &mut Ve
     i
 }
 
+/// Whether the prose line whose marker is at `start` opens a **markdown HTML
+/// block** (`@md` mode): its content begins with a `RoxygenMdHtmlBlock` opener
+/// leaf. The leaf is carved only under a resolved `@md` mode, so its presence is
+/// the single mode signal (the builder never re-derives mode).
+pub(super) fn is_md_html_block_start(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdHtmlBlock)
+}
+
+/// Emit a `ROXYGEN_MD_HTML_BLOCK` node spanning the markdown HTML block beginning
+/// at `start` (a `RoxygenMarker` whose content is a `RoxygenMdHtmlBlock` opener).
+/// Per CommonMark start condition 6, the block runs to the next blank line; every
+/// line until then — the opener and any following prose — is verbatim block
+/// content (its body tokens threaded through). A tag opener or a non-roxygen line
+/// also ends it (greedy and lossless). The `#'` markers, the marker→content
+/// whitespace, and the inter-line newlines/indentation are threaded in as trivia
+/// at the block level, the way the fenced code block threads them. The trailing
+/// newline after the last consumed line is left to the caller. Returns the token
+/// index just past it.
+pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HTML_BLOCK));
+
+    // Opening line: marker, marker→content whitespace, then the opener content.
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+
+    loop {
+        // Line boundary: fold a continuation into the block. The block runs until a
+        // blank line (CommonMark condition 6); a tag opener or a non-roxygen line
+        // also ends it.
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            break;
+        }
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
+            break;
+        }
+        if !matches!(classify_line(tokens, m), LineKind::Prose) {
+            break; // a blank line or tag ends the HTML block
+        }
+        // `\n` + indentation + `#'` threaded as trivia, then the line's body.
+        for idx in i..=m {
+            events.push(Event::Tok(idx));
+        }
+        i = m + 1;
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+    }
+
+    events.push(Event::Finish); // ROXYGEN_MD_HTML_BLOCK
+    i
+}
+
 /// Emit a multi-line block Rd macro as a `ROXYGEN_RD_MACRO` node spanning `#'`
 /// lines. The node owns its opening line's marker and the inter-line markers,
 /// newlines, and indentation as threaded trivia (losslessness); its body is a

@@ -232,6 +232,25 @@ fn lex_roxygen_prose(
         );
         return;
     }
+    // Under `@md`, a prose line whose content begins with a CommonMark HTML-block
+    // start (condition 6 — a block-level tag) carves the *whole* remaining line off
+    // as a `RoxygenMdHtmlBlock` opener leaf. The block builder gathers the opener
+    // and the following lines (to the next blank line) into a `ROXYGEN_MD_HTML_BLOCK`;
+    // the leaf's existence implies `@md`, so the builder keys off the token kind.
+    if md
+        && line_start
+        && let Some(block_end) = scan_md_html_block(bytes, pos)
+    {
+        push(
+            out,
+            TokKind::RoxygenMdHtmlBlock,
+            text,
+            start,
+            pos,
+            block_end - pos,
+        );
+        return;
+    }
     // Under `@md`, a prose line whose content begins with a list marker carves it
     // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
     // run). Whether the marker actually forms a list is a block-level decision
@@ -577,6 +596,114 @@ fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
     (bytes.get(j) == Some(&b'>')).then_some(j + 1)
 }
 
+/// A CommonMark **HTML block start condition 6** at a line's content start: `<`
+/// or `</`, then one of the block-level tag names (case-insensitive), then a
+/// space/tab, `>`, `/>`, or the end of the line. Such a line opens an HTML block
+/// that (per CommonMark) runs to the next blank line, so the whole remaining line
+/// content is the opener leaf; this returns the index past it (the end of the
+/// line). `None` otherwise.
+///
+/// Only condition 6 is recognized. Conditions 1–5 (`<script>`/`<pre>`/comments/
+/// processing instructions/declarations/CDATA — each with its own non-blank-line
+/// terminator) and condition 7 (a complete tag alone on a line) are faithful
+/// under-handling: those forms stay literal prose or inline HTML (backlog), so the
+/// modeled block is exactly the blank-line-terminated one roxygen2's corpus uses.
+fn scan_md_html_block(bytes: &[u8], i: usize) -> Option<usize> {
+    if bytes.get(i) != Some(&b'<') {
+        return None;
+    }
+    let mut j = i + 1;
+    if bytes.get(j) == Some(&b'/') {
+        j += 1;
+    }
+    let name_start = j;
+    while bytes.get(j).is_some_and(u8::is_ascii_alphanumeric) {
+        j += 1;
+    }
+    if !is_html_block_tag(&bytes[name_start..j]) {
+        return None;
+    }
+    match bytes.get(j) {
+        None | Some(b' ' | b'\t' | b'>') => Some(bytes.len()),
+        Some(b'/') if bytes.get(j + 1) == Some(&b'>') => Some(bytes.len()),
+        _ => None,
+    }
+}
+
+/// Whether `name` (ASCII, case-insensitive) is one of CommonMark's block-level
+/// tag names for HTML-block start condition 6.
+fn is_html_block_tag(name: &[u8]) -> bool {
+    const BLOCK_TAGS: &[&str] = &[
+        "address",
+        "article",
+        "aside",
+        "base",
+        "basefont",
+        "blockquote",
+        "body",
+        "caption",
+        "center",
+        "col",
+        "colgroup",
+        "dd",
+        "details",
+        "dialog",
+        "dir",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "frame",
+        "frameset",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "head",
+        "header",
+        "hr",
+        "html",
+        "iframe",
+        "legend",
+        "li",
+        "link",
+        "main",
+        "menu",
+        "menuitem",
+        "nav",
+        "noframes",
+        "ol",
+        "optgroup",
+        "option",
+        "p",
+        "param",
+        "search",
+        "section",
+        "summary",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "title",
+        "tr",
+        "track",
+        "ul",
+    ];
+    let Ok(name) = std::str::from_utf8(name) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    BLOCK_TAGS.contains(&lower.as_str())
+}
+
 /// Advance past a run of ASCII spaces and tabs (the line-scoped subset of
 /// CommonMark "whitespace" — line endings cannot occur inside a sub-lexed line).
 fn skip_html_ws(bytes: &[u8], i: usize) -> usize {
@@ -899,6 +1026,7 @@ mod tests {
                         | TokKind::RoxygenMdListMarker
                         | TokKind::RoxygenMdFence
                         | TokKind::RoxygenMdHtml
+                        | TokKind::RoxygenMdHtmlBlock
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1192,6 +1320,43 @@ mod tests {
             )]
         );
         assert_lossless("#' before-<img src='foo.png'>-after\n");
+    }
+
+    #[test]
+    fn md_html_block_opener_carves_whole_line() {
+        // A line whose content starts with a block-level tag (condition 6) carves
+        // the whole remaining line as a `RoxygenMdHtmlBlock` opener under `@md`.
+        assert_eq!(
+            prose_texts("#' <p>a paragraph</p>\n#' @md\n"),
+            vec![(TokKind::RoxygenMdHtmlBlock, "<p>a paragraph</p>".into())]
+        );
+        assert_lossless("#' <p>a paragraph</p>\n#' @md\n");
+    }
+
+    #[test]
+    fn md_html_block_only_under_md() {
+        // The HTML-block opener is recognized only under `@md`; without it the line
+        // is ordinary prose (the inline `<p>` recognizer is also `@md`-gated).
+        assert_eq!(
+            prose_texts("#' <p>a paragraph</p>\n"),
+            vec![(TokKind::RoxygenText, "<p>a paragraph</p>".into())]
+        );
+        assert_lossless("#' <p>a paragraph</p>\n");
+    }
+
+    #[test]
+    fn md_non_block_tag_at_line_start_stays_inline() {
+        // `<span>` is not a block-level tag, so a line starting with it does not
+        // open an HTML block — it tiles as an inline `RoxygenMdHtml` span instead.
+        assert_eq!(
+            prose_texts("#' <span>x</span>\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenMdHtml, "<span>".into()),
+                (TokKind::RoxygenText, "x".into()),
+                (TokKind::RoxygenMdHtml, "</span>".into()),
+            ]
+        );
+        assert_lossless("#' <span>x</span>\n#' @md\n");
     }
 
     #[test]

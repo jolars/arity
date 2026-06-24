@@ -88,6 +88,13 @@ pub(crate) enum TokKind {
     /// A raw inline-HTML tag (`<img …>`, `</span>`), recognized only under a
     /// resolved `@md` block mode. Projected to `\if{html}{\out{<tag>}}`.
     RoxygenMdHtml,
+    /// A markdown **HTML-block** opener line: a line whose content starts with a
+    /// CommonMark HTML-block start (condition 6 — a block-level tag), recognized
+    /// only at a line's content start under a resolved `@md` mode. The whole
+    /// remaining line content is the token; the block builder gathers the opener
+    /// and the following lines (to the next blank line) into a
+    /// `ROXYGEN_MD_HTML_BLOCK`.
+    RoxygenMdHtmlBlock,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -123,7 +130,7 @@ impl TokKind {
             RoxygenTagArg => Some(RoxygenRole::TagArg),
             RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdImage
             | RoxygenMdEmph | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker
-            | RoxygenMdFence | RoxygenMdHtml => Some(RoxygenRole::Content),
+            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon
