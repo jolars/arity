@@ -7,7 +7,8 @@
 //! block-level Rd-macro / markdown constructs to [`super::build`].
 
 use super::build::{
-    emit_block_macro, emit_md_code_block, emit_md_html_block, emit_md_list, is_block_macro_line,
+    block_macro_opener_closes, emit_block_macro, emit_block_macro_inline, emit_md_code_block,
+    emit_md_html_block, emit_md_list, is_block_macro_line, is_block_macro_opener,
     is_md_code_block_start, is_md_html_block_start, is_md_list_start,
 };
 use crate::parser::events::Event;
@@ -107,7 +108,7 @@ pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Ve
                         events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
                         para_open = true;
                     }
-                    i = emit_line_tokens(tokens, i, events);
+                    i = emit_prose_line(tokens, i, events);
                 }
             }
         }
@@ -195,6 +196,34 @@ fn emit_line_tokens(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> 
     events.push(Event::Tok(start)); // RoxygenMarker
     let mut i = start + 1;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    i
+}
+
+/// Emit a prose line's tokens into the open paragraph, promoting a **mid-prose**
+/// block-macro opener (`\name{ …` that closes on a later `#'` line) to an inline
+/// `ROXYGEN_RD_MACRO` sibling of the surrounding prose. A line-start opener is
+/// handled earlier as a section-level block macro ([`is_block_macro_line`]); an
+/// opener that never closes stays literal prose (the lexer split it into its own
+/// `RoxygenText`, which is emitted unchanged here).
+fn emit_prose_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    events.push(Event::Tok(start)); // RoxygenMarker
+    let mut i = start + 1;
+    while let Some(tok) = tokens.get(i) {
+        if !is_line_body_kind(&tok.kind) {
+            break;
+        }
+        if tok.kind == TokKind::RoxygenText
+            && is_block_macro_opener(&tok.text)
+            && block_macro_opener_closes(tokens, i)
+        {
+            // Consumes the opener and its body across following lines, then resumes
+            // emitting any trailing prose on the macro's closing line.
+            i = emit_block_macro_inline(tokens, i, events);
+            continue;
+        }
         events.push(Event::Tok(i));
         i += 1;
     }

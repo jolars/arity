@@ -69,13 +69,86 @@ fn opens_unbalanced_brace(text: &str) -> bool {
 }
 
 /// Whether `text` begins with an unbalanced `\name{` block-macro opener.
-fn is_block_macro_opener(text: &str) -> bool {
+pub(super) fn is_block_macro_opener(text: &str) -> bool {
     let bytes = text.as_bytes();
     if bytes.first() != Some(&b'\\') {
         return false;
     }
     let k = super::rd_macro_name_end(bytes, 1);
     k > 1 && bytes.get(k) == Some(&b'{') && scan_balanced(bytes, k, b'{', b'}').is_none()
+}
+
+/// Whether the block-macro opener token at `opener` actually **closes** within
+/// the block — its `{` group is balanced by a `}` on the opener line or a later
+/// `#'` line, before a tag opener or the block's end. A line-start opener is
+/// committed unconditionally (it can only be a block opener), but a *mid-prose*
+/// `\name{` is committed to a block macro only when it closes; an unclosed one
+/// stays literal prose (parse_Rd rejects an unbalanced macro outright, so this is
+/// the conservative recovery — see the `roxygen_unbalanced_macro` fixture).
+pub(super) fn block_macro_opener_closes(tokens: &[Token], opener: usize) -> bool {
+    let mut depth = 0i32;
+    let mut i = opener;
+    loop {
+        // Brace-count the content tokens on the current line; a balanced inline
+        // span (`\code{x}`, `` `x` ``, …) is its own token and brace-neutral.
+        while let Some(tok) = tokens.get(i) {
+            match &tok.kind {
+                TokKind::RoxygenText => {
+                    if brace_scan(&tok.text, &mut depth) {
+                        return true;
+                    }
+                    i += 1;
+                }
+                k if k.roxygen_role() == Some(RoxygenRole::Content) => i += 1,
+                _ => break,
+            }
+        }
+        // Line boundary: a continuation (`\n` + indentation + `#'`) keeps scanning;
+        // a tag opener, a non-roxygen line, or EOF ends the block unclosed.
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            return false;
+        }
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
+            return false;
+        }
+        if matches!(classify_line(tokens, m), LineKind::Tag) {
+            return false;
+        }
+        i = m + 1;
+        while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            i += 1;
+        }
+    }
+}
+
+/// Track the running `{`/`}` brace depth across `text` (Rd `\`-escapes skipped),
+/// returning `true` the moment the depth returns to zero — i.e. the macro's group
+/// closes. `*depth` carries across the body's tokens.
+fn brace_scan(text: &str, depth: &mut i32) -> bool {
+    let bytes = text.as_bytes();
+    let mut j = 0;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'\\' => j += 2, // skip the escaped byte (`\{`, `\}`, `\\`, …)
+            b'{' => {
+                *depth += 1;
+                j += 1;
+            }
+            b'}' => {
+                *depth -= 1;
+                j += 1;
+                if *depth == 0 {
+                    return true;
+                }
+            }
+            _ => j += 1,
+        }
+    }
+    false
 }
 
 /// Whether the prose line whose marker is at `start` opens a **markdown list**
@@ -403,7 +476,29 @@ pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<
         events.push(Event::Tok(i));
         i += 1;
     }
+    emit_block_macro_from_opener(tokens, i, events)
+}
 
+/// Emit a block Rd macro whose `\name{` opener appears **mid-prose** (not as the
+/// line's first content). The enclosing `ROXYGEN_PARAGRAPH` stays open, so the
+/// macro nests inside it as an inline sibling of the preceding prose (the way the
+/// projector folds an abutting block macro into the same section). `opener` must
+/// index the `\name{…` opener token; unlike [`emit_block_macro`] there is no
+/// leading marker to thread (it belongs to the prose that precedes the opener).
+pub(super) fn emit_block_macro_inline(
+    tokens: &[Token],
+    opener: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_RD_MACRO));
+    emit_block_macro_from_opener(tokens, opener, events)
+}
+
+/// Emit the body of a `ROXYGEN_RD_MACRO` (already `Start`ed) from its opener token
+/// at `i`, consuming following `#'` lines until the group closes (or a tag / block
+/// end terminates it), and `Finish` the node. Shared by the line-start
+/// [`emit_block_macro`] and the mid-prose [`emit_block_macro_inline`].
+fn emit_block_macro_from_opener(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
     // The body's open brace groups (the parent macro's own body is the empty-stack
     // baseline, so a `}` at an empty stack terminates it).
     let mut frames: Vec<BodyFrame> = Vec::new();

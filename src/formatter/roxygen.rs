@@ -159,9 +159,24 @@ fn is_block_macro(node: &SyntaxNode) -> bool {
 /// air-compatible verbatim treatment of Rd lists.
 fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
     let text = node.text().to_string();
+    // A *mid-prose* opener (`text \preformatted{ …`) has no marker of its own — the
+    // opener line's `#'` belongs to the preceding paragraph — so its first segment
+    // begins with the `\name{` itself. Give the opener its own marker-prefixed line
+    // (the continuation lines already carry their markers); this is lossless and
+    // idempotent (on reparse the opener is a line-start block macro that re-emits
+    // identically).
+    let mid_prose = node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER);
     for (i, seg) in text.split('\n').enumerate() {
-        let line = if i == 0 { seg } else { seg.trim_start() };
-        push_line(items, line.trim_end().to_string());
+        let line = if i == 0 {
+            if mid_prose {
+                format!("#' {}", seg.trim_end())
+            } else {
+                seg.trim_end().to_string()
+            }
+        } else {
+            seg.trim_start().trim_end().to_string()
+        };
+        push_line(items, line);
     }
 }
 

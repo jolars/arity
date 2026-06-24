@@ -279,7 +279,18 @@ fn lex_roxygen_prose(
             b'`' if md => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenMdCode, end)),
             b'`' => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenCode, end)),
             b'*' | b'_' if md => scan_md_emphasis(bytes, i),
-            b'\\' => scan_rd_macro(bytes, i).map(|end| (TokKind::RoxygenRdMacro, end)),
+            // A balanced inline `\name{…}` is its own span; an *unbalanced* `\name{`
+            // opens a block macro that spans following `#'` lines. The opener runs
+            // to the line end (its body is unclosed here), so carve `\name{…EOL` off
+            // as its own `RoxygenText` token: at line start this reproduces the same
+            // whole-line token, and mid-prose it splits the preceding run off so the
+            // grouper can promote the opener to a block macro (when it later closes).
+            b'\\' => scan_rd_macro(bytes, i)
+                .map(|end| (TokKind::RoxygenRdMacro, end))
+                .or_else(|| {
+                    is_block_macro_opener_at(bytes, i)
+                        .then_some((TokKind::RoxygenText, bytes.len()))
+                }),
             b'!' if md => scan_md_image(bytes, i).map(|end| (TokKind::RoxygenMdImage, end)),
             b'[' if md => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
             b'<' if md => scan_md_autolink(bytes, i)
@@ -766,6 +777,15 @@ fn scan_html_attribute(bytes: &[u8], i: usize) -> Option<usize> {
 /// a required balanced `{…}` (and a second `{…}` for a two-argument macro like
 /// `\item`). Returns the index past the last consumed `}`, or `None` when there
 /// is no name or the first braces are unbalanced on the line.
+/// Whether `bytes[i] == b'\\'` begins an **unbalanced** `\name{` block-macro
+/// opener — a `\name{` whose `{` group does not close within the line (so its
+/// body spans following `#'` lines). The balanced inline case is handled by
+/// [`scan_rd_macro`]; this is the residual the grouper promotes to a block macro.
+fn is_block_macro_opener_at(bytes: &[u8], i: usize) -> bool {
+    let k = super::rd_macro_name_end(bytes, i + 1);
+    k > i + 1 && bytes.get(k) == Some(&b'{') && scan_balanced(bytes, k, b'{', b'}').is_none()
+}
+
 pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
     let name_start = i + 1;
     let mut j = super::rd_macro_name_end(bytes, name_start);

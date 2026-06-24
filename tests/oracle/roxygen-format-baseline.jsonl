@@ -24,7 +24,7 @@
 {"key":"harvest/rx-08798830","formatted":"#' @name a\n#' @title a\n#' @example Rd-example-3.R\nNULL\n"}
 {"key":"harvest/rx-08f2930b","formatted":"#' Title\n#'\n#' @param y Y\n#' @param x,z X,Z\n#' @param w W\nb <- function(x, y, z, w) {}\n"}
 {"key":"harvest/rx-0960279a","formatted":"#' Title.\na <- function() {}\n"}
-{"key":"harvest/rx-0a1710c0","formatted":"#' Title\n#'\n#' Description with some *keywords* included. So far so good. \\preformatted{\n#' *these are not emphasised*. Or are they? }\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-0a1710c0","formatted":"#' Title\n#'\n#' Description with some *keywords* included. So far so good.\n#' \\preformatted{ *these are not\n#'   emphasised*. Or are they?\n#' }\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-0abe949f","formatted":"#' Would be title\n#' @title Overridden title\n#' @name a\nNULL\n"}
 {"key":"harvest/rx-0c6356ed","formatted":"#' Foo\n#'\n#' @section A: 1\n#' @section B: 2\nfoo <- function(x) x\n\n#' @rdname foo\n#' @section C: 3\nbar <- function(x) x\n"}
 {"key":"harvest/rx-0d100638","formatted":"#' Title\n#'\n#' Description.\n#'\n#' ```{verbatim}\n#' #| file = testthat::test_path(\"example.Rmd\")\n#' ```\n#' @md\n#' @name x\nNULL\n"}

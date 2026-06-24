@@ -73,11 +73,27 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   (parse_Rd's static table, R 4.5; excludes expanded user macros `\CRANpkg`/`\doi`). Unknown →
   `(UNKNOWN "\\word")`; known brace-less stays literal prose (zero-arg `\cr` rendering deferred).
   A new known macro must go in the table or it silently becomes UNKNOWN.
-- **Block-macro openers, two forms** (`is_block_macro_line`). Form A: a `RoxygenText` `\name{`
-  unbalanced on its line (`\itemize`/`\describe`/`\name`) — necessarily a multi-line opener
-  since the lexer extracts a *balanced* `\name{…}` as one inline token. Form B: a balanced
-  structural `RoxygenRdMacro` (`\tabular{rl}`) then a `RoxygenText` opening the body `{`.
-  `emit_block_macro` dispatches. (A *third* form ⇒ reconsider lexer greediness.)
+- **Block-macro openers, three forms.** Forms A/B are *line-start* (`is_block_macro_line`,
+  section-level). Form A: a `RoxygenText` `\name{` unbalanced on its line
+  (`\itemize`/`\describe`/`\name`) — necessarily a multi-line opener since the lexer extracts a
+  *balanced* `\name{…}` as one inline token. Form B: a balanced structural `RoxygenRdMacro`
+  (`\tabular{rl}`) then a `RoxygenText` opening the body `{`. `emit_block_macro` dispatches.
+  **Form C: a *mid-prose* opener** (`So far so good. \preformatted{ …`). The lexer
+  (`lex_roxygen_prose`, `is_block_macro_opener_at`) **always splits** an unbalanced `\name{`
+  into its own to-EOL `RoxygenText` (at line start this reproduces the same whole-line token;
+  mid-prose it splits the preceding run off). The grouper (`emit_prose_line`) promotes it to an
+  **inline** `ROXYGEN_RD_MACRO` *inside the open paragraph* (sibling of the prose, folded into
+  the same section by `section_body_parts`) — but **only if `block_macro_opener_closes`** (a
+  later `}` balances it before a tag/block-end); an opener that never closes stays literal prose
+  (parse_Rd rejects an unbalanced macro, so this is the conservative recovery —
+  `roxygen_unbalanced_macro`, which is why a mid-prose unbalanced `\code{` splits into two prose
+  tokens yet stays prose). `emit_block_macro_inline`/`emit_block_macro_from_opener` share the
+  body-consume with line-start `emit_block_macro`. **Formatter:** `emit_block_macro` detects a
+  markerless (mid-prose) opener (`first_token() != ROXYGEN_MARKER`) and **prepends `#' `** so the
+  opener lands on its own line — lossless + idempotent (reparse makes it a line-start opener that
+  re-emits identically). Unlike line-start, Form C does *not* verify-by-closure asymmetry is
+  deliberate: a line-start `\name{` is unambiguously a block opener; a mid-prose one commits only
+  when it actually forms a balanced block.
 - **Nested block macros are brace-driven, not indentation.** `emit_block_content`
   tracks open groups with a `Vec<BodyFrame>` stack (`Macro` = a nested `\name{` we
   opened → child `ROXYGEN_RD_MACRO`; `Plain` = bare prose `{`, literal both ends). A
@@ -195,13 +211,12 @@ gate now exist and are the **primary driver** (parser-first, structural, CI-safe
 corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset**
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
-they stay in the R↔R fixed-point net, not false-positive backlog). Current (after verbatim
-`\preformatted`, 2026-06-24s): **144 matching (all
-allowlisted), 22 divergent (backlog)** of 166 pinned cases. The
+they stay in the R↔R fixed-point net, not false-positive backlog). Current (after mid-prose
+`\preformatted`, 2026-06-24t): **145 matching (all
+allowlisted), 21 divergent (backlog)** of 166 pinned cases. The
 divergences are now almost all roxygen2-*evaluation*/multi-block gaps (out of
-scope); the in-scope remainder is links-across-lines, mid-line `\preformatted`
-(rx-0a1710c0, body now handled — only its mid-line opener remains), and `@format %`
-(all hard tail). Tasks:
+scope); the **only** in-scope remainder is **links-across-lines** (rx-383f2ca3/eb12b6b6)
+and **`@format %`** (rx-f6927028) — both hard tail. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
 (harvested pins only), `task roxygen-projector-seed` (re-seed allowlist from matches).
@@ -211,66 +226,70 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (166 pinned cases). The 22 divergences are the worklist.
+   subset (166 pinned cases). The 21 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 15/15 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
-   (215 preserving, 1 divergent, 1 skipped). A coverage net, **not** the parser driver
+   (216 preserving, 0 divergent, 1 skipped). A coverage net, **not** the parser driver
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24s) — verbatim `\preformatted` block → per-line VERB
+## Latest session (2026-06-24t) — mid-prose `\preformatted` opener (block-opener Form C)
 
-**Construct:** a line-start multi-line `\preformatted{ … }` block macro. The CST
-already modeled it as a `ROXYGEN_RD_MACRO` (line-start unbalanced `\name{` = Form
-A); the gap was purely the **projector**: it whitespace-collapsed the body into one
-`(TEXT …)` instead of the verbatim, per-line `(VERB …)` parse_Rd emits for a
-verbatim macro. Closed via a curated `preformatted` case (no harvested case is
-line-start — see Next).
+**Construct:** a `\preformatted{ … }` block macro whose opener appears **mid-prose**
+(`So far so good. \preformatted{ *these are not`), closing on a later `#'` line.
+rx-0a1710c0 — the last in-scope `\preformatted` gap. **Parser + formatter** (the
+projector needed *no* change: `preformatted_atoms` works off `node.text()`, agnostic
+to opener position, and `paragraph_inlines` already maps a `ROXYGEN_RD_MACRO`
+paragraph child → `Inline::Macro`).
 
-**Bucket: projector gap (faithful encoding, not parser).** `\preformatted` is a
-verbatim Rd macro, so its body must encode like `\out`/`\code`, not like prose.
-- `serialize_macro` gains an early arm: `head == \preformatted` → `preformatted_atoms`,
-  bypassing the run/flush prose model (which norm_ws-collapses).
-- `preformatted_atoms(node)`: body = text between the opening `{` and closing `}`;
-  the opener-line remainder keeps its leading space verbatim, each continuation line
-  drops only its `#'` marker + one space (`strip_marker`), lines rejoin with `\n`,
-  then `verb_atoms` splits at newlines (the established `\out`/HTML-block pattern).
-- New `macro_head(node)` helper (peek the `ROXYGEN_RD_MACRO_NAME`).
-- No parser change; the `*…*` inside `\preformatted` already stayed literal
-  `ROXYGEN_TEXT` (it spans `#'` lines, so the line-scoped md emphasis recognizer
-  never matched), which is exactly the verbatim-body behavior we want.
+**Bucket: parser gap (+ a formatter follow-on).**
+- **Lexer** (`lex_roxygen_prose`, new `is_block_macro_opener_at`): the `b'\\'` arm now
+  **always splits** an unbalanced `\name{` into its own to-EOL `RoxygenText`. At line
+  start this reproduces the same whole-line token; mid-prose it flushes the prefix run
+  (`So far so good. `) off so the opener is its own token.
+- **Grouper** (`group.rs`, new `emit_prose_line` replacing `emit_line_tokens` in the
+  `LineKind::Prose` arm): on a `is_block_macro_opener` token that **also**
+  `block_macro_opener_closes` (a later `}` balances it before a tag/block-end), emit an
+  **inline** `ROXYGEN_RD_MACRO` *inside the open paragraph* (`emit_block_macro_inline`).
+  `section_body_parts` folds the abutting macro into the same `\description`. An opener
+  that never closes stays literal prose (parse_Rd errors on it — confirmed via oracle).
+- **Build** (`build.rs`): factored `emit_block_macro_from_opener` (shared body-consume) out
+  of `emit_block_macro`; added `emit_block_macro_inline` (no leading marker to thread),
+  `block_macro_opener_closes` + `brace_scan` (escape-aware `{`/`}` depth across lines).
+- **Formatter** (`emit_block_macro`): a markerless mid-prose opener
+  (`first_token() != ROXYGEN_MARKER`) gets a prepended `#' ` so it lands on its own line.
+  Lossless + idempotent: on reparse the opener is line-start and re-emits identically. This
+  **fixed a Tenet-1 violation** the old baseline encoded — it was reflowing the verbatim
+  `\preformatted` body into one run; now it's preserved per-line.
 
-**Result:** projector **143→144 matching** (144 allowlisted), 22 divergent
-(unchanged — the only `\preformatted` harvested case, rx-0a1710c0, is *mid-line*,
-still backlog), 0 regressions, 166 pinned (+1 curated `preformatted`). `cargo test`
-green (479). Curated fixed-point **15/15** preserving (was 14/14). One
-format-baseline re-bless (intended: the new curated case; the formatter passes the
-block through verbatim, idempotent). Files: `src/roxygen/project_rd.rs` (projector
-arm + 2 helpers), new fixture `tests/fixtures/parser/roxygen_preformatted/` (+2
-snapshots), new curated `tests/oracle/corpus/roxygen/preformatted.{R,rdtree}`,
-projector allowlist (+re-seed), `roxygen-format-baseline.jsonl`,
-`tests/parser_snapshots.rs`, TODO, RECAP.
+**Result:** projector **144→145 matching** (145 allowlisted), **22→21 divergent**, 0
+regressions, 166 pinned. Harvested fixed-point **215→216 preserving, 1→0 divergent**
+(rx-0a1710c0 now renders identical Rd → ratcheted into both allowlists). Curated
+fixed-point **15/15**. `cargo test` green (481), clippy + fmt clean. One format-baseline
+re-bless (intended Tenet-1 win). Files: `src/parser/roxygen/{lex,group,build}.rs`,
+`src/formatter/roxygen.rs`, new fixture `roxygen_preformatted_midline/` (+2 snapshots),
+re-blessed `roxygen_unbalanced_macro_cst` (benign: mid-prose unbalanced `\code{` splits
+into two prose tokens, still prose), both allowlists (+re-seed), format baseline, TODO, RECAP.
 
-**Next (ranked):** **rx-0a1710c0 (mid-line `\preformatted`)** is now *one gap from
-done* — the projector arm landed this session handles its body; what remains is the
-**mid-line opener** (`So far so good. \preformatted{ …`): a *third* block-opener
-form where the verbatim `\name{` is not at line-content-start. Needs the **lexer**
-to split a prose run at a mid-line unbalanced verbatim opener (flush the prefix
-`RoxygenText`, start the opener) AND the **grouper** (`is_block_macro_line` /
-`emit_block_macro` in `build.rs`, the `LineKind::Prose` arm in `group.rs`) to split
-the open paragraph so the prefix prose stays a paragraph sibling and the
-`\preformatted` block follows. Invasive (touches the line/paragraph state machine) —
-scope it on its own. After that, the in-scope tail is **links broken across lines**
-rx-383f2ca3/eb12b6b6 (line-scoped lexer can't span a `[…](…)` across `#'` lines) and
-**`@format %`** rx-f6927028 (`%`-to-EOL Rd comment in non-md prose; coupled to the
-formatter's prose reflow — defer). The other ~17 divergences are roxygen2-evaluation
-or cross-block (out of scope; see 2026-06-24r below).
+**Next (ranked):** the in-scope backlog is down to two hard-tail cases. (1) **`@format %`**
+(rx-f6927028): in **non-md** prose roxygen passes the value through as raw Rd, so `%` is a
+comment-to-EOL → `(\format)` empty; in md mode roxygen escapes it. Projector-side needs
+mode-awareness (re-derive `@md` from the block, which the traps caution against) **and** —
+as this session showed — a likely formatter follow-on (the `%` comment vs prose reflow).
+More contained than (2). (2) **links broken across lines** (rx-383f2ca3/eb12b6b6): a
+`[…](…)`/`[…][ref]` spanning several `#'` lines; the lexer is line-scoped so it can't carve
+a cross-line link — architecturally invasive (cross-line span lexing). The other ~19
+divergences are roxygen2-evaluation or cross-block (out of scope; see 2026-06-24r below).
 
 ## Earlier sessions
 
+- **2026-06-24s (verbatim `\preformatted` block → per-line VERB):** a *line-start*
+  multi-line `\preformatted{ … }`. Pure **projector** gap — `serialize_macro` early arm
+  `head == \preformatted` → `preformatted_atoms` (verbatim per-line `VERB`, not norm_ws-
+  collapsed prose). + curated `preformatted`. 143→144.
 - **2026-06-24r (markdown nested lists, `\itemize` in `\enumerate`, indent-driven):**
   an `@md` list whose items carry sub-lists by **indentation**. `emit_md_list` recurses
   (`emit_md_list_level` keyed on `list_indent`: a following line indented ≥ the item's

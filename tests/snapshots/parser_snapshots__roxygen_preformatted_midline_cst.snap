@@ -1,0 +1,58 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..171
+  ROXYGEN_BLOCK@0..149
+    ROXYGEN_SECTION@0..143
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+      ROXYGEN_MARKER@9..11 "#'"
+      NEWLINE@11..12 "\n"
+      ROXYGEN_PARAGRAPH@12..143
+        ROXYGEN_MARKER@12..14 "#'"
+        WHITESPACE@14..15 " "
+        ROXYGEN_TEXT@15..37 "Description with some "
+        ROXYGEN_MD_EMPH@37..47 "*keywords*"
+        ROXYGEN_TEXT@47..57 " included."
+        NEWLINE@57..58 "\n"
+        ROXYGEN_MARKER@58..60 "#'"
+        WHITESPACE@60..61 " "
+        ROXYGEN_TEXT@61..77 "So far so good. "
+        ROXYGEN_RD_MACRO@77..142
+          ROXYGEN_RD_MACRO_NAME@77..90 "\\preformatted"
+          ROXYGEN_RD_MACRO_DELIM@90..91 "{"
+          ROXYGEN_TEXT@91..106 " *these are not"
+          NEWLINE@106..107 "\n"
+          ROXYGEN_MARKER@107..109 "#'"
+          WHITESPACE@109..112 "   "
+          ROXYGEN_TEXT@112..137 "emphasised*. Or are t ..."
+          NEWLINE@137..138 "\n"
+          ROXYGEN_MARKER@138..140 "#'"
+          WHITESPACE@140..141 " "
+          ROXYGEN_RD_MACRO_DELIM@141..142 "}"
+        NEWLINE@142..143 "\n"
+    ROXYGEN_SECTION@143..149
+      ROXYGEN_MARKER@143..145 "#'"
+      WHITESPACE@145..146 " "
+      ROXYGEN_TAG@146..149
+        ROXYGEN_AT@146..147 "@"
+        ROXYGEN_TAG_NAME@147..149 "md"
+  NEWLINE@149..150 "\n"
+  ASSIGNMENT_EXPR@150..170
+    IDENT@150..153 "foo"
+    WHITESPACE@153..154 " "
+    ASSIGN_LEFT@154..156 "<-"
+    WHITESPACE@156..157 " "
+    FUNCTION_EXPR@157..170
+      FUNCTION_KW@157..165 "function"
+      LPAREN@165..166 "("
+      RPAREN@166..167 ")"
+      WHITESPACE@167..168 " "
+      BLOCK_EXPR@168..170
+        LBRACE@168..169 "{"
+        RBRACE@169..170 "}"
+  NEWLINE@170..171 "\n"

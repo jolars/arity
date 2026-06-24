@@ -315,10 +315,16 @@
       per line (parse_Rd's verbatim split), not a whitespace-collapsed `(TEXT …)`.
       Projector-only (`serialize_macro` early-arm + `preformatted_atoms`, mirroring
       `serialize_md_html_block`/`verb_atoms`); the line-start block was already a
-      `ROXYGEN_RD_MACRO`, so no parser change. + curated `preformatted`. *Still
-      backlog:* the mid-line opener (a prose prefix before `\preformatted{`,
-      `rx-0a1710c0`) — a third block-opener form needing the lexer to split a prose
-      run at a mid-line verbatim opener and the grouper to split the paragraph.
+      `ROXYGEN_RD_MACRO`, so no parser change. + curated `preformatted`.
+      **Mid-prose `\preformatted` opener landed (2026-06-24t):** block-opener **Form
+      C** — `So far so good. \preformatted{ …`. The lexer always splits an unbalanced
+      `\name{` into its own to-EOL token (`is_block_macro_opener_at`); the grouper
+      (`emit_prose_line`) promotes it to an **inline** `ROXYGEN_RD_MACRO` inside the
+      open paragraph **only if it closes** (`block_macro_opener_closes`), else it stays
+      prose (parse_Rd errors on an unclosed macro). Formatter `emit_block_macro`
+      prepends `#' ` to a markerless opener (lossless + idempotent). Fixed a Tenet-1
+      reflow violation in the old baseline. Parser + formatter; projector unchanged.
+      + fixture `roxygen_preformatted_midline`. `rx-0a1710c0` done. 144→145.
       **Markdown nested lists landed (2026-06-24r):** `emit_md_list` now
       recurses by CommonMark indentation (a following list line indented to an
       item's content column opens a nested `ROXYGEN_MD_LIST` inside that item, a
@@ -427,13 +433,13 @@
       corpus (`tests/oracle/corpus/roxygen.jsonl`, 217 standalone blocks mined from
       roxygen2's own tests by `scripts/harvest-roxygen-corpus.R`) measures the fixed
       point `roxygen2(format(x)) == roxygen2(x)` per case, gated opt-in by
-      `tests/oracle/roxygen-allowlist.txt`. Baseline **215 preserving / 1 divergent /
+      `tests/oracle/roxygen-allowlist.txt`. Baseline **216 preserving / 0 divergent /
       1 skipped**. This is a broad *semantic*-preservation net for the formatter, **not**
       the parser-growth driver: it is cosmetic-blind (a reflowed `\describe` renders
       identical Rd, so it passes here) and R-dependent (`#[ignore]`d). Its remaining
-      divergent `@md` slug (`\preformatted{}` `rx-0a1710c0`; nested lists `rx-91e67e79`,
-      inline raw HTML `rx-299f50fb`, and block raw HTML `rx-daf9322f` now **closed**) is
-      downstream of the same block-structure work. Run `task roxygen-harvest`; ratchet via
+      divergent slug (mid-prose `\preformatted{}` `rx-0a1710c0`; nested lists `rx-91e67e79`,
+      inline raw HTML `rx-299f50fb`, and block raw HTML `rx-daf9322f`) is now **closed**.
+      Run `task roxygen-harvest`; ratchet via
       `task roxygen-harvest-seed`.
     - *Parser architecture — refactor BEFORE the next markdown push (links/tables/
       nested lists).* The roxygen parser is sound but its phase discipline has eroded
@@ -473,11 +479,14 @@
          file-size pain that motivated the cleanup is gone (4 modules,
          113/200/430/996), so the marginal structural win doesn't justify a
          behavior-touching rewrite.
-      3. **Watch the block-opener Form A/Form B split.** Because the lexer greedily
-         eats balanced `{…}` groups, `is_block_macro_line` has two structurally
-         different entry forms and macro-arity logic is split lexer↔tree-builder
-         (`scan_rd_macro` ↔ `build_rd_macro`). Correct but intricate; a *third* form
-         appearing is the signal to reconsider the lex-time greediness.
+      3. **Watch the block-opener forms (A/B line-start, C mid-prose).** Because the
+         lexer greedily eats balanced `{…}` groups, `is_block_macro_line` has two
+         structurally different *line-start* entry forms and macro-arity logic is split
+         lexer↔tree-builder (`scan_rd_macro` ↔ `build_rd_macro`). The **Form C**
+         mid-prose opener (2026-06-24t, `emit_prose_line` + `block_macro_opener_closes`)
+         added a third path (inline `ROXYGEN_RD_MACRO` in the open paragraph, commit-only-
+         if-it-closes). Correct but intricate; a *fourth* form is the signal to reconsider
+         the lex-time greediness.
       - *Lower-stakes, documented known-gaps (revisit only if forced).* Roxygen is
         non-incremental — edits fall back to block/full reparse (`reparse.rs`; Tenet 2
         gap, but doc comments are statement-level so a full reparse is cheap), and
