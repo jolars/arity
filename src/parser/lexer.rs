@@ -78,28 +78,56 @@ pub(crate) enum TokKind {
     RoxygenMdListMarker,
 }
 
+/// The semantic role of a roxygen line sub-token. This is the **single source**
+/// for classifying the roxygen `TokKind`s: every site that used to carry its own
+/// hand-maintained `matches!` list now derives from [`TokKind::roxygen_role`].
+/// `Content` is the prose/inline-markup body (text + protected spans); the
+/// others are the structural line tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RoxygenRole {
+    /// The leading `#'`.
+    Marker,
+    /// The `@` introducing a tag.
+    At,
+    /// A tag's name (`@param`'s `param`).
+    TagName,
+    /// A tag's first-word argument (`@param`'s `x`).
+    TagArg,
+    /// Prose / inline-markup body: text, inline code, an Rd macro, a markdown
+    /// link, or a resolved markdown emphasis/strong/code/list-marker span.
+    Content,
+}
+
 impl TokKind {
+    /// The roxygen role of this kind, or `None` for any non-roxygen token. This
+    /// is a wildcard-free match, so adding a `TokKind` is a compile error here —
+    /// the one place that must classify a new roxygen kind's role.
+    pub(crate) fn roxygen_role(&self) -> Option<RoxygenRole> {
+        use TokKind::*;
+        match self {
+            RoxygenMarker => Some(RoxygenRole::Marker),
+            RoxygenAt => Some(RoxygenRole::At),
+            RoxygenTagName => Some(RoxygenRole::TagName),
+            RoxygenTagArg => Some(RoxygenRole::TagArg),
+            RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdEmph
+            | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker => Some(RoxygenRole::Content),
+            Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
+            | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
+            | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon
+            | Colon2 | Colon3 | Dollar | At | Semicolon | Comma | Or | Or2 | And | And2
+            | Equal2 | NotEqual | Bang | LessThan | LessThanOrEqual | GreaterThan
+            | GreaterThanOrEqual | LParen | RParen | LBrace | RBrace | AssignLeft | SuperAssign
+            | AssignRight | SuperAssignRight | AssignEq | Walrus | Whitespace | Newline
+            | Unknown => None,
+        }
+    }
+
     /// Comment-like trivia: a plain comment, or any sub-token of a roxygen
     /// line. Used by trivia-skip loops so a roxygen line appearing where a
     /// comment could (mid-expression) is skipped like one rather than tripping
     /// the parser.
     pub(crate) fn is_comment_like(&self) -> bool {
-        matches!(
-            self,
-            TokKind::Comment
-                | TokKind::RoxygenMarker
-                | TokKind::RoxygenAt
-                | TokKind::RoxygenTagName
-                | TokKind::RoxygenTagArg
-                | TokKind::RoxygenText
-                | TokKind::RoxygenCode
-                | TokKind::RoxygenRdMacro
-                | TokKind::RoxygenMdLink
-                | TokKind::RoxygenMdEmph
-                | TokKind::RoxygenMdStrong
-                | TokKind::RoxygenMdCode
-                | TokKind::RoxygenMdListMarker
-        )
+        matches!(self, TokKind::Comment) || self.roxygen_role().is_some()
     }
 }
 

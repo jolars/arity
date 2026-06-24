@@ -205,41 +205,37 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-23) — Stage 11: `@slot`/`@field` aggregate to `\section{Slots/Fields}`
+## Latest session (2026-06-24) — Parser refactor: unify roxygen `TokKind`/`SyntaxKind` classification
 
-**Projector-only win, +2 cases.** `@slot` (S4) and `@field` (reference class) are
-*aggregating* section tags: roxygen2 collects **every** `@slot` (resp. `@field`) of a
-topic into a single `\section{Slots}{\describe{…}}` (resp. `\section{Fields}`), each tag
-becoming `\item{\code{name}}{def}` where the name is verbatim R-code (`RCODE`, like a
-`\code` body). Confirmed via `block-to-sections`: `@slot a slot a` + `@slot b slot b` →
-`(\section (TEXT "Slots") (\describe (\item (\code (RCODE "a")) (TEXT "slot a")) (\item
-(\code (RCODE "b")) (TEXT "slot b"))))`.
+**Refactor #1 of the pre-markdown-push architecture cleanup (`TODO.md`); no parity
+change, byte-identical.** The roxygen sub-lexer classified its 12 `TokKind`s across **8
+independent, silent `matches!` lists** in 5 files; a forgotten arm already shipped a bug
+once (Stage 5). Collapsed them onto a single compiler-policed source.
 
-- **Bucket: projector gap.** The CST already models the tag fully (`ROXYGEN_TAG_NAME`
-  "slot", `ROXYGEN_TAG_ARG` = name, `ROXYGEN_TEXT` = prose) — no parser change. Fix in
-  `src/roxygen/project_rd.rs`: `project_block` now diverts `slot`/`field` tags into two
-  ordered `(name, def)` vecs (via `tag.arg()` for the name + the usual `tag_inlines` +
-  `section_body_parts` for the def), and a new `describe_section` helper synthesizes the
-  aggregate `\section{…}{\describe …}` after the per-tag loop. The name reuses
-  `rcode_atoms` so it's `\code{RCODE}`, byte-identical to the pin.
-- **Faithful, not compensating:** the aggregate matches roxygen2's documented S4/RC
-  roclet behavior; this is an encoding/aggregation translation of structure the CST
-  already owns, not a roclet reimplementation. Edge cases (no name, no def) guarded but
-  not in corpus → backlog if they ever appear.
-- **Projector 91→93 matching** (all allowlisted via `task roxygen-projector-seed`),
-  **66 divergent**; **0 regressions**. Closed rx-853d2f8f (`@slot`), rx-d55651e1 (`@field`).
-- **Tests:** projector unit tests `slot_tags_aggregate_into_slots_section` +
-  `field_tags_aggregate_into_fields_section` (TDD: failing first). No new parser fixture
-  (CST unchanged — existing tag-arg parsing already covered). Full `cargo test` green
-  (458 lib + all integration); clippy + fmt clean.
+- **New `RoxygenRole { Marker, At, TagName, TagArg, Content }` + wildcard-free
+  `TokKind::roxygen_role` (`src/parser/lexer.rs`)** is the one source for the
+  lexer/parser side. Because the match has **no wildcard**, adding any `TokKind` is now a
+  compile error there — the single place that must classify a new roxygen kind's role.
+  `is_comment_like` (`= Comment || role.is_some()`), `classify_line`
+  (`Some(At)→Tag`, `Some(Content)→Prose`), `is_line_body_kind`
+  (`Whitespace || role != Marker`), and `emit_block_macro`'s inline-span arm
+  (`role == Some(Content)`, **`RoxygenText` arm kept FIRST** — load-bearing) all derive
+  from it. The 7 silent lists are gone.
+- **`SyntaxKind` side** is rowan-flat (u16 + `COUNT`), so it can't be nested/policed; its
+  two identical 8-leaf formatter lists (`is_blank`, `is_tag_prose_kind`) collapsed onto a
+  single `SyntaxKind::is_roxygen_prose_content` (`src/syntax.rs`, beside `is_roxygen_token`)
+  — one residual wildcard soft spot, now singular instead of triplicated.
+- **`expr.rs`'s atom fallthrough left as-is**: it is already an exhaustive wildcard-free
+  anchor (the Plan agent flagged this — a second policed site), and its `=> None` value is
+  shared, so touching it would only add churn.
+- **Pure refactor:** `cargo test` green (458 lib + all integration), projector gate
+  **unmoved** (still 93 matching, allowlist untouched), format-stability baseline
+  untouched, clippy + fmt clean. +78/−78 across 4 source files only.
 
-**Next (ranked):** **Strongly consider a parser refactor before the next markdown push**
-(architecture review, 2026-06-23 — see `TODO.md` "Parser architecture — refactor BEFORE
-the next markdown push"). `roxygen.rs` is ~1700 lines with eroded phase discipline; the
-top item is unifying the scattered `TokKind` line-body `matches!` lists onto one
-compiler-policed classifier (they're silent today and already shipped one bug). Markdown
-links will widen exactly those matchers, so doing the refactor first de-risks the cluster.
-Otherwise, the largest remaining parity cluster is **markdown links** (≈10 cases:
+**Next (ranked):** the architecture cleanup's #1 (this) is done; #2 (split the ~1700-line
+`roxygen.rs` along sub-lexer/block-grouper/structure-builder boundaries) and #3 (watch the
+block-opener Form A/B split) remain optional and deferred (`TODO.md`). The largest
+remaining **parity** cluster is now **markdown links** (≈10 cases:
 rx-270b730c/rx-95dd50a4/rx-72858140/rx-2a68ab3f/rx-4adb1f22/rx-fd84eacf/rx-375ab9f1
 `[text]`/`[text][dest]`/`[fn()]`/`[pkg::obj]` → `\link`/`\code{\link}`; rx-7743ba62/
 rx-0605d020 `[text](url)` → `\href` (the `\href` projector arm now exists — only the
@@ -253,6 +249,12 @@ divergent harvested case, sorted by input length; removed at session end).
 
 ## Earlier sessions
 
+- **2026-06-23 (Stage 11, `@slot`/`@field` aggregate to `\section{Slots/Fields}`):**
+  projector-only, +2 cases. `@slot` (S4)/`@field` (RC) are *aggregating* tags: roxygen2
+  collects every one of a topic into a single `\section{Slots}{\describe{…}}`, each tag →
+  `\item{\code{RCODE name}}{def}`. CST already modeled it; `project_block` diverts
+  `slot`/`field` into ordered `(name, def)` vecs and a new `describe_section` synthesizes
+  the aggregate. 91→93 matching, 0 regressions.
 - **2026-06-23 (Stage 10, `\href{url}{text}` per-arg verbatim):** parser + projector,
   +5 cases. `\href` is a two-arg structural macro with a *per-argument* encoding: arg 0
   (URL) verbatim `VERB`, arg 1 (link text) sub-parsed latexlike. New

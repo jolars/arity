@@ -66,19 +66,10 @@ impl PhysicalLine {
     /// (text or a protected markup span).
     fn is_blank(&self) -> bool {
         self.tag.is_none()
-            && !self.elements.iter().any(|el| {
-                matches!(
-                    el.kind(),
-                    SyntaxKind::ROXYGEN_TEXT
-                        | SyntaxKind::ROXYGEN_CODE
-                        | SyntaxKind::ROXYGEN_RD_MACRO
-                        | SyntaxKind::ROXYGEN_MD_LINK
-                        | SyntaxKind::ROXYGEN_MD_EMPH
-                        | SyntaxKind::ROXYGEN_MD_STRONG
-                        | SyntaxKind::ROXYGEN_MD_CODE
-                        | SyntaxKind::ROXYGEN_MD_LIST_MARKER
-                )
-            })
+            && !self
+                .elements
+                .iter()
+                .any(|el| el.kind().is_roxygen_prose_content())
     }
 }
 
@@ -799,17 +790,7 @@ fn tag_has_prose(tag: &RoxygenTag) -> bool {
 /// are leaf tokens; `el.kind()` reports the same kind for either, so callers
 /// match on the element's kind rather than requiring a token.
 fn is_tag_prose_kind(kind: SyntaxKind) -> bool {
-    matches!(
-        kind,
-        SyntaxKind::ROXYGEN_TEXT
-            | SyntaxKind::ROXYGEN_CODE
-            | SyntaxKind::ROXYGEN_RD_MACRO
-            | SyntaxKind::ROXYGEN_MD_LINK
-            | SyntaxKind::ROXYGEN_MD_EMPH
-            | SyntaxKind::ROXYGEN_MD_STRONG
-            | SyntaxKind::ROXYGEN_MD_CODE
-            | SyntaxKind::ROXYGEN_MD_LIST_MARKER
-    )
+    kind.is_roxygen_prose_content()
 }
 
 /// The normalized tag header: `@name` plus, for an arg-bearing tag, ` arg`

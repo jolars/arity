@@ -178,6 +178,24 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
         )
     }
+
+    /// The prose / inline-markup roxygen leaves: plain text plus the protected
+    /// spans (inline code, Rd macro, markdown link/emphasis/strong/code/list
+    /// marker). The `SyntaxKind`-side counterpart of [`crate::parser::lexer::RoxygenRole::Content`];
+    /// the single list the formatter derives "is this a prose element" from.
+    pub fn is_roxygen_prose_content(self) -> bool {
+        matches!(
+            self,
+            SyntaxKind::ROXYGEN_TEXT
+                | SyntaxKind::ROXYGEN_CODE
+                | SyntaxKind::ROXYGEN_RD_MACRO
+                | SyntaxKind::ROXYGEN_MD_LINK
+                | SyntaxKind::ROXYGEN_MD_EMPH
+                | SyntaxKind::ROXYGEN_MD_STRONG
+                | SyntaxKind::ROXYGEN_MD_CODE
+                | SyntaxKind::ROXYGEN_MD_LIST_MARKER
+        )
+    }
 }
 
 impl From<SyntaxKind> for rowan::SyntaxKind {

@@ -336,18 +336,17 @@
       nested lists).* The roxygen parser is sound but its phase discipline has eroded
       as it grew; `src/parser/roxygen.rs` is now ~1700 lines, the largest file in the
       parser. Do these while it's that size, not after it doubles. Ranked:
-      1. **Unify the `TokKind` line-body classification (highest correctness ROI).**
-         A new roxygen line-body kind must currently be hand-added to *every* matcher
-         — `classify_line`, `is_line_body_kind`, the block-macro inline-span arm
-         (all `roxygen.rs`), `expr.rs`'s atom fallthrough, `tree_builder`'s
-         `syntax_kind_for`, `lexer.rs`'s `is_comment_like`, `syntax.rs`'s
-         `is_roxygen_token`, plus the formatter's `is_blank`/`is_tag_prose_kind`. The
-         `matches!` lists are **silent** (Rust exhaustiveness can't catch a miss); this
-         already shipped a bug once (Stage 5: a `@param` description vanished at an
-         unknown token). Collapse them onto one classification source (a property/trait
-         on `TokKind`, or one predicate fn) so adding a kind is a single
-         compiler-policed edit. This is the thing most likely to cause a *silent*
-         correctness regression as markdown grows.
+      1. **~~Unify the `TokKind` line-body classification (highest correctness ROI).~~
+         DONE (2026-06-24).** New `RoxygenRole` enum + wildcard-free
+         `TokKind::roxygen_role` (`lexer.rs`) is the single, compiler-policed source for
+         the lexer/parser side: `is_comment_like`, `classify_line`, `is_line_body_kind`,
+         and the block-macro inline-span arm all derive from it; adding a `TokKind` is
+         now a compile error in the one match. The `SyntaxKind` side (rowan-flat, can't
+         be policed) collapsed onto a single `SyntaxKind::is_roxygen_prose_content`
+         (`syntax.rs`) that the formatter's `is_blank`/`is_tag_prose_kind` share. The 8
+         silent `matches!` lists are gone; `expr.rs`'s atom fallthrough was already an
+         exhaustive anchor and was left as-is. Pure refactor, byte-identical (projector
+         + format-stability gates unmoved).
       2. **Split `roxygen.rs` along its real phase boundaries.** It conflates four
          phases the R parser keeps separate: sub-lexing, block grouping (event
          emission), line classification, and Rd-macro/markdown *structure building*.

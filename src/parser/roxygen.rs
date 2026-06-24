@@ -10,7 +10,7 @@
 //! node) happens at parse time; see [`emit_roxygen_block`].
 
 use crate::parser::events::Event;
-use crate::parser::lexer::{TokKind, Token};
+use crate::parser::lexer::{RoxygenRole, TokKind, Token};
 use crate::syntax::SyntaxKind;
 
 /// Roxygen tags whose first content word is a *name* argument (e.g. `@param x`,
@@ -708,21 +708,12 @@ enum LineKind {
 /// Classify the roxygen line whose `RoxygenMarker` is at `start`.
 fn classify_line(tokens: &[Token], start: usize) -> LineKind {
     let content = line_content_start(tokens, start);
-    if tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenAt) {
-        return LineKind::Tag;
-    }
     let mut i = content;
     while let Some(tok) = tokens.get(i) {
-        match tok.kind {
-            TokKind::RoxygenText
-            | TokKind::RoxygenCode
-            | TokKind::RoxygenRdMacro
-            | TokKind::RoxygenMdLink
-            | TokKind::RoxygenMdEmph
-            | TokKind::RoxygenMdStrong
-            | TokKind::RoxygenMdCode
-            | TokKind::RoxygenMdListMarker => return LineKind::Prose,
-            TokKind::Whitespace => i += 1,
+        match tok.kind.roxygen_role() {
+            Some(RoxygenRole::At) => return LineKind::Tag,
+            Some(RoxygenRole::Content) => return LineKind::Prose,
+            _ if tok.kind == TokKind::Whitespace => i += 1,
             _ => break,
         }
     }
@@ -742,21 +733,8 @@ fn line_content_start(tokens: &[Token], marker: usize) -> usize {
 /// Whether `kind` is a roxygen line-body token (everything that can follow the
 /// marker on a line).
 fn is_line_body_kind(kind: &TokKind) -> bool {
-    matches!(
-        kind,
-        TokKind::RoxygenAt
-            | TokKind::RoxygenTagName
-            | TokKind::RoxygenTagArg
-            | TokKind::RoxygenText
-            | TokKind::RoxygenCode
-            | TokKind::RoxygenRdMacro
-            | TokKind::RoxygenMdLink
-            | TokKind::RoxygenMdEmph
-            | TokKind::RoxygenMdStrong
-            | TokKind::RoxygenMdCode
-            | TokKind::RoxygenMdListMarker
-            | TokKind::Whitespace
-    )
+    matches!(kind, TokKind::Whitespace)
+        || matches!(kind.roxygen_role(), Some(role) if role != RoxygenRole::Marker)
 }
 
 /// Emit a line's tokens — marker then body — verbatim as `Tok` events. Returns
@@ -981,21 +959,16 @@ fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> 
     'consume: while !closed {
         // Remaining content tokens on the current line.
         while let Some(tok) = tokens.get(i) {
-            match tok.kind {
+            match &tok.kind {
                 TokKind::RoxygenText => {
                     emit_block_content(events, &tok.text, &mut depth, &mut closed);
                     i += 1;
                 }
                 // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`, or a
                 // resolved markdown emphasis/strong/code leaf): pass the whole token
-                // through; the tree builder expands a macro token.
-                TokKind::RoxygenCode
-                | TokKind::RoxygenRdMacro
-                | TokKind::RoxygenMdLink
-                | TokKind::RoxygenMdEmph
-                | TokKind::RoxygenMdStrong
-                | TokKind::RoxygenMdCode
-                | TokKind::RoxygenMdListMarker => {
+                // through; the tree builder expands a macro token. `RoxygenText` is
+                // handled above, so the remaining `Content` kinds are the spans.
+                k if k.roxygen_role() == Some(RoxygenRole::Content) => {
                     events.push(Event::Tok(i));
                     i += 1;
                 }
