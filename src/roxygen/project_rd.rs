@@ -38,7 +38,7 @@ use rowan::NodeOrToken;
 
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
 use crate::parser::parse;
-use crate::parser::roxygen::is_two_arg_rd_macro;
+use crate::parser::roxygen::{is_known_rd_macro, is_two_arg_rd_macro};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 /// Project `text` to the parser-owned Rd section subtrees, one canonical
@@ -511,7 +511,15 @@ fn serialize_macro(node: &SyntaxNode) -> String {
     flush(&mut run, &mut group, head == "\\code");
     finalize(&mut group, &mut out_atoms, structural);
     if out_atoms.is_empty() {
-        format!("({head})")
+        // A name-only macro node (no `{…}` content). A known zero-argument macro
+        // (`\cr`, or a list child `\item` under `\itemize`) renders name-only;
+        // an **unknown** brace-less `\word` is tagged `UNKNOWN` by parse_Rd.
+        let name = head.trim_start_matches('\\');
+        if is_known_rd_macro(name) {
+            format!("({head})")
+        } else {
+            format!("(UNKNOWN {})", encode_text(&head))
+        }
     } else {
         format!("({head} {})", out_atoms.join(" "))
     }

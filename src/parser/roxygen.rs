@@ -119,6 +119,107 @@ pub(crate) fn rd_macro_name_end(bytes: &[u8], start: usize) -> usize {
     k
 }
 
+/// The built-in Rd macro names `tools::parse_Rd` recognizes (without the leading
+/// `\`). A `\word` *not* in this set is an **unknown** macro: `parse_Rd` tags it
+/// `UNKNOWN` (warning "unknown macro '\word'"), even brace-less. Used to gate
+/// brace-less macro recognition in the lexer (only an unknown name is carved as a
+/// token; a known name brace-less stays literal prose --- its name-only/expanded
+/// rendering is backlog) and the projector's name-only classification (a known
+/// list child like `\item`/`\cr` → `(\name)`, an unknown one → `(UNKNOWN …)`).
+///
+/// The set is parse_Rd's static keyword table, verified against R 4.5; it
+/// deliberately excludes package/user-defined macros (`\CRANpkg`, `\doi`, …),
+/// which `parse_Rd` *expands* rather than parses (out of scope for a static
+/// projector --- they surface as faithful divergences).
+const KNOWN_RD_MACROS: &[&str] = &[
+    // Sectioning / structural commands.
+    "name",
+    "alias",
+    "title",
+    "description",
+    "usage",
+    "arguments",
+    "value",
+    "details",
+    "references",
+    "note",
+    "author",
+    "seealso",
+    "examples",
+    "keyword",
+    "concept",
+    "section",
+    "subsection",
+    "docType",
+    "encoding",
+    "Rdversion",
+    "format",
+    "source",
+    "synopsis",
+    "figure",
+    "item",
+    "describe",
+    "itemize",
+    "enumerate",
+    "tabular",
+    "method",
+    "S3method",
+    "S4method",
+    "newcommand",
+    "renewcommand",
+    "Sexpr",
+    "RdOpts",
+    "if",
+    "ifelse",
+    "out",
+    "enc",
+    "href",
+    // Inline text / cross-reference / math macros.
+    "emph",
+    "strong",
+    "bold",
+    "code",
+    "preformatted",
+    "kbd",
+    "samp",
+    "pkg",
+    "file",
+    "email",
+    "url",
+    "var",
+    "env",
+    "option",
+    "command",
+    "dfn",
+    "cite",
+    "acronym",
+    "dQuote",
+    "sQuote",
+    "verb",
+    "link",
+    "linkS4class",
+    "eqn",
+    "deqn",
+    // Zero-argument / escape / examples-only commands.
+    "cr",
+    "tab",
+    "dots",
+    "ldots",
+    "R",
+    "dontrun",
+    "donttest",
+    "dontshow",
+    "testonly",
+];
+
+/// Whether `name` (without the leading `\`) is a built-in Rd macro `parse_Rd`
+/// recognizes. The single source of truth for the known/unknown split, shared by
+/// the lexer (gate brace-less recognition) and the projector (name-only → `(\name)`
+/// vs `(UNKNOWN …)`). See [`KNOWN_RD_MACROS`].
+pub(crate) fn is_known_rd_macro(name: &str) -> bool {
+    KNOWN_RD_MACROS.contains(&name)
+}
+
 /// Length in bytes of the UTF-8 char whose leading byte is `b`.
 fn utf8_len(b: u8) -> usize {
     match b {

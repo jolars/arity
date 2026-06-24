@@ -191,6 +191,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_unterminated_code",
         "roxygen_unbalanced_macro",
         "roxygen_backtick_in_macro",
+        "roxygen_unknown_macro",
     ]
 }
 

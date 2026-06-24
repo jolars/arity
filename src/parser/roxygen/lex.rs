@@ -457,6 +457,14 @@ pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
         return None; // `\\`, `\{`, `\n`, … are not macro calls
     }
     let name = std::str::from_utf8(&bytes[name_start..j]).unwrap_or_default();
+    // A brace-less `\word` that is **not** a known Rd macro is an `UNKNOWN` macro
+    // token (parse_Rd tags any unrecognized `\word` `UNKNOWN`, even without a
+    // group). A *known* name brace-less stays literal prose: a zero-arg macro's
+    // name-only rendering and an arg-requiring macro's misuse are both backlog,
+    // and leaving them as text keeps the existing tokenization (no regression).
+    if bytes.get(j) != Some(&b'{') && bytes.get(j) != Some(&b'[') {
+        return (!super::is_known_rd_macro(name)).then_some(j);
+    }
     if bytes.get(j) == Some(&b'[') {
         j = scan_balanced(bytes, j, b'[', b']')?;
     }

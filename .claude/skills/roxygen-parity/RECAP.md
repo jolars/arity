@@ -205,6 +205,19 @@ reads this first.
   child = R-code body.
 - **pre-commit `panache-format` reformats `.md`** and mangles long inline-code spans
   on wrap; put commands in fenced blocks.
+- **Brace-less `\word` is recognized *only when unknown* (since 2026-06-24j).** parse_Rd
+  tags any unrecognized `\word` `UNKNOWN` even brace-less; a *known* brace-less name is
+  either a zero-arg macro (`\cr`→`(\cr)`) or arg-requiring misuse (messy/expanded) — both
+  **left as literal prose** (backlog), so existing tokenization/format is untouched. The
+  single source of truth is `is_known_rd_macro`/`KNOWN_RD_MACROS` in the `roxygen` parent
+  (parse_Rd's static keyword table, verified vs R 4.5; **excludes** user macros `\CRANpkg`/
+  `\doi`/… which parse_Rd *expands* — out of scope). `scan_rd_macro` carves a brace-less
+  `\word` iff `!is_known_rd_macro`; the projector's `serialize_macro` empty-`out_atoms`
+  branch keys on the same table — a name-only node is `(\name)` if known (a block list child
+  like `\item`/`\cr`), else `(UNKNOWN "\\name")`. **A new known macro must go in
+  `KNOWN_RD_MACROS`** or it silently becomes UNKNOWN. Zero-arg name-only *rendering* in prose
+  (`\cr`→`(\cr)`) is still deferred (those only appear in excluded `@param`/code-span/block
+  contexts in the corpus, never in-scope).
 
 ## Settled decisions (don't relitigate without reason)
 
@@ -233,8 +246,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-multiple-`@examples` aggregation, 2026-06-24h): **122 matching (all
-allowlisted), 38 divergent (backlog)** of 160 pinned cases. The
+brace-less unknown macros, 2026-06-24j): **126 matching (all
+allowlisted), 34 divergent (backlog)** of 160 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -255,51 +268,52 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24i) — `@section` body inline macros + GRP-wrap
+## Latest session (2026-06-24j) — brace-less unknown macros → `(UNKNOWN …)`
 
-**Construct:** `@section Title: body` projects to `\section{Title}{body}`. The body
-sub-parses inline macros/markdown and, because parse_Rd models `\section` as a
-two-arg *structural* macro, GRP-wraps a multi-atom argument while a single-atom title
-stays bare — `(\section (TEXT "Foobar") (GRP (TEXT "With some") (\strong (TEXT "bold
-text")) (TEXT ".")))`. Closed **2 cases** (rx-41e06b64 non-md, rx-1b26c2a4 md), each
-otherwise fully correct.
+**Construct:** a brace-less `\word` that is not a built-in Rd macro projects to
+`(UNKNOWN "\\word")`, faithful to parse_Rd (`\rd \commands` →
+`(UNKNOWN "\\rd") (UNKNOWN "\\commands")`). Closed **2 cases** (rx-16f78b2f non-md,
+rx-b8082617 md), each otherwise fully correct.
 
-**Bucket: projector gap (faithful translation), pure.** The CST already modeled the
-`@section` body as a paragraph with the inline macro (no parser change). The old
-`section` arm did a *textual* `:` split on `inlines_raw_text` and flattened the body
-to one raw `(TEXT …)`. Replaced it: `split_section_title` splits the inline run at the
-first `:` (it lives in a prose `Inline::Text`; macros carry no separator), each side
-goes through `serialize_inlines`, and a new `grp_arg` helper applies the structural
-GRP rule (`[] → ""`, `[one] → bare`, `many → (GRP …)`). Removed the now-unused
-`inlines_raw_text`. **Second gap surfaced by the same cases:** `describe_section`
-(the `@slot`/`@field` Slots/Fields aggregate) spliced the `\item` *definition* (a
-two-arg `\item`'s second structural arg) directly — fine when single-atom, wrong once
-the def carried a macro. Routed it through the same `grp_arg`.
+**Buckets: parser gap + projector gap (both faithful).** Surveyed the corpus: every
+*in-scope* brace-less name is either excluded (`@param`→`\arguments`: the `\cr`/`\dots`
+cases), in a code span (`\x60`), or a block-macro list child (`\item`) — only the
+genuinely-**unknown** `\rd`/`\commands` reach the projector in prose. So scoped the fix
+to **unknown names only**: (1) new `is_known_rd_macro`/`KNOWN_RD_MACROS` in the `roxygen`
+parent (parse_Rd's static keyword table, verified vs R 4.5; excludes user macros that
+*expand*); (2) `scan_rd_macro` carves a brace-less `\word` **iff** it is not known (a
+known brace-less name stays literal prose — zero-arg name-only/arg-misuse rendering is
+backlog, so existing tokenization + format baseline are untouched); (3) the projector's
+`serialize_macro` empty-`out_atoms` branch keys on the same table — name-only node is
+`(\name)` if known (block list children `\item`/`\cr`), else `(UNKNOWN "\\name")`.
 
-**Result:** projector **122→124 matching** (124 allowlisted), 38→36 divergent, 0
-regressions. `cargo test` green (465 unit + all suites), clippy + fmt clean, curated
-fixed-point still 9/9. Files: `src/roxygen/project_rd.rs` (rewrote `section` arm,
-GRP-wrap `\item` def, +`split_section_title`/`grp_arg`, −`inlines_raw_text`, unit
-test), allowlist (+2 via re-seed), TODO, RECAP. **No parser/fixture change** (CST
-unchanged), so the lock-in is the unit test + the two pinned harvested cases.
+**Result:** projector **124→126 matching** (126 allowlisted), 36→34 divergent, 0
+regressions. `cargo test` fully green (all 22 suites incl. the format-stability
+baseline), clippy + fmt clean, curated fixed-point 9/9, harvested fixed-point
+212 preserving (both unchanged). Files: `src/parser/roxygen.rs` (+table/fn),
+`src/parser/roxygen/lex.rs` (`scan_rd_macro` brace-less arm),
+`src/roxygen/project_rd.rs` (UNKNOWN arm + import), new fixture
+`roxygen_unknown_macro` (+ 2 snapshots), allowlist (+2 via re-seed), TODO, RECAP.
 
-**Next (ranked):** down to 36 divergent. Cleanest remaining small win: **brace-less
-unknown macros** (rx-16f78b2f non-md, rx-b8082617 md): `\rd \commands` →
-`(UNKNOWN "\\rd") (UNKNOWN "\\commands")`. parse_Rd tags any unrecognized `\word`
-(even brace-less) as `UNKNOWN`; arity currently leaves a brace-less `\word` as literal
-text. Needs (a) the lexer to emit a brace-less `\word` as a macro-ish token, (b) a
-known-vs-unknown decision (a known brace-less macro like `\dots`/`\cr` is a name-only
-macro; an unknown one is `UNKNOWN`), (c) a projector `UNKNOWN` arm; scope a
-known-macro table. Bigger structural target still open: **nested markdown/Rd lists**
-(rx-91e67e79 md, rx-959fc227 Rd; both project flat — in-list indentation dropped as
-trivia). Plain **fenced code blocks** without `{…}` (no knitr eval) are a 4-case
-cluster (rx-59e70a3d, rx-8c9662d6, rx-dd2506bf, rx-fb5d2ad5) → `\if{html}{\out{<div…>}}
-\preformatted{…} \if{html}{\out{</div>}}`, but needs markdown fenced-block parsing.
-Still out of scope: roxygen2-*evaluation* gaps (data-object auto-`\format`, ```{r}```
-eval blocks, inline `` `r …` ``).
+**Next (ranked):** down to 34 divergent. Cleanest next cluster: **plain fenced code
+blocks** without `{…}` (no knitr eval) — 4 cases (rx-59e70a3d, rx-8c9662d6,
+rx-dd2506bf, rx-fb5d2ad5) → `\if{html}{\out{<div…>}} \preformatted{…}
+\if{html}{\out{</div>}}`; needs markdown fenced-block (```` ``` ````) parsing in the
+block builder. Bigger structural target: **nested markdown/Rd lists** (rx-91e67e79 md,
+rx-959fc227 Rd; both project flat — in-list indentation dropped as trivia). Possible
+follow-up to *this* session: **zero-arg name-only macros in prose** (`\cr`/`\dots`/`\R`
+→ `(\cr)` etc.) — deferred because they never appear in-scope today, but the table is
+already in place to add it (recognize known zero-arg brace-less too). Still out of
+scope: roxygen2-*evaluation* gaps (data-object auto-`\format`, ```` ```{r} ```` eval
+blocks, inline `` `r …` ``).
 
 ## Earlier sessions
 
+- **2026-06-24i (`@section` body inline macros + GRP-wrap):** projector-only, +2
+  (rx-41e06b64 non-md, rx-1b26c2a4 md). `@section Title: body` → `\section{Title}{body}`;
+  body sub-parses inline macros, two-arg structural GRP-wrap of a multi-atom arg.
+  `split_section_title` + `grp_arg`, −`inlines_raw_text`; also routed `describe_section`'s
+  `\item` def through `grp_arg`. 122→124.
 - **2026-06-24h (multiple `@examples` aggregate into one `\examples`):** projector-only,
   +3 (2 harvested rx-5ac40b37/rx-73a5b650 + curated `examples_merge`). `@examples`/
   `@examplesIf` is an aggregating field; moved the examples arm out of per-tag dispatch

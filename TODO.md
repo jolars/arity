@@ -325,8 +325,14 @@
       now lexes as one macro (the name scan stopped at the digit `4`, dropping the
       macro to literal text). New shared `rd_macro_name_end` helper unifies the six
       duplicated name scans (lexer + tree builder + block builders). +1 projector
-      case (rx-852ee490). Brace-less *unknown* macros (`\rd`→`(UNKNOWN …)`,
-      rx-16f78b2f/rx-b8082617) are still backlog.
+      case (rx-852ee490). **Brace-less unknown macros landed (Stage 16,
+      2026-06-24j):** a brace-less `\word` not in the built-in Rd keyword table
+      (new `is_known_rd_macro`/`KNOWN_RD_MACROS`, verified vs R 4.5) projects to
+      `(UNKNOWN "\\word")`; `scan_rd_macro` carves it only when unknown (a known
+      brace-less name stays literal prose — zero-arg name-only/arg-misuse is
+      backlog), and the projector's name-only branch keys on the same table. +2
+      projector cases (rx-16f78b2f non-md, rx-b8082617 md). Zero-arg name-only
+      *rendering* in prose (`\cr`→`(\cr)`) is deferred (never in-scope today).
     - *Hard constraints (the reason this is non-trivial).* Must preserve
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,
