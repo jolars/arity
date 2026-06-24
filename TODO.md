@@ -327,12 +327,15 @@
       corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **83 matching / 76 divergent** of 159 pinned (was 42; `rd_macros`,
+      **115 matching / 44 divergent** of 159 pinned (was 42; `rd_macros`,
       `itemize_enumerate`, `describe_format`, `tabular`, `@md` inline + block lists,
-      the title-as-description fallback, then the `@tag NULL` suppression sentinel
-      (roxygen2's `rd_section()` drops any prose section whose value is the literal
-      "NULL"; a suppressed `@description NULL` re-triggers the title fallback) —
-      closing 7 harvested cases — closed). The remaining divergences are the worklist. Run
+      the title-as-description fallback, the `@tag NULL` suppression sentinel,
+      `\code`-body RCODE, `\href` per-arg verbatim, `@slot`/`@field` aggregation,
+      `@md` inline + reference + shortcut links, then the **intro paragraph split**
+      (roxygen2's `parse_description`: 1st intro paragraph = title, 2nd =
+      description, the rest = details merged with explicit `@details`; body parts
+      grouped by blank `#'` lines) — closing 10 harvested cases — closed). The
+      remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
       Use the `roxygen-parity` skill.

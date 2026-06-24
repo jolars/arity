@@ -136,6 +136,17 @@ reads this first.
   `syntax_kind_for`, `lexer.rs`'s `is_comment_like`, `syntax.rs`'s `is_roxygen_token`, plus the
   formatter's `is_blank`/`is_tag_prose_kind`. Rust exhaustiveness catches the enum matches; the
   `matches!` lists are silent — grep an existing roxygen leaf kind to find them all.
+- **Intro prose splits title/description/details by *roxygen2 paragraph*, not CST node
+  (since 2026-06-24e).** roxygen2's `parse_description` (`R/block.R`) splits the intro on
+  `\n\n`: 1st paragraph = `\title`, 2nd = `\description`, the rest = `\details` (folded
+  with explicit `@details` *only when leftover intro paras exist*; else `@details` stands
+  alone). An explicit `@title`/`@description` claims its slot and shifts the paras down.
+  The projector's `section_body_parts` groups body parts into these paragraphs: a block
+  macro / md-list abutting a prose line (no blank `#'` line) is the **same** paragraph; a
+  **section-level `ROXYGEN_MARKER`** (a blank `#'` line — per-line markers live nested
+  inside each node) starts a new one. Don't revert to per-node parts (that folds a
+  trailing list into the wrong section). Title-as-description fallback still fires when no
+  description exists anywhere.
 - **Two corpora, two disciplines.** *Curated* dir corpus = strict (every case allowlisted
   or `blocked`). *Harvested* JSONL corpus = opt-in allowlist; un-allowlisted divergences
   are just the **backlog**, never a build failure, never need a rationale. Don't `blocked`
@@ -203,8 +214,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-`@md` reference + shortcut links, 2026-06-24d Stage 13): **105 matching (all
-allowlisted), 54 divergent (backlog)** of 159 pinned cases. The
+the intro paragraph split, 2026-06-24e): **115 matching (all
+allowlisted), 44 divergent (backlog)** of 159 pinned cases. The
 divergences are **structural/parser** gaps, not fixed-point cosmetics. Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
@@ -225,62 +236,63 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24d) — `@md` reference + shortcut links → `\link`
+## Latest session (2026-06-24e) — intro paragraph split (title/description/details)
 
-**Construct:** the rest of the markdown-link cluster — *reference* `[text][dest]`
-and *shortcut* `[obj]`/`[func()]`/`` [`code`] ``/`[name-class]`/`[pkg::obj]` links
-under `@md`. roxygen2 resolves these to a link *target* (`\link`/`\linkS4class`,
-optionally `\code`-wrapped), not a `\href`. Closed **10 cases** (the 8 ranked +
-rx-3a7d3931 reference-with-pkg, rx-820d120d code-span-display reference cluster).
+**Construct:** roxygen2's `parse_description` (`R/block.R`) splits the intro
+prose by paragraph: **1st paragraph = title, 2nd = description, the rest =
+details** (folded together with any explicit `@details`). The projector had been
+folding *all* trailing intro paragraphs into the description and emitting `@details`
+as a separate section. Closed **10 cases** (rx-e94c960b, rx-24ced03e, rx-fc8242e3,
+rx-bc412afe, rx-2eca83dc, rx-33fd2d33, rx-602f341e, rx-6d618bdc, rx-ccc39f20,
+rx-fa6eeb19) — all one root cause; the list/link variants already projected right
+*within* a paragraph, they were just landing in the wrong section.
 
-**Root cause = roxygen2 treats *every* bracket as a link.** `get_md_linkrefs`
-(`markdown-link.R`) injects a link-reference definition for **any** bracket-free
-`[…]` not followed by `[` or `{`, so `[note]`/`[see this]`/`[1]` all become
-`\link`s. Two-bucket fix:
-- **Parser gap (lexer too narrow):** `is_autolink_content` only accepted `func()`.
-  Replaced with `is_shortcut_content` (any non-empty, bracket-free span) + a
-  `Some(&b'{') => None` arm for the followed-by-`{` exclusion. Now a bare
-  `[anything]` carves as `ROXYGEN_MD_LINK` under `@md`.
-- **Projector gap:** `parse_inline_md_link`/`serialize_md_link` (inline-only)
-  became `resolve_md_link` — a faithful port of `parse_link`. Dispatches the three
-  forms; `shortcut_link_atom` does the `!has_link_text` branch (is_code from `()`
-  or a code span, `s4` from `-class`, `pkg` from explicit `::`, display = `pkg::` +
-  obj with `-class` stripped, head = `\linkS4class` iff s4 && no-pkg else `\link`),
-  `ref_link_atom` does the has-link-text branch (always `\link`, `\code`-wrap iff
-  display is a code span).
+**Pure projector gap (the CST was already correct).** Two edits in
+`src/roxygen/project_rd.rs`:
+- **`section_body_parts` now groups by roxygen2 paragraphs, not per CST node.**
+  roxygen2 splits the section text on `\n\n`, so a block macro / md-list that
+  directly follows a prose line (no blank `#'` line) belongs to *that* paragraph;
+  a **section-level** `ROXYGEN_MARKER` (a blank `#'` line — the per-line markers
+  live nested inside each node) starts a new paragraph. Returns one `Vec<Inline>`
+  per paragraph, adjacent nodes space-joined.
+- **`project_block` reimplements `parse_description` faithfully:** a `cursor`
+  consumes intro paras (title unless `@title`, then description unless
+  `@description`); leftover paras = details, and — *only when leftover paras
+  exist* — explicit `@details` is folded in (intro paras first, then tag bodies)
+  and skipped in the tag loop. Title-as-description fallback preserved (reuses the
+  title value when no description exists anywhere).
 
-**Key faithfulness call:** the section serializer **drops the `\link[=dest]`/
-`[pkg:file]` topic option**, so the projector only needs the macro head, the
-display text, and the `\code`-wrap — it never resolves a topic *file*. And
-`resolve_link_package` is non-static (needs installed pkgs), so a `pkg::` prefix
-in the display comes **only** from an explicit `::`; this matches roxygen2 run with
-`current_package == ""` (the corpus's context). Recorded as a trap.
+**Trap recorded:** the intro/description/details split keys on **blank `#'`
+lines = section-level `ROXYGEN_MARKER` tokens**; a block macro abutting prose is
+the *same* roxygen2 paragraph. `Inline` now `#[derive(Clone)]`.
 
-**Result:** projector **95→105 matching** (all allowlisted via re-seed), 64→54
-divergent, 0 regressions. `cargo test` 460 green, clippy + fmt clean, **format
-baseline untouched** (no re-bless), curated fixed-point 8/8, harvested 212/4
-unchanged. Files: `src/parser/roxygen/lex.rs` (lexer widen + 1 test, 1 renamed),
-`src/roxygen/project_rd.rs` (resolver), fixture `roxygen_md_shortcut_link` (+2
-snapshots), allowlist (+10), TODO.
+**Result:** projector **105→115 matching** (all allowlisted via re-seed), 54→44
+divergent, 0 regressions. `cargo test` 463 green, clippy + fmt clean, **formatter
+untouched** (format baseline + fixed-point nets unaffected — projector is
+test-only). Files: `src/roxygen/project_rd.rs` (the two arms + 3 new unit tests),
+allowlist (+10 via re-seed), TODO, RECAP.
 
-**Next (ranked):** down to 54 divergent. The remaining link-ish/markdown gaps that
-need roxygen2 *evaluation* are **out of scope** (data-object auto-`\format`
-rx-cbcc255c/…, ```{r}``` eval blocks rx-2900ecd5/…). Good in-scope candidates:
-re-scan the 54-case backlog with `ROXYGEN_PROJECTOR.md` + `block-to-sections` to
-find the next single-root-cause cluster (likely **markdown tables** — the GFM
-`table` extension is in the settled grammar but not yet parsed — or **nested
-markdown lists**, currently projected flat). Probe a few backlog stems first.
+**Next (ranked):** down to 44 divergent. Still out of scope: roxygen2-*evaluation*
+gaps (data-object auto-`\format` rx-cbcc255c/rx-4d59d472, ```{r}``` eval blocks
+rx-2900ecd5/rx-24b3bfd6/…, inline `` `r …` `` rx-21fd7c2f/rx-8770c410). Good
+in-scope clusters in the remaining 44: **nested markdown/Rd lists** (rx-91e67e79,
+rx-959fc227 — currently projected flat; also harvested-fixed-point divergent) and
+**markdown images `![](…)` → `\figure`** (rx-29d590cf, rx-44eb4ad9; plus Rd
+`\figure{}` rx-561b9e7d). The GFM **table** extension is in the settled grammar
+but no corpus case isolates it cleanly. Probe stems with `block-to-sections` first.
 
 ## Earlier sessions
 
+- **2026-06-24d (`@md` reference + shortcut links → `\link`):** the rest of the
+  markdown-link cluster. roxygen2 treats *every* bracket-free `[…]` not followed by
+  `[`/`{` as a link (`get_md_linkrefs`); `is_shortcut_content` widened the lexer,
+  `resolve_md_link` ported `parse_link` (inline→`\href`, reference/shortcut→`\link`/
+  `\linkS4class`, `\code`-wrapped per code-span/`()`). Projector 95→105, +10.
 - **2026-06-24c (`@md` inline links `[text](url)` → `\href`):** projector +2
   (rx-7743ba62/rx-0605d020). Fixed a lexer mode-gating bug (the `[`-recognizer fired
   even without `@md`, mislabeling literal Rd brackets); gated it `b'[' if md`. New
   `Inline::MdLink` arm; `serialize_md_link` → `(\href (VERB url) (TEXT text))`.
   93→95 matching. **Trap:** every md *inline* recognizer must be `if md`-gated.
-
-## Earlier sessions
-
 - **2026-06-24b (Refactor #2, split `roxygen.rs` along phase boundaries):** carved the
   1686-line `src/parser/roxygen.rs` into a thin parent (113, shared macro-classification +
   `scan_balanced`/`utf8_len` + re-exports) + 3 phase submodules under `src/parser/roxygen/`:

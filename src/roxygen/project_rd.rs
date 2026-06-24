@@ -63,6 +63,7 @@ pub fn project_to_rd(text: &str) -> String {
 /// whitespace-normalized at serialization) or an Rd macro node (projected as a
 /// nested subtree). Modeling the body as a *sequence* — rather than one flat
 /// string — is what lets inline `\code`/`\link`/… surface as structure.
+#[derive(Clone)]
 enum Inline {
     Text(String),
     Macro(SyntaxNode),
@@ -134,43 +135,74 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         }
     }
 
-    // A tag whose value is the literal "NULL" is suppressed by roxygen2's
-    // `rd_section()` sentinel (`R/field.R`), so it does not count as an explicit
-    // title/description — a suppressed `@description NULL` re-triggers the
-    // title-as-description fallback (`topics_add_default_description`).
-    let explicit_title = tag_sections
+    // roxygen2's `parse_description` (R/block.R) splits the intro prose by
+    // paragraph: 1st = title, 2nd = description, the rest = details (merged with
+    // any explicit @details). A tag whose value is the literal "NULL" is the
+    // `rd_section()` suppression sentinel (`R/field.R`), so it does not count as
+    // an explicit title/description — a suppressed `@description NULL` re-triggers
+    // the title-as-description fallback (`topics_add_default_description`).
+    let has_explicit_title = tag_sections
         .iter()
-        .find(|(n, b)| n == "title" && !is_null_section(b));
+        .any(|(n, b)| n == "title" && !is_null_section(b));
     let has_explicit_desc = tag_sections
         .iter()
         .any(|(n, b)| n == "description" && !is_null_section(b));
+    let explicit_title_body = tag_sections
+        .iter()
+        .find(|(n, b)| n == "title" && !is_null_section(b))
+        .map(|(_, b)| b.clone());
 
-    // Intro-derived \title and \description (roxygen2's rule: first paragraph is
-    // the title; the rest is the description, or the title duplicated when the
-    // intro is a single paragraph). An explicit @title/@description tag wins.
-    if explicit_title.is_none()
-        && let Some(first) = intro_paras.first()
-    {
-        push_section(out, "title", first);
+    // 1st intro paragraph = title. An explicit @title claims the role and leaves
+    // the intro paragraphs to shift down into description/details.
+    let mut cursor = 0usize;
+    let intro_title = if has_explicit_title {
+        None
+    } else {
+        intro_paras.get(cursor).inspect(|_| cursor += 1).cloned()
+    };
+    // 2nd intro paragraph = description (unless an explicit @description claims it).
+    let intro_desc = if has_explicit_desc {
+        None
+    } else {
+        intro_paras.get(cursor).inspect(|_| cursor += 1).cloned()
+    };
+    // Everything remaining = details, merged with any explicit @details — but
+    // roxygen2 only folds @details in when there *are* leftover intro paragraphs;
+    // otherwise @details stands alone (emitted by the tag loop below).
+    let intro_details = &intro_paras[cursor..];
+    let merge_details = !intro_details.is_empty();
+
+    if let Some(title) = &intro_title {
+        push_section(out, "title", title);
     }
-    if !has_explicit_desc {
-        // roxygen2's title-as-description fallback: with no explicit
-        // @description, the description is the trailing intro paragraphs, or —
-        // when the intro is a single paragraph or absent — the title duplicated
-        // (the title being the first intro paragraph, else the explicit @title).
-        let desc: Option<Vec<Inline>> = if intro_paras.len() >= 2 {
-            Some(join_paras(&intro_paras[1..]))
-        } else if !intro_paras.is_empty() {
-            Some(join_paras(&intro_paras[0..1]))
-        } else {
-            explicit_title.map(|(_, body)| join_paras(std::slice::from_ref(body)))
-        };
-        if let Some(desc) = desc {
-            push_section(out, "description", &desc);
+
+    // Description: the intro's 2nd paragraph, else roxygen2's
+    // title-as-description fallback — when no description exists anywhere, the
+    // title value (intro title, else explicit @title) is reused.
+    let description = match intro_desc {
+        Some(d) => Some(d),
+        None if has_explicit_desc => None, // emitted by the tag loop below
+        None => intro_title.clone().or(explicit_title_body),
+    };
+    if let Some(description) = description {
+        push_section(out, "description", &description);
+    }
+
+    // The intro-derived details (and any folded-in @details).
+    if merge_details {
+        let mut body = join_paras(intro_details);
+        for (_, ed) in tag_sections.iter().filter(|(n, _)| n == "details") {
+            body.push(Inline::Text(" ".to_string()));
+            body.extend(join_paras(std::slice::from_ref(ed)));
         }
+        push_section(out, "details", &body);
     }
 
     for (name, body) in &tag_sections {
+        // A folded-in @details was emitted above; skip the standalone section.
+        if merge_details && name == "details" {
+            continue;
+        }
         project_tag_section(name, body, out);
     }
 
@@ -529,25 +561,49 @@ fn encode_text(s: &str) -> String {
     out
 }
 
-/// The body parts of a section in document order, excluding its `@tag` heading:
-/// each prose `ROXYGEN_PARAGRAPH` becomes its inline run, and each block
-/// `ROXYGEN_RD_MACRO` child (a multi-line `\itemize`/`\enumerate`/…) becomes a
-/// single-element `Inline::Macro` group. A block macro is a *direct* section
-/// child (a sibling of the paragraphs), so it is picked up here rather than via
-/// `paragraphs()`.
+/// The body parts of a section, grouped into roxygen2 *paragraphs* (its blank-
+/// line-delimited prose blocks), excluding its `@tag` heading. roxygen2 splits
+/// the section text on `\n\n`, so a block macro or markdown list that directly
+/// follows a prose line — with no blank `#'` line between — belongs to the same
+/// paragraph as that prose; a blank `#'` line (a *section-level* `ROXYGEN_MARKER`,
+/// as opposed to the per-line markers nested inside each node) starts a new
+/// paragraph. Each returned `Vec<Inline>` is one such paragraph: a prose
+/// `ROXYGEN_PARAGRAPH` contributes its inline run, a block `ROXYGEN_RD_MACRO`
+/// (a multi-line `\itemize`/`\describe`/…) an `Inline::Macro`, and a
+/// `ROXYGEN_MD_LIST` an `Inline::MdList`, with adjacent nodes joined by a space.
 fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
-    section
-        .syntax()
-        .children()
-        .filter_map(|n| match n.kind() {
-            SyntaxKind::ROXYGEN_PARAGRAPH => {
-                RoxygenParagraph::cast(n).map(|p| paragraph_inlines(&p))
+    let mut groups: Vec<Vec<Inline>> = Vec::new();
+    let mut cur: Vec<Inline> = Vec::new();
+    for el in section.syntax().children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_PARAGRAPH
+            | SyntaxKind::ROXYGEN_RD_MACRO
+            | SyntaxKind::ROXYGEN_MD_LIST => {
+                let Some(node) = el.into_node() else { continue };
+                let inlines = match node.kind() {
+                    SyntaxKind::ROXYGEN_PARAGRAPH => RoxygenParagraph::cast(node)
+                        .map(|p| paragraph_inlines(&p))
+                        .unwrap_or_default(),
+                    SyntaxKind::ROXYGEN_MD_LIST => vec![Inline::MdList(node)],
+                    _ => vec![Inline::Macro(node)],
+                };
+                if !cur.is_empty() {
+                    cur.push(Inline::Text(" ".to_string()));
+                }
+                cur.extend(inlines);
             }
-            SyntaxKind::ROXYGEN_RD_MACRO => Some(vec![Inline::Macro(n)]),
-            SyntaxKind::ROXYGEN_MD_LIST => Some(vec![Inline::MdList(n)]),
-            _ => None,
-        })
-        .collect()
+            // A section-level `#'` marker is a blank doc-comment line: it ends the
+            // current paragraph (per-line markers live *inside* the nodes above).
+            SyntaxKind::ROXYGEN_MARKER if !cur.is_empty() => {
+                groups.push(std::mem::take(&mut cur));
+            }
+            _ => {}
+        }
+    }
+    if !cur.is_empty() {
+        groups.push(cur);
+    }
+    groups
 }
 
 /// The inline elements of a prose paragraph: its text and inline Rd-macro
@@ -933,6 +989,81 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"A longer description.\"))\n\
              (\\title (TEXT \"Example dataset\"))"
+        );
+    }
+
+    #[test]
+    fn three_intro_paragraphs_split_title_description_details() {
+        // roxygen2's `parse_description` (R/block.R): the 1st intro paragraph is
+        // the title, the 2nd the description, and every remaining paragraph the
+        // details — not all-the-rest folded into the description.
+        let src = "#' title\n\
+                   #'\n\
+                   #' description\n\
+                   #'\n\
+                   #' details\n\
+                   #' @name a\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"description\"))\n\
+             (\\details (TEXT \"details\"))\n\
+             (\\title (TEXT \"title\"))"
+        );
+    }
+
+    #[test]
+    fn block_macro_joins_its_paragraph_then_splits_at_blank_line() {
+        // A block macro that directly follows a prose line (no blank `#'` line)
+        // belongs to that paragraph; a blank line starts the next paragraph. So
+        // here the first `\itemize` rides with the description and the second with
+        // the details — roxygen2 splits the intro on `\n\n`, not per CST node.
+        let src = "#' Title\n\
+                   #'\n\
+                   #' Description with some\n\
+                   #' \\itemize{\n\
+                   #' \\item itemized\n\
+                   #' \\item list\n\
+                   #' }\n\
+                   #'\n\
+                   #' And then another one:\n\
+                   #' \\itemize{\n\
+                   #' \\item item 1\n\
+                   #' \\item item 2\n\
+                   #' }\n\
+                   foo <- function() {}\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Description with some\") \
+             (\\itemize (\\item) (TEXT \"itemized\") (\\item) (TEXT \"list\")))\n\
+             (\\details (TEXT \"And then another one:\") \
+             (\\itemize (\\item) (TEXT \"item 1\") (\\item) (TEXT \"item 2\")))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn trailing_intro_details_merge_with_explicit_details_tag() {
+        // When the intro has leftover paragraphs *and* there is an explicit
+        // @details tag, roxygen2 folds them into a single \details (intro
+        // paragraphs first, then the tag body), rather than two sections.
+        let src = "#' Title\n\
+                   #'\n\
+                   #' Description\n\
+                   #'\n\
+                   #' Details1\n\
+                   #'\n\
+                   #' Details2\n\
+                   #'\n\
+                   #' @details Details3\n\
+                   #'\n\
+                   #' Details4\n\
+                   foo <- function(x) {}\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Description\"))\n\
+             (\\details (TEXT \"Details1 Details2 Details3 Details4\"))\n\
+             (\\title (TEXT \"Title\"))"
         );
     }
 
