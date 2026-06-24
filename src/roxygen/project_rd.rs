@@ -485,6 +485,19 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
 /// (TEXT "first"))`). A latexlike macro (`\code`, `\emph`, …) inlines its single
 /// argument's atoms directly, never wrapping.
 fn serialize_macro(node: &SyntaxNode) -> String {
+    // `\preformatted` is a *verbatim block* macro: parse_Rd keeps its body
+    // verbatim (no whitespace collapse, no nested-macro / markdown parsing) and
+    // splits it at newlines into one `(VERB …)` per line — the same shape as an
+    // `\out` body. The run/flush prose model below normalizes whitespace, so this
+    // macro takes a dedicated verbatim arm instead.
+    if macro_head(node).trim_start_matches('\\') == "preformatted" {
+        let atoms = preformatted_atoms(node);
+        return if atoms.is_empty() {
+            "(\\preformatted)".to_string()
+        } else {
+            format!("(\\preformatted {})", atoms.join(" "))
+        };
+    }
     let mut head = String::new();
     let mut structural = false;
     let mut out_atoms: Vec<String> = Vec::new();
@@ -573,6 +586,45 @@ fn serialize_macro(node: &SyntaxNode) -> String {
     } else {
         format!("({head} {})", out_atoms.join(" "))
     }
+}
+
+/// The macro head (`\name`, with the leading `\`) of a `ROXYGEN_RD_MACRO` node,
+/// or `""` if it has no name leaf.
+fn macro_head(node: &SyntaxNode) -> String {
+    node.children_with_tokens()
+        .find(|el| el.kind() == SyntaxKind::ROXYGEN_RD_MACRO_NAME)
+        .and_then(|el| el.as_token().map(|t| t.text().to_string()))
+        .unwrap_or_default()
+}
+
+/// The per-line `(VERB …)` atoms of a `\preformatted` block macro. The body is
+/// the verbatim text between the opening `{` and closing `}`; each continuation
+/// `#'` line has its marker (and the single following space) stripped, the lines
+/// rejoin with `\n`, and [`verb_atoms`] splits at newlines exactly as parse_Rd
+/// does for a verbatim macro body. (A `\preformatted` body never nests another
+/// macro or a markdown construct, so reconstructing from the node text — rather
+/// than walking typed children — stays faithful and mirrors
+/// [`serialize_md_html_block`].)
+fn preformatted_atoms(node: &SyntaxNode) -> Vec<String> {
+    let text = node.text().to_string();
+    let (Some(open), Some(close)) = (text.find('{'), text.rfind('}')) else {
+        return Vec::new();
+    };
+    if close <= open {
+        return Vec::new();
+    }
+    // The opener-line remainder keeps its leading space verbatim; later lines drop
+    // only the `#'` marker (and one conventional space).
+    let mut body = String::new();
+    for (idx, line) in text[open + 1..close].split('\n').enumerate() {
+        if idx == 0 {
+            body.push_str(line);
+        } else {
+            body.push('\n');
+            body.push_str(strip_marker(line));
+        }
+    }
+    verb_atoms(&body)
 }
 
 /// Split an `@section` body at roxygen2's title separator (the first literal `:`,

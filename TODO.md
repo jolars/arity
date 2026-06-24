@@ -310,7 +310,16 @@
       **deferred:** the settled loose-file/`DESCRIPTION`
       **default-ON** (only an explicit per-block `@md` enables markdown today —
       flipping the default reinterprets every block, so it needs its own re-bless
-      pass). **Markdown nested lists landed (2026-06-24r):** `emit_md_list` now
+      pass). **Verbatim `\preformatted` block landed (2026-06-24s):** `\preformatted`
+      is now projected as a verbatim block macro — its body becomes one `(VERB …)`
+      per line (parse_Rd's verbatim split), not a whitespace-collapsed `(TEXT …)`.
+      Projector-only (`serialize_macro` early-arm + `preformatted_atoms`, mirroring
+      `serialize_md_html_block`/`verb_atoms`); the line-start block was already a
+      `ROXYGEN_RD_MACRO`, so no parser change. + curated `preformatted`. *Still
+      backlog:* the mid-line opener (a prose prefix before `\preformatted{`,
+      `rx-0a1710c0`) — a third block-opener form needing the lexer to split a prose
+      run at a mid-line verbatim opener and the grouper to split the paragraph.
+      **Markdown nested lists landed (2026-06-24r):** `emit_md_list` now
       recurses by CommonMark indentation (a following list line indented to an
       item's content column opens a nested `ROXYGEN_MD_LIST` inside that item, a
       line back at the list's marker column is a sibling), the projector handles a

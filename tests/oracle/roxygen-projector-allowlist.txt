@@ -19,6 +19,7 @@ markdown_list
 markdown_url
 md_nested_list
 param_prose
+preformatted
 rawrd
 rd_macros
 rd_nested_list
