@@ -316,6 +316,21 @@
       Projector-only (`serialize_macro` early-arm + `preformatted_atoms`, mirroring
       `serialize_md_html_block`/`verb_atoms`); the line-start block was already a
       `ROXYGEN_RD_MACRO`, so no parser change. + curated `preformatted`.
+      **Non-md Rd `%` line comments landed (2026-06-24u, projector-only):** in
+      non-markdown prose the value is literal Rd, where an unescaped `%` begins a
+      comment to end of line (parse_Rd), so `@format %` projects to an empty
+      `\format` and a mid-line `%` keeps only the prose before it. The projector
+      re-derives the block's `@md` mode (`block_md`, mirroring
+      `resolve_roxygen_block`; plain-text leaves carry no mode) and, with markdown
+      off, strips `%` line comments per physical line in `prose_text_atom`
+      (`strip_rd_comments`); the inline-join sites now carry source line breaks as
+      `\n` (norm_ws-equivalent) so the comment is line-scoped. Under `@md`, `%` is
+      escaped (`\%`) and survives, so the strip is mode-gated. +2 (rx-f6927028 +
+      curated `rd_comment`) + 4 projector unit tests. 145→147. *Follow-on:* the
+      formatter reflows multi-line non-md prose onto one line, which joins text
+      across a `%` comment and changes rendered Rd — a separate Tenet-1 formatter
+      bug (see roxygen formatter follow-ons), so the curated case is kept single-
+      line; the multi-line per-line behavior is locked by a projector unit test.
       **Mid-prose `\preformatted` opener landed (2026-06-24t):** block-opener **Form
       C** — `So far so good. \preformatted{ …`. The lexer always splits an unbalanced
       `\name{` into its own to-EOL token (`is_block_macro_opener_at`); the grouper

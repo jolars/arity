@@ -118,7 +118,35 @@ enum MdInline {
 /// state machine the line-flat CST forced is gone. A tag section's body is the
 /// tag's own inline prose followed by its paragraphs (continuation and
 /// paragraph-break both collapse to a single space under `norm_ws`).
+/// The block's resolved markdown mode, mirroring the lexer's
+/// `resolve_roxygen_block`: a standalone `@md` directive turns it on, `@noMd` off,
+/// the last one in the block winning; off by default (Rd-first). A directive is a
+/// tag named `md`/`noMd` with no argument or prose value (roxygen2 errors on a
+/// directive line carrying other content).
+fn block_md(block: &RoxygenBlock) -> bool {
+    let mut md = false;
+    for section in block.sections() {
+        if let Some(tag) = section.tag()
+            && tag.arg().is_none()
+            && tag.text().is_none()
+        {
+            match tag.name().as_deref() {
+                Some("md") => md = true,
+                Some("noMd") => md = false,
+                _ => {}
+            }
+        }
+    }
+    md
+}
+
 fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
+    // Resolve the block's markdown mode the way the lexer's `resolve_roxygen_block`
+    // does (a standalone `@md`/`@noMd` directive line, last one wins, default off).
+    // Plain prose text leaves carry no mode (their kind is identical in both modes),
+    // so the projector re-derives it here: it keys whether prose is literal Rd
+    // (where an unescaped `%` is a comment) or escaped markdown (where it survives).
+    let md = block_md(block);
     let mut intro_paras: Vec<Vec<Inline>> = Vec::new();
     let mut tag_sections: Vec<(String, Vec<Inline>)> = Vec::new();
     // `@slot` (S4) and `@field` (reference class) each aggregate every tag of a
@@ -137,7 +165,9 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             let mut body = tag_inlines(&tag);
             for part in section_body_parts(&section) {
                 if !body.is_empty() {
-                    body.push(Inline::Text(" ".to_string()));
+                    // A line break in the source (norm_ws collapses it to a space,
+                    // but it bounds an Rd `%` comment in non-markdown prose).
+                    body.push(Inline::Text("\n".to_string()));
                 }
                 body.extend(part);
             }
@@ -166,13 +196,13 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     // the title-as-description fallback (`topics_add_default_description`).
     let has_explicit_title = tag_sections
         .iter()
-        .any(|(n, b)| n == "title" && !is_null_section(b));
+        .any(|(n, b)| n == "title" && !is_null_section(b, md));
     let has_explicit_desc = tag_sections
         .iter()
-        .any(|(n, b)| n == "description" && !is_null_section(b));
+        .any(|(n, b)| n == "description" && !is_null_section(b, md));
     let explicit_title_body = tag_sections
         .iter()
-        .find(|(n, b)| n == "title" && !is_null_section(b))
+        .find(|(n, b)| n == "title" && !is_null_section(b, md))
         .map(|(_, b)| b.clone());
 
     // 1st intro paragraph = title. An explicit @title claims the role and leaves
@@ -196,7 +226,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     let merge_details = !intro_details.is_empty();
 
     if let Some(title) = &intro_title {
-        push_section(out, "title", title);
+        push_section(out, "title", title, md);
     }
 
     // Description: the intro's 2nd paragraph, else roxygen2's
@@ -208,17 +238,17 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         None => intro_title.clone().or(explicit_title_body),
     };
     if let Some(description) = description {
-        push_section(out, "description", &description);
+        push_section(out, "description", &description, md);
     }
 
     // The intro-derived details (and any folded-in @details).
     if merge_details {
         let mut body = join_paras(intro_details);
         for (_, ed) in tag_sections.iter().filter(|(n, _)| n == "details") {
-            body.push(Inline::Text(" ".to_string()));
+            body.push(Inline::Text("\n".to_string()));
             body.extend(join_paras(std::slice::from_ref(ed)));
         }
-        push_section(out, "details", &body);
+        push_section(out, "details", &body, md);
     }
 
     for (name, body) in &tag_sections {
@@ -226,15 +256,15 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         if merge_details && name == "details" {
             continue;
         }
-        project_tag_section(name, body, out);
+        project_tag_section(name, body, out, md);
     }
 
     // The aggregated `@slot`/`@field` sections (roxygen2's Slots/Fields).
     if !slots.is_empty() {
-        out.push(describe_section("Slots", &slots));
+        out.push(describe_section("Slots", &slots, md));
     }
     if !fields.is_empty() {
-        out.push(describe_section("Fields", &fields));
+        out.push(describe_section("Fields", &fields, md));
     }
 
     // The single aggregated `\examples` section (body reformatted R → placeholder).
@@ -249,7 +279,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
 /// section; each tag becomes a `\describe` item whose term is the verbatim
 /// `\code{name}` (the name is R-code, tagged `RCODE` like a `\code` body) and
 /// whose definition is the tag's prose.
-fn describe_section(title: &str, items: &[(String, Vec<Inline>)]) -> String {
+fn describe_section(title: &str, items: &[(String, Vec<Inline>)], md: bool) -> String {
     let mut item_atoms: Vec<String> = Vec::new();
     for (name, def) in items {
         let code_atoms = rcode_atoms(name);
@@ -261,7 +291,7 @@ fn describe_section(title: &str, items: &[(String, Vec<Inline>)]) -> String {
         // The definition is `\item`'s second (structural) argument: a multi-atom
         // prose+macro run is `(GRP …)`-wrapped, a single atom stays bare.
         let mut parts = vec![term];
-        let def_arg = grp_arg(&serialize_inlines(def));
+        let def_arg = grp_arg(&serialize_inlines(def, md));
         if !def_arg.is_empty() {
             parts.push(def_arg);
         }
@@ -280,7 +310,9 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
     let mut out: Vec<Inline> = Vec::new();
     for (i, p) in paras.iter().enumerate() {
         if i > 0 {
-            out.push(Inline::Text(" ".to_string()));
+            // A paragraph break is ≥1 line break; norm_ws collapses it to a space,
+            // but it bounds an Rd `%` comment in non-markdown prose.
+            out.push(Inline::Text("\n".to_string()));
         }
         for inl in p {
             out.push(match inl {
@@ -303,13 +335,13 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
 /// roxygen2 does not turn into a parser-owned section (`@param` feeds the excluded
 /// `\arguments`; `@export`/`@md`/`@name`/… are directives) are skipped. The
 /// aggregating `@slot`/`@field` tags are handled by [`describe_section`], not here.
-fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
+fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: bool) {
     // roxygen2's `rd_section()` drops any section whose value is the literal
     // string "NULL" (`R/field.R`), a sentinel to suppress that field (e.g.
     // `@format NULL` to override an auto-generated data `\format`). This applies
     // to every prose tag that maps to a plain-string `rd_section`; `@section`
     // (a two-part value) and the excluded `@param`/… are unaffected.
-    if NULL_SUPPRESSIBLE.contains(&name) && is_null_section(body) {
+    if NULL_SUPPRESSIBLE.contains(&name) && is_null_section(body, md) {
         return;
     }
     match name {
@@ -322,21 +354,21 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
         // content is raw Rd, never markdown — under `@md`, markdown leaves in the
         // body would mis-project; that is a parser-side gap, deferred.)
         "rawRd" => {
-            for atom in serialize_inlines(body) {
+            for atom in serialize_inlines(body, md) {
                 out.push(atom);
             }
         }
         // Direct prose → section-macro mappings.
-        "description" => push_section(out, "description", body),
-        "details" => push_section(out, "details", body),
-        "return" => push_section(out, "value", body),
-        "seealso" => push_section(out, "seealso", body),
-        "source" => push_section(out, "source", body),
-        "format" => push_section(out, "format", body),
-        "references" => push_section(out, "references", body),
-        "note" => push_section(out, "note", body),
-        "author" => push_section(out, "author", body),
-        "title" => push_section(out, "title", body),
+        "description" => push_section(out, "description", body, md),
+        "details" => push_section(out, "details", body, md),
+        "return" => push_section(out, "value", body, md),
+        "seealso" => push_section(out, "seealso", body, md),
+        "source" => push_section(out, "source", body, md),
+        "format" => push_section(out, "format", body, md),
+        "references" => push_section(out, "references", body, md),
+        "note" => push_section(out, "note", body, md),
+        "author" => push_section(out, "author", body, md),
+        "title" => push_section(out, "title", body, md),
         // `@section Title: body` → \section{Title}{body}. roxygen2 splits the
         // field value on its first `:`; parse_Rd then models `\section` as a
         // two-arg structural macro, so each side sub-parses inline macros/markdown
@@ -344,8 +376,8 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>) {
         // stays bare (the same rule `serialize_macro` applies to `\item`/`\tabular`).
         "section" => {
             let (heading, content) = split_section_title(body);
-            let title = serialize_inlines(&heading);
-            let body = serialize_inlines(&content);
+            let title = serialize_inlines(&heading, md);
+            let body = serialize_inlines(&content, md);
             let mut inner = grp_arg(&title);
             if !body.is_empty() {
                 if !inner.is_empty() {
@@ -383,15 +415,15 @@ const NULL_SUPPRESSIBLE: &[&str] = &[
 /// exactly one `(TEXT "NULL")` atom (a plain-string value of "NULL", any
 /// surrounding whitespace already normalized away), with no macro or markdown
 /// structure that would make the value something other than that string.
-fn is_null_section(body: &[Inline]) -> bool {
-    let atoms = serialize_inlines(body);
+fn is_null_section(body: &[Inline], md: bool) -> bool {
+    let atoms = serialize_inlines(body, md);
     atoms.len() == 1 && atoms[0] == "(TEXT \"NULL\")"
 }
 
 /// Push `(\<macro> <atoms…>)` for a prose section, or `(\<macro>)` when the body
 /// has no content (after coalescing).
-fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline]) {
-    let atoms = serialize_inlines(body);
+fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline], md: bool) {
+    let atoms = serialize_inlines(body, md);
     if atoms.is_empty() {
         out.push(format!("(\\{macro_name})"));
     } else {
@@ -401,43 +433,45 @@ fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline]) {
 
 /// Serialize an inline run into the canonical atom sequence: maximal prose runs
 /// coalesce into one whitespace-normalized `(TEXT …)`, and each macro becomes a
-/// nested subtree — mirroring the R driver's `serialize_children`.
-fn serialize_inlines(body: &[Inline]) -> Vec<String> {
+/// nested subtree — mirroring the R driver's `serialize_children`. `md` is the
+/// block's resolved markdown mode: with markdown off a prose run is literal Rd, so
+/// `prose_text_atom` strips its `%` line comments.
+fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
     let mut atoms: Vec<String> = Vec::new();
     let mut run = String::new();
     for inl in body {
         match inl {
             Inline::Text(s) => run.push_str(s),
             Inline::Macro(node) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
                 atoms.push(serialize_macro(node));
             }
             Inline::Md(kind, content) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
                 atoms.push(serialize_md_inline(*kind, content));
             }
             Inline::MdList(node) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
                 atoms.push(serialize_md_list(node));
             }
             Inline::MdLink(raw) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
                 atoms.push(resolve_md_link(raw).unwrap_or_default());
             }
             Inline::MdImage(raw) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
@@ -446,21 +480,21 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 }
             }
             Inline::MdCodeBlock(node) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
                 atoms.extend(serialize_md_code_block(node));
             }
             Inline::MdHtml(raw) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
                 atoms.push(html_inline_atom(raw));
             }
             Inline::MdHtmlBlock(node) => {
-                if let Some(atom) = text_atom(&run) {
+                if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
@@ -468,7 +502,7 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
             }
         }
     }
-    if let Some(atom) = text_atom(&run) {
+    if let Some(atom) = prose_text_atom(&run, md) {
         atoms.push(atom);
     }
     atoms
@@ -683,6 +717,45 @@ fn prefix_space(s: &str) -> String {
 fn text_atom(body: &str) -> Option<String> {
     let t = norm_ws(body);
     (!t.is_empty()).then(|| format!("(TEXT {})", encode_text(&t)))
+}
+
+/// A prose run's `(TEXT …)` atom, accounting for markdown mode. With markdown off
+/// the run is literal Rd, where an unescaped `%` begins a comment to end of line
+/// (parse_Rd's rule), so the comment is stripped per physical line before the run
+/// coalesces; with markdown on roxygen2 escapes `%` (`\%`), so it survives and the
+/// run is taken verbatim. (The run carries source line breaks as `\n`, which
+/// `norm_ws` later collapses, so the comment's end-of-line is honored either way.)
+fn prose_text_atom(run: &str, md: bool) -> Option<String> {
+    if md {
+        text_atom(run)
+    } else {
+        text_atom(&strip_rd_comments(run))
+    }
+}
+
+/// Strip Rd `%` line comments from literal-Rd prose: on each physical line, an
+/// unescaped `%` (one not preceded by a `\`) begins a comment that runs to the end
+/// of that line. Lines are rejoined with `\n` (collapsed downstream by `norm_ws`).
+fn strip_rd_comments(s: &str) -> String {
+    s.split('\n')
+        .map(strip_rd_line_comment)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The prefix of `line` before its first unescaped `%` (the whole line if none).
+fn strip_rd_line_comment(line: &str) -> &str {
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '%' {
+            return &line[..i];
+        }
+    }
+    line
 }
 
 /// The verbatim `(RCODE …)` atoms for a `\code` body. parse_Rd keeps `\code`
@@ -1200,7 +1273,8 @@ fn serialize_md_list(node: &SyntaxNode) -> String {
         .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
     {
         atoms.push("(\\item)".to_string());
-        atoms.extend(serialize_inlines(&md_list_item_inlines(&item)));
+        // A markdown list exists only under `@md`, so its item content is markdown.
+        atoms.extend(serialize_inlines(&md_list_item_inlines(&item), true));
     }
     if atoms.is_empty() {
         format!("({head})")
@@ -1479,6 +1553,76 @@ mod tests {
             "(\\description (TEXT \"Description.\"))\n\
              (\\section (TEXT \"Foobar\") (GRP (TEXT \"With some\") (\\strong (TEXT \"bold text\")) (TEXT \".\")))\n\
              (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn non_md_percent_is_an_rd_line_comment() {
+        // In non-markdown prose (literal Rd), an unescaped `%` begins a comment to
+        // end of line, so `@format %` projects to an empty `\format` and a mid-line
+        // `%` keeps only the prose before it (roxygen2 passes the value as raw Rd).
+        let src = "#' Title here\n\
+                   #'\n\
+                   #' Desc with a %% comment to end of line\n\
+                   #' @format %\n\
+                   x <- list(a = 1, b = 2)\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Desc with a\"))\n\
+             (\\format)\n\
+             (\\title (TEXT \"Title here\"))"
+        );
+    }
+
+    #[test]
+    fn non_md_percent_comment_is_scoped_per_line() {
+        // The `%` comment runs only to the end of *its* physical line: a multi-line
+        // tag value drops the commented tail of the first line but keeps the next
+        // line, then both coalesce under `norm_ws`.
+        let src = "#' Title\n\
+                   #' @details First detail line %% trailing comment\n\
+                   #'   second detail line stays\n\
+                   #' @name x\n\
+                   NULL\n";
+        // Sections sort in byte order: `\description` < `\details` < `\title`.
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\details (TEXT \"First detail line second detail line stays\"))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn md_mode_percent_survives() {
+        // Under `@md` roxygen2 escapes `%` (`\%`), which `parse_Rd` decodes back to a
+        // literal `%`, so the character survives in the projected text — the
+        // projector must *not* treat it as a comment in markdown mode.
+        let src = "#' Title\n\
+                   #' @md\n\
+                   #' @format % and more\n\
+                   x <- list(a = 1)\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\format (TEXT \"% and more\"))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn strip_rd_line_comment_honors_backslash_escape() {
+        // A `\%` is an escaped percent, not a comment opener.
+        assert_eq!(strip_rd_line_comment("a %% b"), "a ");
+        assert_eq!(strip_rd_line_comment("%"), "");
+        assert_eq!(strip_rd_line_comment("no comment here"), "no comment here");
+        assert_eq!(
+            strip_rd_line_comment("keep \\% literal"),
+            "keep \\% literal"
+        );
+        assert_eq!(
+            strip_rd_line_comment("keep \\% then % cut"),
+            "keep \\% then "
         );
     }
 
