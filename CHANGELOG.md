@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.7.0](https://github.com/jolars/arity/compare/v0.6.0...v0.7.0) (2026-06-24)
+
+### Features
+- **parser:** model @md inline raw HTML as \if{html}{\out} ([`a2f5cc9`](https://github.com/jolars/arity/commit/a2f5cc9790904199ad0af4154f725545558872c9))
+- **roxygen:** sub-render inline-link code-span text to \verb/\code ([`585b096`](https://github.com/jolars/arity/commit/585b0963249280b0cb154ce83dedb3b42b7ee80b))
+- **parser:** model @md URL autolinks and empty-dest links as \url ([`7bc2879`](https://github.com/jolars/arity/commit/7bc28793a495fa020a9d852c5f6c2e67a3cf0785))
+- **parser:** model @md fenced code blocks, project to \preformatted ([`06509b3`](https://github.com/jolars/arity/commit/06509b3d19e264e0384329eed9ba6371a4c9c2d4))
+- **parser:** project brace-less unknown Rd macros to UNKNOWN ([`50572be`](https://github.com/jolars/arity/commit/50572be0efd9bfa446012d09ca8eafbf305530ae))
+- **roxygen:** project @section body inlines with GRP-wrap ([`95dbbfb`](https://github.com/jolars/arity/commit/95dbbfb11d1fee842e9e638b6232c46b6f1e3eab))
+- **roxygen:** aggregate multiple @examples into one \examples ([`37357fb`](https://github.com/jolars/arity/commit/37357fb2fac4b378d9deb65a5fb1d920e85beebf))
+- **parser:** lex Rd macro names with digits (\linkS4class) ([`856be51`](https://github.com/jolars/arity/commit/856be518330fa83e45282dac5aded25f86941238))
+- **parser:** project markdown images and Rd \figure to \figure ([`0afed9a`](https://github.com/jolars/arity/commit/0afed9a652695a66e153652a2a1b4021fdd700d6))
+- **roxygen:** split intro into title/description/details by paragraph ([`fb2c926`](https://github.com/jolars/arity/commit/fb2c9267aaf733795dafd3ecbbfec603a7a4be12))
+- **parser:** resolve @md reference and shortcut links to \link ([`fd8b6d2`](https://github.com/jolars/arity/commit/fd8b6d234be89b91429386feb87598267987d6d6))
+- **parser:** project @md inline links [text](url) to \href ([`4cd8cfa`](https://github.com/jolars/arity/commit/4cd8cfab2fb2110b5a93f69db0020ef34e3031d4))
+- **roxygen:** aggregate @slot/@field into \section{Slots,Fields} ([`19f326e`](https://github.com/jolars/arity/commit/19f326e6a74fd751fdbe64069d04858a220abb0d))
+- **parser:** model \href as two-arg macro with verbatim URL arg ([`a129a7a`](https://github.com/jolars/arity/commit/a129a7a0dd941c2968895592583aa015fa2a9223))
+- **roxygen:** project \code body as verbatim RCODE ([`5ec9cf3`](https://github.com/jolars/arity/commit/5ec9cf333d5c3577787dd7f2eca8cc5e264078a9))
+- **roxygen:** suppress sections with NULL sentinel value ([`be2d579`](https://github.com/jolars/arity/commit/be2d5791aeebd6da152ef4e6c66743fd494e7d5e))
+- **roxygen:** project title as description fallback ([`e9f2471`](https://github.com/jolars/arity/commit/e9f247123359b3e25ee6497b5e0329a8392e185d))
+- **parser:** model @md markdown lists as \itemize/\enumerate ([`1cf5da9`](https://github.com/jolars/arity/commit/1cf5da99468faf727b1bd2fe84e6ec1b7068d75c))
+- **parser:** model @md inline markdown (emph/strong/code) ([`6e617ca`](https://github.com/jolars/arity/commit/6e617ca33b2e61f6bf1917e477ae684a01dff0a3))
+- **parser:** model `\tabular{fmt}{ … \tab … \cr }` block macro ([`8cfbdbe`](https://github.com/jolars/arity/commit/8cfbdbe94fbc1f480baa8e56296bfa725064e1c6))
+- **parser:** model two-arg \item{term}{def} in \describe ([`c1b30a9`](https://github.com/jolars/arity/commit/c1b30a9ec231dd1f2fa4f9eceb8c5c4c4f7d3520))
+- **linter:** suppress undefined-symbol for data-masked columns ([`d1e382d`](https://github.com/jolars/arity/commit/d1e382dea2bb24ee3c9867c30f1ac1272d6920a1))
+- **linter:** resolve meta-package attaches for undefined-symbol ([`d64cd31`](https://github.com/jolars/arity/commit/d64cd31be8a69224fec90da6b9465e408528b471))
+- **parser:** model \itemize/\enumerate block Rd macros ([`dc8a38b`](https://github.com/jolars/arity/commit/dc8a38bbe542a3bdb028d0782642772a63c1cbe4))
+- **parser:** model inline Rd macros as nested CST nodes ([`be0521b`](https://github.com/jolars/arity/commit/be0521b64f85534f07cb79843214f3c09840cac1))
+- **roxygen:** bulk-pin projector-eligible harvested corpus ([`58ad5e4`](https://github.com/jolars/arity/commit/58ad5e42079e376b6bce62d2a5468b570b954f42))
+- **roxygen:** add CST->Rd projector + pinned parity gate ([`7473f2f`](https://github.com/jolars/arity/commit/7473f2f997351f60153ffc3d0cf0ffbdfbdabea9))
+
+### Bug Fixes
+- **semantic:** mask operands of opaque custom infix operators ([`479c3dd`](https://github.com/jolars/arity/commit/479c3dd0719d65e5b4dff3e7095e01766654e64f))
+- **parser:** model string-named call/subscript args as named args ([`4e2fdbf`](https://github.com/jolars/arity/commit/4e2fdbf79b1cdb41aff669c3c8d55e1ae9bde739))
+- **formatter:** don't treat mid-prose years as list markers ([`d90e7d5`](https://github.com/jolars/arity/commit/d90e7d5c05c9b3c47e2b7bed5db4392aaa1305c9))
+
 ## [0.6.0](https://github.com/jolars/arity/compare/v0.5.0...v0.6.0) (2026-06-22)
 
 ### Features

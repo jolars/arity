@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.0](https://github.com/jolars/arity/compare/arity-code-v0.6.0...arity-code-v0.7.0) (2026-06-24)
+
+### Dependencies
+- updated arity to v0.7.0
+
 ## [0.6.0](https://github.com/jolars/arity/compare/arity-code-v0.5.0...arity-code-v0.6.0) (2026-06-22)
 
 ### Dependencies
