@@ -347,14 +347,19 @@
          silent `matches!` lists are gone; `expr.rs`'s atom fallthrough was already an
          exhaustive anchor and was left as-is. Pure refactor, byte-identical (projector
          + format-stability gates unmoved).
-      2. **Split `roxygen.rs` along its real phase boundaries.** It conflates four
-         phases the R parser keeps separate: sub-lexing, block grouping (event
-         emission), line classification, and Rd-macro/markdown *structure building*.
-         The `emit_block_*`/`emit_md_list` family is a hand-rolled recursive-descent
-         parser inside nominal "lexing" that can't reuse `core.rs`/`cursor.rs`/
-         `recovery.rs` and reinvents cursor + recovery ad hoc. Carve sub-lexer /
-         block-grouper / structure-builder into modules, ideally over the shared
-         cursor/recovery infra.
+      2. **~~Split `roxygen.rs` along its real phase boundaries.~~ DONE
+         (2026-06-24).** Carved the 1686-line file into a thin parent
+         (`roxygen.rs`: macro-classification tables + `scan_balanced`/`utf8_len`
+         + re-exports) and three submodules over the phase boundaries:
+         `roxygen/lex.rs` (sub-lexing, text → `Vec<Token>`, + the lexer tests),
+         `roxygen/group.rs` (block grouping / section-paragraph skeleton,
+         `Vec<Token>` → `Vec<Event>`), and `roxygen/build.rs` (the
+         `emit_block_*`/`emit_md_list` Rd-macro + markdown structure builder).
+         Pure refactor, byte-identical (projector 93/66 + format-stability gates
+         unmoved, clippy + fmt clean). *Deferred (not done here):* hoisting the
+         hand-rolled cursor/recovery onto the shared `core.rs`/`cursor.rs`/
+         `recovery.rs` infra — a behavior-touching rewrite, out of scope for a
+         pure split; revisit if the structure builder grows.
       3. **Watch the block-opener Form A/Form B split.** Because the lexer greedily
          eats balanced `{…}` groups, `is_block_macro_line` has two structurally
          different entry forms and macro-arity logic is split lexer↔tree-builder

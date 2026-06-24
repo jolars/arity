@@ -205,50 +205,69 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24) — Parser refactor: unify roxygen `TokKind`/`SyntaxKind` classification
+## Latest session (2026-06-24b) — Parser refactor #2: split `roxygen.rs` along phase boundaries
 
-**Refactor #1 of the pre-markdown-push architecture cleanup (`TODO.md`); no parity
-change, byte-identical.** The roxygen sub-lexer classified its 12 `TokKind`s across **8
-independent, silent `matches!` lists** in 5 files; a forgotten arm already shipped a bug
-once (Stage 5). Collapsed them onto a single compiler-policed source.
+**Refactor #2 of the pre-markdown-push architecture cleanup (`TODO.md`); no parity
+change, byte-identical.** The 1686-line `src/parser/roxygen.rs` (the parser's largest
+file) conflated four phases. Carved it into a thin parent + three phase modules under a
+new `src/parser/roxygen/` directory (kept `roxygen.rs` as the module root, so external
+import paths are unchanged):
 
-- **New `RoxygenRole { Marker, At, TagName, TagArg, Content }` + wildcard-free
-  `TokKind::roxygen_role` (`src/parser/lexer.rs`)** is the one source for the
-  lexer/parser side. Because the match has **no wildcard**, adding any `TokKind` is now a
-  compile error there — the single place that must classify a new roxygen kind's role.
-  `is_comment_like` (`= Comment || role.is_some()`), `classify_line`
-  (`Some(At)→Tag`, `Some(Content)→Prose`), `is_line_body_kind`
-  (`Whitespace || role != Marker`), and `emit_block_macro`'s inline-span arm
-  (`role == Some(Content)`, **`RoxygenText` arm kept FIRST** — load-bearing) all derive
-  from it. The 7 silent lists are gone.
-- **`SyntaxKind` side** is rowan-flat (u16 + `COUNT`), so it can't be nested/policed; its
-  two identical 8-leaf formatter lists (`is_blank`, `is_tag_prose_kind`) collapsed onto a
-  single `SyntaxKind::is_roxygen_prose_content` (`src/syntax.rs`, beside `is_roxygen_token`)
-  — one residual wildcard soft spot, now singular instead of triplicated.
-- **`expr.rs`'s atom fallthrough left as-is**: it is already an exhaustive wildcard-free
-  anchor (the Plan agent flagged this — a second policed site), and its `=> None` value is
-  shared, so touching it would only add churn.
-- **Pure refactor:** `cargo test` green (458 lib + all integration), projector gate
-  **unmoved** (still 93 matching, allowlist untouched), format-stability baseline
-  untouched, clippy + fmt clean. +78/−78 across 4 source files only.
+- **`roxygen.rs` (parent, 113 lines):** the **shared macro-classification layer** that
+  both lexer and structure builder consult (`VERBATIM_RD_MACROS`/`is_verbatim_rd_macro`/
+  `is_verbatim_rd_arg`, `TWO_ARG_RD_MACROS`/`is_two_arg_rd_macro`), the shared
+  `scan_balanced` + `utf8_len` helpers, the `mod`/`pub(crate) use` wiring, and the
+  module docs. Re-exports keep `crate::parser::roxygen::{emit_roxygen_block,
+  is_roxygen_comment, lex_roxygen_line, resolve_roxygen_block, scan_rd_macro}` (and the
+  classification predicates) at their old paths — `tree_builder.rs`, `lexer.rs`,
+  `core.rs`, `expr.rs`, `project_rd.rs` untouched.
+- **`roxygen/lex.rs` (996 lines, ~500 tests):** sub-lexing (text → `Vec<Token>`):
+  `resolve_roxygen_block`/mode directives, `lex_roxygen_line`/`_tag`/`_prose`, the
+  `scan_*` inline-span recognizers, `ARG_BEARING_TAGS`, `push`/`take_ws`, **and the whole
+  `#[cfg(test)]` lexer suite** (it tests lexing, so it moved with the lexer).
+- **`roxygen/group.rs` (200 lines):** block grouping (`Vec<Token>` → `Vec<Event>`): the
+  `emit_roxygen_block` loop, `LineKind`/`classify_line`/`line_content_start`/
+  `is_line_body_kind`, `emit_line_tokens`/`emit_tag_line`, continuation folding.
+- **`roxygen/build.rs` (430 lines):** structure building: the `emit_block_*`/
+  `emit_md_list` Rd-macro + markdown machinery, `is_block_macro_line` (Form A/B),
+  `is_md_list_*`, `rd_macro_name`/`opens_unbalanced_brace`/`is_block_macro_opener`.
 
-**Next (ranked):** the architecture cleanup's #1 (this) is done; #2 (split the ~1700-line
-`roxygen.rs` along sub-lexer/block-grouper/structure-builder boundaries) and #3 (watch the
-block-opener Form A/B split) remain optional and deferred (`TODO.md`). The largest
-remaining **parity** cluster is now **markdown links** (≈10 cases:
-rx-270b730c/rx-95dd50a4/rx-72858140/rx-2a68ab3f/rx-4adb1f22/rx-fd84eacf/rx-375ab9f1
-`[text]`/`[text][dest]`/`[fn()]`/`[pkg::obj]` → `\link`/`\code{\link}`; rx-7743ba62/
-rx-0605d020 `[text](url)` → `\href` (the `\href` projector arm now exists — only the
-markdown link *parsing* is missing); rx-1b4ef7c7 `` [`code`] `` → `\code{\link}`) —
-under `@md` only; complex (CommonMark link parsing + roxygen2's `[x]`→`\link`
-resolution). **Out of scope:** data-object auto-`\format`
-(rx-cbcc255c/rx-8f9c159b/rx-4d59d472/rx-deb9d202 — roxygen2 evaluates the object) and
-```{r}``` code blocks that evaluate R (rx-2900ecd5/rx-a6ac1b4d → `#> [1] 2`). To
-re-triage, recreate the throwaway `examples/rxdiff.rs` (dump input/projected/pin per
-divergent harvested case, sorted by input length; removed at session end).
+**Visibility discipline (new trap):** sibling-internal items are `pub(super)` (group↔build
+cross-call: `classify_line`/`line_content_start`/`is_line_body_kind`/`LineKind` ←
+build; `is_block_macro_line`/`is_md_list_start`/`emit_md_list`/`emit_block_macro` ←
+group), externally-reached items stay `pub(crate)` (re-exported from the parent). Parent
+privates (`utf8_len`, classification predicates) are reachable from the descendant
+submodules via `use super::…` — child modules see ancestor privates. The
+lexer/builder/grouper now form a clean cycle of `use super::group`/`use super::build`
+imports (Rust permits the cyclic module references).
+
+**Pure refactor:** `cargo test` green (458 lib + all integration), projector gate
+**unmoved** (93 matching / 66 divergent, allowlist untouched), format-stability baseline
+untouched, clippy + fmt clean. `ROXYGEN_PROJECTOR.md` regenerated byte-identical. Only
+tracked diff: `roxygen.rs` 1623→25 body lines; the three submodules are new files. *Did
+not* attempt the deeper "reuse `core.rs`/`cursor.rs`/`recovery.rs`" rewrite (TODO #2's
+"ideally over the shared infra") — that touches behavior; deferred.
+
+**Next (ranked):** architecture cleanup #1 + #2 done; #3 (watch the block-opener Form
+A/Form B split — a *third* form is the signal to reconsider lex-time greediness) is a
+watch item, not work. The largest remaining **parity** cluster is **markdown links**
+(≈10 cases: rx-270b730c/rx-95dd50a4/rx-72858140/rx-2a68ab3f/rx-4adb1f22/rx-fd84eacf/
+rx-375ab9f1 `[text]`/`[text][dest]`/`[fn()]`/`[pkg::obj]` → `\link`/`\code{\link}`;
+rx-7743ba62/rx-0605d020 `[text](url)` → `\href`, the `\href` projector arm already
+exists; rx-1b4ef7c7 `` [`code`] `` → `\code{\link}`) — under `@md` only; complex
+(CommonMark link parsing + roxygen2's `[x]`→`\link` resolution). **Out of scope:**
+data-object auto-`\format` (rx-cbcc255c/rx-8f9c159b/rx-4d59d472/rx-deb9d202) and
+```{r}``` eval blocks (rx-2900ecd5/rx-a6ac1b4d). The markdown-link parsing would now land
+in `roxygen/lex.rs` (the `scan_md_link` recognizer already tokenizes the *shape*; the
+projector arm + `[x]`→`\link` resolution is the missing piece).
 
 ## Earlier sessions
 
+- **2026-06-24 (Refactor #1, unify `TokKind`/`SyntaxKind` classification):** collapsed 8
+  silent `matches!` lists onto a compiler-policed source. New `RoxygenRole` +
+  wildcard-free `TokKind::roxygen_role` (`lexer.rs`) for the lexer/parser side;
+  `SyntaxKind::is_roxygen_prose_content` (`syntax.rs`) for the formatter side. Pure
+  refactor, byte-identical (projector 93/66 unmoved). +78/−78 across 4 source files.
 - **2026-06-23 (Stage 11, `@slot`/`@field` aggregate to `\section{Slots/Fields}`):**
   projector-only, +2 cases. `@slot` (S4)/`@field` (RC) are *aggregating* tags: roxygen2
   collects every one of a topic into a single `\section{Slots}{\describe{…}}`, each tag →
