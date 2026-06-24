@@ -356,10 +356,20 @@
          `Vec<Token>` → `Vec<Event>`), and `roxygen/build.rs` (the
          `emit_block_*`/`emit_md_list` Rd-macro + markdown structure builder).
          Pure refactor, byte-identical (projector 93/66 + format-stability gates
-         unmoved, clippy + fmt clean). *Deferred (not done here):* hoisting the
-         hand-rolled cursor/recovery onto the shared `core.rs`/`cursor.rs`/
-         `recovery.rs` infra — a behavior-touching rewrite, out of scope for a
-         pure split; revisit if the structure builder grows.
+         unmoved, clippy + fmt clean). **Non-goal (decided, not "deferred"):**
+         hoisting the builder onto the shared `core.rs`/`cursor.rs`/`recovery.rs`
+         infra. On inspection that "infra" is *not* a richer abstraction to adopt:
+         `cursor.rs` is the **same** `fn(tokens, i) -> usize` index-threading idiom
+         the builder already uses (no `Cursor` type with `bump`/`peek`), and
+         `recovery.rs` builds `ERROR` nodes for malformed **R expressions** — a
+         model roxygen **deliberately rejects** (greedy + lossless, no close
+         delimiter, no ERROR nodes; Tenets 3/4). The only honest reuse is 3–4
+         *lookahead-only* whitespace skips → `cursor::skip_ws` (the builder's other
+         skips emit the trivia as events, which `skip_ws` can't), and that's a
+         **drive-by** for whenever we next edit `build.rs`, not a session. The
+         file-size pain that motivated the cleanup is gone (4 modules,
+         113/200/430/996), so the marginal structural win doesn't justify a
+         behavior-touching rewrite.
       3. **Watch the block-opener Form A/Form B split.** Because the lexer greedily
          eats balanced `{…}` groups, `is_block_macro_line` has two structurally
          different entry forms and macro-arity logic is split lexer↔tree-builder
