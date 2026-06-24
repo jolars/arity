@@ -241,6 +241,7 @@ fn lex_roxygen_prose(
             b'`' => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenCode, end)),
             b'*' | b'_' if md => scan_md_emphasis(bytes, i),
             b'\\' => scan_rd_macro(bytes, i).map(|end| (TokKind::RoxygenRdMacro, end)),
+            b'!' if md => scan_md_image(bytes, i).map(|end| (TokKind::RoxygenMdImage, end)),
             b'[' if md => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
             _ => None,
         };
@@ -393,6 +394,23 @@ fn scan_md_list_marker(bytes: &[u8], i: usize) -> Option<usize> {
     };
     match bytes.get(marker_end) {
         None | Some(b' ' | b'\t') => Some(marker_end),
+        _ => None,
+    }
+}
+
+/// A markdown inline image at `bytes[i] == b'!'`: `![alt](url "title")`. Requires
+/// a `[` immediately after the `!`, a balanced `[…]` alt span, then a `(…)`
+/// destination group. Returns the index past the closing `)`, or `None` when it is
+/// not a complete inline image (so it stays literal prose — losslessness holds
+/// either way). Only the **inline** form is recognized; a reference/shortcut image
+/// (`![alt][ref]`/`![alt]`) is left to the prose path (un-handled-shape backlog).
+fn scan_md_image(bytes: &[u8], i: usize) -> Option<usize> {
+    if bytes.get(i + 1) != Some(&b'[') {
+        return None;
+    }
+    let after_alt = scan_balanced(bytes, i + 1, b'[', b']')?;
+    match bytes.get(after_alt) {
+        Some(&b'(') => scan_balanced(bytes, after_alt, b'(', b')'),
         _ => None,
     }
 }
@@ -680,6 +698,7 @@ mod tests {
                         | TokKind::RoxygenCode
                         | TokKind::RoxygenRdMacro
                         | TokKind::RoxygenMdLink
+                        | TokKind::RoxygenMdImage
                         | TokKind::RoxygenMdEmph
                         | TokKind::RoxygenMdStrong
                         | TokKind::RoxygenMdCode

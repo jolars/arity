@@ -67,6 +67,9 @@ pub(crate) enum TokKind {
     RoxygenCode,
     RoxygenRdMacro,
     RoxygenMdLink,
+    /// A markdown image `![alt](url "title")`, recognized only under a resolved
+    /// `@md` block mode. Projected to `\figure` (extension-keyed `\if` wrapping).
+    RoxygenMdImage,
     // Markdown inline spans, emitted only under a resolved `@md` block mode.
     RoxygenMdEmph,
     RoxygenMdStrong,
@@ -109,8 +112,10 @@ impl TokKind {
             RoxygenAt => Some(RoxygenRole::At),
             RoxygenTagName => Some(RoxygenRole::TagName),
             RoxygenTagArg => Some(RoxygenRole::TagArg),
-            RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdEmph
-            | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker => Some(RoxygenRole::Content),
+            RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdImage
+            | RoxygenMdEmph | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker => {
+                Some(RoxygenRole::Content)
+            }
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

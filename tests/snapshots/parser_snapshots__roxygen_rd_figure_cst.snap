@@ -1,0 +1,55 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..148
+  ROXYGEN_BLOCK@0..142
+    ROXYGEN_SECTION@0..22
+      ROXYGEN_PARAGRAPH@0..19
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..18 "Rd figure macro"
+        NEWLINE@18..19 "\n"
+      ROXYGEN_MARKER@19..21 "#'"
+      NEWLINE@21..22 "\n"
+    ROXYGEN_SECTION@22..124
+      ROXYGEN_MARKER@22..24 "#'"
+      WHITESPACE@24..25 " "
+      ROXYGEN_TAG@25..33
+        ROXYGEN_AT@25..26 "@"
+        ROXYGEN_TAG_NAME@26..33 "details"
+      NEWLINE@33..34 "\n"
+      ROXYGEN_PARAGRAPH@34..124
+        ROXYGEN_MARKER@34..36 "#'"
+        WHITESPACE@36..37 " "
+        ROXYGEN_TEXT@37..45 "A plot: "
+        ROXYGEN_RD_MACRO@45..85
+          ROXYGEN_RD_MACRO_NAME@45..52 "\\figure"
+          ROXYGEN_RD_MACRO_DELIM@52..53 "{"
+          ROXYGEN_RD_MACRO_VERB@53..61 "plot.png"
+          ROXYGEN_RD_MACRO_DELIM@61..62 "}"
+          ROXYGEN_RD_MACRO_DELIM@62..63 "{"
+          ROXYGEN_RD_MACRO_VERB@63..84 "A caption with spaces"
+          ROXYGEN_RD_MACRO_DELIM@84..85 "}"
+        ROXYGEN_TEXT@85..101 " and a path-only"
+        NEWLINE@101..102 "\n"
+        ROXYGEN_MARKER@102..104 "#'"
+        WHITESPACE@104..105 " "
+        ROXYGEN_RD_MACRO@105..122
+          ROXYGEN_RD_MACRO_NAME@105..112 "\\figure"
+          ROXYGEN_RD_MACRO_DELIM@112..113 "{"
+          ROXYGEN_RD_MACRO_VERB@113..121 "bare.pdf"
+          ROXYGEN_RD_MACRO_DELIM@121..122 "}"
+        ROXYGEN_TEXT@122..123 "."
+        NEWLINE@123..124 "\n"
+    ROXYGEN_SECTION@124..142
+      ROXYGEN_MARKER@124..126 "#'"
+      WHITESPACE@126..127 " "
+      ROXYGEN_TAG@127..142
+        ROXYGEN_AT@127..128 "@"
+        ROXYGEN_TAG_NAME@128..132 "name"
+        WHITESPACE@132..133 " "
+        ROXYGEN_TEXT@133..142 "rd_figure"
+  NEWLINE@142..143 "\n"
+  IDENT@143..147 "NULL"
+  NEWLINE@147..148 "\n"

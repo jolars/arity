@@ -1,0 +1,44 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..147
+  ROXYGEN_BLOCK@0..141
+    ROXYGEN_SECTION@0..117
+      ROXYGEN_PARAGRAPH@0..18
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..17 "Markdown image"
+        NEWLINE@17..18 "\n"
+      ROXYGEN_MARKER@18..20 "#'"
+      NEWLINE@20..21 "\n"
+      ROXYGEN_PARAGRAPH@21..117
+        ROXYGEN_MARKER@21..23 "#'"
+        WHITESPACE@23..24 " "
+        ROXYGEN_TEXT@24..40 "A raster image: "
+        ROXYGEN_MD_IMAGE@40..69 "![alt](example.png \"C ..."
+        ROXYGEN_TEXT@69..86 " and a vector one"
+        NEWLINE@86..87 "\n"
+        ROXYGEN_MARKER@87..89 "#'"
+        WHITESPACE@89..90 " "
+        ROXYGEN_MD_IMAGE@90..115 "![](diagram.svg \"Vect ..."
+        ROXYGEN_TEXT@115..116 "."
+        NEWLINE@116..117 "\n"
+    ROXYGEN_SECTION@117..124
+      ROXYGEN_MARKER@117..119 "#'"
+      WHITESPACE@119..120 " "
+      ROXYGEN_TAG@120..123
+        ROXYGEN_AT@120..121 "@"
+        ROXYGEN_TAG_NAME@121..123 "md"
+      NEWLINE@123..124 "\n"
+    ROXYGEN_SECTION@124..141
+      ROXYGEN_MARKER@124..126 "#'"
+      WHITESPACE@126..127 " "
+      ROXYGEN_TAG@127..141
+        ROXYGEN_AT@127..128 "@"
+        ROXYGEN_TAG_NAME@128..132 "name"
+        WHITESPACE@132..133 " "
+        ROXYGEN_TEXT@133..141 "md_image"
+  NEWLINE@141..142 "\n"
+  IDENT@142..146 "NULL"
+  NEWLINE@146..147 "\n"

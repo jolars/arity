@@ -82,6 +82,11 @@ enum Inline {
     /// `\linkS4class` (optionally `\code`-wrapped) per roxygen2's `parse_link`
     /// (see [`resolve_md_link`]).
     MdLink(String),
+    /// A markdown image resolved under `@md` mode, carrying the raw leaf text
+    /// `![alt](url "title")`. Projects to `\figure{url}{title}` — wrapped in
+    /// `\if{html}{…}`/`\if{pdf}{…}` per roxygen2's extension-keyed image-format
+    /// rule (see [`resolve_md_image`]).
+    MdImage(String),
 }
 
 /// The kind of a resolved markdown inline leaf.
@@ -256,6 +261,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
                 Inline::Md(k, s) => Inline::Md(*k, s.clone()),
                 Inline::MdList(n) => Inline::MdList(n.clone()),
                 Inline::MdLink(s) => Inline::MdLink(s.clone()),
+                Inline::MdImage(s) => Inline::MdImage(s.clone()),
             });
         }
     }
@@ -386,6 +392,15 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 run.clear();
                 atoms.push(resolve_md_link(raw).unwrap_or_default());
             }
+            Inline::MdImage(raw) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                if let Some(atom) = resolve_md_image(raw) {
+                    atoms.push(atom);
+                }
+            }
         }
     }
     if let Some(atom) = text_atom(&run) {
@@ -499,9 +514,9 @@ fn inlines_raw_text(body: &[Inline]) -> String {
             // content stands in for its source (delimiters are immaterial to the
             // `:` split, and markup in a heading is already an out-of-scope edge).
             Inline::Md(_, content) => s.push_str(content),
-            // A link leaf stands in as its raw source for the textual heading
-            // split (links in a heading are an out-of-scope edge anyway).
-            Inline::MdLink(raw) => s.push_str(raw),
+            // A link/image leaf stands in as its raw source for the textual
+            // heading split (markup in a heading is an out-of-scope edge anyway).
+            Inline::MdLink(raw) | Inline::MdImage(raw) => s.push_str(raw),
         }
     }
     s
@@ -677,6 +692,14 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         {
             out.push(Inline::MdLink(t.text().to_string()));
         }
+        // A markdown image leaf `![alt](url "title")` → `\figure` (see
+        // [`resolve_md_image`]). A leaf that resolves to nothing falls through to
+        // literal prose.
+        NodeOrToken::Token(t)
+            if t.kind() == SyntaxKind::ROXYGEN_MD_IMAGE && resolve_md_image(t.text()).is_some() =>
+        {
+            out.push(Inline::MdImage(t.text().to_string()));
+        }
         // A `ROXYGEN_MD_LIST_MARKER` that reached an inline run (rather than a
         // `ROXYGEN_MD_LIST`) is a marker that did not form a list — the CommonMark
         // interrupt rule kept it inline. roxygen2 renders it as literal text.
@@ -814,6 +837,109 @@ fn shortcut_link_atom(dest: &str) -> String {
         format!("({head} {})", text_atom(&display).unwrap_or_default()),
         is_code,
     )
+}
+
+/// Resolve a `ROXYGEN_MD_IMAGE` leaf `![alt](url "title")` into its Rd atom,
+/// mirroring roxygen2's `mdxml_image` (`markdown.R`). The alt text is *dropped*
+/// (roxygen2 uses only the destination and title); the result is
+/// `(\figure (VERB url) [(VERB title)])`, wrapped in `(\if (TEXT "html") …)` or
+/// `(\if (TEXT "pdf") …)` per the extension-keyed `get_image_format` rule. Returns
+/// `None` for an unrecognized shape (the leaf then stays literal prose).
+fn resolve_md_image(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    // The leaf always begins `![`; the alt span is `[…]` starting at index 1.
+    let alt_end = scan_delimited(bytes, 1, b'[', b']')?;
+    if bytes.get(alt_end) != Some(&b'(') {
+        return None;
+    }
+    let dest_end = scan_delimited(bytes, alt_end, b'(', b')')?;
+    if dest_end != bytes.len() {
+        return None;
+    }
+    let (url, title) = split_image_dest(&raw[alt_end + 1..dest_end - 1]);
+    Some(figure_atom(url, title))
+}
+
+/// Split a CommonMark image destination `url "title"` into `(url, title)`. The URL
+/// is angle-bracketed (`<…>`) or runs to the first ASCII whitespace; the optional
+/// title that follows is wrapped in `"…"`, `'…'`, or `(…)`. A missing title is an
+/// empty string.
+fn split_image_dest(dest: &str) -> (&str, &str) {
+    let dest = dest.trim();
+    let (url, rest) = if dest.as_bytes().first() == Some(&b'<') {
+        match dest.find('>') {
+            Some(close) => (&dest[1..close], &dest[close + 1..]),
+            None => (dest, ""),
+        }
+    } else {
+        match dest.find(char::is_whitespace) {
+            Some(sp) => (&dest[..sp], &dest[sp..]),
+            None => (dest, ""),
+        }
+    };
+    (url, strip_title_delims(rest.trim()))
+}
+
+/// Strip the surrounding title delimiters from a CommonMark image title
+/// (`"…"`/`'…'`/`(…)`); return the input unchanged when it is not delimited.
+fn strip_title_delims(s: &str) -> &str {
+    let b = s.as_bytes();
+    if b.len() >= 2
+        && matches!(
+            (b[0], b[b.len() - 1]),
+            (b'"', b'"') | (b'\'', b'\'') | (b'(', b')')
+        )
+    {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// Build the `\figure` atom for an image, applying roxygen2's `get_image_format`:
+/// a destination matching only the HTML extension set (`svg`) is wrapped in
+/// `\if{html}{…}`, only the PDF set (`pdf`) in `\if{pdf}{…}`, and one matching both
+/// (raster: `jpg`/`jpeg`/`gif`/`png`) or neither stays a bare `\figure`. The title
+/// is verbatim and omitted when empty.
+fn figure_atom(url: &str, title: &str) -> String {
+    let mut args = vec![format!("(VERB {})", encode_text(url))];
+    if !title.is_empty() {
+        args.push(format!("(VERB {})", encode_text(title)));
+    }
+    let figure = format!("(\\figure {})", args.join(" "));
+    match image_format(url) {
+        ImageFormat::Html => format!("(\\if (TEXT {}) {figure})", encode_text("html")),
+        ImageFormat::Pdf => format!("(\\if (TEXT {}) {figure})", encode_text("pdf")),
+        ImageFormat::All => figure,
+    }
+}
+
+/// The conditional an image destination renders under, per roxygen2's
+/// `get_image_format`/`default_image_formats` (`markdown.R`).
+enum ImageFormat {
+    Html,
+    Pdf,
+    All,
+}
+
+/// Classify an image destination by extension, mirroring roxygen2's
+/// `default_image_formats` regexes (`[.](jpg|jpeg|gif|png|svg)$` for HTML,
+/// `[.](jpg|jpeg|gif|png|pdf)$` for PDF). Matching both sets (or neither) is
+/// `All` (a bare `\figure`); matching one only carves the `\if` wrapper.
+fn image_format(url: &str) -> ImageFormat {
+    let lower = url.to_ascii_lowercase();
+    let has_dot_ext = |exts: &[&str]| {
+        exts.iter()
+            .any(|e| lower.strip_suffix(e).is_some_and(|p| p.ends_with('.')))
+    };
+    match (
+        has_dot_ext(&["jpg", "jpeg", "gif", "png", "svg"]),
+        has_dot_ext(&["jpg", "jpeg", "gif", "png", "pdf"]),
+    ) {
+        (true, false) => ImageFormat::Html,
+        (false, true) => ImageFormat::Pdf,
+        _ => ImageFormat::All,
+    }
 }
 
 /// Wrap an atom in `(\code …)` when `is_code`, else return it unchanged.

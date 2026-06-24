@@ -150,14 +150,21 @@ pub enum SyntaxKind {
     // block Rd macros thread them.
     ROXYGEN_MD_LIST,
     ROXYGEN_MD_LIST_ITEM,
+    /// A markdown image `![alt](url "title")`, emitted **only** under a resolved
+    /// `@md` block mode. Like the other markdown leaves it holds its whole span
+    /// (delimiters included) so the run tiles exactly. The projector maps it to
+    /// `\figure{url}{title}`, wrapping the figure in `\if{html}{…}`/`\if{pdf}{…}`
+    /// per roxygen2's extension-keyed `get_image_format` rule. Appended last to
+    /// keep the earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_IMAGE,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_LIST_ITEM` remains the
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_IMAGE` remains the
     /// last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_LIST_ITEM as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_IMAGE as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -176,6 +183,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_STRONG
                 | SyntaxKind::ROXYGEN_MD_CODE
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
+                | SyntaxKind::ROXYGEN_MD_IMAGE
         )
     }
 
@@ -194,6 +202,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_STRONG
                 | SyntaxKind::ROXYGEN_MD_CODE
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
+                | SyntaxKind::ROXYGEN_MD_IMAGE
         )
     }
 }
@@ -308,6 +317,7 @@ impl Language for RLanguage {
             93 => SyntaxKind::ROXYGEN_MD_LIST_MARKER,
             94 => SyntaxKind::ROXYGEN_MD_LIST,
             95 => SyntaxKind::ROXYGEN_MD_LIST_ITEM,
+            96 => SyntaxKind::ROXYGEN_MD_IMAGE,
             _ => SyntaxKind::ERROR,
         }
     }

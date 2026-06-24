@@ -300,6 +300,15 @@
       flipping the default reinterprets every block, so it needs its own re-bless
       pass), and **nested** lists (in-list indentation is dropped, so a nested list
       projects flat — un-allowlisted backlog, never a passing-but-wrong gate entry).
+      **Images + `\figure` landed (Stage 14, 2026-06-24f):** the Rd `\figure{path}{caption}`
+      macro is now a two-arg macro with both args verbatim (`TWO_ARG_RD_MACROS` +
+      `is_verbatim_rd_arg`), and a markdown image `![alt](url "title")` lexes to a new
+      `ROXYGEN_MD_IMAGE` leaf (`scan_md_image`, mode-gated). The projector's
+      `resolve_md_image` mirrors roxygen2's `mdxml_image`: alt dropped, `\figure{url}{title}`,
+      wrapped in `\if{html}{…}`/`\if{pdf}{…}` per the extension-keyed `get_image_format`
+      rule (svg→html, pdf→pdf, raster/unknown→bare). +3 projector cases (rx-29d590cf,
+      rx-44eb4ad9, rx-561b9e7d). Reference/shortcut images (`![alt][ref]`/`![alt]`) are
+      backlog (inline form only).
     - *Hard constraints (the reason this is non-trivial).* Must preserve
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,
