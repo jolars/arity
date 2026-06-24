@@ -310,15 +310,22 @@
       **deferred:** the settled loose-file/`DESCRIPTION`
       **default-ON** (only an explicit per-block `@md` enables markdown today —
       flipping the default reinterprets every block, so it needs its own re-bless
-      pass), and **markdown** nested lists (in-list indentation is dropped, so a
-      nested `*`/`1.` list projects flat — un-allowlisted backlog `rx-91e67e79`,
-      never a passing-but-wrong gate entry). **Nested *Rd* block macros landed
+      pass). **Markdown nested lists landed (2026-06-24r):** `emit_md_list` now
+      recurses by CommonMark indentation (a following list line indented to an
+      item's content column opens a nested `ROXYGEN_MD_LIST` inside that item, a
+      line back at the list's marker column is a sibling), the projector handles a
+      nested `ROXYGEN_MD_LIST` child (new `push_inline` arm; `md_list_is_ordered`
+      now reads direct-child markers only, so a nested ordered sublist can't flip
+      the parent's head), and the formatter **preserves** the content indentation
+      (`normalize_list_marker_text`) because it now sets the nesting depth —
+      flattening it would change the rendered Rd (a behavior change). +1
+      (rx-91e67e79) + curated `md_nested_list`. **Nested *Rd* block macros landed
       (2026-06-24q):** an unbalanced nested `\name{` opener inside a block macro's
       body (`\itemize{` inside `\enumerate{`) now opens a child `ROXYGEN_RD_MACRO`
       via a `BodyFrame` stack in `emit_block_content` (replacing the flat brace-depth
       counter); the projector already recursed, so +1 (rx-959fc227) + curated
       `rd_nested_list`. Rd nesting is brace-driven (indentation-independent), so this
-      is distinct from the still-deferred markdown nested list.
+      is distinct from the markdown nested list above.
       **Images + `\figure` landed (Stage 14, 2026-06-24f):** the Rd `\figure{path}{caption}`
       macro is now a two-arg macro with both args verbatim (`TWO_ARG_RD_MACROS` +
       `is_verbatim_rd_arg`), and a markdown image `![alt](url "title")` lexes to a new
@@ -411,12 +418,12 @@
       corpus (`tests/oracle/corpus/roxygen.jsonl`, 217 standalone blocks mined from
       roxygen2's own tests by `scripts/harvest-roxygen-corpus.R`) measures the fixed
       point `roxygen2(format(x)) == roxygen2(x)` per case, gated opt-in by
-      `tests/oracle/roxygen-allowlist.txt`. Baseline **214 preserving / 2 divergent /
+      `tests/oracle/roxygen-allowlist.txt`. Baseline **215 preserving / 1 divergent /
       1 skipped**. This is a broad *semantic*-preservation net for the formatter, **not**
       the parser-growth driver: it is cosmetic-blind (a reflowed `\describe` renders
-      identical Rd, so it passes here) and R-dependent (`#[ignore]`d). Its 4 divergent
-      `@md` slugs (nested lists `rx-91e67e79`, `\preformatted{}` `rx-0a1710c0`; inline
-      raw HTML `rx-299f50fb` and block raw HTML `rx-daf9322f` now **closed**) are
+      identical Rd, so it passes here) and R-dependent (`#[ignore]`d). Its remaining
+      divergent `@md` slug (`\preformatted{}` `rx-0a1710c0`; nested lists `rx-91e67e79`,
+      inline raw HTML `rx-299f50fb`, and block raw HTML `rx-daf9322f` now **closed**) is
       downstream of the same block-structure work. Run `task roxygen-harvest`; ratchet via
       `task roxygen-harvest-seed`.
     - *Parser architecture — refactor BEFORE the next markdown push (links/tables/

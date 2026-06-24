@@ -100,9 +100,16 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   `<`-html/list-marker/fence/image) — else its leaf kind stops implying `@md` and the projector
   mis-fires in non-`@md` blocks. (The `[`-link slipped this once; audit every new recognizer.)
 - **Inline landed:** emphasis/strong/code (`\emph`/`\strong`/`\code`-vs-`\verb` per
-  arity-parseability = roxygen2 `can_parse`), links, images, raw HTML. **Block landed:** lists,
-  fenced code blocks, HTML blocks. **Nested lists NOT modeled** (in-list indent dropped →
-  projects flat; backlog, never patch to passing-but-wrong).
+  arity-parseability = roxygen2 `can_parse`), links, images, raw HTML. **Block landed:** lists
+  (incl. **nested**), fenced code blocks, HTML blocks.
+- **Markdown nested lists are indentation-driven** (`emit_md_list` recurses: a following list
+  line indented ≥ an item's content column = `marker_indent + marker_width + 1..=4` opens a
+  child `ROXYGEN_MD_LIST` *inside* that item; a line back at the list's marker column is a
+  sibling; shallower ends it). The content indentation is **semantic** → the formatter must
+  preserve it (`normalize_list_marker_text` keeps content indent, normalizing only the `#'` +
+  one conventional space); flattening it = a behavior change. Projector: `push_inline` maps a
+  nested `ROXYGEN_MD_LIST` node → `Inline::MdList`; `md_list_is_ordered` reads **direct-child**
+  item markers only (a nested ordered sublist must not flip the parent's `\itemize`/`\enumerate`).
 - **Links: under `@md` *every* bracket-free `[…]` not followed by `[`/`{` is a link**
   (`get_md_linkrefs`; `is_shortcut_content` mirrors it). `resolve_md_link` ports `parse_link`
   (inline→`\href`, reference/shortcut→`\link`/`\linkS4class`, `\code`-wrapped per code-span/`()`).
@@ -189,11 +196,11 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). Current (after
-nested Rd block macros, 2026-06-24q): **141 matching (all
-allowlisted), 23 divergent (backlog)** of 164 pinned cases. The
+markdown nested lists, 2026-06-24r): **143 matching (all
+allowlisted), 22 divergent (backlog)** of 165 pinned cases. The
 divergences are now almost all roxygen2-*evaluation*/multi-block gaps (out of
-scope); the in-scope remainder is markdown nested lists, links-across-lines,
-mid-line `\preformatted`, and `@format %` (all hard tail). Tasks:
+scope); the in-scope remainder is links-across-lines, mid-line `\preformatted`,
+and `@format %` (all hard tail). Tasks:
 `task roxygen-projector` (the gate),
 `task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
 (harvested pins only), `task roxygen-projector-seed` (re-seed allowlist from matches).
@@ -203,76 +210,81 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (164 pinned cases). The 23 divergences are the worklist.
+   subset (165 pinned cases). The 22 divergences are the worklist.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 13/13 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 14/14 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
-   (214 preserving, 2 divergent, 1 skipped). A coverage net, **not** the parser driver
+   (215 preserving, 1 divergent, 1 skipped). A coverage net, **not** the parser driver
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24q) — nested *Rd* block macros (`\itemize` in `\enumerate`)
+## Latest session (2026-06-24r) — markdown nested lists (`\itemize` in `\enumerate`, indent-driven)
 
-**Construct:** an unbalanced nested `\name{` opener inside a block macro's body — a
-`\itemize{` (or `\enumerate`/`\describe`) that opens across `#'` lines *within* a
-parent block macro. Previously flattened (the inner opener stayed loose
-`ROXYGEN_TEXT`, the `\item`s were siblings of the parent's content). Rd nesting is
-**brace-driven, indentation-independent** (so it works in both modes; the corpus case
-happens to carry `@md` but uses explicit Rd macros). Closed **1 harvested case**
-(rx-959fc227) + new curated `rd_nested_list`.
+**Construct:** an `@md` markdown list whose items carry sub-lists by **indentation**
+(`1.`/`*` nested under a parent item). Previously every marker was a flat sibling
+(in-list indent dropped → projected flat → divergent `rx-91e67e79`). Distinct from
+last session's *Rd* block-macro nesting (brace-driven); this is CommonMark
+indentation nesting. Closed **rx-91e67e79** + new curated `md_nested_list`.
 
-**Bucket: parser gap (projector already recursed).** `serialize_macro` already
-recurses on a child `ROXYGEN_RD_MACRO`, so this was purely a parser fix.
-`emit_block_content` (`build.rs`) traded its flat `depth: usize` counter for a
-`Vec<BodyFrame>` stack (`Macro` = a nested macro we opened, `Plain` = a bare prose
-`{`). On a `\name{` opener it now flushes the run, emits `Start(ROXYGEN_RD_MACRO)` +
-name + `{`, and pushes `Macro`; on `}` it pops — `None` ⇒ terminates the *enclosing*
-macro (the parent body is the empty-stack baseline), `Macro` ⇒ emits `}` + `Finish`,
-`Plain` ⇒ literal text. An unterminated macro (ended by a tag/block end) closes any
-still-open `Macro` frames so the event stream stays balanced.
+**Bucket: parser gap + formatter coupling (the subtle part).** Three coordinated
+changes, all in this RECAP's "Markdown nested lists" trap:
+1. **Parser** (`build.rs`): `emit_md_list` now calls a recursive `emit_md_list_level`
+   keyed on `list_indent`. A following list line whose indent ≥ the current item's
+   `content_indent` (= marker_indent + marker_width + `content_leading_spaces` 1..=4)
+   opens a nested `ROXYGEN_MD_LIST` *inside* that item; a line back at `list_indent`
+   is a sibling; shallower ends the level (the caller resumes). Helpers
+   `list_line_indent`/`content_leading_spaces`/`next_list_line`. Trivia threaded
+   losslessly (verified).
+2. **Projector** (`project_rd.rs`): `push_inline` maps a nested `ROXYGEN_MD_LIST`
+   node → `Inline::MdList` (was falling through to `Inline::Text` of the whole
+   subtree); `md_list_is_ordered` now reads **direct-child** item markers (a nested
+   ordered sublist must not flip the parent's `\itemize`/`\enumerate`).
+3. **Formatter** (`formatter/roxygen.rs`): the old `emit_md_list` trimmed each line's
+   content (dropping the now-**semantic** indentation). New `normalize_list_marker_text`
+   preserves content indent, normalizing only the `#'` sigil + one conventional space.
+   *Required for correctness:* flattening the sublist would make `format(x)` render a
+   flat Rd → a behavior change (the harvested fixed-point net catches it).
 
-**Why low-regression:** the change activates *only* on an unbalanced nested `\name{`
-in `RoxygenText`. Flat `\itemize`/`\describe`/`\tabular` bodies use brace-less
-`\item`/`\cr` (separate branch) or *balanced* `\item{a}{b}` (lexed as its own
-`RoxygenRdMacro` token, passed through). The allowlist gate guards all of them, so any
-regression is detected.
+**Result:** projector **141→143 matching** (143 allowlisted), 23→22 divergent, 0
+regressions, 165 pinned (+1 curated `md_nested_list`). `cargo test` fully green (479
+tests), clippy + fmt clean. R nets: curated fixed-point **14/14** preserving;
+harvested **215 preserving** (was 214; rx-91e67e79 flipped divergent→preserving thanks
+to the formatter fix), 1 divergent, 1 skipped. Two format-baseline re-blesses (intended,
+reviewed): rx-91e67e79 + curated `md_nested_list` now keep nesting indentation. Files:
+`src/parser/roxygen/build.rs`, `src/roxygen/project_rd.rs`, `src/formatter/roxygen.rs`,
+new fixture `tests/fixtures/parser/roxygen_md_nested_list/` (+2 snapshots), new curated
+`tests/oracle/corpus/roxygen/md_nested_list.{R,rdtree}`, both allowlists (+re-seed),
+`roxygen-format-baseline.jsonl`, `tests/parser_snapshots.rs`, TODO, RECAP.
 
-**Result:** projector **139→141 matching** (141 allowlisted), 24→23 divergent, 0
-regressions, 164 pinned (+1 curated `rd_nested_list`). `cargo test` fully green
-(479+ tests, no format-stability re-bless — block macros are atomic passthrough),
-clippy + fmt clean, curated fixed-point **13/13** preserving. Files:
-`src/parser/roxygen/build.rs` (`BodyFrame` stack: `emit_block_content`,
-`emit_block_{open,body_open,macro}`), new fixture
-`tests/fixtures/parser/roxygen_rd_nested_list/` (+ 2 snapshots), new curated
-`tests/oracle/corpus/roxygen/rd_nested_list.{R,rdtree}`, allowlist (+2 via re-seed),
-`tests/parser_snapshots.rs`, TODO, RECAP.
-
-**Triaged out-of-scope this session** (don't re-investigate — confirmed via the
-oracle): **rx-49a38f56** reexports (roclet *generates* the `\describe` from the
-namespace), **rx-8f9c159b** data-object auto-`\format` (roxygen2 *evaluates* the
-object), **rx-aef0e809** duplicate-`@name` block *merge* (cross-block), **rx-93452c15**
-block→object *association* (a `#'` block after `;`/inside a body that roxygen2 drops).
-arity is per-block + static, so all four are out of scope.
-
-**Next (ranked):** 23 divergent, almost all out of scope — roxygen2-*evaluation*
+**Next (ranked):** 22 divergent, almost all out of scope — roxygen2-*evaluation*
 (` ```{r} ` eval blocks rx-2900ecd5/24b3bfd6/24ef0d37/a6ac1b4d/e0e631c5/55b6980b,
 inline `` `r …` `` rx-21fd7c2f/8770c410/cc0ae196, data-object auto-`\format`
 rx-4d59d472/cbcc255c/deb9d202/8f9c159b, RefClass docstrings rx-e02bf95c/f5812049) or
 cross-block (rx-49a38f56/aef0e809/93452c15). The genuine **in-scope** tail (all hard):
-**markdown nested lists** rx-91e67e79 (needs in-list *indentation* tracking in
-`emit_md_list` — distinct from the Rd nesting just landed), **links broken across
-lines** rx-383f2ca3/eb12b6b6 (line-scoped lexer), **mid-line `\preformatted{}`**
-rx-0a1710c0 (a *third* block-opener form, non-line-start), and **`@format %`**
-rx-f6927028 — confirmed this session that roxygen2 strips `%`-to-EOL as an Rd comment
-in *all* non-md prose (`50% done` → `50`), so faithful handling is a lexer feature,
-but arity's formatter **reflows roxygen prose across lines** (verified), so a naive
-`%`-comment leaf would swallow the joined next line → needs coordinated parser+formatter
-work (force-break after the comment, like R `#`). Defer. **Block HTML follow-ups:**
-CommonMark conditions 1–5/7 stay literal/inline (faithful under-handling).
+**mid-line `\preformatted{}`** rx-0a1710c0 (a *third* block-opener form, non-line-start;
+content verbatim — needs lexer + grouper + builder, expected
+`(\preformatted (VERB " *these are not\n") (VERB "  emphasised*…\n"))`), **links broken
+across lines** rx-383f2ca3/eb12b6b6 (line-scoped lexer; the link text/dest spans `#'`
+lines and soft-wraps), and **`@format %`** rx-f6927028 (roxygen2 strips `%`-to-EOL as an
+Rd comment in *all* non-md prose; expected `(\format)` empty — but arity's formatter
+**reflows roxygen prose across lines**, so a naive `%`-comment leaf would swallow the
+joined next line → needs coordinated parser+formatter work, force-break after the comment
+like R `#`. Defer). **Block HTML follow-ups:** CommonMark conditions 1–5/7 stay
+literal/inline (faithful under-handling).
 
 ## Earlier sessions
+
+- **2026-06-24q (nested *Rd* block macros, `\itemize` in `\enumerate`):** an unbalanced
+  nested `\name{` opener inside a block macro's body now opens a child `ROXYGEN_RD_MACRO`
+  via a `Vec<BodyFrame>` stack in `emit_block_content` (`Macro`/`Plain` frames; `}` at the
+  empty stack terminates the enclosing macro) — replacing the flat `depth` counter. Projector
+  already recursed (`serialize_macro` on a child `ROXYGEN_RD_MACRO`), so parser-only. Brace-
+  driven, indentation-independent. +1 (rx-959fc227) + curated `rd_nested_list`. 139→141.
+  *Triaged out-of-scope (confirmed via oracle):* rx-49a38f56 reexports, rx-8f9c159b/cbcc255c/
+  deb9d202/4d59d472 data-object auto-`\format` (roxygen2 evaluates), rx-aef0e809 `@name` merge,
+  rx-93452c15 block→object association — all cross-block or evaluation, arity is per-block+static.
 
 - **2026-06-24p (`@rawRd` → bare top-level Rd nodes):** projector arm in
   `project_tag_section` (`rawRd` pushes each `serialize_inlines` atom as a *bare*
@@ -340,20 +352,11 @@ CommonMark conditions 1–5/7 stay literal/inline (faithful under-handling).
   even without `@md`, mislabeling literal Rd brackets); gated it `b'[' if md`. New
   `Inline::MdLink` arm; `serialize_md_link` → `(\href (VERB url) (TEXT text))`.
   93→95 matching. **Trap:** every md *inline* recognizer must be `if md`-gated.
-- **2026-06-24b (Refactor #2, split `roxygen.rs` along phase boundaries):** carved the
-  1686-line `src/parser/roxygen.rs` into a thin parent (113, shared macro-classification +
-  `scan_balanced`/`utf8_len` + re-exports) + 3 phase submodules under `src/parser/roxygen/`:
-  `lex.rs` (996, sub-lexing + lexer tests), `group.rs` (200, token→event grouping),
-  `build.rs` (430, Rd-macro/markdown building). Sibling-internal items `pub(super)`,
-  externally-reached `pub(crate)`. Pure refactor, byte-identical (projector 93/66 unmoved).
-  The "shared infra over `cursor.rs`/`recovery.rs`" rewrite is a **NON-GOAL** (cursor = same
-  index-threading idiom; recovery builds ERROR nodes roxygen rejects). Form A/B block-opener
-  split is a watch item (a *third* form ⇒ reconsider lex-time greediness).
-- **2026-06-24 (Refactor #1, unify `TokKind`/`SyntaxKind` classification):** collapsed 8
-  silent `matches!` lists onto a compiler-policed source. New `RoxygenRole` +
-  wildcard-free `TokKind::roxygen_role` (`lexer.rs`) for the lexer/parser side;
-  `SyntaxKind::is_roxygen_prose_content` (`syntax.rs`) for the formatter side. Pure
-  refactor, byte-identical (projector 93/66 unmoved). +78/−78 across 4 source files.
+- **2026-06-24b/24 (Refactors, byte-identical, projector 93/66 unmoved):** #2 split the
+  1686-line `src/parser/roxygen.rs` into a thin parent + 3 phase submodules
+  (`lex.rs`/`group.rs`/`build.rs`); shared-infra-over-`cursor`/`recovery` is a **NON-GOAL**.
+  #1 collapsed 8 silent `matches!` lists onto a compiler-policed source (`RoxygenRole` +
+  wildcard-free `TokKind::roxygen_role`; `SyntaxKind::is_roxygen_prose_content`).
 - **2026-06-23 (Stages 1–11, condensed; mechanics in traps + TODO):** Stage 1 CST
   re-model (`ROXYGEN_LINE` dissolved → `ROXYGEN_SECTION`/`ROXYGEN_PARAGRAPH`, trivia
   threading; byte-identical); Stage 2 `\itemize`/`\enumerate` (multi-line `ROXYGEN_RD_MACRO`

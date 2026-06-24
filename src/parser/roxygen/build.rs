@@ -116,55 +116,127 @@ fn is_md_list_continuation(tokens: &[Token], marker: usize) -> bool {
     tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdListMarker)
 }
 
+/// The indentation (in columns) of a list line whose `RoxygenMarker` is at
+/// `marker`: the width of the `#'`→content whitespace, which — after the `#'`
+/// sigil and one conventional space are stripped — is what CommonMark uses to
+/// decide list nesting. (Tabs count as one column here; the corpus uses spaces.)
+fn list_line_indent(tokens: &[Token], marker: usize) -> usize {
+    let mut k = marker + 1;
+    let mut indent = 0;
+    while tokens.get(k).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+        indent += tokens[k].text.chars().count();
+        k += 1;
+    }
+    indent
+}
+
+/// The number of leading spaces of a list item's content (the first body token
+/// after its marker), clamped to CommonMark's 1..=4: a child block must be
+/// indented to at least `marker_indent + marker_width + this` to nest.
+fn content_leading_spaces(tokens: &[Token], content: usize) -> usize {
+    tokens
+        .get(content)
+        .filter(|t| is_line_body_kind(&t.kind))
+        .map(|t| {
+            t.text
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .count()
+        })
+        .unwrap_or(1)
+        .clamp(1, 4)
+}
+
+/// From `i` (expected at a line's trailing `Newline`), the index of the next
+/// line's `RoxygenMarker` when that line continues a markdown list (its content
+/// begins with a `RoxygenMdListMarker`); `None` otherwise.
+fn next_list_line(tokens: &[Token], i: usize) -> Option<usize> {
+    if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+        return None;
+    }
+    let mut m = i + 1;
+    while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+        m += 1;
+    }
+    (tokens.get(m).map(|t| &t.kind) == Some(&TokKind::RoxygenMarker)
+        && is_md_list_continuation(tokens, m))
+    .then_some(m)
+}
+
 /// Emit a `ROXYGEN_MD_LIST` node spanning the consecutive markdown-list lines
-/// beginning at `start` (a `RoxygenMarker` whose content opens a list item).
-/// Each item is a `ROXYGEN_MD_LIST_ITEM` holding its `RoxygenMdListMarker` leaf
-/// and inline content; the `#'` markers, the marker→content whitespace, and the
-/// inter-line newlines/indentation are threaded in as trivia at the list level
-/// (losslessness), the way the block Rd macros thread them. The trailing newline
-/// after the final item is left to the caller. Returns the token index just past
-/// the last consumed content.
+/// beginning at `start` (a `RoxygenMarker` whose content opens a list item),
+/// modeling **nesting** by indentation (CommonMark): a following list line
+/// indented to an item's content column (or deeper) opens a nested
+/// `ROXYGEN_MD_LIST` inside that item, while a line back at the list's own
+/// marker column is a sibling. The trailing newline after the final item is left
+/// to the caller. Returns the token index just past the last consumed content.
 pub(super) fn emit_md_list(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    emit_md_list_level(tokens, start, list_line_indent(tokens, start), events)
+}
+
+/// Emit one `ROXYGEN_MD_LIST` whose item markers sit at indentation
+/// `list_indent`. Each item is a `ROXYGEN_MD_LIST_ITEM` holding its
+/// `RoxygenMdListMarker` leaf, inline content, and any nested `ROXYGEN_MD_LIST`;
+/// the `#'` markers, marker→content whitespace, and inter-line
+/// newlines/indentation are threaded in as trivia (losslessness), the way the
+/// block Rd macros thread them. Recurses for nested levels.
+fn emit_md_list_level(
+    tokens: &[Token],
+    start: usize,
+    list_indent: usize,
+    events: &mut Vec<Event>,
+) -> usize {
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST));
 
     let mut i = start;
     loop {
-        // `i` is at a `RoxygenMarker` of a list-item line. The marker and the
-        // marker→content whitespace are threaded at the list level (trivia).
+        // `i` is at a `RoxygenMarker` of a list-item line at this level. The
+        // marker and the marker→content whitespace are threaded as trivia.
         events.push(Event::Tok(i));
         i += 1;
+        let mut indent = 0;
         while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            indent += tokens[i].text.chars().count();
             events.push(Event::Tok(i));
             i += 1;
         }
 
-        // The item: its `RoxygenMdListMarker` leaf, then its inline content.
+        // The item: its `RoxygenMdListMarker` leaf, then its inline content. A
+        // child block must reach this item's content column to nest under it.
         events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST_ITEM));
+        let marker_width = tokens[i].text.chars().count();
         events.push(Event::Tok(i)); // RoxygenMdListMarker
         i += 1;
+        let content_indent = indent + marker_width + content_leading_spaces(tokens, i);
         while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
             events.push(Event::Tok(i));
             i += 1;
         }
+
+        // Nested lists: every following list line indented to (or past) this
+        // item's content column is a child list inside this item.
+        while let Some(m) = next_list_line(tokens, i) {
+            if list_line_indent(tokens, m) < content_indent {
+                break;
+            }
+            for idx in i..m {
+                events.push(Event::Tok(idx)); // `\n` + leading indentation (trivia)
+            }
+            i = emit_md_list_level(tokens, m, list_line_indent(tokens, m), events);
+        }
         events.push(Event::Finish); // ROXYGEN_MD_LIST_ITEM
 
-        // Continuation: a following list-item line folds its `\n` and leading
-        // indentation in as trivia, leaving its marker for the next iteration.
-        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+        // Sibling: a following list line back at this level's marker column
+        // continues the list; anything shallower ends it (the caller resumes).
+        let Some(m) = next_list_line(tokens, i) else {
             break;
-        }
-        let mut m = i + 1;
-        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-            m += 1;
-        }
-        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker)
-            || !is_md_list_continuation(tokens, m)
-        {
+        };
+        if list_line_indent(tokens, m) != list_indent {
             break;
         }
         for idx in i..m {
-            events.push(Event::Tok(idx));
+            events.push(Event::Tok(idx)); // `\n` + leading indentation (trivia)
         }
         i = m;
     }

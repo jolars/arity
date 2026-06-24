@@ -1,0 +1,65 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..135
+  ROXYGEN_BLOCK@0..129
+    ROXYGEN_SECTION@0..28
+      ROXYGEN_PARAGRAPH@0..25
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..24 "Nested markdown lists"
+        NEWLINE@24..25 "\n"
+      ROXYGEN_MARKER@25..27 "#'"
+      NEWLINE@27..28 "\n"
+    ROXYGEN_SECTION@28..99
+      ROXYGEN_MARKER@28..30 "#'"
+      WHITESPACE@30..31 " "
+      ROXYGEN_TAG@31..39
+        ROXYGEN_AT@31..32 "@"
+        ROXYGEN_TAG_NAME@32..39 "details"
+      NEWLINE@39..40 "\n"
+      ROXYGEN_MD_LIST@40..98
+        ROXYGEN_MARKER@40..42 "#'"
+        WHITESPACE@42..43 " "
+        ROXYGEN_MD_LIST_ITEM@43..87
+          ROXYGEN_MD_LIST_MARKER@43..45 "1."
+          ROXYGEN_TEXT@45..54 " numbered"
+          NEWLINE@54..55 "\n"
+          ROXYGEN_MD_LIST@55..87
+            ROXYGEN_MARKER@55..57 "#'"
+            WHITESPACE@57..61 "    "
+            ROXYGEN_MD_LIST_ITEM@61..71
+              ROXYGEN_MD_LIST_MARKER@61..62 "*"
+              ROXYGEN_TEXT@62..71 " itemized"
+            NEWLINE@71..72 "\n"
+            ROXYGEN_MARKER@72..74 "#'"
+            WHITESPACE@74..78 "    "
+            ROXYGEN_MD_LIST_ITEM@78..87
+              ROXYGEN_MD_LIST_MARKER@78..79 "*"
+              ROXYGEN_TEXT@79..87 " sublist"
+        NEWLINE@87..88 "\n"
+        ROXYGEN_MARKER@88..90 "#'"
+        WHITESPACE@90..91 " "
+        ROXYGEN_MD_LIST_ITEM@91..98
+          ROXYGEN_MD_LIST_MARKER@91..93 "2."
+          ROXYGEN_TEXT@93..98 " list"
+      NEWLINE@98..99 "\n"
+    ROXYGEN_SECTION@99..106
+      ROXYGEN_MARKER@99..101 "#'"
+      WHITESPACE@101..102 " "
+      ROXYGEN_TAG@102..105
+        ROXYGEN_AT@102..103 "@"
+        ROXYGEN_TAG_NAME@103..105 "md"
+      NEWLINE@105..106 "\n"
+    ROXYGEN_SECTION@106..129
+      ROXYGEN_MARKER@106..108 "#'"
+      WHITESPACE@108..109 " "
+      ROXYGEN_TAG@109..129
+        ROXYGEN_AT@109..110 "@"
+        ROXYGEN_TAG_NAME@110..114 "name"
+        WHITESPACE@114..115 " "
+        ROXYGEN_TEXT@115..129 "md_nested_list"
+  NEWLINE@129..130 "\n"
+  IDENT@130..134 "NULL"
+  NEWLINE@134..135 "\n"

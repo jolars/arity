@@ -770,6 +770,11 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_RD_MACRO => {
             out.push(Inline::Macro(n));
         }
+        // A nested `ROXYGEN_MD_LIST` (a sublist inside a list item) projects as
+        // its own `\itemize`/`\enumerate`, the way a top-level list does.
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LIST => {
+            out.push(Inline::MdList(n));
+        }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
         // Markdown inline leaves (emitted only under `@md`): carve off their
         // delimiters and carry the inner content; the kind chooses the Rd macro.
@@ -1273,9 +1278,16 @@ fn strip_marker(line: &str) -> &str {
 /// `ROXYGEN_MD_LIST_MARKER` begins with a digit (`1.`/`1)`), as opposed to a
 /// bullet (`-`/`*`/`+`).
 fn md_list_is_ordered(node: &SyntaxNode) -> bool {
-    node.descendants_with_tokens()
-        .filter_map(|el| el.into_token())
-        .find(|t| t.kind() == SyntaxKind::ROXYGEN_MD_LIST_MARKER)
+    // Only this list's own items decide its kind — a nested sublist's markers
+    // (its own `\itemize`/`\enumerate`) must not flip the parent, so look at the
+    // first *direct* item's marker, not any descendant marker.
+    node.children()
+        .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+        .find_map(|item| {
+            item.children_with_tokens()
+                .filter_map(|el| el.into_token())
+                .find(|t| t.kind() == SyntaxKind::ROXYGEN_MD_LIST_MARKER)
+        })
         .is_some_and(|t| t.text().starts_with(|c: char| c.is_ascii_digit()))
 }
 

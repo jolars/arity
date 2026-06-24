@@ -177,13 +177,15 @@ fn emit_block_macro_examples(items: &mut Vec<Ir>, node: &SyntaxNode) {
 }
 
 /// Emit a markdown list (`@md` mode) as atomic passthrough, each `#'` line
-/// marker-normalized (marker, one space, trimmed content). The node owns its own
-/// `#'` markers and newlines; only the inter-line indentation is dropped. (A
-/// canonical re-indent that models nesting is future work — see `emit_block_macro`,
-/// which preserves in-macro indentation for Rd lists.)
+/// marker-normalized but **preserving the content's leading indentation**: in a
+/// markdown list that indentation is semantic (it sets the CommonMark nesting
+/// depth that the parser models as nested `ROXYGEN_MD_LIST`s), so flattening it
+/// would change the rendered Rd. Only the `#'` sigil and the single conventional
+/// space after it are normalized; everything the marker→content whitespace
+/// carries beyond that is kept.
 fn emit_md_list(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_marker_text(seg));
+        push_line(items, normalize_list_marker_text(seg));
     }
 }
 
@@ -219,6 +221,30 @@ fn normalize_marker_text(raw: &str) -> String {
     }
     let marker = &s[..hashes + 1];
     let content = s[hashes + 1..].trim();
+    if content.is_empty() {
+        marker.to_string()
+    } else {
+        format!("{marker} {content}")
+    }
+}
+
+/// Like [`normalize_marker_text`] but **preserves the content's leading
+/// indentation**: it normalizes the `#'` marker and the single conventional
+/// space after it, yet keeps any further indentation the content carries. Used
+/// for markdown lists, where that indentation is the semantic nesting depth (a
+/// trimmed sublist would render as a flat list — a behavior change).
+fn normalize_list_marker_text(raw: &str) -> String {
+    let s = raw.trim();
+    let hashes = s.len() - s.trim_start_matches('#').len();
+    if hashes == 0 || !s[hashes..].starts_with('\'') {
+        return s.to_string();
+    }
+    let marker = &s[..hashes + 1];
+    // Drop only the one conventional space after the sigil; the rest of the
+    // marker→content whitespace is the list's nesting indentation.
+    let content = s[hashes + 1..]
+        .strip_prefix(' ')
+        .unwrap_or(&s[hashes + 1..]);
     if content.is_empty() {
         marker.to_string()
     } else {
