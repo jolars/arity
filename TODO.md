@@ -388,7 +388,8 @@
       unknown macros, then **markdown fenced code blocks** (` ``` `/` ```r ` →
       `\if{html}{\out{<div…>}} \preformatted{…} \if{html}{\out{</div>}}`, info →
       `sourceCode` class), then **URL autolinks + empty-dest links** (`<url>`/`[url]()`
-      → `\url`) — closed). Now **133 matching / 28 divergent** of 161 pinned.
+      → `\url`), then **inline raw HTML** (`<img …>`/`</span>` → `\if{html}{\out{<tag>}}`,
+      `mdxml_html_inline`) — closed). Now **135 matching / 26 divergent** of 161 pinned.
       The remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
@@ -402,8 +403,8 @@
       the parser-growth driver: it is cosmetic-blind (a reflowed `\describe` renders
       identical Rd, so it passes here) and R-dependent (`#[ignore]`d). Its 4 divergent
       `@md` slugs (nested lists `rx-91e67e79`, `\preformatted{}` `rx-0a1710c0`, raw-HTML
-      block `rx-daf9322f`, inline raw HTML `rx-299f50fb`) are downstream of the same
-      block-structure work. Run `task roxygen-harvest`; ratchet via
+      block `rx-daf9322f`; inline raw HTML `rx-299f50fb` now **closed**) are downstream
+      of the same block-structure work. Run `task roxygen-harvest`; ratchet via
       `task roxygen-harvest-seed`.
     - *Parser architecture — refactor BEFORE the next markdown push (links/tables/
       nested lists).* The roxygen parser is sound but its phase discipline has eroded

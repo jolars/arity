@@ -460,6 +460,7 @@ fn parse_prefix(
         | TokKind::RoxygenMdCode
         | TokKind::RoxygenMdListMarker
         | TokKind::RoxygenMdFence
+        | TokKind::RoxygenMdHtml
         | TokKind::Unknown => None,
     }
 }

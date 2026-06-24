@@ -85,6 +85,9 @@ pub(crate) enum TokKind {
     /// carries the info string, the closer is backticks only). The block builder
     /// pairs an opener with its closer into a `ROXYGEN_MD_CODE_BLOCK`.
     RoxygenMdFence,
+    /// A raw inline-HTML tag (`<img …>`, `</span>`), recognized only under a
+    /// resolved `@md` block mode. Projected to `\if{html}{\out{<tag>}}`.
+    RoxygenMdHtml,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -120,7 +123,7 @@ impl TokKind {
             RoxygenTagArg => Some(RoxygenRole::TagArg),
             RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdImage
             | RoxygenMdEmph | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker
-            | RoxygenMdFence => Some(RoxygenRole::Content),
+            | RoxygenMdFence | RoxygenMdHtml => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

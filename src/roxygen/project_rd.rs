@@ -92,6 +92,10 @@ enum Inline {
     /// `\if{html}{\out{<div…>}}` / `\preformatted{…}` / `\if{html}{\out{</div>}}`
     /// sequence (see [`serialize_md_code_block`]).
     MdCodeBlock(SyntaxNode),
+    /// A raw inline-HTML tag resolved under `@md` mode, carrying the verbatim tag
+    /// text (`<img …>`, `</span>`). Projects to roxygen2's
+    /// `\if{html}{\out{<tag>}}` (`mdxml_html_inline`; see [`html_inline_atom`]).
+    MdHtml(String),
 }
 
 /// The kind of a resolved markdown inline leaf.
@@ -283,6 +287,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
                 Inline::MdLink(s) => Inline::MdLink(s.clone()),
                 Inline::MdImage(s) => Inline::MdImage(s.clone()),
                 Inline::MdCodeBlock(n) => Inline::MdCodeBlock(n.clone()),
+                Inline::MdHtml(s) => Inline::MdHtml(s.clone()),
             });
         }
     }
@@ -428,6 +433,13 @@ fn serialize_inlines(body: &[Inline]) -> Vec<String> {
                 }
                 run.clear();
                 atoms.extend(serialize_md_code_block(node));
+            }
+            Inline::MdHtml(raw) => {
+                if let Some(atom) = text_atom(&run) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(html_inline_atom(raw));
             }
         }
     }
@@ -760,6 +772,11 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
             if t.kind() == SyntaxKind::ROXYGEN_MD_IMAGE && resolve_md_image(t.text()).is_some() =>
         {
             out.push(Inline::MdImage(t.text().to_string()));
+        }
+        // A raw inline-HTML leaf `<tag>` → `\if{html}{\out{<tag>}}` (see
+        // [`html_inline_atom`]).
+        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_HTML => {
+            out.push(Inline::MdHtml(t.text().to_string()));
         }
         // A `ROXYGEN_MD_LIST_MARKER` that reached an inline run (rather than a
         // `ROXYGEN_MD_LIST`) is a marker that did not form a list — the CommonMark
@@ -1135,6 +1152,19 @@ fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
             encode_text("</div>")
         ),
     ]
+}
+
+/// Project a raw inline-HTML leaf into roxygen2's `\if{html}{\out{<tag>}}`
+/// (`mdxml_html_inline`, `markdown.R`): the tag text goes verbatim into a `\out`
+/// inside an `\if{html}{…}`. roxygen2 `escape_verb`-escapes `}` (→ `\}`) but
+/// `parse_Rd` decodes it, so the pin (and thus the projector) carries the raw
+/// tag.
+fn html_inline_atom(raw: &str) -> String {
+    format!(
+        "(\\if (TEXT {}) (\\out (VERB {})))",
+        encode_text("html"),
+        encode_text(raw)
+    )
 }
 
 /// Extract a fenced code block's `(info, code)` from its node. The info string is

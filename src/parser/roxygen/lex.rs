@@ -263,7 +263,9 @@ fn lex_roxygen_prose(
             b'\\' => scan_rd_macro(bytes, i).map(|end| (TokKind::RoxygenRdMacro, end)),
             b'!' if md => scan_md_image(bytes, i).map(|end| (TokKind::RoxygenMdImage, end)),
             b'[' if md => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
-            b'<' if md => scan_md_autolink(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
+            b'<' if md => scan_md_autolink(bytes, i)
+                .map(|end| (TokKind::RoxygenMdLink, end))
+                .or_else(|| scan_md_html_inline(bytes, i).map(|end| (TokKind::RoxygenMdHtml, end))),
             _ => None,
         };
         if let Some((kind, end)) = span {
@@ -517,6 +519,120 @@ fn scan_md_autolink(bytes: &[u8], i: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// A CommonMark inline raw-HTML tag at `bytes[i] == b'<'`: an open tag
+/// (`<name attrs… />`) or a closing tag (`</name >`), line-scoped. Returns the
+/// index past the closing `>`, or `None` when this is not a well-formed tag (it
+/// then stays literal prose — losslessness holds either way). The recognizer
+/// mirrors the CommonMark "Raw HTML" grammar precisely so it never carves a span
+/// `commonmark` (hence roxygen2) would keep literal; over-recognition would make
+/// the projector emit a spurious `\out`. The comment / processing-instruction /
+/// declaration / CDATA forms are **not** recognized (they stay literal — a
+/// faithful under-handling, backlog).
+///
+/// roxygen2's `mdxml_html_inline` renders such a tag verbatim inside
+/// `\if{html}{\out{…}}`.
+fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
+    let mut j = i + 1;
+    let closing = bytes.get(j) == Some(&b'/');
+    if closing {
+        j += 1;
+    }
+    // Tag name: an ASCII letter then letters/digits/`-`.
+    if !bytes.get(j).is_some_and(u8::is_ascii_alphabetic) {
+        return None;
+    }
+    j += 1;
+    while bytes
+        .get(j)
+        .is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        j += 1;
+    }
+    if closing {
+        // A closing tag takes no attributes: optional whitespace then `>`.
+        j = skip_html_ws(bytes, j);
+        return (bytes.get(j) == Some(&b'>')).then_some(j + 1);
+    }
+    // Zero or more attributes, each preceded by required whitespace.
+    loop {
+        let after_ws = skip_html_ws(bytes, j);
+        if after_ws == j {
+            break; // no whitespace ⇒ no further attribute
+        }
+        match scan_html_attribute(bytes, after_ws) {
+            Some(end) => j = end,
+            None => {
+                j = after_ws;
+                break;
+            }
+        }
+    }
+    // Optional whitespace, an optional self-closing `/`, then `>`.
+    j = skip_html_ws(bytes, j);
+    if bytes.get(j) == Some(&b'/') {
+        j += 1;
+    }
+    (bytes.get(j) == Some(&b'>')).then_some(j + 1)
+}
+
+/// Advance past a run of ASCII spaces and tabs (the line-scoped subset of
+/// CommonMark "whitespace" — line endings cannot occur inside a sub-lexed line).
+fn skip_html_ws(bytes: &[u8], i: usize) -> usize {
+    let mut j = i;
+    while bytes.get(j).is_some_and(|&b| matches!(b, b' ' | b'\t')) {
+        j += 1;
+    }
+    j
+}
+
+/// A CommonMark HTML-tag attribute at `bytes[i]` (the byte after the required
+/// whitespace): an attribute name, optionally followed by `=` and a quoted or
+/// unquoted value. Returns the index past the attribute, or `None` when `i` does
+/// not start a valid attribute name (or a present `=` lacks a valid value).
+fn scan_html_attribute(bytes: &[u8], i: usize) -> Option<usize> {
+    // Name: [A-Za-z_:][A-Za-z0-9_.:-]*
+    if !bytes
+        .get(i)
+        .is_some_and(|&b| b.is_ascii_alphabetic() || matches!(b, b'_' | b':'))
+    {
+        return None;
+    }
+    let mut j = i + 1;
+    while bytes
+        .get(j)
+        .is_some_and(|&b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':' | b'-'))
+    {
+        j += 1;
+    }
+    let after_name = j;
+    // Optional value: `\s* = \s* value`.
+    let eq = skip_html_ws(bytes, j);
+    if bytes.get(eq) != Some(&b'=') {
+        return Some(after_name);
+    }
+    j = skip_html_ws(bytes, eq + 1);
+    match bytes.get(j) {
+        Some(&q @ (b'\'' | b'"')) => {
+            j += 1;
+            while bytes.get(j).is_some_and(|&b| b != q) {
+                j += 1;
+            }
+            (bytes.get(j) == Some(&q)).then_some(j + 1)
+        }
+        _ => {
+            // Unquoted value: one or more chars excluding whitespace and
+            // `"'=<>` `` ` ``.
+            let start = j;
+            while bytes.get(j).is_some_and(|&b| {
+                !matches!(b, b' ' | b'\t' | b'"' | b'\'' | b'=' | b'<' | b'>' | b'`')
+            }) {
+                j += 1;
+            }
+            (j > start).then_some(j)
+        }
+    }
 }
 
 /// An Rd macro at `bytes[i] == b'\\'`: `\name`, an optional balanced `[…]`, then
@@ -782,6 +898,7 @@ mod tests {
                         | TokKind::RoxygenMdCode
                         | TokKind::RoxygenMdListMarker
                         | TokKind::RoxygenMdFence
+                        | TokKind::RoxygenMdHtml
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1032,17 +1149,60 @@ mod tests {
 
     #[test]
     fn md_url_autolink() {
-        // A `<scheme:…>` autolink carves as a `RoxygenMdLink` under `@md`; raw HTML
-        // (`<p>`, no scheme `:`) does not.
+        // A `<scheme:…>` autolink carves as a `RoxygenMdLink` under `@md`; a raw
+        // HTML tag (no scheme `:`) carves as a `RoxygenMdHtml`.
         assert_eq!(
             prose_texts("#' see <https://x.y/a> and <p>lit</p>\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "see ".into()),
                 (TokKind::RoxygenMdLink, "<https://x.y/a>".into()),
-                (TokKind::RoxygenText, " and <p>lit</p>".into()),
+                (TokKind::RoxygenText, " and ".into()),
+                (TokKind::RoxygenMdHtml, "<p>".into()),
+                (TokKind::RoxygenText, "lit".into()),
+                (TokKind::RoxygenMdHtml, "</p>".into()),
             ]
         );
         assert_lossless("#' see <https://x.y/a> and <p>lit</p>\n#' @md\n");
+    }
+
+    #[test]
+    fn md_html_inline_tag() {
+        // A raw inline-HTML tag (open tag with attributes) carves as a
+        // `RoxygenMdHtml` span under `@md`; surrounding prose tiles around it.
+        assert_eq!(
+            prose_texts("#' before-<img src='foo.png'>-after\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "before-".into()),
+                (TokKind::RoxygenMdHtml, "<img src='foo.png'>".into()),
+                (TokKind::RoxygenText, "-after".into()),
+            ]
+        );
+        assert_lossless("#' before-<img src='foo.png'>-after\n#' @md\n");
+    }
+
+    #[test]
+    fn html_inline_is_literal_text_without_md() {
+        // A raw HTML tag is recognized only under `@md`; without it `<` is literal
+        // prose, so no `RoxygenMdHtml` is carved.
+        assert_eq!(
+            prose_texts("#' before-<img src='foo.png'>-after\n"),
+            vec![(
+                TokKind::RoxygenText,
+                "before-<img src='foo.png'>-after".into()
+            )]
+        );
+        assert_lossless("#' before-<img src='foo.png'>-after\n");
+    }
+
+    #[test]
+    fn malformed_html_stays_literal() {
+        // `<a b=>` has an `=` with no value → not a well-formed tag → literal prose
+        // (an over-recognition would emit a spurious `\out`).
+        assert_eq!(
+            prose_texts("#' x <a b=> y\n#' @md\n"),
+            vec![(TokKind::RoxygenText, "x <a b=> y".into())]
+        );
+        assert_lossless("#' x <a b=> y\n#' @md\n");
     }
 
     #[test]

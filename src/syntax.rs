@@ -169,14 +169,20 @@ pub enum SyntaxKind {
     /// A fenced-code-block delimiter line (3+ backticks plus an optional info
     /// string), a leaf inside a `ROXYGEN_MD_CODE_BLOCK`.
     ROXYGEN_MD_FENCE,
+    /// A raw inline-HTML tag (`<img …>`, `</span>`), emitted **only** under a
+    /// resolved `@md` block mode. Like the other markdown leaves it holds its
+    /// whole span so the run tiles exactly. The projector maps it to roxygen2's
+    /// `\if{html}{\out{<tag>}}` (`mdxml_html_inline`). Appended last to keep the
+    /// earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_HTML,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_IMAGE` remains the
-    /// last variant. (`ROXYGEN_MD_FENCE` is the current last variant.)
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_FENCE as usize + 1;
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_HTML` remains the
+    /// last variant.
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_HTML as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -197,6 +203,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
                 | SyntaxKind::ROXYGEN_MD_IMAGE
                 | SyntaxKind::ROXYGEN_MD_FENCE
+                | SyntaxKind::ROXYGEN_MD_HTML
         )
     }
 
@@ -217,6 +224,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
                 | SyntaxKind::ROXYGEN_MD_IMAGE
                 | SyntaxKind::ROXYGEN_MD_FENCE
+                | SyntaxKind::ROXYGEN_MD_HTML
         )
     }
 }
@@ -334,6 +342,7 @@ impl Language for RLanguage {
             96 => SyntaxKind::ROXYGEN_MD_IMAGE,
             97 => SyntaxKind::ROXYGEN_MD_CODE_BLOCK,
             98 => SyntaxKind::ROXYGEN_MD_FENCE,
+            99 => SyntaxKind::ROXYGEN_MD_HTML,
             _ => SyntaxKind::ERROR,
         }
     }

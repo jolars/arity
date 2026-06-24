@@ -201,5 +201,6 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::RoxygenMdCode => SyntaxKind::ROXYGEN_MD_CODE,
         TokKind::RoxygenMdListMarker => SyntaxKind::ROXYGEN_MD_LIST_MARKER,
         TokKind::RoxygenMdFence => SyntaxKind::ROXYGEN_MD_FENCE,
+        TokKind::RoxygenMdHtml => SyntaxKind::ROXYGEN_MD_HTML,
     }
 }

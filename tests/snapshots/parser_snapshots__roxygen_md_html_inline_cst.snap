@@ -1,0 +1,45 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..161
+  ROXYGEN_BLOCK@0..155
+    ROXYGEN_SECTION@0..125
+      ROXYGEN_PARAGRAPH@0..15
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..14 "Inline HTML"
+        NEWLINE@14..15 "\n"
+      ROXYGEN_MARKER@15..17 "#'"
+      NEWLINE@17..18 "\n"
+      ROXYGEN_PARAGRAPH@18..125
+        ROXYGEN_MARKER@18..20 "#'"
+        WHITESPACE@20..21 " "
+        ROXYGEN_TEXT@21..63 "A paragraph with a ma ..."
+        NEWLINE@63..64 "\n"
+        ROXYGEN_MARKER@64..66 "#'"
+        WHITESPACE@66..67 " "
+        ROXYGEN_TEXT@67..74 "before-"
+        ROXYGEN_MD_HTML@74..93 "<img src='foo.png'>"
+        ROXYGEN_TEXT@93..106 "-after and a "
+        ROXYGEN_MD_HTML@106..113 "</span>"
+        ROXYGEN_TEXT@113..124 " close tag."
+        NEWLINE@124..125 "\n"
+    ROXYGEN_SECTION@125..132
+      ROXYGEN_MARKER@125..127 "#'"
+      WHITESPACE@127..128 " "
+      ROXYGEN_TAG@128..131
+        ROXYGEN_AT@128..129 "@"
+        ROXYGEN_TAG_NAME@129..131 "md"
+      NEWLINE@131..132 "\n"
+    ROXYGEN_SECTION@132..155
+      ROXYGEN_MARKER@132..134 "#'"
+      WHITESPACE@134..135 " "
+      ROXYGEN_TAG@135..155
+        ROXYGEN_AT@135..136 "@"
+        ROXYGEN_TAG_NAME@136..140 "name"
+        WHITESPACE@140..141 " "
+        ROXYGEN_TEXT@141..155 "md_html_inline"
+  NEWLINE@155..156 "\n"
+  IDENT@156..160 "NULL"
+  NEWLINE@160..161 "\n"

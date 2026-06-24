@@ -50,7 +50,7 @@
 {"key":"harvest/rx-24ef0d37","formatted":"#' Title\n#'\n#' @details Details\n#'\n#' ```{r eval = FALSE}\n#' this - would - fail - to - eval\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
 {"key":"harvest/rx-270b730c","formatted":"#' Title\n#'\n#' Description, see [name][dest].\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2900ecd5","formatted":"#' Title\n#'\n#' ```{r}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() {}\n"}
-{"key":"harvest/rx-299f50fb","formatted":"#' Title\n#'\n#' This is a paragraph containing a manually inserted image before-<img\n#' src='foo.png'>-after\n#' @md\nfoo <- function() {}\n"}
+{"key":"harvest/rx-299f50fb","formatted":"#' Title\n#'\n#' This is a paragraph containing a manually inserted image\n#' before-<img src='foo.png'>-after\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-29d590cf","formatted":"#' Title\n#'\n#' ![](example.svg \"Plot title 1\") ![](example.pdf \"Plot title 2\")\n#' ![](example.PNG \"Plot title 3\")\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2a68ab3f","formatted":"#' Title\n#'\n#' Description, see [function()]. And also [object].\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2dcb2349","formatted":"#' A\n#' @param x,y X and Y\nA <- function(x, y) {}\n\n#' B\n#'\n#' @inheritParams A\nB <- function(x) {}\n"}
