@@ -341,6 +341,39 @@ mod tests {
     }
 
     #[test]
+    fn custom_infix_operands_masked() {
+        // A user-defined `%...%` operator is opaque (it may capture its operands
+        // symbolically, e.g. caugi's `A %---% B`), so its operands are recorded
+        // as reads but flagged `data_masked` so `undefined-symbol` stays silent.
+        let m = model_of("A %---% B");
+        let a = m.idents().iter().find(|i| i.name == "A").unwrap();
+        assert!(
+            a.data_masked,
+            "lhs operand of `%---%` should be data-masked"
+        );
+        let b = m.idents().iter().find(|i| i.name == "B").unwrap();
+        assert!(
+            b.data_masked,
+            "rhs operand of `%---%` should be data-masked"
+        );
+    }
+
+    #[test]
+    fn builtin_infix_operands_not_masked() {
+        // Base special operators evaluate both operands normally, so their
+        // operands stay flaggable.
+        for src in [
+            "x %in% y", "x %% y", "x %*% y", "x %o% y", "x %/% y", "x %>% y",
+        ] {
+            let m = model_of(src);
+            assert!(
+                m.idents().iter().all(|i| !i.data_masked),
+                "no operand of `{src}` should be data-masked",
+            );
+        }
+    }
+
+    #[test]
     fn namespace_operands_not_reads() {
         let m = model_of("dplyr::filter(x, y)");
         let names: Vec<&str> = m.idents.iter().map(|i| i.name.as_str()).collect();

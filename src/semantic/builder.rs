@@ -344,13 +344,22 @@ fn call_is_data_masking(node: &SyntaxNode) -> bool {
 }
 
 fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
-    // Detect namespace / member access patterns.
+    // Detect namespace / member access patterns and opaque custom operators.
     let mut operator_kind: Option<SyntaxKind> = None;
     for el in node.children_with_tokens() {
         if let NodeOrToken::Token(t) = el {
             match t.kind() {
                 SyntaxKind::COLON2 | SyntaxKind::COLON3 | SyntaxKind::DOLLAR | SyntaxKind::AT => {
                     operator_kind = Some(t.kind());
+                    break;
+                }
+                // A user-defined `%...%` operator is opaque: arity does no R
+                // evaluation, so it can't know whether the operator captures its
+                // operands symbolically (NSE) — as caugi's `A %---% B` does. The
+                // base special operators (`%%`, `%in%`, the pipes, …) provably
+                // evaluate both operands normally, so only those stay transparent.
+                SyntaxKind::USER_OP if !is_transparent_infix(t.text()) => {
+                    operator_kind = Some(SyntaxKind::USER_OP);
                     break;
                 }
                 _ => {}
@@ -427,8 +436,33 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                 }
             }
         }
+        Some(SyntaxKind::USER_OP) => {
+            // Opaque custom operator: walk operands with the data mask bumped so
+            // their bare names are recorded as reads (an enclosing binding used
+            // only here isn't mis-flagged unused) but skipped by `undefined-symbol`.
+            // Over-masking only ever suppresses — the safe direction for a
+            // false-positive-only rule.
+            ctx.mask_depth += 1;
+            walk_generic(ctx, node, scope);
+            ctx.mask_depth -= 1;
+        }
         _ => walk_generic(ctx, node, scope),
     }
+}
+
+/// True when a `%...%` operator provably evaluates both operands as ordinary
+/// value reads, so its operands stay flaggable by `undefined-symbol`. Covers the
+/// base special operators and the common pipes; every other (user-defined)
+/// operator is treated as opaque and its operands are masked.
+fn is_transparent_infix(text: &str) -> bool {
+    matches!(
+        text,
+        // base R special operators
+        "%%" | "%/%" | "%*%" | "%o%" | "%in%"
+        // magrittr pipes (operands are ordinary value reads; any nested call
+        // does its own data-masking)
+        | "%>%" | "%T>%" | "%<>%"
+    )
 }
 
 fn handle_arg(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
