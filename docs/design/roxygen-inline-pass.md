@@ -7,12 +7,37 @@ and the rest of the inline recognizers. Author/driver: `roxygen-parity` skill.
 ## 1. Goal and non-goals
 
 **Goal.** A *complete, correct* CommonMark inline parser for roxygen `@md`
-content --- not a pragmatic subset. The reference is roxygen2's own pipeline
-(commonmark core + GFM `table`, `hardbreaks = TRUE`), which is the differential
-oracle. "Correct" means: for every input, arity's projected Rd structure matches
-what roxygen2 renders --- including nesting (`**foo *bar* baz**`), the rule of 3
-(`***`, `**foo*`, ...), full flanking (whitespace **and** punctuation),
-intraword `_` rules, and overlapping/mismatched delimiter runs.
+content --- not a pragmatic subset. "Correct" means: for every input, arity's
+projected Rd structure matches what roxygen2 renders --- including nesting
+(`**foo *bar* baz**`), the rule of 3 (`***`, `**foo*`, ...), full flanking
+(whitespace **and** punctuation), intraword `_` rules, and
+overlapping/mismatched delimiter runs.
+
+**The oracle is roxygen2, not the CommonMark spec.** roxygen2 parses markdown
+via `cmark`/`cmark-gfm` (so its *parsing* is faithful CommonMark), but the
+content is always processed *through roxygen2*, which adds behaviors `cmark`
+alone does not: a markdown-escaping pre-pass, the `rdComplete` brace/quote
+**validation** (`tag-parser.R` →
+`warn_roxy_tag("has mismatched braces or quotes")`), and a *subset* translation
+to Rd (only constructs with an Rd analog). So **roxygen2's behavior is truth
+wherever it diverges from raw `cmark`** --- both what it renders *and* what it
+rejects. We never reason "CommonMark says X, so arity does X"; only "roxygen2
+does Y, so arity does Y." The CommonMark spec is used **only as an input
+corpus** (a broad supply of emphasis shapes); the expected output and the
+pass/fail verdict always come from running roxygen2.
+
+**Two oracle surfaces, not one.** (1) *Render parity* --- the projected Rd
+matches (the existing projector gate). (2) *Diagnostic parity* --- roxygen2 also
+**validates** and emits source-located warnings, then drops the offending
+content (e.g. `\*not emphasis\*` →
+`✖ <text>:3: @description has mismatched braces or quotes` + an empty
+`\description{}`). arity should detect the *same condition* and emit a
+**side-channel parse/lint diagnostic** (the CST stays lossless), which is
+exactly the lint + LSP signal we want. An oracle-*error* input is therefore a
+**diagnostic-parity fixture**, never a silently-skipped `blocked` case. Building
+the diagnostics is aligned with the (deferred) linter/LSP phases; this slice at
+minimum *records* each oracle-error condition so it is not mistaken for a render
+gap.
 
 **Non-goals (this design).** - Block structure changes. The existing block model
 (`ROXYGEN_SECTION` / `ROXYGEN_PARAGRAPH` / lists / fenced code / HTML blocks)
@@ -213,13 +238,13 @@ allowlist.
 
 ## 10. Testing plan
 
-The driver is the **CommonMark spec test set** itself --- adapted to arity's
-oracle. panache compares parser→HTML against the spec's `expected_html`; arity's
-target is not HTML but the **Rd roxygen2 renders**, so we take the spec's
-markdown **inputs only** and keep **roxygen2 as the oracle**. The spec examples
-become a third **corpus source** for the existing projector-parity gate
-(`tests/roxygen_projector.rs`), alongside the curated dir corpus and the
-harvested corpus:
+The **oracle is roxygen2** (§1). The CommonMark spec test set is used **only as
+a broad input corpus** --- never as the expected output. panache compares
+parser→HTML against the spec's `expected_html`; we do **not** --- we throw the
+spec's markdown **inputs** at roxygen2 and pin *whatever roxygen2 does* (render
+or diagnostic). The spec examples become a third **corpus source** for the
+existing projector-parity gate (`tests/roxygen_projector.rs`), alongside the
+curated dir corpus and the harvested corpus:
 
 - **Vendor** the CommonMark `spec.txt` (e.g.
   `tests/oracle/corpus/commonmark-spec/`, refresh via a script; mirror panache's
@@ -232,12 +257,20 @@ harvested corpus:
   `@md` roxygen block on an object, run `block-to-sections`, pin the result (no
   R at test time --- same as the harvested pins). The pure-Rust gate diffs
   `project_to_rd` against the pin.
-- **Allowlist / blocked** carries over verbatim. roxygen2 models only a *subset*
-  of CommonMark→Rd, and some inputs make `roc_proc_text` **error** or pull in
-  not-yet-modeled constructs (links/code/blocks inside an emphasis example) →
-  those go to a **`blocked`** list *with a reason*, never used to silence a
-  regression. The rest are the backlog that drives the parser, ratcheted into
-  the allowlist as they pass.
+- **Allowlist / backlog / diagnostic-parity** (three outcomes, not a vague
+  "blocked"):
+  - *Render parity* --- roxygen2 renders Rd; arity's projection matches →
+    allowlist (or is backlog until the parser closes it). This is the bulk of
+    the emphasis section (verified: roxygen2 renders nesting, the rule of 3,
+    intraword, and flanking all faithfully).
+  - *Diagnostic parity* --- roxygen2 **errors/warns and drops content**
+    (`rdComplete` → `warn_roxy_tag`, e.g. `\*not emphasis\*`). This is **not**
+    `blocked`: it is a diagnostic-parity case. Until arity emits the matching
+    side-channel diagnostic (linter/LSP phase), record it with its exact oracle
+    message so it is never mistaken for a render gap.
+  - *Genuinely out of scope* --- an input pulling in a construct with no Rd
+    analog or no arity model yet → `blocked` *with a reason* (never to silence a
+    regression). For the emphasis section this bucket is expected to be small.
 
 Complementary layers (unchanged in spirit):
 
@@ -251,10 +284,12 @@ Complementary layers (unchanged in spirit):
 - Guardrails: `cargo test` (incl. projector gate, no R), clippy, fmt;
   `task   roxygen-oracle` (R fixed-point) where available.
 
-**Why this beats panache's exact model here:** roxygen2 itself runs `cmark`, so
-the spec inputs exercise precisely the emphasis structure we must match, and the
-oracle *is* the tool we conform to --- no separate HTML renderer to build or
-maintain.
+**Why this beats panache's exact model here:** the oracle *is* the tool we
+conform to (roxygen2), so there is no separate HTML renderer to build or
+maintain, and we capture roxygen2's *actual* behavior --- including its escaping
+quirks and its `rdComplete` diagnostics --- rather than an idealized
+`cmark`→HTML the user will never see. The spec is a generous source of emphasis
+*inputs*; roxygen2 supplies every *answer*.
 
 ## 11. Risks and open questions
 

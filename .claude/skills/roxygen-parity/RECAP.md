@@ -109,6 +109,21 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   idempotent. *(Open: canonical re-indent for prose lists; deferred.)*
 
 **Markdown — mode-keyed**
+- **The oracle is roxygen2, NOT the CommonMark spec** (settled 2026-06-25b). roxygen2 *parses*
+  via `cmark` (so parsing is faithful CommonMark) but always processes *through roxygen2*, which
+  adds a markdown-escaping pre-pass, the `rdComplete` brace/quote **validation**
+  (`warn_roxy_tag "has mismatched braces or quotes"`), and a *subset* Rd translation. So
+  roxygen2's behavior is truth wherever it diverges from raw `cmark` — both render and reject.
+  Never "CommonMark says X → arity does X"; only "roxygen2 does Y → arity does Y." The spec test
+  set is an **input corpus only**; roxygen2 supplies every answer.
+- **Diagnostic parity is a SECOND oracle surface** (settled 2026-06-25b). roxygen2 validates and
+  emits source-located warnings, then **drops** the bad content (`\*not emphasis\*` → `✖ <text>:3:
+  @description has mismatched braces or quotes` + empty `\description{}`; `rdComplete` in
+  `tag-parser.R`). arity should detect the same condition and emit a **side-channel diagnostic**
+  (CST stays lossless) — high-value lint + LSP signal, aligned with the deferred linter/LSP phases.
+  An oracle-*error* input is a **diagnostic-parity fixture**, NOT a silent `blocked`. Three test
+  outcomes: render-parity (allowlist/backlog), diagnostic-parity (record the exact oracle message),
+  out-of-scope (`blocked` with reason — small for emphasis).
 - **END GOAL = full CommonMark parity, nothing less** (tenet, settled 2026-06-25). roxygen2
   delegates to `cmark`/`cmark-gfm`; a "pragmatic subset" is a parity *gap*, never acceptable.
   The early inline recognizers are local line-scoped span scanners in the lexer
@@ -301,6 +316,13 @@ architecture even set up for this?* It is **not**. Findings + decisions:
   flanking class.
 - **Decisions:** Slice 1 = **emphasis only** (links/code stay opaque local tokens — correct per
   CommonMark precedence); **flanking = ASCII-class first**, Unicode adjacency a noted backlog.
+- **Oracle clarified (with the user).** roxygen2 is THE oracle, not the CommonMark spec — the spec
+  is an input corpus only; roxygen2's behavior governs where it diverges from raw `cmark`. And a
+  **second oracle surface = diagnostic parity**: empirically confirmed roxygen2 itself emits
+  `✖ … has mismatched braces or quotes` (`rdComplete`) and drops content on `\*not emphasis\*`, so
+  oracle-errors become diagnostic-parity fixtures (record the message; emit a side-channel
+  diagnostic in the linter/LSP phase), never silent `blocked`. (Verified the trickiest emphasis
+  cases render faithfully: `***bar***`→`(\emph(\strong …))`, `**foo*`→`(TEXT "*")(\emph …)`, etc.)
 
 **Result:** docs + framing only; **no parser/projector/formatter behavior change** (projector
 holds at 147/167). Files: `docs/design/roxygen-inline-pass.md` (new), `src/parser/roxygen/lex.rs`

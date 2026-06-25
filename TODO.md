@@ -301,7 +301,14 @@
       roxygen2 as the oracle (Rd, not the spec's HTML), wired as a third corpus
       source for the projector gate (slice 1 scopes to the ~132 "Emphasis and
       strong emphasis" examples; allowlist + `blocked`-with-reason for inputs
-      roxygen2 errors on or models as a non-Rd subset).
+      with no Rd analog). **Oracle = roxygen2, not the spec** (the spec is inputs
+      only; roxygen2 governs where it diverges from raw `cmark` — its escaping
+      pre-pass, `rdComplete` validation, subset translation). **Diagnostic parity
+      is a second surface:** roxygen2 itself emits source-located warnings and
+      drops bad content (`rdComplete` → `warn_roxy_tag "has mismatched braces or
+      quotes"`, e.g. `\*not emphasis\*`); arity should mirror the condition as a
+      side-channel diagnostic (lossless CST) — high-value lint/LSP signal, so an
+      oracle-error is a diagnostic-parity fixture, not a silent skip.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`
