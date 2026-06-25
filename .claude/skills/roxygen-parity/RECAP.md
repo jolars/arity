@@ -190,9 +190,19 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   to the outer stack, like a Token). Projector: a `ROXYGEN_MD_LINK` **node** → `Inline::MdInlineLink`
   (skip first/last bracket child, recurse the middle), `inline_link_node_atom` GRP-wraps a multi-atom
   display (`\href` two-arg structural), `\url` on empty/equal dest. A `ROXYGEN_MD_LINK` **leaf** is
-  still an autolink/ref/shortcut (`resolve_md_link`) — node-vs-leaf dispatch coexist. The lexer is
-  line-scoped → **cross-line links are still backlog** (rx-383f2ca3/eb12b6b6). Bracket-free gate keeps
-  the opaque path for nested-bracket text (no deactivation modeled yet).
+  still an autolink/ref/shortcut (`resolve_md_link`) — node-vs-leaf dispatch coexist. Bracket-free gate
+  keeps the opaque path for nested-bracket text (no deactivation modeled yet).
+- **Cross-line inline `[text](url)` links landed (2026-06-25i).** The lexer's same-line
+  `inline_link_span` split is line-scoped, but `Arena::build` **already** pairs bracket opener/closer
+  leaves over the whole **paragraph-granularity** run (cross-line trivia included) — so cross-line just
+  needed the lexer to emit the **lone** brackets: `is_cross_line_link_opener` (a `[` with a
+  bracket-free line-remainder, i.e. no same-line `]`) carves a `[` leaf; `cross_line_link_closer` (a
+  bare `]` then a balanced `(url)`) carves a `](url)` leaf. The pair collapses into a line-spanning
+  `ROXYGEN_MD_LINK` node; unmatched brackets fall back to literal text (cmark/roxygen2 faithful). **No
+  new TokKind / inline-pass / projector change.** Formatter: `is_cross_line_emph`→`is_cross_line_inline`
+  also matches a marker-threading `ROXYGEN_MD_LINK` node so reflow rejoins it (output byte-identical —
+  structure-only; idempotent). **Reference/shortcut cross-line (`[text][ref]`) still backlog**
+  (rx-eb12b6b6) — needs ref/shortcut on the stack.
 - **Images** (`scan_md_image`, inline `![…](…)` only): `mdxml_image` drops alt → `\figure{url}
   {title}`, wrapped per extension (`image_format`: svg→html, pdf→pdf, raster/unknown→bare). The
   Rd `\figure` route is a 2-arg verbatim macro.
@@ -309,10 +319,10 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post inline-links, 2026-06-25h): **278 matching (all allowlisted), 25 divergent
-(backlog)** of 303 pinned. Of the 25, 5 are remaining `cm-` cases (`\`-escapes cm-439/442/451/454
-= **diagnostic-parity**, Unicode NBSP cm-355); the other 20 are roxygen2-*evaluation*/multi-block
-gaps (out of scope) plus **links-across-lines** (rx-383f2ca3/eb12b6b6, the next link increment).
+driver). Current (post cross-line inline links, 2026-06-25i): **280 matching (all allowlisted), 24 divergent
+(backlog)** of 304 pinned. Of the 24, 5 are remaining `cm-` cases (`\`-escapes cm-439/442/451/454
+= **diagnostic-parity**, Unicode NBSP cm-355); the other 19 are roxygen2-*evaluation*/multi-block
+gaps (out of scope) plus **reference links-across-lines** (rx-eb12b6b6, the next link increment).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
 `task roxygen-projector-pins` (harvested pins), `task roxygen-spec-corpus`/`roxygen-spec-pins`
@@ -323,9 +333,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (303 pinned cases). The 25 divergences are the worklist (5 = remaining `cm-`).
+   (304 pinned cases). The 24 divergences are the worklist (5 = remaining `cm-`).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 20/20 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 21/21 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -333,56 +343,57 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-25h) — Slice 2 (inline links): `[text](url)` on the stack (cm-421/435)
+## Latest session (2026-06-25i) — Slice 2.5: cross-line inline links `[text](url)` (rx-383f2ca3)
 
-**An inline `[text](url)` link is now resolved on the delimiter stack**, so emphasis inside the
-link text renders *and* an outer emphasis span wraps the whole link. cm-421 (`*foo [*bar*](/url)*`)
-→ `(\emph (TEXT "foo") (\href (VERB "/url") (\emph (TEXT "bar"))))`; cm-435 same with `\strong`.
-The key realization: the lexer **already** carved the link as one opaque token, so the *outer* span
-already worked — the only gap was the link text's *inner* markdown (it stayed flat `(TEXT "*bar*")`).
-The fix puts the inline-link bracket on the stack so the inner resolves via the real inline pass.
+**An inline `[text](url)` link whose `[`…`](url)` spans a soft line break now resolves into one
+cross-line `ROXYGEN_MD_LINK` node**, with whitespace coalesced (`[broken`\n`across lines](url)` →
+`(\href (VERB url) (TEXT "broken across lines"))`) and inner emphasis resolving across the break too.
+The **key realization:** the inline pass's `Arena::build` **already** pairs bracket opener/closer
+leaves over the whole paragraph-granularity run (cross-line trivia included) — so the only gap was
+the **lexer** never emitting the lone brackets when they don't match on one line. Net work was tiny.
 
-- **Lexer (`lex.rs`):** new `inline_link_span` detects a **bracket-free** inline `[text](url)`;
-  the prose loop then emits the `[` and `](url)` as neutral `RoxygenMdBracket` leaves and
-  **recursively lexes the link text** (`lex_roxygen_prose` on the inner slice), so `*`/code inside
-  it carve normally. Reference/shortcut links (`[t][r]`, `[t]`) and images stay opaque (the existing
-  `scan_md_link`/`scan_md_image` path, untouched). New `TokKind::RoxygenMdBracket` wired into
-  `roxygen_role` (Content), `expr.rs`, `tree_builder` (→ `ROXYGEN_MD_DELIM` fallback), `prose_texts`.
-- **Inline pass (`inline.rs`):** `Arena::build` now takes flanking boundary chars and **collapses**
-  a matched bracket pair into one opaque `NodeData::Link { open, close, body }`, where `body` is the
-  **recursively** resolved link text (`resolve_run`, bounded by the bracket chars `[`/`]` for
-  flanking). The Link node is opaque to the outer emphasis stack (like a Token), so an enclosing span
-  wraps it. Exploits the lexer's contiguity guarantee (open/inner/close adjacent, no nesting given
-  the bracket-free gate) → **no `process_emphasis(stack_bottom)` parametrization needed**. Emitted as
-  a `ROXYGEN_MD_LINK` node with the brackets as `ROXYGEN_MD_DELIM` opener/closer leaves.
-- **Projector (`project_rd.rs`):** new `push_inline` arm for a `ROXYGEN_MD_LINK` **node** (skip
-  first/last child = the brackets, recurse the middle for display) + `Inline::MdInlineLink { url,
-  display }`. `inline_link_node_atom` GRP-wraps a multi-atom display (`\href` is two-arg structural:
-  `[**b** c](u)` → `(\href (VERB u) (GRP (\strong …) (TEXT "c")))`; single-atom unwraps) and falls
-  back to `\url` on an empty/equal destination. Existing inline-link pins stay byte-identical (a
-  plain display = one Text atom = the old `href_atom`). Autolinks (`<url>`) still use the
-  `ROXYGEN_MD_LINK` **leaf** arm — node-vs-leaf dispatch coexist.
-- **TDD:** parser fixture `roxygen_md_link_emphasis` (inner emph, multi-atom GRP, outer span over a
-  link) + curated projector case `md_link_emphasis` (pin minted from roxygen2, matches) + 2 lexer
-  unit tests. Formatter unchanged (single-line link node glues atomically; idempotent; format
-  baseline re-blessed for the one new curated case only — no existing case's layout changed).
+- **Lexer (`lex.rs`):** two new carves under `@md`, after the same-line `inline_link_span` split.
+  (1) A **cross-line opener**: a `[` whose line-remainder is bracket-free (`is_cross_line_link_opener`
+  — no same-line `]`, so no same-line link/ref/shortcut applies) → a lone `RoxygenMdBracket` `[` leaf,
+  then keep lexing the rest of the line as prose. (2) A **cross-line closer**: a bare `]` immediately
+  followed by a balanced `(url)` (`cross_line_link_closer`) → a `RoxygenMdBracket` `](url)` leaf. A
+  same-line `[…](url)` is consumed whole by the opener path, so a bare `]` reaching the loop has no
+  same-line `[`. **No new TokKind, no inline-pass/projector change** — the existing
+  `Arena::build` bracket-pairing collapses the pair into a `ROXYGEN_MD_LINK` node over the run, and
+  the projector's node arm (NEWLINE→space, marker-skip, TEXT-coalesce) renders it. Unmatched brackets
+  fall back to literal text (lossless), matching cmark/roxygen2.
+- **Formatter (`roxygen.rs`):** generalized `is_cross_line_emph`→`is_cross_line_inline` to also match
+  a marker-threading `ROXYGEN_MD_LINK` node, so `collect_logical_elements` descends into a cross-line
+  link and prose reflow rejoins it. **Byte-identical output** for every pre-existing case (the change
+  is CST-structure-only — prose reflow already joined the words; the format baseline gained only the
+  new curated case, 0 modifications). Idempotent (a reflowed one-line `[text](url)` re-lexes via the
+  same-line `inline_link_span`; a re-wrapped one re-carves the cross-line brackets).
+- **TDD:** parser fixture `roxygen_md_link_multiline` (two cross-line links, the 2nd with inner
+  cross-line `*emphasis*` → GRP-wrapped `\href` display) + curated projector case `md_link_multiline`
+  (pin minted from roxygen2, matches). rx-383f2ca3 (harvested) ratcheted into the allowlist.
 
-**Result:** projector **275→278 matching (all allowlisted), 27→25 divergent** (cm-421/435 closed,
-+`md_link_emphasis` curated pin); cm emphasis corpus **125→127 of 132**. Curated fixed-point 20/20.
-`cargo test` green, clippy + fmt clean.
+**Result:** projector **278→280 matching (all allowlisted), 25→24 divergent** (rx-383f2ca3 closed,
++`md_link_multiline` curated pin; 304 pinned). Curated fixed-point 20→21/21 preserving. `cargo test`
+green, clippy + fmt clean.
 
-**Next (ranked):** **(1) Cross-line inline links** (rx-383f2ca3/eb12b6b6) — the same `[text](url)`
-form but the `[`…`](url)` spans a soft line break, so the line-scoped lexer never carves it. Needs
-the bracket truly on the stack *across lines*: lex `[` and a line-local `](url)` closer as separate
-bracket leaves (no whole-link `scan_balanced`) and pair them in the inline pass over the
-paragraph-granularity run (brackets are already run members). The harder part is the closer suffix
-recognition without the matching `[` on the same line — and the **formatter** must then reflow a
-cross-line link node (cf. `is_cross_line_emph`). (2) **Reference/shortcut links onto the stack**
-(retire the opaque `scan_md_link`; needs the `get_md_linkrefs` pre-pass + deactivation + the `{`
-lookahead — bigger). (3) **Diagnostic-parity surface:** `\`-escapes cm-439/442/451/454 (record,
-not render). (4) Unicode flanking + `norm_ws` NBSP (cm-355).
+**Next (ranked):** **(1) Reference/shortcut cross-line links** (rx-eb12b6b6, `[text][ref]`/`[text]`
+across a break) — and reference/shortcut links **onto the stack** generally (retire the opaque
+line-scoped `scan_md_link`; needs the `get_md_linkrefs` pre-pass + opener deactivation + the
+followed-by-`{` lookahead — the bigger link increment). NB my cross-line opener carve now splits the
+`[broken` of rx-eb12b6b6's first line into a bracket leaf that finds no `](url)` closer (its closer is
+`][fcn]`) → stays literal + the same-line `[fcn]` shortcut resolves; still divergent from the pin,
+correctly. (2) **Diagnostic-parity surface:** `\`-escapes cm-439/442/451/454 (record, not render).
+(3) Unicode flanking + `norm_ws` NBSP (cm-355).
 
 ## Earlier sessions
+
+- **2026-06-25h (Slice 2 — inline `[text](url)` on the stack, cm-421/435):** the lexer splits a
+  **same-line** bracket-free inline link into neutral `RoxygenMdBracket` leaves (`[` / `](url)`) and
+  recursively lexes the link text; the inline pass collapses the matched pair into an opaque
+  `ROXYGEN_MD_LINK` **node** whose display resolves recursively, so inner emphasis resolves *and* an
+  outer span wraps the link. Projector node arm GRP-wraps a multi-atom display (`\href` two-arg),
+  `\url` on empty/equal dest. Fixture `roxygen_md_link_emphasis` + curated `md_link_emphasis`.
+  278 matching; cm 127/132.
 
 - **2026-06-25g (`_`-leading code span is `\verb`, not `\code`, cm-481):** a markdown code span whose
   content begins with `_` renders `\verb` (R's lexer rejects a `_`-leading name; arity's is lenient).

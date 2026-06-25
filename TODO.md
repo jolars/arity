@@ -362,9 +362,19 @@
       resolves *and* an outer span wraps the whole link (`*foo [*bar*](/u)*`). The
       projector's node arm GRP-wraps a multi-atom display (`\href` is two-arg
       structural) and falls back to `\url` on an empty/equal destination. **cm-421/435
-      closed.** Reference/shortcut links and images stay opaque (unchanged); the
-      lexer is line-scoped, so **cross-line links rx-383f2ca3/eb12b6b6 remain
-      backlog** (need the bracket on the stack across soft breaks, the next increment).
+      closed.** Reference/shortcut links and images stay opaque (unchanged).
+      **Slice 2.5 (cross-line inline links) LANDED (2026-06-25i): `[text](url)`
+      across a soft break.** The lexer now carves a lone `[` opener leaf when its
+      bracketed text is unclosed on the line (`is_cross_line_link_opener`,
+      bracket-free remainder) and a lone `](url)` closer leaf when a bare `]` is
+      followed by a balanced `(url)` (`cross_line_link_closer`); the inline pass's
+      existing bracket-pairing over the paragraph-granularity run assembles them
+      into a `ROXYGEN_MD_LINK` node spanning lines (body = text + inter-line trivia,
+      coalesced by the projector). Unmatched brackets fall back to literal text.
+      Formatter: `is_cross_line_emph`→`is_cross_line_inline` now also descends into a
+      marker-threading link node so reflow rejoins it (byte-identical output —
+      structure-only change). **rx-383f2ca3 closed.** Reference cross-line links
+      (`[text][ref]`, rx-eb12b6b6) still backlog (need ref/shortcut on the stack).
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

@@ -150,6 +150,7 @@ md_empty_list_item
 md_emphasis
 md_emphasis_multiline
 md_link_emphasis
+md_link_multiline
 md_nested_list
 param_prose
 preformatted
@@ -192,6 +193,7 @@ rx-3228e1fc
 rx-33fd2d33
 rx-34622883
 rx-375ab9f1
+rx-383f2ca3
 rx-38ac9ffb
 rx-3950ab1d
 rx-3a7d3931

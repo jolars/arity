@@ -305,6 +305,49 @@ fn lex_roxygen_prose(
             run_start = i;
             continue;
         }
+        // A *cross-line* inline-link opener: a `[` whose bracketed text is not
+        // closed on this line (no same-line `]`, so the same-line link paths
+        // above and `scan_md_link` below do not apply). Carve the `[` as a neutral
+        // bracket opener leaf; the link text continues on following `#'` lines and
+        // the inline pass pairs it with the later `](url)` closer over the
+        // paragraph-granularity run (literal text if it never matches).
+        if md && bytes[i] == b'[' && is_cross_line_link_opener(bytes, i) {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, 1);
+            i += 1;
+            run_start = i;
+            continue;
+        }
+        // A *cross-line* inline-link closer: a `](url)` whose matching `[` opened
+        // on an earlier `#'` line. A same-line `[…](url)` is consumed whole by the
+        // opener path above, so a bare `]` immediately followed by a balanced
+        // `(url)` here has no same-line opener — carve it as a neutral bracket
+        // closer leaf (the inline pass pairs it with the earlier opener, or leaves
+        // it literal when unmatched).
+        if md
+            && bytes[i] == b']'
+            && let Some(url_end) = cross_line_link_closer(bytes, i)
+        {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, url_end - i);
+            i = url_end;
+            run_start = i;
+            continue;
+        }
         // Under a resolved `@md` mode the inline grammar gains markdown emphasis/
         // strong runs, and a backtick span is a *markdown* code span (projected to
         // `\code`/`\verb`) rather than a literal Rd backtick run. Without `@md` the
@@ -495,6 +538,28 @@ fn inline_link_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
     }
     let url_end = scan_balanced(bytes, text_end, b'(', b')')?;
     Some((text_end, url_end))
+}
+
+/// Whether a `[` at `bytes[i]` opens a *cross-line* inline link: the remainder of
+/// this line is bracket-free (no `[` or `]`), so its bracketed text is not closed
+/// here and the matching `](url)` closer appears on a following `#'` line. A `[`
+/// with a same-line `]` is left to the same-line link paths ([`inline_link_span`]
+/// / [`scan_md_link`]); the bracket-free restriction keeps a nested-bracket text
+/// on the conservative opaque path (matching the same-line split's own guard).
+fn is_cross_line_link_opener(bytes: &[u8], i: usize) -> bool {
+    !bytes[i + 1..].iter().any(|&b| matches!(b, b'[' | b']'))
+}
+
+/// The end index of a `](url)` inline-link closer at `bytes[i] == b']'`: the `]`
+/// must be immediately followed by a balanced `(url)` destination. Returns the
+/// index past the closing `)`, or `None` when it is not a closer. A same-line
+/// `[…](url)` is consumed whole by the opener path, so a bare `]` reaching this
+/// point has no same-line opener — the inline pass pairs it with a cross-line one.
+fn cross_line_link_closer(bytes: &[u8], i: usize) -> Option<usize> {
+    if bytes.get(i + 1) != Some(&b'(') {
+        return None;
+    }
+    scan_balanced(bytes, i + 1, b'(', b')')
 }
 
 fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
@@ -1317,6 +1382,39 @@ mod tests {
             ]
         );
         assert_lossless("#' [*x*](/u)\n#' @md\n");
+    }
+
+    #[test]
+    fn md_cross_line_inline_link() {
+        // A `[` whose text is unclosed on its line carves a lone `[` opener leaf;
+        // the `](url)` closer on a following line carves a lone closer leaf. The
+        // inline pass pairs them over the paragraph run into one `ROXYGEN_MD_LINK`.
+        assert_eq!(
+            prose_texts("#' a [broken\n#' link](/u) b\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "broken".into()),
+                (TokKind::RoxygenText, "link".into()),
+                (TokKind::RoxygenMdBracket, "](/u)".into()),
+                (TokKind::RoxygenText, " b".into()),
+            ]
+        );
+        assert_lossless("#' a [broken\n#' link](/u) b\n#' @md\n");
+    }
+
+    #[test]
+    fn md_cross_line_link_brackets_only_under_md() {
+        // Without `@md` the brackets stay literal prose (the cross-line carve is
+        // mode-gated, like every other markdown inline recognizer).
+        assert_eq!(
+            prose_texts("#' a [broken\n#' link](/u) b\n"),
+            vec![
+                (TokKind::RoxygenText, "a [broken".into()),
+                (TokKind::RoxygenText, "link](/u) b".into()),
+            ]
+        );
+        assert_lossless("#' a [broken\n#' link](/u) b\n");
     }
 
     #[test]

@@ -285,15 +285,16 @@ fn collect_logical_elements(
             {
                 collect_logical_elements(&n, out);
             }
-            // A *cross-line* emphasis/strong node (one the inline pass resolved
-            // across a soft line break) owns its inner `#'` markers and newlines, so
-            // descend into it: its delimiter leaves and text become ordinary inline
-            // elements that the marker/newline split below distributes across the
-            // physical lines, where prose reflow handles them (the resolved emphasis
-            // is preserved on reparse — flanking is invariant under whitespace
-            // normalization). A *single-line* emphasis node (no marker) stays atomic,
-            // so `*foo*` glues as one chunk.
-            NodeOrToken::Node(n) if is_cross_line_emph(&n) => {
+            // A *cross-line* inline node — emphasis/strong or an inline link the
+            // pass resolved across a soft line break — owns its inner `#'` markers
+            // and newlines, so descend into it: its delimiter/bracket leaves and
+            // text become ordinary inline elements that the marker/newline split
+            // below distributes across the physical lines, where prose reflow
+            // handles them (the resolved span is preserved on reparse — flanking
+            // and bracket pairing are invariant under whitespace normalization). A
+            // *single-line* span (no marker) stays atomic, so `*foo*` and a
+            // one-line `[text](url)` each glue as one chunk.
+            NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
                 collect_logical_elements(&n, out);
             }
             other => out.push(other),
@@ -301,14 +302,15 @@ fn collect_logical_elements(
     }
 }
 
-/// Whether `node` is a resolved emphasis/strong span the inline pass carried across
-/// a soft line break — it threads one or more `#'` markers as inter-line trivia.
-/// A single-line span never contains a marker, so its presence distinguishes the
-/// reflow-across-lines case from an atomic inline span (mirrors [`is_block_macro`]).
-fn is_cross_line_emph(node: &SyntaxNode) -> bool {
+/// Whether `node` is a resolved inline span (emphasis/strong or an inline link)
+/// the inline pass carried across a soft line break — it threads one or more `#'`
+/// markers as inter-line trivia. A single-line span never contains a marker, so
+/// its presence distinguishes the reflow-across-lines case from an atomic inline
+/// span (mirrors [`is_block_macro`]).
+fn is_cross_line_inline(node: &SyntaxNode) -> bool {
     matches!(
         node.kind(),
-        SyntaxKind::ROXYGEN_MD_EMPH | SyntaxKind::ROXYGEN_MD_STRONG
+        SyntaxKind::ROXYGEN_MD_EMPH | SyntaxKind::ROXYGEN_MD_STRONG | SyntaxKind::ROXYGEN_MD_LINK
     ) && node
         .descendants_with_tokens()
         .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)

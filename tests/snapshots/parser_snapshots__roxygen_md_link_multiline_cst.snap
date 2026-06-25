@@ -1,0 +1,78 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..269
+  ROXYGEN_BLOCK@0..263
+    ROXYGEN_SECTION@0..32
+      ROXYGEN_PARAGRAPH@0..29
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..28 "Cross-line markdown l ..."
+        NEWLINE@28..29 "\n"
+      ROXYGEN_MARKER@29..31 "#'"
+      NEWLINE@31..32 "\n"
+    ROXYGEN_SECTION@32..230
+      ROXYGEN_MARKER@32..34 "#'"
+      WHITESPACE@34..35 " "
+      ROXYGEN_TAG@35..43
+        ROXYGEN_AT@35..36 "@"
+        ROXYGEN_TAG_NAME@36..43 "details"
+      NEWLINE@43..44 "\n"
+      ROXYGEN_PARAGRAPH@44..230
+        ROXYGEN_MARKER@44..46 "#'"
+        WHITESPACE@46..47 " "
+        ROXYGEN_TEXT@47..68 "A link whose text is "
+        ROXYGEN_MD_LINK@68..113
+          ROXYGEN_MD_DELIM@68..69 "["
+          ROXYGEN_TEXT@69..75 "broken"
+          NEWLINE@75..76 "\n"
+          ROXYGEN_MARKER@76..78 "#'"
+          WHITESPACE@78..79 " "
+          ROXYGEN_TEXT@79..91 "across lines"
+          ROXYGEN_MD_DELIM@91..113 "](https://example.com)"
+        ROXYGEN_TEXT@113..128 " joins into one"
+        NEWLINE@128..129 "\n"
+        ROXYGEN_MARKER@129..131 "#'"
+        WHITESPACE@131..132 " "
+        ROXYGEN_TEXT@132..142 "link, and "
+        ROXYGEN_MD_LINK@142..195
+          ROXYGEN_MD_DELIM@142..143 "["
+          ROXYGEN_TEXT@143..153 "text with "
+          ROXYGEN_MD_EMPH@153..163
+            ROXYGEN_MD_DELIM@153..154 "*"
+            ROXYGEN_TEXT@154..162 "emphasis"
+            ROXYGEN_MD_DELIM@162..163 "*"
+          NEWLINE@163..164 "\n"
+          ROXYGEN_MARKER@164..166 "#'"
+          WHITESPACE@166..167 " "
+          ROXYGEN_TEXT@167..173 "inside"
+          ROXYGEN_MD_DELIM@173..195 "](https://example.org)"
+        ROXYGEN_TEXT@195..215 " resolves across the"
+        NEWLINE@215..216 "\n"
+        ROXYGEN_MARKER@216..218 "#'"
+        WHITESPACE@218..219 " "
+        ROXYGEN_TEXT@219..229 "break too."
+        NEWLINE@229..230 "\n"
+    ROXYGEN_SECTION@230..237
+      ROXYGEN_MARKER@230..232 "#'"
+      WHITESPACE@232..233 " "
+      ROXYGEN_TAG@233..236
+        ROXYGEN_AT@233..234 "@"
+        ROXYGEN_TAG_NAME@234..236 "md"
+      NEWLINE@236..237 "\n"
+    ROXYGEN_SECTION@237..263
+      ROXYGEN_MARKER@237..239 "#'"
+      WHITESPACE@239..240 " "
+      ROXYGEN_TAG@240..263
+        ROXYGEN_AT@240..241 "@"
+        ROXYGEN_TAG_NAME@241..245 "name"
+        WHITESPACE@245..246 " "
+        ROXYGEN_TEXT@246..248 "md"
+        ROXYGEN_MD_DELIM@248..249 "_"
+        ROXYGEN_TEXT@249..253 "link"
+        ROXYGEN_MD_DELIM@253..254 "_"
+        ROXYGEN_TEXT@254..263 "multiline"
+  NEWLINE@263..264 "\n"
+  IDENT@264..268 "NULL"
+  NEWLINE@268..269 "\n"

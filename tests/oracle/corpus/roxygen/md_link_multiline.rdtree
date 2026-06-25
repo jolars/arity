@@ -1,0 +1,3 @@
+(\description (TEXT "Cross-line markdown links"))
+(\details (TEXT "A link whose text is") (\href (VERB "https://example.com") (TEXT "broken across lines")) (TEXT "joins into one link, and") (\href (VERB "https://example.org") (GRP (TEXT "text with") (\emph (TEXT "emphasis")) (TEXT "inside"))) (TEXT "resolves across the break too."))
+(\title (TEXT "Cross-line markdown links"))
