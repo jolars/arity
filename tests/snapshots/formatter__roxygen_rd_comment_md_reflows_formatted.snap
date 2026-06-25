@@ -1,0 +1,8 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' @md
+#' Some prose with a % literal here and a second line here.
+#' @name foo
+NULL

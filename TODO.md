@@ -326,11 +326,22 @@
       (`strip_rd_comments`); the inline-join sites now carry source line breaks as
       `\n` (norm_ws-equivalent) so the comment is line-scoped. Under `@md`, `%` is
       escaped (`\%`) and survives, so the strip is mode-gated. +2 (rx-f6927028 +
-      curated `rd_comment`) + 4 projector unit tests. 145→147. *Follow-on:* the
-      formatter reflows multi-line non-md prose onto one line, which joins text
-      across a `%` comment and changes rendered Rd — a separate Tenet-1 formatter
-      bug (see roxygen formatter follow-ons), so the curated case is kept single-
-      line; the multi-line per-line behavior is locked by a projector unit test.
+      curated `rd_comment`) + 4 projector unit tests. 145→147.
+      **Formatter `%`-reflow follow-on landed (2026-06-25, formatter-only):** the
+      paired Tenet-1 bug — the formatter reflowed multi-line non-md prose onto one
+      line, joining text *across* a live `%` comment and changing rendered Rd. Fixed
+      by mode-gating reflow: `ir_roxygen_block` re-derives the block's `@md`
+      (`block_md`, the formatter's own copy mirroring `resolve_roxygen_block`/the
+      projector), and a non-markdown `Paragraph`/`TagUnit` whose source carries a
+      live `%` comment (`line_has_live_rd_comment`, escape-aware like the projector's
+      `strip_rd_line_comment`) bails to verbatim marker-normalized lines (the same
+      shape as the `is_unsafe_line_start` bail) instead of reflowing. Under `@md` the
+      `%` is escaped (`\%`) and survives, so reflow proceeds. Oracle-verified: input
+      and formatted render the identical Rd for the non-md paragraph + tag cases, and
+      the md case stays preserving while still joining. Fixtures
+      `roxygen_bail_rd_comment`, `roxygen_tag_bail_rd_comment`,
+      `roxygen_rd_comment_md_reflows`. 16/16 curated + 216 harvested fixed-point
+      still preserving, 0 regressions.
       **Mid-prose `\preformatted` opener landed (2026-06-24t):** block-opener **Form
       C** — `So far so good. \preformatted{ …`. The lexer always splits an unbalanced
       `\name{` into its own to-EOL token (`is_block_macro_opener_at`); the grouper

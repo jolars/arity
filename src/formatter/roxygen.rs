@@ -27,7 +27,7 @@ use super::context::FormatContext;
 use super::core::format_with_style;
 use super::ir::Ir;
 use super::style::FormatStyle;
-use crate::ast::{AstNode, RoxygenTag};
+use crate::ast::{AstNode, RoxygenBlock, RoxygenTag};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// One physical `#'` line, reconstructed from the logical CST for layout.
@@ -295,6 +295,10 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
     let style = ctx.style();
     let indent_cols = indent * style.indent_width;
 
+    // The block's resolved markdown mode keys whether an unescaped `%` in prose is
+    // a live Rd comment (non-markdown) that reflow must not move text across.
+    let md = block_md(node);
+
     let mut items: Vec<Ir> = Vec::new();
     let mut para = Paragraph::default();
     let mut tag_unit: Option<TagUnit> = None;
@@ -306,8 +310,8 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
     // Flush all pending accumulators (only one is ever non-empty at a time).
     macro_rules! flush_pending {
         () => {{
-            para.flush(&mut items, indent_cols, lw);
-            flush_tag_unit(&mut tag_unit, &mut items, lw);
+            para.flush(&mut items, indent_cols, lw, md);
+            flush_tag_unit(&mut tag_unit, &mut items, lw, md);
             example.flush(&mut items, indent_cols, style);
         }};
     }
@@ -408,12 +412,12 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 unit.push_continuation(&line);
                 continue;
             }
-            flush_tag_unit(&mut tag_unit, &mut items, lw);
+            flush_tag_unit(&mut tag_unit, &mut items, lw, md);
         }
 
         // Otherwise accumulate into the current plain-prose paragraph.
         if para.marker.as_deref().is_some_and(|m| m != marker) {
-            para.flush(&mut items, indent_cols, lw);
+            para.flush(&mut items, indent_cols, lw, md);
         }
         if para.marker.is_none() {
             para.marker = Some(marker);
@@ -449,14 +453,20 @@ impl Paragraph {
     }
 
     /// Emit the pending paragraph (if any) into `items`, then reset.
-    fn flush(&mut self, items: &mut Vec<Ir>, indent_cols: usize, line_width: usize) {
+    fn flush(&mut self, items: &mut Vec<Ir>, indent_cols: usize, line_width: usize, md: bool) {
         if self.lines.is_empty() {
             return;
         }
         // Reflow only when no chunk could migrate to a line start and reparse as
-        // a structured construct (which would break idempotence); otherwise keep
-        // the original line breaks, marker-normalized.
-        if self.chunks.is_empty() || self.chunks.iter().any(|c| is_unsafe_line_start(c)) {
+        // a structured construct (which would break idempotence), and — in
+        // non-markdown prose, which is literal Rd — no line carries a live `%`
+        // comment, since reflowing would move text across the comment boundary and
+        // change the rendered Rd (a Tenet-1 violation); otherwise keep the original
+        // line breaks, marker-normalized.
+        if self.chunks.is_empty()
+            || self.chunks.iter().any(|c| is_unsafe_line_start(c))
+            || (!md && self.lines.iter().any(line_has_live_rd_comment))
+        {
             let lines = std::mem::take(&mut self.lines);
             for line in &lines {
                 emit_normalized(items, line);
@@ -507,12 +517,16 @@ impl TagUnit {
     }
 
     /// Emit the reflowed tag unit into `items`.
-    fn flush(self, items: &mut Vec<Ir>, line_width: usize) {
+    fn flush(self, items: &mut Vec<Ir>, line_width: usize, md: bool) {
         let marker_w = self.marker.chars().count();
         // A prose chunk that could migrate to a continuation-line start and
-        // reparse as a list/header marker would break idempotence: bail to a
-        // verbatim, marker-normalized rendering of the source lines instead.
-        if self.chunks.iter().any(|c| is_unsafe_line_start(c)) {
+        // reparse as a list/header marker would break idempotence; and, in
+        // non-markdown (literal Rd) prose, a line carrying a live `%` comment must
+        // not be reflowed (it would move text across the comment, changing the
+        // rendered Rd): bail to a verbatim, marker-normalized rendering instead.
+        if self.chunks.iter().any(|c| is_unsafe_line_start(c))
+            || (!md && self.lines.iter().any(line_has_live_rd_comment))
+        {
             for (i, line) in self.lines.iter().enumerate() {
                 if i == 0
                     && let Some(tag) = line.tag()
@@ -547,9 +561,9 @@ impl TagUnit {
 }
 
 /// Emit the pending tag unit (if any) into `items`, then clear it.
-fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: usize) {
+fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: usize, md: bool) {
     if let Some(unit) = unit.take() {
-        unit.flush(items, line_width);
+        unit.flush(items, line_width, md);
     }
 }
 
@@ -958,6 +972,52 @@ fn ordered_marker(s: &str) -> Option<(u64, usize)> {
         Some(b'.' | b')') => Some((s[..digits].parse().ok()?, digits + 1)),
         _ => None,
     }
+}
+
+/// Whether `line`'s content carries a live Rd comment: an unescaped `%`, which in
+/// literal (non-markdown) Rd prose begins a comment running to end of line
+/// (parse_Rd). Reflowing such a line — joining it with following text, or moving
+/// words past the `%` — changes which text the comment swallows and so alters the
+/// rendered Rd, so a non-markdown paragraph or tag unit containing one is kept
+/// verbatim. The escape rule mirrors the projector's `strip_rd_line_comment`
+/// (`\%` survives, `\\%` does not).
+fn line_has_live_rd_comment(line: &PhysicalLine) -> bool {
+    let mut escaped = false;
+    for c in content_text(line).chars() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '%' {
+            return true;
+        }
+    }
+    false
+}
+
+/// The block's resolved markdown mode (a standalone `@md`/`@noMd` directive line,
+/// last one wins, default off), mirroring the lexer's `resolve_roxygen_block` and
+/// the projector's `block_md`. Plain prose leaves carry no mode in their kind, so
+/// the formatter re-derives it here to decide whether an unescaped `%` is a live
+/// Rd comment (non-markdown) or escaped literal text (markdown).
+fn block_md(node: &SyntaxNode) -> bool {
+    let Some(block) = RoxygenBlock::cast(node.clone()) else {
+        return false;
+    };
+    let mut md = false;
+    for section in block.sections() {
+        if let Some(tag) = section.tag()
+            && tag.arg().is_none()
+            && tag.text().is_none()
+        {
+            match tag.name().as_deref() {
+                Some("md") => md = true,
+                Some("noMd") => md = false,
+                _ => {}
+            }
+        }
+    }
+    md
 }
 
 /// Whether a chunk placed at the start of a wrapped line could reparse as a

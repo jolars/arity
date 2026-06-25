@@ -1,0 +1,10 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' Title
+#'
+#' Some prose with a % hidden comment
+#' and a second line here.
+#' @name foo
+NULL

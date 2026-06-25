@@ -246,55 +246,55 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-24u) — non-md Rd `%` line comments (projector + encoding)
+## Latest session (2026-06-25) — formatter `%`-reflow follow-on (Tenet-1, formatter-only)
 
-**Construct:** in **non-markdown** prose the roxygen value is literal Rd, so an
-unescaped `%` begins a comment to end of line (parse_Rd). `@format %` → empty
-`\format`; a mid-line `%` keeps only the prose before it; the comment is scoped per
-*physical line* (a multi-line `@details` drops the commented tail of line 1 but keeps
-line 2). rx-f6927028 — the last contained in-scope tail (links-across-lines remains).
-**Projector-only** (a faithful encoding translation: parse_Rd strips the comment from
-the generated raw Rd; the CST is correct + lossless).
+**Construct:** the paired Tenet-1 bug to 2026-06-24u. In **non-markdown** prose an
+unescaped `%` is a live Rd comment to EOL, so reflowing multi-line prose onto one line
+**joins text across the `%`** and changes what the comment swallows → different rendered
+Rd. E.g. `Some prose with a % hidden comment` + `and a second line.` rendered
+`"...with a and a second line."`, but reflow joined them so `% hidden comment and a
+second line.` all became the comment → `"...with a "`. A real behavior-preservation bug
+(same family as losslessness/idempotence), **not** cosmetic — the fixed-point net is
+blind to it (it tested single-line cases), the formatter fixtures catch it.
 
-**Bucket: projector gap.**
-- **Mode re-derivation** (`block_md`): plain-text leaves carry **no** mode (their kind is
-  identical in both modes — verified), so the projector re-derives `@md` by scanning the
-  block for a standalone `@md`/`@noMd` tag (last wins, default off), mirroring
-  `resolve_roxygen_block`. This is a *separate consumer*, not the block-builder
-  re-derivation the traps forbid.
-- **Per-line strip** (`prose_text_atom`/`strip_rd_comments`/`strip_rd_line_comment`):
-  with md off, each `serialize_inlines` run flush strips from the first unescaped `%`
-  (escape-aware: `\%` survives) to the line's end, per physical line. `md` threaded
-  through `serialize_inlines`/`push_section`/`project_tag_section`/`describe_section`/
-  `is_null_section` (md-list path passes `true`).
-- **Line-scoping** the four inline-join sites (`paragraph_inlines` NEWLINE, the
-  tag→continuation join, `section_body_parts`, `join_paras`) now emit `\n` instead of
-  `" "` — norm_ws-equivalent for non-`%` text (no existing pin moved), but it bounds the
-  `%` comment correctly.
+**Bucket: formatter gap** (parser + projector untouched; CST was already correct).
+- **Mode gate in the formatter** (`block_md`, formatter's own copy): plain-prose leaves
+  carry no mode, so `ir_roxygen_block` re-derives `@md` by scanning the block's sections
+  for a standalone `@md`/`@noMd` (last wins, default off) — a **third** consumer of the
+  same rule (lexer `resolve_roxygen_block`, projector `block_md`, now formatter), each a
+  documented separate consumer, **not** the block-builder re-derivation the traps forbid.
+- **Bail to verbatim** (`line_has_live_rd_comment`, escape-aware `%` scan mirroring the
+  projector's `strip_rd_line_comment`): a non-md `Paragraph`/`TagUnit` whose source
+  carries a live `%` keeps its original line breaks (marker-normalized) instead of
+  reflowing — the **same shape** as the existing `is_unsafe_line_start` bail, OR-ed into
+  both `flush`es. `md` threaded through `flush`/`flush_tag_unit`/`flush_pending!`. Under
+  `@md` the `%` is escaped (`\%`) → reflow proceeds (verified it still joins).
 
-**Result:** projector **145→147 matching** (147 allowlisted), **21→20 divergent**, 0
-regressions, 167 pinned. Curated fixed-point **15→16/16 preserving** (rd_comment kept
-single-line so it's fixed-point-safe). `cargo test` green (483), clippy + fmt clean. One
-format-baseline add (the new curated key only). Files: `src/roxygen/project_rd.rs` (+4
-unit tests), new curated `rd_comment.{R,rdtree}`, projector allowlist (+2), format
-baseline, TODO, RECAP.
+**Result:** formatter-only. **Oracle-verified** (block-to-sections/tree): input ==
+formatted render for the non-md paragraph AND non-md `@param` tag-prose cases; the md
+case stays preserving while still joining. `cargo test` green (483), clippy + fmt clean.
+Curated fixed-point **16/16** + harvested **216** still preserving, **0 regressions**
+(the 7 harvested non-md `%` cases are all non-prose passthrough tags — `@name`/`@usage`/
+`@format`/… — never reflowed, so none moved; the format-stability baseline didn't move).
+Files: `src/formatter/roxygen.rs` (+`block_md`/`line_has_live_rd_comment`, `md` threaded
+into both flushes), 3 new formatter fixtures + snapshots, TODO, RECAP.
 
-**Open follow-on (formatter, Tenet-1):** the formatter reflows multi-line non-md prose
-onto one line, which joins text **across** a `%` comment and changes rendered Rd. Real
-behavior-preservation bug, distinct from this projector work. It's why the curated case
-is single-line; the multi-line per-line strip is locked by a projector unit test
-(`non_md_percent_comment_is_scoped_per_line`). Fix lives in the formatter's prose reflow
-(must not join a line whose tail is a live `%` comment).
-
-**Next (ranked):** (1) **the formatter `%`-reflow follow-on above** — contained, well-
-characterized, and the natural pair to this session. (2) **links broken across lines**
-(rx-383f2ca3/eb12b6b6): a `[…](…)`/`[…][ref]` spanning several `#'` lines; the lexer is
-line-scoped so it can't carve a cross-line link — architecturally invasive (cross-line
-span lexing). The remaining ~18 divergences are roxygen2-evaluation or cross-block (out
-of scope; see 2026-06-24r below).
+**Next (ranked):** (1) **links broken across lines** (rx-383f2ca3/eb12b6b6): a
+`[…](…)`/`[…][ref]` spanning several `#'` lines; the lexer is line-scoped so it can't
+carve a cross-line link — architecturally invasive (cross-line span lexing). The only
+remaining in-scope projector divergence. (2) The remaining ~18 projector divergences are
+roxygen2-evaluation or cross-block (out of scope; see 2026-06-24r). The projector stands
+at **147 matching / 20 divergent** of 167 pinned, unchanged this session (formatter work).
 
 ## Earlier sessions
 
+- **2026-06-24u (non-md Rd `%` line comments, projector + encoding):** in non-markdown
+  prose the value is literal Rd, so an unescaped `%` is a comment to EOL (`@format %` →
+  empty `\format`). Projector re-derives `@md` (`block_md`) and, md off, strips `%` per
+  physical line (`strip_rd_comments`/`strip_rd_line_comment`, `\%` survives); the four
+  inline-join sites emit `\n` (norm_ws-equivalent) to line-scope the comment. +2
+  (rx-f6927028 + curated `rd_comment`) + 4 unit tests. 145→147; curated 15→16/16. Its
+  formatter follow-on is this 2026-06-25 session.
 - **2026-06-24t (mid-prose `\preformatted` opener, block-opener Form C):** a
   `\preformatted{ … }` opener appearing **mid-prose** (`So far so good. \preformatted{`).
   Lexer always splits an unbalanced `\name{` to its own to-EOL token; grouper
