@@ -1,14 +1,74 @@
 # roxygen2 projector-parity allowlist --- cases whose CST projection currently
-# matches their pinned roxygen2 section tree. Two kinds of identifier:
+# matches their pinned roxygen2 section tree. Three kinds of identifier:
 #   * curated file stems  (tests/oracle/corpus/roxygen/<stem>.R vs <stem>.rdtree)
 #   * harvested slugs rx-* (tests/oracle/corpus/roxygen.jsonl, projector-eligible
 #     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
+#   * CommonMark spec slugs cm-* (tests/oracle/corpus/commonmark-emphasis.jsonl
+#     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)
 # Guarded against regression by `roxygen_projector.rs` (pure Rust, no R, plain
 # `cargo test`). Re-seed from matching cases with `task roxygen-projector-seed`.
 #
 # Divergent cases in ROXYGEN_PROJECTOR.md are the backlog: close the structural
 # gap in the *parser*, refresh/keep the pin, then add the id here. A faithful
 # divergence means the CST is wrong --- never patch the projector to pass.
+cm-352
+cm-353
+cm-357
+cm-358
+cm-359
+cm-360
+cm-361
+cm-362
+cm-363
+cm-365
+cm-366
+cm-367
+cm-368
+cm-372
+cm-373
+cm-374
+cm-376
+cm-378
+cm-379
+cm-380
+cm-381
+cm-383
+cm-384
+cm-385
+cm-386
+cm-392
+cm-393
+cm-398
+cm-399
+cm-404
+cm-405
+cm-422
+cm-423
+cm-436
+cm-437
+cm-438
+cm-440
+cm-441
+cm-443
+cm-444
+cm-445
+cm-446
+cm-447
+cm-448
+cm-449
+cm-450
+cm-452
+cm-453
+cm-455
+cm-456
+cm-457
+cm-458
+cm-459
+cm-460
+cm-461
+cm-462
+cm-464
+cm-471
 describe_format
 examples
 examples_merge

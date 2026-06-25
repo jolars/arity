@@ -61,6 +61,7 @@ tasks:
             && echo "minted $pin" || echo "SKIP $r (roxygen2 could not process)"
         done
       - task: roxygen-projector-pins
+      - task: roxygen-spec-pins
 
   roxygen-projector-pins:
     desc: Mint the harvested corpus's projector-eligible section pins (tests/oracle/corpus/roxygen-sections.jsonl; needs R + roxygen2)
@@ -69,6 +70,22 @@ tasks:
         Rscript tests/oracle/roxygen_oracle.R projector-pins \
           < tests/oracle/corpus/roxygen.jsonl > tests/oracle/corpus/roxygen-sections.jsonl
         echo "minted $(wc -l < tests/oracle/corpus/roxygen-sections.jsonl) eligible pins of $(grep -vc '^$' tests/oracle/corpus/roxygen.jsonl) harvested"
+
+  roxygen-spec-corpus:
+    desc: Rebuild the CommonMark spec @md corpus + pins from the vendored spec.txt (emphasis section; needs R + roxygen2). Run after re-vendoring spec.txt.
+    cmds:
+      - |
+        Rscript scripts/build-commonmark-corpus.R tests/oracle/corpus/commonmark-spec/spec.txt \
+          "Emphasis and strong emphasis" tests/oracle/corpus/commonmark-emphasis.jsonl
+      - task: roxygen-spec-pins
+
+  roxygen-spec-pins:
+    desc: Mint the CommonMark spec corpus's section pins (commonmark-emphasis-sections.jsonl; needs R + roxygen2)
+    cmds:
+      - |
+        Rscript tests/oracle/roxygen_oracle.R projector-pins \
+          < tests/oracle/corpus/commonmark-emphasis.jsonl > tests/oracle/corpus/commonmark-emphasis-sections.jsonl
+        echo "minted $(wc -l < tests/oracle/corpus/commonmark-emphasis-sections.jsonl) spec pins"
 
   roxygen-projector-seed:
     desc: Re-seed the projector allowlist from currently-matching cases (pure Rust, no R; preserves the header)

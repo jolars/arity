@@ -3,13 +3,18 @@
 //!
 //! For each case we project arity's CST to the parser-owned Rd section subtrees
 //! (`arity::roxygen::project_rd::project_to_rd`) and diff it against a **pinned**
-//! roxygen2 section tree. Two corpora feed it:
+//! roxygen2 section tree. Three corpora feed it:
 //!   * the **curated** dir corpus --- `tests/oracle/corpus/roxygen/<stem>.R` vs a
 //!     committed `<stem>.rdtree`;
 //!   * the **harvested** corpus's *projector-eligible* subset ---
 //!     `tests/oracle/corpus/roxygen.jsonl` (single-topic, self-contained blocks;
 //!     `@inherit`/`@template`/`@eval`/… are filtered out as resolve-from-elsewhere)
-//!     vs the minted `tests/oracle/corpus/roxygen-sections.jsonl`.
+//!     vs the minted `tests/oracle/corpus/roxygen-sections.jsonl`;
+//!   * the **CommonMark spec** corpus --- each spec example's markdown wrapped into
+//!     an `@md` block (`tests/oracle/corpus/commonmark-emphasis.jsonl`) vs its
+//!     minted pin. The spec is a broad *input* corpus only; roxygen2 remains the
+//!     oracle (see `docs/design/roxygen-inline-pass.md` §10). It drives the
+//!     inline-pass (emphasis-first) parity work.
 //!
 //! Pins are minted from roxygen2 by `task roxygen-projector-refresh`. *Pinned ⇒ no
 //! R at test time ⇒ this runs in plain `cargo test`* and is a hard gate, unlike
@@ -40,6 +45,12 @@ const ALLOWLIST_REL: &str = "tests/oracle/roxygen-projector-allowlist.txt";
 /// `tests/oracle/roxygen_oracle.R`'s `projector-pins` op.
 const HARVEST_CORPUS_REL: &str = "tests/oracle/corpus/roxygen.jsonl";
 const HARVEST_PINS_REL: &str = "tests/oracle/corpus/roxygen-sections.jsonl";
+/// CommonMark spec examples wrapped into `@md` blocks (`{slug, input}`) and their
+/// minted pins (`{slug, sections}`). The spec is a broad *input* corpus only ---
+/// roxygen2 is the oracle (see `docs/design/roxygen-inline-pass.md` §10). Built by
+/// `scripts/build-commonmark-corpus.R`; same JSONL shape as the harvested corpus.
+const SPEC_CORPUS_REL: &str = "tests/oracle/corpus/commonmark-emphasis.jsonl";
+const SPEC_PINS_REL: &str = "tests/oracle/corpus/commonmark-emphasis-sections.jsonl";
 
 #[derive(serde::Deserialize)]
 struct HarvestInput {
@@ -139,15 +150,16 @@ fn evaluate_curated() -> Vec<Report> {
         .collect()
 }
 
-/// The harvested corpus's projector-eligible subset: each pinned slug's input
-/// projected and compared to its minted `sections` pin (no trailing newline, so
-/// compared directly). Slugs without a corpus input are skipped.
-fn evaluate_harvested() -> Vec<Report> {
-    let inputs: BTreeMap<String, String> = load_jsonl::<HarvestInput>(HARVEST_CORPUS_REL)
+/// A slug-keyed JSONL corpus (`{slug, input}`) against its minted section pins
+/// (`{slug, sections}`, the projector-eligible subset --- pins carry no trailing
+/// newline, so compared directly). Slugs without a corpus input are skipped. Both
+/// the harvested corpus and the CommonMark spec corpus share this shape.
+fn evaluate_jsonl_corpus(corpus_rel: &str, pins_rel: &str) -> Vec<Report> {
+    let inputs: BTreeMap<String, String> = load_jsonl::<HarvestInput>(corpus_rel)
         .into_iter()
         .map(|c| (c.slug, c.input))
         .collect();
-    load_jsonl::<HarvestPin>(HARVEST_PINS_REL)
+    load_jsonl::<HarvestPin>(pins_rel)
         .into_iter()
         .filter_map(|pin| {
             let input = inputs.get(&pin.slug)?;
@@ -166,7 +178,8 @@ fn evaluate_harvested() -> Vec<Report> {
 
 fn evaluate() -> Vec<Report> {
     let mut reports = evaluate_curated();
-    reports.extend(evaluate_harvested());
+    reports.extend(evaluate_jsonl_corpus(HARVEST_CORPUS_REL, HARVEST_PINS_REL));
+    reports.extend(evaluate_jsonl_corpus(SPEC_CORPUS_REL, SPEC_PINS_REL));
     reports
 }
 
@@ -239,8 +252,9 @@ fn write_report(
     );
     md.push_str(
         "The **primary, CI-safe** conformance gate: `project_to_rd(parse(x))` vs roxygen2 \
-         section pins, over the curated dir corpus (`<stem>.rdtree`) and the harvested \
-         corpus's projector-eligible subset (`roxygen-sections.jsonl`). It compares Rd \
+         section pins, over the curated dir corpus (`<stem>.rdtree`), the harvested \
+         corpus's projector-eligible subset (`roxygen-sections.jsonl`), and the CommonMark \
+         spec corpus (`commonmark-emphasis*.jsonl`, the inline-pass driver). It compares Rd \
          **structure**, so it catches what the semantic fixed-point oracle cannot --- a \
          `\\describe`/`\\itemize`/`\\tabular` the CST has not modeled as a block, or markdown \
          still flat prose. Allowlisted cases (`tests/oracle/roxygen-projector-allowlist.txt`) \

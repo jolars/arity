@@ -266,22 +266,22 @@ gate now exist and are the **primary driver** (parser-first, structural, CI-safe
 corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset**
 (`roxygen-sections.jsonl` — the 151/217 single-topic, self-contained blocks;
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
-they stay in the R↔R fixed-point net, not false-positive backlog). Current (after non-md `%`
-comments, 2026-06-24u): **147 matching (all
-allowlisted), 20 divergent (backlog)** of 167 pinned cases. The
-divergences are now almost all roxygen2-*evaluation*/multi-block gaps (out of
-scope); the **only** in-scope remainder is **links-across-lines** (rx-383f2ca3/eb12b6b6)
-— a hard tail. Tasks:
-`task roxygen-projector` (the gate),
-`task roxygen-projector-refresh` (re-mint all pins), `task roxygen-projector-pins`
-(harvested pins only), `task roxygen-projector-seed` (re-seed allowlist from matches).
+they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
+2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
+driver). Current: **205 matching (all allowlisted), 94 divergent (backlog)** of 299 pinned.
+Of the 94 divergences, 74 are the `cm-` emphasis worklist (flanking/nesting/rule-of-3/
+Unicode/diagnostic-parity); the prior 20 are roxygen2-*evaluation*/multi-block gaps (out of
+scope) plus **links-across-lines** (rx-383f2ca3/eb12b6b6). Tasks:
+`task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
+`task roxygen-projector-pins` (harvested pins), `task roxygen-spec-corpus`/`roxygen-spec-pins`
+(spec corpus + pins), `task roxygen-projector-seed` (re-seed allowlist from matches).
 Report: `ROXYGEN_PROJECTOR.md` (this dir).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
-   the fixed-point check is blind to. Curated corpus + harvested projector-eligible
-   subset (167 pinned cases). The 20 divergences are the worklist.
+   the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
+   (299 pinned cases). The 94 divergences are the worklist (74 = `cm-` emphasis).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 16/16 preserving, 0
    blocked. *Meaning, not layout.*
@@ -291,55 +291,59 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-25b) — markdown CommonMark-parity tenet + inline-pass design (no parser change)
+## Latest session (2026-06-25c) — CommonMark spec emphasis corpus wired as 3rd projector source (test-infra only, no parser change)
 
-**Not a construct — a direction-setting session.** The user redirected from the
-cross-line-link tail to **robustifying emphasis**, then to the root question: *is the
-architecture even set up for this?* It is **not**. Findings + decisions:
+**Slice-1 sub-step 1 of the inline-pass roadmap: stand up the real driver before the pass.**
+Per the design (`docs/design/roxygen-inline-pass.md` §10) and the prior session's ranked next
+target, wired the CommonMark spec test set as a **third projector corpus source** so the
+emphasis work has an exhaustive, roxygen2-pinned driver. No parser/projector/formatter behavior
+change.
 
-- **Diagnosis.** Emphasis is carved as a **whole atomic token** in the lexer
-  (`scan_md_emphasis`, local line-scoped forward scan); the projector strips delimiters and
-  treats the inside as flat `TEXT` (`strip_delim`). So **nesting is unrepresentable**
-  (`**foo *bar* baz**` can't carry an inner `\emph`), the rule of 3 / overlap are decided by a
-  forward scan (not the delimiter stack), flanking ignores punctuation, and it's line-scoped.
-  The function's *shape* is wrong, not its heuristics.
-- **Tenet (settled).** The markdown layer's end goal is **full CommonMark parity, nothing less**
-  — recorded in SKILL.md ("Markdown tenet"), this RECAP (traps + settled decisions), and the
-  reworded `scan_md_emphasis` doc comment (the old "pragmatic subset / faithful under-recognition"
-  framing is gone — it's now "interim, incomplete, to be replaced by the inline pass").
-- **Design doc** `docs/design/roxygen-inline-pass.md` (committed): the real **block→inline
-  delimiter-stack pass** at paragraph granularity inside `parse()` (salsa/incremental
-  untouched). Lexer emits raw `RoxygenMdDelim` runs; the pass resolves `*`/`_` into
-  `ROXYGEN_MD_EMPH`/`STRONG` **nodes** (reusing SyntaxKinds 90/91 as nodes); projector recurses;
-  formatter treats nodes atomic (cross-line spans → existing marker-passthrough). Losslessness
-  via `Event::Leaf` run-splitting; idempotence holds because single-space normalization preserves
-  flanking class.
-- **Decisions:** Slice 1 = **emphasis only** (links/code stay opaque local tokens — correct per
-  CommonMark precedence); **flanking = ASCII-class first**, Unicode adjacency a noted backlog.
-- **Oracle clarified (with the user).** roxygen2 is THE oracle, not the CommonMark spec — the spec
-  is an input corpus only; roxygen2's behavior governs where it diverges from raw `cmark`. And a
-  **second oracle surface = diagnostic parity**: empirically confirmed roxygen2 itself emits
-  `✖ … has mismatched braces or quotes` (`rdComplete`) and drops content on `\*not emphasis\*`, so
-  oracle-errors become diagnostic-parity fixtures (record the message; emit a side-channel
-  diagnostic in the linter/LSP phase), never silent `blocked`. (Verified the trickiest emphasis
-  cases render faithfully: `***bar***`→`(\emph(\strong …))`, `**foo*`→`(TEXT "*")(\emph …)`, etc.)
+- **Vendored** `tests/oracle/corpus/commonmark-spec/spec.txt` (CommonMark 0.31.2, verbatim, with a
+  `README.md`: "do not edit, refresh from upstream; inputs only, roxygen2 is the oracle").
+- **Builder** `scripts/build-commonmark-corpus.R`: walks `spec.txt`, tracks the ATX section
+  heading, extracts a section's `example` blocks (markdown half only, `→`→tab), wraps each into a
+  self-contained `@md` block (`#' @md` / `#' @title T` / `#' @details` / `<md>` / `#' @name spec` /
+  `NULL` — markdown goes in `\details` to isolate it from intro title/description splitting), and
+  emits `{slug, input}` JSONL keyed by the spec's **canonical global example number** (`cm-NNN`;
+  emphasis = `cm-352`..`cm-483`, 132 cases). Pins minted by the existing `projector-pins` op
+  (reused; all 132 eligible) → `commonmark-emphasis-sections.jsonl`.
+- **Wired** into `tests/roxygen_projector.rs`: generalized `evaluate_harvested` →
+  `evaluate_jsonl_corpus(corpus, pins)`, called for both harvested and the new spec corpus.
+  Tasks: `roxygen-spec-corpus` (build + pins), `roxygen-spec-pins` (pins only); folded into
+  `roxygen-projector-refresh`.
+- **Ratchet:** 58/132 spec cases already pass the **interim local scanner** (simple non-nested
+  emphasis) → seeded into the allowlist. The **74 divergences are the inline-pass worklist**:
+  flanking (`a*"foo"*`/`* a *`→literal), nesting, rule-of-3, Unicode-adjacency, plus the
+  diagnostic-parity drops (roxygen2 warned "mismatched braces or quotes" yet still pinned).
 
-**Result:** docs + framing only; **no parser/projector/formatter behavior change** (projector
-holds at 147/167). Files: `docs/design/roxygen-inline-pass.md` (new), `src/parser/roxygen/lex.rs`
-(doc comments reworded), SKILL.md + RECAP.md + TODO.md (tenet + roadmap). `cargo test` green.
+**Result:** projector **147→205 matching (all allowlisted), 20→94 divergent** of 299 pinned
+(+132 spec: 58 allowlisted, 74 backlog). `cargo test` green (one pre-existing flaky `tests/config.rs`
+stdin BrokenPipe, passes in isolation — unrelated), clippy + fmt clean. Files: new `spec.txt` +
+`README.md`, `scripts/build-commonmark-corpus.R`, `commonmark-emphasis{,-sections}.jsonl`,
+`tests/roxygen_projector.rs` (3rd source), `Taskfile.yml` (2 tasks), allowlist (+58 + header), TODO.
 
-**Next (ranked):** **(1) Implement inline-pass slice 1 — emphasis** per the design doc.
-First wire the **CommonMark spec corpus** as the driver: vendor `spec.txt`, load the ~132
-"Emphasis and strong emphasis" examples, wrap each into an `@md` block, mint Rd pins from
-roxygen2 into the projector gate (allowlist/blocked). Also keep the user's "Complex Cases" list
-as curated fixtures. Then: lexer emits `RoxygenMdDelim`; new
-paragraph-level delimiter-stack pass → `ROXYGEN_MD_EMPH`/`STRONG` nodes; projector recurse;
-formatter atomic; TDD fixtures + projector pins + idempotence cases; re-bless the format-stability
-baseline rows (atomic token → node) with review. (2) Then links onto the same stack (yields
-cross-line links rx-383f2ca3/eb12b6b6 for free). (3) Code spans/autolinks/HTML/images fold in as
-the pass matures, retiring the lexer's local recognizers.
+**Next (ranked):** **(1) Implement inline-pass slice 1 — emphasis** (now driven by the 74 `cm-`
+backlog). Lexer stops carving emphasis spans, emits raw `RoxygenMdDelim` runs (new TokKind + new
+`ROXYGEN_MD_DELIM` leaf after `ROXYGEN_MD_HTML_BLOCK`, `COUNT`++); retire the
+`RoxygenMdEmph`/`Strong` *token* kinds, **reuse** SyntaxKinds 90/91 as **node** kinds; new
+paragraph-level delimiter-stack pass in the grouper/builder (`group.rs`/`build.rs`) →
+`ROXYGEN_MD_EMPH`/`STRONG` nodes (full flanking ASCII-first, rule-of-3, `process_emphasis`);
+projector recurses into the nodes; formatter treats them atomic (cross-line → marker-passthrough).
+TDD: curated fixtures (nesting/rule-of-3/overlap/intraword/flanking) + idempotence cases; ratchet
+the `cm-` cases as they flip. Re-bless format-stability baseline rows (atomic token → node) with
+review. **Wire every new leaf kind to all classifiers** (the trap checklist). (2) Links onto the
+same stack. (3) code spans/autolinks/HTML/images fold in.
 
 ## Earlier sessions
+
+- **2026-06-25b (markdown CommonMark-parity tenet + inline-pass design, no parser change):** the
+  direction-setting session. Diagnosed `scan_md_emphasis` as the **wrong shape** (atomic local
+  forward-scan → nesting unrepresentable, rule-of-3/flanking wrong, line-scoped). Settled the tenet
+  (full CommonMark parity, nothing less), authored `docs/design/roxygen-inline-pass.md` (real
+  block→inline delimiter-stack pass), and clarified the two oracle surfaces (render parity +
+  diagnostic parity; roxygen2 is THE oracle, spec is inputs only). Decisions: slice 1 = emphasis
+  only, flanking ASCII-first. Docs/framing only; projector held 147/167.
 
 - **2026-06-25 (formatter `%`-reflow follow-on, formatter-only):** the paired Tenet-1 bug to
   2026-06-24u — reflowing multi-line **non-md** prose joined text across a live `%` comment,

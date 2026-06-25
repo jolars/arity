@@ -309,6 +309,15 @@
       quotes"`, e.g. `\*not emphasis\*`); arity should mirror the condition as a
       side-channel diagnostic (lossless CST) — high-value lint/LSP signal, so an
       oracle-error is a diagnostic-parity fixture, not a silent skip.
+      **Driver wired (2026-06-25c):** the CommonMark spec corpus is now a third
+      projector source — `scripts/build-commonmark-corpus.R` extracts the 132
+      "Emphasis and strong emphasis" examples from the vendored `spec.txt`, wraps
+      each into an `@md` block (`commonmark-emphasis.jsonl`), and `task
+      roxygen-spec-pins` mints roxygen2 Rd pins. **58/132 already pass** the
+      interim local scanner (allowlisted); the **74 divergences are the
+      inline-pass worklist** (flanking like `a*"foo"*`→literal, nesting, rule-of-3,
+      Unicode-adjacency, plus diagnostic-parity drops). Next: implement the pass
+      itself (lexer `RoxygenMdDelim` → delimiter-stack → nodes) and ratchet them in.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`
