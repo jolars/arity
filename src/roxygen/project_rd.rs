@@ -798,9 +798,38 @@ fn rcode_atoms(body: &str) -> Vec<String> {
     atoms
 }
 
-/// Collapse every whitespace run to a single space and trim (the R `norm_ws`).
+/// Collapse every whitespace run to a single space and trim (the R `norm_ws`,
+/// `gsub("[[:space:]]+", " ")` then `trimws`).
+///
+/// The R driver's `[[:space:]]` is **ASCII-only** even in a UTF-8 locale, so
+/// non-ASCII Unicode whitespace (NBSP `U+00A0`, NEL `U+0085`, the `Zs`
+/// separators) is *preserved verbatim*, never collapsed. This matters for
+/// flanking-rejected emphasis: `*\u{a0}a\u{a0}*` stays the literal text
+/// `*\u{a0}a\u{a0}*` (a NBSP can't flank, so no `\emph`), and the NBSP must
+/// survive the projection. Rust's `split_whitespace`/`char::is_whitespace` is
+/// Unicode-aware and would wrongly fold NBSP to a plain space, so we classify
+/// against the ASCII POSIX-space set instead.
 fn norm_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut out = String::with_capacity(s.len());
+    let mut pending_space = false;
+    for c in s.chars() {
+        if is_posix_space(c) {
+            pending_space = true;
+        } else {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The C-locale POSIX `[[:space:]]` set: space, tab, newline, vertical tab,
+/// form feed, and carriage return. ASCII-only by design (see `norm_ws`).
+fn is_posix_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
 }
 
 /// Escape a string the way the R driver's `encode_text` does (`\`, `"`, `\n`).
@@ -2145,6 +2174,33 @@ mod tests {
         assert!(
             project_to_rd(src)
                 .contains("(\\details (TEXT \"Text with *emphasis* and `code` here.\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn norm_ws_collapses_ascii_but_preserves_unicode_whitespace() {
+        // ASCII whitespace runs collapse to a single space and the ends trim.
+        assert_eq!(norm_ws("  a \t\n b  "), "a b");
+        // Non-ASCII Unicode whitespace (NBSP, NEL) is preserved verbatim --- the
+        // R driver's `[[:space:]]` is ASCII-only even in a UTF-8 locale.
+        assert_eq!(norm_ws("*\u{a0}a\u{a0}*"), "*\u{a0}a\u{a0}*");
+        assert_eq!(norm_ws("x\u{85}y"), "x\u{85}y");
+    }
+
+    #[test]
+    fn nbsp_cannot_flank_emphasis_stays_literal() {
+        // A NBSP is Unicode whitespace, so the `*`s around `\u{a0}a\u{a0}` cannot
+        // flank --- no `\emph`, the literal text (NBSP intact) survives. (cm-355)
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' *\u{a0}a\u{a0}*\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"*\u{a0}a\u{a0}*\"))"),
             "got: {}",
             project_to_rd(src)
         );

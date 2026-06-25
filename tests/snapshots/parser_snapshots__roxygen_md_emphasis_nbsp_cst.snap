@@ -1,0 +1,53 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..130
+  ROXYGEN_BLOCK@0..124
+    ROXYGEN_SECTION@0..47
+      ROXYGEN_PARAGRAPH@0..44
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..43 "Non-breaking space ca ..."
+        NEWLINE@43..44 "\n"
+      ROXYGEN_MARKER@44..46 "#'"
+      NEWLINE@46..47 "\n"
+    ROXYGEN_SECTION@47..104
+      ROXYGEN_MARKER@47..49 "#'"
+      WHITESPACE@49..50 " "
+      ROXYGEN_TAG@50..58
+        ROXYGEN_AT@50..51 "@"
+        ROXYGEN_TAG_NAME@51..58 "details"
+      NEWLINE@58..59 "\n"
+      ROXYGEN_PARAGRAPH@59..104
+        ROXYGEN_MARKER@59..61 "#'"
+        WHITESPACE@61..62 " "
+        ROXYGEN_TEXT@62..71 "a normal "
+        ROXYGEN_MD_EMPH@71..77
+          ROXYGEN_MD_DELIM@71..72 "*"
+          ROXYGEN_TEXT@72..76 "word"
+          ROXYGEN_MD_DELIM@76..77 "*"
+        ROXYGEN_TEXT@77..82 " but "
+        ROXYGEN_MD_DELIM@82..83 "*"
+        ROXYGEN_TEXT@83..88 "\u{a0}a\u{a0}"
+        ROXYGEN_MD_DELIM@88..89 "*"
+        ROXYGEN_TEXT@89..103 " stays literal"
+        NEWLINE@103..104 "\n"
+    ROXYGEN_SECTION@104..111
+      ROXYGEN_MARKER@104..106 "#'"
+      WHITESPACE@106..107 " "
+      ROXYGEN_TAG@107..110
+        ROXYGEN_AT@107..108 "@"
+        ROXYGEN_TAG_NAME@108..110 "md"
+      NEWLINE@110..111 "\n"
+    ROXYGEN_SECTION@111..124
+      ROXYGEN_MARKER@111..113 "#'"
+      WHITESPACE@113..114 " "
+      ROXYGEN_TAG@114..124
+        ROXYGEN_AT@114..115 "@"
+        ROXYGEN_TAG_NAME@115..119 "name"
+        WHITESPACE@119..120 " "
+        ROXYGEN_TEXT@120..124 "nbsp"
+  NEWLINE@124..125 "\n"
+  IDENT@125..129 "NULL"
+  NEWLINE@129..130 "\n"

@@ -336,12 +336,15 @@
       EMPH/STRONG node** (one threading a `ROXYGEN_MARKER`, `is_cross_line_emph`) so
       its delimiter/text leaves distribute across physical lines and prose reflow
       rejoins them (`*foo`\n`bar*` → `*foo bar*`); single-line spans stay atomic.
-      **125/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
-      closed 2026-06-25f; cm-481 closed 2026-06-25g). The 7 remaining are later-slice
-      backlog: links-into-the-pass (cm-421/435, slice 2), markdown backslash escapes
-      (cm-439/442/451/454 — a **diagnostic-parity** surface: roxygen2 errors "mismatched
-      braces or quotes" and drops the content, needs the deferred lint/LSP side-channel),
-      and Unicode NBSP in `norm_ws` (cm-355). The **`\code`-vs-`\verb` underscore rule
+      **128/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
+      closed 2026-06-25f; cm-481 closed 2026-06-25g; cm-421/435 closed by slice 2,
+      2026-06-25h; cm-355 closed 2026-06-25j). The 4 remaining are markdown backslash
+      escapes (cm-439/442/451/454 — a **diagnostic-parity** surface: roxygen2 errors
+      "mismatched braces or quotes" and drops the content, needs the deferred lint/LSP
+      side-channel). **Unicode NBSP in `norm_ws` (cm-355) landed 2026-06-25j:** the R
+      driver's `[[:space:]]` is ASCII-only, so `norm_ws` now collapses only ASCII
+      whitespace and preserves NBSP/NEL/`Zs` verbatim — a flanking-rejected `*\u{a0}a\u{a0}*`
+      keeps its NBSP. The **`\code`-vs-`\verb` underscore rule
       landed (2026-06-25g, cm-481):** a `_`-leading code span (`` `_` ``) renders `\verb`,
       not `\code` — R's lexer rejects any name beginning with `_` (rlang's `parse_expr`
       errors), but arity's lexer lexes it as an ordinary identifier, so

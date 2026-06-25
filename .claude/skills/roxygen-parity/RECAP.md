@@ -131,8 +131,11 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   (`*foo`\n`bar*` → `*foo bar*`); a single-line span (no marker) stays atomic (glues as one
   chunk). Idempotent (flanking is invariant under whitespace normalization). Backlog toward
   full parity: links onto the same stack (slice 2, yields cross-line links), markdown
-  `\`-escapes (diagnostic-parity), Unicode flanking/`norm_ws` NBSP. (Empty-list-item interrupt
-  cm-369 closed 2026-06-25f — a list fix, see the List-markers trap.)
+  `\`-escapes (diagnostic-parity). (Empty-list-item interrupt cm-369 closed 2026-06-25f — a list
+  fix, see the List-markers trap. **Unicode flanking/NBSP closed 2026-06-25j:** the parser's
+  `char::is_whitespace` flanking already handled NBSP; the gap was the projector's `norm_ws`
+  folding NBSP to a space — now ASCII-`[[:space:]]`-only, preserving Unicode whitespace. See the
+  Sections/projection trap on `norm_ws`.)
 - **The oracle is roxygen2, NOT the CommonMark spec** (settled 2026-06-25b). roxygen2 *parses*
   via `cmark` (so parsing is faithful CommonMark) but always processes *through roxygen2*, which
   adds a markdown-escaping pre-pass, the `rdComplete` brace/quote **validation**
@@ -235,6 +238,14 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   block-level decision.
 
 **Sections / projection**
+- **`norm_ws` is ASCII-`[[:space:]]`-only, never Unicode-aware.** The R driver's `norm_ws`
+  (`gsub("[[:space:]]+", " ")` + `trimws`) collapses *ASCII* whitespace only — NBSP `U+00A0`,
+  NEL `U+0085`, and the `Zs` separators pass through verbatim. `project_rd::norm_ws` mirrors this
+  via `is_posix_space` (` \t\n\x0b\x0c\r`); **do not** revert to Rust's Unicode-aware
+  `split_whitespace`/`char::is_whitespace` (it folds NBSP→space, breaking flanking-rejected
+  emphasis like `*\u{a0}a\u{a0}*`, cm-355). Flanking itself (`inline.rs`) *is* Unicode-aware
+  (`char::is_whitespace`), so a NBSP correctly can't open/close a span — only the projection's
+  text-coalesce needed the ASCII fix.
 - **Non-md prose is literal Rd; an unescaped `%` is a comment to EOL.** The projector
   re-derives `@md` (`block_md`, mirrors `resolve_roxygen_block` — plain-text leaves carry
   *no* mode, so this is a separate, necessary re-derivation, **not** the block-builder
@@ -319,10 +330,10 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post cross-line inline links, 2026-06-25i): **280 matching (all allowlisted), 24 divergent
-(backlog)** of 304 pinned. Of the 24, 5 are remaining `cm-` cases (`\`-escapes cm-439/442/451/454
-= **diagnostic-parity**, Unicode NBSP cm-355); the other 19 are roxygen2-*evaluation*/multi-block
-gaps (out of scope) plus **reference links-across-lines** (rx-eb12b6b6, the next link increment).
+driver). Current (post Unicode NBSP flanking, 2026-06-25j): **281 matching (all allowlisted), 23 divergent
+(backlog)** of 304 pinned. Of the 23, 4 are remaining `cm-` cases (`\`-escapes cm-439/442/451/454
+= **diagnostic-parity**); the other 19 are roxygen2-*evaluation*/multi-block gaps (out of scope) plus
+**reference links-across-lines** (rx-eb12b6b6, the next link increment).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
 `task roxygen-projector-pins` (harvested pins), `task roxygen-spec-corpus`/`roxygen-spec-pins`
@@ -333,7 +344,7 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (304 pinned cases). The 24 divergences are the worklist (5 = remaining `cm-`).
+   (304 pinned cases). The 23 divergences are the worklist (4 = remaining `cm-`).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
    `#[ignore]`d) — strict semantic preservation of the formatter; 21/21 preserving, 0
    blocked. *Meaning, not layout.*
@@ -343,49 +354,51 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-25i) — Slice 2.5: cross-line inline links `[text](url)` (rx-383f2ca3)
+## Latest session (2026-06-25j) — Unicode NBSP flanking, `norm_ws` ASCII-only (cm-355)
 
-**An inline `[text](url)` link whose `[`…`](url)` spans a soft line break now resolves into one
-cross-line `ROXYGEN_MD_LINK` node**, with whitespace coalesced (`[broken`\n`across lines](url)` →
-`(\href (VERB url) (TEXT "broken across lines"))`) and inner emphasis resolving across the break too.
-The **key realization:** the inline pass's `Arena::build` **already** pairs bracket opener/closer
-leaves over the whole paragraph-granularity run (cross-line trivia included) — so the only gap was
-the **lexer** never emitting the lone brackets when they don't match on one line. Net work was tiny.
+**A NBSP (`U+00A0`) is Unicode whitespace, so `*\u{a0}a\u{a0}*` can't flank → stays literal text
+with the NBSP preserved.** arity's *parser* already rejected the flanking correctly (no `\emph`
+node — leftover `MD_DELIM` leaves); the divergence was purely in the **projector**: `norm_ws` used
+Rust's Unicode-aware `split_whitespace`, folding the NBSP to a plain space (`* a *`) where roxygen2
+(and the oracle serializer's `gsub("[[:space:]]+", " ")`) keep it verbatim (`*\u{a0}a\u{a0}*`).
 
-- **Lexer (`lex.rs`):** two new carves under `@md`, after the same-line `inline_link_span` split.
-  (1) A **cross-line opener**: a `[` whose line-remainder is bracket-free (`is_cross_line_link_opener`
-  — no same-line `]`, so no same-line link/ref/shortcut applies) → a lone `RoxygenMdBracket` `[` leaf,
-  then keep lexing the rest of the line as prose. (2) A **cross-line closer**: a bare `]` immediately
-  followed by a balanced `(url)` (`cross_line_link_closer`) → a `RoxygenMdBracket` `](url)` leaf. A
-  same-line `[…](url)` is consumed whole by the opener path, so a bare `]` reaching the loop has no
-  same-line `[`. **No new TokKind, no inline-pass/projector change** — the existing
-  `Arena::build` bracket-pairing collapses the pair into a `ROXYGEN_MD_LINK` node over the run, and
-  the projector's node arm (NEWLINE→space, marker-skip, TEXT-coalesce) renders it. Unmatched brackets
-  fall back to literal text (lossless), matching cmark/roxygen2.
-- **Formatter (`roxygen.rs`):** generalized `is_cross_line_emph`→`is_cross_line_inline` to also match
-  a marker-threading `ROXYGEN_MD_LINK` node, so `collect_logical_elements` descends into a cross-line
-  link and prose reflow rejoins it. **Byte-identical output** for every pre-existing case (the change
-  is CST-structure-only — prose reflow already joined the words; the format baseline gained only the
-  new curated case, 0 modifications). Idempotent (a reflowed one-line `[text](url)` re-lexes via the
-  same-line `inline_link_span`; a re-wrapped one re-carves the cross-line brackets).
-- **TDD:** parser fixture `roxygen_md_link_multiline` (two cross-line links, the 2nd with inner
-  cross-line `*emphasis*` → GRP-wrapped `\href` display) + curated projector case `md_link_multiline`
-  (pin minted from roxygen2, matches). rx-383f2ca3 (harvested) ratcheted into the allowlist.
+- **Projector (`project_rd.rs`):** rewrote `norm_ws` to classify against the **C-locale POSIX
+  `[[:space:]]` set** (`is_posix_space`: ` \t\n\x0b\x0c\r`, ASCII-only) — collapse runs to a single
+  space + trim, but **preserve every non-ASCII Unicode whitespace** (NBSP, NEL `U+0085`, the `Zs`
+  separators). Verified in R that `[[:space:]]` is ASCII-only even in a UTF-8 locale, so this is a
+  *faithful* encoding fix (matching the R driver's `norm_ws`), not compensation. No behavior change
+  for any ASCII-only text (281−1 prior pins unaffected). Parser untouched — flanking was already right.
+- **TDD:** parser fixture `roxygen_md_emphasis_nbsp` (a `*word*` emphasizes, `*\u{a0}a\u{a0}*` stays
+  leftover `MD_DELIM`s) locks the Unicode-whitespace flanking; 2 unit tests (`norm_ws` ASCII-collapse
+  + NBSP/NEL preserve; cm-355 end-to-end). cm-355 ratcheted into the projector allowlist.
 
-**Result:** projector **278→280 matching (all allowlisted), 25→24 divergent** (rx-383f2ca3 closed,
-+`md_link_multiline` curated pin; 304 pinned). Curated fixed-point 20→21/21 preserving. `cargo test`
-green, clippy + fmt clean.
+**Result:** projector **280→281 matching (all allowlisted), 24→23 divergent** (cm-355 closed; 304
+pinned). cm 127→128/132. Curated fixed-point 21/21 preserving. `cargo test` green, clippy + fmt clean.
 
 **Next (ranked):** **(1) Reference/shortcut cross-line links** (rx-eb12b6b6, `[text][ref]`/`[text]`
-across a break) — and reference/shortcut links **onto the stack** generally (retire the opaque
-line-scoped `scan_md_link`; needs the `get_md_linkrefs` pre-pass + opener deactivation + the
-followed-by-`{` lookahead — the bigger link increment). NB my cross-line opener carve now splits the
-`[broken` of rx-eb12b6b6's first line into a bracket leaf that finds no `](url)` closer (its closer is
-`][fcn]`) → stays literal + the same-line `[fcn]` shortcut resolves; still divergent from the pin,
-correctly. (2) **Diagnostic-parity surface:** `\`-escapes cm-439/442/451/454 (record, not render).
-(3) Unicode flanking + `norm_ws` NBSP (cm-355).
+across a break) — reference/shortcut links **onto the stack** (retire the opaque line-scoped
+`scan_md_link`; needs the `get_md_linkrefs` pre-pass + opener deactivation + the followed-by-`{`
+lookahead — the bigger link increment). (2) **Diagnostic-parity surface:** `\`-escapes
+cm-439/442/451/454 — the 4 remaining `cm-` cases. roxygen2 runs `rdComplete` on the **markdown-rendered
+Rd** (`markdown_if_active` → `markdown()` → `double_escape_md` doubles every `\`, then cmark, then the
+Rd output is brace/escape-checked); on failure it **drops** the content and warns. Matching the empty
+`(\details)` pin requires arity to replicate that escape+render+validate verdict and a side-channel
+diagnostic — a meaty, design-level decision (worth a user check before starting). (3) The remaining
+out-of-scope harvested divergences (knitr ``` ```{r} ``` eval, inline `` `r …` ``, RefClass docstrings)
+stay backlog, not blocked.
 
 ## Earlier sessions
+
+- **2026-06-25i (Slice 2.5 — cross-line inline links `[text](url)`, rx-383f2ca3):** an inline
+  `[text](url)` whose `[`…`](url)` spans a soft line break resolves into one cross-line
+  `ROXYGEN_MD_LINK` node (whitespace coalesced, inner emphasis crosses too). `Arena::build`
+  **already** pairs bracket opener/closer over the paragraph-granularity run; the only gap was the
+  lexer never emitting the lone brackets. Two `@md` lexer carves after `inline_link_span`: a
+  cross-line opener (`is_cross_line_link_opener`, bracket-free line-remainder → lone `[` leaf) and a
+  cross-line closer (`cross_line_link_closer`, bare `]` + balanced `(url)` → `](url)` leaf). No new
+  TokKind / inline-pass / projector change; formatter `is_cross_line_emph`→`is_cross_line_inline`
+  also matches a marker-threading Link node (byte-identical output). Fixture
+  `roxygen_md_link_multiline` + curated `md_link_multiline`. 278→280; cm 127/132.
 
 - **2026-06-25h (Slice 2 — inline `[text](url)` on the stack, cm-421/435):** the lexer splits a
   **same-line** bracket-free inline link into neutral `RoxygenMdBracket` leaves (`[` / `](url)`) and
