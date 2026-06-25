@@ -59,6 +59,11 @@ jobs:
       - name: Build mdBook
         run: mdbook build book
 
+      # mdBook has no `canonical-site-url` setting (rust-lang/mdBook#2706), so
+      # inject a <link rel="canonical"> into every rendered page post-build.
+      - name: Inject canonical links
+        run: cargo run --quiet --example canonical -- book/book https://arity.cc/
+
       # mdBook has no built-in sitemap; generate one from the rendered pages.
       # `lastmod` is derived from git history, so this needs full history.
       - name: Generate sitemap
