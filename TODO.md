@@ -323,13 +323,27 @@
       leaves) with `ROXYGEN_MD_DELIM` opener/closer/leftover leaves (`Event::Leaf`
       run-splitting → losslessness). Projector recurses (`MdEmphasis { strong,
       children }`); formatter unchanged (single-line nodes glue atomically;
-      idempotent). **119/132 cm cases now pass** (was 58). The 13 remaining are
-      legitimate later-slice backlog: cross-line/multi-line spans (cm-369/396/407/
-      425/434), links-into-the-pass (cm-421/435, slice 2), markdown backslash
-      escapes (cm-439/442/451/454), code `\code`-vs-`\verb` (cm-481), Unicode NBSP
-      whitespace in `norm_ws` (cm-355). Next: **slice 1.5 = widen the run to a whole
-      paragraph** (cross-line emphasis; formatter marker-passthrough for a node that
-      contains a `ROXYGEN_MARKER`), then **slice 2 = links onto the same stack**.
+      idempotent). **119/132 cm cases now pass** (was 58).
+      **Slice 1.5 LANDED (2026-06-25e): paragraph-granularity runs (cross-line
+      emphasis).** `resolve_emphasis` now collects *every* paragraph-body token into
+      a run — content plus the inter-line trivia (newline / `#'` marker / whitespace)
+      a continuation folds in — bounded only by a structural `Start`/`Finish`/`Leaf`,
+      so a span resolves across a soft line break (`*foo`\n`bar*` → one `\emph` over
+      `foo bar`). Trivia present as whitespace for flanking (`edge_char` maps the
+      marker to a space) and pass through verbatim, landing *inside* the resolved
+      node when the span crosses a line; the projector already skipped marker/newline
+      children. Formatter: `collect_logical_elements` **descends into a cross-line
+      EMPH/STRONG node** (one threading a `ROXYGEN_MARKER`, `is_cross_line_emph`) so
+      its delimiter/text leaves distribute across physical lines and prose reflow
+      rejoins them (`*foo`\n`bar*` → `*foo bar*`); single-line spans stay atomic.
+      **123/132 cm cases now pass** (cm-396/407/425/434 closed). The 9 remaining are
+      later-slice backlog: links-into-the-pass (cm-421/435, slice 2), markdown
+      backslash escapes (cm-439/442/451/454), code `\code`-vs-`\verb` (cm-481),
+      Unicode NBSP in `norm_ws` (cm-355), and the empty-list-item interrupt rule
+      (cm-369 — a lone `*` line mis-parses as a list marker; CommonMark forbids an
+      empty item interrupting a paragraph — a *list* fix, not emphasis). Next:
+      **slice 2 = links onto the same stack** (closes cm-421/435 + cross-line links
+      rx-383f2ca3/eb12b6b6).
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

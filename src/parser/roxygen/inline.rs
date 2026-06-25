@@ -12,15 +12,22 @@
 //! delimiter pieces whose texts tile the original run, an unmatched run re-emits
 //! its bytes, and every non-delimiter event passes through unchanged.
 //!
-//! **Scope (slice 1).** Emphasis/strong only, and resolution is **line-scoped**: a
-//! run is bounded by the `#'` marker / newline trivia, so a span cannot yet cross
-//! a soft line break (a documented backlog item toward paragraph-granularity).
+//! **Scope (slice 1.5).** Emphasis/strong only, resolved at **paragraph
+//! granularity**: a run spans every consecutive token of a paragraph (or tag-line)
+//! body — including the inter-line trivia (newline, the next `#'` marker, leading
+//! whitespace) that a continuation folds in — so a span may cross a *soft* line
+//! break (`*foo`\n`bar*` → one `\emph` over `foo bar`). A run is bounded only by a
+//! structural event (`Start`/`Finish`/`Leaf`): a paragraph/section/tag boundary, or
+//! an inline node (`ROXYGEN_RD_MACRO`) which binds tighter than emphasis. The
+//! inter-line trivia present as **whitespace** for flanking (a soft break is a
+//! single space; the `#'` marker is treated as whitespace too) and pass through
+//! verbatim — landing *inside* the resolved node when the span crosses a line.
 //! Code spans, links, images, and raw HTML stay opaque local-span leaves, resolved
 //! by the lexer *before* this pass — matching CommonMark precedence (they bind
 //! tighter than emphasis), so the pass treats each as one opaque inline.
 
 use crate::parser::events::Event;
-use crate::parser::lexer::{RoxygenRole, TokKind, Token};
+use crate::parser::lexer::{TokKind, Token};
 use crate::syntax::SyntaxKind;
 
 /// Resolve markdown emphasis/strong in `events` (in place). A no-op unless the
@@ -37,7 +44,12 @@ pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>) {
     let mut run: Vec<usize> = Vec::new();
     for ev in std::mem::take(events) {
         match ev {
-            Event::Tok(i) if is_inline_content(&tokens[i].kind) => run.push(i),
+            // Every paragraph-body token joins the run — content *and* the
+            // inter-line trivia (newline / `#'` marker / whitespace) a continuation
+            // folds in — so a span resolves across soft line breaks. A structural
+            // event (a paragraph/section/tag boundary, or an inline `ROXYGEN_RD_MACRO`
+            // which binds tighter than emphasis) bounds the run.
+            Event::Tok(i) => run.push(i),
             other => {
                 flush_run(tokens, &mut run, &mut out);
                 out.push(other);
@@ -46,13 +58,6 @@ pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>) {
     }
     flush_run(tokens, &mut run, &mut out);
     *events = out;
-}
-
-/// Whether a token kind is inline-prose content (so it belongs to an inline run).
-/// The marker, the marker→content whitespace, and inter-line newlines have other
-/// roles, so they bound a run — keeping resolution line-scoped.
-fn is_inline_content(kind: &TokKind) -> bool {
-    kind.roxygen_role() == Some(RoxygenRole::Content)
 }
 
 /// Resolve one inline run (the token indices in `run`) and append its events to
@@ -144,10 +149,14 @@ impl Arena {
             if tok.kind == TokKind::RoxygenMdDelim {
                 let ch = tok.text.as_bytes()[0];
                 let len = tok.text.len(); // a same-char ASCII run: bytes == chars
+                // For flanking, the char immediately before/after the run. Inter-line
+                // trivia (a soft break: newline, the `#'` marker, leading whitespace)
+                // counts as whitespace — the newline/whitespace bytes already are, and
+                // the marker is mapped to one (`edge_char`).
                 let before = p
                     .checked_sub(1)
-                    .and_then(|q| tokens[run[q]].text.chars().next_back());
-                let after = run.get(p + 1).and_then(|&j| tokens[j].text.chars().next());
+                    .and_then(|q| edge_char(&tokens[run[q]], false));
+                let after = run.get(p + 1).and_then(|&j| edge_char(&tokens[j], true));
                 let (can_open, can_close) = flanking(ch, before, after);
                 let node = arena.push_node(NodeData::Delim(tok.text.clone()));
                 arena.push_delim(node, ch, len, can_open, can_close);
@@ -469,6 +478,22 @@ fn flanking(ch: u8, before: Option<char>, after: Option<char>) -> (bool, bool) {
         ),
         // `*` (and any other delimiter char routed here).
         _ => (left_flanking, right_flanking),
+    }
+}
+
+/// The flanking-relevant edge char of a run neighbor: the first char (`leading`)
+/// or the last char of its text. A `#'` marker token is mapped to a space — an
+/// inter-line continuation is a soft break, which CommonMark treats as whitespace
+/// (newline/whitespace tokens already yield a whitespace char). `None` (an empty
+/// token) falls back to the start/end boundary, also whitespace.
+fn edge_char(tok: &Token, leading: bool) -> Option<char> {
+    if tok.kind == TokKind::RoxygenMarker {
+        return Some(' ');
+    }
+    if leading {
+        tok.text.chars().next()
+    } else {
+        tok.text.chars().next_back()
     }
 }
 

@@ -53,6 +53,7 @@ cm-392
 cm-393
 cm-394
 cm-395
+cm-396
 cm-397
 cm-398
 cm-399
@@ -63,6 +64,7 @@ cm-403
 cm-404
 cm-405
 cm-406
+cm-407
 cm-408
 cm-409
 cm-410
@@ -79,6 +81,7 @@ cm-420
 cm-422
 cm-423
 cm-424
+cm-425
 cm-426
 cm-427
 cm-428
@@ -87,6 +90,7 @@ cm-430
 cm-431
 cm-432
 cm-433
+cm-434
 cm-436
 cm-437
 cm-438
@@ -139,6 +143,7 @@ markdown_inline
 markdown_list
 markdown_url
 md_emphasis
+md_emphasis_multiline
 md_nested_list
 param_prose
 preformatted

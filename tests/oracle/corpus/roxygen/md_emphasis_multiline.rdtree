@@ -1,0 +1,3 @@
+(\description (TEXT "Cross-line markdown emphasis"))
+(\details (TEXT "A soft line break inside") (\emph (TEXT "foo bar")) (TEXT "joins into one emphasis span, and") (\strong (TEXT "strong across lines")) (TEXT "too. Nesting survives the break:") (\strong (TEXT "Gomphocarpus (") (\emph (TEXT "Gomphocarpus physocarpus")) (TEXT ", syn.") (\emph (TEXT "Asclepias physocarpa")) (TEXT ")")) (TEXT "."))
+(\title (TEXT "Cross-line markdown emphasis"))

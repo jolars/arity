@@ -109,19 +109,29 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   idempotent. *(Open: canonical re-indent for prose lists; deferred.)*
 
 **Markdown — mode-keyed**
-- **Emphasis is the real delimiter-stack inline pass** (slice 1 landed 2026-06-25d),
-  NOT a local scanner. The lexer carves `*`/`_` as **neutral** `RoxygenMdDelim` leaves (no
-  open/close decision); `src/parser/roxygen/inline.rs::resolve_emphasis` runs cmark's
-  `process_emphasis` (full ASCII flanking, rule of 3, nesting) over each **single-line**
-  inline run (bounded by marker/newline trivia — line-scoped), emitting `ROXYGEN_MD_EMPH`/
-  `STRONG` **nodes** (kinds 90/91, now NODES) with `ROXYGEN_MD_DELIM` (kind 101) opener/
-  closer/leftover leaves. **Interior unmatched delim ≠ the span's own delimiters:** the
-  projector skips only the **first and last** `MD_DELIM` child (opener/closer); an interior
-  `MD_DELIM` is literal text (`_foo_bar_baz_` → `\emph` over `foo_bar_baz`). Losslessness via
-  `Event::Leaf` run-splitting; formatter unchanged (line-scoped ⇒ no marker inside a node ⇒
-  single-line nodes glue atomically; idempotent). Backlog toward full parity: **widen the run
-  to a whole paragraph** (cross-line spans + formatter marker-passthrough), links onto the same
-  stack (slice 2), markdown `\`-escapes, Unicode flanking/`norm_ws` NBSP.
+- **Emphasis is the real delimiter-stack inline pass** (slice 1 landed 2026-06-25d,
+  paragraph-granularity slice 1.5 landed 2026-06-25e), NOT a local scanner. The lexer carves
+  `*`/`_` as **neutral** `RoxygenMdDelim` leaves (no open/close decision);
+  `src/parser/roxygen/inline.rs::resolve_emphasis` runs cmark's `process_emphasis` (full ASCII
+  flanking, rule of 3, nesting) over each **paragraph-granularity** inline run, emitting
+  `ROXYGEN_MD_EMPH`/`STRONG` **nodes** (kinds 90/91, now NODES) with `ROXYGEN_MD_DELIM` (kind
+  101) opener/closer/leftover leaves. **Run = every paragraph-body `Event::Tok`** (content +
+  the inter-line trivia — newline/`#'` marker/whitespace — a continuation folds in), bounded
+  only by a structural `Start`/`Finish`/`Leaf` (paragraph/section/tag boundary, or an inline
+  `ROXYGEN_RD_MACRO` which binds tighter). A span thus **crosses a soft line break**
+  (`*foo`\n`bar*` → one `\emph` over `foo bar`); the trivia present as **whitespace** for
+  flanking (`edge_char` maps the `#'` marker to a space; newline/whitespace bytes already are)
+  and pass through verbatim, landing *inside* the node when the span crosses a line.
+  **Interior unmatched delim ≠ the span's own delimiters:** the projector skips only the
+  **first and last** `MD_DELIM` child (opener/closer); an interior `MD_DELIM` is literal text
+  (`_foo_bar_baz_` → `\emph` over `foo_bar_baz`). Losslessness via `Event::Leaf` run-splitting.
+  **Formatter:** `collect_logical_elements` **descends into a cross-line EMPH/STRONG node**
+  (one threading a `ROXYGEN_MARKER`, `is_cross_line_emph` — mirrors `is_block_macro`) so its
+  delimiter/text leaves distribute across the physical lines and prose reflow rejoins them
+  (`*foo`\n`bar*` → `*foo bar*`); a single-line span (no marker) stays atomic (glues as one
+  chunk). Idempotent (flanking is invariant under whitespace normalization). Backlog toward
+  full parity: links onto the same stack (slice 2, yields cross-line links), markdown
+  `\`-escapes, Unicode flanking/`norm_ws` NBSP, the empty-list-item interrupt rule (cm-369).
 - **The oracle is roxygen2, NOT the CommonMark spec** (settled 2026-06-25b). roxygen2 *parses*
   via `cmark` (so parsing is faithful CommonMark) but always processes *through roxygen2*, which
   adds a markdown-escaping pre-pass, the `rdComplete` brace/quote **validation**
@@ -282,10 +292,11 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post slice 1, 2026-06-25d): **267 matching (all allowlisted), 33 divergent
-(backlog)** of 300 pinned. Of the 33, 13 are remaining `cm-` cases (cross-line, links-in-text,
-`\`-escapes, code `\code`/`\verb`, Unicode NBSP); the other 20 are roxygen2-*evaluation*/
-multi-block gaps (out of scope) plus **links-across-lines** (rx-383f2ca3/eb12b6b6). Tasks:
+driver). Current (post slice 1.5, 2026-06-25e): **272 matching (all allowlisted), 29 divergent
+(backlog)** of 301 pinned. Of the 29, 9 are remaining `cm-` cases (links-in-text, `\`-escapes,
+code `\code`/`\verb`, Unicode NBSP, empty-list-item interrupt cm-369); the other 20 are
+roxygen2-*evaluation*/multi-block gaps (out of scope) plus **links-across-lines**
+(rx-383f2ca3/eb12b6b6). Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
 `task roxygen-projector-pins` (harvested pins), `task roxygen-spec-corpus`/`roxygen-spec-pins`
 (spec corpus + pins), `task roxygen-projector-seed` (re-seed allowlist from matches).
@@ -295,9 +306,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (300 pinned cases). The 33 divergences are the worklist (13 = remaining `cm-`).
+   (301 pinned cases). The 29 divergences are the worklist (9 = remaining `cm-`).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 16/16 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 18/18 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -305,55 +316,62 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-25d) — Inline-pass slice 1: the real emphasis delimiter stack (parser + projector)
+## Latest session (2026-06-25e) — Inline-pass slice 1.5: paragraph-granularity runs (cross-line emphasis)
 
-**The big one. Replaced the interim local emphasis scanner with a faithful cmark
-`process_emphasis`.** Per `docs/design/roxygen-inline-pass.md` §9.1 and the prior ranked target.
+**Widened the emphasis delimiter stack from line-scoped to paragraph-scoped** per
+`docs/design/roxygen-inline-pass.md` §4/§8 and the prior ranked target. A `*`/`**` span now
+resolves across a soft line break.
 
-- **Lexer:** `scan_md_emphasis` (local atomic forward-scan) **deleted**. Under `@md`, `*`/`_` now
-  carve as a **neutral** maximal `RoxygenMdDelim` run (no open/close decision). Retired the
-  `RoxygenMdEmph`/`Strong` **token** kinds; new `RoxygenMdDelim` TokKind; new `ROXYGEN_MD_DELIM`
-  SyntaxKind (101, after `MD_HTML_BLOCK`, `COUNT`++); `ROXYGEN_MD_EMPH`/`STRONG` (90/91) **repurposed
-  from leaves to nodes**. Wired every classifier (lexer `roxygen_role`, `expr.rs`,
-  `tree_builder::syntax_kind_for`, `syntax.rs` `is_roxygen_token`/`is_roxygen_prose_content`,
-  `kind_from_raw`).
-- **Inline pass** `src/parser/roxygen/inline.rs` (new): `resolve_emphasis` runs in
-  `emit_roxygen_block` (build into a local event buffer, resolve, splice back). Over each maximal
-  **single-line** inline-content run (bounded by marker/newline trivia → line-scoped) it builds an
-  arena + delimiter stack and ports cmark's `process_emphasis` verbatim — full ASCII flanking, the
-  rule of three (`odd_match` via `orig`/`is_multiple_of(3)`), `openers_bottom`, partial-run
-  consumption — wrapping enclosed nodes in `ROXYGEN_MD_EMPH`/`STRONG`. Delimiter leaves emitted via
-  `Event::Leaf(ROXYGEN_MD_DELIM, …)` that tile the run (losslessness). No-delim runs short-circuit
-  (byte-identical), and the pass is a no-op without a delim (non-`@md` untouched).
-- **Projector:** `Inline::Md(MdInline,String)` → `Inline::MdCode(String)` + recursive
-  `Inline::MdEmphasis { strong, children }`. `push_inline` handles the EMPH/STRONG **nodes**:
-  recurse children but **skip only the first and last `MD_DELIM`** (opener/closer) — an *interior*
-  `MD_DELIM` is an unmatched literal (`_foo_bar_baz_` → `\emph` over `foo_bar_baz`). This was the one
-  real bug found (interior delims initially dropped → 7 cm regressions; fixed).
-- **Formatter:** unchanged. Line-scoped ⇒ a node never contains a marker ⇒ single-line emphasis
-  glues atomically (`chunk_elements` `n.text()`), identical to the old atomic token. Idempotent +
-  projection-stable across reflow (verified). Re-blessed the format baseline only for the new
-  curated case.
-- **TDD:** curated fixture `roxygen_md_emphasis` (nesting `**foo *bar* baz**`, rule-of-3
-  `***wow***`, intraword `snake_case`/`_wrapped_phrase_`) — CST snapshot + losslessness + pinned
-  `.rdtree`, allowlisted. Updated the 3 affected lexer unit tests + 8 fixture snapshots (intraword
-  `_` now carves under `@md`; emphasis is a node).
+- **Parser (`inline.rs`):** `resolve_emphasis`'s run-collection now pushes **every paragraph-body
+  `Event::Tok`** (was: only `RoxygenRole::Content` tokens) — so the inter-line trivia (newline /
+  `#'` marker / leading whitespace) a continuation folds in joins the run rather than bounding it;
+  only a structural `Start`/`Finish`/`Leaf` (a paragraph/section/tag boundary, or an inline
+  `ROXYGEN_RD_MACRO` binding tighter) bounds it. Deleted `is_inline_content`. New `edge_char`
+  helper maps a `#'` marker neighbor to a space for flanking (newline/whitespace already yield
+  whitespace) so a soft break reads as a single space (faithful: roxygen2 joins lines). A run
+  with no delim still re-emits verbatim (byte-identical); trivia inside a matched span land as
+  child leaves of the EMPH/STRONG node.
+- **Projector:** **no change** — `push_inline` already skipped `ROXYGEN_MARKER` and mapped
+  `NEWLINE`→space among an emph node's children, and the token fallback turns a stray whitespace
+  into ` ` (norm_ws collapses). The faithful diagnostic just worked once the CST was right.
+- **Formatter (`roxygen.rs`):** `collect_logical_elements` now **descends into a cross-line
+  EMPH/STRONG node** (`is_cross_line_emph` = an emph/strong node threading a `ROXYGEN_MARKER`,
+  mirrors `is_block_macro`), so its delimiter/text leaves distribute across the physical lines and
+  ordinary prose reflow rejoins them (`*foo`\n`bar*` → `*foo bar*`); a single-line span stays
+  atomic (one glued chunk). Chose reflow over §8's "atomic passthrough" because flanking is
+  invariant under whitespace normalization → idempotent and yields cleaner output (verified:
+  losslessness, `format --verify`, and projection-stable across format on all 4 cm cases + the
+  curated case). Re-blessed the format baseline for the one new curated case (no existing-case
+  drift).
+- **TDD:** parser fixture `roxygen_md_emphasis_multiline` (cross-line `*foo`\n`bar*`, `**strong`\n
+  `lines**`, and a nested cross-line `**…(*…*, syn.\n*…*)**`) — CST snapshot + losslessness;
+  curated projector case `md_emphasis_multiline` + minted `.rdtree`; formatter fixture
+  `roxygen_md_emphasis_multiline_reflow` (idempotent reflow).
 
-**Result:** projector **205→267 matching (all allowlisted), 94→33 divergent**; the cm emphasis
-corpus **58→119 of 132**. Curated fixed-point 17/17, harvested 216/216 preserving (0 regressions).
-`cargo test` green, clippy + fmt clean. The 13 remaining cm divergences are later-slice backlog:
-cross-line/multi-line (cm-369/396/407/425/434), links-in-text (cm-421/435 → slice 2), `\`-escapes
-(cm-439/442/451/454), code `\code`-vs-`\verb` (cm-481), Unicode NBSP in `norm_ws` (cm-355).
+**Result:** projector **267→272 matching (all allowlisted), 33→29 divergent**; the cm emphasis
+corpus **119→123 of 132** (cm-396/407/425/434 closed). Curated fixed-point 18/18, harvested
+216/216 preserving (0 regressions). `cargo test` green, clippy + fmt clean. cm-369 (a lone `*`
+line) turned out to be a **list** bug, not emphasis: CommonMark forbids an empty list item from
+interrupting a paragraph, but arity parses the `*` as a list marker → spurious `\itemize` —
+left as backlog.
 
-**Next (ranked):** **(1) Slice 1.5 — widen the inline run to a whole paragraph** (cross-line
-emphasis): collect a paragraph's content across lines, run the stack over the joined stream; the
-formatter then needs marker-passthrough for an EMPH/STRONG node containing a `ROXYGEN_MARKER`
-(§8). Closes cm-369/407/425 (+396/434 with the rest). (2) **Slice 2 — links onto the same stack**
-(closes cm-421/435 link-text emphasis + cross-line links rx-383f2ca3/eb12b6b6). (3) Markdown
-`\`-escapes (cm-439/442/451/454 — likely a diagnostic-parity surface). (4) Unicode flanking +
-`norm_ws` NBSP (cm-355). (5) code-span `\code`-vs-`\verb` for `_` (cm-481).
+**Next (ranked):** **(1) Slice 2 — links onto the same delimiter stack** (`[`/`]` via cmark's
+`look_for_link_or_image`): closes cm-421/435 (emphasis inside link text) + cross-line links
+rx-383f2ca3/eb12b6b6 for free. (2) Markdown `\`-escapes (cm-439/442/451/454 — likely a
+diagnostic-parity surface). (3) Empty-list-item interrupt rule (cm-369; a *list* fix in
+`is_md_list_start`/`emit_md_list`). (4) Unicode flanking + `norm_ws` NBSP (cm-355). (5) code-span
+`\code`-vs-`\verb` for `_` (cm-481).
 
 ## Earlier sessions
+
+- **2026-06-25d (Inline-pass slice 1 — the real emphasis delimiter stack, parser + projector):**
+  replaced the local `scan_md_emphasis` forward-scan with a faithful cmark `process_emphasis`. Lexer
+  carves `*`/`_` as neutral `RoxygenMdDelim` runs; new `inline.rs::resolve_emphasis` builds an arena +
+  delimiter stack (full ASCII flanking, rule of 3, nesting, partial-run consumption) → `ROXYGEN_MD_EMPH`/
+  `STRONG` **nodes** (90/91, now nodes) with `ROXYGEN_MD_DELIM` (101) opener/closer/leftover leaves.
+  Projector recurses, skipping only first/last `MD_DELIM` (interior = literal). Formatter unchanged
+  (line-scoped ⇒ single-line nodes glue atomically). Projector 205→267, cm 58→119/132. Curated fixture
+  `roxygen_md_emphasis`.
 
 - **2026-06-25c (CommonMark spec emphasis corpus wired as 3rd projector source, test-infra only):**
   vendored `spec.txt` (0.31.2), `scripts/build-commonmark-corpus.R` extracts the 132 "Emphasis"

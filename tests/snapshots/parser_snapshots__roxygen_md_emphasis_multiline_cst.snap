@@ -1,0 +1,87 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..307
+  ROXYGEN_BLOCK@0..301
+    ROXYGEN_SECTION@0..35
+      ROXYGEN_PARAGRAPH@0..32
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..31 "Cross-line markdown e ..."
+        NEWLINE@31..32 "\n"
+      ROXYGEN_MARKER@32..34 "#'"
+      NEWLINE@34..35 "\n"
+    ROXYGEN_SECTION@35..264
+      ROXYGEN_MARKER@35..37 "#'"
+      WHITESPACE@37..38 " "
+      ROXYGEN_TAG@38..46
+        ROXYGEN_AT@38..39 "@"
+        ROXYGEN_TAG_NAME@39..46 "details"
+      NEWLINE@46..47 "\n"
+      ROXYGEN_PARAGRAPH@47..264
+        ROXYGEN_MARKER@47..49 "#'"
+        WHITESPACE@49..50 " "
+        ROXYGEN_TEXT@50..75 "A soft line break ins ..."
+        ROXYGEN_MD_EMPH@75..87
+          ROXYGEN_MD_DELIM@75..76 "*"
+          ROXYGEN_TEXT@76..79 "foo"
+          NEWLINE@79..80 "\n"
+          ROXYGEN_MARKER@80..82 "#'"
+          WHITESPACE@82..83 " "
+          ROXYGEN_TEXT@83..86 "bar"
+          ROXYGEN_MD_DELIM@86..87 "*"
+        ROXYGEN_TEXT@87..122 " joins into one empha ..."
+        ROXYGEN_MD_STRONG@122..148
+          ROXYGEN_MD_DELIM@122..124 "**"
+          ROXYGEN_TEXT@124..130 "strong"
+          NEWLINE@130..131 "\n"
+          ROXYGEN_MARKER@131..133 "#'"
+          WHITESPACE@133..134 " "
+          ROXYGEN_TEXT@134..146 "across lines"
+          ROXYGEN_MD_DELIM@146..148 "**"
+        ROXYGEN_TEXT@148..181 " too. Nesting survive ..."
+        NEWLINE@181..182 "\n"
+        ROXYGEN_MARKER@182..184 "#'"
+        WHITESPACE@184..185 " "
+        ROXYGEN_MD_STRONG@185..262
+          ROXYGEN_MD_DELIM@185..187 "**"
+          ROXYGEN_TEXT@187..201 "Gomphocarpus ("
+          ROXYGEN_MD_EMPH@201..227
+            ROXYGEN_MD_DELIM@201..202 "*"
+            ROXYGEN_TEXT@202..226 "Gomphocarpus physocarpus"
+            ROXYGEN_MD_DELIM@226..227 "*"
+          ROXYGEN_TEXT@227..233 ", syn."
+          NEWLINE@233..234 "\n"
+          ROXYGEN_MARKER@234..236 "#'"
+          WHITESPACE@236..237 " "
+          ROXYGEN_MD_EMPH@237..259
+            ROXYGEN_MD_DELIM@237..238 "*"
+            ROXYGEN_TEXT@238..258 "Asclepias physocarpa"
+            ROXYGEN_MD_DELIM@258..259 "*"
+          ROXYGEN_TEXT@259..260 ")"
+          ROXYGEN_MD_DELIM@260..262 "**"
+        ROXYGEN_TEXT@262..263 "."
+        NEWLINE@263..264 "\n"
+    ROXYGEN_SECTION@264..271
+      ROXYGEN_MARKER@264..266 "#'"
+      WHITESPACE@266..267 " "
+      ROXYGEN_TAG@267..270
+        ROXYGEN_AT@267..268 "@"
+        ROXYGEN_TAG_NAME@268..270 "md"
+      NEWLINE@270..271 "\n"
+    ROXYGEN_SECTION@271..301
+      ROXYGEN_MARKER@271..273 "#'"
+      WHITESPACE@273..274 " "
+      ROXYGEN_TAG@274..301
+        ROXYGEN_AT@274..275 "@"
+        ROXYGEN_TAG_NAME@275..279 "name"
+        WHITESPACE@279..280 " "
+        ROXYGEN_TEXT@280..282 "md"
+        ROXYGEN_MD_DELIM@282..283 "_"
+        ROXYGEN_TEXT@283..291 "emphasis"
+        ROXYGEN_MD_DELIM@291..292 "_"
+        ROXYGEN_TEXT@292..301 "multiline"
+  NEWLINE@301..302 "\n"
+  IDENT@302..306 "NULL"
+  NEWLINE@306..307 "\n"

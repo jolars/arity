@@ -285,9 +285,33 @@ fn collect_logical_elements(
             {
                 collect_logical_elements(&n, out);
             }
+            // A *cross-line* emphasis/strong node (one the inline pass resolved
+            // across a soft line break) owns its inner `#'` markers and newlines, so
+            // descend into it: its delimiter leaves and text become ordinary inline
+            // elements that the marker/newline split below distributes across the
+            // physical lines, where prose reflow handles them (the resolved emphasis
+            // is preserved on reparse — flanking is invariant under whitespace
+            // normalization). A *single-line* emphasis node (no marker) stays atomic,
+            // so `*foo*` glues as one chunk.
+            NodeOrToken::Node(n) if is_cross_line_emph(&n) => {
+                collect_logical_elements(&n, out);
+            }
             other => out.push(other),
         }
     }
+}
+
+/// Whether `node` is a resolved emphasis/strong span the inline pass carried across
+/// a soft line break — it threads one or more `#'` markers as inter-line trivia.
+/// A single-line span never contains a marker, so its presence distinguishes the
+/// reflow-across-lines case from an atomic inline span (mirrors [`is_block_macro`]).
+fn is_cross_line_emph(node: &SyntaxNode) -> bool {
+    matches!(
+        node.kind(),
+        SyntaxKind::ROXYGEN_MD_EMPH | SyntaxKind::ROXYGEN_MD_STRONG
+    ) && node
+        .descendants_with_tokens()
+        .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
 }
 
 /// Build the IR for a `ROXYGEN_BLOCK` at the given nesting `indent`.
