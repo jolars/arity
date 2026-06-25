@@ -1,0 +1,3 @@
+(\description (TEXT "Empty bullets do not interrupt a paragraph"))
+(\details (TEXT "a paragraph line *"))
+(\title (TEXT "Empty bullets do not interrupt a paragraph"))

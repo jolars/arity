@@ -336,14 +336,18 @@
       EMPH/STRONG node** (one threading a `ROXYGEN_MARKER`, `is_cross_line_emph`) so
       its delimiter/text leaves distribute across physical lines and prose reflow
       rejoins them (`*foo`\n`bar*` → `*foo bar*`); single-line spans stay atomic.
-      **123/132 cm cases now pass** (cm-396/407/425/434 closed). The 9 remaining are
-      later-slice backlog: links-into-the-pass (cm-421/435, slice 2), markdown
-      backslash escapes (cm-439/442/451/454), code `\code`-vs-`\verb` (cm-481),
-      Unicode NBSP in `norm_ws` (cm-355), and the empty-list-item interrupt rule
-      (cm-369 — a lone `*` line mis-parses as a list marker; CommonMark forbids an
-      empty item interrupting a paragraph — a *list* fix, not emphasis). Next:
-      **slice 2 = links onto the same stack** (closes cm-421/435 + cross-line links
-      rx-383f2ca3/eb12b6b6).
+      **124/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
+      closed 2026-06-25f). The 8 remaining are later-slice backlog: links-into-the-pass
+      (cm-421/435, slice 2), markdown backslash escapes (cm-439/442/451/454 — a
+      **diagnostic-parity** surface: roxygen2 errors "mismatched braces or quotes" and
+      drops the content, needs the deferred lint/LSP side-channel), code
+      `\code`-vs-`\verb` (cm-481), and Unicode NBSP in `norm_ws` (cm-355). The
+      **empty-list-item interrupt rule landed (2026-06-25f, cm-369):** a lone
+      `*`/`-`/`+` with no content can no longer interrupt an open paragraph
+      (`md_list_item_is_empty` in `build.rs`); it folds into the paragraph as literal
+      text rather than a spurious one-item `\itemize` (a fresh-position empty bullet
+      still opens a list). Next: **slice 2 = links onto the same stack** (closes
+      cm-421/435 + cross-line links rx-383f2ca3/eb12b6b6).
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

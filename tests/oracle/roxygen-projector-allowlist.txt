@@ -27,6 +27,7 @@ cm-365
 cm-366
 cm-367
 cm-368
+cm-369
 cm-370
 cm-371
 cm-372
@@ -142,6 +143,7 @@ markdown_html_block
 markdown_inline
 markdown_list
 markdown_url
+md_empty_list_item
 md_emphasis
 md_emphasis_multiline
 md_nested_list

@@ -131,7 +131,8 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   (`*foo`\n`bar*` → `*foo bar*`); a single-line span (no marker) stays atomic (glues as one
   chunk). Idempotent (flanking is invariant under whitespace normalization). Backlog toward
   full parity: links onto the same stack (slice 2, yields cross-line links), markdown
-  `\`-escapes, Unicode flanking/`norm_ws` NBSP, the empty-list-item interrupt rule (cm-369).
+  `\`-escapes (diagnostic-parity), Unicode flanking/`norm_ws` NBSP. (Empty-list-item interrupt
+  cm-369 closed 2026-06-25f — a list fix, see the List-markers trap.)
 - **The oracle is roxygen2, NOT the CommonMark spec** (settled 2026-06-25b). roxygen2 *parses*
   via `cmark` (so parsing is faithful CommonMark) but always processes *through roxygen2*, which
   adds a markdown-escaping pre-pass, the `rdComplete` brace/quote **validation**
@@ -203,9 +204,13 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   forms stay literal (backlog). A line-start block-level tag is the **block** path above (carved
   first); a non-block tag (`<span>`) or a tag mid-prose stays inline.
 - **List markers** (`scan_md_list_marker`): punctuation only (trailing space stays in text → a
-  non-list marker reflows like plain text). `emit_md_list` applies the CommonMark interrupt rule
-  (a bullet always interrupts; an ordered list only when start == 1; else stays inline prose →
-  projector renders the leaf as text).
+  non-list marker reflows like plain text). `is_md_list_start` applies the CommonMark interrupt
+  rule (mid-paragraph only): a bullet interrupts **unless the item is empty**
+  (`md_list_item_is_empty`, cm-369 — a lone `*`/`-`/`+` after prose stays paragraph text, not a
+  spurious `\itemize`); an ordered list interrupts only when start == 1; else stays inline prose →
+  projector renders the leaf as text. **A fresh-position empty bullet still opens a list** (the
+  empty-item gate is `para_open`-only). The lexer always carves the marker; emptiness is a
+  block-level decision.
 
 **Sections / projection**
 - **Non-md prose is literal Rd; an unescaped `%` is a comment to EOL.** The projector
@@ -292,11 +297,11 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post slice 1.5, 2026-06-25e): **272 matching (all allowlisted), 29 divergent
-(backlog)** of 301 pinned. Of the 29, 9 are remaining `cm-` cases (links-in-text, `\`-escapes,
-code `\code`/`\verb`, Unicode NBSP, empty-list-item interrupt cm-369); the other 20 are
-roxygen2-*evaluation*/multi-block gaps (out of scope) plus **links-across-lines**
-(rx-383f2ca3/eb12b6b6). Tasks:
+driver). Current (post cm-369, 2026-06-25f): **274 matching (all allowlisted), 28 divergent
+(backlog)** of 302 pinned (curated `md_empty_list_item` added). Of the 28, 8 are remaining
+`cm-` cases (links-in-text cm-421/435, `\`-escapes cm-439/442/451/454 = **diagnostic-parity**,
+code `\code`/`\verb` cm-481, Unicode NBSP cm-355); the other 20 are roxygen2-*evaluation*/
+multi-block gaps (out of scope) plus **links-across-lines** (rx-383f2ca3/eb12b6b6). Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
 `task roxygen-projector-pins` (harvested pins), `task roxygen-spec-corpus`/`roxygen-spec-pins`
 (spec corpus + pins), `task roxygen-projector-seed` (re-seed allowlist from matches).
@@ -306,9 +311,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (301 pinned cases). The 29 divergences are the worklist (9 = remaining `cm-`).
+   (302 pinned cases). The 28 divergences are the worklist (8 = remaining `cm-`).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 18/18 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 19/19 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -316,53 +321,56 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-25e) — Inline-pass slice 1.5: paragraph-granularity runs (cross-line emphasis)
+## Latest session (2026-06-25f) — Empty list item can't interrupt a paragraph (cm-369)
 
-**Widened the emphasis delimiter stack from line-scoped to paragraph-scoped** per
-`docs/design/roxygen-inline-pass.md` §4/§8 and the prior ranked target. A `*`/`**` span now
-resolves across a soft line break.
+**A lone `*`/`-`/`+` with no content no longer opens a spurious one-item list when it follows
+paragraph prose** (CommonMark: an empty list item cannot interrupt a paragraph). cm-369
+(`*foo bar`\n`*`) renders literal `*foo bar *` in roxygen2, but arity parsed the second-line `*`
+as a `ROXYGEN_MD_LIST` marker → spurious `\itemize`. A pure **parser** (list) fix, cooperating
+with the existing emphasis pass.
 
-- **Parser (`inline.rs`):** `resolve_emphasis`'s run-collection now pushes **every paragraph-body
-  `Event::Tok`** (was: only `RoxygenRole::Content` tokens) — so the inter-line trivia (newline /
-  `#'` marker / leading whitespace) a continuation folds in joins the run rather than bounding it;
-  only a structural `Start`/`Finish`/`Leaf` (a paragraph/section/tag boundary, or an inline
-  `ROXYGEN_RD_MACRO` binding tighter) bounds it. Deleted `is_inline_content`. New `edge_char`
-  helper maps a `#'` marker neighbor to a space for flanking (newline/whitespace already yield
-  whitespace) so a soft break reads as a single space (faithful: roxygen2 joins lines). A run
-  with no delim still re-emits verbatim (byte-identical); trivia inside a matched span land as
-  child leaves of the EMPH/STRONG node.
-- **Projector:** **no change** — `push_inline` already skipped `ROXYGEN_MARKER` and mapped
-  `NEWLINE`→space among an emph node's children, and the token fallback turns a stray whitespace
-  into ` ` (norm_ws collapses). The faithful diagnostic just worked once the CST was right.
-- **Formatter (`roxygen.rs`):** `collect_logical_elements` now **descends into a cross-line
-  EMPH/STRONG node** (`is_cross_line_emph` = an emph/strong node threading a `ROXYGEN_MARKER`,
-  mirrors `is_block_macro`), so its delimiter/text leaves distribute across the physical lines and
-  ordinary prose reflow rejoins them (`*foo`\n`bar*` → `*foo bar*`); a single-line span stays
-  atomic (one glued chunk). Chose reflow over §8's "atomic passthrough" because flanking is
-  invariant under whitespace normalization → idempotent and yields cleaner output (verified:
-  losslessness, `format --verify`, and projection-stable across format on all 4 cm cases + the
-  curated case). Re-blessed the format baseline for the one new curated case (no existing-case
-  drift).
-- **TDD:** parser fixture `roxygen_md_emphasis_multiline` (cross-line `*foo`\n`bar*`, `**strong`\n
-  `lines**`, and a nested cross-line `**…(*…*, syn.\n*…*)**`) — CST snapshot + losslessness;
-  curated projector case `md_emphasis_multiline` + minted `.rdtree`; formatter fixture
-  `roxygen_md_emphasis_multiline_reflow` (idempotent reflow).
+- **Parser (`build.rs`):** new `md_list_item_is_empty(tokens, marker)` — after the
+  `RoxygenMdListMarker`, skip whitespace-only line-body tokens (stops at `Newline`, whose
+  `roxygen_role()` is `None` so it isn't line-body) and check whether a content token follows.
+  `is_md_list_start` now gates an interrupting bullet on `!md_list_item_is_empty` as well as
+  `md_list_marker_can_interrupt`. **Only mid-paragraph** (`para_open`): a fresh-position empty
+  bullet still opens a list (verified: `- `\n`- item` after a bare `@details` keeps the
+  `\itemize`). The lexer is unchanged — it correctly carves a lone `*` as a marker (empty items
+  are valid lists at block start); emptiness is a block-level decision.
+- **Cooperation, no projector change:** with the list gone, the `*` folds into the open paragraph
+  as a `ROXYGEN_MD_LIST_MARKER` leaf (the projector already renders a stray marker as literal
+  text), and the emphasis pass sees `*foo bar` + soft-break + `*` — the trailing `*` is preceded
+  by the soft break (whitespace) → can't close → both delims stay literal → `*foo bar *`. Matches
+  the pin exactly.
+- **TDD:** parser fixture `roxygen_md_empty_list_item` (CST snapshot + losslessness); curated
+  projector case `md_empty_list_item` + minted `.rdtree` (`(\details (TEXT "a paragraph line *"))`);
+  re-blessed the format baseline for the one new curated case (idempotent + projection-stable,
+  no existing-case drift).
 
-**Result:** projector **267→272 matching (all allowlisted), 33→29 divergent**; the cm emphasis
-corpus **119→123 of 132** (cm-396/407/425/434 closed). Curated fixed-point 18/18, harvested
-216/216 preserving (0 regressions). `cargo test` green, clippy + fmt clean. cm-369 (a lone `*`
-line) turned out to be a **list** bug, not emphasis: CommonMark forbids an empty list item from
-interrupting a paragraph, but arity parses the `*` as a list marker → spurious `\itemize` —
-left as backlog.
+**Result:** projector **272→274 matching (all allowlisted), 29→28 divergent** (+cm-369, +curated
+case); cm emphasis corpus **123→124 of 132**. Curated fixed-point **18→19/19** preserving,
+harvested 216/216 (0 regressions). `cargo test` green, clippy + fmt clean.
 
 **Next (ranked):** **(1) Slice 2 — links onto the same delimiter stack** (`[`/`]` via cmark's
 `look_for_link_or_image`): closes cm-421/435 (emphasis inside link text) + cross-line links
-rx-383f2ca3/eb12b6b6 for free. (2) Markdown `\`-escapes (cm-439/442/451/454 — likely a
-diagnostic-parity surface). (3) Empty-list-item interrupt rule (cm-369; a *list* fix in
-`is_md_list_start`/`emit_md_list`). (4) Unicode flanking + `norm_ws` NBSP (cm-355). (5) code-span
-`\code`-vs-`\verb` for `_` (cm-481).
+rx-383f2ca3/eb12b6b6 for free. *A foundational refactor (design §9.2/§12) — budget a full
+context; links currently resolve as opaque local lexer spans.* (2) **Diagnostic-parity surface:**
+markdown `\`-escapes cm-439/442/451/454 — roxygen2 errors "@… has mismatched braces or quotes"
+and drops the content (empty `(\details)`); closing for render parity needs the deferred lint/LSP
+side-channel, so **record**, don't chase render parity. (3) Unicode flanking + `norm_ws` NBSP
+(cm-355). (4) code-span `\code`-vs-`\verb` for `_` (cm-481 — CST is already correct; a projector
+code-span classification nuance).
 
 ## Earlier sessions
+
+- **2026-06-25e (Inline-pass slice 1.5 — paragraph-granularity runs, cross-line emphasis):**
+  widened the emphasis delimiter stack from line-scoped to paragraph-scoped. `inline.rs::resolve_emphasis`
+  now pushes **every** paragraph-body `Event::Tok` (was: only `Content`), so inter-line trivia joins
+  the run and a `*`/`**` span resolves across a soft line break (`*foo`\n`bar*` → one `\emph`). New
+  `edge_char` maps a `#'` marker neighbor to whitespace for flanking. Formatter `collect_logical_elements`
+  descends into a cross-line EMPH/STRONG node (`is_cross_line_emph`) so reflow rejoins it; single-line
+  spans stay atomic. Projector unchanged. Fixtures `roxygen_md_emphasis_multiline` (+ reflow). 267→272;
+  cm 119→123/132.
 
 - **2026-06-25d (Inline-pass slice 1 — the real emphasis delimiter stack, parser + projector):**
   replaced the local `scan_md_emphasis` forward-scan with a faithful cmark `process_emphasis`. Lexer

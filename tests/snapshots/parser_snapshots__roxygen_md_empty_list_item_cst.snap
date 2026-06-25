@@ -1,0 +1,48 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..120
+  ROXYGEN_BLOCK@0..114
+    ROXYGEN_SECTION@0..52
+      ROXYGEN_PARAGRAPH@0..49
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..48 "Empty list items do n ..."
+        NEWLINE@48..49 "\n"
+      ROXYGEN_MARKER@49..51 "#'"
+      NEWLINE@51..52 "\n"
+    ROXYGEN_SECTION@52..89
+      ROXYGEN_MARKER@52..54 "#'"
+      WHITESPACE@54..55 " "
+      ROXYGEN_TAG@55..63
+        ROXYGEN_AT@55..56 "@"
+        ROXYGEN_TAG_NAME@56..63 "details"
+      NEWLINE@63..64 "\n"
+      ROXYGEN_PARAGRAPH@64..89
+        ROXYGEN_MARKER@64..66 "#'"
+        WHITESPACE@66..67 " "
+        ROXYGEN_TEXT@67..83 "a paragraph line"
+        NEWLINE@83..84 "\n"
+        ROXYGEN_MARKER@84..86 "#'"
+        WHITESPACE@86..87 " "
+        ROXYGEN_MD_LIST_MARKER@87..88 "*"
+        NEWLINE@88..89 "\n"
+    ROXYGEN_SECTION@89..96
+      ROXYGEN_MARKER@89..91 "#'"
+      WHITESPACE@91..92 " "
+      ROXYGEN_TAG@92..95
+        ROXYGEN_AT@92..93 "@"
+        ROXYGEN_TAG_NAME@93..95 "md"
+      NEWLINE@95..96 "\n"
+    ROXYGEN_SECTION@96..114
+      ROXYGEN_MARKER@96..98 "#'"
+      WHITESPACE@98..99 " "
+      ROXYGEN_TAG@99..114
+        ROXYGEN_AT@99..100 "@"
+        ROXYGEN_TAG_NAME@100..104 "name"
+        WHITESPACE@104..105 " "
+        ROXYGEN_TEXT@105..114 "emptyitem"
+  NEWLINE@114..115 "\n"
+  IDENT@115..119 "NULL"
+  NEWLINE@119..120 "\n"

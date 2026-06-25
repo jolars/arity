@@ -161,7 +161,9 @@ pub(super) fn is_md_list_start(tokens: &[Token], start: usize, para_open: bool) 
     let content = line_content_start(tokens, start);
     match tokens.get(content) {
         Some(tok) if tok.kind == TokKind::RoxygenMdListMarker => {
-            !para_open || md_list_marker_can_interrupt(&tok.text)
+            !para_open
+                || (md_list_marker_can_interrupt(&tok.text)
+                    && !md_list_item_is_empty(tokens, content))
         }
         _ => false,
     }
@@ -179,6 +181,23 @@ fn md_list_marker_can_interrupt(marker: &str) -> bool {
             digits.parse::<u64>().map(|n| n == 1).unwrap_or(false)
         }
     }
+}
+
+/// Whether the list-item line whose `RoxygenMdListMarker` is at `marker` is
+/// **empty** — only optional trailing whitespace follows it before the line ends.
+/// CommonMark forbids an empty list item from interrupting a paragraph (a lone
+/// `*`/`-` after prose stays paragraph text, never a spurious one-item list); this
+/// gate applies only mid-paragraph, so an empty item at a fresh block position
+/// still opens a list.
+fn md_list_item_is_empty(tokens: &[Token], marker: usize) -> bool {
+    let mut i = marker + 1;
+    while tokens
+        .get(i)
+        .is_some_and(|t| is_line_body_kind(&t.kind) && t.text.trim().is_empty())
+    {
+        i += 1;
+    }
+    !tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind))
 }
 
 /// Whether the line whose marker is at `marker` continues a markdown list: its
