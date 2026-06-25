@@ -129,6 +129,14 @@ tasks:
       - docs-gen
     cmds:
       - mdbook build book
+      - task: docs-sitemap
+
+  docs-sitemap:
+    desc: Generate book/book/sitemap.xml from the rendered book
+    cmds:
+      - >-
+        cargo run --quiet --example sitemap --
+        book/book https://arity.cc/
 
   audit:
     desc: Run security audit
