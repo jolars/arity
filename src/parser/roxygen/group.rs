@@ -30,6 +30,18 @@ use crate::syntax::SyntaxKind;
 /// currently open level; the trailing `Newline` after the final line is left for
 /// the caller, so blank-line and statement separation are unaffected.
 pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    // Build the block's events into a local buffer, run the `@md` inline pass over
+    // it (resolving emphasis/strong delimiter runs into nodes), then splice the
+    // result into the caller's stream. The pass is a no-op without delimiter runs,
+    // so non-`@md` (and delimiter-free) blocks stay byte-identical.
+    let mut block = Vec::new();
+    let end = emit_roxygen_block_events(tokens, start, &mut block);
+    super::inline::resolve_emphasis(tokens, &mut block);
+    events.append(&mut block);
+    end
+}
+
+fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_BLOCK));
 

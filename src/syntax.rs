@@ -184,14 +184,23 @@ pub enum SyntaxKind {
     /// maps it to roxygen2's `\if{html}{\out{…}}` (`mdxml_html_block`). Appended
     /// last to keep the earlier variants' `as u16` discriminants stable.
     ROXYGEN_MD_HTML_BLOCK,
+    /// A raw markdown emphasis-delimiter run leaf (`*`, `**`, `_`, …), emitted
+    /// only under a resolved `@md` block mode. The lexer carves the maximal same-
+    /// char run neutrally; the inline pass (`parser::roxygen::inline`) resolves
+    /// matched runs into `ROXYGEN_MD_EMPH`/`ROXYGEN_MD_STRONG` **nodes** (now node
+    /// kinds, not leaves), whose opener/closer delimiters are themselves
+    /// `ROXYGEN_MD_DELIM` leaves, and leaves an unmatched run as a literal
+    /// `ROXYGEN_MD_DELIM` leaf (projected as plain text). Appended last to keep the
+    /// earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_DELIM,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_HTML_BLOCK` remains
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_DELIM` remains
     /// the last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_HTML_BLOCK as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_DELIM as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -206,20 +215,22 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_CODE
                 | SyntaxKind::ROXYGEN_RD_MACRO
                 | SyntaxKind::ROXYGEN_MD_LINK
-                | SyntaxKind::ROXYGEN_MD_EMPH
-                | SyntaxKind::ROXYGEN_MD_STRONG
                 | SyntaxKind::ROXYGEN_MD_CODE
                 | SyntaxKind::ROXYGEN_MD_LIST_MARKER
                 | SyntaxKind::ROXYGEN_MD_IMAGE
                 | SyntaxKind::ROXYGEN_MD_FENCE
                 | SyntaxKind::ROXYGEN_MD_HTML
+                | SyntaxKind::ROXYGEN_MD_DELIM
         )
     }
 
-    /// The prose / inline-markup roxygen leaves: plain text plus the protected
-    /// spans (inline code, Rd macro, markdown link/emphasis/strong/code/list
-    /// marker). The `SyntaxKind`-side counterpart of [`crate::parser::lexer::RoxygenRole::Content`];
-    /// the single list the formatter derives "is this a prose element" from.
+    /// The prose / inline-markup roxygen content elements: plain text plus the
+    /// protected spans (inline code, Rd macro, markdown link/code/list-marker/…)
+    /// and the resolved emphasis/strong **nodes**. The `SyntaxKind`-side
+    /// counterpart of [`crate::parser::lexer::RoxygenRole::Content`]; the single
+    /// list the formatter derives "is this a prose element" from. Includes the
+    /// `ROXYGEN_MD_EMPH`/`ROXYGEN_MD_STRONG` nodes (the inline pass's output) so the
+    /// formatter treats a resolved span as one atomic prose chunk.
     pub fn is_roxygen_prose_content(self) -> bool {
         matches!(
             self,
@@ -234,6 +245,7 @@ impl SyntaxKind {
                 | SyntaxKind::ROXYGEN_MD_IMAGE
                 | SyntaxKind::ROXYGEN_MD_FENCE
                 | SyntaxKind::ROXYGEN_MD_HTML
+                | SyntaxKind::ROXYGEN_MD_DELIM
         )
     }
 }
@@ -353,6 +365,7 @@ impl Language for RLanguage {
             98 => SyntaxKind::ROXYGEN_MD_FENCE,
             99 => SyntaxKind::ROXYGEN_MD_HTML,
             100 => SyntaxKind::ROXYGEN_MD_HTML_BLOCK,
+            101 => SyntaxKind::ROXYGEN_MD_DELIM,
             _ => SyntaxKind::ERROR,
         }
     }

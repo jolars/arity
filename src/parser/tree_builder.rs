@@ -196,8 +196,11 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::RoxygenRdMacro => SyntaxKind::ROXYGEN_RD_MACRO,
         TokKind::RoxygenMdLink => SyntaxKind::ROXYGEN_MD_LINK,
         TokKind::RoxygenMdImage => SyntaxKind::ROXYGEN_MD_IMAGE,
-        TokKind::RoxygenMdEmph => SyntaxKind::ROXYGEN_MD_EMPH,
-        TokKind::RoxygenMdStrong => SyntaxKind::ROXYGEN_MD_STRONG,
+        // A raw emphasis-delimiter run lexed under `@md`. The inline pass resolves
+        // matched runs into `ROXYGEN_MD_EMPH`/`ROXYGEN_MD_STRONG` *nodes* (whose
+        // opener/closer delimiter leaves are synthesized `Event::Leaf`s also tagged
+        // `ROXYGEN_MD_DELIM`); an unmatched run stays this literal leaf.
+        TokKind::RoxygenMdDelim => SyntaxKind::ROXYGEN_MD_DELIM,
         TokKind::RoxygenMdCode => SyntaxKind::ROXYGEN_MD_CODE,
         TokKind::RoxygenMdListMarker => SyntaxKind::ROXYGEN_MD_LIST_MARKER,
         TokKind::RoxygenMdFence => SyntaxKind::ROXYGEN_MD_FENCE,

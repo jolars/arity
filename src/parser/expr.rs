@@ -455,8 +455,7 @@ fn parse_prefix(
         | TokKind::RoxygenRdMacro
         | TokKind::RoxygenMdLink
         | TokKind::RoxygenMdImage
-        | TokKind::RoxygenMdEmph
-        | TokKind::RoxygenMdStrong
+        | TokKind::RoxygenMdDelim
         | TokKind::RoxygenMdCode
         | TokKind::RoxygenMdListMarker
         | TokKind::RoxygenMdFence

@@ -21,6 +21,7 @@
 
 mod build;
 mod group;
+mod inline;
 mod lex;
 
 pub(crate) use group::emit_roxygen_block;

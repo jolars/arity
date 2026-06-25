@@ -70,9 +70,15 @@ pub(crate) enum TokKind {
     /// A markdown image `![alt](url "title")`, recognized only under a resolved
     /// `@md` block mode. Projected to `\figure` (extension-keyed `\if` wrapping).
     RoxygenMdImage,
-    // Markdown inline spans, emitted only under a resolved `@md` block mode.
-    RoxygenMdEmph,
-    RoxygenMdStrong,
+    /// A raw markdown emphasis-delimiter run (`*`, `**`, `_`, `___`, …), emitted
+    /// only under a resolved `@md` block mode. The lexer emits the maximal same-
+    /// char run *neutrally* — no open/close decision — and the paragraph-level
+    /// inline pass (`roxygen::inline`) resolves runs into `ROXYGEN_MD_EMPH`/
+    /// `ROXYGEN_MD_STRONG` *nodes* via the CommonMark delimiter-stack algorithm,
+    /// leaving unmatched runs as literal `ROXYGEN_MD_DELIM` leaves.
+    RoxygenMdDelim,
+    /// A markdown code span (`` `x` ``), emitted only under a resolved `@md` block
+    /// mode. Projected to `\code`/`\verb` per roxygen2's R-parseability rule.
     RoxygenMdCode,
     /// A markdown list item's leading marker (`-`/`*`/`+` or `1.`/`1)`), at a
     /// line's content start under a resolved `@md` mode. Excludes the trailing
@@ -129,8 +135,8 @@ impl TokKind {
             RoxygenTagName => Some(RoxygenRole::TagName),
             RoxygenTagArg => Some(RoxygenRole::TagArg),
             RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdImage
-            | RoxygenMdEmph | RoxygenMdStrong | RoxygenMdCode | RoxygenMdListMarker
-            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock => Some(RoxygenRole::Content),
+            | RoxygenMdDelim | RoxygenMdCode | RoxygenMdListMarker | RoxygenMdFence
+            | RoxygenMdHtml | RoxygenMdHtmlBlock => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

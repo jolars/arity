@@ -71,7 +71,16 @@ enum Inline {
     /// code span — carrying its delimiter-stripped inner content. Emphasis/strong
     /// project to `\emph`/`\strong` over `(TEXT …)`; a code span projects to
     /// `\code` or `\verb` per roxygen2's R-parseability rule (see [`md_code_atom`]).
-    Md(MdInline, String),
+    MdCode(String),
+    /// A resolved markdown emphasis (`strong = false`) or strong (`strong = true`)
+    /// **node** (`ROXYGEN_MD_EMPH`/`ROXYGEN_MD_STRONG`), carrying its inner inline
+    /// run (the delimiter leaves stripped). Projects to `\emph`/`\strong` over the
+    /// recursively-serialized children — so nesting (`*foo **bar***`) surfaces as
+    /// structure, not flattened text.
+    MdEmphasis {
+        strong: bool,
+        children: Vec<Inline>,
+    },
     /// A markdown block list resolved under `@md` mode (a `ROXYGEN_MD_LIST` node).
     /// Projects to `\itemize`/`\enumerate` with a name-only `\item` per item ahead
     /// of its content (see [`serialize_md_list`]).
@@ -100,14 +109,6 @@ enum Inline {
     /// node). Projects to roxygen2's `\if{html}{\out{…}}` with one verbatim line
     /// per `VERB` (`mdxml_html_block`; see [`serialize_md_html_block`]).
     MdHtmlBlock(SyntaxNode),
-}
-
-/// The kind of a resolved markdown inline leaf.
-#[derive(Clone, Copy)]
-enum MdInline {
-    Emph,
-    Strong,
-    Code,
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -314,19 +315,7 @@ fn join_paras(paras: &[Vec<Inline>]) -> Vec<Inline> {
             // but it bounds an Rd `%` comment in non-markdown prose.
             out.push(Inline::Text("\n".to_string()));
         }
-        for inl in p {
-            out.push(match inl {
-                Inline::Text(s) => Inline::Text(s.clone()),
-                Inline::Macro(n) => Inline::Macro(n.clone()),
-                Inline::Md(k, s) => Inline::Md(*k, s.clone()),
-                Inline::MdList(n) => Inline::MdList(n.clone()),
-                Inline::MdLink(s) => Inline::MdLink(s.clone()),
-                Inline::MdImage(s) => Inline::MdImage(s.clone()),
-                Inline::MdCodeBlock(n) => Inline::MdCodeBlock(n.clone()),
-                Inline::MdHtml(s) => Inline::MdHtml(s.clone()),
-                Inline::MdHtmlBlock(n) => Inline::MdHtmlBlock(n.clone()),
-            });
-        }
+        out.extend(p.iter().cloned());
     }
     out
 }
@@ -449,12 +438,27 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 run.clear();
                 atoms.push(serialize_macro(node));
             }
-            Inline::Md(kind, content) => {
+            Inline::MdCode(content) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
                 run.clear();
-                atoms.push(serialize_md_inline(*kind, content));
+                atoms.push(md_code_atom(content));
+            }
+            Inline::MdEmphasis { strong, children } => {
+                if let Some(atom) = prose_text_atom(&run, md) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                // Recurse into the inner inline run (nesting projects as structure),
+                // then wrap. The block's `@md` mode holds inside an emphasis span.
+                let inner = serialize_inlines(children, md).join(" ");
+                let head = if *strong { "\\strong" } else { "\\emph" };
+                atoms.push(if inner.is_empty() {
+                    format!("({head})")
+                } else {
+                    format!("({head} {inner})")
+                });
             }
             Inline::MdList(node) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
@@ -900,17 +904,37 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LIST => {
             out.push(Inline::MdList(n));
         }
+        // A resolved emphasis/strong *node* (the inline pass's output): recurse
+        // into its inner inline run, skipping the opener/closer delimiter leaves
+        // (and any inter-line trivia), so nesting projects as structure.
+        NodeOrToken::Node(n)
+            if matches!(
+                n.kind(),
+                SyntaxKind::ROXYGEN_MD_EMPH | SyntaxKind::ROXYGEN_MD_STRONG
+            ) =>
+        {
+            let strong = n.kind() == SyntaxKind::ROXYGEN_MD_STRONG;
+            // The span's *own* delimiters are the first child (opener) and the last
+            // child (closer); they are skipped. Any *interior* `ROXYGEN_MD_DELIM` is
+            // an unmatched delimiter and stays literal text (`_foo_bar_baz_` →
+            // `\emph` over `foo_bar_baz`), reached via push_inline's text fallback.
+            let kids: Vec<_> = n.children_with_tokens().collect();
+            let interior = kids.len().saturating_sub(1);
+            let mut children = Vec::new();
+            for child in kids.into_iter().take(interior).skip(1) {
+                match child.kind() {
+                    SyntaxKind::ROXYGEN_MARKER => {} // threaded trivia: never prose
+                    SyntaxKind::NEWLINE => children.push(Inline::Text(" ".to_string())),
+                    _ => push_inline(&mut children, child),
+                }
+            }
+            out.push(Inline::MdEmphasis { strong, children });
+        }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
         // Markdown inline leaves (emitted only under `@md`): carve off their
         // delimiters and carry the inner content; the kind chooses the Rd macro.
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_EMPH => {
-            out.push(Inline::Md(MdInline::Emph, strip_delim(t.text(), 1)));
-        }
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_STRONG => {
-            out.push(Inline::Md(MdInline::Strong, strip_delim(t.text(), 2)));
-        }
         NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MD_CODE => {
-            out.push(Inline::Md(MdInline::Code, strip_code_span(t.text())));
+            out.push(Inline::MdCode(strip_code_span(t.text())));
         }
         // A markdown link leaf: the inline `[text](url)` form projects to `\href`;
         // the reference (`[text][ref]`) and shortcut (`[dest]`) forms resolve to an
@@ -942,13 +966,6 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
     }
 }
 
-/// Strip `n` leading and `n` trailing delimiter bytes from an emphasis/strong
-/// span (`*x*` → `x`, `**x**` → `x`). The span always has at least `2*n`
-/// delimiter bytes around non-empty content (the lexer guarantees it).
-fn strip_delim(text: &str, n: usize) -> String {
-    text.get(n..text.len() - n).unwrap_or("").to_string()
-}
-
 /// The content of a markdown code span: drop the matched backtick runs, then
 /// apply CommonMark's single-space trim (if the inner text both starts and ends
 /// with a space but is not all spaces, one space is removed from each end).
@@ -966,17 +983,6 @@ fn strip_code_span(text: &str) -> String {
         inner[1..inner.len() - 1].to_string()
     } else {
         inner
-    }
-}
-
-/// Project a resolved markdown inline leaf into its Rd atom: `\emph`/`\strong`
-/// wrap whitespace-normalized `(TEXT …)`, while a code span becomes `\code` or
-/// `\verb` per [`md_code_atom`].
-fn serialize_md_inline(kind: MdInline, content: &str) -> String {
-    match kind {
-        MdInline::Emph => format!("(\\emph {})", text_atom(content).unwrap_or_default()),
-        MdInline::Strong => format!("(\\strong {})", text_atom(content).unwrap_or_default()),
-        MdInline::Code => md_code_atom(content),
     }
 }
 

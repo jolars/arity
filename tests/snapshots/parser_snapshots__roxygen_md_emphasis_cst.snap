@@ -1,0 +1,77 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..207
+  ROXYGEN_BLOCK@0..201
+    ROXYGEN_SECTION@0..30
+      ROXYGEN_PARAGRAPH@0..27
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..26 "Markdown emphasis cases"
+        NEWLINE@26..27 "\n"
+      ROXYGEN_MARKER@27..29 "#'"
+      NEWLINE@29..30 "\n"
+    ROXYGEN_SECTION@30..174
+      ROXYGEN_MARKER@30..32 "#'"
+      WHITESPACE@32..33 " "
+      ROXYGEN_TAG@33..41
+        ROXYGEN_AT@33..34 "@"
+        ROXYGEN_TAG_NAME@34..41 "details"
+      NEWLINE@41..42 "\n"
+      ROXYGEN_PARAGRAPH@42..174
+        ROXYGEN_MARKER@42..44 "#'"
+        WHITESPACE@44..45 " "
+        ROXYGEN_TEXT@45..53 "Nesting "
+        ROXYGEN_MD_STRONG@53..70
+          ROXYGEN_MD_DELIM@53..55 "**"
+          ROXYGEN_TEXT@55..59 "foo "
+          ROXYGEN_MD_EMPH@59..64
+            ROXYGEN_MD_DELIM@59..60 "*"
+            ROXYGEN_TEXT@60..63 "bar"
+            ROXYGEN_MD_DELIM@63..64 "*"
+          ROXYGEN_TEXT@64..68 " baz"
+          ROXYGEN_MD_DELIM@68..70 "**"
+        ROXYGEN_TEXT@70..86 ", rule of three "
+        ROXYGEN_MD_EMPH@86..95
+          ROXYGEN_MD_DELIM@86..87 "*"
+          ROXYGEN_MD_STRONG@87..94
+            ROXYGEN_MD_DELIM@87..89 "**"
+            ROXYGEN_TEXT@89..92 "wow"
+            ROXYGEN_MD_DELIM@92..94 "**"
+          ROXYGEN_MD_DELIM@94..95 "*"
+        ROXYGEN_TEXT@95..110 ", and intraword"
+        NEWLINE@110..111 "\n"
+        ROXYGEN_MARKER@111..113 "#'"
+        WHITESPACE@113..114 " "
+        ROXYGEN_TEXT@114..119 "snake"
+        ROXYGEN_MD_DELIM@119..120 "_"
+        ROXYGEN_TEXT@120..145 "case stays literal wh ..."
+        ROXYGEN_MD_EMPH@145..161
+          ROXYGEN_MD_DELIM@145..146 "_"
+          ROXYGEN_TEXT@146..153 "wrapped"
+          ROXYGEN_MD_DELIM@153..154 "_"
+          ROXYGEN_TEXT@154..160 "phrase"
+          ROXYGEN_MD_DELIM@160..161 "_"
+        ROXYGEN_TEXT@161..173 " emphasizes."
+        NEWLINE@173..174 "\n"
+    ROXYGEN_SECTION@174..181
+      ROXYGEN_MARKER@174..176 "#'"
+      WHITESPACE@176..177 " "
+      ROXYGEN_TAG@177..180
+        ROXYGEN_AT@177..178 "@"
+        ROXYGEN_TAG_NAME@178..180 "md"
+      NEWLINE@180..181 "\n"
+    ROXYGEN_SECTION@181..201
+      ROXYGEN_MARKER@181..183 "#'"
+      WHITESPACE@183..184 " "
+      ROXYGEN_TAG@184..201
+        ROXYGEN_AT@184..185 "@"
+        ROXYGEN_TAG_NAME@185..189 "name"
+        WHITESPACE@189..190 " "
+        ROXYGEN_TEXT@190..192 "md"
+        ROXYGEN_MD_DELIM@192..193 "_"
+        ROXYGEN_TEXT@193..201 "emphasis"
+  NEWLINE@201..202 "\n"
+  IDENT@202..206 "NULL"
+  NEWLINE@206..207 "\n"

@@ -1,0 +1,3 @@
+(\description (TEXT "Markdown emphasis cases"))
+(\details (TEXT "Nesting") (\strong (TEXT "foo") (\emph (TEXT "bar")) (TEXT "baz")) (TEXT ", rule of three") (\emph (\strong (TEXT "wow"))) (TEXT ", and intraword snake_case stays literal while") (\emph (TEXT "wrapped_phrase")) (TEXT "emphasizes."))
+(\title (TEXT "Markdown emphasis cases"))

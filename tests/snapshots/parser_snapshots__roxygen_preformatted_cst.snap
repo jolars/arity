@@ -16,7 +16,10 @@ ROOT@0..155
         ROXYGEN_MARKER@12..14 "#'"
         WHITESPACE@14..15 " "
         ROXYGEN_TEXT@15..37 "Description with some "
-        ROXYGEN_MD_EMPH@37..47 "*keywords*"
+        ROXYGEN_MD_EMPH@37..47
+          ROXYGEN_MD_DELIM@37..38 "*"
+          ROXYGEN_TEXT@38..46 "keywords"
+          ROXYGEN_MD_DELIM@46..47 "*"
         ROXYGEN_TEXT@47..57 " included."
         NEWLINE@57..58 "\n"
       ROXYGEN_RD_MACRO@58..126
@@ -28,7 +31,9 @@ ROOT@0..155
         NEWLINE@90..91 "\n"
         ROXYGEN_MARKER@91..93 "#'"
         WHITESPACE@93..96 "   "
-        ROXYGEN_TEXT@96..121 "emphasised*. Or are t ..."
+        ROXYGEN_TEXT@96..106 "emphasised"
+        ROXYGEN_MD_DELIM@106..107 "*"
+        ROXYGEN_TEXT@107..121 ". Or are they?"
         NEWLINE@121..122 "\n"
         ROXYGEN_MARKER@122..124 "#'"
         WHITESPACE@124..125 " "

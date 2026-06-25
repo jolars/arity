@@ -278,7 +278,11 @@ fn lex_roxygen_prose(
         let span = match bytes[i] {
             b'`' if md => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenMdCode, end)),
             b'`' => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenCode, end)),
-            b'*' | b'_' if md => scan_md_emphasis(bytes, i),
+            // A `*`/`_` run under `@md` is carved *neutrally* as a maximal same-
+            // char delimiter run (`RoxygenMdDelim`); the open/close decision and
+            // matching are the inline pass's job (CommonMark delimiter stack), not
+            // the lexer's. Always carves (losslessness holds — it is still text).
+            b'*' | b'_' if md => Some((TokKind::RoxygenMdDelim, i + run_len(bytes, i, bytes[i]))),
             // A balanced inline `\name{…}` is its own span; an *unbalanced* `\name{`
             // opens a block macro that spans following `#'` lines. The opener runs
             // to the line end (its body is unclosed here), so carve `\name{…EOL` off
@@ -352,72 +356,6 @@ fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
             j += m;
         } else {
             j += 1;
-        }
-    }
-    None
-}
-
-/// A markdown emphasis (`*…*`/`_…_`) or strong (`**…**`/`__…__`) span at
-/// `bytes[i] in {*, _}`, recognized only under a resolved `@md` mode. Returns the
-/// token kind (`RoxygenMdStrong` for a two-delimiter run, `RoxygenMdEmph` for a
-/// one-delimiter run) and the index past the closing delimiter run, or `None`
-/// when this is not a valid span (so it stays literal prose — losslessness holds
-/// either way).
-///
-/// **Interim, incomplete — to be replaced by the inline pass.** The end goal is
-/// *full* CommonMark emphasis parity (see `docs/design/roxygen-inline-pass.md`):
-/// the real delimiter-stack algorithm, run as a block→inline pass, which alone
-/// can model nesting (`**foo *bar* baz**`), the rule of 3, overlapping runs, and
-/// full (whitespace **and** punctuation) flanking. This local forward scan cannot
-/// — its very shape is wrong — so it deliberately handles only the unambiguous
-/// shapes and *bails to literal text* for the rest (opening run of 1 or 2; a 3+
-/// run bails; opener left-flanking, closer right-flanking by whitespace only; `_`
-/// not intraword). The bailing is a stopgap that keeps the structure never
-/// *wrong*, not a target: every bail is a parity gap the inline pass will close.
-fn scan_md_emphasis(bytes: &[u8], i: usize) -> Option<(TokKind, usize)> {
-    let delim = bytes[i];
-    let open_len = run_len(bytes, i, delim);
-    if open_len >= 3 {
-        return None; // 3+ run needs the delimiter stack — bails until the inline pass
-    }
-    let n = open_len; // 1 → emphasis, 2 → strong
-    let content_start = i + n;
-    // Opener must be left-flanking: a non-whitespace char follows the run.
-    if bytes
-        .get(content_start)
-        .is_none_or(|b| b.is_ascii_whitespace())
-    {
-        return None;
-    }
-    // `_` cannot open intraword: the char before the run must not be alphanumeric.
-    if delim == b'_' && i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
-        return None;
-    }
-    let mut j = content_start;
-    while j < bytes.len() {
-        if bytes[j] == delim {
-            let run = run_len(bytes, j, delim);
-            // A closer of at least `n` delimiters that is right-flanking (the
-            // preceding char is non-space) and, for `_`, not intraword.
-            let close_end = j + n;
-            if run >= n
-                && j > content_start
-                && !bytes[j - 1].is_ascii_whitespace()
-                && (delim != b'_'
-                    || bytes
-                        .get(close_end)
-                        .is_none_or(|b| !b.is_ascii_alphanumeric()))
-            {
-                let kind = if n == 2 {
-                    TokKind::RoxygenMdStrong
-                } else {
-                    TokKind::RoxygenMdEmph
-                };
-                return Some((kind, close_end));
-            }
-            j += run;
-        } else {
-            j += utf8_len(bytes[j]);
         }
     }
     None
@@ -1043,8 +981,7 @@ mod tests {
                         | TokKind::RoxygenRdMacro
                         | TokKind::RoxygenMdLink
                         | TokKind::RoxygenMdImage
-                        | TokKind::RoxygenMdEmph
-                        | TokKind::RoxygenMdStrong
+                        | TokKind::RoxygenMdDelim
                         | TokKind::RoxygenMdCode
                         | TokKind::RoxygenMdListMarker
                         | TokKind::RoxygenMdFence
@@ -1071,16 +1008,21 @@ mod tests {
 
     #[test]
     fn md_inline_recognized_under_md_mode() {
-        // With an `@md` directive in the block, emphasis/strong runs and a
-        // markdown code span are carved out as their own leaves.
+        // With an `@md` directive in the block, each `*`/`_` run is carved as a
+        // neutral `RoxygenMdDelim` (the inline pass decides open/close/match), and a
+        // markdown code span is its own leaf. The lexer makes no flanking decision.
         let src = "#' a *one*, **two**, and `three` end.\n#' @md\n";
         assert_eq!(
             prose_texts(src),
             vec![
                 (TokKind::RoxygenText, "a ".into()),
-                (TokKind::RoxygenMdEmph, "*one*".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
+                (TokKind::RoxygenText, "one".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
                 (TokKind::RoxygenText, ", ".into()),
-                (TokKind::RoxygenMdStrong, "**two**".into()),
+                (TokKind::RoxygenMdDelim, "**".into()),
+                (TokKind::RoxygenText, "two".into()),
+                (TokKind::RoxygenMdDelim, "**".into()),
                 (TokKind::RoxygenText, ", and ".into()),
                 (TokKind::RoxygenMdCode, "`three`".into()),
                 (TokKind::RoxygenText, " end.".into()),
@@ -1125,15 +1067,18 @@ mod tests {
 
     #[test]
     fn md_list_marker_requires_space_and_is_not_emphasis() {
-        // Under `@md`, a `*` at line start followed by a non-space is emphasis, not
-        // a list marker; `-3` (no space) is plain text; `* item` is a bullet.
+        // Under `@md`, a `*` at line start followed by a non-space carves a neutral
+        // delimiter run (the inline pass decides emphasis), not a list marker; `-3`
+        // (no space) is plain text; `* item` is a bullet.
         let src = "#' * a *b* c\n#' @md\n";
         assert_eq!(
             prose_texts(src),
             vec![
                 (TokKind::RoxygenMdListMarker, "*".into()),
                 (TokKind::RoxygenText, " a ".into()),
-                (TokKind::RoxygenMdEmph, "*b*".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
+                (TokKind::RoxygenText, "b".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
                 (TokKind::RoxygenText, " c".into()),
             ]
         );
@@ -1209,16 +1154,25 @@ mod tests {
     }
 
     #[test]
-    fn md_emphasis_flanking_rejects_false_positives() {
-        // Under `@md`, whitespace-flanked `*` and intraword `_` are not emphasis
-        // (CommonMark flanking) --- they stay literal text, so the line is one run.
+    fn md_emphasis_delims_carved_neutrally() {
+        // Under `@md`, the lexer carves every `*`/`_` run as a neutral delimiter
+        // leaf — it makes *no* flanking/open/close decision (that is the inline
+        // pass's job). So whitespace-flanked `*` and intraword `_` still tokenize
+        // as delimiter runs; whether they resolve to emphasis is decided later.
         let src = "#' a * b * c and snake_case_name here\n#' @md\n";
         assert_eq!(
             prose_texts(src),
-            vec![(
-                TokKind::RoxygenText,
-                "a * b * c and snake_case_name here".into(),
-            )]
+            vec![
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
+                (TokKind::RoxygenText, " b ".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
+                (TokKind::RoxygenText, " c and snake".into()),
+                (TokKind::RoxygenMdDelim, "_".into()),
+                (TokKind::RoxygenText, "case".into()),
+                (TokKind::RoxygenMdDelim, "_".into()),
+                (TokKind::RoxygenText, "name here".into()),
+            ]
         );
         assert_lossless(src);
     }

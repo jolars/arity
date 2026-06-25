@@ -309,15 +309,27 @@
       quotes"`, e.g. `\*not emphasis\*`); arity should mirror the condition as a
       side-channel diagnostic (lossless CST) — high-value lint/LSP signal, so an
       oracle-error is a diagnostic-parity fixture, not a silent skip.
-      **Driver wired (2026-06-25c):** the CommonMark spec corpus is now a third
+      **Driver wired (2026-06-25c):** the CommonMark spec corpus is a third
       projector source — `scripts/build-commonmark-corpus.R` extracts the 132
       "Emphasis and strong emphasis" examples from the vendored `spec.txt`, wraps
-      each into an `@md` block (`commonmark-emphasis.jsonl`), and `task
-      roxygen-spec-pins` mints roxygen2 Rd pins. **58/132 already pass** the
-      interim local scanner (allowlisted); the **74 divergences are the
-      inline-pass worklist** (flanking like `a*"foo"*`→literal, nesting, rule-of-3,
-      Unicode-adjacency, plus diagnostic-parity drops). Next: implement the pass
-      itself (lexer `RoxygenMdDelim` → delimiter-stack → nodes) and ratchet them in.
+      each into an `@md` block (`commonmark-emphasis.jsonl`), `task
+      roxygen-spec-pins` mints roxygen2 Rd pins.
+      **Slice 1 LANDED (2026-06-25d): the real delimiter-stack inline pass.** The
+      lexer now carves `*`/`_` as neutral `RoxygenMdDelim` leaves (no flanking
+      decision); a new paragraph-grouper pass `src/parser/roxygen/inline.rs`
+      (`resolve_emphasis`) runs the full cmark `process_emphasis` over each inline
+      run — full ASCII flanking, the rule of three, nesting — emitting
+      `ROXYGEN_MD_EMPH`/`STRONG` **nodes** (SyntaxKinds 90/91, now nodes not
+      leaves) with `ROXYGEN_MD_DELIM` opener/closer/leftover leaves (`Event::Leaf`
+      run-splitting → losslessness). Projector recurses (`MdEmphasis { strong,
+      children }`); formatter unchanged (single-line nodes glue atomically;
+      idempotent). **119/132 cm cases now pass** (was 58). The 13 remaining are
+      legitimate later-slice backlog: cross-line/multi-line spans (cm-369/396/407/
+      425/434), links-into-the-pass (cm-421/435, slice 2), markdown backslash
+      escapes (cm-439/442/451/454), code `\code`-vs-`\verb` (cm-481), Unicode NBSP
+      whitespace in `norm_ws` (cm-355). Next: **slice 1.5 = widen the run to a whole
+      paragraph** (cross-line emphasis; formatter marker-passthrough for a node that
+      contains a `ROXYGEN_MARKER`), then **slice 2 = links onto the same stack**.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`
