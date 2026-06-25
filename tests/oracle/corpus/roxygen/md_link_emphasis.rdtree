@@ -1,0 +1,2 @@
+(\description (TEXT "A link whose text carries emphasis renders that emphasis: see") (\href (VERB "https://example.org/a") (GRP (\strong (TEXT "bold")) (TEXT "and") (\emph (TEXT "italic")) (TEXT "text"))) (TEXT "for the rich case, and") (\href (VERB "https://example.org/b") (\emph (TEXT "just italic"))) (TEXT "for a single span. Emphasis also spans a link, as in") (\emph (TEXT "the phrase") (\href (VERB "https://example.org/c") (\emph (TEXT "nested"))) (TEXT "here")) (TEXT "."))
+(\title (TEXT "Markdown inline links with emphasis"))

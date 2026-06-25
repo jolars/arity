@@ -271,6 +271,40 @@ fn lex_roxygen_prose(
         i = marker_end;
     }
     while i < bytes.len() {
+        // Under `@md`, an inline link `[text](url)`: carve the `[` opener and the
+        // `](url)` closer as neutral `RoxygenMdBracket` leaves and *recursively* lex
+        // the link text in between, so emphasis/code spans inside it resolve. The
+        // inline pass then assembles the matched pair into a `ROXYGEN_MD_LINK`
+        // **node** whose display children are the resolved markdown. Reference and
+        // shortcut links (`[t][r]`, `[t]`) stay opaque (the `scan_md_link` arm
+        // below); only a *bracket-free* inline link text is split here.
+        if md
+            && bytes[i] == b'['
+            && let Some((text_end, url_end)) = inline_link_span(bytes, i)
+        {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, 1);
+            let inner = &text[i + 1..text_end - 1];
+            lex_roxygen_prose(out, inner, start + i + 1, 0, md, false);
+            push(
+                out,
+                TokKind::RoxygenMdBracket,
+                text,
+                start,
+                text_end - 1,
+                url_end - (text_end - 1),
+            );
+            i = url_end;
+            run_start = i;
+            continue;
+        }
         // Under a resolved `@md` mode the inline grammar gains markdown emphasis/
         // strong runs, and a backtick span is a *markdown* code span (projected to
         // `\code`/`\verb`) rather than a literal Rd backtick run. Without `@md` the
@@ -438,6 +472,31 @@ fn scan_md_image(bytes: &[u8], i: usize) -> Option<usize> {
 /// resolves to `\link{…}` just like `[func()]`. The followed-by-`{` exclusion
 /// keeps a pandoc-style `[x]{…}` (and a literal `\foo{…}` written under `@md`)
 /// out — see [`is_shortcut_content`].
+/// An inline markdown link `[text](url)` at `bytes[i] == b'['`: a balanced `[…]`
+/// whose text is **bracket-free** (so it carries no nested link), immediately
+/// followed by a balanced `(…)` destination. Returns `(text_end, url_end)` — the
+/// index past the `]` and the index past the `)`. `None` when it is not a complete
+/// bracket-free inline link, in which case the reference/shortcut path
+/// ([`scan_md_link`]) applies and the link stays an opaque token.
+///
+/// The bracket-free restriction keeps the conservative opaque path for nested
+/// brackets (`[a [b] c](url)`), whose CommonMark resolution (no nested links,
+/// opener deactivation) the split path does not yet model.
+fn inline_link_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
+    let text_end = scan_balanced(bytes, i, b'[', b']')?;
+    if bytes[i + 1..text_end - 1]
+        .iter()
+        .any(|&b| matches!(b, b'[' | b']'))
+    {
+        return None;
+    }
+    if bytes.get(text_end) != Some(&b'(') {
+        return None;
+    }
+    let url_end = scan_balanced(bytes, text_end, b'(', b')')?;
+    Some((text_end, url_end))
+}
+
 fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
     let after_text = scan_balanced(bytes, i, b'[', b']')?;
     match bytes.get(after_text) {
@@ -980,6 +1039,7 @@ mod tests {
                         | TokKind::RoxygenCode
                         | TokKind::RoxygenRdMacro
                         | TokKind::RoxygenMdLink
+                        | TokKind::RoxygenMdBracket
                         | TokKind::RoxygenMdImage
                         | TokKind::RoxygenMdDelim
                         | TokKind::RoxygenMdCode
@@ -1226,15 +1286,37 @@ mod tests {
 
     #[test]
     fn md_inline_link() {
+        // An inline `[text](url)` link is split into neutral bracket leaves around
+        // the recursively-lexed link text (here a single plain run), so emphasis or
+        // code spans inside it can resolve in the inline pass.
         assert_eq!(
             prose_texts("#' see [the docs](https://x.y) now\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "see ".into()),
-                (TokKind::RoxygenMdLink, "[the docs](https://x.y)".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "the docs".into()),
+                (TokKind::RoxygenMdBracket, "](https://x.y)".into()),
                 (TokKind::RoxygenText, " now".into()),
             ]
         );
         assert_lossless("#' see [the docs](https://x.y) now\n#' @md\n");
+    }
+
+    #[test]
+    fn md_inline_link_text_emphasis() {
+        // The link text is recursively lexed, so a `*…*` run inside it carves as a
+        // neutral delimiter (resolved into emphasis by the inline pass), not literal.
+        assert_eq!(
+            prose_texts("#' [*x*](/u)\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
+                (TokKind::RoxygenText, "x".into()),
+                (TokKind::RoxygenMdDelim, "*".into()),
+                (TokKind::RoxygenMdBracket, "](/u)".into()),
+            ]
+        );
+        assert_lossless("#' [*x*](/u)\n#' @md\n");
     }
 
     #[test]

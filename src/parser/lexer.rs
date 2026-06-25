@@ -67,6 +67,16 @@ pub(crate) enum TokKind {
     RoxygenCode,
     RoxygenRdMacro,
     RoxygenMdLink,
+    /// A markdown **inline-link bracket** (`[`/`![` opener, or a `](url)` closer
+    /// carrying the destination), recognized only under a resolved `@md` block
+    /// mode for the inline `[text](url)` form. The lexer carves the bracket *and*
+    /// recursively lexes the link text in between (so emphasis/code inside it
+    /// resolve), then the inline pass (`roxygen::inline`) assembles the matched
+    /// pair into a `ROXYGEN_MD_LINK` **node** whose display children are the
+    /// resolved markdown. A transient kind: every bracket the lexer emits is part
+    /// of a complete inline link, so the pass always consumes it (never reaching
+    /// the tree builder as a bare token).
+    RoxygenMdBracket,
     /// A markdown image `![alt](url "title")`, recognized only under a resolved
     /// `@md` block mode. Projected to `\figure` (extension-keyed `\if` wrapping).
     RoxygenMdImage,
@@ -134,9 +144,9 @@ impl TokKind {
             RoxygenAt => Some(RoxygenRole::At),
             RoxygenTagName => Some(RoxygenRole::TagName),
             RoxygenTagArg => Some(RoxygenRole::TagArg),
-            RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdImage
-            | RoxygenMdDelim | RoxygenMdCode | RoxygenMdListMarker | RoxygenMdFence
-            | RoxygenMdHtml | RoxygenMdHtmlBlock => Some(RoxygenRole::Content),
+            RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdBracket
+            | RoxygenMdImage | RoxygenMdDelim | RoxygenMdCode | RoxygenMdListMarker
+            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

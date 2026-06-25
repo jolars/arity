@@ -30,13 +30,20 @@ use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
 use crate::syntax::SyntaxKind;
 
-/// Resolve markdown emphasis/strong in `events` (in place). A no-op unless the
-/// block carries at least one raw delimiter run.
+/// Whether `kind` is a raw markdown-inline-markup token the pass resolves: an
+/// emphasis delimiter run or an inline-link bracket. A run carrying neither is
+/// re-emitted verbatim.
+fn is_inline_markup(kind: &TokKind) -> bool {
+    matches!(kind, TokKind::RoxygenMdDelim | TokKind::RoxygenMdBracket)
+}
+
+/// Resolve markdown emphasis/strong and inline links in `events` (in place). A
+/// no-op unless the block carries at least one raw delimiter run or link bracket.
 pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>) {
-    let has_delim = events
+    let has_markup = events
         .iter()
-        .any(|e| matches!(e, Event::Tok(i) if tokens[*i].kind == TokKind::RoxygenMdDelim));
-    if !has_delim {
+        .any(|e| matches!(e, Event::Tok(i) if is_inline_markup(&tokens[*i].kind)));
+    if !has_markup {
         return;
     }
 
@@ -60,24 +67,37 @@ pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>) {
     *events = out;
 }
 
-/// Resolve one inline run (the token indices in `run`) and append its events to
-/// `out`, then clear `run`. A run with no delimiter re-emits its tokens verbatim
-/// (byte-identical), so only delimiter-bearing runs are rebuilt.
+/// Resolve one top-level inline run and append its events to `out`, then clear
+/// `run`. A run with no markup re-emits its tokens verbatim (byte-identical), so
+/// only markup-bearing runs are rebuilt. The run's edges are the start/end of the
+/// inline content (whitespace, for flanking).
 fn flush_run(tokens: &[Token], run: &mut Vec<usize>, out: &mut Vec<Event>) {
     if run.is_empty() {
         return;
     }
-    if !run
-        .iter()
-        .any(|&i| tokens[i].kind == TokKind::RoxygenMdDelim)
-    {
+    if !run.iter().any(|&i| is_inline_markup(&tokens[i].kind)) {
         out.extend(run.drain(..).map(Event::Tok));
         return;
     }
-    let mut arena = Arena::build(tokens, run);
+    resolve_run(tokens, run, None, None, out);
+    run.clear();
+}
+
+/// Resolve an inline run (`run` token indices) into events appended to `out`,
+/// given the flanking-relevant characters immediately `before`/`after` the run
+/// (`None` = a whitespace boundary). Builds the arena (collapsing inline links
+/// into opaque `ROXYGEN_MD_LINK` nodes, their text resolved by a recursive call),
+/// resolves emphasis over the resulting top-level node list, and emits.
+fn resolve_run(
+    tokens: &[Token],
+    run: &[usize],
+    before: Option<char>,
+    after: Option<char>,
+    out: &mut Vec<Event>,
+) {
+    let mut arena = Arena::build(tokens, run, before, after);
     arena.process_emphasis();
     arena.emit(out);
-    run.clear();
 }
 
 /// A node in the inline arena: a doubly linked list at the top level, with
@@ -104,6 +124,18 @@ enum NodeData {
         strong: bool,
         open: String,
         close: String,
+    },
+    /// A resolved inline link `[text](url)`: `open` is the opener bracket (`[`),
+    /// `close` the closer carrying the destination (`](url)`), and `body` the
+    /// already-resolved events of the link text (emphasis/code spans inside it
+    /// resolved by a recursive [`resolve_run`]). Emitted as a `ROXYGEN_MD_LINK`
+    /// **node** with the brackets as `ROXYGEN_MD_DELIM` opener/closer leaves; the
+    /// node is opaque to the enclosing emphasis stack (so an outer span wraps the
+    /// whole link, exactly as a plain inline does).
+    Link {
+        open: String,
+        close: String,
+        body: Vec<Event>,
     },
 }
 
@@ -134,7 +166,12 @@ struct Arena {
 
 impl Arena {
     /// Build the top-level node list and the delimiter stack from an inline run.
-    fn build(tokens: &[Token], run: &[usize]) -> Arena {
+    /// `before`/`after` are the flanking-relevant boundary characters at the run's
+    /// edges (`None` = whitespace). An inline-link bracket pair (`[` … `](url)`) is
+    /// **collapsed** into one opaque [`NodeData::Link`] whose body is the recursively
+    /// resolved link text — so the brackets never reach the emphasis stack and an
+    /// enclosing span wraps the whole link.
+    fn build(tokens: &[Token], run: &[usize], before: Option<char>, after: Option<char>) -> Arena {
         let mut arena = Arena {
             nodes: Vec::new(),
             delims: Vec::new(),
@@ -142,27 +179,63 @@ impl Arena {
             tail: None,
             last_delim: None,
         };
-        // Precompute, per run position, the first/last char of each token's text,
-        // for flanking (the char immediately before/after a delimiter run).
-        for (p, &idx) in run.iter().enumerate() {
-            let tok = &tokens[idx];
+        // The flanking neighbor char at run position `p` on the given side: an
+        // interior position reads its neighbor token's edge char; a run edge uses
+        // the passed boundary (the link-text `[`/`]` for a recursive call, else ws).
+        let neighbor = |p: usize, leading: bool| -> Option<char> {
+            if leading {
+                run.get(p + 1)
+                    .map_or(after, |&j| edge_char(&tokens[j], true))
+            } else {
+                match p.checked_sub(1) {
+                    Some(q) => edge_char(&tokens[run[q]], false),
+                    None => before,
+                }
+            }
+        };
+        let mut p = 0;
+        while p < run.len() {
+            let tok = &tokens[run[p]];
+            if tok.kind == TokKind::RoxygenMdBracket {
+                // An opener (`[`/`![`) collapses with its matching closer (`](url)`)
+                // into one Link node; the inner tokens resolve recursively, bounded
+                // by the bracket chars (`[` before, `]` after) for flanking.
+                if is_bracket_open(&tok.text)
+                    && let Some(close_p) = (p + 1..run.len()).find(|&q| {
+                        matches!(tokens[run[q]].kind, TokKind::RoxygenMdBracket)
+                            && is_bracket_close(&tokens[run[q]].text)
+                    })
+                {
+                    let open = tok.text.clone();
+                    let close = tokens[run[close_p]].text.clone();
+                    let mut body = Vec::new();
+                    resolve_run(
+                        tokens,
+                        &run[p + 1..close_p],
+                        open.chars().next_back(),
+                        close.chars().next(),
+                        &mut body,
+                    );
+                    arena.push_node(NodeData::Link { open, close, body });
+                    p = close_p + 1;
+                    continue;
+                }
+                // An unmatched bracket re-emits as literal text (a `Delim` node,
+                // projected as plain text); the lexer should never produce one.
+                arena.push_node(NodeData::Delim(tok.text.clone()));
+                p += 1;
+                continue;
+            }
             if tok.kind == TokKind::RoxygenMdDelim {
                 let ch = tok.text.as_bytes()[0];
                 let len = tok.text.len(); // a same-char ASCII run: bytes == chars
-                // For flanking, the char immediately before/after the run. Inter-line
-                // trivia (a soft break: newline, the `#'` marker, leading whitespace)
-                // counts as whitespace — the newline/whitespace bytes already are, and
-                // the marker is mapped to one (`edge_char`).
-                let before = p
-                    .checked_sub(1)
-                    .and_then(|q| edge_char(&tokens[run[q]], false));
-                let after = run.get(p + 1).and_then(|&j| edge_char(&tokens[j], true));
-                let (can_open, can_close) = flanking(ch, before, after);
+                let (can_open, can_close) = flanking(ch, neighbor(p, false), neighbor(p, true));
                 let node = arena.push_node(NodeData::Delim(tok.text.clone()));
                 arena.push_delim(node, ch, len, can_open, can_close);
             } else {
-                arena.push_node(NodeData::Token(idx));
+                arena.push_node(NodeData::Token(run[p]));
             }
+            p += 1;
         }
         arena
     }
@@ -453,8 +526,28 @@ impl Arena {
                 out.push(Event::Leaf(SyntaxKind::ROXYGEN_MD_DELIM, close.clone()));
                 out.push(Event::Finish);
             }
+            NodeData::Link { open, close, body } => {
+                // A `ROXYGEN_MD_LINK` node: the brackets are opener/closer
+                // `ROXYGEN_MD_DELIM` leaves around the already-resolved link-text
+                // events (so the projector skips first/last child, as for emphasis).
+                out.push(Event::Start(SyntaxKind::ROXYGEN_MD_LINK));
+                out.push(Event::Leaf(SyntaxKind::ROXYGEN_MD_DELIM, open.clone()));
+                out.extend(body.iter().cloned());
+                out.push(Event::Leaf(SyntaxKind::ROXYGEN_MD_DELIM, close.clone()));
+                out.push(Event::Finish);
+            }
         }
     }
+}
+
+/// Whether a `RoxygenMdBracket` token text is an inline-link opener (`[` or `![`).
+fn is_bracket_open(text: &str) -> bool {
+    text.starts_with('[') || text.starts_with('!')
+}
+
+/// Whether a `RoxygenMdBracket` token text is an inline-link closer (`](url)`).
+fn is_bracket_close(text: &str) -> bool {
+    text.starts_with(']')
 }
 
 /// CommonMark flanking for a delimiter run of char `ch`, given the characters

@@ -11,7 +11,10 @@ ROOT@0..93
         ROXYGEN_TEXT@3..7 "See "
         ROXYGEN_MD_LINK@7..29 "<https://log.r-hub.io>"
         ROXYGEN_TEXT@29..34 " and "
-        ROXYGEN_MD_LINK@34..53 "[http://acme.com]()"
+        ROXYGEN_MD_LINK@34..53
+          ROXYGEN_MD_DELIM@34..35 "["
+          ROXYGEN_TEXT@35..50 "http://acme.com"
+          ROXYGEN_MD_DELIM@50..53 "]()"
         ROXYGEN_TEXT@53..66 " for details."
         NEWLINE@66..67 "\n"
     ROXYGEN_SECTION@67..73

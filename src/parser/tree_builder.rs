@@ -195,6 +195,10 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::RoxygenCode => SyntaxKind::ROXYGEN_CODE,
         TokKind::RoxygenRdMacro => SyntaxKind::ROXYGEN_RD_MACRO,
         TokKind::RoxygenMdLink => SyntaxKind::ROXYGEN_MD_LINK,
+        // An inline-link bracket leaf is consumed by the inline pass (assembled
+        // into a `ROXYGEN_MD_LINK` node); it never reaches the builder as a bare
+        // token. Map to the delimiter leaf as a defensive fallback.
+        TokKind::RoxygenMdBracket => SyntaxKind::ROXYGEN_MD_DELIM,
         TokKind::RoxygenMdImage => SyntaxKind::ROXYGEN_MD_IMAGE,
         // A raw emphasis-delimiter run lexed under `@md`. The inline pass resolves
         // matched runs into `ROXYGEN_MD_EMPH`/`ROXYGEN_MD_STRONG` *nodes* (whose

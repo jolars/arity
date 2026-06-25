@@ -89,8 +89,19 @@ enum Inline {
     /// inline `[text](url)` form projects to `\href{url}{text}`; the reference
     /// (`[text][ref]`) and shortcut (`[dest]`) forms resolve to an `\link`/
     /// `\linkS4class` (optionally `\code`-wrapped) per roxygen2's `parse_link`
-    /// (see [`resolve_md_link`]).
+    /// (see [`resolve_md_link`]). This is the opaque-leaf form (a `<url>` autolink,
+    /// a reference/shortcut link, or a bracketed-text inline link).
     MdLink(String),
+    /// An inline `[text](url)` link resolved into a `ROXYGEN_MD_LINK` **node** by
+    /// the inline pass: `url` is the destination and `display` the recursively
+    /// resolved link text (so emphasis/code spans inside it surface as structure).
+    /// Projects to `\href{url}{display}` (the display GRP-wrapped when it is more
+    /// than one atom, since `\href` is a two-argument structural macro), or to
+    /// `\url{text}` when the destination is empty or equals the text.
+    MdInlineLink {
+        url: String,
+        display: Vec<Inline>,
+    },
     /// A markdown image resolved under `@md` mode, carrying the raw leaf text
     /// `![alt](url "title")`. Projects to `\figure{url}{title}` — wrapped in
     /// `\if{html}{…}`/`\if{pdf}{…}` per roxygen2's extension-keyed image-format
@@ -473,6 +484,13 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(resolve_md_link(raw).unwrap_or_default());
+            }
+            Inline::MdInlineLink { url, display } => {
+                if let Some(atom) = prose_text_atom(&run, md) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(inline_link_node_atom(url, display, md));
             }
             Inline::MdImage(raw) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
@@ -930,6 +948,28 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
             }
             out.push(Inline::MdEmphasis { strong, children });
         }
+        // A resolved inline-link *node* (`ROXYGEN_MD_LINK`): the inline pass's
+        // output for `[text](url)`. The first child is the `[` opener leaf and the
+        // last child the `](url)` closer leaf; the display text in between recurses
+        // (so emphasis/code spans inside the link surface as structure). The closer
+        // carries the destination.
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LINK => {
+            let kids: Vec<_> = n.children_with_tokens().collect();
+            let url = kids
+                .last()
+                .map(|c| inline_link_dest(&c.to_string()))
+                .unwrap_or_default();
+            let interior = kids.len().saturating_sub(1);
+            let mut display = Vec::new();
+            for child in kids.into_iter().take(interior).skip(1) {
+                match child.kind() {
+                    SyntaxKind::ROXYGEN_MARKER => {} // threaded trivia: never prose
+                    SyntaxKind::NEWLINE => display.push(Inline::Text(" ".to_string())),
+                    _ => push_inline(&mut display, child),
+                }
+            }
+            out.push(Inline::MdInlineLink { url, display });
+        }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
         // Markdown inline leaves (emitted only under `@md`): carve off their
         // delimiters and carry the inner content; the kind chooses the Rd macro.
@@ -1026,6 +1066,50 @@ fn resolve_md_link(raw: &str) -> Option<String> {
         None => Some(shortcut_link_atom(text)),
         _ => None,
     }
+}
+
+/// The destination of an inline-link closer leaf `](dest)`: the text between the
+/// parentheses (verbatim, mirroring the opaque path's `&raw[text_end+1..url_end-1]`).
+fn inline_link_dest(close: &str) -> String {
+    close
+        .strip_prefix("](")
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Project a `ROXYGEN_MD_LINK` node `[display](url)`: `\href{url}{display}` with
+/// the display GRP-wrapped when it is more than one atom (`\href` is a two-argument
+/// structural macro), falling back to `\url{text}` when the destination is empty or
+/// equals the link text (roxygen2's `mdxml_link`, the auto-generated-destination
+/// branch). Mirrors [`inline_link_atom`], but the display renders the link's
+/// resolved markdown *children* rather than a flat string.
+fn inline_link_node_atom(url: &str, display: &[Inline], md: bool) -> String {
+    let display_text = inline_plain_text(display);
+    if url.is_empty() || norm_ws(url) == norm_ws(&display_text) {
+        return url_atom(&display_text);
+    }
+    let arg = grp_arg(&serialize_inlines(display, md));
+    format!("(\\href (VERB {}){})", encode_text(url), prefix_space(&arg))
+}
+
+/// A best-effort plain-text rendering of a resolved inline run, used only to test a
+/// link's destination against its text (the `\url` auto-destination branch). Rich
+/// inlines (emphasis, code) contribute their textual content; non-textual inlines
+/// contribute nothing — a link whose destination equals such a text is vanishingly
+/// rare, and the `\href` branch is the safe default.
+fn inline_plain_text(inlines: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in inlines {
+        match inl {
+            Inline::Text(t) => s.push_str(t),
+            Inline::MdCode(t) => s.push_str(t),
+            Inline::MdEmphasis { children, .. } => s.push_str(&inline_plain_text(children)),
+            Inline::MdInlineLink { display, .. } => s.push_str(&inline_plain_text(display)),
+            _ => {}
+        }
+    }
+    s
 }
 
 /// An inline `[text](url)` link, mirroring roxygen2's `mdxml_link`: an empty

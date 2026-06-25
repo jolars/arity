@@ -9,7 +9,10 @@ ROOT@0..84
         ROXYGEN_MARKER@0..2 "#'"
         WHITESPACE@2..3 " "
         ROXYGEN_TEXT@3..7 "See "
-        ROXYGEN_MD_LINK@7..47 "[the manual](https:// ..."
+        ROXYGEN_MD_LINK@7..47
+          ROXYGEN_MD_DELIM@7..8 "["
+          ROXYGEN_TEXT@8..18 "the manual"
+          ROXYGEN_MD_DELIM@18..47 "](https://example.org ..."
         ROXYGEN_TEXT@47..57 " for more."
         NEWLINE@57..58 "\n"
     ROXYGEN_SECTION@58..64

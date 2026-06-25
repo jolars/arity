@@ -1,0 +1,60 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..96
+  ROXYGEN_BLOCK@0..76
+    ROXYGEN_SECTION@0..76
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+      ROXYGEN_PARAGRAPH@7..76
+        ROXYGEN_MARKER@7..9 "#'"
+        WHITESPACE@9..10 " "
+        ROXYGEN_TEXT@10..16 "Click "
+        ROXYGEN_MD_LINK@16..37
+          ROXYGEN_MD_DELIM@16..17 "["
+          ROXYGEN_MD_STRONG@17..25
+            ROXYGEN_MD_DELIM@17..19 "**"
+            ROXYGEN_TEXT@19..23 "bold"
+            ROXYGEN_MD_DELIM@23..25 "**"
+          ROXYGEN_TEXT@25..30 " part"
+          ROXYGEN_MD_DELIM@30..37 "](/url)"
+        ROXYGEN_TEXT@37..39 ", "
+        ROXYGEN_MD_LINK@39..49
+          ROXYGEN_MD_DELIM@39..40 "["
+          ROXYGEN_MD_EMPH@40..44
+            ROXYGEN_MD_DELIM@40..41 "*"
+            ROXYGEN_TEXT@41..43 "it"
+            ROXYGEN_MD_DELIM@43..44 "*"
+          ROXYGEN_MD_DELIM@44..49 "](/u)"
+        ROXYGEN_TEXT@49..54 ", or "
+        ROXYGEN_MD_EMPH@54..71
+          ROXYGEN_MD_DELIM@54..55 "*"
+          ROXYGEN_TEXT@55..59 "foo "
+          ROXYGEN_MD_LINK@59..70
+            ROXYGEN_MD_DELIM@59..60 "["
+            ROXYGEN_MD_EMPH@60..65
+              ROXYGEN_MD_DELIM@60..61 "*"
+              ROXYGEN_TEXT@61..64 "bar"
+              ROXYGEN_MD_DELIM@64..65 "*"
+            ROXYGEN_MD_DELIM@65..70 "](/v)"
+          ROXYGEN_MD_DELIM@70..71 "*"
+        ROXYGEN_TEXT@71..76 " now."
+  NEWLINE@76..77 "\n"
+  ASSIGNMENT_EXPR@77..95
+    IDENT@77..78 "f"
+    WHITESPACE@78..79 " "
+    ASSIGN_LEFT@79..81 "<-"
+    WHITESPACE@81..82 " "
+    FUNCTION_EXPR@82..95
+      FUNCTION_KW@82..90 "function"
+      LPAREN@90..91 "("
+      IDENT@91..92 "x"
+      RPAREN@92..93 ")"
+      WHITESPACE@93..94 " "
+      IDENT@94..95 "x"
+  NEWLINE@95..96 "\n"

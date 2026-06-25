@@ -351,8 +351,20 @@
       `*`/`-`/`+` with no content can no longer interrupt an open paragraph
       (`md_list_item_is_empty` in `build.rs`); it folds into the paragraph as literal
       text rather than a spurious one-item `\itemize` (a fresh-position empty bullet
-      still opens a list). Next: **slice 2 = links onto the same stack** (closes
-      cm-421/435 + cross-line links rx-383f2ca3/eb12b6b6).
+      still opens a list).
+      **Slice 2 (inline links) LANDED (2026-06-25h): inline `[text](url)` on the
+      stack.** The lexer splits an inline link (`inline_link_span`, bracket-free
+      text) into neutral `RoxygenMdBracket` leaves (`[` opener, `](url)` closer) and
+      *recursively* lexes the link text in between, so emphasis/code spans inside it
+      carve normally. The inline pass collapses the matched pair into an opaque
+      `ROXYGEN_MD_LINK` **node** whose display children are resolved by a recursive
+      `resolve_run` (bounded by the bracket chars for flanking) — so inner emphasis
+      resolves *and* an outer span wraps the whole link (`*foo [*bar*](/u)*`). The
+      projector's node arm GRP-wraps a multi-atom display (`\href` is two-arg
+      structural) and falls back to `\url` on an empty/equal destination. **cm-421/435
+      closed.** Reference/shortcut links and images stay opaque (unchanged); the
+      lexer is line-scoped, so **cross-line links rx-383f2ca3/eb12b6b6 remain
+      backlog** (need the bracket on the stack across soft breaks, the next increment).
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`
