@@ -1,0 +1,73 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..265
+  ROXYGEN_BLOCK@0..259
+    ROXYGEN_SECTION@0..33
+      ROXYGEN_PARAGRAPH@0..30
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..29 "Cross-line reference  ..."
+        NEWLINE@29..30 "\n"
+      ROXYGEN_MARKER@30..32 "#'"
+      NEWLINE@32..33 "\n"
+    ROXYGEN_SECTION@33..222
+      ROXYGEN_MARKER@33..35 "#'"
+      WHITESPACE@35..36 " "
+      ROXYGEN_TAG@36..44
+        ROXYGEN_AT@36..37 "@"
+        ROXYGEN_TAG_NAME@37..44 "details"
+      NEWLINE@44..45 "\n"
+      ROXYGEN_PARAGRAPH@45..222
+        ROXYGEN_MARKER@45..47 "#'"
+        WHITESPACE@47..48 " "
+        ROXYGEN_TEXT@48..79 "A reference link whos ..."
+        ROXYGEN_MD_LINK@79..108
+          ROXYGEN_MD_DELIM@79..80 "["
+          ROXYGEN_TEXT@80..86 "broken"
+          NEWLINE@86..87 "\n"
+          ROXYGEN_MARKER@87..89 "#'"
+          WHITESPACE@89..90 " "
+          ROXYGEN_TEXT@90..102 "across lines"
+          ROXYGEN_MD_DELIM@102..108 "][fcn]"
+        ROXYGEN_TEXT@108..128 " joins into one link"
+        NEWLINE@128..129 "\n"
+        ROXYGEN_MARKER@129..131 "#'"
+        WHITESPACE@131..132 " "
+        ROXYGEN_TEXT@132..169 "over the dropped topi ..."
+        ROXYGEN_MD_DELIM@169..170 "]"
+        ROXYGEN_MD_LINK@170..173 "[b]"
+        NEWLINE@173..174 "\n"
+        ROXYGEN_MARKER@174..176 "#'"
+        WHITESPACE@176..177 " "
+        ROXYGEN_TEXT@177..187 "keeps its "
+        ROXYGEN_MD_CODE@187..190 "`]`"
+        ROXYGEN_TEXT@190..204 " literal with "
+        ROXYGEN_MD_CODE@204..209 "`[b]`"
+        ROXYGEN_TEXT@209..221 " a shortcut."
+        NEWLINE@221..222 "\n"
+    ROXYGEN_SECTION@222..229
+      ROXYGEN_MARKER@222..224 "#'"
+      WHITESPACE@224..225 " "
+      ROXYGEN_TAG@225..228
+        ROXYGEN_AT@225..226 "@"
+        ROXYGEN_TAG_NAME@226..228 "md"
+      NEWLINE@228..229 "\n"
+    ROXYGEN_SECTION@229..259
+      ROXYGEN_MARKER@229..231 "#'"
+      WHITESPACE@231..232 " "
+      ROXYGEN_TAG@232..259
+        ROXYGEN_AT@232..233 "@"
+        ROXYGEN_TAG_NAME@233..237 "name"
+        WHITESPACE@237..238 " "
+        ROXYGEN_TEXT@238..240 "md"
+        ROXYGEN_MD_DELIM@240..241 "_"
+        ROXYGEN_TEXT@241..244 "ref"
+        ROXYGEN_MD_DELIM@244..245 "_"
+        ROXYGEN_TEXT@245..249 "link"
+        ROXYGEN_MD_DELIM@249..250 "_"
+        ROXYGEN_TEXT@250..259 "multiline"
+  NEWLINE@259..260 "\n"
+  IDENT@260..264 "NULL"
+  NEWLINE@264..265 "\n"

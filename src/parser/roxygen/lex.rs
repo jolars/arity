@@ -348,6 +348,29 @@ fn lex_roxygen_prose(
             run_start = i;
             continue;
         }
+        // A *cross-line* reference-link closer: a bare `]` immediately followed by a
+        // `[ref]` label, where the `]` closes a `[` that opened on an earlier `#'`
+        // line (a `[text][ref]` reference link spanning lines). Carve only the lone
+        // `]` as a neutral bracket leaf; the `[ref]` label is carved separately
+        // ([`scan_md_link`], guaranteed a clean shortcut by `cross_line_ref_closer`).
+        // The inline pass then either pairs the `]` with the earlier opener —
+        // consuming the label as the dropped topic — or, with no opener, leaves the
+        // `]` literal and the `[ref]` a standalone shortcut, so `a][b]` stays
+        // `a]` + a `[b]` shortcut, matching roxygen2.
+        if md && bytes[i] == b']' && cross_line_ref_closer(bytes, i) {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, 1);
+            i += 1;
+            run_start = i;
+            continue;
+        }
         // Under a resolved `@md` mode the inline grammar gains markdown emphasis/
         // strong runs, and a backtick span is a *markdown* code span (projected to
         // `\code`/`\verb`) rather than a literal Rd backtick run. Without `@md` the
@@ -560,6 +583,25 @@ fn cross_line_link_closer(bytes: &[u8], i: usize) -> Option<usize> {
         return None;
     }
     scan_balanced(bytes, i + 1, b'(', b')')
+}
+
+/// Whether a `]` at `bytes[i]` is a *cross-line* reference-link closer: it is
+/// immediately followed by a balanced, bracket-free `[ref]` label that is a clean
+/// shortcut (not itself followed by `(`, `[`, or `{`, the shapes that would make
+/// [`scan_md_link`] reject or re-read it). Used to carve the lone `]` as a neutral
+/// bracket leaf; the `[ref]` label is carved separately as a shortcut `MD_LINK`,
+/// and the inline pass pairs the `]` with an earlier cross-line `[` opener (a
+/// `[text][ref]` reference link spanning lines, the label consumed as the dropped
+/// topic) or — with no opener — leaves the `]` literal and the `[ref]` a standalone
+/// shortcut link (so `a][b]` stays `a]` + `\link{b}`). The clean-shortcut guard
+/// keeps the lexer's lone-`]` carve in lockstep with the label that follows it, so
+/// the inline pass never faces a lone `]` without its label token.
+fn cross_line_ref_closer(bytes: &[u8], i: usize) -> bool {
+    bytes.get(i + 1) == Some(&b'[')
+        && scan_balanced(bytes, i + 1, b'[', b']').is_some_and(|end| {
+            is_shortcut_content(&bytes[i + 2..end - 1])
+                && !matches!(bytes.get(end), Some(b'(' | b'[' | b'{'))
+        })
 }
 
 fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {

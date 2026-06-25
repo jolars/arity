@@ -102,6 +102,16 @@ enum Inline {
         url: String,
         display: Vec<Inline>,
     },
+    /// A reference link `[text][ref]` resolved into a `ROXYGEN_MD_LINK` **node** by
+    /// the inline pass (its closer leaf is `][ref]`): `display` is the recursively
+    /// resolved link text and `dest` the reference label. roxygen2's section
+    /// serializer drops the `[ref]` topic option, so this projects to `\link{display}`
+    /// (`\code`-wrapped when the display is a single code span), falling back to the
+    /// shortcut path when the display text equals the label (see [`ref_link_node_atom`]).
+    MdRefLink {
+        dest: String,
+        display: Vec<Inline>,
+    },
     /// A markdown image resolved under `@md` mode, carrying the raw leaf text
     /// `![alt](url "title")`. Projects to `\figure{url}{title}` — wrapped in
     /// `\if{html}{…}`/`\if{pdf}{…}` per roxygen2's extension-keyed image-format
@@ -491,6 +501,13 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(inline_link_node_atom(url, display, md));
+            }
+            Inline::MdRefLink { dest, display } => {
+                if let Some(atom) = prose_text_atom(&run, md) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(ref_link_node_atom(display, dest));
             }
             Inline::MdImage(raw) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
@@ -978,16 +995,15 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
             out.push(Inline::MdEmphasis { strong, children });
         }
         // A resolved inline-link *node* (`ROXYGEN_MD_LINK`): the inline pass's
-        // output for `[text](url)`. The first child is the `[` opener leaf and the
-        // last child the `](url)` closer leaf; the display text in between recurses
-        // (so emphasis/code spans inside the link surface as structure). The closer
-        // carries the destination.
+        // output for a bracket-paired link. The first child is the `[` opener leaf
+        // and the last child the closer leaf; the display in between recurses (so
+        // emphasis/code spans inside the link surface as structure). The closer text
+        // distinguishes the two paired forms: `](url)` is an inline link carrying its
+        // destination (`\href`/`\url`); `][ref]` is a *reference* link whose `[ref]`
+        // topic option is dropped, projecting to `\link{display}`.
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LINK => {
             let kids: Vec<_> = n.children_with_tokens().collect();
-            let url = kids
-                .last()
-                .map(|c| inline_link_dest(&c.to_string()))
-                .unwrap_or_default();
+            let closer = kids.last().map(|c| c.to_string()).unwrap_or_default();
             let interior = kids.len().saturating_sub(1);
             let mut display = Vec::new();
             for child in kids.into_iter().take(interior).skip(1) {
@@ -997,7 +1013,16 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
                     _ => push_inline(&mut display, child),
                 }
             }
-            out.push(Inline::MdInlineLink { url, display });
+            match closer.strip_prefix("][").and_then(|s| s.strip_suffix(']')) {
+                Some(dest) => out.push(Inline::MdRefLink {
+                    dest: dest.to_string(),
+                    display,
+                }),
+                None => out.push(Inline::MdInlineLink {
+                    url: inline_link_dest(&closer),
+                    display,
+                }),
+            }
         }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
         // Markdown inline leaves (emitted only under `@md`): carve off their
@@ -1120,6 +1145,28 @@ fn inline_link_node_atom(url: &str, display: &[Inline], md: bool) -> String {
     }
     let arg = grp_arg(&serialize_inlines(display, md));
     format!("(\\href (VERB {}){})", encode_text(url), prefix_space(&arg))
+}
+
+/// Project a `ROXYGEN_MD_LINK` node with a reference closer (`[display][ref]`):
+/// `\link{display}` — roxygen2's section serializer drops the `[ref]` topic option,
+/// so only the `\link` head and the display survive, `\code`-wrapped when the
+/// display is a single code span. When the display text equals the reference label,
+/// roxygen2 treats the text as auto-generated and falls back to the shortcut path.
+/// Mirrors [`ref_link_atom`], but the display is the link's resolved markdown
+/// *children* rather than a flat string.
+fn ref_link_node_atom(display: &[Inline], dest: &str) -> String {
+    let display_text = inline_plain_text(display);
+    if norm_ws(&display_text) == norm_ws(dest) {
+        return shortcut_link_atom(dest);
+    }
+    let (inner, is_code) = match display {
+        [Inline::MdCode(content)] => (content.clone(), true),
+        _ => (display_text, false),
+    };
+    code_wrap(
+        format!("(\\link {})", text_atom(&inner).unwrap_or_default()),
+        is_code,
+    )
 }
 
 /// A best-effort plain-text rendering of a resolved inline run, used only to test a

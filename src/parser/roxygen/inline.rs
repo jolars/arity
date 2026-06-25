@@ -197,31 +197,33 @@ impl Arena {
         while p < run.len() {
             let tok = &tokens[run[p]];
             if tok.kind == TokKind::RoxygenMdBracket {
-                // An opener (`[`/`![`) collapses with its matching closer (`](url)`)
-                // into one Link node; the inner tokens resolve recursively, bounded
-                // by the bracket chars (`[` before, `]` after) for flanking.
+                // An opener (`[`/`![`) collapses with its matching closer into one
+                // Link node; the inner tokens resolve recursively, bounded by the
+                // bracket chars (`[` before, `]` after) for flanking. The closer is
+                // either an inline `](url)` leaf or — for a cross-line *reference*
+                // link `[text][ref]` — a lone `]` leaf immediately followed by the
+                // `[ref]` label token (consumed as the dropped topic, folded into the
+                // closer text as `][ref]` so the projector resolves `\link{text}`).
                 if is_bracket_open(&tok.text)
-                    && let Some(close_p) = (p + 1..run.len()).find(|&q| {
-                        matches!(tokens[run[q]].kind, TokKind::RoxygenMdBracket)
-                            && is_bracket_close(&tokens[run[q]].text)
-                    })
+                    && let Some((close_p, close, after_p)) = find_link_closer(tokens, run, p)
                 {
                     let open = tok.text.clone();
-                    let close = tokens[run[close_p]].text.clone();
                     let mut body = Vec::new();
                     resolve_run(
                         tokens,
                         &run[p + 1..close_p],
                         open.chars().next_back(),
-                        close.chars().next(),
+                        Some(']'),
                         &mut body,
                     );
                     arena.push_node(NodeData::Link { open, close, body });
-                    p = close_p + 1;
+                    p = after_p;
                     continue;
                 }
                 // An unmatched bracket re-emits as literal text (a `Delim` node,
-                // projected as plain text); the lexer should never produce one.
+                // projected as plain text) — e.g. a lone `]` reference closer whose
+                // opener never appeared, leaving the `[ref]` label a standalone
+                // shortcut token. (Same-line link brackets never reach here.)
                 arena.push_node(NodeData::Delim(tok.text.clone()));
                 p += 1;
                 continue;
@@ -545,9 +547,41 @@ fn is_bracket_open(text: &str) -> bool {
     text.starts_with('[') || text.starts_with('!')
 }
 
-/// Whether a `RoxygenMdBracket` token text is an inline-link closer (`](url)`).
+/// Whether a `RoxygenMdBracket` token text is an inline-link closer (`](url)` or a
+/// lone `]` reference closer).
 fn is_bracket_close(text: &str) -> bool {
     text.starts_with(']')
+}
+
+/// Find the matching closer for an opener at `run[p]`, scanning forward for the
+/// first valid closer bracket. Returns `(close_p, close_text, after_p)`:
+/// `close_p` is the closer's run position, `close_text` the closer string emitted
+/// as the link's closer leaf, and `after_p` the run position to resume from.
+///
+/// Two closer shapes: an inline `](url)` bracket leaf (`after_p = close_p + 1`), or
+/// a cross-line *reference* closer — a lone `]` bracket leaf immediately followed by
+/// a `[ref]` shortcut-link token. The label is consumed (`after_p = close_p + 2`)
+/// and folded into the closer text (`][ref]`) so the projector resolves a reference
+/// link, dropping the `[ref]` topic. A lone `]` with no following label is *not* a
+/// closer (the lexer only carves it alongside its label, so this never occurs in
+/// practice) — it is skipped, leaving it to re-emit as literal text.
+fn find_link_closer(tokens: &[Token], run: &[usize], p: usize) -> Option<(usize, String, usize)> {
+    (p + 1..run.len()).find_map(|q| {
+        let tok = &tokens[run[q]];
+        if tok.kind != TokKind::RoxygenMdBracket || !is_bracket_close(&tok.text) {
+            return None;
+        }
+        if tok.text == "]" {
+            match run.get(q + 1).map(|&j| &tokens[j]) {
+                Some(label) if label.kind == TokKind::RoxygenMdLink => {
+                    Some((q, format!("]{}", label.text), q + 2))
+                }
+                _ => None,
+            }
+        } else {
+            Some((q, tok.text.clone(), q + 1))
+        }
+    })
 }
 
 /// CommonMark flanking for a delimiter run of char `ch`, given the characters

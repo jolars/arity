@@ -376,8 +376,22 @@
       coalesced by the projector). Unmatched brackets fall back to literal text.
       Formatter: `is_cross_line_emph`→`is_cross_line_inline` now also descends into a
       marker-threading link node so reflow rejoins it (byte-identical output —
-      structure-only change). **rx-383f2ca3 closed.** Reference cross-line links
-      (`[text][ref]`, rx-eb12b6b6) still backlog (need ref/shortcut on the stack).
+      structure-only change). **rx-383f2ca3 closed.**
+      **Cross-line *reference* links LANDED (2026-06-25k): `[text][ref]` across a
+      break.** Unlike `](url)`, a `][ref]` closer is byte-identical to a stray `]` +
+      same-line shortcut (`a][b]`), so the line-scoped lexer can't disambiguate;
+      disambiguation lives in the **arena**. The lexer carves only the lone `]`
+      (`cross_line_ref_closer`: a `]` followed by a clean bracket-free `[ref]`
+      shortcut), leaving the `[ref]` a separate shortcut `MD_LINK` leaf;
+      `find_link_closer` pairs the `]` with an earlier `[` opener and folds the
+      following label into the closer text (`][ref]`, consumed as the dropped topic),
+      or — with no opener — leaves the `]` literal and the `[ref]` a standalone
+      shortcut (`a][b]` → `a]` + `\link{b}`, correct by construction). Projector node
+      arm branches on the closer (`][ref]` → `MdRefLink` → `ref_link_node_atom`,
+      `\link{display}` topic dropped). No new TokKind; formatter unchanged.
+      **rx-eb12b6b6 closed.** Cross-line *shortcut* `[text]` (bare-`]` closer) and the
+      full `get_md_linkrefs`/opener-deactivation migration retiring the opaque
+      same-line `scan_md_link` still backlog.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

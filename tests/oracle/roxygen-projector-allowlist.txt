@@ -147,12 +147,13 @@ markdown_html_block
 markdown_inline
 markdown_list
 markdown_url
-md_empty_list_item
 md_emphasis
 md_emphasis_multiline
+md_empty_list_item
 md_link_emphasis
 md_link_multiline
 md_nested_list
+md_ref_link_multiline
 param_prose
 preformatted
 rawrd
@@ -278,6 +279,7 @@ rx-e0fc1b98
 rx-e2097b28
 rx-e94c960b
 rx-e94fa7ce
+rx-eb12b6b6
 rx-ee685ce2
 rx-efc349c1
 rx-f4658690

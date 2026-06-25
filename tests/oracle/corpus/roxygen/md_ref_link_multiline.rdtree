@@ -1,0 +1,3 @@
+(\description (TEXT "Cross-line reference links"))
+(\details (TEXT "A reference link whose text is") (\link (TEXT "broken across lines")) (TEXT "joins into one link over the dropped topic, while a stray a]") (\link (TEXT "b")) (TEXT "keeps its bracket literal and leaves") (\link (TEXT "b")) (TEXT "a shortcut."))
+(\title (TEXT "Cross-line reference links"))
