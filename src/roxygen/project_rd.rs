@@ -1475,7 +1475,8 @@ fn code_span_is_r(code: &str) -> bool {
     if !out.diagnostics.is_empty() {
         return false;
     }
-    out.cst
+    let one_expr = out
+        .cst
         .children_with_tokens()
         .filter(|el| {
             !matches!(
@@ -1484,7 +1485,27 @@ fn code_span_is_r(code: &str) -> bool {
             )
         })
         .count()
-        == 1
+        == 1;
+    one_expr && !has_invalid_underscore_name(&out.cst)
+}
+
+/// R's lexer rejects any name beginning with `_` (so rlang's `parse_expr`
+/// errors), with one exception: a lone `_` used as the native-pipe placeholder,
+/// valid only inside a `|>` pipeline. arity's lexer is more lenient and lexes a
+/// `_`-leading run as an ordinary identifier, so screen these out here to mirror
+/// roxygen2's `can_parse`. A `_`-leading name of length ≥ 2 is never valid; a
+/// lone `_` is valid only when a `|>` is present in the same expression.
+fn has_invalid_underscore_name(cst: &SyntaxNode) -> bool {
+    let has_pipe = cst
+        .descendants_with_tokens()
+        .any(|el| el.kind() == SyntaxKind::PIPE);
+    cst.descendants_with_tokens()
+        .filter_map(|el| el.into_token())
+        .filter(|t| t.kind() == SyntaxKind::IDENT)
+        .any(|t| {
+            let text = t.text();
+            text.starts_with('_') && (text.len() > 1 || !has_pipe)
+        })
 }
 
 #[cfg(test)]
@@ -1920,6 +1941,21 @@ mod tests {
             ),
             "got: {out}"
         );
+    }
+
+    #[test]
+    fn underscore_leading_code_span_is_verb_not_code() {
+        // R's lexer rejects any name beginning with `_` (rlang's `parse_expr`
+        // errors), so roxygen2's `can_parse` is false and a `` `_` `` code span
+        // renders `\verb`. arity's lexer is more lenient (it lexes `_` as an
+        // ordinary identifier), so `code_span_is_r` must screen these out.
+        assert!(!code_span_is_r("_"));
+        assert!(!code_span_is_r("_x"));
+        assert!(!code_span_is_r("_foo_"));
+        // A lone `_` stays valid as the native-pipe placeholder.
+        assert!(code_span_is_r("x |> _$col"));
+        // Ordinary names with a non-leading underscore are unaffected.
+        assert!(code_span_is_r("a_b"));
     }
 
     #[test]

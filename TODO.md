@@ -336,12 +336,17 @@
       EMPH/STRONG node** (one threading a `ROXYGEN_MARKER`, `is_cross_line_emph`) so
       its delimiter/text leaves distribute across physical lines and prose reflow
       rejoins them (`*foo`\n`bar*` → `*foo bar*`); single-line spans stay atomic.
-      **124/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
-      closed 2026-06-25f). The 8 remaining are later-slice backlog: links-into-the-pass
-      (cm-421/435, slice 2), markdown backslash escapes (cm-439/442/451/454 — a
-      **diagnostic-parity** surface: roxygen2 errors "mismatched braces or quotes" and
-      drops the content, needs the deferred lint/LSP side-channel), code
-      `\code`-vs-`\verb` (cm-481), and Unicode NBSP in `norm_ws` (cm-355). The
+      **125/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
+      closed 2026-06-25f; cm-481 closed 2026-06-25g). The 7 remaining are later-slice
+      backlog: links-into-the-pass (cm-421/435, slice 2), markdown backslash escapes
+      (cm-439/442/451/454 — a **diagnostic-parity** surface: roxygen2 errors "mismatched
+      braces or quotes" and drops the content, needs the deferred lint/LSP side-channel),
+      and Unicode NBSP in `norm_ws` (cm-355). The **`\code`-vs-`\verb` underscore rule
+      landed (2026-06-25g, cm-481):** a `_`-leading code span (`` `_` ``) renders `\verb`,
+      not `\code` — R's lexer rejects any name beginning with `_` (rlang's `parse_expr`
+      errors), but arity's lexer lexes it as an ordinary identifier, so
+      `has_invalid_underscore_name` screens it out in `code_span_is_r` (a lone `_` stays
+      valid as the native-pipe placeholder, gated on a `|>` being present). The
       **empty-list-item interrupt rule landed (2026-06-25f, cm-369):** a lone
       `*`/`-`/`+` with no content can no longer interrupt an open paragraph
       (`md_list_item_is_empty` in `build.rs`); it folds into the paragraph as literal
