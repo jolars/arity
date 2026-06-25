@@ -274,6 +274,34 @@
       block (markdown prose can contain inline `\emph{}`; an Rd `\item` body can
       contain markdown), so the grammar is genuinely the union, not a mode switch
       between two disjoint languages.
+    - *Markdown end goal = full CommonMark parity (tenet, settled 2026-06-25).*
+      Nothing less than complete CommonMark fidelity (roxygen2 delegates to
+      `cmark`/`cmark-gfm`); a subset is a *gap*, not an end state. The early inline
+      recognizers are local, line-scoped span scanners in the lexer
+      (`scan_md_emphasis` etc.) — the **wrong shape**: CommonMark inline is a
+      non-local, whole-block **delimiter-stack** pass (block parse → inline parse).
+      Do **not** widen a local scanner with heuristics to chase a tricky case.
+      **Plan — block→inline pass** (`docs/design/roxygen-inline-pass.md`): a
+      paragraph-level inline pass inside `parse()` (salsa/incremental untouched)
+      where the lexer emits *raw* `RoxygenMdDelim` runs and the pass resolves them
+      into `ROXYGEN_MD_EMPH`/`STRONG` **nodes** (SyntaxKinds 90/91 reused as nodes)
+      via the delimiter stack — full flanking, rule of 3, `process_emphasis`.
+      Projector recurses (nesting finally projects); formatter treats the nodes
+      atomic (cross-line spans → existing marker-passthrough); losslessness via
+      `Event::Leaf` run-splitting; idempotence holds (single-space normalization
+      preserves flanking class). **Slice 1 = emphasis only** (links/code stay
+      opaque local tokens, correct per CommonMark precedence); **flanking =
+      ASCII-class first**, Unicode-adjacency a noted backlog. **Slice 2 =** links
+      onto the same stack (yields cross-line links rx-383f2ca3/eb12b6b6 for free).
+      **Slice 3+ =** code spans/autolinks/HTML/images fold in, retiring the lexer's
+      local recognizers. NB: the current `\emph`/`\strong` recognition (below) is
+      **interim** — a local atomic-token scan that cannot model nesting/rule-of-3,
+      superseded by slice 1. **Test driver = the real CommonMark spec test set**
+      (`spec.txt`), adapted: take the spec's markdown *inputs only* and keep
+      roxygen2 as the oracle (Rd, not the spec's HTML), wired as a third corpus
+      source for the projector gate (slice 1 scopes to the ~132 "Emphasis and
+      strong emphasis" examples; allowlist + `blocked`-with-reason for inputs
+      roxygen2 errors on or models as a non-Rd subset).
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

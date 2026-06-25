@@ -109,6 +109,15 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   idempotent. *(Open: canonical re-indent for prose lists; deferred.)*
 
 **Markdown — mode-keyed**
+- **END GOAL = full CommonMark parity, nothing less** (tenet, settled 2026-06-25). roxygen2
+  delegates to `cmark`/`cmark-gfm`; a "pragmatic subset" is a parity *gap*, never acceptable.
+  The early inline recognizers are local line-scoped span scanners in the lexer
+  (`scan_md_emphasis` etc.) — the **wrong shape**: CommonMark inline is a non-local whole-block
+  **delimiter-stack** pass (block→inline). Agreed direction: a real **block→inline pass**
+  (`docs/design/roxygen-inline-pass.md`); **emphasis migrates first** (decided), then links/code.
+  Do **not** widen a local scanner with heuristics to chase a tricky case — that entrenches the
+  wrong shape; land it in the inline pass or record it as backlog. A bail-to-literal is a stopgap
+  (structure never *wrong*), never a target.
 - **Mode resolved per-block** by `resolve_roxygen_block` (scans the `#'` run for `@md`/`@noMd`,
   default off; loose-file default-ON deferred), threaded as `md: bool` and **baked into leaf
   kinds** — the lexer is the *single* mode source. **Never re-derive `@md` in the block builder.**
@@ -210,6 +219,27 @@ Markdown = CommonMark core + GFM `table`, `hardbreaks = TRUE`. Full design ratio
 `~/.claude/plans/i-want-to-start-snoopy-haven.md` (local); roadmap: `TODO.md` roxygen
 section.
 
+**Markdown = full CommonMark parity (end goal, settled 2026-06-25).** The markdown layer
+targets *complete* CommonMark fidelity (roxygen2 delegates to `cmark`/`cmark-gfm`); a subset
+is a gap, not an end state. The local lexer span-scanners (`scan_md_emphasis` etc.) are the
+**wrong shape** — CommonMark inline is a whole-block **delimiter-stack** pass. The agreed
+path is a real **block→inline pass** (`docs/design/roxygen-inline-pass.md`): a paragraph-level
+inline pass inside `parse()` (salsa/incremental untouched) where the lexer emits *raw*
+`RoxygenMdDelim` runs and the pass resolves them into `ROXYGEN_MD_EMPH`/`STRONG` **nodes** via
+the delimiter-stack algorithm (full flanking, rule of 3, `process_emphasis`). **Slice 1 =
+emphasis only** (links/code stay opaque local tokens, correct per CommonMark precedence);
+**flanking = ASCII-class first** with a noted Unicode backlog. Then links move onto the same
+stack — which also yields cross-line links for free.
+**Driver = the real CommonMark spec test set** (settled 2026-06-25), adapted: panache compares
+parser→HTML vs `expected_html`, but arity's target is the *Rd roxygen2 renders*, so we take the
+spec's markdown **inputs only** and keep **roxygen2 as the oracle**. The spec becomes a **third
+corpus source** for the existing projector gate (alongside curated + harvested): vendor
+`spec.txt`, scope per slice (slice 1 = the ~132 "Emphasis and strong emphasis" examples), wrap
+each into an `@md` block, mint Rd pins once (no R at test time), same allowlist/**blocked** (with
+reason) discipline. roxygen2 models only a CommonMark *subset*→Rd and errors on some inputs →
+those are `blocked`, never silenced. The user's hand-written "Complex Cases" list stays as
+*curated* legible fixtures; the spec corpus is the breadth net.
+
 ## Progress
 
 Phase 0 **done**. **Phase 1 skeleton done:** the projector + pinned projector-parity
@@ -246,47 +276,57 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-25) — formatter `%`-reflow follow-on (Tenet-1, formatter-only)
+## Latest session (2026-06-25b) — markdown CommonMark-parity tenet + inline-pass design (no parser change)
 
-**Construct:** the paired Tenet-1 bug to 2026-06-24u. In **non-markdown** prose an
-unescaped `%` is a live Rd comment to EOL, so reflowing multi-line prose onto one line
-**joins text across the `%`** and changes what the comment swallows → different rendered
-Rd. E.g. `Some prose with a % hidden comment` + `and a second line.` rendered
-`"...with a and a second line."`, but reflow joined them so `% hidden comment and a
-second line.` all became the comment → `"...with a "`. A real behavior-preservation bug
-(same family as losslessness/idempotence), **not** cosmetic — the fixed-point net is
-blind to it (it tested single-line cases), the formatter fixtures catch it.
+**Not a construct — a direction-setting session.** The user redirected from the
+cross-line-link tail to **robustifying emphasis**, then to the root question: *is the
+architecture even set up for this?* It is **not**. Findings + decisions:
 
-**Bucket: formatter gap** (parser + projector untouched; CST was already correct).
-- **Mode gate in the formatter** (`block_md`, formatter's own copy): plain-prose leaves
-  carry no mode, so `ir_roxygen_block` re-derives `@md` by scanning the block's sections
-  for a standalone `@md`/`@noMd` (last wins, default off) — a **third** consumer of the
-  same rule (lexer `resolve_roxygen_block`, projector `block_md`, now formatter), each a
-  documented separate consumer, **not** the block-builder re-derivation the traps forbid.
-- **Bail to verbatim** (`line_has_live_rd_comment`, escape-aware `%` scan mirroring the
-  projector's `strip_rd_line_comment`): a non-md `Paragraph`/`TagUnit` whose source
-  carries a live `%` keeps its original line breaks (marker-normalized) instead of
-  reflowing — the **same shape** as the existing `is_unsafe_line_start` bail, OR-ed into
-  both `flush`es. `md` threaded through `flush`/`flush_tag_unit`/`flush_pending!`. Under
-  `@md` the `%` is escaped (`\%`) → reflow proceeds (verified it still joins).
+- **Diagnosis.** Emphasis is carved as a **whole atomic token** in the lexer
+  (`scan_md_emphasis`, local line-scoped forward scan); the projector strips delimiters and
+  treats the inside as flat `TEXT` (`strip_delim`). So **nesting is unrepresentable**
+  (`**foo *bar* baz**` can't carry an inner `\emph`), the rule of 3 / overlap are decided by a
+  forward scan (not the delimiter stack), flanking ignores punctuation, and it's line-scoped.
+  The function's *shape* is wrong, not its heuristics.
+- **Tenet (settled).** The markdown layer's end goal is **full CommonMark parity, nothing less**
+  — recorded in SKILL.md ("Markdown tenet"), this RECAP (traps + settled decisions), and the
+  reworded `scan_md_emphasis` doc comment (the old "pragmatic subset / faithful under-recognition"
+  framing is gone — it's now "interim, incomplete, to be replaced by the inline pass").
+- **Design doc** `docs/design/roxygen-inline-pass.md` (committed): the real **block→inline
+  delimiter-stack pass** at paragraph granularity inside `parse()` (salsa/incremental
+  untouched). Lexer emits raw `RoxygenMdDelim` runs; the pass resolves `*`/`_` into
+  `ROXYGEN_MD_EMPH`/`STRONG` **nodes** (reusing SyntaxKinds 90/91 as nodes); projector recurses;
+  formatter treats nodes atomic (cross-line spans → existing marker-passthrough). Losslessness
+  via `Event::Leaf` run-splitting; idempotence holds because single-space normalization preserves
+  flanking class.
+- **Decisions:** Slice 1 = **emphasis only** (links/code stay opaque local tokens — correct per
+  CommonMark precedence); **flanking = ASCII-class first**, Unicode adjacency a noted backlog.
 
-**Result:** formatter-only. **Oracle-verified** (block-to-sections/tree): input ==
-formatted render for the non-md paragraph AND non-md `@param` tag-prose cases; the md
-case stays preserving while still joining. `cargo test` green (483), clippy + fmt clean.
-Curated fixed-point **16/16** + harvested **216** still preserving, **0 regressions**
-(the 7 harvested non-md `%` cases are all non-prose passthrough tags — `@name`/`@usage`/
-`@format`/… — never reflowed, so none moved; the format-stability baseline didn't move).
-Files: `src/formatter/roxygen.rs` (+`block_md`/`line_has_live_rd_comment`, `md` threaded
-into both flushes), 3 new formatter fixtures + snapshots, TODO, RECAP.
+**Result:** docs + framing only; **no parser/projector/formatter behavior change** (projector
+holds at 147/167). Files: `docs/design/roxygen-inline-pass.md` (new), `src/parser/roxygen/lex.rs`
+(doc comments reworded), SKILL.md + RECAP.md + TODO.md (tenet + roadmap). `cargo test` green.
 
-**Next (ranked):** (1) **links broken across lines** (rx-383f2ca3/eb12b6b6): a
-`[…](…)`/`[…][ref]` spanning several `#'` lines; the lexer is line-scoped so it can't
-carve a cross-line link — architecturally invasive (cross-line span lexing). The only
-remaining in-scope projector divergence. (2) The remaining ~18 projector divergences are
-roxygen2-evaluation or cross-block (out of scope; see 2026-06-24r). The projector stands
-at **147 matching / 20 divergent** of 167 pinned, unchanged this session (formatter work).
+**Next (ranked):** **(1) Implement inline-pass slice 1 — emphasis** per the design doc.
+First wire the **CommonMark spec corpus** as the driver: vendor `spec.txt`, load the ~132
+"Emphasis and strong emphasis" examples, wrap each into an `@md` block, mint Rd pins from
+roxygen2 into the projector gate (allowlist/blocked). Also keep the user's "Complex Cases" list
+as curated fixtures. Then: lexer emits `RoxygenMdDelim`; new
+paragraph-level delimiter-stack pass → `ROXYGEN_MD_EMPH`/`STRONG` nodes; projector recurse;
+formatter atomic; TDD fixtures + projector pins + idempotence cases; re-bless the format-stability
+baseline rows (atomic token → node) with review. (2) Then links onto the same stack (yields
+cross-line links rx-383f2ca3/eb12b6b6 for free). (3) Code spans/autolinks/HTML/images fold in as
+the pass matures, retiring the lexer's local recognizers.
 
 ## Earlier sessions
+
+- **2026-06-25 (formatter `%`-reflow follow-on, formatter-only):** the paired Tenet-1 bug to
+  2026-06-24u — reflowing multi-line **non-md** prose joined text across a live `%` comment,
+  changing rendered Rd. Fixed by mode-gating reflow: `ir_roxygen_block` re-derives `@md`
+  (`block_md`, the formatter's own copy) and a non-md `Paragraph`/`TagUnit` carrying a live `%`
+  (`line_has_live_rd_comment`, escape-aware) bails to verbatim marker-normalized lines (same
+  shape as `is_unsafe_line_start`). Under `@md` the `%` is escaped → reflow proceeds. Fixtures
+  `roxygen_bail_rd_comment`, `roxygen_tag_bail_rd_comment`, `roxygen_rd_comment_md_reflows`.
+  Curated 16/16 + harvested 216 still preserving, 0 regressions. Projector unchanged (147/167).
 
 - **2026-06-24u (non-md Rd `%` line comments, projector + encoding):** in non-markdown
   prose the value is literal Rd, so an unescaped `%` is a comment to EOL (`@format %` →

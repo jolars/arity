@@ -49,6 +49,21 @@ net still uses.) The grammar is **Rd-first,
 markdown-second** (markdown only under the resolved `@md` mode); markdown is
 CommonMark core + the GFM `table` extension, `hardbreaks = TRUE`.
 
+## Markdown tenet (non-negotiable)
+
+The **end goal for the markdown layer is full CommonMark parity — nothing less**.
+roxygen2 delegates to `cmark`/`cmark-gfm`, so any "pragmatic subset" is a parity
+*gap*, never an acceptable end state. The early inline recognizers were written as
+local, line-scoped span scanners in the lexer (`scan_md_emphasis` etc.); that
+**shape is wrong** for CommonMark, whose inline grammar is a non-local,
+whole-block **delimiter-stack** pass (block parse → inline parse). The agreed
+direction is a real **block→inline pass** (`docs/design/roxygen-inline-pass.md`)
+that emphasis migrates into first, then links/code/etc. When you touch a markdown
+construct: if the current local scanner can't model it correctly, do **not** widen
+the scanner with heuristics — that entrenches the wrong shape. Either land it in
+the inline pass or record the gap as backlog toward full parity. A bail-to-literal
+is a stopgap (keeps structure never *wrong*), never a target.
+
 ## Two checks (don't conflate them)
 
 1. **Projector parity --- the primary engine, a CI-safe hard gate (EXISTS, Phase 1

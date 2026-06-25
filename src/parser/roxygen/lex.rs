@@ -364,18 +364,21 @@ fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
 /// when this is not a valid span (so it stays literal prose — losslessness holds
 /// either way).
 ///
-/// A pragmatic CommonMark subset sufficient for the inline foundation: the
-/// opening run is 1 (emphasis) or 2 (strong) delimiters — a 3+ run is the
-/// ambiguous combined form and bails. The opener must be left-flanking (followed
-/// by a non-space) and the closer right-flanking (preceded by a non-space), and
-/// an `_` run may not sit intraword (CommonMark forbids `snake_case` emphasis).
-/// Nested/mismatched runs that don't satisfy this bail to text — a faithful
-/// *under*-recognition, never a wrong structure.
+/// **Interim, incomplete — to be replaced by the inline pass.** The end goal is
+/// *full* CommonMark emphasis parity (see `docs/design/roxygen-inline-pass.md`):
+/// the real delimiter-stack algorithm, run as a block→inline pass, which alone
+/// can model nesting (`**foo *bar* baz**`), the rule of 3, overlapping runs, and
+/// full (whitespace **and** punctuation) flanking. This local forward scan cannot
+/// — its very shape is wrong — so it deliberately handles only the unambiguous
+/// shapes and *bails to literal text* for the rest (opening run of 1 or 2; a 3+
+/// run bails; opener left-flanking, closer right-flanking by whitespace only; `_`
+/// not intraword). The bailing is a stopgap that keeps the structure never
+/// *wrong*, not a target: every bail is a parity gap the inline pass will close.
 fn scan_md_emphasis(bytes: &[u8], i: usize) -> Option<(TokKind, usize)> {
     let delim = bytes[i];
     let open_len = run_len(bytes, i, delim);
     if open_len >= 3 {
-        return None; // combined emph+strong — out of foundation scope
+        return None; // 3+ run needs the delimiter stack — bails until the inline pass
     }
     let n = open_len; // 1 → emphasis, 2 → strong
     let content_start = i + n;
