@@ -1,4 +1,4 @@
-# Editor setup
+# Editor Setup
 
 Arity ships a language server, started with `arity lsp` (stdio, JSON-RPC). It
 offers formatting, diagnostics with quick fixes, hover, completion, signature

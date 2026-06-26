@@ -11,7 +11,7 @@ The simplest way to install Arity is from
 cargo install arity
 ```
 
-### From source
+### From Source
 
 Clone the repository and build a release binary:
 
@@ -23,7 +23,7 @@ cargo build --release
 
 The binary is written to `target/release/arity`.
 
-## First run
+## First Run
 
 Format a file in place:
 

@@ -2,9 +2,7 @@
 
 # Arity
 
-Arity is a language server, formatter, and linter for the R language.
-
-## Quick start
+## Quick Start
 
 Install with Cargo:
 
@@ -27,7 +25,7 @@ arity lint file.R
 For full installation options (prebuilt binaries, package managers, and source
 builds), see [Getting Started](getting-started.md).
 
-## Where to go next
+## Where to Go Next
 
 - [Getting Started](getting-started.md): complete installation and first-run
   walkthrough.

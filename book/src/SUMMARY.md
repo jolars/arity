@@ -5,13 +5,13 @@
 
 # Guide
 
-- [Editor setup](guide/editors.md)
+- [Editor Setup](guide/editors.md)
 
 # Reference
 
 - [Configuration](reference/configuration.md)
 - [CLI Reference](reference/cli.md)
-- [Lint rules](reference/rules.md)
+- [Lint Rules](reference/rules.md)
   - [undefined-symbol](reference/rules/undefined-symbol.md)
   - [unused-binding](reference/rules/unused-binding.md)
   - [duplicate-formal](reference/rules/duplicate-formal.md)
