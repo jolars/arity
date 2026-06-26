@@ -163,6 +163,34 @@ tasks:
         cargo run --quiet --example sitemap --
         book/book https://arity.cc/
 
+  docs-lighthouse:
+    desc: Run a Lighthouse desktop audit on the built docs (perf, a11y, best-practices, SEO)
+    deps:
+      - docs-build
+    vars:
+      PORT: '{{.PORT | default "8347"}}'
+    cmds:
+      - mkdir -p .lighthouse
+      - >-
+        python3 -m http.server {{.PORT}} --directory book/book
+        >/dev/null 2>&1 &
+        SERVER_PID=$!;
+        trap "kill $SERVER_PID 2>/dev/null" EXIT;
+        until curl -sf -o /dev/null "http://localhost:{{.PORT}}/index.html"; do sleep 0.2; done;
+        CHROME_PATH="$(command -v chromium)"
+        lighthouse "http://localhost:{{.PORT}}/index.html"
+        --preset=desktop
+        --output=json --output=html
+        --output-path=.lighthouse/report
+        --chrome-flags="--headless=new --no-sandbox --disable-gpu"
+        --only-categories=performance,accessibility,best-practices,seo
+        --quiet
+      - >-
+        node -e 'const r=require("./.lighthouse/report.report.json");
+        for(const k in r.categories)
+        console.log(r.categories[k].title.padEnd(16),
+        Math.round(r.categories[k].score*100));'
+
   audit:
     desc: Run security audit
     cmds:
