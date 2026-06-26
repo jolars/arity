@@ -1,0 +1,3 @@
+(\description (TEXT "Escaped markdown brackets"))
+(\details (TEXT "An escaped [bracket](x) and a [shortcut] stay literal prose, as does a mid-word a[b](z), while a real") (\href (VERB "https://example.com") (TEXT "link")) (TEXT "still resolves."))
+(\title (TEXT "Escaped markdown brackets"))

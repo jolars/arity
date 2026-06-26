@@ -392,6 +392,20 @@
       **rx-eb12b6b6 closed.** Cross-line *shortcut* `[text]` (bare-`]` closer) and the
       full `get_md_linkrefs`/opener-deactivation migration retiring the opaque
       same-line `scan_md_link` still backlog.
+      **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
+      delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
+      reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose
+      CommonMark escape survives cmark — `\[` neither opens a link **nor keeps its
+      backslash** (`\[text](url)` → literal `[text](url)`), while `\*`/`` \` ``/`\%`
+      keep theirs (the doubling neutralizes them). Lexer: `bracket_is_escaped` (a `[`
+      with an immediately preceding `\`) guards all three `[`-opener paths
+      (`inline_link_span`, `is_cross_line_link_opener`, `scan_md_link`). Projector:
+      `unescape_md_brackets` drops one backslash before `[`/`]` in `@md` text. A single
+      adjacent `\` already suppresses the link (verified for 1–3 leading backslashes);
+      deeper runs follow `double_escape_md`'s non-overlapping `gsub` and stay backlog,
+      as do escaped-*close* `[text\]` (which trip roxygen2's synthesized-linkref quirk)
+      and `\`-escapes inside emphasis (cm-439/442/451/454, the diagnostic-parity
+      surface). Curated `md_escaped_bracket`.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

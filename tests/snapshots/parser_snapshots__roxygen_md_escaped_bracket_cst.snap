@@ -1,0 +1,44 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..133
+  ROXYGEN_BLOCK@0..113
+    ROXYGEN_SECTION@0..113
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+      ROXYGEN_PARAGRAPH@7..113
+        ROXYGEN_MARKER@7..9 "#'"
+        WHITESPACE@9..10 " "
+        ROXYGEN_TEXT@10..21 "A \\[bracket"
+        ROXYGEN_MD_DELIM@21..25 "](x)"
+        ROXYGEN_TEXT@25..42 ", a mid-word a\\[b"
+        ROXYGEN_MD_DELIM@42..46 "](z)"
+        ROXYGEN_TEXT@46..77 ", and \\[shortcut] sta ..."
+        NEWLINE@77..78 "\n"
+        ROXYGEN_MARKER@78..80 "#'"
+        WHITESPACE@80..81 " "
+        ROXYGEN_TEXT@81..88 "a real "
+        ROXYGEN_MD_LINK@88..97
+          ROXYGEN_MD_DELIM@88..89 "["
+          ROXYGEN_TEXT@89..93 "link"
+          ROXYGEN_MD_DELIM@93..97 "](y)"
+        ROXYGEN_TEXT@97..113 " still resolves."
+  NEWLINE@113..114 "\n"
+  ASSIGNMENT_EXPR@114..132
+    IDENT@114..115 "f"
+    WHITESPACE@115..116 " "
+    ASSIGN_LEFT@116..118 "<-"
+    WHITESPACE@118..119 " "
+    FUNCTION_EXPR@119..132
+      FUNCTION_KW@119..127 "function"
+      LPAREN@127..128 "("
+      IDENT@128..129 "x"
+      RPAREN@129..130 ")"
+      WHITESPACE@130..131 " "
+      IDENT@131..132 "x"
+  NEWLINE@132..133 "\n"

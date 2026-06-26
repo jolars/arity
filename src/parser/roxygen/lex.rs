@@ -280,6 +280,7 @@ fn lex_roxygen_prose(
         // below); only a *bracket-free* inline link text is split here.
         if md
             && bytes[i] == b'['
+            && !bracket_is_escaped(bytes, i)
             && let Some((text_end, url_end)) = inline_link_span(bytes, i)
         {
             push(
@@ -311,7 +312,11 @@ fn lex_roxygen_prose(
         // bracket opener leaf; the link text continues on following `#'` lines and
         // the inline pass pairs it with the later `](url)` closer over the
         // paragraph-granularity run (literal text if it never matches).
-        if md && bytes[i] == b'[' && is_cross_line_link_opener(bytes, i) {
+        if md
+            && bytes[i] == b'['
+            && !bracket_is_escaped(bytes, i)
+            && is_cross_line_link_opener(bytes, i)
+        {
             push(
                 out,
                 TokKind::RoxygenText,
@@ -396,7 +401,9 @@ fn lex_roxygen_prose(
                         .then_some((TokKind::RoxygenText, bytes.len()))
                 }),
             b'!' if md => scan_md_image(bytes, i).map(|end| (TokKind::RoxygenMdImage, end)),
-            b'[' if md => scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end)),
+            b'[' if md && !bracket_is_escaped(bytes, i) => {
+                scan_md_link(bytes, i).map(|end| (TokKind::RoxygenMdLink, end))
+            }
             b'<' if md => scan_md_autolink(bytes, i)
                 .map(|end| (TokKind::RoxygenMdLink, end))
                 .or_else(|| scan_md_html_inline(bytes, i).map(|end| (TokKind::RoxygenMdHtml, end))),
@@ -571,6 +578,19 @@ fn inline_link_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
 /// on the conservative opaque path (matching the same-line split's own guard).
 fn is_cross_line_link_opener(bytes: &[u8], i: usize) -> bool {
     !bytes[i + 1..].iter().any(|&b| matches!(b, b'[' | b']'))
+}
+
+/// Whether a markdown `[` at `bytes[i]` is *backslash-escaped* (CommonMark `\[`),
+/// so it cannot open a link and stays literal prose. roxygen2 honors an escaped
+/// open bracket via `double_escape_md`, which special-cases brackets — it reverts
+/// `\\[`→`\[` after doubling every other backslash, so a `[` reaches cmark escaped
+/// whenever *any* backslash run immediately precedes it. A single adjacent `\`
+/// therefore already neutralizes the opener (verified against the oracle for one to
+/// three leading backslashes: `\[`, `\\[`, `\\\[` all stay literal). Only the
+/// *opener* is guarded; an escaped closing `]` instead triggers roxygen2's
+/// link-reference machinery (a synthesized `[…]: …` linkref) and is left as backlog.
+fn bracket_is_escaped(bytes: &[u8], i: usize) -> bool {
+    i > 0 && bytes[i - 1] == b'\\'
 }
 
 /// The end index of a `](url)` inline-link closer at `bytes[i] == b']'`: the `]`

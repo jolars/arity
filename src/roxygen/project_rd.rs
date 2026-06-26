@@ -766,10 +766,36 @@ fn text_atom(body: &str) -> Option<String> {
 /// `norm_ws` later collapses, so the comment's end-of-line is honored either way.)
 fn prose_text_atom(run: &str, md: bool) -> Option<String> {
     if md {
-        text_atom(run)
+        text_atom(&unescape_md_brackets(run))
     } else {
         text_atom(&strip_rd_comments(run))
     }
+}
+
+/// In `@md` prose, roxygen2 honors a CommonMark backslash escape for the square
+/// brackets `[`/`]` only: an escaped `\[`/`\]` is literal (never a link delimiter)
+/// *and the backslash is consumed* (`\[`→`[`, `\]`→`]`). This is unique to
+/// brackets — roxygen2's `double_escape_md` doubles every backslash but then
+/// reverts `\\[`→`\[` and `\\]`→`\]`, so only the bracket escape survives cmark;
+/// every other punctuation escape (`\*`, `` \` ``, `\%`, …) keeps its backslash
+/// because the doubling neutralizes it. The lexer already suppresses the link at an
+/// escaped `[` ([`bracket_is_escaped`](crate::parser::roxygen)); this drops the
+/// now-redundant backslash so the projected literal text matches roxygen2.
+///
+/// Only a *single* adjacent backslash is consumed (`\\[`→`\[`); deeper backslash
+/// runs follow `double_escape_md`'s non-overlapping `gsub` semantics and are left
+/// as backlog (a `\\\[` run is rare in real docs).
+fn unescape_md_brackets(run: &str) -> String {
+    let mut out = String::with_capacity(run.len());
+    let mut chars = run.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && matches!(chars.peek(), Some('[' | ']')) {
+            out.push(chars.next().expect("peeked bracket"));
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Strip Rd `%` line comments from literal-Rd prose: on each physical line, an
@@ -2248,6 +2274,40 @@ mod tests {
                    NULL\n";
         assert!(
             project_to_rd(src).contains("(\\details (TEXT \"*\u{a0}a\u{a0}*\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn unescape_md_brackets_consumes_one_backslash_before_a_bracket() {
+        // `\[`/`\]` lose exactly one backslash; a deeper run keeps the rest.
+        assert_eq!(unescape_md_brackets(r"\[x\]"), "[x]");
+        assert_eq!(unescape_md_brackets(r"\\[x"), r"\[x");
+        // Other escapes are untouched (only brackets are special in roxygen2).
+        assert_eq!(
+            unescape_md_brackets(r"foo \* \` \% bar"),
+            r"foo \* \` \% bar"
+        );
+        // A backslash not adjacent to a bracket (e.g. at a line break) is kept.
+        assert_eq!(unescape_md_brackets("a\\\n[b"), "a\\\n[b");
+    }
+
+    #[test]
+    fn md_escaped_bracket_is_literal_with_the_backslash_consumed() {
+        // Under `@md`, an escaped `\[` neither opens a link nor keeps its
+        // backslash: roxygen2 renders `\[text](url)` as the literal `[text](url)`
+        // (the `double_escape_md` bracket revert + cmark escape). The lexer
+        // suppresses the link; the projector drops the backslash.
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' A \\[bracket](x) and \\[shortcut] stay literal.\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\details (TEXT \"A [bracket](x) and [shortcut] stay literal.\"))"),
             "got: {}",
             project_to_rd(src)
         );
