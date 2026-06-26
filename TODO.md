@@ -415,13 +415,23 @@
       labels; `push_section` appends the rendered leak, coalesced into the trailing TEXT
       (`append_rendered_text`/`decode_text_atom`). Uniform across backslash counts
       (single/multi) and multi-candidate all-invalid fields. Curated `md_escaped_close_bracket`.
-      **Still backlog (the rest of the migration):** (1) a field *mixing* valid and invalid
-      candidates—the first invalid def's unclosed label swallows the next def's `[`,
-      poisoning the whole appended block so cmark leaks *all* defs **and** de-links the
-      otherwise-valid shortcuts (a whole-field cmark-link-ref-resolution model); (2) leaks
-      outside `push_section` (`@section` body, `@slot`/`@field`, `@rawRd`); (3) the full
-      opener-deactivation migration retiring the opaque same-line `scan_md_link` (unify all
-      brackets onto the arena stack).
+      **Mixed valid+invalid poisoning LANDED (2026-06-26c):** the def block is appended as
+      one cmark block (one line per candidate, source order) parsed top-down—the **first
+      invalid** (escaped-close) candidate's label runs into the next line's `[` (illegal in a
+      label), failing that def *and every def after it*, so the leaked block runs from the
+      first invalid candidate to the end (**valid candidates included**), and any shortcut/
+      reference link in that tail is **de-linked**. Projector-only: `demote_poisoned_links`
+      finds the poison boundary on the body skeleton (`first_invalid_linkref_offset`, any
+      trailing backslash = invalid) and rewrites the tail's shortcut/reference link nodes to
+      literal bracket text *before* the skeleton is rebuilt—so they reappear as candidates and
+      their now-leaked defs surface; `leaked_linkref_text` changed from "only invalid" to
+      "from the first invalid onward". Inline links/autolinks/code survive (own destination,
+      no def needed). Curated `md_linkref_poisoning`. **Still backlog (the rest of the
+      migration):** (1) leaks outside `push_section` (`@section` body, `@slot`/`@field`,
+      `@rawRd`); (2) an inline-link `[text]` candidate def in a poisoned tail (the link
+      survives but its def still leaks—arity keeps it a node, invisible to the skeleton scan);
+      (3) the full opener-deactivation migration retiring the opaque same-line `scan_md_link`
+      (unify all brackets onto the arena stack).
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose

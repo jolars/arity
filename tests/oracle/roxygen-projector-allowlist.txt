@@ -154,6 +154,7 @@ md_escaped_bracket
 md_escaped_close_bracket
 md_link_emphasis
 md_link_multiline
+md_linkref_poisoning
 md_nested_list
 md_ref_link_multiline
 md_shortcut_link_multiline

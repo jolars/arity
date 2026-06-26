@@ -242,19 +242,26 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   **Still backlog:** escaped-*close*-bracket `[text\]` (roxygen2's synthesized-linkref quirk) and the
   `get_md_linkrefs` pre-pass / opener-deactivation full migration that would retire the opaque
   same-line `scan_md_link`.
-- **`get_md_linkrefs` leaks invalid synthesized link-ref defs (2026-06-26b).** roxygen2's
-  `add_linkrefs_to_md` (`markdown-link.R`) appends `[label]: R:URLencode(label)` for **every**
-  bracket-free `[…]` shortcut candidate. A *valid* def is consumed (shortcut → link, arity makes the
-  `\link` directly); an **escaped-close** candidate `[text\]` yields a def whose label never closes →
-  cmark leaks it as literal trailing prose. `leaked_linkref_text` (projector, `@md`-only, called from
-  `push_section`) ports `double_escape_md`→`md_linkref_labels`→filter `!linkref_label_closes` (even
-  trailing-`\` run = valid)→`url_encode`→`cmark_unescape`; uniform across backslash counts.
-  **Trap — the def-block is whole-field, not per-candidate:** a field MIXING valid and invalid
-  candidates poisons the *entire* appended def block (the first invalid label swallows the next def's
-  unescaped `[`), so cmark leaks ALL defs **and** de-links the valid shortcuts. The current slice only
-  models **all-invalid** fields (single or many escaped-close, no valid shortcut to de-link); mixed is
-  backlog (next ranked target). **Probe with exact-byte files** (`\]` in a shell arg masks the case).
-  Curated `md_escaped_close_bracket`.
+- **`get_md_linkrefs` leaks invalid synthesized link-ref defs, whole-field poisoning (2026-06-26c).**
+  roxygen2's `add_linkrefs_to_md` (`markdown-link.R`) appends `[label]: R:URLencode(label)` for **every**
+  bracket-free `[…]` shortcut candidate, as **one cmark block** (`paste0(text,"\n\n",refs,"\n")`, one
+  line per candidate, source order), parsed top-down. A *valid* def is consumed (shortcut → link, arity
+  makes the `\link` directly); an **escaped-close** candidate `[text\]` yields a def whose label never
+  closes (its `\]` doesn't close, the label runs into the **next** line's `[` which is illegal inside a
+  label) → that def *and every def after it* fail, so cmark leaks the block **from the first invalid
+  candidate to the end** (valid candidates included), and any shortcut/reference link in that tail is
+  **de-linked**. `leaked_linkref_text` (projector, `@md`-only, from `push_section`): `double_escape_md`
+  →`md_linkref_labels`→take `[first_invalid..]` (was: filter `!closes`)→`url_encode`→`cmark_unescape`.
+  De-linking is done **upstream** by `demote_poisoned_links`: it locates the poison boundary on the body
+  skeleton (`first_invalid_linkref_offset` — **any trailing backslash = invalid**, since `double_escape_md`
+  makes a `k≥1` run odd `2k-1`) and rewrites the tail's shortcut/reference link nodes (`MdShortcutLink`/
+  `MdRefLink`/opaque-shortcut/ref `MdLink`) to literal bracket text *before* the skeleton is rebuilt — so
+  they reappear as candidates and their now-leaked defs surface naturally. **Inline links/autolinks/code
+  survive** (own destination, no def needed; `demoted_link_source` returns None). **Probe with exact-byte
+  files** (`\]` in a shell arg masks the case). Curated `md_escaped_close_bracket` (all-invalid),
+  `md_linkref_poisoning` (mixed). **Still backlog:** an inline-link `[text]` candidate's def in a poisoned
+  tail still leaks in roxygen2 (the `\href` survives) but arity keeps it a node → invisible to the
+  skeleton scan → def not leaked; and leaks outside `push_section` (`@section`/`@slot`/`@field`/`@rawRd`).
 - **Escaped brackets are the ONLY honored punctuation escape (2026-06-25l).** roxygen2's
   `double_escape_md` doubles every `\` but **reverts** `\\[`→`\[`, `\\]`→`\]`, so only `[`/`]` keep a
   CommonMark escape through cmark: `\[` neither opens a link **nor keeps its backslash** (`\[x](u)`→
@@ -391,8 +398,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post `get_md_linkrefs` leaked-def slice 1, 2026-06-26b): **286 matching (all allowlisted), 22
-divergent (backlog)** of 307 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
+driver). Current (post `get_md_linkrefs` mixed-poisoning slice, 2026-06-26c): **287 matching (all allowlisted), 22
+divergent (backlog)** of 309 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
 = **diagnostic-parity**); the other 18 are roxygen2-*evaluation*/multi-block gaps (out of scope —
 knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
@@ -415,53 +422,54 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-26b) — `get_md_linkrefs` leaked link-ref defs (migration slice 1)
+## Latest session (2026-06-26c) — `get_md_linkrefs` mixed valid+invalid poisoning (migration slice 2)
 
-**First slice of the `get_md_linkrefs`/`add_linkrefs_to_md` migration** (user chose "the migration"
-over a one-off fix). roxygen2's `markdown()` runs `add_linkrefs_to_md` (`markdown-link.R`): it appends
-a synthesized `[label]: R:URLencode(label)` reference definition for **every** bracket-free `[…]`
-shortcut candidate, so cmark resolves the shortcut as a link to `R:label`. arity already short-circuits
-this for **valid** candidates (it makes the `\link` directly). The gap is the **escaped-close**
-candidate `[text\]`: its synthesized def's own label never closes (the `\]` escapes the `]`), so it is
-**not** a valid CommonMark link-ref def → cmark leaks it as literal trailing prose
-(`… [text]: R:text%5C`). arity rendered the shortcut literally but **dropped the leaked def**; now it
-emits it.
+**Closed the deep part of the `get_md_linkrefs` migration** (ranked #1 from last session): a field
+**mixing** valid shortcuts and escaped-close candidates. roxygen2 appends the synthesized defs as one
+cmark block (`paste0(text,"\n\n",refs,"\n")`, one line per candidate in source order) parsed top-down;
+the **first invalid** (escaped-close) candidate's label never closes — its `\]` doesn't close and the
+label runs into the **next** line's `[`, illegal inside a link label — so that def *and every def after
+it* fail, and cmark leaks the block **from the first invalid candidate to the end** (valid candidates
+included), **de-linking** every shortcut/reference link in that tail. Probed exhaustively
+(`q1`/`r1`–`r4`): order matters — a valid shortcut **before** the first escaped-close still links; one
+**after** is de-linked + its def leaks. Inline links/autolinks/code spans **survive** (own destination,
+no ref-def needed; verified via oracle).
 
-**Projector-only** (the CST is already lossless; the leak is a render-time text synthesis with no CST
-representation — like `norm_ws`/`strip_rd_comments`). `leaked_linkref_text` ports the full pipeline
-**faithfully and uniformly** (handles single *and* multi-backslash identically):
-`double_escape_md` (double every `\`, revert `\\[`→`\[`/`\\]`→`\]`) → `md_linkref_labels` (hand-rolled
-`get_md_linkrefs` scan: bracket-free `[content]` + optional `[ref]`, lookbehind not-`]`/`\`, lookahead
-not-`[`/`{`) → filter to **invalid** labels (`linkref_label_closes` = even trailing-backslash run) →
-`[label]: R:url_encode(label)` (R `URLencode` char set) → `cmark_unescape` (drop `\` before ASCII
-punct). `push_section` appends each rendered leak via `append_rendered_text`, coalescing it into the
-trailing `(TEXT …)` (`decode_text_atom` round-trips `encode_text`).
+**Projector-only, elegant via demote-then-leak.** The skeleton maps link nodes to a single space, so a
+de-linked-but-valid shortcut would be invisible to the candidate scan. Fix: **demote first**.
+`demote_poisoned_links` (called from `push_section` before serialize) finds the poison boundary on the
+body skeleton (`first_invalid_linkref_offset`; a candidate is invalid iff its label ends with **any**
+backslash — `double_escape_md` makes a `k≥1` trailing run odd `2k-1`, matching the escaped-label check)
+and rewrites every shortcut/reference link node **after** that offset (`MdShortcutLink`/`MdRefLink`/
+opaque-shortcut-or-ref `MdLink`, via `demoted_link_source`) to its literal bracket text. The rebuilt
+skeleton then **sees** those demoted shortcuts as candidates, so `leaked_linkref_text` (changed from
+"filter `!closes`" to "take `[first_invalid..]`") leaks their now-dead defs. `md_linkref_labels`
+refactored over a position-returning `md_linkref_scan`.
 
-**Scope (deliberate):** a field whose candidates are **all** escaped-close (one or many → all leak,
-matches the `a [one\] b [two\] c` probe) projects faithfully. The **mixed** valid+invalid field is
-backlog: there the first invalid def's unclosed label swallows the next def's `[`, **poisoning the
-whole appended block** so cmark leaks *all* defs **and** de-links the otherwise-valid shortcuts (a
-whole-field cmark-link-ref-resolution model — the deep part of the migration). Verified via oracle:
-`[text\]` + `[shortcut]` → **both** leak and `[shortcut]` stays literal.
+**TDD:** curated projector case `md_linkref_poisoning` (valid `[before]` links, `[stop\]` poisons,
+`[after]` de-linked, both tail defs leak; pinned + ratcheted) + 4 new projector unit tests
+(`leaked_linkref_text` mixed, `first_invalid_linkref_offset`, `demoted_link_source`, end-to-end). **No
+new TokKind / SyntaxKind. Formatter unchanged** (source preserved; format baseline +1 case, no drift).
 
-**TDD:** curated projector case `md_escaped_close_bracket` (two escaped-close candidates, both leak +
-coalesce; pinned, ratcheted in) + 8 projector unit tests (each ported fn + the end-to-end case).
-**No new TokKind / SyntaxKind. Formatter unchanged** (source preserved; format baseline +1 case, no
-existing drift).
+**Result:** projector **286→287 matching (all allowlisted), 22 divergent unchanged** (309 pinned).
+Curated fixed-point **26/26** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
 
-**Result:** projector **285→286 matching (all allowlisted), 22 divergent unchanged** (307 pinned).
-Curated fixed-point **25/25** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
-
-**Next (ranked):** **(1)** The **mixed valid+invalid** def-block poisoning (above) — the next
-`get_md_linkrefs` slice; needs a whole-field model of cmark's link-ref-def parsing (an invalid def
-de-links *valid* shortcuts in the same field). **(2)** Leaks outside `push_section` (`@section` body,
-`@slot`/`@field`, `@rawRd`). **(3)** The `\`-escapes-in-emphasis diagnostic-parity surface
-(cm-439/442/451/454): roxygen2 runs `rdComplete` and **drops** the section on failure — design-level,
-needs a side-channel diagnostic (**user check before starting**). **(4)** Opener-deactivation:
-retire the opaque same-line `scan_md_link`, unify all brackets onto the arena stack.
+**Next (ranked):** **(1)** Leaks outside `push_section` (`@section` body, `@slot`/`@field`, `@rawRd`) —
+the same `leaked_linkref_text`/`demote_poisoned_links` pair, wired into the other section builders.
+**(2)** Inline-link `[text]` candidate defs in a poisoned tail (the `\href` survives but its def still
+leaks in roxygen2; arity keeps it a node → invisible to the skeleton scan, so the def isn't leaked).
+**(3)** The `\`-escapes-in-emphasis diagnostic-parity surface (cm-439/442/451/454): roxygen2 runs
+`rdComplete` and **drops** the section on failure — design-level, needs a side-channel diagnostic
+(**user check before starting**). **(4)** Opener-deactivation: retire the opaque same-line
+`scan_md_link`, unify all brackets onto the arena stack.
 
 ## Earlier sessions
 
+- **2026-06-26b (`get_md_linkrefs` leaked defs, migration slice 1):** escaped-close `[text\]` yields a
+  synthesized def whose label never closes → cmark leaks it as literal trailing prose. Projector-only
+  (`leaked_linkref_text`: `double_escape_md`→`md_linkref_labels`→filter `!closes`→`url_encode`→
+  `cmark_unescape`, appended via `append_rendered_text`). Modeled all-invalid fields only; mixed was
+  deferred (closed this session). Curated `md_escaped_close_bracket`. 285→286.
 - **2026-06-26 (Cross-line *shortcut* `[text]` links, bare-`]` closer):** a `[text]` whose `[` opens on
   an earlier `#'` line resolves into one `\link{text}` over the coalesced text. Line-locally every `]`
   is ambiguous, so the lexer carves **every** bare `]` not part of a `](url)`/`][ref]`/`]{…}` shape as a

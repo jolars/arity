@@ -443,6 +443,11 @@ fn is_null_section(body: &[Inline], md: bool) -> bool {
 /// may append leaked link-reference definitions to the field text (see
 /// [`leaked_linkref_text`]); they coalesce into the section's trailing prose.
 fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline], md: bool) {
+    // Under `@md`, a leaked link-reference block de-links the shortcut/reference
+    // links in its poisoned tail; rewrite them to literal bracket text first so the
+    // body and the leaked definitions stay consistent (see [`demote_poisoned_links`]).
+    let demoted = md.then(|| demote_poisoned_links(body)).flatten();
+    let body = demoted.as_deref().unwrap_or(body);
     let mut atoms = serialize_inlines(body, md);
     if md {
         for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
@@ -851,25 +856,113 @@ fn inline_source_skeleton(body: &[Inline]) -> String {
 /// (`… [text]: R:text%5C`). arity already renders such a shortcut literally (the
 /// lexer never pairs an escaped-close bracket); this models the leaked *definition*.
 ///
-/// **Scope.** A *valid* candidate's definition closes, so roxygen2 turns it into a
-/// link, which arity resolves directly via its own link path — so this filters
-/// those out and synthesizes only the invalid (escaped-close) definitions. The
-/// one case this does **not** yet model is a field *mixing* valid and invalid
-/// candidates: there the first invalid definition's unclosed label swallows the
-/// next definition's `[`, poisoning the whole appended block so cmark leaks *all*
-/// definitions **and** de-links the otherwise-valid shortcuts. That whole-field
-/// interaction is deferred backlog; a field whose candidates are *all*
-/// escaped-close (one or many) projects faithfully here.
+/// **Whole-field poisoning.** The synthesized definitions are appended as one
+/// block (each candidate on its own line, in source order). cmark parses it
+/// top-down: a *valid* candidate's definition closes and is consumed (the shortcut
+/// becomes a link, which arity resolves via its own link path). But the **first
+/// invalid** (escaped-close) candidate's label never closes — it runs into the next
+/// line's `[`, which is illegal inside a link label — so that definition *and every
+/// definition after it* fail to parse and leak as literal text (a definition cannot
+/// interrupt the paragraph the failed one started). So the leaked block begins at
+/// the first invalid candidate and runs to the end, **valid candidates included**.
+/// Correspondingly, a shortcut/reference link whose definition is in that leaked
+/// tail is de-linked in the body — handled upstream by [`demote_poisoned_links`],
+/// which rewrites those links to literal bracket text *before* the skeleton is
+/// built, so they reappear here as the candidates whose definitions leak.
 ///
 /// Returns the cmark-rendered leaked definition lines (already final text), in
-/// document order. `@md` only; empty for the no-candidate common case.
+/// document order. `@md` only; empty when no candidate is invalid.
 fn leaked_linkref_text(source: &str) -> Vec<String> {
     let escaped = double_escape_md(source);
-    md_linkref_labels(&escaped)
-        .into_iter()
-        .filter(|label| !linkref_label_closes(label))
-        .map(|label| cmark_unescape(&format!("[{label}]: R:{}", url_encode(&label))))
+    let labels = md_linkref_labels(&escaped);
+    let Some(first_invalid) = labels.iter().position(|label| !linkref_label_closes(label)) else {
+        return Vec::new();
+    };
+    labels[first_invalid..]
+        .iter()
+        .map(|label| cmark_unescape(&format!("[{label}]: R:{}", url_encode(label))))
         .collect()
+}
+
+/// Rewrite the shortcut/reference links that a leaked link-reference block
+/// de-links (see [`leaked_linkref_text`]) into literal bracket text.
+///
+/// roxygen2's `add_linkrefs_to_md` appends one synthesized `[label]: R:…`
+/// definition per bracket-free `[…]` candidate. The **first invalid** (escaped-close)
+/// candidate poisons every definition after it, so any shortcut or reference link
+/// occurring after that point loses its definition and renders literally. The
+/// escaped-close candidate itself is already literal text (the lexer never pairs an
+/// escaped-close bracket), so it lives in a `Text` inline; once such a `Text` is
+/// seen, every following shortcut/reference link node is demoted to its source
+/// bracket text. Demoting *before* the skeleton is built means those links reappear
+/// as candidates, so their now-leaked definitions surface naturally.
+///
+/// Inline links (`[text](url)`), autolinks (`<url>`), and code spans do **not**
+/// need a reference definition, so they survive poisoning and are left untouched.
+/// `@md` only; returns `None` (no rewrite) when the body has no invalid candidate.
+fn demote_poisoned_links(body: &[Inline]) -> Option<Vec<Inline>> {
+    // The poisoning boundary is found on the whole-body skeleton (an escaped-close
+    // candidate can straddle several inlines — the lexer splits `[stop\]` into a
+    // `Text` plus a leftover `]` delimiter), then mapped back by skeleton offset.
+    let skeleton = inline_source_skeleton(body);
+    let boundary = first_invalid_linkref_offset(&skeleton)?;
+    let mut out = Vec::with_capacity(body.len());
+    let mut offset = 0;
+    for inl in body {
+        let start = offset;
+        offset += skeleton_len(inl);
+        if start > boundary
+            && let Some(text) = demoted_link_source(inl)
+        {
+            out.push(Inline::Text(text));
+        } else {
+            out.push(inl.clone());
+        }
+    }
+    Some(out)
+}
+
+/// An inline's byte length in [`inline_source_skeleton`]: a `Text` contributes its
+/// own bytes, every resolved inline a single space placeholder.
+fn skeleton_len(inl: &Inline) -> usize {
+    match inl {
+        Inline::Text(t) => t.len(),
+        _ => 1,
+    }
+}
+
+/// The literal source bracket text for a shortcut or reference link that a leaked
+/// definition block de-links, or `None` for any inline that survives poisoning (an
+/// inline link, autolink, code span, macro, or plain text — none of which depend on
+/// a reference definition). Used by [`demote_poisoned_links`].
+fn demoted_link_source(inl: &Inline) -> Option<String> {
+    match inl {
+        Inline::MdShortcutLink { display } => Some(format!("[{}]", inline_plain_text(display))),
+        Inline::MdRefLink { dest, display } => {
+            Some(format!("[{}][{}]", inline_plain_text(display), dest))
+        }
+        // The opaque same-line leaf is its own verbatim source; demote only the
+        // shortcut/reference forms (an inline link or autolink survives).
+        Inline::MdLink(raw) if opaque_link_is_shortcut_or_ref(raw) => Some(raw.clone()),
+        _ => None,
+    }
+}
+
+/// Whether an opaque `ROXYGEN_MD_LINK` leaf is a shortcut (`[dest]`) or reference
+/// (`[text][ref]`) link — the forms that depend on a reference definition and are
+/// thus de-linked by poisoning — rather than an inline link (`[text](url)`) or
+/// autolink (`<url>`), which carry their own destination. Mirrors the closer
+/// dispatch in [`resolve_md_link`].
+fn opaque_link_is_shortcut_or_ref(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    if bytes.first() == Some(&b'<') {
+        return false; // autolink
+    }
+    let Some(text_end) = scan_delimited(bytes, 0, b'[', b']') else {
+        return false;
+    };
+    // `(` → inline link (own destination); `[` → reference; nothing → shortcut.
+    !matches!(bytes.get(text_end), Some(&b'('))
 }
 
 /// roxygen2's `double_escape_md` (`markdown-link.R`): double every backslash, then
@@ -890,8 +983,16 @@ fn double_escape_md(s: &str) -> String {
 /// bracket-free `[ref]`, **not** preceded by `]`/`\` and **not** followed by
 /// `[`/`{`. Matches are non-overlapping, left to right.
 fn md_linkref_labels(text: &str) -> Vec<String> {
+    md_linkref_scan(text).into_iter().map(|(l, _)| l).collect()
+}
+
+/// Scan `text` for `get_md_linkrefs` candidates, returning each candidate's
+/// reference **label** (see [`md_linkref_labels`]) paired with the **byte offset of
+/// its opening `[`**. The position lets the poisoning boundary
+/// ([`first_invalid_linkref_offset`]) map back into the body skeleton.
+fn md_linkref_scan(text: &str) -> Vec<(String, usize)> {
     let bytes = text.as_bytes();
-    let mut labels = Vec::new();
+    let mut out = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
         // Lookbehind: a `[` not preceded by `]` or `\`.
@@ -913,10 +1014,26 @@ fn md_linkref_labels(text: &str) -> Vec<String> {
             i += 1;
             continue;
         }
-        labels.push(String::from_utf8_lossy(label).into_owned());
+        out.push((String::from_utf8_lossy(label).into_owned(), i));
         i = match_end;
     }
-    labels
+    out
+}
+
+/// The byte offset (in `skeleton`, the body's reconstructed markdown source) of the
+/// opening `[` of the first **invalid** (escaped-close) link-reference candidate, or
+/// `None` if every candidate closes. This is where leaked-definition poisoning
+/// begins — every shortcut/reference link after it is de-linked (see
+/// [`demote_poisoned_links`]). The skeleton carries raw (single) backslashes, so a
+/// candidate is invalid exactly when its label ends with a backslash:
+/// `double_escape_md` turns any non-empty trailing backslash run into an odd run
+/// (`2k-1`) that fails to close (`linkref_label_closes`), so any trailing backslash
+/// poisons — matching the escaped-label classification the leak itself uses.
+fn first_invalid_linkref_offset(skeleton: &str) -> Option<usize> {
+    md_linkref_scan(skeleton)
+        .into_iter()
+        .find(|(label, _)| label.ends_with('\\'))
+        .map(|(_, start)| start)
 }
 
 /// If `bytes[open]` is `[`, return the bracket-free content (`[^\]\[]+`, ≥1 byte,
@@ -2661,9 +2778,9 @@ mod tests {
     }
 
     #[test]
-    fn leaked_linkref_text_synthesizes_only_invalid_definitions() {
+    fn leaked_linkref_text_leaks_from_first_invalid_definition() {
         // An escaped-close shortcut leaks its synthesized definition; a valid
-        // shortcut does not (roxygen2 turns it into a link, arity resolves directly).
+        // shortcut before any invalid one does not (roxygen2 links it).
         assert_eq!(
             leaked_linkref_text("see [text\\] here"),
             vec!["[text]: R:text%5C".to_string()]
@@ -2676,6 +2793,89 @@ mod tests {
         );
         // An escaped-open `\[…]` is excluded by the lookbehind — no leak.
         assert!(leaked_linkref_text("an escaped \\[x\\] stays").is_empty());
+        // Poisoning: the first invalid definition swallows the rest of the block, so
+        // a *valid* candidate after it leaks too (and is de-linked elsewhere).
+        assert_eq!(
+            leaked_linkref_text("a [one] b [two\\] c [three] d"),
+            vec![
+                "[two]: R:two%5C".to_string(),
+                "[three]: R:three".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn first_invalid_linkref_offset_finds_the_poison_bracket() {
+        // The opening `[` of the first escaped-close candidate (`[two\]` at index 10).
+        assert_eq!(
+            first_invalid_linkref_offset("a [one] b [two\\] c"),
+            Some(10)
+        );
+        // All candidates close → no poisoning.
+        assert_eq!(first_invalid_linkref_offset("[foo] [bar]"), None);
+        // A leading escaped-close candidate poisons from the start.
+        assert_eq!(first_invalid_linkref_offset("[bad\\] tail"), Some(0));
+    }
+
+    #[test]
+    fn demoted_link_source_targets_only_definition_backed_links() {
+        // Shortcut/reference links lose their (now-leaked) definition → literal text.
+        assert_eq!(
+            demoted_link_source(&Inline::MdShortcutLink {
+                display: vec![Inline::Text("foo".to_string())]
+            }),
+            Some("[foo]".to_string())
+        );
+        assert_eq!(
+            demoted_link_source(&Inline::MdRefLink {
+                dest: "ref".to_string(),
+                display: vec![Inline::Text("disp".to_string())]
+            }),
+            Some("[disp][ref]".to_string())
+        );
+        assert_eq!(
+            demoted_link_source(&Inline::MdLink("[foo]".to_string())),
+            Some("[foo]".to_string())
+        );
+        assert_eq!(
+            demoted_link_source(&Inline::MdLink("[t][r]".to_string())),
+            Some("[t][r]".to_string())
+        );
+        // Inline links and autolinks carry their own destination → survive.
+        assert_eq!(
+            demoted_link_source(&Inline::MdLink("[t](u)".to_string())),
+            None
+        );
+        assert_eq!(
+            demoted_link_source(&Inline::MdLink("<http://x>".to_string())),
+            None
+        );
+        assert_eq!(
+            demoted_link_source(&Inline::Text("plain".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn projects_mixed_linkref_poisoning() {
+        // The end-to-end mixed case: a valid shortcut before the escaped-close
+        // candidate links; the escaped-close poisons the appended definition block,
+        // so a later shortcut is de-linked into literal text and *both* trailing
+        // definitions leak.
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' See [before] then [stop\\] and [after].\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"See\") (\\link (TEXT \"before\")) \
+                 (TEXT \"then [stop] and [after]. [stop]: R:stop%5C [after]: R:after\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
     }
 
     #[test]

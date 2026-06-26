@@ -1,0 +1,3 @@
+(\description (TEXT "Mixed link-reference poisoning"))
+(\details (TEXT "A shortcut like") (\link (TEXT "before")) (TEXT "resolves, but once an escaped-close candidate like [stop] appears, its unclosed synthesized definition poisons the rest of the appended block: every following definition leaks, and a later shortcut like [after] is de-linked into literal text. [stop]: R:stop%5C [after]: R:after"))
+(\title (TEXT "Mixed link-reference poisoning"))
