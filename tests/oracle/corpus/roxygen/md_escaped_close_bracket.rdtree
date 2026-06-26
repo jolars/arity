@@ -1,0 +1,3 @@
+(\description (TEXT "Escaped close brackets"))
+(\details (TEXT "A shortcut whose closing bracket is escaped, like [text], is not a link; roxygen2 still leaks the synthesized [other] reference definitions as literal trailing text. [text]: R:text%5C [other]: R:other%5C"))
+(\title (TEXT "Escaped close brackets"))

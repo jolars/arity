@@ -439,9 +439,16 @@ fn is_null_section(body: &[Inline], md: bool) -> bool {
 }
 
 /// Push `(\<macro> <atoms…>)` for a prose section, or `(\<macro>)` when the body
-/// has no content (after coalescing).
+/// has no content (after coalescing). Under `@md`, roxygen2's `add_linkrefs_to_md`
+/// may append leaked link-reference definitions to the field text (see
+/// [`leaked_linkref_text`]); they coalesce into the section's trailing prose.
 fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline], md: bool) {
-    let atoms = serialize_inlines(body, md);
+    let mut atoms = serialize_inlines(body, md);
+    if md {
+        for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
+            append_rendered_text(&mut atoms, &leaked);
+        }
+    }
     if atoms.is_empty() {
         out.push(format!("(\\{macro_name})"));
     } else {
@@ -811,6 +818,224 @@ fn unescape_md_brackets(run: &str) -> String {
         }
     }
     out
+}
+
+/// Reconstruct a field's markdown **source** text for link-reference scanning:
+/// the literal prose (`Inline::Text`) verbatim, with every *resolved* inline (a
+/// link/code/macro/emphasis arity already turned into structure) flattened to a
+/// single space. A resolved inline is never a leaked-definition candidate —
+/// roxygen2 either linkified it (a valid, consumed definition) or it is a non-link
+/// macro — and a space keeps it a neutral boundary that cannot fuse adjacent
+/// brackets into a spurious span.
+fn inline_source_skeleton(body: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in body {
+        match inl {
+            Inline::Text(t) => s.push_str(t),
+            _ => s.push(' '),
+        }
+    }
+    s
+}
+
+/// The **leaked** link-reference definitions roxygen2's `add_linkrefs_to_md`
+/// appends to a markdown field's rendered text (`markdown-link.R`).
+///
+/// roxygen2 scans the (double-escaped) field text with `get_md_linkrefs` and, for
+/// **every** bracket-free `[…]` shortcut candidate, appends a synthesized
+/// `[label]: R:URLencode(label)` reference definition so cmark resolves the
+/// shortcut as a link to `R:label`. A candidate whose closing bracket is
+/// **backslash-escaped** (`[text\]`) yields a definition whose own label never
+/// closes — *not* a valid CommonMark link reference definition — so cmark leaves it
+/// as **literal text**, and it leaks into the rendered Rd as trailing prose
+/// (`… [text]: R:text%5C`). arity already renders such a shortcut literally (the
+/// lexer never pairs an escaped-close bracket); this models the leaked *definition*.
+///
+/// **Scope.** A *valid* candidate's definition closes, so roxygen2 turns it into a
+/// link, which arity resolves directly via its own link path — so this filters
+/// those out and synthesizes only the invalid (escaped-close) definitions. The
+/// one case this does **not** yet model is a field *mixing* valid and invalid
+/// candidates: there the first invalid definition's unclosed label swallows the
+/// next definition's `[`, poisoning the whole appended block so cmark leaks *all*
+/// definitions **and** de-links the otherwise-valid shortcuts. That whole-field
+/// interaction is deferred backlog; a field whose candidates are *all*
+/// escaped-close (one or many) projects faithfully here.
+///
+/// Returns the cmark-rendered leaked definition lines (already final text), in
+/// document order. `@md` only; empty for the no-candidate common case.
+fn leaked_linkref_text(source: &str) -> Vec<String> {
+    let escaped = double_escape_md(source);
+    md_linkref_labels(&escaped)
+        .into_iter()
+        .filter(|label| !linkref_label_closes(label))
+        .map(|label| cmark_unescape(&format!("[{label}]: R:{}", url_encode(&label))))
+        .collect()
+}
+
+/// roxygen2's `double_escape_md` (`markdown-link.R`): double every backslash, then
+/// revert the two bracket escapes (`\\[`→`\[`, `\\]`→`\]`) — so only a bracket
+/// escape survives cmark, every other punctuation escape is neutralized. The
+/// `gsub(fixed = TRUE)` passes are non-overlapping left-to-right, matching
+/// `str::replace`.
+fn double_escape_md(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace("\\\\[", "\\[")
+        .replace("\\\\]", "\\]")
+}
+
+/// Scan double-escaped markdown text for `get_md_linkrefs` shortcut candidates,
+/// returning each candidate's reference **label** (`refs[,3]`: the second `[…]`
+/// group if present, else the first). Ports roxygen2's `get_md_linkrefs` regex
+/// (`markdown-link.R`): a bracket-free `[content]`, optionally followed by a
+/// bracket-free `[ref]`, **not** preceded by `]`/`\` and **not** followed by
+/// `[`/`{`. Matches are non-overlapping, left to right.
+fn md_linkref_labels(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut labels = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Lookbehind: a `[` not preceded by `]` or `\`.
+        if bytes[i] != b'[' || (i > 0 && matches!(bytes[i - 1], b']' | b'\\')) {
+            i += 1;
+            continue;
+        }
+        let Some((content, content_end)) = bracket_free_group(bytes, i) else {
+            i += 1;
+            continue;
+        };
+        // Optional second `[ref]` (a non-empty bracket-free group right after).
+        let (label, match_end) = match bracket_free_group(bytes, content_end) {
+            Some((reff, ref_end)) => (reff, ref_end),
+            None => (content, content_end),
+        };
+        // Lookahead: not immediately followed by `[` or `{`.
+        if matches!(bytes.get(match_end), Some(b'[' | b'{')) {
+            i += 1;
+            continue;
+        }
+        labels.push(String::from_utf8_lossy(label).into_owned());
+        i = match_end;
+    }
+    labels
+}
+
+/// If `bytes[open]` is `[`, return the bracket-free content (`[^\]\[]+`, ≥1 byte,
+/// no interior `[`/`]`) and the index just past its closing `]`. `None` when there
+/// is no such group (empty content, an interior `[`, or no closing `]`).
+fn bracket_free_group(bytes: &[u8], open: usize) -> Option<(&[u8], usize)> {
+    if bytes.get(open) != Some(&b'[') {
+        return None;
+    }
+    let start = open + 1;
+    let mut j = start;
+    while j < bytes.len() && !matches!(bytes[j], b'[' | b']') {
+        j += 1;
+    }
+    (bytes.get(j) == Some(&b']') && j > start).then_some((&bytes[start..j], j + 1))
+}
+
+/// Whether the synthesized definition `[label]: …` is a valid CommonMark link
+/// reference definition (its label's closing `]` is *not* backslash-escaped). The
+/// label is bracket-free, so the only failure is a trailing odd run of backslashes
+/// escaping the `]`. A valid definition is consumed by cmark (the shortcut becomes
+/// a link, handled by arity's own link path); an invalid one leaks.
+fn linkref_label_closes(label: &str) -> bool {
+    label.bytes().rev().take_while(|&b| b == b'\\').count() % 2 == 0
+}
+
+/// R's `URLencode(x, reserved = FALSE)`: keep ASCII alphanumerics and the
+/// unreserved/sub-delim set, percent-encode every other byte as `%XX`
+/// (uppercase). Matches roxygen2's `map_chr(refs, URLencode)` for the synthesized
+/// `R:label` destinations (e.g. `\`→`%5C`, space→`%20`).
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'!' | b'#'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b'-'
+                    | b'.'
+                    | b'/'
+                    | b':'
+                    | b';'
+                    | b'='
+                    | b'?'
+                    | b'@'
+                    | b'['
+                    | b']'
+                    | b'_'
+                    | b'~'
+            )
+        {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Resolve CommonMark backslash escapes in `s`: a `\` before an ASCII-punctuation
+/// char is dropped (the char stays literal); any other `\` is kept. Renders the
+/// *leaked* (invalid) link-reference definition the way cmark renders it as
+/// paragraph text (`[text\]: R:text%5C` → `[text]: R:text%5C`).
+fn cmark_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek().is_some_and(char::is_ascii_punctuation) {
+            out.push(chars.next().expect("peeked punctuation"));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Append already-rendered prose `extra` to a section's atom list, coalescing it
+/// into a trailing `(TEXT …)` atom (the way roxygen2's appended link-ref text
+/// coalesces with the section's prose under the canonical TEXT-run merge), or
+/// pushing a fresh `(TEXT …)` when the last atom is not prose.
+fn append_rendered_text(atoms: &mut Vec<String>, extra: &str) {
+    if let Some(last) = atoms.last_mut()
+        && let Some(text) = decode_text_atom(last)
+        && let Some(merged) = text_atom(&format!("{text} {extra}"))
+    {
+        *last = merged;
+        return;
+    }
+    if let Some(atom) = text_atom(extra) {
+        atoms.push(atom);
+    }
+}
+
+/// Reverse [`encode_text`] for a `(TEXT "…")` atom, returning the decoded inner
+/// string, or `None` if `atom` is not a text atom.
+fn decode_text_atom(atom: &str) -> Option<String> {
+    let inner = atom.strip_prefix("(TEXT \"")?.strip_suffix("\")")?;
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some(other) => out.push(other), // `\\` → `\`, `\"` → `"`
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    Some(out)
 }
 
 /// Strip Rd `%` line comments from literal-Rd prose: on each physical line, an
@@ -2378,6 +2603,113 @@ mod tests {
                 "(\\details (TEXT \"A\") (\\link (TEXT \"broken across lines\")) \
                  (TEXT \"joins, but a stray a] stays.\"))"
             ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn double_escape_md_reverts_only_bracket_escapes() {
+        // Every backslash is doubled, then the two bracket escapes are reverted —
+        // so a bracket escape survives unchanged, every other escape is neutralized.
+        assert_eq!(double_escape_md("[text\\]"), "[text\\]");
+        assert_eq!(double_escape_md("a\\*b"), "a\\\\*b");
+        assert_eq!(double_escape_md("\\[x\\]"), "\\[x\\]");
+        // Two source backslashes before `]` become three (2*2 then revert one pair).
+        assert_eq!(double_escape_md("[text\\\\]"), "[text\\\\\\]");
+    }
+
+    #[test]
+    fn url_encode_matches_r_urlencode() {
+        // Alphanumerics and the unreserved/sub-delim set pass through; everything
+        // else is percent-encoded uppercase (`\`→%5C, space→%20, `%`→%25).
+        assert_eq!(url_encode("text\\"), "text%5C");
+        assert_eq!(url_encode("a b"), "a%20b");
+        assert_eq!(url_encode("a/b:c"), "a/b:c");
+        assert_eq!(url_encode("100%"), "100%25");
+    }
+
+    #[test]
+    fn cmark_unescape_drops_backslash_before_punctuation() {
+        assert_eq!(cmark_unescape("[text\\]: R:text%5C"), "[text]: R:text%5C");
+        // An escaped backslash collapses, then the escaped bracket (the multi-
+        // backslash leaked-definition shape).
+        assert_eq!(cmark_unescape("[text\\\\\\]"), "[text\\]");
+        // A backslash before a non-punctuation char is kept.
+        assert_eq!(cmark_unescape("a\\b"), "a\\b");
+    }
+
+    #[test]
+    fn md_linkref_labels_ports_get_md_linkrefs() {
+        // A bare shortcut; the second `[ref]` group wins as the label.
+        assert_eq!(md_linkref_labels("see [foo] now"), vec!["foo".to_string()]);
+        assert_eq!(md_linkref_labels("[text][ref]"), vec!["ref".to_string()]);
+        // Lookbehind: a `[` preceded by `\` (an escaped-open bracket) is no match.
+        assert!(md_linkref_labels("\\[foo]").is_empty());
+        // Lookahead: a `[…]` immediately followed by `[` or `{` is no match.
+        assert!(md_linkref_labels("[a]{x}").is_empty());
+        // The escaped-close shortcut still matches (its `]` closes the content).
+        assert_eq!(md_linkref_labels("[text\\]"), vec!["text\\".to_string()]);
+    }
+
+    #[test]
+    fn linkref_label_closes_on_even_trailing_backslashes() {
+        assert!(linkref_label_closes("text")); // 0 trailing — valid definition
+        assert!(!linkref_label_closes("text\\")); // 1 trailing — `]` escaped, leaks
+        assert!(!linkref_label_closes("text\\\\\\")); // 3 trailing — leaks
+        assert!(linkref_label_closes("text\\\\")); // 2 trailing — `]` not escaped
+    }
+
+    #[test]
+    fn leaked_linkref_text_synthesizes_only_invalid_definitions() {
+        // An escaped-close shortcut leaks its synthesized definition; a valid
+        // shortcut does not (roxygen2 turns it into a link, arity resolves directly).
+        assert_eq!(
+            leaked_linkref_text("see [text\\] here"),
+            vec!["[text]: R:text%5C".to_string()]
+        );
+        assert!(leaked_linkref_text("see [foo] here").is_empty());
+        // Multiple escaped-close candidates each leak (all-invalid block).
+        assert_eq!(
+            leaked_linkref_text("a [one\\] b [two\\] c"),
+            vec!["[one]: R:one%5C".to_string(), "[two]: R:two%5C".to_string()]
+        );
+        // An escaped-open `\[…]` is excluded by the lookbehind — no leak.
+        assert!(leaked_linkref_text("an escaped \\[x\\] stays").is_empty());
+    }
+
+    #[test]
+    fn append_rendered_text_coalesces_into_trailing_text() {
+        // Merges into a trailing `(TEXT …)`, round-tripping the escape encoding.
+        let mut atoms = vec!["(TEXT \"prose.\")".to_string()];
+        append_rendered_text(&mut atoms, "[t]: R:t%5C");
+        assert_eq!(atoms, vec!["(TEXT \"prose. [t]: R:t%5C\")".to_string()]);
+        // With no trailing prose atom, a fresh `(TEXT …)` is pushed.
+        let mut atoms = vec!["(\\link (TEXT \"x\"))".to_string()];
+        append_rendered_text(&mut atoms, "[t]: R:t%5C");
+        assert_eq!(
+            atoms,
+            vec![
+                "(\\link (TEXT \"x\"))".to_string(),
+                "(TEXT \"[t]: R:t%5C\")".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn projects_escaped_close_bracket_leaked_linkref() {
+        // The end-to-end case: a `@md` shortcut whose closing bracket is escaped is
+        // not a link, but roxygen2 leaks its synthesized reference definition into
+        // the rendered prose (coalesced with the section text).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' A link like [text\\] leaks.\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\details (TEXT \"A link like [text] leaks. [text]: R:text%5C\"))"),
             "got: {}",
             project_to_rd(src)
         );

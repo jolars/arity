@@ -401,9 +401,27 @@
       `shortcut_link_atom`). No new TokKind/SyntaxKind; formatter unchanged. Side
       effect: the `]` in `\[shortcut]` (escaped-bracket fixture) is now a standalone
       `Delim` (projection unchanged, snapshot re-accepted). Curated
-      `md_shortcut_link_multiline`. Escaped-*close* `[text\]` and the full
-      `get_md_linkrefs`/opener-deactivation migration retiring the opaque same-line
-      `scan_md_link` still backlog.
+      `md_shortcut_link_multiline`.
+      **`get_md_linkrefs` leaked link-ref definitions LANDED (2026-06-26): escaped-close
+      `[text\]`.** First slice of the `get_md_linkrefs`/`add_linkrefs_to_md` migration
+      (`markdown-link.R`). roxygen2 appends a synthesized `[label]: R:URLencode(label)`
+      reference definition for **every** bracket-free `[…]` shortcut candidate; a valid
+      def is consumed (the shortcut becomes a link, arity resolves directly), but an
+      escaped-**close** candidate (`[text\]`) yields a def whose own label never closes,
+      so cmark leaks it as literal trailing prose (`… [text]: R:text%5C`). Projector-only
+      (CST already lossless): `leaked_linkref_text` ports `double_escape_md` +
+      `get_md_linkrefs` (hand-rolled scan, lookbehind/lookahead) + `url_encode`
+      (R `URLencode`) + `cmark_unescape`, filtered to **invalid** (odd-trailing-backslash)
+      labels; `push_section` appends the rendered leak, coalesced into the trailing TEXT
+      (`append_rendered_text`/`decode_text_atom`). Uniform across backslash counts
+      (single/multi) and multi-candidate all-invalid fields. Curated `md_escaped_close_bracket`.
+      **Still backlog (the rest of the migration):** (1) a field *mixing* valid and invalid
+      candidates—the first invalid def's unclosed label swallows the next def's `[`,
+      poisoning the whole appended block so cmark leaks *all* defs **and** de-links the
+      otherwise-valid shortcuts (a whole-field cmark-link-ref-resolution model); (2) leaks
+      outside `push_section` (`@section` body, `@slot`/`@field`, `@rawRd`); (3) the full
+      opener-deactivation migration retiring the opaque same-line `scan_md_link` (unify all
+      brackets onto the arena stack).
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose

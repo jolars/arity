@@ -151,6 +151,7 @@ md_emphasis
 md_emphasis_multiline
 md_empty_list_item
 md_escaped_bracket
+md_escaped_close_bracket
 md_link_emphasis
 md_link_multiline
 md_nested_list
