@@ -87,9 +87,9 @@ Use `arity.releaseTag` only if you need an exact tag override:
   The extension detects NixOS and skips the download, using `arity` on your
   `PATH` instead; install `arity` (for example via the `arity` package) or set
   `arity.executableStrategy` to `path` with `arity.executablePath`.
-- **Offline / restricted networks / proxies**: the bundled-binary default works
+- **Offline/restricted networks/proxies**: the bundled-binary default works
   without network access. Only the explicit-version download paths
-  (`arity.version` / `arity.releaseTag`) require GitHub connectivity.
+  (`arity.version`/`arity.releaseTag`) require GitHub connectivity.
 - If a download fall-through fails, the extension shows a warning and falls back
   to looking up `arity` on the system `PATH`.
 
@@ -118,6 +118,5 @@ Arity registers itself as the default formatter for `[r]` files.
 
 When `arity.executableStrategy` is `bundled` (the default), the extension
 prefers the binary that shipped inside the VSIX. If no bundled binary is
-available, or `arity.version` / `arity.releaseTag` is set explicitly, it
-downloads from GitHub releases configured by `arity.githubRepo` (default
-`jolars/arity`).
+available, or `arity.version`/`arity.releaseTag` is set explicitly, it downloads
+from GitHub releases configured by `arity.githubRepo` (default `jolars/arity`).

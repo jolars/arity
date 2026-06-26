@@ -8,7 +8,7 @@ symbols, semantic tokens, folding ranges, and call hierarchy.
 Configuration is read from an `arity.toml` discovered from each file's directory
 (see the [configuration reference](../reference/configuration.md)).
 
-## VS Code / Positron
+## VS Code/Positron
 
 Install the **Arity** extension from the [VS Code
 Marketplace](https://marketplace.visualstudio.com/) or [Open

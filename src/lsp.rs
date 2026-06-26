@@ -31,7 +31,7 @@
 //! strictly-newer edit of the *same* URI cancels the running analyze via
 //! [`salsa::Database::trigger_cancellation`] (the worker's [`salsa::Cancelled`]
 //! catch then publishes nothing), while a *different* pending URI waits its turn
-//! — never cross-cancelled, so a multi-URI [`Outbound::RelintAll`] still publishes
+//! — never cross-canceled, so a multi-URI [`Outbound::RelintAll`] still publishes
 //! every file. Diagnostics route back through the main loop, which drops publishes
 //! for closed or superseded documents (a version gate that backstops the rare
 //! finish-during-cancel race).

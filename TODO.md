@@ -13,7 +13,7 @@
   full-reparse fallback (cf. rust-analyzer `reparsing.rs`), splicing reused
   green subtrees (`src/parser/reparse.rs`). `parsed_document` recovers the
   edit from the old/new text via a prefix/suffix diff and splices off a
-  non-salsa per-file previous-parse cache (a pure perf hint --- a successful
+  non-salsa per-file previous-parse cache (a pure perf hint—a successful
   reparse is byte-identical to a full parse, so it never changes query
   output). Correctness is pinned by an oracle property test
   (`tests/incremental_reparse.rs`: `reparse == parse(new)` in tree *and*
@@ -43,7 +43,7 @@
   `ExcludeFilter` in `src/file_discovery.rs`) is **not** consulted by LSP
   workspace seeding (`src/lsp/lint_thread.rs` `seed_workspace`), salsa sibling
   discovery (`src/linter/check.rs`), or `arity index` package discovery
-  (`src/rindex/discover.rs`) — all pass `ExcludeFilter::none()`. Wire the resolved
+  (`src/rindex/discover.rs`)—all pass `ExcludeFilter::none()`. Wire the resolved
   config's excludes through those paths so excluded files don't get indexed/linted
   in-editor either.
 
@@ -63,7 +63,7 @@
   - [x] **Parsing foundation (CST-native).** Roxygen lines (`#'`, per roxygen2's
     `^#+'`) are lexed into sub-tokens (`ROXYGEN_MARKER`/`ROXYGEN_AT`/
     `ROXYGEN_TAG_NAME`/`ROXYGEN_TAG_ARG`/`ROXYGEN_TEXT`). **CST re-model (2026-06-23):**
-    a block is no longer line-flat — the parser builds **logical content**
+    a block is no longer line-flat—the parser builds **logical content**
     `ROXYGEN_BLOCK` → `ROXYGEN_SECTION` (intro + one per `@tag`) →
     `ROXYGEN_TAG`/`ROXYGEN_PARAGRAPH`, with `#'` markers and inter-line newlines as
     trivia (rowan/rust-analyzer style), so block macros spanning `#'` lines become
@@ -99,9 +99,9 @@
       natural continuation of transform (1). **CST enrichment (parser layer):**
       to keep markup atomic *by construction* (Tenet 3), the prose lexer now
       carves protected spans out of `ROXYGEN_TEXT` runs into three new leaf
-      kinds — `ROXYGEN_CODE` (`` `…` ``), `ROXYGEN_RD_MACRO`
-      (`\code{…}`/`\link[pkg]{…}`), `ROXYGEN_MD_LINK` (`[t](u)`/`[func()]`) —
-      via conservative, line-scoped, byte-exact recognizers in
+      kinds—`ROXYGEN_CODE` (`` `…` ``), `ROXYGEN_RD_MACRO`
+      (`\code{…}`/`\link[pkg]{…}`), `ROXYGEN_MD_LINK` (`[t](u)`/`[func()]`)—via
+      conservative, line-scoped, byte-exact recognizers in
       `lex_roxygen_prose` (`src/parser/roxygen.rs`); malformed/unterminated
       markup stays prose, so losslessness holds by construction (fuzz +
       `tests/fixtures/parser/roxygen_{inline_code,rd_link,rd_link_pkg,rd_code,md_link,md_autolink,mixed_inline,nested_braces,unterminated_code,unbalanced_macro,backtick_in_macro}`).
@@ -128,7 +128,7 @@
       `src/formatter/roxygen.rs`). A tag line carrying inline prose
       (`@param x <prose>`, `@return <prose>`, `@seealso <prose>`, …) plus the
       plain-prose lines that follow it form **one reflow unit**: the normalized
-      header (`@tag [arg]`, single-spaced — the "normalize tag-internal spacing"
+      header (`@tag [arg]`, single-spaced—the "normalize tag-internal spacing"
       half) stays on the first line, and continuation lines hang-indent **two
       extra spaces** under `#'` (the tidyverse rule, `style/documentation.qmd`
       "Indents and line breaks"; applies to all description tags, not just
@@ -159,8 +159,8 @@
       and re-prefixed. The body line-width budget is reduced by the marker prefix
       and indentation so the `#'`-prefixed output respects the line width
       (Tenet 1). **Conservative fallback**: a body that does not parse cleanly as
-      R falls back to the current marker-normalized passthrough, byte-for-byte —
-      this covers Rd-macro wrappers (`\dontrun{}`/`\donttest{}`/`\dontshow{}`,
+      R falls back to the current marker-normalized passthrough, byte-for-byte—this
+      covers Rd-macro wrappers (`\dontrun{}`/`\donttest{}`/`\dontshow{}`,
       not valid R: `\` lexes as the lambda token, so a following identifier is a
       parse error) and any other unparseable example. Idempotent by construction
       (extraction inverts prefixing; the embedded formatter is itself idempotent
@@ -182,12 +182,12 @@
     consumes one structural model instead of re-deriving it from text with string
     heuristics.
     - *A roxygen block is Rd-first, markdown-second.* The block's native language
-      is **Rd** (R documentation markup — the same syntax as `.Rd` files);
+      is **Rd** (R documentation markup—the same syntax as `.Rd` files);
       markdown (when enabled) is a convenience layer roxygen2 *translates into*
       Rd, not a replacement for it. So Rd macros are always in scope, independent
       of `@md`. The parser needs a real Rd sub-grammar, not just markdown:
       - *Inline macros* (`\code{}`, `\emph{}`, `\strong{}`, `\link[pkg]{name}`,
-        `\url{}`, `\href{}{}`) — **done** (single-arg, line-scoped):
+        `\url{}`, `\href{}{}`)—**done** (single-arg, line-scoped):
         `ROXYGEN_RD_MACRO` is now a *node* whose content is sub-parsed
         (`ROXYGEN_RD_MACRO_{NAME,OPT,DELIM,VERB}` leaves, nesting, verbatim
         bodies for `\url`/`\verb`/`\samp`/…), and the projector emits the
@@ -197,7 +197,7 @@
         parse_Rd tags `\code` content as R code (whitespace preserved, split at
         newlines).
       - *Multi-argument macros* (`\item{term}{def}`, `\link[pkg]{name}`,
-        `\method{generic}{class}`, `\href{url}{text}`) — multiple adjacent brace
+        `\method{generic}{class}`, `\href{url}{text}`)—multiple adjacent brace
         groups, not one. **`\item{term}{def}` landed (Stage 3, 2026-06-23):**
         `is_two_arg_rd_macro` (currently `item`) makes the lexer pull a second
         adjacent `{…}` into one macro token, the tree builder emits both groups as
@@ -205,12 +205,12 @@
         groups stay separate atoms (`(\item (TEXT "a") (TEXT "first"))`);
         `describe_format` matches its pin. **`\href{url}{text}` landed (Stage 10,
         2026-06-23):** added to `is_two_arg_rd_macro`, but with a *per-argument*
-        encoding — new `is_verbatim_rd_arg` makes the first arg (the URL) verbatim
+        encoding—new `is_verbatim_rd_arg` makes the first arg (the URL) verbatim
         `(VERB …)` while the second (the link text) is sub-parsed like any latexlike
         body (`(\href (VERB "url") (GRP …))`); +5 projector cases. `\method`/`\section`
         extend the set when needed.
-      - *Aggregating section tags* (`@slot`, `@field`) — **done (Stage 11,
-        2026-06-23, projector-only):** every `@slot` (S4) / `@field` (reference
+      - *Aggregating section tags* (`@slot`, `@field`)—**done (Stage 11,
+        2026-06-23, projector-only):** every `@slot` (S4)/`@field` (reference
         class) of a topic aggregates into one `\section{Slots|Fields}{\describe{…}}`,
         each tag a `\item{\code{name}}{def}` (the name verbatim `RCODE`). The CST
         already modeled the tag arg + prose; `describe_section` in `project_rd.rs`
@@ -233,7 +233,7 @@
         `#'` lines (markers/newlines threaded as trivia), with brace-less `\item`
         as a name-only child; the projector reuses `serialize_macro`, and the
         formatter passes the node through verbatim (it had reflowed it into a
-        run-on — that bug is fixed; `itemize_enumerate` matches its pin).
+        run-on—that bug is fixed; `itemize_enumerate` matches its pin).
         **`\describe{ \item{term}{def} … }` landed (Stage 3, 2026-06-23):** the
         multi-arg `\item` (above) closes it; `describe_format` matches its pin.
         **`\tabular{rl}{ … \tab … \cr }` landed (Stage 4, 2026-06-23):** a balanced
@@ -243,17 +243,17 @@
         group leaves, `emit_block_body_open` opens the body), with `\tab`/`\cr` as
         name-only children. The projector GRP-wraps a structural macro's multi-atom
         argument (`(\tabular (TEXT "rl") (GRP …))`); `tabular` matches its pin.
-      - *Verbatim / non-prose content* (`\deqn{}`/`\eqn{}` carry LaTeX-ish math,
+      - *Verbatim/non-prose content* (`\deqn{}`/`\eqn{}` carry LaTeX-ish math,
         `\preformatted{}`/`\verb{}` carry literal text, `\tabular` cells use
-        `\tab`/`\cr` separators) — never reflow or markdown-interpret the interior.
+        `\tab`/`\cr` separators)—never reflow or markdown-interpret the interior.
       - *Comments and escapes* (`%` begins an Rd comment to end of line; `\%`,
-        `\{`, `\}`, `\\` are escapes) — relevant to both losslessness and where a
+        `\{`, `\}`, `\\` are escapes)—relevant to both losslessness and where a
         macro argument actually ends.
-    - *Motivation — single source of truth.* Block structure is currently
+    - *Motivation—single source of truth.* Block structure is currently
       reconstructed twice in `src/formatter/roxygen.rs`: a classifier
       (`is_structured`/`starts_ordered_list_item`) decides what a *line* is, and a
       migration guard (`is_unsafe_line_start`) decides what a reflowed *chunk* may
-      become — and the two must be kept in lockstep by hand or idempotence breaks.
+      become—and the two must be kept in lockstep by hand or idempotence breaks.
       That coupling is exactly what produced the "`2008.` mid-sentence treated as
       an ordered-list marker, so the `@source` paragraph bailed to verbatim" bug
       (fixed by collapsing both onto a shared `ordered_marker` predicate + the
@@ -262,14 +262,14 @@
       A real block CST makes that class of bug structurally impossible: the
       formatter reflows *prose nodes* and never guesses whether a chunk might
       reparse as a marker.
-    - *Markdown flavor — confirm before implementing.* When markdown is on,
+    - *Markdown flavor—confirm before implementing.* When markdown is on,
       roxygen2's markdown is **not** hand-rolled: it delegates to the `commonmark`
       R package (a binding to `cmark`/`cmark-gfm`), then translates the result
       into Rd (`` `code` `` → `\code{}`, `[fn()]`/`[text][dest]` → `\link`, etc.).
       So the markdown layer's base grammar is CommonMark, but the exact extension
       set roxygen enables (tables, autolinks, strikethrough, …) must be pinned
       against roxygen2's actual `commonmark::markdown_*` call. Settle the precise
-      flavor as an early step, because — together with the Rd grammar above — it
+      flavor as an early step, because—together with the Rd grammar above—it
       decides what the parser accepts. Note markdown and Rd **coexist** in one
       block (markdown prose can contain inline `\emph{}`; an Rd `\item` body can
       contain markdown), so the grammar is genuinely the union, not a mode switch
@@ -278,14 +278,14 @@
       Nothing less than complete CommonMark fidelity (roxygen2 delegates to
       `cmark`/`cmark-gfm`); a subset is a *gap*, not an end state. The early inline
       recognizers are local, line-scoped span scanners in the lexer
-      (`scan_md_emphasis` etc.) — the **wrong shape**: CommonMark inline is a
+      (`scan_md_emphasis` etc.)—the **wrong shape**: CommonMark inline is a
       non-local, whole-block **delimiter-stack** pass (block parse → inline parse).
       Do **not** widen a local scanner with heuristics to chase a tricky case.
-      **Plan — block→inline pass** (`docs/design/roxygen-inline-pass.md`): a
+      **Plan—block→inline pass** (`docs/design/roxygen-inline-pass.md`): a
       paragraph-level inline pass inside `parse()` (salsa/incremental untouched)
       where the lexer emits *raw* `RoxygenMdDelim` runs and the pass resolves them
       into `ROXYGEN_MD_EMPH`/`STRONG` **nodes** (SyntaxKinds 90/91 reused as nodes)
-      via the delimiter stack — full flanking, rule of 3, `process_emphasis`.
+      via the delimiter stack—full flanking, rule of 3, `process_emphasis`.
       Projector recurses (nesting finally projects); formatter treats the nodes
       atomic (cross-line spans → existing marker-passthrough); losslessness via
       `Event::Leaf` run-splitting; idempotence holds (single-space normalization
@@ -295,22 +295,22 @@
       onto the same stack (yields cross-line links rx-383f2ca3/eb12b6b6 for free).
       **Slice 3+ =** code spans/autolinks/HTML/images fold in, retiring the lexer's
       local recognizers. NB: the current `\emph`/`\strong` recognition (below) is
-      **interim** — a local atomic-token scan that cannot model nesting/rule-of-3,
+      **interim**—a local atomic-token scan that cannot model nesting/rule-of-3,
       superseded by slice 1. **Test driver = the real CommonMark spec test set**
       (`spec.txt`), adapted: take the spec's markdown *inputs only* and keep
       roxygen2 as the oracle (Rd, not the spec's HTML), wired as a third corpus
       source for the projector gate (slice 1 scopes to the ~132 "Emphasis and
       strong emphasis" examples; allowlist + `blocked`-with-reason for inputs
       with no Rd analog). **Oracle = roxygen2, not the spec** (the spec is inputs
-      only; roxygen2 governs where it diverges from raw `cmark` — its escaping
+      only; roxygen2 governs where it diverges from raw `cmark`—its escaping
       pre-pass, `rdComplete` validation, subset translation). **Diagnostic parity
       is a second surface:** roxygen2 itself emits source-located warnings and
       drops bad content (`rdComplete` → `warn_roxy_tag "has mismatched braces or
       quotes"`, e.g. `\*not emphasis\*`); arity should mirror the condition as a
-      side-channel diagnostic (lossless CST) — high-value lint/LSP signal, so an
+      side-channel diagnostic (lossless CST)—high-value lint/LSP signal, so an
       oracle-error is a diagnostic-parity fixture, not a silent skip.
       **Driver wired (2026-06-25c):** the CommonMark spec corpus is a third
-      projector source — `scripts/build-commonmark-corpus.R` extracts the 132
+      projector source—`scripts/build-commonmark-corpus.R` extracts the 132
       "Emphasis and strong emphasis" examples from the vendored `spec.txt`, wraps
       each into an `@md` block (`commonmark-emphasis.jsonl`), `task
       roxygen-spec-pins` mints roxygen2 Rd pins.
@@ -318,7 +318,7 @@
       lexer now carves `*`/`_` as neutral `RoxygenMdDelim` leaves (no flanking
       decision); a new paragraph-grouper pass `src/parser/roxygen/inline.rs`
       (`resolve_emphasis`) runs the full cmark `process_emphasis` over each inline
-      run — full ASCII flanking, the rule of three, nesting — emitting
+      run—full ASCII flanking, the rule of three, nesting—emitting
       `ROXYGEN_MD_EMPH`/`STRONG` **nodes** (SyntaxKinds 90/91, now nodes not
       leaves) with `ROXYGEN_MD_DELIM` opener/closer/leftover leaves (`Event::Leaf`
       run-splitting → losslessness). Projector recurses (`MdEmphasis { strong,
@@ -326,8 +326,8 @@
       idempotent). **119/132 cm cases now pass** (was 58).
       **Slice 1.5 LANDED (2026-06-25e): paragraph-granularity runs (cross-line
       emphasis).** `resolve_emphasis` now collects *every* paragraph-body token into
-      a run — content plus the inter-line trivia (newline / `#'` marker / whitespace)
-      a continuation folds in — bounded only by a structural `Start`/`Finish`/`Leaf`,
+      a run—content plus the inter-line trivia (newline/`#'` marker/whitespace)
+      a continuation folds in—bounded only by a structural `Start`/`Finish`/`Leaf`,
       so a span resolves across a soft line break (`*foo`\n`bar*` → one `\emph` over
       `foo bar`). Trivia present as whitespace for flanking (`edge_char` maps the
       marker to a space) and pass through verbatim, landing *inside* the resolved
@@ -339,14 +339,14 @@
       **128/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
       closed 2026-06-25f; cm-481 closed 2026-06-25g; cm-421/435 closed by slice 2,
       2026-06-25h; cm-355 closed 2026-06-25j). The 4 remaining are markdown backslash
-      escapes (cm-439/442/451/454 — a **diagnostic-parity** surface: roxygen2 errors
+      escapes (cm-439/442/451/454—a **diagnostic-parity** surface: roxygen2 errors
       "mismatched braces or quotes" and drops the content, needs the deferred lint/LSP
       side-channel). **Unicode NBSP in `norm_ws` (cm-355) landed 2026-06-25j:** the R
       driver's `[[:space:]]` is ASCII-only, so `norm_ws` now collapses only ASCII
-      whitespace and preserves NBSP/NEL/`Zs` verbatim — a flanking-rejected `*\u{a0}a\u{a0}*`
+      whitespace and preserves NBSP/NEL/`Zs` verbatim—a flanking-rejected `*\u{a0}a\u{a0}*`
       keeps its NBSP. The **`\code`-vs-`\verb` underscore rule
       landed (2026-06-25g, cm-481):** a `_`-leading code span (`` `_` ``) renders `\verb`,
-      not `\code` — R's lexer rejects any name beginning with `_` (rlang's `parse_expr`
+      not `\code`—R's lexer rejects any name beginning with `_` (rlang's `parse_expr`
       errors), but arity's lexer lexes it as an ordinary identifier, so
       `has_invalid_underscore_name` screens it out in `code_span_is_r` (a lone `_` stays
       valid as the native-pipe placeholder, gated on a `|>` being present). The
@@ -361,7 +361,7 @@
       *recursively* lexes the link text in between, so emphasis/code spans inside it
       carve normally. The inline pass collapses the matched pair into an opaque
       `ROXYGEN_MD_LINK` **node** whose display children are resolved by a recursive
-      `resolve_run` (bounded by the bracket chars for flanking) — so inner emphasis
+      `resolve_run` (bounded by the bracket chars for flanking)—so inner emphasis
       resolves *and* an outer span wraps the whole link (`*foo [*bar*](/u)*`). The
       projector's node arm GRP-wraps a multi-atom display (`\href` is two-arg
       structural) and falls back to `\url` on an empty/equal destination. **cm-421/435
@@ -375,8 +375,8 @@
       into a `ROXYGEN_MD_LINK` node spanning lines (body = text + inter-line trivia,
       coalesced by the projector). Unmatched brackets fall back to literal text.
       Formatter: `is_cross_line_emph`→`is_cross_line_inline` now also descends into a
-      marker-threading link node so reflow rejoins it (byte-identical output —
-      structure-only change). **rx-383f2ca3 closed.**
+      marker-threading link node so reflow rejoins it
+      (byte-identical output—structure-only change). **rx-383f2ca3 closed.**
       **Cross-line *reference* links LANDED (2026-06-25k): `[text][ref]` across a
       break.** Unlike `](url)`, a `][ref]` closer is byte-identical to a stray `]` +
       same-line shortcut (`a][b]`), so the line-scoped lexer can't disambiguate;
@@ -385,7 +385,7 @@
       shortcut), leaving the `[ref]` a separate shortcut `MD_LINK` leaf;
       `find_link_closer` pairs the `]` with an earlier `[` opener and folds the
       following label into the closer text (`][ref]`, consumed as the dropped topic),
-      or — with no opener — leaves the `]` literal and the `[ref]` a standalone
+      or—with no opener—leaves the `]` literal and the `[ref]` a standalone
       shortcut (`a][b]` → `a]` + `\link{b}`, correct by construction). Projector node
       arm branches on the closer (`][ref]` → `MdRefLink` → `ref_link_node_atom`,
       `\link{display}` topic dropped). No new TokKind; formatter unchanged.
@@ -395,7 +395,7 @@
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose
-      CommonMark escape survives cmark — `\[` neither opens a link **nor keeps its
+      CommonMark escape survives cmark—`\[` neither opens a link **nor keeps its
       backslash** (`\[text](url)` → literal `[text](url)`), while `\*`/`` \` ``/`\%`
       keep theirs (the doubling neutralizes them). Lexer: `bracket_is_escaped` (a `[`
       with an immediately preceding `\`) guards all three `[`-opener paths
@@ -420,14 +420,14 @@
       `\item` ahead of its content. The lexer carves a line-start `RoxygenMdListMarker`
       (mode-keyed, punctuation only), `emit_md_list` builds a `ROXYGEN_MD_LIST` of
       `ROXYGEN_MD_LIST_ITEM`s (markers/newlines threaded as trivia), applying the
-      CommonMark interrupt rule (an ordered list ≠ 1 can't interrupt a paragraph —
-      its marker stays inline text); the projector adds an `Inline::MdList` arm and
+      CommonMark interrupt rule (an ordered list ≠ 1 can't interrupt a paragraph—its
+      marker stays inline text); the projector adds an `Inline::MdList` arm and
       the formatter passes the list through marker-normalized. `markdown_list`
       matches its pin. **Inline links landed (Stage 12, 2026-06-24c):** under `@md`,
       an inline `[text](url)` link → `\href{url}{text}` (`(\href (VERB url) (TEXT
       text))`, URL verbatim). The lexer's `[`-recognizer is now **mode-gated** (it
       was firing in non-`@md` mode too, mislabeling literal Rd brackets as
-      `ROXYGEN_MD_LINK` — fixed to match `*`/`` ` ``/list-markers, so a link's
+      `ROXYGEN_MD_LINK`—fixed to match `*`/`` ` ``/list-markers, so a link's
       existence implies `@md`); the projector adds an `Inline::MdLink` arm.
       rx-7743ba62/rx-0605d020 match their pins. **Reference + shortcut links landed
       (Stage 13, 2026-06-24d):** the lexer now carves *any* bracket-free `[…]` not
@@ -440,10 +440,10 @@
       Static-context faithful: package resolution is non-static, so a `pkg::` prefix
       comes only from an explicit `::` (the corpus's `current_package == ""`). Still
       **deferred:** the settled loose-file/`DESCRIPTION`
-      **default-ON** (only an explicit per-block `@md` enables markdown today —
-      flipping the default reinterprets every block, so it needs its own re-bless
+      **default-ON** (only an explicit per-block `@md` enables markdown today—flipping
+      the default reinterprets every block, so it needs its own re-bless
       pass). **Verbatim `\preformatted` block landed (2026-06-24s):** `\preformatted`
-      is now projected as a verbatim block macro — its body becomes one `(VERB …)`
+      is now projected as a verbatim block macro—its body becomes one `(VERB …)`
       per line (parse_Rd's verbatim split), not a whitespace-collapsed `(TEXT …)`.
       Projector-only (`serialize_macro` early-arm + `preformatted_atoms`, mirroring
       `serialize_md_html_block`/`verb_atoms`); the line-start block was already a
@@ -460,7 +460,7 @@
       escaped (`\%`) and survives, so the strip is mode-gated. +2 (rx-f6927028 +
       curated `rd_comment`) + 4 projector unit tests. 145→147.
       **Formatter `%`-reflow follow-on landed (2026-06-25, formatter-only):** the
-      paired Tenet-1 bug — the formatter reflowed multi-line non-md prose onto one
+      paired Tenet-1 bug—the formatter reflowed multi-line non-md prose onto one
       line, joining text *across* a live `%` comment and changing rendered Rd. Fixed
       by mode-gating reflow: `ir_roxygen_block` re-derives the block's `@md`
       (`block_md`, the formatter's own copy mirroring `resolve_roxygen_block`/the
@@ -475,7 +475,7 @@
       `roxygen_rd_comment_md_reflows`. 16/16 curated + 216 harvested fixed-point
       still preserving, 0 regressions.
       **Mid-prose `\preformatted` opener landed (2026-06-24t):** block-opener **Form
-      C** — `So far so good. \preformatted{ …`. The lexer always splits an unbalanced
+      C**—`So far so good. \preformatted{ …`. The lexer always splits an unbalanced
       `\name{` into its own to-EOL token (`is_block_macro_opener_at`); the grouper
       (`emit_prose_line`) promotes it to an **inline** `ROXYGEN_RD_MACRO` inside the
       open paragraph **only if it closes** (`block_macro_opener_closes`), else it stays
@@ -490,8 +490,8 @@
       nested `ROXYGEN_MD_LIST` child (new `push_inline` arm; `md_list_is_ordered`
       now reads direct-child markers only, so a nested ordered sublist can't flip
       the parent's head), and the formatter **preserves** the content indentation
-      (`normalize_list_marker_text`) because it now sets the nesting depth —
-      flattening it would change the rendered Rd (a behavior change). +1
+      (`normalize_list_marker_text`) because it now sets the nesting depth—flattening
+      it would change the rendered Rd (a behavior change). +1
       (rx-91e67e79) + curated `md_nested_list`. **Nested *Rd* block macros landed
       (2026-06-24q):** an unbalanced nested `\name{` opener inside a block macro's
       body (`\itemize{` inside `\enumerate{`) now opens a child `ROXYGEN_RD_MACRO`
@@ -516,7 +516,7 @@
       2026-06-24j):** a brace-less `\word` not in the built-in Rd keyword table
       (new `is_known_rd_macro`/`KNOWN_RD_MACROS`, verified vs R 4.5) projects to
       `(UNKNOWN "\\word")`; `scan_rd_macro` carves it only when unknown (a known
-      brace-less name stays literal prose — zero-arg name-only/arg-misuse is
+      brace-less name stays literal prose—zero-arg name-only/arg-misuse is
       backlog), and the projector's name-only branch keys on the same table. +2
       projector cases (rx-16f78b2f non-md, rx-b8082617 md). Zero-arg name-only
       *rendering* in prose (`\cr`→`(\cr)`) is deferred (never in-scope today).
@@ -539,7 +539,7 @@
       losslessness (Tenet 4: `reconstruct(text) == text`) against CommonMark's
       context-sensitive, whitespace-significant grammar (lazy continuation lines,
       tight/loose lists, setext underlines, trailing-space hard breaks); must fit
-      the salsa incremental pipeline (Tenet 2) — today roxygen edits already fall
+      the salsa incremental pipeline (Tenet 2)—today roxygen edits already fall
       back to block/full reparse, which a richer grammar can keep but should not
       regress; and the inline protected-span leaves
       (`ROXYGEN_CODE`/`ROXYGEN_RD_MACRO`/`ROXYGEN_MD_LINK`) already carved by
@@ -548,21 +548,22 @@
       under transform 2).
     - *Scope note.* This subsumes the formatter's `is_structured` family and the
       `is_unsafe_line_start` guard; it does **not** require a separate Markdown
-      renderer — arity still only needs the structure to decide reflow boundaries
+      renderer—arity still only needs the structure to decide reflow boundaries
       and embedded-R extents, not to emit HTML.
-    - *Primary driver — projector parity (Phase 1 skeleton landed).* This is
+    - *Primary driver—projector parity (Phase 1 skeleton landed).* This is
       **parser work**: the gate compares the *CST's structure* to roxygen2, so it
       forces the structure into the parser rather than rewarding formatter
       heuristics. `src/roxygen/project_rd.rs` projects the CST to the parser-owned
-      Rd **section subtrees** (excluding roclet-*generated* scaffolding —
-      `\name`/`\alias`/`\usage`/the `\arguments` wrapper); `tests/roxygen_projector.rs`
-      diffs that against pinned roxygen2 section trees — **pure Rust, no R, runs in
+      Rd **section subtrees** (excluding roclet-*generated*
+      scaffolding—`\name`/`\alias`/`\usage`/the `\arguments` wrapper);
+      `tests/roxygen_projector.rs`
+      diffs that against pinned roxygen2 section trees—**pure Rust, no R, runs in
       plain `cargo test`**, allowlist-gated (`roxygen-projector-allowlist.txt`). Two
       pin sources: the curated dir corpus (`<stem>.rdtree`) and the **harvested
-      corpus's projector-eligible subset** (`roxygen-sections.jsonl` — 151/217
+      corpus's projector-eligible subset** (`roxygen-sections.jsonl`—151/217
       single-topic, self-contained blocks; `@inherit`/`@template`/`@eval`/… filtered
       out as resolve-from-elsewhere, kept in the fixed-point net instead). Progress:
-      **133 matching / 28 divergent** of 161 pinned (was 42; `rd_macros`,
+      **133 matching/28 divergent** of 161 pinned (was 42; `rd_macros`,
       `itemize_enumerate`, `describe_format`, `tabular`, `@md` inline + block lists,
       the title-as-description fallback, the `@tag NULL` suppression sentinel,
       `\code`-body RCODE, `\href` per-arg verbatim, `@slot`/`@field` aggregation,
@@ -581,17 +582,17 @@
       then **`@rawRd`** (content injected verbatim as bare top-level Rd nodes, no
       wrapping section macro; also switched the driver's section sort to
       `method = "radix"` so pins are byte-order/locale-independent, matching the
-      Rust projector — the first non-`(\…)`-headed section exposed the gap)
-      — closed). Now **139 matching / 24 divergent** of 163 pinned.
+      Rust projector—the first non-`(\…)`-headed section exposed the gap)—closed).
+      Now **139 matching/24 divergent** of 163 pinned.
       The remaining divergences are the worklist. Run
       `task roxygen-projector`; re-mint with
       `task roxygen-projector-refresh`; re-seed with `task roxygen-projector-seed`.
       Use the `roxygen-parity` skill.
-    - *Coverage net — harvested fixed-point (landed, secondary).* A harvested oracle
+    - *Coverage net—harvested fixed-point (landed, secondary).* A harvested oracle
       corpus (`tests/oracle/corpus/roxygen.jsonl`, 217 standalone blocks mined from
       roxygen2's own tests by `scripts/harvest-roxygen-corpus.R`) measures the fixed
       point `roxygen2(format(x)) == roxygen2(x)` per case, gated opt-in by
-      `tests/oracle/roxygen-allowlist.txt`. Baseline **216 preserving / 0 divergent /
+      `tests/oracle/roxygen-allowlist.txt`. Baseline **216 preserving, 0 divergent,
       1 skipped**. This is a broad *semantic*-preservation net for the formatter, **not**
       the parser-growth driver: it is cosmetic-blind (a reflowed `\describe` renders
       identical Rd, so it passes here) and R-dependent (`#[ignore]`d). Its remaining
@@ -599,7 +600,7 @@
       inline raw HTML `rx-299f50fb`, and block raw HTML `rx-daf9322f`) is now **closed**.
       Run `task roxygen-harvest`; ratchet via
       `task roxygen-harvest-seed`.
-    - *Parser architecture — refactor BEFORE the next markdown push (links/tables/
+    - *Parser architecture—refactor BEFORE the next markdown push (links/tables/
       nested lists).* The roxygen parser is sound but its phase discipline has eroded
       as it grew; `src/parser/roxygen.rs` is now ~1700 lines, the largest file in the
       parser. Do these while it's that size, not after it doubles. Ranked:
@@ -619,7 +620,7 @@
          (`roxygen.rs`: macro-classification tables + `scan_balanced`/`utf8_len`
          + re-exports) and three submodules over the phase boundaries:
          `roxygen/lex.rs` (sub-lexing, text → `Vec<Token>`, + the lexer tests),
-         `roxygen/group.rs` (block grouping / section-paragraph skeleton,
+         `roxygen/group.rs` (block grouping/section-paragraph skeleton,
          `Vec<Token>` → `Vec<Event>`), and `roxygen/build.rs` (the
          `emit_block_*`/`emit_md_list` Rd-macro + markdown structure builder).
          Pure refactor, byte-identical (projector 93/66 + format-stability gates
@@ -628,7 +629,7 @@
          infra. On inspection that "infra" is *not* a richer abstraction to adopt:
          `cursor.rs` is the **same** `fn(tokens, i) -> usize` index-threading idiom
          the builder already uses (no `Cursor` type with `bump`/`peek`), and
-         `recovery.rs` builds `ERROR` nodes for malformed **R expressions** — a
+         `recovery.rs` builds `ERROR` nodes for malformed **R expressions**—a
          model roxygen **deliberately rejects** (greedy + lossless, no close
          delimiter, no ERROR nodes; Tenets 3/4). The only honest reuse is 3–4
          *lookahead-only* whitespace skips → `cursor::skip_ws` (the builder's other
@@ -646,7 +647,7 @@
          if-it-closes). Correct but intricate; a *fourth* form is the signal to reconsider
          the lex-time greediness.
       - *Lower-stakes, documented known-gaps (revisit only if forced).* Roxygen is
-        non-incremental — edits fall back to block/full reparse (`reparse.rs`; Tenet 2
+        non-incremental—edits fall back to block/full reparse (`reparse.rs`; Tenet 2
         gap, but doc comments are statement-level so a full reparse is cheap), and
         roxygen owns ~⅓ of all `SyntaxKind`s (69/213); the markdown roadmap will keep
         inflating both. The projector being `pub` only to reach a test crate is an
@@ -658,7 +659,7 @@ Closest precedent: **jarl** (`etiennebacher/jarl`, Rust + rowan + air-parser,
 55+ rules, suppression directives, LSP, autofix). The foundation pass borrows
 shape (diagnostic + `Violation` trait, `PackageOrigin` enum, `# arity-ignore`
 suppression directive style, annotate-snippets rendering) but stays its own
-project --- arity is a unified formatter + linter + LSP binary on arity's own
+project—arity is a unified formatter + linter + LSP binary on arity's own
 in-tree parser, not a drop-in jarl replacement.
 
 ### Rule roadmap
@@ -674,17 +675,17 @@ Cost model driving the order: a rule is **cheap** (`syn`) when it only needs the
 CST + AST + literal inspection; **medium** (`ns`) when it must confirm a callee
 resolves to base R (not a user redefinition) via `SymbolProvider`; **expensive**
 (`sem`) when it needs the `SemanticModel` (scopes/flow). Anything needing R
-evaluation or type inference is **out of scope** --- arity stays static. Pure
+evaluation or type inference is **out of scope**—arity stays static. Pure
 layout (quotes, leading zero, spacing) is the **formatter's** job (Tenet 1), not
 the linter's.
 
 **Category directories.** Keep `correctness/` and `suspicious/`; add
 `readability/`, `performance/`, `meta/` (suppression-directive rules), and
-`pkg/dplyr/` + `pkg/testthat/`. No `style/` dir --- pure layout is the
+`pkg/dplyr/` + `pkg/testthat/`. No `style/` dir—pure layout is the
 formatter's. Public rule IDs stay flat kebab-case (category is a directory
 concern, as `all_rule_ids()` already is).
 
-#### Phase 0 --- Infrastructure (unblocks everything)
+#### Phase 0—Infrastructure (unblocks everything)
 
 - [x] **§I0 Single-walk dispatch** (landed). Rules declare interest via
       `Rule::interests() -> &[SyntaxKind]` and receive `Rule::check(element, ctx,
@@ -702,7 +703,7 @@ concern, as `all_rule_ids()` already is).
       T/F), plus `element_text` and an `is_atom` precedence guard for negating
       rewrites. Reduced each syntactic rule to ~30 lines.
 - [x] **§I3 Namespace-confirmation helper** (landed): `RuleContext::resolves_to_base`
-      confirms a bare call invokes base R --- simple-name callee that is a base
+      confirms a bare call invokes base R—simple-name callee that is a base
       export (`symbols.is_base`), not namespace-qualified (`pkg::f`), not shadowed
       by a local binding (`model.resolve_local` over the callee read), and not
       masked by an attached package (effective `symbols.origin(...)` is a default
@@ -715,20 +716,20 @@ concern, as `all_rule_ids()` already is).
       the sole list; `ALL_RULE_IDS` is replaced by `all_rule_ids()`, which
       derives the valid-ID set from `all_rules()` so the two can't drift.
 
-#### Phase 1 --- High-signal, purely syntactic, safe fixes (`syn`)
+#### Phase 1—High-signal, purely syntactic, safe fixes (`syn`)
 
 Match a call/operator shape with deterministic fixes. Match bare names for now;
 harden against shadowing in Phase 4.
 
-- [ ] `browser` (suspicious, safe-delete) --- leftover debug call.
-- [x] `equals-na` `x == NA` -> `is.na(x)` (correctness, safe; landed --- `==`
+- [ ] `browser` (suspicious, safe-delete)—leftover debug call.
+- [x] `equals-na` `x == NA` -> `is.na(x)` (correctness, safe; landed—`==`
       form only). Still open: `equals-nan` -> `is.nan` (safe); `equals-null`
-      (correctness, none/unsafe --- `== NULL` rewrite is less mechanical).
+      (correctness, none/unsafe—`== NULL` rewrite is less mechanical).
 - [ ] `empty-assignment` (correctness, none).
-- [x] `duplicated-arguments` `f(a = 1, a = 2)` (correctness, none; landed) ---
-      mirrors `duplicate-formal`. Warning (not error): `c(a = 1, a = 2)` is legal.
+- [x] `duplicated-arguments` `f(a = 1, a = 2)` (correctness, none; landed)—mirrors
+      `duplicate-formal`. Warning (not error): `c(a = 1, a = 2)` is legal.
 - [x] `redundant-equals` `x == TRUE` -> `x`, `x == FALSE` -> `!x` (suspicious,
-      safe; landed --- `!`-rewrite withheld for non-atom operands via `is_atom`).
+      safe; landed—`!`-rewrite withheld for non-atom operands via `is_atom`).
 - [x] `redundant-ifelse` `ifelse(c, TRUE, FALSE)` -> `c`,
       `ifelse(c, FALSE, TRUE)` -> `!c` (suspicious, safe; landed).
 - [x] `true-false-symbol` `T`/`F` -> `TRUE`/`FALSE` (readability, safe; landed).
@@ -743,8 +744,8 @@ harden against shadowing in Phase 4.
       `true-false-symbol`); the fix replaces the `while (TRUE)` header with
       `repeat` and is withheld when the clause carries a comment.
 - [x] `vector-logic` `&`/`|` -> `&&`/`||` in `if`/`while` condition
-      (correctness, safe; landed). Flags only operators in conditional context
-      --- the walk descends from the condition through parens, `!`, and
+      (correctness, safe; landed). Flags only operators in conditional context—the
+      walk descends from the condition through parens, `!`, and
       `&&`/`||`/`&`/`|`, but stops at a function call (`if (any(a | b))` is left
       alone). The fix doubles the operator token, a tight format-clean edit.
 - [x] `comparison-negation` `!(a == b)` -> `a != b` (readability, safe; landed).
@@ -759,16 +760,16 @@ harden against shadowing in Phase 4.
       (pull negation out). Fires only when every positional arg is `!`-negated
       (`na.rm` preserved). The rewrite drops a primary to a `!`-expr, so the fix
       is withheld in parent contexts that bind tighter than `!` (`is_safe_context`).
-- [ ] `implicit-assignment` (suspicious, none) --- scope to avoid overlap with
+- [ ] `implicit-assignment` (suspicious, none)—scope to avoid overlap with
       existing `assignment-in-condition`.
 
-#### Phase 2 --- Call-rewrite idioms, namespace-confirmed (`ns`)
+#### Phase 2—Call-rewrite idioms, namespace-confirmed (`ns`)
 
 - [ ] **§I2 regex/string-literal helper** first: read a `STRING` token's
-      unquoted contents; classify regex metachars / single anchor (`^`/`$`).
+      unquoted contents; classify regex metachars/single anchor (`^`/`$`).
       Blocks `string-boundary`, `fixed-regex`.
-- [x] `any-is-na` `any(is.na(x))` -> `anyNA(x)` (performance, safe; landed) ---
-      flagship. First rule in the new `performance/` category. Fires only on the
+- [x] `any-is-na` `any(is.na(x))` -> `anyNA(x)` (performance, safe; landed)—flagship.
+      First rule in the new `performance/` category. Fires only on the
       clean shape (`any` with one positional arg that is `is.na` with one
       positional arg), namespace-confirmed via `resolves_to_base` on *both*
       callees (a local/qualified/masked redefinition of either is left alone),
@@ -788,47 +789,47 @@ harden against shadowing in Phase 4.
 - [ ] `lengths` `sapply(x, length)` -> `lengths(x)` (performance, safe).
 - [ ] `nzchar` `nchar(x) > 0` -> `nzchar(x)` (performance, safe).
 - [ ] `seq`/`seq2` `1:length(x)` -> `seq_along`, `1:n` -> `seq_len`
-      (performance, safe) --- off-by-one safety, high value.
+      (performance, safe)—off-by-one safety, high value.
 - [ ] `is-numeric` (correctness, safe); `class-equals` `class(x) == ...` ->
-      `inherits` (performance, unsafe --- `class()` is a vector).
+      `inherits` (performance, unsafe—`class()` is a vector).
 - [ ] `string-boundary` `grepl("^a", x)` -> `startsWith` (readability, safe when
       fixed literal + single anchor); `fixed-regex` add `fixed = TRUE`
       (performance, safe).
 - [ ] `sort` `sort(x)[1]` -> `min`, etc. (performance, unsafe).
 - [ ] `internal-function` `pkg:::fn` via
-      `BinaryExpr::namespace_access().internal` (correctness, none) --- cheap.
+      `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.
 
-#### Phase 3 --- SemanticModel rules + config plumbing
+#### Phase 3—SemanticModel rules + config plumbing
 
 - [ ] **§I4 per-rule config**: add a `[lint.rules.<id>]` TOML table + typed
       per-rule struct in `src/config.rs`, threaded into rules via a
       `config`/`&RuleConfig` field on `RuleContext`. **Blocks**
       `undesirable-function`, `download-file`.
 - [x] `unreachable-code` after `return()`/`stop()` (correctness, ns,
-      unsafe-delete; landed) --- flags statements following an unconditional
+      unsafe-delete; landed)—flags statements following an unconditional
       base-R `return()`/`stop()` that is a direct block statement (`return`
       gated on an enclosing function); namespace-confirmed, fix withheld when it
       would drop a comment. Both-branches-return (needs CFG) is out of scope.
-- [ ] `if-always-true` literal `if (TRUE/FALSE)` only --- no const-folding
+- [ ] `if-always-true` literal `if (TRUE/FALSE)` only—no const-folding
       (correctness, unsafe).
-- [ ] `unused-function` (suspicious, sem, none) --- reuse
+- [ ] `unused-function` (suspicious, sem, none)—reuse
       `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
 - [ ] `duplicated-function-definition` (suspicious, sem, none).
 - [ ] `for-loop-index`/`for-loop-dup-index` (suspicious, sem, none).
-- [ ] `unnecessary-nesting` collapsible nested `if` / single-stmt block
+- [ ] `unnecessary-nesting` collapsible nested `if`/single-stmt block
       (readability, sem, unsafe).
-- [ ] `coalesce` `if (is.null(x)) y else x` (performance, sem, unsafe) --- may
+- [ ] `coalesce` `if (is.null(x)) y else x` (performance, sem, unsafe)—may
       want §I5 multi-edit fix.
-- [ ] `undesirable-function` (suspicious, ns + config, none) --- needs §I4;
-      **default-off**. `download-file` (correctness, ns, none) --- low priority.
+- [ ] `undesirable-function` (suspicious, ns + config, none)—needs §I4;
+      **default-off**. `download-file` (correctness, ns, none)—low priority.
 
-#### Phase 4 --- Meta (suppression) rules + hardening
+#### Phase 4—Meta (suppression) rules + hardening
 
 - [ ] **§I6 suppression refactor**: have `SuppressionMap` expose the parsed
       directive list (rule, range, has-reason, raw) and surface it on
       `RuleContext` (`suppressions`). `outdated-suppression` also needs the
       driver (`check.rs`/`run_rules`) to record which suppressions actually
-      matched a diagnostic --- a post-pass, not a per-rule concern.
+      matched a diagnostic—a post-pass, not a per-rule concern.
 - [ ] `misnamed-suppression` (vs `ALL_RULE_IDS`, safe), `blanket-suppression`
       (none), `unexplained-suppression` (none, **default-off**),
       `outdated-suppression` (safe-delete). These subsume the reserved
@@ -838,7 +839,7 @@ harden against shadowing in Phase 4.
       rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
       user-redefined. (`true-false-symbol` already shipped shadow-checked.)
 
-#### Phase 5 --- Package-aware rules
+#### Phase 5—Package-aware rules
 
 Gated on the package being attached (`model.loaded_packages()`).
 
@@ -847,20 +848,20 @@ Gated on the package being attached (`model.loaded_packages()`).
       `expect-type`, `expect-s3-class`, `expect-match`/`expect-no-match` (all ns,
       safe). High value for test-heavy repos.
 - [ ] `pkg/dplyr/`: `dplyr-filter-out` `filter(!(x %in% y))` (ns, safe). Defer
-      `dplyr-group-by-ungroup` --- needs **§I8 pipe-chain abstraction**
+      `dplyr-group-by-ungroup`—needs **§I8 pipe-chain abstraction**
       (`%>%`/`|>` stage walk) that doesn't exist yet.
 
 #### Out of scope (recorded so they aren't silently dropped)
 
 - **Formatter's domain (Tenet 1):** `quotes`, `numeric_leading_zero`, spacing,
-  indentation, semicolons, trailing whitespace --- excluded from the linter.
-- **Needs R evaluation / type inference (arity is static):** `all_equal`,
+  indentation, semicolons, trailing whitespace—excluded from the linter.
+- **Needs R evaluation/type inference (arity is static):** `all_equal`,
   `length_levels`, `length_test`, `matrix_apply`, `list2df`, `which_grepl`,
   `grepv`, `sample_int`, `system_file`, `sprintf` arg-checking, full `coalesce`,
   const-folded `if_always_true`. Implement only an exact-AST-shape subset where
   one exists, else defer.
 - **Too noisy without opt-in:** `undesirable-function`, `unused-function`,
-  `unexplained-suppression` --- all **default-off**.
+  `unexplained-suppression`—all **default-off**.
 
 #### `RuleContext`/`Rule` extensions implied above
 
@@ -881,13 +882,13 @@ it is closer than it looks: the per-file `SemanticModel` (`src/semantic.rs`:
 scope tree, bindings, identifier *read* sites, `loaded_packages`,
 `referenced_packages`) plus the salsa queries (`semantic_model`, `file_exports`,
 `file_free_reads`, `source_edges`) and the harvested package index
-(`src/rindex/`) already supply most of the analysis these features need --- the
+(`src/rindex/`) already supply most of the analysis these features need—the
 work is mostly wiring resolution results to LSP responses, not new analysis.
 Roughly ordered by leverage-to-effort:
 
 ### Prerequisites & blockers
 
-There are **no hard architectural blockers** --- the parser and salsa model are
+There are **no hard architectural blockers**—the parser and salsa model are
 already shaped for this. A grounded audit (2026-06-11) found the load-bearing
 infrastructure present and reusable:
 
@@ -901,7 +902,7 @@ infrastructure present and reusable:
 - **The read-snapshot path is present.** The lint thread owns the persistent
   db; read requests get a cheap `Analysis` snapshot (`src/incremental.rs`
   `snapshot`, dispatched in `src/lsp.rs`). New read-only features drop into the
-  same path --- no new threading. (Caveat: any feature that *caches* a location
+  same path—no new threading. (Caveat: any feature that *caches* a location
   must validate against the current version, as `hover_via_db` already does
   with its `file_text != text` check, because def `TextRange`s shift on edit.)
 - **Project-level aggregation already exists in principle:** an interned
@@ -909,7 +910,7 @@ infrastructure present and reusable:
   `file_exports`/`file_free_reads`/`source_edges` across members
   (`src/project/graph.rs`).
 
-Two genuine gaps gated the **cross-file** half of the list (both soft --- new
+Two genuine gaps gated the **cross-file** half of the list (both soft—new
 infra that builds *with* the grain, not architectural fights). The first has
 landed; the second is still open but only matters for cross-edit-stable handles:
 
@@ -917,13 +918,13 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   `reverse_source_edges(db, project)` (`src/project/graph.rs`) is the
   who-sources-me map (`Eq`, backdates), and the file-set is now the explicit
   salsa `Workspace` input (`src/incremental.rs`) from which the interned
-  `Project` is derived by `workspace_project` — no per-request disk walk. See
+  `Project` is derived by `workspace_project`—no per-request disk walk. See
   *Cross-cutting prerequisite* below for the full landed shape.
 
 - [x] **Stable cross-edit node references.** Done, landed with its first
   consumer (intra-file rename). Three pieces: (1) rowan's typed
   same-revision handles `AstPtr`/`SyntaxNodePtr` re-exported from
-  `src/ast.rs`; (2) arity's canonical `NodePtr` (`src/syntax/ptr.rs`) — a
+  `src/ast.rs`; (2) arity's canonical `NodePtr` (`src/syntax/ptr.rs`)—a
   `(kind, range)` handle that owns its construction (rowan's is closed) and
   derives `serde`, so it can be mapped onto a new revision *and* ride an LSP
   `data` field, with a hand-written `try_to_node` via `covering_element`;
@@ -941,21 +942,21 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 - [x] **Go-to-definition** (`textDocument/definition`). Intra-file resolves a
   read site (or the def itself) to its local binding via the shared
   `resolve_local_target` and reports `Binding::def_range`
-  (`compute_definition` / `definition_via_db`). Cross-file resolves a bare
-  top-level name against the workspace `project_defs` index — its first
-  consumer — via the new `Analysis::workspace_def_sites`, recovering each
-  span per file with `def_range_in`. Package-export / namespaced targets have
+  (`compute_definition`/`definition_via_db`). Cross-file resolves a bare
+  top-level name against the workspace `project_defs` index—its first
+  consumer—via the new `Analysis::workspace_def_sites`, recovering each
+  span per file with `def_range_in`. Package-export/namespaced targets have
   no in-tree location, so they return nothing and lean on hover (as planned).
 
-- [x] **Go-to-references / find-all-references** (`textDocument/references`). The
+- [x] **Go-to-references/find-all-references** (`textDocument/references`). The
   inverse of go-to-definition, in the same two phases. Intra-file: the cursor
   resolves to a local binding (shared `resolve_local_target`) and every
   `idents()` read of it is reported via the shared `local_occurrences`
-  (`compute_references` / `references_via_db`), honoring
+  (`compute_references`/`references_via_db`), honoring
   `context.includeDeclaration`. Cross-file: a *file-scope* (top-level) binding
   or a bare free read is matched against the new project-wide `project_reads`
-  aggregate — the read-site mirror of `project_defs`, built over the range-free
-  `file_free_reads` firewall — via `Analysis::workspace_read_sites`, recovering
+  aggregate—the read-site mirror of `project_defs`, built over the range-free
+  `file_free_reads` firewall—via `Analysis::workspace_read_sites`, recovering
   each read span per file with `read_ranges_in`. Nested locals stay intra-file;
   namespaced (`pkg::name`) names have no in-tree reads.
 
@@ -964,14 +965,14 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   (`compute_document_highlights`): the definition as `WRITE`, each read as
   `READ`. Pure (no workspace snapshot), so it runs straight on the read pool.
 
-- [ ] **Go-to-declaration / type-definition / implementation**. Low priority for
+- [ ] **Go-to-declaration/type-definition/implementation**. Low priority for
   R's dynamic semantics; likely alias to definition or omit.
 
 ### Symbols
 
 - [x] **Document symbols** (`textDocument/documentSymbol`). A hierarchical
   `DocumentSymbol` outline of the file's function and variable bindings
-  (`compute_document_symbols` / `on_document_symbol`). The name set is the
+  (`compute_document_symbols`/`on_document_symbol`). The name set is the
   `SemanticModel`'s `Local`/`Implicit` bindings at *every* scope (the
   `file_exports` predicate lifted past file scope; params and `for`-vars
   excluded); the CST then supplies the tree and each symbol's full/selection
@@ -1018,37 +1019,37 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   `workspace_read_sites`/`workspace_def_sites` →
   `project_defs`/`project_reads`, which are range-free, name-only
   `BTreeMap<name, set<path>>` indices. The visibility model (`ProjectScope`:
-  `sees`/`visible`/`used_by_others`) is *never consulted* on this path --- it
+  `sees`/`visible`/`used_by_others`) is *never consulted* on this path—it
   only backs the undefined-symbol/unused lints. So the workspace is treated
   as one flat global namespace when R's top-level scope is really a set of
   disjoint visibility islands (package members; directional `source()`
   edges). Consequence: renaming a top-level `foo` rewrites *every* `foo` in
-  the workspace, including an unrelated sibling's --- a false positive. The
+  the workspace, including an unrelated sibling's—a false positive. The
   fix is one provenance-aware resolution primitive both handlers consume; in
   R there's no module system, so cross-file binding identity genuinely *is*
-  "the name, within a visibility-connected component" --- the current code
+  "the name, within a visibility-connected component"—the current code
   keys on name over the wrong (global) scope. Rename carries two soundness
   duties at once (never rewrite an unrelated binding; never miss a read of
   the renamed one), so when the static model is uncertain it must
   refuse-or-warn, not guess. Stage it:
 
-  - [x] **Phase A --- component partitioning (no ordering).** Landed.
+  - [x] **Phase A—component partitioning (no ordering).** Landed.
     `ProjectScope` now retains `sees` (the reachability relation) and a
     `package_siblings` map, exposed via `sees`/`seen_by`/`package_siblings`
     accessors (`src/project/scope.rs`), all span-free. `Analysis::cross_file_binding`
     (`src/incremental.rs`) resolves a `(def_file, name)` to its `cohort` (def_file
-    + package siblings that also define it --- the flat-namespace aliases; a
+    + package siblings that also define it—the flat-namespace aliases; a
     `source()`-connected redefinition is a *shadow*, not an alias, so it stays
     out), `readers` (files that can see def_file, free-read the name, and don't
     shadow it), a `conflict` flag (≥2 defs in the component), and a
     `project_has_dynamic_source` flag. `rename_via_db`/`references_via_db`
-    (`src/lsp.rs`) consume it through `cross_file_rename_edits` /
+    (`src/lsp.rs`) consume it through `cross_file_rename_edits` and
     `cross_file_reference_locations`; a bare free read resolves via
     `Analysis::visible_def_files`. Rename **refuses** (returns `None`) on
     conflict, on any project dynamic source (chosen project-wide for soundness),
     or on a bare read that resolves to ≠1 visible def; references is
     non-destructive so it **over-reports** the cohort instead. Computed
-    on-demand off the read snapshot --- no new tracked query, so backdating is
+    on-demand off the read snapshot—no new tracked query, so backdating is
     untouched. This killed the cross-component false positive.
 
     - [x] *Follow-up: the dynamic-source refusal was project-wide and blunt.*
@@ -1057,22 +1058,22 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       `src/incremental.rs`). A dynamic `source()` in file `d` injects a hidden
       `d -> ?` edge; the files it could affect are `d`'s blast radius
       `{d} ∪ seen_by(d)`. The rename refuses only when a *free-reader of the
-      renamed name* falls in that radius --- otherwise the dynamic source can
+      renamed name* falls in that radius—otherwise the dynamic source can
       neither hide a read nor divert one, so it is irrelevant and no longer
       blocks. Reuses Phase A's `seen_by` reachability and the `project_reads`
       reader index off the snapshot; no new infra. Reads-only is sufficient
       (a definer with no in-reach reader changes nothing observable).
 
-  - [x] **Phase B --- load-order resolution.** Landed, both ordering axes.
+  - [x] **Phase B—load-order resolution.** Landed, both ordering axes.
     *Package collation order*: a workspace package is one flat namespace built
     before any function runs, so multiple sibling defs of a name are aliases of
-    one slot --- a sound **rename-all**, not the blanket `conflict` refusal Phase
+    one slot—a sound **rename-all**, not the blanket `conflict` refusal Phase
     A used. `CrossFileBinding` now splits that into `cohort_incomplete`: a
     multi-def cohort refuses only when the package's analyzed member set doesn't
     cover its `R/*.[RrSsQq]` sources (`expected = dir glob ∪ Collate:`, computed
     by `read_collations` and frozen into the interned `Project.collations`, so it
     stays pure and backdates; `parse_dcf` lifted from `rindex::harvest`). Only the
-    *set* of collated files is needed --- order never changes which reads resolve
+    *set* of collated files is needed—order never changes which reads resolve
     where. *`source()` position*: a new range-free, order-bearing per-file
     firewall `top_level_events` (`Define`/`SourceEdge`/`Read`, order = `Vec`
     position, span-free so it backdates across body edits like `source_edges`;
@@ -1085,7 +1086,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
     References over-reports as before. Give-ups: `local=TRUE`
     (`Dependency::Skip`), computed paths (`Unresolved`), non-top-level/
     conditional `source()` (only root children scanned), `sys.source()` (mapped
-    to `Dynamic` --- a deliberate tightening from silently ignored), same-name
+    to `Dynamic`—a deliberate tightening from silently ignored), same-name
     across one sourced closure (`OrderUnknown`), and `Collate:`/unanalyzed package
     members (`cohort_incomplete`). Took the on-demand route like Phase A: no new
     *tracked* provenance query; `top_level_read_binding`/`package_complete` are
@@ -1109,17 +1110,17 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       path (all top-level reads bind to the cohort, or none exist) renames every
       free read; otherwise it drops the `Unbound`/bound-elsewhere reads and
       **refuses** (`None`) only on an undecidable `Unknown` read (two static
-      closure definers — the dynamic-source case is still refused project-wide by
+      closure definers—the dynamic-source case is still refused project-wide by
       `dynamic_source_risk`). The old aggregate `order_ambiguous` flag is gone.
       `references` still over-reports. *Known limitation (pre-existing, unchanged):*
       reads inside a `source()` call's own arguments aren't in the sequence, so
-      they aren't position-classified --- the same gap `top_level_read_binding`
+      they aren't position-classified—the same gap `top_level_read_binding`
       already had.
 
     - [x] *Follow-up: body reads bind to the final scope, which may be a shadow,
       not the cohort.* Landed. Function-body reads run at call time against the
-      reader's final post-execution scope, so they all share one binding ---
-      previously assumed to be the cohort and kept by construction. When a reader
+      reader's final post-execution scope, so they all share one binding—previously
+      assumed to be the cohort and kept by construction. When a reader
       sources a cohort def **and then** a later same-name def outside the cohort
       (a `source()`-shadow, e.g. `source("a.R"); source("z.R")` both defining
       `foo`), the final scope binds `foo` to `z.R`, so co-renaming the body read
@@ -1130,44 +1131,44 @@ landed; the second is still open but only matters for cross-edit-stable handles:
       resolves it once per reader: `Bound` to a non-cohort file drops the body
       reads (every free read that isn't a classified top-level read), `Unknown`
       refuses the whole rename (like a top-level `Unknown`), and `Unbound` keeps
-      them --- the package-sibling flat-namespace case, where the def *is* the
+      them—the package-sibling flat-namespace case, where the def *is* the
       cohort and carries no `source()` event. Span-free, so the salsa firewall is
       intact (backdates across body edits). `references` still over-reports
       harmlessly.
 
-  - **Salsa / incrementality (Tenet 2).** Several constraints, all learnable
+  - **Salsa/incrementality (Tenet 2).** Several constraints, all learnable
     from the existing graph layer:
 
     - *Don't break the firewall.* Phase B reintroduces position, which would
       break the range-free firewall that lets `project_defs`/`project_reads`
       backdate across body edits. Keep it by modeling a per-file *top-level
-      sequence* --- an ordered list of `define name`/`source-edge` events that
-      carries order but **not** spans --- so a body edit leaves it unchanged and
+      sequence*—an ordered list of `define name`/`source-edge` events that
+      carries order but **not** spans—so a body edit leaves it unchanged and
       it backdates like today's firewalls; collation order is path-derived and
       already stable.
 
     - *Never depend a tracked query on `project_graph`.* It's `no_eq` (holds
-      non-`Eq` `HashMap`s) so it never backdates when it re-runs --- any export
+      non-`Eq` `HashMap`s) so it never backdates when it re-runs—any export
       change anywhere re-runs the whole graph. Project what you need through a
       thin `Eq` firewall, the way `visible_symbols`/`Visibility` already does.
       The provenance map (name → defining file, order-resolved) is a *new* such
       projection, fed by the top-level sequence. (Phase A took the on-demand
       route: `sees`/`package_siblings` are exposed as `ProjectScope` accessors
       and the handlers read the `no_eq` graph off the read snapshot rather than
-      memoizing --- fine because rename/references aren't tracked queries. If
+      memoizing—fine because rename/references aren't tracked queries. If
       Phase B wants a *tracked* consumer of order-resolved provenance, it must go
       through a thin `Eq` projection instead, the way `visible_symbols` does.)
 
     - *Stays read-only.* Resolution consumes already-aggregated member firewalls
       + the graph, all readable on a snapshot, so rename/references stay on the
-      read pool and need **no** writes --- no change to the single-writer lint
+      read pool and need **no** writes—no change to the single-writer lint
       thread. Precondition: discovery has driven members into the db (it has).
 
     - *Keep source() traversal in one pure query*, cycle-guarded with a
-      `visited` set like `ProjectScope::build` --- not mutually-recursive tracked
+      `visited` set like `ProjectScope::build`—not mutually-recursive tracked
       queries, which would pull in salsa's fixpoint machinery for no gain.
 
-- [x] **File rename** (`workspace/willRenameFiles` / `workspace/didRenameFiles`,
+- [x] **File rename** (`workspace/willRenameFiles`/`workspace/didRenameFiles`,
   advertised via the `fileOperations` server capability for `**/*.{R,r}`). Done:
   `willRenameFiles` returns a `WorkspaceEdit` rewriting `source("old")` literals
   in dependents (`Analysis::source_rename_edits` → `will_rename_via_db`), found
@@ -1191,7 +1192,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 - [x] **Signature help** (`textDocument/signatureHelp`). Inside a call, show the
   callee's formals/usage. The index already carries `formals` and the
-  `\usage` block (same data hover renders) --- the new work is detecting
+  `\usage` block (same data hover renders)—the new work is detecting
   "inside call argument N" from the CST and tracking the active parameter.
   Done in `src/lsp/signature.rs`: resolves the enclosing call's callee via the
   shared hover index path, builds parameters from `formals` (with UTF-16 label
@@ -1218,8 +1219,8 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   `src/lsp/semantic_tokens.rs`. Follow-ups: base-R/loaded-package
   `defaultLibrary` modifier, `range`/delta variants, and `USER_OP` operators.
 
-- [x] **Folding ranges** (`textDocument/foldingRange`). Pure CST walk ---
-  brace blocks, function/parameter and argument lists, parenthesized and
+- [x] **Folding ranges** (`textDocument/foldingRange`). Pure CST walk—brace
+  blocks, function/parameter and argument lists, parenthesized and
   subscript expressions, comment runs. No semantic model needed.
 - [ ] **Selection ranges** (`textDocument/selectionRange`). Pure CST walk:
   incremental scope expansion from the cursor outward through enclosing nodes.
@@ -1235,11 +1236,11 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   callee-position reference sites and groups them by enclosing top-level
   function; outgoing walks the function body's `CALL_EXPR`s, resolving each
   callee intra-file then via `visible_def_files`.
-  - **v1 scope:** items are **top-level (file-scope) functions only** — the
+  - **v1 scope:** items are **top-level (file-scope) functions only**—the
     names the cross-file index keys on; a call inside a nested function is
     attributed to its enclosing top-level function. Edges are strict
     *callee-position* uses `F(...)`, never value uses (`lapply(xs, F)`).
-  - **Known limitations / follow-ups:** nested/local functions are not items
+  - **Known limitations/follow-ups:** nested/local functions are not items
     (so calls *to* a nested function don't appear as outgoing edges, and a
     nested function never appears as a caller/callee item); call sites at script
     top-level (inside no function) are dropped from incoming; ambiguous
@@ -1252,24 +1253,24 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 ### Cross-cutting prerequisite
 
-- [x] **Workspace-wide symbol/reference index.** Done --- all three pieces
+- [x] **Workspace-wide symbol/reference index.** Done—all three pieces
   landed, keyed on the interned `Project`: (1) an explicit, salsa-tracked
   workspace file-set, the singleton `Workspace` input at `Durability::MEDIUM`
   with a conditional setter, from which the interned `Project` is *derived* by
-  the `workspace_project` query (`src/incremental.rs`, `src/project/graph.rs`)
-  --- the CLI and LSP both go through it, and the LSP seeds it from
+  the `workspace_project` query (`src/incremental.rs`, `src/project/graph.rs`)—the
+  CLI and LSP both go through it, and the LSP seeds it from
   `initialize` `workspaceFolders`/`rootUri` plus a lazy per-file backstop
   (`src/lsp.rs`, `seed_workspace_for`); (2) the reverse `source_edges` map
   `reverse_source_edges` (`Eq`, backdates; keeps `local=TRUE` and out-of-set
   targets, unlike the forward scope builder); (3) the name → def-site
-  aggregate --- range-free `file_def_sites`/`DefKind` firewall +
+  aggregate—range-free `file_def_sites`/`DefKind` firewall +
   project-wide `project_defs`, with spans recovered per-request via
   `Analysis::def_range_in` from the fresh `semantic_model`. Backdating proofs
   in `tests/salsa_incremental.rs`. The cross-file *consumers* (workspace
   symbols, references, rename, file rename, call hierarchy) now have no index
-  work left --- they sit on these queries.
+  work left—they sit on these queries.
 
-  - [x] Follow-up (model (b)): `workspace_project` is now **pure** — the
+  - [x] Follow-up (model (b)): `workspace_project` is now **pure**—the
     per-root NAMESPACE texts, expected-source sets, and package-root
     markers live in a new `PackageGraph` salsa input (`src/incremental.rs`),
     populated in the write-phase by `IncrementalDatabase::refresh_package_graph`
@@ -1281,7 +1282,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
     (`workspace_project_is_pure_namespace_not_reread_on_keystroke`). Still
     pairs with the `vfs`/`SourceRoot` follow-up under *Thin `FileId`*.
 
-- [x] Downloadable CRAN sidecar — names-only client (escalation of the bundled
+- [x] Downloadable CRAN sidecar—names-only client (escalation of the bundled
       lists above). A dynamic, disk-cached, version-keyed `RemoteExports` tier
       (`src/rindex/remote.rs`) sits between the harvested index and the bundled
       lists in `resolve_origin`, carried in the salsa `LibraryIndex`'s `remote`
@@ -1298,7 +1299,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
         `pkg → version` manifest, publish gzipped to a CDN (Pages/Releases),
         refresh weekly and additively. arity ships only the client + default URL.
   - [ ] Full-metadata tier (formals + Rd docs) so hover/signature help work for
-        uninstalled packages — a richer payload reusing the same fetch path.
+        uninstalled packages—a richer payload reusing the same fetch path.
   - [ ] Bulk/CI prefetch path (download-once snapshot, no per-file network).
   - [ ] Pin-aware versions: resolve the project's actual version from
         renv.lock/DESCRIPTION (needs CRAN Archive coverage); the URL/disk schema
@@ -1307,27 +1308,27 @@ landed; the second is still open but only matters for cross-edit-stable handles:
         and resolved sets so the `resolution_incomplete` poison
         (`src/project/scope.rs`) clears once the sidecar can enumerate exports.
 
-- [x] Data-masking / tidy-eval suppression (landed). A bare name in a
+- [x] Data-masking/tidy-eval suppression (landed). A bare name in a
   data-masking verb's arguments (`mutate(b = a + 1)`) resolves to a data-frame
   *column*, not a binding or export, so flagging it is a false positive. The
   builder (`src/semantic/builder.rs`) tracks a `mask_depth`: a call whose callee
-  is in `is_data_masking_callee` (`src/semantic/symbols.rs` — base `with`/
+  is in `is_data_masking_callee` (`src/semantic/symbols.rs`—base `with`/
   `within`/`subset`/`transform`, the dplyr verbs, tidyr/tidyselect, ggplot2
   `aes`) walks its callee unmasked (so a typo'd verb is still flagged) but its
   argument list with `mask_depth` bumped; reads recorded there carry
   `IdentRef::data_masked`, which both `undefined-symbol` paths skip. The read is
   still recorded so an enclosing binding used only inside a masked expression
   isn't mis-flagged unused. Match is name-only and over-masks conservatively
-  (the whole arg subtree, nested calls included) — over-matching only ever
+  (the whole arg subtree, nested calls included)—over-matching only ever
   suppresses, the safe direction for a false-positive-only rule.
   - [ ] Follow-ups: data.table's `dt[i, j, by]` masking is `[`-shaped, not a
     call, so it's unhandled. Masking is not package-gated (a user's own
     non-NSE `filter`/`transform` under-flags its args); gate on the verb's
     package actually being attached if that proves too coarse. Mask carries
     into inline `function(...)` bodies inside a masked arg (lexically those
-    aren't masked) — deliberately conservative for now.
+    aren't masked)—deliberately conservative for now.
 
-- [x] Meta-package attachment (Option A — static table, landed). A meta-package
+- [x] Meta-package attachment (Option A—static table, landed). A meta-package
   like `tidyverse` attaches a fixed set of core packages (dplyr, ggplot2,
   tibble, …) via its `.onAttach` hook; those names are *not* in the
   meta-package's own export list, so `library(tidyverse); tibble(...)` used to
@@ -1340,7 +1341,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   against the bundled/remote/harvested tiers as usual (all nine tidyverse core
   packages are already bundled). The set is `.onAttach`-driven, *not* `Depends`,
   so it genuinely needs the curated table.
-  - [ ] Follow-up (Option B — harvest-time attach capture). The static table is
+  - [ ] Follow-up (Option B—harvest-time attach capture). The static table is
     correct but hand-maintained and offline-only. When a package is actually
     installed/harvested, detect what it attaches (diff `search()` across a clean
     `library()` call) and record `attaches: Vec<SmolStr>` in `PackageIndex`
@@ -1350,7 +1351,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
     tidyverse (tidymodels, fastverse, …) without growing the curated list.
 
 - [ ] Follow-up: prune packages that vanish from CRAN out of the bundled set.
-  The refresh is now **additive** --- `scripts/rank_cran_downloads.sh` unions
+  The refresh is now **additive**—`scripts/rank_cran_downloads.sh` unions
   each run's top-N (30-day window) into `scripts/cran_top_packages.txt` and
   never drops by ranking, and `scripts/dump_cran_symbols.R` preserves a
   member's last-known exports when it can't be installed this run. So an
@@ -1367,13 +1368,13 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   dedups equivalent path spellings to one input, so cwd/path-form no longer
   leaks into salsa keys. `file_path` is now `Option<&Path>`; `source_edges`
   reads the optional path as before. The `uuid` dependency is gone. Scoping
-  is unchanged --- multi-root layouts (package + scripts) are governed by
+  is unchanged—multi-root layouts (package + scripts) are governed by
   `package_root`/`ProjectScope`, not the file key. See
   `ARCHITECTURE_AUDIT.md` §3.3.
 
-  - [ ] Follow-up: full `vfs`/`SourceRoot` model ---
-    opaque-`FileId`-at-the-URI boundary in `src/lsp.rs` and
-    `SourceRoot`-scoped durability --- when multi-root workspaces
+  - [ ] Follow-up: full `vfs`/`SourceRoot` model—opaque-`FileId`-at-the-URI
+    boundary in `src/lsp.rs` and
+    `SourceRoot`-scoped durability—when multi-root workspaces
     actually need it. Lower leverage for a single-crate tool (the wart
     is already gone).
 
@@ -1385,7 +1386,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 
 - [ ] **Harvest lazy-data symbols.** The index now covers R's default packages
   (so hover/signatures work for base-R functions), but `harvest_package`
-  only reads `NAMESPACE`/object exports --- it skips a package's lazy-data
+  only reads `NAMESPACE`/object exports—it skips a package's lazy-data
   (`.getNamespaceInfo(ns, "lazydata")`). So `datasets` harvests 0 symbols and
   hovering a dataset (e.g. `iris`) resolves the package but finds no entry.
   The static name lists already include lazydata; the harvest does not.

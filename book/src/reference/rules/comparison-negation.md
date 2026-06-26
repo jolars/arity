@@ -1,6 +1,6 @@
 # `comparison-negation`
 
-Flag a negated comparison — `!(a == b)`, `!x < y` — which reads more clearly as the opposite comparison (`a != b`, `x >= y`).
+Flag a negated comparison—`!(a == b)`, `!x < y`—which reads more clearly as the opposite comparison (`a != b`, `x >= y`).
 
 The fix is withheld when a comment in the operand would otherwise be lost.
 

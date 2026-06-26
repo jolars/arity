@@ -10,11 +10,11 @@ language, built in Rust on a lossless, incremental parser. It provides a fast,
 deterministic development experience that integrates with popular code editors
 and IDEs.
 
-- **Formatter** --- deterministic, rule-based formatting toward the tidyverse
+- **Formatter**---deterministic, rule-based formatting toward the tidyverse
   style guide, with idempotent output and roxygen support.
-- **Linter** --- a growing set of correctness, readability, and performance
-  rules, many with safe autofixes.
-- **Language server** --- formatting, diagnostics with quick fixes, hover,
+- **Linter**---a growing set of correctness, readability, and performance rules,
+  many with safe autofixes.
+- **Language server**---formatting, diagnostics with quick fixes, hover,
   completion, signature help, go-to-definition and references, rename, document
   and workspace symbols, semantic tokens, folding, and call hierarchy.
 
@@ -24,12 +24,12 @@ Runs on Linux, macOS, and Windows (x86_64 and arm64).
 
 Arity is available from several sources:
 
-- **crates.io** --- `cargo install arity`
-- **npm** --- `npm install -g arity-cli` (bundles a prebuilt binary)
-- **PyPI** --- `uv tool install arity` / `pipx install arity`
-- **Prebuilt binaries** --- from the [releases
+- **crates.io**---`cargo install arity`
+- **npm**---`npm install -g arity-cli` (bundles a prebuilt binary)
+- **PyPI**---`uv tool install arity`/`pipx install arity`
+- **Prebuilt binaries**---from the [releases
   page](https://github.com/jolars/arity/releases)
-- **VS Code / Open VSX** --- the **Arity** extension (also works in Positron)
+- **VS Code/Open VSX**---the **Arity** extension (also works in Positron)
 
 ### From npm
 
@@ -44,7 +44,7 @@ npm install -g arity-cli
 ```
 
 The package detects your platform at install time and pulls in a prebuilt binary
-via npm's optional dependencies --- no Rust toolchain required.
+via npm's optional dependencies---no Rust toolchain required.
 
 ### From crates.io
 
@@ -85,7 +85,7 @@ diagnostics with quick fixes, hover, completion, signature help,
 go-to-definition and references, rename, document and workspace symbols,
 semantic tokens, folding, and call hierarchy.
 
-The **Arity** extension for VS Code / Open VSX (and Positron) bundles the binary
+The **Arity** extension for VS Code/Open VSX (and Positron) bundles the binary
 and starts the server automatically. For Neovim, Helix, and other editors, see
 the [editor setup guide](https://arity.cc/guide/editors.html).
 

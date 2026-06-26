@@ -44,7 +44,7 @@ impl Rule for AnyDuplicated {
 
     fn description(&self) -> &'static str {
         "Flag `any(duplicated(x))`, which is the purpose-built `anyDuplicated(x) \
-         > 0` — faster (it short-circuits and builds no intermediate logical \
+         > 0`—faster (it short-circuits and builds no intermediate logical \
          vector) and clearer.\n\nThe rule fires only on the clean \
          single-argument shape and only when both `any` and `duplicated` resolve \
          to base R; a local redefinition of either is left alone. Because the \

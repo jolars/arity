@@ -1,6 +1,6 @@
 # `any-is-na`
 
-Flag `any(is.na(x))`, which is the purpose-built `anyNA(x)` — faster (it short-circuits and builds no intermediate logical vector) and clearer.
+Flag `any(is.na(x))`, which is the purpose-built `anyNA(x)`—faster (it short-circuits and builds no intermediate logical vector) and clearer.
 
 The rule fires only on the clean single-argument shape and only when both `any` and `is.na` resolve to base R; a local redefinition of either is left alone.
 

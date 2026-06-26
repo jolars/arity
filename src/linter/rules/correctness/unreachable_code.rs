@@ -47,7 +47,7 @@ impl Rule for UnreachableCode {
 
     fn description(&self) -> &'static str {
         "Flag statements that follow an unconditional `return()` or `stop()` in a \
-         block — once either runs, nothing after it in the same block can be \
+         block—once either runs, nothing after it in the same block can be \
          reached, so the trailing code is dead.\n\nThe rule fires only when the \
          terminator is a direct statement of the block (a `return()`/`stop()` \
          guarded by an `if` leaves the tail reachable) and only when the callee \

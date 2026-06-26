@@ -6,11 +6,11 @@ changes), so the comparison is free of file-mutation and exit-code noise.
 
 **This is not a CI gate and not an air-parity target.** Timings are machine- and
 run-dependent; this file measures speed only, never output equivalence (see
-`AIR_COMPAT.md` / `task air-compat` for that). Regenerate with `task bench`.
+`AIR_COMPAT.md`/`task air-compat` for that). Regenerate with `task bench`.
 
 air is tree-sitter-based; arity uses a different model (rowan CST + event
 pipeline, with incremental reparse as a first-class concern), so matching air's
-raw throughput is not a goal. The bar is staying **largely on par** --- not
+raw throughput is not a goal. The bar is staying **largely on par**—not
 winning.
 
 [hyperfine]: https://github.com/sharkdp/hyperfine

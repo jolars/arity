@@ -36,7 +36,7 @@ impl Rule for OuterNegation {
     }
 
     fn description(&self) -> &'static str {
-        "Flag `any(!x)` / `all(!x)`, which by De Morgan's law read more clearly \
+        "Flag `any(!x)`/`all(!x)`, which by De Morgan's law read more clearly \
          with the negation pulled outside: `!all(x)` and `!any(x)`.\n\nThe rule \
          fires only when *every* positional argument is negated (a `na.rm` \
          argument is allowed and preserved). The fix is withheld when the call \

@@ -36,7 +36,7 @@ impl Rule for AnyIsNa {
     }
 
     fn description(&self) -> &'static str {
-        "Flag `any(is.na(x))`, which is the purpose-built `anyNA(x)` — faster \
+        "Flag `any(is.na(x))`, which is the purpose-built `anyNA(x)`—faster \
          (it short-circuits and builds no intermediate logical vector) and \
          clearer.\n\nThe rule fires only on the clean single-argument shape and \
          only when both `any` and `is.na` resolve to base R; a local \

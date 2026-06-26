@@ -139,7 +139,7 @@ pub(crate) struct LintWorker {
     done_tx: Sender<AnalyzeDone>,
     /// The single in-flight read-phase analyze, if any. At most one runs at a
     /// time: the write-phase needs exclusive `&mut db`, and salsa cancellation is
-    /// global, so a second concurrent analyze couldn't be cancelled selectively.
+    /// global, so a second concurrent analyze couldn't be canceled selectively.
     inflight: Option<InflightAnalyze>,
     /// Coalesced lint queue: the latest pending request per URI. Persists across
     /// `select!` iterations (it used to be a per-iteration local).
@@ -361,7 +361,7 @@ impl LintWorker {
         self.maybe_fetch_remote(&anchor, &req.index_config, &req.text);
 
         // Read-phase on the read pool, holding a db clone. A superseding edit (or any
-        // write) trips `salsa::Cancelled`, caught here so a cancelled analyze
+        // write) trips `salsa::Cancelled`, caught here so a canceled analyze
         // publishes nothing; the main loop's version gate is the backstop.
         let snapshot = self.db.snapshot();
         let out_tx = self.out_tx.clone();

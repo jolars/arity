@@ -40,7 +40,7 @@ impl Rule for VectorLogic {
          single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 \
          condition is an error since R 4.2), and `&&`/`||` short-circuit. The \
          fix doubles the operator. Operators inside a function call \
-         (`if (any(a | b))`) are left alone — a vector result is the point \
+         (`if (any(a | b))`) are left alone—a vector result is the point \
          there."
     }
 

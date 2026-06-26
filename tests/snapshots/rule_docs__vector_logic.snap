@@ -6,7 +6,7 @@ expression: render_rule_doc(rule.as_ref())
 
 Flag the vectorized `&`/`|` used directly in an `if`/`while` condition, where the scalar `&&`/`||` is meant.
 
-A condition needs a single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 condition is an error since R 4.2), and `&&`/`||` short-circuit. The fix doubles the operator. Operators inside a function call (`if (any(a | b))`) are left alone — a vector result is the point there.
+A condition needs a single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 condition is an error since R 4.2), and `&&`/`||` short-circuit. The fix doubles the operator. Operators inside a function call (`if (any(a | b))`) are left alone—a vector result is the point there.
 
 Vectorized `&` in an `if` condition:
 

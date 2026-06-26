@@ -2,7 +2,7 @@
 
 Flag `while (TRUE)`, an unconditional loop better written as `repeat`.
 
-`repeat` states the intent — loop until a `break`/`return` — without the dummy `TRUE` condition. Only the reserved literal `TRUE` is matched; the rebindable `T` is left to `true-false-symbol`.
+`repeat` states the intent—loop until a `break`/`return`—without the dummy `TRUE` condition. Only the reserved literal `TRUE` is matched; the rebindable `T` is left to `true-false-symbol`.
 
 An unconditional `while` loop:
 

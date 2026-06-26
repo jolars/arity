@@ -22,8 +22,8 @@ includes `R`.
 1. **Deterministic, rule-based formatting.** Output is decided solely by the
    formatter's rules and the layout engine. Push back against attempts to
    hard-code special cases or exceptions for specific constructs. Unlike air
-   (arity's closest relative), arity does **not** honor "persistent line breaks"
-   --- the input's existing line breaks never influence the result. Because the
+   (arity's closest relative), arity does **not** honor "persistent line
+   breaks"—the input's existing line breaks never influence the result. Because the
    formatter is the **sole authority on layout**, autofixes are textual edits
    that never invoke it: a fix decides *what* to rewrite, never *how to lay it
    out*. Producing well-formatted output after a fix is a separate format pass's
@@ -41,7 +41,7 @@ includes `R`.
 ## Air compatibility (soft target)
 
 Arity tracks a **soft, one-directional compatibility target** with the `air`
-formatter (a la ruff's "% Black-compatible" number) --- but this is **strictly
+formatter (a la ruff's "% Black-compatible" number)—but this is **strictly
 subordinate to Tenet 1** and is **never a quality gate**. We do not match air;
 we measure how often air would leave arity's output unchanged, and treat air's
 maturity as a free differential oracle for finding our own inconsistencies.
@@ -50,11 +50,11 @@ maturity as a free differential oracle for finding our own inconsistencies.
   `cargo test` and cannot fail CI). Run it with `task air-compat`; it
   regenerates `AIR_COMPAT.md`.
 - It measures the *fixed point* `air(arity(x)) == arity(x)`, not a head-to-head
-  diff --- this cancels out the persistent-line-break difference (which is the
+  diff—this cancels out the persistent-line-break difference (which is the
   whole point of arity) by construction, leaving only genuine rule divergences.
 - Divergences are triaged into two buckets. **Adopt** when air's output is
   simply more idiomatic and arity is being inconsistent (fix the rule).
-  **Record** when the divergence is a deliberate arity choice --- add it to
+  **Record** when the divergence is a deliberate arity choice—add it to
   `tests/air_compat_allowlist.toml` with a rationale.
 - Diverging from air is allowed, but should **raise tension**: it is a
   conscious, documented decision (an allowlist entry), not a silent one. An
@@ -91,7 +91,7 @@ running the real linter on each rule's examples. `mdbook build book` then builds
 the site; `.github/workflows/docs.yml` deploys it to GitHub Pages. The rendered
 rule docs are pinned by `tests/rule_docs.rs` so they can't drift from behavior.
 
-Snapshot tests use `insta`: review/accept with `cargo insta review` /
+Snapshot tests use `insta`: review/accept with `cargo insta review` or
 `cargo insta accept`. Logging honors `RUST_LOG` (e.g.
 `RUST_LOG=debug cargo test`) via `env_logger`. `task <name>` (Taskfile.yml)
 wraps the above: `lint`, `format`, `test`, `test-debug`, `audit`, `deny`,
@@ -108,14 +108,14 @@ parse_expr (expr.rs, Pratt) + structural.rs (recursive descent) → Vec<Event>
 build_tree (tree_builder.rs) → rowan SyntaxNode (CST)
 ```
 
-- `core::parse` drives the loop; `events.rs` defines `Event` (start node / token
-  / finish node); `cursor.rs`, `context.rs`, `recovery.rs`, `diagnostics.rs`
+- `core::parse` drives the loop; `events.rs` defines `Event` (start node, token,
+  and finish node); `cursor.rs`, `context.rs`, `recovery.rs`, `diagnostics.rs`
   support the parser. `src/syntax.rs` defines `SyntaxKind` (rowan-style
   `SCREAMING_SNAKE_CASE`).
 - **Losslessness is the core invariant:** all whitespace, newlines, comments,
   and `%...%`/`[[`/`]]` tokens are preserved; `reconstruct(text)` must equal
   `text`. Parser work prioritizes stable, recoverable CST shape over early
-  semantic precision. Semantics stay **static** --- no R evaluation.
+  semantic precision. Semantics stay **static**—no R evaluation.
 - `src/ast/nodes.rs` (`src/ast.rs`) provides zero-cost typed AST wrappers over
   the CST using rowan's `AstNode` support (e.g. `AssignmentExpr`, `IfExpr`,
   `FunctionExpr`).
@@ -125,7 +125,7 @@ build_tree (tree_builder.rs) → rowan SyntaxNode (CST)
 **Formatter** (`src/formatter/`, public API in `src/formatter.rs`): consumes the
 CST and uses a Wadler/Prettier-style document IR (`ir.rs`) printed by a single
 best-fit layout engine (`printer.rs`) that makes all line-break decisions.
-`rules/` builds the IR per construct; `core.rs` exposes `format` /
+`rules/` builds the IR per construct; `core.rs` exposes `format` and
 `format_with_style`; `check.rs` exposes `check_paths`; `style.rs` is
 `FormatStyle`; `trivia.rs`/`context.rs`/`render.rs` are support. Target style is
 the tidyverse R style guide. The native-IR migration is largely complete
@@ -135,15 +135,15 @@ control flow all build native IR). The remaining `Ir::verbatim` legacy bridge is
 not yet ported (see `TODO.md` follow-ups).
 
 **Linter** (`src/linter/`): `check_paths` walks files, parses, and reports
-`LintStatus` (`Clean` / `Findings` / `ParseDiagnostics`); parse diagnostics
+`LintStatus` (`Clean`/`Findings`/`ParseDiagnostics`); parse diagnostics
 block linting a file. Largely a placeholder ahead of Phase 6.
 
 *Autofix correctness.* A fix is a textual edit, so the bar it must clear is
 **correctness, not formatting**: applying it must leave code that still parses
-and is still lossless --- never broken syntax (e.g. a negating rewrite that
+and is still lossless—never broken syntax (e.g. a negating rewrite that
 misbinds, `!a + b`) or dropped trivia (e.g. a relocation that loses a comment).
 When an edit can't meet that bar for some shape, make it correct by construction
-(tight span, atom-guarded) or **withhold the fix for that shape** --- the finding
+(tight span, atom-guarded) or **withhold the fix for that shape**—the finding
 is still reported. A fix does **not** owe line-width: it may leave a line the
 formatter would re-break, because layout is the formatter's job (Tenet 1), and
 the intended pipeline is fix-then-format, not fix-alone. The withhold/atom-guard
@@ -152,13 +152,13 @@ that fixed output parses (and stays format-clean on the curated width-safe
 cases).
 
 **Language server** (`src/lsp.rs`, CLI `arity lsp`): a stdio JSON-RPC server on
-the `lsp-server` crate (rust-analyzer's transport) --- offers formatting, pushed
+the `lsp-server` crate (rust-analyzer's transport)—offers formatting, pushed
 diagnostics, quick-fix code actions, and index-backed hover. The main loop owns
 no salsa database: read-only requests run on `rayon`, and linting is serialized
 on a **dedicated thread** that owns the persistent `IncrementalDatabase`. This is
 forced by salsa being strictly single-writer (a `set_*` setter blocks until all
 other db handles drop) combined with cross-file lint *writing* sibling files into
-the db --- so lint can't run on a shared read snapshot. The lint thread
+the db—so lint can't run on a shared read snapshot. The lint thread
 *coalesces* requests (latest version per URI wins) in lieu of a debounce. See the
 module doc for the full rationale.
 
@@ -171,8 +171,9 @@ module doc for the full rationale.
   cross-platform build/test, `cargo-audit` + `cargo-deny`, clippy `-D warnings`,
   and the rustfmt check.
 - Formatter output must be **idempotent** (`format(format(x)) == format(x)`);
-  the formatter and parser test suites guard losslessness + idempotence ---
-  byte-identical output is the bar for "behavior-preserving" refactors.
+  the formatter and parser test suites guard losslessness +
+  idempotence—byte-identical output is the bar for "behavior-preserving"
+  refactors.
 - Dependency changes must stay compatible with `cargo-audit` and `cargo-deny`
   (`deny.toml`).
 
@@ -181,7 +182,7 @@ module doc for the full rationale.
 - **Conventional Commits** (`type(scope): subject`) and **semantic versioning**.
 - Subject line: aim for ≤ 60 chars, ≤ 72 is fine, longer only if truly needed.
 - Bodies are short and to the point.
-- **Never edit the changelog by hand** --- `versionary` generates it.
+- **Never edit the changelog by hand**—`versionary` generates it.
 
 ## Testing layout
 
@@ -195,14 +196,14 @@ it pass. For a bug, always start by adding a failing test that reproduces it
   `input.R` + `expected.R`.
 - `insta` snapshots live in `tests/snapshots/`.
 - `tests/air_parser_harness.rs` compares against the `air_r_parser` crate (a git
-  dev-dependency from posit-dev/air) --- AIR snapshot cases are ported into the
+  dev-dependency from posit-dev/air)—AIR snapshot cases are ported into the
   parser fixtures as hardening input.
 
 ## Reference-only directories (not part of the build, untracked)
 
-- `air/` --- a local checkout of posit-dev/air (tree-sitter-based R tooling)
+- `air/`—a local checkout of posit-dev/air (tree-sitter-based R tooling)
   kept for reference/comparison. **Not** in the Cargo build and not exposed via
   this CLI. It has its own `air/CLAUDE.md` describing *that* project's
-  conventions (e.g. `just test`, `air.toml`) --- do not apply those to arity.
-- `style/` --- vendored copy of the tidyverse R style guide (the formatter's
+  conventions (e.g. `just test`, `air.toml`)—do not apply those to arity.
+- `style/`—vendored copy of the tidyverse R style guide (the formatter's
   target style).

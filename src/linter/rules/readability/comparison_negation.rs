@@ -28,7 +28,7 @@ impl Rule for ComparisonNegation {
     }
 
     fn description(&self) -> &'static str {
-        "Flag a negated comparison — `!(a == b)`, `!x < y` — which reads more \
+        "Flag a negated comparison—`!(a == b)`, `!x < y`—which reads more \
          clearly as the opposite comparison (`a != b`, `x >= y`).\n\nThe fix is \
          withheld when a comment in the operand would otherwise be lost."
     }

@@ -283,7 +283,7 @@ pub fn check_tracked_file(
 /// Splitting the lint into a write-phase ([`prepare_document_in_project`], needs
 /// `&mut db`) and a read-phase ([`analyze_prepared`], `&db` only) lets the LSP
 /// run the expensive read-phase off its lint thread on a short-lived db clone,
-/// where it can be cancelled by a fresher edit (see `src/lsp.rs`).
+/// where it can be canceled by a fresher edit (see `src/lsp.rs`).
 pub struct PreparedProject {
     active: SourceFile,
     rules: ResolvedRules,

@@ -224,7 +224,7 @@ fn reparse_token(
     }
 
     // Merge guard: appending the following source character must not extend the
-    // token (which would mean the edit merged it with its neighbour, e.g.
+    // token (which would mean the edit merged it with its neighbor, e.g.
     // `for`→`fore`, or an unterminated string swallowing the next line).
     if let Some(next_char) = old_text[t1..].chars().next() {
         let mut probe = new_text.clone();

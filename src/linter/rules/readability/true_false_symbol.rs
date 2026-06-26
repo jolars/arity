@@ -31,7 +31,7 @@ impl Rule for TrueFalseSymbol {
     fn description(&self) -> &'static str {
         "Prefer the reserved literals `TRUE`/`FALSE` over the rebindable base \
          symbols `T`/`F`.\n\n`T` and `F` are ordinary base-R bindings, not \
-         reserved words — `T <- FALSE` is legal — so relying on them as boolean \
+         reserved words—`T <- FALSE` is legal—so relying on them as boolean \
          shorthand is fragile. The fix is withheld when the name resolves to a \
          local binding, since that is the user's own variable rather than the \
          shorthand."

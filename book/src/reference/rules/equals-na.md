@@ -1,6 +1,6 @@
 # `equals-na`
 
-Flag `x == NA`, which is always `NA` rather than `TRUE`/`FALSE` — almost always a mistake for `is.na(x)`, which is the autofix.
+Flag `x == NA`, which is always `NA` rather than `TRUE`/`FALSE`—almost always a mistake for `is.na(x)`, which is the autofix.
 
 Comparing to `NA` with `==`:
 

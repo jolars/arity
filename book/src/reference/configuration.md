@@ -74,7 +74,7 @@ line-ending = "auto"
 ```
 
 `line-width` and `indent-width` can be overridden per run with the
-`--line-width` / `--indent-width` flags on `arity format`.
+`--line-width`/`--indent-width` flags on `arity format`.
 
 ## `[lint]`
 
@@ -85,7 +85,7 @@ line-ending = "auto"
 
 Rule IDs are the kebab-case names from the [rule reference](rules.md). Unknown
 IDs are reported when linting runs, not when the config is parsed. The
-`--select` / `--ignore` flags on `arity lint` override these for a single run.
+`--select`/`--ignore` flags on `arity lint` override these for a single run.
 
 ```toml
 [lint]
@@ -98,12 +98,12 @@ ignore = ["unused-binding"]
 Controls the R-package symbol index used by the language server (and by
 namespace-aware lint rules) to resolve names.
 
-  | Key             | Type           | Default | Description                                                              |
-  | --------------- | -------------- | ------- | ------------------------------------------------------------------------ |
-  | `library-paths` | array of paths | `[]`    | Explicit R library directories, used when automatic discovery misses.    |
-  | `cache-dir`     | path           | unset   | Override the index cache directory (otherwise XDG / `$ARITY_CACHE_DIR`). |
-  | `auto-build`    | boolean        | `true`  | Let the language server lazily index referenced-but-unindexed packages.  |
-  | `help`          | boolean        | `true`  | Harvest help titles while indexing. `false` stores names only (faster).  |
+  | Key             | Type           | Default | Description                                                             |
+  | --------------- | -------------- | ------- | ----------------------------------------------------------------------- |
+  | `library-paths` | array of paths | `[]`    | Explicit R library directories, used when automatic discovery misses.   |
+  | `cache-dir`     | path           | unset   | Override the index cache directory (otherwise XDG/`$ARITY_CACHE_DIR`).  |
+  | `auto-build`    | boolean        | `true`  | Let the language server lazily index referenced-but-unindexed packages. |
+  | `help`          | boolean        | `true`  | Harvest help titles while indexing. `false` stores names only (faster). |
 
 > **Note:** the downloadable CRAN symbol sidecar is *not* configured here.
 > Enabling network access is a per-user decision set via the `ARITY_REMOTE_URL`
@@ -115,9 +115,9 @@ The following are **not yet implemented** but are reserved so the schema can
 grow without breaking changes (adding a key is always backward-compatible under
 the strict unknown-key check):
 
-- `[format].indent-style` (`"space"` or `"tab"`) --- tab indentation.
-- `[format].skip` and a `# fmt: skip` comment --- opt specific calls out of
+- `[format].indent-style` (`"space"` or `"tab"`)---tab indentation.
+- `[format].skip` and a `# fmt: skip` comment---opt specific calls out of
   formatting.
-- `[lint.rules.<id>]` --- per-rule configuration tables (including per-rule
+- `[lint.rules.<id>]`---per-rule configuration tables (including per-rule
   severity).
-- Category names (e.g. `"correctness"`) in `select` / `ignore`.
+- Category names (e.g. `"correctness"`) in `select`/`ignore`.

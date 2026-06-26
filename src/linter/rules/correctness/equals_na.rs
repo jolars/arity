@@ -15,7 +15,7 @@ impl Rule for EqualsNa {
     }
 
     fn description(&self) -> &'static str {
-        "Flag `x == NA`, which is always `NA` rather than `TRUE`/`FALSE` — \
+        "Flag `x == NA`, which is always `NA` rather than `TRUE`/`FALSE`—\
          almost always a mistake for `is.na(x)`, which is the autofix."
     }
 
