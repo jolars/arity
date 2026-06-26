@@ -1,0 +1,69 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..243
+  ROXYGEN_BLOCK@0..237
+    ROXYGEN_SECTION@0..32
+      ROXYGEN_PARAGRAPH@0..29
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..28 "Cross-line shortcut l ..."
+        NEWLINE@28..29 "\n"
+      ROXYGEN_MARKER@29..31 "#'"
+      NEWLINE@31..32 "\n"
+    ROXYGEN_SECTION@32..195
+      ROXYGEN_MARKER@32..34 "#'"
+      WHITESPACE@34..35 " "
+      ROXYGEN_TAG@35..43
+        ROXYGEN_AT@35..36 "@"
+        ROXYGEN_TAG_NAME@36..43 "details"
+      NEWLINE@43..44 "\n"
+      ROXYGEN_PARAGRAPH@44..195
+        ROXYGEN_MARKER@44..46 "#'"
+        WHITESPACE@46..47 " "
+        ROXYGEN_TEXT@47..77 "A shortcut link whose ..."
+        ROXYGEN_MD_LINK@77..101
+          ROXYGEN_MD_DELIM@77..78 "["
+          ROXYGEN_TEXT@78..84 "broken"
+          NEWLINE@84..85 "\n"
+          ROXYGEN_MARKER@85..87 "#'"
+          WHITESPACE@87..88 " "
+          ROXYGEN_TEXT@88..100 "across lines"
+          ROXYGEN_MD_DELIM@100..101 "]"
+        ROXYGEN_TEXT@101..126 " joins into one link  ..."
+        NEWLINE@126..127 "\n"
+        ROXYGEN_MARKER@127..129 "#'"
+        WHITESPACE@129..130 " "
+        ROXYGEN_TEXT@130..163 "the coalesced text, a ..."
+        ROXYGEN_MD_DELIM@163..164 "]"
+        ROXYGEN_TEXT@164..170 " keeps"
+        NEWLINE@170..171 "\n"
+        ROXYGEN_MARKER@171..173 "#'"
+        WHITESPACE@173..174 " "
+        ROXYGEN_TEXT@174..194 "its bracket literal."
+        NEWLINE@194..195 "\n"
+    ROXYGEN_SECTION@195..202
+      ROXYGEN_MARKER@195..197 "#'"
+      WHITESPACE@197..198 " "
+      ROXYGEN_TAG@198..201
+        ROXYGEN_AT@198..199 "@"
+        ROXYGEN_TAG_NAME@199..201 "md"
+      NEWLINE@201..202 "\n"
+    ROXYGEN_SECTION@202..237
+      ROXYGEN_MARKER@202..204 "#'"
+      WHITESPACE@204..205 " "
+      ROXYGEN_TAG@205..237
+        ROXYGEN_AT@205..206 "@"
+        ROXYGEN_TAG_NAME@206..210 "name"
+        WHITESPACE@210..211 " "
+        ROXYGEN_TEXT@211..213 "md"
+        ROXYGEN_MD_DELIM@213..214 "_"
+        ROXYGEN_TEXT@214..222 "shortcut"
+        ROXYGEN_MD_DELIM@222..223 "_"
+        ROXYGEN_TEXT@223..227 "link"
+        ROXYGEN_MD_DELIM@227..228 "_"
+        ROXYGEN_TEXT@228..237 "multiline"
+  NEWLINE@237..238 "\n"
+  IDENT@238..242 "NULL"
+  NEWLINE@242..243 "\n"

@@ -376,6 +376,29 @@ fn lex_roxygen_prose(
             run_start = i;
             continue;
         }
+        // A *cross-line* shortcut-link closer: a lone `]` that closes a `[` opened on
+        // an earlier `#'` line (a `[text]` shortcut spanning lines). Line-locally
+        // *every* `]` is ambiguous — the lexer cannot see an earlier opener — so carve
+        // any lone `]` that is not an inline (`](url)`) or reference (`][ref]`) closer
+        // (handled above) and is not a non-link `]{…}` lookahead as a neutral bracket
+        // leaf. The inline pass pairs it with an earlier cross-line opener (a shortcut
+        // link) or, with no opener, re-emits it as literal text — so a truly stray `]`
+        // is unchanged. A *same-line* shortcut is consumed whole by `scan_md_link`, so
+        // a `]` reaching here has no same-line opener.
+        if md && bytes[i] == b']' && !matches!(bytes.get(i + 1), Some(b'(' | b'[' | b'{')) {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, 1);
+            i += 1;
+            run_start = i;
+            continue;
+        }
         // Under a resolved `@md` mode the inline grammar gains markdown emphasis/
         // strong runs, and a backtick span is a *markdown* code span (projected to
         // `\code`/`\verb`) rather than a literal Rd backtick run. Without `@md` the

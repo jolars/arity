@@ -1,0 +1,3 @@
+(\description (TEXT "Cross-line shortcut links"))
+(\details (TEXT "A shortcut link whose text is") (\link (TEXT "broken across lines")) (TEXT "joins into one link over the coalesced text, while a stray a] keeps its bracket literal."))
+(\title (TEXT "Cross-line shortcut links"))

@@ -112,6 +112,14 @@ enum Inline {
         dest: String,
         display: Vec<Inline>,
     },
+    /// A shortcut link `[text]` resolved into a `ROXYGEN_MD_LINK` **node** by the
+    /// inline pass (its closer leaf is a bare `]`): the display text *is* the link
+    /// destination. Projects to `\link`/`\linkS4class` per the destination shape
+    /// (`-class`, `pkg::`, `()`), `\code`-wrapped for a code-span display — the node
+    /// analog of the opaque shortcut leaf (see [`shortcut_link_node_atom`]).
+    MdShortcutLink {
+        display: Vec<Inline>,
+    },
     /// A markdown image resolved under `@md` mode, carrying the raw leaf text
     /// `![alt](url "title")`. Projects to `\figure{url}{title}` — wrapped in
     /// `\if{html}{…}`/`\if{pdf}{…}` per roxygen2's extension-keyed image-format
@@ -508,6 +516,13 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(ref_link_node_atom(display, dest));
+            }
+            Inline::MdShortcutLink { display } => {
+                if let Some(atom) = prose_text_atom(&run, md) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(shortcut_link_node_atom(display));
             }
             Inline::MdImage(raw) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
@@ -1024,9 +1039,10 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         // output for a bracket-paired link. The first child is the `[` opener leaf
         // and the last child the closer leaf; the display in between recurses (so
         // emphasis/code spans inside the link surface as structure). The closer text
-        // distinguishes the two paired forms: `](url)` is an inline link carrying its
-        // destination (`\href`/`\url`); `][ref]` is a *reference* link whose `[ref]`
-        // topic option is dropped, projecting to `\link{display}`.
+        // distinguishes the three paired forms: `](url)` is an inline link carrying
+        // its destination (`\href`/`\url`); `][ref]` is a *reference* link whose
+        // `[ref]` topic option is dropped, projecting to `\link{display}`; a bare `]`
+        // is a *shortcut* link whose display is the destination.
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LINK => {
             let kids: Vec<_> = n.children_with_tokens().collect();
             let closer = kids.last().map(|c| c.to_string()).unwrap_or_default();
@@ -1039,15 +1055,19 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
                     _ => push_inline(&mut display, child),
                 }
             }
-            match closer.strip_prefix("][").and_then(|s| s.strip_suffix(']')) {
-                Some(dest) => out.push(Inline::MdRefLink {
+            if closer == "]" {
+                // A bare `]` closer: a cross-line *shortcut* link `[text]`.
+                out.push(Inline::MdShortcutLink { display });
+            } else if let Some(dest) = closer.strip_prefix("][").and_then(|s| s.strip_suffix(']')) {
+                out.push(Inline::MdRefLink {
                     dest: dest.to_string(),
                     display,
-                }),
-                None => out.push(Inline::MdInlineLink {
+                });
+            } else {
+                out.push(Inline::MdInlineLink {
                     url: inline_link_dest(&closer),
                     display,
-                }),
+                });
             }
         }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
@@ -1195,6 +1215,19 @@ fn ref_link_node_atom(display: &[Inline], dest: &str) -> String {
     )
 }
 
+/// Project a `ROXYGEN_MD_LINK` node with a bare `]` shortcut closer (`[display]`):
+/// the display text *is* the destination, so this mirrors [`shortcut_link_atom`] but
+/// takes the code-span-ness from the resolved children rather than from backticks in
+/// a raw string. A single code-span display re-wraps its content in backticks so the
+/// shared resolver detects it (`\code`-wrapped `\link`); any other display passes its
+/// coalesced plain text through unchanged.
+fn shortcut_link_node_atom(display: &[Inline]) -> String {
+    match display {
+        [Inline::MdCode(content)] => shortcut_link_atom(&format!("`{content}`")),
+        _ => shortcut_link_atom(&inline_plain_text(display)),
+    }
+}
+
 /// A best-effort plain-text rendering of a resolved inline run, used only to test a
 /// link's destination against its text (the `\url` auto-destination branch). Rich
 /// inlines (emphasis, code) contribute their textual content; non-textual inlines
@@ -1208,6 +1241,7 @@ fn inline_plain_text(inlines: &[Inline]) -> String {
             Inline::MdCode(t) => s.push_str(t),
             Inline::MdEmphasis { children, .. } => s.push_str(&inline_plain_text(children)),
             Inline::MdInlineLink { display, .. } => s.push_str(&inline_plain_text(display)),
+            Inline::MdShortcutLink { display } => s.push_str(&inline_plain_text(display)),
             _ => {}
         }
     }
@@ -2308,6 +2342,42 @@ mod tests {
         assert!(
             project_to_rd(src)
                 .contains("(\\details (TEXT \"A [bracket](x) and [shortcut] stay literal.\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn shortcut_link_node_atom_resolves_text_and_code() {
+        // A plain-text display is the destination: `\link{text}` (text coalesced).
+        assert_eq!(
+            shortcut_link_node_atom(&[Inline::Text("cross-line shortcut".to_string())]),
+            "(\\link (TEXT \"cross-line shortcut\"))"
+        );
+        // A single code-span display is `\code`-wrapped, mirroring `shortcut_link_atom`.
+        assert_eq!(
+            shortcut_link_node_atom(&[Inline::MdCode("f".to_string())]),
+            "(\\code (\\link (TEXT \"f\")))"
+        );
+    }
+
+    #[test]
+    fn md_cross_line_shortcut_link_joins_into_one_link() {
+        // Under `@md`, a shortcut link `[text]` whose `[` opens on an earlier `#'`
+        // line resolves into one `\link{text}` over the coalesced text; a stray `]`
+        // with no opener stays literal (matching roxygen2).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' A [broken\n\
+                   #' across lines] joins, but a stray a] stays.\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"A\") (\\link (TEXT \"broken across lines\")) \
+                 (TEXT \"joins, but a stray a] stays.\"))"
+            ),
             "got: {}",
             project_to_rd(src)
         );

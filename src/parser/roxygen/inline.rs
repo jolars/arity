@@ -558,13 +558,14 @@ fn is_bracket_close(text: &str) -> bool {
 /// `close_p` is the closer's run position, `close_text` the closer string emitted
 /// as the link's closer leaf, and `after_p` the run position to resume from.
 ///
-/// Two closer shapes: an inline `](url)` bracket leaf (`after_p = close_p + 1`), or
-/// a cross-line *reference* closer — a lone `]` bracket leaf immediately followed by
-/// a `[ref]` shortcut-link token. The label is consumed (`after_p = close_p + 2`)
-/// and folded into the closer text (`][ref]`) so the projector resolves a reference
-/// link, dropping the `[ref]` topic. A lone `]` with no following label is *not* a
-/// closer (the lexer only carves it alongside its label, so this never occurs in
-/// practice) — it is skipped, leaving it to re-emit as literal text.
+/// Three closer shapes: an inline `](url)` bracket leaf (`after_p = close_p + 1`); a
+/// cross-line *reference* closer — a lone `]` bracket leaf immediately followed by a
+/// `[ref]` shortcut-link token, consumed (`after_p = close_p + 2`) and folded into
+/// the closer text (`][ref]`) so the projector resolves a reference link, dropping
+/// the `[ref]` topic; or a cross-line *shortcut* closer — a lone `]` with no following
+/// label, kept as the bare closer text `]` (the projector resolves `\link{display}`
+/// from the link text itself). An opener with no later closer at all returns `None`,
+/// leaving the opener to re-emit as literal text.
 fn find_link_closer(tokens: &[Token], run: &[usize], p: usize) -> Option<(usize, String, usize)> {
     (p + 1..run.len()).find_map(|q| {
         let tok = &tokens[run[q]];
@@ -573,10 +574,15 @@ fn find_link_closer(tokens: &[Token], run: &[usize], p: usize) -> Option<(usize,
         }
         if tok.text == "]" {
             match run.get(q + 1).map(|&j| &tokens[j]) {
+                // A lone `]` immediately followed by a `[ref]` shortcut token closes a
+                // cross-line *reference* link; the label folds into the closer text
+                // (`][ref]`) and is consumed as the dropped topic.
                 Some(label) if label.kind == TokKind::RoxygenMdLink => {
                     Some((q, format!("]{}", label.text), q + 2))
                 }
-                _ => None,
+                // A lone `]` with no following label closes a cross-line *shortcut*
+                // link (`[text]`): the closer is just `]`.
+                _ => Some((q, "]".to_string(), q + 1)),
             }
         } else {
             Some((q, tok.text.clone(), q + 1))

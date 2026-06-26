@@ -155,6 +155,7 @@ md_link_emphasis
 md_link_multiline
 md_nested_list
 md_ref_link_multiline
+md_shortcut_link_multiline
 param_prose
 preformatted
 rawrd

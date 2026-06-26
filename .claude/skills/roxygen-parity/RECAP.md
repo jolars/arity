@@ -221,7 +221,25 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   single code span, shortcut fallback when display==label; mirrors the opaque `ref_link_atom`). No new
   TokKind / SyntaxKind; formatter unchanged (already matches any marker-threading `ROXYGEN_MD_LINK`).
   Fixture `roxygen_md_ref_link_multiline` + curated `md_ref_link_multiline`. rx-eb12b6b6 closed.
-  **Still backlog:** cross-line *shortcut* `[text]` (bare-`]` closer, every `]` ambiguous) and the
+- **Cross-line *shortcut* `[text]` links landed (2026-06-26).** A `[text]` whose `[` opens on an
+  earlier `#'` line resolves into one `\link{text}` over the coalesced text. Line-locally every `]`
+  is ambiguous (no cross-line state), so the disambiguation is **correct-by-construction in the
+  arena**, exactly like the ref-link form: the lexer carves a lone `]` as a neutral bracket leaf
+  whenever it is **not** an inline (`](url)`) or reference (`][ref]`) closer and **not** a non-link
+  `]{…}` lookahead (`!matches!(bytes.get(i+1), Some(b'(' | b'[' | b'{'))`) — so it now carves
+  *every* bare `]` in `@md` prose. `find_link_closer` pairs the lone `]` (no following `[ref]` label)
+  with an earlier `[` opener as a **shortcut** closer (closer text just `]`), or — with no opener —
+  the bare `]` re-emits as a literal `Delim` (a truly stray `]` is unchanged; `a]` stays `a]`). A
+  *same-line* shortcut is still consumed whole by `scan_md_link`, so a `]` reaching the carve has no
+  same-line opener. Projector: a `ROXYGEN_MD_LINK` node whose closer is `]` → `Inline::MdShortcutLink`
+  → `shortcut_link_node_atom` (the display *is* the destination, so it mirrors `shortcut_link_atom` —
+  `\link`/`\linkS4class` per `-class`/`pkg::`/`()`, `\code`-wrapped for a single code-span display).
+  **No new TokKind / SyntaxKind; formatter unchanged** (`is_cross_line_inline` already matches any
+  marker-threading `ROXYGEN_MD_LINK` node, so reflow rejoins it byte-identically). Note: carving
+  every bare `]` changed the CST of `roxygen_md_escaped_bracket` (the `]` in `\[shortcut]` is now a
+  standalone unmatched `Delim`) — projection unchanged, snapshot re-accepted. Fixture
+  `roxygen_md_shortcut_link_multiline` + curated `md_shortcut_link_multiline`.
+  **Still backlog:** escaped-*close*-bracket `[text\]` (roxygen2's synthesized-linkref quirk) and the
   `get_md_linkrefs` pre-pass / opener-deactivation full migration that would retire the opaque
   same-line `scan_md_link`.
 - **Escaped brackets are the ONLY honored punctuation escape (2026-06-25l).** roxygen2's
@@ -360,8 +378,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post escaped square brackets, 2026-06-25l): **284 matching (all allowlisted), 22 divergent
-(backlog)** of 306 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
+driver). Current (post cross-line shortcut links, 2026-06-26): **285 matching (all allowlisted), 22 divergent
+(backlog)** of 307 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
 = **diagnostic-parity**); the other 18 are roxygen2-*evaluation*/multi-block gaps (out of scope —
 knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
@@ -374,9 +392,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (306 pinned cases). The 22 divergences are the worklist (4 = remaining `cm-`).
+   (307 pinned cases). The 22 divergences are the worklist (4 = remaining `cm-`).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 23/23 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 24/24 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -384,53 +402,62 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-25l) — Escaped square brackets `\[`/`\]` are literal, not link delimiters
+## Latest session (2026-06-26) — Cross-line *shortcut* `[text]` links
 
-**Under `@md`, a backslash-escaped `\[`/`\]` no longer opens a markdown link, and the projected
-literal text drops the backslash (`\[text](url)` → `[text](url)`, matching roxygen2).** Brackets
-are the **only** punctuation whose CommonMark escape roxygen2 honors: `double_escape_md` doubles
-every backslash but then **reverts** `\\[`→`\[` and `\\]`→`\]`, so the bracket escape survives cmark
-while `\*`/`` \` ``/`\%`/… keep their backslash (the doubling neutralizes them — and arity already
-matched those). Two-part fix, both faithful:
+**Under `@md`, a shortcut link `[text]` whose `[` opens on an earlier `#'` line now resolves into one
+`\link{text}` over the coalesced text** (roxygen2 joins it across the soft break, exactly like the
+same-line shortcut). This was the last cross-line link form; the inline `[text](url)` and reference
+`[text][ref]` forms landed earlier (2026-06-25i/k). The hard part — flagged in the prior session's
+ranked target — is that line-locally **every `]` is ambiguous** (the lexer is line-scoped, no
+cross-line state). The disambiguation is **correct-by-construction in the arena**, mirroring the
+ref-link fix:
 
-- **Lexer (`lex.rs`):** `bracket_is_escaped(bytes, i)` — a `[` whose immediately preceding byte is
-  `\`. Guards all three `[`-opener paths (`inline_link_span`, `is_cross_line_link_opener`, the
-  `scan_md_link` reference/shortcut arm). A single adjacent `\` already suppresses the link;
-  verified against the oracle for 1–3 leading backslashes (`\[`, `\\[`, `\\\[` all stay literal,
-  the link never forms). The `[` stays in the prose run → lossless by construction.
-- **Projector (`project_rd.rs`):** `unescape_md_brackets` drops **one** backslash immediately
-  before `[`/`]` in `@md` text (`prose_text_atom`'s md branch). `\[`→`[`, `\\[`→`\[`,
-  `\[text\]`→`[text]`. This is the encoding half of the escape (the lexer suppresses the link; the
-  projector consumes the now-redundant backslash). Non-md text is unaffected (literal-Rd `%`-strip
-  path). Only single-backslash is exact; a `\\\[` run follows `double_escape_md`'s non-overlapping
-  `gsub` and is left as backlog.
+- **Lexer (`lex.rs`):** carve a lone `]` as a neutral `RoxygenMdBracket` leaf whenever it is **not**
+  an inline (`](url)`) or reference (`][ref]`) closer (handled by the preceding carves) and **not**
+  a non-link `]{…}` lookahead — i.e. `bytes[i]==']' && !matches!(bytes.get(i+1), Some(b'(' | b'[' | b'{'))`.
+  This now carves **every** bare `]` in `@md` prose. Safe because a *same-line* shortcut is consumed
+  whole by `scan_md_link` first, so a `]` reaching the carve has no same-line opener.
+- **Arena (`inline.rs::find_link_closer`):** a lone `]` with **no** following `[ref]` label now pairs
+  with an earlier `[` opener as a **shortcut** closer (closer text just `]`); previously it returned
+  `None`. With no opener the bare `]` re-emits as a literal `Delim`, so a truly stray `]` is
+  unchanged (`a]` stays `a]`).
+- **Projector (`project_rd.rs`):** a `ROXYGEN_MD_LINK` node whose closer is `]` → new
+  `Inline::MdShortcutLink { display }` → `shortcut_link_node_atom` (the display *is* the destination,
+  so it mirrors `shortcut_link_atom` — `\link`/`\linkS4class` per `-class`/`pkg::`/`()`, `\code`-wrapped
+  for a single code-span display). Node-closer dispatch is now three-way (`](url)`/`][ref]`/`]`).
 
-**The trap that nearly bit:** my first probes used the Bash tool with shell-quoted backslashes, so
-`\\[` reached R as **two** backslashes, not one — making it *look* like arity already matched the
-single-`\[` case. File-based exact-byte probes (Python writing the source) corrected this: a single
-`\[` **consumes** its backslash (roxygen2 → `[text](url)`), which arity did **not** do until the
-projector fix. **Always pin escape-sensitive oracle probes with exact bytes, never shell-quoted.**
+**No new TokKind / SyntaxKind. Formatter unchanged** — `is_cross_line_inline` already matches any
+marker-threading `ROXYGEN_MD_LINK` node, so reflow rejoins the cross-line shortcut byte-identically
+(idempotent, verified by the format-stability baseline: +1 new case, **no existing case drifted**).
+**Side effect:** carving every bare `]` changed the CST of the existing `roxygen_md_escaped_bracket`
+fixture (the `]` in `\[shortcut]` is now a standalone unmatched `Delim` instead of buried in a text
+run) — **projection unchanged** (still literal `[shortcut]`), snapshot re-accepted.
 
-**TDD:** parser fixture `roxygen_md_escaped_bracket` (escaped inline + shortcut + mid-word + a real
-link for contrast; lossless, CST shows escaped `\[…` staying `ROXYGEN_TEXT`) + curated projector
-case `md_escaped_bracket` (pinned, ratcheted in) + 2 projector unit tests. Format baseline
-re-blessed (+1 new case; **no existing case drifted** — escaped `\[` stays literal in formatted
-source, idempotent).
+**TDD:** parser fixture `roxygen_md_shortcut_link_multiline` (cross-line shortcut + a contrasting
+stray `a]`; lossless, CST shows the `ROXYGEN_MD_LINK` node + a standalone `Delim` `]`) + curated
+projector case `md_shortcut_link_multiline` (pinned, ratcheted in) + 2 projector unit tests.
 
-**Result:** projector **283→284 matching (all allowlisted), 22 divergent unchanged** (1 new curated
-pin; 306 pinned). The 22 backlog is untouched (18 out-of-scope `rx-` + 4 `cm-` escape-in-emphasis).
-Curated fixed-point **23/23** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
+**Result:** projector **284→285 matching (all allowlisted), 22 divergent unchanged** (1 new curated
+pin; 307 pinned). The 22 backlog is untouched (18 out-of-scope `rx-` + 4 `cm-` escape-in-emphasis).
+Curated fixed-point **24/24** preserving, 0 blocked; harvested 216 preserving, 0 divergent. `cargo
+test` green, clippy + fmt clean.
 
-**Next (ranked):** **(1)** Escaped-*close*-bracket `[text\]` and cross-line *shortcut* `[text]`
-(both need the arena bracket-stack — every `]` is ambiguous line-locally — and `[text\]` additionally
-trips roxygen2's synthesized-linkref quirk `[text\]: R:…`, so probe the exact oracle shape first).
-**(2)** The `\`-escapes-in-emphasis diagnostic-parity surface (cm-439/442/451/454): roxygen2 runs
-`rdComplete` on the markdown-rendered Rd and **drops** the section on failure — meaty, design-level,
-needs a side-channel diagnostic (**user check before starting**). **(3)** The full
-`get_md_linkrefs`/opener-deactivation migration retiring the opaque same-line `scan_md_link`.
+**Next (ranked):** **(1)** Escaped-*close*-bracket `[text\]` (still backlog — trips roxygen2's
+synthesized-linkref quirk `[text\]: R:…`, so probe the exact oracle shape with exact-byte files
+first). **(2)** The `\`-escapes-in-emphasis diagnostic-parity surface (cm-439/442/451/454): roxygen2
+runs `rdComplete` on the markdown-rendered Rd and **drops** the section on failure — meaty,
+design-level, needs a side-channel diagnostic (**user check before starting**). **(3)** The full
+`get_md_linkrefs`/opener-deactivation migration retiring the opaque same-line `scan_md_link` (would
+also subsume the remaining shortcut/escape edges into the unified bracket-stack).
 
 ## Earlier sessions
 
+- **2026-06-25l (Escaped square brackets `\[`/`\]` are literal):** under `@md` a backslash-escaped
+  `\[`/`\]` no longer opens a link, and the projected literal drops one backslash (`\[text](url)` →
+  `[text](url)`). Brackets are the only punctuation whose CommonMark escape roxygen2 honors
+  (`double_escape_md` reverts `\\[`→`\[`). Lexer `bracket_is_escaped` guards the three `[`-openers;
+  projector `unescape_md_brackets` drops one `\` before `[`/`]`. **Trap:** probe escape cases with
+  exact-byte files, never shell-quoted. Fixture `roxygen_md_escaped_bracket` + curated. 283→284.
 - **2026-06-25k (Cross-line *reference* `[text][ref]` links, rx-eb12b6b6):** a `[text][ref]`
   whose `[` opens on an earlier `#'` line resolves into one cross-line `\link{text}` (topic
   dropped). The `][ref]` closer is byte-identical to a stray `]`+shortcut line-locally, so

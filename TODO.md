@@ -389,9 +389,21 @@
       shortcut (`a][b]` → `a]` + `\link{b}`, correct by construction). Projector node
       arm branches on the closer (`][ref]` → `MdRefLink` → `ref_link_node_atom`,
       `\link{display}` topic dropped). No new TokKind; formatter unchanged.
-      **rx-eb12b6b6 closed.** Cross-line *shortcut* `[text]` (bare-`]` closer) and the
-      full `get_md_linkrefs`/opener-deactivation migration retiring the opaque
-      same-line `scan_md_link` still backlog.
+      **rx-eb12b6b6 closed.**
+      **Cross-line *shortcut* `[text]` links LANDED (2026-06-26): bare-`]` closer.**
+      The last cross-line link form. Line-locally every `]` is ambiguous, so the
+      lexer now carves *every* bare `]` not part of a `](url)`/`][ref]` closer or a
+      `]{…}` non-link (`!matches!(bytes.get(i+1), Some(b'(' | b'[' | b'{'))`) as a
+      neutral bracket leaf; `find_link_closer` pairs a lone `]` (no following label)
+      with an earlier `[` opener as a shortcut closer, or—no opener—re-emits it
+      literal (`a]` stays `a]`). Projector node arm: closer `]` → `MdShortcutLink` →
+      `shortcut_link_node_atom` (display *is* the destination, mirrors
+      `shortcut_link_atom`). No new TokKind/SyntaxKind; formatter unchanged. Side
+      effect: the `]` in `\[shortcut]` (escaped-bracket fixture) is now a standalone
+      `Delim` (projection unchanged, snapshot re-accepted). Curated
+      `md_shortcut_link_multiline`. Escaped-*close* `[text\]` and the full
+      `get_md_linkrefs`/opener-deactivation migration retiring the opaque same-line
+      `scan_md_link` still backlog.
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose
