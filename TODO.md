@@ -426,9 +426,15 @@
       literal bracket text *before* the skeleton is rebuilt—so they reappear as candidates and
       their now-leaked defs surface; `leaked_linkref_text` changed from "only invalid" to
       "from the first invalid onward". Inline links/autolinks/code survive (own destination,
-      no def needed). Curated `md_linkref_poisoning`. **Still backlog (the rest of the
-      migration):** (1) leaks outside `push_section` (`@section` body, `@slot`/`@field`,
-      `@rawRd`); (2) an inline-link `[text]` candidate def in a poisoned tail (the link
+      no def needed). Curated `md_linkref_poisoning`.
+      **Leaks outside `push_section` LANDED (2026-06-26d):** the demote+leak pair was extracted
+      into `serialize_prose_with_linkrefs` and wired into the two other `markdown_if_active`
+      builders—`@field`/`@slot` item defs (`describe_section`, the description half of
+      `tag_two_part`) and the `@section` body (roxygen2 markdown-processes the whole `title:
+      body` then splits on `:`, so demote runs on the whole body and the leaked defs land in
+      the content after the colon). Curated `md_linkref_poisoning_field`/`_section`.
+      **Still backlog (the rest of the migration):** (1) leaks in `@rawRd` (never markdown
+      today—a parser-side gap, deferred); (2) an inline-link `[text]` candidate def in a poisoned tail (the link
       survives but its def still leaks—arity keeps it a node, invisible to the skeleton scan);
       (3) the full opener-deactivation migration retiring the opaque same-line `scan_md_link`
       (unify all brackets onto the arena stack).

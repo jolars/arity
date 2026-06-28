@@ -319,9 +319,11 @@ fn describe_section(title: &str, items: &[(String, Vec<Inline>)], md: bool) -> S
             format!("(\\code {})", code_atoms.join(" "))
         };
         // The definition is `\item`'s second (structural) argument: a multi-atom
-        // prose+macro run is `(GRP …)`-wrapped, a single atom stays bare.
+        // prose+macro run is `(GRP …)`-wrapped, a single atom stays bare. It is a
+        // `markdown_if_active` field (the description half of `tag_two_part`), so it
+        // carries the `add_linkrefs_to_md` poisoning like any other prose section.
         let mut parts = vec![term];
-        let def_arg = grp_arg(&serialize_inlines(def, md));
+        let def_arg = grp_arg(&serialize_prose_with_linkrefs(def, md));
         if !def_arg.is_empty() {
             parts.push(def_arg);
         }
@@ -393,15 +395,27 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
         // and a multi-atom argument is `(GRP …)`-wrapped while a single-atom one
         // stays bare (the same rule `serialize_macro` applies to `\item`/`\tabular`).
         "section" => {
+            // roxygen2 `markdown_if_active`-processes the **whole** `title: body`
+            // (so `add_linkrefs_to_md` poisoning spans both halves), then splits the
+            // rendered Rd on the first `:`. Demote first on the whole body, split the
+            // demoted run, and append the leaked definitions to the content — they
+            // render at the very end of the field, i.e. after the `:`.
+            let demoted = md.then(|| demote_poisoned_links(body)).flatten();
+            let body = demoted.as_deref().unwrap_or(body);
             let (heading, content) = split_section_title(body);
             let title = serialize_inlines(&heading, md);
-            let body = serialize_inlines(&content, md);
+            let mut content_atoms = serialize_inlines(&content, md);
+            if md {
+                for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
+                    append_rendered_text(&mut content_atoms, &leaked);
+                }
+            }
             let mut inner = grp_arg(&title);
-            if !body.is_empty() {
+            if !content_atoms.is_empty() {
                 if !inner.is_empty() {
                     inner.push(' ');
                 }
-                inner.push_str(&grp_arg(&body));
+                inner.push_str(&grp_arg(&content_atoms));
             }
             out.push(format!("(\\section{})", prefix_space(&inner)));
         }
@@ -443,9 +457,26 @@ fn is_null_section(body: &[Inline], md: bool) -> bool {
 /// may append leaked link-reference definitions to the field text (see
 /// [`leaked_linkref_text`]); they coalesce into the section's trailing prose.
 fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline], md: bool) {
-    // Under `@md`, a leaked link-reference block de-links the shortcut/reference
-    // links in its poisoned tail; rewrite them to literal bracket text first so the
-    // body and the leaked definitions stay consistent (see [`demote_poisoned_links`]).
+    let atoms = serialize_prose_with_linkrefs(body, md);
+    if atoms.is_empty() {
+        out.push(format!("(\\{macro_name})"));
+    } else {
+        out.push(format!("(\\{macro_name} {})", atoms.join(" ")));
+    }
+}
+
+/// Serialize a prose body into canonical atoms, applying roxygen2's
+/// `add_linkrefs_to_md` poisoning model under `@md`. Every field text that
+/// roxygen2 runs through `markdown_if_active` is subject to the same leak — a
+/// prose section ([`push_section`]), each `@field`/`@slot` definition
+/// ([`describe_section`]), and the `@section` body — so they share this path.
+///
+/// Two steps, both `@md`-only: a leaked link-reference block de-links the
+/// shortcut/reference links in its poisoned tail, so [`demote_poisoned_links`]
+/// rewrites them to literal bracket text *first* (keeping body and leaked
+/// definitions consistent), then [`leaked_linkref_text`] appends the leaked
+/// definitions to the trailing prose.
+fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
     let demoted = md.then(|| demote_poisoned_links(body)).flatten();
     let body = demoted.as_deref().unwrap_or(body);
     let mut atoms = serialize_inlines(body, md);
@@ -454,11 +485,7 @@ fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline], md: bo
             append_rendered_text(&mut atoms, &leaked);
         }
     }
-    if atoms.is_empty() {
-        out.push(format!("(\\{macro_name})"));
-    } else {
-        out.push(format!("(\\{macro_name} {})", atoms.join(" ")));
-    }
+    atoms
 }
 
 /// Serialize an inline run into the canonical atom sequence: maximal prose runs

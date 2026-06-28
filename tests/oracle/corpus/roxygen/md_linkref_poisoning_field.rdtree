@@ -1,0 +1,3 @@
+(\description (TEXT "Link-reference poisoning inside a field definition"))
+(\section (TEXT "Fields") (\describe (\item (\code (RCODE "x")) (GRP (TEXT "A shortcut like") (\link (TEXT "before")) (TEXT "resolves, but an escaped-close candidate like [stop] poisons the appended definition block, so a later [after] shortcut is de-linked and both tail definitions leak. [stop]: R:stop%5C [after]: R:after")))))
+(\title (TEXT "Link-reference poisoning inside a field definition"))
