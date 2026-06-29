@@ -9,11 +9,20 @@ ROOT@0..127
         ROXYGEN_MARKER@0..2 "#'"
         WHITESPACE@2..3 " "
         ROXYGEN_TEXT@3..7 "See "
-        ROXYGEN_MD_LINK@7..15 "[object]"
+        ROXYGEN_MD_LINK@7..15
+          ROXYGEN_MD_DELIM@7..8 "["
+          ROXYGEN_TEXT@8..14 "object"
+          ROXYGEN_MD_DELIM@14..15 "]"
         ROXYGEN_TEXT@15..17 ", "
-        ROXYGEN_MD_LINK@17..25 "[func()]"
+        ROXYGEN_MD_LINK@17..25
+          ROXYGEN_MD_DELIM@17..18 "["
+          ROXYGEN_TEXT@18..24 "func()"
+          ROXYGEN_MD_DELIM@24..25 "]"
         ROXYGEN_TEXT@25..31 ", and "
-        ROXYGEN_MD_LINK@31..42 "[obj-class]"
+        ROXYGEN_MD_LINK@31..42
+          ROXYGEN_MD_DELIM@31..32 "["
+          ROXYGEN_TEXT@32..41 "obj-class"
+          ROXYGEN_MD_DELIM@41..42 "]"
         ROXYGEN_TEXT@42..48 " here."
         NEWLINE@48..49 "\n"
         ROXYGEN_MARKER@49..51 "#'"

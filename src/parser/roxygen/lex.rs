@@ -365,6 +365,29 @@ fn lex_roxygen_prose(
             run_start = i;
             continue;
         }
+        // A *same-line* plain-text shortcut opener `[text]`: carve the `[` as a
+        // neutral bracket opener leaf and let the main loop lex the (plain) interior
+        // and the closing `]` (the bare-`]` carve below). The inline pass pairs the
+        // bracket leaves into a `ROXYGEN_MD_LINK` node, replacing the opaque
+        // `scan_md_link` leaf — byte-identical projection (see `same_line_shortcut_opener`).
+        if md
+            && bytes[i] == b'['
+            && !bracket_is_escaped(bytes, i)
+            && same_line_shortcut_opener(bytes, i)
+        {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, 1);
+            i += 1;
+            run_start = i;
+            continue;
+        }
         // A *cross-line* inline-link closer: a `](url)` whose matching `[` opened
         // on an earlier `#'` line. A same-line `[…](url)` is consumed whole by the
         // opener path above, so a bare `]` immediately followed by a balanced
@@ -636,6 +659,40 @@ fn inline_link_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
 /// on the conservative opaque path (matching the same-line split's own guard).
 fn is_cross_line_link_opener(bytes: &[u8], i: usize) -> bool {
     !bytes[i + 1..].iter().any(|&b| matches!(b, b'[' | b']'))
+}
+
+/// Whether a `[` at `bytes[i]` opens a *same-line* plain-text shortcut link
+/// `[text]`: a balanced, bracket-free `[…]` whose text is **plain** (no inline
+/// markdown markup), not part of an inline (`[text](url)`), reference
+/// (`[text][ref]`), or `[text]{…}` non-link, and not itself a reference *label*.
+/// Carving it as a neutral `RoxygenMdBracket` opener routes it through the inline
+/// pass (uniform with cross-line shortcuts and inline links) instead of the opaque
+/// [`scan_md_link`] leaf, so the bracket recognizers converge on the arena stack.
+///
+/// The restrictions keep the carve **behavior-preserving** vs the opaque leaf: a
+/// plain display resolves to a single `Inline::Text` whose coalesced text equals the
+/// raw bracket interior, so the projector's node path
+/// (`shortcut_link_node_atom` → `shortcut_link_atom(text)`) is byte-identical to the
+/// leaf path (`resolve_md_link` → `shortcut_link_atom(text)`). A *marked-up* display
+/// (`[*foo*]`, `` [`x`] ``) would diverge — the node path coalesces the display while
+/// the leaf keeps the raw span — so it stays opaque; roxygen2 rejects a non-plain
+/// shortcut anyway ("markdown links must contain plain text"). A `[` immediately
+/// preceded by `]` is a cross-line reference *label* (`[ref]` of `[text][ref]`) and
+/// is left to [`scan_md_link`] so the arena's `][ref]` fold still sees its opaque
+/// token.
+fn same_line_shortcut_opener(bytes: &[u8], i: usize) -> bool {
+    if i > 0 && bytes[i - 1] == b']' {
+        return false;
+    }
+    let Some(close) = scan_balanced(bytes, i, b'[', b']') else {
+        return false;
+    };
+    let content = &bytes[i + 1..close - 1];
+    is_shortcut_content(content)
+        && !content
+            .iter()
+            .any(|&b| matches!(b, b'*' | b'_' | b'`' | b'<' | b'!' | b'\\'))
+        && !matches!(bytes.get(close), Some(b'(' | b'[' | b'{'))
 }
 
 /// Whether a markdown `[` at `bytes[i]` is *backslash-escaped* (CommonMark `\[`),
@@ -1539,13 +1596,20 @@ mod tests {
 
     #[test]
     fn md_function_autolink() {
+        // A same-line plain-text shortcut `[func()]` carves as neutral bracket
+        // leaves (opener `[`, closer `]`) for the inline pass to pair, not the
+        // opaque `RoxygenMdLink` leaf (see `same_line_shortcut_opener`).
         assert_eq!(
             prose_texts("#' Call [func()] and [pkg::g()].\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "Call ".into()),
-                (TokKind::RoxygenMdLink, "[func()]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "func()".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, " and ".into()),
-                (TokKind::RoxygenMdLink, "[pkg::g()]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "pkg::g()".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, ".".into()),
             ]
         );
@@ -1698,17 +1762,24 @@ mod tests {
 
     #[test]
     fn md_shortcut_link() {
-        // Under `@md`, any bracket-free `[…]` is a shortcut link — words, digits,
-        // spaces, and `::` all qualify — but a `[…]{` is excluded.
+        // Under `@md`, a same-line bracket-free plain-text `[…]` shortcut — words,
+        // digits, spaces, and `::` all qualify — carves as neutral bracket leaves
+        // (opener/closer) for the inline pass; a `[…]{` is excluded and stays prose.
         assert_eq!(
             prose_texts("#' see [note], [see this], [pkg::obj] but [x]{y}\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "see ".into()),
-                (TokKind::RoxygenMdLink, "[note]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "note".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, ", ".into()),
-                (TokKind::RoxygenMdLink, "[see this]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "see this".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, ", ".into()),
-                (TokKind::RoxygenMdLink, "[pkg::obj]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "pkg::obj".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, " but [x]{y}".into()),
             ]
         );

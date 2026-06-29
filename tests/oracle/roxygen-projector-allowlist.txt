@@ -164,6 +164,7 @@ md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
 md_nested_list
 md_ref_link_multiline
+md_shortcut_link
 md_shortcut_link_multiline
 param_prose
 preformatted

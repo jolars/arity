@@ -9,9 +9,15 @@ ROOT@0..73
         ROXYGEN_MARKER@0..2 "#'"
         WHITESPACE@2..3 " "
         ROXYGEN_TEXT@3..8 "Call "
-        ROXYGEN_MD_LINK@8..16 "[mean()]"
+        ROXYGEN_MD_LINK@8..16
+          ROXYGEN_MD_DELIM@8..9 "["
+          ROXYGEN_TEXT@9..15 "mean()"
+          ROXYGEN_MD_DELIM@15..16 "]"
         ROXYGEN_TEXT@16..20 " or "
-        ROXYGEN_MD_LINK@20..37 "[stats::median()]"
+        ROXYGEN_MD_LINK@20..37
+          ROXYGEN_MD_DELIM@20..21 "["
+          ROXYGEN_TEXT@21..36 "stats::median()"
+          ROXYGEN_MD_DELIM@36..37 "]"
         ROXYGEN_TEXT@37..46 " instead."
         NEWLINE@46..47 "\n"
     ROXYGEN_SECTION@47..53

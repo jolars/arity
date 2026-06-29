@@ -195,6 +195,20 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   display (`\href` two-arg structural), `\url` on empty/equal dest. A `ROXYGEN_MD_LINK` **leaf** is
   still an autolink/ref/shortcut (`resolve_md_link`) — node-vs-leaf dispatch coexist. Bracket-free gate
   keeps the opaque path for nested-bracket text (no deactivation modeled yet).
+- **Same-line plain-text *shortcut* `[text]` is now a node too (2026-06-29e, opener-deactivation slice A).**
+  `same_line_shortcut_opener` (`lex.rs`) carves a `[` opening a balanced, **bracket-free, plain-text** (no
+  `* _ ` ` ` < ! \\`) `[…]` whose after-`]` ∉ `(`/`[`/`{` and which is **not preceded by `]`** as a neutral
+  bracket opener → arena pairs it (bare-`]` closer) → `MdShortcutLink`. **Behavior-preserving:** plain
+  interior = one `Inline::Text` whose text == raw interior, so node `shortcut_link_node_atom →
+  shortcut_link_atom(text)` == leaf `resolve_md_link → shortcut_link_atom(text)` (same fn/string); poisoning
+  arms already cover the node form. The **plain-text gate is load-bearing** — a marked-up display
+  (`[*foo*]`/`` [`x`] ``) would diverge (node coalesces vs leaf keeps raw) and roxygen2 *rejects* `[*foo*]`
+  ("links must contain plain text"), so it stays opaque. The `!preceded-by-]` guard keeps a cross-line
+  `[ref]` *label* on `scan_md_link` so the arena's `][ref]` fold still sees its token. **Slice B (remaining):**
+  refs/nested-inline still opaque (the `][ref]` fold couples to the opaque `[ref]` token); retiring
+  `scan_md_link` needs the full arena `look_for_link_or_image` rewrite (backward match + deactivation), which
+  also fixes the latent non-poisoned nested bug (`[a [b] c](url)` standalone → inner `\link{b}`, not outer
+  `\href`). See `~/.claude/plans/luminous-zooming-toast.md`.
 - **Cross-line inline `[text](url)` links landed (2026-06-25i).** The lexer's same-line
   `inline_link_span` split is line-scoped, but `Arena::build` **already** pairs bracket opener/closer
   leaves over the whole **paragraph-granularity** run (cross-line trivia included) — so cross-line just
@@ -431,8 +445,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post rdComplete-drop slice, 2026-06-29d): **298 matching (all allowlisted), 18
-divergent (backlog)** of 316 pinned. All 4 `cm-` escapes-in-emphasis cases (cm-439/442/451/454) are now
+driver). Current (post opener-deactivation slice A, 2026-06-29e): **299 matching (all allowlisted), 18
+divergent (backlog)** of 317 pinned. All 4 `cm-` escapes-in-emphasis cases (cm-439/442/451/454) are now
 **closed** (rdComplete-drop, this session); the 18 left are roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
@@ -455,59 +469,70 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29d) — `rdComplete` brace-balance drop (cm-439/442/451/454 closed)
+## Latest session (2026-06-29e) — opener-deactivation slice A (same-line shortcut → arena node)
 
-**User-chosen target** (the fork: rdComplete-drop vs opener-deactivation vs block-the-cm-cases; user picked
-rdComplete-drop). The 4 remaining `cm-` cases are all the same shape — an **escaped emphasis delimiter**
-(`foo *\**`/`**\***`/`_\__`/`__\___`) which arity's emphasis stack resolves into an `\emph`/`\strong` whose
-content is a lone backslash. roxygen2 (via cmark) renders the **same** broken Rd (`foo \emph{\}*` — the
-trailing `\` escapes the macro's own closing `}`), then its `markdown_if_active` runs `rdComplete` on the
-rendered section, warns `✖ @details has mismatched braces or quotes`, and **drops the body to empty**
-(`(\details)`). arity kept the broken `\emph` → divergence.
+**User-chosen target** (the architectural opener-deactivation refactor, RECAP ranked #1). The end goal:
+retire the opaque same-line `scan_md_link`, carve **every** bracket as a neutral leaf, and make the arena
+implement CommonMark `look_for_link_or_image` (backward match + **opener deactivation**) so all bracket
+links project through the node arms. Deep probing (see the new traps) showed the refactor is large and
+**entangled** (the reference path couples to the opaque `[ref]` token; the `get_md_linkrefs` poisoning
+machinery depends on opaque-leaf-vs-node; roxygen2 rejects non-plain shortcut text). So it was **staged**
+(plan: `~/.claude/plans/luminous-zooming-toast.md`) and this session landed the **safe, behavior-preserving
+slice A** (user-confirmed): move *same-line plain-text shortcut* `[text]` off the opaque leaf onto the
+existing arena node path.
 
-**Projector-only, faithful drop** (like the linkref-poisoning arms — the projector replicates roxygen2's
-render quirks, never patches to pass). Three pieces in `project_rd.rs`: (a) `rd_complete` — a verbatim port
-of roxygen2's `rdComplete(string, is_code = FALSE)` (`src/isComplete.cpp`: a brace-balance scan where `\`
-escapes the next char and `%` opens a comment to EOL; complete iff braces net zero and not ending
-mid-escape). (b) `sexpr_to_rd`/`render_sexpr` — reconstructs the **pre-parse** Rd string from the projected
-S-expr atoms (`(\macro c1 c2 …)`→`\macro{c1}{c2}…`, `(GRP …)` concatenates, leaves decode via the
-`encode_text` inverse); node atoms are balanced **by construction**, so the only imbalance source is a
-leaf's decoded text (the trailing-`\` bug). (c) `push_section` grew a `drop_on_incomplete` flag; in `@md`
-mode it runs `section_atoms_rd_complete` and emits an empty `(\macro)` on failure. Wired `true` **only** for
-`@description`/`@details` (roxygen2's `tag_markdown_with_sections`, `sections = TRUE` — incl. the intro
-paragraphs `parse_description` re-emits as those tags); the intro **title** and every other prose tag
-(`@return`/`@seealso`/…) are plain `tag_markdown` (`sections = FALSE`) → **no drop**.
+**Parser-only carve.** New `same_line_shortcut_opener` (`lex.rs`) + a main-loop arm: a `[` opening a
+balanced, **bracket-free, plain-text** (no `* _ ` ` ` < ! \\`) `[…]`, with after-`]` not `(`/`[`/`{`, and
+**not** preceded by `]`, carves as a neutral `RoxygenMdBracket` opener; the interior lexes normally and the
+existing bare-`]` carve closes it. `find_link_closer` pairs them → `ROXYGEN_MD_LINK` **node** →
+`MdShortcutLink`. **Behavior-preserving by construction:** a plain interior resolves to one `Inline::Text`
+whose coalesced text equals the raw interior, so the node path `shortcut_link_node_atom →
+shortcut_link_atom(text)` is byte-identical to the leaf path `resolve_md_link → shortcut_link_atom(text)`
+(same fn, same string); poisoning skeleton/demote already have node arms with identical len/source. The
+plain-text gate is essential — a *marked-up* display (`[*foo*]`, `` [`x`] ``) would diverge (node coalesces,
+leaf keeps raw), and roxygen2 *rejects* `[*foo*]` ("markdown links must contain plain text") anyway, so it
+stays opaque. The `!preceded-by-]` guard keeps a cross-line reference *label* `[ref]` on the opaque path so
+the arena's `][ref]` fold still sees its token.
 
-**Trap that bit (the 2 regressions caught + fixed):** in `@md` mode roxygen2 escapes `%`→`\%` in the
-rendered Rd **everywhere** — prose, URLs, verbatim, code, preformatted alike (verified `[x](…/a%20b)` →
-`\href{…/a\%20b}{…}`) — so none opens an Rd comment. The reconstruction decodes from the parsed tree (where
-`\%` is already `%`), so it **must re-escape `%`→`\%` for every leaf** (`escape_percent = md`), else a `%20`
-in an `\href` URL commented out the closing braces and false-dropped `rx-0605d020`/`rx-ac585ae8`. (Braces
-and backslashes pass through verbatim — roxygen2 does **not** escape literal `{`/`}` in md text.)
+**Scope intentionally narrow.** References, nested-bracket inline, autolinks **stay** on `scan_md_link`/
+`scan_md_autolink` (no code removed) — they unify only in slice B's full arena rewrite. So **no observable
+Rd change**; this is pure structural unification (standalone shortcuts now resolve through the arena like
+cross-line shortcuts and inline links).
 
-**Also fixed a pre-existing miss:** the `roxygen_format_stability` baseline was never re-blessed when last
-session added `curated/rawrd_md_literal` — it failed on the clean tree (verified via stash). Re-blessed
-(`BLESS_ROXYGEN_FORMAT=1`); the diff adds exactly that one key.
+**TDD/tests:** re-accepted 3 parser CST snapshots (`roxygen_md_autolink`, `roxygen_md_shortcut_link`,
+`roxygen_mixed_inline` — plain shortcuts leaf→node, losslessness held, audited each diff is *only*
+leaf→node); updated 2 lexer unit tests to the bracket-leaf form; added curated `md_shortcut_link` (+ pin,
+ratcheted into the allowlist); re-blessed the format baseline (diff = exactly the one new key, **no**
+existing-case output change — confirms the formatter treats a single-line shortcut node identically to the
+old leaf).
 
-**TDD:** 4 new projector unit tests (`rd_complete` port, `section_atoms_rd_complete` incl. the `%`-in-URL
-case, the end-to-end drop over all 4 delimiters, and the `@return` no-drop scope guard). No new corpus case
-— the cm cases already exist in the spec corpus and were pinned backlog; ratcheted cm-439/442/451/454 into
-the projector allowlist.
+**Result:** projector **298→299 matching (all allowlisted), 18 divergent** (317 pinned). Curated
+fixed-point **34/34** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
 
-**Result:** projector **294→298 matching (all allowlisted), 22→18 divergent** (316 pinned, unchanged).
-Curated fixed-point **33/33** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
-
-**Next (ranked):** **(1)** Opener-deactivation: retire the opaque same-line `scan_md_link`, unify all
-brackets onto the arena stack (architectural, toward full CommonMark parity; no immediate gate movement).
-**(2)** Extend the rdComplete drop to **markdown-OFF** mode (the `markdown_if_active` else branch runs
-`rd_complete` on the **raw** text for *every* `markdown_if_active` tag — both `sections` variants) and to
-the `@section`/`@field`/`@slot` paths; deferred this session to keep scope to the in-scope `@md` cm cases.
-**(3)** `@evalRd`/`@usage` per-tag non-markdown (same `is_raw_rd_tag` mechanism) **if** they enter scope.
-The 18 remaining projector divergences are all roxygen2-eval/multi-block, **out of scope** — the in-scope
-render/diagnostic backlog is now empty; consider whether to also surface a side-channel **diagnostic** for
-the rdComplete failure (lint/LSP phase) rather than only the silent drop.
+**Next (ranked):** **(1)** Opener-deactivation **slice B** (the real work, gate movement): rewrite the
+arena bracket handling to CommonMark `look_for_link_or_image` (brackets on the stack, backward match,
+**opener deactivation**); carve *all* brackets; delete `scan_md_link`; fix the **non-poisoned
+nested-bracket** projection (latent bug: `[a [b] c](url)` standalone should render *inner* `\link{b}` +
+literal outer, not the opaque outer `\href` arity emits today); retire `opaque_inline_link_display`/
+`opaque_link_is_shortcut_or_ref`/the bracket branches of `resolve_md_link` (keep autolink); re-derive the
+poisoning skeleton/demote off node forms; teach `inline_plain_text` the link-node variants. The poisoned
+curated case must still render outer-`\href` (poisoning de-links the inner) — the knife-edge that proves
+the deactivation/poisoning interaction is faithful. Oracle shapes for slice B are recorded in the plan.
+**(2)** Extend the rdComplete drop to **markdown-OFF** mode (`markdown_if_active` else branch runs
+`rd_complete` on **raw** text for *every* routed tag; `@field`/`@slot` via `tag_two_part`'s whole-raw check
+drops the *entire* tag, mode-independent — all confirmed via oracle this session). **(3)** `@evalRd`/
+`@usage` per-tag non-markdown if they enter scope. The 18 remaining projector divergences are all
+roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-29d (`rdComplete` brace-balance drop, cm-439/442/451/454 closed):** an escaped emphasis
+  delimiter (`*\**`) resolves to `\emph{\}` whose trailing `\` escapes its own `}`; roxygen2's
+  `markdown_if_active` runs `rdComplete` on the rendered section and **drops** `@description`/`@details`
+  (`sections = TRUE`) to empty. Projector-only faithful drop: `rd_complete` (verbatim port of
+  `src/isComplete.cpp`) + `sexpr_to_rd`/`render_sexpr` (pre-parse Rd reconstruction) + `push_section`'s
+  `drop_on_incomplete`. Trap: `@md` escapes `%`→`\%` everywhere, so re-escape every leaf (`escape_percent`)
+  or a `%20` URL false-drops. 294→298. (Also re-blessed the format baseline missed in 2026-06-29c.)
 
 - **2026-06-29c (`@rawRd` body is verbatim Rd, never markdown):** roxygen2's `@rawRd` uses `tag_value`, not
   `tag_markdown`, so its body is never markdown-processed; arity's block-keyed lexer wrongly carved md leaves

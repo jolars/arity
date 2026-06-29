@@ -18,7 +18,10 @@ ROOT@0..81
           ROXYGEN_TEXT@24..27 "sum"
           ROXYGEN_RD_MACRO_DELIM@27..28 "}"
         ROXYGEN_TEXT@28..34 ", and "
-        ROXYGEN_MD_LINK@34..39 "[g()]"
+        ROXYGEN_MD_LINK@34..39
+          ROXYGEN_MD_DELIM@34..35 "["
+          ROXYGEN_TEXT@35..38 "g()"
+          ROXYGEN_MD_DELIM@38..39 "]"
         ROXYGEN_TEXT@39..44 " per "
         ROXYGEN_MD_LINK@44..53
           ROXYGEN_MD_DELIM@44..45 "["
