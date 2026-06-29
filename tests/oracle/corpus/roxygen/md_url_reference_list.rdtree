@@ -1,0 +1,3 @@
+(\description (TEXT "Refs inside list items"))
+(\details (TEXT "A reference inside a list item resolves to a definition elsewhere in the field:") (\itemize (\item) (TEXT "see") (\href (VERB "https://example.com") (TEXT "foo")) (TEXT "for details") (\item) (TEXT "a plain item")))
+(\title (TEXT "Refs inside list items"))

@@ -559,11 +559,22 @@
       demote poisoned), now called by both `serialize_prose_with_linkrefs` and the `@section` arm on the whole
       body before the `:` split. Projector-only. Curated `md_url_reference_section`. Curated fixed-point
       47→48/48; projector 312→313.
-      **Slice B remainder (backlog):** (b) lift the refmap to whole-*field* (a label defined in a sibling
-      list-item / paragraph of the *same field* is still missed), plus multi-line defs + URL normalization.
-      (c) retire `scan_md_link` *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink `<url>`) by
-      carving **every** bracket and moving refs onto the arena lookahead. Plan:
-      `~/.claude/plans/luminous-zooming-toast.md`.
+      **User link-refs resolve across list items LANDED (2026-06-29p):** the user-def stage was flat over
+      the top-level body, so a `[ref]: url` def and its referencing link in different *list items* (or a list
+      item vs a paragraph) of the same field were missed — the ref stayed `\link` and the in-item def leaked.
+      Split the user-def stage into `collect_user_linkrefs_tree` (whole-field url map, recursing into list
+      items) + `apply_user_linkrefs` (recursive rewrite/consume; a changed list becomes a new
+      `Inline::MdListResolved` carrying its rewritten items, serialized by `serialize_md_list_resolved`; an
+      unchanged list keeps its opaque `MdList(node)` form, byte-identical). Cross-*paragraph* already worked
+      (the field body is joined). Projector-only. Curated `md_url_reference_list` (ref in item, def in para),
+      `md_url_reference_list_def` (def in item, consumed). Projector 313→315.
+      **Slice B remainder (backlog):** (b) the refmap (`linkref_keys`) + poisoning are still top-level-only,
+      so an *undefined-label* demotion or poisoning whose candidate sits inside a list item is missed (rare:
+      a plain `[x]` self-defines via the synthesized `[x]: R:x`, so only lookbehind/lookahead-blocked labels
+      like an in-list `a][b]` diverge); plus multi-line defs + URL normalization + strict cross-list
+      document-order for duplicate labels. (c) retire `scan_md_link` *entirely* (still serves plain same-line
+      `[t]`/`[t][r]`, autolink `<url>`) by carving **every** bracket and moving refs onto the arena lookahead.
+      Plan: `~/.claude/plans/luminous-zooming-toast.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it

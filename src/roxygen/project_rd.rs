@@ -87,6 +87,18 @@ enum Inline {
     /// Projects to `\itemize`/`\enumerate` with a name-only `\item` per item ahead
     /// of its content (see [`serialize_md_list`]).
     MdList(SyntaxNode),
+    /// A markdown block list whose item contents have been rewritten by the
+    /// whole-field link-reference pipeline ([`apply_user_linkrefs`]) — a user
+    /// `[ref]: url` definition resolves a referencing link inside a list item, or a
+    /// definition that *sits* in a list item is consumed (leaving the item empty).
+    /// Carries each item's resolved inline run instead of the opaque node, so it
+    /// projects from those (see [`serialize_md_list_resolved`]); produced only when
+    /// some item actually changed, so a list with no link-reference work keeps its
+    /// `MdList(node)` form and its byte-identical serialization.
+    MdListResolved {
+        ordered: bool,
+        items: Vec<Vec<Inline>>,
+    },
     /// A markdown link resolved under `@md` mode, carrying the raw leaf text. The
     /// inline `[text](url)` form projects to `\href{url}{text}`; the reference
     /// (`[text][ref]`) and shortcut (`[dest]`) forms resolve to an `\link`/
@@ -741,7 +753,11 @@ fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
 /// correctness; the refmap (stage 2) runs after stage 1 so it sees every bracket
 /// the user defs left behind.
 fn resolve_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
-    let resolved = resolve_user_linkrefs(body);
+    let mut urls: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    collect_user_linkrefs_tree(body, &mut urls);
+    let resolved = (!urls.is_empty())
+        .then(|| apply_user_linkrefs(body, &urls))
+        .flatten();
     let b1 = resolved.as_deref().unwrap_or(body);
     let undefined = demote_undefined_links(b1, &linkref_keys(b1));
     let b2 = undefined.as_deref().unwrap_or(b1);
@@ -800,6 +816,13 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(serialize_md_list(node));
+            }
+            Inline::MdListResolved { ordered, items } => {
+                if let Some(atom) = prose_text_atom(&run, md) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(serialize_md_list_resolved(*ordered, items));
             }
             Inline::MdLink(raw) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
@@ -1573,48 +1596,113 @@ fn demote_undefined_links(
     changed.then_some(out)
 }
 
-/// Resolve user-written CommonMark link-reference definitions (`[ref]: url`) in a
-/// markdown field body. roxygen2 runs each field through cmark, which (a) consumes
-/// definition blocks (they render nothing) and (b) makes a referencing shortcut or
-/// reference link resolve to the *user's* destination — so an `[*foo*][r1]` with a
-/// `[r1]: url` definition renders `\href{url}{\emph{foo}}` (display **kept**, unlike
-/// the R-topic `\link` path that drops a non-plain display). The user definition
-/// also wins over roxygen2's synthesized `[r1]: R:r1` because cmark keeps the first
-/// definition and the synthesized block is appended last.
+/// Collect user-written CommonMark link-reference definitions (`[ref]: url`) across
+/// the **whole field**, recursing into list items, into a global (normalized-label →
+/// destination) map. roxygen2 runs the entire tag value through cmark as one
+/// document, so a definition in any paragraph or list item resolves a referencing
+/// link anywhere else in the field. First definition of a label wins (cmark),
+/// approximated by `or_insert` over a top-level-then-descend walk (a duplicate label
+/// split across a list and prose — vanishingly rare — is the only case where strict
+/// document order would differ; backlog).
+fn collect_user_linkrefs_tree(
+    body: &[Inline],
+    urls: &mut std::collections::HashMap<String, String>,
+) {
+    let (level, _dropped) = collect_user_linkrefs(body);
+    for (label, url) in level {
+        urls.entry(label).or_insert(url);
+    }
+    for inl in body {
+        match inl {
+            Inline::MdList(node) => {
+                for item in node
+                    .children()
+                    .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+                {
+                    collect_user_linkrefs_tree(&md_list_item_inlines(&item), urls);
+                }
+            }
+            Inline::MdListResolved { items, .. } => {
+                for item in items {
+                    collect_user_linkrefs_tree(item, urls);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Apply the field's global user link-reference map (`urls`, from
+/// [`collect_user_linkrefs_tree`]) to a body, recursing into list items: consume
+/// definition runs (they render nothing) and rewrite each referencing shortcut or
+/// reference link whose label is defined to an [`Inline::MdInlineLink`] — so an
+/// `[*foo*][r1]` with a `[r1]: url` definition renders `\href{url}{\emph{foo}}`
+/// (display **kept**, unlike the R-topic `\link` path that drops a non-plain
+/// display). The user definition wins over roxygen2's synthesized `[r1]: R:r1`
+/// because cmark keeps the first definition and the synthesized block is appended
+/// last.
 ///
-/// Returns `None` (body reused unchanged) when the field has no recognizable
-/// definition — the common case, so existing behavior is untouched. Otherwise the
-/// definition inlines are dropped and each referencing link with a defined label is
-/// rewritten to an [`Inline::MdInlineLink`] (which renders `\href{url}{display}`).
+/// Returns `None` when nothing in this subtree changed, so a list with no
+/// link-reference work keeps its opaque [`Inline::MdList`] form (and thus its
+/// byte-identical serialization); a list that *did* change becomes an
+/// [`Inline::MdListResolved`] carrying its rewritten items.
 ///
 /// Scope (this slice): single-`Text`-node definitions at a true block start (a
-/// definition cannot interrupt a paragraph), bare or `<…>` destinations, an
-/// optional same-line title. Multi-line definitions, titles spanning lines, and
-/// URL normalization (percent-encoding, entities) are backlog.
-fn resolve_user_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
-    let (urls, dropped) = collect_user_linkrefs(body);
-    if dropped.is_empty() {
-        return None;
-    }
-    let out: Vec<Inline> = body
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !dropped.contains(i))
-        .map(|(_, inl)| {
-            if let Some(label) = link_ref_label(inl)
-                && let Some(url) = urls.get(&normalize_linkref_label(&label))
-                && let Some(display) = link_display_inlines(inl)
-            {
-                Inline::MdInlineLink {
-                    url: url.clone(),
-                    display,
+/// definition cannot interrupt a paragraph), bare or `<…>` destinations, an optional
+/// same-line title — now resolved across paragraphs and list items of the same
+/// field. Multi-line definitions, titles spanning lines, and URL normalization
+/// (percent-encoding, entities) are backlog.
+fn apply_user_linkrefs(
+    body: &[Inline],
+    urls: &std::collections::HashMap<String, String>,
+) -> Option<Vec<Inline>> {
+    let (_, dropped) = collect_user_linkrefs(body);
+    let mut out = Vec::with_capacity(body.len());
+    let mut changed = !dropped.is_empty();
+    for (i, inl) in body.iter().enumerate() {
+        if dropped.contains(&i) {
+            continue;
+        }
+        if let Some(label) = link_ref_label(inl)
+            && let Some(url) = urls.get(&normalize_linkref_label(&label))
+            && let Some(display) = link_display_inlines(inl)
+        {
+            out.push(Inline::MdInlineLink {
+                url: url.clone(),
+                display,
+            });
+            changed = true;
+            continue;
+        }
+        if let Inline::MdList(node) = inl {
+            let items: Vec<Vec<Inline>> = node
+                .children()
+                .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+                .map(|item| md_list_item_inlines(&item))
+                .collect();
+            let mut new_items = Vec::with_capacity(items.len());
+            let mut item_changed = false;
+            for item in &items {
+                match apply_user_linkrefs(item, urls) {
+                    Some(rewritten) => {
+                        new_items.push(rewritten);
+                        item_changed = true;
+                    }
+                    None => new_items.push(item.clone()),
                 }
-            } else {
-                inl.clone()
             }
-        })
-        .collect();
-    Some(out)
+            if item_changed {
+                out.push(Inline::MdListResolved {
+                    ordered: md_list_is_ordered(node),
+                    items: new_items,
+                });
+                changed = true;
+                continue;
+            }
+        }
+        out.push(inl.clone());
+    }
+    changed.then_some(out)
 }
 
 /// Scan a field body for user link-reference definitions, returning the
@@ -2668,6 +2756,25 @@ fn serialize_md_list(node: &SyntaxNode) -> String {
         atoms.push("(\\item)".to_string());
         // A markdown list exists only under `@md`, so its item content is markdown.
         atoms.extend(serialize_inlines(&md_list_item_inlines(&item), true));
+    }
+    if atoms.is_empty() {
+        format!("({head})")
+    } else {
+        format!("({head} {})", atoms.join(" "))
+    }
+}
+
+/// Serialize a markdown list whose item contents have already been rewritten by the
+/// whole-field link-reference pipeline ([`apply_user_linkrefs`]) — the resolved-items
+/// analog of [`serialize_md_list`]. Each item renders a name-only `(\item)` followed
+/// by its resolved inline run (markdown stays active inside a list item). An item the
+/// pipeline emptied (it held only a consumed definition) renders a bare `(\item)`.
+fn serialize_md_list_resolved(ordered: bool, items: &[Vec<Inline>]) -> String {
+    let head = if ordered { "\\enumerate" } else { "\\itemize" };
+    let mut atoms: Vec<String> = Vec::new();
+    for item in items {
+        atoms.push("(\\item)".to_string());
+        atoms.extend(serialize_inlines(item, true));
     }
     if atoms.is_empty() {
         format!("({head})")
