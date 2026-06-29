@@ -3034,6 +3034,28 @@ mod tests {
     }
 
     #[test]
+    fn non_plain_reference_links_are_dropped() {
+        // The reference (`[text][ref]`) analog of the shortcut drop: a reference
+        // whose synthesized `R:` destination links as `\link` requires plain-text
+        // display, so `[*foo*][r1]` (emphasis) and `` [`x` `y`][r4] `` (two code
+        // spans) drop, while `[plain][r2]` (plain) and `` [`code`][r3] `` (a sole
+        // code span) survive. The markup-display openers are carved onto the arena
+        // (`same_line_ref_opener`); the plain one stays an opaque leaf, both reaching
+        // the same projection.
+        let src = "#' @details\n\
+                   #' A reference [*foo*][r1] is dropped, but [plain][r2] and \
+                   [`code`][r3] survive while [`x` `y`][r4] drops too.\n\
+                   #' @md\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"A reference is dropped, but\") (\\link (TEXT \"plain\")) \
+             (TEXT \"and\") (\\code (\\link (TEXT \"code\"))) (TEXT \"survive while drops too.\"))"
+        );
+    }
+
+    #[test]
     fn link_display_droppable_boundary() {
         // A sole code span is unwrapped and allowed; pure text is allowed; anything
         // richer (emphasis, a second code span, an autolink) drops the link.

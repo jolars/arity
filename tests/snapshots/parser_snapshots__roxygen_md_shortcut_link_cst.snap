@@ -30,7 +30,10 @@ ROOT@0..127
         ROXYGEN_TEXT@52..57 "Also "
         ROXYGEN_MD_LINK@57..69 "[text][dest]"
         ROXYGEN_TEXT@69..74 " and "
-        ROXYGEN_MD_LINK@74..99 "[`code`][stats::filte ..."
+        ROXYGEN_MD_LINK@74..99
+          ROXYGEN_MD_DELIM@74..75 "["
+          ROXYGEN_MD_CODE@75..81 "`code`"
+          ROXYGEN_MD_DELIM@81..99 "][stats::filter()]"
         ROXYGEN_TEXT@99..100 "."
         NEWLINE@100..101 "\n"
     ROXYGEN_SECTION@101..107

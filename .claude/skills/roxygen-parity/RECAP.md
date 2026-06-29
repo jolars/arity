@@ -205,11 +205,17 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   gate carves `* _ ` ` ` <` displays too (only `!`/`\` plain-text displays stay opaque), so the inline pass
   resolves their children and `link_display_is_droppable` drops the non-plain ones. The `!preceded-by-]`
   guard keeps a cross-line `[ref]` *label* on `scan_md_link` so the arena's `][ref]` fold still sees its
-  token. **Slice B (remaining):**
-  refs/nested-inline still opaque (the `][ref]` fold couples to the opaque `[ref]` token); retiring
-  `scan_md_link` needs the full arena `look_for_link_or_image` rewrite (backward match + deactivation), which
-  also fixes the latent non-poisoned nested bug (`[a [b] c](url)` standalone → inner `\link{b}`, not outer
-  `\href`). See `~/.claude/plans/luminous-zooming-toast.md`.
+  token. **Same-line markup *reference* `[*foo*][ref]` now also nodeifies (2026-06-29l)** — the sibling
+  `same_line_ref_opener` (`lex.rs`) carves a `[` whose markup display (`* _ ` ` ` <`, not `!`/`\`) is followed
+  by a clean `[ref]` (`cross_line_ref_closer(close-1)`); the opener is the **only** new carve — the existing
+  line-agnostic `cross_line_ref_closer` (lone `]`) + opaque `scan_md_link` (`[ref]`) + arena `classify_closer`
+  (`][ref]` fold) + `link_display_is_droppable` do the rest. **Plain** `[plain][ref]` stays opaque
+  (byte-identical), so the markup-only gate keeps the diff tiny. **Slice B (remaining):**
+  plain same-line `[t]`/`[t][r]` + nested-inline still opaque (the `][ref]` fold couples to the opaque
+  `[ref]` token); fully retiring `scan_md_link` needs the arena `look_for_link_or_image` rewrite to move
+  references onto the lookahead. **Still opaque on purpose:** a URL-defined ref `[*foo*][r]`+`[r]: url` →
+  `\href{url}{markup}` (markup kept) — arity models ref *labels*, not *destinations*, so this is the next
+  target, not yet handled. See `~/.claude/plans/luminous-zooming-toast.md`.
 - **Arena now does CommonMark opener deactivation; nested links resolve inner-first (2026-06-29f, slice B core).**
   `match_brackets` (`inline.rs`) replaced the forward `find_link_closer`: a **stack** pairs each `]` to the
   nearest *active* `[`, a formed link **deactivates every opener below it**, a lone `]` does the `][ref]`
@@ -532,8 +538,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post non-plain-shortcut drop, 2026-06-29k): **309 matching (all allowlisted), 18
-divergent (backlog)** of 327 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post same-line non-plain *reference* drop, 2026-06-29l): **310 matching (all allowlisted), 18
+divergent (backlog)** of 328 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -555,46 +561,58 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29k) — non-plain shortcut/reference link drop
+## Latest session (2026-06-29l) — same-line non-plain *reference* `[*foo*][ref]` drop
 
-**RECAP ranked next #1.** Probed roxygen2 7.3.3: a shortcut/reference link (`R:` dest) whose display, after
-unwrapping a *sole* `code` child, has any non-text child is **dropped to empty** by `parse_link`
-("markdown links must contain plain text" → `return("")`); the *link* vanishes, surrounding prose stays
-contiguous (RECAP's earlier "drops the whole section" was wrong). Boundary (all probed): drops `[*foo*]`,
-`[_a_]`, `` [`x` `y`] ``, `` [a `b`] ``, `[<url>]`; keeps `[a_b]` (intraword `_` ≠ emphasis — needs real
-flanking, so a char-scan can't decide) and `` [`code`] `` (sole code → `\code{\link{…}}`). Inline
-`[text](url)` never drops (own dest → `\href`).
+**RECAP ranked next #1.** The same-line *reference* analog of 29k's shortcut drop. Probed roxygen2 7.3.3
+(`R/markdown-link.R`): `get_md_linkrefs`'s one regex matches BOTH `[ref]` and `[text][ref]`
+(`(?<=[^\]\\]|^)\[([^\]\[]+)\](?:\[([^\]\[]+)\])?(?=[^\[{]|$)`), synthesizing `[ref]: R:URLencode(ref)` for
+**group 3** (the second `[]`, or group 2 when absent). So a reference's destination is **R-topic** unless a
+user `[ref]: URL` def precedes the synthesized one (cmark uses the first def). Boundary (all probed):
+`[*foo*][r1]`/`[`x` `y`][r4]` (R-topic, markup display) **drop** (`parse_link` "must contain plain text" →
+`""`); `[plain][r2]` → `\link{plain}`; `` [`code`][r3] `` → `\code{\link{code}}` (sole code). **A
+user-defined URL ref** `[*foo*][r1]`+`[r1]: https://…` instead → `\href{url}{\emph{foo}}` (markup **kept** —
+`\href` isn't the R-topic `\link`, so the plain-text rule doesn't apply). That `\href`-with-markup case needs
+URL-def resolution (arity models only ref *labels*, not *destinations*) → **next target**, NOT this one.
 
-**Fix (two-part, faithful, ~30 lines).** (a) **Lexer** `same_line_shortcut_opener` now carves `* _ ` ` ` <`
-displays as arena bracket pairs (only `!`/`\` — always plain text — stay on the opaque `scan_md_link` leaf),
-so the inline pass resolves the display *children* (emphasis/code/autolink) — no projector-side mini-parser,
-no duplicated flanking. (b) **Projector** `link_display_is_droppable(display)` (sole-`MdCode` unwrap, then
-require all `Inline::Text`) drops the `MdShortcutLink`/`MdRefLink` node in `serialize_inlines` via `continue`
-**without flushing the text run**, so the dropped link is transparent and the prose coalesces (mirrors
-roxygen2's `""` concatenation). Refmap-safe: candidate label (`linkref_source_skeleton`) and resolution label
-(`link_ref_label`) both use `inline_plain_text`, so the link stays self-consistently in the refmap (never
-spuriously demoted) and reaches serialize to be dropped. Blast radius ≈ 0: marked-up bare shortcuts don't
-appear in the existing corpus (all marked-up brackets there are inline/ref links, excluded by the
-following-bracket guard).
+**Fix (one carve, ~12 lines lexer).** The same-line `[*foo*][ref]` was consumed whole by `scan_md_link` as
+one opaque leaf only because its `[` opener wasn't carved. New `same_line_ref_opener` (lex.rs) carves a `[`
+whose balanced bracket-free display contains a markup char (`* _ ` ` ` <`, not `!`/`\`) AND is followed by a
+clean `[ref]` (`cross_line_ref_closer(close-1)`). After carving the opener, the **existing** machinery does
+the rest with **zero** new code: the main loop's line-agnostic `cross_line_ref_closer` carves the lone `]`,
+`scan_md_link` carves `[ref]` opaque, the arena's `classify_closer` folds `][ref]` → `MdRefLink` node with
+resolved display, and `serialize_inlines`' `link_display_is_droppable` (29k) drops it. Refmap-safe: the
+`MdRefLink`-node arms of `linkref_skeleton_push`/`link_ref_label` already exist (cross-line refs), so `r1` is
+in the refmap (not spuriously demoted) and reaches serialize. **Plain** `[plain][ref]` stays opaque
+(byte-identical node-vs-leaf projection) — markup-only carve keeps blast radius tiny.
 
-**TDD/tests:** fixture `roxygen_md_shortcut_emphasis` (CST snapshot shows all four `[…]` as `MD_LINK` nodes
-with resolved children; lossless), curated `md_shortcut_emphasis` (drop+keep mix), 2 unit tests (end-to-end
-drop, `link_display_is_droppable` boundary). Re-blessed the format baseline (pure +1 key; same-line shortcut
-nodes are atomic like the opaque leaf was → formatter byte-identical).
+**TDD/tests:** fixture `roxygen_md_ref_emphasis` (CST: markup refs are `MD_LINK` nodes with resolved
+EMPH/CODE children, plain ref stays an opaque leaf; lossless), curated `md_ref_emphasis` (drop+keep mix),
+2 unit tests (end-to-end `non_plain_reference_links_are_dropped`, lexer carve-vs-opaque). Carving made the
+*existing* `roxygen_md_shortcut_link` fixture nodeify its `` [`code`][stats::filter()] `` (markup display) —
+CST snapshot re-accepted, projection byte-identical (`\code{\link{code}}` either path). Re-blessed the format
+baseline (pure +1 key; ref-link nodes atomic like the opaque leaf → formatter byte-identical).
 
-**Result:** projector **308→309 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
-`cargo test` 524 green, clippy + fmt clean, curated fixed-point 43→44/44.
+**Result:** projector **309→310 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
+`cargo test` 525 green, clippy + fmt clean, curated fixed-point 44→45/45.
 
-**Next (ranked):** **(1)** Same-line **non-plain *reference* `[*foo*][ref]`** drop — still an opaque
-`scan_md_link` leaf (the `][ref]` same-line closer isn't carved), so it doesn't yet nodeify; needs the
-slice-B `][ref]` carve (or a raw-display plain-text check on the opaque ref). **(2)** Whole-*field* refmap —
-`linkref_keys` is per-prose-body, so a label defined in a sibling paragraph/list of the same tag is missed;
-lift to the field. **(3)** Slice B **remainder** — fully retire `scan_md_link` (still serves same-line
-reference `[t][r]`, autolink `<url>`): carve every bracket, move references onto the arena lookahead, retire
+**Next (ranked):** **(1)** **URL-defined reference** `[text][ref]`+`[ref]: https://…` → `\href{url}{display}`
+(markup kept). arity treats *all* refs as R-topic `\link` (it models ref labels, not destinations); needs a
+field-level user-def map (`[ref]: url`) and a `\href` vs `\link` split in `ref_link_node_atom`/`ref_link_atom`.
+Couples to **(2)** Whole-*field* refmap — `linkref_keys` is per-prose-body, so a sibling-paragraph def is
+missed; lift to the field (a user `[ref]: url` def lives in its own paragraph, so URL resolution needs this).
+**(3)** Slice B **remainder** — fully retire `scan_md_link` (still serves plain same-line `[t]`/`[t][r]`,
+autolink `<url>`): carve every bracket, move references onto the arena lookahead, retire
 `opaque_inline_link_display`/`opaque_link_is_shortcut_or_ref`. The 18 projector divergences stay
 roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-29k (non-plain shortcut/reference link drop):** a shortcut/reference link (`R:` dest) whose
+  display (after unwrapping a *sole* `code` child) has any non-text child is **dropped to empty** by
+  `parse_link` ("markdown links must contain plain text"); the link vanishes, prose stays contiguous.
+  `same_line_shortcut_opener` carves `* _ ` ` ` <` displays as arena pairs (`!`/`\` stay opaque); projector
+  `link_display_is_droppable` drops the `MdShortcutLink`/`MdRefLink` node via `continue` (no run flush).
+  Fixture `roxygen_md_shortcut_emphasis` + curated `md_shortcut_emphasis`. 308→309.
 
 - **2026-06-29j (link-reference map; undefined shortcut/ref stays literal):** arity linked every bracket-free
   shortcut optimistically, but roxygen's `get_md_linkrefs` only defines a label for a `[` not preceded by `]`

@@ -524,11 +524,21 @@
       `serialize_inlines` **without flushing the text run** (the dropped link is transparent, so the prose
       coalesces). Same-line *reference* `[*foo*][r]` (still opaque) stays backlog. Curated
       `md_shortcut_emphasis`. 308→309.
-      **Slice B remainder (backlog):** (a) retire `scan_md_link` *entirely* (it still serves same-line
-      reference `[t][r]`, non-plain reference `[*foo*][r]`, autolink `<url>`) by carving **every** bracket
-      and moving refs onto the arena; (b) lift the refmap from per-prose-body to whole-*field* (a label
-      defined in a sibling paragraph/list of the same tag is currently missed). Plan:
-      `~/.claude/plans/luminous-zooming-toast.md`.
+      **Same-line non-plain *reference* drop LANDED (2026-06-29l):** the reference analog. `get_md_linkrefs`'s
+      one regex synthesizes `[ref]: R:ref` for the *second* `[]` of `[text][ref]`, so a reference is R-topic
+      (`\link`, plain-text rule applies → markup display drops) unless a user `[ref]: URL` def precedes it
+      (then `\href`, markup kept). New `same_line_ref_opener` (lex.rs) carves *only* the `[` opener of a
+      markup-display (`* _ ` ` ` <`) reference followed by a clean `[ref]`; the existing line-agnostic
+      `cross_line_ref_closer` (lone `]`) + opaque `scan_md_link` (`[ref]`) + arena `][ref]` fold +
+      `link_display_is_droppable` do the rest (zero new projector code). Plain `[plain][ref]` stays opaque
+      (byte-identical). Curated `md_ref_emphasis`. 309→310.
+      **Slice B remainder (backlog):** (a) **URL-defined reference** `[text][ref]`+`[ref]: url` →
+      `\href{url}{display}` (markup kept) — arity models ref *labels*, not *destinations*; needs a field-level
+      user-def map + `\href`-vs-`\link` split in `ref_link_(node_)atom`. (b) lift the refmap from
+      per-prose-body to whole-*field* (a label defined in a sibling paragraph/list of the same tag is missed;
+      a user `[ref]: url` def lives in its own paragraph, so (a) needs this). (c) retire `scan_md_link`
+      *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink `<url>`) by carving **every** bracket
+      and moving refs onto the arena lookahead. Plan: `~/.claude/plans/luminous-zooming-toast.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it

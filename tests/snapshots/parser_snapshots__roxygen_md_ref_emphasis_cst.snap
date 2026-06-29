@@ -1,0 +1,46 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..96
+  ROXYGEN_BLOCK@0..76
+    ROXYGEN_SECTION@0..76
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+      ROXYGEN_PARAGRAPH@7..76
+        ROXYGEN_MARKER@7..9 "#'"
+        WHITESPACE@9..10 " "
+        ROXYGEN_TEXT@10..16 "A ref "
+        ROXYGEN_MD_LINK@16..27
+          ROXYGEN_MD_DELIM@16..17 "["
+          ROXYGEN_MD_EMPH@17..22
+            ROXYGEN_MD_DELIM@17..18 "*"
+            ROXYGEN_TEXT@18..21 "foo"
+            ROXYGEN_MD_DELIM@21..22 "*"
+          ROXYGEN_MD_DELIM@22..27 "][r1]"
+        ROXYGEN_TEXT@27..39 " drops, but "
+        ROXYGEN_MD_LINK@39..50 "[plain][r2]"
+        ROXYGEN_TEXT@50..55 " and "
+        ROXYGEN_MD_LINK@55..67
+          ROXYGEN_MD_DELIM@55..56 "["
+          ROXYGEN_MD_CODE@56..62 "`code`"
+          ROXYGEN_MD_DELIM@62..67 "][r3]"
+        ROXYGEN_TEXT@67..76 " survive."
+  NEWLINE@76..77 "\n"
+  ASSIGNMENT_EXPR@77..95
+    IDENT@77..78 "f"
+    WHITESPACE@78..79 " "
+    ASSIGN_LEFT@79..81 "<-"
+    WHITESPACE@81..82 " "
+    FUNCTION_EXPR@82..95
+      FUNCTION_KW@82..90 "function"
+      LPAREN@90..91 "("
+      IDENT@91..92 "x"
+      RPAREN@92..93 ")"
+      WHITESPACE@93..94 " "
+      IDENT@94..95 "x"
+  NEWLINE@95..96 "\n"

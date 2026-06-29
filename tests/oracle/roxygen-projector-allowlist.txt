@@ -165,6 +165,7 @@ md_linkref_poisoning_section
 md_nested_link
 md_nested_link_chain
 md_nested_list
+md_ref_emphasis
 md_ref_link_multiline
 md_shortcut_link
 md_shortcut_link_multiline
