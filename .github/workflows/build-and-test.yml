@@ -86,8 +86,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          fetch-tags: true
-          token: ${{ secrets.RELEASE_TOKEN }}
 
       - uses: dtolnay/rust-toolchain@stable
 
