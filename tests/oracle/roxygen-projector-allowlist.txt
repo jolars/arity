@@ -175,6 +175,8 @@ rawrd_md_literal
 rd_comment
 rd_macros
 rd_nested_list
+rdcomplete_off_description
+rdcomplete_off_seealso
 # roxygen2 projector-parity allowlist --- cases whose CST projection currently
 rx-0273da0d
 rx-031cfdcb

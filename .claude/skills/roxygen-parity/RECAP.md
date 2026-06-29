@@ -419,8 +419,16 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   comes only from leaf text — the trailing-`\` bug `*\**`→`\emph{\}`), then `rd_complete` (verbatim
   port). **Critical:** re-escape `%`→`\%` for **every** leaf in `@md` (`escape_percent = md`) — roxygen2
   escapes `%` everywhere in md render, so a `%20` URL must not comment-out the closing braces (else a
-  false drop). Literal `{`/`}` in md text are **not** escaped (they count). Other prose tags are
-  `sections=FALSE` → **no drop**; markdown-OFF raw-text drop + `@section`/`@field`/`@slot` are backlog.
+  false drop). Literal `{`/`}` in md text are **not** escaped (they count). **The drop rule is
+  mode-dependent** (`push_section`'s `check_drop = if md { drop_on_incomplete } else { true }`,
+  2026-06-29g): with md **on**, only the `sections=TRUE` tags (`drop_on_incomplete`) drop, others
+  (`tag_markdown`, `sections=FALSE`: `@title`/`@seealso`/`@note`/…) don't; with md **off**,
+  `markdown_if_active`'s else-branch runs `rdComplete(text)` **unconditionally**, so *every* prose
+  section `push_section` emits (title included) drops to empty on imbalance regardless of
+  `drop_on_incomplete`. `section_atoms_rd_complete` works for md-off too (the `%`-comment strip on
+  non-md prose removes only comment-state chars, so brace balance is preserved; `escape_percent=md`=false
+  is correct). **Still backlog:** `@field`/`@slot` (`tag_two_part` runs `rdComplete` on raw → NULL
+  *whole-tag* drop, mode-independent — a separate `describe_section` path) and `@section`.
 
 ## Settled decisions (don't relitigate without reason)
 
@@ -471,8 +479,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post opener-deactivation slice B core, 2026-06-29f): **301 matching (all allowlisted), 18
-divergent (backlog)** of 319 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post markdown-off rdComplete drop, 2026-06-29g): **303 matching (all allowlisted), 18
+divergent (backlog)** of 321 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -484,9 +492,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (316 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
+   (321 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 33/33 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 38/38 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -494,58 +502,55 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29f) — opener-deactivation slice B core (nested-bracket correctness)
+## Latest session (2026-06-29g) — markdown-OFF rdComplete brace-balance drop
 
-**User-chosen target** (RECAP ranked #1, the architectural slice B). Landed the **core** of slice B: the
-arena now implements CommonMark `look_for_link_or_image` (backward matching + **opener deactivation**),
-fixing the latent **non-poisoned nested-bracket bug** (`[a [b] c](url)` standalone rendered the opaque outer
-`\href`; now renders literal `[a `, `\link{b}`, literal ` c](url)` — inner links win, enclosing brackets
-literal, exactly as roxygen2/cmark). Three coordinated changes:
+**RECAP ranked #3.** Extended the per-section `rdComplete` drop (landed md-ON in 2026-06-29d) to
+**markdown-OFF** mode. Oracle finding (`markdown_if_active`, `R/markdown.R`): with markdown off the
+function's *else-branch* runs `rdComplete(text, is_code=FALSE)` **unconditionally** — so on a brace
+imbalance **every** prose section it produces drops to empty, not just the `sections=TRUE`
+`@description`/`@details`. Probed and confirmed: md-OFF `@title`, `@description`, `@details`, and
+every `tag_markdown` section (`@seealso`/`@note`/…) all drop to `(\<macro>)`; md-ON leaves the
+`sections=FALSE` ones intact (unchanged). The title-as-description fallback composes correctly (the
+fallback text routes through `push_section` too, so an unbalanced title drops *both* `\title` and the
+derived `\description`).
 
-1. **Arena** (`inline.rs`): replaced the forward `find_link_closer` with `match_brackets` — a stack-based
-   pre-pass that pairs `]` to the nearest *active* `[`, deactivates every opener below a formed link
-   (`look_for_link_or_image`), does the `][ref]` reference-label lookahead, and gates a lone-`]` shortcut on
-   a **bracket-free** interior. `build` then emits matched links (recursive body — provably no nested
-   matched link inside, since an inner link would have deactivated this opener), literal brackets, or
-   consumed closers/labels. `BracketRole` enum drives it.
-2. **Lexer** (`lex.rs`): `is_nested_bracket_opener` carves the outer `[` of a balanced same-line group whose
-   interior contains brackets (the bracket-free same-line/opaque paths don't apply), so a nested link's
-   *every* bracket reaches the arena (inner via `same_line_shortcut_opener`/`inline_link_span`, closer via
-   `cross_line_link_closer`). `scan_md_link` no longer swallows a nested span (the carve+continue precedes
-   it).
-3. **Projector** (`project_rd.rs`): the arena resolves **optimistically** (all shortcuts live), so the
-   *poisoned* nested case — where the inner shortcut is de-linked — needs repair: `relink_demoted_inline_links`
-   re-forms the enclosing `[…](url)` from the demoted bracket text **inside `demote_poisoned_links`**. The
-   **consecutive-`Inline::Text` constraint** scopes it exactly to the poisoned case (a surviving inner link
-   *node* interrupts the run, so a non-poisoned nested link or an inner inline-link keeps its outer bracket
-   literal); an escaped `\[` keeps its backslash and is skipped. This is the knife-edge: poisoned
-   `[a [b] c](url)` → outer `\href` (inner `[b]` de-linked + leaked `[b]: R:b`); non-poisoned → inner `\link{b}`.
+**Fix (projector-only):** one line in `push_section` — `check_drop = if md { drop_on_incomplete }
+else { true }` — gating the existing `section_atoms_rd_complete` check. No parser change: arity already
+lexes a mid-prose unbalanced `\code{` as literal prose (the `roxygen_unbalanced_macro` recovery), so the
+imbalance is in the leaf text and the existing `sexpr_to_rd`/`rd_complete` reconstruction catches it.
+The `%`-comment strip on non-md prose removes only comment-state chars, so brace balance is preserved
+(`escape_percent=md`=false is correct for md-off).
 
-**TDD/tests:** new curated `md_nested_link` (inline/shortcut/`[[x]]`/inline-in-inline) + `md_nested_link_chain`
-(multi-inner + 3-level deep nest), pins minted, ratcheted into the allowlist; new parser fixture
-`roxygen_md_nested_link` (+ accepted CST snapshot, losslessness held — *read* the CST: inner `MD_LINK` node,
-outer literal `MD_DELIM`); new lexer unit test `nested_bracket_link_carves_outer_opener`. Re-blessed the
-format baseline: the nested link is **no longer atomic**, so the formatter reflows within its literal
-portions (e.g. `md_linkref_poisoning_nested_link` now breaks `[a [b]\n#' c](url)`) — Tenet-1 faithful
-(fixed-point **36/36** Rd-preserving, idempotent; diff = exactly the 3 nested keys, no other case changed).
+**TDD/tests:** two curated dir-corpus cases — `rdcomplete_off_description` (unbalanced `@description`,
+sections=TRUE) and `rdcomplete_off_seealso` (unbalanced `@seealso`, the sections=FALSE divergence-guard
+that proves md-off drops *all* tags) — both minted from roxygen2, confirmed divergent before the fix,
+matching after, ratcheted into the allowlist. Re-blessed the format baseline (pure addition of the two
+keys; formatter output byte-identical to input — no formatter change).
 
-**Result:** projector **299→301 matching (all allowlisted), 18 divergent** (all 18 are harvested `rx-*`
-eval/multi-block, out of scope). Curated fixed-point **36/36** preserving, 0 blocked. `cargo test` green,
-clippy + fmt clean.
+**Result:** projector **301→303 matching (all allowlisted), 18 divergent** (unchanged — all 18 are
+harvested `rx-*` eval/multi-block, out of scope). Curated fixed-point **38/38** preserving, 0 blocked.
+`cargo test` green, clippy + fmt clean.
 
-**Next (ranked):** **(1)** Slice B **remainder** — fully retire `scan_md_link` (it still serves same-line
-reference `[t][r]`, non-plain shortcut `[*foo*]`, autolink `<url>`): carve **every** bracket, move
-references onto the arena's lookahead, retire the now-vestigial `opaque_inline_link_display`/
-`opaque_link_is_shortcut_or_ref`. **(2)** Model the **link-reference map** (the same gap as poisoning,
-newly pinpointed this session): arity links *every* bracket-free shortcut, but roxygen's `get_md_linkrefs`
-`(?<!\])` lookbehind blocks reference-**definition** creation for a `[` after `]`, so an *undefined*
-shortcut after `]` stays literal (`a][b]` / `[a [b] c][ref]` standalone → all literal; they link only when
-the label is defined elsewhere). Modeling the refmap would fix this **and** subsume the projector poisoning
-relink. **(3)** Extend the rdComplete drop to **markdown-OFF** mode (`@description`/`@details` → empty,
-`@field`/`@slot` → whole tag dropped on brace imbalance — oracle-confirmed this session). The 18 projector
-divergences stay roxygen2-eval/multi-block, **out of scope**.
+**Next (ranked):** **(1)** `@field`/`@slot` **whole-tag drop** (`tag_two_part` runs `rdComplete` on the
+raw `name + def` → NULL, dropping the whole tag, **mode-independent**); needs the `describe_section`
+path + RefClass/S4 oracle setup (a `setRefClass`/`@slot` on a class object). **(2)** Slice B
+**remainder** — fully retire `scan_md_link` (still serves same-line reference `[t][r]`, non-plain
+shortcut `[*foo*]`, autolink `<url>`): carve every bracket, move references onto the arena lookahead,
+retire the vestigial `opaque_inline_link_display`/`opaque_link_is_shortcut_or_ref`. **(3)** Model the
+**link-reference map** (arity links every bracket-free shortcut, but roxygen needs the label *defined*;
+the `(?<!\])` lookbehind gap — subsumes the projector poisoning relink). The 18 projector divergences
+stay roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-29f (opener-deactivation slice B core):** the arena now implements CommonMark
+  `look_for_link_or_image` (backward matching + **opener deactivation**), fixing the latent non-poisoned
+  nested-bracket bug (`[a [b] c](url)` standalone → inner `\link{b}`, outer brackets literal). Three
+  changes: arena `match_brackets` (stack pairing + deactivation, `BracketRole`), lexer
+  `is_nested_bracket_opener` (carves the outer `[` so every bracket reaches the arena), projector
+  `relink_demoted_inline_links` (re-forms the enclosing `\href` for the *poisoned* case, scoped by the
+  consecutive-`Inline::Text` run). Curated `md_nested_link` + `_chain`; nested link no longer atomic
+  (format baseline re-blessed, fixed-point 36/36). 299→301.
 
 - **2026-06-29e (opener-deactivation slice A):** moved same-line plain-text *shortcut* `[text]` off the
   opaque `scan_md_link` leaf onto the arena node path (`same_line_shortcut_opener` → `MdShortcutLink`).

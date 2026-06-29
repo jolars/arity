@@ -342,7 +342,13 @@
       The last 4 (markdown backslash escapes in emphasis, `*\**`→`\emph{\}`) were the
       **rdComplete-drop** surface: roxygen2 errors "mismatched braces or quotes" and
       drops the `@description`/`@details` body to empty; the projector now replicates the
-      drop (`rd_complete` port + `sexpr_to_rd` brace reconstruction, `@md` only). A
+      drop (`rd_complete` port + `sexpr_to_rd` brace reconstruction). **markdown-OFF
+      drop landed 2026-06-29g:** `markdown_if_active`'s else-branch runs `rdComplete`
+      *unconditionally*, so with md off **every** prose section (title included) drops
+      to empty on a brace imbalance, not just `sections=TRUE`—`push_section` gates this
+      `check_drop = if md { drop_on_incomplete } else { true }` (curated
+      `rdcomplete_off_description`/`_seealso`). Still backlog: `@field`/`@slot`
+      (`tag_two_part` whole-tag drop, mode-independent) and `@section`. A
       user-facing side-channel **diagnostic** for the same condition is still deferred to
       the lint/LSP phase (the drop alone is what closed the gate cases). **Unicode NBSP in `norm_ws` (cm-355) landed 2026-06-25j:** the R
       driver's `[[:space:]]` is ASCII-only, so `norm_ws` now collapses only ASCII

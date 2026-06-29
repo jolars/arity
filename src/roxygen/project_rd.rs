@@ -465,13 +465,16 @@ fn is_null_section(body: &[Inline], md: bool) -> bool {
 /// may append leaked link-reference definitions to the field text (see
 /// [`leaked_linkref_text`]); they coalesce into the section's trailing prose.
 ///
-/// `drop_on_incomplete` mirrors roxygen2's `markdown_if_active` per-section drop:
-/// the `sections = TRUE` tags (`@description`/`@details`, including the intro
-/// paragraphs `parse_description` re-emits as those tags) run `rdComplete` on each
-/// rendered section, warn on a brace imbalance, and replace the body with `""`
-/// (`R/markdown.R`, `src/isComplete.cpp`). The other prose tags use plain
-/// `tag_markdown` (`sections = FALSE`), which does not drop, so they pass `false`.
-/// Only `@md` is modeled here; the markdown-off raw-text check is deferred backlog.
+/// `drop_on_incomplete` mirrors roxygen2's `markdown_if_active` per-section drop —
+/// but the rule is **mode-dependent**. With markdown **on**, only the
+/// `sections = TRUE` tags (`@description`/`@details`, including the intro paragraphs
+/// `parse_description` re-emits as those tags) run `rdComplete` and replace the body
+/// with `""` on a brace imbalance; the other prose tags use plain `tag_markdown`
+/// (`sections = FALSE`) and do not drop, so they pass `false`. With markdown **off**,
+/// `markdown_if_active`'s else-branch runs `rdComplete(text)` *unconditionally*, so
+/// **every** prose section it produces (title included) drops to empty on a brace
+/// imbalance regardless of `drop_on_incomplete` (`R/markdown.R`, `src/isComplete.cpp`).
+/// (`@field`/`@slot` use `tag_two_part`, a separate whole-tag drop, not modeled here.)
 fn push_section(
     out: &mut Vec<String>,
     macro_name: &str,
@@ -480,7 +483,8 @@ fn push_section(
     drop_on_incomplete: bool,
 ) {
     let atoms = serialize_prose_with_linkrefs(body, md);
-    if md && drop_on_incomplete && !section_atoms_rd_complete(&atoms, md) {
+    let check_drop = if md { drop_on_incomplete } else { true };
+    if check_drop && !section_atoms_rd_complete(&atoms, md) {
         out.push(format!("(\\{macro_name})"));
         return;
     }
