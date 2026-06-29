@@ -319,3 +319,4 @@ rx-fd84eacf
 #     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
 tabular
 #     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)
+md_shortcut_emphasis

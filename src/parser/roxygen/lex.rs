@@ -694,17 +694,18 @@ fn is_cross_line_link_opener(bytes: &[u8], i: usize) -> bool {
 /// pass (uniform with cross-line shortcuts and inline links) instead of the opaque
 /// [`scan_md_link`] leaf, so the bracket recognizers converge on the arena stack.
 ///
-/// The restrictions keep the carve **behavior-preserving** vs the opaque leaf: a
-/// plain display resolves to a single `Inline::Text` whose coalesced text equals the
-/// raw bracket interior, so the projector's node path
+/// A plain display resolves to a single `Inline::Text` whose coalesced text equals
+/// the raw bracket interior, so the projector's node path
 /// (`shortcut_link_node_atom` → `shortcut_link_atom(text)`) is byte-identical to the
 /// leaf path (`resolve_md_link` → `shortcut_link_atom(text)`). A *marked-up* display
-/// (`[*foo*]`, `` [`x`] ``) would diverge — the node path coalesces the display while
-/// the leaf keeps the raw span — so it stays opaque; roxygen2 rejects a non-plain
-/// shortcut anyway ("markdown links must contain plain text"). A `[` immediately
-/// preceded by `]` is a cross-line reference *label* (`[ref]` of `[text][ref]`) and
-/// is left to [`scan_md_link`] so the arena's `][ref]` fold still sees its opaque
-/// token.
+/// (`[*foo*]`, `` [`x` `y`] ``) is also carved here: the inline pass resolves its
+/// emphasis/code/autolink/HTML children so the projector can mirror roxygen2's
+/// `parse_link` — a sole code span links (`\code{\link{…}}`), any richer display is
+/// rejected ("markdown links must contain plain text") and dropped to empty
+/// (`link_display_is_droppable`). Only `!`/`\` displays (always plain text) stay on
+/// the opaque leaf. A `[` immediately preceded by `]` is a cross-line reference
+/// *label* (`[ref]` of `[text][ref]`) and is left to [`scan_md_link`] so the arena's
+/// `][ref]` fold still sees its opaque token.
 fn same_line_shortcut_opener(bytes: &[u8], i: usize) -> bool {
     if i > 0 && bytes[i - 1] == b']' {
         return false;
@@ -714,9 +715,14 @@ fn same_line_shortcut_opener(bytes: &[u8], i: usize) -> bool {
     };
     let content = &bytes[i + 1..close - 1];
     is_shortcut_content(content)
-        && !content
-            .iter()
-            .any(|&b| matches!(b, b'*' | b'_' | b'`' | b'<' | b'!' | b'\\'))
+        // An `!` (no following `[`, so never an image here) or a `\` escape only
+        // ever yields plain text, so those displays stay on the opaque
+        // [`scan_md_link`] leaf where `resolve_md_link` renders them directly.
+        // Emphasis/code/autolink/HTML markers (`* _ ` ` ` <`) are carved so the
+        // inline pass resolves the display into structured children: a sole code
+        // span links (`\code{\link{…}}`), any richer display makes roxygen2 reject
+        // the link as non-plain text and the projector drops it.
+        && !content.iter().any(|&b| matches!(b, b'!' | b'\\'))
         && !matches!(bytes.get(close), Some(b'(' | b'[' | b'{'))
 }
 

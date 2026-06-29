@@ -514,12 +514,21 @@
       normalized label ∉ refmap to literal — running before the positional poison demotion in
       `serialize_prose_with_linkrefs`, full candidate set (not boundary-limited). Projector-only. Curated
       `md_undefined_shortcut` + `md_undefined_ref`. 306→308.
+      **Non-plain shortcut drop LANDED (2026-06-29k):** roxygen2's `parse_link` rejects a shortcut/
+      reference link whose display is not plain text ("markdown links must contain plain text") and renders
+      it as **empty** (the *link* is dropped, surrounding prose left contiguous — *not* the whole section).
+      A *sole* code span unwraps and links (`\code{\link{…}}`); emphasis / a second code span / autolink /
+      image / HTML drops. Fix: relax `same_line_shortcut_opener` to carve `* _ ` ` ` <` displays as arena
+      bracket pairs (only `!`/`\` plain-text displays stay on the opaque leaf) so the inline pass resolves
+      the display children, then `link_display_is_droppable` drops the `MdShortcutLink`/`MdRefLink` node in
+      `serialize_inlines` **without flushing the text run** (the dropped link is transparent, so the prose
+      coalesces). Same-line *reference* `[*foo*][r]` (still opaque) stays backlog. Curated
+      `md_shortcut_emphasis`. 308→309.
       **Slice B remainder (backlog):** (a) retire `scan_md_link` *entirely* (it still serves same-line
-      reference `[t][r]`, non-plain shortcut `[*foo*]`, autolink `<url>`) by carving **every** bracket and
-      moving refs onto the arena; (b) the **non-plain shortcut `[*foo*]`** drop — a *separate* mechanism
-      (roxygen makes the def but rejects "links must contain plain text" and drops the whole section); (c)
-      lift the refmap from per-prose-body to whole-*field* (a label defined in a sibling paragraph/list of
-      the same tag is currently missed). Plan: `~/.claude/plans/luminous-zooming-toast.md`.
+      reference `[t][r]`, non-plain reference `[*foo*][r]`, autolink `<url>`) by carving **every** bracket
+      and moving refs onto the arena; (b) lift the refmap from per-prose-body to whole-*field* (a label
+      defined in a sibling paragraph/list of the same tag is currently missed). Plan:
+      `~/.claude/plans/luminous-zooming-toast.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it

@@ -1,0 +1,3 @@
+(\description (TEXT "Shortcut links that contain markup are dropped"))
+(\details (TEXT "A shortcut is dropped because its display is not plain text, but") (\link (TEXT "a_b")) (TEXT "and") (\code (\link (TEXT "code"))) (TEXT "survive while drops too."))
+(\title (TEXT "Shortcut links that contain markup are dropped"))

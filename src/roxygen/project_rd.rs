@@ -792,7 +792,15 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 run.clear();
                 atoms.push(inline_link_node_atom(url, display, md));
             }
+            // A reference/shortcut link whose display is not plain text is *dropped*
+            // by roxygen2's `parse_link` ("markdown links must contain plain text").
+            // The dropped link contributes nothing and — like roxygen2's `""` — does
+            // not break the surrounding text run, so it is skipped without flushing
+            // (the run keeps accumulating, coalescing the text on either side).
             Inline::MdRefLink { dest, display } => {
+                if link_display_is_droppable(display) {
+                    continue;
+                }
                 if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
@@ -800,6 +808,9 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 atoms.push(ref_link_node_atom(display, dest));
             }
             Inline::MdShortcutLink { display } => {
+                if link_display_is_droppable(display) {
+                    continue;
+                }
                 if let Some(atom) = prose_text_atom(&run, md) {
                     atoms.push(atom);
                 }
@@ -2144,6 +2155,21 @@ fn shortcut_link_node_atom(display: &[Inline]) -> String {
     }
 }
 
+/// Whether roxygen2's `parse_link` would *drop* a shortcut/reference link with this
+/// resolved display, rendering nothing ("markdown links must contain plain text").
+/// `parse_link` first unwraps a display that is a *single* code span (which then
+/// links as `\code{\link{…}}`) and otherwise requires every child to be text (a
+/// softbreak/linebreak, both projected as `Inline::Text(" ")`, also count): any
+/// emphasis, a second code span, an image, an autolink, or raw HTML makes the link
+/// non-plain and roxygen2 discards it. (An inline `[text](url)` link is never
+/// subject to this — it carries its own destination and renders `\href`.)
+fn link_display_is_droppable(display: &[Inline]) -> bool {
+    if matches!(display, [Inline::MdCode(_)]) {
+        return false;
+    }
+    !display.iter().all(|inl| matches!(inl, Inline::Text(_)))
+}
+
 /// A best-effort plain-text rendering of a resolved inline run, used only to test a
 /// link's destination against its text (the `\url` auto-destination branch). Rich
 /// inlines (emphasis, code) contribute their textual content; non-textual inlines
@@ -2985,6 +3011,46 @@ mod tests {
              (TEXT \".\"))\n\
              (\\title (TEXT \"Title\"))"
         );
+    }
+
+    #[test]
+    fn non_plain_shortcut_links_are_dropped() {
+        // roxygen2's `parse_link` rejects a shortcut/reference link whose display is
+        // not plain text ("markdown links must contain plain text") and renders it as
+        // empty, leaving the surrounding prose contiguous: `[*foo*]` (emphasis) and
+        // `` [`x` `y`] `` (two code spans) drop, while `[a_b]` (intraword `_` is not
+        // emphasis) and `` [`code`] `` (a sole code span) survive.
+        let src = "#' @details\n\
+                   #' A shortcut [*foo*] is dropped, but [a_b] and [`code`] survive \
+                   while [`x` `y`] drops too.\n\
+                   #' @md\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"A shortcut is dropped, but\") (\\link (TEXT \"a_b\")) \
+             (TEXT \"and\") (\\code (\\link (TEXT \"code\"))) (TEXT \"survive while drops too.\"))"
+        );
+    }
+
+    #[test]
+    fn link_display_droppable_boundary() {
+        // A sole code span is unwrapped and allowed; pure text is allowed; anything
+        // richer (emphasis, a second code span, an autolink) drops the link.
+        assert!(!link_display_is_droppable(&[Inline::MdCode("x".into())]));
+        assert!(!link_display_is_droppable(&[Inline::Text("a_b".into())]));
+        assert!(link_display_is_droppable(&[Inline::MdEmphasis {
+            strong: false,
+            children: vec![Inline::Text("foo".into())],
+        }]));
+        assert!(link_display_is_droppable(&[
+            Inline::MdCode("x".into()),
+            Inline::Text(" ".into()),
+            Inline::MdCode("y".into()),
+        ]));
+        assert!(link_display_is_droppable(&[Inline::MdLink(
+            "<https://e.org>".into()
+        )]));
     }
 
     #[test]
