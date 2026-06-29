@@ -487,11 +487,14 @@ impl Paragraph {
         // a structured construct (which would break idempotence), and — in
         // non-markdown prose, which is literal Rd — no line carries a live `%`
         // comment, since reflowing would move text across the comment boundary and
-        // change the rendered Rd (a Tenet-1 violation); otherwise keep the original
-        // line breaks, marker-normalized.
+        // change the rendered Rd (a Tenet-1 violation), and — in markdown prose —
+        // the paragraph does not begin with a link-reference definition, which
+        // reflow would join into ordinary prose (changing the rendered Rd the same
+        // way); otherwise keep the original line breaks, marker-normalized.
         if self.chunks.is_empty()
             || self.chunks.iter().any(|c| is_unsafe_line_start(c))
             || (!md && self.lines.iter().any(line_has_live_rd_comment))
+            || (md && self.lines.first().is_some_and(line_is_linkref_def))
         {
             let lines = std::mem::take(&mut self.lines);
             for line in &lines {
@@ -521,6 +524,10 @@ struct TagUnit {
     chunks: Vec<String>,
     /// Source lines (tag line first), kept for the verbatim fallback.
     lines: Vec<PhysicalLine>,
+    /// Whether the tag's own prose value (the field's block start) is a
+    /// link-reference definition, in which case reflow must not join it with the
+    /// absorbed continuations (see [`line_is_linkref_def`]).
+    first_is_linkref_def: bool,
 }
 
 impl TagUnit {
@@ -533,6 +540,7 @@ impl TagUnit {
             header: tag_header(tag).unwrap_or_else(|| "@".to_string()),
             chunks,
             lines: vec![line.clone()],
+            first_is_linkref_def: text_is_linkref_def(&tag_rest_verbatim(tag)),
         }
     }
 
@@ -546,12 +554,16 @@ impl TagUnit {
     fn flush(self, items: &mut Vec<Ir>, line_width: usize, md: bool) {
         let marker_w = self.marker.chars().count();
         // A prose chunk that could migrate to a continuation-line start and
-        // reparse as a list/header marker would break idempotence; and, in
-        // non-markdown (literal Rd) prose, a line carrying a live `%` comment must
-        // not be reflowed (it would move text across the comment, changing the
-        // rendered Rd): bail to a verbatim, marker-normalized rendering instead.
+        // reparse as a list/header marker would break idempotence; in non-markdown
+        // (literal Rd) prose, a line carrying a live `%` comment must not be
+        // reflowed (it would move text across the comment, changing the rendered
+        // Rd); and in markdown prose, a tag value that begins with a
+        // link-reference definition must not be joined with its continuations
+        // (the same render change): bail to a verbatim, marker-normalized
+        // rendering instead.
         if self.chunks.iter().any(|c| is_unsafe_line_start(c))
             || (!md && self.lines.iter().any(line_has_live_rd_comment))
+            || (md && self.first_is_linkref_def)
         {
             for (i, line) in self.lines.iter().enumerate() {
                 if i == 0
@@ -1021,6 +1033,80 @@ fn line_has_live_rd_comment(line: &PhysicalLine) -> bool {
     false
 }
 
+/// Whether `line`'s content is a CommonMark link-reference definition
+/// (`[label]: destination [optional title]`) — a leaf block cmark consumes,
+/// rendering nothing while giving every referencing link a destination. Joining
+/// such a line with adjacent content during reflow turns it back into ordinary
+/// prose (the destination would absorb the following words, or a second stacked
+/// definition would land in the title slot), so a referencing link renders as an
+/// R-topic `\link` over leaked literal text instead of the intended `\href` — a
+/// change in the rendered Rd (Tenet 1). A markdown paragraph whose first line is
+/// one is therefore kept verbatim. A definition is recognized only at a block
+/// start, which is why the caller checks the paragraph's *first* line; a later
+/// definition-shaped line is a paragraph continuation (it cannot interrupt), and
+/// joining it is render-preserving. Mirrors the projector's
+/// `parse_linkref_def_dest`.
+fn line_is_linkref_def(line: &PhysicalLine) -> bool {
+    text_is_linkref_def(&content_text(line))
+}
+
+/// Whether `text` (a line's or tag value's content) is a CommonMark
+/// link-reference definition. See [`line_is_linkref_def`] for why this matters.
+fn text_is_linkref_def(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix('[') else {
+        return false;
+    };
+    // Label: a bracket-free run up to the closing `]`, non-empty after trimming.
+    let Some(close) = rest.find(']') else {
+        return false;
+    };
+    if rest[..close].trim().is_empty() {
+        return false;
+    }
+    linkref_dest_is_clean(&rest[close + 1..])
+}
+
+/// Whether `text` (everything after a link label's closing `]`) is a clean
+/// `: destination [title]` with no trailing content — the test that decides
+/// whether cmark accepts the line as a link-reference definition rather than a
+/// paragraph. The destination is angle-bracketed (`<…>`) or a non-whitespace run;
+/// an optional title (`"…"`, `'…'`, or `(…)`) may follow. Mirrors the projector's
+/// `parse_linkref_def_dest`.
+fn linkref_dest_is_clean(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix(':') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let (url, after) = if let Some(r) = rest.strip_prefix('<') {
+        let Some(close) = r.find('>') else {
+            return false;
+        };
+        (&r[..close], &r[close + 1..])
+    } else {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        (&rest[..end], &rest[end..])
+    };
+    if url.is_empty() {
+        return false;
+    }
+    let after = after.trim_start();
+    if after.is_empty() {
+        return true;
+    }
+    // An optional title; anything else means this is not a definition.
+    let close = match after.as_bytes()[0] {
+        b'"' => '"',
+        b'\'' => '\'',
+        b'(' => ')',
+        _ => return false,
+    };
+    let title_rest = &after[1..];
+    let Some(end) = title_rest.find(close) else {
+        return false;
+    };
+    title_rest[end + 1..].trim().is_empty()
+}
+
 /// The block's resolved markdown mode (a standalone `@md`/`@noMd` directive line,
 /// last one wins, default off), mirroring the lexer's `resolve_roxygen_block` and
 /// the projector's `block_md`. Plain prose leaves carry no mode in their kind, so
@@ -1089,5 +1175,37 @@ fn normalize_roxygen_line(line: &PhysicalLine) -> String {
         marker
     } else {
         format!("{marker} {content}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `text_is_linkref_def` recognizes exactly the line shapes cmark accepts as a
+    /// link-reference definition, so the reflow bail fires only when joining the
+    /// line would change the rendered Rd.
+    #[test]
+    fn linkref_def_detection() {
+        // Clean definitions: bare, angle-bracketed, and titled.
+        assert!(text_is_linkref_def("[foo]: https://example.com"));
+        assert!(text_is_linkref_def("[foo]: <https://example.com>"));
+        assert!(text_is_linkref_def(
+            "[foo]: https://example.com \"a title\""
+        ));
+        assert!(text_is_linkref_def("[foo]: https://example.com 'a title'"));
+        assert!(text_is_linkref_def("[foo]: https://example.com (a title)"));
+
+        // Not a definition: missing colon, empty label, empty destination, or
+        // trailing non-title content (cmark treats these as a paragraph, where a
+        // join is render-preserving, so the bail must not fire).
+        assert!(!text_is_linkref_def("[foo] https://example.com"));
+        assert!(!text_is_linkref_def("[]: https://example.com"));
+        assert!(!text_is_linkref_def("[foo]:"));
+        assert!(!text_is_linkref_def(
+            "[foo]: https://example.com trailing junk"
+        ));
+        assert!(!text_is_linkref_def("just some prose"));
+        assert!(!text_is_linkref_def("[foo] and [bar] in prose."));
     }
 }

@@ -543,11 +543,16 @@
       `parse_linkref_def_dest` handles bare/`<…>` dests + optional same-line title. Returns `None` (no change)
       with no def. Curated `md_url_reference` (blank-separated defs, emph/plain/code displays) + 3 unit tests
       (incl. interrupt-rule guard). 310→311.
-      **Slice B remainder (backlog):** (a) **Formatter: keep link-ref-definition lines unjoined** — the
-      formatter joins consecutive `#'` def lines into one, invalidating them as CommonMark defs → changes
-      rendered Rd (fixed-point break); the curated case dodges it with blank-separated defs, but the formatter
-      should recognize a `[label]: dest` line and not reflow it (same family as the `%`-comment reflow bail).
-      (b) lift the refmap to whole-*field* (a label defined in a sibling list-item / `@section` body is missed;
+      **Formatter: link-ref-definition lines stay unjoined LANDED (2026-06-29n):** the prose-reflow bail now
+      also fires, under `@md`, when a paragraph's first line (or a tag value) is a CommonMark link-reference
+      definition (`text_is_linkref_def`/`linkref_dest_is_clean`, mirroring the projector's
+      `parse_linkref_def_dest`), so consecutive `#'` def lines are no longer joined into one (which would
+      invalidate them and change the rendered Rd — a Tenet-1 fixed-point break). A def is recognized only at a
+      block start, so a def-shaped *continuation* after prose still reflows (render-preserving). Formatter-only;
+      `Paragraph::flush` + `TagUnit::flush` gates, fixtures `roxygen_bail_linkref_def` /
+      `roxygen_tag_bail_linkref_def` / `roxygen_md_linkref_continuation_reflows` + a unit test, curated
+      `md_url_reference_consecutive` (now format-stable). Curated fixed-point 46→47/47; projector 311→312.
+      **Slice B remainder (backlog):** (b) lift the refmap to whole-*field* (a label defined in a sibling list-item / `@section` body is missed;
       `@section` has its own arm with no `serialize_prose_with_linkrefs` call), plus multi-line defs + URL
       normalization. (c) retire `scan_md_link` *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink
       `<url>`) by carving **every** bracket and moving refs onto the arena lookahead. Plan:
