@@ -259,9 +259,14 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   they reappear as candidates and their now-leaked defs surface naturally. **Inline links/autolinks/code
   survive** (own destination, no def needed; `demoted_link_source` returns None). **Probe with exact-byte
   files** (`\]` in a shell arg masks the case). Curated `md_escaped_close_bracket` (all-invalid),
-  `md_linkref_poisoning` (mixed). **Still backlog:** an inline-link `[text]` candidate's def in a poisoned
-  tail still leaks in roxygen2 (the `\href` survives) but arity keeps it a node → invisible to the
-  skeleton scan → def not leaked; and leaks outside `push_section` (`@section`/`@slot`/`@field`/`@rawRd`).
+  `md_linkref_poisoning` (mixed). **Inline-link candidate defs now leak too (2026-06-26e):** roxygen2's
+  `get_md_linkrefs` also synthesizes `[text]: R:text` for an inline `[text](url)` link (its `[text]` is a
+  bracket-free candidate followed by `(`, lookahead-allowed), so in a poisoned tail that def leaks even
+  though the `\href` survives. The skeleton exposes the link via `inline_skeleton_fragment` (single source
+  shared by `inline_source_skeleton` + `skeleton_len`): an `MdInlineLink` contributes `[text] `; the link
+  is **not** demoted. Curated `md_linkref_poisoning_inline_link`. **Still backlog:** the rarer opaque
+  nested-bracket inline link, image `![alt]` alt-text defs, autolink-adjacent candidates (skeleton still
+  emits a space); and `@rawRd` leaks (never markdown today — a parser-side gap).
 - **Escaped brackets are the ONLY honored punctuation escape (2026-06-25l).** roxygen2's
   `double_escape_md` doubles every `\` but **reverts** `\\[`→`\[`, `\\]`→`\]`, so only `[`/`]` keep a
   CommonMark escape through cmark: `\[` neither opens a link **nor keeps its backslash** (`\[x](u)`→
@@ -398,8 +403,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post `get_md_linkrefs` leaks-outside-`push_section` slice, 2026-06-26d): **289 matching (all allowlisted), 22
-divergent (backlog)** of 311 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
+driver). Current (post inline-link-poisoning slice, 2026-06-26e): **290 matching (all allowlisted), 22
+divergent (backlog)** of 312 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
 = **diagnostic-parity**); the other 18 are roxygen2-*evaluation*/multi-block gaps (out of scope —
 knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
@@ -412,9 +417,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (307 pinned cases). The 22 divergences are the worklist (4 = remaining `cm-`).
+   (312 pinned cases). The 22 divergences are the worklist (4 = remaining `cm-`).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 24/24 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 29/29 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -422,45 +427,52 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-26d) — `get_md_linkrefs` leaks outside `push_section` (migration slice 3)
+## Latest session (2026-06-26e) — inline-link candidate defs in a poisoned tail (migration slice 4)
 
-**Closed ranked #1 from last session** (most of it): the `add_linkrefs_to_md` poisoning was modeled only
-in `push_section`, but roxygen2 runs **every** `markdown_if_active` field text through the same
-linkref pre-pass. Wired the demote+leak pair into the two other prose-section builders: `@field`/`@slot`
-item definitions and the `@section` body. **No new TokKind / SyntaxKind — projector-only** (the CST was
-already correct; the gap was the projector not applying the leak to these builders).
+**Closed ranked #2 from last session.** roxygen2's `get_md_linkrefs` synthesizes a `[text]: R:text`
+reference def for **every** bracket-free `[…]` candidate — and an inline `[text](url)` link's `[text]`
+*is* such a candidate (followed by `(`, which the regex lookahead `(?=[^\[{]|$)` allows). So in a
+poisoned tail the inline link's def leaks even though the `\href` survives (the link carries its own
+destination, never needed the def). arity kept the inline link as an `MdInlineLink` **node**, so the
+link-ref **skeleton** scan (which works on the body's reconstructed source text, flattening every
+resolved inline to a single space) never saw `[text]` → the def wasn't leaked. **Projector-only — no
+new TokKind / SyntaxKind** (CST already correct).
 
-**Refactor + two wirings.** Extracted `serialize_prose_with_linkrefs(body, md)` (the
-`demote_poisoned_links` → `serialize_inlines` → `leaked_linkref_text`/`append_rendered_text` pipeline
-that `push_section` had inline) and reused it from `push_section` and `describe_section` (each
-`@field`/`@slot` def — the **description** half of `tag_two_part`, the only piece `markdown_if_active`
-touches; the name half is verbatim `\code`). **`@section` is subtler** (`rd-section.R`): roxygen2
-`tag_markdown`-processes the *whole* `title: body` raw value (so linkref poisoning spans both halves),
-*then* `roxy_tag_rd` splits the rendered Rd on the first `:`. So the arm now demotes on the **whole**
-body first, runs `split_section_title` on the demoted run, and appends the leaked defs to the
-**content** (they render at the very end, i.e. after the colon). Probed both shapes against the oracle
-(`block-to-sections`) before coding — `[before]` links, `[stop\]` poisons, `[after]` de-links, both
-tail defs leak (`[stop]: R:stop%5C [after]: R:after`).
+**One-helper fix.** Extracted `inline_skeleton_fragment(inl) -> Cow<str>` as the **single source** for
+both `inline_source_skeleton` (the scan text) and `skeleton_len` (the boundary-offset mapping in
+`demote_poisoned_links`) — they must agree byte-for-byte or the poison-boundary offset drifts. The
+fragment is the prose verbatim, a single space for resolved inlines, **and** `[<plain display>] ` for an
+`MdInlineLink` (the trailing space stands in for the consumed `(url)`, satisfying the lookahead without
+fusing a spurious span). The link is **not** demoted (it survives as `\href`); only its def now surfaces
+in the leaked tail. Probed the exact shape against the oracle first: `[before]` links, `[stop\]` poisons,
+`[after](url)` → `\href` survives **and** `[after]: R:after` leaks alongside `[stop]: R:stop%5C`.
 
-**TDD:** two curated projector cases `md_linkref_poisoning_field` + `md_linkref_poisoning_section`
-(pinned from roxygen2, ratcheted into the allowlist). Format baseline re-blessed (+2 keys, additive
-only; formatter unchanged). No new unit tests (no new helper logic — pure wiring; the pinned cases are
-the lock).
+**TDD:** curated projector case `md_linkref_poisoning_inline_link` (pinned from roxygen2, ratcheted into
+the allowlist) + a unit test `skeleton_exposes_inline_link_brackets_for_leaked_defs` (asserts the fragment,
+`skeleton_len` agreement, the leaked pair, and no-leak when unpoisoned). Format baseline re-blessed (+1 key,
+additive only; formatter unchanged).
 
-**Result:** projector **287→289 matching (all allowlisted), 22 divergent unchanged** (311 pinned).
-Curated fixed-point **28/28** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
+**Result:** projector **289→290 matching (all allowlisted), 22 divergent unchanged** (312 pinned).
+Curated fixed-point **29/29** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
 
-**Next (ranked):** **(1)** `@rawRd` linkref leaks — but `@rawRd` is **never markdown today** (a
-parser-side gap, RECAP "Sections/projection" trap), so this needs the parser to carry md leaves in a
-rawRd body first; deferred until then. **(2)** Inline-link `[text]` candidate defs in a poisoned tail
-(the `\href` survives but its def still leaks in roxygen2; arity keeps it a node → invisible to the
-skeleton scan, so the def isn't leaked). **(3)** The `\`-escapes-in-emphasis diagnostic-parity surface
-(cm-439/442/451/454): roxygen2 runs `rdComplete` and **drops** the section on failure — design-level,
-needs a side-channel diagnostic (**user check before starting**). **(4)** Opener-deactivation: retire
-the opaque same-line `scan_md_link`, unify all brackets onto the arena stack.
+**Next (ranked):** **(1)** `@rawRd` linkref leaks — `@rawRd` is **never markdown today** (a parser-side
+gap, RECAP "Sections/projection" trap), so this needs the parser to carry md leaves in a rawRd body
+first; deferred until then. **(2)** The remaining poisoned-tail candidate shapes the skeleton still
+flattens to a space: image `![alt]` alt-text defs, the rarer opaque nested-bracket inline link, and
+autolink-adjacent candidates — extend `inline_skeleton_fragment` per shape. **(3)** The
+`\`-escapes-in-emphasis diagnostic-parity surface (cm-439/442/451/454): roxygen2 runs `rdComplete` and
+**drops** the section on failure — design-level, needs a side-channel diagnostic (**user check before
+starting**). **(4)** Opener-deactivation: retire the opaque same-line `scan_md_link`, unify all brackets
+onto the arena stack.
 
 ## Earlier sessions
 
+- **2026-06-26d (`get_md_linkrefs` leaks outside `push_section`, slice 3):** the demote+leak pair was
+  extracted into `serialize_prose_with_linkrefs` and wired into the two other `markdown_if_active`
+  builders — `@field`/`@slot` item defs (`describe_section`, the description half of `tag_two_part`) and
+  the `@section` body (roxygen2 markdown-processes the whole `title: body` then splits on `:`, so demote
+  runs on the whole body and the leaked defs land in the content after the colon). Projector-only. Curated
+  `md_linkref_poisoning_field` + `_section`. 287→289.
 - **2026-06-26c (`get_md_linkrefs` mixed valid+invalid poisoning, slice 2):** a field mixing valid
   shortcuts and escaped-close candidates. The defs append as one cmark block parsed top-down; the
   **first invalid** (escaped-close) candidate's label runs into the next line's `[` (illegal in a

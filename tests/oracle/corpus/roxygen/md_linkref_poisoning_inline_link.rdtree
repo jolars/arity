@@ -1,0 +1,3 @@
+(\description (TEXT "Inline-link poisoning"))
+(\details (TEXT "A shortcut like") (\link (TEXT "before")) (TEXT "resolves, but an escaped-close candidate like [stop] poisons the appended definition block, so a later inline link") (\href (VERB "https://example.org") (TEXT "after")) (TEXT "survives as a link yet still leaks a synthesized reference definition. [stop]: R:stop%5C [after]: R:after"))
+(\title (TEXT "Inline-link poisoning"))

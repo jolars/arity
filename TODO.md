@@ -433,11 +433,19 @@
       `tag_two_part`) and the `@section` body (roxygen2 markdown-processes the whole `title:
       body` then splits on `:`, so demote runs on the whole body and the leaked defs land in
       the content after the colon). Curated `md_linkref_poisoning_field`/`_section`.
+      **Inline-link defs in a poisoned tail LANDED (2026-06-26e):** roxygen2's `get_md_linkrefs`
+      also synthesizes a `[text]: R:text` def for an inline `[text](url)` link (its `[text]` is a
+      bracket-free candidate followed by `(`, which the lookahead allows), so in a poisoned tail
+      that def leaks even though the `\href` survives (the link carries its own destination). The
+      skeleton now exposes the link's bracketed display via `inline_skeleton_fragment` (shared by
+      `inline_source_skeleton` + `skeleton_len`): an `MdInlineLink` contributes `[text] ` so the
+      link-ref scan sees the candidate; the link is not demoted, so it still renders `\href`.
+      Curated `md_linkref_poisoning_inline_link`.
       **Still backlog (the rest of the migration):** (1) leaks in `@rawRd` (never markdown
-      today—a parser-side gap, deferred); (2) an inline-link `[text]` candidate def in a poisoned tail (the link
-      survives but its def still leaks—arity keeps it a node, invisible to the skeleton scan);
-      (3) the full opener-deactivation migration retiring the opaque same-line `scan_md_link`
-      (unify all brackets onto the arena stack).
+      today—a parser-side gap, deferred); (2) the rarer opaque nested-bracket inline link, image
+      `![alt]` alt-text defs, and autolink-adjacent candidates in a poisoned tail (skeleton still
+      emits a space for those); (3) the full opener-deactivation migration retiring the opaque
+      same-line `scan_md_link` (unify all brackets onto the arena stack).
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose

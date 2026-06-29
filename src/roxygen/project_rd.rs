@@ -34,6 +34,8 @@
 //! structure, then the projector grows a faithful arm for the new nodes. Never
 //! patch the projector to make a case pass.
 
+use std::borrow::Cow;
+
 use rowan::NodeOrToken;
 
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
@@ -862,12 +864,32 @@ fn unescape_md_brackets(run: &str) -> String {
 fn inline_source_skeleton(body: &[Inline]) -> String {
     let mut s = String::new();
     for inl in body {
-        match inl {
-            Inline::Text(t) => s.push_str(t),
-            _ => s.push(' '),
-        }
+        s.push_str(&inline_skeleton_fragment(inl));
     }
     s
+}
+
+/// The markdown-source fragment an inline contributes to [`inline_source_skeleton`]:
+/// the literal prose (`Inline::Text`) verbatim, and a single space for every
+/// *resolved* inline arity already turned into structure.
+///
+/// **Inline links are the exception.** roxygen2's `get_md_linkrefs` synthesizes a
+/// `[text]: R:text` reference definition for an inline `[text](url)` link too (its
+/// `[text]` is a bracket-free shortcut candidate followed by `(`, which the regex
+/// lookahead allows), so in a poisoned tail that definition leaks even though the
+/// `\href` itself survives (the link carries its own destination). The skeleton
+/// therefore exposes the link's bracketed display text — `[text]` followed by a
+/// space placeholder for the consumed `(url)` — so the link-reference scan sees the
+/// candidate. The node-form (`MdInlineLink`) is handled; the rarer opaque
+/// nested-bracket inline link, autolinks, and images stay backlog (a single space).
+fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
+    match inl {
+        Inline::Text(t) => Cow::Borrowed(t),
+        Inline::MdInlineLink { display, .. } => {
+            Cow::Owned(format!("[{}] ", inline_plain_text(display)))
+        }
+        _ => Cow::Borrowed(" "),
+    }
 }
 
 /// The **leaked** link-reference definitions roxygen2's `add_linkrefs_to_md`
@@ -949,13 +971,11 @@ fn demote_poisoned_links(body: &[Inline]) -> Option<Vec<Inline>> {
     Some(out)
 }
 
-/// An inline's byte length in [`inline_source_skeleton`]: a `Text` contributes its
-/// own bytes, every resolved inline a single space placeholder.
+/// An inline's byte length in [`inline_source_skeleton`] — the length of its
+/// [`inline_skeleton_fragment`], so the poisoning-boundary offset maps back onto
+/// the body inline-by-inline.
 fn skeleton_len(inl: &Inline) -> usize {
-    match inl {
-        Inline::Text(t) => t.len(),
-        _ => 1,
-    }
+    inline_skeleton_fragment(inl).len()
 }
 
 /// The literal source bracket text for a shortcut or reference link that a leaked
@@ -2881,6 +2901,37 @@ mod tests {
             demoted_link_source(&Inline::Text("plain".to_string())),
             None
         );
+    }
+
+    #[test]
+    fn skeleton_exposes_inline_link_brackets_for_leaked_defs() {
+        // roxygen2's `get_md_linkrefs` synthesizes a `[text]: R:text` definition for
+        // an inline `[text](url)` link too, so the skeleton must surface its `[text]`
+        // as a candidate (a single space would hide it). The link itself survives.
+        let link = Inline::MdInlineLink {
+            url: "https://example.org".to_string(),
+            display: vec![Inline::Text("after".to_string())],
+        };
+        assert_eq!(inline_skeleton_fragment(&link), "[after] ");
+        // `skeleton_len` must agree with the fragment, or the boundary offset mapping
+        // in `demote_poisoned_links` drifts.
+        assert_eq!(skeleton_len(&link), "[after] ".len());
+        // An escaped-close candidate poisons the tail; the surviving inline link's
+        // definition leaks alongside it.
+        let body = vec![Inline::Text("see [stop\\] then ".to_string()), link];
+        assert_eq!(
+            leaked_linkref_text(&inline_source_skeleton(&body)),
+            vec![
+                "[stop]: R:stop%5C".to_string(),
+                "[after]: R:after".to_string(),
+            ]
+        );
+        // Without a poison boundary nothing leaks (the def is consumed, not leaked).
+        let clean = vec![Inline::MdInlineLink {
+            url: "u".to_string(),
+            display: vec![Inline::Text("x".to_string())],
+        }];
+        assert!(leaked_linkref_text(&inline_source_skeleton(&clean)).is_empty());
     }
 
     #[test]
