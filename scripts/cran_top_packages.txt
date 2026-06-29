@@ -28,6 +28,7 @@ MASS
 Matrix
 MatrixModels
 ModelMetrics
+PKI
 QuickJSR
 R.cache
 R.methodsS3
@@ -197,6 +198,7 @@ ggplot2movies
 ggplotify
 ggpubr
 ggraph
+ggrastr
 ggrepel
 ggridges
 ggsci
@@ -326,7 +328,9 @@ openssl
 openxlsx
 ordinal
 otel
+otelsdk
 pROC
+packrat
 pak
 palmerpenguins
 pan
@@ -425,6 +429,7 @@ scales
 scatterplot3d
 selectr
 seriation
+servr
 sessioninfo
 sf
 sfheaders
