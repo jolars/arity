@@ -336,12 +336,15 @@
       EMPH/STRONG node** (one threading a `ROXYGEN_MARKER`, `is_cross_line_emph`) so
       its delimiter/text leaves distribute across physical lines and prose reflow
       rejoins them (`*foo`\n`bar*` → `*foo bar*`); single-line spans stay atomic.
-      **128/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
+      **132/132 cm cases now pass** (cm-396/407/425/434 closed by slice 1.5; cm-369
       closed 2026-06-25f; cm-481 closed 2026-06-25g; cm-421/435 closed by slice 2,
-      2026-06-25h; cm-355 closed 2026-06-25j). The 4 remaining are markdown backslash
-      escapes (cm-439/442/451/454—a **diagnostic-parity** surface: roxygen2 errors
-      "mismatched braces or quotes" and drops the content, needs the deferred lint/LSP
-      side-channel). **Unicode NBSP in `norm_ws` (cm-355) landed 2026-06-25j:** the R
+      2026-06-25h; cm-355 closed 2026-06-25j; cm-439/442/451/454 closed 2026-06-29d).
+      The last 4 (markdown backslash escapes in emphasis, `*\**`→`\emph{\}`) were the
+      **rdComplete-drop** surface: roxygen2 errors "mismatched braces or quotes" and
+      drops the `@description`/`@details` body to empty; the projector now replicates the
+      drop (`rd_complete` port + `sexpr_to_rd` brace reconstruction, `@md` only). A
+      user-facing side-channel **diagnostic** for the same condition is still deferred to
+      the lint/LSP phase (the drop alone is what closed the gate cases). **Unicode NBSP in `norm_ws` (cm-355) landed 2026-06-25j:** the R
       driver's `[[:space:]]` is ASCII-only, so `norm_ws` now collapses only ASCII
       whitespace and preserves NBSP/NEL/`Zs` verbatim—a flanking-rejected `*\u{a0}a\u{a0}*`
       keeps its NBSP. The **`\code`-vs-`\verb` underscore rule
@@ -480,9 +483,9 @@
       `unescape_md_brackets` drops one backslash before `[`/`]` in `@md` text. A single
       adjacent `\` already suppresses the link (verified for 1–3 leading backslashes);
       deeper runs follow `double_escape_md`'s non-overlapping `gsub` and stay backlog,
-      as do escaped-*close* `[text\]` (which trip roxygen2's synthesized-linkref quirk)
-      and `\`-escapes inside emphasis (cm-439/442/451/454, the diagnostic-parity
-      surface). Curated `md_escaped_bracket`.
+      as does escaped-*close* `[text\]` (which trips roxygen2's synthesized-linkref
+      quirk). (`\`-escapes inside emphasis cm-439/442/451/454 closed 2026-06-29d via the
+      rdComplete-drop, not an escape rule.) Curated `md_escaped_bracket`.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

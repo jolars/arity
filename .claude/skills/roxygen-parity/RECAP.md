@@ -370,6 +370,17 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   sentinel; `NULL_SUPPRESSIBLE`). `@section` (title+body pair) is NOT suppressed; a suppressed
   `@description NULL` re-fires the title fallback. Data-object auto-`\format` (roxygen2 *evaluates*
   the object) is **out of scope**.
+- **`@description`/`@details` drop to empty on a brace-incomplete render** (2026-06-29d). roxygen2's
+  `markdown_if_active` runs `rdComplete(rendered, is_code=FALSE)` per section for the `sections=TRUE`
+  tags (`@description`/`@details`, incl. intro paras re-emitted by `parse_description`) and replaces
+  the body with `""` on a brace imbalance (`R/markdown.R`, `src/isComplete.cpp`). Projector replicates
+  it (`push_section(drop_on_incomplete=true)` → `section_atoms_rd_complete`): `sexpr_to_rd` rebuilds
+  the **pre-parse** Rd from the S-expr atoms (node = `\m{c}…` balanced by construction, so imbalance
+  comes only from leaf text — the trailing-`\` bug `*\**`→`\emph{\}`), then `rd_complete` (verbatim
+  port). **Critical:** re-escape `%`→`\%` for **every** leaf in `@md` (`escape_percent = md`) — roxygen2
+  escapes `%` everywhere in md render, so a `%20` URL must not comment-out the closing braces (else a
+  false drop). Literal `{`/`}` in md text are **not** escaped (they count). Other prose tags are
+  `sections=FALSE` → **no drop**; markdown-OFF raw-text drop + `@section`/`@field`/`@slot` are backlog.
 
 ## Settled decisions (don't relitigate without reason)
 
@@ -420,10 +431,10 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post `@rawRd`-non-markdown slice, 2026-06-29c): **294 matching (all allowlisted), 22
-divergent (backlog)** of 316 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
-= **diagnostic-parity**); the other 18 are roxygen2-*evaluation*/multi-block gaps (out of scope —
-knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
+driver). Current (post rdComplete-drop slice, 2026-06-29d): **298 matching (all allowlisted), 18
+divergent (backlog)** of 316 pinned. All 4 `cm-` escapes-in-emphasis cases (cm-439/442/451/454) are now
+**closed** (rdComplete-drop, this session); the 18 left are roxygen2-*evaluation*/multi-block gaps (out
+of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
 `task roxygen-projector-pins` (harvested pins), `task roxygen-spec-corpus`/`roxygen-spec-pins`
@@ -434,9 +445,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (313 pinned cases). The 22 divergences are the worklist (4 = remaining `cm-`).
+   (316 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 30/30 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 33/33 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -444,47 +455,66 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29c) — `@rawRd` body is verbatim Rd, never markdown (parser-side, per-tag mode)
+## Latest session (2026-06-29d) — `rdComplete` brace-balance drop (cm-439/442/451/454 closed)
 
-**User-chosen target** (the fork at session start: `@rawRd` parser gap vs cm-escape diagnostic-parity vs
-opener-deactivation). The RECAP's framing of #1 as "`@rawRd` linkref leaks … the parser must carry md
-leaves" was **backwards**: roxygen2's `@rawRd` uses `tag_value`, **not** `tag_markdown`, so its body is
-**never** markdown-processed — there is no `get_md_linkrefs` leak at all. The real divergence: under `@md`
-arity's lexer is block-keyed, so it wrongly carved `[bracket]`→`ROXYGEN_MD_LINK` and `*star*`→
-`ROXYGEN_MD_EMPH` inside the `@rawRd` body, which the projector then rendered as `\link`/`\emph` while
-roxygen2 keeps `(TEXT "Some [bracket] and *star* text.")` literal.
+**User-chosen target** (the fork: rdComplete-drop vs opener-deactivation vs block-the-cm-cases; user picked
+rdComplete-drop). The 4 remaining `cm-` cases are all the same shape — an **escaped emphasis delimiter**
+(`foo *\**`/`**\***`/`_\__`/`__\___`) which arity's emphasis stack resolves into an `\emph`/`\strong` whose
+content is a lone backslash. roxygen2 (via cmark) renders the **same** broken Rd (`foo \emph{\}*` — the
+trailing `\` escapes the macro's own closing `}`), then its `markdown_if_active` runs `rdComplete` on the
+rendered section, warns `✖ @details has mismatched braces or quotes`, and **drops the body to empty**
+(`(\details)`). arity kept the broken `\emph` → divergence.
 
-**Parser-side, per-tag markdown.** Markdown is a **per-tag** property (some tags `tag_markdown`, some
-`tag_value`/`tag_code`), but arity's mode was resolved per-**block** and threaded as one `md: bool`. Fix
-in the `lex()` driver (`lexer.rs`): a `rox_raw` flag, reset at each block boundary and re-keyed per line —
-`roxygen_line_tag(line)` extracts a line-opening tag name (marker→ws→`@name` scan, mirrors
-`lex_roxygen_line`), `is_raw_rd_tag(name)` (`"rawRd"` only) decides raw-ness; a prose/continuation line
-keeps the enclosing tag's setting. Lines in a raw region lex with `md && !rox_raw` = false → no md leaves.
-Projector unchanged in shape (the `@rawRd` arm's `serialize_inlines` now sees literal text); only its
-stale "deferred" comment was updated. Probed the oracle first (Case A bare top-level text = clean; Cases
-B/C with `\code`/`\enumerate` at top level hit parse_Rd's "unexpected macro" error-recovery — the RECAP's
-"don't curate invalid top-level Rd" trap, skipped).
+**Projector-only, faithful drop** (like the linkref-poisoning arms — the projector replicates roxygen2's
+render quirks, never patches to pass). Three pieces in `project_rd.rs`: (a) `rd_complete` — a verbatim port
+of roxygen2's `rdComplete(string, is_code = FALSE)` (`src/isComplete.cpp`: a brace-balance scan where `\`
+escapes the next char and `%` opens a comment to EOL; complete iff braces net zero and not ending
+mid-escape). (b) `sexpr_to_rd`/`render_sexpr` — reconstructs the **pre-parse** Rd string from the projected
+S-expr atoms (`(\macro c1 c2 …)`→`\macro{c1}{c2}…`, `(GRP …)` concatenates, leaves decode via the
+`encode_text` inverse); node atoms are balanced **by construction**, so the only imbalance source is a
+leaf's decoded text (the trailing-`\` bug). (c) `push_section` grew a `drop_on_incomplete` flag; in `@md`
+mode it runs `section_atoms_rd_complete` and emits an empty `(\macro)` on failure. Wired `true` **only** for
+`@description`/`@details` (roxygen2's `tag_markdown_with_sections`, `sections = TRUE` — incl. the intro
+paragraphs `parse_description` re-emits as those tags); the intro **title** and every other prose tag
+(`@return`/`@seealso`/…) are plain `tag_markdown` (`sections = FALSE`) → **no drop**.
 
-**TDD:** parser fixture `roxygen_rawrd_no_markdown` (lossless, CST shows one `ROXYGEN_TEXT` body, no md
-leaves) + curated projector case `rawrd_md_literal` (pinned from roxygen2, allowlisted). Watched the gate
-go red (allowlisted case diverged) before the fix, green after. `@evalRd`/`@usage` share the semantics but
-are out of the projector's scope, left for later.
+**Trap that bit (the 2 regressions caught + fixed):** in `@md` mode roxygen2 escapes `%`→`\%` in the
+rendered Rd **everywhere** — prose, URLs, verbatim, code, preformatted alike (verified `[x](…/a%20b)` →
+`\href{…/a\%20b}{…}`) — so none opens an Rd comment. The reconstruction decodes from the parsed tree (where
+`\%` is already `%`), so it **must re-escape `%`→`\%` for every leaf** (`escape_percent = md`), else a `%20`
+in an `\href` URL commented out the closing braces and false-dropped `rx-0605d020`/`rx-ac585ae8`. (Braces
+and backslashes pass through verbatim — roxygen2 does **not** escape literal `{`/`}` in md text.)
 
-**Result:** projector **293→294 matching (all allowlisted), 22 divergent unchanged** (315→316 pinned).
+**Also fixed a pre-existing miss:** the `roxygen_format_stability` baseline was never re-blessed when last
+session added `curated/rawrd_md_literal` — it failed on the clean tree (verified via stash). Re-blessed
+(`BLESS_ROXYGEN_FORMAT=1`); the diff adds exactly that one key.
+
+**TDD:** 4 new projector unit tests (`rd_complete` port, `section_atoms_rd_complete` incl. the `%`-in-URL
+case, the end-to-end drop over all 4 delimiters, and the `@return` no-drop scope guard). No new corpus case
+— the cm cases already exist in the spec corpus and were pinned backlog; ratcheted cm-439/442/451/454 into
+the projector allowlist.
+
+**Result:** projector **294→298 matching (all allowlisted), 22→18 divergent** (316 pinned, unchanged).
 Curated fixed-point **33/33** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
 
-**Next (ranked):** **(1)** The `\`-escapes-in-emphasis diagnostic-parity surface (cm-439/442/451/454):
-roxygen2 runs `rdComplete` and **drops** the section on failure (empty `(\details)`) — design-level, needs
-a side-channel diagnostic (lossless CST + a diagnostic), aligned with the deferred linter/LSP phases
-(**user check before starting** — flagged it this session; user picked rawRd instead). **(2)**
-Opener-deactivation: retire the opaque same-line `scan_md_link`, unify all brackets onto the arena stack.
-**(3)** `@evalRd`/`@usage` per-tag non-markdown (same `is_raw_rd_tag` mechanism) **if** they enter the
-projector's scope — currently filtered/roclet-generated, so no gate movement. The in-scope render/diagnostic
-backlog is now just the 4 cm-escape cases (#1); the other 18 divergences are roxygen2-eval/multi-block, out
-of scope.
+**Next (ranked):** **(1)** Opener-deactivation: retire the opaque same-line `scan_md_link`, unify all
+brackets onto the arena stack (architectural, toward full CommonMark parity; no immediate gate movement).
+**(2)** Extend the rdComplete drop to **markdown-OFF** mode (the `markdown_if_active` else branch runs
+`rd_complete` on the **raw** text for *every* `markdown_if_active` tag — both `sections` variants) and to
+the `@section`/`@field`/`@slot` paths; deferred this session to keep scope to the in-scope `@md` cm cases.
+**(3)** `@evalRd`/`@usage` per-tag non-markdown (same `is_raw_rd_tag` mechanism) **if** they enter scope.
+The 18 remaining projector divergences are all roxygen2-eval/multi-block, **out of scope** — the in-scope
+render/diagnostic backlog is now empty; consider whether to also surface a side-channel **diagnostic** for
+the rdComplete failure (lint/LSP phase) rather than only the silent drop.
 
 ## Earlier sessions
 
+- **2026-06-29c (`@rawRd` body is verbatim Rd, never markdown):** roxygen2's `@rawRd` uses `tag_value`, not
+  `tag_markdown`, so its body is never markdown-processed; arity's block-keyed lexer wrongly carved md leaves
+  (`[bracket]`/`*star*`) inside it under `@md`. Fixed parser-side with a per-tag `rox_raw` flag in the
+  `lex()` driver (`roxygen_line_tag`/`is_raw_rd_tag`, `"rawRd"` only, reset per block). Fixture
+  `roxygen_rawrd_no_markdown` + curated `rawrd_md_literal`. 293→294. (NB: missed re-blessing the format
+  baseline — fixed 2026-06-29d.)
 - **2026-06-29b (opaque nested-bracket inline-link inner candidates in a poisoned tail, slice 6):**
   roxygen2's `get_md_linkrefs` synthesizes a `[label]: R:label` def for every bracket-free `[…]` candidate
   scanning the **raw** field text; a nested-bracket inline link `[a [b] c](url)` stays an **opaque** `MdLink`

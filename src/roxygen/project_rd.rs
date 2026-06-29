@@ -258,7 +258,9 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     let merge_details = !intro_details.is_empty();
 
     if let Some(title) = &intro_title {
-        push_section(out, "title", title, md);
+        // The intro title is re-emitted as a `tag_markdown` (`sections = FALSE`)
+        // tag, which does not get the per-section `rdComplete` drop.
+        push_section(out, "title", title, md, false);
     }
 
     // Description: the intro's 2nd paragraph, else roxygen2's
@@ -270,7 +272,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         None => intro_title.clone().or(explicit_title_body),
     };
     if let Some(description) = description {
-        push_section(out, "description", &description, md);
+        push_section(out, "description", &description, md, true);
     }
 
     // The intro-derived details (and any folded-in @details).
@@ -280,7 +282,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             body.push(Inline::Text("\n".to_string()));
             body.extend(join_paras(std::slice::from_ref(ed)));
         }
-        push_section(out, "details", &body, md);
+        push_section(out, "details", &body, md, true);
     }
 
     for (name, body) in &tag_sections {
@@ -382,17 +384,19 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
                 out.push(atom);
             }
         }
-        // Direct prose → section-macro mappings.
-        "description" => push_section(out, "description", body, md),
-        "details" => push_section(out, "details", body, md),
-        "return" => push_section(out, "value", body, md),
-        "seealso" => push_section(out, "seealso", body, md),
-        "source" => push_section(out, "source", body, md),
-        "format" => push_section(out, "format", body, md),
-        "references" => push_section(out, "references", body, md),
-        "note" => push_section(out, "note", body, md),
-        "author" => push_section(out, "author", body, md),
-        "title" => push_section(out, "title", body, md),
+        // Direct prose → section-macro mappings. `@description`/`@details` are
+        // `tag_markdown_with_sections` (`sections = TRUE`), so a brace-incomplete
+        // rendered section is dropped to empty; the rest are plain `tag_markdown`.
+        "description" => push_section(out, "description", body, md, true),
+        "details" => push_section(out, "details", body, md, true),
+        "return" => push_section(out, "value", body, md, false),
+        "seealso" => push_section(out, "seealso", body, md, false),
+        "source" => push_section(out, "source", body, md, false),
+        "format" => push_section(out, "format", body, md, false),
+        "references" => push_section(out, "references", body, md, false),
+        "note" => push_section(out, "note", body, md, false),
+        "author" => push_section(out, "author", body, md, false),
+        "title" => push_section(out, "title", body, md, false),
         // `@section Title: body` → \section{Title}{body}. roxygen2 splits the
         // field value on its first `:`; parse_Rd then models `\section` as a
         // two-arg structural macro, so each side sub-parses inline macros/markdown
@@ -460,13 +464,206 @@ fn is_null_section(body: &[Inline], md: bool) -> bool {
 /// has no content (after coalescing). Under `@md`, roxygen2's `add_linkrefs_to_md`
 /// may append leaked link-reference definitions to the field text (see
 /// [`leaked_linkref_text`]); they coalesce into the section's trailing prose.
-fn push_section(out: &mut Vec<String>, macro_name: &str, body: &[Inline], md: bool) {
+///
+/// `drop_on_incomplete` mirrors roxygen2's `markdown_if_active` per-section drop:
+/// the `sections = TRUE` tags (`@description`/`@details`, including the intro
+/// paragraphs `parse_description` re-emits as those tags) run `rdComplete` on each
+/// rendered section, warn on a brace imbalance, and replace the body with `""`
+/// (`R/markdown.R`, `src/isComplete.cpp`). The other prose tags use plain
+/// `tag_markdown` (`sections = FALSE`), which does not drop, so they pass `false`.
+/// Only `@md` is modeled here; the markdown-off raw-text check is deferred backlog.
+fn push_section(
+    out: &mut Vec<String>,
+    macro_name: &str,
+    body: &[Inline],
+    md: bool,
+    drop_on_incomplete: bool,
+) {
     let atoms = serialize_prose_with_linkrefs(body, md);
+    if md && drop_on_incomplete && !section_atoms_rd_complete(&atoms, md) {
+        out.push(format!("(\\{macro_name})"));
+        return;
+    }
     if atoms.is_empty() {
         out.push(format!("(\\{macro_name})"));
     } else {
         out.push(format!("(\\{macro_name} {})", atoms.join(" ")));
     }
+}
+
+/// Whether a section's projected atoms reconstruct to brace-complete Rd, i.e.
+/// roxygen2 would *not* drop the section. Rebuilds the pre-parse Rd string from
+/// the canonical S-expression atoms ([`sexpr_to_rd`]) and runs [`rd_complete`]
+/// (the `is_code = false` form `markdown_if_active` uses).
+fn section_atoms_rd_complete(atoms: &[String], md: bool) -> bool {
+    let mut rd = String::new();
+    for atom in atoms {
+        sexpr_to_rd(atom, md, &mut rd);
+    }
+    rd_complete(&rd)
+}
+
+/// Reconstruct the pre-parse Rd string from one projected S-expression atom,
+/// appending to `out`. Node atoms are balanced by construction --- a
+/// `(\macro c1 c2 …)` renders `\macro{c1}{c2}…` and a `(GRP …)` concatenates its
+/// children (the wrapping braces come from its parent), so the only brace
+/// imbalance can come from a leaf's decoded text (a trailing `\` escaping the next
+/// `}`, exactly roxygen2's `\emph{\}` case). A leaf (`TEXT`/`RCODE`/`VERB`/
+/// `UNKNOWN`) contributes its decoded content; under `@md` every `%` is re-escaped
+/// to `\%` to mirror roxygen2's markdown render (which escapes `%` in prose, URLs,
+/// verbatim, and code alike, so none opens an Rd comment), keeping the count
+/// faithful.
+fn sexpr_to_rd(atom: &str, md: bool, out: &mut String) {
+    let bytes = atom.as_bytes();
+    let mut i = 0;
+    render_sexpr(bytes, &mut i, md, out);
+}
+
+fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, out: &mut String) {
+    if bytes.get(*i) != Some(&b'(') {
+        return;
+    }
+    *i += 1; // consume '('
+    let head_start = *i;
+    while let Some(&c) = bytes.get(*i) {
+        if c == b' ' || c == b')' {
+            break;
+        }
+        *i += 1;
+    }
+    let head = &bytes[head_start..*i];
+    let is_leaf = matches!(head, b"TEXT" | b"RCODE" | b"VERB" | b"UNKNOWN");
+    // Under `@md`, roxygen2 escapes every `%` to `\%` in the rendered Rd --- in
+    // prose, URLs, verbatim, and code alike --- so none opens an Rd comment.
+    let escape_percent = md;
+    if is_leaf {
+        skip_spaces(bytes, i);
+        if bytes.get(*i) == Some(&b'"') {
+            let text = read_quoted(bytes, i);
+            append_leaf_text(&text, escape_percent, out);
+        }
+        // consume the closing ')'
+        while let Some(&c) = bytes.get(*i) {
+            *i += 1;
+            if c == b')' {
+                break;
+            }
+        }
+        return;
+    }
+    let is_grp = head == b"GRP";
+    if !is_grp {
+        // A macro head: `\name`. Its leading backslash escapes the first name
+        // letter for `rd_complete`, which is harmless (a letter, never a brace).
+        out.push_str(std::str::from_utf8(head).unwrap_or(""));
+    }
+    loop {
+        skip_spaces(bytes, i);
+        match bytes.get(*i) {
+            None => break,
+            Some(&b')') => {
+                *i += 1;
+                break;
+            }
+            Some(_) => {
+                if is_grp {
+                    render_sexpr(bytes, i, md, out);
+                } else {
+                    out.push('{');
+                    render_sexpr(bytes, i, md, out);
+                    out.push('}');
+                }
+            }
+        }
+    }
+}
+
+fn skip_spaces(bytes: &[u8], i: &mut usize) {
+    while bytes.get(*i) == Some(&b' ') {
+        *i += 1;
+    }
+}
+
+/// Read and decode a `"…"` quoted leaf string at `bytes[*i]` (which must be the
+/// opening quote), inverting [`encode_text`] (`\\`→`\`, `\"`→`"`, `\n`→newline).
+/// Leaves `*i` just past the closing quote.
+fn read_quoted(bytes: &[u8], i: &mut usize) -> String {
+    *i += 1; // consume opening quote
+    let mut out = String::new();
+    while let Some(&c) = bytes.get(*i) {
+        if c == b'\\' {
+            *i += 1;
+            match bytes.get(*i) {
+                Some(b'n') => out.push('\n'),
+                Some(&other) => out.push(other as char),
+                None => out.push('\\'),
+            }
+            *i += 1;
+        } else if c == b'"' {
+            *i += 1; // consume closing quote
+            break;
+        } else {
+            // Copy a full UTF-8 char so multibyte content survives.
+            let start = *i;
+            *i += 1;
+            while bytes.get(*i).is_some_and(|b| b & 0xC0 == 0x80) {
+                *i += 1;
+            }
+            out.push_str(std::str::from_utf8(&bytes[start..*i]).unwrap_or(""));
+        }
+    }
+    out
+}
+
+/// Append a leaf's decoded text to the reconstructed Rd, re-escaping `%`→`\%` when
+/// `escape_percent` (any leaf under `@md`, where roxygen2 escapes `%` so it never
+/// opens an Rd comment). Other special chars (`{`/`}`/`\`) pass through verbatim —
+/// they are exactly what `rd_complete` must weigh against the structural braces.
+fn append_leaf_text(text: &str, escape_percent: bool, out: &mut String) {
+    if escape_percent {
+        for c in text.chars() {
+            if c == '%' {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+    } else {
+        out.push_str(text);
+    }
+}
+
+/// Port of roxygen2's `rdComplete(string, is_code = FALSE)` (`src/isComplete.cpp`):
+/// a brace-balance scan where `\` escapes the next char and `%` starts a comment to
+/// end of line. The string is complete iff braces net to zero and the scan does not
+/// end mid-escape. (The `is_code = TRUE` string/raw-string handling is unused by
+/// `markdown_if_active`, so it is not modeled.)
+fn rd_complete(s: &str) -> bool {
+    #[derive(PartialEq)]
+    enum State {
+        Rd,
+        RdEscape,
+        RdComment,
+    }
+    let mut state = State::Rd;
+    let mut braces: i64 = 0;
+    for c in s.chars() {
+        match state {
+            State::Rd => match c {
+                '{' => braces += 1,
+                '}' => braces -= 1,
+                '\\' => state = State::RdEscape,
+                '%' => state = State::RdComment,
+                _ => {}
+            },
+            State::RdEscape => state = State::Rd,
+            State::RdComment => {
+                if c == '\n' {
+                    state = State::Rd;
+                }
+            }
+        }
+    }
+    braces == 0 && state != State::RdEscape
 }
 
 /// Serialize a prose body into canonical atoms, applying roxygen2's
@@ -3091,5 +3288,75 @@ mod tests {
             "got: {}",
             project_to_rd(src)
         );
+    }
+
+    #[test]
+    fn rd_complete_ports_the_brace_balance_check() {
+        // Balanced braces, escaped braces, and `%` line comments are complete.
+        assert!(rd_complete("a{b}"));
+        assert!(rd_complete("a\\{b")); // escaped `{` not counted
+        assert!(rd_complete("\\emph{x}"));
+        assert!(rd_complete("a%{")); // `%` comments the unmatched `{`
+        assert!(rd_complete("{%}\n}")); // comment ends at newline; `}` then closes
+        // Unbalanced or escaped-away closers are incomplete.
+        assert!(!rd_complete("a{b"));
+        assert!(!rd_complete("a}b"));
+        assert!(!rd_complete("\\emph{\\}")); // trailing `\` escapes the closing `}`
+        assert!(!rd_complete("a\\")); // a dangling escape is incomplete
+        assert!(!rd_complete("{%}")); // comment swallows the `}`; `{` stays open
+    }
+
+    #[test]
+    fn section_atoms_rd_complete_reconstructs_braces() {
+        // A balanced inline macro projects complete; a `%` in prose is re-escaped
+        // (no comment), so a following structural `}` still closes.
+        assert!(section_atoms_rd_complete(
+            &["(TEXT \"foo\")".into(), "(\\emph (TEXT \"x\"))".into()],
+            true,
+        ));
+        assert!(section_atoms_rd_complete(
+            &["(\\emph (TEXT \"a % b\"))".into()],
+            true,
+        ));
+        // A `%` inside a verbatim URL is escaped too (roxygen2 renders `\%`), so an
+        // `\href{…%20…}{…}` stays complete rather than the URL commenting out the
+        // closing braces.
+        assert!(section_atoms_rd_complete(
+            &["(\\href (VERB \"https://x/a%20b\") (TEXT \"link % text\"))".into()],
+            true,
+        ));
+        // An emphasis whose content is a lone backslash renders `\emph{\}`, whose
+        // trailing `\` escapes the closing brace --- exactly roxygen2's `*\**` bug.
+        assert!(!section_atoms_rd_complete(
+            &["(TEXT \"foo\")".into(), "(\\emph (TEXT \"\\\\\"))".into()],
+            true,
+        ));
+    }
+
+    #[test]
+    fn projects_rdcomplete_failure_drops_the_section() {
+        // roxygen2 runs `rdComplete` on the rendered Rd of an `@description`/
+        // `@details` section (`markdown_if_active`, `sections = TRUE`); when the
+        // braces are unbalanced it warns and drops the body to empty. An escaped
+        // emphasis delimiter `*\**` renders `\emph{\}*`, which is incomplete, so the
+        // section projects empty --- matching the `cm-439`/`442`/`451`/`454` pins.
+        for delim in ["*\\**", "**\\***", "_\\__", "__\\___"] {
+            let src =
+                format!("#' @md\n#' @title T\n#' @details\n#' foo {delim}\n#' @name spec\nNULL\n");
+            let out = project_to_rd(&src);
+            assert!(
+                out.contains("(\\details)") && !out.contains("(\\details "),
+                "delim {delim:?} got: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn rdcomplete_drop_is_scoped_to_with_sections_tags() {
+        // `@return` (`tag_markdown`, `sections = FALSE`) is *not* dropped on an
+        // imbalance --- only `@description`/`@details` carry the per-section check.
+        let src = "#' @md\n#' @title T\n#' @return foo *\\**\n#' @name spec\nNULL\n";
+        let out = project_to_rd(src);
+        assert!(out.contains("(\\value"), "got: {out}");
     }
 }
