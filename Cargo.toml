@@ -18,9 +18,6 @@ categories = [
   "parsing",
   "parser-implementations",
 ]
-# Whitelist what ships to crates.io: source (incl. the include_str! symbol
-# tables under src/) plus the readme and license. Keeps the fixture corpus,
-# snapshots, docs, and images out of the published crate.
 
 [lib]
 name = "arity"
