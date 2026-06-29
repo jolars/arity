@@ -441,11 +441,17 @@
       `inline_source_skeleton` + `skeleton_len`): an `MdInlineLink` contributes `[text] ` so the
       link-ref scan sees the candidate; the link is not demoted, so it still renders `\href`.
       Curated `md_linkref_poisoning_inline_link`.
+      **Image alt-text defs in a poisoned tail LANDED (2026-06-29):** an image `![alt](url)`'s
+      `[alt]` is a bracket-free candidate too (the `[` is preceded by `!`, lookbehind-allowed, and
+      followed by `(`, lookahead-allowed), so its `[alt]: R:alt` def leaks in a poisoned tail even
+      though the `\figure` survives. New `MdImage` arm in `inline_skeleton_fragment` contributes
+      `[alt] ` (`image_alt_text` extracts the literal alt span via `scan_delimited`); the image is
+      not demoted. Curated `md_linkref_poisoning_image`.
       **Still backlog (the rest of the migration):** (1) leaks in `@rawRd` (never markdown
-      today—a parser-side gap, deferred); (2) the rarer opaque nested-bracket inline link, image
-      `![alt]` alt-text defs, and autolink-adjacent candidates in a poisoned tail (skeleton still
-      emits a space for those); (3) the full opener-deactivation migration retiring the opaque
-      same-line `scan_md_link` (unify all brackets onto the arena stack).
+      today—a parser-side gap, deferred); (2) the rarer opaque nested-bracket inline link and
+      autolink-adjacent candidates in a poisoned tail (skeleton still emits a space for those);
+      (3) the full opener-deactivation migration retiring the opaque same-line `scan_md_link`
+      (unify all brackets onto the arena stack).
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose

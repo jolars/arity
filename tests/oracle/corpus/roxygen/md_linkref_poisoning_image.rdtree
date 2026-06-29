@@ -1,0 +1,3 @@
+(\description (TEXT "Image poisoning"))
+(\details (TEXT "A shortcut like") (\link (TEXT "before")) (TEXT "resolves, but an escaped-close candidate like [stop] poisons the appended definition block, so a later image") (\figure (VERB "https://example.org/x.png")) (TEXT "survives as a figure yet still leaks a synthesized reference definition. [stop]: R:stop%5C [alt]: R:alt"))
+(\title (TEXT "Image poisoning"))

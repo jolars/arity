@@ -880,16 +880,36 @@ fn inline_source_skeleton(body: &[Inline]) -> String {
 /// `\href` itself survives (the link carries its own destination). The skeleton
 /// therefore exposes the link's bracketed display text — `[text]` followed by a
 /// space placeholder for the consumed `(url)` — so the link-reference scan sees the
-/// candidate. The node-form (`MdInlineLink`) is handled; the rarer opaque
-/// nested-bracket inline link, autolinks, and images stay backlog (a single space).
+/// candidate. **Images are handled the same way:** an image `![alt](url)`'s `[alt]`
+/// is a bracket-free candidate too (the `[` is preceded by `!`, allowed, and
+/// followed by `(`, lookahead-allowed), so its synthesized `[alt]: R:alt`
+/// definition leaks in a poisoned tail even though the `\figure` survives (it
+/// carries its own destination). The node-form (`MdInlineLink`/`MdImage`) is
+/// handled; the rarer opaque nested-bracket inline link and autolinks stay backlog
+/// (a single space).
 fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
     match inl {
         Inline::Text(t) => Cow::Borrowed(t),
         Inline::MdInlineLink { display, .. } => {
             Cow::Owned(format!("[{}] ", inline_plain_text(display)))
         }
+        Inline::MdImage(raw) => match image_alt_text(raw) {
+            Some(alt) => Cow::Owned(format!("[{alt}] ")),
+            None => Cow::Borrowed(" "),
+        },
         _ => Cow::Borrowed(" "),
     }
+}
+
+/// The literal alt-text span of an image leaf (`![alt](url)` → `alt`), or `None`
+/// if the leaf does not open with a balanced `![…]`. The alt is taken verbatim
+/// from the source (it is what roxygen2's `get_md_linkrefs` scans for a `[alt]`
+/// candidate), so it is not markdown-resolved.
+fn image_alt_text(raw: &str) -> Option<&str> {
+    let bytes = raw.as_bytes();
+    // The leaf always begins `![`; the alt span is `[…]` starting at index 1.
+    let alt_end = scan_delimited(bytes, 1, b'[', b']')?;
+    Some(&raw[2..alt_end - 1])
 }
 
 /// The **leaked** link-reference definitions roxygen2's `add_linkrefs_to_md`
@@ -2932,6 +2952,26 @@ mod tests {
             display: vec![Inline::Text("x".to_string())],
         }];
         assert!(leaked_linkref_text(&inline_source_skeleton(&clean)).is_empty());
+    }
+
+    #[test]
+    fn skeleton_exposes_image_alt_for_leaked_defs() {
+        // An image `![alt](url)`'s `[alt]` is a bracket-free candidate too, so the
+        // skeleton must surface it (a single space would hide it). The `\figure`
+        // survives; only its synthesized `[alt]: R:alt` definition leaks.
+        let image = Inline::MdImage("![alt](https://example.org/x.png)".to_string());
+        assert_eq!(image_alt_text("![alt](u)"), Some("alt"));
+        assert_eq!(inline_skeleton_fragment(&image), "[alt] ");
+        assert_eq!(skeleton_len(&image), "[alt] ".len());
+        // The image survives poisoning (carries its own destination), never demoted.
+        assert_eq!(demoted_link_source(&image), None);
+        // An escaped-close candidate poisons the tail; the surviving image's
+        // definition leaks alongside it.
+        let body = vec![Inline::Text("see [stop\\] then ".to_string()), image];
+        assert_eq!(
+            leaked_linkref_text(&inline_source_skeleton(&body)),
+            vec!["[stop]: R:stop%5C".to_string(), "[alt]: R:alt".to_string()]
+        );
     }
 
     #[test]
