@@ -193,25 +193,34 @@ impl Arena {
                 }
             }
         };
+        // Match the link brackets first (CommonMark `look_for_link_or_image`:
+        // backward matching with opener deactivation, so nested links resolve
+        // inner-first and the enclosing brackets stay literal), then walk the run.
+        let roles = match_brackets(tokens, run);
         let mut p = 0;
         while p < run.len() {
-            let tok = &tokens[run[p]];
-            if tok.kind == TokKind::RoxygenMdBracket {
-                // An opener (`[`/`![`) collapses with its matching closer into one
-                // Link node; the inner tokens resolve recursively, bounded by the
-                // bracket chars (`[` before, `]` after) for flanking. The closer is
-                // either an inline `](url)` leaf or — for a cross-line *reference*
-                // link `[text][ref]` — a lone `]` leaf immediately followed by the
-                // `[ref]` label token (consumed as the dropped topic, folded into the
-                // closer text as `][ref]` so the projector resolves `\link{text}`).
-                if is_bracket_open(&tok.text)
-                    && let Some((close_p, close, after_p)) = find_link_closer(tokens, run, p)
-                {
-                    let open = tok.text.clone();
+            match &roles[p] {
+                // A matched link opener collapses with its closer into one Link
+                // node; the inner tokens resolve recursively, bounded by the bracket
+                // chars (`[` before, `]` after) for flanking. A matched link's
+                // interior provably contains no further matched link (an inner link
+                // would have deactivated this opener), so the recursion only resolves
+                // emphasis and literal brackets. The closer text distinguishes the
+                // forms: an inline `](url)` leaf, or — for a *reference* link
+                // `[text][ref]` — a lone `]` plus the consumed `[ref]` label folded
+                // in as `][ref]`, or a bare `]` *shortcut*.
+                BracketRole::MatchedOpener {
+                    closer,
+                    after,
+                    close_text,
+                } => {
+                    let open = tokens[run[p]].text.clone();
+                    let close = close_text.clone();
+                    let (closer, after_p) = (*closer, *after);
                     let mut body = Vec::new();
                     resolve_run(
                         tokens,
-                        &run[p + 1..close_p],
+                        &run[p + 1..closer],
                         open.chars().next_back(),
                         Some(']'),
                         &mut body,
@@ -220,14 +229,22 @@ impl Arena {
                     p = after_p;
                     continue;
                 }
-                // An unmatched bracket re-emits as literal text (a `Delim` node,
-                // projected as plain text) — e.g. a lone `]` reference closer whose
-                // opener never appeared, leaving the `[ref]` label a standalone
-                // shortcut token. (Same-line link brackets never reach here.)
-                arena.push_node(NodeData::Delim(tok.text.clone()));
-                p += 1;
-                continue;
+                // An unmatched/inactive bracket re-emits as literal text (a `Delim`
+                // node, projected as plain text) — a deactivated outer opener, a `]`
+                // whose opener never appeared, or a closer that formed no link.
+                BracketRole::LiteralBracket => {
+                    arena.push_node(NodeData::Delim(tokens[run[p]].text.clone()));
+                    p += 1;
+                    continue;
+                }
+                // A closer or reference label already folded into its opener's link.
+                BracketRole::Consumed => {
+                    p += 1;
+                    continue;
+                }
+                BracketRole::Other => {}
             }
+            let tok = &tokens[run[p]];
             if tok.kind == TokKind::RoxygenMdDelim {
                 let ch = tok.text.as_bytes()[0];
                 let len = tok.text.len(); // a same-char ASCII run: bytes == chars
@@ -547,47 +564,116 @@ fn is_bracket_open(text: &str) -> bool {
     text.starts_with('[') || text.starts_with('!')
 }
 
-/// Whether a `RoxygenMdBracket` token text is an inline-link closer (`](url)` or a
-/// lone `]` reference closer).
-fn is_bracket_close(text: &str) -> bool {
-    text.starts_with(']')
+/// The role of a run position after bracket matching: a matched link opener
+/// (collapsed into a Link node), a literal bracket (an unmatched/deactivated
+/// opener, or a closer that formed no link), a consumed closer or reference label
+/// (emitted as part of its opener's link), or a non-bracket position (`Other`).
+enum BracketRole {
+    MatchedOpener {
+        closer: usize,
+        after: usize,
+        close_text: String,
+    },
+    LiteralBracket,
+    Consumed,
+    Other,
 }
 
-/// Find the matching closer for an opener at `run[p]`, scanning forward for the
-/// first valid closer bracket. Returns `(close_p, close_text, after_p)`:
-/// `close_p` is the closer's run position, `close_text` the closer string emitted
-/// as the link's closer leaf, and `after_p` the run position to resume from.
-///
-/// Three closer shapes: an inline `](url)` bracket leaf (`after_p = close_p + 1`); a
-/// cross-line *reference* closer — a lone `]` bracket leaf immediately followed by a
-/// `[ref]` shortcut-link token, consumed (`after_p = close_p + 2`) and folded into
-/// the closer text (`][ref]`) so the projector resolves a reference link, dropping
-/// the `[ref]` topic; or a cross-line *shortcut* closer — a lone `]` with no following
-/// label, kept as the bare closer text `]` (the projector resolves `\link{display}`
-/// from the link text itself). An opener with no later closer at all returns `None`,
-/// leaving the opener to re-emit as literal text.
-fn find_link_closer(tokens: &[Token], run: &[usize], p: usize) -> Option<(usize, String, usize)> {
-    (p + 1..run.len()).find_map(|q| {
+/// Match the link brackets in `run` left-to-right with CommonMark opener
+/// deactivation (`look_for_link_or_image`): each `]` closes the nearest *active*
+/// `[` opener, and forming a link deactivates every opener still below it on the
+/// stack — so nested links resolve inner-first and the enclosing brackets stay
+/// literal (`[a [b] c](url)` → literal `[a `, `\link{b}`, literal ` c](url)`).
+/// Images are opaque leaves and autolinks are not brackets, so neither reaches
+/// here; every opener is a link opener. Returns a role per run position.
+fn match_brackets(tokens: &[Token], run: &[usize]) -> Vec<BracketRole> {
+    let mut roles = Vec::with_capacity(run.len());
+    roles.resize_with(run.len(), || BracketRole::Other);
+    // Stack of (run position of an open `[`, still active).
+    let mut stack: Vec<(usize, bool)> = Vec::new();
+    let mut q = 0;
+    while q < run.len() {
         let tok = &tokens[run[q]];
-        if tok.kind != TokKind::RoxygenMdBracket || !is_bracket_close(&tok.text) {
-            return None;
+        if tok.kind != TokKind::RoxygenMdBracket {
+            q += 1;
+            continue;
         }
-        if tok.text == "]" {
-            match run.get(q + 1).map(|&j| &tokens[j]) {
-                // A lone `]` immediately followed by a `[ref]` shortcut token closes a
-                // cross-line *reference* link; the label folds into the closer text
-                // (`][ref]`) and is consumed as the dropped topic.
-                Some(label) if label.kind == TokKind::RoxygenMdLink => {
-                    Some((q, format!("]{}", label.text), q + 2))
+        if is_bracket_open(&tok.text) {
+            stack.push((q, true));
+            roles[q] = BracketRole::LiteralBracket; // until matched below
+            q += 1;
+            continue;
+        }
+        // A closer (`]`-shaped): pop the nearest opener.
+        let Some((o_pos, active)) = stack.pop() else {
+            roles[q] = BracketRole::LiteralBracket;
+            q += 1;
+            continue;
+        };
+        if !active {
+            roles[q] = BracketRole::LiteralBracket;
+            q += 1;
+            continue;
+        }
+        match classify_closer(tokens, run, o_pos, q) {
+            Some((close_text, after, label_consumed)) => {
+                roles[o_pos] = BracketRole::MatchedOpener {
+                    closer: q,
+                    after,
+                    close_text,
+                };
+                roles[q] = BracketRole::Consumed;
+                if label_consumed {
+                    roles[q + 1] = BracketRole::Consumed;
                 }
-                // A lone `]` with no following label closes a cross-line *shortcut*
-                // link (`[text]`): the closer is just `]`.
-                _ => Some((q, "]".to_string(), q + 1)),
+                // A link (never an image here) deactivates the openers below it.
+                for e in stack.iter_mut() {
+                    e.1 = false;
+                }
+                q = after;
             }
-        } else {
-            Some((q, tok.text.clone(), q + 1))
+            None => {
+                roles[q] = BracketRole::LiteralBracket;
+                q += 1;
+            }
         }
-    })
+    }
+    roles
+}
+
+/// Classify the closer at `run[closer_q]` for an active opener at `run[o_pos]`,
+/// returning `(close_text, after, label_consumed)` for a valid link or `None` for
+/// none. An inline `](url)` composite closer is always a valid link. A lone `]` is
+/// a *reference* link when immediately followed by an opaque `[ref]` label token
+/// (consumed, folded in as `][ref]`); otherwise a *shortcut* link iff the opener's
+/// raw interior is bracket-free (roxygen synthesizes a reference only for a
+/// bracket-free shortcut label) — a bracket-bearing shortcut is not a link.
+fn classify_closer(
+    tokens: &[Token],
+    run: &[usize],
+    o_pos: usize,
+    closer_q: usize,
+) -> Option<(String, usize, bool)> {
+    let close_tok = &tokens[run[closer_q]];
+    if close_tok.text != "]" {
+        return Some((close_tok.text.clone(), closer_q + 1, false));
+    }
+    match run.get(closer_q + 1).map(|&j| &tokens[j]) {
+        Some(label) if label.kind == TokKind::RoxygenMdLink => {
+            Some((format!("]{}", label.text), closer_q + 2, true))
+        }
+        _ => interior_bracket_free(tokens, run, o_pos, closer_q)
+            .then(|| ("]".to_string(), closer_q + 1, false)),
+    }
+}
+
+/// Whether the raw interior between an opener at `run[o_pos]` and a closer at
+/// `run[closer_q]` carries no `[`/`]` in any token — the roxygen shortcut/reference
+/// validity test (a bracket-bearing label is not a synthesized reference).
+fn interior_bracket_free(tokens: &[Token], run: &[usize], o_pos: usize, closer_q: usize) -> bool {
+    run[o_pos + 1..closer_q]
+        .iter()
+        .all(|&j| !tokens[j].text.bytes().any(|b| matches!(b, b'[' | b']')))
 }
 
 /// CommonMark flanking for a delimiter run of char `ch`, given the characters

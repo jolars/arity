@@ -388,6 +388,31 @@ fn lex_roxygen_prose(
             run_start = i;
             continue;
         }
+        // A *nested-bracket* link opener: a `[` whose balanced same-line interior
+        // itself contains brackets, so the conservative same-line/opaque paths
+        // above (which all require a bracket-free interior) do not apply. Carve the
+        // `[` as a neutral opener and let the main loop carve the inner brackets and
+        // the closer; the inline pass resolves the nesting with CommonMark opener
+        // deactivation — the inner links win and this outer bracket stays literal
+        // (`[a [b] c](url)`, `[foo [bar] baz]`, `[[x]](url)`).
+        if md
+            && bytes[i] == b'['
+            && !bracket_is_escaped(bytes, i)
+            && is_nested_bracket_opener(bytes, i)
+        {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, 1);
+            i += 1;
+            run_start = i;
+            continue;
+        }
         // A *cross-line* inline-link closer: a `](url)` whose matching `[` opened
         // on an earlier `#'` line. A same-line `[…](url)` is consumed whole by the
         // opener path above, so a bare `]` immediately followed by a balanced
@@ -693,6 +718,21 @@ fn same_line_shortcut_opener(bytes: &[u8], i: usize) -> bool {
             .iter()
             .any(|&b| matches!(b, b'*' | b'_' | b'`' | b'<' | b'!' | b'\\'))
         && !matches!(bytes.get(close), Some(b'(' | b'[' | b'{'))
+}
+
+/// Whether a `[` at `bytes[i]` opens a *nested-bracket* same-line link: its
+/// balanced `[…]` interior itself contains a `[` or `]`. The bracket-free same-line
+/// paths ([`inline_link_span`], [`same_line_shortcut_opener`]) and the opaque
+/// [`scan_md_link`] all require a bracket-free interior, so only a nested interior
+/// reaches here. Carving the outer `[` as a neutral opener (rather than one opaque
+/// link token) lets the inline pass resolve the nesting with CommonMark opener
+/// deactivation: the inner links win and this outer bracket stays literal.
+fn is_nested_bracket_opener(bytes: &[u8], i: usize) -> bool {
+    scan_balanced(bytes, i, b'[', b']').is_some_and(|close| {
+        bytes[i + 1..close - 1]
+            .iter()
+            .any(|&b| matches!(b, b'[' | b']'))
+    })
 }
 
 /// Whether a markdown `[` at `bytes[i]` is *backslash-escaped* (CommonMark `\[`),
@@ -1784,6 +1824,30 @@ mod tests {
             ]
         );
         assert_lossless("#' see [note], [see this], [pkg::obj] but [x]{y}\n#' @md\n");
+    }
+
+    #[test]
+    fn nested_bracket_link_carves_outer_opener() {
+        // A nested-bracket link `[a [b] c](url)` carves *every* bracket as a neutral
+        // leaf (the outer opener via `is_nested_bracket_opener`, the inner `[b]` via
+        // the same-line shortcut path, and the `](url)` inline closer), so the inline
+        // pass can resolve the nesting with opener deactivation. The opaque
+        // `scan_md_link` no longer swallows the whole span.
+        assert_eq!(
+            prose_texts("#' x [a [b] c](https://o.org) y\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "x ".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "b".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
+                (TokKind::RoxygenText, " c".into()),
+                (TokKind::RoxygenMdBracket, "](https://o.org)".into()),
+                (TokKind::RoxygenText, " y".into()),
+            ]
+        );
+        assert_lossless("#' x [a [b] c](https://o.org) y\n#' @md\n");
     }
 
     #[test]

@@ -1,0 +1,3 @@
+(\description (TEXT "Nested bracket deactivation chains"))
+(\details (TEXT "Multiple inner shortcuts each win over the outer inline link, as in [a") (\link (TEXT "b")) (TEXT "c") (\link (TEXT "d")) (TEXT "e](https://example.org), and a three-level nest [w [x") (\link (TEXT "y")) (TEXT "z] v](https://example.org) deactivates every enclosing bracket so only the innermost shortcut resolves."))
+(\title (TEXT "Nested bracket deactivation chains"))

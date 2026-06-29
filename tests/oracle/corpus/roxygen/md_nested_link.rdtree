@@ -1,0 +1,3 @@
+(\description (TEXT "Nested bracket links"))
+(\details (TEXT "A nested inline [a") (\link (TEXT "b")) (TEXT "c](https://example.org) keeps the inner shortcut, a shortcut [foo") (\link (TEXT "bar")) (TEXT "baz] does too, a bracketed [") (\link (TEXT "x")) (TEXT "](https://example.com) link, and a nested inline-in-inline [a") (\href (VERB "https://i.org") (TEXT "b")) (TEXT "c](https://o.org)."))
+(\title (TEXT "Nested bracket links"))

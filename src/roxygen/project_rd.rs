@@ -1216,7 +1216,82 @@ fn demote_poisoned_links(body: &[Inline]) -> Option<Vec<Inline>> {
             out.push(inl.clone());
         }
     }
-    Some(out)
+    Some(relink_demoted_inline_links(out))
+}
+
+/// Re-form enclosing inline links that a poisoning demotion exposes.
+///
+/// When a nested link's inner shortcut is de-linked by poisoning (the arena
+/// resolves the optimistic CommonMark structure — inner link wins, outer bracket
+/// literal — so [`demote_poisoned_links`] rewrites the now-dead inner shortcut to
+/// literal text), the enclosing brackets are no longer deactivated by a live inner
+/// link, so roxygen2 (cmark) resolves the *outer* `[…](url)` as an inline link
+/// instead. Concretely `[a [b] c](url)` parses to literal `[a `, `\link{b}`,
+/// literal ` c](url)`; once `[b]` is demoted to text the whole span is consecutive
+/// literal text and re-forms as `\href{url}{a [b] c}`.
+///
+/// Scans each maximal run of consecutive `Inline::Text` for an *unescaped*
+/// `[display](url)` inline-link pattern and splits it into `Text` + `MdInlineLink`.
+/// The consecutive-text constraint is what scopes this to the poisoned case: a
+/// surviving inner inline link is a node that interrupts the run (so a nested
+/// inline-in-inline like `[a [b](u) c](o)` keeps its outer bracket literal, exactly
+/// as CommonMark does), and a non-poisoned nested link still has its inner `\link`
+/// node interrupting the run. An escaped `\[` keeps its backslash in the text
+/// inline (unescaping happens later in `prose_text_atom`), so it is skipped here and
+/// stays literal — `\[bracket](x)` never relinks. Shortcuts/references in a poisoned
+/// tail are dead, so only inline `(url)` links re-form; the re-formed display is
+/// therefore plain literal text.
+fn relink_demoted_inline_links(body: Vec<Inline>) -> Vec<Inline> {
+    let mut out = Vec::with_capacity(body.len());
+    let mut text_run = String::new();
+    for inl in body {
+        match inl {
+            Inline::Text(s) => text_run.push_str(&s),
+            other => {
+                relink_text_run(&text_run, &mut out);
+                text_run.clear();
+                out.push(other);
+            }
+        }
+    }
+    relink_text_run(&text_run, &mut out);
+    out
+}
+
+/// Push `s` to `out`, re-forming any unescaped `[display](url)` inline link into an
+/// `Inline::MdInlineLink` (display as plain text — see [`relink_demoted_inline_links`]).
+fn relink_text_run(s: &str, out: &mut Vec<Inline>) {
+    if s.is_empty() {
+        return;
+    }
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut run_start = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'['
+            && !(i > 0 && bytes[i - 1] == b'\\')
+            && let Some(text_end) = scan_delimited(bytes, i, b'[', b']')
+            && bytes.get(text_end) == Some(&b'(')
+            && let Some(url_end) = scan_delimited(bytes, text_end, b'(', b')')
+        {
+            if run_start < i {
+                out.push(Inline::Text(s[run_start..i].to_string()));
+            }
+            let display = s[i + 1..text_end - 1].to_string();
+            let url = s[text_end + 1..url_end - 1].to_string();
+            out.push(Inline::MdInlineLink {
+                url,
+                display: vec![Inline::Text(display)],
+            });
+            i = url_end;
+            run_start = i;
+            continue;
+        }
+        i += 1;
+    }
+    if run_start < s.len() {
+        out.push(Inline::Text(s[run_start..].to_string()));
+    }
 }
 
 /// An inline's byte length in [`inline_source_skeleton`] — the length of its
