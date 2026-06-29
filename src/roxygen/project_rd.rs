@@ -716,6 +716,13 @@ fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
     // valid candidate whose definition leaks. Both only turn links into literal
     // text, so order is immaterial to correctness; the refmap runs on the original
     // body so it sees every bracket as roxygen2's raw-source scan does.
+    // Resolve user link-reference definitions (`[ref]: url`) first: a referencing
+    // shortcut/reference link whose label is defined becomes a `\href{url}{display}`
+    // (display kept), and the definition lines are consumed. This runs on the
+    // original body so the refmap below still sees every bracket the way roxygen2's
+    // raw-source scan does.
+    let resolved = md.then(|| resolve_user_linkrefs(body)).flatten();
+    let body = resolved.as_deref().unwrap_or(body);
     let undefined = md
         .then(|| demote_undefined_links(body, &linkref_keys(body)))
         .flatten();
@@ -1548,6 +1555,208 @@ fn demote_undefined_links(
         })
         .collect();
     changed.then_some(out)
+}
+
+/// Resolve user-written CommonMark link-reference definitions (`[ref]: url`) in a
+/// markdown field body. roxygen2 runs each field through cmark, which (a) consumes
+/// definition blocks (they render nothing) and (b) makes a referencing shortcut or
+/// reference link resolve to the *user's* destination — so an `[*foo*][r1]` with a
+/// `[r1]: url` definition renders `\href{url}{\emph{foo}}` (display **kept**, unlike
+/// the R-topic `\link` path that drops a non-plain display). The user definition
+/// also wins over roxygen2's synthesized `[r1]: R:r1` because cmark keeps the first
+/// definition and the synthesized block is appended last.
+///
+/// Returns `None` (body reused unchanged) when the field has no recognizable
+/// definition — the common case, so existing behavior is untouched. Otherwise the
+/// definition inlines are dropped and each referencing link with a defined label is
+/// rewritten to an [`Inline::MdInlineLink`] (which renders `\href{url}{display}`).
+///
+/// Scope (this slice): single-`Text`-node definitions at a true block start (a
+/// definition cannot interrupt a paragraph), bare or `<…>` destinations, an
+/// optional same-line title. Multi-line definitions, titles spanning lines, and
+/// URL normalization (percent-encoding, entities) are backlog.
+fn resolve_user_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
+    let (urls, dropped) = collect_user_linkrefs(body);
+    if dropped.is_empty() {
+        return None;
+    }
+    let out: Vec<Inline> = body
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !dropped.contains(i))
+        .map(|(_, inl)| {
+            if let Some(label) = link_ref_label(inl)
+                && let Some(url) = urls.get(&normalize_linkref_label(&label))
+                && let Some(display) = link_display_inlines(inl)
+            {
+                Inline::MdInlineLink {
+                    url: url.clone(),
+                    display,
+                }
+            } else {
+                inl.clone()
+            }
+        })
+        .collect();
+    Some(out)
+}
+
+/// Scan a field body for user link-reference definitions, returning the
+/// (normalized-label → destination) map and the set of body indices that are part
+/// of a definition (and so must be dropped from the rendered output). A definition
+/// run is consumed only at a *block start* (the body start, or right after a `Text`
+/// containing a newline — a paragraph break): a definition cannot interrupt a
+/// paragraph (CommonMark). Within a run, consecutive definitions are separated by a
+/// whitespace-only `Text` (a soft line break), which is also dropped.
+fn collect_user_linkrefs(
+    body: &[Inline],
+) -> (
+    std::collections::HashMap<String, String>,
+    std::collections::BTreeSet<usize>,
+) {
+    let mut urls: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut dropped = std::collections::BTreeSet::new();
+    let mut i = 0;
+    let mut block_start = true;
+    while i < body.len() {
+        if block_start && let Some(end) = scan_linkref_run(body, i, &mut urls, &mut dropped) {
+            i = end;
+            // The remainder of this block (if any) is prose, not definitions.
+            block_start = false;
+            continue;
+        }
+        block_start = matches!(&body[i], Inline::Text(t) if t.contains('\n'));
+        i += 1;
+    }
+    (urls, dropped)
+}
+
+/// Consume a run of consecutive link-reference definitions beginning at a block
+/// start (`start`), recording each into `urls` (first definition of a label wins,
+/// per cmark) and its inlines into `dropped`. Tolerates CommonMark's
+/// leading-whitespace indentation and the whitespace-only soft breaks that separate
+/// stacked definitions (both dropped). Returns the exclusive end index of the run,
+/// or `None` when no definition begins the block. Whitespace *after* the last
+/// definition is left untouched (it belongs to the following prose).
+fn scan_linkref_run(
+    body: &[Inline],
+    start: usize,
+    urls: &mut std::collections::HashMap<String, String>,
+    dropped: &mut std::collections::BTreeSet<usize>,
+) -> Option<usize> {
+    let mut end = start;
+    let mut any = false;
+    loop {
+        // Skip whitespace-only (non-paragraph-break) Text — leading indentation or a
+        // soft break between definitions.
+        let mut k = end;
+        while let Some(Inline::Text(t)) = body.get(k) {
+            if t.is_empty() || t.contains('\n') || !t.chars().all(char::is_whitespace) {
+                break;
+            }
+            k += 1;
+        }
+        let Some((label, url)) = match_linkref_def(body, k) else {
+            break;
+        };
+        urls.entry(normalize_linkref_label(&label)).or_insert(url);
+        for idx in end..=k + 1 {
+            dropped.insert(idx);
+        }
+        any = true;
+        end = k + 2;
+    }
+    any.then_some(end)
+}
+
+/// Match a single link-reference definition at body index `j`: a shortcut-shaped
+/// label link (`[label]`) immediately followed by a `Text` of the form
+/// `: <destination> [title]`. Returns the `(label, destination)` pair, or `None`
+/// when the shape does not hold.
+fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String)> {
+    let label = linkref_def_label(body.get(j)?)?;
+    let Inline::Text(text) = body.get(j + 1)? else {
+        return None;
+    };
+    let url = parse_linkref_def_dest(text)?;
+    Some((label, url))
+}
+
+/// The label of a shortcut-shaped link (`[label]`) — the form a link-reference
+/// definition's leading token takes (a `[label]` followed by `:` is a shortcut, not
+/// a reference or inline link). `None` for any other inline.
+fn linkref_def_label(inl: &Inline) -> Option<String> {
+    match inl {
+        Inline::MdShortcutLink { display } => Some(inline_plain_text(display)),
+        Inline::MdLink(raw) => {
+            let bytes = raw.as_bytes();
+            if bytes.first() != Some(&b'[') {
+                return None;
+            }
+            let end = scan_delimited(bytes, 0, b'[', b']')?;
+            (end == bytes.len()).then(|| raw[1..end - 1].to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Parse a link-reference definition's destination from the `Text` that follows the
+/// label (`: <destination> [title]`). The destination is angle-bracketed (`<…>`,
+/// brackets stripped) or a non-whitespace run; an optional title (`"…"`, `'…'`, or
+/// `(…)`) may follow. Returns the destination, or `None` when the text is not a
+/// clean single-node definition (trailing non-title content makes it a paragraph,
+/// not a definition).
+fn parse_linkref_def_dest(text: &str) -> Option<String> {
+    let rest = text.strip_prefix(':')?.trim_start();
+    let (url, after) = if let Some(r) = rest.strip_prefix('<') {
+        let close = r.find('>')?;
+        (r[..close].to_string(), &r[close + 1..])
+    } else {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        (rest[..end].to_string(), &rest[end..])
+    };
+    if url.is_empty() {
+        return None;
+    }
+    let after = after.trim_start();
+    if after.is_empty() {
+        return Some(url);
+    }
+    // An optional title; anything else means this is not a valid definition.
+    let close = match after.as_bytes()[0] {
+        b'"' => '"',
+        b'\'' => '\'',
+        b'(' => ')',
+        _ => return None,
+    };
+    let title_rest = &after[1..];
+    let end = title_rest.find(close)?;
+    title_rest[end + 1..].trim().is_empty().then(|| url.clone())
+}
+
+/// The display inlines of a referencing link — what `\href{url}{…}` renders when the
+/// link's label resolves to a user destination. For a shortcut/reference *node* this
+/// is the resolved `display`; for an opaque shortcut/reference leaf the bracketed
+/// text becomes one `Text` (plain by construction — marked-up displays nodeify).
+/// `None` for an inline link or autolink (own destination, not reference-resolved).
+fn link_display_inlines(inl: &Inline) -> Option<Vec<Inline>> {
+    match inl {
+        Inline::MdShortcutLink { display } | Inline::MdRefLink { display, .. } => {
+            Some(display.clone())
+        }
+        Inline::MdLink(raw) => {
+            let bytes = raw.as_bytes();
+            if bytes.first() == Some(&b'<') {
+                return None; // autolink
+            }
+            let text_end = scan_delimited(bytes, 0, b'[', b']')?;
+            match bytes.get(text_end) {
+                Some(&b'(') => None, // inline link — own destination
+                _ => Some(vec![Inline::Text(raw[1..text_end - 1].to_string())]),
+            }
+        }
+        _ => None,
+    }
 }
 
 /// roxygen2's `double_escape_md` (`markdown-link.R`): double every backslash, then
@@ -3873,5 +4082,63 @@ mod tests {
         let src = "#' @md\n#' @title T\n#' @return foo *\\**\n#' @name spec\nNULL\n";
         let out = project_to_rd(src);
         assert!(out.contains("(\\value"), "got: {out}");
+    }
+
+    #[test]
+    fn url_defined_reference_links_render_href() {
+        // A user link-reference definition `[ref]: url` defines a destination, so
+        // roxygen2 renders the referencing link as `\href{url}{display}` with the
+        // display *kept* (the "must contain plain text" drop is `\link`-only). The
+        // definition lines themselves are consumed (cmark removes them).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' See [*foo*][r1] and [plain][r2] and [`code`][r3].\n\
+                   #'\n\
+                   #' [r1]: https://example.com\n\
+                   #' [r2]: https://example.org\n\
+                   #' [r3]: https://example.net\n\
+                   #' @name spec\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"See\") \
+             (\\href (VERB \"https://example.com\") (\\emph (TEXT \"foo\"))) (TEXT \"and\") \
+             (\\href (VERB \"https://example.org\") (TEXT \"plain\")) (TEXT \"and\") \
+             (\\href (VERB \"https://example.net\") (\\code (RCODE \"code\"))) (TEXT \".\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn url_defined_shortcut_link_renders_href() {
+        // A bare shortcut `[r1]` whose label has a user URL definition → `\href`;
+        // the definition line is consumed.
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' See [r1] here.\n#'\n#' [r1]: https://example.com\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"See\") (\\href (VERB \"https://example.com\") (TEXT \"r1\")) (TEXT \"here.\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn linkref_definition_cannot_interrupt_a_paragraph() {
+        // A `[r1]: url` line *without* a preceding blank line is part of the
+        // paragraph, not a definition (CommonMark): the label stays an R-topic
+        // `\link` and the line renders literally. (Regression guard: the user-def
+        // transform must only fire at a real block start.)
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' Some prose with [r1] here.\n#' [r1]: https://example.com\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"Some prose with\") (\\link (TEXT \"r1\")) (TEXT \"here.\") (\\link (TEXT \"r1\")) (TEXT \": https://example.com\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
     }
 }

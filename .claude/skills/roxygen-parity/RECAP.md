@@ -254,6 +254,23 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   — roxygen synthesizes the def, links the shortcut, then `parse_link` rejects "links must contain plain text" and
   drops **the link** (not the section) to empty. Curated `md_undefined_shortcut` (all-literal `a][b]`),
   `md_undefined_ref` (`[a [b] c][ref]` → inner `\link{b}`, outer literal).
+- **User link-reference definitions (`[ref]: url`) → `\href{url}{display}`, display KEPT (2026-06-29m).** A
+  CommonMark def gives a referencing shortcut/reference link a real destination, so it renders `\href` (not the
+  R-topic `\link`, so the "must contain plain text" drop does **not** apply — markup display survives), and the
+  def line is **consumed** (renders nothing). User def beats roxygen's synthesized `[ref]: R:ref` (cmark keeps
+  the first def). Projector-only: `resolve_user_linkrefs` (in `serialize_prose_with_linkrefs`, before
+  `demote_undefined_links`, on the **original** body so the refmap is unaffected) builds a label→url map via
+  `collect_user_linkrefs`/`scan_linkref_run` (a def run is consumed only at a **block start** — body start or
+  after a `Text` containing `\n` — since a def *cannot interrupt a paragraph*; leading-indent + soft-break-
+  separated stacked defs are tolerated and dropped), then **rewrites** each defined-label link to
+  `Inline::MdInlineLink{url, display}` (reusing the `\href` rendering). `parse_linkref_def_dest` handles bare or
+  `<…>` dests + optional same-line title (trailing non-title content ⇒ not a def). Returns `None` (no change)
+  when no def → existing cases byte-identical. **Backlog:** multi-line defs, URL normalization, whole-*field*
+  refmap (sibling list-item / `@section`-body defs), and `@section`'s own arm (no `serialize_prose_with_linkrefs`
+  call). **Formatter follow-on (deferred, RECAP next #1):** the formatter joins consecutive `#'` def lines into
+  one → invalidates them as CommonMark defs → changes rendered Rd. Curated `md_url_reference` dodges it with
+  **blank-line-separated** defs (format-stable, like the `%`-comment cases); the consecutive-def projector path
+  is unit-tested (no formatter). Curated `md_url_reference`.
 - **A shortcut/reference link with a non-plain display is DROPPED to empty (2026-06-29k).** roxygen2's
   `parse_link` (`markdown-link.R`): after unwrapping a *sole* `code` child (which links — `\code{\link{…}}`), if
   any display child is not text/softbreak/linebreak it `warn`s "markdown links must contain plain text" and
@@ -538,8 +555,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post same-line non-plain *reference* drop, 2026-06-29l): **310 matching (all allowlisted), 18
-divergent (backlog)** of 328 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post URL-defined reference links, 2026-06-29m): **311 matching (all allowlisted), 18
+divergent (backlog)** of 329 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -551,9 +568,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (327 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
+   (329 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 44/44 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 46/46 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -561,51 +578,59 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29l) — same-line non-plain *reference* `[*foo*][ref]` drop
+## Latest session (2026-06-29m) — URL-defined reference links (`[ref]: url` → `\href`)
 
-**RECAP ranked next #1.** The same-line *reference* analog of 29k's shortcut drop. Probed roxygen2 7.3.3
-(`R/markdown-link.R`): `get_md_linkrefs`'s one regex matches BOTH `[ref]` and `[text][ref]`
-(`(?<=[^\]\\]|^)\[([^\]\[]+)\](?:\[([^\]\[]+)\])?(?=[^\[{]|$)`), synthesizing `[ref]: R:URLencode(ref)` for
-**group 3** (the second `[]`, or group 2 when absent). So a reference's destination is **R-topic** unless a
-user `[ref]: URL` def precedes the synthesized one (cmark uses the first def). Boundary (all probed):
-`[*foo*][r1]`/`[`x` `y`][r4]` (R-topic, markup display) **drop** (`parse_link` "must contain plain text" →
-`""`); `[plain][r2]` → `\link{plain}`; `` [`code`][r3] `` → `\code{\link{code}}` (sole code). **A
-user-defined URL ref** `[*foo*][r1]`+`[r1]: https://…` instead → `\href{url}{\emph{foo}}` (markup **kept** —
-`\href` isn't the R-topic `\link`, so the plain-text rule doesn't apply). That `\href`-with-markup case needs
-URL-def resolution (arity models only ref *labels*, not *destinations*) → **next target**, NOT this one.
+**RECAP ranked next #1.** A user CommonMark link-reference definition (`[ref]: url`) gives a referencing
+shortcut/reference link a real destination, so roxygen2 renders `\href{url}{display}` with the **display
+kept** (the "must contain plain text" drop is `\link`-only — `\href` carries its own dest). The definition
+lines are **consumed** by cmark (render nothing). The user def wins over roxygen2's synthesized `[ref]: R:ref`
+(cmark keeps the first def; the synthesized block is appended last). Probed boundaries: markup display
+`[*foo*][r1]`→`\href{url}{\emph{foo}}`, plain `[plain][r2]`→`\href{url}{plain}`, code `` [`x`][r3] ``→
+`\href{url}{\code{x}}`, bare shortcut `[r1]`→`\href{url}{r1}`; `<url>` brackets stripped, title ignored;
+**a definition cannot interrupt a paragraph** (a `[r1]: url` line with no preceding blank stays literal
+prose + R-topic `\link`).
 
-**Fix (one carve, ~12 lines lexer).** The same-line `[*foo*][ref]` was consumed whole by `scan_md_link` as
-one opaque leaf only because its `[` opener wasn't carved. New `same_line_ref_opener` (lex.rs) carves a `[`
-whose balanced bracket-free display contains a markup char (`* _ ` ` ` <`, not `!`/`\`) AND is followed by a
-clean `[ref]` (`cross_line_ref_closer(close-1)`). After carving the opener, the **existing** machinery does
-the rest with **zero** new code: the main loop's line-agnostic `cross_line_ref_closer` carves the lone `]`,
-`scan_md_link` carves `[ref]` opaque, the arena's `classify_closer` folds `][ref]` → `MdRefLink` node with
-resolved display, and `serialize_inlines`' `link_display_is_droppable` (29k) drops it. Refmap-safe: the
-`MdRefLink`-node arms of `linkref_skeleton_push`/`link_ref_label` already exist (cross-line refs), so `r1` is
-in the refmap (not spuriously demoted) and reaches serialize. **Plain** `[plain][ref]` stays opaque
-(byte-identical node-vs-leaf projection) — markup-only carve keeps blast radius tiny.
+**Fix (projector-only, ~120 lines).** New `resolve_user_linkrefs` (wired into `serialize_prose_with_linkrefs`
+*before* `demote_undefined_links`, on the original body so the refmap still sees every bracket): builds a
+label→url map via `collect_user_linkrefs`/`scan_linkref_run` (consumes a definition run only at a **block
+start** — body start or after a `Text` containing `\n` — tolerating leading-indent + soft-break-separated
+stacked defs, all dropped), drops the def inlines, and **rewrites** each referencing link with a defined
+label to `Inline::MdInlineLink{url, display}` (reusing the existing `\href` rendering — `inline_link_node_atom`
+GRP-wraps a multi-atom display, code-span sub-renders). `match_linkref_def`/`linkref_def_label`/
+`parse_linkref_def_dest`/`link_display_inlines` are the helpers. Returns `None` (no change) when the field has
+no def → existing cases byte-identical. Refmap-safe: a label with a user def is already a synthesized
+candidate (its `[ref]` bracket), so never spuriously demoted; the poisoning machinery stays inert on clean
+cases.
 
-**TDD/tests:** fixture `roxygen_md_ref_emphasis` (CST: markup refs are `MD_LINK` nodes with resolved
-EMPH/CODE children, plain ref stays an opaque leaf; lossless), curated `md_ref_emphasis` (drop+keep mix),
-2 unit tests (end-to-end `non_plain_reference_links_are_dropped`, lexer carve-vs-opaque). Carving made the
-*existing* `roxygen_md_shortcut_link` fixture nodeify its `` [`code`][stats::filter()] `` (markup display) —
-CST snapshot re-accepted, projection byte-identical (`\code{\link{code}}` either path). Re-blessed the format
-baseline (pure +1 key; ref-link nodes atomic like the opaque leaf → formatter byte-identical).
+**TDD/tests:** 3 unit tests (consecutive-def render, bare-shortcut, **interrupt-rule regression guard**),
+curated `md_url_reference` (blank-separated defs, emph/plain/code displays). **Formatter follow-on (deferred):**
+the formatter **joins consecutive `#'` def lines** into one line, which invalidates them as CommonMark defs
+(multiple defs need separate lines) → changes rendered Rd (Tenet-1 fixed-point break). Dodged exactly like the
+`%`-comment reflow: the curated case uses **blank-line-separated** defs (each its own paragraph; the formatter
+preserves the blanks → format-stable). The consecutive-def projector path is still covered by the unit test
+(no formatter involved). Re-blessed the format baseline (+1 key).
 
-**Result:** projector **309→310 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
-`cargo test` 525 green, clippy + fmt clean, curated fixed-point 44→45/45.
+**Result:** projector **310→311 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
+`cargo test` 529 lib green, clippy + fmt clean, curated fixed-point 45→46/46.
 
-**Next (ranked):** **(1)** **URL-defined reference** `[text][ref]`+`[ref]: https://…` → `\href{url}{display}`
-(markup kept). arity treats *all* refs as R-topic `\link` (it models ref labels, not destinations); needs a
-field-level user-def map (`[ref]: url`) and a `\href` vs `\link` split in `ref_link_node_atom`/`ref_link_atom`.
-Couples to **(2)** Whole-*field* refmap — `linkref_keys` is per-prose-body, so a sibling-paragraph def is
-missed; lift to the field (a user `[ref]: url` def lives in its own paragraph, so URL resolution needs this).
+**Next (ranked):** **(1)** **Formatter: keep link-ref-definition lines unjoined** — the deferred follow-on above;
+the formatter should recognize a `[label]: dest` def line (markdown-block-level) and not reflow it into the
+previous/next line, so consecutive defs stay format-stable. Same family as the (since-fixed) `%`-comment reflow
+bail. **(2)** **Whole-*field* refmap** — `collect_user_linkrefs`/`linkref_keys` are per-prose-body, so a def in
+the **description** intro paragraph used in **details** (a *separate* markdown doc in roxygen) is correctly
+isolated, but a def in a sibling **list item / `@section` body** of the same field is missed; also `@section`
+has its own projector arm that doesn't call `serialize_prose_with_linkrefs` (URL refs there are unhandled).
 **(3)** Slice B **remainder** — fully retire `scan_md_link` (still serves plain same-line `[t]`/`[t][r]`,
-autolink `<url>`): carve every bracket, move references onto the arena lookahead, retire
-`opaque_inline_link_display`/`opaque_link_is_shortcut_or_ref`. The 18 projector divergences stay
-roxygen2-eval/multi-block, **out of scope**.
+autolink `<url>`): carve every bracket, move references onto the arena lookahead. The 18 projector divergences
+stay roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-29l (same-line non-plain *reference* `[*foo*][ref]` drop):** the reference analog of 29k. A new
+  `same_line_ref_opener` (lex.rs) carves the `[` of a markup-display (`* _ ` ` ` <`, not `!`/`\`) reference
+  followed by a clean `[ref]`; the existing `cross_line_ref_closer` + `scan_md_link` + arena fold + 29k's
+  `link_display_is_droppable` do the rest with zero new code. Plain `[plain][ref]` stays opaque. Curated
+  `md_ref_emphasis`. 309→310.
 
 - **2026-06-29k (non-plain shortcut/reference link drop):** a shortcut/reference link (`R:` dest) whose
   display (after unwrapping a *sole* `code` child) has any non-text child is **dropped to empty** by

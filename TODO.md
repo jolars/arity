@@ -532,13 +532,26 @@
       `cross_line_ref_closer` (lone `]`) + opaque `scan_md_link` (`[ref]`) + arena `][ref]` fold +
       `link_display_is_droppable` do the rest (zero new projector code). Plain `[plain][ref]` stays opaque
       (byte-identical). Curated `md_ref_emphasis`. 309→310.
-      **Slice B remainder (backlog):** (a) **URL-defined reference** `[text][ref]`+`[ref]: url` →
-      `\href{url}{display}` (markup kept) — arity models ref *labels*, not *destinations*; needs a field-level
-      user-def map + `\href`-vs-`\link` split in `ref_link_(node_)atom`. (b) lift the refmap from
-      per-prose-body to whole-*field* (a label defined in a sibling paragraph/list of the same tag is missed;
-      a user `[ref]: url` def lives in its own paragraph, so (a) needs this). (c) retire `scan_md_link`
-      *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink `<url>`) by carving **every** bracket
-      and moving refs onto the arena lookahead. Plan: `~/.claude/plans/luminous-zooming-toast.md`.
+      **URL-defined reference links LANDED (2026-06-29m):** a user CommonMark def `[ref]: url` gives a
+      referencing shortcut/reference link a real destination → `\href{url}{display}` (display **kept**: the
+      "must contain plain text" drop is `\link`-only); the def lines are **consumed**. User def beats roxygen's
+      synthesized `[ref]: R:ref` (cmark first-def-wins). Projector-only: `resolve_user_linkrefs` (in
+      `serialize_prose_with_linkrefs`, before `demote_undefined_links`, on the original body) builds a
+      label→url map (`collect_user_linkrefs`/`scan_linkref_run`, consuming a def run only at a **block start**
+      since a def cannot interrupt a paragraph; leading-indent + soft-break-stacked defs dropped) and rewrites
+      each defined-label link to `Inline::MdInlineLink{url, display}` (reusing the `\href` rendering).
+      `parse_linkref_def_dest` handles bare/`<…>` dests + optional same-line title. Returns `None` (no change)
+      with no def. Curated `md_url_reference` (blank-separated defs, emph/plain/code displays) + 3 unit tests
+      (incl. interrupt-rule guard). 310→311.
+      **Slice B remainder (backlog):** (a) **Formatter: keep link-ref-definition lines unjoined** — the
+      formatter joins consecutive `#'` def lines into one, invalidating them as CommonMark defs → changes
+      rendered Rd (fixed-point break); the curated case dodges it with blank-separated defs, but the formatter
+      should recognize a `[label]: dest` line and not reflow it (same family as the `%`-comment reflow bail).
+      (b) lift the refmap to whole-*field* (a label defined in a sibling list-item / `@section` body is missed;
+      `@section` has its own arm with no `serialize_prose_with_linkrefs` call), plus multi-line defs + URL
+      normalization. (c) retire `scan_md_link` *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink
+      `<url>`) by carving **every** bracket and moving refs onto the arena lookahead. Plan:
+      `~/.claude/plans/luminous-zooming-toast.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
