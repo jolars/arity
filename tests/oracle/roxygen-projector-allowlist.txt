@@ -323,3 +323,4 @@ tabular
 md_shortcut_emphasis
 md_url_reference
 md_url_reference_consecutive
+md_url_reference_section

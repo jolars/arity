@@ -431,12 +431,14 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
         // stays bare (the same rule `serialize_macro` applies to `\item`/`\tabular`).
         "section" => {
             // roxygen2 `markdown_if_active`-processes the **whole** `title: body`
-            // (so `add_linkrefs_to_md` poisoning spans both halves), then splits the
-            // rendered Rd on the first `:`. Demote first on the whole body, split the
-            // demoted run, and append the leaked definitions to the content — they
-            // render at the very end of the field, i.e. after the `:`.
-            let demoted = md.then(|| demote_poisoned_links(body)).flatten();
-            let body = demoted.as_deref().unwrap_or(body);
+            // (so the link-reference pipeline — user `[ref]: url` defs, undefined-
+            // label demotion, and `add_linkrefs_to_md` poisoning — spans both
+            // halves), then splits the rendered Rd on the first `:`. Run the whole
+            // pipeline on the whole body, split the result, and append any leaked
+            // definitions to the content — they render at the very end of the
+            // field, i.e. after the `:`.
+            let transformed = md.then(|| resolve_linkrefs(body)).flatten();
+            let body = transformed.as_deref().unwrap_or(body);
             let (heading, content) = split_section_title(body);
             let title = serialize_inlines(&heading, md);
             let mut content_atoms = serialize_inlines(&content, md);
@@ -709,26 +711,8 @@ fn rd_complete(s: &str) -> bool {
 /// definitions consistent), then [`leaked_linkref_text`] appends the leaked
 /// definitions to the trailing prose.
 fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
-    // First, demote shortcut/reference links whose label roxygen2 never defines
-    // (the `(?<!\])`/`(?=[^\[{])` link-reference-map gap), then apply the
-    // *positional* poisoning demotion to whatever survives. The two compose:
-    // the refmap gap covers a label that is never a candidate, poisoning covers a
-    // valid candidate whose definition leaks. Both only turn links into literal
-    // text, so order is immaterial to correctness; the refmap runs on the original
-    // body so it sees every bracket as roxygen2's raw-source scan does.
-    // Resolve user link-reference definitions (`[ref]: url`) first: a referencing
-    // shortcut/reference link whose label is defined becomes a `\href{url}{display}`
-    // (display kept), and the definition lines are consumed. This runs on the
-    // original body so the refmap below still sees every bracket the way roxygen2's
-    // raw-source scan does.
-    let resolved = md.then(|| resolve_user_linkrefs(body)).flatten();
-    let body = resolved.as_deref().unwrap_or(body);
-    let undefined = md
-        .then(|| demote_undefined_links(body, &linkref_keys(body)))
-        .flatten();
-    let body = undefined.as_deref().unwrap_or(body);
-    let demoted = md.then(|| demote_poisoned_links(body)).flatten();
-    let body = demoted.as_deref().unwrap_or(body);
+    let transformed = md.then(|| resolve_linkrefs(body)).flatten();
+    let body = transformed.as_deref().unwrap_or(body);
     let mut atoms = serialize_inlines(body, md);
     if md {
         for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
@@ -736,6 +720,38 @@ fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
         }
     }
     atoms
+}
+
+/// Apply roxygen2's full markdown link-reference pipeline to a prose body,
+/// returning the rewritten inline run (or `None` when nothing changed). The
+/// caller has already checked that markdown is active. Three composing stages,
+/// each turning links into other links or literal text:
+///
+/// 1. **User definitions** (`[ref]: url`): a referencing shortcut/reference link
+///    whose label is defined becomes a `\href{url}{display}` (display kept), and
+///    the definition lines are consumed. Runs on the original body so the refmap
+///    below still sees every bracket the way roxygen2's raw-source scan does.
+/// 2. **Undefined-label demotion** (the `(?<!\])`/`(?=[^\[{])` link-reference-map
+///    gap): a shortcut/reference link whose label roxygen2 never defines demotes
+///    to literal bracket text.
+/// 3. **Positional poisoning** (`add_linkrefs_to_md`): a valid candidate whose
+///    synthesized definition leaks demotes its tail.
+///
+/// Both demotions only turn links into literal text, so order is immaterial to
+/// correctness; the refmap (stage 2) runs after stage 1 so it sees every bracket
+/// the user defs left behind.
+fn resolve_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
+    let resolved = resolve_user_linkrefs(body);
+    let b1 = resolved.as_deref().unwrap_or(body);
+    let undefined = demote_undefined_links(b1, &linkref_keys(b1));
+    let b2 = undefined.as_deref().unwrap_or(b1);
+    let demoted = demote_poisoned_links(b2);
+    // Materialize an owned body only when some stage actually rewrote it.
+    if resolved.is_some() || undefined.is_some() || demoted.is_some() {
+        Some(demoted.unwrap_or_else(|| b2.to_vec()))
+    } else {
+        None
+    }
 }
 
 /// Serialize an inline run into the canonical atom sequence: maximal prose runs

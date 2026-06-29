@@ -552,10 +552,17 @@
       `Paragraph::flush` + `TagUnit::flush` gates, fixtures `roxygen_bail_linkref_def` /
       `roxygen_tag_bail_linkref_def` / `roxygen_md_linkref_continuation_reflows` + a unit test, curated
       `md_url_reference_consecutive` (now format-stable). Curated fixed-point 46→47/47; projector 311→312.
-      **Slice B remainder (backlog):** (b) lift the refmap to whole-*field* (a label defined in a sibling list-item / `@section` body is missed;
-      `@section` has its own arm with no `serialize_prose_with_linkrefs` call), plus multi-line defs + URL
-      normalization. (c) retire `scan_md_link` *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink
-      `<url>`) by carving **every** bracket and moving refs onto the arena lookahead. Plan:
+      **`@section` runs the full link-ref pipeline LANDED (2026-06-29o):** the `@section` arm only ran
+      `demote_poisoned_links`, so a user `[ref]: url` def in a `@section` body didn't resolve (stayed `\link` +
+      leaked literal text) and an undefined `a][b]` wasn't demoted. Extracted the three body-transform stages
+      into a shared `resolve_linkrefs(body) -> Option<Vec<Inline>>` (resolve user defs → demote undefined →
+      demote poisoned), now called by both `serialize_prose_with_linkrefs` and the `@section` arm on the whole
+      body before the `:` split. Projector-only. Curated `md_url_reference_section`. Curated fixed-point
+      47→48/48; projector 312→313.
+      **Slice B remainder (backlog):** (b) lift the refmap to whole-*field* (a label defined in a sibling
+      list-item / paragraph of the *same field* is still missed), plus multi-line defs + URL normalization.
+      (c) retire `scan_md_link` *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink `<url>`) by
+      carving **every** bracket and moving refs onto the arena lookahead. Plan:
       `~/.claude/plans/luminous-zooming-toast.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link

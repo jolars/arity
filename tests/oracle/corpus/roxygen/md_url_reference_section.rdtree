@@ -1,0 +1,3 @@
+(\description (TEXT "Refs inside a section body"))
+(\section (TEXT "My heading") (GRP (TEXT "A defined reference") (\href (VERB "https://example.com") (TEXT "foo")) (TEXT "links to its URL, but an undefined a][bar] stays literal.")))
+(\title (TEXT "Refs inside a section body"))

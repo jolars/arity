@@ -265,9 +265,12 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   separated stacked defs are tolerated and dropped), then **rewrites** each defined-label link to
   `Inline::MdInlineLink{url, display}` (reusing the `\href` rendering). `parse_linkref_def_dest` handles bare or
   `<…>` dests + optional same-line title (trailing non-title content ⇒ not a def). Returns `None` (no change)
-  when no def → existing cases byte-identical. **Backlog:** multi-line defs, URL normalization, whole-*field*
-  refmap (sibling list-item / `@section`-body defs), and `@section`'s own arm (no `serialize_prose_with_linkrefs`
-  call). **Formatter follow-on LANDED 2026-06-29n:** the prose-reflow bail now also fires under `@md` when a
+  when no def → existing cases byte-identical. **`@section`'s arm now runs the full pipeline (2026-06-29o):**
+  the body-transform stages were extracted into `resolve_linkrefs` (user-def resolution → undefined-label
+  demotion → positional poisoning), shared by `serialize_prose_with_linkrefs` and the `@section` arm — so a
+  `[ref]: url` def (and an undefined `a][b]`) in a `@section` body now resolves identically to any other prose
+  field. **Backlog:** multi-line defs, URL normalization, whole-*field* refmap (a def in a sibling
+  list-item/paragraph of the same field is still missed). **Formatter follow-on LANDED 2026-06-29n:** the prose-reflow bail now also fires under `@md` when a
   paragraph's **first** line (`Paragraph::flush`), or a tag's prose value (`TagUnit::flush`, precomputed
   `first_is_linkref_def`), is a link-reference definition (`text_is_linkref_def`/`linkref_dest_is_clean`,
   text-level ports of `parse_linkref_def_dest`), so consecutive `#'` def lines stay unjoined — a def-shaped
@@ -558,8 +561,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post link-ref-def formatter bail, 2026-06-29n): **312 matching (all allowlisted), 18
-divergent (backlog)** of 330 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post `@section` link-ref unification, 2026-06-29o): **313 matching (all allowlisted), 18
+divergent (backlog)** of 331 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -571,9 +574,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (330 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
+   (331 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 47/47 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 48/48 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -581,50 +584,48 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29n) — Formatter: link-ref-definition lines stay unjoined
+## Latest session (2026-06-29o) — `@section` runs the full link-reference pipeline
 
-**RECAP ranked next #1 (deferred formatter follow-on to 2026-06-29m).** The prose-reflow path joined
-consecutive `#'` link-reference-definition lines (`[a]: url1` + `[b]: url2`) into one line, which invalidates
-them as CommonMark defs (a def is one logical line; once joined the second lands in the first's title slot and
-both fall back to a paragraph) → a referencing link renders as an R-topic `\link` over leaked literal def text
-instead of the intended `\href` — a **Tenet-1 fixed-point break** (`roxygen2(format(x)) != roxygen2(x)`),
-verified end-to-end with the oracle. Probed two CommonMark rules that scope the fix: **(a)** a def is
-recognized only at a **block start**, so a def-shaped line that *follows prose on consecutive lines* is a
-paragraph continuation (renders `\link` + literal `: url` text whether joined or not → reflow is
-render-preserving, no bail); **(b)** a clean def is `[label]: dest [optional title]` with **no trailing
-content** (trailing junk makes it a paragraph → safe to reflow).
+**RECAP ranked next #1, the `@section`-arm slice.** The `@section` projector arm only ran
+`demote_poisoned_links` on its body, skipping the other two link-reference stages: a user `[ref]: url`
+definition in a `@section` body did not resolve its referencing link to `\href` (it stayed an R-topic `\link`
+and the def text leaked as literal trailing prose), and an undefined `a][b]` shortcut was not demoted. roxygen2
+`markdown_if_active`-processes the **whole** `title: body` value (so the full pipeline — user-def resolution,
+undefined-label demotion, and `add_linkrefs_to_md` poisoning — applies before the split on the first `:`), so
+this was a genuine projector gap (parses fine; wrong Rd shape).
 
-**Fix (formatter-only).** A third reflow-bail condition, gated on `@md` (a `[a]: url` in non-markdown prose is
-literal Rd, never a def): `Paragraph::flush` bails (keeps original line breaks, marker-normalized) when its
-**first** line is a link-reference definition (`self.lines.first().is_some_and(line_is_linkref_def)` — first
-line only, since later def-shaped lines are continuations); `TagUnit::flush` bails when the tag's own prose
-value is a def (precomputed `first_is_linkref_def` from `tag_rest_verbatim`, covering `@details [a]: url` +
-continuation). `text_is_linkref_def`/`linkref_dest_is_clean` are text-level ports of the projector's
-`parse_linkref_def_dest` (bare/`<…>` dest, optional `"`/`'`/`(` title, no trailing content). Same shape as the
-`%`-comment and `is_unsafe_line_start` bails already in those two `flush`es.
+**Fix (projector-only).** Extracted the three body-transform stages out of `serialize_prose_with_linkrefs`
+into a shared `resolve_linkrefs(body) -> Option<Vec<Inline>>` (resolve user defs → demote undefined → demote
+poisoned; `None` when no stage rewrites the body, so existing cases stay byte-identical and allocation-free).
+Both `serialize_prose_with_linkrefs` and the `@section` arm now call it on the whole body before serializing;
+`@section` then splits the transformed body on the first `:` and appends leaked defs to the content as before.
+No parser/CST change.
 
-**TDD/tests:** formatter fixtures `roxygen_bail_linkref_def` (consecutive defs stay unjoined),
-`roxygen_tag_bail_linkref_def` (def-as-tag-value), `roxygen_md_linkref_continuation_reflows` (def-shaped
-continuation after prose **still reflows** — the don't-over-bail guard); a `linkref_def_detection` unit test
-(clean/angle/titled vs. no-colon/empty-label/empty-dest/trailing-junk/prose); curated
-`md_url_reference_consecutive` (the consecutive-def analog of `md_url_reference`, now **format-stable** — pin
-minted, allowlisted). Re-blessed the format baseline (+1 key, only the new curated key — no existing case
-drifted).
+**TDD/tests:** curated `md_url_reference_section` (a `@section` body with a user-defined reference `[foo]` →
+`\href` consumed, plus an undefined `a][bar]` left literal — exercises both newly-wired stages); pin minted,
+allowlisted, format baseline re-blessed (+1 key, no existing case drifted; the lone def line stays unjoined via
+the 29n bail and output is byte-identical to input → trivially render-preserving).
 
-**Result:** projector **311→312 matching (all allowlisted), 18 divergent** (unchanged — all out of scope);
-curated fixed-point **46→47/47** (the consecutive-def case now semantically preserving). `cargo test` 803
-green (529 lib), clippy + fmt clean.
+**Result:** projector **312→313 matching (all allowlisted), 18 divergent** (unchanged — all out of scope);
+curated fixed-point **47→48/48**. `cargo test` green, clippy + fmt clean.
 
 **Next (ranked):** **(1)** **Whole-*field* refmap** — `collect_user_linkrefs`/`linkref_keys` are
-per-prose-body, so a def in the **description** intro paragraph used in **details** is correctly isolated, but a
-def in a sibling **list item / `@section` body** of the same field is missed; also `@section` has its own
-projector arm that doesn't call `serialize_prose_with_linkrefs` (URL refs there are unhandled). Plus multi-line
-defs + URL normalization. **(2)** Slice B **remainder** — fully retire `scan_md_link` (still serves plain
-same-line `[t]`/`[t][r]`, autolink `<url>`): carve every bracket, move references onto the arena lookahead. The
-18 projector divergences stay roxygen2-eval/multi-block, **out of scope**. Plan:
+per-prose-body, so a def in a sibling **list item / paragraph** of the *same field* is still missed (roxygen2
+processes the whole field text at once, so its defs span paragraphs/list items). Plus multi-line defs + URL
+normalization. **(2)** Slice B **remainder** — fully retire `scan_md_link` (still serves plain same-line
+`[t]`/`[t][r]`, autolink `<url>`): carve every bracket, move references onto the arena lookahead. The 18
+projector divergences stay roxygen2-eval/multi-block, **out of scope**. Plan:
 `~/.claude/plans/luminous-zooming-toast.md`.
 
 ## Earlier sessions
+
+- **2026-06-29n (formatter: link-ref-definition lines stay unjoined):** the prose-reflow path joined
+  consecutive `#'` def lines (`[a]: url1` + `[b]: url2`), invalidating them as CommonMark defs → a `\link` over
+  leaked literal text instead of `\href` (Tenet-1 fixed-point break). A third reflow-bail (`@md`-gated):
+  `Paragraph::flush`/`TagUnit::flush` bail when the **first** line is a link-ref def (`text_is_linkref_def`/
+  `linkref_dest_is_clean`, text ports of `parse_linkref_def_dest`); a def-shaped *continuation* after prose
+  still reflows (can't interrupt a paragraph → render-preserving). Curated `md_url_reference_consecutive` now
+  format-stable. 311→312; curated fixed-point 46→47/47.
 
 - **2026-06-29m (URL-defined reference links `[ref]: url` → `\href`):** a user CommonMark def gives a
   referencing shortcut/reference link a real destination → `\href{url}{display}` (display **kept** — the "must
