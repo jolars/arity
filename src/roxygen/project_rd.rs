@@ -225,6 +225,20 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
                         fields.push((arg, body));
                     }
                 }
+                // `@section` uses `tag_markdown` (`sections = FALSE`), so it never
+                // gets the per-section `rdComplete` drop under markdown. But in
+                // markdown-OFF mode `markdown_if_active`'s else-branch runs
+                // `rdComplete(x$raw)` unconditionally on the whole `title: body`
+                // value and replaces it with "" on a brace imbalance. `roxy_tag_rd`
+                // then splits "" on its first `:` → title="", content=NA, rendering
+                // `\section{}{NA}` → `(\section (TEXT "NA"))`. As with `@slot`/
+                // `@field`, the raw value's only rd_complete-relevant chars
+                // (`{}`, `\`, `%`) never appear in the scaffolding and `is_code =
+                // FALSE` ignores quotes, so the full section source scans
+                // identically to `x$raw`.
+                "section" if !md && !rd_complete(&section.syntax().text().to_string()) => {
+                    out.push("(\\section (TEXT \"NA\"))".to_string());
+                }
                 "examples" | "examplesIf" => has_examples = true,
                 _ => tag_sections.push((name, body)),
             }
@@ -3027,6 +3041,57 @@ mod tests {
                    setClass('test')\n";
         let out = project_to_rd(src);
         assert!(out.contains("Slots"), "Slots section should survive: {out}");
+    }
+
+    #[test]
+    fn section_with_unbalanced_brace_drops_to_na_md_off() {
+        // markdown-OFF: `markdown_if_active`'s else-branch runs `rdComplete(x$raw)`
+        // unconditionally on the whole `@section` value; a brace imbalance replaces
+        // it with "". `roxy_tag_rd` then splits "" on ":" → title="", content=NA →
+        // `\section{}{NA}` → `(\section (TEXT "NA"))`.
+        let src = "#' @title T\n\
+                   #' @section Heading:\n\
+                   #'   body with brace {\n\
+                   #' @name x\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(out.contains("(\\section (TEXT \"NA\"))"), "got: {out}");
+        assert!(!out.contains("Heading"), "dropped title leaked: {out}");
+    }
+
+    #[test]
+    fn section_with_percent_commented_brace_survives_md_off() {
+        // The raw `rdComplete` treats `%` as a line comment, so a `{` after a `%` is
+        // commented out and the section renders normally (not dropped to NA).
+        let src = "#' @title T\n\
+                   #' @section Heading:\n\
+                   #'   body %{\n\
+                   #' @name x\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains("(\\section (TEXT \"Heading\") (TEXT \"body\"))"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn section_unbalanced_brace_not_dropped_md_on() {
+        // markdown-ON: `@section` uses `tag_markdown` with `sections = FALSE`, so the
+        // per-section `rdComplete` drop never fires — the body is not replaced by NA
+        // (roxygen2 emits the imbalanced content as-is).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @section Heading:\n\
+                   #'   body with brace {\n\
+                   #' @name x\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            !out.contains("(\\section (TEXT \"NA\"))"),
+            "md-on @section must not drop to NA: {out}"
+        );
+        assert!(out.contains("Heading"), "title should survive: {out}");
     }
 
     #[test]

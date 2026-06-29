@@ -353,8 +353,13 @@
       mode-independently; since `is_code=FALSE` ignores quotes and `{}\%` never appear
       in `#'`/`@slot` scaffolding, the existing `rd_complete` port run on the raw
       section text matches `x$raw` exactly—a `continue` guard in `project_block`'s
-      `slot`/`field` arm (curated `rdcomplete_slot_drop`/`_field_drop`). Still backlog:
-      `@section` whole-tag handling. A
+      `slot`/`field` arm (curated `rdcomplete_slot_drop`/`_field_drop`). **`@section`
+      md-OFF drop landed 2026-06-29i:** `@section` uses plain `tag_markdown`
+      (`sections=FALSE`), so md-on never drops; md-off runs `rdComplete(x$raw)`
+      unconditionally and replaces the value with `""`, after which `roxy_tag_rd` splits
+      it to `title=""`/`content=NA` → `\section{}{NA}` → `(\section (TEXT "NA"))`. Same
+      raw-source `rd_complete` guard in `project_block`'s `section` arm (curated
+      `rdcomplete_section_drop`). A
       user-facing side-channel **diagnostic** for the same condition is still deferred to
       the lint/LSP phase (the drop alone is what closed the gate cases). **Unicode NBSP in `norm_ws` (cm-355) landed 2026-06-25j:** the R
       driver's `[[:space:]]` is ASCII-only, so `norm_ws` now collapses only ASCII
