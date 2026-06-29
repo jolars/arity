@@ -1,0 +1,3 @@
+(\description (TEXT "Autolink adjacent"))
+(\details (TEXT "A shortcut") (\link (TEXT "before")) (TEXT "resolves, but [stop] poisons, then") (\url (VERB "https://example.org")) (TEXT "and [after] follow. [stop]: R:stop%5C [after]: R:after"))
+(\title (TEXT "Autolink adjacent"))

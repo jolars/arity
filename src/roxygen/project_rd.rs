@@ -885,8 +885,11 @@ fn inline_source_skeleton(body: &[Inline]) -> String {
 /// followed by `(`, lookahead-allowed), so its synthesized `[alt]: R:alt`
 /// definition leaks in a poisoned tail even though the `\figure` survives (it
 /// carries its own destination). The node-form (`MdInlineLink`/`MdImage`) is
-/// handled; the rarer opaque nested-bracket inline link and autolinks stay backlog
-/// (a single space).
+/// handled; an **opaque** inline-link leaf is handled too — a nested-bracket
+/// display (`[a [b] c](url)`) keeps the link opaque (the lexer only nodes a
+/// bracket-free display), yet `get_md_linkrefs` still finds the *inner*
+/// bracket-free `[b]` candidate, so the display is exposed verbatim. Autolinks
+/// (`<url>`) carry no bracket candidate, so they stay a single space.
 fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
     match inl {
         Inline::Text(t) => Cow::Borrowed(t),
@@ -897,8 +900,34 @@ fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
             Some(alt) => Cow::Owned(format!("[{alt}] ")),
             None => Cow::Borrowed(" "),
         },
+        // An opaque inline-link leaf (nested-bracket display): expose the raw
+        // display so its inner bracket-free candidate surfaces, with a space
+        // placeholder for the consumed `(url)`. A shortcut/reference leaf is
+        // handled by demotion, an autolink carries no candidate — both a space.
+        Inline::MdLink(raw) => match opaque_inline_link_display(raw) {
+            Some(display) => Cow::Owned(format!("[{display}] ")),
+            None => Cow::Borrowed(" "),
+        },
         _ => Cow::Borrowed(" "),
     }
+}
+
+/// The verbatim bracketed display of an **opaque inline-link** leaf
+/// (`[display](url)` → `display`), or `None` for a shortcut/reference leaf (no `(`
+/// after the balanced display) or an autolink (`<url>`). The display is taken
+/// verbatim because it is what roxygen2's `get_md_linkrefs` scans for *inner*
+/// bracket-free candidates — a nested-bracket display `[a [b] c]` yields a `[b]`
+/// candidate (the outer `[a [b] c]` is not a candidate: its content has brackets).
+/// Only nested-bracket displays reach here; a bracket-free inline link is a
+/// `ROXYGEN_MD_LINK` *node* (`MdInlineLink`), handled above.
+fn opaque_inline_link_display(raw: &str) -> Option<&str> {
+    let bytes = raw.as_bytes();
+    if bytes.first() == Some(&b'<') {
+        return None; // autolink
+    }
+    let text_end = scan_delimited(bytes, 0, b'[', b']')?;
+    // Inline link iff the balanced display is immediately followed by `(`.
+    (bytes.get(text_end) == Some(&b'(')).then(|| &raw[1..text_end - 1])
 }
 
 /// The literal alt-text span of an image leaf (`![alt](url)` → `alt`), or `None`
@@ -2971,6 +3000,35 @@ mod tests {
         assert_eq!(
             leaked_linkref_text(&inline_source_skeleton(&body)),
             vec!["[stop]: R:stop%5C".to_string(), "[alt]: R:alt".to_string()]
+        );
+    }
+
+    #[test]
+    fn skeleton_exposes_opaque_inline_link_inner_bracket_for_leaked_defs() {
+        // A nested-bracket display keeps the inline link opaque (the lexer only
+        // nodes a bracket-free display), yet `get_md_linkrefs` still finds the
+        // *inner* `[b]` candidate (the outer `[a [b] c]` is not a candidate — its
+        // content has brackets). The skeleton must surface the display verbatim.
+        let link = Inline::MdLink("[a [b] c](https://example.org)".to_string());
+        assert_eq!(
+            opaque_inline_link_display("[a [b] c](https://example.org)"),
+            Some("a [b] c")
+        );
+        // A shortcut/reference leaf has no `(` after the display; an autolink opens
+        // with `<` — neither is an inline-link display.
+        assert_eq!(opaque_inline_link_display("[shortcut]"), None);
+        assert_eq!(opaque_inline_link_display("[text][ref]"), None);
+        assert_eq!(opaque_inline_link_display("<https://example.org>"), None);
+        assert_eq!(inline_skeleton_fragment(&link), "[a [b] c] ");
+        assert_eq!(skeleton_len(&link), "[a [b] c] ".len());
+        // The inline link survives poisoning (carries its own destination).
+        assert_eq!(demoted_link_source(&link), None);
+        // An escaped-close candidate poisons the tail; the surviving link's inner
+        // `[b]` definition leaks alongside it.
+        let body = vec![Inline::Text("see [stop\\] then ".to_string()), link];
+        assert_eq!(
+            leaked_linkref_text(&inline_source_skeleton(&body)),
+            vec!["[stop]: R:stop%5C".to_string(), "[b]: R:b".to_string()]
         );
     }
 

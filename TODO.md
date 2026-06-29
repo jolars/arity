@@ -447,11 +447,20 @@
       though the `\figure` survives. New `MdImage` arm in `inline_skeleton_fragment` contributes
       `[alt] ` (`image_alt_text` extracts the literal alt span via `scan_delimited`); the image is
       not demoted. Curated `md_linkref_poisoning_image`.
+      **Opaque nested-bracket inline-link inner candidates in a poisoned tail LANDED
+      (2026-06-29b):** a nested-bracket display `[a [b] c](url)` keeps the inline link an opaque
+      `MdLink` leaf (the lexer only nodes a *bracket-free* display), yet the raw `get_md_linkrefs`
+      scan still finds the *inner* bracket-free `[b]` candidate (the outer `[a [b] c]` is not one—
+      its content has brackets), so `[b]: R:b` leaks even though the `\href` survives. New
+      `opaque_inline_link_display` (verbatim display iff a balanced `[…]` is followed by `(`, else
+      `None` for shortcut/ref/autolink) drives an `MdLink` arm in `inline_skeleton_fragment` →
+      `[a [b] c] `; the link is not demoted. Autolink-adjacent was already correct (`<url>` carries
+      no `[…]` candidate → a single space is faithful), confirmed by an already-passing curated
+      guard. Curated `md_linkref_poisoning_nested_link` + `md_linkref_poisoning_autolink`.
       **Still backlog (the rest of the migration):** (1) leaks in `@rawRd` (never markdown
-      today—a parser-side gap, deferred); (2) the rarer opaque nested-bracket inline link and
-      autolink-adjacent candidates in a poisoned tail (skeleton still emits a space for those);
-      (3) the full opener-deactivation migration retiring the opaque same-line `scan_md_link`
-      (unify all brackets onto the arena stack).
+      today—a parser-side gap, deferred); (2) the full opener-deactivation migration retiring the
+      opaque same-line `scan_md_link` (unify all brackets onto the arena stack, which would also
+      fold the opaque inline-link path back onto the node form).
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose

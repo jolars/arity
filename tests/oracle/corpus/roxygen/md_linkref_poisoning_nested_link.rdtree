@@ -1,0 +1,3 @@
+(\description (TEXT "Nested bracket"))
+(\details (TEXT "A shortcut") (\link (TEXT "before")) (TEXT "resolves, but [stop] poisons, then") (\href (VERB "https://example.org") (TEXT "a [b] c")) (TEXT "survives. [stop]: R:stop%5C [b]: R:b"))
+(\title (TEXT "Nested bracket"))

@@ -152,9 +152,11 @@ md_escaped_close_bracket
 md_link_emphasis
 md_link_multiline
 md_linkref_poisoning
+md_linkref_poisoning_autolink
 md_linkref_poisoning_field
 md_linkref_poisoning_image
 md_linkref_poisoning_inline_link
+md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
 md_nested_list
 md_ref_link_multiline
