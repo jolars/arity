@@ -25,7 +25,10 @@ mod inline;
 mod lex;
 
 pub(crate) use group::emit_roxygen_block;
-pub(crate) use lex::{is_roxygen_comment, lex_roxygen_line, resolve_roxygen_block, scan_rd_macro};
+pub(crate) use lex::{
+    is_raw_rd_tag, is_roxygen_comment, lex_roxygen_line, resolve_roxygen_block, roxygen_line_tag,
+    scan_rd_macro,
+};
 
 /// Inline Rd macros whose `{…}` content is **verbatim** (`VERB` in
 /// `tools::parse_Rd`): the body is raw text and nested `\macro` markup is *not*

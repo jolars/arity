@@ -112,6 +112,41 @@ fn roxygen_md_directive(line: &str) -> Option<bool> {
     }
 }
 
+/// If `line` (a roxygen line's text, starting at `#`, no trailing newline) opens
+/// a tag, return the tag name (`@rawRd` → `"rawRd"`); otherwise `None` (a prose
+/// or continuation line). Mirrors the marker → ws → `@name` scan in
+/// [`lex_roxygen_line`]/[`lex_roxygen_tag`]. Used by the lexer driver to track
+/// which tag's body a line belongs to, so a verbatim-Rd tag's content lexes as Rd
+/// even inside an `@md` block (see [`is_raw_rd_tag`]).
+pub(crate) fn roxygen_line_tag(line: &str) -> Option<&str> {
+    let after_hashes = line.trim_start_matches('#');
+    let body = after_hashes.strip_prefix('\'')?;
+    let body = body.trim_start_matches([' ', '\t']);
+    let rest = body.strip_prefix('@')?;
+    let bytes = rest.as_bytes();
+    // A tag opens with `@` immediately followed by a letter (matching the
+    // `@@`/`@ `/`@1` exclusions in `lex_roxygen_line`); the name is
+    // `[A-Za-z][A-Za-z0-9]*`.
+    if !bytes.first().is_some_and(u8::is_ascii_alphabetic) {
+        return None;
+    }
+    let mut end = 1;
+    while end < bytes.len() && bytes[end].is_ascii_alphanumeric() {
+        end += 1;
+    }
+    Some(&rest[..end])
+}
+
+/// Tags whose body roxygen2 injects verbatim and never markdown-processes
+/// (`@rawRd` uses `tag_value`, not `tag_markdown`), so their content must lex as
+/// Rd even inside an `@md` block — markdown leaves there would mis-project (a
+/// `[bracket]` is literal Rd, not a `\link`). Only `@rawRd` is projector-relevant;
+/// `@evalRd` (R code) and `@usage` (roclet-generated) share the non-markdown
+/// semantics but are out of the projector's scope, so they are left out for now.
+pub(crate) fn is_raw_rd_tag(name: &str) -> bool {
+    name == "rawRd"
+}
+
 /// Sub-tokenize a roxygen line into `out`. `text` is the line's content with no
 /// trailing newline or `\r`; `start` is its absolute byte offset; `md` is the
 /// block's resolved markdown mode (see [`resolve_roxygen_block`]), which keys

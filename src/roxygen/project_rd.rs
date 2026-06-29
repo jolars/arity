@@ -372,9 +372,11 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
         // into a sequence of top-level Rd nodes, each a section in its own right.
         // arity's roxygen lexer already recognizes inline Rd macros in prose, so
         // serializing the body yields the same atom granularity (a prose run, a
-        // `\emph`, …); each atom is pushed as a bare top-level section. (The
-        // content is raw Rd, never markdown — under `@md`, markdown leaves in the
-        // body would mis-project; that is a parser-side gap, deferred.)
+        // `\emph`, …); each atom is pushed as a bare top-level section. The
+        // content is raw Rd, never markdown: the lexer keys `@rawRd` bodies to
+        // non-markdown even inside an `@md` block (`is_raw_rd_tag`), so a
+        // `[bracket]`/`*star*` here stays literal Rd text rather than a spurious
+        // `\link`/`\emph`.
         "rawRd" => {
             for atom in serialize_inlines(body, md) {
                 out.push(atom);

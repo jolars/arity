@@ -1,0 +1,3 @@
+(TEXT "Some [bracket] and *star* text.")
+(\description (TEXT "T"))
+(\title (TEXT "T"))

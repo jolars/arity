@@ -457,10 +457,18 @@
       `[a [b] c] `; the link is not demoted. Autolink-adjacent was already correct (`<url>` carries
       no `[…]` candidate → a single space is faithful), confirmed by an already-passing curated
       guard. Curated `md_linkref_poisoning_nested_link` + `md_linkref_poisoning_autolink`.
-      **Still backlog (the rest of the migration):** (1) leaks in `@rawRd` (never markdown
-      today—a parser-side gap, deferred); (2) the full opener-deactivation migration retiring the
-      opaque same-line `scan_md_link` (unify all brackets onto the arena stack, which would also
-      fold the opaque inline-link path back onto the node form).
+      **`@rawRd` body is verbatim Rd, never markdown — LANDED (2026-06-29c).** roxygen2's
+      `@rawRd` uses `tag_value`, not `tag_markdown`, so its body is never markdown-processed
+      (no `get_md_linkrefs` leak at all—the earlier "rawRd leaks" framing was backwards);
+      arity's block-keyed lexer wrongly carved `[bracket]`/`*star*` as md leaves under `@md`.
+      Fix is per-tag markdown in the `lex()` driver: a `rox_raw` flag (reset per block,
+      re-keyed per line via `roxygen_line_tag` + `is_raw_rd_tag` = `"rawRd"`) lexes raw-tag
+      lines with `md=false`. Parser-side; projector arm unchanged. Fixture
+      `roxygen_rawrd_no_markdown` + curated `rawrd_md_literal`.
+      **Still backlog (the rest of the migration):** the full opener-deactivation migration
+      retiring the opaque same-line `scan_md_link` (unify all brackets onto the arena stack,
+      which would also fold the opaque inline-link path back onto the node form). (`@evalRd`/
+      `@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
       reverts `\\[`→`\[` and `\\]`→`\]`, so brackets are the **only** punctuation whose

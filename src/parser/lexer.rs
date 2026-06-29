@@ -185,6 +185,11 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
     // block end, so a `@md` directive anywhere in a block keys the whole block.
     let mut rox_md = false;
     let mut rox_block_end = 0usize;
+    // Whether the current line belongs to a verbatim-Rd tag's body (`@rawRd`),
+    // whose content is never markdown even when the block is `@md`. Reset at each
+    // block boundary; a line opening a tag resets it to that tag's raw-ness, while
+    // a prose/continuation line keeps the enclosing tag's setting.
+    let mut rox_raw = false;
 
     while i < bytes.len() {
         let c = bytes[i] as char;
@@ -234,15 +239,23 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     if start >= rox_block_end {
                         (rox_md, rox_block_end) =
                             crate::parser::roxygen::resolve_roxygen_block(input, start);
+                        rox_raw = false;
                     }
                     // Leave a trailing `\r` (and the `\n`) to the main loop so
                     // CRLF stays one Newline token and roxygen content is clean.
                     let content_end = if line.ends_with('\r') { j - 1 } else { j };
+                    let line_text = &input[start..content_end];
+                    // A line opening a tag re-keys the raw-Rd region to that tag's
+                    // body (`@rawRd` is verbatim Rd, never markdown); a prose or
+                    // continuation line keeps the enclosing tag's setting.
+                    if let Some(tag) = crate::parser::roxygen::roxygen_line_tag(line_text) {
+                        rox_raw = crate::parser::roxygen::is_raw_rd_tag(tag);
+                    }
                     crate::parser::roxygen::lex_roxygen_line(
                         &mut out,
-                        &input[start..content_end],
+                        line_text,
                         start,
-                        rox_md,
+                        rox_md && !rox_raw,
                     );
                     i = content_end;
                 } else {

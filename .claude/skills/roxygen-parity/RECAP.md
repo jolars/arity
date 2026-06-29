@@ -359,8 +359,13 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   arity already lexes inline Rd macros in prose, so valid top-level Rd projects
   faithfully; invalid top-level Rd (an inline `\emph` at top level) makes parse_Rd
   error-recover (flatten to TEXT) while arity keeps the macro → divergence (don't
-  curate such a case). Under `@md` the body would carry md leaves (rawRd is never
-  markdown) → mis-projects; parser-side gap, deferred.
+  curate such a case). **`@rawRd` is never markdown (closed 2026-06-29c):** roxygen2
+  uses `tag_value`, not `tag_markdown`, so a `[bracket]`/`*star*` in the body is
+  literal Rd even under `@md`. The lexer keys this per-tag — the `lex()` driver tracks
+  a raw-Rd region (`roxygen_line_tag` + `is_raw_rd_tag`, `"rawRd"` only; reset per
+  block, re-keyed when a line opens a tag) and lexes those lines with `md=false`, so
+  the body carries no md leaves and `serialize_inlines` projects literal text. (`@evalRd`/
+  `@usage` share the non-markdown semantics but are out of the projector's scope.)
 - **A prose section whose trimmed value is literal `"NULL"` is suppressed** (`rd_section()`
   sentinel; `NULL_SUPPRESSIBLE`). `@section` (title+body pair) is NOT suppressed; a suppressed
   `@description NULL` re-fires the title fallback. Data-object auto-`\format` (roxygen2 *evaluates*
@@ -415,8 +420,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post opaque-nested-link slice, 2026-06-29b): **293 matching (all allowlisted), 22
-divergent (backlog)** of 315 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
+driver). Current (post `@rawRd`-non-markdown slice, 2026-06-29c): **294 matching (all allowlisted), 22
+divergent (backlog)** of 316 pinned. Of the 22, 4 are remaining `cm-` cases (`\`-escapes-in-emphasis cm-439/442/451/454
 = **diagnostic-parity**); the other 18 are roxygen2-*evaluation*/multi-block gaps (out of scope —
 knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
@@ -439,50 +444,54 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29b) — opaque nested-bracket inline-link inner candidates in a poisoned tail (migration slice 6)
+## Latest session (2026-06-29c) — `@rawRd` body is verbatim Rd, never markdown (parser-side, per-tag mode)
 
-**Closed ranked #1 from last session** (both sub-shapes). roxygen2's `get_md_linkrefs` synthesizes a
-`[label]: R:label` def for **every** bracket-free `[…]` candidate, scanning the **raw** field text. A
-nested-bracket inline link `[a [b] c](url)` keeps the link an **opaque** `MdLink` leaf (the lexer's
-`inline_link_span` only nodes a *bracket-free* display, so a nested display falls to the opaque
-`scan_md_link` path), yet the raw scan still finds the *inner* bracket-free `[b]` candidate (the outer
-`[a [b] c]` is **not** a candidate — its content has brackets). So in a poisoned tail `[b]: R:b` leaks even
-though the `\href` survives. arity kept the opaque `MdLink` at the catch-all single space, hiding `[b]`.
-**Projector-only — no new TokKind / SyntaxKind** (CST already correct); mirrors slices 4–5 exactly.
+**User-chosen target** (the fork at session start: `@rawRd` parser gap vs cm-escape diagnostic-parity vs
+opener-deactivation). The RECAP's framing of #1 as "`@rawRd` linkref leaks … the parser must carry md
+leaves" was **backwards**: roxygen2's `@rawRd` uses `tag_value`, **not** `tag_markdown`, so its body is
+**never** markdown-processed — there is no `get_md_linkrefs` leak at all. The real divergence: under `@md`
+arity's lexer is block-keyed, so it wrongly carved `[bracket]`→`ROXYGEN_MD_LINK` and `*star*`→
+`ROXYGEN_MD_EMPH` inside the `@rawRd` body, which the projector then rendered as `\link`/`\emph` while
+roxygen2 keeps `(TEXT "Some [bracket] and *star* text.")` literal.
 
-**One-arm fix.** New `opaque_inline_link_display(raw)` returns the verbatim display iff a balanced `[…]` is
-immediately followed by `(` (inline link), else `None` (shortcut/ref → no `(`; autolink → leading `<`).
-Drives an `MdLink` arm in `inline_skeleton_fragment` (the single source for `inline_source_skeleton` +
-`skeleton_len`): `[a [b] c] ` — the display verbatim (so the inner `[b]` surfaces) + a space for the
-consumed `(url)`. The link is **not** demoted (`demoted_link_source`'s guard `opaque_link_is_shortcut_or_ref`
-already returns false for an inline link → `_`-arm None; survives as `\href`). Probed the oracle first:
-`[before]` links, `[stop\]` poisons, `[a [b] c](url)` → `\href` survives **and** `[b]: R:b` leaks after
-`[stop]: R:stop%5C`.
+**Parser-side, per-tag markdown.** Markdown is a **per-tag** property (some tags `tag_markdown`, some
+`tag_value`/`tag_code`), but arity's mode was resolved per-**block** and threaded as one `md: bool`. Fix
+in the `lex()` driver (`lexer.rs`): a `rox_raw` flag, reset at each block boundary and re-keyed per line —
+`roxygen_line_tag(line)` extracts a line-opening tag name (marker→ws→`@name` scan, mirrors
+`lex_roxygen_line`), `is_raw_rd_tag(name)` (`"rawRd"` only) decides raw-ness; a prose/continuation line
+keeps the enclosing tag's setting. Lines in a raw region lex with `md && !rox_raw` = false → no md leaves.
+Projector unchanged in shape (the `@rawRd` arm's `serialize_inlines` now sees literal text); only its
+stale "deferred" comment was updated. Probed the oracle first (Case A bare top-level text = clean; Cases
+B/C with `\code`/`\enumerate` at top level hit parse_Rd's "unexpected macro" error-recovery — the RECAP's
+"don't curate invalid top-level Rd" trap, skipped).
 
-**Autolink-adjacent was already correct** — a `<url>` autolink carries no `[…]` candidate, so its
-single-space skeleton is faithful, and a poisoned shortcut after it (`<url> … [after]`) is demoted normally.
-Confirmed by curated `md_linkref_poisoning_autolink`, which **passed on first mint** (a free regression
-guard, ratcheted in). So the slice is one real fix + one confirmation.
+**TDD:** parser fixture `roxygen_rawrd_no_markdown` (lossless, CST shows one `ROXYGEN_TEXT` body, no md
+leaves) + curated projector case `rawrd_md_literal` (pinned from roxygen2, allowlisted). Watched the gate
+go red (allowlisted case diverged) before the fix, green after. `@evalRd`/`@usage` share the semantics but
+are out of the projector's scope, left for later.
 
-**TDD:** curated projector cases `md_linkref_poisoning_nested_link` (the real fix) +
-`md_linkref_poisoning_autolink` (already-passing guard), both pinned from roxygen2 and allowlisted; unit
-test `skeleton_exposes_opaque_inline_link_inner_bracket_for_leaked_defs` (asserts the display extraction,
-the shortcut/ref/autolink `None` cases, the fragment, `skeleton_len` agreement, no-demote, and the leaked
-pair). Format baseline re-blessed (+2 keys, additive only — formatter leaves both byte-identical).
+**Result:** projector **293→294 matching (all allowlisted), 22 divergent unchanged** (315→316 pinned).
+Curated fixed-point **33/33** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
 
-**Result:** projector **291→293 matching (all allowlisted), 22 divergent unchanged** (313→315 pinned).
-Curated fixed-point **32/32** preserving, 0 blocked. `cargo test` green, clippy + fmt clean.
-
-**Next (ranked):** **(1)** `@rawRd` linkref leaks — `@rawRd` is **never markdown today** (a parser-side
-gap, RECAP "Sections/projection" trap), so the parser must carry md leaves in a rawRd body first; deferred
-until then. **(2)** The `\`-escapes-in-emphasis diagnostic-parity surface (cm-439/442/451/454): roxygen2
-runs `rdComplete` and **drops** the section on failure — design-level, needs a side-channel diagnostic
-(**user check before starting**). **(3)** Opener-deactivation: retire the opaque same-line `scan_md_link`,
-unify all brackets onto the arena stack (would also fold the opaque inline-link path handled this slice
-back onto the node form). The poisoned-tail candidate-skeleton family (slices 1–6) is now closed except
-the rawRd parser gap (#1).
+**Next (ranked):** **(1)** The `\`-escapes-in-emphasis diagnostic-parity surface (cm-439/442/451/454):
+roxygen2 runs `rdComplete` and **drops** the section on failure (empty `(\details)`) — design-level, needs
+a side-channel diagnostic (lossless CST + a diagnostic), aligned with the deferred linter/LSP phases
+(**user check before starting** — flagged it this session; user picked rawRd instead). **(2)**
+Opener-deactivation: retire the opaque same-line `scan_md_link`, unify all brackets onto the arena stack.
+**(3)** `@evalRd`/`@usage` per-tag non-markdown (same `is_raw_rd_tag` mechanism) **if** they enter the
+projector's scope — currently filtered/roclet-generated, so no gate movement. The in-scope render/diagnostic
+backlog is now just the 4 cm-escape cases (#1); the other 18 divergences are roxygen2-eval/multi-block, out
+of scope.
 
 ## Earlier sessions
+
+- **2026-06-29b (opaque nested-bracket inline-link inner candidates in a poisoned tail, slice 6):**
+  roxygen2's `get_md_linkrefs` synthesizes a `[label]: R:label` def for every bracket-free `[…]` candidate
+  scanning the **raw** field text; a nested-bracket inline link `[a [b] c](url)` stays an **opaque** `MdLink`
+  leaf yet the raw scan still finds the inner `[b]` candidate, so in a poisoned tail `[b]: R:b` leaks though
+  `\href` survives. New `opaque_inline_link_display` drives an `MdLink` arm in `inline_skeleton_fragment`
+  (`[a [b] c] `); link not demoted. Autolink-adjacent was already correct (`md_linkref_poisoning_autolink`
+  passed on first mint). Projector-only. Curated `md_linkref_poisoning_nested_link` + `_autolink`. 291→293.
 
 - **2026-06-29 (image alt-text candidate defs in a poisoned tail, slice 5):** an image `![alt](url)`'s
   `[alt]` is a bracket-free candidate, so its `[alt]: R:alt` def leaks in a poisoned tail even though the

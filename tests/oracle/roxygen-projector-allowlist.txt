@@ -164,6 +164,7 @@ md_shortcut_link_multiline
 param_prose
 preformatted
 rawrd
+rawrd_md_literal
 rd_comment
 rd_macros
 rd_nested_list
