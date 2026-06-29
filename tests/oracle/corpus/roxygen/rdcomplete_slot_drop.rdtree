@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\section (TEXT "Slots") (\describe (\item (\code (RCODE "b")) (TEXT "slot b"))))
+(\title (TEXT "T"))

@@ -205,6 +205,19 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             }
             match name.as_str() {
                 "slot" | "field" => {
+                    // roxygen2 parses `@slot`/`@field` with `tag_two_part`, which
+                    // runs `rdComplete(x$raw, is_code = FALSE)` on the *raw* tag
+                    // value (name + description, before markdown) and drops the
+                    // whole tag to NULL on a brace imbalance — mode-independently,
+                    // so a dropped tag contributes no `\describe` item (and an
+                    // all-dropped Slots/Fields aggregate emits no section at all).
+                    // The raw value's only rd_complete-relevant chars (`{}`, `\`,
+                    // `%`) never appear in the `#'`/`@slot` scaffolding, and
+                    // `is_code = FALSE` ignores quotes, so the section's full source
+                    // text scans identically to roxygen2's `x$raw`.
+                    if !rd_complete(&section.syntax().text().to_string()) {
+                        continue;
+                    }
                     let arg = tag.arg().map(|t| t.text().to_string()).unwrap_or_default();
                     if name == "slot" {
                         slots.push((arg, body));
@@ -2965,6 +2978,55 @@ mod tests {
             ),
             "got: {out}"
         );
+    }
+
+    #[test]
+    fn slot_with_unbalanced_brace_is_dropped() {
+        // roxygen2 parses `@slot` with `tag_two_part`, which runs
+        // `rdComplete(x$raw, is_code = FALSE)` on the *raw* tag value and drops the
+        // whole tag on a brace imbalance (mode-independent). Only the balanced slot
+        // survives the aggregated Slots section.
+        let src = "#' Important class.\n\
+                   #'\n\
+                   #' @slot a sl{ot a\n\
+                   #' @slot b slot b\n\
+                   setClass('test')\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains(
+                "(\\section (TEXT \"Slots\") (\\describe \
+                 (\\item (\\code (RCODE \"b\")) (TEXT \"slot b\"))))"
+            ),
+            "got: {out}"
+        );
+        assert!(!out.contains("slot a"), "dropped slot leaked: {out}");
+    }
+
+    #[test]
+    fn all_fields_unbalanced_drops_fields_section() {
+        // When every `@field` is brace-incomplete, all drop and roxygen2 emits no
+        // Fields section at all (the aggregating field is empty).
+        let src = "#' Important class.\n\
+                   #'\n\
+                   #' @field a fi{eld a\n\
+                   setRefClass('test')\n";
+        let out = project_to_rd(src);
+        assert!(
+            !out.contains("Fields"),
+            "Fields section should be absent: {out}"
+        );
+    }
+
+    #[test]
+    fn slot_with_percent_commented_brace_survives() {
+        // `rdComplete` runs on the *raw* value where `%` is a line comment, so an
+        // unbalanced `{` after a `%` is commented out and the slot survives.
+        let src = "#' Important class.\n\
+                   #'\n\
+                   #' @slot a desc %{\n\
+                   setClass('test')\n";
+        let out = project_to_rd(src);
+        assert!(out.contains("Slots"), "Slots section should survive: {out}");
     }
 
     #[test]

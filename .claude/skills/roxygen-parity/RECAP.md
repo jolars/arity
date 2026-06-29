@@ -427,8 +427,21 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   section `push_section` emits (title included) drops to empty on imbalance regardless of
   `drop_on_incomplete`. `section_atoms_rd_complete` works for md-off too (the `%`-comment strip on
   non-md prose removes only comment-state chars, so brace balance is preserved; `escape_percent=md`=false
-  is correct). **Still backlog:** `@field`/`@slot` (`tag_two_part` runs `rdComplete` on raw → NULL
-  *whole-tag* drop, mode-independent — a separate `describe_section` path) and `@section`.
+  is correct). **`@field`/`@slot` whole-tag drop landed 2026-06-29h** (next bullet). **Still backlog:**
+  `@section` whole-tag handling.
+- **`@field`/`@slot` drop the WHOLE tag on a raw brace imbalance (2026-06-29h), mode-independent.**
+  roxygen2 parses them via `tag_two_part`, which runs `rdComplete(x$raw, is_code = FALSE)` on the
+  **raw** tag value (`name + description`, *before* markdown) and returns `NULL` on a brace imbalance —
+  so a bad `@slot`/`@field` contributes **no** `\describe` item, and an all-dropped Slots/Fields
+  aggregate emits no section at all (vs `push_section`'s empty-`(\macro)` for `@description`/`@details`).
+  **Key simplification:** `rdComplete(is_code=FALSE)` tracks only `{` `}` `\` `%`(line-comment) `\n` —
+  it **ignores quotes** (`"` `'` `` ` ``), and none of `{}\%` appear in the `#'`/`@slot` scaffolding,
+  so `rd_complete(section.syntax().text())` scans **identically** to roxygen2's `x$raw`. No source
+  reconstruction needed; reuse the existing `rd_complete` port on the raw section text. The raw is
+  pre-markdown, so `%` is an active comment **regardless of `@md`** (`@slot a a %{` survives — `%`
+  comments the `{`; `@slot a a{ %20` drops — `{` precedes the `%`). The gate sits in `project_block`'s
+  `"slot" | "field"` arm (`continue` on incomplete). Curated `rdcomplete_slot_drop` (partial: one bad
+  slot dropped, one survives), `rdcomplete_field_drop` (all-bad → no Fields section).
 
 ## Settled decisions (don't relitigate without reason)
 
@@ -479,8 +492,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post markdown-off rdComplete drop, 2026-06-29g): **303 matching (all allowlisted), 18
-divergent (backlog)** of 321 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post `@field`/`@slot` whole-tag drop, 2026-06-29h): **305 matching (all allowlisted), 18
+divergent (backlog)** of 323 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -492,9 +505,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (321 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
+   (323 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 38/38 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 40/40 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -502,46 +515,51 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29g) — markdown-OFF rdComplete brace-balance drop
+## Latest session (2026-06-29h) — `@field`/`@slot` whole-tag drop on raw brace imbalance
 
-**RECAP ranked #3.** Extended the per-section `rdComplete` drop (landed md-ON in 2026-06-29d) to
-**markdown-OFF** mode. Oracle finding (`markdown_if_active`, `R/markdown.R`): with markdown off the
-function's *else-branch* runs `rdComplete(text, is_code=FALSE)` **unconditionally** — so on a brace
-imbalance **every** prose section it produces drops to empty, not just the `sections=TRUE`
-`@description`/`@details`. Probed and confirmed: md-OFF `@title`, `@description`, `@details`, and
-every `tag_markdown` section (`@seealso`/`@note`/…) all drop to `(\<macro>)`; md-ON leaves the
-`sections=FALSE` ones intact (unchanged). The title-as-description fallback composes correctly (the
-fallback text routes through `push_section` too, so an unbalanced title drops *both* `\title` and the
-derived `\description`).
+**RECAP ranked #1.** roxygen2 parses `@slot` (S4) and `@field` (RefClass) via `tag_two_part`, which
+runs `rdComplete(x$raw, is_code = FALSE)` on the **raw** tag value (`name + description`, before
+markdown) and returns `NULL` on a brace imbalance — dropping the **whole tag**, **mode-independently**.
+So a bad slot/field contributes no `\describe` item; an all-dropped Slots/Fields aggregate emits no
+section at all. Probed/confirmed: partial drop (one bad slot dropped, the balanced sibling survives),
+all-dropped (no section), md-on still drops, and raw `%` is an active line-comment (`@slot a a %{`
+survives — `%` comments the `{`; `@slot a a{ %20` drops — `{` precedes the `%`).
 
-**Fix (projector-only):** one line in `push_section` — `check_drop = if md { drop_on_incomplete }
-else { true }` — gating the existing `section_atoms_rd_complete` check. No parser change: arity already
-lexes a mid-prose unbalanced `\code{` as literal prose (the `roxygen_unbalanced_macro` recovery), so the
-imbalance is in the leaf text and the existing `sexpr_to_rd`/`rd_complete` reconstruction catches it.
-The `%`-comment strip on non-md prose removes only comment-state chars, so brace balance is preserved
-(`escape_percent=md`=false is correct for md-off).
+**Fix (projector-only, ~6 lines):** a `continue`-on-incomplete guard in `project_block`'s
+`"slot" | "field"` arm. **Key insight that made it trivial:** `rdComplete(is_code=FALSE)` scans only
+`{` `}` `\` `%`(line-comment) `\n` — it *ignores quotes*, and none of `{}\%` occur in the
+`#'`/`@slot`/`@` scaffolding, so the existing `rd_complete` port run on `section.syntax().text()`
+(the lossless section source) scans **identically** to roxygen2's `x$raw`. No source reconstruction,
+no md handling (`%` is pre-escape, so unescaped here regardless of mode — exactly what raw needs).
 
-**TDD/tests:** two curated dir-corpus cases — `rdcomplete_off_description` (unbalanced `@description`,
-sections=TRUE) and `rdcomplete_off_seealso` (unbalanced `@seealso`, the sections=FALSE divergence-guard
-that proves md-off drops *all* tags) — both minted from roxygen2, confirmed divergent before the fix,
-matching after, ratcheted into the allowlist. Re-blessed the format baseline (pure addition of the two
-keys; formatter output byte-identical to input — no formatter change).
+**TDD/tests:** 3 unit tests (drop, all-dropped, `%`-survives) written first (2 failed pre-fix); 2
+curated dir-corpus cases `rdcomplete_slot_drop` (partial) + `rdcomplete_field_drop` (all-dropped, no
+Fields section) minted from roxygen2, confirmed divergent before, matching after, ratcheted into the
+allowlist. Re-blessed the format baseline (pure addition of the 2 keys; formatter byte-identical to
+input — no formatter change).
 
-**Result:** projector **301→303 matching (all allowlisted), 18 divergent** (unchanged — all 18 are
-harvested `rx-*` eval/multi-block, out of scope). Curated fixed-point **38/38** preserving, 0 blocked.
+**Result:** projector **303→305 matching (all allowlisted), 18 divergent** (unchanged — all 18 are
+harvested `rx-*` eval/multi-block, out of scope). Curated fixed-point **40/40** preserving, 0 blocked.
 `cargo test` green, clippy + fmt clean.
 
-**Next (ranked):** **(1)** `@field`/`@slot` **whole-tag drop** (`tag_two_part` runs `rdComplete` on the
-raw `name + def` → NULL, dropping the whole tag, **mode-independent**); needs the `describe_section`
-path + RefClass/S4 oracle setup (a `setRefClass`/`@slot` on a class object). **(2)** Slice B
-**remainder** — fully retire `scan_md_link` (still serves same-line reference `[t][r]`, non-plain
-shortcut `[*foo*]`, autolink `<url>`): carve every bracket, move references onto the arena lookahead,
-retire the vestigial `opaque_inline_link_display`/`opaque_link_is_shortcut_or_ref`. **(3)** Model the
-**link-reference map** (arity links every bracket-free shortcut, but roxygen needs the label *defined*;
-the `(?<!\])` lookbehind gap — subsumes the projector poisoning relink). The 18 projector divergences
-stay roxygen2-eval/multi-block, **out of scope**.
+**Next (ranked):** **(1)** `@section` **whole-tag drop** (`tag_two_part`-style raw `rdComplete`? — it
+uses `tag_markdown_with_sections` on the body; probe whether the title+body splits before or after the
+drop check). **(2)** Slice B **remainder** — fully retire `scan_md_link` (still serves same-line
+reference `[t][r]`, non-plain shortcut `[*foo*]`, autolink `<url>`): carve every bracket, move
+references onto the arena lookahead, retire the vestigial
+`opaque_inline_link_display`/`opaque_link_is_shortcut_or_ref`. **(3)** Model the **link-reference map**
+(arity links every bracket-free shortcut, but roxygen needs the label *defined*; the `(?<!\])`
+lookbehind gap — subsumes the projector poisoning relink). The 18 projector divergences stay
+roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-29g (markdown-OFF rdComplete brace-balance drop):** extended the per-section `rdComplete`
+  drop to md-off mode, where `markdown_if_active`'s else-branch runs `rdComplete(text)`
+  **unconditionally** → *every* prose section (title included) drops to empty on imbalance, not just
+  the `sections=TRUE` `@description`/`@details`. One-line `push_section` gate
+  (`check_drop = if md { drop_on_incomplete } else { true }`). Curated `rdcomplete_off_description` +
+  `rdcomplete_off_seealso`. 301→303.
 
 - **2026-06-29f (opener-deactivation slice B core):** the arena now implements CommonMark
   `look_for_link_or_image` (backward matching + **opener deactivation**), fixing the latent non-poisoned

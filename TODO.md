@@ -347,8 +347,14 @@
       *unconditionally*, so with md off **every** prose section (title included) drops
       to empty on a brace imbalance, not just `sections=TRUE`—`push_section` gates this
       `check_drop = if md { drop_on_incomplete } else { true }` (curated
-      `rdcomplete_off_description`/`_seealso`). Still backlog: `@field`/`@slot`
-      (`tag_two_part` whole-tag drop, mode-independent) and `@section`. A
+      `rdcomplete_off_description`/`_seealso`). **`@field`/`@slot` whole-tag drop
+      landed 2026-06-29h:** `tag_two_part` runs `rdComplete(x$raw, is_code=FALSE)` on
+      the raw value and returns NULL on imbalance, dropping the whole tag
+      mode-independently; since `is_code=FALSE` ignores quotes and `{}\%` never appear
+      in `#'`/`@slot` scaffolding, the existing `rd_complete` port run on the raw
+      section text matches `x$raw` exactly—a `continue` guard in `project_block`'s
+      `slot`/`field` arm (curated `rdcomplete_slot_drop`/`_field_drop`). Still backlog:
+      `@section` whole-tag handling. A
       user-facing side-channel **diagnostic** for the same condition is still deferred to
       the lint/LSP phase (the drop alone is what closed the gate cases). **Unicode NBSP in `norm_ws` (cm-355) landed 2026-06-25j:** the R
       driver's `[[:space:]]` is ASCII-only, so `norm_ws` now collapses only ASCII
