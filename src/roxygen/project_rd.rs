@@ -709,6 +709,17 @@ fn rd_complete(s: &str) -> bool {
 /// definitions consistent), then [`leaked_linkref_text`] appends the leaked
 /// definitions to the trailing prose.
 fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
+    // First, demote shortcut/reference links whose label roxygen2 never defines
+    // (the `(?<!\])`/`(?=[^\[{])` link-reference-map gap), then apply the
+    // *positional* poisoning demotion to whatever survives. The two compose:
+    // the refmap gap covers a label that is never a candidate, poisoning covers a
+    // valid candidate whose definition leaks. Both only turn links into literal
+    // text, so order is immaterial to correctness; the refmap runs on the original
+    // body so it sees every bracket as roxygen2's raw-source scan does.
+    let undefined = md
+        .then(|| demote_undefined_links(body, &linkref_keys(body)))
+        .flatten();
+    let body = undefined.as_deref().unwrap_or(body);
     let demoted = md.then(|| demote_poisoned_links(body)).flatten();
     let body = demoted.as_deref().unwrap_or(body);
     let mut atoms = serialize_inlines(body, md);
@@ -1364,6 +1375,168 @@ fn opaque_link_is_shortcut_or_ref(raw: &str) -> bool {
     };
     // `(` → inline link (own destination); `[` → reference; nothing → shortcut.
     !matches!(bytes.get(text_end), Some(&b'('))
+}
+
+/// The set of normalized link-reference labels roxygen2 **defines** for a markdown
+/// field — its *link-reference map*.
+///
+/// roxygen2's `add_linkrefs_to_md` synthesizes a `[label]: R:…` definition for
+/// every bracket-free `[…]` shortcut candidate found by `get_md_linkrefs`, and
+/// cmark resolves a shortcut or reference link only when its (normalized) label is
+/// one of those definitions. The candidate scan's `(?<!\])` lookbehind skips a `[`
+/// immediately preceded by `]` and its `(?=[^\[{])` lookahead skips one followed by
+/// `[`/`{`, so a bracketed span in those positions defines nothing — and a link
+/// using such a label stays literal unless the label is *also* defined by some
+/// other candidate in the same field (e.g. a standalone `[b]` elsewhere defines `b`
+/// for an `a][b]`). arity's arena resolves every shortcut optimistically, so
+/// [`demote_undefined_links`] uses this map to drop the ones roxygen2 leaves literal.
+///
+/// The map is built from a faithful reconstruction of the field's raw markdown
+/// source ([`linkref_source_skeleton`]) — every link/image bracket re-exposed — so
+/// the candidate scan ([`md_linkref_scan`], the same port the poisoning path uses)
+/// sees what roxygen2 saw before parsing.
+fn linkref_keys(body: &[Inline]) -> std::collections::HashSet<String> {
+    md_linkref_scan(&linkref_source_skeleton(body))
+        .into_iter()
+        .map(|(label, _)| normalize_linkref_label(&label))
+        .collect()
+}
+
+/// Reconstruct a markdown field's raw source from its resolved inline body,
+/// re-exposing the bracket text of every link and image so the link-reference
+/// candidate scan ([`md_linkref_scan`]) sees the same `[…]` spans roxygen2 scanned
+/// before parsing. Unlike [`inline_source_skeleton`] — which renders a *resolved*
+/// shortcut/reference link as a single space because the poisoning path handles it
+/// positionally — this exposes those brackets so [`linkref_keys`] can decide which
+/// labels are defined at all.
+///
+/// The reconstruction is faithful with respect to the candidate scan's lookbehind
+/// and lookahead: a shortcut/reference link re-emits its trailing `]` (so a span
+/// right after it is correctly seen as preceded by `]`), an inline link/image
+/// re-emits `[display] `/`[alt] ` (a space stands in for the consumed `(url)`,
+/// non-blocking like the real `)`), and emphasis children recurse between space
+/// guards (the dropped `*`/`_` markers were non-blocking too). A code span and
+/// other resolved inlines contribute a single space.
+fn linkref_source_skeleton(body: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in body {
+        linkref_skeleton_push(inl, &mut s);
+    }
+    s
+}
+
+fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
+    match inl {
+        Inline::Text(t) => s.push_str(t),
+        Inline::MdShortcutLink { display } => {
+            s.push('[');
+            s.push_str(&inline_plain_text(display));
+            s.push(']');
+        }
+        Inline::MdRefLink { dest, display } => {
+            s.push('[');
+            s.push_str(&inline_plain_text(display));
+            s.push_str("][");
+            s.push_str(dest);
+            s.push(']');
+        }
+        Inline::MdInlineLink { display, .. } => {
+            s.push('[');
+            s.push_str(&inline_plain_text(display));
+            s.push_str("] ");
+        }
+        Inline::MdImage(raw) => match image_alt_text(raw) {
+            Some(alt) => {
+                s.push('[');
+                s.push_str(alt);
+                s.push_str("] ");
+            }
+            None => s.push(' '),
+        },
+        // An opaque leaf is its own verbatim source — a same-line shortcut/reference
+        // (`[*foo*]`/`[t][r]`), a nested-bracket inline link (whose inner `[b]` is a
+        // candidate), or an autolink (no bracket). All are faithful as-is.
+        Inline::MdLink(raw) => s.push_str(raw),
+        Inline::MdEmphasis { children, .. } => {
+            s.push(' ');
+            for child in children {
+                linkref_skeleton_push(child, s);
+            }
+            s.push(' ');
+        }
+        _ => s.push(' '),
+    }
+}
+
+/// Normalize a link-reference label for matching, mirroring CommonMark's
+/// case-insensitive, whitespace-collapsing comparison: trim, fold internal
+/// whitespace runs to one space, and lowercase. (Full Unicode case-folding is
+/// approximated by `to_lowercase`; sufficient for the labels roxygen2 produces.)
+fn normalize_linkref_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// The resolution label of a shortcut or reference link — the label that must be
+/// defined in the field's link-reference map for the link to resolve — or `None`
+/// for any inline that does not depend on a reference definition (an inline link or
+/// autolink carries its own destination; text/code/macros are not links). For a
+/// reference link the label is the `[ref]` topic; for a shortcut it is the display.
+fn link_ref_label(inl: &Inline) -> Option<String> {
+    match inl {
+        Inline::MdShortcutLink { display } => Some(inline_plain_text(display)),
+        Inline::MdRefLink { dest, .. } => Some(dest.clone()),
+        Inline::MdLink(raw) => opaque_link_ref_label(raw),
+        _ => None,
+    }
+}
+
+/// The resolution label of an *opaque* shortcut/reference `ROXYGEN_MD_LINK` leaf
+/// (`[dest]` → `dest`, `[text][ref]` → `ref`), or `None` for an inline link
+/// (own destination) or autolink. Mirrors the closer dispatch in [`resolve_md_link`].
+fn opaque_link_ref_label(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    if bytes.first() == Some(&b'<') {
+        return None; // autolink
+    }
+    let text_end = scan_delimited(bytes, 0, b'[', b']')?;
+    match bytes.get(text_end) {
+        Some(&b'(') => None, // inline link — own destination
+        Some(&b'[') => {
+            let ref_end = scan_delimited(bytes, text_end, b'[', b']')?;
+            Some(raw[text_end + 1..ref_end - 1].to_string())
+        }
+        _ => Some(raw[1..text_end - 1].to_string()), // shortcut
+    }
+}
+
+/// Demote shortcut/reference links whose label is absent from the field's
+/// link-reference map (`keys`) to their literal bracket source — roxygen2 leaves
+/// such links unresolved (see [`linkref_keys`]). Returns `None` when nothing is
+/// demoted (the common case, so the body is reused unchanged). `@md` only.
+fn demote_undefined_links(
+    body: &[Inline],
+    keys: &std::collections::HashSet<String>,
+) -> Option<Vec<Inline>> {
+    let mut changed = false;
+    let out: Vec<Inline> = body
+        .iter()
+        .map(|inl| {
+            if let Some(label) = link_ref_label(inl)
+                && !keys.contains(&normalize_linkref_label(&label))
+                && let Some(text) = demoted_link_source(inl)
+            {
+                changed = true;
+                Inline::Text(text)
+            } else {
+                inl.clone()
+            }
+        })
+        .collect();
+    changed.then_some(out)
 }
 
 /// roxygen2's `double_escape_md` (`markdown-link.R`): double every backslash, then
@@ -3456,6 +3629,54 @@ mod tests {
             ),
             "got: {}",
             project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn linkref_keys_skips_a_label_after_a_closing_bracket() {
+        // The `(?<!\])` lookbehind: a `[` right after `]` defines nothing, so a
+        // standalone `a][b]` produces an empty link-reference map; a label defined
+        // elsewhere (a normal shortcut, or a second `[ref]` group) is present.
+        let keys = |s: &str| linkref_keys(&[Inline::Text(s.to_string())]);
+        assert!(keys("a][b]").is_empty());
+        assert!(keys("a][b] and [b] here").contains("b"));
+        assert!(keys("[text][ref]").contains("ref"));
+        // Lookahead: a `[…]` followed by `{` defines nothing.
+        assert!(keys("[a]{x}").is_empty());
+    }
+
+    #[test]
+    fn projects_undefined_shortcut_after_bracket_as_literal() {
+        // `a][b]` standalone: `b` is never a link-reference candidate (the `[` is
+        // preceded by `]`), so roxygen2 leaves it literal — arity must demote its
+        // optimistically-resolved `\link{b}` back to text.
+        let src = "#' @md\n#' @details\n#' A stray a][b] here.\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"A stray a][b] here.\"))"
+        );
+    }
+
+    #[test]
+    fn projects_undefined_ref_links_only_the_defined_inner_shortcut() {
+        // `[a [b] c][ref]`: the inner `[b]` is a defined candidate (links), the
+        // outer `[ref]` after a `]` is not (stays literal with its brackets).
+        let src = "#' @md\n#' @details\n#' A [a [b] c][ref] link.\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"A [a\") (\\link (TEXT \"b\")) (TEXT \"c][ref] link.\"))"
+        );
+    }
+
+    #[test]
+    fn undefined_shortcut_links_when_defined_elsewhere() {
+        // The same `a][b]` resolves when a later standalone `[b]` defines `b` —
+        // the full-field refmap, not a position rule (cf. md_ref_link_multiline).
+        let src = "#' @md\n#' @details\n#' A stray a][b], later [b].\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"A stray a]\") (\\link (TEXT \"b\")) \
+             (TEXT \", later\") (\\link (TEXT \"b\")) (TEXT \".\"))"
         );
     }
 

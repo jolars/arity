@@ -503,12 +503,23 @@
       consecutive-text constraint scopes it exactly to the poisoned case — a surviving inner link node
       interrupts the run). Curated `md_nested_link` + `md_nested_link_chain`; 299→301; poisoned
       `md_linkref_poisoning_nested_link` held (its formatter reflow re-blessed, fixed-point 36/36).
-      **Slice B remainder (backlog):** retire `scan_md_link` *entirely* (it still serves same-line
+      **Link-reference map LANDED (2026-06-29j): an undefined shortcut/reference stays literal.**
+      roxygen's `get_md_linkrefs` `(?<!\])` lookbehind blocks def *creation* for a `[` right after `]`
+      (and `(?=[^\[{])` for one before `[`/`{`), but resolution still needs the refmap — so `a][b]` /
+      `[a [b] c][ref]` standalone render all-literal (no def for `b`/`ref`), yet link when the label is
+      defined elsewhere (`md_ref_link_multiline`'s `a][b]` works via a later `[b]`). The arena links
+      optimistically; the **projector** now demotes: `linkref_keys` builds the refmap from a faithful
+      raw-source reconstruction (`linkref_source_skeleton`, re-exposing every link/image bracket) scanned
+      by the existing `md_linkref_scan`, and `demote_undefined_links` rewrites any shortcut/ref link whose
+      normalized label ∉ refmap to literal — running before the positional poison demotion in
+      `serialize_prose_with_linkrefs`, full candidate set (not boundary-limited). Projector-only. Curated
+      `md_undefined_shortcut` + `md_undefined_ref`. 306→308.
+      **Slice B remainder (backlog):** (a) retire `scan_md_link` *entirely* (it still serves same-line
       reference `[t][r]`, non-plain shortcut `[*foo*]`, autolink `<url>`) by carving **every** bracket and
-      moving refs onto the arena; and model the **link-reference map** so an *undefined* shortcut after a
-      `]` stays literal (roxygen's `get_md_linkrefs` `(?<!\])` blocks def *creation* only, so `a][b]` /
-      `[a [b] c][ref]` resolve a shortcut only when its label is defined elsewhere — arity links
-      optimistically, the same refmap gap as poisoning). Plan: `~/.claude/plans/luminous-zooming-toast.md`.
+      moving refs onto the arena; (b) the **non-plain shortcut `[*foo*]`** drop — a *separate* mechanism
+      (roxygen makes the def but rejects "links must contain plain text" and drops the whole section); (c)
+      lift the refmap from per-prose-body to whole-*field* (a label defined in a sibling paragraph/list of
+      the same tag is currently missed). Plan: `~/.claude/plans/luminous-zooming-toast.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it

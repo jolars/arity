@@ -227,14 +227,26 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   the scoping trick: a *surviving* inner link node interrupts the run, so only the poisoned case (inner
   demoted to text) re-links; an escaped `\[` keeps its backslash and is skipped (never relinks). Knife-edge:
   poisoned `[a [b] c](url)` → outer `\href` + leaked `[b]: R:b`; non-poisoned → inner `\link{b}`.
-- **arity links EVERY bracket-free shortcut, but roxygen needs the label *defined* (refmap gap, pinpointed
-  2026-06-29f).** roxygen's `get_md_linkrefs` `(?<!\])` lookbehind blocks reference-**definition** creation
-  for a `[` immediately after `]`, but link **resolution** still uses the refmap — so `a][b]` /
+- **The link-reference map is modeled; an undefined shortcut/ref stays literal (2026-06-29j).** roxygen's
+  `get_md_linkrefs` `(?<!\])` lookbehind blocks reference-**definition** creation for a `[` immediately after
+  `]` (and `(?=[^\[{])` for one before `[`/`{`), but link **resolution** still needs the refmap — so `a][b]` /
   `[a [b] c][ref]` *standalone* render **all literal** (no def for `b`/`ref`), yet link when the label is
-  defined elsewhere (`md_ref_link_multiline`'s `a][b]` works because a later `[b]` defines it). arity has no
-  refmap → it links optimistically → divergence on the *undefined* standalone case (a known backlog item,
-  the same class as poisoning; modeling the refmap subsumes both). Don't curate an undefined-shortcut-after-`]`
-  case as passing.
+  defined elsewhere (`md_ref_link_multiline`'s `a][b]` works because a later `[b]` defines it). The arena still
+  links optimistically; the **projector** now demotes it: `linkref_keys(body)` builds the refmap from a faithful
+  raw-source reconstruction (`linkref_source_skeleton` — re-exposes every link/image bracket, recursing emphasis
+  between space guards, the opaque leaf verbatim; unlike `inline_source_skeleton` which hides resolved
+  shortcuts) scanned by the existing `md_linkref_scan`; `demote_undefined_links` rewrites any shortcut/ref link
+  whose **normalized** label (`normalize_linkref_label`: trim + ws-collapse + lowercase) ∉ refmap to its literal
+  bracket source (`demoted_link_source`), running **before** the positional poison demotion in
+  `serialize_prose_with_linkrefs`. The two compose (refmap gap = never a candidate; poison = valid candidate
+  whose def leaks), both monotonic. **Full refmap = full candidate set** (not poison-boundary-limited): that is
+  what keeps `md_ref_link_multiline`'s `a][b]` linking. **Distinct, still-open:** (1) the refmap is per-*prose-body*,
+  not whole-*field* — a label defined in a sibling paragraph/list of the same tag is missed (backlog); (2) a
+  shortcut inside a code span / right-after-`]`-inside-emphasis is a reconstruction edge (MdCode → space, emphasis
+  markers dropped); (3) the **non-plain shortcut** `[*foo*]` is a *separate* mechanism — roxygen *does* synthesize
+  the def but rejects "links must contain plain text" and **drops the whole section** (arity still links it; not a
+  refmap fix). Curated `md_undefined_shortcut` (all-literal `a][b]`), `md_undefined_ref` (`[a [b] c][ref]` → inner
+  `\link{b}`, outer literal).
 - **Cross-line inline `[text](url)` links landed (2026-06-25i).** The lexer's same-line
   `inline_link_span` split is line-scoped, but `Arena::build` **already** pairs bracket opener/closer
   leaves over the whole **paragraph-granularity** run (cross-line trivia included) — so cross-line just
@@ -503,8 +515,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post `@section` md-off drop, 2026-06-29i): **306 matching (all allowlisted), 18
-divergent (backlog)** of 324 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post link-reference-map modeling, 2026-06-29j): **308 matching (all allowlisted), 18
+divergent (backlog)** of 326 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -516,9 +528,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (324 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
+   (326 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 41/41 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 43/43 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -526,46 +538,56 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29i) — `@section` md-OFF drop to `(\section (TEXT "NA"))`
+## Latest session (2026-06-29j) — link-reference map (undefined shortcut/ref stays literal)
 
-**RECAP ranked #1.** The ranked hypothesis was **wrong about the mechanism**: `@section` uses plain
-`tag_markdown` (`sections = FALSE`), NOT `tag_markdown_with_sections`. Probed empirically:
-- **md ON:** the `if (sections && …)` rdComplete drop **never fires** — an imbalanced md-on `@section`
-  renders the content verbatim, producing broken Rd parse_Rd warns on (so **not curatable**).
-- **md OFF:** `markdown_if_active`'s else-branch runs `rdComplete(x$raw)` **unconditionally** on the
-  whole `title: body` value → on imbalance replaces it with `""`. `roxy_tag_rd` then `str_split("",
-  ":", n=2)` → `title=""`, `content=NA` (R recycles the missing 2nd piece to `NA`), and
-  `format.rd_section_section` does `paste0("\\section{", "", "}{\n", NA, …)` → literal `\section{}{NA}`
-  → canonical `(\section (TEXT "NA"))` (empty `{}` title coalesces away).
-- `%` is an active line-comment in the raw: `body %{` survives (commented), `body{ %x` drops.
+**RECAP ranked next #2 (the refmap gap).** The three live divergences (probed against roxygen2 7.3.3)
+were all one root cause — arity links every bracket-free shortcut **optimistically**, but roxygen's
+`get_md_linkrefs` only synthesizes a `[label]: R:…` def for a `[` **not** preceded by `]` (the `(?<!\])`
+lookbehind) and **not** followed by `[`/`{`, so a label that is never a candidate stays literal:
+- `a][b]` standalone → all literal (no def for `b`); arity linked `[b]`.
+- `[a [b] c][ref]` standalone → inner `\link{b}` (defined), outer `[ref]` literal (after `]`, no def);
+  arity linked `[ref]` too.
+- (`[*foo*]` is a **separate** mechanism — def IS made but roxygen rejects "must contain plain text" and
+  drops the whole section; left as backlog, not a refmap fix.)
 
-**Fix (projector-only, ~3 lines + comment):** a guard arm in `project_block`'s collection-loop match,
-`"section" if !md && !rd_complete(section source) => out.push("(\\section (TEXT \"NA\"))")`. Mirrors the
-`@field`/`@slot` precedent: `rd_complete(is_code=FALSE)` scans only `{}\%\n` (ignores quotes), none of
-which occur in the `#'`/`@section` scaffolding, so the lossless section source scans identically to
-`x$raw`. The non-dropped path (md-on, or balanced) falls through to the existing `project_tag_section`
-`"section"` arm unchanged.
+**Fix (projector-only, ~80 lines + comments).** New `linkref_keys(body)` builds the refmap from a faithful
+raw-source reconstruction `linkref_source_skeleton` (re-exposes every link/image bracket — `[disp]`,
+`[disp][ref]`, `[disp] ` for inline links, `[alt] ` for images, opaque leaf verbatim, emphasis children
+recursed between space guards — unlike `inline_source_skeleton` which **hides** resolved shortcuts for the
+poison path) scanned by the **existing** `md_linkref_scan`; `demote_undefined_links` rewrites any
+shortcut/ref link whose `normalize_linkref_label`-normalized label ∉ refmap to its literal bracket source
+(`demoted_link_source`), wired into `serialize_prose_with_linkrefs` **before** the positional poison
+demotion. Uses the **full** candidate set (not poison-boundary-limited) — that is what keeps
+`md_ref_link_multiline`'s `a][b]` linking (a later `[b]` defines `b`). The two demotions compose (both
+monotonic; refmap gap = never a candidate, poison = candidate whose def leaks).
 
-**TDD/tests:** 3 unit tests written first (drop→NA, `%`-survives, md-on-no-drop); only the drop test
-failed pre-fix (the other two were already correct, confirming the guard's `!md` scope and `%` strip).
-Curated `rdcomplete_section_drop` minted from roxygen2, divergent before, matching after, ratcheted in.
-Re-blessed the format baseline (pure addition of one key; formatter byte-identical to input — projector
-change only, the source `@section` layout is untouched per Tenet 1).
+**TDD/tests:** curated `md_undefined_shortcut` + `md_undefined_ref` minted from roxygen2 (divergent
+before, matching after), ratcheted into the allowlist; 4 unit tests (`linkref_keys` lookbehind/lookahead,
+undefined-literal, undefined-ref-inner-links, defined-elsewhere-links). Re-blessed the format baseline
+(pure +2 keys; formatter byte-identical — projector-only change). Curated fixed-point 41→43/43.
 
-**Result:** projector **305→306 matching (all allowlisted), 18 divergent** (unchanged — all 18 are
-harvested `rx-*` eval/multi-block, out of scope). Curated fixed-point **41/41** preserving, 0 blocked.
-`cargo test` green, clippy + fmt clean.
+**Result:** projector **306→308 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
+`cargo test` 522 green, clippy + fmt clean, fixed-point 43/43.
 
-**Next (ranked):** **(1)** Slice B **remainder** — fully retire `scan_md_link` (still serves same-line
-reference `[t][r]`, non-plain shortcut `[*foo*]`, autolink `<url>`): carve every bracket, move
-references onto the arena lookahead, retire the vestigial
-`opaque_inline_link_display`/`opaque_link_is_shortcut_or_ref`. **(2)** Model the **link-reference map**
-(arity links every bracket-free shortcut, but roxygen needs the label *defined*; the `(?<!\])`
-lookbehind gap — subsumes the projector poisoning relink). The 18 projector divergences stay
+**Next (ranked):** **(1)** The **non-plain shortcut `[*foo*]`** drop — a distinct mechanism the refmap does
+*not* cover: roxygen synthesizes the def but rejects "markdown links must contain plain text" and **drops the
+whole section** (probe the exact warning + render). **(2)** Whole-*field* refmap — today `linkref_keys` is
+per-prose-body, so a label defined in a sibling paragraph/list of the same tag is missed; lift the refmap to
+the field. **(3)** Slice B **remainder** — fully retire `scan_md_link` (still serves same-line reference
+`[t][r]`, non-plain shortcut, autolink `<url>`): carve every bracket, move references onto the arena
+lookahead, retire `opaque_inline_link_display`/`opaque_link_is_shortcut_or_ref`. Refmap modeling could
+eventually subsume the projector poisoning *positional* demotion (unify on "valid def before the poison
+boundary"), but that rewrite stayed out of scope this session. The 18 projector divergences stay
 roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
 
+- **2026-06-29i (`@section` md-OFF drop to `(\section (TEXT "NA"))`):** `@section` uses plain `tag_markdown`
+  (`sections=FALSE`), so the per-section rdComplete drop never fires under `@md`; but md-OFF
+  `markdown_if_active`'s else-branch runs `rdComplete(x$raw)` unconditionally on the `title: body` value →
+  `""` on imbalance → `str_split` gives `title=""`, `content=NA` → `\section{}{NA}` → `(\section (TEXT "NA"))`.
+  Projector guard in `project_block`'s `"section"` arm (`!md && !rd_complete(source)`); raw scans identically
+  to `x$raw`. Curated `rdcomplete_section_drop`. 305→306.
 - **2026-06-29h (`@field`/`@slot` whole-tag drop on raw brace imbalance):** roxygen2 parses them via
   `tag_two_part` → `rdComplete(x$raw, is_code=FALSE)`, dropping the whole tag (mode-independent) on
   imbalance — a bad slot/field contributes no `\describe` item, all-dropped → no Slots/Fields section.

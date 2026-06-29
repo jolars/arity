@@ -1,0 +1,3 @@
+(\description (TEXT "Undefined shortcut after a bracket"))
+(\details (TEXT "A stray bracket a][b] keeps both its bracket and its label literal, since roxygen2 synthesizes no link-reference definition for a label right after a closing bracket."))
+(\title (TEXT "Undefined shortcut after a bracket"))

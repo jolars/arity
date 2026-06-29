@@ -1,0 +1,3 @@
+(\description (TEXT "Undefined reference label in a nested bracket"))
+(\details (TEXT "A nested reference [a") (\link (TEXT "b")) (TEXT "c][ref] links only its inner shortcut: the inner") (\link (TEXT "b")) (TEXT "is defined, while the outer ref label is not, so the surrounding brackets stay literal."))
+(\title (TEXT "Undefined reference label in a nested bracket"))
