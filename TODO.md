@@ -620,10 +620,22 @@
       non-empty + self-consistent; `inline_plain_text` unchanged (render prechecks untouched). Curated
       `md_link_macro_pure`; 2 unit tests. Projector 325→326; curated fixed-point 60→61/61; format baseline +1
       (additive).
+      **Structural two-arg macro args LANDED (2026-06-30e):** under `@md` a **structural** two-arg macro
+      (`\item`/`\tabular`/`\href` — the non-fragile members of `is_two_arg_rd_macro`; `\figure` fragile, excluded)
+      md-processes **each** argument: `\item{*term*}{a \strong{bold} def}`→`(\item (\emph (TEXT "term")) (GRP
+      (TEXT "a") (\strong (TEXT "bold")) (TEXT "def")))`, `\href{url}{*x*}`→`(\href (VERB url) (GRP (\emph …)))`,
+      `\tabular{ll}{*a* \tab **b** \cr}`→cells md, `\tab`/`\cr` preserved. Projector-only: new
+      `is_md_structural_macro` sets a `md_structural` flag and `serialize_macro`'s `flush` routes prose runs through
+      `resolve_macro_arg_inlines` (the real arena) instead of `text_atom`. **Run-splitting, not whole-arg re-lex** —
+      the block-macro grouper already carves brace-less `\tab`/`\cr` as macro nodes (the fragment lexer leaves them
+      literal), so walking the already-carved children and md-resolving only TEXT runs keeps them; VERB args (the
+      `\href` URL) and the `(GRP …)` finalize are the loop's existing arms. Curated `md_macro_arg_structural`;
+      1 unit test (5 shapes). Projector 326→327; curated fixed-point 61→62/62; format baseline +1 (additive).
+      Backlog edge: emphasis spanning a nested Rd macro (`*a \strong{x} b*`) — run-split leaves the unmatched `*`
+      literal (whole-arg re-lex would resolve it but reintroduces the `\tab`/`\cr` regression).
       **Slice B remainder (still backlog):** `scan_md_link`'s `[`-path is **not** fully retired — it still serves
       an **`!`-bearing display** (mid-prose image marker) and the **autolink `<url>`** is on `scan_md_autolink`.
-      Broader: the structural/two-arg non-fragile macros roxygen also md-processes (`\value`/`\section`
-      inline, `\item`/`\tabular` args); and a macro arg with cmark-active markdown inside a *fragile* arg ties into
+      Broader: `\value`/`\section` *inline* md (rare); and a macro arg with cmark-active markdown inside a *fragile* arg ties into
       the markdown `\`-escape backlog (do NOT widen the lexer heuristically — markdown tenet); closing it + moving
       `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer` branch, and the
       projector opaque-leaf helpers be deleted. Plus: poisoning's `relink_demoted_inline_links` into list items,

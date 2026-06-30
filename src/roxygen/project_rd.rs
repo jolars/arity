@@ -919,7 +919,12 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
 /// roxygen2 protects only its `escaped_for_md` set from cmark, so a non-fragile
 /// macro's `{…}` body is parsed as a markdown inline run (`\emph{*x*}` →
 /// `\emph{\emph{x}}`). A fragile nested macro (`\code`/`\link`/…) stays literal —
-/// this resolves recursively, so each macro re-checks its own fragility.
+/// this resolves recursively, so each macro re-checks its own fragility. A
+/// non-fragile **structural** macro (`\item`, `\tabular`, `\href` —
+/// [`is_md_structural_macro`]) likewise markdown-processes each of its arguments:
+/// the `md_structural` flag below routes prose runs through the inline pass while
+/// the loop's existing arms keep nested macros (`\tab`/`\cr`), verbatim args (the
+/// `\href` URL), and the per-argument `(GRP …)` wrap intact.
 fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     // `\preformatted` is a *verbatim block* macro: parse_Rd keeps its body
     // verbatim (no whitespace collapse, no nested-macro / markdown parsing) and
@@ -947,6 +952,12 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
             format!("({head_full} {})", atoms.join(" "))
         };
     }
+    // A structural two-arg macro (`\item`, `\tabular`, `\href`) under `@md` has
+    // each non-verbatim argument markdown-processed. The general loop below already
+    // carves nested macros (`\tab`/`\cr`/`\strong`) and verbatim args; the only
+    // difference is that a prose run is resolved as a markdown inline run rather
+    // than a single literal `(TEXT …)`.
+    let md_structural = md && is_md_structural_macro(name);
     let mut head = String::new();
     let mut structural = false;
     let mut out_atoms: Vec<String> = Vec::new();
@@ -959,6 +970,8 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     let flush = |run: &mut String, group: &mut Vec<String>, code: bool| {
         if code {
             group.extend(rcode_atoms(run));
+        } else if md_structural {
+            group.extend(serialize_inlines(&resolve_macro_arg_inlines(run), true));
         } else if let Some(atom) = text_atom(run) {
             group.push(atom);
         }
@@ -1053,6 +1066,16 @@ fn is_md_inline_text_macro(name: &str) -> bool {
             name,
             "itemize" | "enumerate" | "describe" | "Sexpr" | "RdOpts" | "enc"
         )
+}
+
+/// Whether macro `name` (without the leading `\`) is a **structural** two-argument
+/// macro whose arguments are markdown-processed when it appears under `@md`. These
+/// are the non-fragile members of [`is_two_arg_rd_macro`] (`\item`, `\tabular`,
+/// `\href`) --- `\figure` is fragile ([`is_fragile_for_md`]), so it stays literal.
+/// Unlike a latexlike single-arg macro ([`is_md_inline_text_macro`]), each `{…}`
+/// argument is resolved independently and a multi-atom one wraps in `(GRP …)`.
+fn is_md_structural_macro(name: &str) -> bool {
+    is_known_rd_macro(name) && !is_fragile_for_md(name) && is_two_arg_rd_macro(name)
 }
 
 /// The raw source text of a single-argument macro's `{…}` content (everything
@@ -3726,6 +3749,70 @@ mod tests {
             project_to_rd(code).contains("(\\code (RCODE \"*x*\"))"),
             "{}",
             project_to_rd(code)
+        );
+    }
+
+    #[test]
+    fn md_structural_macro_args_are_markdown_processed() {
+        // Under `@md`, a structural two-arg macro (`\item`, `\tabular`, `\href`)
+        // has *each* of its non-verbatim arguments markdown-processed, then a
+        // multi-atom argument GRP-wraps (parse_Rd models it as a list). roxygen2
+        // protects only its `escaped_for_md` set, so `\item`/`\tabular`/`\href`'s
+        // text args are markdown while a nested fragile macro (`\code`) stays
+        // literal and a verbatim argument (the `\href` URL) is untouched.
+        let item = "#' @md\n#' @title T\n#' @details\n#' \\describe{\n\
+                    #'   \\item{*term*}{a \\strong{bold} def}\n#' }\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(item).contains(
+                "(\\describe (\\item (\\emph (TEXT \"term\")) \
+                 (GRP (TEXT \"a\") (\\strong (TEXT \"bold\")) (TEXT \"def\"))))"
+            ),
+            "{}",
+            project_to_rd(item)
+        );
+
+        // Both arguments single-atom markdown unwrap (no GRP).
+        let two = "#' @md\n#' @title T\n#' @details\n#' \\describe{\n\
+                   #'   \\item{*term*}{*def*}\n#' }\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(two)
+                .contains("(\\describe (\\item (\\emph (TEXT \"term\")) (\\emph (TEXT \"def\"))))"),
+            "{}",
+            project_to_rd(two)
+        );
+
+        // A nested fragile macro keeps its argument literal even inside an md arg.
+        let frag = "#' @md\n#' @title T\n#' @details\n#' \\describe{\n\
+                    #'   \\item{x}{a \\code{*y*} b}\n#' }\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(frag).contains(
+                "(\\item (TEXT \"x\") (GRP (TEXT \"a\") (\\code (RCODE \"*y*\")) (TEXT \"b\")))"
+            ),
+            "{}",
+            project_to_rd(frag)
+        );
+
+        // `\href`: verbatim URL untouched, display markdown-processed and wrapped.
+        let href = "#' @md\n#' @title T\n#' @details See \\href{http://x.org}{*the* site}.\n\
+                    #' @name x\nNULL\n";
+        assert!(
+            project_to_rd(href).contains(
+                "(\\href (VERB \"http://x.org\") (GRP (\\emph (TEXT \"the\")) (TEXT \"site\")))"
+            ),
+            "{}",
+            project_to_rd(href)
+        );
+
+        // `\tabular`: the format string and each cell are markdown, `\tab`/`\cr`
+        // preserved; the multi-atom body wraps in `(GRP …)`.
+        let tab = "#' @md\n#' @title T\n#' @details\n#' \\tabular{ll}{\n\
+                   #'   *a* \\tab **b** \\cr\n#' }\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(tab).contains(
+                "(\\tabular (TEXT \"ll\") (GRP (\\emph (TEXT \"a\")) (\\tab) (\\strong (TEXT \"b\")) (\\cr)))"
+            ),
+            "{}",
+            project_to_rd(tab)
         );
     }
 

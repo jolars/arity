@@ -1,0 +1,3 @@
+(\description (TEXT "Markdown inside structural Rd macro arguments"))
+(\details (TEXT "A structural two-arg macro markdown-processes each argument. See the") (\href (VERB "http://x.org") (GRP (\emph (TEXT "the")) (TEXT "site"))) (TEXT "link, whose URL stays verbatim while its display resolves emphasis and wraps in a group.") (\describe (\item (\emph (TEXT "term")) (GRP (TEXT "a") (\strong (TEXT "bold")) (TEXT "def"))) (\item (TEXT "x") (GRP (TEXT "a") (\code (RCODE "*y*")) (TEXT "b")))) (\tabular (TEXT "ll") (GRP (\emph (TEXT "a")) (\tab) (\strong (TEXT "b")) (\cr) (TEXT "c") (\tab) (TEXT "d") (\cr))))
+(\title (TEXT "Markdown inside structural Rd macro arguments"))
