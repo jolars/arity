@@ -224,6 +224,98 @@ pub(crate) fn is_known_rd_macro(name: &str) -> bool {
     KNOWN_RD_MACROS.contains(&name)
 }
 
+/// Rd macros whose `{…}` content roxygen2 **protects** from the markdown parser
+/// (`escaped_for_md` in roxygen2's `R/markdown-escaping.R`): under `@md`,
+/// `escape_rd_for_md` swaps the whole `\tag{…}` span out for a placeholder before
+/// running cmark, so markdown inside such a macro stays literal Rd
+/// (`\code{*x*}` → `\code{*x*}`, not `\code{\emph{x}}`). Every *other* macro keeps
+/// only its backslash-word as literal text while its argument **is** markdown-
+/// processed (`\emph{*x*}` → `\emph{\emph{x}}`), so the projector resolves the arg
+/// of a non-fragile, known, single-argument macro as a markdown inline run.
+const FRAGILE_FOR_MD_RD_MACROS: &[&str] = &[
+    "acronym",
+    "code",
+    "command",
+    "CRANpkg",
+    "deqn",
+    "doi",
+    "dontrun",
+    "dontshow",
+    "donttest",
+    "email",
+    "env",
+    "eqn",
+    "figure",
+    "file",
+    "if",
+    "ifelse",
+    "kbd",
+    "link",
+    "linkS4class",
+    "method",
+    "mjeqn",
+    "mjdeqn",
+    "mjseqn",
+    "mjsdeqn",
+    "mjteqn",
+    "mjtdeqn",
+    "newcommand",
+    "option",
+    "out",
+    "packageAuthor",
+    "packageDescription",
+    "packageDESCRIPTION",
+    "packageIndices",
+    "packageMaintainer",
+    "packageTitle",
+    "pkg",
+    "PR",
+    "preformatted",
+    "renewcommand",
+    "S3method",
+    "S4method",
+    "samp",
+    "special",
+    "testonly",
+    "url",
+    "var",
+    "verb",
+];
+
+/// Whether the macro named `name` (without the leading `\`) has its `{…}` content
+/// **protected** from markdown under `@md` (roxygen2's `escaped_for_md`). A fragile
+/// macro keeps its argument literal; a non-fragile one has it markdown-processed.
+/// See [`FRAGILE_FOR_MD_RD_MACROS`].
+pub(crate) fn is_fragile_for_md(name: &str) -> bool {
+    FRAGILE_FOR_MD_RD_MACROS.contains(&name)
+}
+
+/// Resolve a bare prose `content` string as a `@md` markdown **inline run** and
+/// return the resulting `ROXYGEN_PARAGRAPH` node, whose children are the resolved
+/// inline elements (text, emphasis/strong nodes, links, code spans, nested Rd
+/// macros). Drives the projector's translation of a non-fragile Rd macro's argument
+/// under `@md` (`\emph{*x*}` → `\emph{\emph{x}}`): the projector slices out the raw
+/// argument text and feeds it here, reusing the **real** inline pass (the
+/// delimiter-stack arena) rather than a second markdown scanner — so nesting,
+/// links, and code spans resolve exactly as in ordinary `@md` prose. A nested
+/// fragile macro stays an opaque `ROXYGEN_RD_MACRO` token here; the projector keeps
+/// its argument literal by recursing with the same fragility check.
+pub(crate) fn resolve_md_inline(content: &str) -> crate::syntax::SyntaxNode {
+    use crate::parser::events::Event;
+    use crate::syntax::SyntaxKind;
+
+    let mut tokens = Vec::new();
+    lex::lex_roxygen_prose_fragment(&mut tokens, content, true);
+    let mut events = Vec::with_capacity(tokens.len() + 2);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
+    events.extend((0..tokens.len()).map(Event::Tok));
+    events.push(Event::Finish);
+    inline::resolve_emphasis(&tokens, &mut events);
+    let root = crate::parser::tree_builder::build_tree(&tokens, &events);
+    root.first_child()
+        .expect("build_tree always wraps the paragraph in ROOT")
+}
+
 /// Length in bytes of the UTF-8 char whose leading byte is `b`.
 fn utf8_len(b: u8) -> usize {
     match b {

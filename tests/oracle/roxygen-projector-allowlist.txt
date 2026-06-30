@@ -156,6 +156,7 @@ md_escaped_close_bracket
 md_link_backslash
 md_link_backslash_drop
 md_link_emphasis
+md_link_macro_arg_drop
 md_link_multiline
 md_linkref_poisoning
 md_linkref_poisoning_autolink
@@ -165,6 +166,7 @@ md_linkref_poisoning_inline_link
 md_linkref_poisoning_list
 md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
+md_macro_arg_emphasis
 md_nested_link
 md_nested_link_chain
 md_nested_list

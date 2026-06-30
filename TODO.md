@@ -596,13 +596,31 @@
       shortcut, and `[a\*b\*]` **drops** (emphasis child). Fixture `roxygen_md_link_backslash_display` + curated
       `md_link_backslash` (keeps) + `md_link_backslash_drop` (drop) + 2 unit tests. Projector 321→323; curated
       fixed-point 56→58/58; format baseline +2 (additive).
+      **Markdown inside non-fragile inline Rd macro args LANDED (2026-06-30c):** under `@md` a **non-fragile**
+      inline text macro (`\emph`/`\strong`/`\sQuote`/…) has its argument markdown-processed —
+      `\emph{*x*}`→`(\emph (\emph (TEXT "x")))`, matching roxygen2 (which protects only its `escaped_for_md`
+      *fragile* set: `\code`/`\link`/`\verb`/`\url`/…). Projector-only faithful encoding translation (the macro arg
+      stays a lossless literal `TEXT` leaf; CST + formatter untouched): `serialize_macro` is `md`-threaded and, for a
+      known/non-fragile/single-arg/non-block macro (`is_md_inline_text_macro`), slices the raw arg
+      (`macro_single_arg_content`) and resolves it via the **real arena** (new parser entry `resolve_md_inline` —
+      `lex_roxygen_prose_fragment` + `resolve_emphasis` + `build_tree`, NOT a second scanner), projecting the
+      resolved children with the ordinary `push_inline`/`serialize_inlines`. Links/code/**nesting** resolve too
+      (recursion re-checks fragility per macro, so a nested `\code{*x*}` stays literal). New `is_fragile_for_md`
+      (ports `escaped_for_md`). **Case A:** a link display with an active-markdown macro (`[a\emph{*x*}]`) now
+      **drops** ("must contain plain text") via `macro_arg_has_active_markdown` (recursive); `[a\emph{x}]`/
+      `[a\code{*x*}]` keep. Curated `md_macro_arg_emphasis` + `md_link_macro_arg_drop`; 3 unit tests. Projector
+      323→325; curated fixed-point 58→60/60; format baseline +2 (additive).
       **Slice B remainder (still backlog):** `scan_md_link`'s `[`-path is **not** fully retired — it still serves
       an **`!`-bearing display** (mid-prose image marker) and the **autolink `<url>`** is on `scan_md_autolink`.
-      The deep `\`-display edge — a macro arg with cmark-active markdown (`\emph{*x*}`: cmark drops, arity keeps)
-      — needs the markdown `\`-escape backlog (do NOT widen the lexer heuristically — markdown tenet); closing it
-      + moving `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer`
-      branch, and the projector opaque-leaf helpers be deleted. Plus: poisoning's `relink_demoted_inline_links`
-      into list items, cross-list duplicate-label document order, multi-line def *titles*. Plan:
+      A **pure-macro link display** (`[\emph{a \strong{*x*}}]`, no surrounding text) should drop but arity's
+      truncated link-reference label is empty (`inline_plain_text` drops macros) so `demote_undefined_links`
+      rewrites it to literal `[]`; needs the linkref label/skeleton to include macro source (a text-bearing display
+      is fine). Broader: the structural/two-arg non-fragile macros roxygen also md-processes (`\value`/`\section`
+      inline, `\item`/`\tabular` args); and a macro arg with cmark-active markdown inside a *fragile* arg ties into
+      the markdown `\`-escape backlog (do NOT widen the lexer heuristically — markdown tenet); closing it + moving
+      `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer` branch, and the
+      projector opaque-leaf helpers be deleted. Plus: poisoning's `relink_demoted_inline_links` into list items,
+      cross-list duplicate-label document order, multi-line def *titles*. Plan:
       `~/.claude/plans/we-ll-do-the-slice-elegant-ladybug.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link

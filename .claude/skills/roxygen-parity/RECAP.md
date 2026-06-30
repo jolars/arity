@@ -73,6 +73,26 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   (parse_Rd's static table, R 4.5; excludes expanded user macros `\CRANpkg`/`\doi`). Unknown →
   `(UNKNOWN "\\word")`; known brace-less stays literal prose (zero-arg `\cr` rendering deferred).
   A new known macro must go in the table or it silently becomes UNKNOWN.
+- **Under `@md`, a non-fragile macro's ARG is markdown** (landed 2026-06-30c). roxygen2's `escaped_for_md`
+  (`markdown-escaping.R`) is the *fragile* protected set — `escape_rd_for_md` swaps the whole `\tag{…}` span for a
+  placeholder before cmark, so `\code`/`\link`/`\verb`/`\url`/`\preformatted`/… keep their arg literal; **every
+  other** macro keeps only its backslash-word as literal Rd while its arg **is** full markdown (`\emph{*x*}`→
+  `\emph{\emph{x}}`, links/code/nesting included). Ported as `is_fragile_for_md` (`src/parser/roxygen.rs`).
+  **Projector-only** faithful encoding translation (the macro arg stays a lossless literal `TEXT` leaf — CST +
+  formatter untouched; this is *not* a CST anti-pattern, it's the projector's job): `serialize_macro` is now
+  `md`-threaded; `is_md_inline_text_macro` gates known + non-fragile + single-arg + non-block (excludes
+  `\itemize`/`\describe`/`\Sexpr`/`\enc` arity models itself); `macro_single_arg_content` slices the raw arg and
+  `resolve_md_inline` (new parser entry: `lex_roxygen_prose_fragment` + `resolve_emphasis` + `build_tree`) resolves
+  it via the **real arena** (NOT a second scanner — markdown tenet), projected by the ordinary `push_inline`/
+  `serialize_inlines`. **Recursion re-checks fragility per macro** (a nested `\code{*x*}` inside `\emph` stays
+  literal). **Link-display drop (Case A):** `link_display_is_droppable` counts an `Inline::Macro` as plain only
+  when `!macro_arg_has_active_markdown` (recursive — a nested non-fragile macro with an active arg makes the
+  display active), so `[a\emph{*x*}]` drops ("must contain plain text"), `[a\emph{x}]`/`[a\code{*x*}]` keep.
+  **Backlog:** a **pure-macro display** (`[\emph{…}]`, no surrounding text) drops in roxygen but arity's truncated
+  linkref label is empty (`inline_plain_text` drops macros) → `demote_undefined_links` rewrites it to literal `[]`
+  (text-bearing display is fine, self-consistent label); structural/two-arg non-fragile macros (`\value`/`\section`
+  inline, `\item`/`\tabular` args) roxygen also md-processes; cmark-active markdown inside a *fragile* arg
+  (`\emph{\code{*x*}}`-style) ties into the `\`-escape backlog.
 - **Block-macro openers, three forms.** Forms A/B are *line-start* (`is_block_macro_line`,
   section-level). Form A: a `RoxygenText` `\name{` unbalanced on its line
   (`\itemize`/`\describe`/`\name`) — necessarily a multi-line opener since the lexer extracts a
@@ -569,8 +589,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post `\`-display-in-link, 2026-06-30b): **323 matching (all allowlisted), 18
-divergent (backlog)** of 341 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post macro-arg-markdown, 2026-06-30c): **325 matching (all allowlisted), 18
+divergent (backlog)** of 343 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -582,9 +602,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (341 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
+   (343 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 58/58 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 60/60 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -592,49 +612,62 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-30b) — backslash words/macros in a markdown link display
+## Latest session (2026-06-30c) — markdown inside non-fragile inline Rd macro arguments
 
-Closed most of the ranked-#1 `\`-display residual: a `\`-bearing same-line link display now resolves on the
-arena, with its Rd macros surfacing as nested `\link` children, faithfully matching roxygen2's
-`\link{<markdown display>}` (parse_Rd reads the backslash word as a macro). The five oracle-probed shapes all
-project exactly: `[a\b]`→`(\link (TEXT "a") (UNKNOWN "\\b"))`, `[a\emph{x}]`→`(\link (TEXT "a") (\emph (TEXT
-"x")))`, `[a\code{f}]`→`(\link (TEXT "a") (\code (RCODE "f")))`, the reference form `[a\b][lbl]` (topic dropped)
-identical to the shortcut, and `[a\*b\*]` **drops** ("markdown links must contain plain text").
+Closed the ranked-#1 deep target. Under `@md`, a **non-fragile** inline text macro (`\emph`/`\strong`/`\sQuote`/
+…) now has its argument **markdown-processed** in the projection, matching roxygen2's `\emph{*x*}`→
+`\emph{\emph{x}}`. The mechanism is roxygen2's `escape_rd_for_md` (`markdown-escaping.R`): it protects only its
+`escaped_for_md` **fragile** set (`\code`/`\link`/`\verb`/`\url`/`\preformatted`/…) from cmark by swapping the
+whole `\tag{…}` span for a placeholder; every other macro keeps just its backslash-word as literal Rd while its
+argument is full markdown — links, code spans, and **nesting** included, recursively. Six oracle-probed shapes
+project exactly: `\emph{*x*}`→`(\emph (\emph (TEXT "x")))`, `\strong{*x*}`→`(\strong (\emph …))`,
+`\emph{a *b* c}`→span mid-arg, `\code{*x*}`→literal `(RCODE …)` (fragile), `\emph{a \code{*x*} b}`→nested `\code`
+stays literal (recursion re-checks fragility), and `\emph{see [b](u)}`→`\href` inside.
 
-**Parser (one-line):** dropped only the `\` exclusion from `same_line_bracket_opener`'s guard (kept `!` — a
-possible image marker), so a bracket-free `\`-bearing display routes through the arena like any other; the main
-loop lexes its interior, so `\b` carves as a `ROXYGEN_RD_MACRO`/`UNKNOWN` child and `\emph{x}`/`\code{f}` as
-balanced macro children, and the bare-`]` carve closes it. **No new TokKind/SyntaxKind.**
+**Mechanism (projector-only; CST + formatter UNTOUCHED).** roxygen2's actual rule is the fragile-set, so this is
+faithful *encoding translation* — the projector's job, **not** a CST change (the macro arg stays a lossless
+literal `TEXT` leaf, so losslessness/idempotence/format-baseline are unaffected). `serialize_macro` is now
+`md`-threaded: for a **known, non-fragile, single-arg, non-block** macro (`is_md_inline_text_macro` — excludes the
+fragile set, two-arg, and the `\itemize`/`\describe`/`\Sexpr`/`\enc` arity models itself), it slices the raw arg
+(`macro_single_arg_content`) and resolves it via the **real arena** (new parser entry `resolve_md_inline` →
+`lex_roxygen_prose_fragment` + `resolve_emphasis` + `build_tree`, reusing the inline pass, **not** a second
+scanner), then projects the resolved inline children with the ordinary `push_inline`/`serialize_inlines`. Nesting
+falls out (the inner macro is an `Inline::Macro` → recurses, re-checking its own fragility). New
+`is_fragile_for_md` ports `escaped_for_md` (`src/parser/roxygen.rs`).
 
-**Projector:** (1) `link_display_is_droppable` now counts `Inline::Macro` as **markdown-level plain text**
-(the backslash escapes nothing to cmark, macro braces are literal → roxygen2 keeps the link), so a
-macro-bearing display is not dropped while an emphasis child (`[a\*b\*]`) still is — the drop matches even
-though arity's internal emphasis structure need not match roxygen2's double-escape result, since *any*
-non-text child drops. (2) New `display_has_macro`/`link_over_display`: a macro-bearing shortcut/reference
-display renders `(\link <serialized display atoms>)` (`serialize_inlines` already renders `Inline::Macro` via
-`serialize_macro`, incl. the `(UNKNOWN …)` brace-less arm) instead of collapsing to a flat destination string.
-The `\linkS4class`/`pkg::`/`()` refinements (flat-string) don't apply to a macro-bearing dest — backlog.
+**Case A (link-display drop).** A shortcut/reference display carrying a macro with cmark-active markdown
+(`[a\emph{*x*}]`) now **drops** ("markdown links must contain plain text"): `link_display_is_droppable` counts an
+`Inline::Macro` as plain only when `!macro_arg_has_active_markdown` (recursive — a nested non-fragile macro with
+an active arg makes the display active; a fragile `\code{*x*}` or a literal `\emph{x}` stays inert). `[a\emph{x}]`
+and `[a\code{*x*}]` keep.
 
-**Result:** projector **321→323 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
-`cargo test` green (538 lib + all integration), clippy + fmt clean; curated fixed-point **56→58/58**, 0 blocked;
-format baseline re-blessed (+2, additive-only — `\`-displays were absent from the existing corpus → no
-existing case's output changed). Fixture `roxygen_md_link_backslash_display` (CST snapshot); curated
-`md_link_backslash` (macro-keeps) + `md_link_backslash_drop` (escaped-emphasis drop) + 2 unit tests.
+**Result:** projector **323→325 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
+`cargo test` green (542 lib + all integration), clippy + fmt clean; curated fixed-point **58→60/60**, 0 blocked;
+format baseline re-blessed (+2, additive-only — projector-only, no existing case's output changed). Curated
+`md_macro_arg_emphasis` + `md_link_macro_arg_drop`; 5 projector unit tests.
 
-**`scan_md_link`'s `[`-path is NOT dead (deliberate).** It still serves an **`!`-bearing display** (a mid-prose
-`!` could be an image marker — kept excluded from `same_line_bracket_opener`) and the **autolink `<url>`** (no
-bracket, on `scan_md_autolink`). `classify_closer`'s legacy opaque branch + the projector's opaque-leaf helpers
-stay (still reachable for the `!` case). **Known remaining `\`-display edge (backlog):** a macro whose `{…}`
-argument itself contains cmark-active markdown (`\emph{*x*}`) — cmark sees emphasis (drop), arity treats it as
-one opaque macro (keep) → divergence; not curated. This is the deep coupling to the markdown `\`-escape backlog.
+**Known edge (backlog).** A link display that is a **pure macro** (`[\emph{a \strong{*x*}}]`, no surrounding
+text): roxygen drops it, but arity's truncated linkref label is empty (`inline_plain_text` drops macros), so
+`demote_undefined_links` rewrites it to literal `[]` instead of dropping. A **text-bearing** display
+(`[x \emph{…}]`) is fine (self-consistent non-empty label). Fixing it means the linkref label/skeleton must
+include the macro source. Also still backlog: structural/two-arg non-fragile macros roxygen also md-processes
+(`\value`/`\section` inline, `\item`/`\tabular` args), and cmark-active markdown inside a fragile arg (ties into
+the `\`-escape work).
 
-**Next (ranked):** **(1)** the `\emph{*x*}` nested-markdown-in-macro-arg edge, and the broader markdown
-`\`-escape diagnostic-parity work it ties into (would also let `scan_md_link`'s `[`-path retire once `!`-displays
-move onto the arena too). **(2)** Slice B leftover hardenings — poisoning's `relink_demoted_inline_links` into
-list items, cross-list duplicate-label document order, multi-line def *titles*. **(3)** the 18 projector
-divergences stay roxygen2-eval/multi-block, **out of scope**.
+**Next (ranked):** **(1)** the pure-macro link-display drop edge above (linkref label for macro-bearing
+displays). **(2)** broaden md-arg resolution past single-arg latexlike (structural/two-arg non-fragile macros)
+and the markdown `\`-escape diagnostic-parity work. **(3)** Slice B leftover hardenings — poisoning's
+`relink_demoted_inline_links` into list items, cross-list duplicate-label document order, multi-line def
+*titles*. **(4)** the 18 projector divergences stay roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-30b (`\`-display-in-link):** a `\`-bearing same-line link display resolves on the arena (dropped the
+  `\` exclusion from `same_line_bracket_opener`, kept `!`), Rd macros surfacing as nested `\link` children
+  (`[a\b]`→`(\link (TEXT "a") (UNKNOWN "\\b"))`, `[a\emph{x}]`/`[a\code{f}]` render the macro, `[a\*b\*]` drops).
+  Projector `display_has_macro`/`link_over_display` render `(\link <display>)`; the "Macro counts as plain"
+  rule it added is now superseded by 2026-06-30c's active-markdown check. 321→323; fixed-point 56→58/58. Curated
+  `md_link_backslash` + `_drop`.
 
 - **2026-06-30 (Slice B remainder — poisoning lift, multi-line/entity defs, references on the arena):** three
   committed targets. (A) `demote_poisoned_links` + `inline_skeleton_fragment` lifted to whole-field together

@@ -40,7 +40,9 @@ use rowan::NodeOrToken;
 
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
 use crate::parser::parse;
-use crate::parser::roxygen::{is_known_rd_macro, is_two_arg_rd_macro};
+use crate::parser::roxygen::{
+    is_fragile_for_md, is_known_rd_macro, is_two_arg_rd_macro, resolve_md_inline,
+};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 /// Project `text` to the parser-owned Rd section subtrees, one canonical
@@ -786,7 +788,7 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                     atoms.push(atom);
                 }
                 run.clear();
-                atoms.push(serialize_macro(node));
+                atoms.push(serialize_macro(node, md));
             }
             Inline::MdCode(content) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
@@ -911,7 +913,14 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
 /// while a single-atom argument unwraps (`\item{a}{first}` → `(\item (TEXT "a")
 /// (TEXT "first"))`). A latexlike macro (`\code`, `\emph`, …) inlines its single
 /// argument's atoms directly, never wrapping.
-fn serialize_macro(node: &SyntaxNode) -> String {
+///
+/// Under `@md`, a **non-fragile** inline text macro (`\emph`, `\strong`, `\sQuote`,
+/// …) has its argument **markdown-processed** ([`is_md_inline_text_macro`]):
+/// roxygen2 protects only its `escaped_for_md` set from cmark, so a non-fragile
+/// macro's `{…}` body is parsed as a markdown inline run (`\emph{*x*}` →
+/// `\emph{\emph{x}}`). A fragile nested macro (`\code`/`\link`/…) stays literal —
+/// this resolves recursively, so each macro re-checks its own fragility.
+fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     // `\preformatted` is a *verbatim block* macro: parse_Rd keeps its body
     // verbatim (no whitespace collapse, no nested-macro / markdown parsing) and
     // splits it at newlines into one `(VERB …)` per line — the same shape as an
@@ -923,6 +932,19 @@ fn serialize_macro(node: &SyntaxNode) -> String {
             "(\\preformatted)".to_string()
         } else {
             format!("(\\preformatted {})", atoms.join(" "))
+        };
+    }
+    let head_full = macro_head(node);
+    let name = head_full.trim_start_matches('\\');
+    if md
+        && is_md_inline_text_macro(name)
+        && let Some(content) = macro_single_arg_content(node)
+    {
+        let atoms = serialize_inlines(&resolve_macro_arg_inlines(&content), md);
+        return if atoms.is_empty() {
+            format!("({head_full})")
+        } else {
+            format!("({head_full} {})", atoms.join(" "))
         };
     }
     let mut head = String::new();
@@ -974,7 +996,7 @@ fn serialize_macro(node: &SyntaxNode) -> String {
             SyntaxKind::ROXYGEN_RD_MACRO => {
                 flush(&mut run, &mut group, head == "\\code");
                 if let Some(n) = el.as_node() {
-                    group.push(serialize_macro(n));
+                    group.push(serialize_macro(n, md));
                 }
             }
             // A closing `}` ends an argument group: flush the run, then finalize
@@ -1013,6 +1035,76 @@ fn serialize_macro(node: &SyntaxNode) -> String {
     } else {
         format!("({head} {})", out_atoms.join(" "))
     }
+}
+
+/// Whether macro `name` (without the leading `\`) has its single argument
+/// **markdown-processed** when it appears inline under `@md`. roxygen2 protects
+/// only its `escaped_for_md` set ([`is_fragile_for_md`]) from cmark, so *every*
+/// other macro's argument is markdown — but arity already models the block and
+/// structural macros (`\itemize`/`\describe`/`\tabular`/`\Sexpr`/…) as their own
+/// constructs, so resolving their bodies as inline prose would be wrong; they are
+/// excluded here. The remainder are the inline text macros (`\emph`, `\strong`,
+/// `\sQuote`, `\value`, …) whose body is a latexlike inline run.
+fn is_md_inline_text_macro(name: &str) -> bool {
+    is_known_rd_macro(name)
+        && !is_fragile_for_md(name)
+        && !is_two_arg_rd_macro(name)
+        && !matches!(
+            name,
+            "itemize" | "enumerate" | "describe" | "Sexpr" | "RdOpts" | "enc"
+        )
+}
+
+/// The raw source text of a single-argument macro's `{…}` content (everything
+/// between the first `{` delimiter and its matching `}`), or `None` if the macro
+/// has no argument group. Nested macros contribute their *source* (their own
+/// braces live inside the child node, not as direct delimiters), so the result
+/// re-lexes faithfully; threaded `#'` markers are dropped (defensive — an inline
+/// macro carries none).
+fn macro_single_arg_content(node: &SyntaxNode) -> Option<String> {
+    let mut content = String::new();
+    let mut opened = false;
+    let mut inside = false;
+    for el in node.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
+                let text = el
+                    .as_token()
+                    .map(|t| t.text().to_string())
+                    .unwrap_or_default();
+                if text == "{" && !opened {
+                    opened = true;
+                    inside = true;
+                } else if text == "}" && inside {
+                    inside = false;
+                }
+            }
+            SyntaxKind::ROXYGEN_MARKER => {}
+            _ if inside => match el {
+                NodeOrToken::Node(n) => content.push_str(&n.text().to_string()),
+                NodeOrToken::Token(t) => content.push_str(t.text()),
+            },
+            _ => {}
+        }
+    }
+    opened.then_some(content)
+}
+
+/// Resolve a non-fragile macro's raw argument `content` as a `@md` markdown inline
+/// run, returning the projected inline elements. Reuses the real inline pass
+/// ([`resolve_md_inline`]) and the ordinary inline collector, so emphasis, links,
+/// code spans, and nested macros resolve exactly as in `@md` prose.
+fn resolve_macro_arg_inlines(content: &str) -> Vec<Inline> {
+    let para = resolve_md_inline(content);
+    let mut out = Vec::new();
+    for el in para.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_MARKER => {}
+            SyntaxKind::NEWLINE => out.push(Inline::Text(" ".to_string())),
+            _ => push_inline(&mut out, el),
+        }
+    }
+    out
 }
 
 /// The macro head (`\name`, with the leading `\`) of a `ROXYGEN_RD_MACRO` node,
@@ -2749,20 +2841,50 @@ fn shortcut_link_node_atom(display: &[Inline]) -> String {
 /// non-plain and roxygen2 discards it. (An inline `[text](url)` link is never
 /// subject to this — it carries its own destination and renders `\href`.)
 ///
-/// An `Inline::Macro` child counts as **plain text**: it comes from a backslash-word
-/// (`\b`) or `\name{…}` in the markdown source, which cmark sees as literal text (a
-/// backslash escapes only punctuation, and a macro's braces are literal), so the link
-/// is kept — parse_Rd later reinterprets it as an Rd macro inside the `\link`. (A
-/// macro whose `{…}` argument itself contains cmark-active markdown — `\emph{*x*}` —
-/// would be non-plain to cmark and dropped; arity treats it as one opaque macro, so
-/// that nested-markdown edge stays backlog.)
+/// An `Inline::Macro` child counts as **plain text** *unless* its argument carries
+/// cmark-active markdown: a bare backslash-word (`\b`) or a `\name{…}` whose body is
+/// literal (`\emph{x}`, or any fragile macro like `\code{*x*}`) is literal text to
+/// cmark (a backslash escapes only punctuation, macro braces are literal), so the
+/// link is kept and parse_Rd reinterprets it as an Rd macro. But a non-fragile
+/// macro whose argument *is* markdown-processed and resolves to active markup
+/// (`\emph{*x*}`, `\emph{a \strong{*x*}}`, `` \emph{`c`} ``) makes the display
+/// non-plain to cmark, so roxygen2 drops the link ([`macro_arg_has_active_markdown`]).
 fn link_display_is_droppable(display: &[Inline]) -> bool {
     if matches!(display, [Inline::MdCode(_)]) {
         return false;
     }
-    !display
-        .iter()
-        .all(|inl| matches!(inl, Inline::Text(_) | Inline::Macro(_)))
+    !display.iter().all(|inl| match inl {
+        Inline::Text(_) => true,
+        Inline::Macro(n) => !macro_arg_has_active_markdown(n),
+        _ => false,
+    })
+}
+
+/// Whether a non-fragile Rd macro's markdown-processed argument resolves to any
+/// **cmark-active** markup (emphasis, a code span, a link, an image, raw HTML, or a
+/// nested non-fragile macro whose own argument is active). Such a macro is *not*
+/// plain text to cmark, so a link display containing it is dropped. A fragile macro
+/// (`\code`/`\link`/…) or a non-fragile one with a literal argument (`\emph{x}`) is
+/// inert. Mirrors the resolution [`serialize_macro`] performs, so the drop decision
+/// and the render agree.
+fn macro_arg_has_active_markdown(node: &SyntaxNode) -> bool {
+    let head = macro_head(node);
+    let name = head.trim_start_matches('\\');
+    is_md_inline_text_macro(name)
+        && macro_single_arg_content(node).is_some_and(|content| {
+            inlines_have_active_markdown(&resolve_macro_arg_inlines(&content))
+        })
+}
+
+/// Whether a resolved inline run carries cmark-active markup: any element that is
+/// neither plain text nor an inert macro (see [`macro_arg_has_active_markdown`],
+/// which recurses through nested non-fragile macros).
+fn inlines_have_active_markdown(inlines: &[Inline]) -> bool {
+    inlines.iter().any(|inl| match inl {
+        Inline::Text(_) => false,
+        Inline::Macro(n) => macro_arg_has_active_markdown(n),
+        _ => true,
+    })
 }
 
 /// A best-effort plain-text rendering of a resolved inline run, used only to test a
@@ -3537,6 +3659,112 @@ mod tests {
             "(\\description (TEXT \"a\"))\n\
              (\\examples ...)\n\
              (\\title (TEXT \"a\"))"
+        );
+    }
+
+    #[test]
+    fn md_non_fragile_macro_arg_is_markdown_processed() {
+        // Under `@md`, a non-fragile inline text macro (`\emph`) has its argument
+        // markdown-processed, so `*x*` becomes a nested `\emph` — matching
+        // roxygen2's `\emph{\emph{x}}` (`escaped_for_md` protects only the fragile
+        // set). A fragile macro (`\code`) keeps its argument literal.
+        let emph = "#' @md\n#' @title T\n#' @details A \\emph{*x*} b.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(emph)
+                .contains("(\\details (TEXT \"A\") (\\emph (\\emph (TEXT \"x\"))) (TEXT \"b.\"))"),
+            "{}",
+            project_to_rd(emph)
+        );
+
+        let multi = "#' @md\n#' @title T\n#' @details A \\emph{a *b* c} d.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(multi).contains(
+                "(\\details (TEXT \"A\") (\\emph (TEXT \"a\") (\\emph (TEXT \"b\")) (TEXT \"c\")) (TEXT \"d.\"))"
+            ),
+            "{}",
+            project_to_rd(multi)
+        );
+
+        let strong = "#' @md\n#' @title T\n#' @details A \\strong{*x*} b.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(strong).contains("(\\strong (\\emph (TEXT \"x\")))"),
+            "{}",
+            project_to_rd(strong)
+        );
+
+        // `\code` is fragile — its body stays literal `*x*` (RCODE), not `\emph`.
+        let code = "#' @md\n#' @title T\n#' @details A \\code{*x*} b.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(code).contains("(\\code (RCODE \"*x*\"))"),
+            "{}",
+            project_to_rd(code)
+        );
+    }
+
+    #[test]
+    fn md_macro_arg_resolution_is_off_without_md() {
+        // Without `@md`, `*x*` is literal Rd prose inside the macro (no emphasis).
+        let src = "#' @title T\n#' @details A \\emph{*x*} b.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\emph (TEXT \"*x*\"))"),
+            "{}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn md_link_display_with_active_markdown_macro_drops() {
+        // A shortcut link whose display carries a macro with cmark-active markdown
+        // (`\emph{*x*}`) is dropped ("markdown links must contain plain text"); the
+        // surrounding prose coalesces. A macro with a literal arg (`\emph{x}`) keeps
+        // the link, and a fragile `\code{*x*}` keeps it too (its body is protected).
+        let drop = "#' @md\n#' @title T\n#' @details See [a\\emph{*x*}] here.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(drop).contains("(\\details (TEXT \"See here.\"))"),
+            "{}",
+            project_to_rd(drop)
+        );
+
+        let keep_plain =
+            "#' @md\n#' @title T\n#' @details See [a\\emph{x}] here.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(keep_plain).contains("(\\link (TEXT \"a\") (\\emph (TEXT \"x\")))"),
+            "{}",
+            project_to_rd(keep_plain)
+        );
+
+        let keep_code =
+            "#' @md\n#' @title T\n#' @details See [a\\code{*x*}] here.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(keep_code).contains("(\\link (TEXT \"a\") (\\code (RCODE \"*x*\")))"),
+            "{}",
+            project_to_rd(keep_code)
+        );
+
+        // Recursive: a nested non-fragile `\strong{*y*}` makes the display active.
+        // (The display carries leading text `x`, so its truncated link-reference
+        // label stays self-consistent — a *macro-only* display like `[\emph{…}]`
+        // hits the empty-label demotion edge and is deferred to backlog.)
+        let drop_nested = "#' @md\n#' @title T\n#' @details See [x \\emph{a \\strong{*y*}}] here.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(drop_nested).contains("(\\details (TEXT \"See here.\"))"),
+            "{}",
+            project_to_rd(drop_nested)
+        );
+    }
+
+    #[test]
+    fn md_nested_fragile_macro_stays_literal() {
+        // A fragile `\code` nested inside a non-fragile `\emph`: the outer arg is
+        // markdown-processed, but `\code`'s own body stays literal (recursive
+        // fragility check) — `(\emph (TEXT "a") (\code (RCODE "*x*")) (TEXT "b"))`.
+        let src =
+            "#' @md\n#' @title T\n#' @details A \\emph{a \\code{*x*} b} c.\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\emph (TEXT \"a\") (\\code (RCODE \"*x*\")) (TEXT \"b\"))"),
+            "{}",
+            project_to_rd(src)
         );
     }
 

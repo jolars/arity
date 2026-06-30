@@ -1,0 +1,3 @@
+(\description (TEXT "Markdown inside non-fragile Rd macro arguments"))
+(\details (TEXT "A non-fragile macro has its argument markdown-processed:") (\emph (\emph (TEXT "x"))) (TEXT "nests an emphasis,") (\strong (\emph (TEXT "y"))) (TEXT "too, and") (\emph (TEXT "a") (\emph (TEXT "b")) (TEXT "c")) (TEXT "resolves a span mid-argument. A fragile") (\code (RCODE "*z*")) (TEXT "keeps its body literal."))
+(\title (TEXT "Markdown inside non-fragile Rd macro arguments"))

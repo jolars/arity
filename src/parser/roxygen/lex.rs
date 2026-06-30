@@ -179,6 +179,15 @@ pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize, m
     }
 }
 
+/// Sub-tokenize a bare prose **fragment** (no `#'` marker, not a line start) under
+/// the given `md` mode. Used by the projector to re-lex the argument of a
+/// non-fragile Rd macro under `@md` as a markdown inline run (`\emph{*x*}`'s `*x*`).
+/// `line_start = false`, so the line-leading block recognizers (fence / HTML block /
+/// list marker) never fire — a macro argument is inline content, not a block.
+pub(super) fn lex_roxygen_prose_fragment(out: &mut Vec<Token>, text: &str, md: bool) {
+    lex_roxygen_prose(out, text, 0, 0, md, false);
+}
+
 fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usize, md: bool) {
     let bytes = text.as_bytes();
 
