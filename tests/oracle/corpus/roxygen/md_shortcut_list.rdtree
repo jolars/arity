@@ -1,0 +1,3 @@
+(\description (TEXT "Self-defined shortcut inside a list item"))
+(\details (TEXT "A plain shortcut inside a list item self-defines and links:") (\itemize (\item) (TEXT "see") (\link (TEXT "foo")) (TEXT "here") (\item) (TEXT "a plain item")))
+(\title (TEXT "Self-defined shortcut inside a list item"))

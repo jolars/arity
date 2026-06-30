@@ -1,0 +1,3 @@
+(\description (TEXT "Undefined shortcut inside a list item"))
+(\details (TEXT "A reference whose label roxygen2 never defines stays literal even inside a list item:") (\itemize (\item) (TEXT "a stray a][b] keeps its brackets literal") (\item) (TEXT "a plain item")))
+(\title (TEXT "Undefined shortcut inside a list item"))

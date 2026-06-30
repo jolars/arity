@@ -561,8 +561,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post `@section` link-ref unification, 2026-06-29o): **313 matching (all allowlisted), 18
-divergent (backlog)** of 331 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post whole-field refmap + undefined demotion, 2026-06-29q): **317 matching (all allowlisted), 18
+divergent (backlog)** of 335 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -584,45 +584,54 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-29p) — user link-refs resolve across list items (whole-field, partial)
+## Latest session (2026-06-29q) — whole-field refmap + undefined-label demotion (in-list)
 
-**RECAP ranked next #1, the whole-field refmap slice (user-def half).** The user-def link-reference stage
-(`resolve_user_linkrefs`) was flat over the top-level body: a `[ref]: url` def and its referencing link in
-different **list items** (or a list item vs a paragraph) of the *same field* were missed — the in-item ref
-stayed an R-topic `\link` and an in-item def leaked as literal text. roxygen2 runs the whole tag value through
-cmark as one document, so defs resolve across paragraphs *and* list items. (Cross-*paragraph* already worked —
-the projector joins the field body into one inline run before resolving; the gap was purely list nesting,
-because `Inline::MdList` is an opaque `SyntaxNode` the pipeline never descended into.) Probed and confirmed:
-the **only** realistic list-internal divergence is user defs — a plain `[x]` shortcut self-defines via
-roxygen's synthesized `[x]: R:x`, so undefined-demotion/poisoning inside lists is rare and stays backlog.
+**RECAP ranked next #1, the refmap half of Slice B remainder (b).** The user-def stage already recursed into
+lists (29p), but the other two link-ref stages were still **top-level-only**: `linkref_keys` (the refmap) and
+`demote_undefined_links` treated `MdList`/`MdListResolved` as opaque single-space skeleton fragments. So an
+**undefined** in-list reference whose label roxygen2 never synthesizes a def for — a `[` preceded by `]`
+(`a][b]`) or followed by `[`/`{` — stayed arity's optimistic `\link{b}` *inside the `\itemize`*, while
+roxygen2 keeps it literal (it runs the whole tag value through cmark as one document, so the in-list bracket
+is just more candidate text). Probed + confirmed: `a][b]` in a list item → literal `a][b]`; a plain `[foo]`
+in a list item → `\link{foo}` (self-defines via the synthesized `[foo]: R:foo`).
 
-**Fix (projector-only).** Split the user-def stage into two recursive passes: `collect_user_linkrefs_tree`
-builds the **whole-field** url map (recursing into `MdList` items and nested `MdListResolved` items), and
-`apply_user_linkrefs` recursively consumes def runs + rewrites defined-label links, descending into list
-items. A list whose items actually changed becomes a new `Inline::MdListResolved { ordered, items }` carrying
-its rewritten item runs (serialized by `serialize_md_list_resolved`, the resolved-items analog of
-`serialize_md_list`); a list with **no** link-ref work keeps its opaque `MdList(node)` form, so its
-serialization is byte-identical (all 313 prior pins unchanged). `resolve_linkrefs` now collects the tree url
-map first and only runs the apply pass when it is non-empty; the two demote stages are unchanged
-(top-level-only, treating `MdListResolved` as opaque). No parser/CST change.
+**Fix (projector-only).** Lifted **both** stages to whole-field together — they must move as a pair, since a
+whole-field demotion run against a top-level-only refmap would wrongly demote a *self-defined* in-list
+`[foo]` (its label lives only in the list). (1) `linkref_skeleton_push` gained `MdList`/`MdListResolved`
+arms that recurse into each item's inlines, **space-guarded per item** (the raw source separates items with
+newlines, so a `[` opening an item is never seen as preceded by the previous item's `]`). (2)
+`demote_undefined_links` now descends into list items via a new `demote_undefined_in_list` helper (mirrors
+`apply_user_linkrefs`'s descent): a list whose items actually demote becomes an `Inline::MdListResolved`,
+an untouched list keeps its opaque `MdList` form (byte-identical serialization → all prior pins unchanged).
+Poisoning (`demote_poisoned_links`) stays top-level-only (an escaped-close candidate inside a list item is
+vanishingly rare → backlog). No parser/CST change.
 
-**TDD/tests:** curated `md_url_reference_list` (ref `[foo]` inside a list item, def in a following paragraph →
-`\href`), `md_url_reference_list_def` (def `[foo]: url` *inside* a list item → consumed, item emptied, ref in
-a preceding paragraph resolves). Pins minted, both allowlisted; losslessness verified. No formatter change →
-format baseline untouched.
+**TDD/tests:** curated `md_undefined_shortcut_list` (in-list `a][b]` → literal inside `\itemize`) +
+`md_shortcut_list` (in-list self-defined `[foo]` → `\link{foo}`, the no-regression guard proving the
+whole-field refmap keeps it defined). Both pins minted + allowlisted; 2 unit tests
+(`projects_{undefined,self_defined}_shortcut_inside_a_list_item_*`). Format baseline re-blessed (+2 keys;
+formatter output byte-identical/idempotent — corpus-addition only, not a behavior change).
 
-**Result:** projector **313→315 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
-`cargo test` green (530 lib + all integration), clippy + fmt clean.
+**Result:** projector **315→317 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
+`cargo test` green (532 lib + all integration), clippy + fmt clean; curated fixed-point 52/52, 0 blocked.
 
-**Next (ranked):** **(1)** Slice B **remainder (b)** — lift the **refmap (`linkref_keys`) + poisoning** to
-whole-field too (still top-level-only, so an undefined-label demotion or poisoning whose candidate sits inside
-a list item is missed — rare, lookbehind/lookahead-blocked labels like an in-list `a][b]`). Plus multi-line
-defs, URL normalization, and strict cross-list document order for duplicate labels. **(2)** Slice B
-**remainder (c)** — fully retire `scan_md_link` (still serves plain same-line `[t]`/`[t][r]`, autolink
-`<url>`): carve every bracket, move references onto the arena lookahead. The 18 projector divergences stay
-roxygen2-eval/multi-block, **out of scope**. Plan: `~/.claude/plans/luminous-zooming-toast.md`.
+**Next (ranked):** **(1)** Slice B **remainder (b) tail** — lift **poisoning** (`demote_poisoned_links` +
+its `inline_skeleton_fragment`) to whole-field too (still top-level-only; a leaked synthesized def whose
+escaped-close candidate sits inside a list item is missed — very rare). Plus multi-line defs, URL
+normalization, and strict cross-list document order for duplicate labels. **(2)** Slice B **remainder (c)** —
+fully retire `scan_md_link` (still serves plain same-line `[t]`/`[t][r]`, autolink `<url>`): carve every
+bracket, move references onto the arena lookahead. The 18 projector divergences stay roxygen2-eval/multi-block,
+**out of scope**. Plan: `~/.claude/plans/luminous-zooming-toast.md`.
 
 ## Earlier sessions
+
+- **2026-06-29p (user link-refs resolve across list items, user-def half of whole-field):** the user-def
+  stage (`resolve_user_linkrefs`) was flat over the top-level body, so a `[ref]: url` def and its referencing
+  link in different list items (or item vs paragraph) of the same field were missed. Split into
+  `collect_user_linkrefs_tree` (whole-field url map, recursing into list items) + `apply_user_linkrefs`
+  (recursive consume/rewrite; a changed list becomes `Inline::MdListResolved`, serialized by
+  `serialize_md_list_resolved`; an unchanged list keeps its opaque `MdList`, byte-identical). Projector-only.
+  Curated `md_url_reference_list` + `md_url_reference_list_def`. 313→315.
 
 - **2026-06-29o (`@section` runs the full link-ref pipeline):** the `@section` arm only ran
   `demote_poisoned_links`; extracted the three body-transform stages into a shared

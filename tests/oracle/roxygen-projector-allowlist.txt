@@ -169,8 +169,10 @@ md_ref_emphasis
 md_ref_link_multiline
 md_shortcut_link
 md_shortcut_link_multiline
+md_shortcut_list
 md_undefined_ref
 md_undefined_shortcut
+md_undefined_shortcut_list
 param_prose
 preformatted
 rawrd

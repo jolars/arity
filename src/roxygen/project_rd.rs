@@ -1521,6 +1521,33 @@ fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
             }
             s.push(' ');
         }
+        // A markdown list is part of the same cmark document, so its items'
+        // brackets are link-reference candidates for the whole-field refmap (a
+        // label defined inside a list resolves a reference anywhere in the field,
+        // and vice versa). Each item is space-guarded — the raw source separates
+        // items with newlines, so a `[` opening an item is never seen as preceded
+        // by the previous item's closing `]`.
+        Inline::MdList(node) => {
+            for item in node
+                .children()
+                .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+            {
+                s.push(' ');
+                for child in md_list_item_inlines(&item) {
+                    linkref_skeleton_push(&child, s);
+                }
+            }
+            s.push(' ');
+        }
+        Inline::MdListResolved { items, .. } => {
+            for item in items {
+                s.push(' ');
+                for child in item {
+                    linkref_skeleton_push(child, s);
+                }
+            }
+            s.push(' ');
+        }
         _ => s.push(' '),
     }
 }
@@ -1587,13 +1614,61 @@ fn demote_undefined_links(
                 && let Some(text) = demoted_link_source(inl)
             {
                 changed = true;
-                Inline::Text(text)
-            } else {
-                inl.clone()
+                return Inline::Text(text);
+            }
+            // Descend into list items: a referencing link inside a list item is
+            // checked against the same whole-field refmap (`keys`), since roxygen2
+            // runs the entire tag value through cmark as one document. A list whose
+            // items actually changed becomes an `MdListResolved` carrying the
+            // rewritten runs; an untouched list keeps its opaque form (byte-identical
+            // serialization). Mirrors the descent in `apply_user_linkrefs`.
+            match demote_undefined_in_list(inl, keys) {
+                Some(resolved) => {
+                    changed = true;
+                    resolved
+                }
+                None => inl.clone(),
             }
         })
         .collect();
     changed.then_some(out)
+}
+
+/// If `inl` is a markdown list (opaque `MdList` or already-`MdListResolved`),
+/// run undefined-label demotion over each item against the whole-field refmap
+/// `keys`, returning a rewritten `Inline::MdListResolved` when any item changed
+/// (else `None`). Not a list, or no change ⇒ `None`. Helper for
+/// [`demote_undefined_links`].
+fn demote_undefined_in_list(
+    inl: &Inline,
+    keys: &std::collections::HashSet<String>,
+) -> Option<Inline> {
+    let (ordered, items): (bool, Vec<Vec<Inline>>) = match inl {
+        Inline::MdList(node) => (
+            md_list_is_ordered(node),
+            node.children()
+                .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+                .map(|item| md_list_item_inlines(&item))
+                .collect(),
+        ),
+        Inline::MdListResolved { ordered, items } => (*ordered, items.clone()),
+        _ => return None,
+    };
+    let mut new_items = Vec::with_capacity(items.len());
+    let mut item_changed = false;
+    for item in &items {
+        match demote_undefined_links(item, keys) {
+            Some(rewritten) => {
+                new_items.push(rewritten);
+                item_changed = true;
+            }
+            None => new_items.push(item.clone()),
+        }
+    }
+    item_changed.then_some(Inline::MdListResolved {
+        ordered,
+        items: new_items,
+    })
 }
 
 /// Collect user-written CommonMark link-reference definitions (`[ref]: url`) across
@@ -4097,6 +4172,36 @@ mod tests {
             project_to_rd(src),
             "(\\details (TEXT \"A stray a]\") (\\link (TEXT \"b\")) \
              (TEXT \", later\") (\\link (TEXT \"b\")) (TEXT \".\"))"
+        );
+    }
+
+    #[test]
+    fn projects_undefined_shortcut_inside_a_list_item_as_literal() {
+        // The whole-field refmap + undefined-label demotion descend into list
+        // items: an `a][b]` inside a list item is undefined (the `[` is preceded
+        // by `]`), so roxygen2 keeps it literal — arity must demote its
+        // optimistic `\link{b}` inside the `\itemize`.
+        let src = "#' @md\n#' @details\n#' Top.\n#'\n\
+                   #' - a stray a][b] keeps it\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"Top.\") \
+             (\\itemize (\\item) (TEXT \"a stray a][b] keeps it\")))"
+        );
+    }
+
+    #[test]
+    fn projects_self_defined_shortcut_inside_a_list_item_as_link() {
+        // A plain `[foo]` shortcut inside a list item self-defines (roxygen2
+        // synthesizes `[foo]: R:foo`), so the whole-field refmap keeps it in
+        // `keys` and it stays a `\link` — the refmap recursion must not demote a
+        // self-defined in-list shortcut.
+        let src = "#' @md\n#' @details\n#' Top.\n#'\n\
+                   #' - see [foo] here\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"Top.\") \
+             (\\itemize (\\item) (TEXT \"see\") (\\link (TEXT \"foo\")) (TEXT \"here\")))"
         );
     }
 

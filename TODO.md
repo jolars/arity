@@ -568,13 +568,20 @@
       unchanged list keeps its opaque `MdList(node)` form, byte-identical). Cross-*paragraph* already worked
       (the field body is joined). Projector-only. Curated `md_url_reference_list` (ref in item, def in para),
       `md_url_reference_list_def` (def in item, consumed). Projector 313→315.
-      **Slice B remainder (backlog):** (b) the refmap (`linkref_keys`) + poisoning are still top-level-only,
-      so an *undefined-label* demotion or poisoning whose candidate sits inside a list item is missed (rare:
-      a plain `[x]` self-defines via the synthesized `[x]: R:x`, so only lookbehind/lookahead-blocked labels
-      like an in-list `a][b]` diverge); plus multi-line defs + URL normalization + strict cross-list
-      document-order for duplicate labels. (c) retire `scan_md_link` *entirely* (still serves plain same-line
-      `[t]`/`[t][r]`, autolink `<url>`) by carving **every** bracket and moving refs onto the arena lookahead.
-      Plan: `~/.claude/plans/luminous-zooming-toast.md`.
+      **Whole-field refmap + undefined-label demotion LANDED (2026-06-29q):** the refmap (`linkref_keys`)
+      and `demote_undefined_links` were top-level-only (treating `MdList`/`MdListResolved` as opaque), so an
+      undefined in-list reference like `a][b]` stayed an optimistic `\link` while roxygen2 keeps it literal.
+      Lifted both to whole-field: `linkref_skeleton_push` recurses into list-item content (space-guarded per
+      item, faithful to the newline-separated raw source), and `demote_undefined_links` descends into list
+      items (`demote_undefined_in_list`; a changed list becomes `MdListResolved`). Both move together — a
+      whole-field demotion against a top-level-only refmap would wrongly demote a self-defined in-list `[foo]`.
+      Projector-only. Curated `md_undefined_shortcut_list` (in-list `a][b]` literal) + `md_shortcut_list`
+      (in-list self-defined `[foo]` still links). Projector 315→317.
+      **Slice B remainder (backlog):** (b) *poisoning* (`demote_poisoned_links`) is still top-level-only, so a
+      leaked synthesized def whose escaped-close candidate sits inside a list item is missed (very rare); plus
+      multi-line defs + URL normalization + strict cross-list document-order for duplicate labels. (c) retire
+      `scan_md_link` *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink `<url>`) by carving
+      **every** bracket and moving refs onto the arena lookahead. Plan: `~/.claude/plans/luminous-zooming-toast.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
