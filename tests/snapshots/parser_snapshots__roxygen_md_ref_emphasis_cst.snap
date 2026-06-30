@@ -23,7 +23,10 @@ ROOT@0..96
             ROXYGEN_MD_DELIM@21..22 "*"
           ROXYGEN_MD_DELIM@22..27 "][r1]"
         ROXYGEN_TEXT@27..39 " drops, but "
-        ROXYGEN_MD_LINK@39..50 "[plain][r2]"
+        ROXYGEN_MD_LINK@39..50
+          ROXYGEN_MD_DELIM@39..40 "["
+          ROXYGEN_TEXT@40..45 "plain"
+          ROXYGEN_MD_DELIM@45..50 "][r2]"
         ROXYGEN_TEXT@50..55 " and "
         ROXYGEN_MD_LINK@55..67
           ROXYGEN_MD_DELIM@55..56 "["

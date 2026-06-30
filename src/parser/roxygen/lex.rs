@@ -365,39 +365,19 @@ fn lex_roxygen_prose(
             run_start = i;
             continue;
         }
-        // A *same-line* plain-text shortcut opener `[text]`: carve the `[` as a
-        // neutral bracket opener leaf and let the main loop lex the (plain) interior
-        // and the closing `]` (the bare-`]` carve below). The inline pass pairs the
-        // bracket leaves into a `ROXYGEN_MD_LINK` node, replacing the opaque
-        // `scan_md_link` leaf — byte-identical projection (see `same_line_shortcut_opener`).
+        // A *same-line* bracketed link span: a balanced, bracket-free `[…]` that is
+        // not an inline link (handled above) and not a `[…]{…}` non-link. Carve the
+        // `[` as a neutral bracket opener leaf and let the main loop lex the interior
+        // and the closing `]` (the bare-`]`/`][ref]` carves below). This one carve
+        // covers a shortcut display, a reference display (`[display][ref]`), and a
+        // reference *label* (`[ref]`) alike; the inline pass pairs the brackets into
+        // `ROXYGEN_MD_LINK` nodes and `classify_closer` reads a following neutral
+        // `[ref]` off the arena lookahead. Only `!`/`\` displays stay on the opaque
+        // `scan_md_link` leaf for now (see `same_line_bracket_opener`).
         if md
             && bytes[i] == b'['
             && !bracket_is_escaped(bytes, i)
-            && same_line_shortcut_opener(bytes, i)
-        {
-            push(
-                out,
-                TokKind::RoxygenText,
-                text,
-                start,
-                run_start,
-                i - run_start,
-            );
-            push(out, TokKind::RoxygenMdBracket, text, start, i, 1);
-            i += 1;
-            run_start = i;
-            continue;
-        }
-        // A *same-line* reference-link opener `[text][ref]` whose display carries
-        // markdown markup (`* _ ` ` ` <`): carve the `[` as a neutral bracket opener
-        // and let the main loop carve the markup display, the closing `]`
-        // ([`cross_line_ref_closer`]), and the `[ref]` label ([`scan_md_link`]). The
-        // inline pass folds the pair into a reference `ROXYGEN_MD_LINK` node whose
-        // resolved display the projector can drop when it is non-plain
-        // (`link_display_is_droppable`). A *plain* display stays on the opaque
-        // [`scan_md_link`] leaf (byte-identical projection — see
-        // [`same_line_ref_opener`]).
-        if md && bytes[i] == b'[' && !bracket_is_escaped(bytes, i) && same_line_ref_opener(bytes, i)
+            && same_line_bracket_opener(bytes, i)
         {
             push(
                 out,
@@ -710,77 +690,37 @@ fn is_cross_line_link_opener(bytes: &[u8], i: usize) -> bool {
     !bytes[i + 1..].iter().any(|&b| matches!(b, b'[' | b']'))
 }
 
-/// Whether a `[` at `bytes[i]` opens a *same-line* plain-text shortcut link
-/// `[text]`: a balanced, bracket-free `[…]` whose text is **plain** (no inline
-/// markdown markup), not part of an inline (`[text](url)`), reference
-/// (`[text][ref]`), or `[text]{…}` non-link, and not itself a reference *label*.
-/// Carving it as a neutral `RoxygenMdBracket` opener routes it through the inline
-/// pass (uniform with cross-line shortcuts and inline links) instead of the opaque
-/// [`scan_md_link`] leaf, so the bracket recognizers converge on the arena stack.
+/// Whether a `[` at `bytes[i]` opens a *same-line* bracketed link span carved onto
+/// the arena: a balanced, bracket-free `[…]` (`is_shortcut_content`) that is not an
+/// inline link (`[…](url)`, handled by [`inline_link_span`]) and not a `[…]{…}`
+/// non-link. Carving the `[` as a neutral `RoxygenMdBracket` opener routes it
+/// through the inline pass (uniform with cross-line spans and inline links) instead
+/// of the opaque [`scan_md_link`] leaf, so the bracket recognizers converge on the
+/// arena stack.
 ///
-/// A plain display resolves to a single `Inline::Text` whose coalesced text equals
-/// the raw bracket interior, so the projector's node path
-/// (`shortcut_link_node_atom` → `shortcut_link_atom(text)`) is byte-identical to the
-/// leaf path (`resolve_md_link` → `shortcut_link_atom(text)`). A *marked-up* display
-/// (`[*foo*]`, `` [`x` `y`] ``) is also carved here: the inline pass resolves its
-/// emphasis/code/autolink/HTML children so the projector can mirror roxygen2's
-/// `parse_link` — a sole code span links (`\code{\link{…}}`), any richer display is
-/// rejected ("markdown links must contain plain text") and dropped to empty
-/// (`link_display_is_droppable`). Only `!`/`\` displays (always plain text) stay on
-/// the opaque leaf. A `[` immediately preceded by `]` is a cross-line reference
-/// *label* (`[ref]` of `[text][ref]`) and is left to [`scan_md_link`] so the arena's
-/// `][ref]` fold still sees its opaque token.
-fn same_line_shortcut_opener(bytes: &[u8], i: usize) -> bool {
-    if i > 0 && bytes[i - 1] == b']' {
-        return false;
-    }
+/// This one predicate carves three roles that the arena then distinguishes:
+/// - a **shortcut** display `[text]` (the `]` followed by neither `(` nor `[`),
+/// - a **reference** display `[display][ref]` (the `]` followed by `[`), and
+/// - a reference **label** `[ref]` (the `[` immediately preceded by `]`).
+///
+/// `classify_closer` reads a following neutral `[ref]` label off the lookahead, so
+/// the label no longer needs its own opaque token (the preceded-by-`]` guard and
+/// the not-followed-by-`[` restriction the earlier shortcut/reference predicates
+/// carried are gone). A plain display resolves to a single `Inline::Text` whose
+/// text equals the raw interior, so the projector's node path is byte-identical to
+/// the old leaf path; a marked-up display (`[*foo*]`, `` [`x` `y`] ``) resolves its
+/// children so the projector can mirror roxygen2's `parse_link` (a sole code span
+/// links, any richer display is dropped). Only `!`/`\` displays (always plain text;
+/// `\` escapes still need projector handling) stay on the opaque
+/// [`scan_md_link`] leaf for now.
+fn same_line_bracket_opener(bytes: &[u8], i: usize) -> bool {
     let Some(close) = scan_balanced(bytes, i, b'[', b']') else {
         return false;
     };
     let content = &bytes[i + 1..close - 1];
     is_shortcut_content(content)
-        // An `!` (no following `[`, so never an image here) or a `\` escape only
-        // ever yields plain text, so those displays stay on the opaque
-        // [`scan_md_link`] leaf where `resolve_md_link` renders them directly.
-        // Emphasis/code/autolink/HTML markers (`* _ ` ` ` <`) are carved so the
-        // inline pass resolves the display into structured children: a sole code
-        // span links (`\code{\link{…}}`), any richer display makes roxygen2 reject
-        // the link as non-plain text and the projector drops it.
         && !content.iter().any(|&b| matches!(b, b'!' | b'\\'))
-        && !matches!(bytes.get(close), Some(b'(' | b'[' | b'{'))
-}
-
-/// Whether a `[` at `bytes[i]` opens a *same-line* reference link `[text][ref]`
-/// whose display carries inline markdown markup (`*`, `_`, `` ` ``, or `<`). Such a
-/// display must be resolved by the inline pass so the projector can apply
-/// roxygen2's `parse_link` rule: a reference whose synthesized `R:` destination
-/// links as `\link` requires plain-text display, and any richer display
-/// (emphasis, a second code span, an autolink) is dropped ("markdown links must
-/// contain plain text" — see `link_display_is_droppable`). Carving the `[` opener
-/// as a neutral bracket routes the link through the arena; the main loop then
-/// carves the closing `]` ([`cross_line_ref_closer`], line-agnostic) and the
-/// `[ref]` label ([`scan_md_link`], opaque), which the arena folds as `][ref]`.
-///
-/// A *plain* display (`[plain][ref]`, `[a_b][ref]` — intraword `_` is not
-/// emphasis) stays on the opaque [`scan_md_link`] leaf: its node and leaf
-/// projections are byte-identical, so leaving it untouched keeps the change
-/// tightly scoped. Only a markup-bearing display can resolve to a non-plain node
-/// that drops, so only that case needs the arena. Mirrors the markup half of
-/// [`same_line_shortcut_opener`], but for the `[text][ref]` (reference) shape.
-fn same_line_ref_opener(bytes: &[u8], i: usize) -> bool {
-    if i > 0 && bytes[i - 1] == b']' {
-        return false;
-    }
-    let Some(close) = scan_balanced(bytes, i, b'[', b']') else {
-        return false;
-    };
-    let content = &bytes[i + 1..close - 1];
-    is_shortcut_content(content)
-        && content.iter().any(|&b| matches!(b, b'*' | b'_' | b'`' | b'<'))
-        && !content.iter().any(|&b| matches!(b, b'!' | b'\\'))
-        // The `]` at `close - 1` must be followed by a clean `[ref]` label, so the
-        // arena pairs the carved opener/closer into a reference link.
-        && cross_line_ref_closer(bytes, close - 1)
+        && !matches!(bytes.get(close), Some(b'(' | b'{'))
 }
 
 /// Whether a `[` at `bytes[i]` opens a *nested-bracket* same-line link: its
@@ -1826,11 +1766,19 @@ mod tests {
 
     #[test]
     fn md_reference_link() {
+        // A reference link carves entirely onto neutral bracket leaves: the display
+        // `[text]` and the label `[ref]` are each a `[`/`]` pair; the inline pass
+        // pairs them into a `ROXYGEN_MD_LINK` node and reads `[ref]` off the lookahead.
         assert_eq!(
             prose_texts("#' a [text][ref] b\n#' @md\n"),
             vec![
                 (TokKind::RoxygenText, "a ".into()),
-                (TokKind::RoxygenMdLink, "[text][ref]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "text".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "ref".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, " b".into()),
             ]
         );
@@ -1839,12 +1787,10 @@ mod tests {
 
     #[test]
     fn md_reference_link_with_markup_display_carves_onto_arena() {
-        // A *markup*-bearing reference display (`[*foo*][ref]`) carves the `[` opener
-        // and the lone `]` closer as neutral bracket leaves (the `[ref]` label stays
-        // an opaque shortcut leaf the arena folds in), so the inline pass can resolve
-        // the emphasis and the projector apply roxygen2's drop rule. A *plain*
-        // display (`[plain][ref]`) stays one opaque `RoxygenMdLink` leaf — its node
-        // and leaf projections are byte-identical (see `same_line_ref_opener`).
+        // A markup-bearing reference display (`[*foo*][r1]`) carves the same way as a
+        // plain one (`[plain][r2]`): the `[` opener, the closing `]`, and the `[ref]`
+        // label are all neutral bracket leaves, so the inline pass resolves the
+        // emphasis and the projector applies roxygen2's drop rule.
         assert_eq!(
             prose_texts("#' a [*foo*][r1] and [plain][r2] b\n#' @md\n"),
             vec![
@@ -1854,9 +1800,16 @@ mod tests {
                 (TokKind::RoxygenText, "foo".into()),
                 (TokKind::RoxygenMdDelim, "*".into()),
                 (TokKind::RoxygenMdBracket, "]".into()),
-                (TokKind::RoxygenMdLink, "[r1]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "r1".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, " and ".into()),
-                (TokKind::RoxygenMdLink, "[plain][r2]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "plain".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "r2".into()),
+                (TokKind::RoxygenMdBracket, "]".into()),
                 (TokKind::RoxygenText, " b".into()),
             ]
         );

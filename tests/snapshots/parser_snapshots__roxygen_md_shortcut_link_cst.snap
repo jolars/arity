@@ -28,7 +28,10 @@ ROOT@0..127
         ROXYGEN_MARKER@49..51 "#'"
         WHITESPACE@51..52 " "
         ROXYGEN_TEXT@52..57 "Also "
-        ROXYGEN_MD_LINK@57..69 "[text][dest]"
+        ROXYGEN_MD_LINK@57..69
+          ROXYGEN_MD_DELIM@57..58 "["
+          ROXYGEN_TEXT@58..62 "text"
+          ROXYGEN_MD_DELIM@62..69 "][dest]"
         ROXYGEN_TEXT@69..74 " and "
         ROXYGEN_MD_LINK@74..99
           ROXYGEN_MD_DELIM@74..75 "["

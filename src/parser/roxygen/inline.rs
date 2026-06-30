@@ -616,15 +616,17 @@ fn match_brackets(tokens: &[Token], run: &[usize]) -> Vec<BracketRole> {
             continue;
         }
         match classify_closer(tokens, run, o_pos, q) {
-            Some((close_text, after, label_consumed)) => {
+            Some((close_text, after)) => {
                 roles[o_pos] = BracketRole::MatchedOpener {
                     closer: q,
                     after,
                     close_text,
                 };
-                roles[q] = BracketRole::Consumed;
-                if label_consumed {
-                    roles[q + 1] = BracketRole::Consumed;
+                // Consume the closer and any folded-in `[ref]` label tokens
+                // (`q + 1 .. after`); for an inline/shortcut closer the range is just
+                // the closer itself (`after == q + 1`).
+                for role in &mut roles[q..after] {
+                    *role = BracketRole::Consumed;
                 }
                 // A link (never an image here) deactivates the openers below it.
                 for e in stack.iter_mut() {
@@ -642,29 +644,62 @@ fn match_brackets(tokens: &[Token], run: &[usize]) -> Vec<BracketRole> {
 }
 
 /// Classify the closer at `run[closer_q]` for an active opener at `run[o_pos]`,
-/// returning `(close_text, after, label_consumed)` for a valid link or `None` for
-/// none. An inline `](url)` composite closer is always a valid link. A lone `]` is
-/// a *reference* link when immediately followed by an opaque `[ref]` label token
-/// (consumed, folded in as `][ref]`); otherwise a *shortcut* link iff the opener's
-/// raw interior is bracket-free (roxygen synthesizes a reference only for a
-/// bracket-free shortcut label) — a bracket-bearing shortcut is not a link.
+/// returning `(close_text, after)` for a valid link or `None` for none, where
+/// `after` is the run index just past the closer and any folded-in `[ref]` label.
+/// An inline `](url)` composite closer is always a valid link. A lone `]` is a
+/// *reference* link when immediately followed by a `[ref]` label — neutral `[`/`]`
+/// bracket tokens on the lookahead, folded in as `][ref]` (or, for a `\`-bearing
+/// label, the legacy opaque `scan_md_link` leaf). Otherwise it is a *shortcut* link
+/// iff the opener's raw interior is bracket-free (roxygen synthesizes a reference
+/// only for a bracket-free shortcut label) — a bracket-bearing shortcut is not a link.
 fn classify_closer(
     tokens: &[Token],
     run: &[usize],
     o_pos: usize,
     closer_q: usize,
-) -> Option<(String, usize, bool)> {
+) -> Option<(String, usize)> {
     let close_tok = &tokens[run[closer_q]];
     if close_tok.text != "]" {
-        return Some((close_tok.text.clone(), closer_q + 1, false));
+        return Some((close_tok.text.clone(), closer_q + 1));
     }
-    match run.get(closer_q + 1).map(|&j| &tokens[j]) {
-        Some(label) if label.kind == TokKind::RoxygenMdLink => {
-            Some((format!("]{}", label.text), closer_q + 2, true))
+    // A reference label `[ref]` on the lookahead, as neutral bracket tokens.
+    if let Some((label, after)) = neutral_ref_label(tokens, run, closer_q + 1) {
+        return Some((format!("][{label}]"), after));
+    }
+    // Legacy: a `\`-bearing label still carved as one opaque `scan_md_link` leaf.
+    if let Some(&j) = run.get(closer_q + 1)
+        && tokens[j].kind == TokKind::RoxygenMdLink
+    {
+        return Some((format!("]{}", tokens[j].text), closer_q + 2));
+    }
+    interior_bracket_free(tokens, run, o_pos, closer_q).then(|| ("]".to_string(), closer_q + 1))
+}
+
+/// If `run[label_open]` is a neutral `[` bracket opening a bracket-free reference
+/// label, return `(label_text, after)` where `after` is the run index just past the
+/// label's closing `]`. The label runs to the next neutral `]` bracket (the opener
+/// carve guarantees a bracket-free interior, so the first `]` closes it). `None`
+/// when `run[label_open]` is not a neutral `[` opener or no closing `]` follows.
+fn neutral_ref_label(
+    tokens: &[Token],
+    run: &[usize],
+    label_open: usize,
+) -> Option<(String, usize)> {
+    let open = run.get(label_open).map(|&j| &tokens[j])?;
+    if open.kind != TokKind::RoxygenMdBracket || !open.text.starts_with('[') {
+        return None;
+    }
+    let mut label = String::new();
+    let mut k = label_open + 1;
+    while let Some(&j) = run.get(k) {
+        let tok = &tokens[j];
+        if tok.kind == TokKind::RoxygenMdBracket {
+            return (tok.text == "]").then_some((label, k + 1));
         }
-        _ => interior_bracket_free(tokens, run, o_pos, closer_q)
-            .then(|| ("]".to_string(), closer_q + 1, false)),
+        label.push_str(&tok.text);
+        k += 1;
     }
+    None
 }
 
 /// Whether the raw interior between an opener at `run[o_pos]` and a closer at

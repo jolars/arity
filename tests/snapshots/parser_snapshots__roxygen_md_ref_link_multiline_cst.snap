@@ -37,7 +37,10 @@ ROOT@0..265
         WHITESPACE@131..132 " "
         ROXYGEN_TEXT@132..169 "over the dropped topi ..."
         ROXYGEN_MD_DELIM@169..170 "]"
-        ROXYGEN_MD_LINK@170..173 "[b]"
+        ROXYGEN_MD_LINK@170..173
+          ROXYGEN_MD_DELIM@170..171 "["
+          ROXYGEN_TEXT@171..172 "b"
+          ROXYGEN_MD_DELIM@172..173 "]"
         NEWLINE@173..174 "\n"
         ROXYGEN_MARKER@174..176 "#'"
         WHITESPACE@176..177 " "
