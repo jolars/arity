@@ -631,8 +631,19 @@
       literal), so walking the already-carved children and md-resolving only TEXT runs keeps them; VERB args (the
       `\href` URL) and the `(GRP …)` finalize are the loop's existing arms. Curated `md_macro_arg_structural`;
       1 unit test (5 shapes). Projector 326→327; curated fixed-point 61→62/62; format baseline +1 (additive).
-      Backlog edge: emphasis spanning a nested Rd macro (`*a \strong{x} b*`) — run-split leaves the unmatched `*`
-      literal (whole-arg re-lex would resolve it but reintroduces the `\tab`/`\cr` regression).
+      **Emphasis spanning a nested macro in a structural arg LANDED (2026-06-30f):** roxygen2 resolves a
+      structural argument as **one** cmark run, so an emphasis/link span crosses a nested Rd macro
+      (`\item{x}{*a \strong{y} b*}`→`(\item (TEXT "x") (\emph (TEXT "a") (\strong (TEXT "y")) (TEXT "b")))`, and
+      even `\tabular{ll}{*a \tab b* \cr}`→`(GRP (\emph (TEXT "a") (\tab) (TEXT "b")) (\cr))` across a brace-less
+      separator). Replaced the run-split with **whole-argument** resolution: new parser `resolve_md_inline_pieces`
+      (+ `MdArgPiece`) lexes prose runs as markdown and emits each pre-carved nested macro (braced `\strong`,
+      brace-less `\tab`/`\cr`) as **one opaque `RoxygenRdMacro` token** — `build_rd_macro` re-expands a brace-less
+      `\tab` into a name-only node, so the delimiter-stack arena spans emphasis across the macros while `\tab`/`\cr`
+      stay macros (re-lexing the raw string couldn't — the fragment lexer leaves brace-less known macros literal).
+      Projector `serialize_md_structural_macro` walks the arg groups into pieces, resolves each as one run, GRP-wraps
+      a multi-atom result, keeps a verbatim arg (`\href` URL) as `(VERB …)`. Projector-only (CST/formatter
+      untouched). Curated `md_macro_arg_span`; 1 unit test (2 shapes). Projector 327→328; curated fixed-point
+      62→63/63; format baseline +1 (additive).
       **Slice B remainder (still backlog):** `scan_md_link`'s `[`-path is **not** fully retired — it still serves
       an **`!`-bearing display** (mid-prose image marker) and the **autolink `<url>`** is on `scan_md_autolink`.
       Broader: `\value`/`\section` *inline* md (rare); and a macro arg with cmark-active markdown inside a *fragile* arg ties into

@@ -95,15 +95,21 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   drop/keep decision instead of demoting to literal `[]`. `inline_plain_text` is unchanged (render-path
   equal-dest prechecks untouched). **Structural two-arg macro args landed 2026-06-30e:** `\item`/`\tabular`/
   `\href` (the non-fragile members of `is_two_arg_rd_macro`; `is_md_structural_macro`) md-process **each**
-  argument — `serialize_macro`'s `md_structural` flag routes prose runs through `resolve_macro_arg_inlines`
-  while the loop's existing arms keep nested `\tab`/`\cr` (already carved by the block-macro grouper, so
-  **run-splitting** not whole-arg re-lex — the fragment lexer leaves brace-less known macros literal),
-  verbatim args (the `\href` URL `VERB`), and the per-arg `(GRP …)` wrap. Projector-only; CST/formatter
-  untouched. **Still backlog:** `\value`/`\section` *inline* (rare); emphasis spanning a nested Rd macro
-  (`*a \strong{x} b*` — run-split leaves the unmatched `*` literal, roxygen resolves whole-arg; whole-arg
-  re-lex would fix this but breaks brace-less `\tab`/`\cr`); cmark-active markdown inside a *fragile* arg
-  (`\emph{\code{*x*}}`-style) ties into the `\`-escape backlog; `linkref_def_label` still drops a macro *def*
-  label (`[\emph{x}]: url`, vanishingly rare).
+  argument. **Whole-argument resolution since 2026-06-30f** (replaced the original run-splitting):
+  `serialize_md_structural_macro` walks each arg group's pre-carved children into `MdArgPiece`s (prose →
+  markdown-lexed text, **every** nested macro — braced `\strong`, brace-less `\tab`/`\cr` — → one opaque
+  `MdArgPiece::Macro`) and resolves the **whole arg as one cmark run** via the new parser
+  `resolve_md_inline_pieces`, so an emphasis/link span **crosses a nested macro** (`\item{x}{*a \strong{y} b*}`
+  → `(\item (TEXT "x") (\emph (TEXT "a") (\strong (TEXT "y")) (TEXT "b")))`, even `*a \tab b*` → `\emph` over a
+  brace-less `\tab`). The opaque macro is emitted as a synthetic `RoxygenRdMacro` token — `build_rd_macro`
+  re-expands a brace-less `\tab` into a name-only node, which re-lexing the raw arg string could **not** (the
+  fragment lexer leaves brace-less known macros literal: this is why run-splitting existed, and why pieces — not
+  whole-string re-lex — is the fix). Verbatim args (the `\href` URL) stay `(VERB …)`; a multi-atom arg `(GRP …)`-
+  wraps, a single-atom one (one `\emph` owning the whole arg) stays bare. Projector + a thin parser entry;
+  CST/formatter untouched. **Still backlog:** `\value`/`\section` *inline* (rare); cmark-active markdown inside a
+  *fragile* arg (`\emph{\code{*x*}}`-style — the nested-`\code` case already correct, but the deeper `\`-escape
+  forms tie into the markdown `\`-escape backlog); `linkref_def_label` still drops a macro *def* label
+  (`[\emph{x}]: url`, vanishingly rare).
 - **Block-macro openers, three forms.** Forms A/B are *line-start* (`is_block_macro_line`,
   section-level). Form A: a `RoxygenText` `\name{` unbalanced on its line
   (`\itemize`/`\describe`/`\name`) — necessarily a multi-line opener since the lexer extracts a
@@ -600,8 +606,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post structural-macro-md-args, 2026-06-30e): **327 matching (all allowlisted), 18
-divergent (backlog)** of 345 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post emphasis-across-nested-macro, 2026-06-30f): **328 matching (all allowlisted), 18
+divergent (backlog)** of 346 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -623,44 +629,46 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-30e) — markdown in structural two-arg Rd macro args
+## Latest session (2026-06-30f) — emphasis spanning a nested macro in a structural arg
 
-Closed ranked-#1's first half. Under `@md`, a **structural two-arg** macro (`\item`, `\tabular`, `\href` — the
-non-fragile members of `is_two_arg_rd_macro`; `\figure` is fragile, excluded) now markdown-processes **each** of
-its arguments, matching roxygen2's `escape_rd_for_md` (only the `escaped_for_md`/fragile set is protected).
-Oracle-probed (`block-to-sections`): `\item{*term*}{a \strong{bold} def}` → `(\item (\emph (TEXT "term")) (GRP
-(TEXT "a") (\strong (TEXT "bold")) (TEXT "def")))`; `\item{*term*}{*def*}` → both single-atom md unwrap (no GRP);
-`\item{x}{a \code{*y*} b}` → nested fragile `\code` stays literal; `\href{url}{*the* site}` → URL `VERB` untouched,
-display md + GRP; `\tabular{ll}{*a* \tab **b** \cr}` → cells md, `\tab`/`\cr` preserved.
+Closed the concrete half of ranked-#1: under `@md` an emphasis (or link) span now **crosses a nested Rd macro**
+inside a structural two-arg argument, the documented run-split backlog edge from 2026-06-30e. roxygen2 resolves a
+structural argument as **one** cmark run (the nested macro is opaque text to cmark, reconstituted afterward), so
+the span survives. Oracle-probed: `\item{x}{*a \strong{y} b*}` → `(\item (TEXT "x") (\emph (TEXT "a") (\strong
+(TEXT "y")) (TEXT "b")))` (the `\emph` owns the whole arg → single atom, no GRP); `\tabular{ll}{*a \tab b* \cr}` →
+`(GRP (\emph (TEXT "a") (\tab) (TEXT "b")) (\cr))` — emphasis spans even a **brace-less `\tab`**.
 
-**Root cause + fix (projector-only; CST/parser/formatter UNTOUCHED).** `serialize_macro`'s md path only handled
-single-arg latexlike macros (`is_md_inline_text_macro`, which **excludes** two-arg macros), so a structural
-macro fell through to the general loop where prose runs flushed as literal `(TEXT …)` — `*term*` stayed literal.
-Fix: a new `is_md_structural_macro(name)` (`= is_known && !is_fragile_for_md && is_two_arg_rd_macro`) sets a
-`md_structural` flag, and the loop's `flush` closure routes prose runs through `serialize_inlines(
-resolve_macro_arg_inlines(run))` (the real arena) instead of `text_atom`. **Run-splitting, not whole-arg re-lex:**
-the block-macro grouper already carves brace-less `\tab`/`\cr` as macro nodes (the general loop recurses them with
-`md=true`), but the *fragment* lexer leaves brace-less known macros literal — so re-lexing the whole arg as a
-string would render `\tab`/`\cr` as literal `(TEXT "\\tab")`. Walking the already-carved children and md-resolving
-only the TEXT runs keeps them. The loop's existing VERB arm (the `\href` URL) and `(GRP …)` finalize (structural
-multi-atom) are untouched.
+**Root cause + fix (projector + a thin parser entry; CST/formatter UNTOUCHED).** 2026-06-30e's `md_structural`
+path resolved each prose run *between* the carved macros **separately** (`*a ` and ` b*` flushed apart), leaving
+the unmatched `*` literal. The clean fix is **whole-argument** resolution from the pre-carved children: new
+`serialize_md_structural_macro` (replacing the `md_structural` flag in the general loop) walks each arg group into
+`MdArgPiece`s — prose → `Text` (markdown-lexed), **every** nested macro (braced *and* brace-less) → one opaque
+`Macro` carrying its raw source — and the new parser `resolve_md_inline_pieces` feeds them to the real
+delimiter-stack arena. **Why pieces, not whole-string re-lex:** the fragment lexer leaves brace-less known macros
+(`\tab`/`\cr`) literal, so re-lexing the raw arg would render them `(TEXT "\\tab")`. Emitting each carved macro as
+a synthetic `RoxygenRdMacro` **token** lets `build_rd_macro` re-expand a brace-less `\tab` into a name-only node
+(→ `(\tab)`) while the arena treats it as an opaque atom that emphasis spans. Verbatim args (the `\href` URL) stay
+`(VERB …)`; multi-atom → `(GRP …)`, single-atom (one `\emph` owning the arg) → bare. Refactored the shared
+para-collect into `para_to_inlines` and the events/build tail into `resolve_md_inline_tokens`.
 
-**Result:** projector **326→327 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
-`cargo test` green (545 lib + integration), clippy + fmt clean; curated fixed-point **61→62/62**, 0 blocked;
+**Result:** projector **327→328 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
+`cargo test` green (546 lib + integration), clippy + fmt clean; curated fixed-point **62→63/63**, 0 blocked;
 format baseline re-blessed (+1, additive-only — the new corpus case's key; no existing output changed). Curated
-`md_macro_arg_structural`; 1 projector unit test (5 shapes).
+`md_macro_arg_span`; 1 projector unit test (2 shapes).
 
-**Known edge (backlog).** Emphasis spanning a nested Rd macro (`*a \strong{x} b*`) — run-splitting flushes
-`*a ` and ` b*` separately, leaving the unmatched `*` literal, whereas roxygen resolves the whole arg as one cmark
-run (the macro escaped to literal text, so the span survives). Whole-arg re-lex would fix this but reintroduces the
-`\tab`/`\cr` literal-prose regression; deferred (rare). `\value`/`\section` *inline* md still backlog.
-
-**Next (ranked):** **(1)** the markdown `\`-escape diagnostic-parity work (cmark-active markdown inside a
-*fragile* arg, `\emph{\code{*x*}}`-style) and the emphasis-across-nested-macro edge above. **(2)** Slice B leftover
-hardenings — poisoning's `relink_demoted_inline_links` into list items, cross-list duplicate-label document order,
-multi-line def *titles*. **(3)** the 18 projector divergences stay roxygen2-eval/multi-block, **out of scope**.
+**Next (ranked):** **(1)** the markdown `\`-escape **diagnostic-parity** work (the deeper cmark-active markdown
+inside a *fragile* arg — the simple `\emph{\code{*x*}}` nesting is already correct; a separate oracle surface, do
+NOT widen the lexer heuristically). **(2)** Slice B leftover hardenings — poisoning's `relink_demoted_inline_links`
+into list items, cross-list duplicate-label document order, multi-line def *titles*. **(3)** the 18 projector
+divergences stay roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-30e (markdown in structural two-arg Rd macro args):** under `@md` a structural two-arg macro
+  (`\item`/`\tabular`/`\href`) md-processes **each** argument (`\item{*term*}{a \strong{bold} def}` →
+  `(\item (\emph …) (GRP …))`). Projector-only `md_structural` flag in `serialize_macro` routing prose runs through
+  the real arena; run-split (per-run) — the edge it left (emphasis across a nested macro) is closed this session.
+  Curated `md_macro_arg_structural`; 326→327; fixed-point 61→62/62.
 
 - **2026-06-30d (pure-macro link displays drop/keep, not literal `[]`):** under `@md` a shortcut link whose
   display is a **pure macro with no surrounding text** drops/keeps correctly instead of collapsing to literal `[]`.

@@ -1,0 +1,3 @@
+(\description (TEXT "Emphasis spanning a nested macro in a structural Rd argument"))
+(\details (TEXT "roxygen2 markdown-processes a structural argument as one cmark run, so an emphasis span crosses a nested Rd macro.") (\describe (\item (TEXT "x") (\emph (TEXT "a") (\strong (TEXT "y")) (TEXT "b")))) (\tabular (TEXT "ll") (GRP (\emph (TEXT "a") (\tab) (TEXT "b")) (\cr))))
+(\title (TEXT "Emphasis spanning a nested macro in a structural Rd argument"))

@@ -41,7 +41,8 @@ use rowan::NodeOrToken;
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
 use crate::parser::parse;
 use crate::parser::roxygen::{
-    is_fragile_for_md, is_known_rd_macro, is_two_arg_rd_macro, resolve_md_inline,
+    MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_two_arg_rd_macro, resolve_md_inline,
+    resolve_md_inline_pieces,
 };
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -953,11 +954,12 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
         };
     }
     // A structural two-arg macro (`\item`, `\tabular`, `\href`) under `@md` has
-    // each non-verbatim argument markdown-processed. The general loop below already
-    // carves nested macros (`\tab`/`\cr`/`\strong`) and verbatim args; the only
-    // difference is that a prose run is resolved as a markdown inline run rather
-    // than a single literal `(TEXT …)`.
-    let md_structural = md && is_md_structural_macro(name);
+    // each non-verbatim argument markdown-processed as **one** cmark run (so an
+    // emphasis/link span crosses a nested macro). That needs a whole-argument
+    // resolution from the pre-carved children, handled by a dedicated walk.
+    if md && is_md_structural_macro(name) {
+        return serialize_md_structural_macro(node, &head_full);
+    }
     let mut head = String::new();
     let mut structural = false;
     let mut out_atoms: Vec<String> = Vec::new();
@@ -970,8 +972,6 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     let flush = |run: &mut String, group: &mut Vec<String>, code: bool| {
         if code {
             group.extend(rcode_atoms(run));
-        } else if md_structural {
-            group.extend(serialize_inlines(&resolve_macro_arg_inlines(run), true));
         } else if let Some(atom) = text_atom(run) {
             group.push(atom);
         }
@@ -1050,6 +1050,90 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     }
 }
 
+/// Project a **structural** two-arg macro (`\item`/`\tabular`/`\href`) under `@md`,
+/// markdown-processing each non-verbatim argument as a single cmark run.
+///
+/// roxygen2 resolves a structural argument as **one** markdown run, so an emphasis
+/// or link span crosses a nested Rd macro (`*a \strong{x} b*` →
+/// `\emph{a \strong{x} b}`, and even `*a \tab b*` →
+/// `\emph{a \tab b}` across a brace-less separator). The general `serialize_macro`
+/// loop resolves each prose run between the carved macros *separately*, which
+/// leaves the unmatched `*` delimiters literal. Here each argument group's
+/// already-carved children are collected into [`MdArgPiece`]s — prose runs as
+/// markdown-lexed text, every nested macro (braced `\strong`, brace-less
+/// `\tab`/`\cr`) as one opaque token — and resolved together by
+/// [`resolve_md_inline_pieces`], so the delimiter-stack arena spans the macros.
+///
+/// A *verbatim* argument (the `\href` URL) keeps its `(VERB …)` projection
+/// untouched. A multi-atom argument `(GRP …)`-wraps (parse_Rd models it as a list);
+/// a single-atom argument (e.g. one `\emph` owning the whole argument) stays bare.
+fn serialize_md_structural_macro(node: &SyntaxNode, head_full: &str) -> String {
+    let mut out_atoms: Vec<String> = Vec::new();
+    let mut pieces: Vec<MdArgPiece> = Vec::new();
+    let mut run = String::new();
+    // A verbatim argument projects as a single `(VERB …)`, never markdown.
+    let mut verb: Option<String> = None;
+
+    // Flush the pending prose run into a markdown-lexed text piece.
+    let flush = |run: &mut String, pieces: &mut Vec<MdArgPiece>| {
+        if !run.is_empty() {
+            pieces.push(MdArgPiece::Text(std::mem::take(run)));
+        }
+    };
+
+    for el in node.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_RD_MACRO_NAME => {}
+            SyntaxKind::ROXYGEN_RD_MACRO_VERB => {
+                let raw = el
+                    .as_token()
+                    .map(|t| t.text().to_string())
+                    .unwrap_or_default();
+                verb = Some(format!("(VERB {})", encode_text(&raw)));
+            }
+            // A nested macro is opaque to the markdown run: emit its raw source as
+            // one piece so emphasis/links span across it.
+            SyntaxKind::ROXYGEN_RD_MACRO => {
+                flush(&mut run, &mut pieces);
+                if let Some(n) = el.as_node() {
+                    pieces.push(MdArgPiece::Macro(n.text().to_string()));
+                }
+            }
+            // The closing `}` of an argument group: resolve its pieces as one
+            // markdown run (or emit the verbatim atom), GRP-wrapping a multi-atom
+            // result. The opening `{` carries no content.
+            SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
+                if el.as_token().is_some_and(|t| t.text() == "}") {
+                    flush(&mut run, &mut pieces);
+                    if let Some(v) = verb.take() {
+                        out_atoms.push(v);
+                    } else {
+                        let para = resolve_md_inline_pieces(&pieces);
+                        let atoms = serialize_inlines(&para_to_inlines(&para), true);
+                        match atoms.len() {
+                            0 => {}
+                            1 => out_atoms.push(atoms.into_iter().next().unwrap()),
+                            _ => out_atoms.push(format!("(GRP {})", atoms.join(" "))),
+                        }
+                    }
+                    pieces.clear();
+                }
+            }
+            SyntaxKind::ROXYGEN_RD_MACRO_OPT | SyntaxKind::ROXYGEN_MARKER => {}
+            _ => {
+                if let Some(t) = el.as_token() {
+                    run.push_str(t.text());
+                }
+            }
+        }
+    }
+    if out_atoms.is_empty() {
+        format!("({head_full})")
+    } else {
+        format!("({head_full} {})", out_atoms.join(" "))
+    }
+}
+
 /// Whether macro `name` (without the leading `\`) has its single argument
 /// **markdown-processed** when it appears inline under `@md`. roxygen2 protects
 /// only its `escaped_for_md` set ([`is_fragile_for_md`]) from cmark, so *every*
@@ -1118,7 +1202,13 @@ fn macro_single_arg_content(node: &SyntaxNode) -> Option<String> {
 /// ([`resolve_md_inline`]) and the ordinary inline collector, so emphasis, links,
 /// code spans, and nested macros resolve exactly as in `@md` prose.
 fn resolve_macro_arg_inlines(content: &str) -> Vec<Inline> {
-    let para = resolve_md_inline(content);
+    para_to_inlines(&resolve_md_inline(content))
+}
+
+/// Collect a resolved `ROXYGEN_PARAGRAPH` node's children into projected inline
+/// elements: the threaded `#'` markers drop and a soft `NEWLINE` becomes a space
+/// (norm_ws-equivalent), everything else projects via [`push_inline`].
+fn para_to_inlines(para: &SyntaxNode) -> Vec<Inline> {
     let mut out = Vec::new();
     for el in para.children_with_tokens() {
         match el.kind() {
@@ -3810,6 +3900,40 @@ mod tests {
         assert!(
             project_to_rd(tab).contains(
                 "(\\tabular (TEXT \"ll\") (GRP (\\emph (TEXT \"a\")) (\\tab) (\\strong (TEXT \"b\")) (\\cr)))"
+            ),
+            "{}",
+            project_to_rd(tab)
+        );
+    }
+
+    #[test]
+    fn md_structural_macro_arg_emphasis_spans_nested_macro() {
+        // roxygen2 resolves a structural argument as **one** cmark run, so an
+        // emphasis span crosses a nested Rd macro (the macro is opaque text to
+        // cmark, reconstituted afterward). arity must do the same rather than
+        // splitting the run at the macro and leaving the `*` delimiters literal.
+        //
+        // `\item{x}{*a \strong{y} b*}` → the `\emph` wraps the whole second
+        // argument *including* the `\strong`, so the argument is a single atom
+        // (no `(GRP …)`).
+        let item = "#' @md\n#' @title T\n#' @details\n#' \\describe{\n\
+                    #'   \\item{x}{*a \\strong{y} b*}\n#' }\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(item).contains(
+                "(\\item (TEXT \"x\") (\\emph (TEXT \"a\") (\\strong (TEXT \"y\")) (TEXT \"b\")))"
+            ),
+            "{}",
+            project_to_rd(item)
+        );
+
+        // `\tabular`: an emphasis span even crosses a brace-less `\tab` separator
+        // (cmark treats `\tab` as literal text). The `\emph` owns `a \tab b`, so
+        // the body is `(GRP (\emph a \tab b) \cr)`.
+        let tab = "#' @md\n#' @title T\n#' @details\n#' \\tabular{ll}{\n\
+                   #'   *a \\tab b* \\cr\n#' }\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(tab).contains(
+                "(\\tabular (TEXT \"ll\") (GRP (\\emph (TEXT \"a\") (\\tab) (TEXT \"b\")) (\\cr)))"
             ),
             "{}",
             project_to_rd(tab)

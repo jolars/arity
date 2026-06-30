@@ -301,11 +301,64 @@ pub(crate) fn is_fragile_for_md(name: &str) -> bool {
 /// fragile macro stays an opaque `ROXYGEN_RD_MACRO` token here; the projector keeps
 /// its argument literal by recursing with the same fragility check.
 pub(crate) fn resolve_md_inline(content: &str) -> crate::syntax::SyntaxNode {
+    let mut tokens = Vec::new();
+    lex::lex_roxygen_prose_fragment(&mut tokens, content, true);
+    resolve_md_inline_tokens(tokens)
+}
+
+/// One piece of a **structural** Rd-macro argument fed to
+/// [`resolve_md_inline_pieces`]: either raw prose `Text` (markdown-lexed) or a
+/// pre-parsed nested `Macro` (its raw `\name{…}`/`\name` source, kept opaque).
+pub(crate) enum MdArgPiece {
+    /// Raw prose text, lexed as a markdown inline fragment.
+    Text(String),
+    /// A nested Rd macro's raw source (`\strong{y}`, `\tab`, `\cr`, …), emitted as
+    /// one opaque `RoxygenRdMacro` token so emphasis/links span across it.
+    Macro(String),
+}
+
+/// Resolve a **structural** Rd-macro argument (`\item`/`\tabular`/`\href` under
+/// `@md`) as a single markdown inline run from its already-carved `pieces`,
+/// returning the resolved `ROXYGEN_PARAGRAPH` node (same shape as
+/// [`resolve_md_inline`]).
+///
+/// roxygen2 markdown-processes a structural argument as **one** cmark run: a nested
+/// Rd macro is opaque text to cmark (reconstituted afterward), so an emphasis or
+/// link span crosses it. Re-lexing the raw argument string cannot reproduce this
+/// faithfully — the prose fragment lexer leaves a *brace-less* known macro
+/// (`\tab`/`\cr`, the table separators) literal. Instead each pre-parsed macro
+/// child (carved by the block-macro grouper) is emitted as one opaque
+/// `RoxygenRdMacro` token, which [`build_rd_macro`](crate::parser::tree_builder)
+/// re-expands into a faithful node (a brace-less `\tab` → a name-only `\tab` node).
+/// The prose pieces between them lex as ordinary markdown fragments, so the
+/// delimiter-stack arena spans emphasis across the macros exactly as cmark does.
+pub(crate) fn resolve_md_inline_pieces(pieces: &[MdArgPiece]) -> crate::syntax::SyntaxNode {
+    use crate::parser::lexer::{TokKind, Token};
+
+    let mut tokens = Vec::new();
+    for piece in pieces {
+        match piece {
+            MdArgPiece::Text(t) => lex::lex_roxygen_prose_fragment(&mut tokens, t, true),
+            // Offsets are unused by the inline pass and the tree builder (which key
+            // off `kind`/`text` only), so a synthetic macro token needs no real span.
+            MdArgPiece::Macro(m) => tokens.push(Token {
+                kind: TokKind::RoxygenRdMacro,
+                text: m.clone(),
+                start: 0,
+                end: 0,
+            }),
+        }
+    }
+    resolve_md_inline_tokens(tokens)
+}
+
+/// Wrap `tokens` in a paragraph, run the emphasis/inline pass, and return the
+/// resolved `ROXYGEN_PARAGRAPH` node. Shared by [`resolve_md_inline`] and
+/// [`resolve_md_inline_pieces`].
+fn resolve_md_inline_tokens(tokens: Vec<crate::parser::lexer::Token>) -> crate::syntax::SyntaxNode {
     use crate::parser::events::Event;
     use crate::syntax::SyntaxKind;
 
-    let mut tokens = Vec::new();
-    lex::lex_roxygen_prose_fragment(&mut tokens, content, true);
     let mut events = Vec::with_capacity(tokens.len() + 2);
     events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
     events.extend((0..tokens.len()).map(Event::Tok));
