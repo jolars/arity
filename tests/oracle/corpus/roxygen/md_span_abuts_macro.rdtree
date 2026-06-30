@@ -1,0 +1,3 @@
+(\description (TEXT "Markdown emphasis spans an inline Rd macro"))
+(\details (TEXT "An opener abutting a macro spans it: a") (\emph (\code (RCODE "x")) (TEXT "y")) (TEXT ". A span also crosses a macro over a soft break:") (\emph (TEXT "a") (\code (RCODE "b")) (TEXT "c")) (TEXT ". A closer abutting a macro stays literal: a*") (\code (RCODE "z")) (TEXT "*b."))
+(\title (TEXT "Markdown emphasis spans an inline Rd macro"))

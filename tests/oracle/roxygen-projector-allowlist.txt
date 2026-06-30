@@ -170,6 +170,7 @@ md_linkref_poisoning_section
 md_macro_arg_emphasis
 md_macro_arg_span
 md_macro_arg_structural
+md_span_abuts_macro
 md_nested_link
 md_nested_link_chain
 md_nested_list

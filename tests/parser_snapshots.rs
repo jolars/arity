@@ -199,6 +199,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_tabular",
         "roxygen_href",
         "roxygen_md_inline",
+        "roxygen_md_span_abuts_macro",
         "roxygen_md_emphasis",
         "roxygen_md_emphasis_multiline",
         "roxygen_md_emphasis_nbsp",

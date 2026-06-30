@@ -644,6 +644,24 @@
       a multi-atom result, keeps a verbatim arg (`\href` URL) as `(VERB …)`. Projector-only (CST/formatter
       untouched). Curated `md_macro_arg_span`; 1 unit test (2 shapes). Projector 327→328; curated fixed-point
       62→63/63; format baseline +1 (additive).
+      **Emphasis span crosses an *inline* Rd macro LANDED (2026-06-30g):** the inline (top-level prose) analog.
+      A single-line inline macro is a `RoxygenRdMacro` *token* that already joins the emphasis run, so a span
+      crosses it — the only divergence was a delimiter **directly abutting** the macro, where its raw `\`/`}`
+      punctuation edge wrongly suppressed flanking. roxygen2 protects a fragile tag as an **alphanumeric
+      placeholder** suffixed `-<i>-` before cmark, so the macro flanks like a letter (leading) / hyphen
+      (trailing). Fix = one branch in `edge_char` (`inline.rs`): a `RoxygenRdMacro` token presents `'x'` leading,
+      `'-'` trailing. The asymmetry is load-bearing and reproduces the oracle exactly — `a*\code{x} y*`→
+      `(TEXT "a") (\emph (\code (RCODE "x")) (TEXT "y"))` (opener opens), `a*\code{z}*b` keeps both `*` literal
+      (the `-` blocks the closer). Projector/formatter untouched (consume the now-correct CST; reflow of a
+      cross-line emph containing a macro is idempotent). Curated `md_span_abuts_macro` + parser fixture
+      `roxygen_md_span_abuts_macro`; 1 projector unit test. Projector 328→329; curated fixed-point 63→64/64;
+      format baseline +1 (additive).
+      **Deferred (recorded):** **multi-line** inline macros (`Start..Finish` events) still bound the run — but
+      they are block/list macros (`\itemize`/`\describe`), emphasis around them is non-idiomatic, AND cross-line
+      spans are independently blocked by a **separate grouping divergence**: a tag with a *same-line* value
+      (`@details *a x` / `c*`) splits continuation lines into separate `ROXYGEN_PARAGRAPH` siblings (tag-alone-
+      then-prose already spans correctly, macro included). Fix the grouping first; then multi-line Step B
+      becomes demonstrable.
       **Slice B remainder (still backlog):** `scan_md_link`'s `[`-path is **not** fully retired — it still serves
       an **`!`-bearing display** (mid-prose image marker) and the **autolink `<url>`** is on `scan_md_autolink`.
       Broader: `\value`/`\section` *inline* md (rare); and a macro arg with cmark-active markdown inside a *fragile* arg ties into

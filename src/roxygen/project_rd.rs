@@ -3941,6 +3941,32 @@ mod tests {
     }
 
     #[test]
+    fn md_emphasis_span_abuts_an_inline_macro() {
+        // roxygen2 protects a fragile Rd tag as an alphanumeric placeholder before
+        // cmark (`escape_rd_for_md`), so the macro flanks like a letter at its
+        // leading edge — a `*` opener abutting the macro can open and the span
+        // crosses it. `a*\code{x} y*` → `a` then `\emph{\code{x} y}`.
+        let opens = "#' @md\n#' @title T\n#' @details a*\\code{x} y*\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(opens)
+                .contains("(\\details (TEXT \"a\") (\\emph (\\code (RCODE \"x\")) (TEXT \"y\")))"),
+            "{}",
+            project_to_rd(opens)
+        );
+
+        // The placeholder ends in `-` (the `-<i>-` suffix), so a `*` closer abutting
+        // the macro's trailing edge stays blocked — `a*\code{z}*b` keeps both `*`
+        // literal (no emphasis), exactly as roxygen2 leaves it.
+        let blocked = "#' @md\n#' @title T\n#' @details a*\\code{z}*b\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(blocked)
+                .contains("(\\details (TEXT \"a*\") (\\code (RCODE \"z\")) (TEXT \"*b\"))"),
+            "{}",
+            project_to_rd(blocked)
+        );
+    }
+
+    #[test]
     fn md_macro_arg_resolution_is_off_without_md() {
         // Without `@md`, `*x*` is literal Rd prose inside the macro (no emphasis).
         let src = "#' @title T\n#' @details A \\emph{*x*} b.\n#' @name x\nNULL\n";

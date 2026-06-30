@@ -740,9 +740,24 @@ fn flanking(ch: u8, before: Option<char>, after: Option<char>) -> (bool, bool) {
 /// inter-line continuation is a soft break, which CommonMark treats as whitespace
 /// (newline/whitespace tokens already yield a whitespace char). `None` (an empty
 /// token) falls back to the start/end boundary, also whitespace.
+///
+/// An inline Rd macro (`\code{…}`, `\link{…}`, `\emph{…}`, …) is **opaque** to the
+/// markdown pass exactly as it is to roxygen2's cmark: roxygen2 replaces a fragile
+/// tag with an alphanumeric placeholder (`make_random_string`) suffixed `-<i>-`
+/// (`str_sub_same`) *before* parsing, and a non-fragile tag is plain text whose
+/// markdown the arg-recursion handles. So for flanking a macro must present that
+/// placeholder's shape, **not** its own `\`/`}` punctuation bytes: an alphanumeric
+/// at the **leading** edge (so a `*` opener abutting the macro can open —
+/// `a*\code{x} y*` → `\emph{\code{x} y}`) and the trailing `-` at the **trailing**
+/// edge (so a `*` closer abutting the macro stays blocked, as the placeholder's `-`
+/// blocks it — `a*\code{x}*b` keeps both `*` literal). Without this the macro's raw
+/// `\` (leading) / `}` (trailing) punctuation would wrongly suppress a span.
 fn edge_char(tok: &Token, leading: bool) -> Option<char> {
     if tok.kind == TokKind::RoxygenMarker {
         return Some(' ');
+    }
+    if tok.kind == TokKind::RoxygenRdMacro {
+        return Some(if leading { 'x' } else { '-' });
     }
     if leading {
         tok.text.chars().next()

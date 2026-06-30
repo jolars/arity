@@ -1,0 +1,74 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..217
+  ROXYGEN_BLOCK@0..211
+    ROXYGEN_SECTION@0..43
+      ROXYGEN_PARAGRAPH@0..40
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..39 "Emphasis abutting an  ..."
+        NEWLINE@39..40 "\n"
+      ROXYGEN_MARKER@40..42 "#'"
+      NEWLINE@42..43 "\n"
+    ROXYGEN_SECTION@43..168
+      ROXYGEN_MARKER@43..45 "#'"
+      WHITESPACE@45..46 " "
+      ROXYGEN_TAG@46..54
+        ROXYGEN_AT@46..47 "@"
+        ROXYGEN_TAG_NAME@47..54 "details"
+      NEWLINE@54..55 "\n"
+      ROXYGEN_PARAGRAPH@55..168
+        ROXYGEN_MARKER@55..57 "#'"
+        WHITESPACE@57..58 " "
+        ROXYGEN_TEXT@58..96 "An opener abutting a  ..."
+        ROXYGEN_MD_EMPH@96..108
+          ROXYGEN_MD_DELIM@96..97 "*"
+          ROXYGEN_RD_MACRO@97..105
+            ROXYGEN_RD_MACRO_NAME@97..102 "\\code"
+            ROXYGEN_RD_MACRO_DELIM@102..103 "{"
+            ROXYGEN_TEXT@103..104 "x"
+            ROXYGEN_RD_MACRO_DELIM@104..105 "}"
+          ROXYGEN_TEXT@105..107 " y"
+          ROXYGEN_MD_DELIM@107..108 "*"
+        ROXYGEN_TEXT@108..109 "."
+        NEWLINE@109..110 "\n"
+        ROXYGEN_MARKER@110..112 "#'"
+        WHITESPACE@112..113 " "
+        ROXYGEN_TEXT@113..155 "A closer abutting a m ..."
+        ROXYGEN_MD_DELIM@155..156 "*"
+        ROXYGEN_RD_MACRO@156..164
+          ROXYGEN_RD_MACRO_NAME@156..161 "\\code"
+          ROXYGEN_RD_MACRO_DELIM@161..162 "{"
+          ROXYGEN_TEXT@162..163 "z"
+          ROXYGEN_RD_MACRO_DELIM@163..164 "}"
+        ROXYGEN_MD_DELIM@164..165 "*"
+        ROXYGEN_TEXT@165..167 "b."
+        NEWLINE@167..168 "\n"
+    ROXYGEN_SECTION@168..175
+      ROXYGEN_MARKER@168..170 "#'"
+      WHITESPACE@170..171 " "
+      ROXYGEN_TAG@171..174
+        ROXYGEN_AT@171..172 "@"
+        ROXYGEN_TAG_NAME@172..174 "md"
+      NEWLINE@174..175 "\n"
+    ROXYGEN_SECTION@175..211
+      ROXYGEN_MARKER@175..177 "#'"
+      WHITESPACE@177..178 " "
+      ROXYGEN_TAG@178..211
+        ROXYGEN_AT@178..179 "@"
+        ROXYGEN_TAG_NAME@179..183 "name"
+        WHITESPACE@183..184 " "
+        ROXYGEN_TEXT@184..191 "roxygen"
+        ROXYGEN_MD_DELIM@191..192 "_"
+        ROXYGEN_TEXT@192..194 "md"
+        ROXYGEN_MD_DELIM@194..195 "_"
+        ROXYGEN_TEXT@195..199 "span"
+        ROXYGEN_MD_DELIM@199..200 "_"
+        ROXYGEN_TEXT@200..205 "abuts"
+        ROXYGEN_MD_DELIM@205..206 "_"
+        ROXYGEN_TEXT@206..211 "macro"
+  NEWLINE@211..212 "\n"
+  IDENT@212..216 "NULL"
+  NEWLINE@216..217 "\n"

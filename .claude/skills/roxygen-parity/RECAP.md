@@ -141,11 +141,25 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   carves `*`/`_` as **neutral** `RoxygenMdDelim` leaves; the pass emits `ROXYGEN_MD_EMPH`/`STRONG`
   **nodes** with `ROXYGEN_MD_DELIM` opener/closer/leftover leaves. **Run = every paragraph-body
   `Event::Tok`** (content + inter-line trivia), bounded by a structural `Start`/`Finish`/`Leaf`
-  (paragraph/section/tag boundary, or an inline `ROXYGEN_RD_MACRO` which binds tighter) — so a span
-  **crosses a soft line break**. The projector skips only the **first and last** `MD_DELIM` child
-  (opener/closer); interior `MD_DELIM` is literal text. **Formatter:** `collect_logical_elements`
-  descends into a cross-line EMPH/STRONG node (`is_cross_line_emph`) so reflow rejoins it; a
+  (paragraph/section/tag boundary) — so a span **crosses a soft line break**. A **single-line inline
+  macro is a `RoxygenRdMacro` *token***, so it already joins the run as an opaque atom and a span
+  crosses it; only a **multi-line** macro (`Start..Finish` events, `emit_block_macro_inline`) bounds
+  the run (deferred backlog, contrived: multi-line inline macros are block/list macros). The
+  projector skips only the **first and last** `MD_DELIM` child (opener/closer); interior `MD_DELIM`
+  is literal text. **Formatter:** `collect_logical_elements` descends into a cross-line EMPH/STRONG
+  node (`is_cross_line_emph`) so reflow rejoins it (a contained macro is one atomic reflow unit); a
   single-line span stays atomic. Idempotent.
+- **An inline Rd macro flanks like roxygen2's placeholder, NOT its own punctuation** (`edge_char`).
+  roxygen2 swaps a fragile tag for an **alphanumeric** placeholder suffixed `-<i>-` before cmark
+  (`escape_rd_for_md`), so for flanking a `RoxygenRdMacro` token presents `'x'` (alnum) at its
+  **leading** edge and `'-'` (hyphen) at its **trailing** edge — NOT its raw `\`/`}`. Asymmetry is
+  load-bearing: an opener abutting a macro opens (`a*\code{x} y*`→`\emph{\code{x} y}`); a closer
+  abutting one stays blocked by the `-` (`a*\code{z}*b` keeps both `*` literal). A delimiter not
+  adjacent to a macro is unaffected (the macro is interior).
+- **Cross-line emphasis works only when the tag value starts on the *next* `#'` line** (`@details`
+  alone, prose below). A tag with a *same-line* value (`@details *a x`) splits continuation lines
+  into separate `ROXYGEN_PARAGRAPH` siblings, so a span can't cross — a **separate grouping**
+  divergence (independent of macros), still backlog.
 - **Links: under `@md` *every* bracket-free `[…]` not followed by `[`/`{` is a link**
   (`get_md_linkrefs`; `is_shortcut_content` mirrors it). `resolve_md_link` ports `parse_link`
   (inline→`\href`, reference/shortcut→`\link`/`\linkS4class`, `\code`-wrapped per code-span/`()`).
@@ -321,7 +335,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 328 matching (all allowlisted), 18 divergent** of 346 pinned.
+corpus (132 `cm-NNN` cases). **Current: 329 matching (all allowlisted), 18 divergent** of 347 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -330,45 +344,54 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (346 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (347 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 63/63 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 64/64 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-06-30f) — emphasis spanning a nested macro in a structural arg
+## Latest session (2026-06-30g) — emphasis span crosses an inline Rd macro (faithful flanking)
 
-Closed the concrete half of ranked-#1: under `@md` an emphasis (or link) span now **crosses a nested Rd
-macro** inside a structural two-arg argument, the documented run-split backlog edge from 2026-06-30e.
-roxygen2 resolves a structural argument as **one** cmark run (the nested macro is opaque text to cmark,
-reconstituted afterward), so the span survives. Oracle-probed: `\item{x}{*a \strong{y} b*}` →
-`(\item (TEXT "x") (\emph (TEXT "a") (\strong (TEXT "y")) (TEXT "b")))`; `\tabular{ll}{*a \tab b* \cr}`
-→ `(GRP (\emph (TEXT "a") (\tab) (TEXT "b")) (\cr))` — emphasis spans even a brace-less `\tab`.
+Targeted ranked-#1 (the `\`-escape / "cmark-active markdown around a fragile arg" cluster). **Step 0
+empirical characterization reframed the work:** the literal `\`-escape *drop* cases (`*\**`) were already
+done (2026-06-29d), and **all realistic single-line macro-spanning cases already matched** (a single-line
+inline macro is a `RoxygenRdMacro` *token* that joins the run). The lone genuine divergence: a markdown
+delimiter **directly abutting** an inline macro, where the macro's raw `\`/`}` punctuation edge wrongly
+suppressed flanking. roxygen2 protects a fragile tag as an **alphanumeric placeholder** suffixed `-<i>-`
+before cmark, so the macro flanks like a letter (leading) / hyphen (trailing). Oracle-probed:
+`a*\code{x} y*` → `(TEXT "a") (\emph (\code (RCODE "x")) (TEXT "y"))`; `a*\code{z}*b` keeps both `*`
+literal (the `-` blocks the closer).
 
-**Fix (projector + a thin parser entry; CST/formatter UNTOUCHED).** New `serialize_md_structural_macro`
-(replacing the per-run `md_structural` flag) walks each arg group into `MdArgPiece`s — prose → `Text`
-(markdown-lexed), every nested macro (braced + brace-less) → one opaque `Macro` carrying raw source —
-and the new parser `resolve_md_inline_pieces` feeds them to the real delimiter-stack arena. Pieces, not
-whole-string re-lex: emitting each carved macro as a synthetic `RoxygenRdMacro` token lets
-`build_rd_macro` re-expand a brace-less `\tab` to a name-only node while the arena treats it as an opaque
-atom. Verbatim args stay `(VERB …)`; multi-atom → `(GRP …)`, single-atom → bare. Refactored shared
-`para_to_inlines` + `resolve_md_inline_tokens`.
+**Fix (one branch in `edge_char`, `inline.rs`; faithful placeholder model).** A `RoxygenRdMacro` token now
+presents `'x'` at its leading edge and `'-'` at its trailing edge for flanking (was its raw `\`/`}`). The
+asymmetry is load-bearing and exactly reproduces the oracle (opener abutting a macro opens; closer abutting
+stays blocked). Single-line cases already worked unchanged (the macro is interior, not adjacent to a
+delimiter). Projector + formatter UNTOUCHED beyond consuming the now-correct CST.
 
-**Result:** projector **327→328 matching, 18 divergent** (unchanged). `cargo test` green, clippy + fmt
-clean; curated fixed-point **62→63/63**, 0 blocked; format baseline re-blessed (+1, additive-only).
-Curated `md_macro_arg_span`; 1 projector unit test.
+**Empirical scope cut (recorded, not silent):** **Step B** (multi-line `Start..Finish` macro as an opaque
+arena atom) was **deferred** — multi-line inline macros are block/list macros (`\itemize`/`\describe`),
+emphasis around them is non-idiomatic, AND cross-line spans are independently blocked by a **separate
+grouping divergence** (a tag with a *same-line* value splits continuation lines into separate paragraphs;
+tag-alone-then-prose already spans correctly, macro included). Neither is demonstrable in isolation.
 
-**Next (ranked):** **(1)** the markdown `\`-escape **diagnostic-parity** work (cmark-active markdown
-inside a *fragile* arg — a separate oracle surface, do NOT widen the lexer heuristically). **(2)** Slice
-B leftover hardenings — poisoning's `relink_demoted_inline_links` into list items, cross-list
-duplicate-label document order, multi-line def *titles*. **(3)** the 18 projector divergences stay
-out of scope.
+**Result:** projector **328→329 matching, 18 divergent** (unchanged). `cargo test` green, clippy + fmt
+clean; curated fixed-point **63→64/64**, 0 blocked; format baseline re-blessed (+1, additive-only).
+Curated `md_span_abuts_macro` (+ parser fixture `roxygen_md_span_abuts_macro`); 1 projector unit test.
+
+**Next (ranked):** **(1)** the markdown `\`-escape **render** edges (still backlog, now sharper): the `@md`
+`%`-swallow (`a \% b`→`a \`), non-fragile macro head-decomposition / `double_escape_md` collisions
+(`\*foo*`→`\\emph` head-eating) — a separate oracle surface, do NOT widen the lexer heuristically. **(2)**
+the **tag same-line-value continuation** grouping divergence (`@details *a x` / `c*` splits paragraphs so a
+span can't cross) — unblocks cross-line spans generally; then multi-line-macro Step B becomes demonstrable.
+**(3)** Slice B leftover hardenings (`relink_demoted_inline_links` into list items, cross-list
+duplicate-label order, multi-line def *titles*). **(4)** the 18 projector divergences stay out of scope.
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-06-30f** — emphasis/link span crosses a nested macro in a *structural* arg (`resolve_md_inline_pieces`). 327→328.
 - **2026-06-30e** — md in structural two-arg macro args (each arg processed); per-run `md_structural`. 326→327.
 - **2026-06-30d** — pure-macro link displays drop/keep via `link_label_text` (not literal `[]`). 325→326.
 - **2026-06-30c** — md inside non-fragile inline macro args; `is_fragile_for_md`, `is_md_inline_text_macro`. 323→325.
