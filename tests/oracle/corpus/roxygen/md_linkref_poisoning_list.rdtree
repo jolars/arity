@@ -1,0 +1,3 @@
+(\description (TEXT "Link-reference poisoning inside a list item"))
+(\details (TEXT "A shortcut like") (\link (TEXT "before")) (TEXT "resolves, since it precedes the poison:") (\itemize (\item) (TEXT "an escaped close [stop] here") (\item) (TEXT "a shortcut [foo] after")) (TEXT "[stop]: R:stop%5C [foo]: R:foo"))
+(\title (TEXT "Link-reference poisoning inside a list item"))

@@ -1206,6 +1206,38 @@ fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
             Some(display) => Cow::Owned(format!("[{display}] ")),
             None => Cow::Borrowed(" "),
         },
+        // A markdown list is part of the same cmark document, so an escaped-close
+        // candidate (or a post-demotion literal bracket) inside a list item must
+        // surface in the whole-field poisoning skeleton. Recurse into each item,
+        // space-guarded per item (the raw source separates items with newlines, so
+        // a `[` opening an item is never seen as preceded by the previous item's
+        // `]`) — the same shape as `linkref_skeleton_push`, and the offset walk in
+        // `demote_poisoned_walk` stays byte-aligned with this.
+        Inline::MdList(node) => {
+            let mut s = String::new();
+            for item in node
+                .children()
+                .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+            {
+                s.push(' ');
+                for child in md_list_item_inlines(&item) {
+                    s.push_str(&inline_skeleton_fragment(&child));
+                }
+            }
+            s.push(' ');
+            Cow::Owned(s)
+        }
+        Inline::MdListResolved { items, .. } => {
+            let mut s = String::new();
+            for item in items {
+                s.push(' ');
+                for child in item {
+                    s.push_str(&inline_skeleton_fragment(child));
+                }
+            }
+            s.push(' ');
+            Cow::Owned(s)
+        }
         _ => Cow::Borrowed(" "),
     }
 }
@@ -1300,22 +1332,97 @@ fn demote_poisoned_links(body: &[Inline]) -> Option<Vec<Inline>> {
     // The poisoning boundary is found on the whole-body skeleton (an escaped-close
     // candidate can straddle several inlines — the lexer splits `[stop\]` into a
     // `Text` plus a leftover `]` delimiter), then mapped back by skeleton offset.
+    // The skeleton descends into list items (see `inline_skeleton_fragment`), so
+    // the demotion walk must descend identically to keep offsets aligned.
     let skeleton = inline_source_skeleton(body);
     let boundary = first_invalid_linkref_offset(&skeleton)?;
-    let mut out = Vec::with_capacity(body.len());
     let mut offset = 0;
+    let mut changed = false;
+    let out = demote_poisoned_walk(body, boundary, &mut offset, &mut changed);
+    Some(relink_demoted_inline_links(out))
+}
+
+/// Recursive offset-threaded walk for [`demote_poisoned_links`]: demote every
+/// shortcut/reference link whose skeleton offset starts after `boundary` to its
+/// literal bracket source, descending into list items with the same per-item
+/// space-guard offset accounting as [`inline_skeleton_fragment`]'s list arms (so
+/// the boundary maps back consistently). `offset` advances inline-by-inline;
+/// `changed` is set when any inline is rewritten. A list whose items change becomes
+/// an `MdListResolved`; an untouched list keeps its opaque `MdList` form (so its
+/// serialization stays byte-identical).
+fn demote_poisoned_walk(
+    body: &[Inline],
+    boundary: usize,
+    offset: &mut usize,
+    changed: &mut bool,
+) -> Vec<Inline> {
+    let mut out = Vec::with_capacity(body.len());
     for inl in body {
-        let start = offset;
-        offset += skeleton_len(inl);
-        if start > boundary
-            && let Some(text) = demoted_link_source(inl)
-        {
-            out.push(Inline::Text(text));
-        } else {
-            out.push(inl.clone());
+        match inl {
+            Inline::MdList(node) => {
+                let items: Vec<Vec<Inline>> = node
+                    .children()
+                    .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+                    .map(|item| md_list_item_inlines(&item))
+                    .collect();
+                let mut item_changed = false;
+                let new_items = demote_poisoned_items(&items, boundary, offset, &mut item_changed);
+                if item_changed {
+                    *changed = true;
+                    out.push(Inline::MdListResolved {
+                        ordered: md_list_is_ordered(node),
+                        items: new_items,
+                    });
+                } else {
+                    out.push(inl.clone());
+                }
+            }
+            Inline::MdListResolved { ordered, items } => {
+                let mut item_changed = false;
+                let new_items = demote_poisoned_items(items, boundary, offset, &mut item_changed);
+                if item_changed {
+                    *changed = true;
+                    out.push(Inline::MdListResolved {
+                        ordered: *ordered,
+                        items: new_items,
+                    });
+                } else {
+                    out.push(inl.clone());
+                }
+            }
+            _ => {
+                let start = *offset;
+                *offset += skeleton_len(inl);
+                if start > boundary
+                    && let Some(text) = demoted_link_source(inl)
+                {
+                    *changed = true;
+                    out.push(Inline::Text(text));
+                } else {
+                    out.push(inl.clone());
+                }
+            }
         }
     }
-    Some(relink_demoted_inline_links(out))
+    out
+}
+
+/// Walk a list's items for [`demote_poisoned_walk`], advancing `offset` with the
+/// per-item leading space and overall trailing space that
+/// [`inline_skeleton_fragment`]'s list arm emits, so offsets stay byte-aligned.
+fn demote_poisoned_items(
+    items: &[Vec<Inline>],
+    boundary: usize,
+    offset: &mut usize,
+    item_changed: &mut bool,
+) -> Vec<Vec<Inline>> {
+    let mut new_items = Vec::with_capacity(items.len());
+    for item in items {
+        *offset += 1; // the per-item leading space guard
+        new_items.push(demote_poisoned_walk(item, boundary, offset, item_changed));
+    }
+    *offset += 1; // the list's trailing space
+    new_items
 }
 
 /// Re-form enclosing inline links that a poisoning demotion exposes.
@@ -4202,6 +4309,43 @@ mod tests {
             project_to_rd(src),
             "(\\details (TEXT \"Top.\") \
              (\\itemize (\\item) (TEXT \"see\") (\\link (TEXT \"foo\")) (TEXT \"here\")))"
+        );
+    }
+
+    #[test]
+    fn projects_in_list_poisoning_demotes_a_later_in_list_shortcut() {
+        // Whole-field poisoning descends into list items: an escaped-close
+        // candidate inside a list item poisons the appended definition block, so a
+        // *later* in-list shortcut is de-linked into literal text and both leaked
+        // definitions surface as trailing prose.
+        let src = "#' @md\n#' @details\n#' Pre [before] links.\n#'\n\
+                   #' - an escaped close [stop\\] here\n\
+                   #' - a shortcut [foo] after\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"Pre\") (\\link (TEXT \"before\")) (TEXT \"links.\") \
+             (\\itemize (\\item) (TEXT \"an escaped close [stop] here\") \
+             (\\item) (TEXT \"a shortcut [foo] after\")) \
+             (TEXT \"[stop]: R:stop%5C [foo]: R:foo\"))"
+        );
+    }
+
+    #[test]
+    fn projects_in_list_candidate_before_the_boundary_survives() {
+        // The boundary maps back through the list's per-item space-guard offsets:
+        // a shortcut in an *earlier* item (before the escaped-close candidate)
+        // still resolves, while one in a later item is demoted.
+        let src = "#' @md\n#' @details\n#' Top.\n#'\n\
+                   #' - early [foo] survives\n\
+                   #' - an escaped close [stop\\] here\n\
+                   #' - [bar] dead\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"Top.\") \
+             (\\itemize (\\item) (TEXT \"early\") (\\link (TEXT \"foo\")) (TEXT \"survives\") \
+             (\\item) (TEXT \"an escaped close [stop] here\") \
+             (\\item) (TEXT \"[bar] dead\")) \
+             (TEXT \"[stop]: R:stop%5C [bar]: R:bar\"))"
         );
     }
 

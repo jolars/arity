@@ -160,6 +160,7 @@ md_linkref_poisoning_autolink
 md_linkref_poisoning_field
 md_linkref_poisoning_image
 md_linkref_poisoning_inline_link
+md_linkref_poisoning_list
 md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
 md_nested_link
