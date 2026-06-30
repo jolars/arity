@@ -610,12 +610,19 @@
       **drops** ("must contain plain text") via `macro_arg_has_active_markdown` (recursive); `[a\emph{x}]`/
       `[a\code{*x*}]` keep. Curated `md_macro_arg_emphasis` + `md_link_macro_arg_drop`; 3 unit tests. Projector
       323→325; curated fixed-point 58→60/60; format baseline +2 (additive).
+      **Pure-macro link displays drop/keep LANDED (2026-06-30d):** a shortcut whose display is a **pure macro**
+      (`[\emph{*x*}]` active drops; `[\emph{y}]` inert / `[\code{f}]` fragile keep as `\link` over the macro) no
+      longer collapses to a literal `[]`. Root cause: `link_ref_label` + `linkref_skeleton_push` derived the label
+      from `inline_plain_text`, which **drops macros**, so a pure-macro display got the empty label `""` whose `[]`
+      candidate registers no refmap key → `demote_undefined_links` demoted it before the drop/keep site. Fix
+      (projector-only): new `link_label_text` (= `inline_plain_text` + `Inline::Macro(n) => n.text()`) routes the
+      three link-reference sites (`link_ref_label`/`linkref_skeleton_push`/`demoted_link_source`) so the label is
+      non-empty + self-consistent; `inline_plain_text` unchanged (render prechecks untouched). Curated
+      `md_link_macro_pure`; 2 unit tests. Projector 325→326; curated fixed-point 60→61/61; format baseline +1
+      (additive).
       **Slice B remainder (still backlog):** `scan_md_link`'s `[`-path is **not** fully retired — it still serves
       an **`!`-bearing display** (mid-prose image marker) and the **autolink `<url>`** is on `scan_md_autolink`.
-      A **pure-macro link display** (`[\emph{a \strong{*x*}}]`, no surrounding text) should drop but arity's
-      truncated link-reference label is empty (`inline_plain_text` drops macros) so `demote_undefined_links`
-      rewrites it to literal `[]`; needs the linkref label/skeleton to include macro source (a text-bearing display
-      is fine). Broader: the structural/two-arg non-fragile macros roxygen also md-processes (`\value`/`\section`
+      Broader: the structural/two-arg non-fragile macros roxygen also md-processes (`\value`/`\section`
       inline, `\item`/`\tabular` args); and a macro arg with cmark-active markdown inside a *fragile* arg ties into
       the markdown `\`-escape backlog (do NOT widen the lexer heuristically — markdown tenet); closing it + moving
       `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer` branch, and the

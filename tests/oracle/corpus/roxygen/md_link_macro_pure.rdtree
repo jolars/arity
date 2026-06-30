@@ -1,0 +1,3 @@
+(\description (TEXT "Pure-macro link displays"))
+(\details (TEXT "An active pure-macro display drops, an inert one") (\link (\emph (TEXT "y"))) (TEXT "keeps, and a fragile one") (\link (\code (RCODE "f"))) (TEXT "keeps too."))
+(\title (TEXT "Pure-macro link displays"))

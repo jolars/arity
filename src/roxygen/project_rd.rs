@@ -1605,9 +1605,9 @@ fn skeleton_len(inl: &Inline) -> usize {
 /// a reference definition). Used by [`demote_poisoned_links`].
 fn demoted_link_source(inl: &Inline) -> Option<String> {
     match inl {
-        Inline::MdShortcutLink { display } => Some(format!("[{}]", inline_plain_text(display))),
+        Inline::MdShortcutLink { display } => Some(format!("[{}]", link_label_text(display))),
         Inline::MdRefLink { dest, display } => {
-            Some(format!("[{}][{}]", inline_plain_text(display), dest))
+            Some(format!("[{}][{}]", link_label_text(display), dest))
         }
         // The opaque same-line leaf is its own verbatim source; demote only the
         // shortcut/reference forms (an inline link or autolink survives).
@@ -1686,12 +1686,12 @@ fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
         Inline::Text(t) => s.push_str(t),
         Inline::MdShortcutLink { display } => {
             s.push('[');
-            s.push_str(&inline_plain_text(display));
+            s.push_str(&link_label_text(display));
             s.push(']');
         }
         Inline::MdRefLink { dest, display } => {
             s.push('[');
-            s.push_str(&inline_plain_text(display));
+            s.push_str(&link_label_text(display));
             s.push_str("][");
             s.push_str(dest);
             s.push(']');
@@ -1770,7 +1770,7 @@ fn normalize_linkref_label(label: &str) -> String {
 /// reference link the label is the `[ref]` topic; for a shortcut it is the display.
 fn link_ref_label(inl: &Inline) -> Option<String> {
     match inl {
-        Inline::MdShortcutLink { display } => Some(inline_plain_text(display)),
+        Inline::MdShortcutLink { display } => Some(link_label_text(display)),
         Inline::MdRefLink { dest, .. } => Some(dest.clone()),
         Inline::MdLink(raw) => opaque_link_ref_label(raw),
         _ => None,
@@ -2901,6 +2901,34 @@ fn inline_plain_text(inlines: &[Inline]) -> String {
             Inline::MdEmphasis { children, .. } => s.push_str(&inline_plain_text(children)),
             Inline::MdInlineLink { display, .. } => s.push_str(&inline_plain_text(display)),
             Inline::MdShortcutLink { display } => s.push_str(&inline_plain_text(display)),
+            _ => {}
+        }
+    }
+    s
+}
+
+/// The text of a link's display for **link-reference purposes** — its resolution
+/// label ([`link_ref_label`]), its candidate in the refmap skeleton
+/// ([`linkref_skeleton_push`]), and the literal a demoted link rewrites to
+/// ([`demoted_link_source`]). Identical to [`inline_plain_text`] except an
+/// `Inline::Macro` contributes its **verbatim source** (`\emph{*x*}`) rather than
+/// nothing: a pure-macro display (`[\emph{*x*}]`) would otherwise produce the empty
+/// label `""`, whose `[]` candidate registers no refmap key
+/// ([`bracket_free_group`]) — so the link was spuriously demoted to a literal `[]`
+/// instead of reaching the drop/keep decision in [`serialize_inlines`]. The macro
+/// source is also exactly what roxygen2's own `get_md_linkrefs` candidate scan sees,
+/// and keeping the skeleton and the resolution label both routed through this helper
+/// keeps them self-consistent (so a defined label never spuriously demotes).
+fn link_label_text(inlines: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in inlines {
+        match inl {
+            Inline::Text(t) => s.push_str(t),
+            Inline::MdCode(t) => s.push_str(t),
+            Inline::MdEmphasis { children, .. } => s.push_str(&link_label_text(children)),
+            Inline::MdInlineLink { display, .. } => s.push_str(&link_label_text(display)),
+            Inline::MdShortcutLink { display } => s.push_str(&link_label_text(display)),
+            Inline::Macro(n) => s.push_str(&n.text().to_string()),
             _ => {}
         }
     }
@@ -4894,6 +4922,39 @@ mod tests {
                    #' @name spec\nNULL\n";
         assert!(
             project_to_rd(src).contains("(\\details (TEXT \"A gap.\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn pure_macro_active_link_display_drops() {
+        // A shortcut whose display is a *pure* macro (no surrounding text) carrying
+        // cmark-active markdown (`[\emph{*x*}]`) drops to empty like any non-plain
+        // display — the link must reach the drop site, not be spuriously demoted to a
+        // literal `[]` by an empty link-reference label. Regression guard for the
+        // pure-macro label fix (`link_label_text` includes the macro source).
+        let src = "#' @md\n#' @title T\n#' @details A [\\emph{*x*}] gap.\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"A gap.\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn pure_macro_inert_link_display_keeps() {
+        // A pure-macro display with an *inert* argument (`[\emph{y}]`) or a *fragile*
+        // macro (`[\code{f}]`) keeps the link, rendering `\link` over the macro
+        // subtree — not a literal `[]`. The self-consistent macro-source label lets
+        // the link survive the undefined-label demotion and reach the keep path.
+        let src = "#' @md\n#' @title T\n#' @details Keep [\\emph{y}] and [\\code{f}].\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"Keep\") (\\link (\\emph (TEXT \"y\"))) (TEXT \"and\") (\\link (\\code (RCODE \"f\"))) (TEXT \".\"))"
+            ),
             "got: {}",
             project_to_rd(src)
         );
