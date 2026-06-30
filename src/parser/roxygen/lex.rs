@@ -711,16 +711,19 @@ fn is_cross_line_link_opener(bytes: &[u8], i: usize) -> bool {
 /// text equals the raw interior, so the projector's node path is byte-identical to
 /// the old leaf path; a marked-up display (`[*foo*]`, `` [`x` `y`] ``) resolves its
 /// children so the projector can mirror roxygen2's `parse_link` (a sole code span
-/// links, any richer display is dropped). Only `!`/`\` displays (always plain text;
-/// `\` escapes still need projector handling) stay on the opaque
-/// [`scan_md_link`] leaf for now.
+/// links, any richer display is dropped). A `\`-bearing display routes through here
+/// too: the main loop lexes its interior, so a backslash-word (`[a\b]`, an Rd macro
+/// to parse_Rd) carves as a `ROXYGEN_RD_MACRO` child and the projector renders it
+/// inside the `\link` (markdown-level plain text — the backslash escapes nothing, so
+/// roxygen2 keeps the link). Only an `!` display (a possible image marker) stays on
+/// the opaque [`scan_md_link`] leaf for now.
 fn same_line_bracket_opener(bytes: &[u8], i: usize) -> bool {
     let Some(close) = scan_balanced(bytes, i, b'[', b']') else {
         return false;
     };
     let content = &bytes[i + 1..close - 1];
     is_shortcut_content(content)
-        && !content.iter().any(|&b| matches!(b, b'!' | b'\\'))
+        && !content.contains(&b'!')
         && !matches!(bytes.get(close), Some(b'(' | b'{'))
 }
 

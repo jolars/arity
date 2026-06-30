@@ -1,0 +1,3 @@
+(\description (TEXT "Backslash words in a markdown link display"))
+(\details (TEXT "A shortcut") (\link (TEXT "a") (UNKNOWN "\\b")) (TEXT "keeps its backslash word as an Rd macro, as does the reference") (\link (TEXT "a") (UNKNOWN "\\b")) (TEXT ", while a brace macro") (\link (TEXT "a") (\emph (TEXT "x"))) (TEXT "and") (\link (TEXT "a") (\code (RCODE "f"))) (TEXT "survive too."))
+(\title (TEXT "Backslash words in a markdown link display"))

@@ -187,6 +187,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_shortcut_link",
         "roxygen_md_shortcut_emphasis",
         "roxygen_md_ref_emphasis",
+        "roxygen_md_link_backslash_display",
         "roxygen_mixed_inline",
         "roxygen_nested_braces",
         "roxygen_rd_macro_nested",

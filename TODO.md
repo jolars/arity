@@ -587,13 +587,23 @@
       display, reference display, reference label) neutral, and `classify_closer`/`neutral_ref_label` read the
       `[ref]` off the lookahead, so plain references are `ROXYGEN_MD_LINK` nodes (projection-invariant; 3 CST
       snapshots re-accepted). Projector 317→321; curated fixed-point 52→56/56.
-      **Slice B remainder (still backlog):** `scan_md_link` is **not** fully retired — it still serves the
-      **`\`-bearing display residual** (`[a\b]`→`\link{a}`+Rd-macro `\b` (links); `[a\*b\*]` *drops*) and the
-      **autolink `<url>`**. The `\`-display needs Rd-macro-in-markdown-display modeling + the markdown `\`-escape
-      backlog (do NOT widen the lexer heuristically — markdown tenet); only then can `scan_md_link`'s `[`-path,
-      the opaque `classify_closer` branch, and the projector opaque-leaf helpers be deleted. Plus: poisoning's
-      `relink_demoted_inline_links` into list items, cross-list duplicate-label document order, multi-line def
-      *titles*. Plan: `~/.claude/plans/we-ll-do-the-slice-elegant-ladybug.md`.
+      **`\`-display-in-link LANDED (2026-06-30b):** a `\`-bearing same-line link display now resolves on the
+      arena — dropped only the `\` exclusion from `same_line_bracket_opener` (kept `!` for image markers), so the
+      main loop lexes the interior and `\b`/`\emph{x}`/`\code{f}` carve as `ROXYGEN_RD_MACRO` children. Projector:
+      `link_display_is_droppable` counts `Inline::Macro` as markdown-plain-text (kept), and
+      `display_has_macro`/`link_over_display` render `(\link <serialized display>)` — so `[a\b]`→`(\link (TEXT
+      "a") (UNKNOWN "\\b"))`, `[a\emph{x}]`/`[a\code{f}]` render the macro, the ref form `[a\b][lbl]` matches the
+      shortcut, and `[a\*b\*]` **drops** (emphasis child). Fixture `roxygen_md_link_backslash_display` + curated
+      `md_link_backslash` (keeps) + `md_link_backslash_drop` (drop) + 2 unit tests. Projector 321→323; curated
+      fixed-point 56→58/58; format baseline +2 (additive).
+      **Slice B remainder (still backlog):** `scan_md_link`'s `[`-path is **not** fully retired — it still serves
+      an **`!`-bearing display** (mid-prose image marker) and the **autolink `<url>`** is on `scan_md_autolink`.
+      The deep `\`-display edge — a macro arg with cmark-active markdown (`\emph{*x*}`: cmark drops, arity keeps)
+      — needs the markdown `\`-escape backlog (do NOT widen the lexer heuristically — markdown tenet); closing it
+      + moving `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer`
+      branch, and the projector opaque-leaf helpers be deleted. Plus: poisoning's `relink_demoted_inline_links`
+      into list items, cross-list duplicate-label document order, multi-line def *titles*. Plan:
+      `~/.claude/plans/we-ll-do-the-slice-elegant-ladybug.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it

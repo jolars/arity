@@ -195,23 +195,28 @@ lives in git/TODO and the demoted session log. Most cite a function name; go rea
   display (`\href` two-arg structural), `\url` on empty/equal dest. A `ROXYGEN_MD_LINK` **leaf** is
   still an autolink/ref/shortcut (`resolve_md_link`) — node-vs-leaf dispatch coexist. Bracket-free gate
   keeps the opaque path for nested-bracket text (no deactivation modeled yet).
-- **Every same-line bracketed link span is now a node; one carve rule (2026-06-30, Slice B remainder C-core).**
-  `same_line_bracket_opener` (`lex.rs`, replacing `same_line_shortcut_opener` + `same_line_ref_opener`) carves a
-  `[` opening a balanced, **bracket-free** `[…]` (`is_shortcut_content`, no `! \\`) whose after-`]` ∉ `(`/`{` as
-  a neutral bracket opener — covering a **shortcut display**, a **reference display** (`]` then `[`), *and* a
-  **reference label** `[ref]` (the preceded-by-`]` guard and the not-followed-by-`[` restriction are gone). The
-  arena's `classify_closer` reads a following neutral `[ref]` via `neutral_ref_label` and folds it as `][ref]`
-  (returns `(close_text, after)`; `match_brackets` range-consumes `q..after`). So **plain references
-  `[plain][ref]` are now `ROXYGEN_MD_LINK` nodes** (`MdRefLink`), not opaque leaves — projection-invariant
-  (`ref_link_node_atom` == the old leaf `ref_link_atom`). Shortcut display (plain & marked-up) and reference
-  display nodeify uniformly; `link_display_is_droppable` drops a non-plain display ("markdown links must contain
-  plain text"). **`scan_md_link` survives ONLY for** (a) the **`\`-bearing display residual** and (b) the
-  **autolink `<url>`** (no bracket). `classify_closer` keeps a legacy opaque branch for a `\`-label reference;
-  the projector keeps its opaque-leaf helpers (still reached by the residual + autolink). **`\`-display is hard,
-  do NOT widen the lexer (markdown tenet):** oracle-probed, `[a\b]`→`\link{a}`+Rd-macro `\b` (links), `[a\*b\*]`
-  *drops*; faithful projection needs Rd-macro-in-display modeling + the markdown `\`-escape backlog. **Still
-  opaque on purpose:** a URL-defined ref `[*foo*][r]`+`[r]: url` is handled by the projector's user-def stage
-  (`resolve_user_linkrefs`, 29m), distinct from the label-only opaque leaf.
+- **Every same-line bracketed link span is now a node; one carve rule (2026-06-30, C-core; `\`-displays added
+  2026-06-30b).** `same_line_bracket_opener` (`lex.rs`, replacing `same_line_shortcut_opener` +
+  `same_line_ref_opener`) carves a `[` opening a balanced, **bracket-free** `[…]` (`is_shortcut_content`, **no
+  `!`** — kept for image markers; `\` is now allowed) whose after-`]` ∉ `(`/`{` as a neutral bracket opener —
+  covering a **shortcut display**, a **reference display** (`]` then `[`), *and* a **reference label** `[ref]`
+  (the preceded-by-`]` guard and the not-followed-by-`[` restriction are gone). The arena's `classify_closer`
+  reads a following neutral `[ref]` via `neutral_ref_label` and folds it as `][ref]` (returns `(close_text,
+  after)`; `match_brackets` range-consumes `q..after`). So **plain references `[plain][ref]` are now
+  `ROXYGEN_MD_LINK` nodes** (`MdRefLink`), not opaque leaves — projection-invariant (`ref_link_node_atom` == the
+  old leaf `ref_link_atom`). Shortcut display (plain & marked-up) and reference display nodeify uniformly;
+  `link_display_is_droppable` drops a non-plain display ("markdown links must contain plain text") **but counts
+  `Inline::Macro` as plain text** (a backslash-word/macro is cmark-literal → kept). **A `\`-bearing display is on
+  the arena too (2026-06-30b):** the main loop lexes its interior, so `[a\b]` → `(\link (TEXT "a") (UNKNOWN
+  "\\b"))`, `[a\emph{x}]`/`[a\code{f}]` → `(\link … (\emph …)/(\code …))` via `display_has_macro`/
+  `link_over_display` (= `\link` over the serialized display atoms; `pkg::`/`-class`/`()` flat-string refinements
+  skipped for a macro dest — backlog), and `[a\*b\*]` **drops** (emphasis child). **`scan_md_link`'s `[`-path
+  survives ONLY for an `!`-bearing display** (mid-prose image marker); the autolink `<url>` is on
+  `scan_md_autolink` (no bracket). `classify_closer`'s legacy opaque branch + the projector's opaque-leaf helpers
+  stay (still reachable for the `!` case). **Known `\`-display edge (backlog):** a macro arg with cmark-active
+  markdown (`\emph{*x*}`) — cmark drops, arity (one opaque macro) keeps; ties into the markdown `\`-escape
+  backlog. **Still opaque on purpose:** a URL-defined ref `[*foo*][r]`+`[r]: url` is handled by the projector's
+  user-def stage (`resolve_user_linkrefs`, 29m), distinct from the label-only opaque leaf.
 - **Arena now does CommonMark opener deactivation; nested links resolve inner-first (2026-06-29f, slice B core).**
   `match_brackets` (`inline.rs`) replaced the forward `find_link_closer`: a **stack** pairs each `]` to the
   nearest *active* `[`, a formed link **deactivates every opener below it**, a lone `]` does the `][ref]`
@@ -564,8 +569,8 @@ corpus (`<stem>.rdtree`) and the **harvested corpus's projector-eligible subset*
 `@inherit`/`@template`/`@eval`/`@example`/… filtered out as resolve-from-elsewhere, so
 they stay in the R↔R fixed-point net, not false-positive backlog). **A third source landed
 2026-06-25c: the CommonMark spec emphasis corpus** (132 `cm-NNN` cases, the inline-pass
-driver). Current (post Slice B remainder A+B+C-core, 2026-06-30): **321 matching (all allowlisted), 18
-divergent (backlog)** of 339 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
+driver). Current (post `\`-display-in-link, 2026-06-30b): **323 matching (all allowlisted), 18
+divergent (backlog)** of 341 pinned. The 18 left are all roxygen2-*evaluation*/multi-block gaps (out
 of scope — knitr `` `r …` ``/` ```{r} ` eval, RefClass docstrings, cross-block `@name`/reexport association).
 Tasks:
 `task roxygen-projector` (the gate), `task roxygen-projector-refresh` (re-mint all pins),
@@ -577,9 +582,9 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary,
    parser-growth driver**. Compares Rd *structure*, so it sees block-structure gaps
    the fixed-point check is blind to. Curated + harvested + CommonMark-spec corpora
-   (339 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
+   (341 pinned cases). The 18 divergences are the worklist (all roxygen2-eval/multi-block, out of scope).
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R,
-   `#[ignore]`d) — strict semantic preservation of the formatter; 56/56 preserving, 0
+   `#[ignore]`d) — strict semantic preservation of the formatter; 58/58 preserving, 0
    blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R,
    `#[ignore]`d) — broad **opt-in** backlog gated by `roxygen-allowlist.txt`
@@ -587,56 +592,58 @@ Report: `ROXYGEN_PROJECTOR.md` (this dir).
    (it's cosmetic-blind + R-dependent). Reports: `task roxygen-oracle` /
    `task roxygen-harvest`.
 
-## Latest session (2026-06-30) — Slice B remainder: poisoning lift, multi-line/entity defs, references on the arena
+## Latest session (2026-06-30b) — backslash words/macros in a markdown link display
 
-Three committed targets closing most of the Slice B remainder (user asked for all of it). Plan:
-`~/.claude/plans/we-ll-do-the-slice-elegant-ladybug.md`.
+Closed most of the ranked-#1 `\`-display residual: a `\`-bearing same-line link display now resolves on the
+arena, with its Rd macros surfacing as nested `\link` children, faithfully matching roxygen2's
+`\link{<markdown display>}` (parse_Rd reads the backslash word as a macro). The five oracle-probed shapes all
+project exactly: `[a\b]`→`(\link (TEXT "a") (UNKNOWN "\\b"))`, `[a\emph{x}]`→`(\link (TEXT "a") (\emph (TEXT
+"x")))`, `[a\code{f}]`→`(\link (TEXT "a") (\code (RCODE "f")))`, the reference form `[a\b][lbl]` (topic dropped)
+identical to the shortcut, and `[a\*b\*]` **drops** ("markdown links must contain plain text").
 
-**A — whole-field poisoning demotion (projector-only, `5d43db3`).** The third link-ref stage (positional
-poisoning) was still top-level-only after 29q. Lifted `demote_poisoned_links` **and**
-`inline_skeleton_fragment` to whole-field *together* (shared offset accounting): the fragment gained
-`MdList`/`MdListResolved` arms (recurse per item, space-guarded), and the demotion walk became a recursive
-`demote_poisoned_walk`/`demote_poisoned_items` threading a skeleton offset and descending into items (a
-changed list → `MdListResolved`, untouched → opaque `MdList`, byte-identical). So an escaped-close candidate
-`[stop\]` inside a list item now poisons later in-list shortcuts and the leaked defs surface.
-`relink_demoted_inline_links` stays top-level (poisoned nested inline link in a list item = backlog).
-Curated `md_linkref_poisoning_list` + 2 unit tests. 317→318.
+**Parser (one-line):** dropped only the `\` exclusion from `same_line_bracket_opener`'s guard (kept `!` — a
+possible image marker), so a bracket-free `\`-bearing display routes through the arena like any other; the main
+loop lexes its interior, so `\b` carves as a `ROXYGEN_RD_MACRO`/`UNKNOWN` child and `\emph{x}`/`\code{f}` as
+balanced macro children, and the bare-`]` carve closes it. **No new TokKind/SyntaxKind.**
 
-**B — multi-line + entity-decoded link-ref defs (projector-only, `02e1a15`).** `match_linkref_def` now gathers
-the trailing `Text` run across soft line breaks (stops at a `\n`-bearing Text / non-Text), so a destination on
-a continuation line (`[ref]:`\n`  url`) resolves; `parse_linkref_def_dest` entity-decodes the destination
-(`decode_html_entities`: the five named entities + numeric refs), so `&amp;`→`&` in an href. An invalid (spaced)
-dest stays prose (regression guard — already matched). Curated `md_url_reference_{multiline,entity,invalid_dest}`
-+ 2 unit tests. 318→321. (B4 cross-list duplicate-label doc-order = vanishingly-rare backlog, not curated.)
+**Projector:** (1) `link_display_is_droppable` now counts `Inline::Macro` as **markdown-level plain text**
+(the backslash escapes nothing to cmark, macro braces are literal → roxygen2 keeps the link), so a
+macro-bearing display is not dropped while an emphasis child (`[a\*b\*]`) still is — the drop matches even
+though arity's internal emphasis structure need not match roxygen2's double-escape result, since *any*
+non-text child drops. (2) New `display_has_macro`/`link_over_display`: a macro-bearing shortcut/reference
+display renders `(\link <serialized display atoms>)` (`serialize_inlines` already renders `Inline::Macro` via
+`serialize_macro`, incl. the `(UNKNOWN …)` brace-less arm) instead of collapsing to a flat destination string.
+The `\linkS4class`/`pkg::`/`()` refinements (flat-string) don't apply to a macro-bearing dest — backlog.
 
-**C-core — reference links via the arena lookahead (parser, `dd9f573`).** Moved the reference label `[ref]`
-off the opaque `scan_md_link` leaf onto the arena's bracket lookahead. One `same_line_bracket_opener` (replacing
-`same_line_shortcut_opener` + `same_line_ref_opener`) carves every bracket-free same-line `[…]` (shortcut
-display, reference display, *and* reference label) as neutral brackets — dropping the preceded-by-`]` guard,
-the not-followed-by-`[` restriction, and the markup requirement; `classify_closer` reads a following neutral
-`[ref]` via `neutral_ref_label` and folds it as `][ref]` (returns `(close_text, after)`; `match_brackets`
-range-consumes `q..after`). **Plain references thus become `ROXYGEN_MD_LINK` nodes** instead of opaque leaves.
-**Projection-invariant** (gate 321/321, fixed-point 56/56); 3 parser CST snapshots re-accepted (leaf→node).
+**Result:** projector **321→323 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
+`cargo test` green (538 lib + all integration), clippy + fmt clean; curated fixed-point **56→58/58**, 0 blocked;
+format baseline re-blessed (+2, additive-only — `\`-displays were absent from the existing corpus → no
+existing case's output changed). Fixture `roxygen_md_link_backslash_display` (CST snapshot); curated
+`md_link_backslash` (macro-keeps) + `md_link_backslash_drop` (escaped-emphasis drop) + 2 unit tests.
 
-**Result:** projector **317→321 matching (all allowlisted), 18 divergent** (unchanged — all out of scope).
-`cargo test` green (536 lib + all integration), clippy + fmt clean; curated fixed-point **52→56/56**, 0 blocked.
+**`scan_md_link`'s `[`-path is NOT dead (deliberate).** It still serves an **`!`-bearing display** (a mid-prose
+`!` could be an image marker — kept excluded from `same_line_bracket_opener`) and the **autolink `<url>`** (no
+bracket, on `scan_md_autolink`). `classify_closer`'s legacy opaque branch + the projector's opaque-leaf helpers
+stay (still reachable for the `!` case). **Known remaining `\`-display edge (backlog):** a macro whose `{…}`
+argument itself contains cmark-active markdown (`\emph{*x*}`) — cmark sees emphasis (drop), arity treats it as
+one opaque macro (keep) → divergence; not curated. This is the deep coupling to the markdown `\`-escape backlog.
 
-**`scan_md_link` is NOT fully retired (deliberate).** It still serves the **`\`-bearing display residual**
-(`[a\b]`, `[a\b][ref]`) and the **autolink `<url>`** (which carries no bracket). The `\`-display is genuinely
-hard: oracle-probed, `[a\b]` renders `\link{a}` + an Rd macro `\b` (links), while `[a\*b\*]` *drops* ("markdown
-links must contain plain text"). That needs Rd-macro-in-markdown-display modeling + the markdown `\`-escape
-backlog — **do not widen the lexer with a heuristic** (markdown tenet). `classify_closer` keeps a legacy opaque
-branch for a `\`-label reference; the projector keeps its opaque-leaf helpers (still reached by the residual +
-autolink).
-
-**Next (ranked):** **(1)** the `\`-display residual — model Rd macros inside a markdown link display so
-`[a\b]`/`[a\b][ref]`/`[a\*b\*]` project faithfully (then `scan_md_link`'s `[`-path + the opaque `classify_closer`
-branch + the projector opaque-leaf helpers can finally be deleted; tie into the deferred markdown `\`-escape
-diagnostic-parity work). **(2)** Slice B leftover hardenings — poisoning's `relink_demoted_inline_links` into
+**Next (ranked):** **(1)** the `\emph{*x*}` nested-markdown-in-macro-arg edge, and the broader markdown
+`\`-escape diagnostic-parity work it ties into (would also let `scan_md_link`'s `[`-path retire once `!`-displays
+move onto the arena too). **(2)** Slice B leftover hardenings — poisoning's `relink_demoted_inline_links` into
 list items, cross-list duplicate-label document order, multi-line def *titles*. **(3)** the 18 projector
 divergences stay roxygen2-eval/multi-block, **out of scope**.
 
 ## Earlier sessions
+
+- **2026-06-30 (Slice B remainder — poisoning lift, multi-line/entity defs, references on the arena):** three
+  committed targets. (A) `demote_poisoned_links` + `inline_skeleton_fragment` lifted to whole-field together
+  (recurse per list item, shared offset) so an escaped-close candidate poisons later in-list links (`5d43db3`,
+  317→318). (B) `match_linkref_def` gathers the dest across soft breaks + `parse_linkref_def_dest` entity-decodes
+  it, so multi-line/`&amp;` defs resolve (`02e1a15`, 318→321). (C-core) one `same_line_bracket_opener` carves
+  every bracket-free same-line `[…]` (shortcut/reference display *and* reference label) onto the arena, so plain
+  references become `ROXYGEN_MD_LINK` nodes (`dd9f573`, projection-invariant). Curated `md_linkref_poisoning_list`,
+  `md_url_reference_{multiline,entity,invalid_dest}`; 3 CST snapshots re-accepted.
 
 - **2026-06-29q (whole-field refmap + undefined-label demotion, in-list):** lifted `linkref_keys` (the refmap)
   and `demote_undefined_links` to whole-field together (descend into list items, space-guarded per item;

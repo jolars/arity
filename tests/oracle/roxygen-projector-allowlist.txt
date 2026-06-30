@@ -153,6 +153,8 @@ md_emphasis_multiline
 md_empty_list_item
 md_escaped_bracket
 md_escaped_close_bracket
+md_link_backslash
+md_link_backslash_drop
 md_link_emphasis
 md_link_multiline
 md_linkref_poisoning

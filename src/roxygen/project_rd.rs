@@ -2692,6 +2692,9 @@ fn ref_link_node_atom(display: &[Inline], dest: &str) -> String {
     if norm_ws(&display_text) == norm_ws(dest) {
         return shortcut_link_atom(dest);
     }
+    if display_has_macro(display) {
+        return link_over_display(display);
+    }
     let (inner, is_code) = match display {
         [Inline::MdCode(content)] => (content.clone(), true),
         _ => (display_text, false),
@@ -2700,6 +2703,27 @@ fn ref_link_node_atom(display: &[Inline], dest: &str) -> String {
         format!("(\\link {})", text_atom(&inner).unwrap_or_default()),
         is_code,
     )
+}
+
+/// Whether a resolved link display carries a `ROXYGEN_RD_MACRO` child (a
+/// backslash-word or `\name{…}` written in the markdown source). Such a display is
+/// rendered as `\link` over the serialized display atoms ([`link_over_display`])
+/// rather than collapsed to a flat destination string, so the macro surfaces as a
+/// nested Rd subtree the way parse_Rd reads it (`[a\b]` → `(\link (TEXT "a")
+/// (UNKNOWN "\\b"))`).
+fn display_has_macro(display: &[Inline]) -> bool {
+    display.iter().any(|inl| matches!(inl, Inline::Macro(_)))
+}
+
+/// Render `\link` over a macro-bearing display: the topic is the serialized display
+/// atoms (text runs plus each Rd macro as a nested subtree), mirroring roxygen2's
+/// `\link{<markdown display>}` whose body parse_Rd then parses. The `\linkS4class` /
+/// `pkg::` / `()` shortcut-destination refinements operate on a flat string and so do
+/// not apply to a macro-bearing destination (a vanishingly-rare combination — left as
+/// backlog).
+fn link_over_display(display: &[Inline]) -> String {
+    let body = serialize_inlines(display, true).join(" ");
+    format!("(\\link {body})")
 }
 
 /// Project a `ROXYGEN_MD_LINK` node with a bare `]` shortcut closer (`[display]`):
@@ -2711,6 +2735,7 @@ fn ref_link_node_atom(display: &[Inline], dest: &str) -> String {
 fn shortcut_link_node_atom(display: &[Inline]) -> String {
     match display {
         [Inline::MdCode(content)] => shortcut_link_atom(&format!("`{content}`")),
+        _ if display_has_macro(display) => link_over_display(display),
         _ => shortcut_link_atom(&inline_plain_text(display)),
     }
 }
@@ -2723,11 +2748,21 @@ fn shortcut_link_node_atom(display: &[Inline]) -> String {
 /// emphasis, a second code span, an image, an autolink, or raw HTML makes the link
 /// non-plain and roxygen2 discards it. (An inline `[text](url)` link is never
 /// subject to this — it carries its own destination and renders `\href`.)
+///
+/// An `Inline::Macro` child counts as **plain text**: it comes from a backslash-word
+/// (`\b`) or `\name{…}` in the markdown source, which cmark sees as literal text (a
+/// backslash escapes only punctuation, and a macro's braces are literal), so the link
+/// is kept — parse_Rd later reinterprets it as an Rd macro inside the `\link`. (A
+/// macro whose `{…}` argument itself contains cmark-active markdown — `\emph{*x*}` —
+/// would be non-plain to cmark and dropped; arity treats it as one opaque macro, so
+/// that nested-markdown edge stays backlog.)
 fn link_display_is_droppable(display: &[Inline]) -> bool {
     if matches!(display, [Inline::MdCode(_)]) {
         return false;
     }
-    !display.iter().all(|inl| matches!(inl, Inline::Text(_)))
+    !display
+        .iter()
+        .all(|inl| matches!(inl, Inline::Text(_) | Inline::Macro(_)))
 }
 
 /// A best-effort plain-text rendering of a resolved inline run, used only to test a
@@ -4598,6 +4633,39 @@ mod tests {
             project_to_rd(src).contains(
                 "(\\details (TEXT \"Some prose with\") (\\link (TEXT \"r1\")) (TEXT \"here.\") (\\link (TEXT \"r1\")) (TEXT \": https://example.com\"))"
             ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn backslash_word_in_link_display_renders_as_rd_macro() {
+        // A markdown link display carrying a backslash word (`\b`, an Rd macro to
+        // parse_Rd) keeps the link — at the markdown level the backslash is literal,
+        // so roxygen2 does not drop it — and the macro surfaces as a nested subtree
+        // inside the `\link` rather than collapsing into the topic text. The
+        // reference form `[a\b][lbl]` drops its topic and renders identically.
+        let src = "#' @md\n#' @title T\n#' @details See [a\\b] and [a\\b][lbl] now.\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"See\") (\\link (TEXT \"a\") (UNKNOWN \"\\\\b\")) (TEXT \"and\") (\\link (TEXT \"a\") (UNKNOWN \"\\\\b\")) (TEXT \"now.\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn escaped_emphasis_in_link_display_drops_the_link() {
+        // `[a\*b\*]` resolves an emphasis node in its display (a non-text child), so
+        // roxygen2's `parse_link` drops the whole link ("must contain plain text")
+        // and the surrounding prose coalesces — unlike a backslash *word*, which is
+        // markdown-level plain text and is kept.
+        let src = "#' @md\n#' @title T\n#' @details A [a\\*b\\*] gap.\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"A gap.\"))"),
             "got: {}",
             project_to_rd(src)
         );
