@@ -3618,9 +3618,9 @@ mod tests {
         // whose synthesized `R:` destination links as `\link` requires plain-text
         // display, so `[*foo*][r1]` (emphasis) and `` [`x` `y`][r4] `` (two code
         // spans) drop, while `[plain][r2]` (plain) and `` [`code`][r3] `` (a sole
-        // code span) survive. The markup-display openers are carved onto the arena
-        // (`same_line_ref_opener`); the plain one stays an opaque leaf, both reaching
-        // the same projection.
+        // code span) survive. All reference displays are now carved onto the arena
+        // (`same_line_bracket_opener`) as `ROXYGEN_MD_LINK` nodes, reaching the same
+        // projection the opaque leaf used to.
         let src = "#' @details\n\
                    #' A reference [*foo*][r1] is dropped, but [plain][r2] and \
                    [`code`][r3] survive while [`x` `y`][r4] drops too.\n\

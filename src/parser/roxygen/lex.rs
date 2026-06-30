@@ -310,9 +310,11 @@ fn lex_roxygen_prose(
         // `](url)` closer as neutral `RoxygenMdBracket` leaves and *recursively* lex
         // the link text in between, so emphasis/code spans inside it resolve. The
         // inline pass then assembles the matched pair into a `ROXYGEN_MD_LINK`
-        // **node** whose display children are the resolved markdown. Reference and
-        // shortcut links (`[t][r]`, `[t]`) stay opaque (the `scan_md_link` arm
-        // below); only a *bracket-free* inline link text is split here.
+        // **node** whose display children are the resolved markdown. Shortcut and
+        // reference links (`[t]`, `[t][r]`) carve onto neutral brackets too (the
+        // `same_line_bracket_opener` arm below); only a `\`-bearing display still
+        // falls to the opaque `scan_md_link` leaf. Here only a *bracket-free* inline
+        // link text is split.
         if md
             && bytes[i] == b'['
             && !bracket_is_escaped(bytes, i)
@@ -443,12 +445,12 @@ fn lex_roxygen_prose(
         // A *cross-line* reference-link closer: a bare `]` immediately followed by a
         // `[ref]` label, where the `]` closes a `[` that opened on an earlier `#'`
         // line (a `[text][ref]` reference link spanning lines). Carve only the lone
-        // `]` as a neutral bracket leaf; the `[ref]` label is carved separately
-        // ([`scan_md_link`], guaranteed a clean shortcut by `cross_line_ref_closer`).
-        // The inline pass then either pairs the `]` with the earlier opener —
-        // consuming the label as the dropped topic — or, with no opener, leaves the
-        // `]` literal and the `[ref]` a standalone shortcut, so `a][b]` stays
-        // `a]` + a `[b]` shortcut, matching roxygen2.
+        // `]` as a neutral bracket leaf; the `[ref]` label carves onto its own neutral
+        // brackets (`same_line_bracket_opener`) and `classify_closer` reads it off the
+        // lookahead. The inline pass then either pairs the `]` with the earlier opener
+        // — folding the label in as `][ref]` — or, with no opener, leaves the `]`
+        // literal and the `[ref]` a standalone shortcut, so `a][b]` stays `a]` + a
+        // `[b]` shortcut, matching roxygen2.
         if md && bytes[i] == b']' && cross_line_ref_closer(bytes, i) {
             push(
                 out,
@@ -470,8 +472,7 @@ fn lex_roxygen_prose(
         // (handled above) and is not a non-link `]{…}` lookahead as a neutral bracket
         // leaf. The inline pass pairs it with an earlier cross-line opener (a shortcut
         // link) or, with no opener, re-emits it as literal text — so a truly stray `]`
-        // is unchanged. A *same-line* shortcut is consumed whole by `scan_md_link`, so
-        // a `]` reaching here has no same-line opener.
+        // is unchanged.
         if md && bytes[i] == b']' && !matches!(bytes.get(i + 1), Some(b'(' | b'[' | b'{')) {
             push(
                 out,
@@ -725,7 +726,7 @@ fn same_line_bracket_opener(bytes: &[u8], i: usize) -> bool {
 
 /// Whether a `[` at `bytes[i]` opens a *nested-bracket* same-line link: its
 /// balanced `[…]` interior itself contains a `[` or `]`. The bracket-free same-line
-/// paths ([`inline_link_span`], [`same_line_shortcut_opener`]) and the opaque
+/// paths ([`inline_link_span`], [`same_line_bracket_opener`]) and the opaque
 /// [`scan_md_link`] all require a bracket-free interior, so only a nested interior
 /// reaches here. Carving the outer `[` as a neutral opener (rather than one opaque
 /// link token) lets the inline pass resolve the nesting with CommonMark opener
@@ -1641,7 +1642,7 @@ mod tests {
     fn md_function_autolink() {
         // A same-line plain-text shortcut `[func()]` carves as neutral bracket
         // leaves (opener `[`, closer `]`) for the inline pass to pair, not the
-        // opaque `RoxygenMdLink` leaf (see `same_line_shortcut_opener`).
+        // opaque `RoxygenMdLink` leaf (see `same_line_bracket_opener`).
         assert_eq!(
             prose_texts("#' Call [func()] and [pkg::g()].\n#' @md\n"),
             vec![

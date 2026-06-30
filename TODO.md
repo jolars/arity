@@ -577,11 +577,23 @@
       whole-field demotion against a top-level-only refmap would wrongly demote a self-defined in-list `[foo]`.
       Projector-only. Curated `md_undefined_shortcut_list` (in-list `a][b]` literal) + `md_shortcut_list`
       (in-list self-defined `[foo]` still links). Projector 315→317.
-      **Slice B remainder (backlog):** (b) *poisoning* (`demote_poisoned_links`) is still top-level-only, so a
-      leaked synthesized def whose escaped-close candidate sits inside a list item is missed (very rare); plus
-      multi-line defs + URL normalization + strict cross-list document-order for duplicate labels. (c) retire
-      `scan_md_link` *entirely* (still serves plain same-line `[t]`/`[t][r]`, autolink `<url>`) by carving
-      **every** bracket and moving refs onto the arena lookahead. Plan: `~/.claude/plans/luminous-zooming-toast.md`.
+      **Slice B remainder A+B+C-core LANDED (2026-06-30):** (A) whole-field *poisoning* — both
+      `inline_skeleton_fragment` and the new recursive `demote_poisoned_walk`/`demote_poisoned_items` descend
+      into list items (space-guarded, offset-aligned), so an escaped-close candidate inside a list item poisons
+      later in-list links; curated `md_linkref_poisoning_list`. (B) *multi-line* defs (`match_linkref_def`
+      gathers the trailing `Text` run across soft breaks) + *entity-decoded* destinations (`decode_html_entities`,
+      `&amp;`→`&`); curated `md_url_reference_{multiline,entity,invalid_dest}`. (C-core) **references onto the
+      arena lookahead** — one `same_line_bracket_opener` carves every bracket-free same-line `[…]` (shortcut
+      display, reference display, reference label) neutral, and `classify_closer`/`neutral_ref_label` read the
+      `[ref]` off the lookahead, so plain references are `ROXYGEN_MD_LINK` nodes (projection-invariant; 3 CST
+      snapshots re-accepted). Projector 317→321; curated fixed-point 52→56/56.
+      **Slice B remainder (still backlog):** `scan_md_link` is **not** fully retired — it still serves the
+      **`\`-bearing display residual** (`[a\b]`→`\link{a}`+Rd-macro `\b` (links); `[a\*b\*]` *drops*) and the
+      **autolink `<url>`**. The `\`-display needs Rd-macro-in-markdown-display modeling + the markdown `\`-escape
+      backlog (do NOT widen the lexer heuristically — markdown tenet); only then can `scan_md_link`'s `[`-path,
+      the opaque `classify_closer` branch, and the projector opaque-leaf helpers be deleted. Plus: poisoning's
+      `relink_demoted_inline_links` into list items, cross-list duplicate-label document order, multi-line def
+      *titles*. Plan: `~/.claude/plans/we-ll-do-the-slice-elegant-ladybug.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
       delimiters.** roxygen2's `double_escape_md` doubles every backslash *except* it
