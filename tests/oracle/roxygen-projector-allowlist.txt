@@ -326,6 +326,9 @@ tabular
 md_shortcut_emphasis
 md_url_reference
 md_url_reference_consecutive
+md_url_reference_entity
+md_url_reference_invalid_dest
 md_url_reference_list
 md_url_reference_list_def
+md_url_reference_multiline
 md_url_reference_section

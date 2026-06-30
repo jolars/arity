@@ -1942,30 +1942,43 @@ fn scan_linkref_run(
             }
             k += 1;
         }
-        let Some((label, url)) = match_linkref_def(body, k) else {
+        let Some((label, url, def_end)) = match_linkref_def(body, k) else {
             break;
         };
         urls.entry(normalize_linkref_label(&label)).or_insert(url);
-        for idx in end..=k + 1 {
+        for idx in end..def_end {
             dropped.insert(idx);
         }
         any = true;
-        end = k + 2;
+        end = def_end;
     }
     any.then_some(end)
 }
 
 /// Match a single link-reference definition at body index `j`: a shortcut-shaped
-/// label link (`[label]`) immediately followed by a `Text` of the form
-/// `: <destination> [title]`. Returns the `(label, destination)` pair, or `None`
-/// when the shape does not hold.
-fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String)> {
+/// label link (`[label]`) followed by `Text` of the form `: <destination> [title]`.
+/// The destination (and optional title) may continue across soft line breaks, so
+/// the trailing `Text` run is concatenated — joining continuation lines — up to (but
+/// not including) a paragraph break (a `Text` containing `\n`) or a non-`Text`
+/// inline. Returns `(label, destination, def_end)` where `def_end` is the exclusive
+/// body index just past the consumed definition, or `None` when the shape does not
+/// hold.
+fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String, usize)> {
     let label = linkref_def_label(body.get(j)?)?;
-    let Inline::Text(text) = body.get(j + 1)? else {
-        return None;
-    };
-    let url = parse_linkref_def_dest(text)?;
-    Some((label, url))
+    let mut text = String::new();
+    let mut k = j + 1;
+    while let Some(Inline::Text(t)) = body.get(k) {
+        if t.contains('\n') {
+            break; // a paragraph break ends the definition's block
+        }
+        text.push_str(t);
+        k += 1;
+    }
+    if k == j + 1 {
+        return None; // no trailing text — not a definition
+    }
+    let url = parse_linkref_def_dest(&text)?;
+    Some((label, url, k))
 }
 
 /// The label of a shortcut-shaped link (`[label]`) — the form a link-reference
@@ -2004,6 +2017,10 @@ fn parse_linkref_def_dest(text: &str) -> Option<String> {
     if url.is_empty() {
         return None;
     }
+    // cmark entity-decodes link destinations (`&amp;` → `&`), so a defined href
+    // carries the decoded URL. (The destination is otherwise verbatim — no
+    // percent re-encoding.)
+    let url = decode_html_entities(&url);
     let after = after.trim_start();
     if after.is_empty() {
         return Some(url);
@@ -2018,6 +2035,54 @@ fn parse_linkref_def_dest(text: &str) -> Option<String> {
     let title_rest = &after[1..];
     let end = title_rest.find(close)?;
     title_rest[end + 1..].trim().is_empty().then(|| url.clone())
+}
+
+/// Decode the HTML/XML character references cmark resolves in a markdown link
+/// destination: the five named entities (`&amp;`/`&lt;`/`&gt;`/`&quot;`/`&apos;`)
+/// and numeric references (`&#NN;`, `&#xHH;`). An unrecognized `&…;` (or a bare `&`)
+/// is left verbatim. The fast path returns the input unchanged when it has no `&`,
+/// so destinations without entities are byte-identical.
+fn decode_html_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        if s.as_bytes()[i] == b'&'
+            && let Some(rel) = s[i + 1..].find(';')
+            && let Some(ch) = decode_entity(&s[i + 1..i + 1 + rel])
+        {
+            out.push(ch);
+            i += 1 + rel + 1;
+            continue;
+        }
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Resolve one character-reference body (the text between `&` and `;`): a named
+/// entity from cmark's predefined set or a decimal/hex numeric reference. `None`
+/// for an unrecognized name or an out-of-range code point (left verbatim).
+fn decode_entity(body: &str) -> Option<char> {
+    match body {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => {
+            let num = body.strip_prefix('#')?;
+            let code = match num.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => num.parse::<u32>().ok()?,
+            };
+            char::from_u32(code)
+        }
+    }
 }
 
 /// The display inlines of a referencing link — what `\href{url}{…}` renders when the
@@ -4346,6 +4411,30 @@ mod tests {
              (\\item) (TEXT \"an escaped close [stop] here\") \
              (\\item) (TEXT \"[bar] dead\")) \
              (TEXT \"[stop]: R:stop%5C [bar]: R:bar\"))"
+        );
+    }
+
+    #[test]
+    fn decode_html_entities_resolves_named_and_numeric_refs() {
+        assert_eq!(decode_html_entities("a&amp;b"), "a&b");
+        assert_eq!(decode_html_entities("&lt;&gt;&quot;&apos;"), "<>\"'");
+        assert_eq!(decode_html_entities("&#65;&#x42;"), "AB");
+        // No `&`: byte-identical fast path. Unrecognized name or a bare `&`: verbatim.
+        assert_eq!(decode_html_entities("plain"), "plain");
+        assert_eq!(decode_html_entities("a&b=1"), "a&b=1");
+        assert_eq!(decode_html_entities("&unknown;"), "&unknown;");
+    }
+
+    #[test]
+    fn parses_a_multiline_linkref_definition() {
+        // `[ref]:` then a continuation line carrying the URL resolve to one
+        // `\href`; the definition lines are consumed.
+        let src = "#' @md\n#' @details\n#' See [ref].\n#'\n\
+                   #' [ref]:\n#'   https://example.com\n#' @name x\nNULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\details (TEXT \"See\") \
+             (\\href (VERB \"https://example.com\") (TEXT \"ref\")) (TEXT \".\"))"
         );
     }
 

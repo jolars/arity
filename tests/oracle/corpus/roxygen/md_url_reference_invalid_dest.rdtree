@@ -1,0 +1,3 @@
+(\description (TEXT "Invalid link-reference destination stays prose"))
+(\details (TEXT "A destination with an unescaped space is not a valid definition, so the shortcut self-defines and the line stays literal prose: see") (\link (TEXT "ref")) (TEXT "here.") (\link (TEXT "ref")) (TEXT ": https://example.com/a b"))
+(\title (TEXT "Invalid link-reference destination stays prose"))

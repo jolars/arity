@@ -1,0 +1,3 @@
+(\description (TEXT "Entity-decoded link-reference destination"))
+(\details (TEXT "cmark decodes HTML entities in a link destination, so the href carries the decoded URL: see") (\href (VERB "https://example.com/?a=1&b=2") (TEXT "ref")) (TEXT "here."))
+(\title (TEXT "Entity-decoded link-reference destination"))
