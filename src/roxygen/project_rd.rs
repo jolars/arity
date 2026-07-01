@@ -1325,7 +1325,7 @@ fn text_atom(body: &str) -> Option<String> {
 /// `norm_ws` later collapses, so the comment's end-of-line is honored either way.)
 fn prose_text_atom(run: &str, md: bool) -> Option<String> {
     if md {
-        text_atom(&unescape_md_brackets(run))
+        text_atom(&unescape_md_brackets(&collapse_md_backslash_runs(run)))
     } else {
         text_atom(&strip_rd_comments(run))
     }
@@ -1352,6 +1352,51 @@ fn unescape_md_brackets(run: &str) -> String {
             out.push(chars.next().expect("peeked bracket"));
         } else {
             out.push(c);
+        }
+    }
+    out
+}
+
+/// In `@md` prose, a run of literal backslashes collapses per CommonMark's
+/// backslash escaping. roxygen2's `double_escape_md` doubles every backslash
+/// (`k` → `2k`), cmark then resolves each `\\` pair to one literal backslash
+/// (`2k` → `k`), and finally `parse_Rd` collapses the rendered `\\` pairs again
+/// (`k` → `ceil(k/2)`, the trailing odd backslash escaping the next character).
+/// The net effect on the parsed text is that a run of `k` source backslashes
+/// renders as `ceil(k/2)` backslashes: a lone `\` (`\*`, `` \` ``, `\_`, …) keeps
+/// its single backslash (`ceil(1/2) == 1`, a no-op), while `\\` → `\`,
+/// `\\\\` → `\\`, and so on.
+///
+/// A run immediately before `[`/`]` is left untouched — those bracket escapes
+/// follow `double_escape_md`'s revert (`\\[` → `\[`) and are resolved separately
+/// by [`unescape_md_brackets`], which runs after this. Runs before `%` (the Rd
+/// comment character) are also left to the separate `%`-swallow modeling (a lone
+/// `\%` keeps its backslash but the bare `%` still comments to end of line);
+/// `ceil(k/2)` is a no-op for the common `k == 1` case there anyway.
+fn collapse_md_backslash_runs(run: &str) -> String {
+    let mut out = String::with_capacity(run.len());
+    let mut chars = run.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        // Consume a maximal run of backslashes.
+        let mut k = 1usize;
+        while chars.peek() == Some(&'\\') {
+            chars.next();
+            k += 1;
+        }
+        // A run abutting a square bracket is a bracket escape: leave it verbatim
+        // for `unescape_md_brackets` (its `\\[` → `\[` revert is a distinct path).
+        if matches!(chars.peek(), Some('[' | ']')) {
+            for _ in 0..k {
+                out.push('\\');
+            }
+        } else {
+            for _ in 0..k.div_ceil(2) {
+                out.push('\\');
+            }
         }
     }
     out
@@ -4536,6 +4581,21 @@ mod tests {
         );
         // A backslash not adjacent to a bracket (e.g. at a line break) is kept.
         assert_eq!(unescape_md_brackets("a\\\n[b"), "a\\\n[b");
+    }
+
+    #[test]
+    fn collapse_md_backslash_runs_halves_a_run() {
+        // A run of `k` source backslashes renders as `ceil(k/2)` (double_escape
+        // doubles, cmark and parse_Rd each collapse pairs): `\\` → `\`,
+        // `\\\\` → `\\`, but a lone `\` (`\*`, `\_`, …) is unchanged.
+        assert_eq!(collapse_md_backslash_runs(r"a \ b"), r"a \ b");
+        assert_eq!(collapse_md_backslash_runs(r"a \\ b"), r"a \ b");
+        assert_eq!(collapse_md_backslash_runs(r"a \\\\ b"), r"a \\ b");
+        assert_eq!(collapse_md_backslash_runs(r"a \\\\\\ b"), r"a \\\ b");
+        assert_eq!(collapse_md_backslash_runs(r"\* \_ \%"), r"\* \_ \%");
+        // A run abutting a bracket is left verbatim for `unescape_md_brackets`.
+        assert_eq!(collapse_md_backslash_runs(r"\\[x"), r"\\[x");
+        assert_eq!(collapse_md_backslash_runs(r"a\\]b"), r"a\\]b");
     }
 
     #[test]

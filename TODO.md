@@ -681,10 +681,18 @@
       (`inline_link_span`, `is_cross_line_link_opener`, `scan_md_link`). Projector:
       `unescape_md_brackets` drops one backslash before `[`/`]` in `@md` text. A single
       adjacent `\` already suppresses the link (verified for 1–3 leading backslashes);
-      deeper runs follow `double_escape_md`'s non-overlapping `gsub` and stay backlog,
-      as does escaped-*close* `[text\]` (which trips roxygen2's synthesized-linkref
-      quirk). (`\`-escapes inside emphasis cm-439/442/451/454 closed 2026-06-29d via the
-      rdComplete-drop, not an escape rule.) Curated `md_escaped_bracket`.
+      deeper runs before a bracket follow `double_escape_md`'s non-overlapping `gsub` and
+      stay backlog, as does escaped-*close* `[text\]` (which trips roxygen2's synthesized-
+      linkref quirk). (`\`-escapes inside emphasis cm-439/442/451/454 closed 2026-06-29d via
+      the rdComplete-drop, not an escape rule.) Curated `md_escaped_bracket`.
+      **Backslash-run collapse LANDED (2026-07-01):** in `@md` prose text a run of `k`
+      literal backslashes renders as `ceil(k/2)` (`double_escape_md` doubles, cmark + parse_Rd
+      each collapse `\\` pairs), so `\\`→`\`, `\\\\`→`\\`, and a lone `\*`/`\_`/… is a no-op.
+      Projector-only `collapse_md_backslash_runs` (before `unescape_md_brackets`; skips runs
+      abutting `[`/`]`). Curated `md_backslash_run`. **Still backlog** (the `@md` `\`-escape
+      render cluster, do NOT widen the lexer): the `\%`-swallow (`a \% b`→`a \`, the bare `%`
+      comments to EOL), a run before a letter (macro-carving splits it — `\\y`), and brace-
+      less known-macro decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`).
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

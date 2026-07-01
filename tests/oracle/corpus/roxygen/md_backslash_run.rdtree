@@ -1,0 +1,3 @@
+(\description (TEXT "Backslash runs in markdown prose"))
+(\details (TEXT "A double backslash a \\ b and a quadruple a \\\\ b collapse per CommonMark, while a single \\* and \\_ keep their backslash."))
+(\title (TEXT "Backslash runs in markdown prose"))
