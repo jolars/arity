@@ -166,12 +166,17 @@ impl SemanticModel {
     /// Bindings that were defined but never read in the same file.
     /// Excludes parameters and `for`-loop variables (those have semantic
     /// meaning even when unused) and names starting with `.` (R convention).
+    ///
+    /// Also excludes `Implicit` (super-assignment, `<<-`) targets: a `<<-` is a
+    /// stateful write to an *enclosing* (or global) binding, not a fresh local,
+    /// so its non-use here does not mean dead code — the read may live in the
+    /// outer scope or a later invocation of a closure.
     pub fn unused_local_bindings(&self) -> impl Iterator<Item = BindingId> + '_ {
         (0..self.bindings.len())
             .map(BindingId::from_index)
             .filter(move |id| {
                 let binding = self.binding(*id);
-                matches!(binding.kind, BindingKind::Local | BindingKind::Implicit)
+                matches!(binding.kind, BindingKind::Local)
                     && !binding.read
                     && !binding.name.starts_with('.')
             })

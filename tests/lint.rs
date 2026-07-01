@@ -58,6 +58,27 @@ fn lint_flags_unused_binding() {
 }
 
 #[test]
+fn super_assignment_is_not_unused() {
+    // `done <<- TRUE` mutates the enclosing `done` (read via `if (done)`), so it
+    // is a stateful write, not a dead local. A super-assignment must never flag
+    // as an unused binding.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("super.R");
+    std::fs::write(
+        &path,
+        "make <- function() {\n  done <- FALSE\n  function() {\n    if (done) return(NULL)\n    done <<- TRUE\n  }\n}\nmake()\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "super.R").contains(&"unused-binding"),
+        "super.R: {:?}",
+        rules_for(&result, "super.R")
+    );
+}
+
+#[test]
 fn reassigned_binding_read_after_each_assignment_is_not_unused() {
     // A name assigned twice in one scope, with a read after each assignment, is
     // used both times. The later binding's read must resolve to it, not to the
