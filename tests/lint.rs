@@ -351,18 +351,44 @@ fn dynamic_source_suppresses_undefined_symbol() {
 
 #[test]
 fn shadowed_builtin_flags_call_of_shadowed_name() {
-    // The footgun the rule targets: `c` shadows base `c`, then `c(2, 3)` calls
-    // the local instead of base. Fire.
+    // The footgun the rule targets: `c` is bound to a *function* that shadows
+    // base `c`, then `c(2, 3)` calls the local instead of base. Fire.
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("call.R");
-    std::fs::write(&path, "f <- function() {\n  c <- 1\n  c(2, 3)\n}\nf()\n")
-        .expect("failed to write file");
+    std::fs::write(
+        &path,
+        "f <- function() {\n  c <- function(x, y) x\n  c(2, 3)\n}\nf()\n",
+    )
+    .expect("failed to write file");
 
     let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
     assert!(
         rules_for(&result, "call.R").contains(&"shadowed-builtin"),
         "call.R: {:?}",
         rules_for(&result, "call.R")
+    );
+}
+
+#[test]
+fn shadowed_builtin_ignores_value_binding_shadow() {
+    // The dominant tidyverse idiom: `names <- names(data)` binds a *value*, then
+    // `names(data)` is called again. R's call-position lookup skips the
+    // non-function local and reaches base `names`, so there is no hazard. The
+    // rule must stay silent (verified against R; this was a false positive on
+    // tidyr).
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("valbind.R");
+    std::fs::write(
+        &path,
+        "f <- function(data) {\n  names <- names(data)\n  names(data)\n}\nf(x)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "valbind.R").contains(&"shadowed-builtin"),
+        "value binding should not trigger shadowed-builtin: {:?}",
+        rules_for(&result, "valbind.R")
     );
 }
 
