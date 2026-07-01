@@ -733,10 +733,25 @@
       literal backslashes renders as `ceil(k/2)` (`double_escape_md` doubles, cmark + parse_Rd
       each collapse `\\` pairs), so `\\`→`\`, `\\\\`→`\\`, and a lone `\*`/`\_`/… is a no-op.
       Projector-only `collapse_md_backslash_runs` (before `unescape_md_brackets`; skips runs
-      abutting `[`/`]`). Curated `md_backslash_run`. **Still backlog** (the `@md` `\`-escape
-      render cluster, do NOT widen the lexer): the `\%`-swallow (`a \% b`→`a \`, the bare `%`
-      comments to EOL), a run before a letter (macro-carving splits it — `\\y`), and brace-
-      less known-macro decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`).
+      abutting `[`/`]`). Curated `md_backslash_run`.
+      **`%`-swallow LANDED (2026-07-01b):** in `@md` prose an escaping backslash before the Rd
+      comment char collides with roxygen2's own `%`→`\%` escape, keyed on the *parity* of the
+      source backslash run before `%`: odd (`\%`, `\\\%`) keeps `ceil(k/2)` backslashes and
+      the `%` comments to end of the physical line; even (bare `%`, `\\%`) keeps `ceil(k/2)`
+      backslashes and a literal `%`. Projector-only `md_percent_swallow` (per-line, before
+      `collapse_md_backslash_runs` so parity reads the original run). Curated `md_percent_swallow`.
+      **Still backlog** (the `@md` `\`-escape render cluster, do NOT widen the lexer): a
+      backslash run before a letter (macro-carving splits it — `\\y`), and brace-less
+      known-macro decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`).
+      **Also backlog (pre-existing, shared with the non-md path):** the `%`-swallow (and the
+      non-md `%`-comment strip) stop at the physical source line, but the projector flattens a
+      *soft-wrap* line break to a space in `paragraph_inlines`/`section_body_parts` (only
+      paragraph breaks reach the run as `\n`), so a `%` on a soft-wrapped line eats its
+      continuation instead of stopping at the line. Non-md repro: `@details` (own line) then
+      `a % x` / `continuation` yields `a` (arity) vs `a continuation` (roxygen2). Fixing it
+      means giving the prose run a physical-line boundary distinct from the paragraph-break
+      `\n` the link-ref block machinery keys on — a paragraph-model change (target #2 / inline
+      pass), not a projector-only add.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

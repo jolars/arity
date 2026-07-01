@@ -1,0 +1,3 @@
+(\description (TEXT "Percent swallow in markdown prose"))
+(\details (TEXT "A bare % stays literal but an escaped \\ A double-escaped \\% keeps its backslash and percent."))
+(\title (TEXT "Percent swallow in markdown prose"))

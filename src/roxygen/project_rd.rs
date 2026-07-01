@@ -1325,7 +1325,9 @@ fn text_atom(body: &str) -> Option<String> {
 /// `norm_ws` later collapses, so the comment's end-of-line is honored either way.)
 fn prose_text_atom(run: &str, md: bool) -> Option<String> {
     if md {
-        text_atom(&unescape_md_brackets(&collapse_md_backslash_runs(run)))
+        text_atom(&unescape_md_brackets(&collapse_md_backslash_runs(
+            &md_percent_swallow(run),
+        )))
     } else {
         text_atom(&strip_rd_comments(run))
     }
@@ -1355,6 +1357,52 @@ fn unescape_md_brackets(run: &str) -> String {
         }
     }
     out
+}
+
+/// In `@md` prose, model roxygen2's `%`-swallow. `%` is the Rd comment character,
+/// so roxygen2's markdown→Rd pass escapes a rendered `%` to `\%`; but when the
+/// markdown already places a literal backslash immediately before the `%`, that
+/// escaping backslash collides with the literal one and the `%` is left **bare** in
+/// the Rd, starting a comment that eats to end of line. Whether the collision
+/// happens is keyed on the **parity of the source backslash run** before the `%`
+/// (`double_escape_md` doubles the run to `2k`, cmark resolves the `\\` pairs, and
+/// the emitted Rd carries the `k` literal backslashes plus the one escaping the
+/// `%` — a run of `k + 1`, which parse_Rd leaves a trailing bare `%` iff `k` is
+/// odd):
+///
+/// - `k` **odd** (`\%`, `\\\%`, …): the `%` comments to end of line. The `k`
+///   backslashes are kept (later halved to `ceil(k/2)` by
+///   [`collapse_md_backslash_runs`]) and everything from the `%` to the physical
+///   line's end is dropped.
+/// - `k` **even** (bare `%`, `\\%`, `\\\\%`, …): the `%` survives as a literal
+///   percent; the run keeps its `ceil(k/2)` backslashes and the `%`.
+///
+/// The swallow is line-scoped (roxygen2's comment ends at the newline, and a
+/// soft-wrapped continuation on the next `#'` line survives), mirroring the
+/// non-`@md` [`strip_rd_comments`]. It runs **before** [`collapse_md_backslash_runs`]
+/// so the odd/even decision reads the original run length, not its halved form.
+fn md_percent_swallow(run: &str) -> String {
+    run.split('\n')
+        .map(md_percent_swallow_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The prefix of `line` up to (not including) the first `%` whose preceding
+/// maximal backslash run has **odd** length (the whole line if none); the kept
+/// backslashes are retained for [`collapse_md_backslash_runs`] to halve.
+fn md_percent_swallow_line(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, _) in line.char_indices().filter(|&(i, _)| bytes[i] == b'%') {
+        let mut k = 0usize;
+        while i > k && bytes[i - 1 - k] == b'\\' {
+            k += 1;
+        }
+        if k % 2 == 1 {
+            return &line[..i];
+        }
+    }
+    line
 }
 
 /// In `@md` prose, a run of literal backslashes collapses per CommonMark's
@@ -4596,6 +4644,22 @@ mod tests {
         // A run abutting a bracket is left verbatim for `unescape_md_brackets`.
         assert_eq!(collapse_md_backslash_runs(r"\\[x"), r"\\[x");
         assert_eq!(collapse_md_backslash_runs(r"a\\]b"), r"a\\]b");
+    }
+
+    #[test]
+    fn md_percent_swallow_is_parity_keyed() {
+        // A bare `%` (even run, k=0) stays literal.
+        assert_eq!(md_percent_swallow("a % b"), "a % b");
+        // A lone `\%` (odd) comments to end of line; the escaping `\` is kept
+        // (later halved to `ceil(1/2) == 1` by collapse_md_backslash_runs).
+        assert_eq!(md_percent_swallow(r"a \% b"), "a \\");
+        // `\\%` (even) survives literal; `\\\%` (odd) swallows, keeping 3 `\`.
+        assert_eq!(md_percent_swallow(r"a \\% b"), r"a \\% b");
+        assert_eq!(md_percent_swallow(r"a \\\% b"), "a \\\\\\");
+        // The first odd `%` wins even when a bare `%` precedes it on the line.
+        assert_eq!(md_percent_swallow(r"a % b \% c"), "a % b \\");
+        // Line-scoped: a continuation on the next physical line survives.
+        assert_eq!(md_percent_swallow("a \\% b\nc"), "a \\\nc");
     }
 
     #[test]

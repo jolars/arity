@@ -238,12 +238,28 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
 - **A backslash *run* in `@md` prose text collapses `ceil(k/2)`.** `double_escape_md` doubles (`k`→`2k`),
   cmark resolves `\\` pairs (`2k`→`k`), parse_Rd collapses again (`k`→`ceil(k/2)`): `\\`→`\`, `\\\\`→`\\`;
   `k==1` is a **no-op** (so the single-escape trap above still holds). Projector-only
-  `collapse_md_backslash_runs` (before `unescape_md_brackets`; **skips** runs abutting `[`/`]`). **Still
-  backlog** (the `@md` `\`-escape *render* cluster — do NOT widen the lexer): the `\%`-swallow
-  (`a \% b`→`a \`, mdxml `%`→`\%` collides with the abutting literal `\` → bare `%` comments to EOL); a run
-  **before a letter** (`\\y` — the lexer splits it into text `\` + an UNKNOWN macro node); brace-less
-  known-macro decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`, `\dots`→kept — lexer
-  leaves them plain text). Facets (b)–(d) tie into the inline-pass migration.
+  `collapse_md_backslash_runs` (before `unescape_md_brackets`; **skips** runs abutting `[`/`]`).
+- **The `@md` `%`-swallow is parity-keyed on the *original* backslash-run length.** `%` is the Rd comment
+  char, so roxygen2's md→Rd pass escapes a rendered `%`→`\%`; when the markdown already places a literal
+  `\` before the `%`, that escaping `\` collides and the `%` is left **bare** → comments to end of the
+  physical line. **Odd** run before `%` (`\%`, `\\\%`): keep `ceil(k/2)` backslashes, drop `%`→EOL.
+  **Even** (bare `%`, `\\%`): keep `ceil(k/2)` backslashes + literal `%`. Projector-only
+  `md_percent_swallow` (per physical line; runs **before** `collapse_md_backslash_runs` so parity reads the
+  raw run). Silent (no roxygen2 warning) → pure render-parity. Curated `md_percent_swallow`.
+- **PRE-EXISTING boundary bug (shared md + non-md), the `%`-swallow's remaining edge.** Both the `%`-swallow
+  and the non-md `strip_rd_comments` stop at the **physical source line**, but the projector flattens a
+  *soft-wrap* line break to a **space** in `paragraph_inlines`/`section_body_parts` (only *paragraph*
+  breaks reach the run as `\n`). So a `%` on a soft-wrapped line eats its continuation (arity) instead of
+  stopping at the line (roxygen2). Non-md repro: `@details` alone then `a % x` / `continuation` → `a`
+  (arity) vs `a continuation`. The curated `md_percent_swallow` avoids intra-paragraph soft-wraps for
+  this reason. Fix needs a physical-line boundary in the run **distinct from** the paragraph-break `\n`
+  the link-ref block machinery keys on (`t.contains('\n')` block-start detection in
+  `collect_user_linkrefs`/`scan_linkref_run`) — a paragraph-model change (target #2 / inline pass), NOT a
+  projector-only add.
+- **Still backlog** (the `@md` `\`-escape *render* cluster — do NOT widen the lexer): a run **before a
+  letter** (`\\y` — the lexer splits it into text `\` + an UNKNOWN macro node); brace-less known-macro
+  decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`, `\dots`→kept — lexer leaves them
+  plain text). These tie into the inline-pass migration.
 - **Images** (`scan_md_image`, inline `![…](…)` only): `mdxml_image` drops alt → `\figure{url}{title}`,
   wrapped per extension (`image_format`: svg→html, pdf→pdf, raster/unknown→bare). `\figure` = 2-arg
   verbatim macro.
@@ -344,7 +360,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 330 matching (all allowlisted), 18 divergent** of 348 pinned.
+corpus (132 `cm-NNN` cases). **Current: 331 matching (all allowlisted), 18 divergent** of 349 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -353,50 +369,58 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (348 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (349 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
    strict semantic preservation of the formatter; 64/64 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-01) — `@md` backslash-run collapse (`\\`→`\`), projector-only
+## Latest session (2026-07-01b) — `@md` `%`-swallow (parity-keyed), projector-only
 
-Targeted ranked-#1 (the `\`-escape render cluster). **Step 0 characterization split the cluster into
-distinct, mostly-entangled facets** (oracle-probed all): (a) even/odd **backslash-run collapse** in prose
-text — a run of `k` source backslashes renders `ceil(k/2)` (`double_escape_md` doubles → cmark collapses
-`\\` pairs → parse_Rd collapses again), so `\\`→`\`, `\\\\`→`\\`, `\*`/`\_` no-op; (b) the **`%`-swallow**
-(`a \% b`→`a \`: mdxml escapes `%`→`\%` but the abutting literal `\` forms `\\` in Rd, leaving the `%` bare
-→ live Rd comment to EOL); (c) a run **before a letter** (`\\y`) which the lexer splits into text `\` + an
-UNKNOWN macro node (so the projector can't re-fuse it); (d) **brace-less known-macro decomposition** under
-`@md` (`\emph z`→dropped, `\code z`→`\code{ z}`, `\dots`→kept) — the lexer leaves these as plain text, so
-matching would need re-scanning raw text (the "widen the scanner" anti-pattern) or the inline-pass work.
-Only facet (a) is cleanly isolatable and projector-only; landed it.
+Targeted ranked-#1 facet (b) (the `\`-escape render cluster's `%`-swallow). **Oracle characterization
+nailed the rule** (exact-byte probes, `block-to-sections`): the swallow is keyed on the **parity of the
+source backslash run** before `%` — odd (`\%`, `\\\%`) keeps `ceil(k/2)` backslashes and the bare `%`
+comments to end of the physical line; even (bare `%`, `\\%`, `\\\\%`) keeps `ceil(k/2)` backslashes + a
+literal `%`. Mechanism: roxygen2's md→Rd escapes a rendered `%`→`\%`, whose escaping `\` collides with a
+preceding literal `\` to form the bare `%`. **Silent** (no roxygen2 warning) → pure render-parity, not
+diagnostic-parity.
 
-**Fix (one projector fn, `collapse_md_backslash_runs`, `project_rd.rs`).** Applied in the `@md` branch of
-`prose_text_atom` **before** `unescape_md_brackets`: each maximal run of `k` backslashes → `k.div_ceil(2)`,
-**except** a run abutting `[`/`]` (left verbatim for the distinct bracket-revert path, preserving the pinned
-`\\[`→`\[`). `k==1` is a no-op, so the common `\*`/`\_`/`\%` single-escape cases are untouched. Lexer +
-formatter UNTOUCHED (the collapse is a rendering concern, not layout — the formatter keeps `\\` in source).
+**Fix (one projector fn, `md_percent_swallow`, `project_rd.rs`).** Per physical line (`split('\n')`, mirrors
+`strip_rd_comments`); truncates the line at the first `%` whose preceding backslash run is odd, keeping the
+backslashes. Wired into `prose_text_atom`'s `@md` branch **before** `collapse_md_backslash_runs`, so the
+odd/even decision reads the *raw* run length (collapse then halves the kept backslashes to `ceil(k/2)`).
+Lexer + formatter UNTOUCHED (a rendering concern, not layout). Curated `md_percent_swallow` + 1 unit test.
 
-**Result:** projector **329→330 matching, 18 divergent** (unchanged). `cargo test` green (22 bins), clippy +
-fmt clean; format baseline re-blessed (+1, additive-only — projector change, format is byte-identical).
-Curated `md_backslash_run` (projector corpus + pin); 1 projector unit test.
+**Snag found + scoped (important):** the swallow (and the non-md comment strip) stop at the **physical
+source line**, but the projector flattens a *soft-wrap* line break to a **space** in
+`paragraph_inlines`/`section_body_parts` — only *paragraph* breaks reach the run as `\n`. So a `%` on a
+soft-wrapped line eats its continuation. This is a **pre-existing bug shared with the non-md path**
+(confirmed: `@details` alone then `a % x`/`continuation` → arity `a` vs roxygen2 `a continuation`). Fixing
+it needs a physical-line boundary in the run distinct from the paragraph-break `\n` the link-ref block
+machinery keys on — a paragraph-model change, NOT projector-only. **Scoped out:** the curated case uses
+single-physical-line paragraphs (no intra-paragraph soft-wrap), so the landed swallow is exact; the
+soft-wrap edge is recorded as backlog (a new trap + a TODO bullet). This confirms the RECAP's prior read
+that facets (b)–(d) are entangled with the paragraph/inline-pass work.
 
-**Next (ranked):** **(1)** the rest of the `@md` `\`-escape render cluster (facets b–d above): the
-`%`-swallow (a genuine content *drop*, so a diagnostic-parity angle too), the run-before-letter macro-split,
-brace-less known-macro decomposition — a separate oracle surface tied to the inline-pass migration, do NOT
-widen the lexer. **(2)** the **tag same-line-value continuation** grouping divergence (`@details *a x` / `c*`
-splits paragraphs so a span can't cross) — cross-cutting (parser grouping + projector `tag_inlines` +
-formatter `TagUnit`/`collect_logical_elements`, which read the value from the TAG node), touches
-losslessness/idempotence; unblocks cross-line spans generally. **(3)** Slice B leftover hardenings
-(`relink_demoted_inline_links` into list items, cross-list duplicate-label order, multi-line def *titles*).
-**(4)** the 18 projector divergences stay out of scope.
+**Result:** projector **330→331 matching, 18 divergent** (unchanged, all out-of-scope). `cargo test` green
+(22 bins), clippy + fmt clean; format baseline re-blessed (+1, additive-only — projector change, format
+byte-identical).
+
+**Next (ranked):** **(1)** the **physical-line-boundary** rework (the snag above) — give the prose run a
+soft-wrap boundary distinct from the paragraph-break `\n`; unblocks the `%`-swallow/`%`-comment soft-wrap
+edge for *both* md and non-md, and overlaps target #2's paragraph-model work. **(2)** the **tag
+same-line-value continuation** grouping divergence (`@details *a x` / `c*` splits paragraphs so a span can't
+cross) — cross-cutting (parser grouping + projector `tag_inlines` + formatter), touches
+losslessness/idempotence. **(3)** the rest of facets (c)/(d): run-before-letter macro-split, brace-less
+known-macro decomposition — tied to the inline-pass migration, do NOT widen the lexer. **(4)** Slice B
+leftover hardenings. **(5)** the 18 projector divergences stay out of scope.
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-01** — `@md` backslash-run collapse (`\\`→`\`, `ceil(k/2)`); projector `collapse_md_backslash_runs`. 329→330.
 - **2026-06-30g** — emphasis span crosses an inline Rd macro; faithful placeholder flanking in `edge_char`. 328→329.
 - **2026-06-30f** — emphasis/link span crosses a nested macro in a *structural* arg (`resolve_md_inline_pieces`). 327→328.
 - **2026-06-30e** — md in structural two-arg macro args (each arg processed); per-run `md_structural`. 326→327.
