@@ -1,7 +1,7 @@
 //! `arity lint` driver: walks input paths, parses, builds a semantic model,
 //! runs the configured rules, filters suppressed findings, and reports.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,8 +12,8 @@ use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, SourceFile, parsed_tree_root, semantic_model,
 };
 use crate::project::{
-    ExternalResolution, FileScope, PackageCollation, Project, ProjectMember, external_resolution,
-    package_root, visible_symbols, workspace_project,
+    ExternalResolution, FileScope, PackageCollation, Project, ProjectMember, expected_r_sources,
+    external_resolution, package_root, visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -151,6 +151,21 @@ pub fn check_paths_with_index(
         }
     }
 
+    // Scope-only members: a package's generated R sources (`cpp11.R`,
+    // `RcppExports.R`, `extendr-wrappers.R`, `import-standalone-*.R`) are in the
+    // default exclude set, so they are never linted — but they *define* the
+    // wrappers that hand-written siblings call. Track them so their top-level
+    // bindings enter the package namespace; without this every caller is a false
+    // `undefined-symbol`. They join the workspace below but are absent from
+    // `files`, so pass 2 never lints them. Mirrors the LSP's exclude-free sibling
+    // discovery in `seed_workspace_for`.
+    let mut scope_only: Vec<SourceFile> = Vec::new();
+    for path in excluded_package_sources(&files) {
+        if let Ok(content) = fs::read_to_string(&path) {
+            scope_only.push(db.upsert_file(&path, content));
+        }
+    }
+
     // Install the harvested index as the HIGH-durability library singleton
     // before deriving the project (which borrows `&db`). `external_resolution`
     // reads it.
@@ -160,7 +175,8 @@ pub fn check_paths_with_index(
     // it. `workspace_project` filters to cleanly-parsing members, reads each
     // package's NAMESPACE, and interns — the same membership the inline build
     // produced, now keyed off the salsa `Workspace` input.
-    db.set_workspace_members(tracked.values().copied().collect(), files.clone());
+    let members: Vec<SourceFile> = tracked.values().copied().chain(scope_only).collect();
+    db.set_workspace_members(members, files.clone());
     let project = workspace_project(&db);
 
     // The cross-file path resolves undefined symbols through `external_resolution`
@@ -208,6 +224,30 @@ pub fn check_paths_with_index(
         total_findings,
         reports,
     })
+}
+
+/// The R sources each analyzed package loads that the exclude filter dropped
+/// from `lint_files` — the scope-only members [`check_paths_with_index`] adds so
+/// generated wrappers still populate the package namespace.
+///
+/// For every package root represented in `lint_files`, this is the package's
+/// expected `R/` source set (see [`expected_r_sources`]) minus the files already
+/// being linted. Generated files (`cpp11.R`, `RcppExports.R`, …) are the usual
+/// residents: excluded from linting, but their bindings are real package API.
+fn excluded_package_sources(lint_files: &[PathBuf]) -> Vec<PathBuf> {
+    let linted: HashSet<&PathBuf> = lint_files.iter().collect();
+    let roots: BTreeSet<PathBuf> = lint_files.iter().filter_map(|p| package_root(p)).collect();
+    let mut extra = Vec::new();
+    for root in roots {
+        let r_dir = root.join("R");
+        for name in expected_r_sources(&root) {
+            let path = r_dir.join(name);
+            if !linted.contains(&path) && path.is_file() {
+                extra.push(path);
+            }
+        }
+    }
+    extra
 }
 
 /// Intern a [`Project`] from a membership snapshot. Sorts `members` by path so

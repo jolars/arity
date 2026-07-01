@@ -160,7 +160,7 @@ const R_SOURCE_EXTS: [&str; 6] = ["R", "r", "S", "s", "Q", "q"];
 /// entries from `DESCRIPTION`. Union (not intersection) so neither a stale
 /// `Collate:` nor an unlisted file can shrink the expected set and let an
 /// incomplete package pass. Touches disk.
-fn expected_r_sources(root: &Path) -> BTreeSet<String> {
+pub fn expected_r_sources(root: &Path) -> BTreeSet<String> {
     let mut expected: BTreeSet<String> = BTreeSet::new();
     if let Ok(entries) = std::fs::read_dir(root.join("R")) {
         for entry in entries.flatten() {

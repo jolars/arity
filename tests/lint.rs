@@ -1,9 +1,11 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use arity::config::LintConfig;
+use arity::config::{DEFAULT_EXCLUDE, LintConfig};
+use arity::file_discovery::ExcludeFilter;
 use arity::linter::{
     Applicability, LintResult, LintStatus, apply_fixes, check_document, check_paths,
+    check_paths_with_index,
 };
 use tempfile::tempdir;
 
@@ -170,6 +172,57 @@ fn package_resolves_bindings_across_files() {
     assert_eq!(result.total_findings, 0, "reports: {:?}", result.reports);
     assert!(rules_for(&result, "a.R").is_empty());
     assert!(rules_for(&result, "b.R").is_empty());
+}
+
+#[test]
+fn excluded_generated_file_still_contributes_bindings() {
+    // `cpp11.R` is in the default exclude set, so it is never linted. But it
+    // defines the R wrappers (`native_fn`) that hand-written siblings call, so
+    // its top-level bindings must still enter the package namespace — otherwise
+    // every caller is a false `undefined-symbol`. (The exclude only suppresses
+    // findings *in* the generated file, not its contribution to scope.)
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(
+        r_dir.join("cpp11.R"),
+        "native_fn <- function(x) .Call(`_testpkg_native_fn`, x)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        r_dir.join("use.R"),
+        "wrap <- function(x) native_fn(x)\nwrap(1)\n",
+    )
+    .unwrap();
+
+    // Exercise the real default exclude set (as the CLI builds it), which
+    // `check_paths`/`check_paths_with_config` skip (they exclude nothing).
+    let patterns: Vec<String> = DEFAULT_EXCLUDE.iter().map(|p| p.to_string()).collect();
+    let exclude = ExcludeFilter::new(dir.path(), &patterns).expect("valid exclude patterns");
+    let result = check_paths_with_index(
+        std::slice::from_ref(&dir.path().to_path_buf()),
+        &LintConfig::default(),
+        &exclude,
+        IndexedProvider::empty(),
+    )
+    .expect("lint should succeed");
+
+    // The generated file is excluded from linting entirely.
+    assert!(
+        !result
+            .reports
+            .iter()
+            .any(|r| r.path.file_name().and_then(|n| n.to_str()) == Some("cpp11.R")),
+        "cpp11.R should be excluded from linting: {:?}",
+        result.reports
+    );
+    // ...but the call to its wrapper resolves, so no false undefined-symbol.
+    assert!(
+        !rules_for(&result, "use.R").contains(&"undefined-symbol"),
+        "use.R: {:?}",
+        rules_for(&result, "use.R")
+    );
 }
 
 #[test]
