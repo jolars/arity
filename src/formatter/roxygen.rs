@@ -483,16 +483,16 @@ impl Paragraph {
         if self.lines.is_empty() {
             return;
         }
-        // Reflow only when no chunk could migrate to a line start and reparse as
-        // a structured construct (which would break idempotence), and — in
-        // non-markdown prose, which is literal Rd — no line carries a live `%`
-        // comment, since reflowing would move text across the comment boundary and
-        // change the rendered Rd (a Tenet-1 violation), and — in markdown prose —
-        // the paragraph does not begin with a link-reference definition, which
-        // reflow would join into ordinary prose (changing the rendered Rd the same
-        // way); otherwise keep the original line breaks, marker-normalized.
+        // Reflow only when — in non-markdown prose, which is literal Rd — no line
+        // carries a live `%` comment, since reflowing would move text across the
+        // comment boundary and change the rendered Rd (a Tenet-1 violation), and —
+        // in markdown prose — the paragraph does not begin with a link-reference
+        // definition, which reflow would join into ordinary prose (changing the
+        // rendered Rd the same way); otherwise keep the original line breaks,
+        // marker-normalized. A chunk that could migrate to a line start and reparse
+        // as a structured construct is not a bail: `wrap_chunks` keeps such a marker
+        // off any line start, preserving idempotence without abandoning reflow.
         if self.chunks.is_empty()
-            || self.chunks.iter().any(|c| is_unsafe_line_start(c))
             || (!md && self.lines.iter().any(line_has_live_rd_comment))
             || (md && self.lines.first().is_some_and(line_is_linkref_def))
         {
@@ -553,16 +553,16 @@ impl TagUnit {
     /// Emit the reflowed tag unit into `items`.
     fn flush(self, items: &mut Vec<Ir>, line_width: usize, md: bool) {
         let marker_w = self.marker.chars().count();
-        // A prose chunk that could migrate to a continuation-line start and
-        // reparse as a list/header marker would break idempotence; in non-markdown
-        // (literal Rd) prose, a line carrying a live `%` comment must not be
-        // reflowed (it would move text across the comment, changing the rendered
-        // Rd); and in markdown prose, a tag value that begins with a
-        // link-reference definition must not be joined with its continuations
-        // (the same render change): bail to a verbatim, marker-normalized
-        // rendering instead.
-        if self.chunks.iter().any(|c| is_unsafe_line_start(c))
-            || (!md && self.lines.iter().any(line_has_live_rd_comment))
+        // In non-markdown (literal Rd) prose, a line carrying a live `%` comment
+        // must not be reflowed (it would move text across the comment, changing the
+        // rendered Rd); and in markdown prose, a tag value that begins with a
+        // link-reference definition must not be joined with its continuations (the
+        // same render change): bail to a verbatim, marker-normalized rendering. A
+        // prose chunk that could migrate to a continuation-line start and reparse as
+        // a list/header marker is not a bail: `wrap_chunks_hanging` keeps such a
+        // marker off any line start, preserving idempotence without abandoning
+        // reflow.
+        if (!md && self.lines.iter().any(line_has_live_rd_comment))
             || (md && self.first_is_linkref_def)
         {
             for (i, line) in self.lines.iter().enumerate() {
@@ -711,7 +711,10 @@ fn wrap_chunks_hanging(chunks: &[String], first_budget: usize, cont_budget: usiz
             }
             cur.push_str(chunk);
             cur_w = w;
-        } else if cur_w + 1 + w <= budget {
+        } else if cur_w + 1 + w <= budget || is_unsafe_line_start(chunk) {
+            // Fits, or must not break here: breaking would drop an unsafe marker
+            // onto a continuation-line start, where it could reparse as a block
+            // construct (breaking idempotence). Keep it inline, accepting overflow.
             cur.push(' ');
             cur.push_str(chunk);
             cur_w += 1 + w;
@@ -738,7 +741,10 @@ fn wrap_chunks(chunks: &[String], budget: usize) -> Vec<String> {
         if cur.is_empty() {
             cur.push_str(chunk);
             cur_w = w;
-        } else if cur_w + 1 + w <= budget {
+        } else if cur_w + 1 + w <= budget || is_unsafe_line_start(chunk) {
+            // Fits, or must not break here: breaking would drop an unsafe marker
+            // onto a line start, where it could reparse as a block construct
+            // (breaking idempotence). Keep it inline, accepting overflow.
             cur.push(' ');
             cur.push_str(chunk);
             cur_w += 1 + w;

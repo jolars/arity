@@ -1,0 +1,3 @@
+#' @param n_repeats Integer. Number of times to repeat the cross-validation
+#'   process with different fold assignments. Default is 1.
+f <- function(x) x
