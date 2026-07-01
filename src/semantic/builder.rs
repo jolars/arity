@@ -111,6 +111,26 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
     });
 }
 
+/// Record the `USER_OP` token of a binary expression (`a %op% b`) as a read of
+/// its definition. A user operator is defined and referenced backtick-quoted
+/// (`` `%op%` <- function(...)``), so the read name is the operator text wrapped
+/// in backticks to match the binding. Recorded with the ambient mask state.
+fn record_user_op_read(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    for el in node.children_with_tokens() {
+        if let NodeOrToken::Token(t) = el
+            && t.kind() == SyntaxKind::USER_OP
+        {
+            ctx.model.idents.push(IdentRef {
+                name: SmolStr::new(format!("`{}`", t.text())),
+                range: t.text_range(),
+                scope,
+                data_masked: ctx.mask_depth > 0,
+            });
+            return;
+        }
+    }
+}
+
 fn handle_function(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
     let fn_scope = push_scope(
         ctx.model,
@@ -450,6 +470,11 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             // Over-masking only ever suppresses — the safe direction for a
             // false-positive-only rule.
             ctx.mask_depth += 1;
+            // The operator itself is a read of its (backtick-quoted) definition:
+            // `a %||% b` uses `` `%||%` ``. Record it masked, matching the operand
+            // policy — so a locally- or cross-file-defined operator isn't flagged
+            // unused, while an external one stays out of `undefined-symbol`.
+            record_user_op_read(ctx, node, scope);
             walk_generic(ctx, node, scope);
             ctx.mask_depth -= 1;
         }

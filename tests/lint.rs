@@ -79,6 +79,26 @@ fn super_assignment_is_not_unused() {
 }
 
 #[test]
+fn infix_operator_use_is_not_unused() {
+    // A user-defined `%op%` used as an infix operator (`a %||% b`) reads its
+    // definition, so the `` `%||%` `` binding must not flag as unused.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("op.R");
+    std::fs::write(
+        &path,
+        "`%||%` <- function(x, y) if (is.null(x)) y else x\nz <- a %||% b\nprint(z)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "op.R").contains(&"unused-binding"),
+        "op.R: {:?}",
+        rules_for(&result, "op.R")
+    );
+}
+
+#[test]
 fn reassigned_binding_read_after_each_assignment_is_not_unused() {
     // A name assigned twice in one scope, with a read after each assignment, is
     // used both times. The later binding's read must resolve to it, not to the
