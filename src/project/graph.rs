@@ -24,8 +24,8 @@ use smol_str::SmolStr;
 
 use crate::incremental::{
     IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile, Workspace,
-    file_def_sites, file_exports, file_free_reads, loaded_names, parse_diagnostics, source_edges,
-    top_level_events,
+    file_def_sites, file_exports, file_free_reads, file_qualified_reads, loaded_names,
+    parse_diagnostics, source_edges, top_level_events,
 };
 use crate::project::exports::DefKind;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
@@ -300,6 +300,7 @@ pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
             path: m.path.clone(),
             exports: file_exports(db, m.file).clone(),
             free_reads: file_free_reads(db, m.file).clone(),
+            qualified_reads: file_qualified_reads(db, m.file).clone(),
             source_edges: source_edges(db, m.file).clone(),
             top_level_events: top_level_events(db, m.file).clone(),
             package_root: m.package_root.clone(),

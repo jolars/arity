@@ -11,7 +11,7 @@ pub mod scope;
 pub mod sequence;
 pub mod source;
 
-pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads};
+pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads, file_qualified_reads};
 pub use graph::{
     DefIndex, ExternalResolution, PackageCollation, PackageInfo, Project, ProjectMember, ReadIndex,
     ReverseSources, Visibility, discover_packages, external_resolution, project_defs,

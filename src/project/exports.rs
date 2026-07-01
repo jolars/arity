@@ -40,6 +40,19 @@ pub fn file_free_reads(model: &SemanticModel) -> BTreeSet<String> {
         .collect()
 }
 
+/// The names a file reads via a `pkg::name` / `pkg:::name` access (the right
+/// operand). A cross-file *use* signal only: unlike [`file_free_reads`], these
+/// never feed name resolution (`undefined-symbol`) — an external `utils::foo`
+/// must not become an unresolved `foo` — so they are kept in their own channel
+/// that only marks a same-package binding used (see [`crate::project::scope`]).
+pub fn file_qualified_reads(model: &SemanticModel) -> BTreeSet<String> {
+    model
+        .qualified_reads()
+        .iter()
+        .map(|name| name.to_string())
+        .collect()
+}
+
 /// How a top-level binding was defined: a function (`f <- function(...)` or a
 /// lambda) versus any other value. Stable across body edits — the classification
 /// turns on the *shape* of the right-hand side, not its contents — so it keeps

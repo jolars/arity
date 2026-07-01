@@ -255,6 +255,30 @@ fn namespace_export_is_not_unused() {
 }
 
 #[test]
+fn self_qualified_internal_use_is_not_unused() {
+    // A non-exported helper read only via `pkg:::helper()` in a sibling file
+    // (here a test) is used cross-file, so it must not flag unused. Mirrors the
+    // real-world `SLOPE:::randomProblem(...)` case.
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("NAMESPACE"), "").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "helper <- function() 1\n").unwrap();
+    let test_dir = dir.path().join("tests").join("testthat");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(test_dir.join("test-a.R"), "testpkg:::helper()\n").unwrap();
+
+    let result =
+        check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
 fn namespace_import_from_resolves_symbol() {
     // `filter` is imported from dplyr, so it resolves.
     let result = lint_package(

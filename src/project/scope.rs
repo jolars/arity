@@ -48,6 +48,12 @@ pub struct FileFacts {
     /// Names this file reads but does not bind locally
     /// (see [`crate::project::exports::file_free_reads`]).
     pub free_reads: BTreeSet<String>,
+    /// Names this file reads via `pkg::name` / `pkg:::name`
+    /// (see [`crate::project::exports::file_qualified_reads`]). Folded into a
+    /// same-package binding's "used by others" set so `pkg:::helper()` in a
+    /// sibling counts as a use, but kept out of `free_reads` so it never feeds
+    /// name resolution.
+    pub qualified_reads: BTreeSet<String>,
     /// Top-level `source()` edges this file declares (range-free).
     pub source_edges: Vec<SourceEdgeKey>,
     /// This file's top-level execution sequence (range-free, order-bearing): the
@@ -311,10 +317,13 @@ impl ProjectScope {
             visible.insert(f.path.clone(), defs);
 
             // Every file `f` sees contributes `f`'s free reads to that file's
-            // "used by others" set.
+            // "used by others" set. A `pkg::name` / `pkg:::name` access counts as
+            // a use too (e.g. `pkg:::helper()` in a test): fold in `f`'s qualified
+            // reads, which resolve to a same-package sibling's binding.
             for seen in &sees[&f.path] {
                 if let Some(used) = used_by_others.get_mut(seen) {
                     used.extend(f.free_reads.iter().cloned());
+                    used.extend(f.qualified_reads.iter().cloned());
                 }
             }
         }
@@ -690,6 +699,7 @@ mod tests {
             path: PathBuf::from(path),
             exports: set(exp),
             free_reads: set(reads),
+            qualified_reads: BTreeSet::new(),
             source_edges: edges,
             top_level_events: Vec::new(),
             package_root: root.map(PathBuf::from),
@@ -727,6 +737,7 @@ mod tests {
             path: PathBuf::from(path),
             exports: set(exp),
             free_reads: BTreeSet::new(),
+            qualified_reads: BTreeSet::new(),
             source_edges: edges,
             top_level_events: events,
             package_root: None,

@@ -384,6 +384,10 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             if let Some(op) = op_idx {
                 for el in &elements[op + 1..] {
                     match el {
+                        // Bare `pkg::name`: the RHS IDENT is the accessed name.
+                        NodeOrToken::Token(t) if t.kind() == SyntaxKind::IDENT => {
+                            ctx.model.qualified_reads.push(t.text().into());
+                        }
                         NodeOrToken::Token(_) => {}
                         NodeOrToken::Node(child) if child.kind() == SyntaxKind::CALL_EXPR => {
                             // Skip the first IDENT (callee); recurse into everything else.
@@ -396,6 +400,9 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                                     NodeOrToken::Token(t)
                                         if t.kind() == SyntaxKind::IDENT && !skipped_callee =>
                                     {
+                                        // `pkg::name(args)`: the callee is the
+                                        // accessed name — a cross-file use.
+                                        ctx.model.qualified_reads.push(t.text().into());
                                         skipped_callee = true;
                                     }
                                     NodeOrToken::Node(grandchild) => {

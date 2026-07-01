@@ -182,6 +182,7 @@ pub enum QueryKind {
     SemanticModel,
     FileExports,
     FileFreeReads,
+    FileQualifiedReads,
     FileDefSites,
     SourceEdges,
     TopLevelEvents,
@@ -347,6 +348,18 @@ pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<Str
         file: Some(file),
     });
     crate::project::file_free_reads(semantic_model(db, file))
+}
+
+/// The names the file reads via `pkg::name` / `pkg:::name`
+/// ([`crate::project::file_qualified_reads`]), as a tracked query. A cross-file
+/// *use* signal that, unlike [`file_free_reads`], never feeds name resolution.
+#[salsa::tracked(returns(ref))]
+pub fn file_qualified_reads(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FileQualifiedReads,
+        file: Some(file),
+    });
+    crate::project::file_qualified_reads(semantic_model(db, file))
 }
 
 /// The file's top-level definitions tagged by [`DefKind`]
