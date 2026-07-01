@@ -68,11 +68,11 @@ fn generate_cli_markdown() -> Result<()> {
         return Ok(());
     }
 
-    let opts = clap_markdown::MarkdownOptions::default()
-        .show_footer(false)
-        .show_table_of_contents(false);
-
-    let markdown = clap_markdown::help_markdown_command_custom(&cmd, &opts);
+    let markdown = clapdown::Options::new()
+        .title("Command-Line Help for `arity`")
+        .footer(false)
+        .table_of_contents(false)
+        .render(&cmd);
 
     let output_path = docs_dir.join("cli.md");
     fs::write(&output_path, &markdown)?;
