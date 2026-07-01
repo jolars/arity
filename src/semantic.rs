@@ -18,8 +18,8 @@ use smol_str::SmolStr;
 pub use binding::{Binding, BindingId, BindingKind};
 pub use scope::{Scope, ScopeId, ScopeKind};
 pub use symbols::{
-    LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, is_data_masking_callee,
-    meta_package_members,
+    LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, implicit_attached_packages,
+    is_data_masking_callee, meta_package_members,
 };
 
 use crate::syntax::SyntaxNode;

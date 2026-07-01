@@ -225,6 +225,90 @@ fn excluded_generated_file_still_contributes_bindings() {
     );
 }
 
+/// Build a package on disk with a `tests/testthat/` test file and lint it,
+/// returning the result. `r_file` is written to `R/foo.R`, `test_file` to
+/// `tests/testthat/test-foo.R`.
+fn lint_pkg_with_test(r_file: &str, test_file: &str, indexed: IndexedProvider) -> LintResult {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("foo.R"), r_file).unwrap();
+    let tt = dir.path().join("tests").join("testthat");
+    std::fs::create_dir_all(&tt).unwrap();
+    std::fs::write(tt.join("test-foo.R"), test_file).unwrap();
+
+    let patterns: Vec<String> = DEFAULT_EXCLUDE.iter().map(|p| p.to_string()).collect();
+    let exclude = ExcludeFilter::new(dir.path(), &patterns).expect("valid exclude patterns");
+    check_paths_with_index(
+        std::slice::from_ref(&dir.path().to_path_buf()),
+        &LintConfig::default(),
+        &exclude,
+        indexed,
+    )
+    .expect("lint should succeed")
+}
+
+#[test]
+fn testthat_verbs_resolve_in_test_files() {
+    // testthat attaches itself before sourcing `tests/testthat/` files, so their
+    // `test_that`/`expect_*` calls must resolve without an explicit
+    // `library(testthat)`. With testthat indexed, a genuine typo is still flagged.
+    let indexed =
+        IndexedProvider::from_indices([indexed_pkg("testthat", &["test_that", "expect_equal"])]);
+    let result = lint_pkg_with_test(
+        "foo <- function() 1\n",
+        "test_that(\"foo works\", {\n  expect_equal(foo(), 1)\n  bogus_undefined_fn()\n})\n",
+        indexed,
+    );
+
+    let undefined: Vec<&str> = result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some("test-foo.R"))
+        .map(|r| {
+            r.diagnostics
+                .iter()
+                .filter(|d| d.rule == "undefined-symbol")
+                .map(|d| d.message.body.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    assert_eq!(
+        undefined.len(),
+        1,
+        "expected only the typo, got {undefined:?}"
+    );
+    assert!(
+        undefined[0].contains("bogus_undefined_fn"),
+        "unexpected finding: {undefined:?}"
+    );
+}
+
+#[test]
+fn testthat_attach_is_scoped_to_test_files() {
+    // The implicit testthat attach must not leak into ordinary package sources:
+    // testthat unindexed (empty index) gate-suppresses the *test* file, but a
+    // genuine unknown symbol in `R/foo.R` is still flagged.
+    let result = lint_pkg_with_test(
+        "foo <- function() bogus_in_r()\n",
+        "test_that(\"x\", expect_equal(1, 1))\n",
+        IndexedProvider::empty(),
+    );
+
+    assert!(
+        !rules_for(&result, "test-foo.R").contains(&"undefined-symbol"),
+        "test file should not flag testthat verbs: {:?}",
+        rules_for(&result, "test-foo.R")
+    );
+    assert!(
+        rules_for(&result, "foo.R").contains(&"undefined-symbol"),
+        "R/ source should still flag unknown symbols: {:?}",
+        rules_for(&result, "foo.R")
+    );
+}
+
 #[test]
 fn source_closure_resolves_bindings_across_scripts() {
     // a.R sources helpers.R, so `greet` resolves there, and helpers.R's `greet`
@@ -854,6 +938,31 @@ fn undefined_symbol_still_gated_for_unbundled_package() {
     let p = CompositeProvider::base_only();
     let msgs = undefined_with("library(some_obscure_pkg_xyz)\nbogus()\n", &p);
     assert!(msgs.is_empty(), "gate should suppress, got {msgs:?}");
+}
+
+#[test]
+fn undefined_symbol_standalone_attaches_testthat_for_test_files() {
+    // Single-file (standalone) path: a `tests/testthat/` file has testthat
+    // attached implicitly, so `expect_true` resolves against the indexed package
+    // while a genuine typo (`bogus`) is still flagged.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "testthat",
+        &["expect_true"],
+    )]));
+    let diags = check_document_with_provider(
+        Path::new("tests/testthat/test-x.R"),
+        "expect_true(TRUE)\nbogus()\n",
+        &LintConfig::default(),
+        &p,
+    )
+    .expect("lint should succeed");
+    let msgs: Vec<&str> = diags
+        .iter()
+        .filter(|d| d.rule == "undefined-symbol")
+        .map(|d| d.message.body.as_str())
+        .collect();
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
 }
 
 #[test]

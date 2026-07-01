@@ -14,6 +14,7 @@
 //! resolve as [`PackageOrigin::Unknown`] unless locally harvested.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::LazyLock;
 
 use rowan::TextRange;
@@ -69,6 +70,32 @@ pub fn meta_package_members(name: &str) -> &'static [&'static str] {
         "tidyverse" => TIDYVERSE,
         _ => &[],
     }
+}
+
+/// Packages attached *implicitly* for a file, by virtue of its location rather
+/// than any `library()`/`require()` call in its text. Folded into the file's
+/// loaded-package set so symbol resolution treats them as on the search path.
+///
+/// The one case today: testthat attaches itself before sourcing a package's
+/// `tests/testthat/` files, so their `test_that`/`expect_*` calls resolve
+/// without an explicit `library(testthat)` that the convention omits.
+pub fn implicit_attached_packages(path: &Path) -> &'static [&'static str] {
+    if is_testthat_file(path) {
+        &["testthat"]
+    } else {
+        &[]
+    }
+}
+
+/// Whether `path` is a testthat test file: a direct member of a `tests/testthat/`
+/// directory (test, `helper*`, and `setup*` files all live flat there). Matched
+/// structurally on the parent (`testthat`) and grandparent (`tests`) names.
+fn is_testthat_file(path: &Path) -> bool {
+    fn dir_name(dir: Option<&Path>) -> Option<&str> {
+        dir.and_then(Path::file_name).and_then(|n| n.to_str())
+    }
+    let dir = path.parent();
+    dir_name(dir) == Some("testthat") && dir_name(dir.and_then(Path::parent)) == Some("tests")
 }
 
 /// Whether a call to `name` evaluates (some of) its arguments under R's

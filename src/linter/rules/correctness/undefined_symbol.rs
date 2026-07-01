@@ -8,9 +8,14 @@
 //! any of the otherwise-unresolved names, so flagging them would be a false
 //! positive.
 
+use rowan::TextRange;
+use smol_str::SmolStr;
+
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext};
-use crate::semantic::{PackageOrigin, meta_package_members};
+use crate::semantic::{
+    LoadedPackage, PackageOrigin, implicit_attached_packages, meta_package_members,
+};
 
 pub struct UndefinedSymbol;
 
@@ -72,7 +77,26 @@ impl UndefinedSymbol {
     /// available (single-file paths). Mirrors the cross-file path's logic using
     /// the [`RuleContext::symbols`] provider directly.
     fn run_standalone(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-        let loaded = ctx.model.loaded_packages();
+        // Fold in packages attached by the file's location (e.g. testthat for a
+        // `tests/testthat/` file), which no `library()` call names. Allocate only
+        // when there is something to add — the common case keeps the model's slice.
+        let implicit = implicit_attached_packages(ctx.path);
+        let augmented: Vec<LoadedPackage>;
+        let loaded: &[LoadedPackage] = if implicit.is_empty() {
+            ctx.model.loaded_packages()
+        } else {
+            augmented = ctx
+                .model
+                .loaded_packages()
+                .iter()
+                .cloned()
+                .chain(implicit.iter().map(|name| LoadedPackage {
+                    name: SmolStr::new(name),
+                    range: TextRange::default(),
+                }))
+                .collect();
+            &augmented
+        };
         // Conservative gate: bail out entirely if any attached package's exports
         // are unknown, since such a package could define the unresolved names. A
         // meta-package (e.g. tidyverse) also attaches its core members, so each

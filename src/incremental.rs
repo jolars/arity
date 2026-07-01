@@ -389,11 +389,19 @@ pub fn loaded_names(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String
         kind: QueryKind::LoadedNames,
         file: Some(file),
     });
-    semantic_model(db, file)
+    let mut names: BTreeSet<String> = semantic_model(db, file)
         .loaded_packages()
         .iter()
         .map(|pkg| pkg.name.to_string())
-        .collect()
+        .collect();
+    // Packages attached by the file's location (e.g. testthat for a
+    // `tests/testthat/` file) count as loaded even without a `library()` call.
+    if let Some(path) = file.path(db).as_deref() {
+        for pkg in crate::semantic::symbols::implicit_attached_packages(path) {
+            names.insert((*pkg).to_string());
+        }
+    }
+    names
 }
 
 /// The file's top-level `source()` edges, range-free
