@@ -52,7 +52,11 @@ impl Rule for ShadowedBuiltin {
 
     fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         for (binding_idx, binding) in ctx.model.bindings().iter().enumerate() {
-            if !matches!(binding.kind, BindingKind::Local | BindingKind::Param) {
+            // Only local `<-` shadowing is a smell. A parameter named after a base
+            // function (`transform = identity`, `round = 3`, `names = ...`) is
+            // idiomatic — it's the intended call target, and R's function-vs-value
+            // lookup resolves same-named calls correctly — so parameters are exempt.
+            if !matches!(binding.kind, BindingKind::Local) {
                 continue;
             }
             if !ctx.symbols.is_base(&binding.name) {

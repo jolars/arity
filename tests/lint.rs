@@ -272,6 +272,28 @@ fn shadowed_builtin_ignores_call_in_own_defining_rhs() {
     );
 }
 
+#[test]
+fn shadowed_builtin_ignores_parameters() {
+    // A parameter named after a base function (`transform = identity`, then
+    // `transform(x)`) is idiomatic: it's the intended target of the call, and R's
+    // function-vs-value lookup resolves same-named calls correctly. The rule only
+    // targets local `<-` shadowing, so a parameter must not trigger it.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("param.R");
+    std::fs::write(
+        &path,
+        "f <- function(x, transform = identity) {\n  transform(x)\n}\nf(1)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "param.R").contains(&"shadowed-builtin"),
+        "parameter should not trigger shadowed-builtin: {:?}",
+        rules_for(&result, "param.R")
+    );
+}
+
 /// Write a minimal package (DESCRIPTION + NAMESPACE + R/a.R) and lint it.
 fn lint_package(namespace: &str, a_r: &str) -> LintResult {
     let dir = tempdir().expect("failed to create temp dir");
