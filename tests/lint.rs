@@ -1169,6 +1169,25 @@ fn duplicated_arguments_ignores_distinct_and_positional() {
 }
 
 #[test]
+fn duplicated_arguments_ignores_c_call() {
+    // `c()` takes `...`, so repeated names are legal and idiomatic (e.g. cli
+    // message vectors: `c("i" = ..., "i" = ...)`). See the tidyr survey.
+    let src = "cli::cli_abort(c(i = \"one\", i = \"two\"))\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"duplicated-arguments"), "got: {rules:?}");
+}
+
+#[test]
+fn duplicated_arguments_still_flags_list_call() {
+    // `list()` duplicate names are almost always a bug, so keep flagging them.
+    let rules: Vec<&str> = diagnostics("list(a = 1, a = 2)\n")
+        .iter()
+        .map(|d| d.rule)
+        .collect();
+    assert!(rules.contains(&"duplicated-arguments"), "got: {rules:?}");
+}
+
+#[test]
 fn redundant_equals_true_drops_comparison() {
     assert_eq!(
         fixed_output("if (x == TRUE) f()\n", "redundant-equals"),

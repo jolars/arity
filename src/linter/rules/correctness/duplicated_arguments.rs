@@ -2,6 +2,9 @@
 //! (`f(a = 1, a = 2)`). The sibling of `duplicate-formal` on the call side.
 //! Not always a runtime error (`c(a = 1, a = 2)` is fine — `c` takes `...`), so
 //! it is a warning, not an error, and carries no autofix.
+//!
+//! `c()` is exempt entirely: repeated names there are legal and idiomatic (cli
+//! message vectors, `c("i" = ..., "i" = ...)`), so flagging them is pure noise.
 
 use std::collections::HashSet;
 
@@ -42,6 +45,12 @@ impl Rule for DuplicatedArguments {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
+        // `c()` takes `...` and repeated names are legal and idiomatic (cli
+        // message vectors: `c("i" = ..., "i" = ...)`), so duplicates there are
+        // not a mistake. Everything else (including `list()`) stays flagged.
+        if matchers::callee_name(&call).as_deref() == Some("c") {
+            return;
+        }
         let mut seen: HashSet<String> = HashSet::new();
         for arg in matchers::args(&call) {
             let (Some(name), Some(token)) = (arg.name, arg.name_token) else {
