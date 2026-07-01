@@ -209,6 +209,28 @@ fn shadowed_builtin_ignores_value_use_of_shadowed_name() {
     );
 }
 
+#[test]
+fn shadowed_builtin_ignores_call_in_own_defining_rhs() {
+    // `sign <- sign(x)` is idiomatic and safe: R evaluates the RHS `sign(x)`
+    // before the local binding is live (and function lookup skips the
+    // non-function local anyway). The call is part of the *defining assignment*,
+    // not a "later" call, so the rule must stay silent.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("selfrhs.R");
+    std::fs::write(
+        &path,
+        "f <- function(x) {\n  sign <- sign(x)\n  x * sign\n}\nf(1)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "selfrhs.R").contains(&"shadowed-builtin"),
+        "defining RHS call should not trigger shadowed-builtin: {:?}",
+        rules_for(&result, "selfrhs.R")
+    );
+}
+
 /// Write a minimal package (DESCRIPTION + NAMESPACE + R/a.R) and lint it.
 fn lint_package(namespace: &str, a_r: &str) -> LintResult {
     let dir = tempdir().expect("failed to create temp dir");
