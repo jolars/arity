@@ -1,4 +1,4 @@
-{"key":"curated/describe_format","formatted":"#' Example dataset\n#'\n#' A dataset used to exercise the roxygen oracle.\n#'\n#' @format A data frame with two columns:\n#' \\describe{\n#'   \\item{a}{the first column, described at some length to exercise wrapping}\n#'   \\item{b}{the second column}\n#' }\n#' @source Somewhere reputable.\n#' @name example_data\nNULL\n"}
+{"key":"curated/describe_format","formatted":"#' Example dataset\n#'\n#' A dataset used to exercise the roxygen oracle.\n#'\n#' @format A data frame with two columns:\n#'   \\describe{\n#'     \\item{a}{the first column, described at some length to exercise wrapping}\n#'     \\item{b}{the second column}\n#'   }\n#' @source Somewhere reputable.\n#' @name example_data\nNULL\n"}
 {"key":"curated/examples","formatted":"#' Add two numbers\n#'\n#' @param x,y Numbers to add.\n#' @return Their sum.\n#' @examples\n#' add(1, 2)\n#' add(3, 4)\n#' @export\nadd <- function(x, y) x + y\n"}
 {"key":"curated/examples_merge","formatted":"#' @name a\n#' @title a\n#' @examples\n#' TRUE\n#' @examples\n#' FALSE\nNULL\n"}
 {"key":"curated/itemize_enumerate","formatted":"#' Rd lists outside markdown mode\n#'\n#' @details\n#' \\itemize{\n#'   \\item First bullet, long enough to be a wrapping candidate at most widths.\n#'   \\item Second bullet.\n#' }\n#' \\enumerate{\n#'   \\item Step one.\n#'   \\item Step two.\n#' }\n#' @name rd_lists\nNULL\n"}
@@ -241,10 +241,10 @@
 {"key":"harvest/rx-d4e0e632","formatted":"#' Title\n#'\n#' @param connect_args \\verb{[named list]}\\cr Connection arguments Description,\n#'   see \\verb{[foobar]}. Also \\verb{[this_too]}.\nfoo <- function() {}\n"}
 {"key":"harvest/rx-d4e3f08f","formatted":"#' Title.\n#'\n#' @name abc\n#' @docType data\n#' @usage data(abc)\nNULL\n"}
 {"key":"harvest/rx-d55651e1","formatted":"#' Important class.\n#'\n#' @field a field a\n#'\n#' @field b field b\n#'\nsetRefClass('test')\n"}
-{"key":"harvest/rx-d58b849a","formatted":"#' @title Title\n#' @description List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"key":"harvest/rx-d58b849a","formatted":"#' @title Title\n#' @description List:\n#'   \\itemize{\n#'   \\item item1\n#'   \\item item2\n#'   }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
 {"key":"harvest/rx-d791aabe","formatted":"#' Title\n#'\n#' Description, see \\href{http://www.someurl.com}{some thing}.\nfoo <- function() {}\n"}
 {"key":"harvest/rx-daf9322f","formatted":"#' Title\n#'\n#' <p>This is a paragraph</p>\n#' <p>This is another paragraph</p>\n#' @md\nfoo <- function() {}\n"}
-{"key":"harvest/rx-db08ab08","formatted":"#' @title Title\n#' @details List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"key":"harvest/rx-db08ab08","formatted":"#' @title Title\n#' @details List:\n#'   \\itemize{\n#'   \\item item1\n#'   \\item item2\n#'   }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
 {"key":"harvest/rx-dd2506bf","formatted":"#' Title\n#'\n#' @description\n#' Before\n#' ```r\n#' x %in% 1:10\n#' ```\n#' After\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-de1bee56","formatted":"#' @name a\n#' @title a\n#' @author A\nNULL\n\n#' @name b\n#' @rdname a\n#' @author A\nNULL\n\n#' @name c\n#' @rdname a\n#' @author B\nNULL\n"}
 {"key":"harvest/rx-de3ac450","formatted":"#' Class constructor with disambiguated class\n#'\n#' @param x x\nbaz <- function(x) {}\n\n#' @describeIn baz method\nprint.roxygen2_baz <- function(x) {}\n\n#' @describeIn baz function (method for another class)\nformat.quuz_baz <- function(x) {}\n"}

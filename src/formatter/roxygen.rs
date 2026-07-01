@@ -151,13 +151,34 @@ fn is_block_macro(node: &SyntaxNode) -> bool {
             .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
 }
 
+/// Whether `node` is a *list* block Rd macro (`\describe`/`\itemize`/`\enumerate`),
+/// whose inter-item and leading whitespace is insignificant in the rendered Rd, so
+/// re-indenting the block (to hang it under a tag) is meaning-preserving. This
+/// deliberately excludes verbatim-content macros like `\preformatted`/`\verb`,
+/// where leading whitespace is literal and a re-indent would change the output.
+fn is_list_block_macro(node: &SyntaxNode) -> bool {
+    node.children_with_tokens()
+        .find(|el| el.kind() == SyntaxKind::ROXYGEN_RD_MACRO_NAME)
+        .and_then(|el| el.into_token())
+        .is_some_and(|t| matches!(t.text(), "\\describe" | "\\itemize" | "\\enumerate"))
+}
+
 /// Emit a block Rd macro as atomic, marker-preserving passthrough: its own source
 /// lines, each on its own output line. The node's text already carries the `#'`
 /// markers (the opening one and the continuations) and the in-macro indentation;
 /// only the inter-line indentation *before* a continuation marker is dropped (the
 /// formatter recomputes the block's own indent), matching the fenced-code and
 /// air-compatible verbatim treatment of Rd lists.
-fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
+///
+/// `hang` is the tag hanging indent (in spaces) to shift the whole block under when
+/// it continues a prose-bearing tag (e.g. `\describe{}` after `@format <prose>`);
+/// `0` leaves the block flush, byte-identical to the plain passthrough. To stay
+/// idempotent, the shift is *anchored* to the opener: the opener sits at `marker`
+/// plus one conventional space plus `hang`, and every inner line keeps its offset
+/// relative to the opener. (Blindly adding `hang` each pass would compound and
+/// break `format(format(x)) == format(x)`; anchoring re-derives the same result on
+/// reparse.)
+fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode, hang: usize) {
     let text = node.text().to_string();
     // A *mid-prose* opener (`text \preformatted{ …`) has no marker of its own — the
     // opener line's `#'` belongs to the preceding paragraph — so its first segment
@@ -166,18 +187,57 @@ fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
     // idempotent (on reparse the opener is a line-start block macro that re-emits
     // identically).
     let mid_prose = node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER);
-    for (i, seg) in text.split('\n').enumerate() {
-        let line = if i == 0 {
-            if mid_prose {
-                format!("#' {}", seg.trim_end())
+
+    if hang == 0 {
+        for (i, seg) in text.split('\n').enumerate() {
+            let line = if i == 0 {
+                if mid_prose {
+                    format!("#' {}", seg.trim_end())
+                } else {
+                    seg.trim_end().to_string()
+                }
             } else {
-                seg.trim_end().to_string()
-            }
-        } else {
-            seg.trim_start().trim_end().to_string()
-        };
-        push_line(items, line);
+                seg.trim_start().trim_end().to_string()
+            };
+            push_line(items, line);
+        }
+        return;
     }
+
+    // Anchor to the opener's in-macro indentation.
+    let opener_indent = {
+        let (_, indent, _) =
+            split_block_macro_line(text.split('\n').next().unwrap_or(""), mid_prose);
+        indent
+    };
+    for (i, seg) in text.split('\n').enumerate() {
+        let (marker, indent, content) = split_block_macro_line(seg, i == 0 && mid_prose);
+        let width = 1 + hang + indent.saturating_sub(opener_indent);
+        push_line(
+            items,
+            format!("{marker}{blank:width$}{content}", blank = ""),
+        );
+    }
+}
+
+/// Split one raw block-macro line into (marker, in-macro indent width, content),
+/// dropping any inter-line indentation before the marker. `synth_marker` is set for
+/// a mid-prose opener line that carries no marker of its own, in which case a `#'`
+/// marker is synthesized and the indent is zero.
+fn split_block_macro_line(seg: &str, synth_marker: bool) -> (String, usize, String) {
+    if synth_marker {
+        return ("#'".to_string(), 0, seg.trim().to_string());
+    }
+    let s = seg.trim_start();
+    let hashes = s.len() - s.trim_start_matches('#').len();
+    if hashes == 0 || !s[hashes..].starts_with('\'') {
+        // No recognizable marker: treat the whole (trimmed) line as content.
+        return (String::new(), 0, s.trim_end().to_string());
+    }
+    let marker = s[..hashes + 1].to_string();
+    let rest = &s[hashes + 1..];
+    let indent = rest.len() - rest.trim_start().len();
+    (marker, indent, rest.trim().to_string())
 }
 
 /// Emit a block Rd macro that wraps example R inside `@examples` (`\dontrun{}`,
@@ -350,6 +410,20 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         // copy-pasted, so it is emitted *flush* (marker-normalized, no extra
         // indent). `in_examples` stays set — more example lines may follow.
         if let Some(macro_node) = &line.block_macro {
+            // A *list* block Rd macro that directly continues a prose-bearing tag
+            // (an open `tag_unit`, e.g. `\describe{}` after `@format <prose>`)
+            // inherits the tag's two-space hanging indent, matching how a *prose*
+            // continuation of the same tag hangs. The hang is gated to list macros
+            // (`\describe`/`\itemize`/`\enumerate`), whose inter-item whitespace is
+            // insignificant in the rendered Rd: re-indenting a *verbatim* macro
+            // (`\preformatted`/`\verb`) would inject literal spaces into the output
+            // and change what the reader sees. With no open tag unit it stays flush,
+            // mirroring plain-prose continuation (which only hangs under a tag unit).
+            let hang = if tag_unit.is_some() && is_list_block_macro(macro_node) {
+                2
+            } else {
+                0
+            };
             flush_pending!();
             if macro_node.kind() == SyntaxKind::ROXYGEN_MD_LIST {
                 // A markdown list is marker-normalized per line (the in-list
@@ -367,7 +441,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
             } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {
-                emit_block_macro(&mut items, macro_node);
+                emit_block_macro(&mut items, macro_node, hang);
             }
             continue;
         }

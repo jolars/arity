@@ -152,6 +152,38 @@
       `roxygen_tag_marker_space` now asserts the normalized spacing). No
       air-compat allowlist entry: air leaves roxygen untouched, so the
       fixed-point gauge sees no divergence.
+    - [x] (3b) hang *list* block Rd macros under a prose-bearing tag. A
+      `\describe`/`\itemize`/`\enumerate` block that directly continues an open
+      `TagUnit` (e.g. `\describe{}` after `@format <prose>`) inherits the tag's
+      two-space hanging indent, so the block no longer sits flush while the tag's
+      prose hangs (the inconsistency behind the `@format` describe-block report).
+      Idempotent by construction: the shift is *anchored to the opener* (opener at
+      `marker + 1 + hang`, inner lines keep their offset relative to it), so a
+      reparse re-derives the same result. Gated to **list** macros only
+      (`is_list_block_macro`), whose inter-item/leading whitespace is insignificant
+      in the rendered Rd; verbatim-content macros (`\preformatted`/`\verb`) stay
+      flush because re-indenting them would inject *literal* spaces and change the
+      output. Fixtures `roxygen_rd_macro_hangs_under_tag` (list hangs) and
+      `roxygen_rd_verbatim_not_hung` (verbatim untouched); baseline re-blessed.
+    - [ ] **Systematically bucket roxygen tags (and block Rd macros) for layout.**
+      The hang decisions above accreted case by case (all prose tags hang; list
+      macros under them hang; verbatim macros don't) without a principled taxonomy,
+      and the naive splits are wrong: the axis is **not** "tag takes a name
+      argument" (`@return`/`@param` should format symmetrically even though only
+      `@param` has a name), nor is "inline vs section" clean (`@format` reads as a
+      section yet carries an inline first line with no newline after the tag). Work
+      out the *actual* dimensions that govern layout and assign every tag/macro to a
+      bucket deliberately, from roxygen2's own tag model + Rd semantics rather than
+      ad hoc lists. Candidate dimensions to pin down: (a) does the tag's body hang
+      under an inline header, or sit flush as a section body; (b) is the body
+      free-form prose (reflowable) vs. structured/verbatim (passthrough); (c) for
+      block Rd macros, is inner whitespace insignificant (list-like, re-indentable)
+      or literal (verbatim). Cross-check the resulting buckets against the harvest
+      corpus (what people actually write) before committing, and fold today's
+      `NON_PROSE_TAGS` / `is_list_block_macro` / uniform-hang rules into the derived
+      scheme. Open question this must answer: should section-body tags
+      (`@details`/`@description`/`@format`/`@value`) hang their prose at all, or is
+      the current uniform hang itself a divergence to correct?
     - [x] (4) run arity's own formatter on embedded R in
       `@examples`/`@examplesIf` (`ExampleBody` in `src/formatter/roxygen.rs`).
       The body lines are collected, stripped of their markers (reusing
