@@ -1,4 +1,5 @@
-#' @details Some intro prose before the block.
+#' @details
+#' Some intro prose before the block.
 #' \preformatted{
 #'   x <- 1
 #'     y <- indented_on_purpose

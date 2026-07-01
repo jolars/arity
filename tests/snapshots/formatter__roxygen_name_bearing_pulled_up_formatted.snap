@@ -1,0 +1,6 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' @param x The x value.
+f <- function(x) x

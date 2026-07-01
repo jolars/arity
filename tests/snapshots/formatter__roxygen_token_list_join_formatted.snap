@@ -1,0 +1,6 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' @keywords internal utils
+f <- function() NULL

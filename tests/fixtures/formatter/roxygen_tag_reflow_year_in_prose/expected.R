@@ -1,3 +1,4 @@
-#' @source USDA, NRCS. 2008. The PLANTS Database, 31 December 2008). National
-#'   Plant Data Center, Baton Rouge, LA 70874-4490 USA.
+#' @source
+#' USDA, NRCS. 2008. The PLANTS Database, 31 December 2008). National Plant Data
+#' Center, Baton Rouge, LA 70874-4490 USA.
 f <- function(x) x

@@ -1,4 +1,4 @@
-{"key":"curated/describe_format","formatted":"#' Example dataset\n#'\n#' A dataset used to exercise the roxygen oracle.\n#'\n#' @format A data frame with two columns:\n#'   \\describe{\n#'     \\item{a}{the first column, described at some length to exercise wrapping}\n#'     \\item{b}{the second column}\n#'   }\n#' @source Somewhere reputable.\n#' @name example_data\nNULL\n"}
+{"key":"curated/describe_format","formatted":"#' Example dataset\n#'\n#' A dataset used to exercise the roxygen oracle.\n#'\n#' @format\n#' A data frame with two columns:\n#' \\describe{\n#'   \\item{a}{the first column, described at some length to exercise wrapping}\n#'   \\item{b}{the second column}\n#' }\n#' @source Somewhere reputable.\n#' @name example_data\nNULL\n"}
 {"key":"curated/examples","formatted":"#' Add two numbers\n#'\n#' @param x,y Numbers to add.\n#' @return Their sum.\n#' @examples\n#' add(1, 2)\n#' add(3, 4)\n#' @export\nadd <- function(x, y) x + y\n"}
 {"key":"curated/examples_merge","formatted":"#' @name a\n#' @title a\n#' @examples\n#' TRUE\n#' @examples\n#' FALSE\nNULL\n"}
 {"key":"curated/itemize_enumerate","formatted":"#' Rd lists outside markdown mode\n#'\n#' @details\n#' \\itemize{\n#'   \\item First bullet, long enough to be a wrapping candidate at most widths.\n#'   \\item Second bullet.\n#' }\n#' \\enumerate{\n#'   \\item Step one.\n#'   \\item Step two.\n#' }\n#' @name rd_lists\nNULL\n"}
@@ -9,7 +9,7 @@
 {"key":"curated/md_backslash_run","formatted":"#' Backslash runs in markdown prose\n#'\n#' @details\n#' A double backslash a \\\\ b and a quadruple a \\\\\\\\ b collapse per CommonMark,\n#' while a single \\* and \\_ keep their backslash.\n#' @md\n#' @name md_backslash_run\nNULL\n"}
 {"key":"curated/md_emphasis","formatted":"#' Markdown emphasis cases\n#'\n#' @details\n#' Nesting **foo *bar* baz**, rule of three ***wow***, and intraword snake_case\n#' stays literal while _wrapped_phrase_ emphasizes.\n#' @md\n#' @name md_emphasis\nNULL\n"}
 {"key":"curated/md_emphasis_multiline","formatted":"#' Cross-line markdown emphasis\n#'\n#' @details\n#' A soft line break inside *foo bar* joins into one emphasis span, and **strong\n#' across lines** too. Nesting survives the break: **Gomphocarpus\n#' (*Gomphocarpus physocarpus*, syn. *Asclepias physocarpa*)**.\n#' @md\n#' @name md_emphasis_multiline\nNULL\n"}
-{"key":"curated/md_empty_list_item","formatted":"#' Empty bullets do not interrupt a paragraph\n#'\n#' @details\n#' a paragraph line *\n#' @md\n#' @name emptyitem\nNULL\n"}
+{"key":"curated/md_empty_list_item","formatted":"#' Empty bullets do not interrupt a paragraph\n#'\n#' @details a paragraph line *\n#' @md\n#' @name emptyitem\nNULL\n"}
 {"key":"curated/md_escaped_bracket","formatted":"#' Escaped markdown brackets\n#'\n#' @details\n#' An escaped \\[bracket](x) and a \\[shortcut] stay literal prose, as does a\n#' mid-word a\\[b](z), while a real [link](https://example.com) still resolves.\n#' @md\n#' @name md_escaped_bracket\nNULL\n"}
 {"key":"curated/md_escaped_close_bracket","formatted":"#' Escaped close brackets\n#'\n#' @details\n#' A shortcut whose closing bracket is escaped, like [text\\], is not a link;\n#' roxygen2 still leaks the synthesized [other\\] reference definitions as\n#' literal trailing text.\n#' @md\n#' @name md_escaped_close_bracket\nNULL\n"}
 {"key":"curated/md_link_backslash","formatted":"#' Backslash words in a markdown link display\n#'\n#' @details\n#' A shortcut [a\\b] keeps its backslash word as an Rd macro, as does the\n#' reference [a\\b][lbl], while a brace macro [a\\emph{x}] and [a\\code{f}] survive\n#' too.\n#' @md\n#' @name md_link_backslash\nNULL\n"}
@@ -101,8 +101,8 @@
 {"key":"harvest/rx-22825405","formatted":"#' Title\n#'\n#' Description, see \\link[=abc-class]{abc}.\nfoo <- function() {}\n"}
 {"key":"harvest/rx-24af68b8","formatted":"#' Foo\n#'\n#' This.\n#'\n#' OBTW.\nfoo <- function(x = '%') x\n\n#' @rdname foo\n#' @description And that.\n#' @details ORLY?\nbar <- function(y = '%') y\n"}
 {"key":"harvest/rx-24b3bfd6","formatted":"#' Title\n#'\n#' @details\n#'\n#' ```{r}\n#' a <- 1\n#'\n#' b <- 2\n#' ```\n#'\n#' ```{r}\n#' c <- 3\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
-{"key":"harvest/rx-24ced03e","formatted":"#' Title\n#'\n#' Description\n#'\n#' Details1\n#'\n#' Details2\n#'\n#' @details Details3\n#'\n#' Details4\nfoo <- function(x) {}\n"}
-{"key":"harvest/rx-24ef0d37","formatted":"#' Title\n#'\n#' @details Details\n#'\n#' ```{r eval = FALSE}\n#' this - would - fail - to - eval\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"key":"harvest/rx-24ced03e","formatted":"#' Title\n#'\n#' Description\n#'\n#' Details1\n#'\n#' Details2\n#'\n#' @details\n#' Details3\n#'\n#' Details4\nfoo <- function(x) {}\n"}
+{"key":"harvest/rx-24ef0d37","formatted":"#' Title\n#'\n#' @details\n#' Details\n#'\n#' ```{r eval = FALSE}\n#' this - would - fail - to - eval\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
 {"key":"harvest/rx-270b730c","formatted":"#' Title\n#'\n#' Description, see [name][dest].\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-2900ecd5","formatted":"#' Title\n#'\n#' ```{r}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-299f50fb","formatted":"#' Title\n#'\n#' This is a paragraph containing a manually inserted image\n#' before-<img src='foo.png'>-after\n#' @md\nfoo <- function() {}\n"}
@@ -142,7 +142,7 @@
 {"key":"harvest/rx-526b1dca","formatted":"#' Wrapper around original\n#'\n#' @inherit original\n#' @inheritDotParams original\n#' @param y some more specific description\n#' @export\nwrapper <- function(x = 'some_value', y = 'some other value', ...) {\n  original(x = x, y = y, ...)\n}\n\n#' Original function\n#'\n#' @param x x description\n#' @param y y description\n#' @param z z description\n#' @export\noriginal <- function(x, y, z, ...) {}\n"}
 {"key":"harvest/rx-528eee33","formatted":"#' Title\n#'\n#' @format abc\n#'\nx <- list(a = 1, b = 2)\n"}
 {"key":"harvest/rx-53695cf4","formatted":"#' Title\n#'\n#' Description.\n#'\n#' @param `_arg1` should not be code. But \\verb{this should}.\n#' @param `_arg2` should not be code, either. \\verb{But this.}\n#'\nfoo <- function(`_arg1`, `_arg2`) {}\n"}
-{"key":"harvest/rx-55b6980b","formatted":"#' @title Title `r structure('default', class = 'foo')`\n#'\n#' @details Details\n#'\n#' ```{r}\n#' structure('default', class = 'foo')\n#' ```\n#'\n#' @md\n#' @name bar\nNULL\n"}
+{"key":"harvest/rx-55b6980b","formatted":"#' @title Title `r structure('default', class = 'foo')`\n#'\n#' @details\n#' Details\n#'\n#' ```{r}\n#' structure('default', class = 'foo')\n#' ```\n#'\n#' @md\n#' @name bar\nNULL\n"}
 {"key":"harvest/rx-561b9e7d","formatted":"#' Title\n#'\n#' Description\n#'\n#' Details with a plot: \\figure{example.jpg}{Plot title}\nfoo <- function() {}\n"}
 {"key":"harvest/rx-56294ccd","formatted":"#' A\n#' @usage a(a=2)\na <- function(a = 1) {}\n"}
 {"key":"harvest/rx-56403ae7","formatted":"#' A.\n#'\n#' @return ABC\na <- function(x) {}\n\n#' B\n#'\n#' @inherit a\nb <- function(y) {}\n"}
@@ -208,7 +208,7 @@
 {"key":"harvest/rx-9ffae298","formatted":"#' Title\n#' @family Long family name\n#'\nlong_function_name_________________________1 <- function() {}\n\n#' Title\n#' @family Long family name\nlong_function_name_________________________2 <- function() {}\n\n#' Title\n#' @family Long family name\n#'\nlong_function_name_________________________3 <- function() {}\n\n#' Title\n#' @family Long family name\nlong_function_name_________________________4 <- function() {}\n"}
 {"key":"harvest/rx-a2c3b8d5","formatted":"#' Class constructor\n#'\n#' @param x x\nfoo <- function(x) {}\n\n#' @describeIn foo method\nprint.foo <- function(x) {}\n\n#' @describeIn foo method\nformat.foo <- function(x) {}\n\n#' @describeIn foo function (method for different class)\nformat.bar <- function(x) {}\n\n#' @describeIn foo function\nis_foo <- function(x) {}\n"}
 {"key":"harvest/rx-a35bbddc","formatted":"#' Title\nsetGeneric('f', function(x) standardGeneric('f'))\n\n#' @describeIn f Method for a\nsetMethod(f, signature('a'), function(x) 1)\n"}
-{"key":"harvest/rx-a6ac1b4d","formatted":"#' @title Title\n#' @details Details\n#' ```{r lorem}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() NULL\n"}
+{"key":"harvest/rx-a6ac1b4d","formatted":"#' @title Title\n#' @details\n#' Details\n#' ```{r lorem}\n#' 1+1\n#' ```\n#' @md\nfoo <- function() NULL\n"}
 {"key":"harvest/rx-a6f06852","formatted":"#' Title\n#' @family Long family name\nf <- function() {}\n\n#' Title\n#' @family Long family name\n'%+%' <- function(a, b) {}\n"}
 {"key":"harvest/rx-a77de068","formatted":"#' A.\n#' @param .x,x X\na <- function(x, .x) {}\n\n#' B\n#' @inheritParams a\nb <- function(x, .x) {}\n"}
 {"key":"harvest/rx-abce3716","formatted":"#' foo\n#' @family a\nfoo <- function() {}\n"}
@@ -241,16 +241,16 @@
 {"key":"harvest/rx-d4e0e632","formatted":"#' Title\n#'\n#' @param connect_args \\verb{[named list]}\\cr Connection arguments Description,\n#'   see \\verb{[foobar]}. Also \\verb{[this_too]}.\nfoo <- function() {}\n"}
 {"key":"harvest/rx-d4e3f08f","formatted":"#' Title.\n#'\n#' @name abc\n#' @docType data\n#' @usage data(abc)\nNULL\n"}
 {"key":"harvest/rx-d55651e1","formatted":"#' Important class.\n#'\n#' @field a field a\n#'\n#' @field b field b\n#'\nsetRefClass('test')\n"}
-{"key":"harvest/rx-d58b849a","formatted":"#' @title Title\n#' @description List:\n#'   \\itemize{\n#'   \\item item1\n#'   \\item item2\n#'   }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"key":"harvest/rx-d58b849a","formatted":"#' @title Title\n#' @description\n#' List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
 {"key":"harvest/rx-d791aabe","formatted":"#' Title\n#'\n#' Description, see \\href{http://www.someurl.com}{some thing}.\nfoo <- function() {}\n"}
 {"key":"harvest/rx-daf9322f","formatted":"#' Title\n#'\n#' <p>This is a paragraph</p>\n#' <p>This is another paragraph</p>\n#' @md\nfoo <- function() {}\n"}
-{"key":"harvest/rx-db08ab08","formatted":"#' @title Title\n#' @details List:\n#'   \\itemize{\n#'   \\item item1\n#'   \\item item2\n#'   }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
+{"key":"harvest/rx-db08ab08","formatted":"#' @title Title\n#' @details\n#' List:\n#' \\itemize{\n#' \\item item1\n#' \\item item2\n#' }\n#'\n#' Inline \\code{code} and \\emph{emphasis}.\n#' @name foobar\nNULL\n"}
 {"key":"harvest/rx-dd2506bf","formatted":"#' Title\n#'\n#' @description\n#' Before\n#' ```r\n#' x %in% 1:10\n#' ```\n#' After\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-de1bee56","formatted":"#' @name a\n#' @title a\n#' @author A\nNULL\n\n#' @name b\n#' @rdname a\n#' @author A\nNULL\n\n#' @name c\n#' @rdname a\n#' @author B\nNULL\n"}
 {"key":"harvest/rx-de3ac450","formatted":"#' Class constructor with disambiguated class\n#'\n#' @param x x\nbaz <- function(x) {}\n\n#' @describeIn baz method\nprint.roxygen2_baz <- function(x) {}\n\n#' @describeIn baz function (method for another class)\nformat.quuz_baz <- function(x) {}\n"}
 {"key":"harvest/rx-deb9d202","formatted":"#' foo object\nfoo <- list(bar = function(a) a)\nfoo$bar(a = 1)\n"}
 {"key":"harvest/rx-e02bf95c","formatted":"#' Class ABC\nsetRefClass(\n  'ABC',\n  methods = list(\n    f = function() {\n      'This function has a docstring'\n      1\n    }\n  )\n)\n"}
-{"key":"harvest/rx-e0e631c5","formatted":"#' Title\n#'\n#' @details Details `r x <- 10; x`\n#'\n#' ```{r}\n#' y <- x + 10\n#' y\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
+{"key":"harvest/rx-e0e631c5","formatted":"#' Title\n#'\n#' @details\n#' Details `r x <- 10; x`\n#'\n#' ```{r}\n#' y <- x + 10\n#' y\n#' ```\n#'\n#' @md\n#' @name dummy\nNULL\n"}
 {"key":"harvest/rx-e0fc1b98","formatted":"#' A\n#' @usage NULL\na <- function(a = 1) {}\n"}
 {"key":"harvest/rx-e2097b28","formatted":"#' Title\n#'\n#' Description with some **bold** included. **More bold.**\n#' @md\nfoo <- function() {}\n"}
 {"key":"harvest/rx-e65dc76d","formatted":"#' A.\n#'\n#' @param x X\n#' @param y Y\na <- function(x, y) {}\n\n#' B1\n#'\n#' @param y B\n#' @inheritParams a\nb1 <- function(x, y) {}\n\n#' B2\n#'\n#' @inheritParams a\n#' @param y B\nb2 <- function(x, y) {}\n\n#' C1\n#'\n#' @param x C\n#' @inheritParams a\nc1 <- function(x, y) {}\n\n#' C2\n#'\n#' @inheritParams a\n#' @param x C\nc2 <- function(x, y) {}\n"}

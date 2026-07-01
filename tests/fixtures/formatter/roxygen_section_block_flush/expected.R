@@ -1,0 +1,6 @@
+#' @format
+#' A list with two items representing 211 observations from 9 variables
+#' \describe{
+#'   \item{a}{x}
+#'   \item{b}{y}
+#' }

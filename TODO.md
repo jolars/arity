@@ -165,25 +165,37 @@
       flush because re-indenting them would inject *literal* spaces and change the
       output. Fixtures `roxygen_rd_macro_hangs_under_tag` (list hangs) and
       `roxygen_rd_verbatim_not_hung` (verbatim untouched); baseline re-blessed.
-    - [ ] **Systematically bucket roxygen tags (and block Rd macros) for layout.**
-      The hang decisions above accreted case by case (all prose tags hang; list
-      macros under them hang; verbatim macros don't) without a principled taxonomy,
-      and the naive splits are wrong: the axis is **not** "tag takes a name
-      argument" (`@return`/`@param` should format symmetrically even though only
-      `@param` has a name), nor is "inline vs section" clean (`@format` reads as a
-      section yet carries an inline first line with no newline after the tag). Work
-      out the *actual* dimensions that govern layout and assign every tag/macro to a
-      bucket deliberately, from roxygen2's own tag model + Rd semantics rather than
-      ad hoc lists. Candidate dimensions to pin down: (a) does the tag's body hang
-      under an inline header, or sit flush as a section body; (b) is the body
-      free-form prose (reflowable) vs. structured/verbatim (passthrough); (c) for
-      block Rd macros, is inner whitespace insignificant (list-like, re-indentable)
-      or literal (verbatim). Cross-check the resulting buckets against the harvest
-      corpus (what people actually write) before committing, and fold today's
-      `NON_PROSE_TAGS` / `is_list_block_macro` / uniform-hang rules into the derived
-      scheme. Open question this must answer: should section-body tags
-      (`@details`/`@description`/`@format`/`@value`) hang their prose at all, or is
-      the current uniform hang itself a divergence to correct?
+    - [x] **Systematically bucket roxygen tags (and block Rd macros) for layout.**
+      Layout is now chosen by a single classification (`enum TagClass` +
+      `classify(name)` in `src/formatter/roxygen.rs`), **never** by the input's
+      written form: `@details x` and `@details`⏎`x` render identically in roxygen2,
+      so they must format identically (Tenet 1). The formatter canonicalizes,
+      gathering a section's body from *both* places the parser can put it (inline in
+      the `ROXYGEN_TAG` node for form-1, a sibling `ROXYGEN_PARAGRAPH` for form-2)
+      and re-emitting per class. The seven classes (from roxygen2's own tag-parser
+      model): **NameBearingProse** (`@param`/`@slot`/`@field`, `tag_name_description`)
+      hang under the inline `@tag name` header; **SectioningProse** (`tag_markdown`:
+      `@description`/`@details`/`@return`/`@value`/`@format`/`@note`/`@references`/
+      `@source`/`@seealso`/`@author`/`@title`) go inline when the single-paragraph
+      body fits, else form-2 (bare `#' @tag`, body flush); **Code**
+      (`@examples`/`@usage`/`@eval*`) verbatim; **AtomicValue** (`tag_value`, e.g.
+      `@family single table verbs`) one line, interior spaces preserved, overflow
+      tolerated; **TokenList** (`tag_words`/namespace) joined onto one line;
+      **Toggle** (`@export`/`@noRd`/`@md`) bare; **Section** title inline, body
+      form-2. Reclassifying a tag is a one-line `match` edit; unknown tags default to
+      SectioningProse (the sole guessed assignment). This resolves the open question:
+      **section-body tags do not hang** — a wrapped body drops to form-2 (matching
+      the corpus and `style/documentation.qmd:40-70`); only the name-bearing label
+      tags hang. Consequently the 3b list-macro `+2` hang was a divergence and is
+      **removed** (`is_list_block_macro` deleted): a `\describe`/`\itemize` under a
+      section sits flush beneath the bare `#' @tag` (the block content-forces form-2),
+      matching what people write. Fixtures: convergence proofs
+      `roxygen_section_return_form{1,2}` (both → `#' @return A value.`),
+      `roxygen_name_bearing_pulled_up`, `roxygen_section_{inline_if_fits,
+      multiparagraph,null,block_flush}`, `roxygen_token_list_join`,
+      `roxygen_atomic_value_overflow`; the `@format`/`@details` + list corpus cases
+      now flush (baseline re-blessed, 9 cases). R oracle stays green (cross-boundary
+      prose movement is Rd-meaning-preserving).
     - [x] (4) run arity's own formatter on embedded R in
       `@examples`/`@examplesIf` (`ExampleBody` in `src/formatter/roxygen.rs`).
       The body lines are collected, stripped of their markers (reusing

@@ -1,25 +1,35 @@
-//! Roxygen block formatting: marker normalization (transform 1), prose reflow
-//! (transform 2), tag-prose hanging-indent reflow (transform 3), and embedded-R
-//! formatting in `@examples`/`@examplesIf` bodies (transform 4).
+//! Roxygen block formatting. A `ROXYGEN_BLOCK` is emitted one `#'` line per output
+//! line, reflowed to the line width, with protected markup spans (inline code, Rd
+//! macros, markdown links) kept atomic.
 //!
-//! A `ROXYGEN_BLOCK` is emitted one `#'` line per output line. Consecutive plain
-//! prose lines are grouped into a paragraph and greedily re-wrapped to the line
-//! width, with protected markup spans (inline code, Rd macros, markdown links)
-//! kept atomic. A tag line *with inline prose* (e.g. `@param x <prose>`) plus the
-//! plain-prose lines that follow it form a single reflow unit: the tag header
-//! stays on the first line and continuation lines hang-indent two extra spaces
-//! under it (the tidyverse style), with internal tag spacing normalized.
+//! **Layout is chosen by a tag's [`TagClass`], never by its written form.** A tag's
+//! body renders identically in roxygen2 whether written inline (`@details x`, form-1)
+//! or on the next line (`@details`⏎`x`, form-2), so the formatter must produce the
+//! same output for both (Tenet 1). It therefore *canonicalizes*: it gathers a
+//! section's body from both places the parser can put it — inline in the
+//! `ROXYGEN_TAG` node (form-1) and the sibling `ROXYGEN_PARAGRAPH`s (form-2) — and
+//! re-emits it in its class's one canonical shape. The classes ([`classify`]):
 //!
-//! An `@examples`/`@examplesIf` body is treated as embedded R: the body lines are
-//! collected, stripped of their markers, run through arity's own formatter, and
-//! re-prefixed (transform 4). If the body does not parse cleanly (e.g. it wraps R
-//! in Rd macros like `\dontrun{}`, which are not valid R), the whole body falls
-//! back to marker-normalized passthrough, byte-for-byte. Other non-prose tag
-//! content (`@usage`/`@eval`/`@evalRd` code, `@section Title:` headings, and
-//! namespace directives), blank separators, fenced code blocks, and other
-//! structured lines (lists, tables, headers, blockquotes) are passed through
+//! - **NameBearingProse** (`@param`/`@slot`/`@field`): the `@tag name` header stays
+//!   inline and the prose hangs two spaces beneath it ([`TagUnit`]).
+//! - **SectioningProse** (`@description`/`@details`/`@return`/…): free-form prose,
+//!   **reflowed** — inline on the tag line when the single-paragraph body fits, else
+//!   form-2 (a bare `#' @tag` line with the body flush beneath). A body containing a
+//!   block/list/fence, or a second paragraph, forces form-2 ([`SectionUnit`]).
+//! - **Code** (`@examples`/`@examplesIf`, and `@usage`/`@eval*`): the
+//!   `@examples` body is formatted as embedded R ([`ExampleBody`]); other code tags
+//!   are verbatim passthrough. Embedded R that fails to parse (e.g. wrapped in
+//!   `\dontrun{}`) falls back to marker-normalized passthrough, byte-for-byte.
+//! - **AtomicValue** (`@name`/`@family`/…): one line, value verbatim, overflow ok.
+//! - **TokenList** (`@keywords`/`@importFrom`/…): joined onto one line
+//!   ([`TokenListUnit`]). **Toggle** (`@export`/`@md`): bare `#' @tag`.
+//! - **Section** (`@section Title:`): title inline, body form-2 flush.
+//!
+//! Blank separators, block Rd macros, markdown lists, fenced code blocks, and other
+//! structured lines (tables, headers, blockquotes) are passed through
 //! marker-normalized but never reflowed — the conservative gate that keeps reflow
-//! correct without a full Markdown parse.
+//! correct without a full Markdown parse. A block macro always sits flush; it never
+//! hangs under a tag (the enclosing section is laid out form-2 instead).
 
 use rowan::NodeOrToken;
 
@@ -151,34 +161,15 @@ fn is_block_macro(node: &SyntaxNode) -> bool {
             .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
 }
 
-/// Whether `node` is a *list* block Rd macro (`\describe`/`\itemize`/`\enumerate`),
-/// whose inter-item and leading whitespace is insignificant in the rendered Rd, so
-/// re-indenting the block (to hang it under a tag) is meaning-preserving. This
-/// deliberately excludes verbatim-content macros like `\preformatted`/`\verb`,
-/// where leading whitespace is literal and a re-indent would change the output.
-fn is_list_block_macro(node: &SyntaxNode) -> bool {
-    node.children_with_tokens()
-        .find(|el| el.kind() == SyntaxKind::ROXYGEN_RD_MACRO_NAME)
-        .and_then(|el| el.into_token())
-        .is_some_and(|t| matches!(t.text(), "\\describe" | "\\itemize" | "\\enumerate"))
-}
-
 /// Emit a block Rd macro as atomic, marker-preserving passthrough: its own source
-/// lines, each on its own output line. The node's text already carries the `#'`
-/// markers (the opening one and the continuations) and the in-macro indentation;
-/// only the inter-line indentation *before* a continuation marker is dropped (the
-/// formatter recomputes the block's own indent), matching the fenced-code and
-/// air-compatible verbatim treatment of Rd lists.
-///
-/// `hang` is the tag hanging indent (in spaces) to shift the whole block under when
-/// it continues a prose-bearing tag (e.g. `\describe{}` after `@format <prose>`);
-/// `0` leaves the block flush, byte-identical to the plain passthrough. To stay
-/// idempotent, the shift is *anchored* to the opener: the opener sits at `marker`
-/// plus one conventional space plus `hang`, and every inner line keeps its offset
-/// relative to the opener. (Blindly adding `hang` each pass would compound and
-/// break `format(format(x)) == format(x)`; anchoring re-derives the same result on
-/// reparse.)
-fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode, hang: usize) {
+/// lines, each on its own output line, flush at `#'`. The node's text already
+/// carries the `#'` markers (the opening one and the continuations) and the
+/// in-macro indentation; only the inter-line indentation *before* a continuation
+/// marker is dropped (the formatter recomputes the block's own indent), matching
+/// the fenced-code and air-compatible verbatim treatment of Rd lists. A block
+/// never hangs under a tag: a `SectioningProse` tag carrying a block is laid out
+/// form-2, so the block sits flush beneath the bare `#' @tag` line.
+fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
     let text = node.text().to_string();
     // A *mid-prose* opener (`text \preformatted{ …`) has no marker of its own — the
     // opener line's `#'` belongs to the preceding paragraph — so its first segment
@@ -188,56 +179,18 @@ fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode, hang: usize) {
     // identically).
     let mid_prose = node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER);
 
-    if hang == 0 {
-        for (i, seg) in text.split('\n').enumerate() {
-            let line = if i == 0 {
-                if mid_prose {
-                    format!("#' {}", seg.trim_end())
-                } else {
-                    seg.trim_end().to_string()
-                }
-            } else {
-                seg.trim_start().trim_end().to_string()
-            };
-            push_line(items, line);
-        }
-        return;
-    }
-
-    // Anchor to the opener's in-macro indentation.
-    let opener_indent = {
-        let (_, indent, _) =
-            split_block_macro_line(text.split('\n').next().unwrap_or(""), mid_prose);
-        indent
-    };
     for (i, seg) in text.split('\n').enumerate() {
-        let (marker, indent, content) = split_block_macro_line(seg, i == 0 && mid_prose);
-        let width = 1 + hang + indent.saturating_sub(opener_indent);
-        push_line(
-            items,
-            format!("{marker}{blank:width$}{content}", blank = ""),
-        );
+        let line = if i == 0 {
+            if mid_prose {
+                format!("#' {}", seg.trim_end())
+            } else {
+                seg.trim_end().to_string()
+            }
+        } else {
+            seg.trim_start().trim_end().to_string()
+        };
+        push_line(items, line);
     }
-}
-
-/// Split one raw block-macro line into (marker, in-macro indent width, content),
-/// dropping any inter-line indentation before the marker. `synth_marker` is set for
-/// a mid-prose opener line that carries no marker of its own, in which case a `#'`
-/// marker is synthesized and the indent is zero.
-fn split_block_macro_line(seg: &str, synth_marker: bool) -> (String, usize, String) {
-    if synth_marker {
-        return ("#'".to_string(), 0, seg.trim().to_string());
-    }
-    let s = seg.trim_start();
-    let hashes = s.len() - s.trim_start_matches('#').len();
-    if hashes == 0 || !s[hashes..].starts_with('\'') {
-        // No recognizable marker: treat the whole (trimmed) line as content.
-        return (String::new(), 0, s.trim_end().to_string());
-    }
-    let marker = s[..hashes + 1].to_string();
-    let rest = &s[hashes + 1..];
-    let indent = rest.len() - rest.trim_start().len();
-    (marker, indent, rest.trim().to_string())
 }
 
 /// Emit a block Rd macro that wraps example R inside `@examples` (`\dontrun{}`,
@@ -388,42 +341,38 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
     let mut items: Vec<Ir> = Vec::new();
     let mut para = Paragraph::default();
     let mut tag_unit: Option<TagUnit> = None;
+    let mut section: Option<SectionUnit> = None;
+    let mut tokenlist: Option<TokenListUnit> = None;
     let mut example = ExampleBody::default();
     let mut in_examples = false;
     let mut in_fence = false;
     let lw = style.line_width;
 
-    // Flush all pending accumulators (only one is ever non-empty at a time).
+    // Flush all pending accumulators (only one is ever non-empty at a time). A
+    // `SectionUnit` decides inline-vs-form-2 here from its buffered first paragraph
+    // and `force_form2` flag.
     macro_rules! flush_pending {
         () => {{
             para.flush(&mut items, indent_cols, lw, md);
             flush_tag_unit(&mut tag_unit, &mut items, lw, md);
+            flush_tokenlist(&mut tokenlist, &mut items);
+            flush_section(&mut section, &mut items, lw, md);
             example.flush(&mut items, indent_cols, style);
         }};
     }
 
     for line in physical_lines(node) {
         // A block Rd macro is atomic passthrough: flush pending accumulators, then
-        // emit it without reflowing. In a prose section its in-macro indentation is
-        // preserved (a `\itemize` list); inside an `@examples` body it wraps
-        // example R (`\dontrun{}`/`\donttest{}`/…), which is meant to be
-        // copy-pasted, so it is emitted *flush* (marker-normalized, no extra
-        // indent). `in_examples` stays set — more example lines may follow.
+        // emit it *flush* without reflowing. Inside an `@examples` body it wraps
+        // example R (`\dontrun{}`/`\donttest{}`/…), emitted flush for copy-paste;
+        // in a prose section its in-macro indentation is preserved. A block never
+        // hangs under a tag — a `SectioningProse` section that carries a block is
+        // forced to form-2 (bare tag line, block flush beneath), so the presence of
+        // a block content-forces the section's layout before the block is emitted.
         if let Some(macro_node) = &line.block_macro {
-            // A *list* block Rd macro that directly continues a prose-bearing tag
-            // (an open `tag_unit`, e.g. `\describe{}` after `@format <prose>`)
-            // inherits the tag's two-space hanging indent, matching how a *prose*
-            // continuation of the same tag hangs. The hang is gated to list macros
-            // (`\describe`/`\itemize`/`\enumerate`), whose inter-item whitespace is
-            // insignificant in the rendered Rd: re-indenting a *verbatim* macro
-            // (`\preformatted`/`\verb`) would inject literal spaces into the output
-            // and change what the reader sees. With no open tag unit it stays flush,
-            // mirroring plain-prose continuation (which only hangs under a tag unit).
-            let hang = if tag_unit.is_some() && is_list_block_macro(macro_node) {
-                2
-            } else {
-                0
-            };
+            if let Some(s) = section.as_mut() {
+                s.force_form2 = true;
+            }
             flush_pending!();
             if macro_node.kind() == SyntaxKind::ROXYGEN_MD_LIST {
                 // A markdown list is marker-normalized per line (the in-list
@@ -441,7 +390,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
             } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {
-                emit_block_macro(&mut items, macro_node, hang);
+                emit_block_macro(&mut items, macro_node);
             }
             continue;
         }
@@ -458,46 +407,72 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         let is_fence = is_fence_marker(&content);
 
         // Fenced code block: everything between fences (and the fence lines
-        // themselves) is passthrough; a fence marker toggles the state.
-        if in_fence {
-            if is_fence {
-                in_fence = false;
+        // themselves) is passthrough; a fence marker toggles the state. A fence
+        // inside a section forces it to form-2 (the fenced block cannot be inline).
+        if in_fence || is_fence {
+            in_fence = !is_fence || !in_fence;
+            if let Some(s) = section.as_mut() {
+                s.force_form2 = true;
             }
             flush_pending!();
             emit_normalized(&mut items, &line);
             continue;
         }
-        if is_fence {
-            in_fence = true;
-            flush_pending!();
-            emit_normalized(&mut items, &line);
-            continue;
-        }
 
-        // Tag line: a paragraph/tag-unit boundary; (re)arm the `@examples`
-        // passthrough.
+        // Tag line: closes any open unit/section, then opens the accumulator its
+        // class dictates. Layout is chosen by `tag_class`, never by whether the
+        // body was written inline (form-1) or on the next line (form-2).
         if let Some(tag) = line.tag() {
             in_examples = tag.is_examples();
             flush_pending!();
-            if in_examples || is_non_prose_tag(&tag) || !tag_has_prose(&tag) {
-                // Code/example body, structured (`@section Title:`) or namespace
-                // directive, or a bare tag: passthrough, internal spacing
-                // normalized.
-                emit_tag_passthrough(&mut items, &line, &tag);
-            } else {
-                // `@tag [arg] <prose>`: open a reflow unit that absorbs the
-                // following continuation prose lines.
-                tag_unit = Some(TagUnit::new(&line, &tag, indent_cols));
+            match tag_class(&tag) {
+                // `@examples` body is captured on following iterations; other Code
+                // tags (`@usage`/`@eval*`) are verbatim, header spacing normalized.
+                TagClass::Code | TagClass::AtomicValue | TagClass::Toggle | TagClass::Section => {
+                    emit_tag_passthrough(&mut items, &line, &tag);
+                }
+                TagClass::TokenList => {
+                    tokenlist = Some(TokenListUnit::new(&line, &tag));
+                }
+                // Open unconditionally (even with no inline prose): the unit pulls
+                // up the following prose under the inline `@tag name` header.
+                TagClass::NameBearingProse => {
+                    tag_unit = Some(TagUnit::new(&line, &tag, indent_cols));
+                }
+                TagClass::SectioningProse => {
+                    section = Some(SectionUnit::new(&line, &tag, indent_cols));
+                }
             }
             continue;
         }
 
-        // Blank separator or a structured line: passthrough, and a boundary.
-        // (`@examples` body lines are captured at the top of the loop.) A line
-        // continues open prose when a tag unit or paragraph is mid-flight; that
-        // gates ordered-list recognition (a non-`1` marker can't interrupt it).
-        let in_paragraph = tag_unit.is_some() || !para.lines.is_empty();
-        if line.is_blank() || is_structured(&content, in_paragraph) {
+        // A line continues open prose when a unit/section/paragraph is mid-flight;
+        // that gates ordered-list recognition (a non-`1` marker can't interrupt it).
+        let in_paragraph = tag_unit.is_some()
+            || tokenlist.is_some()
+            || section.as_ref().is_some_and(|s| !s.chunks.is_empty())
+            || !para.lines.is_empty();
+
+        // Blank separator: a boundary, except inside an open section, where it is
+        // buffered — a *trailing* blank before the next tag must not flip the
+        // section's inline/form-2 decision (Tenet 1), and a blank *followed* by
+        // more prose marks a real paragraph break (handled in the prose branch).
+        if line.is_blank() {
+            if let Some(s) = section.as_mut() {
+                s.pending_blanks.push(line.clone());
+                continue;
+            }
+            flush_pending!();
+            emit_normalized(&mut items, &line);
+            continue;
+        }
+
+        // Structured line (list/blockquote/header/table): never reflowed. Inside a
+        // section it content-forces form-2, then emits flush beneath the bare tag.
+        if is_structured(&content, in_paragraph) {
+            if let Some(s) = section.as_mut() {
+                s.force_form2 = true;
+            }
             flush_pending!();
             emit_normalized(&mut items, &line);
             continue;
@@ -505,6 +480,31 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
 
         // Plain prose. A marker change (e.g. `#'` then `##'`) starts fresh.
         let marker = marker_text(&line);
+
+        // Continuation of an open section (same marker): absorb into the section's
+        // first paragraph, unless a blank has intervened — that opens a *second*
+        // paragraph, which content-forces form-2 and dissolves the rest of the
+        // section body into ordinary flush prose.
+        if let Some(s) = section.as_mut() {
+            if s.marker == marker && s.pending_blanks.is_empty() {
+                s.push_prose(&line);
+                continue;
+            }
+            if s.marker == marker {
+                s.force_form2 = true;
+            }
+            flush_section(&mut section, &mut items, lw, md);
+        }
+
+        // Continuation of an open token list (same marker): absorb; a boundary
+        // otherwise flushes it onto its single joined line.
+        if let Some(t) = tokenlist.as_mut() {
+            if t.marker == marker {
+                t.push_continuation(&line);
+                continue;
+            }
+            flush_tokenlist(&mut tokenlist, &mut items);
+        }
 
         // Continuation of an open tag unit (same marker): absorb and hang-indent.
         if let Some(unit) = tag_unit.as_mut() {
@@ -566,10 +566,8 @@ impl Paragraph {
         // marker-normalized. A chunk that could migrate to a line start and reparse
         // as a structured construct is not a bail: `wrap_chunks` keeps such a marker
         // off any line start, preserving idempotence without abandoning reflow.
-        if self.chunks.is_empty()
-            || (!md && self.lines.iter().any(line_has_live_rd_comment))
-            || (md && self.lines.first().is_some_and(line_is_linkref_def))
-        {
+        let first_text = self.lines.first().map(content_text).unwrap_or_default();
+        if self.chunks.is_empty() || prose_bails_reflow(&self.lines, &first_text, md) {
             let lines = std::mem::take(&mut self.lines);
             for line in &lines {
                 emit_normalized(items, line);
@@ -676,6 +674,186 @@ impl TagUnit {
 fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: usize, md: bool) {
     if let Some(unit) = unit.take() {
         unit.flush(items, line_width, md);
+    }
+}
+
+/// Whether a run of prose lines must not be reflowed, so it is kept verbatim
+/// (marker-normalized). In non-markdown (literal Rd) prose any line carrying a
+/// live `%` comment forbids reflow (it would move text across the comment,
+/// changing the rendered Rd); in markdown prose a leading link-reference
+/// definition does (joining it turns it back into ordinary prose). `first_text`
+/// is the paragraph's first prose line — for a tag-headed body, the tag *value*
+/// rather than the whole `@tag …` line, so the linkref check reads the right text.
+fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> bool {
+    if md {
+        text_is_linkref_def(first_text)
+    } else {
+        lines.iter().any(line_has_live_rd_comment)
+    }
+}
+
+/// A `SectioningProse` tag (`@details`, `@return`, …) together with its body,
+/// laid out by class rather than by written form: the body is emitted inline on
+/// the tag line when it is a single paragraph that fits the line width, otherwise
+/// form-2 (a bare `#' @tag` line with the body flush beneath). Because the tag's
+/// inline prose (form-1) and a following sibling paragraph (form-2) both feed the
+/// same first paragraph here, the two written forms converge on identical output.
+///
+/// Only the *first* paragraph is buffered: once a block, a structured line, or a
+/// second paragraph appears, `force_form2` is set and the header + first paragraph
+/// are emitted form-2, after which the rest of the section body flows through the
+/// ordinary flush-prose path. Trailing blanks are buffered in `pending_blanks` so
+/// a blank before the next tag cannot flip the inline/form-2 decision (Tenet 1).
+struct SectionUnit {
+    marker: String,
+    indent_cols: usize,
+    /// The normalized tag header, e.g. `@return` or `@format`.
+    header: String,
+    /// Breakable chunks of the body's first paragraph.
+    chunks: Vec<String>,
+    /// The first paragraph's source lines (tag line first), for the reflow bail.
+    lines: Vec<PhysicalLine>,
+    /// The first paragraph's first prose line's text (tag value for form-1, the
+    /// first following prose line for form-2), for the markdown linkref-def bail.
+    first_text: Option<String>,
+    /// Buffered blank separators after the first paragraph (trailing blanks are
+    /// dropped; a blank followed by prose forces form-2, handled by the caller).
+    pending_blanks: Vec<PhysicalLine>,
+    /// Set when a block / structured line / second paragraph makes the body
+    /// unrepresentable inline, forcing the bare-tag-line (form-2) layout.
+    force_form2: bool,
+}
+
+impl SectionUnit {
+    fn new(line: &PhysicalLine, tag: &RoxygenTag, indent_cols: usize) -> Self {
+        let mut chunks = Vec::new();
+        tag_prose_chunks(tag, &mut chunks);
+        // Form-1: the tag carries the body's first prose inline; record its value.
+        let first_text = (!chunks.is_empty()).then(|| tag_rest_verbatim(tag));
+        SectionUnit {
+            marker: marker_text(line),
+            indent_cols,
+            header: tag_header(tag).unwrap_or_else(|| "@".to_string()),
+            chunks,
+            lines: vec![line.clone()],
+            first_text,
+            pending_blanks: Vec::new(),
+            force_form2: false,
+        }
+    }
+
+    /// Absorb a following plain-prose line into the body's first paragraph.
+    fn push_prose(&mut self, line: &PhysicalLine) {
+        // Form-2: the first following prose line supplies the paragraph's first text.
+        if self.first_text.is_none() {
+            self.first_text = Some(content_text(line));
+        }
+        line_chunks(line, &mut self.chunks);
+        self.lines.push(line.clone());
+    }
+
+    /// Emit the section (header + first paragraph) into `items`, then the buffered
+    /// separators. Subsequent body content (if `force_form2` was set) is emitted by
+    /// the caller through the ordinary flush-prose path.
+    fn flush(self, items: &mut Vec<Ir>, line_width: usize, md: bool) {
+        let marker = &self.marker;
+        let header = &self.header;
+        let first_text = self.first_text.as_deref().unwrap_or("");
+        if !self.chunks.is_empty() && prose_bails_reflow(&self.lines, first_text, md) {
+            // Cannot reflow safely: passthrough the source lines marker-normalized
+            // (form preserved), the tag line keeping its inline value.
+            for (i, line) in self.lines.iter().enumerate() {
+                if i == 0
+                    && let Some(tag) = line.tag()
+                {
+                    emit_tag_passthrough(items, line, &tag);
+                } else {
+                    emit_normalized(items, line);
+                }
+            }
+        } else if self.chunks.is_empty() {
+            push_line(items, format!("{marker} {header}"));
+        } else {
+            let one = self.chunks.join(" ");
+            let inline_w = self.indent_cols
+                + marker.chars().count()
+                + 1
+                + header.chars().count()
+                + 1
+                + one.chars().count();
+            if !self.force_form2 && inline_w <= line_width {
+                push_line(items, format!("{marker} {header} {one}"));
+            } else {
+                push_line(items, format!("{marker} {header}"));
+                let prefix = self.indent_cols + marker.chars().count() + 1;
+                let budget = line_width.saturating_sub(prefix).max(1);
+                for wrapped in wrap_chunks(&self.chunks, budget) {
+                    push_line(items, format!("{marker} {wrapped}"));
+                }
+            }
+        }
+        for blank in &self.pending_blanks {
+            emit_normalized(items, blank);
+        }
+    }
+}
+
+/// Emit the pending section (if any) into `items`, then clear it.
+fn flush_section(
+    section: &mut Option<SectionUnit>,
+    items: &mut Vec<Ir>,
+    line_width: usize,
+    md: bool,
+) {
+    if let Some(section) = section.take() {
+        section.flush(items, line_width, md);
+    }
+}
+
+/// A `TokenList` tag (`@keywords`, `@importFrom`, …) together with any following
+/// continuation lines, all joined onto the tag's single line. These are
+/// directives, not prose, so the joined line is never wrapped (overflow tolerated).
+struct TokenListUnit {
+    marker: String,
+    header: String,
+    chunks: Vec<String>,
+}
+
+impl TokenListUnit {
+    fn new(line: &PhysicalLine, tag: &RoxygenTag) -> Self {
+        let mut chunks = Vec::new();
+        tag_prose_chunks(tag, &mut chunks);
+        TokenListUnit {
+            marker: marker_text(line),
+            header: tag_header(tag).unwrap_or_else(|| "@".to_string()),
+            chunks,
+        }
+    }
+
+    /// Absorb a following plain-prose line's tokens onto the joined line.
+    fn push_continuation(&mut self, line: &PhysicalLine) {
+        line_chunks(line, &mut self.chunks);
+    }
+
+    /// Emit the single joined `#' @tag <tokens>` line (bare `#' @tag` when empty).
+    fn flush(self, items: &mut Vec<Ir>) {
+        let marker = &self.marker;
+        let header = &self.header;
+        if self.chunks.is_empty() {
+            push_line(items, format!("{marker} {header}"));
+        } else {
+            push_line(
+                items,
+                format!("{marker} {header} {}", self.chunks.join(" ")),
+            );
+        }
+    }
+}
+
+/// Emit the pending token list (if any) into `items`, then clear it.
+fn flush_tokenlist(tokenlist: &mut Option<TokenListUnit>, items: &mut Vec<Ir>) {
+    if let Some(tokenlist) = tokenlist.take() {
+        tokenlist.flush(items);
     }
 }
 
@@ -940,53 +1118,68 @@ fn emit_tag_passthrough(items: &mut Vec<Ir>, line: &PhysicalLine, tag: &RoxygenT
     }
 }
 
-/// Roxygen tags whose inline content is *not* hanging-indent prose, so it must
-/// not be reflowed: embedded R (`usage`/`eval`/`evalRd`; `examples` is handled
-/// separately), the `@section Title:` heading shape, and namespace/identifier
-/// directives whose content is symbols rather than prose. Conservative and
-/// extensible — reflowing an omitted identifier tag stays correct (it parses and
-/// is idempotent), just not ideal.
-const NON_PROSE_TAGS: &[&str] = &[
-    "usage",
-    "eval",
-    "evalRd",
-    "evalNamespace",
-    "section",
-    "export",
-    "exportClass",
-    "exportMethod",
-    "exportS3Method",
-    "exportPattern",
-    "import",
-    "importFrom",
-    "importClassesFrom",
-    "importMethodsFrom",
-    "rawNamespace",
-    "useDynLib",
-    "rdname",
-    "name",
-    "aliases",
-    "keywords",
-    "family",
-    "concept",
-    "docType",
-    "encoding",
-    "backref",
-];
-
-/// Whether `tag`'s inline content should be passed through rather than reflowed.
-fn is_non_prose_tag(tag: &RoxygenTag) -> bool {
-    tag.name()
-        .as_deref()
-        .is_some_and(|n| NON_PROSE_TAGS.contains(&n))
+/// The layout class of a roxygen tag: the *single* axis that decides how the tag
+/// and its body are laid out. Layout is chosen by class, never by the input's
+/// written form (Tenet 1: `@details x` and `@details`⏎`x` render identically in
+/// roxygen2, so they must format identically). Classes are derived from roxygen2's
+/// own tag-parser model; the comments on [`classify`] record that provenance so
+/// moving a tag between classes is a one-line, auditable edit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TagClass {
+    /// `tag_name_description` — an inline name label followed by prose, e.g.
+    /// `@param x <prose>`. Canonical: header inline, continuations hang two spaces.
+    NameBearingProse,
+    /// `tag_markdown` — free-form section prose with no inline label. Canonical:
+    /// body inline on the tag line when it fits, else form-2 (bare tag line, body
+    /// flush at `#'`).
+    SectioningProse,
+    /// `tag_code`/`tag_examples` — embedded R or verbatim code, never prose-reflowed.
+    Code,
+    /// `tag_value` — a single value that occupies the rest of the line (spaces
+    /// significant), one line, overflow tolerated.
+    AtomicValue,
+    /// `tag_words` and namespace directives — a token list joined onto one line.
+    TokenList,
+    /// `tag_toggle` — a bare directive with no body (`@export`, `@noRd`, `@md`).
+    Toggle,
+    /// `@section`: a verbatim `Title:` kept inline, body always form-2 flush.
+    Section,
 }
 
-/// Whether the tag carries inline prose on its own line (a `ROXYGEN_TEXT` run or
-/// a protected span after the header), as opposed to a bare tag like `@export`.
-fn tag_has_prose(tag: &RoxygenTag) -> bool {
-    tag.syntax()
-        .children_with_tokens()
-        .any(|el| is_tag_prose_kind(el.kind()))
+/// Classify a tag by name into its [`TagClass`]. The `match` arms are grouped by
+/// roxygen2 parser (`tag_name_description`, `tag_markdown`, `tag_code`, `tag_value`,
+/// `tag_words`, `tag_toggle`) so a reclassification is a one-line move. Unknown or
+/// custom tags default to [`TagClass::SectioningProse`] (matching the prior "an
+/// unrecognized prose tag reflows" behavior); this is the sole guessed assignment.
+fn classify(name: &str) -> TagClass {
+    use TagClass::*;
+    match name {
+        // tag_name_description
+        "param" | "slot" | "field" => NameBearingProse,
+        // tag_markdown (section-producing prose)
+        "description" | "details" | "return" | "value" | "format" | "note" | "references"
+        | "source" | "seealso" | "author" | "title" => SectioningProse,
+        "section" => Section,
+        // tag_examples / tag_code
+        "examples" | "examplesIf" | "usage" | "eval" | "evalRd" | "evalNamespace" => Code,
+        // tag_value (single verbatim value; interior spaces significant)
+        "name" | "rdname" | "docType" | "encoding" | "family" | "concept" | "inheritParams"
+        | "backref" | "exportClass" | "exportMethod" | "exportPattern" => AtomicValue,
+        // tag_words / namespace directives (join to one line)
+        "keywords" | "aliases" | "import" | "importFrom" | "importClassesFrom"
+        | "importMethodsFrom" | "exportS3Method" | "useDynLib" | "rawNamespace" => TokenList,
+        // tag_toggle
+        "export" | "noRd" | "md" | "noMd" => Toggle,
+        _ => SectioningProse,
+    }
+}
+
+/// The tag's layout class, defaulting a nameless (malformed) tag to
+/// [`TagClass::SectioningProse`] so it degrades to the safe passthrough fallback.
+fn tag_class(tag: &RoxygenTag) -> TagClass {
+    tag.name()
+        .as_deref()
+        .map_or(TagClass::SectioningProse, classify)
 }
 
 /// Whether `kind` is a roxygen prose element (plain text or a protected span).
@@ -1113,25 +1306,19 @@ fn line_has_live_rd_comment(line: &PhysicalLine) -> bool {
     false
 }
 
-/// Whether `line`'s content is a CommonMark link-reference definition
-/// (`[label]: destination [optional title]`) — a leaf block cmark consumes,
-/// rendering nothing while giving every referencing link a destination. Joining
-/// such a line with adjacent content during reflow turns it back into ordinary
-/// prose (the destination would absorb the following words, or a second stacked
-/// definition would land in the title slot), so a referencing link renders as an
-/// R-topic `\link` over leaked literal text instead of the intended `\href` — a
-/// change in the rendered Rd (Tenet 1). A markdown paragraph whose first line is
-/// one is therefore kept verbatim. A definition is recognized only at a block
-/// start, which is why the caller checks the paragraph's *first* line; a later
-/// definition-shaped line is a paragraph continuation (it cannot interrupt), and
-/// joining it is render-preserving. Mirrors the projector's
-/// `parse_linkref_def_dest`.
-fn line_is_linkref_def(line: &PhysicalLine) -> bool {
-    text_is_linkref_def(&content_text(line))
-}
-
 /// Whether `text` (a line's or tag value's content) is a CommonMark
-/// link-reference definition. See [`line_is_linkref_def`] for why this matters.
+/// link-reference definition (`[label]: destination [optional title]`) — a leaf
+/// block cmark consumes, rendering nothing while giving every referencing link a
+/// destination. Joining such a line with adjacent content during reflow turns it
+/// back into ordinary prose (the destination would absorb the following words, or
+/// a second stacked definition would land in the title slot), so a referencing
+/// link renders as an R-topic `\link` over leaked literal text instead of the
+/// intended `\href` — a change in the rendered Rd (Tenet 1). A markdown paragraph
+/// whose first line is one is therefore kept verbatim. A definition is recognized
+/// only at a block start, which is why the caller checks the paragraph's *first*
+/// line; a later definition-shaped line is a paragraph continuation (it cannot
+/// interrupt), and joining it is render-preserving. Mirrors the projector's
+/// `parse_linkref_def_dest`.
 fn text_is_linkref_def(text: &str) -> bool {
     let Some(rest) = text.strip_prefix('[') else {
         return false;

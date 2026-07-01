@@ -1,0 +1,8 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' Title
+#'
+#' @format NULL
+x <- list(a = 1, b = 2)
