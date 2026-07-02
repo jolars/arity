@@ -793,9 +793,21 @@
       look-back/emit via `is_md_setext_underline_or_dash`; at a fresh block position the block loop's list
       check runs first, so the same bullet still opens an empty list. Restricted to `-` (`*`/`+` never
       underline); the projector reads level 2 from the `-` node text with no change. Curated
-      `md_setext_dash`; projector 349→350. **Backlog:** a setext underline
-      after a same-line tag value (`@details Title` / `===`) stays a literal sibling (same-line-tag-value
-      grouping backlog); thematic breaks (`---` after a blank) stay literal where roxygen2 errors.
+      `md_setext_dash`; projector 349→350. **Backlog:** thematic breaks (`---` after a blank) stay
+      literal where roxygen2 errors.
+      **Setext after a same-line tag value LANDED (2026-07-02n):** `@details Big Title` / `===` (the
+      heading title on the tag line, underline below) now promotes to a `ROXYGEN_MD_HEADING`, exactly as
+      the next-line form (`@details` / `Big Title` / `===`) already did. `emit_tag_line` detects
+      `has_value && tag_folds_prose_continuation && is_md_setext_heading_start(start)`, closes the tag
+      *empty*, and emits the value + underline as a **sibling** heading (`emit_md_setext_heading_from_value`
+      — a marker-less first line, since that `#'` belongs to the tag). The projector needs **no** change:
+      the sibling shape is what the next-line form produces, so `emit_section_with_headings` hoists it
+      (description/details) and other prose tags inline the title with the underline dropped (matching
+      roxygen2's "Level 1 headings are not supported in @seealso" warn+flatten). Formatter: `emit_md_heading`
+      gained the `mid_prose` first-line `#' `-prefix (mirrors `emit_block_macro`), so the title lands on its
+      own `#'` line above the underline — the next-line form, which projects identically (idempotent).
+      Mode-gated for free (the underline leaf is `@md`-only, so non-md folds `===` as prose). Curated
+      `md_setext_tag_value`; parser fixture `roxygen_md_setext_tag_value`; projector 353→354.
       **ATX headings LANDED (2026-07-02g):** a `#{1,6}` + space/EOL line under `@md` carves as a whole-line
       `RoxygenMdHeading` leaf (`is_atx_heading`) wrapped in a single-line `ROXYGEN_MD_HEADING` node (a
       direct section child, like the HTML block / table). The projector (`emit_section_with_headings`)

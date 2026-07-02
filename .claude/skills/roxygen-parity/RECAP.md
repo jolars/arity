@@ -448,45 +448,56 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02m) — block-quote lazy continuation
+## Latest session (2026-07-02n) — setext heading after a same-line tag value
 
-Landed **block-quote lazy continuation** (ranked #4; block-quote backlog). CommonMark folds a non-`>`
-paragraph-continuation line (no intervening blank) into a block quote's open paragraph. Probed roxygen2:
-`> quoted line one`⏎`lazy continuation` renders `quoted line onelazy continuation` (the lazy line joins the
-quote's flatten with **no** separator); a blank line then ends the quote, and a following paragraph is
-separate (keeps its own leading space). Previously arity modeled the lazy line as a separate
-`ROXYGEN_PARAGRAPH` sibling, so it flattened with a joining space (`... one continuation`).
+Landed **a setext heading whose title begins as a tag's same-line value** (ranked #2; the same-line-tag-
+value grouping backlog). Probed roxygen2: `@details Big Title`⏎`===`⏎`body.` renders `(\section (TEXT "Big
+Title") (TEXT "body para."))` — identical to the next-line form (`@details`⏎`Big Title`⏎`===`), which arity
+already handled. Previously the same-line value stopped folding at the underline (`is_foldable_continuation`
+excludes underlines), so `Big Title` sat in the `ROXYGEN_TAG` and `===`+body were a literal sibling paragraph
+— no setext promotion.
 
-**Parser-only** (one edit). `emit_md_block_quote`'s gather loop broke on any non-`>` line; it now continues
-when the next line is `is_md_block_quote_start` **or** `is_foldable_continuation` (the existing plain-prose,
-opens-no-new-block guard reused from the same-line-tag fold). A blank/tag/list/fence/heading/table/thematic-
-break/nested-quote line still ends the quote. **No projector or formatter change:** `block_quote_flat_text`
-splits the node text on `\n` and `strip_block_quote_marker` no-ops on a `>`-less line, so the folded lazy line
-rides straight into the flatten; the formatter's atomic passthrough already emits the whole node.
+**Parser-only** (projector needs **nothing**). `emit_tag_line` pre-scans for the tag name + first value
+token, then when `has_value && tag_folds_prose_continuation(name) && is_md_setext_heading_start(tokens,
+start)` it closes the tag **empty** and emits the value + underline as a **sibling** `ROXYGEN_MD_HEADING`
+via the new `emit_md_setext_heading_from_value` (a marker-less first line — the `#'` belongs to the tag).
+That's the exact shape the next-line form already produces, so the existing projector routes it correctly
+with no new arm: `emit_section_with_headings` **hoists** it for description/details, and `serialize_inlines`'
+`Inline::MdHeading` arm **inlines the title** (dropping the underline) for other prose tags — matching
+roxygen2, which *warns* "Level 1 headings are not supported in @seealso" and flattens (`(\seealso (TEXT "Big
+Title body."))`). No tag gating needed.
 
-**Result:** projector **352→353 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green,
-clippy + fmt clean; curated fixed-point net **88/88 preserving** (was 87/87; R run), 0 blocked/diverg; format
-baseline **+1 additive** (the new curated case, formatter output an unchanged passthrough). New parser fixture
-`roxygen_md_blockquote_lazy` (CST snapshot shows the lazy line inside `ROXYGEN_MD_BLOCK_QUOTE`; lossless, empty
-diagnostics) + curated corpus `md_blockquote_lazy` (+ pin, + allowlist) + projector unit test
-`md_block_quote_lazy_continuation_folds_into_quote`.
+**Formatter** (one edit): `emit_md_heading` gained the `mid_prose` branch (mirror of `emit_block_macro`) —
+a heading whose first token isn't a `ROXYGEN_MARKER` gets `#' ` prepended to its first line, so the title
+lands on its own `#'` line above the underline. That is the next-line setext form, which projects
+identically → **idempotent** (`#' @details Big Title`⏎`#' ===` reflows to `#' @details`⏎`#' Big Title`⏎`#'
+===`, stable thereafter).
 
-**Trap (new):** *Lazy continuation is a parser fold, not a projector fix.* The block-quote node already
-flattened `>`-less lines correctly (`strip_block_quote_marker` no-ops), so the only work was extending the
-parser gather loop to pull the lazy line **into** the node; the projector/formatter needed nothing. Contrast
-the glue session (2026-07-02l), which was projector-only because the CST already had the right node boundary.
+**Result:** projector **353→354 matching** (all allowlisted), 18 divergent (unchanged, out-of-scope).
+`cargo test` green, clippy + fmt clean; curated fixed-point net **89/89 preserving** (was 88/88; R run), 0
+blocked/diverg; format baseline **+1 additive** (the new curated case, an idempotent split). New parser
+fixture `roxygen_md_setext_tag_value` (CST shows the empty `@details` tag + the sibling `ROXYGEN_MD_HEADING`;
+lossless, empty diagnostics) + curated corpus `md_setext_tag_value` (+ pin, + allowlist). Mode-gated for
+free: the `===` underline leaf is `@md`-only, so a non-md `@details Big Title`⏎`===` folds `===` as prose.
 
-**Next (ranked):** **(1)** the roxygen-diagnostic side-channel (block-quote/thematic-break/unknown-macro
-warnings) as a second oracle surface — no diagnostic infra exists in the roxygen parser yet. **(2)** a
-setext underline after a same-line tag value (`@details Title` / `===`) — the same-line-tag-value grouping
-backlog (continuation lines split into sibling paragraphs, so no look-back). **(3)** facets (c)/(d) of the
-`@md` `\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. The 18 projector
+**Trap (new):** *A same-line tag value promoting to a heading is a sibling, not a tag child.* The value
+physically sits on the tag line, but the faithful CST closes the tag empty and makes the value+underline a
+`ROXYGEN_MD_HEADING` **sibling** — reusing the next-line form's shape so the whole projector (hoist vs
+inline-title, per tag) works unchanged. The only new surface is the marker-less first line, handled in the
+parser emit (no leading marker threaded) and the formatter (`mid_prose` prefix), mirroring `emit_block_macro`'s
+mid-prose opener.
+
+**Next (ranked):** **(1)** the roxygen-diagnostic side-channel (block-quote/thematic-break/unknown-macro /
+unsupported-heading warnings) as a second oracle surface — no diagnostic infra exists in the roxygen parser
+yet; the `@seealso` level-1-heading warn+flatten this session leaned on is a candidate. **(2)** facets (c)/(d)
+of the `@md` `\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. The 18 projector
 divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02m** — block-quote lazy continuation (a non-`>` paragraph-continuation line folds into the quote's open paragraph, no separator; `emit_md_block_quote` gather loop continues on `is_md_block_quote_start` OR `is_foldable_continuation`; projector/formatter unchanged). 352→353.
 - **2026-07-02l** — block-quote glue onto adjacent prose (no paragraph separator before a quote; projector-only, `RunSeg::Final` segment + `trim_trailing_run_ws`, separators suppressed in both join sites). 350→352.
 - **2026-07-02k** — single-dash setext H2 underlines (`-`/`- ` after a paragraph → level-2 setext; an empty list item can't interrupt a paragraph); build.rs `is_md_setext_dash_underline`/`is_md_setext_underline_or_dash` wired into the two setext functions only, list-check-first disambiguates the fresh-position empty bullet. Parser-only. 349→350.
 - **2026-07-02j** — markdown thematic breaks (`***`/`---`/`___`) → render **empty**, neighbors coalesce (roxygen2 has no support: `mdxml_unknown`→`escape_comment`=""); `is_thematic_break` leaf + block-level `setext_underline_is_thematic` for a bare `---`; projector flushes a part with no atom. 347→349.

@@ -218,6 +218,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_setext",
         "roxygen_md_setext_dash",
         "roxygen_md_setext_not",
+        "roxygen_md_setext_tag_value",
         "roxygen_md_blockquote",
         "roxygen_md_blockquote_lazy",
         "roxygen_md_blockquote_not",

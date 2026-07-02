@@ -264,13 +264,33 @@ fn emit_md_block_quote(items: &mut Vec<Ir>, node: &SyntaxNode) {
     }
 }
 
-/// Emit a markdown ATX heading (`@md` mode) as atomic passthrough, marker-
-/// normalized. A heading is a single line; the node owns its own `#'` marker.
-/// Marker-normalizing preserves the leading `#{1,6}` run (it is trimmed content,
-/// not touched), so on reparse it still forms the same heading — idempotent.
+/// Emit a markdown heading (`@md` mode) as atomic passthrough, marker-normalized.
+/// An ATX heading is a single line; a setext heading is its title line(s) plus the
+/// `===`/`---` underline. Marker-normalizing preserves the leading `#{1,6}` run or
+/// the underline (each is trimmed content, not touched), so on reparse it still
+/// forms the same heading — idempotent.
+///
+/// A setext heading whose title began as a tag's same-line value (`@details Title` /
+/// `===`) has a **marker-less** first line — the opener `#'` belonged to the tag —
+/// so, like [`emit_block_macro`]'s mid-prose opener, that line is given its own
+/// `#' `. On reparse the title then sits on its own `#'` line above the underline
+/// (the next-line setext form), which projects identically — idempotent.
 fn emit_md_heading(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_marker_text(seg));
+    let mid_prose = node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER);
+    for (idx, seg) in node.text().to_string().split('\n').enumerate() {
+        if idx == 0 && mid_prose {
+            let content = seg.trim();
+            push_line(
+                items,
+                if content.is_empty() {
+                    "#'".to_string()
+                } else {
+                    format!("#' {content}")
+                },
+            );
+        } else {
+            push_line(items, normalize_marker_text(seg));
+        }
     }
 }
 

@@ -786,7 +786,7 @@ fn is_md_setext_dash_underline(tokens: &[Token], start: usize) -> bool {
 /// emit, both reached solely from a paragraph open — at a fresh block position the
 /// same dash bullet still opens an empty list (the block loop's list check runs
 /// first), so this never mis-fires on a list.
-fn is_md_setext_underline_or_dash(tokens: &[Token], start: usize) -> bool {
+pub(super) fn is_md_setext_underline_or_dash(tokens: &[Token], start: usize) -> bool {
     is_md_setext_underline_line(tokens, start) || is_md_setext_dash_underline(tokens, start)
 }
 

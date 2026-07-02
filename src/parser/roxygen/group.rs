@@ -11,8 +11,8 @@ use super::build::{
     emit_md_code_block, emit_md_heading, emit_md_html_block, emit_md_list, emit_md_setext_heading,
     emit_md_table, emit_md_thematic_break, is_block_macro_line, is_block_macro_opener,
     is_md_block_quote_start, is_md_code_block_start, is_md_heading_start, is_md_html_block_start,
-    is_md_list_start, is_md_setext_heading_start, is_md_setext_underline_line, is_md_table_start,
-    is_md_thematic_break_line,
+    is_md_list_start, is_md_setext_heading_start, is_md_setext_underline_line,
+    is_md_setext_underline_or_dash, is_md_table_start, is_md_thematic_break_line,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -311,16 +311,52 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
         i += 1;
     }
     events.push(Event::Start(SyntaxKind::ROXYGEN_TAG));
-    let mut has_value = false;
+
+    // Pre-scan this line's body: the tag name (for the prose-folding / setext
+    // decisions) and the first Content (value) token — everything before it is the
+    // tag *head* (`@`, name, an arg-bearing tag's `ROXYGEN_TAG_ARG`, and interior
+    // whitespace).
     let mut tag_name: Option<&str> = None;
-    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
-        let tok = &tokens[i];
+    let mut value_start: Option<usize> = None;
+    let mut j = i;
+    while tokens.get(j).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        let tok = &tokens[j];
         if tok.kind == TokKind::RoxygenTagName {
             tag_name = Some(&tok.text);
         }
         if tok.kind.roxygen_role() == Some(RoxygenRole::Content) {
-            has_value = true;
+            value_start = Some(j);
+            break;
         }
+        j += 1;
+    }
+    let has_value = value_start.is_some();
+
+    // A same-line value whose (folded) paragraph is terminated by a `===`/`---`
+    // underline is a **setext heading**, exactly as when the value starts on the
+    // next `#'` line. The value can't stay inside the `ROXYGEN_TAG` (the underline
+    // must be adjacent to its heading text), so the head closes the tag empty and
+    // the value + underline become a sibling `ROXYGEN_MD_HEADING` — the shape the
+    // next-line form already produces, so the projector hoists it (description /
+    // details) or inlines the title (other prose tags) with no extra arm.
+    if has_value
+        && tag_name.is_some_and(super::tag_folds_prose_continuation)
+        && is_md_setext_heading_start(tokens, start)
+    {
+        // Emit the tag head, dropping the whitespace between it and the value (that
+        // gap starts the heading's first, marker-less line).
+        let mut head_end = value_start.unwrap();
+        while head_end > i && tokens[head_end - 1].kind == TokKind::Whitespace {
+            head_end -= 1;
+        }
+        for idx in i..head_end {
+            events.push(Event::Tok(idx));
+        }
+        events.push(Event::Finish); // ROXYGEN_TAG
+        return emit_md_setext_heading_from_value(tokens, head_end, events);
+    }
+
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         events.push(Event::Tok(i));
         i += 1;
     }
@@ -348,6 +384,56 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
     }
     events.push(Event::Finish); // ROXYGEN_TAG
     i
+}
+
+/// Emit a `ROXYGEN_MD_HEADING` node for a **setext heading** whose title begins as a
+/// tag's same-line value: the first line has no `#'` marker of its own (that marker
+/// belongs to the enclosing tag, already emitted and closed), so it starts at
+/// `value_start` — the whitespace/content between the tag head and the value. The
+/// remaining lines are ordinary `#'` continuation lines threaded in as trivia up to
+/// and including the `===`/`---` underline. Returns the token index just past the
+/// underline line's content (its trailing `Newline` is the grouper's, so the body
+/// prose below becomes a sibling paragraph). Mirrors [`super::build::emit_md_setext_heading`],
+/// which handles the case where the whole heading starts at a marker.
+fn emit_md_setext_heading_from_value(
+    tokens: &[Token],
+    value_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HEADING));
+    // First (marker-less) line: the same-line value and its leading whitespace.
+    let mut i = value_start;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    // Each subsequent `#'` line, threaded in until the underline. `is_md_setext_-
+    // heading_start` guaranteed a reachable underline, so a next line always exists.
+    loop {
+        // `i` is at the trailing `Newline` of the just-emitted line.
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        debug_assert_eq!(
+            tokens.get(m).map(|t| &t.kind),
+            Some(&TokKind::RoxygenMarker),
+            "setext heading run terminates in an underline"
+        );
+        for idx in i..=m {
+            events.push(Event::Tok(idx)); // newline, continuation indent, marker
+        }
+        let mut k = m + 1;
+        while tokens.get(k).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(k));
+            k += 1;
+        }
+        if is_md_setext_underline_or_dash(tokens, m) {
+            events.push(Event::Finish); // ROXYGEN_MD_HEADING
+            return k;
+        }
+        i = k;
+    }
 }
 
 /// Whether the roxygen line whose `RoxygenMarker` is at `marker` is a plain-prose

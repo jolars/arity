@@ -357,6 +357,7 @@ md_heading_intro
 md_setext
 md_setext_dash
 md_setext_multiline
+md_setext_tag_value
 md_blockquote
 md_blockquote_glue
 md_blockquote_glue_around
