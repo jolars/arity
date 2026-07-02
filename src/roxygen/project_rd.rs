@@ -174,7 +174,8 @@ enum Inline {
     /// node). roxygen2 does not support block quotes: it warns and renders the node's
     /// *flattened plain text* (`escape_comment(xml_text)` — the `>` markers and inner
     /// markdown dropped, descendant text concatenated with no separator). The
-    /// projector reproduces that flattened text (see [`serialize_md_block_quote`]).
+    /// Its flattened text glues onto adjacent prose with no paragraph separator
+    /// (see [`block_quote_flat_text`]), pushed as a `Final` run segment.
     MdBlockQuote(SyntaxNode),
 }
 
@@ -232,9 +233,13 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             let name = tag.name().map(|n| n.to_string()).unwrap_or_default();
             let mut body = tag_inlines(&tag);
             for part in section_body_parts(&section) {
-                if !body.is_empty() {
-                    // A line break in the source (norm_ws collapses it to a space,
-                    // but it bounds an Rd `%` comment in non-markdown prose).
+                // A part that leads with a block quote carries no separator: its
+                // flattened text glues onto whatever precedes (roxygen2 emits no
+                // paragraph break around an unsupported block quote). Any other part
+                // is a fresh roxygen paragraph, joined by a line break (norm_ws
+                // collapses it to a space, but it bounds an Rd `%` comment in
+                // non-markdown prose).
+                if !body.is_empty() && !matches!(part.first(), Some(Inline::MdBlockQuote(_))) {
                     body.push(Inline::Text("\n".to_string()));
                 }
                 body.extend(part);
@@ -973,36 +978,95 @@ fn resolve_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
     }
 }
 
+/// A pending piece of the `(TEXT …)` atom [`serialize_inlines`] is coalescing.
+/// Ordinary prose is `Raw` (source text awaiting the markdown/comment pipeline);
+/// a block quote's already-flattened text is `Final` (pre-processed) so it *glues*
+/// into the surrounding atom instead of splitting off as its own — roxygen2 emits
+/// no paragraph separator around an unsupported block quote, so its text runs
+/// straight onto adjacent prose (`before` + `> q` → `beforeq`).
+enum RunSeg {
+    Raw(String),
+    Final(String),
+}
+
+/// Append raw source text to the pending run, coalescing into a trailing `Raw`
+/// segment so a contiguous prose run stays one segment (processed as a whole).
+fn push_raw(run: &mut Vec<RunSeg>, s: &str) {
+    match run.last_mut() {
+        Some(RunSeg::Raw(last)) => last.push_str(s),
+        _ => run.push(RunSeg::Raw(s.to_string())),
+    }
+}
+
+/// Drop trailing whitespace (spaces, source line breaks, `SOFT_BREAK`s) from the
+/// pending run, popping now-empty trailing `Raw` segments. Used before a block
+/// quote glues on, so the preceding paragraph's trailing break does not survive as
+/// a separating space (`norm_ws` would collapse it to one). A `Final` segment (an
+/// already-flattened block quote) is left untouched — its own whitespace is fixed.
+fn trim_trailing_run_ws(run: &mut Vec<RunSeg>) {
+    while let Some(RunSeg::Raw(last)) = run.last_mut() {
+        let trimmed = last.trim_end_matches(is_posix_space);
+        if trimmed.len() == last.len() {
+            break;
+        }
+        last.truncate(trimmed.len());
+        if last.is_empty() {
+            run.pop();
+        } else {
+            break;
+        }
+    }
+}
+
+/// Finalize the pending run into one coalesced `(TEXT …)` atom (or `None` when it
+/// normalizes to empty), clearing it. Each `Raw` segment runs through the prose
+/// pipeline ([`process_prose`]: markdown escaping or Rd `%`-comment stripping)
+/// *without* normalizing whitespace; a `Final` (pre-flattened block quote) segment
+/// passes through verbatim; the concatenation is whitespace-normalized once, so a
+/// boundary line break collapses to a single space while a glued block quote stays
+/// seamless.
+fn flush_run(run: &mut Vec<RunSeg>, md: bool) -> Option<String> {
+    if run.is_empty() {
+        return None;
+    }
+    let mut combined = String::new();
+    for seg in run.iter() {
+        match seg {
+            RunSeg::Raw(s) => combined.push_str(&process_prose(s, md)),
+            RunSeg::Final(s) => combined.push_str(s),
+        }
+    }
+    run.clear();
+    text_atom(&combined)
+}
+
 /// Serialize an inline run into the canonical atom sequence: maximal prose runs
 /// coalesce into one whitespace-normalized `(TEXT …)`, and each macro becomes a
 /// nested subtree — mirroring the R driver's `serialize_children`. `md` is the
 /// block's resolved markdown mode: with markdown off a prose run is literal Rd, so
-/// `prose_text_atom` strips its `%` line comments.
+/// `process_prose` strips its `%` line comments.
 fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
     let mut atoms: Vec<String> = Vec::new();
-    let mut run = String::new();
+    let mut run: Vec<RunSeg> = Vec::new();
     for inl in body {
         match inl {
-            Inline::Text(s) => run.push_str(s),
+            Inline::Text(s) => push_raw(&mut run, s),
             Inline::Macro(node) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(serialize_macro(node, md));
             }
             Inline::MdCode(content) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(md_code_atom(content));
             }
             Inline::MdEmphasis { strong, children } => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 // Recurse into the inner inline run (nesting projects as structure),
                 // then wrap. The block's `@md` mode holds inside an emphasis span.
                 let inner = serialize_inlines(children, md).join(" ");
@@ -1014,31 +1078,27 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 });
             }
             Inline::MdList(node) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(serialize_md_list(node));
             }
             Inline::MdListResolved { ordered, items } => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(serialize_md_list_resolved(*ordered, items));
             }
             Inline::MdLink(raw) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(resolve_md_link(raw).unwrap_or_default());
             }
             Inline::MdInlineLink { url, display } => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(inline_link_node_atom(url, display, md));
             }
             // A reference/shortcut link whose display is not plain text is *dropped*
@@ -1050,66 +1110,66 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 if link_display_is_droppable(display) {
                     continue;
                 }
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(ref_link_node_atom(display, dest));
             }
             Inline::MdShortcutLink { display } => {
                 if link_display_is_droppable(display) {
                     continue;
                 }
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(shortcut_link_node_atom(display));
             }
             Inline::MdImage(raw) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 if let Some(atom) = resolve_md_image(raw) {
                     atoms.push(atom);
                 }
             }
             Inline::MdCodeBlock(node) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.extend(serialize_md_code_block(node));
             }
             Inline::MdHtml(raw) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(html_inline_atom(raw));
             }
             Inline::MdHtmlBlock(node) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(serialize_md_html_block(node));
             }
             Inline::MdBlockQuote(node) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
-                    atoms.push(atom);
-                }
-                run.clear();
-                if let Some(atom) = serialize_md_block_quote(node) {
-                    atoms.push(atom);
+                // roxygen2 has no block-quote support: it renders the flattened
+                // plain text with *no* surrounding paragraph separator, so the text
+                // glues straight onto adjacent prose (`before` + `> q` → `beforeq`).
+                // Push it as a pre-flattened `Final` segment so it coalesces into
+                // the current `(TEXT …)` atom instead of splitting off as its own.
+                // The preceding node keeps a trailing line break (its own newline,
+                // or the part-join break) which `norm_ws` would otherwise turn into a
+                // separating space, so drop that trailing whitespace first — cmark
+                // strips a paragraph's trailing whitespace before the quote appends.
+                let flat = block_quote_flat_text(node);
+                if !flat.is_empty() {
+                    trim_trailing_run_ws(&mut run);
+                    run.push(RunSeg::Final(flat));
                 }
             }
             Inline::MdTable(node) => {
-                if let Some(atom) = prose_text_atom(&run, md) {
+                if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                run.clear();
                 atoms.push(serialize_md_table(node));
             }
             // A heading is normally consumed by the outline builder before it
@@ -1121,16 +1181,15 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
             Inline::MdHeading(node) => {
                 let (_, title) = parse_md_heading(node);
                 for atom in serialize_inlines(&resolve_macro_arg_inlines(&title), md) {
-                    if let Some(prose) = prose_text_atom(&run, md) {
+                    if let Some(prose) = flush_run(&mut run, md) {
                         atoms.push(prose);
                     }
-                    run.clear();
                     atoms.push(atom);
                 }
             }
         }
     }
-    if let Some(atom) = prose_text_atom(&run, md) {
+    if let Some(atom) = flush_run(&mut run, md) {
         atoms.push(atom);
     }
     atoms
@@ -1549,23 +1608,26 @@ fn text_atom(body: &str) -> Option<String> {
     (!t.is_empty()).then(|| format!("(TEXT {})", encode_text(&t)))
 }
 
-/// A prose run's `(TEXT …)` atom, accounting for markdown mode. With markdown off
-/// the run is literal Rd, where an unescaped `%` begins a comment to end of line
-/// (parse_Rd's rule), so the comment is stripped per physical line before the run
-/// coalesces; with markdown on roxygen2 escapes `%` (`\%`), so it survives and the
-/// run is taken verbatim. (The run carries source line breaks as `\n`, which
-/// `norm_ws` later collapses, so the comment's end-of-line is honored either way.)
-fn prose_text_atom(run: &str, md: bool) -> Option<String> {
+/// Apply roxygen2's prose-text pipeline to a raw source run *without* normalizing
+/// whitespace — the caller normalizes once over the fully coalesced atom (see
+/// [`flush_run`]), so a `Final` block-quote segment can glue seamlessly onto the
+/// processed prose on either side. With markdown off the run is literal Rd, where
+/// an unescaped `%` begins a comment to end of line (parse_Rd's rule), so the
+/// comment is stripped per physical line; with markdown on roxygen2 escapes `%`
+/// (`\%`) so it survives and the markdown escapes (backslash runs, `[`/`]`, HTML
+/// entities) resolve instead. (Source line breaks stay as `\n`, which the caller's
+/// `norm_ws` later collapses, so a comment's end-of-line is honored either way.)
+fn process_prose(run: &str, md: bool) -> String {
     if md {
         // cmark decodes HTML entities (`&amp;`, `&copy;`, `&#65;`) as the final
         // text transform: they are inert with respect to the `%`-swallow, bracket,
         // and backslash rules (an entity-produced `[`/`%`/`\` is literal text, not a
         // delimiter), so decode after those run on the raw source.
-        text_atom(&decode_html_entities(&unescape_md_brackets(
-            &collapse_md_backslash_runs(&md_percent_swallow(run)),
+        decode_html_entities(&unescape_md_brackets(&collapse_md_backslash_runs(
+            &md_percent_swallow(run),
         )))
     } else {
-        text_atom(&strip_rd_comments(run))
+        strip_rd_comments(run)
     }
 }
 
@@ -1977,7 +2039,7 @@ fn demote_poisoned_items(
 /// inline-in-inline like `[a [b](u) c](o)` keeps its outer bracket literal, exactly
 /// as CommonMark does), and a non-poisoned nested link still has its inner `\link`
 /// node interrupting the run. An escaped `\[` keeps its backslash in the text
-/// inline (unescaping happens later in `prose_text_atom`), so it is skipped here and
+/// inline (unescaping happens later in `process_prose`), so it is skipped here and
 /// stays literal — `\[bracket](x)` never relinks. Shortcuts/references in a poisoned
 /// tail are dead, so only inline `(url)` links re-form; the re-formed display is
 /// therefore plain literal text.
@@ -2595,7 +2657,7 @@ fn parse_linkref_def_dest(text: &str) -> Option<(String, bool)> {
 /// semicolon) is left verbatim, as is an unrecognized name (`&nope;`). The fast
 /// path returns the input unchanged when it has no `&`, so text without entities is
 /// byte-identical. Used both for a markdown link destination and, via
-/// [`prose_text_atom`], for `@md` prose text (cmark decodes entities everywhere
+/// [`process_prose`], for `@md` prose text (cmark decodes entities everywhere
 /// except code spans/blocks, which the projector keeps as separate verbatim leaves).
 fn decode_html_entities(s: &str) -> String {
     if !s.contains('&') {
@@ -3009,7 +3071,8 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
             | SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE
             | SyntaxKind::ROXYGEN_MD_TABLE => {
                 let Some(node) = el.into_node() else { continue };
-                let inlines = match node.kind() {
+                let kind = node.kind();
+                let inlines = match kind {
                     SyntaxKind::ROXYGEN_PARAGRAPH => RoxygenParagraph::cast(node)
                         .map(|p| paragraph_inlines(&p))
                         .unwrap_or_default(),
@@ -3020,7 +3083,11 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
                     SyntaxKind::ROXYGEN_MD_TABLE => vec![Inline::MdTable(node)],
                     _ => vec![Inline::Macro(node)],
                 };
-                if !cur.is_empty() {
+                // A block quote carries no separator: roxygen2 flattens it with no
+                // surrounding paragraph break, so its text glues onto the preceding
+                // node (`before` + `> q` → `beforeq`). Every other node joins with a
+                // space (a roxygen paragraph break, collapsed by `norm_ws`).
+                if !cur.is_empty() && kind != SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE {
                     cur.push(Inline::Text(" ".to_string()));
                 }
                 cur.extend(inlines);
@@ -3838,7 +3905,25 @@ fn serialize_md_html_block(node: &SyntaxNode) -> String {
 /// its source), cross-line emphasis, and gluing the flattened text onto an adjacent
 /// prose paragraph (roxygen2 emits no `\n\n` before a quote, so `before` + `> q`
 /// renders `beforeq`) are deferred backlog and not pinned.
-fn serialize_md_block_quote(node: &SyntaxNode) -> Option<String> {
+/// The **un-normalized** flattened plain text of a `ROXYGEN_MD_BLOCK_QUOTE`.
+/// roxygen2 has no block-quote support (`mdxml_unsupported`, `R/markdown.R`): it
+/// warns, then renders `escape_comment(xml_text(node))` — the concatenation of
+/// every descendant text node, with the `>` markers and all inner markup
+/// (emphasis, code spans, links) dropped and **no separator** between the lines
+/// (softbreaks and paragraph breaks contribute nothing). Each quote line has its
+/// `#'` marker, its `>` marker (after up to three spaces), and one optional
+/// following space stripped; its remaining markdown resolves to inlines whose plain
+/// text ([`inline_plain_text`], softbreaks removed) is concatenated directly.
+///
+/// Returned raw (not wrapped in a `(TEXT …)` atom, not whitespace-normalized) so
+/// [`serialize_inlines`] can push it as a `Final` segment that glues onto adjacent
+/// prose (roxygen2 emits no `\n\n` before a quote, so `before` + `> q` renders
+/// `beforeq`), deferring the single `norm_ws` to the coalesced atom.
+///
+/// Scoped to fully-marked, self-contained quotes: an inner Rd macro (roxygen2 keeps
+/// its source) and CommonMark lazy continuation (a non-`>` line folded into the
+/// quote) are deferred backlog and not pinned.
+fn block_quote_flat_text(node: &SyntaxNode) -> String {
     let text = node.text().to_string();
     let mut flat = String::new();
     for line in text.split('\n') {
@@ -3851,7 +3936,7 @@ fn serialize_md_block_quote(node: &SyntaxNode) -> Option<String> {
             }
         }
     }
-    text_atom(&flat)
+    flat
 }
 
 /// Strip a block-quote line's `>` marker: up to three leading spaces, the `>`, then
@@ -4528,6 +4613,60 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"T\"))\n\
              (\\details (TEXT \"a quote with codeand text\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn md_block_quote_glues_onto_adjacent_prose() {
+        // A block quote emits no paragraph separator, so its flattened text glues
+        // onto the surrounding prose with no space: a preceding paragraph on the
+        // *same* line (`before` + `> q` → `beforeq`), a preceding paragraph across a
+        // *blank* line (still glued), and a following paragraph that keeps its own
+        // separating space (`beforeq after`). Two adjacent quotes also glue (`q1q2`).
+        let same_part = "#' T\n\
+                         #' @md\n\
+                         #' @details\n\
+                         #' before\n\
+                         #' > quoted line\n\
+                         #' @name d\n\
+                         NULL\n";
+        assert_eq!(
+            project_to_rd(same_part),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"beforequoted line\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+
+        let around = "#' T\n\
+                      #' @md\n\
+                      #' @details\n\
+                      #' before\n\
+                      #'\n\
+                      #' > quoted\n\
+                      #'\n\
+                      #' after\n\
+                      #' @name d\n\
+                      NULL\n";
+        assert_eq!(
+            project_to_rd(around),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"beforequoted after\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+
+        let two_quotes = "#' T\n\
+                          #' @md\n\
+                          #' @details\n\
+                          #' > q1\n\
+                          #'\n\
+                          #' > q2\n\
+                          #' @name d\n\
+                          NULL\n";
+        assert_eq!(
+            project_to_rd(two_quotes),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"q1q2\"))\n\
              (\\title (TEXT \"T\"))"
         );
     }

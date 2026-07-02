@@ -743,13 +743,21 @@
       `ROXYGEN_MD_BLOCK_QUOTE` node (verbatim `ROXYGEN_TEXT`, like the HTML block). roxygen2 does not
       support block quotes: it warns and renders `escape_comment(xml_text)` — the flattened plain text
       (`>` markers + inner markdown dropped, lines concatenated with **no separator**). The projector
-      (`serialize_md_block_quote`) strips each `>` marker, flattens per line via `inline_plain_text`
+      (`block_quote_flat_text`) strips each `>` marker, flattens per line via `inline_plain_text`
       (softbreaks removed), and concatenates. Formatter = marker-normalized atomic passthrough (Tenet 1,
-      idempotent). Curated `md_blockquote`/`md_blockquote_multiline`; projector 345→347. **Backlog:**
-      lazy continuation (non-`>` paragraph lines in a quote); the glue-onto-preceding-paragraph case
-      (`before` / `> q` → `beforeq`, no `\n\n`); inner Rd macros (roxygen2 keeps their source); the
-      roxygen-diagnostic side-channel (roxygen2's "block quotes are not currently supported" warning);
-      indented code blocks.
+      idempotent). Curated `md_blockquote`/`md_blockquote_multiline`; projector 345→347. **Glue onto
+      adjacent prose LANDED (2026-07-02l):** roxygen2 emits no paragraph separator around an unsupported
+      quote, so its flattened text runs straight onto the neighbor (`before` / `> q` → `beforeq`, even
+      across a blank line; `> q1` / blank / `> q2` → `q1q2`; a following paragraph keeps its own leading
+      space). Projector-only: `serialize_inlines`' `run` is now a `Vec<RunSeg>` (`Raw`/`Final`) so a
+      pre-flattened quote coalesces into one `(TEXT …)` (`flush_run`/`process_prose`, norm_ws once);
+      `trim_trailing_run_ws` drops the preceding node's trailing break; the same-part `" "`
+      (`section_body_parts`) and cross-part `\n` (`project_block`) separators are suppressed before a
+      quote. Curated `md_blockquote_glue`/`md_blockquote_glue_around`; projector 350→352. **Backlog:**
+      lazy continuation (non-`>` paragraph lines CommonMark-folded into a quote — a parser change; still a
+      separate paragraph → `> q` / `cont` glues to `q cont` not `qcont`); inner Rd macros (roxygen2 keeps
+      their source); the roxygen-diagnostic side-channel (roxygen2's "block quotes are not currently
+      supported" warning); indented code blocks.
       **Thematic breaks LANDED (2026-07-02j):** a `***`/`---`/`___` line under `@md` (three or more of
       one char, spaces allowed between, up to three leading spaces) renders **empty** — roxygen2 has no
       thematic-break support (`mdxml_unsupported`/`mdxml_unknown`, both `escape_comment(xml_text)` = "",

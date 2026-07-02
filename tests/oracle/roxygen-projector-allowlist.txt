@@ -358,6 +358,8 @@ md_setext
 md_setext_dash
 md_setext_multiline
 md_blockquote
+md_blockquote_glue
+md_blockquote_glue_around
 md_blockquote_multiline
 md_thematic_break
 md_thematic_break_stars
