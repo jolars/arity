@@ -1,0 +1,55 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..126
+  ROXYGEN_BLOCK@0..120
+    ROXYGEN_SECTION@0..23
+      ROXYGEN_PARAGRAPH@0..20
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..19 "Block quote lazy"
+        NEWLINE@19..20 "\n"
+      ROXYGEN_MARKER@20..22 "#'"
+      NEWLINE@22..23 "\n"
+    ROXYGEN_SECTION@23..30
+      ROXYGEN_MARKER@23..25 "#'"
+      WHITESPACE@25..26 " "
+      ROXYGEN_TAG@26..29
+        ROXYGEN_AT@26..27 "@"
+        ROXYGEN_TAG_NAME@27..29 "md"
+      NEWLINE@29..30 "\n"
+    ROXYGEN_SECTION@30..110
+      ROXYGEN_MARKER@30..32 "#'"
+      WHITESPACE@32..33 " "
+      ROXYGEN_TAG@33..41
+        ROXYGEN_AT@33..34 "@"
+        ROXYGEN_TAG_NAME@34..41 "details"
+      NEWLINE@41..42 "\n"
+      ROXYGEN_MD_BLOCK_QUOTE@42..83
+        ROXYGEN_MARKER@42..44 "#'"
+        WHITESPACE@44..45 " "
+        ROXYGEN_TEXT@45..62 "> quoted line one"
+        NEWLINE@62..63 "\n"
+        ROXYGEN_MARKER@63..65 "#'"
+        WHITESPACE@65..66 " "
+        ROXYGEN_TEXT@66..83 "lazy continuation"
+      NEWLINE@83..84 "\n"
+      ROXYGEN_MARKER@84..86 "#'"
+      NEWLINE@86..87 "\n"
+      ROXYGEN_PARAGRAPH@87..110
+        ROXYGEN_MARKER@87..89 "#'"
+        WHITESPACE@89..90 " "
+        ROXYGEN_TEXT@90..109 "Separate paragraph."
+        NEWLINE@109..110 "\n"
+    ROXYGEN_SECTION@110..120
+      ROXYGEN_MARKER@110..112 "#'"
+      WHITESPACE@112..113 " "
+      ROXYGEN_TAG@113..120
+        ROXYGEN_AT@113..114 "@"
+        ROXYGEN_TAG_NAME@114..118 "name"
+        WHITESPACE@118..119 " "
+        ROXYGEN_TEXT@119..120 "x"
+  NEWLINE@120..121 "\n"
+  IDENT@121..125 "NULL"
+  NEWLINE@125..126 "\n"

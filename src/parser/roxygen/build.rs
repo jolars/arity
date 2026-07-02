@@ -347,10 +347,14 @@ pub(super) fn is_md_block_quote_start(tokens: &[Token], start: usize) -> bool {
 /// (each a `>`-opening `#'` line); a blank line, a tag, a non-`>` prose line, or a
 /// non-roxygen line ends it. The `#'` markers, marker→content whitespace, and
 /// inter-line newlines/indentation are threaded in as trivia (losslessness), the
-/// way the HTML block threads them. CommonMark **lazy continuation** (a non-`>`
-/// paragraph line that still belongs to the quote) is deferred backlog: only
-/// fully-marked quotes are gathered. The trailing newline after the last line is
-/// left to the caller. Returns the token index just past it.
+/// way the HTML block threads them. CommonMark **lazy continuation** is honored: a
+/// non-`>` paragraph line immediately following a quote line (no intervening blank)
+/// still belongs to the quote's open paragraph, so it is folded in too. The guard
+/// is [`is_foldable_continuation`](super::group::is_foldable_continuation) — a plain
+/// prose line that opens no new block; a line that starts a list, fence, heading,
+/// table, block macro, thematic break, or another quote is not lazy. The trailing
+/// newline after the last line is left to the caller. Returns the token index just
+/// past it.
 pub(super) fn emit_md_block_quote(
     tokens: &[Token],
     start: usize,
@@ -379,10 +383,12 @@ pub(super) fn emit_md_block_quote(
         if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
             break;
         }
-        if !is_md_block_quote_start(tokens, m) {
-            break; // a blank line, tag, or non-`>` prose line ends the quote
+        if !is_md_block_quote_start(tokens, m) && !super::group::is_foldable_continuation(tokens, m)
+        {
+            break; // a blank line, tag, or new-block line ends the quote
         }
-        // `\n` + indentation + `#'` threaded as trivia, then the line's body.
+        // A `>` line or a lazy paragraph-continuation line: `\n` + indentation + `#'`
+        // threaded as trivia, then the line's body.
         for idx in i..=m {
             events.push(Event::Tok(idx));
         }

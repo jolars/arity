@@ -10,6 +10,7 @@
 {"key":"curated/md_blockquote","formatted":"#' Block quote\n#'\n#' @md\n#' @details\n#' > a *quote* with `code`\n#' @name md_blockquote\nNULL\n"}
 {"key":"curated/md_blockquote_glue","formatted":"#' Block quote glue\n#'\n#' @md\n#' @details\n#' before\n#' > quoted line\n#' @name md_blockquote_glue\nNULL\n"}
 {"key":"curated/md_blockquote_glue_around","formatted":"#' Block quote glue around\n#'\n#' @md\n#' @details\n#' before\n#'\n#' > quoted\n#'\n#' after\n#' @name md_blockquote_glue_around\nNULL\n"}
+{"key":"curated/md_blockquote_lazy","formatted":"#' Block quote lazy\n#'\n#' @md\n#' @details\n#' > quoted line one\n#' lazy continuation\n#'\n#' Separate paragraph.\n#' @name md_blockquote_lazy\nNULL\n"}
 {"key":"curated/md_blockquote_multiline","formatted":"#' Block quote across lines\n#'\n#' @md\n#' @details\n#' > line one\n#' > and [text](https://x.org)\n#' @name md_blockquote_multiline\nNULL\n"}
 {"key":"curated/md_email_autolink","formatted":"#' Email autolinks in markdown prose\n#'\n#' @md\n#' @details\n#' Contact <foo@example.com> or <a.b+c@sub.example.co.uk>. A scheme-bearing\n#' address <mailto:x@y.com> is a URL autolink. A malformed one <foo@-ex.com>\n#' stays literal.\n#' @name md_email_autolink\nNULL\n"}
 {"key":"curated/md_emphasis","formatted":"#' Markdown emphasis cases\n#'\n#' @details\n#' Nesting **foo *bar* baz**, rule of three ***wow***, and intraword snake_case\n#' stays literal while _wrapped_phrase_ emphasizes.\n#' @md\n#' @name md_emphasis\nNULL\n"}

@@ -323,9 +323,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   appends). Separators suppressed before a quote in **both** join sites: `section_body_parts` (same-part, the
   `" "`) and `project_block`'s part loop (cross-part, the `\n`). Formatter = marker-normalized passthrough.
   **Indent is `#'` marker-ws trivia** → a 4+-space `>` over-recognizes vs roxygen2's indented code block
-  (shared fence/heading gap). **Backlog:** lazy continuation (a non-`>` line CommonMark-folded into the
-  quote — needs a *parser* change; currently a separate paragraph); inner Rd macros; the diagnostic
-  side-channel.
+  (shared fence/heading gap).
+  **Lazy continuation (RESOLVED 2026-07-02m):** CommonMark folds a non-`>` **paragraph-continuation** line
+  (no intervening blank) into the quote's open paragraph, so it flattens **into** the quote with no separator
+  (`> quoted line one`⏎`lazy continuation`→`quoted line onelazy continuation`). Parser-only: `emit_md_block_quote`'s
+  gather loop now continues on a line that is a `>` block-quote start **or** an `is_foldable_continuation` (a plain
+  prose line opening no new block — same guard the same-line-tag fold uses); a blank/tag/new-block still ends it.
+  Projector/formatter unchanged (`block_quote_flat_text` strips a missing `>` to a no-op; the folded line rides in
+  the node text). **Backlog:** a lazy line after a non-paragraph quote body (`> ---`⏎`x` — arity over-folds since
+  it flattens the body as prose; contrived); inner Rd macros; the diagnostic side-channel.
 - **GFM tables** (`ROXYGEN_MD_TABLE` node) are the **only** table kind (cmark-gfm `table` ext; pandoc
   simple/grid tables stay prose). Recognition is **two-line**, so the `@md` signal is a mode-gated leaf on
   the **delimiter** row (the header is generic prose — no header leaf): `RoxygenMdTableDelim`
@@ -426,7 +432,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 352 matching (all allowlisted), 18 divergent** of 370 pinned.
+corpus (132 `cm-NNN` cases). **Current: 353 matching (all allowlisted), 18 divergent** of 371 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -442,55 +448,46 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02l) — block-quote glue onto adjacent prose
+## Latest session (2026-07-02m) — block-quote lazy continuation
 
-Landed **block-quote glue** (ranked #4; block-quote backlog). roxygen2 has no block-quote support, so
-`mdxml_unsupported` renders the flattened text with **no surrounding paragraph separator** — the text runs
-straight onto the neighbor. Probed the exact rule: **no separator *before* a quote**, everything else keeps
-its own. So `before`+`> q`→`beforeq` (same line **and** across a blank line), `> q1`⏎blank⏎`> q2`→`q1q2`, but
-a following *paragraph* keeps its leading space (`beforeq after`). A standalone/multiline quote was already
-pinned; only the gluing diverged (arity emitted a joining space and a separate atom).
+Landed **block-quote lazy continuation** (ranked #4; block-quote backlog). CommonMark folds a non-`>`
+paragraph-continuation line (no intervening blank) into a block quote's open paragraph. Probed roxygen2:
+`> quoted line one`⏎`lazy continuation` renders `quoted line onelazy continuation` (the lazy line joins the
+quote's flatten with **no** separator); a blank line then ends the quote, and a following paragraph is
+separate (keeps its own leading space). Previously arity modeled the lazy line as a separate
+`ROXYGEN_PARAGRAPH` sibling, so it flattened with a joining space (`... one continuation`).
 
-**Projector only** (no parser/formatter change — the block quote node was already modeled). Three edits:
-(1) `serialize_inlines`' `run` went from `String` to `Vec<RunSeg>` (`Raw`=source awaiting the md pipeline |
-`Final`=pre-flattened verbatim); `flush_run` md-processes each `Raw` via the extracted `process_prose`
-(the old `prose_text_atom` body, **minus** norm_ws), concatenates raw+final, and norm_ws's the whole atom
-**once** — so a `Final` block quote coalesces into the surrounding `(TEXT …)` instead of splitting off.
-The block-quote arm now pushes `RunSeg::Final(block_quote_flat_text(node))` (new; returns the raw
-un-normalized flatten) after `trim_trailing_run_ws` drops the preceding node's trailing break (cmark strips
-a paragraph's trailing ws before the quote appends — else norm_ws would revive it as a space). (2)
-`section_body_parts` skips the same-part `" "` join before a `ROXYGEN_MD_BLOCK_QUOTE`. (3) `project_block`'s
-part loop skips the cross-part `\n` before a part that **leads** with an `Inline::MdBlockQuote`.
+**Parser-only** (one edit). `emit_md_block_quote`'s gather loop broke on any non-`>` line; it now continues
+when the next line is `is_md_block_quote_start` **or** `is_foldable_continuation` (the existing plain-prose,
+opens-no-new-block guard reused from the same-line-tag fold). A blank/tag/list/fence/heading/table/thematic-
+break/nested-quote line still ends the quote. **No projector or formatter change:** `block_quote_flat_text`
+splits the node text on `\n` and `strip_block_quote_marker` no-ops on a `>`-less line, so the folded lazy line
+rides straight into the flatten; the formatter's atomic passthrough already emits the whole node.
 
-**Result:** projector **350→352 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green (574
-integration + 164 lib), clippy + fmt clean; curated fixed-point net **87/87 preserving** (was 85/85; R run),
-0 blocked/diverg; format baseline **+2 additive** (the two new curated cases, formatter output unchanged).
-Curated `md_blockquote_glue` (same-part) + `md_blockquote_glue_around` (across blanks) (+ pins, + allowlist);
-projector unit test `md_block_quote_glues_onto_adjacent_prose` (same-part, across-blank, two-quote,
-following-paragraph-space). No new parser fixture (CST unchanged; existing `roxygen_md_blockquote{,_not}`
-cover the shape; losslessness reverified on the two new corpus files).
+**Result:** projector **352→353 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green,
+clippy + fmt clean; curated fixed-point net **88/88 preserving** (was 87/87; R run), 0 blocked/diverg; format
+baseline **+1 additive** (the new curated case, formatter output an unchanged passthrough). New parser fixture
+`roxygen_md_blockquote_lazy` (CST snapshot shows the lazy line inside `ROXYGEN_MD_BLOCK_QUOTE`; lossless, empty
+diagnostics) + curated corpus `md_blockquote_lazy` (+ pin, + allowlist) + projector unit test
+`md_block_quote_lazy_continuation_folds_into_quote`.
 
-**Trap (new):** *A block quote emits no paragraph separator — glue is modeled as a `Final` run segment, and
-the preceding break must be trimmed.* Two things had to change together: the `run` had to hold a
-pre-processed segment (so the quote's already-flattened text merges into one coalesced `(TEXT …)` instead of
-flushing to its own atom), **and** the preceding node's trailing `NEWLINE`→`SOFT_BREAK` (which `norm_ws`
-turns into a space) had to be trimmed before the glue. Suppressing the *inserted* separators
-(`section_body_parts` `" "`, `project_block` `\n`) alone was **not** enough — the paragraph node carries its
-own trailing newline inside it.
+**Trap (new):** *Lazy continuation is a parser fold, not a projector fix.* The block-quote node already
+flattened `>`-less lines correctly (`strip_block_quote_marker` no-ops), so the only work was extending the
+parser gather loop to pull the lazy line **into** the node; the projector/formatter needed nothing. Contrast
+the glue session (2026-07-02l), which was projector-only because the CST already had the right node boundary.
 
 **Next (ranked):** **(1)** the roxygen-diagnostic side-channel (block-quote/thematic-break/unknown-macro
 warnings) as a second oracle surface — no diagnostic infra exists in the roxygen parser yet. **(2)** a
 setext underline after a same-line tag value (`@details Title` / `===`) — the same-line-tag-value grouping
 backlog (continuation lines split into sibling paragraphs, so no look-back). **(3)** facets (c)/(d) of the
-`@md` `\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. **(4)** block-quote
-**lazy continuation** (a non-`>` line CommonMark-folded into the quote — a *parser* change; currently a
-separate paragraph, so `> q`⏎`cont`→`q cont` not `qcont`). The 18 projector divergences stay out of scope
-(roxygen2 evaluation / multi-block).
+`@md` `\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. The 18 projector
+divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02l** — block-quote glue onto adjacent prose (no paragraph separator before a quote; projector-only, `RunSeg::Final` segment + `trim_trailing_run_ws`, separators suppressed in both join sites). 350→352.
 - **2026-07-02k** — single-dash setext H2 underlines (`-`/`- ` after a paragraph → level-2 setext; an empty list item can't interrupt a paragraph); build.rs `is_md_setext_dash_underline`/`is_md_setext_underline_or_dash` wired into the two setext functions only, list-check-first disambiguates the fresh-position empty bullet. Parser-only. 349→350.
 - **2026-07-02j** — markdown thematic breaks (`***`/`---`/`___`) → render **empty**, neighbors coalesce (roxygen2 has no support: `mdxml_unknown`→`escape_comment`=""); `is_thematic_break` leaf + block-level `setext_underline_is_thematic` for a bare `---`; projector flushes a part with no atom. 347→349.
 - **2026-07-02i** — markdown block quotes (`> quoted`) → flattened plain text (`>` + inner markdown dropped, lines glue with no separator); `is_block_quote_marker`/`emit_md_block_quote`, projector `serialize_md_block_quote`. 345→347.

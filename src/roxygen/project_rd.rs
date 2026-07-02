@@ -4672,6 +4672,30 @@ mod tests {
     }
 
     #[test]
+    fn md_block_quote_lazy_continuation_folds_into_quote() {
+        // CommonMark lazy continuation: a non-`>` paragraph line immediately after a
+        // quote line (no blank) belongs to the quote's open paragraph, so it flattens
+        // into the quote with **no** separator (`quoted line one` + `lazy continuation`
+        // → `quoted line onelazy continuation`). A blank line ends the quote; the
+        // following paragraph is separate and keeps its own separating space.
+        let src = "#' T\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' > quoted line one\n\
+                   #' lazy continuation\n\
+                   #'\n\
+                   #' Separate paragraph.\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"quoted line onelazy continuation Separate paragraph.\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
     fn md_thematic_break_renders_empty_and_coalesces() {
         // roxygen2 has no thematic-break support: it warns and renders the empty
         // `escape_comment(xml_text)` (a break has no text), so the break contributes

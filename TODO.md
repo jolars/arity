@@ -753,11 +753,17 @@
       pre-flattened quote coalesces into one `(TEXT …)` (`flush_run`/`process_prose`, norm_ws once);
       `trim_trailing_run_ws` drops the preceding node's trailing break; the same-part `" "`
       (`section_body_parts`) and cross-part `\n` (`project_block`) separators are suppressed before a
-      quote. Curated `md_blockquote_glue`/`md_blockquote_glue_around`; projector 350→352. **Backlog:**
-      lazy continuation (non-`>` paragraph lines CommonMark-folded into a quote — a parser change; still a
-      separate paragraph → `> q` / `cont` glues to `q cont` not `qcont`); inner Rd macros (roxygen2 keeps
-      their source); the roxygen-diagnostic side-channel (roxygen2's "block quotes are not currently
-      supported" warning); indented code blocks.
+      quote. Curated `md_blockquote_glue`/`md_blockquote_glue_around`; projector 350→352. **Lazy
+      continuation LANDED (2026-07-02m):** CommonMark folds a non-`>` paragraph-continuation line (no
+      intervening blank) into the quote's open paragraph, so it flattens **into** the quote with no
+      separator (`> quoted line one` / `lazy continuation` → `quoted line onelazy continuation`).
+      Parser-only: `emit_md_block_quote`'s gather loop now continues on a `>` line **or** an
+      `is_foldable_continuation` (plain prose opening no new block); projector/formatter unchanged
+      (`block_quote_flat_text` no-ops on a `>`-less line). Fixture `roxygen_md_blockquote_lazy`; curated
+      `md_blockquote_lazy`; projector 352→353. **Backlog:** a lazy line after a non-paragraph quote body
+      (`> ---` / `x` — arity over-folds; contrived); inner Rd macros (roxygen2 keeps their source); the
+      roxygen-diagnostic side-channel (roxygen2's "block quotes are not currently supported" warning);
+      indented code blocks.
       **Thematic breaks LANDED (2026-07-02j):** a `***`/`---`/`___` line under `@md` (three or more of
       one char, spaces allowed between, up to three leading spaces) renders **empty** — roxygen2 has no
       thematic-break support (`mdxml_unsupported`/`mdxml_unknown`, both `escape_comment(xml_text)` = "",
