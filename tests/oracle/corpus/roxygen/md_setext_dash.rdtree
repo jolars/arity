@@ -1,0 +1,3 @@
+(\description (TEXT "Dash setext underline"))
+(\details (\subsection (TEXT "Foo") (TEXT "bar")))
+(\title (TEXT "Dash setext underline"))

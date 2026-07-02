@@ -758,6 +758,32 @@ pub(super) fn is_md_setext_underline_line(tokens: &[Token], start: usize) -> boo
     tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdSetextUnderline)
 }
 
+/// Whether the line whose marker is at `start` is a **lone dash bullet** (`-`/`- `)
+/// with no item content — a `RoxygenMdListMarker` leaf whose text is a single `-`
+/// followed only by trailing whitespace. CommonMark resolves such a line, when it
+/// *follows a paragraph*, as a level-2 setext underline (an empty list item cannot
+/// interrupt a paragraph), so the dash bullet the lexer carved as a list marker
+/// serves here as an underline. Restricted to `-` (a `*`/`+` empty bullet is never
+/// a setext underline); the projector reads the level 2 from the leaf text (`-`).
+fn is_md_setext_dash_underline(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    tokens.get(content).is_some_and(|t| {
+        t.kind == TokKind::RoxygenMdListMarker
+            && t.text == "-"
+            && md_list_item_is_empty(tokens, content)
+    })
+}
+
+/// Whether the line whose marker is at `start` can serve as a **setext H2/H1
+/// underline**: a genuine `===`/`---` underline leaf, or a lone dash bullet
+/// ([`is_md_setext_dash_underline`]). Used only by the setext-heading look-back and
+/// emit, both reached solely from a paragraph open — at a fresh block position the
+/// same dash bullet still opens an empty list (the block loop's list check runs
+/// first), so this never mis-fires on a list.
+fn is_md_setext_underline_or_dash(tokens: &[Token], start: usize) -> bool {
+    is_md_setext_underline_line(tokens, start) || is_md_setext_dash_underline(tokens, start)
+}
+
 /// Whether the prose line whose marker is at `start` opens a **setext heading**:
 /// its paragraph — the maximal run of foldable prose continuation lines — is
 /// terminated *immediately* by a setext underline line. A setext underline heads
@@ -767,7 +793,7 @@ pub(super) fn is_md_setext_underline_line(tokens: &[Token], start: usize) -> boo
 /// break (`---` after a blank). Only called at a paragraph open, so the run scanned
 /// here is exactly the paragraph the grouper would otherwise build.
 pub(super) fn is_md_setext_heading_start(tokens: &[Token], start: usize) -> bool {
-    if is_md_setext_underline_line(tokens, start) {
+    if is_md_setext_underline_or_dash(tokens, start) {
         return false;
     }
     let mut line = start;
@@ -775,7 +801,7 @@ pub(super) fn is_md_setext_heading_start(tokens: &[Token], start: usize) -> bool
         let Some(next) = super::group::next_roxygen_line_marker(tokens, line) else {
             return false;
         };
-        if is_md_setext_underline_line(tokens, next) {
+        if is_md_setext_underline_or_dash(tokens, next) {
             return true;
         }
         if super::group::is_foldable_continuation(tokens, next) {
@@ -811,7 +837,7 @@ pub(super) fn emit_md_setext_heading(
             events.push(Event::Tok(i));
             i += 1;
         }
-        if is_md_setext_underline_line(tokens, marker) {
+        if is_md_setext_underline_or_dash(tokens, marker) {
             events.push(Event::Finish); // ROXYGEN_MD_HEADING
             return i;
         }

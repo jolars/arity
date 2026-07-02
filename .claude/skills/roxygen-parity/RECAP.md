@@ -417,7 +417,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 349 matching (all allowlisted), 18 divergent** of 367 pinned.
+corpus (132 `cm-NNN` cases). **Current: 350 matching (all allowlisted), 18 divergent** of 368 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -426,66 +426,57 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (367 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (368 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 84/84 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 85/85 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02j) — markdown thematic breaks
+## Latest session (2026-07-02k) — single-dash setext H2
 
-Landed **thematic breaks** (`***`/`---`/`___`) → render **empty** (ranked #1 target). roxygen2 has no
-thematic-break support: cmark emits `thematic_break`, which roxygen2 7.3 (checking for the older `hrule`
-name) hits at `mdxml_unknown` — but that path, like `mdxml_unsupported`, warns then renders
-`escape_comment(xml_text(node))` = **`""`** (a thematic break has no text). So the break contributes
-nothing and the surrounding markdown paragraphs coalesce (two plain paragraphs already coalesce to one
-`(TEXT …)` atom, so a break between them renders identically: `Before. / --- / After.` → `(\details (TEXT
-"Before. After."))`; `Foo / *** / bar` interrupting a paragraph → `(TEXT "Foo bar")`).
+Landed **single-dash setext underlines** (`-`/`- ` after a paragraph → level-2 setext heading; ranked
+#1 target). CommonMark resolves a lone `-` line following a paragraph as a level-2 setext underline
+because **an empty list item cannot interrupt a paragraph**; at a fresh block position the same `-` is
+an empty list bullet. roxygen2 confirms: `Foo` / `-` / `bar` under `@md` →
+`(\details (\subsection (TEXT "Foo") (TEXT "bar")))`, and multi-line titles promote whole (`Foo` / `Baz`
+/ `-` → `(\subsection (TEXT "Foo Baz") (TEXT "bar"))`). Restricted to `-`: `*`/`+` never underline
+(`Foo` / `*` / `bar` → `(TEXT "Foo * bar")`).
 
-**Parser:**
-- **Lexer** (`lex.rs`): `is_thematic_break(bytes, i)` (≤3 indent, then ≥3 of one `*`/`-`/`_` with only
-  spaces/tabs between and after) carves a whole-line `RoxygenMdThematicBreak` leaf, `@md`+line-start,
-  **after** the setext check (so a contiguous `---`/`===` stays a `RoxygenMdSetextUnderline`; this only
-  catches the `*`/`_`-based and spaced forms like `- - -`). New `TokKind::RoxygenMdThematicBreak` →
-  **`ROXYGEN_TEXT`** in `syntax_kind_for`. New node `SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK` (COUNT 106).
-- **Builder** (`build.rs`): `is_md_thematic_break_line` = the `RoxygenMdThematicBreak` leaf **OR** a
-  dash-run-{3,} `RoxygenMdSetextUnderline` (`setext_underline_is_thematic`) — the CommonMark precedence
-  resolution for a bare `---` that heads no paragraph. `emit_md_thematic_break` wraps the one line in a
-  single-line node. Guards added to `is_table_row_line` + `is_foldable_continuation`.
-- **Grouper** (`group.rs`): a thematic break is a direct section child that **interrupts an open
-  paragraph** (CommonMark), dispatched **after** the setext-heading arm (a promoting `---` is consumed as
-  a heading before then, so any dash-run reaching here heads nothing).
+**Parser only** (no projector/formatter change): the lexer keeps carving a lone dash as a
+`RoxygenMdListMarker` (needed for the fresh-position empty-list case). Two new build.rs helpers —
+`is_md_setext_dash_underline` (content is a `RoxygenMdListMarker` with text exactly `-` **and**
+`md_list_item_is_empty`) and `is_md_setext_underline_or_dash` (the genuine `===`/`---` leaf **OR** the
+dash bullet) — are wired into the *two* setext functions only (`is_md_setext_heading_start` look-back +
+`emit_md_setext_heading` terminator). Both are reached solely from a paragraph open, and the block
+loop's `is_md_list_start` check (group.rs:113) runs **before** the setext check (group.rs:147), so a
+fresh-position dash still opens an empty list — no mis-fire. A `- item` line with content fails
+`md_list_item_is_empty`, so it interrupts as a list (unchanged). **Projector needs nothing**:
+`parse_md_heading` reads the underline from `node.text()` via `setext_underline_level`, and
+`setext_underline_level("-")` already returns `Some(2)` — the leaf kind of the `-` never mattered.
 
-**Projector** (`project_rd.rs`): `section_body_parts` maps `ROXYGEN_MD_THEMATIC_BREAK` to a **part flush
-with no atom** (like a blank `ROXYGEN_MARKER`) — it separates paragraphs but contributes nothing, so the
-neighbors coalesce. No `Inline` variant needed (a break never carries content). **Formatter**:
-`emit_md_thematic_break` = single-line marker-normalized atomic passthrough (idempotent).
+**Result:** projector **349→350 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green,
+clippy + fmt clean; curated fixed-point net **85/85 preserving** (was 84/84; R run), 0 blocked/diverg;
+format baseline **+1 additive** (the one new curated case). Curated `md_setext_dash` (+ pin); parser
+fixture `roxygen_md_setext_dash` (single `-`, multi-line title, `- item` list boundary; the existing
+`roxygen_md_setext_not` already covers the fresh-position empty bullet); formatter fixture
+`roxygen_md_setext_dash` (marker normalization); projector unit test
+`md_setext_single_dash_underline_hoists_subsection`.
 
-**Result:** projector **347→349 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green,
-clippy + fmt clean; fixed-point net **preserving** (R run, 3 tests pass); format baseline **+2 additive**
-(the 2 new curated cases only). Curated `md_thematic_break`/`md_thematic_break_stars` (+ pins); parser
-fixtures `roxygen_md_thematic_break` (+`_not`: non-md literal / `**x**` strong / `` `***` `` code / too-short
-`--`); formatter fixture `roxygen_md_thematic_break`; lexer unit tests
-(`md_thematic_break_recognized`/`_rejects`); projector unit test
-(`md_thematic_break_renders_empty_and_coalesces`). The `roxygen_md_setext_not` parser snapshot updated: its
-`---`-after-a-blank line (previously literal prose) is now correctly a `ROXYGEN_MD_THEMATIC_BREAK` — the
-intended promotion, matching the fixture's own comment.
+**Trap (new):** *A lone dash is one leaf, two block meanings — resolved by position, list-check-first.*
+The lexer cannot know whether a paragraph precedes, so it always carves `-` as a `RoxygenMdListMarker`
+(never a setext leaf). The block builder disambiguates: the setext look-back (only entered at a
+paragraph open) treats an empty dash bullet as an underline; a fresh-position dash is caught by the
+earlier `is_md_list_start` branch and opens an empty list. **Do not** broaden `is_md_setext_underline_line`
+globally — that would make a dash bullet non-foldable in tag-value continuation (`is_foldable_continuation`)
+and perturb the separate same-line-tag-value grouping backlog; keep the dash recognition in the dedicated
+`is_md_setext_underline_or_dash` used only by the two setext functions.
 
-**Trap (new):** *Thematic break vs setext is a precedence split, not one leaf.* A contiguous `---` is
-carved as `RoxygenMdSetextUnderline` (so it can promote a preceding paragraph into an H2 heading); only
-when it **heads no paragraph** (reaches block dispatch standalone — a promoting `---` is consumed at
-para-open, never standalone) is it a thematic break. The lexer's `is_thematic_break` runs **after** the
-setext check and so catches only the unambiguous forms (`***`/`___`/spaced); the dash case is resolved at
-block level in `is_md_thematic_break_line` via `setext_underline_is_thematic` (dash run ≥3). *Render =
-empty, paragraphs coalesce:* the projector must **not** emit an atom for the break; it just flushes the
-current `section_body_parts` part (the `@details` arm re-joins all parts with `\n`→space anyway).
-
-**Next (ranked):** **(1)** single-dash setext H2 (`-`/`- ` after a paragraph) — block-level promotion of
-an empty list-marker line (collides with the empty list bullet at the token level). **(2)** the
-roxygen-diagnostic side-channel (block-quote/thematic-break/unknown-macro warnings) as a second oracle
-surface — no diagnostic infra exists in the roxygen parser yet. **(3)** facets (c)/(d) of the `@md`
-`\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. **(4)** block-quote
+**Next (ranked):** **(1)** the roxygen-diagnostic side-channel (block-quote/thematic-break/unknown-macro
+warnings) as a second oracle surface — no diagnostic infra exists in the roxygen parser yet. **(2)** a
+setext underline after a same-line tag value (`@details Title` / `===`) — the same-line-tag-value grouping
+backlog (continuation lines split into sibling paragraphs, so no look-back). **(3)** facets (c)/(d) of the
+`@md` `\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. **(4)** block-quote
 backlog (lazy continuation; glue-onto-preceding-paragraph). The 18 projector divergences stay out of scope
 (roxygen2 evaluation / multi-block).
 
@@ -493,6 +484,7 @@ backlog (lazy continuation; glue-onto-preceding-paragraph). The 18 projector div
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02j** — markdown thematic breaks (`***`/`---`/`___`) → render **empty**, neighbors coalesce (roxygen2 has no support: `mdxml_unknown`→`escape_comment`=""); `is_thematic_break` leaf + block-level `setext_underline_is_thematic` for a bare `---`; projector flushes a part with no atom. 347→349.
 - **2026-07-02i** — markdown block quotes (`> quoted`) → flattened plain text (`>` + inner markdown dropped, lines glue with no separator); `is_block_quote_marker`/`emit_md_block_quote`, projector `serialize_md_block_quote`. 345→347.
 - **2026-07-02h** — setext headings (`Title`/`===`|`---`) → hoisted Rd `\section`/`\subsection` like ATX; block-level **look-back** promotes the whole preceding paragraph (`is_md_setext_heading_start`/`emit_md_setext_heading`, multi-line `ROXYGEN_MD_HEADING`; `is_foldable_continuation` excludes underlines). Single `-`/`- ` deferred. 343→345.
 

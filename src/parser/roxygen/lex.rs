@@ -727,9 +727,11 @@ fn is_atx_heading(bytes: &[u8], i: usize) -> bool {
 /// to the line end. `=` gives a level-1 underline, `-` a level-2 one (the projector
 /// reads the level from the leaf's first non-space byte).
 ///
-/// A single `-`/`- ` is deliberately excluded: it is indistinguishable from an
-/// empty list-item bullet at the token level, and the list-marker path already owns
-/// it. The common `===`/`---` forms are covered; a single-dash setext H2 is deferred.
+/// A single `-`/`- ` is deliberately excluded here: it is indistinguishable from an
+/// empty list-item bullet at the token level, so the lexer carves it as a
+/// `RoxygenMdListMarker` and the *block* builder resolves it — a lone dash bullet
+/// after a paragraph is a level-2 setext underline (`is_md_setext_dash_underline`),
+/// but at a fresh position it opens an empty list.
 fn is_setext_underline(bytes: &[u8], i: usize) -> bool {
     let mut j = i;
     let mut indent = 0;

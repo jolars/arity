@@ -4248,6 +4248,29 @@ mod tests {
     }
 
     #[test]
+    fn md_setext_single_dash_underline_hoists_subsection() {
+        // CommonMark resolves a lone `-` line after a paragraph as a level-2 setext
+        // underline (an empty list item cannot interrupt a paragraph), so `Foo`
+        // becomes an H2 `\subsection` and `bar` its body. A `- item` line with
+        // content would instead interrupt as a list (not exercised here).
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' Foo\n\
+                   #' -\n\
+                   #' bar\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\details (\\subsection (TEXT \"Foo\") (TEXT \"bar\")))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
     fn three_intro_paragraphs_split_title_description_details() {
         // roxygen2's `parse_description` (R/block.R): the 1st intro paragraph is
         // the title, the 2nd the description, and every remaining paragraph the

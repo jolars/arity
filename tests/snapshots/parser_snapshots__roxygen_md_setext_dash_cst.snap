@@ -1,0 +1,91 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..228
+  ROXYGEN_BLOCK@0..222
+    ROXYGEN_SECTION@0..49
+      ROXYGEN_PARAGRAPH@0..46
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..45 "Single-dash setext he ..."
+        NEWLINE@45..46 "\n"
+      ROXYGEN_MARKER@46..48 "#'"
+      NEWLINE@48..49 "\n"
+    ROXYGEN_SECTION@49..56
+      ROXYGEN_MARKER@49..51 "#'"
+      WHITESPACE@51..52 " "
+      ROXYGEN_TAG@52..55
+        ROXYGEN_AT@52..53 "@"
+        ROXYGEN_TAG_NAME@53..55 "md"
+      NEWLINE@55..56 "\n"
+    ROXYGEN_SECTION@56..199
+      ROXYGEN_MARKER@56..58 "#'"
+      WHITESPACE@58..59 " "
+      ROXYGEN_TAG@59..67
+        ROXYGEN_AT@59..60 "@"
+        ROXYGEN_TAG_NAME@60..67 "details"
+      NEWLINE@67..68 "\n"
+      ROXYGEN_MD_HEADING@68..79
+        ROXYGEN_MARKER@68..70 "#'"
+        WHITESPACE@70..71 " "
+        ROXYGEN_TEXT@71..74 "Foo"
+        NEWLINE@74..75 "\n"
+        ROXYGEN_MARKER@75..77 "#'"
+        WHITESPACE@77..78 " "
+        ROXYGEN_MD_LIST_MARKER@78..79 "-"
+      NEWLINE@79..80 "\n"
+      ROXYGEN_PARAGRAPH@80..87
+        ROXYGEN_MARKER@80..82 "#'"
+        WHITESPACE@82..83 " "
+        ROXYGEN_TEXT@83..86 "bar"
+        NEWLINE@86..87 "\n"
+      ROXYGEN_MARKER@87..89 "#'"
+      NEWLINE@89..90 "\n"
+      ROXYGEN_MD_HEADING@90..111
+        ROXYGEN_MARKER@90..92 "#'"
+        WHITESPACE@92..93 " "
+        ROXYGEN_TEXT@93..98 "Multi"
+        NEWLINE@98..99 "\n"
+        ROXYGEN_MARKER@99..101 "#'"
+        WHITESPACE@101..102 " "
+        ROXYGEN_TEXT@102..106 "line"
+        NEWLINE@106..107 "\n"
+        ROXYGEN_MARKER@107..109 "#'"
+        WHITESPACE@109..110 " "
+        ROXYGEN_MD_LIST_MARKER@110..111 "-"
+      NEWLINE@111..112 "\n"
+      ROXYGEN_PARAGRAPH@112..120
+        ROXYGEN_MARKER@112..114 "#'"
+        WHITESPACE@114..115 " "
+        ROXYGEN_TEXT@115..119 "deep"
+        NEWLINE@119..120 "\n"
+      ROXYGEN_MARKER@120..122 "#'"
+      NEWLINE@122..123 "\n"
+      ROXYGEN_PARAGRAPH@123..139
+        ROXYGEN_MARKER@123..125 "#'"
+        WHITESPACE@125..126 " "
+        ROXYGEN_TEXT@126..138 "A paragraph."
+        NEWLINE@138..139 "\n"
+      ROXYGEN_MD_LIST@139..198
+        ROXYGEN_MARKER@139..141 "#'"
+        WHITESPACE@141..142 " "
+        ROXYGEN_MD_LIST_ITEM@142..198
+          ROXYGEN_MD_LIST_MARKER@142..143 "-"
+          ROXYGEN_TEXT@143..198 " item with content in ..."
+      NEWLINE@198..199 "\n"
+    ROXYGEN_SECTION@199..222
+      ROXYGEN_MARKER@199..201 "#'"
+      WHITESPACE@201..202 " "
+      ROXYGEN_TAG@202..222
+        ROXYGEN_AT@202..203 "@"
+        ROXYGEN_TAG_NAME@203..207 "name"
+        WHITESPACE@207..208 " "
+        ROXYGEN_TEXT@208..210 "md"
+        ROXYGEN_MD_DELIM@210..211 "_"
+        ROXYGEN_TEXT@211..217 "setext"
+        ROXYGEN_MD_DELIM@217..218 "_"
+        ROXYGEN_TEXT@218..222 "dash"
+  NEWLINE@222..223 "\n"
+  IDENT@223..227 "NULL"
+  NEWLINE@227..228 "\n"

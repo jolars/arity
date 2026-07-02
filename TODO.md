@@ -764,15 +764,22 @@
       marker-normalized atomic passthrough (Tenet 1, idempotent). Curated `md_thematic_break`/`_stars`;
       projector 347→349. **Backlog:** the roxygen-diagnostic side-channel warning.
       **Setext headings LANDED (2026-07-02h):** a `===`/`---` underline line under `@md` carves as a
-      `RoxygenMdSetextUnderline` leaf (`is_setext_underline`: `=`+ or `-`{2,}, single `-`/`- ` excluded
-      as an empty list bullet). At block level a paragraph immediately terminated by such an underline
+      `RoxygenMdSetextUnderline` leaf (`is_setext_underline`: `=`+ or `-`{2,}). At block level a paragraph
+      immediately terminated by such an underline
       is promoted (look-back `is_md_setext_heading_start` + `emit_md_setext_heading`) into the SAME
       `ROXYGEN_MD_HEADING` node as ATX — the underline turns the **whole preceding paragraph** into the
       heading text (multi-line title coalesces). `=`→level 1 (top-level `\section`), `-`→level 2
       (`\subsection`), sharing the ATX outline builder. `parse_md_heading` detects setext (multi-line
       node whose last stripped line is an underline) and reads the level+title. Formatter reuses ATX's
       marker-normalized passthrough. Curated `md_setext`/`md_setext_multiline`; projector 343→345.
-      **Backlog:** single-dash `-`/`- ` setext H2 (collides with empty list bullet); a setext underline
+      **Single-dash setext H2 LANDED (2026-07-02k):** a lone `-`/`- ` line the lexer carves as an empty
+      `RoxygenMdListMarker` bullet acts as a level-2 setext underline **when it follows a paragraph**
+      (CommonMark: an empty list item cannot interrupt a paragraph). Block-level only —
+      `is_md_setext_dash_underline` (dash bullet + `md_list_item_is_empty`) is OR'd into the setext
+      look-back/emit via `is_md_setext_underline_or_dash`; at a fresh block position the block loop's list
+      check runs first, so the same bullet still opens an empty list. Restricted to `-` (`*`/`+` never
+      underline); the projector reads level 2 from the `-` node text with no change. Curated
+      `md_setext_dash`; projector 349→350. **Backlog:** a setext underline
       after a same-line tag value (`@details Title` / `===`) stays a literal sibling (same-line-tag-value
       grouping backlog); thematic breaks (`---` after a blank) stay literal where roxygen2 errors.
       **ATX headings LANDED (2026-07-02g):** a `#{1,6}` + space/EOL line under `@md` carves as a whole-line
