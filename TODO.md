@@ -569,6 +569,19 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   locals excluded). Empty in single-file mode (no workspace seeded).
   `container_name`/`detail` and a real fuzzy ranking are follow-ups.
 
+- [ ] **RStudio-style code sections** (outline + folding). R tooling (RStudio,
+  and the R languageserver's `section.R`) treats a trailing run of 4+
+  `-`/`#`/`=`/`+`/`*` markers on a comment line (`# Foo ----`, `#### Bar ####`)
+  as a named section header, with the leading `#`s giving nesting depth, and
+  surfaces the resulting tree in **both** `documentSymbol` (a file outline) and
+  `foldingRange` (fold a section down to its next same-or-higher-level sibling).
+  arity surfaces neither: document symbols are binding-only
+  (`compute_document_symbols`) and folding is CST-structural (brace blocks,
+  comment runs). Both would consume one section scanner over comment trivia—
+  purely lexical (no semantic model), so it drops onto the read pool like the
+  existing symbol/folding walks. Convention, not language; gate behind a setting
+  if it proves noisy. (Gap surfaced by the 2026-07-02 languageserver survey.)
+
 ### Rename
 
 - [x] **Rename symbol** (`textDocument/rename` + `textDocument/prepareRename`).
@@ -819,6 +832,59 @@ landed; the second is still open but only matters for cross-edit-stable handles:
     top-level (inside no function) are dropped from incoming; ambiguous
     cross-file callees (a name visibly defined in >1 sibling) resolve to the
     first sorted def; string/backtick callees (`` `+`(…) ``) are skipped.
+
+- [ ] **On-type formatting** (`textDocument/onTypeFormatting`). The R
+  languageserver advertises it with first-trigger `\n` and more-triggers `)`,
+  `]`, `}`—reformat the current statement as the user closes a bracket or presses
+  enter. arity advertises full + range formatting but **not**
+  `documentOnTypeFormattingProvider` (`src/lsp/server.rs`). Small wiring over the
+  existing `format_range` path, but **gated on the CRLF bug already logged under
+  Formatter** (line-ending config isn't threaded into `format_range`, so a range
+  edit in a CRLF buffer splices LF); fix that first, then advertise. (2026-07-02
+  languageserver survey.)
+
+- [ ] **Document links** (`textDocument/documentLink` + resolve). The
+  languageserver scans string constants that resolve to existing files (relative
+  to the workspace root, raw-string aware) and makes them clickable, resolving to
+  the file URI on demand under a `link_file_size_limit` setting (`link.R`). arity
+  already has a range-bearing source-literal extractor
+  (`collect_source_literal_edges`, `src/project/source.rs`) built for file
+  rename—generalize it from `source()`/`readLines()`-style args to *any* string
+  literal naming an existing file, and emit `DocumentLink`s. Pure read-pool CST
+  walk; needs the workspace root for relative resolution (already available).
+  (2026-07-02 languageserver survey.)
+
+- [ ] **Document color** (`textDocument/documentColor` + `colorPresentation`). The
+  languageserver turns any single-line string literal matching `#RRGGBB[AA]` or a
+  name in `grDevices::colors()` into a color swatch, and offers hex presentations
+  for the editor's picker (`color.R`). arity would add a color-string recognizer
+  over string tokens plus a static R named-color table and hex↔rgba conversion.
+  Pure, self-contained, and orthogonal to the formatter/linter stance—no tension
+  with the tenets. `range: true`-style capability, read-pool CST walk.
+  (2026-07-02 languageserver survey.)
+
+- [ ] **Type hierarchy** (`textDocument/prepareTypeHierarchy` + supertypes/
+  subtypes). The class-hierarchy analog of the call hierarchy already shipped.
+  The languageserver detects an S3/S4/RefClass/R6 class definition at the cursor
+  and walks its super/subtypes (`type_hierarchy.R`). arity has **no OOP class
+  model** yet—`setClass`/`R6Class`/`setRefClass` shapes are the same ones deferred
+  in document symbols—so this is the larger item: it first needs a static model of
+  class definitions and their inheritance edges (`setClass(contains=)`,
+  `R6Class(inherit=)`, `setRefClass(contains=)`), which would *also* feed the
+  deferred `R6`/`setClass` document-symbol shapes. Higher effort, lower priority
+  than the three above. (2026-07-02 languageserver survey.)
+
+- [ ] **Minor capability-conformance gaps vs. the R languageserver** (2026-07-02
+  survey). (a) arity's completion trigger set is `:` only; the languageserver
+  also triggers on `.` (ubiquitous in R names)—fold into the existing completion
+  trigger follow-ups. (b) arity advertises `workspace_folders: None` and seeds the
+  workspace once from `initialize`; the languageserver advertises
+  `workspaceFolders.changeNotifications`, so arity does not react to
+  `workspace/didChangeWorkspaceFolders` (folders added or removed mid-session).
+  (c) `textDocumentSync` is FULL-only with no `willSave`/`save` registration
+  (benign). Note: the languageserver's `codeLens`, `executeCommand`,
+  `linkedEditingRange`, `moniker`, and type/implementation-definition providers are
+  **commented out in its own `capabilities.R`**, so they are *not* arity gaps.
 
 - [ ] **Inlay hints** (`textDocument/inlayHint`). E.g. argument-name hints at
   call sites (matching positional args to index formals). Speculative. Not
