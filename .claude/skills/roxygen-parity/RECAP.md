@@ -246,16 +246,16 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   **Even** (bare `%`, `\\%`): keep `ceil(k/2)` backslashes + literal `%`. Projector-only
   `md_percent_swallow` (per physical line; runs **before** `collapse_md_backslash_runs` so parity reads the
   raw run). Silent (no roxygen2 warning) → pure render-parity. Curated `md_percent_swallow`.
-- **PRE-EXISTING boundary bug (shared md + non-md), the `%`-swallow's remaining edge.** Both the `%`-swallow
-  and the non-md `strip_rd_comments` stop at the **physical source line**, but the projector flattens a
-  *soft-wrap* line break to a **space** in `paragraph_inlines`/`section_body_parts` (only *paragraph*
-  breaks reach the run as `\n`). So a `%` on a soft-wrapped line eats its continuation (arity) instead of
-  stopping at the line (roxygen2). Non-md repro: `@details` alone then `a % x` / `continuation` → `a`
-  (arity) vs `a continuation`. The curated `md_percent_swallow` avoids intra-paragraph soft-wraps for
-  this reason. Fix needs a physical-line boundary in the run **distinct from** the paragraph-break `\n`
-  the link-ref block machinery keys on (`t.contains('\n')` block-start detection in
-  `collect_user_linkrefs`/`scan_linkref_run`) — a paragraph-model change (target #2 / inline pass), NOT a
-  projector-only add.
+- **Soft-wrap physical-line boundary (RESOLVED 2026-07-02).** A `%`-swallow (and the non-md
+  `strip_rd_comments`) ends at the **physical source line**; the projector had flattened a *soft-wrap*
+  break to a **space**, so a `%` on a soft-wrapped line ate its continuation. Fix: a soft-wrap now carries
+  a **`SOFT_BREAK` sentinel** (`'\u{c}'`, form feed) — is_posix_space so `norm_ws` collapses it, but not
+  `\n` so the link-ref block machinery (`t.contains('\n')` in `collect_user_linkrefs`/`scan_linkref_run`)
+  still reads only a paragraph break. `strip_rd_comments`/`md_percent_swallow` split on `physical_lines`
+  (both `\n` and `SOFT_BREAK`). **All 5 NEWLINE→text sites** in `project_rd.rs` emit `SOFT_BREAK` now (not
+  `" "`). Formatter got the `@md` analog of its non-md `%`-reflow gate: `line_has_md_percent_swallow`
+  bails reflow so a `\%`-line is never joined with its continuation. Curated `rd_comment_softwrap` +
+  `md_percent_softwrap`.
 - **Still backlog** (the `@md` `\`-escape *render* cluster — do NOT widen the lexer): a run **before a
   letter** (`\\y` — the lexer splits it into text `\` + an UNKNOWN macro node); brace-less known-macro
   decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`, `\dots`→kept — lexer leaves them
@@ -360,7 +360,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 331 matching (all allowlisted), 18 divergent** of 349 pinned.
+corpus (132 `cm-NNN` cases). **Current: 333 matching (all allowlisted), 18 divergent** of 351 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -369,57 +369,56 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (349 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (351 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 64/64 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 68/68 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-01b) — `@md` `%`-swallow (parity-keyed), projector-only
+## Latest session (2026-07-02) — soft-wrap physical-line boundary (`%`-swallow/comment)
 
-Targeted ranked-#1 facet (b) (the `\`-escape render cluster's `%`-swallow). **Oracle characterization
-nailed the rule** (exact-byte probes, `block-to-sections`): the swallow is keyed on the **parity of the
-source backslash run** before `%` — odd (`\%`, `\\\%`) keeps `ceil(k/2)` backslashes and the bare `%`
-comments to end of the physical line; even (bare `%`, `\\%`, `\\\\%`) keeps `ceil(k/2)` backslashes + a
-literal `%`. Mechanism: roxygen2's md→Rd escapes a rendered `%`→`\%`, whose escaping `\` collides with a
-preceding literal `\` to form the bare `%`. **Silent** (no roxygen2 warning) → pure render-parity, not
-diagnostic-parity.
+Closed ranked-#1: the soft-wrap edge of the `%`-swallow / non-md `%`-comment strip. Both end at the
+**physical source line**, but the projector had flattened a soft-wrap break to a **space**, so a `%` on a
+soft-wrapped `#'` line ate its continuation. **Oracle-confirmed** (exact-byte probes, `block-to-sections`):
+non-md `a % swallowed`/`continuation survives` → `a continuation survives`; md `a \% swallowed`/`continuation
+survives` → `a \ continuation survives` (odd run swallows to the *physical* line, continuation survives).
 
-**Fix (one projector fn, `md_percent_swallow`, `project_rd.rs`).** Per physical line (`split('\n')`, mirrors
-`strip_rd_comments`); truncates the line at the first `%` whose preceding backslash run is odd, keeping the
-backslashes. Wired into `prose_text_atom`'s `@md` branch **before** `collapse_md_backslash_runs`, so the
-odd/even decision reads the *raw* run length (collapse then halves the kept backslashes to `ceil(k/2)`).
-Lexer + formatter UNTOUCHED (a rendering concern, not layout). Curated `md_percent_swallow` + 1 unit test.
+**Fix — a `SOFT_BREAK` sentinel** (`'\u{c}'`, form feed) for a soft-wrap, distinct from the paragraph-break
+`\n`. It **is** `is_posix_space` (so `norm_ws` collapses it → no-comment prose renders identically) but is
+**not** `\n` (so the link-ref block machinery, which keys on `t.contains('\n')`, still treats only a
+paragraph break as a block start). All **5** `SyntaxKind::NEWLINE => Inline::Text(" ")` sites in
+`project_rd.rs` now emit `SOFT_BREAK`; `strip_rd_comments`/`md_percent_swallow` split on a new
+`physical_lines` helper (`split(['\n', SOFT_BREAK])`). The full projector gate (351 pins, incl. multi-line
+link/shortcut cases that carry soft-breaks inside link content) stayed green — the sentinel doesn't leak
+into refmap/skeleton behavior.
 
-**Snag found + scoped (important):** the swallow (and the non-md comment strip) stop at the **physical
-source line**, but the projector flattens a *soft-wrap* line break to a **space** in
-`paragraph_inlines`/`section_body_parts` — only *paragraph* breaks reach the run as `\n`. So a `%` on a
-soft-wrapped line eats its continuation. This is a **pre-existing bug shared with the non-md path**
-(confirmed: `@details` alone then `a % x`/`continuation` → arity `a` vs roxygen2 `a continuation`). Fixing
-it needs a physical-line boundary in the run distinct from the paragraph-break `\n` the link-ref block
-machinery keys on — a paragraph-model change, NOT projector-only. **Scoped out:** the curated case uses
-single-physical-line paragraphs (no intra-paragraph soft-wrap), so the landed swallow is exact; the
-soft-wrap edge is recorded as backlog (a new trap + a TODO bullet). This confirms the RECAP's prior read
-that facets (b)–(d) are entangled with the paragraph/inline-pass work.
+**Formatter follow-on (caught by the fixed-point net):** under `@md` the formatter *reflowed* the two
+soft-wrapped lines into one, moving the continuation past the `\%` → roxygen2 then rendered `a \` (bug).
+Added `line_has_md_percent_swallow` — the `@md` analog of the existing non-md `line_has_live_rd_comment`
+reflow gate — wired into both bail sites (`TagUnit::flush` + `prose_bails_reflow`). Now a `\%`-swallow line
+is kept verbatim, idempotent.
 
-**Result:** projector **330→331 matching, 18 divergent** (unchanged, all out-of-scope). `cargo test` green
-(22 bins), clippy + fmt clean; format baseline re-blessed (+1, additive-only — projector change, format
-byte-identical).
+**Result:** projector **331→333 matching, 18 divergent** (unchanged, all out-of-scope). Curated fixed-point
+**68/68** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline re-blessed
+(+2, additive — the 2 new stems; no existing case's format changed). Projector unit tests: a new
+`strip_rd_comments_stops_at_soft_wrap` + soft-wrap asserts in `md_percent_swallow_is_parity_keyed`; the
+formatter gate is covered by the fixed-point net + format baseline.
 
-**Next (ranked):** **(1)** the **physical-line-boundary** rework (the snag above) — give the prose run a
-soft-wrap boundary distinct from the paragraph-break `\n`; unblocks the `%`-swallow/`%`-comment soft-wrap
-edge for *both* md and non-md, and overlaps target #2's paragraph-model work. **(2)** the **tag
-same-line-value continuation** grouping divergence (`@details *a x` / `c*` splits paragraphs so a span can't
-cross) — cross-cutting (parser grouping + projector `tag_inlines` + formatter), touches
-losslessness/idempotence. **(3)** the rest of facets (c)/(d): run-before-letter macro-split, brace-less
-known-macro decomposition — tied to the inline-pass migration, do NOT widen the lexer. **(4)** Slice B
-leftover hardenings. **(5)** the 18 projector divergences stay out of scope.
+**Next (ranked):** **(1)** the **tag same-line-value continuation** grouping divergence (`@details *a x` /
+`c*` splits continuation lines into separate `ROXYGEN_PARAGRAPH` siblings so an emphasis span can't cross)
+— cross-cutting (parser grouping + projector `tag_inlines` + formatter), touches losslessness/idempotence,
+overlaps the inline-pass paragraph model. **(2)** facets (c)/(d) of the `@md` `\`-escape cluster:
+run-before-letter macro-split (`\\y`), brace-less known-macro decomposition (`\emph z`/`\code z`) — tied to
+the inline-pass migration, do NOT widen the lexer. **(3)** Slice B leftover hardenings (`\value`/`\section`
+inline md; cmark-active md inside a *fragile* arg; `linkref_def_label` macro drop). **(4)** the 18 projector
+divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-01b** — `@md` `%`-swallow (parity-keyed on the source backslash run); projector `md_percent_swallow`. 330→331.
 - **2026-07-01** — `@md` backslash-run collapse (`\\`→`\`, `ceil(k/2)`); projector `collapse_md_backslash_runs`. 329→330.
 - **2026-06-30g** — emphasis span crosses an inline Rd macro; faithful placeholder flanking in `edge_char`. 328→329.
 - **2026-06-30f** — emphasis/link span crosses a nested macro in a *structural* arg (`resolve_md_inline_pieces`). 327→328.

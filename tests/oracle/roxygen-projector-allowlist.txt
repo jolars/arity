@@ -175,6 +175,7 @@ md_span_abuts_macro
 md_nested_link
 md_nested_link_chain
 md_nested_list
+md_percent_softwrap
 md_percent_swallow
 md_ref_emphasis
 md_ref_link_multiline
@@ -189,6 +190,7 @@ preformatted
 rawrd
 rawrd_md_literal
 rd_comment
+rd_comment_softwrap
 rd_macros
 rd_nested_list
 rdcomplete_field_drop

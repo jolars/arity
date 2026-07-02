@@ -1,0 +1,3 @@
+(\description (TEXT "Comment stops at the soft-wrapped line"))
+(\details (TEXT "a continuation survives"))
+(\title (TEXT "Comment stops at the soft-wrapped line"))

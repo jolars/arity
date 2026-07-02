@@ -743,15 +743,15 @@
       **Still backlog** (the `@md` `\`-escape render cluster, do NOT widen the lexer): a
       backslash run before a letter (macro-carving splits it — `\\y`), and brace-less
       known-macro decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`).
-      **Also backlog (pre-existing, shared with the non-md path):** the `%`-swallow (and the
-      non-md `%`-comment strip) stop at the physical source line, but the projector flattens a
-      *soft-wrap* line break to a space in `paragraph_inlines`/`section_body_parts` (only
-      paragraph breaks reach the run as `\n`), so a `%` on a soft-wrapped line eats its
-      continuation instead of stopping at the line. Non-md repro: `@details` (own line) then
-      `a % x` / `continuation` yields `a` (arity) vs `a continuation` (roxygen2). Fixing it
-      means giving the prose run a physical-line boundary distinct from the paragraph-break
-      `\n` the link-ref block machinery keys on — a paragraph-model change (target #2 / inline
-      pass), not a projector-only add.
+      **Soft-wrap physical-line boundary LANDED (2026-07-02):** the `%`-swallow (and the
+      non-md `%`-comment strip) stop at the physical source line, but the projector had flattened
+      a *soft-wrap* line break to a space, so a `%` on a soft-wrapped line ate its continuation.
+      A soft-wrap now carries a `SOFT_BREAK` sentinel (form feed) distinct from the paragraph-break
+      `\n`: `strip_rd_comments`/`md_percent_swallow` split on `physical_lines` (both `\n` and
+      `SOFT_BREAK`) while the link-ref block machinery still keys only on `\n`; `norm_ws` collapses
+      `SOFT_BREAK` to a space, so no-comment prose renders identically. The formatter got the `@md`
+      analog of its non-md `%`-reflow gate (`line_has_md_percent_swallow`), so a `\%`-swallow line
+      is no longer joined with its continuation. Curated `rd_comment_softwrap` + `md_percent_softwrap`.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

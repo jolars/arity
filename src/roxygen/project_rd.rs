@@ -1213,7 +1213,7 @@ fn para_to_inlines(para: &SyntaxNode) -> Vec<Inline> {
     for el in para.children_with_tokens() {
         match el.kind() {
             SyntaxKind::ROXYGEN_MARKER => {}
-            SyntaxKind::NEWLINE => out.push(Inline::Text(" ".to_string())),
+            SyntaxKind::NEWLINE => out.push(Inline::Text(SOFT_BREAK.to_string())),
             _ => push_inline(&mut out, el),
         }
     }
@@ -1382,7 +1382,7 @@ fn unescape_md_brackets(run: &str) -> String {
 /// non-`@md` [`strip_rd_comments`]. It runs **before** [`collapse_md_backslash_runs`]
 /// so the odd/even decision reads the original run length, not its halved form.
 fn md_percent_swallow(run: &str) -> String {
-    run.split('\n')
+    physical_lines(run)
         .map(md_percent_swallow_line)
         .collect::<Vec<_>>()
         .join("\n")
@@ -2602,7 +2602,7 @@ fn decode_text_atom(atom: &str) -> Option<String> {
 /// unescaped `%` (one not preceded by a `\`) begins a comment that runs to the end
 /// of that line. Lines are rejoined with `\n` (collapsed downstream by `norm_ws`).
 fn strip_rd_comments(s: &str) -> String {
-    s.split('\n')
+    physical_lines(s)
         .map(strip_rd_line_comment)
         .collect::<Vec<_>>()
         .join("\n")
@@ -2673,6 +2673,26 @@ fn norm_ws(s: &str) -> String {
 /// form feed, and carriage return. ASCII-only by design (see `norm_ws`).
 fn is_posix_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
+/// A sentinel marking a **physical soft-wrap** line break inside a prose run: the
+/// point where one `#'` source line ends and the next continues the *same*
+/// roxygen2 paragraph. It is distinct from a paragraph break (`\n`) on purpose.
+/// An Rd `%` comment (and the `@md` `%`-swallow) ends at the *physical* source
+/// line, so [`strip_rd_comments`]/[`md_percent_swallow`] must stop at a
+/// `SOFT_BREAK` just as they stop at a `\n`; but the link-reference block
+/// machinery ([`collect_user_linkrefs`]/[`scan_linkref_run`]) treats **only** a
+/// `\n` as a paragraph break — a definition may not interrupt a soft-wrapped
+/// paragraph. `SOFT_BREAK` is ASCII whitespace (so `norm_ws` collapses it to a
+/// single space; a soft-wrapped paragraph with no comment renders identically)
+/// but is not `\n` (so it never reads as a paragraph break).
+const SOFT_BREAK: char = '\u{c}'; // form feed
+
+/// Split a prose run at every **physical** source-line boundary — a paragraph
+/// break (`\n`) or a soft-wrap ([`SOFT_BREAK`]). Used by the `%`-comment
+/// strippers, whose comments end at the physical line.
+fn physical_lines(run: &str) -> impl Iterator<Item = &str> {
+    run.split(['\n', SOFT_BREAK])
 }
 
 /// Escape a string the way the R driver's `encode_text` does (`\`, `"`, `\n`).
@@ -2751,7 +2771,7 @@ fn paragraph_inlines(para: &RoxygenParagraph) -> Vec<Inline> {
     for el in para.syntax().children_with_tokens() {
         match el.kind() {
             SyntaxKind::ROXYGEN_MARKER => {} // trivia: never prose
-            SyntaxKind::NEWLINE => out.push(Inline::Text(" ".to_string())), // line join
+            SyntaxKind::NEWLINE => out.push(Inline::Text(SOFT_BREAK.to_string())), // line join
             _ => push_inline(&mut out, el),
         }
     }
@@ -2814,7 +2834,7 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
             for child in kids.into_iter().take(interior).skip(1) {
                 match child.kind() {
                     SyntaxKind::ROXYGEN_MARKER => {} // threaded trivia: never prose
-                    SyntaxKind::NEWLINE => children.push(Inline::Text(" ".to_string())),
+                    SyntaxKind::NEWLINE => children.push(Inline::Text(SOFT_BREAK.to_string())),
                     _ => push_inline(&mut children, child),
                 }
             }
@@ -2836,7 +2856,7 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
             for child in kids.into_iter().take(interior).skip(1) {
                 match child.kind() {
                     SyntaxKind::ROXYGEN_MARKER => {} // threaded trivia: never prose
-                    SyntaxKind::NEWLINE => display.push(Inline::Text(" ".to_string())),
+                    SyntaxKind::NEWLINE => display.push(Inline::Text(SOFT_BREAK.to_string())),
                     _ => push_inline(&mut display, child),
                 }
             }
@@ -3564,7 +3584,7 @@ fn md_list_item_inlines(item: &SyntaxNode) -> Vec<Inline> {
     for el in item.children_with_tokens() {
         match el.kind() {
             SyntaxKind::ROXYGEN_MD_LIST_MARKER | SyntaxKind::ROXYGEN_MARKER => {}
-            SyntaxKind::NEWLINE => out.push(Inline::Text(" ".to_string())),
+            SyntaxKind::NEWLINE => out.push(Inline::Text(SOFT_BREAK.to_string())),
             _ => push_inline(&mut out, el),
         }
     }
@@ -4660,6 +4680,24 @@ mod tests {
         assert_eq!(md_percent_swallow(r"a % b \% c"), "a % b \\");
         // Line-scoped: a continuation on the next physical line survives.
         assert_eq!(md_percent_swallow("a \\% b\nc"), "a \\\nc");
+        // The physical line ends at a soft-wrap (SOFT_BREAK) too, not just a
+        // paragraph break: the continuation on the next `#'` line survives.
+        assert_eq!(
+            md_percent_swallow(&format!("a \\% b{SOFT_BREAK}c")),
+            "a \\\nc"
+        );
+    }
+
+    #[test]
+    fn strip_rd_comments_stops_at_soft_wrap() {
+        // A non-`@md` `%` comment ends at the physical source line. Both a
+        // paragraph break (`\n`) and a soft-wrap (SOFT_BREAK) end the line, so a
+        // continuation on the next `#'` line survives the comment either way.
+        assert_eq!(strip_rd_comments("a % swallowed\nc"), "a \nc");
+        assert_eq!(
+            strip_rd_comments(&format!("a % swallowed{SOFT_BREAK}c")),
+            "a \nc"
+        );
     }
 
     #[test]

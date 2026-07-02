@@ -628,14 +628,17 @@ impl TagUnit {
         // In non-markdown (literal Rd) prose, a line carrying a live `%` comment
         // must not be reflowed (it would move text across the comment, changing the
         // rendered Rd); and in markdown prose, a tag value that begins with a
-        // link-reference definition must not be joined with its continuations (the
-        // same render change): bail to a verbatim, marker-normalized rendering. A
+        // link-reference definition — or any line carrying an active `%`-swallow —
+        // must not be joined with its continuations (the same render change): bail
+        // to a verbatim, marker-normalized rendering. A
         // prose chunk that could migrate to a continuation-line start and reparse as
         // a list/header marker is not a bail: `wrap_chunks_hanging` keeps such a
         // marker off any line start, preserving idempotence without abandoning
         // reflow.
         if (!md && self.lines.iter().any(line_has_live_rd_comment))
-            || (md && self.first_is_linkref_def)
+            || (md
+                && (self.first_is_linkref_def
+                    || self.lines.iter().any(line_has_md_percent_swallow)))
         {
             for (i, line) in self.lines.iter().enumerate() {
                 if i == 0
@@ -681,12 +684,13 @@ fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: u
 /// (marker-normalized). In non-markdown (literal Rd) prose any line carrying a
 /// live `%` comment forbids reflow (it would move text across the comment,
 /// changing the rendered Rd); in markdown prose a leading link-reference
-/// definition does (joining it turns it back into ordinary prose). `first_text`
+/// definition — or any line with an active `%`-swallow — does (joining it moves
+/// text across the swallow or turns a definition back into prose). `first_text`
 /// is the paragraph's first prose line — for a tag-headed body, the tag *value*
 /// rather than the whole `@tag …` line, so the linkref check reads the right text.
 fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> bool {
     if md {
-        text_is_linkref_def(first_text)
+        text_is_linkref_def(first_text) || lines.iter().any(line_has_md_percent_swallow)
     } else {
         lines.iter().any(line_has_live_rd_comment)
     }
@@ -1301,6 +1305,31 @@ fn line_has_live_rd_comment(line: &PhysicalLine) -> bool {
             escaped = true;
         } else if c == '%' {
             return true;
+        }
+    }
+    false
+}
+
+/// Whether `line`'s content carries an active `@md` `%`-swallow: a `%` whose
+/// preceding maximal backslash run has **odd** length. Under `@md`, roxygen2's
+/// markdown→Rd pass escapes a rendered `%` to `\%`; when the markdown already
+/// places a literal backslash before the `%`, that escaping backslash collides
+/// with the literal one and leaves a bare `%` that comments to end of the physical
+/// line (parity-keyed on the backslash-run length). Reflowing such a line — moving
+/// the continuation past the `%` — changes what the comment swallows and so alters
+/// the rendered Rd, so the markdown paragraph or tag unit containing one is kept
+/// verbatim, mirroring the non-markdown [`line_has_live_rd_comment`] gate. Mirrors
+/// the projector's `md_percent_swallow_line`.
+fn line_has_md_percent_swallow(line: &PhysicalLine) -> bool {
+    let mut backslashes = 0usize;
+    for c in content_text(line).chars() {
+        if c == '\\' {
+            backslashes += 1;
+        } else {
+            if c == '%' && backslashes % 2 == 1 {
+                return true;
+            }
+            backslashes = 0;
         }
     }
     false
