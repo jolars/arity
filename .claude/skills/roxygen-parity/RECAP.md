@@ -407,7 +407,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 343 matching (all allowlisted), 18 divergent** of 361 pinned.
+corpus (132 `cm-NNN` cases). **Current: 345 matching (all allowlisted), 18 divergent** of 363 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -416,64 +416,70 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (361 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (363 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 78/78 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 80/80 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02g) — ATX markdown headings
+## Latest session (2026-07-02h) — setext markdown headings
 
-Landed **ATX headings** `# Title` (levels 1-6) → hoisted Rd `\section`/`\subsection` (ranked #1 target).
-This was the invasive one: a heading **restructures sections** — a `#` in `@description`/`@details`
-hoists a **top-level `\section`** (out of the enclosing tag), a `##`+ nests as `\subsection`, and content
-before the first heading stays in the enclosing tag. All seven probed variants match roxygen2 exactly.
+Landed **setext headings** (`Title`/`===` and `Title`/`---` underlines) → the same hoisted Rd
+`\section`/`\subsection` as ATX (ranked #2 target). The distinctive twist vs ATX: setext is a
+**block-level look-back** — the underline turns the **whole preceding paragraph** into the heading
+text (multi-line title coalesces, `intro\nSub\n---` → `\subsection` titled "intro Sub"), so detection
+happens at *paragraph open* by scanning the maximal foldable-prose run for a terminating underline.
 
-**Parser** (mirrors the HTML-block/table single-line-opener precedent):
-- **Lexer** (`lex.rs`): `is_atx_heading(bytes, i)` (1-6 `#` then space/tab/EOL; rejects `#hashtag`, 7+ `#`)
-  carves the whole line as a `RoxygenMdHeading` leaf, `@md`+line-start only. New `TokKind::RoxygenMdHeading`
-  → **`ROXYGEN_TEXT`** in `syntax_kind_for` (an unwrapped leaf stays literal prose; no path produces one).
-- **Grouper** (`build.rs`/`group.rs`): `is_md_heading_start` → `emit_md_heading` builds a **single-line**
-  `ROXYGEN_MD_HEADING` node (marker + leaf; no following-line gather, unlike table/HTML block). Dispatched
-  as a direct section child (interrupts an open paragraph); added to both `is_foldable_continuation` and
-  `is_table_row_line` exclusions.
-- **New SyntaxKind** `ROXYGEN_MD_HEADING` (=103, last variant; COUNT bumped, `kind_from_raw` arm). The leaf
-  reached every classifier (`roxygen_role`, `expr.rs` atom fallthrough, `syntax_kind_for`, `prose_texts`
-  test helper).
+**Parser:**
+- **Lexer** (`lex.rs`): `is_setext_underline(bytes, i)` (up-to-3-space indent, then `=`+ *or* `-`{2,},
+  trailing ws only) carves a `RoxygenMdSetextUnderline` leaf, `@md`+line-start, after the ATX check.
+  New `TokKind::RoxygenMdSetextUnderline` → **`ROXYGEN_TEXT`** in `syntax_kind_for` (an unmatched
+  underline — a thematic-break position — stays literal prose, byte-identical to before). **Single
+  `-`/`- ` is deliberately NOT carved** — it collides with an empty list-item bullet; single-dash
+  setext H2 is deferred. `--`/`---`/`===` (the common forms) are covered.
+- **Grouper** (`build.rs`/`group.rs`): `is_md_setext_heading_start` (look-back scan via the new
+  `next_roxygen_line_marker`) + `emit_md_setext_heading` build a **multi-line** `ROXYGEN_MD_HEADING`
+  (reusing the ATX node kind) holding the prose lines + underline. Wired into the Prose arm gated on
+  `!para_open` (detected only at a fresh paragraph, so the run captured is exactly the paragraph the
+  grouper would build). `is_foldable_continuation` now excludes underlines (so a same-line tag value
+  doesn't swallow one) and is `pub(super)`.
 
-**Projector** (`project_rd.rs`): `Inline::MdHeading(node)` is a **structural marker**, not serialized in
-place. `section_body_parts` emits it as its own group. `emit_section_with_headings` (used for
-`@description`/`@details` + intro-derived description/details) splits the body at heading markers, builds a
-`HeadingFrame` outline stack (frame 0 = enclosing tag at level 0; each heading's parent = nearest open
-frame of a strictly lower level), then emits: the enclosing tag (leading prose + level->=2 direct children
-as nested `\subsection`, omitted when empty) + each level-1 child as a **top-level `\section`** sibling.
-`render_heading_frame` renders `\section`/`\subsection` as a 2-arg structural macro (title, body-GRP);
-`parse_md_heading` reads level + closing-`#`-stripped title (`strip_atx_closing`); title inlines resolve
-via `resolve_macro_arg_inlines`. **Formatter:** atomic marker-normalized single-line passthrough (Tenet 1).
+**Projector** (`project_rd.rs`): `parse_md_heading` gained a setext branch — a node whose last
+marker-stripped line is a setext underline (`setext_underline_level`: `=`→1, `-`→2) yields that level
+and a title joined from the lines above it (soft breaks → spaces). Everything downstream
+(`section_body_parts`, `emit_section_with_headings`, `HeadingFrame` outline) is unchanged — setext
+flows through the identical `Inline::MdHeading` path. **Formatter:** `emit_md_heading` already splits
+`node.text()` per line and marker-normalizes, so the multi-line node just works (idempotent — reparse
+re-forms the same heading).
 
-**Result:** projector **340→343 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green (562
-lib + integration), clippy + fmt clean; fixed-point net 75→**78/78** preserving; format baseline **+3
-additive** (the 3 new curated cases only). Curated `md_heading`/`_subsection`/`_intro` (+ pins); parser
-fixtures `roxygen_md_heading` (+`_not`, two blocks: non-md literal + `@md` rejects `#hashtag`/7-`#`);
-formatter fixture `roxygen_md_heading`; lexer unit tests (`md_heading_recognized`/`_rejects`); projector
-unit tests (`md_heading_hoists_section_and_nests_subsection`, `md_subsection_without_level_one_stays_in_details`).
+**Result:** projector **343→345 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green
+(851 total), clippy + fmt clean; fixed-point net 78→**80/80** preserving; format baseline **+2 additive**
+(the 2 new curated cases only, no existing case reinterpreted). Curated `md_setext`/`md_setext_multiline`
+(+ pins); parser fixtures `roxygen_md_setext` (+`_not`: non-md literal / thematic-break position /
+single-dash list / mixed `=-=`); formatter fixture `roxygen_md_setext`; lexer unit tests
+(`md_setext_underline_recognized`/`_rejects`); projector unit tests
+(`md_setext_heading_hoists_section`/`md_setext_multiline_title_and_nesting`).
 
-**Trap (new):** *Markdown mode is **block-wide**, not positional* — `block_md` scans the whole `#'` run for
-`@md`/`@noMd` (last wins), so an `@md` **anywhere** in a block makes an earlier `@details`'s `# x` a
-heading. A "not a heading without `@md`" fixture needs its own separate block (no `@md`).
+**Trap (new):** *Setext is a look-back; detect at paragraph OPEN.* The underline promotes the whole
+contiguous paragraph, so the scan must start at the paragraph's first line (`!para_open`) and walk its
+full foldable run — not react at the underline line itself. A `RoxygenMdSetextUnderline` is Content role
+(so it reads as Prose), which is why `is_foldable_continuation` must explicitly exclude it.
 
-**Next (ranked):** **(1)** **blockquotes** (`>` line) — roxygen2 *errors* ("block quotes are not currently
-supported") → a **diagnostic-parity** fixture, not a silent blocked; check whether roxygen-diagnostic
-side-channel infra exists first. **(2)** **setext headings** (`===`/`---` underline) → same
-`\section`/`\subsection` hoist as ATX, reusing `emit_section_with_headings`. **(3)** facets (c)/(d) of the
-`@md` `\`-escape cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass migration, do NOT widen the
-lexer. The 18 projector divergences stay out of scope (roxygen2 evaluation / multi-block).
+**Next (ranked):** **(1)** **blockquotes** (`>` line) — roxygen2 *errors* ("block quotes are not
+currently supported") → a **diagnostic-parity** fixture; check whether a roxygen-diagnostic side-channel
+exists first (also covers **thematic breaks** `---`/`***`/`___` after a blank, which error the same way —
+currently arity leaves them literal). **(2)** single-dash setext H2 (`-`/`- ` after a paragraph) — needs
+block-level promotion of an empty list-marker line, resolving the list-vs-underline ambiguity. **(3)**
+facets (c)/(d) of the `@md` `\`-escape cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass
+migration, do NOT widen the lexer. The 18 projector divergences stay out of scope (roxygen2 evaluation /
+multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02g** — ATX headings `# Title` (levels 1-6) → hoisted Rd `\section`/`\subsection` (single-line `RoxygenMdHeading` leaf; projector `emit_section_with_headings`/`HeadingFrame` outline; trap: md mode is block-wide, so a "not a heading" fixture needs its own no-`@md` block). 340→343.
 - **2026-07-02f** — GFM pipe tables `| a | b |` + `|---|:--:|` → `\tabular{<align>}{… \tab … \cr}` (`is_table_delim_row` carve, `emit_md_table`; projector `serialize_md_table` per-cell inline runs). 337→340.
 - **2026-07-02e** — CommonMark email autolinks `<addr>` → `\href{mailto:addr}{addr}` (`scan_md_email_autolink`; projector `autolink_has_uri_scheme` splits URI→`\url` vs email→mailto). 336→337.
 - **2026-07-02d** — link-ref def with a trailing macro on the dest line is not a definition (`match_linkref_def` rejects a non-`Text` inline without a `SOFT_BREAK`; `parse_linkref_def_dest`→`(url, line_closed)`). 335→336.

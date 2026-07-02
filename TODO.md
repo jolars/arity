@@ -735,8 +735,20 @@
       (`serialize_md_table`): each cell is an independent markdown inline run (emphasis never crosses a
       `|`), `\|`→`|` per-cell, ragged rows pad with empty cells / truncate to the column count. The
       formatter passes the table through atomically (marker-normalized, never reflowed; Tenet 1).
-      Curated `md_table`/`md_table_cells`/`md_table_prose`; projector 337→340. **Backlog:** setext
-      headings, and **blockquotes** (roxygen2 errors → diagnostic-parity) remain.
+      Curated `md_table`/`md_table_cells`/`md_table_prose`; projector 337→340. **Backlog:**
+      **blockquotes** (roxygen2 errors → diagnostic-parity) remain.
+      **Setext headings LANDED (2026-07-02h):** a `===`/`---` underline line under `@md` carves as a
+      `RoxygenMdSetextUnderline` leaf (`is_setext_underline`: `=`+ or `-`{2,}, single `-`/`- ` excluded
+      as an empty list bullet). At block level a paragraph immediately terminated by such an underline
+      is promoted (look-back `is_md_setext_heading_start` + `emit_md_setext_heading`) into the SAME
+      `ROXYGEN_MD_HEADING` node as ATX — the underline turns the **whole preceding paragraph** into the
+      heading text (multi-line title coalesces). `=`→level 1 (top-level `\section`), `-`→level 2
+      (`\subsection`), sharing the ATX outline builder. `parse_md_heading` detects setext (multi-line
+      node whose last stripped line is an underline) and reads the level+title. Formatter reuses ATX's
+      marker-normalized passthrough. Curated `md_setext`/`md_setext_multiline`; projector 343→345.
+      **Backlog:** single-dash `-`/`- ` setext H2 (collides with empty list bullet); a setext underline
+      after a same-line tag value (`@details Title` / `===`) stays a literal sibling (same-line-tag-value
+      grouping backlog); thematic breaks (`---` after a blank) stay literal where roxygen2 errors.
       **ATX headings LANDED (2026-07-02g):** a `#{1,6}` + space/EOL line under `@md` carves as a whole-line
       `RoxygenMdHeading` leaf (`is_atx_heading`) wrapped in a single-line `ROXYGEN_MD_HEADING` node (a
       direct section child, like the HTML block / table). The projector (`emit_section_with_headings`)

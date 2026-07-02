@@ -127,6 +127,18 @@ pub(crate) enum TokKind {
     /// kind to `ROXYGEN_TEXT`, so a heading leaf that is never wrapped (there is no
     /// such path today) stays literal prose.
     RoxygenMdHeading,
+    /// A **setext heading underline** line (`===`/`---`): a line whose content is a
+    /// non-empty run of `=` (level 1) or two-or-more `-` (level 2), with only
+    /// leading/trailing whitespace, recognized at a line's content start under a
+    /// resolved `@md` mode. The token is the whole line content. Whether it actually
+    /// forms a heading is a *block-level look-back* decision — a setext underline
+    /// heads nothing on its own; it promotes the **preceding paragraph** into a
+    /// heading (`emit_md_setext_heading`). The tree builder maps this kind to
+    /// `ROXYGEN_TEXT`, so an underline with no preceding paragraph (a thematic-break
+    /// position) stays literal prose. Single `-`/`- ` underlines are *not* carved
+    /// here — they collide with an empty list-item marker — so a single-dash setext
+    /// H2 is deferred backlog; `---` (the common form) is covered.
+    RoxygenMdSetextUnderline,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -160,10 +172,21 @@ impl TokKind {
             RoxygenAt => Some(RoxygenRole::At),
             RoxygenTagName => Some(RoxygenRole::TagName),
             RoxygenTagArg => Some(RoxygenRole::TagArg),
-            RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdBracket
-            | RoxygenMdImage | RoxygenMdDelim | RoxygenMdCode | RoxygenMdListMarker
-            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock | RoxygenMdTableDelim
-            | RoxygenMdHeading => Some(RoxygenRole::Content),
+            RoxygenText
+            | RoxygenCode
+            | RoxygenRdMacro
+            | RoxygenMdLink
+            | RoxygenMdBracket
+            | RoxygenMdImage
+            | RoxygenMdDelim
+            | RoxygenMdCode
+            | RoxygenMdListMarker
+            | RoxygenMdFence
+            | RoxygenMdHtml
+            | RoxygenMdHtmlBlock
+            | RoxygenMdTableDelim
+            | RoxygenMdHeading
+            | RoxygenMdSetextUnderline => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

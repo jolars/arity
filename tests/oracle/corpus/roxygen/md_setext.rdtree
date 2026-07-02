@@ -1,0 +1,4 @@
+(\description (TEXT "Setext outline"))
+(\section (TEXT "First") (GRP (TEXT "Body of first.") (\subsection (TEXT "Nested") (TEXT "Nested body."))))
+(\section (TEXT "Second") (TEXT "Body of second."))
+(\title (TEXT "Setext outline"))

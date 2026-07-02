@@ -354,3 +354,5 @@ md_table_prose
 md_heading
 md_heading_subsection
 md_heading_intro
+md_setext
+md_setext_multiline

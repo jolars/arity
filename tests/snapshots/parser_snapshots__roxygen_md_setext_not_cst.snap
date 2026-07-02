@@ -1,0 +1,93 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..328
+  ROXYGEN_BLOCK@0..65
+    ROXYGEN_SECTION@0..65
+      ROXYGEN_PARAGRAPH@0..65
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..49 "Without markdown an u ..."
+        NEWLINE@49..50 "\n"
+        ROXYGEN_MARKER@50..52 "#'"
+        WHITESPACE@52..53 " "
+        ROXYGEN_TEXT@53..58 "Title"
+        NEWLINE@58..59 "\n"
+        ROXYGEN_MARKER@59..61 "#'"
+        WHITESPACE@61..62 " "
+        ROXYGEN_TEXT@62..65 "==="
+  NEWLINE@65..66 "\n"
+  ASSIGNMENT_EXPR@66..74
+    IDENT@66..69 "foo"
+    WHITESPACE@69..70 " "
+    ASSIGN_LEFT@70..72 "<-"
+    WHITESPACE@72..73 " "
+    INT@73..74 "1"
+  NEWLINE@74..75 "\n"
+  NEWLINE@75..76 "\n"
+  ROXYGEN_BLOCK@76..318
+    ROXYGEN_SECTION@76..127
+      ROXYGEN_PARAGRAPH@76..124
+        ROXYGEN_MARKER@76..78 "#'"
+        WHITESPACE@78..79 " "
+        ROXYGEN_TEXT@79..123 "With markdown these d ..."
+        NEWLINE@123..124 "\n"
+      ROXYGEN_MARKER@124..126 "#'"
+      NEWLINE@126..127 "\n"
+    ROXYGEN_SECTION@127..134
+      ROXYGEN_MARKER@127..129 "#'"
+      WHITESPACE@129..130 " "
+      ROXYGEN_TAG@130..133
+        ROXYGEN_AT@130..131 "@"
+        ROXYGEN_TAG_NAME@131..133 "md"
+      NEWLINE@133..134 "\n"
+    ROXYGEN_SECTION@134..318
+      ROXYGEN_MARKER@134..136 "#'"
+      WHITESPACE@136..137 " "
+      ROXYGEN_TAG@137..145
+        ROXYGEN_AT@137..138 "@"
+        ROXYGEN_TAG_NAME@138..145 "details"
+      NEWLINE@145..146 "\n"
+      ROXYGEN_MARKER@146..148 "#'"
+      NEWLINE@148..149 "\n"
+      ROXYGEN_PARAGRAPH@149..226
+        ROXYGEN_MARKER@149..151 "#'"
+        WHITESPACE@151..152 " "
+        ROXYGEN_TEXT@152..155 "---"
+        NEWLINE@155..156 "\n"
+        ROXYGEN_MARKER@156..158 "#'"
+        WHITESPACE@158..159 " "
+        ROXYGEN_TEXT@159..225 "A dash run after a bl ..."
+        NEWLINE@225..226 "\n"
+      ROXYGEN_MARKER@226..228 "#'"
+      NEWLINE@228..229 "\n"
+      ROXYGEN_MD_LIST@229..233
+        ROXYGEN_MARKER@229..231 "#'"
+        WHITESPACE@231..232 " "
+        ROXYGEN_MD_LIST_ITEM@232..233
+          ROXYGEN_MD_LIST_MARKER@232..233 "-"
+      NEWLINE@233..234 "\n"
+      ROXYGEN_PARAGRAPH@234..276
+        ROXYGEN_MARKER@234..236 "#'"
+        WHITESPACE@236..237 " "
+        ROXYGEN_TEXT@237..275 "A single dash is an e ..."
+        NEWLINE@275..276 "\n"
+      ROXYGEN_MARKER@276..278 "#'"
+      NEWLINE@278..279 "\n"
+      ROXYGEN_PARAGRAPH@279..318
+        ROXYGEN_MARKER@279..281 "#'"
+        WHITESPACE@281..282 " "
+        ROXYGEN_TEXT@282..285 "=-="
+        NEWLINE@285..286 "\n"
+        ROXYGEN_MARKER@286..288 "#'"
+        WHITESPACE@288..289 " "
+        ROXYGEN_TEXT@289..318 "A mixed run is litera ..."
+  NEWLINE@318..319 "\n"
+  ASSIGNMENT_EXPR@319..327
+    IDENT@319..322 "bar"
+    WHITESPACE@322..323 " "
+    ASSIGN_LEFT@323..325 "<-"
+    WHITESPACE@325..326 " "
+    INT@326..327 "2"
+  NEWLINE@327..328 "\n"

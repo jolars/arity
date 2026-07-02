@@ -215,6 +215,8 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_table_not",
         "roxygen_md_heading",
         "roxygen_md_heading_not",
+        "roxygen_md_setext",
+        "roxygen_md_setext_not",
         "roxygen_rd_figure",
         "roxygen_unterminated_code",
         "roxygen_unbalanced_macro",

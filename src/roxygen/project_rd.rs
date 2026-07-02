@@ -673,15 +673,46 @@ fn render_heading_frame(frames: &[HeadingFrame], idx: usize, md: bool, macro_nam
     format!("(\\{macro_name}{})", prefix_space(&inner))
 }
 
-/// A markdown ATX heading node's level (1-6) and title text (markdown source, with
-/// the optional closing `#` sequence stripped and surrounding whitespace trimmed).
-/// The node is a single line; the `#'` marker and its leading space are stripped.
+/// A markdown heading node's level (1-6) and title text (markdown source, resolved
+/// later by the caller). Handles both node shapes that reach `ROXYGEN_MD_HEADING`:
+///
+/// - **ATX** (`# Title`): a single line; the level is the leading `#` run, the title
+///   is the rest with the optional closing `#` sequence stripped.
+/// - **Setext** (`Title` / `===`): two or more `#'` lines whose last is a `===`/`---`
+///   underline; the level comes from the underline (`=` -> 1, `-` -> 2) and the
+///   title from the joined prose lines above it (soft breaks become spaces, matching
+///   a coalesced paragraph).
 fn parse_md_heading(node: &SyntaxNode) -> (usize, String) {
     let text = node.text().to_string();
+    let lines: Vec<&str> = text.split('\n').map(strip_marker).collect();
+    if lines.len() >= 2
+        && let Some(level) = setext_underline_level(lines.last().unwrap())
+    {
+        let title = lines[..lines.len() - 1]
+            .iter()
+            .map(|l| l.trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        return (level, title);
+    }
     let line = strip_marker(&text).trim_start();
     let level = line.bytes().take_while(|&b| b == b'#').count().clamp(1, 6);
     let rest = line.get(level..).unwrap_or("").trim();
     (level, strip_atx_closing(rest).to_string())
+}
+
+/// The setext heading level of a marker-stripped line, or `None` when it is not a
+/// setext underline: a non-empty run of `=` (level 1) or `-` (level 2) with only
+/// surrounding whitespace. Mirrors the lexer's `is_setext_underline` (which carved
+/// the underline leaf), so a line that reached here as the last child of a heading
+/// node always matches.
+fn setext_underline_level(line: &str) -> Option<usize> {
+    let s = line.trim();
+    let ch = s.bytes().next()?;
+    if (ch == b'=' || ch == b'-') && s.bytes().all(|b| b == ch) {
+        return Some(if ch == b'=' { 1 } else { 2 });
+    }
+    None
 }
 
 /// Strip a CommonMark ATX **closing sequence** — a trailing run of `#` preceded by
@@ -4101,6 +4132,54 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"Title\"))\n\
              (\\details (TEXT \"Lead.\") (\\subsection (TEXT \"Sub\") (TEXT \"body\")))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn md_setext_heading_hoists_section() {
+        // A setext `===` underline promotes its preceding paragraph into a level-1
+        // heading, hoisted to a top-level `\section` out of `\details` (same as an
+        // ATX `#`). The prose after the underline is the section body.
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' Big\n\
+                   #' ===\n\
+                   #'\n\
+                   #' body\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\section (TEXT \"Big\") (TEXT \"body\"))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn md_setext_multiline_title_and_nesting() {
+        // The underline promotes the *whole* preceding paragraph: `intro`+`Sub` are
+        // one paragraph (no blank between), so `---` makes both the H2 title
+        // ("intro Sub"). A `-` underline is level 2, nested under the `===` H1.
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' Top\n\
+                   #' ===\n\
+                   #' intro\n\
+                   #' Sub\n\
+                   #' ---\n\
+                   #' deep\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\section (TEXT \"Top\") (\\subsection (TEXT \"intro Sub\") (TEXT \"deep\")))\n\
              (\\title (TEXT \"Title\"))"
         );
     }

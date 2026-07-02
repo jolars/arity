@@ -619,6 +619,83 @@ pub(super) fn emit_md_heading(tokens: &[Token], start: usize, events: &mut Vec<E
     i
 }
 
+/// Whether the roxygen line whose marker is at `start` is a **setext heading
+/// underline** line — its first content token is a `RoxygenMdSetextUnderline` leaf
+/// (carved only under a resolved `@md` mode, so the builder never re-derives mode).
+pub(super) fn is_md_setext_underline_line(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdSetextUnderline)
+}
+
+/// Whether the prose line whose marker is at `start` opens a **setext heading**:
+/// its paragraph — the maximal run of foldable prose continuation lines — is
+/// terminated *immediately* by a setext underline line. A setext underline heads
+/// nothing on its own, so the current line must carry prose (not be the underline).
+/// The whole preceding paragraph becomes the heading text; this block-level
+/// look-back is what distinguishes a setext H2 (`para` then `---`) from a thematic
+/// break (`---` after a blank). Only called at a paragraph open, so the run scanned
+/// here is exactly the paragraph the grouper would otherwise build.
+pub(super) fn is_md_setext_heading_start(tokens: &[Token], start: usize) -> bool {
+    if is_md_setext_underline_line(tokens, start) {
+        return false;
+    }
+    let mut line = start;
+    loop {
+        let Some(next) = super::group::next_roxygen_line_marker(tokens, line) else {
+            return false;
+        };
+        if is_md_setext_underline_line(tokens, next) {
+            return true;
+        }
+        if super::group::is_foldable_continuation(tokens, next) {
+            line = next;
+            continue;
+        }
+        return false;
+    }
+}
+
+/// Emit a `ROXYGEN_MD_HEADING` node for a **setext heading**: the preceding prose
+/// paragraph (one or more `#'` lines) plus its `===`/`---` underline line. The
+/// `#'` markers, marker->content whitespace, and inter-line newlines are threaded
+/// in as trivia leaves; the trailing newline after the underline is left to the
+/// caller. Returns the token index just past the underline line's content.
+///
+/// The projector reads the level from the underline (`=` -> 1, `-` -> 2) and the
+/// title from the prose lines before it; the formatter emits each line
+/// marker-normalized (`emit_md_heading`), so the pair reparses to the same heading
+/// (idempotent). Reuses the ATX heading's node kind — both are `ROXYGEN_MD_HEADING`.
+pub(super) fn emit_md_setext_heading(
+    tokens: &[Token],
+    start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HEADING));
+    let mut marker = start;
+    loop {
+        events.push(Event::Tok(marker)); // RoxygenMarker
+        let mut i = marker + 1;
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+        if is_md_setext_underline_line(tokens, marker) {
+            events.push(Event::Finish); // ROXYGEN_MD_HEADING
+            return i;
+        }
+        // Not the underline yet: thread the inter-line trivia (newline + continuation
+        // indentation) and advance. `is_md_setext_heading_start` guaranteed the run
+        // terminates in an underline, so a next line always exists.
+        let next = super::group::next_roxygen_line_marker(tokens, marker)
+            .expect("setext heading run terminates in an underline");
+        for idx in i..next {
+            events.push(Event::Tok(idx));
+        }
+        marker = next;
+    }
+}
+
 /// Emit a multi-line block Rd macro as a `ROXYGEN_RD_MACRO` node spanning `#'`
 /// lines. The node owns its opening line's marker and the inter-line markers,
 /// newlines, and indentation as threaded trivia (losslessness); its body is a

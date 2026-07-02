@@ -1,0 +1,93 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..209
+  ROXYGEN_BLOCK@0..203
+    ROXYGEN_SECTION@0..37
+      ROXYGEN_PARAGRAPH@0..34
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..33 "Setext headings under ..."
+        NEWLINE@33..34 "\n"
+      ROXYGEN_MARKER@34..36 "#'"
+      NEWLINE@36..37 "\n"
+    ROXYGEN_SECTION@37..44
+      ROXYGEN_MARKER@37..39 "#'"
+      WHITESPACE@39..40 " "
+      ROXYGEN_TAG@40..43
+        ROXYGEN_AT@40..41 "@"
+        ROXYGEN_TAG_NAME@41..43 "md"
+      NEWLINE@43..44 "\n"
+    ROXYGEN_SECTION@44..185
+      ROXYGEN_MARKER@44..46 "#'"
+      WHITESPACE@46..47 " "
+      ROXYGEN_TAG@47..55
+        ROXYGEN_AT@47..48 "@"
+        ROXYGEN_TAG_NAME@48..55 "details"
+      NEWLINE@55..56 "\n"
+      ROXYGEN_MD_HEADING@56..73
+        ROXYGEN_MARKER@56..58 "#'"
+        WHITESPACE@58..59 " "
+        ROXYGEN_TEXT@59..64 "First"
+        NEWLINE@64..65 "\n"
+        ROXYGEN_MARKER@65..67 "#'"
+        WHITESPACE@67..68 " "
+        ROXYGEN_TEXT@68..73 "====="
+      NEWLINE@73..74 "\n"
+      ROXYGEN_MARKER@74..76 "#'"
+      NEWLINE@76..77 "\n"
+      ROXYGEN_PARAGRAPH@77..95
+        ROXYGEN_MARKER@77..79 "#'"
+        WHITESPACE@79..80 " "
+        ROXYGEN_TEXT@80..94 "Body of first."
+        NEWLINE@94..95 "\n"
+      ROXYGEN_MARKER@95..97 "#'"
+      NEWLINE@97..98 "\n"
+      ROXYGEN_MD_HEADING@98..117
+        ROXYGEN_MARKER@98..100 "#'"
+        WHITESPACE@100..101 " "
+        ROXYGEN_TEXT@101..107 "Nested"
+        NEWLINE@107..108 "\n"
+        ROXYGEN_MARKER@108..110 "#'"
+        WHITESPACE@110..111 " "
+        ROXYGEN_TEXT@111..117 "------"
+      NEWLINE@117..118 "\n"
+      ROXYGEN_PARAGRAPH@118..134
+        ROXYGEN_MARKER@118..120 "#'"
+        WHITESPACE@120..121 " "
+        ROXYGEN_TEXT@121..133 "Nested body."
+        NEWLINE@133..134 "\n"
+      ROXYGEN_MARKER@134..136 "#'"
+      NEWLINE@136..137 "\n"
+      ROXYGEN_MD_HEADING@137..171
+        ROXYGEN_MARKER@137..139 "#'"
+        WHITESPACE@139..140 " "
+        ROXYGEN_TEXT@140..148 "Two line"
+        NEWLINE@148..149 "\n"
+        ROXYGEN_MARKER@149..151 "#'"
+        WHITESPACE@151..152 " "
+        ROXYGEN_TEXT@152..159 "heading"
+        NEWLINE@159..160 "\n"
+        ROXYGEN_MARKER@160..162 "#'"
+        WHITESPACE@162..163 " "
+        ROXYGEN_TEXT@163..171 "========"
+      NEWLINE@171..172 "\n"
+      ROXYGEN_PARAGRAPH@172..185
+        ROXYGEN_MARKER@172..174 "#'"
+        WHITESPACE@174..175 " "
+        ROXYGEN_TEXT@175..184 "Trailing."
+        NEWLINE@184..185 "\n"
+    ROXYGEN_SECTION@185..203
+      ROXYGEN_MARKER@185..187 "#'"
+      WHITESPACE@187..188 " "
+      ROXYGEN_TAG@188..203
+        ROXYGEN_AT@188..189 "@"
+        ROXYGEN_TAG_NAME@189..193 "name"
+        WHITESPACE@193..194 " "
+        ROXYGEN_TEXT@194..196 "md"
+        ROXYGEN_MD_DELIM@196..197 "_"
+        ROXYGEN_TEXT@197..203 "setext"
+  NEWLINE@203..204 "\n"
+  IDENT@204..208 "NULL"
+  NEWLINE@208..209 "\n"

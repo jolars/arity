@@ -354,6 +354,22 @@ fn lex_roxygen_prose(
         );
         return;
     }
+    // Under `@md`, a line whose content is a **setext heading underline** (`===` or
+    // `---`) carves the whole remaining line off as a `RoxygenMdSetextUnderline`
+    // leaf. Whether it promotes the preceding paragraph into a heading is decided
+    // later at block level (`emit_md_setext_heading`); an underline that heads
+    // nothing stays literal prose (the tree builder maps the kind to `ROXYGEN_TEXT`).
+    if md && line_start && is_setext_underline(bytes, pos) {
+        push(
+            out,
+            TokKind::RoxygenMdSetextUnderline,
+            text,
+            start,
+            pos,
+            text.len() - pos,
+        );
+        return;
+    }
     // Under `@md`, a prose line whose content begins with a list marker carves it
     // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
     // run). Whether the marker actually forms a list is a block-level decision
@@ -668,6 +684,41 @@ fn is_atx_heading(bytes: &[u8], i: usize) -> bool {
         return false;
     }
     matches!(bytes.get(i + n), None | Some(b' ' | b'\t'))
+}
+
+/// Whether the line content at `bytes[i..]` (positioned past the `#'` marker) is a
+/// **setext heading underline**: after up to three spaces of leading indentation, a
+/// non-empty run of `=` or a run of two-or-more `-`, then only trailing whitespace
+/// to the line end. `=` gives a level-1 underline, `-` a level-2 one (the projector
+/// reads the level from the leaf's first non-space byte).
+///
+/// A single `-`/`- ` is deliberately excluded: it is indistinguishable from an
+/// empty list-item bullet at the token level, and the list-marker path already owns
+/// it. The common `===`/`---` forms are covered; a single-dash setext H2 is deferred.
+fn is_setext_underline(bytes: &[u8], i: usize) -> bool {
+    let mut j = i;
+    let mut indent = 0;
+    while indent < 3 && bytes.get(j) == Some(&b' ') {
+        j += 1;
+        indent += 1;
+    }
+    let ch = match bytes.get(j) {
+        Some(&c @ (b'=' | b'-')) => c,
+        _ => return false,
+    };
+    let run = run_len(bytes, j, ch);
+    if ch == b'-' && run < 2 {
+        return false; // a single `-` is an empty list bullet, not an underline
+    }
+    j += run;
+    while let Some(&c) = bytes.get(j) {
+        if c == b' ' || c == b'\t' {
+            j += 1;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
@@ -1478,6 +1529,7 @@ mod tests {
                         | TokKind::RoxygenMdHtmlBlock
                         | TokKind::RoxygenMdTableDelim
                         | TokKind::RoxygenMdHeading
+                        | TokKind::RoxygenMdSetextUnderline
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1627,16 +1679,67 @@ mod tests {
 
     #[test]
     fn md_table_delim_rejects_non_delimiters() {
-        // A pipeless dash run (`---`, a setext underline) and a colon-only cell
-        // (`| : |`, no hyphen) are not delimiter rows — they stay literal prose.
-        for text in ["---", "| : | - |"] {
-            let src = format!("#' {text}\n#' @md\n");
+        // A colon-only cell (`| : |`, no hyphen) is not a delimiter row — it stays
+        // literal prose. (A pipeless `---` is a *setext underline* leaf now, covered
+        // by `md_setext_underline_recognized`.)
+        let text = "| : | - |";
+        let src = format!("#' {text}\n#' @md\n");
+        assert_eq!(
+            prose_texts(&src),
+            vec![(TokKind::RoxygenText, text.into())],
+            "non-delimiter {text:?}"
+        );
+    }
+
+    #[test]
+    fn md_setext_underline_recognized() {
+        // Under `@md`, a line whose content is a run of `=` or two-or-more `-` (with
+        // optional up-to-3-space indent and trailing whitespace) carves off as a
+        // single `RoxygenMdSetextUnderline` leaf — the block builder decides whether
+        // it promotes a preceding paragraph into a heading.
+        for underline in ["===", "=", "---", "--", "=== "] {
+            let src = format!("#' text\n#' {underline}\n#' @md\n");
+            let toks = prose_texts(&src);
             assert_eq!(
-                prose_texts(&src),
-                vec![(TokKind::RoxygenText, text.into())],
-                "non-delimiter {text:?}"
+                toks.last(),
+                Some(&(TokKind::RoxygenMdSetextUnderline, underline.into())),
+                "underline {underline:?} -> {toks:?}"
+            );
+            assert_lossless(&src);
+        }
+    }
+
+    #[test]
+    fn md_setext_underline_rejects_non_underlines() {
+        // A single `-`/`- ` (an empty list bullet), a mixed `=-=`, a `=== x` with
+        // trailing text, and an underline without `@md` all stay non-underline: the
+        // single dash is a list marker, the rest literal prose.
+        let single_dash = prose_texts("#' text\n#' - \n#' @md\n");
+        assert!(
+            single_dash
+                .iter()
+                .any(|t| t.0 == TokKind::RoxygenMdListMarker && t.1 == "-"),
+            "single `- ` is a list bullet: {single_dash:?}"
+        );
+        assert!(
+            !single_dash
+                .iter()
+                .any(|t| t.0 == TokKind::RoxygenMdSetextUnderline),
+            "single `- ` is not a setext underline: {single_dash:?}"
+        );
+        for text in ["=-=", "=== x"] {
+            let src = format!("#' first\n#' {text}\n#' @md\n");
+            assert_eq!(
+                prose_texts(&src).last(),
+                Some(&(TokKind::RoxygenText, text.into())),
+                "non-underline {text:?}"
             );
         }
+        assert_eq!(
+            prose_texts("#' text\n#' ===\n").last(),
+            Some(&(TokKind::RoxygenText, "===".into())),
+            "no `@md`: an underline-looking line is literal prose"
+        );
     }
 
     #[test]

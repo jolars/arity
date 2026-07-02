@@ -1,0 +1,3 @@
+(\description (TEXT "Setext multi-line title"))
+(\section (TEXT "Top") (\subsection (TEXT "intro Sub") (TEXT "deep")))
+(\title (TEXT "Setext multi-line title"))

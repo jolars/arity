@@ -221,5 +221,9 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         // (the only path the grouper produces). Mapping the bare leaf to
         // `ROXYGEN_TEXT` keeps any unwrapped heading leaf as literal prose.
         TokKind::RoxygenMdHeading => SyntaxKind::ROXYGEN_TEXT,
+        // A setext heading underline (`===`/`---`) is verbatim text: it lives inside
+        // a `ROXYGEN_MD_HEADING` node when it promotes a preceding paragraph, and
+        // stays literal prose when it heads nothing (a thematic-break position).
+        TokKind::RoxygenMdSetextUnderline => SyntaxKind::ROXYGEN_TEXT,
     }
 }
