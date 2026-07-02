@@ -299,6 +299,17 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   backtick follows). `emit_md_code_block` pairs opener↔closer into `ROXYGEN_MD_CODE_BLOCK`. Projector
   emits 3 atoms: `\if{html}{\out{<div…>}}` / `\preformatted{<code+\n>}` / `\if{html}{\out{</div>}}`.
   Out of scope: ` ```{r} ` knitr-eval blocks.
+- **Indented code blocks** (`ROXYGEN_MD_INDENTED_CODE` node): a line indented **>= 5 space columns** past
+  the marker (roxygen2 strips `#'` + one space, cmark needs 4). **No mode-carrying leaf** — the content
+  lexes as ordinary tokens, so the block builder re-derives `@md` via `block_md` (reusing
+  `roxygen_md_directive`), the one sanctioned exception to "never re-derive `@md` in the block builder"
+  (there is no leaf). `is_indent_code_line` reads the ordinary `Whitespace` length (do NOT add a
+  whitespace-variant token — it fights every `== Whitespace` loop). Checked in the group main loop
+  **before `classify_line`** (a column-5 `@param`/`\item` is code, not a tag/macro), gated `md && !para_open`
+  (interrupt rule). `emit_md_indented_code` gathers code lines + interior blanks (trailing blanks
+  dropped). Projector `serialize_md_indented_code`: strip marker + up to 5 columns/line, one VERB per
+  line, bare `sourceCode` class — same 3-atom shape as fenced. Formatter uses `normalize_list_marker_text`
+  (indent is semantic; trimming destroys the block). Tabs → prose (backlog). Curated `md_indented_code`.
 - **HTML blocks** (`ROXYGEN_MD_HTML_BLOCK` node): `scan_md_html_block` carves a line-start opener
   (CommonMark start **condition 6** only, a `BLOCK_TAGS` tag, before the fence carve);
   `emit_md_html_block` gathers opener + following Prose lines until blank/tag/non-roxygen. Projector
@@ -432,7 +443,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 353 matching (all allowlisted), 18 divergent** of 371 pinned.
+corpus (132 `cm-NNN` cases). **Current: 355 matching (all allowlisted), 18 divergent** of 373 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -441,62 +452,73 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (370 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (373 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 87/87 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 90/90 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02n) — setext heading after a same-line tag value
+## Latest session (2026-07-02o) — markdown indented code blocks
 
-Landed **a setext heading whose title begins as a tag's same-line value** (ranked #2; the same-line-tag-
-value grouping backlog). Probed roxygen2: `@details Big Title`⏎`===`⏎`body.` renders `(\section (TEXT "Big
-Title") (TEXT "body para."))` — identical to the next-line form (`@details`⏎`Big Title`⏎`===`), which arity
-already handled. Previously the same-line value stopped folding at the underline (`is_foldable_continuation`
-excludes underlines), so `Big Title` sat in the `ROXYGEN_TAG` and `===`+body were a literal sibling paragraph
-— no setext promotion.
+Landed **CommonMark indented code blocks** under `@md` (a line indented >= 5 space columns past
+the `#'` marker — roxygen2 strips the marker + one space, then cmark needs 4 — renders the same
+three-atom `\if{html}{\out{<div class="sourceCode">}}` / `\preformatted{…}` / `\if{html}{\out{</div>}}`
+sequence as a fenced block, bare `sourceCode` class, each line's indent stripped). This also **fixed
+an existing formatter bug**: indented code was parsed as prose and reflowed (`x <- 1`⏎`y <- 2` →
+`x <- 1 y <- 2`), changing what roxygen2 renders — a Tenet-1/fixed-point violation.
 
-**Parser-only** (projector needs **nothing**). `emit_tag_line` pre-scans for the tag name + first value
-token, then when `has_value && tag_folds_prose_continuation(name) && is_md_setext_heading_start(tokens,
-start)` it closes the tag **empty** and emits the value + underline as a **sibling** `ROXYGEN_MD_HEADING`
-via the new `emit_md_setext_heading_from_value` (a marker-less first line — the `#'` belongs to the tag).
-That's the exact shape the next-line form already produces, so the existing projector routes it correctly
-with no new arm: `emit_section_with_headings` **hoists** it for description/details, and `serialize_inlines`'
-`Inline::MdHeading` arm **inlines the title** (dropping the underline) for other prose tags — matching
-roxygen2, which *warns* "Level 1 headings are not supported in @seealso" and flattens (`(\seealso (TEXT "Big
-Title body."))`). No tag gating needed.
+**Design (three approaches, kept the third).** (a) A whole-line content leaf `RoxygenMdIndentCode`
+made a block-macro body's `\item` lines opaque → broke `\enumerate` projection (the harvested
+`rx-959fc227` regressed). (b) A whitespace-signal leaf `RoxygenMdIndent` broke ~15 `== Whitespace`
+skip loops in the block-macro machinery (the gather stopped mid-`\enumerate`). (c) **KEPT: no new
+token.** The >= 5-col signal is read from the ordinary `Whitespace` token length; `@md` is threaded
+to the block builder via a new `block_md(tokens, start)` (group.rs) that re-derives mode per block,
+**reusing the lexer's `roxygen_md_directive`** (now `pub(super)`) so what counts as `@md`/`@noMd`
+stays one source. Normal `Whitespace` everywhere → the whole block-macro machinery is untouched.
 
-**Formatter** (one edit): `emit_md_heading` gained the `mid_prose` branch (mirror of `emit_block_macro`) —
-a heading whose first token isn't a `ROXYGEN_MARKER` gets `#' ` prepended to its first line, so the title
-lands on its own `#'` line above the underline. That is the next-line setext form, which projects
-identically → **idempotent** (`#' @details Big Title`⏎`#' ===` reflows to `#' @details`⏎`#' Big Title`⏎`#'
-===`, stable thereafter).
+**Parser.** `is_indent_code_line` (build.rs): `tokens[start+1]` is a `Whitespace` of >= 5 all-space
+columns *and* real content follows (a whitespace-only line is blank, not code). `is_md_indented_code_start`
+adds `md && !para_open` (the interrupt rule). Detection runs in the group main loop **before
+`classify_line`**, so a column-5 `@param` is code text, not a tag (matches roxygen2). `emit_md_indented_code`
+gathers code lines + **interior** blank lines (trailing blanks excluded, like fenced code) into a new
+`ROXYGEN_MD_INDENTED_CODE` node. Content lexes normally (so a `\item`/emphasis inside a block macro or a
+lazy continuation still resolves — no regression).
 
-**Result:** projector **353→354 matching** (all allowlisted), 18 divergent (unchanged, out-of-scope).
-`cargo test` green, clippy + fmt clean; curated fixed-point net **89/89 preserving** (was 88/88; R run), 0
-blocked/diverg; format baseline **+1 additive** (the new curated case, an idempotent split). New parser
-fixture `roxygen_md_setext_tag_value` (CST shows the empty `@details` tag + the sibling `ROXYGEN_MD_HEADING`;
-lossless, empty diagnostics) + curated corpus `md_setext_tag_value` (+ pin, + allowlist). Mode-gated for
-free: the `===` underline leaf is `@md`-only, so a non-md `@details Big Title`⏎`===` folds `===` as prose.
+**Projector.** `serialize_md_indented_code` reads `node.text()`, per line strips the marker + one space
+(`strip_marker`) then up to 4 more code-indent columns, one `(VERB …)` per line (`verb_atoms`; fenced
+`serialize_md_code_block`'s single-VERB is unexercised and would mis-split multi-line — indented code is
+usually multi-line, so per-line is required). New `Inline::MdIndentedCode`, wired in `section_body_parts`
++ `serialize_inlines` exactly like `MdCodeBlock`.
 
-**Trap (new):** *A same-line tag value promoting to a heading is a sibling, not a tag child.* The value
-physically sits on the tag line, but the faithful CST closes the tag empty and makes the value+underline a
-`ROXYGEN_MD_HEADING` **sibling** — reusing the next-line form's shape so the whole projector (hoist vs
-inline-title, per tag) works unchanged. The only new surface is the marker-less first line, handled in the
-parser emit (no leading marker threaded) and the formatter (`mid_prose` prefix), mirroring `emit_block_macro`'s
-mid-prose opener.
+**Formatter.** `emit_md_indented_code` uses **`normalize_list_marker_text`** (preserves content
+indentation) — the indent IS the code signal, so trimming it (as every other block emitter's
+`normalize_marker_text` does) would destroy the block. Byte-identical for `#'` markers → idempotent.
 
-**Next (ranked):** **(1)** the roxygen-diagnostic side-channel (block-quote/thematic-break/unknown-macro /
-unsupported-heading warnings) as a second oracle surface — no diagnostic infra exists in the roxygen parser
-yet; the `@seealso` level-1-heading warn+flatten this session leaned on is a candidate. **(2)** facets (c)/(d)
-of the `@md` `\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. The 18 projector
-divergences stay out of scope (roxygen2 evaluation / multi-block).
+**Result:** projector **354→355 matching** (all allowlisted), 18 divergent (unchanged, out-of-scope).
+`cargo test` green, clippy + fmt clean; curated fixed-point **90/90 preserving** (was 89), 0 blocked;
+format baseline **+1 additive**. New fixtures: parser `roxygen_md_indented_code` (CST shows the code
+node; a 4-space line stays a `ROXYGEN_PARAGRAPH` — threshold is 5; lossless, empty diagnostics),
+formatter `roxygen_md_indented_code` (indent preserved), curated corpus `md_indented_code` (+pin
++allowlist).
+
+**Traps (new):**
+- *Indented code has NO mode-carrying leaf* (its content lexes as ordinary tokens), so the block builder
+  **re-derives `@md`** via `block_md` (reusing `roxygen_md_directive`) — a deliberate, documented
+  exception to "never re-derive `@md` in the block builder," necessary because there is no leaf and the
+  projector already re-derives (`block_md`). **Do NOT reintroduce a whitespace-variant token** — it fights
+  every `== Whitespace` loop in the block-macro machinery.
+- *Threshold is 5 columns, detection before `classify_line`.* roxygen2 strips `#'` + one space, then cmark's
+  4-column code indent — so 5 post-marker spaces = code, 4 = prose. A column-5 `@param`/`\item` is code, not
+  a tag/macro, so the section-level check pre-empts Tag/Prose classification. Tabs → treated as prose (backlog).
+- *The indent is semantic in the formatter.* Reuse `normalize_list_marker_text`, never `normalize_marker_text`
+  (which trims content ws) — trimming the >= 4-column indent turns the code block back into prose.
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02n** — setext heading whose title begins as a tag's same-line value (`@details Big Title`⏎`===` → sibling `ROXYGEN_MD_HEADING`, empty tag; `emit_tag_line` pre-scan + `emit_md_setext_heading_from_value`; formatter `mid_prose` prefix; projector unchanged). 353→354.
 - **2026-07-02m** — block-quote lazy continuation (a non-`>` paragraph-continuation line folds into the quote's open paragraph, no separator; `emit_md_block_quote` gather loop continues on `is_md_block_quote_start` OR `is_foldable_continuation`; projector/formatter unchanged). 352→353.
 - **2026-07-02l** — block-quote glue onto adjacent prose (no paragraph separator before a quote; projector-only, `RunSeg::Final` segment + `trim_trailing_run_ws`, separators suppressed in both join sites). 350→352.
 - **2026-07-02k** — single-dash setext H2 underlines (`-`/`- ` after a paragraph → level-2 setext; an empty list item can't interrupt a paragraph); build.rs `is_md_setext_dash_underline`/`is_md_setext_underline_or_dash` wired into the two setext functions only, list-check-first disambiguates the fresh-position empty bullet. Parser-only. 349→350.

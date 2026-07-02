@@ -114,6 +114,7 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             // (marker-normalized, never reflowed across items/lines).
             SyntaxKind::ROXYGEN_MD_LIST
             | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
+            | SyntaxKind::ROXYGEN_MD_INDENTED_CODE
             | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
             | SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE
             | SyntaxKind::ROXYGEN_MD_TABLE
@@ -230,6 +231,19 @@ fn emit_md_list(items: &mut Vec<Ir>, node: &SyntaxNode) {
 fn emit_md_code_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
         push_line(items, normalize_marker_text(seg));
+    }
+}
+
+/// Emit a markdown indented code block (`@md` mode) as atomic passthrough, each
+/// `#'` line marker-normalized but **keeping the content's leading indentation** —
+/// that >= 4-column indentation past the stripped `#'` is exactly what makes the
+/// line code (trimming it, as [`normalize_marker_text`] would, turns the block back
+/// into prose and changes the rendered Rd). Reuses [`normalize_list_marker_text`],
+/// which drops only the single conventional space after the marker; on reparse the
+/// same indentation re-forms the code block, so this is idempotent.
+fn emit_md_indented_code(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_list_marker_text(seg));
     }
 }
 
@@ -449,6 +463,13 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 // A fenced code block is atomic passthrough, each line marker-
                 // normalized — byte-identical to the pre-node textual fence path.
                 emit_md_code_block(&mut items, macro_node);
+            } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_INDENTED_CODE {
+                // An indented code block is atomic passthrough, but — unlike the
+                // other blocks — its leading indentation is the semantic signal that
+                // makes it code (>= 4 columns past the stripped `#'`), so it must be
+                // preserved, not trimmed. Marker-normalize while keeping the content
+                // indentation (as the markdown-list passthrough does for nesting).
+                emit_md_indented_code(&mut items, macro_node);
             } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_HTML_BLOCK {
                 // An HTML block is atomic passthrough (verbatim raw HTML), each
                 // line marker-normalized — never reflowed across lines.

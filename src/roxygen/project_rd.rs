@@ -148,6 +148,12 @@ enum Inline {
     /// `\if{html}{\out{<div…>}}` / `\preformatted{…}` / `\if{html}{\out{</div>}}`
     /// sequence (see [`serialize_md_code_block`]).
     MdCodeBlock(SyntaxNode),
+    /// A markdown indented code block resolved under `@md` mode (a
+    /// `ROXYGEN_MD_INDENTED_CODE` node). Projects to the same three-atom
+    /// `\if{html}{\out{<div…>}}` / `\preformatted{…}` / `\if{html}{\out{</div>}}`
+    /// sequence as a fenced code block, but with a bare `sourceCode` class and each
+    /// line's leading indentation stripped (see [`serialize_md_indented_code`]).
+    MdIndentedCode(SyntaxNode),
     /// A raw inline-HTML tag resolved under `@md` mode, carrying the verbatim tag
     /// text (`<img …>`, `</span>`). Projects to roxygen2's
     /// `\if{html}{\out{<tag>}}` (`mdxml_html_inline`; see [`html_inline_atom`]).
@@ -1137,6 +1143,12 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                     atoms.push(atom);
                 }
                 atoms.extend(serialize_md_code_block(node));
+            }
+            Inline::MdIndentedCode(node) => {
+                if let Some(atom) = flush_run(&mut run, md) {
+                    atoms.push(atom);
+                }
+                atoms.extend(serialize_md_indented_code(node));
             }
             Inline::MdHtml(raw) => {
                 if let Some(atom) = flush_run(&mut run, md) {
@@ -3067,6 +3079,7 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
             | SyntaxKind::ROXYGEN_RD_MACRO
             | SyntaxKind::ROXYGEN_MD_LIST
             | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
+            | SyntaxKind::ROXYGEN_MD_INDENTED_CODE
             | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
             | SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE
             | SyntaxKind::ROXYGEN_MD_TABLE => {
@@ -3078,6 +3091,7 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
                         .unwrap_or_default(),
                     SyntaxKind::ROXYGEN_MD_LIST => vec![Inline::MdList(node)],
                     SyntaxKind::ROXYGEN_MD_CODE_BLOCK => vec![Inline::MdCodeBlock(node)],
+                    SyntaxKind::ROXYGEN_MD_INDENTED_CODE => vec![Inline::MdIndentedCode(node)],
                     SyntaxKind::ROXYGEN_MD_HTML_BLOCK => vec![Inline::MdHtmlBlock(node)],
                     SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE => vec![Inline::MdBlockQuote(node)],
                     SyntaxKind::ROXYGEN_MD_TABLE => vec![Inline::MdTable(node)],
@@ -3862,6 +3876,43 @@ fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
             encode_text(&format!("<div class=\"{class}\">"))
         ),
         format!("(\\preformatted (VERB {}))", encode_text(&code)),
+        format!(
+            "(\\if (TEXT {html}) (\\out (VERB {})))",
+            encode_text("</div>")
+        ),
+    ]
+}
+
+/// Project a `ROXYGEN_MD_INDENTED_CODE` node into the same three-atom rendering as
+/// a fenced code block (`mdxml_code_block`), but with a bare `sourceCode` class (an
+/// indented code block has no info string) and each line's indentation stripped: a
+/// CommonMark indented code block drops four columns of indentation, on top of the
+/// `#'` marker and the one space roxygen2 strips first. Each line therefore has its
+/// marker, one following space, then up to four further leading spaces removed; the
+/// result is joined with newlines (a trailing newline per line, commonmark's
+/// `xml_text`) and split into one `VERB` per line by `parse_Rd`.
+fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
+    let text = node.text().to_string();
+    let mut code = String::new();
+    for line in text.split('\n') {
+        // `strip_marker` removes the `#'` marker and the single conventional space;
+        // the indented code block then consumes up to four further leading columns.
+        let after_marker = strip_marker(line);
+        let content = after_marker
+            .char_indices()
+            .take(4)
+            .take_while(|&(_, c)| c == ' ')
+            .count();
+        code.push_str(&after_marker[content..]);
+        code.push('\n');
+    }
+    let html = encode_text("html");
+    vec![
+        format!(
+            "(\\if (TEXT {html}) (\\out (VERB {})))",
+            encode_text("<div class=\"sourceCode\">")
+        ),
+        format!("(\\preformatted {})", verb_atoms(&code).join(" ")),
         format!(
             "(\\if (TEXT {html}) (\\out (VERB {})))",
             encode_text("</div>")

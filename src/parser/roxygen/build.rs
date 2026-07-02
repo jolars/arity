@@ -598,6 +598,123 @@ pub(super) fn is_md_code_block_start(tokens: &[Token], start: usize) -> bool {
     tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdFence)
 }
 
+/// Whether the roxygen line whose marker is at `start` is an **indented-code
+/// line**: its marker->content whitespace is five or more all-space columns (a
+/// CommonMark indented code block needs four columns; roxygen2 strips the marker
+/// and one following space first) *and* there is real content after it (a
+/// whitespace-only line is blank, not code). Mode-blind — the caller gates on `md`;
+/// the leading whitespace is ordinary `Whitespace` (no special leaf), so the
+/// block-macro machinery's whitespace handling is unaffected.
+fn is_indent_code_line(tokens: &[Token], start: usize) -> bool {
+    let Some(ws) = tokens.get(start + 1) else {
+        return false;
+    };
+    if ws.kind != TokKind::Whitespace || ws.text.len() < 5 || !ws.text.bytes().all(|b| b == b' ') {
+        return false;
+    }
+    let content = line_content_start(tokens, start);
+    tokens
+        .get(content)
+        .is_some_and(|t| is_line_body_kind(&t.kind))
+}
+
+/// Whether the roxygen line whose marker is at `start` opens a **markdown indented
+/// code block**: the block is `@md`, the line is an indented-code line, and it does
+/// not interrupt an open paragraph. A CommonMark indented code block cannot
+/// interrupt a paragraph, so a >= 4-column-indented line inside a paragraph
+/// (`para_open`) is a lazy continuation, not a code block — the same block-level
+/// `para_open` gate the list-marker recognizer applies. `md` is threaded from the
+/// block builder (there is no per-line leaf to key off, since the content lexes as
+/// ordinary tokens), the way the projector re-derives it per block.
+pub(super) fn is_md_indented_code_start(
+    tokens: &[Token],
+    start: usize,
+    para_open: bool,
+    md: bool,
+) -> bool {
+    md && !para_open && is_indent_code_line(tokens, start)
+}
+
+/// Emit a `ROXYGEN_MD_INDENTED_CODE` node spanning the indented code block
+/// beginning at `start` (a `RoxygenMarker` whose content is a `RoxygenMdIndentCode`
+/// leaf). The node gathers the opening line, following indented-code lines, and any
+/// **interior** blank lines (a blank line joins the block only when a later line is
+/// another code line — CommonMark keeps interior blanks but drops trailing ones).
+/// A tag opener, a non-indented prose line, or a non-roxygen line ends the block;
+/// the trailing newline (and any trailing blank lines) after the last code line are
+/// left to the caller. The `#'` markers, marker->content whitespace, and inter-line
+/// newlines/indentation are threaded in as trivia (losslessness), the way the fenced
+/// code block threads them. Returns the token index just past the last code line.
+pub(super) fn emit_md_indented_code(
+    tokens: &[Token],
+    start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_INDENTED_CODE));
+
+    // Opening line: marker, marker->content whitespace, the code leaf.
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+
+    loop {
+        // `i` is at the trailing `Newline` of the last emitted code line. Scan
+        // forward across zero or more blank lines to the next code line; a blank run
+        // only joins the block when a code line follows it.
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            break;
+        }
+        let mut probe = i; // at a `Newline`
+        let code_end = loop {
+            let mut m = probe + 1;
+            while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+                m += 1;
+            }
+            if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
+                break None; // a non-roxygen line ends the block
+            }
+            if is_indent_code_line(tokens, m) {
+                let mut e = m + 1;
+                while tokens.get(e).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                    e += 1;
+                }
+                break Some(e);
+            }
+            if matches!(classify_line(tokens, m), LineKind::Blank) {
+                // A blank line: tentatively part of the block; keep scanning past it.
+                let mut e = m + 1;
+                while tokens.get(e).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                    e += 1;
+                }
+                if tokens.get(e).map(|t| &t.kind) != Some(&TokKind::Newline) {
+                    break None; // a trailing blank line at EOF is not in the block
+                }
+                probe = e;
+            } else {
+                break None; // a tag or non-indented prose line ends the block
+            }
+        };
+        match code_end {
+            // Thread the intervening trivia (newlines, continuation indentation,
+            // interior blank-line markers) and the code line's tokens into the node.
+            Some(end) => {
+                for idx in i..end {
+                    events.push(Event::Tok(idx));
+                }
+                i = end;
+            }
+            None => break,
+        }
+    }
+
+    events.push(Event::Finish); // ROXYGEN_MD_INDENTED_CODE
+    i
+}
+
 /// Emit a `ROXYGEN_MD_CODE_BLOCK` node spanning the fenced code block beginning
 /// at `start` (a `RoxygenMarker` whose content is a `RoxygenMdFence` opener).
 /// The node owns the opener fence leaf, each verbatim code line's body tokens,

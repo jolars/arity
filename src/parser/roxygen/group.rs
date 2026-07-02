@@ -8,11 +8,12 @@
 
 use super::build::{
     block_macro_opener_closes, emit_block_macro, emit_block_macro_inline, emit_md_block_quote,
-    emit_md_code_block, emit_md_heading, emit_md_html_block, emit_md_list, emit_md_setext_heading,
-    emit_md_table, emit_md_thematic_break, is_block_macro_line, is_block_macro_opener,
-    is_md_block_quote_start, is_md_code_block_start, is_md_heading_start, is_md_html_block_start,
-    is_md_list_start, is_md_setext_heading_start, is_md_setext_underline_line,
-    is_md_setext_underline_or_dash, is_md_table_start, is_md_thematic_break_line,
+    emit_md_code_block, emit_md_heading, emit_md_html_block, emit_md_indented_code, emit_md_list,
+    emit_md_setext_heading, emit_md_table, emit_md_thematic_break, is_block_macro_line,
+    is_block_macro_opener, is_md_block_quote_start, is_md_code_block_start, is_md_heading_start,
+    is_md_html_block_start, is_md_indented_code_start, is_md_list_start,
+    is_md_setext_heading_start, is_md_setext_underline_line, is_md_setext_underline_or_dash,
+    is_md_table_start, is_md_thematic_break_line,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -44,7 +45,47 @@ pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Ve
     end
 }
 
+/// The resolved `@md` mode of the block starting at `start`, re-derived from the
+/// block's own tokens. Indented code blocks are the one construct with no
+/// mode-carrying leaf (their content lexes as ordinary tokens — see
+/// [`super::build::is_indent_code_line`]), so the block builder needs `@md` here to
+/// decide whether a >= 5-column indent is a code block or literal Rd prose. This
+/// mirrors the projector's own per-block `block_md`; it reuses the lexer's directive
+/// matcher [`super::lex::roxygen_md_directive`] so what counts as `@md`/`@noMd`
+/// stays a single source of truth. Default off, last directive in the block wins.
+fn block_md(tokens: &[Token], start: usize) -> bool {
+    let mut md = false;
+    let mut i = start;
+    loop {
+        // Reconstruct the line text (marker + body tokens) and check for a directive.
+        let mut line = String::from(&*tokens[i].text);
+        let mut j = i + 1;
+        while tokens.get(j).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            line.push_str(&tokens[j].text);
+            j += 1;
+        }
+        if let Some(on) = super::lex::roxygen_md_directive(&line) {
+            md = on;
+        }
+        // Continuation: `Newline`, optional continuation `Whitespace`, then a marker.
+        if tokens.get(j).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            break;
+        }
+        let mut m = j + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) == Some(&TokKind::RoxygenMarker) {
+            i = m;
+        } else {
+            break;
+        }
+    }
+    md
+}
+
 fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    let md = block_md(tokens, start);
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_BLOCK));
 
@@ -54,122 +95,137 @@ fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Ev
 
     loop {
         // `i` is at a `RoxygenMarker` (a logical line start).
-        match classify_line(tokens, i) {
-            LineKind::Tag => {
-                if para_open {
-                    events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                    para_open = false;
-                }
-                if section_open {
-                    events.push(Event::Finish); // previous ROXYGEN_SECTION
-                }
+        //
+        // An indented code block (a >= 5-column `@md` indent with no open paragraph)
+        // is a section-level construct that pre-empts the line's Tag/Prose
+        // classification: at column 5 even an `@param` is code text, not a tag. The
+        // interrupt rule (a code block cannot interrupt a paragraph) is the
+        // `!para_open` gate inside `is_md_indented_code_start`, so a >= 5-column line
+        // inside an open paragraph falls through and folds in as a lazy continuation.
+        if is_md_indented_code_start(tokens, i, para_open, md) {
+            if !section_open {
                 events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
                 section_open = true;
-                i = emit_tag_line(tokens, i, events);
             }
-            LineKind::Blank => {
-                if para_open {
-                    events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                    para_open = false;
-                }
-                if !section_open {
+            i = emit_md_indented_code(tokens, i, events);
+        } else {
+            match classify_line(tokens, i) {
+                LineKind::Tag => {
+                    if para_open {
+                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                        para_open = false;
+                    }
+                    if section_open {
+                        events.push(Event::Finish); // previous ROXYGEN_SECTION
+                    }
                     events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
                     section_open = true;
+                    i = emit_tag_line(tokens, i, events);
                 }
-                i = emit_line_tokens(tokens, i, events); // marker (+ trailing ws)
-            }
-            LineKind::Prose => {
-                if !section_open {
-                    events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
-                    section_open = true;
+                LineKind::Blank => {
+                    if para_open {
+                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                        para_open = false;
+                    }
+                    if !section_open {
+                        events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
+                        section_open = true;
+                    }
+                    i = emit_line_tokens(tokens, i, events); // marker (+ trailing ws)
                 }
-                if is_md_html_block_start(tokens, i) {
-                    // A markdown HTML block (`@md` mode) is a direct section child,
-                    // like a block macro: close any open paragraph and emit the
-                    // HTML block as a sibling.
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
+                LineKind::Prose => {
+                    if !section_open {
+                        events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
+                        section_open = true;
                     }
-                    i = emit_md_html_block(tokens, i, events);
-                } else if is_md_block_quote_start(tokens, i) {
-                    // A markdown block quote (`> quoted`, `@md` mode) is a direct
-                    // section child, like a block macro: it interrupts an open
-                    // paragraph (CommonMark block quotes interrupt paragraphs).
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
+                    if is_md_html_block_start(tokens, i) {
+                        // A markdown HTML block (`@md` mode) is a direct section child,
+                        // like a block macro: close any open paragraph and emit the
+                        // HTML block as a sibling.
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_md_html_block(tokens, i, events);
+                    } else if is_md_block_quote_start(tokens, i) {
+                        // A markdown block quote (`> quoted`, `@md` mode) is a direct
+                        // section child, like a block macro: it interrupts an open
+                        // paragraph (CommonMark block quotes interrupt paragraphs).
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_md_block_quote(tokens, i, events);
+                    } else if is_md_code_block_start(tokens, i) {
+                        // A markdown fenced code block (`@md` mode) is a direct
+                        // section child, like a block macro: close any open paragraph
+                        // and emit the code block as a sibling.
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_md_code_block(tokens, i, events);
+                    } else if is_md_list_start(tokens, i, para_open) {
+                        // A markdown list (`@md` mode) is a direct section child, like
+                        // a block macro: close any open paragraph and build the list.
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_md_list(tokens, i, events);
+                    } else if is_block_macro_line(tokens, i) {
+                        // A block Rd macro (`\itemize{ … }` across lines) is a direct
+                        // section child, not paragraph prose: close any open paragraph
+                        // and emit the macro as a sibling.
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_block_macro(tokens, i, events);
+                    } else if is_md_table_start(tokens, i) {
+                        // A GFM table (header + delimiter row) is a direct section
+                        // child, like a block macro; it interrupts an open paragraph.
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_md_table(tokens, i, events);
+                    } else if is_md_heading_start(tokens, i) {
+                        // An ATX heading is a direct section child, like a block macro;
+                        // it interrupts an open paragraph. The projector hoists it into
+                        // an Rd `\section`/`\subsection`.
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_md_heading(tokens, i, events);
+                    } else if !para_open && is_md_setext_heading_start(tokens, i) {
+                        // A setext heading: this prose line's paragraph is terminated by a
+                        // `===`/`---` underline. Emit the whole paragraph + underline as a
+                        // `ROXYGEN_MD_HEADING` (a direct section child, like ATX). Detected
+                        // only at a fresh paragraph, so it captures the paragraph's full
+                        // extent — the underline promotes every contiguous prose line above
+                        // it, matching CommonMark.
+                        i = emit_md_setext_heading(tokens, i, events);
+                    } else if is_md_thematic_break_line(tokens, i) {
+                        // A thematic break (`***`/`---`/`___`) is a direct section child,
+                        // like a block quote: it interrupts an open paragraph (CommonMark).
+                        // A promoting `---` is consumed as a setext heading above, so any
+                        // dash-run reaching here heads nothing. roxygen2 renders a thematic
+                        // break as empty; the projector drops the node so the surrounding
+                        // paragraphs coalesce.
+                        if para_open {
+                            events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                            para_open = false;
+                        }
+                        i = emit_md_thematic_break(tokens, i, events);
+                    } else {
+                        if !para_open {
+                            events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
+                            para_open = true;
+                        }
+                        i = emit_prose_line(tokens, i, events);
                     }
-                    i = emit_md_block_quote(tokens, i, events);
-                } else if is_md_code_block_start(tokens, i) {
-                    // A markdown fenced code block (`@md` mode) is a direct
-                    // section child, like a block macro: close any open paragraph
-                    // and emit the code block as a sibling.
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
-                    }
-                    i = emit_md_code_block(tokens, i, events);
-                } else if is_md_list_start(tokens, i, para_open) {
-                    // A markdown list (`@md` mode) is a direct section child, like
-                    // a block macro: close any open paragraph and build the list.
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
-                    }
-                    i = emit_md_list(tokens, i, events);
-                } else if is_block_macro_line(tokens, i) {
-                    // A block Rd macro (`\itemize{ … }` across lines) is a direct
-                    // section child, not paragraph prose: close any open paragraph
-                    // and emit the macro as a sibling.
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
-                    }
-                    i = emit_block_macro(tokens, i, events);
-                } else if is_md_table_start(tokens, i) {
-                    // A GFM table (header + delimiter row) is a direct section
-                    // child, like a block macro; it interrupts an open paragraph.
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
-                    }
-                    i = emit_md_table(tokens, i, events);
-                } else if is_md_heading_start(tokens, i) {
-                    // An ATX heading is a direct section child, like a block macro;
-                    // it interrupts an open paragraph. The projector hoists it into
-                    // an Rd `\section`/`\subsection`.
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
-                    }
-                    i = emit_md_heading(tokens, i, events);
-                } else if !para_open && is_md_setext_heading_start(tokens, i) {
-                    // A setext heading: this prose line's paragraph is terminated by a
-                    // `===`/`---` underline. Emit the whole paragraph + underline as a
-                    // `ROXYGEN_MD_HEADING` (a direct section child, like ATX). Detected
-                    // only at a fresh paragraph, so it captures the paragraph's full
-                    // extent — the underline promotes every contiguous prose line above
-                    // it, matching CommonMark.
-                    i = emit_md_setext_heading(tokens, i, events);
-                } else if is_md_thematic_break_line(tokens, i) {
-                    // A thematic break (`***`/`---`/`___`) is a direct section child,
-                    // like a block quote: it interrupts an open paragraph (CommonMark).
-                    // A promoting `---` is consumed as a setext heading above, so any
-                    // dash-run reaching here heads nothing. roxygen2 renders a thematic
-                    // break as empty; the projector drops the node so the surrounding
-                    // paragraphs coalesce.
-                    if para_open {
-                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
-                        para_open = false;
-                    }
-                    i = emit_md_thematic_break(tokens, i, events);
-                } else {
-                    if !para_open {
-                        events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
-                        para_open = true;
-                    }
-                    i = emit_prose_line(tokens, i, events);
                 }
             }
         }

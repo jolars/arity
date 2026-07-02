@@ -102,7 +102,7 @@ fn line_run_end(bytes: &[u8], i: usize) -> usize {
 /// is an `@md` / `@noMd` mode directive: `Some(true)` for `@md`, `Some(false)`
 /// for `@noMd`, `None` otherwise. The tag must stand alone after the marker
 /// (roxygen2 errors on a directive line carrying other content).
-fn roxygen_md_directive(line: &str) -> Option<bool> {
+pub(super) fn roxygen_md_directive(line: &str) -> Option<bool> {
     let after_hashes = line.trim_start_matches('#');
     let body = after_hashes.strip_prefix('\'')?.trim();
     match body {

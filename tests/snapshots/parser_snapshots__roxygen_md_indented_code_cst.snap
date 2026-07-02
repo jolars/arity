@@ -1,0 +1,88 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..303
+  ROXYGEN_BLOCK@0..297
+    ROXYGEN_SECTION@0..42
+      ROXYGEN_PARAGRAPH@0..39
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..38 "Indented code blocks  ..."
+        NEWLINE@38..39 "\n"
+      ROXYGEN_MARKER@39..41 "#'"
+      NEWLINE@41..42 "\n"
+    ROXYGEN_SECTION@42..49
+      ROXYGEN_MARKER@42..44 "#'"
+      WHITESPACE@44..45 " "
+      ROXYGEN_TAG@45..48
+        ROXYGEN_AT@45..46 "@"
+        ROXYGEN_TAG_NAME@46..48 "md"
+      NEWLINE@48..49 "\n"
+    ROXYGEN_SECTION@49..272
+      ROXYGEN_MARKER@49..51 "#'"
+      WHITESPACE@51..52 " "
+      ROXYGEN_TAG@52..60
+        ROXYGEN_AT@52..53 "@"
+        ROXYGEN_TAG_NAME@53..60 "details"
+      NEWLINE@60..61 "\n"
+      ROXYGEN_PARAGRAPH@61..92
+        ROXYGEN_MARKER@61..63 "#'"
+        WHITESPACE@63..64 " "
+        ROXYGEN_TEXT@64..91 "Some prose before the ..."
+        NEWLINE@91..92 "\n"
+      ROXYGEN_MARKER@92..94 "#'"
+      NEWLINE@94..95 "\n"
+      ROXYGEN_MD_INDENTED_CODE@95..146
+        ROXYGEN_MARKER@95..97 "#'"
+        WHITESPACE@97..102 "     "
+        ROXYGEN_TEXT@102..108 "x <- 1"
+        NEWLINE@108..109 "\n"
+        ROXYGEN_MARKER@109..111 "#'"
+        WHITESPACE@111..118 "       "
+        ROXYGEN_TEXT@118..129 "nested <- 2"
+        NEWLINE@129..130 "\n"
+        ROXYGEN_MARKER@130..132 "#'"
+        NEWLINE@132..133 "\n"
+        ROXYGEN_MARKER@133..135 "#'"
+        WHITESPACE@135..140 "     "
+        ROXYGEN_TEXT@140..146 "y <- 3"
+      NEWLINE@146..147 "\n"
+      ROXYGEN_MARKER@147..149 "#'"
+      NEWLINE@149..150 "\n"
+      ROXYGEN_PARAGRAPH@150..175
+        ROXYGEN_MARKER@150..152 "#'"
+        WHITESPACE@152..153 " "
+        ROXYGEN_TEXT@153..174 "Prose after the code."
+        NEWLINE@174..175 "\n"
+      ROXYGEN_MARKER@175..177 "#'"
+      NEWLINE@177..178 "\n"
+      ROXYGEN_PARAGRAPH@178..243
+        ROXYGEN_MARKER@178..180 "#'"
+        WHITESPACE@180..181 " "
+        ROXYGEN_TEXT@181..242 "A four-space indent i ..."
+        NEWLINE@242..243 "\n"
+      ROXYGEN_MARKER@243..245 "#'"
+      NEWLINE@245..246 "\n"
+      ROXYGEN_PARAGRAPH@246..272
+        ROXYGEN_MARKER@246..248 "#'"
+        WHITESPACE@248..252 "    "
+        ROXYGEN_TEXT@252..257 "still"
+        ROXYGEN_MD_DELIM@257..258 "_"
+        ROXYGEN_TEXT@258..271 "prose <- TRUE"
+        NEWLINE@271..272 "\n"
+    ROXYGEN_SECTION@272..297
+      ROXYGEN_MARKER@272..274 "#'"
+      WHITESPACE@274..275 " "
+      ROXYGEN_TAG@275..297
+        ROXYGEN_AT@275..276 "@"
+        ROXYGEN_TAG_NAME@276..280 "name"
+        WHITESPACE@280..281 " "
+        ROXYGEN_TEXT@281..283 "md"
+        ROXYGEN_MD_DELIM@283..284 "_"
+        ROXYGEN_TEXT@284..292 "indented"
+        ROXYGEN_MD_DELIM@292..293 "_"
+        ROXYGEN_TEXT@293..297 "code"
+  NEWLINE@297..298 "\n"
+  IDENT@298..302 "NULL"
+  NEWLINE@302..303 "\n"

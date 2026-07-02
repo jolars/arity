@@ -230,14 +230,24 @@ pub enum SyntaxKind {
     /// surrounding paragraphs coalesce. The projector drops it in `section_body_parts`.
     /// Appended last to keep the earlier variants' `as u16` discriminants stable.
     ROXYGEN_MD_THEMATIC_BREAK,
+    /// A markdown **indented code block** resolved under `@md` mode: a run of
+    /// prose lines each indented four or more columns past roxygen2's stripped
+    /// `#'` prefix (a CommonMark indented code block), with interior blank lines,
+    /// holding the `#'` markers (trivia) and the verbatim code leaves. roxygen2
+    /// renders it exactly like a fenced code block — the three-atom
+    /// `\if{html}{\out{<div…>}}` / `\preformatted{…}` / `\if{html}{\out{</div>}}`
+    /// sequence — but with a bare `sourceCode` class and each line's indentation
+    /// stripped (see `serialize_md_indented_code`). Appended last to keep the
+    /// earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_INDENTED_CODE,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_THEMATIC_BREAK` remains
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_INDENTED_CODE` remains
     /// the last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_INDENTED_CODE as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -407,6 +417,7 @@ impl Language for RLanguage {
             103 => SyntaxKind::ROXYGEN_MD_HEADING,
             104 => SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE,
             105 => SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK,
+            106 => SyntaxKind::ROXYGEN_MD_INDENTED_CODE,
             _ => SyntaxKind::ERROR,
         }
     }

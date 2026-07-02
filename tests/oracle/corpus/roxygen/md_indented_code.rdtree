@@ -1,0 +1,3 @@
+(\description (TEXT "Indented code block in markdown"))
+(\details (TEXT "Some prose before the code.") (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "x <- 1\n") (VERB "  nested <- 2\n") (VERB "\n") (VERB "y <- 3\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (TEXT "Prose after the code."))
+(\title (TEXT "Indented code block in markdown"))

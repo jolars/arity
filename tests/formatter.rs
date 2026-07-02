@@ -189,6 +189,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_setext_dash",
         "roxygen_md_blockquote",
         "roxygen_md_thematic_break",
+        "roxygen_md_indented_code",
         "roxygen_tag_reflow_param",
         "roxygen_tag_reflow_return",
         "roxygen_tag_reflow_seealso",

@@ -365,3 +365,4 @@ md_blockquote_lazy
 md_blockquote_multiline
 md_thematic_break
 md_thematic_break_stars
+md_indented_code
