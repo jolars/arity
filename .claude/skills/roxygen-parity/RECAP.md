@@ -307,6 +307,21 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): `<tag>` →
   `(\if (TEXT "html") (\out (VERB <tag>)))`. Mirrors CommonMark Raw-HTML grammar precisely; comment/PI/
   declaration/CDATA stay literal (backlog).
+- **GFM tables** (`ROXYGEN_MD_TABLE` node) are the **only** table kind (cmark-gfm `table` ext; pandoc
+  simple/grid tables stay prose). Recognition is **two-line**, so the `@md` signal is a mode-gated leaf on
+  the **delimiter** row (the header is generic prose — no header leaf): `RoxygenMdTableDelim`
+  (`is_table_delim_row`: ≥1 unescaped `|` so bare `---` stays setext; cells `:?-+:?`) → **`ROXYGEN_TEXT`**
+  in `syntax_kind_for` so an *unmatched* delim row is literal prose for free. Gate `is_md_table_start`
+  (two-line look-ahead: next line is the delim leaf **and** header cell-count == delim cell-count).
+  Cell counting/splitting (`split_table_row_cells`, `parser/roxygen.rs`) honors `\|` but **not** code
+  spans — a code-span pipe breaks the count (matches cmark-gfm). `emit_md_table` gathers header+delim+
+  greedy body rows (a pipeless line is a single-cell row; stop at blank/tag/new-block/EOF) verbatim
+  (like the HTML block). Projector `serialize_md_table` reparses `node.text()`: delim→align
+  (`:--`→l/`:-:`→c/`--:`→r/none→l), each cell an **independent** `resolve_macro_arg_inlines` run
+  (emphasis never crosses `|`), `\|`→`|` per-cell, ragged rows pad(empty cell, no atom)/truncate to
+  ncol; header+body fill one `GRP` with `\tab`/`\cr`. Formatter = atomic passthrough (Tenet 1). CST is
+  **flat verbatim** (no row/cell nodes) — the right shape (HTML-block precedent; structure would only
+  help column alignment, which the formatter deliberately doesn't do). Curated `md_table`/`_cells`/`_prose`.
 - **List markers** (`scan_md_list_marker`): punctuation only (trailing space stays in text).
   `is_md_list_start` applies the CommonMark interrupt rule (mid-paragraph): a bullet interrupts
   **unless the item is empty** (`md_list_item_is_empty`, cm-369); an ordered list interrupts only when
@@ -392,7 +407,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 337 matching (all allowlisted), 18 divergent** of 355 pinned.
+corpus (132 `cm-NNN` cases). **Current: 340 matching (all allowlisted), 18 divergent** of 358 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -401,58 +416,67 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (355 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (358 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 72/72 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 75/75 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02e) — CommonMark email autolinks
+## Latest session (2026-07-02f) — GFM tables
 
-Landed CommonMark **email autolinks** `<addr>` → `\href{mailto:addr}{addr}` (a parser gap: URI autolinks
-`<scheme:…>`→`\url` already worked, email was explicitly "out of scope" in `scan_md_autolink`). Probed the
-gap by differential sweep (arity projection vs `block-to-sections`): the CST was flat text, roxygen2 emits
-the mailto `\href`. Two-site change, no new SyntaxKind (reuses the `RoxygenMdLink` leaf):
-- **Lexer (`lex.rs`):** new `scan_md_email_autolink`, chained in the `b'<' if md` arm **after** the URI
-  `scan_md_autolink`, **before** raw HTML. It ports the strict CommonMark email regex — local part
-  ``[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+``, `@`, then `.`-separated domain labels each starting/ending in a
-  letter/digit (no leading/trailing hyphen, max length 63). All 8 validity edge cases calibrated against
-  roxygen2 match (single-label domain `<a@b>` valid; `<foo@-ex.com>`/`<foo@ex-.com>`/`<foo@ex_a.com>`
-  literal).
-- **Projector (`project_rd.rs`):** `resolve_md_link`'s `<…>` arm now distinguishes the two **disjoint**
-  cmark autolink forms via new `autolink_has_uri_scheme` (mirrors the scheme check in `scan_md_autolink`):
-  a URI scheme → `url_atom` (`\url`), else email → `href_atom(addr, "mailto:"+addr)`. `href_atom` already
-  emits `(\href (VERB "mailto:…") (TEXT "…"))` exactly. `<mailto:foo@x.com>` (a scheme) still lands on
-  `\url`. No other autolink site changed — the refmap/skeleton/drop machinery all key on `starts-with-<`,
-  so email autolinks (also `<…>`) are already handled identically. Formatter unchanged (same leaf kind →
-  already atomic).
+Landed **GFM pipe tables** `| a | b |` + `|---|:--:|` + body rows → `\tabular{<align>}{… \tab … \cr}`
+(the ranked #1 target). Confirmed by probe that cmark-gfm's `table` extension is the **only** table kind
+roxygen2 enables — pandoc *simple* (space-column) and *grid* (`+---+`) tables stay literal prose. The
+outer pipes are optional; colons in the delimiter set per-column alignment (`:--`→l, `:-:`→c, `--:`→r,
+none/`---`→l).
 
-**Result:** projector **336→337 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
-**71→72/72** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1
-(additive** — only new `md_email_autolink`). New parser fixture `roxygen_md_email_autolink` (CST +
-diagnostics snapshots), lexer unit test `md_email_autolink`, curated corpus `md_email_autolink` (+ pin).
+**Recognition is two-line, so a mode-gated leaf carries the `@md` signal** (the header row is generic
+prose with no md leaf — the standard block constructs each have a line-leading leaf, but a table's
+*header* does not, so the **delimiter row** is the carve site):
+- **Lexer** (`lex.rs` + shared helpers in `parser/roxygen.rs`): `scan`→`is_table_delim_row` carves a
+  whole-line `RoxygenMdTableDelim` leaf (≥1 unescaped `|` so a bare `---` stays a setext underline;
+  each cell `:?-+:?`). New `TokKind::RoxygenMdTableDelim` → **`ROXYGEN_TEXT`** in `syntax_kind_for` (so
+  an *unmatched* delimiter row is literal prose for free — no orphan-handling needed). Shared
+  `split_table_row_cells`/`count_table_cells` (honor `\|`, **not** code spans — a code-span pipe breaks
+  the count, matching cmark-gfm).
+- **Grouper** (`build.rs`/`group.rs`): `is_md_table_start` (two-line look-ahead: next line's content is
+  the delim leaf **and** header cell-count == delim cell-count) dispatches `emit_md_table`, which
+  gathers header + delim + greedily-consumed body rows (a pipeless line is a single-cell row; stops at
+  blank/tag/new-block/EOF) into a `ROXYGEN_MD_TABLE` node (verbatim, like the HTML block). Interrupts
+  an open paragraph; added to `is_foldable_continuation`'s exclusions.
+- **Projector** (`project_rd.rs`): `Inline::MdTable` → `serialize_md_table` reconstructs rows/cells from
+  `node.text()` (strip_marker per line). Delim row → alignment; header+body rows fill one `GRP`, each
+  cell an **independent** `resolve_macro_arg_inlines` run (emphasis never crosses `|`), `\|`→`|`
+  per-cell, ragged rows pad (empty trailing cell, no atom) / truncate to column count.
+- **Formatter** (`formatter/roxygen.rs`): `ROXYGEN_MD_TABLE` is atomic passthrough (marker-normalized,
+  never reflowed; Tenet 1), idempotent.
 
-**Incidental finding (recorded so it isn't re-chased):** `@return`→`\value` inline md **already works**
-(the same-line-value fold + `push_section`'s full markdown/linkref pipeline handle emphasis, code, links,
-soft-wrap). So the Slice-B backlog item "`\value` inline" is effectively closed for the same-line form;
-`@section` inline md also already matches (verified by probe). What remains genuinely unmodeled: **block**
-markdown constructs — GFM **tables** (`| … |` → `\tabular`), ATX/setext **headings** (`#`/`===` → hoisted
-`\section`/`\subsection`, requires cross-section restructuring), **blockquotes** (roxygen2 errors →
-diagnostic-parity), and thematic breaks (a roxygen2 internal error → out of scope).
+**New SyntaxKind** `ROXYGEN_MD_TABLE` (=102, now the last variant; COUNT bumped, `kind_from_raw` arm).
+The delim leaf reached every classifier (`roxygen_role`, `expr.rs` atom fallthrough, `syntax_kind_for`,
+`prose_texts` test helper). **CST shape = flat verbatim, reparse in projector** — the *right* shape:
+identical to the HTML-block/fenced-code precedent, and structured row/cell nodes would only pay off if
+the formatter aligned columns (it deliberately doesn't).
 
-**Next (ranked):** **(1)** GFM **tables** — self-contained block element inside a section body (like the
-existing `\itemize`/`\describe` block machinery), `| a | b |` + `|---|` alignment row → `\tabular{align}{…
-\tab … \cr}`. Highest value, cleanest fit. **(2)** markdown **headings** → `\section`/`\subsection` — common
-but invasive (hoists a `\section` out of `@details` to top level, subsection nesting). **(3)** facets (c)/(d)
-of the `@md` `\`-escape cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass migration, do NOT
-widen the lexer. **(4)** the tag same-line value **+ blank + prose** (paragraph break, low value); the 18
+**Result:** projector **337→340 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green
+(558 lib + all integration), clippy + fmt clean; format baseline **+3 additive** (only the 3 new curated
+cases; no existing case's format changed). Curated `md_table`/`md_table_cells`/`md_table_prose` (+ pins);
+parser fixtures `roxygen_md_table` (+`_not`, locks the literal-prose fallback); formatter fixture
+`roxygen_md_table`; lexer unit tests (`md_table_delim_*`); projector unit test
+(`md_table_projects_to_tabular`).
+
+**Next (ranked):** **(1)** markdown **headings** → `\section`/`\subsection` — the last common block
+construct, but invasive (hoists a `\section` out of `@details` to top level; subsection nesting;
+cross-section restructuring). **(2)** **blockquotes** — roxygen2 *errors* on them (`>` line) → a
+**diagnostic-parity** fixture, not a silent blocked. **(3)** facets (c)/(d) of the `@md` `\`-escape
+cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass migration, do NOT widen the lexer. The 18
 projector divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02e** — CommonMark email autolinks `<addr>` → `\href{mailto:addr}{addr}` (`scan_md_email_autolink`; projector `autolink_has_uri_scheme` splits URI→`\url` vs email→mailto). 336→337.
 - **2026-07-02d** — link-ref def with a trailing macro on the dest line is not a definition (`match_linkref_def` rejects a non-`Text` inline without a `SOFT_BREAK`; `parse_linkref_def_dest`→`(url, line_closed)`). 335→336.
 - **2026-07-02c** — HTML character references decode under `@md` (full 2125-entry HTML5 table, `decode_html_entities` wired into `prose_text_atom`). 334→335.
 - **2026-07-02b** — same-line tag-value continuation folds into the `ROXYGEN_TAG` (emphasis/link spans cross the soft break). 333→334.

@@ -80,6 +80,112 @@ pub(crate) fn is_two_arg_rd_macro(name: &str) -> bool {
     TWO_ARG_RD_MACROS.contains(&name)
 }
 
+/// Split a GFM table row into its cells, honoring backslash-escaped pipes. One
+/// optional leading and one optional trailing **unescaped** `|` are stripped (the
+/// GFM leading/trailing pipe), then the remainder is split on each unescaped `|`.
+/// Cells are returned untrimmed (callers trim). An escaped `\|` stays inside its
+/// cell. Shared by the recognition gate (cell counting) and the projector (cell
+/// rendering) so the two never disagree on where a cell begins.
+///
+/// GFM counts pipes **without** honoring code spans — a `|` inside `` `…` `` still
+/// splits a cell — so this deliberately does not track backticks. That is what
+/// makes `| ` + "`a|b`" + ` | y |` fail the header/delimiter cell-count match and
+/// stay prose (verified against roxygen2).
+pub(crate) fn split_table_row_cells(line: &str) -> Vec<&str> {
+    let trimmed = line.trim();
+    let bytes = trimmed.as_bytes();
+    let start = usize::from(bytes.first() == Some(&b'|'));
+    let end = if bytes.len() > start
+        && bytes[bytes.len() - 1] == b'|'
+        && !pipe_is_escaped(bytes, bytes.len() - 1)
+    {
+        bytes.len() - 1
+    } else {
+        bytes.len()
+    };
+    let inner = &trimmed[start..end];
+    let ib = inner.as_bytes();
+    let mut cells = Vec::new();
+    let mut cell_start = 0;
+    let mut i = 0;
+    while i < ib.len() {
+        match ib[i] {
+            b'\\' => i += 2, // skip the escaped byte (an escaped `\|` stays in-cell)
+            b'|' => {
+                cells.push(&inner[cell_start..i]);
+                i += 1;
+                cell_start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    cells.push(&inner[cell_start.min(inner.len())..]);
+    cells
+}
+
+/// The number of cells in a GFM table row (see [`split_table_row_cells`]). The
+/// header row and the delimiter row form a table only when these are equal.
+pub(crate) fn count_table_cells(line: &str) -> usize {
+    split_table_row_cells(line).len()
+}
+
+/// Whether `line` is a GFM table **delimiter row**: it contains at least one
+/// unescaped `|` (so a bare `---`, which is a setext underline, is *not* a
+/// single-column table) and every cell (trimmed) is `:?-+:?` (optional leading
+/// colon, one or more hyphens, optional trailing colon). The pipe requirement
+/// mirrors cmark-gfm, which treats a pipeless dash run as a setext heading.
+pub(crate) fn is_table_delim_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !line_has_unescaped_pipe(trimmed) {
+        return false;
+    }
+    let cells = split_table_row_cells(trimmed);
+    !cells.is_empty() && cells.iter().all(|c| is_table_delim_cell(c.trim()))
+}
+
+/// Whether the byte at `idx` (a `|`) is backslash-escaped: preceded by an odd
+/// run of `\`.
+fn pipe_is_escaped(bytes: &[u8], idx: usize) -> bool {
+    let mut k = idx;
+    let mut count = 0;
+    while k > 0 && bytes[k - 1] == b'\\' {
+        count += 1;
+        k -= 1;
+    }
+    count % 2 == 1
+}
+
+/// Whether `line` contains an unescaped `|`.
+fn line_has_unescaped_pipe(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'|' => return true,
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+/// Whether `cell` (already trimmed) is a valid delimiter cell: `:?-+:?`.
+fn is_table_delim_cell(cell: &str) -> bool {
+    let b = cell.as_bytes();
+    let mut i = usize::from(b.first() == Some(&b':'));
+    let dash_start = i;
+    while i < b.len() && b[i] == b'-' {
+        i += 1;
+    }
+    if i == dash_start {
+        return false; // a delimiter cell needs at least one hyphen
+    }
+    if b.get(i) == Some(&b':') {
+        i += 1;
+    }
+    i == b.len()
+}
+
 /// Scan a balanced delimited run starting at `bytes[i] == open`, tracking nesting
 /// and skipping Rd backslash escapes (`\}` etc.). Returns the index past the
 /// matching `close`, or `None` if it is unbalanced before end of input.

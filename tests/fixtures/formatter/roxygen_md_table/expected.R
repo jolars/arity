@@ -1,0 +1,9 @@
+#' Title
+#'
+#' @md
+#' @details
+#' | a | b |
+#' |:--|--:|
+#' | 1 | 2 |
+#' @name x
+NULL

@@ -114,7 +114,8 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             // (marker-normalized, never reflowed across items/lines).
             SyntaxKind::ROXYGEN_MD_LIST
             | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
-            | SyntaxKind::ROXYGEN_MD_HTML_BLOCK => {
+            | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
+            | SyntaxKind::ROXYGEN_MD_TABLE => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
                 }
@@ -233,6 +234,17 @@ fn emit_md_code_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// marker-normalized (marker, one space, trimmed content). The node owns its own
 /// `#'` markers and newlines; the raw HTML is never reflowed across lines.
 fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
+/// Emit a GFM table (`@md` mode) as atomic passthrough, each `#'` line
+/// marker-normalized (marker, one space, trimmed content). The node owns its own
+/// `#'` markers and newlines; the table is never reflowed. Marker-normalizing the
+/// header/delimiter/body rows is idempotent — on reparse the same header/delimiter
+/// cell counts still form the table.
+fn emit_md_table_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
         push_line(items, normalize_marker_text(seg));
     }
@@ -387,6 +399,10 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 // An HTML block is atomic passthrough (verbatim raw HTML), each
                 // line marker-normalized — never reflowed across lines.
                 emit_md_html_block(&mut items, macro_node);
+            } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_TABLE {
+                // A GFM table is atomic passthrough, each line marker-normalized —
+                // never reflowed (arity does not lay out roxygen table content).
+                emit_md_table_block(&mut items, macro_node);
             } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {

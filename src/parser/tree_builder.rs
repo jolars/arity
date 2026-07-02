@@ -212,5 +212,10 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         // The HTML-block opener line is verbatim text inside a
         // `ROXYGEN_MD_HTML_BLOCK`; the block node is built by the grouping phase.
         TokKind::RoxygenMdHtmlBlock => SyntaxKind::ROXYGEN_TEXT,
+        // A table delimiter row is verbatim text — inside a `ROXYGEN_MD_TABLE` when
+        // it forms a table, or ordinary prose when it does not (an unmatched
+        // delimiter row). Either way its content is plain text; the table node is
+        // built by the grouping phase.
+        TokKind::RoxygenMdTableDelim => SyntaxKind::ROXYGEN_TEXT,
     }
 }

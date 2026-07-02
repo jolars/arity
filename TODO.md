@@ -721,6 +721,24 @@
       `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer` branch, and the
       projector opaque-leaf helpers be deleted. Plus: poisoning's `relink_demoted_inline_links` into list items,
       cross-list duplicate-label document order, multi-line def *titles*.
+      **GFM tables LANDED (2026-07-02f):** a `| a | b |` header + a `|---|:--:|` delimiter row
+      (matching cell counts) + body rows → `\tabular{<align>}{… \tab … \cr}`. cmark-gfm's `table`
+      extension is the **only** table kind roxygen2 enables (pandoc *simple*/*grid* tables are not
+      recognized — verified: they stay literal prose); the outer pipes are optional and colons in the
+      delimiter set per-column alignment (`:--`→l, `:-:`→c, `--:`→r, none→l). The delimiter row is a
+      mode-gated lexer leaf (`RoxygenMdTableDelim`, `is_table_delim_row`; ≥1 unescaped `|` so a bare
+      `---` stays a setext underline), the two-line gate (`is_md_table_start`) matches header vs
+      delimiter cell counts (raw pipes, **not** code-span-aware — a code-span pipe breaks recognition,
+      matching cmark-gfm), and `emit_md_table` gathers the rows into a `ROXYGEN_MD_TABLE` node
+      (verbatim `ROXYGEN_TEXT`, like the HTML block); an unmatched delimiter row falls back to
+      `ROXYGEN_TEXT` (literal prose). The projector reconstructs rows/cells from the node text
+      (`serialize_md_table`): each cell is an independent markdown inline run (emphasis never crosses a
+      `|`), `\|`→`|` per-cell, ragged rows pad with empty cells / truncate to the column count. The
+      formatter passes the table through atomically (marker-normalized, never reflowed; Tenet 1).
+      Curated `md_table`/`md_table_cells`/`md_table_prose`; projector 337→340. **Backlog:** GFM tables
+      are the last common *block* markdown construct; ATX/setext **headings** (→ hoisted
+      `\section`/`\subsection`, cross-section restructuring) and **blockquotes** (roxygen2 errors →
+      diagnostic-parity) remain.
       **Email autolinks LANDED (2026-07-02e):** a CommonMark email autolink `<addr>` (strict spec
       regex — local part, `@`, `.`-separated domain labels with no leading/trailing hyphen) carves as
       a `RoxygenMdLink` (`scan_md_email_autolink`, chained after the URI `scan_md_autolink`, before raw

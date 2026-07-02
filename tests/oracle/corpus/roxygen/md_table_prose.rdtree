@@ -1,0 +1,3 @@
+(\description (TEXT "Table between prose"))
+(\details (TEXT "Before the table.") (\tabular (TEXT "ll") (GRP (TEXT "a") (\tab) (TEXT "b") (\cr) (TEXT "1") (\tab) (TEXT "2") (\cr))) (TEXT "After the table."))
+(\title (TEXT "Table between prose"))

@@ -321,6 +321,24 @@ fn lex_roxygen_prose(
         );
         return;
     }
+    // Under `@md`, a prose line whose whole content is a GFM table **delimiter
+    // row** (`|---|:--:|`) carves it off as a `RoxygenMdTableDelim` leaf. The block
+    // builder pairs it with the preceding header line (when their cell counts
+    // match) into a `ROXYGEN_MD_TABLE`; an unmatched delimiter row stays literal
+    // prose (the tree builder maps the kind to `ROXYGEN_TEXT`). The leaf's
+    // existence implies `@md`, so the builder keys off the token kind, never
+    // re-deriving mode.
+    if md && line_start && super::is_table_delim_row(&text[pos..]) {
+        push(
+            out,
+            TokKind::RoxygenMdTableDelim,
+            text,
+            start,
+            pos,
+            text.len() - pos,
+        );
+        return;
+    }
     // Under `@md`, a prose line whose content begins with a list marker carves it
     // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
     // run). Whether the marker actually forms a list is a block-level decision
@@ -1430,6 +1448,7 @@ mod tests {
                         | TokKind::RoxygenMdFence
                         | TokKind::RoxygenMdHtml
                         | TokKind::RoxygenMdHtmlBlock
+                        | TokKind::RoxygenMdTableDelim
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1558,6 +1577,45 @@ mod tests {
         assert_eq!(
             prose_texts("#' ```r\n"),
             vec![(TokKind::RoxygenText, "```r".into())]
+        );
+    }
+
+    #[test]
+    fn md_table_delim_recognized_under_md_mode() {
+        // Under `@md`, a line whose whole content is a GFM delimiter row carves off
+        // as a single `RoxygenMdTableDelim` leaf (with or without outer pipes, and
+        // with alignment colons). The header/body rows stay ordinary text.
+        for delim in ["|---|---|", "| :-- | :-: | --: |", "---|---", "| --- |"] {
+            let src = format!("#' {delim}\n#' @md\n");
+            assert_eq!(
+                prose_texts(&src),
+                vec![(TokKind::RoxygenMdTableDelim, delim.into())],
+                "delimiter row {delim:?}"
+            );
+            assert_lossless(&src);
+        }
+    }
+
+    #[test]
+    fn md_table_delim_rejects_non_delimiters() {
+        // A pipeless dash run (`---`, a setext underline) and a colon-only cell
+        // (`| : |`, no hyphen) are not delimiter rows — they stay literal prose.
+        for text in ["---", "| : | - |"] {
+            let src = format!("#' {text}\n#' @md\n");
+            assert_eq!(
+                prose_texts(&src),
+                vec![(TokKind::RoxygenText, text.into())],
+                "non-delimiter {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn md_table_delim_off_without_md_directive() {
+        // No `@md`: a delimiter-looking row stays literal prose (no delim leaf).
+        assert_eq!(
+            prose_texts("#' |---|---|\n"),
+            vec![(TokKind::RoxygenText, "|---|---|".into())]
         );
     }
 

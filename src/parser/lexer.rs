@@ -111,6 +111,14 @@ pub(crate) enum TokKind {
     /// and the following lines (to the next blank line) into a
     /// `ROXYGEN_MD_HTML_BLOCK`.
     RoxygenMdHtmlBlock,
+    /// A GFM-table **delimiter row** (`|---|:--:|`): a line whose whole content is
+    /// a run of `|`-separated alignment cells (each `:?-+:?`, at least one `|`),
+    /// recognized only at a line's content start under a resolved `@md` mode. The
+    /// whole remaining line content is the token. The block builder pairs it with
+    /// the preceding header line (when their cell counts match) into a
+    /// `ROXYGEN_MD_TABLE`; an unmatched delimiter row stays literal prose (the tree
+    /// builder maps this kind to `ROXYGEN_TEXT`).
+    RoxygenMdTableDelim,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -146,7 +154,9 @@ impl TokKind {
             RoxygenTagArg => Some(RoxygenRole::TagArg),
             RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdBracket
             | RoxygenMdImage | RoxygenMdDelim | RoxygenMdCode | RoxygenMdListMarker
-            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock => Some(RoxygenRole::Content),
+            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock | RoxygenMdTableDelim => {
+                Some(RoxygenRole::Content)
+            }
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

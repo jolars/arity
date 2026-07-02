@@ -1,0 +1,70 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..175
+  ROXYGEN_BLOCK@0..169
+    ROXYGEN_SECTION@0..33
+      ROXYGEN_PARAGRAPH@0..30
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..29 "A GFM table under mar ..."
+        NEWLINE@29..30 "\n"
+      ROXYGEN_MARKER@30..32 "#'"
+      NEWLINE@32..33 "\n"
+    ROXYGEN_SECTION@33..40
+      ROXYGEN_MARKER@33..35 "#'"
+      WHITESPACE@35..36 " "
+      ROXYGEN_TAG@36..39
+        ROXYGEN_AT@36..37 "@"
+        ROXYGEN_TAG_NAME@37..39 "md"
+      NEWLINE@39..40 "\n"
+    ROXYGEN_SECTION@40..152
+      ROXYGEN_MARKER@40..42 "#'"
+      WHITESPACE@42..43 " "
+      ROXYGEN_TAG@43..51
+        ROXYGEN_AT@43..44 "@"
+        ROXYGEN_TAG_NAME@44..51 "details"
+      NEWLINE@51..52 "\n"
+      ROXYGEN_PARAGRAPH@52..72
+        ROXYGEN_MARKER@52..54 "#'"
+        WHITESPACE@54..55 " "
+        ROXYGEN_TEXT@55..71 "Intro paragraph."
+        NEWLINE@71..72 "\n"
+      ROXYGEN_MD_TABLE@72..151
+        ROXYGEN_MARKER@72..74 "#'"
+        WHITESPACE@74..75 " "
+        ROXYGEN_TEXT@75..91 "| Name | Value |"
+        NEWLINE@91..92 "\n"
+        ROXYGEN_MARKER@92..94 "#'"
+        WHITESPACE@94..95 " "
+        ROXYGEN_TEXT@95..111 "| :--- | ----: |"
+        NEWLINE@111..112 "\n"
+        ROXYGEN_MARKER@112..114 "#'"
+        WHITESPACE@114..115 " "
+        ROXYGEN_TEXT@115..117 "| "
+        ROXYGEN_MD_EMPH@117..120
+          ROXYGEN_MD_DELIM@117..118 "*"
+          ROXYGEN_TEXT@118..119 "a"
+          ROXYGEN_MD_DELIM@119..120 "*"
+        ROXYGEN_TEXT@120..124 "  | "
+        ROXYGEN_MD_CODE@124..127 "`1`"
+        ROXYGEN_TEXT@127..131 "   |"
+        NEWLINE@131..132 "\n"
+        ROXYGEN_MARKER@132..134 "#'"
+        WHITESPACE@134..135 " "
+        ROXYGEN_TEXT@135..151 "| b    | 2     |"
+      NEWLINE@151..152 "\n"
+    ROXYGEN_SECTION@152..169
+      ROXYGEN_MARKER@152..154 "#'"
+      WHITESPACE@154..155 " "
+      ROXYGEN_TAG@155..169
+        ROXYGEN_AT@155..156 "@"
+        ROXYGEN_TAG_NAME@156..160 "name"
+        WHITESPACE@160..161 " "
+        ROXYGEN_TEXT@161..163 "md"
+        ROXYGEN_MD_DELIM@163..164 "_"
+        ROXYGEN_TEXT@164..169 "table"
+  NEWLINE@169..170 "\n"
+  IDENT@170..174 "NULL"
+  NEWLINE@174..175 "\n"

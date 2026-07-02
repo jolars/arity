@@ -255,6 +255,120 @@ fn next_list_line(tokens: &[Token], i: usize) -> Option<usize> {
     .then_some(m)
 }
 
+/// Whether the prose line whose marker is at `start` opens a **GFM table**
+/// (`@md` mode): its immediately-following line's content is a
+/// `RoxygenMdTableDelim` leaf (a delimiter row) *and* the two lines have the same
+/// number of cells (GFM recognizes a table only on a matching header/delimiter
+/// cell count). The header line itself is ordinary prose — a table has no
+/// header-line leaf — so this two-line look-ahead is what distinguishes a table
+/// from a paragraph that merely contains pipes.
+pub(super) fn is_md_table_start(tokens: &[Token], start: usize) -> bool {
+    let header_end = line_content_end(tokens, start);
+    let Some(delim_marker) = following_line_marker(tokens, header_end) else {
+        return false;
+    };
+    let delim_content = line_content_start(tokens, delim_marker);
+    if tokens.get(delim_content).map(|t| &t.kind) != Some(&TokKind::RoxygenMdTableDelim) {
+        return false;
+    }
+    let header = line_raw_content(tokens, start);
+    let delim = &tokens[delim_content].text;
+    super::count_table_cells(&header) == super::count_table_cells(delim)
+}
+
+/// The index just past a line's content — at its trailing `Newline`, a
+/// non-roxygen token, or EOF — starting from the `RoxygenMarker` at `marker`.
+fn line_content_end(tokens: &[Token], marker: usize) -> usize {
+    let mut i = line_content_start(tokens, marker);
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        i += 1;
+    }
+    i
+}
+
+/// From `i` (expected at a line's trailing `Newline`), the next roxygen line's
+/// `RoxygenMarker`, or `None` when the block ends (non-roxygen line / EOF).
+fn following_line_marker(tokens: &[Token], i: usize) -> Option<usize> {
+    if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+        return None;
+    }
+    let mut m = i + 1;
+    while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+        m += 1;
+    }
+    (tokens.get(m).map(|t| &t.kind) == Some(&TokKind::RoxygenMarker)).then_some(m)
+}
+
+/// Reconstruct a roxygen line's raw content (the text after the `#'` marker and
+/// its trailing whitespace) by concatenating its body tokens' text — used to
+/// count a header row's cells (its inline spans are separate tokens, so the raw
+/// pipe structure is only visible once they are re-joined).
+fn line_raw_content(tokens: &[Token], marker: usize) -> String {
+    let mut s = String::new();
+    let mut i = line_content_start(tokens, marker);
+    while let Some(tok) = tokens.get(i) {
+        if !is_line_body_kind(&tok.kind) {
+            break;
+        }
+        s.push_str(&tok.text);
+        i += 1;
+    }
+    s
+}
+
+/// Whether the line whose marker is at `marker` is a **table body row**: an
+/// ordinary prose line that does not itself open another block construct. A GFM
+/// table greedily consumes following non-blank prose lines as rows (a pipeless
+/// line is a single-cell row), breaking only at a blank line, a tag, a new block
+/// (list / fenced code / HTML block / block macro), or the block's end.
+fn is_table_row_line(tokens: &[Token], marker: usize) -> bool {
+    matches!(classify_line(tokens, marker), LineKind::Prose)
+        && !is_md_html_block_start(tokens, marker)
+        && !is_md_code_block_start(tokens, marker)
+        && !is_md_list_start(tokens, marker, false)
+        && !is_block_macro_line(tokens, marker)
+}
+
+/// Emit a `ROXYGEN_MD_TABLE` node spanning the GFM table beginning at `start` (a
+/// `RoxygenMarker` whose line is a table header, the following line a matching
+/// delimiter row — see [`is_md_table_start`]). The node owns the header row, the
+/// delimiter row, and any following body rows, with the `#'` markers,
+/// marker→content whitespace, and inter-line newlines/indentation threaded in as
+/// trivia (losslessness), the way the fenced code block and HTML block thread
+/// them. The trailing newline after the last row is left to the caller. Returns
+/// the token index just past the last consumed content.
+pub(super) fn emit_md_table(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_TABLE));
+
+    // Header line: marker, then the marker→content whitespace and content tokens.
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+
+    // Following lines: the delimiter row (guaranteed to be the first one by the
+    // gate) and any body rows. Stop at a blank line, a tag, a new block, or EOF.
+    while let Some(m) = following_line_marker(tokens, i) {
+        if !is_table_row_line(tokens, m) {
+            break;
+        }
+        for idx in i..=m {
+            events.push(Event::Tok(idx)); // `\n` + indentation + `#'` (trivia)
+        }
+        i = m + 1;
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+    }
+
+    events.push(Event::Finish); // ROXYGEN_MD_TABLE
+    i
+}
+
 /// Emit a `ROXYGEN_MD_LIST` node spanning the consecutive markdown-list lines
 /// beginning at `start` (a `RoxygenMarker` whose content opens a list item),
 /// modeling **nesting** by indentation (CommonMark): a following list line

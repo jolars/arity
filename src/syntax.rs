@@ -193,14 +193,24 @@ pub enum SyntaxKind {
     /// `ROXYGEN_MD_DELIM` leaf (projected as plain text). Appended last to keep the
     /// earlier variants' `as u16` discriminants stable.
     ROXYGEN_MD_DELIM,
+    /// A GFM **table** (resolved `@md` mode only): a header row, a delimiter row
+    /// (`|---|:--:|`) whose cell count matches the header, and zero or more body
+    /// rows, with the `#'` markers, marker→content whitespace, and inter-line
+    /// newlines threaded in as trivia (losslessness), the way the fenced code block
+    /// and HTML block thread them. Its line content is verbatim `ROXYGEN_TEXT` (and,
+    /// for the delimiter row, whatever inline leaves the lexer carved); the
+    /// projector reconstructs the rows and cells from the node text and maps them to
+    /// roxygen2's `\tabular{<align>}{… \tab … \cr}`. Appended last to keep the
+    /// earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_TABLE,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_DELIM` remains
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_TABLE` remains
     /// the last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_DELIM as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_TABLE as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -366,6 +376,7 @@ impl Language for RLanguage {
             99 => SyntaxKind::ROXYGEN_MD_HTML,
             100 => SyntaxKind::ROXYGEN_MD_HTML_BLOCK,
             101 => SyntaxKind::ROXYGEN_MD_DELIM,
+            102 => SyntaxKind::ROXYGEN_MD_TABLE,
             _ => SyntaxKind::ERROR,
         }
     }

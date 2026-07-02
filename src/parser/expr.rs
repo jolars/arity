@@ -462,6 +462,7 @@ fn parse_prefix(
         | TokKind::RoxygenMdFence
         | TokKind::RoxygenMdHtml
         | TokKind::RoxygenMdHtmlBlock
+        | TokKind::RoxygenMdTableDelim
         | TokKind::Unknown => None,
     }
 }

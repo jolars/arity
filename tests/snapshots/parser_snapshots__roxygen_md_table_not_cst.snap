@@ -1,0 +1,60 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..173
+  ROXYGEN_BLOCK@0..167
+    ROXYGEN_SECTION@0..54
+      ROXYGEN_PARAGRAPH@0..51
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..50 "Delimiter-looking row ..."
+        NEWLINE@50..51 "\n"
+      ROXYGEN_MARKER@51..53 "#'"
+      NEWLINE@53..54 "\n"
+    ROXYGEN_SECTION@54..61
+      ROXYGEN_MARKER@54..56 "#'"
+      WHITESPACE@56..57 " "
+      ROXYGEN_TAG@57..60
+        ROXYGEN_AT@57..58 "@"
+        ROXYGEN_TAG_NAME@58..60 "md"
+      NEWLINE@60..61 "\n"
+    ROXYGEN_SECTION@61..146
+      ROXYGEN_MARKER@61..63 "#'"
+      WHITESPACE@63..64 " "
+      ROXYGEN_TAG@64..72
+        ROXYGEN_AT@64..65 "@"
+        ROXYGEN_TAG_NAME@65..72 "details"
+      NEWLINE@72..73 "\n"
+      ROXYGEN_PARAGRAPH@73..146
+        ROXYGEN_MARKER@73..75 "#'"
+        WHITESPACE@75..76 " "
+        ROXYGEN_TEXT@76..85 "| a | b |"
+        NEWLINE@85..86 "\n"
+        ROXYGEN_MARKER@86..88 "#'"
+        WHITESPACE@88..89 " "
+        ROXYGEN_TEXT@89..96 "| --- |"
+        NEWLINE@96..97 "\n"
+        ROXYGEN_MARKER@97..99 "#'"
+        WHITESPACE@99..100 " "
+        ROXYGEN_TEXT@100..132 "A lone delimiter with ..."
+        NEWLINE@132..133 "\n"
+        ROXYGEN_MARKER@133..135 "#'"
+        WHITESPACE@135..136 " "
+        ROXYGEN_TEXT@136..145 "|---|---|"
+        NEWLINE@145..146 "\n"
+    ROXYGEN_SECTION@146..167
+      ROXYGEN_MARKER@146..148 "#'"
+      WHITESPACE@148..149 " "
+      ROXYGEN_TAG@149..167
+        ROXYGEN_AT@149..150 "@"
+        ROXYGEN_TAG_NAME@150..154 "name"
+        WHITESPACE@154..155 " "
+        ROXYGEN_TEXT@155..157 "md"
+        ROXYGEN_MD_DELIM@157..158 "_"
+        ROXYGEN_TEXT@158..163 "table"
+        ROXYGEN_MD_DELIM@163..164 "_"
+        ROXYGEN_TEXT@164..167 "not"
+  NEWLINE@167..168 "\n"
+  IDENT@168..172 "NULL"
+  NEWLINE@172..173 "\n"

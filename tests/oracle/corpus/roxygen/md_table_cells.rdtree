@@ -1,0 +1,3 @@
+(\description (TEXT "Table cell content"))
+(\details (\tabular (TEXT "ll") (GRP (TEXT "x") (\tab) (TEXT "y") (\cr) (\emph (TEXT "a")) (\tab) (\code (RCODE "f()")) (\cr) (TEXT "p | q") (\tab) (TEXT "r") (\cr) (TEXT "solo") (\tab) (\cr) (TEXT "1") (\tab) (TEXT "2") (\cr))))
+(\title (TEXT "Table cell content"))

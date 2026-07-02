@@ -1,0 +1,3 @@
+(\description (TEXT "Table column alignments"))
+(\details (\tabular (TEXT "lcrl") (GRP (TEXT "a") (\tab) (TEXT "b") (\tab) (TEXT "c") (\tab) (TEXT "d") (\cr) (TEXT "1") (\tab) (TEXT "2") (\tab) (TEXT "3") (\tab) (TEXT "4") (\cr))))
+(\title (TEXT "Table column alignments"))

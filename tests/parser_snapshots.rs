@@ -211,6 +211,8 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_empty_list_item",
         "roxygen_md_nested_list",
         "roxygen_md_code_block",
+        "roxygen_md_table",
+        "roxygen_md_table_not",
         "roxygen_rd_figure",
         "roxygen_unterminated_code",
         "roxygen_unbalanced_macro",

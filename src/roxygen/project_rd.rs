@@ -42,7 +42,7 @@ use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, Roxyge
 use crate::parser::parse;
 use crate::parser::roxygen::{
     MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_two_arg_rd_macro, resolve_md_inline,
-    resolve_md_inline_pieces,
+    resolve_md_inline_pieces, split_table_row_cells,
 };
 use crate::roxygen::entities;
 use crate::syntax::{SyntaxKind, SyntaxNode};
@@ -156,6 +156,12 @@ enum Inline {
     /// node). Projects to roxygen2's `\if{html}{\out{…}}` with one verbatim line
     /// per `VERB` (`mdxml_html_block`; see [`serialize_md_html_block`]).
     MdHtmlBlock(SyntaxNode),
+    /// A GFM table resolved under `@md` mode (a `ROXYGEN_MD_TABLE` node). Projects
+    /// to roxygen2's `\tabular{<align>}{<cells>}`: the delimiter row gives the
+    /// per-column alignment (`l`/`c`/`r`), and the header and body rows fill one
+    /// `GRP` with each cell's markdown-resolved content, `\tab` between cells and
+    /// `\cr` ending each row (see [`serialize_md_table`]).
+    MdTable(SyntaxNode),
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -896,6 +902,13 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(serialize_md_html_block(node));
+            }
+            Inline::MdTable(node) => {
+                if let Some(atom) = prose_text_atom(&run, md) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                atoms.push(serialize_md_table(node));
             }
         }
     }
@@ -2764,7 +2777,8 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
             | SyntaxKind::ROXYGEN_RD_MACRO
             | SyntaxKind::ROXYGEN_MD_LIST
             | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
-            | SyntaxKind::ROXYGEN_MD_HTML_BLOCK => {
+            | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
+            | SyntaxKind::ROXYGEN_MD_TABLE => {
                 let Some(node) = el.into_node() else { continue };
                 let inlines = match node.kind() {
                     SyntaxKind::ROXYGEN_PARAGRAPH => RoxygenParagraph::cast(node)
@@ -2773,6 +2787,7 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
                     SyntaxKind::ROXYGEN_MD_LIST => vec![Inline::MdList(node)],
                     SyntaxKind::ROXYGEN_MD_CODE_BLOCK => vec![Inline::MdCodeBlock(node)],
                     SyntaxKind::ROXYGEN_MD_HTML_BLOCK => vec![Inline::MdHtmlBlock(node)],
+                    SyntaxKind::ROXYGEN_MD_TABLE => vec![Inline::MdTable(node)],
                     _ => vec![Inline::Macro(node)],
                 };
                 if !cur.is_empty() {
@@ -3571,6 +3586,92 @@ fn serialize_md_html_block(node: &SyntaxNode) -> String {
     )
 }
 
+/// Per-column alignment of a GFM table, from the delimiter row's colon markers.
+#[derive(Clone, Copy)]
+enum TableAlign {
+    Left,
+    Center,
+    Right,
+}
+
+impl TableAlign {
+    /// The `\tabular` format letter (`l`/`c`/`r`).
+    fn code(self) -> char {
+        match self {
+            TableAlign::Left => 'l',
+            TableAlign::Center => 'c',
+            TableAlign::Right => 'r',
+        }
+    }
+}
+
+/// Project a `ROXYGEN_MD_TABLE` node into roxygen2's `\tabular{<align>}{<cells>}`
+/// (`mdxml_table`, `R/markdown-table.R` via cmark-gfm). The delimiter row (the
+/// node's second line) supplies the per-column alignment; the header row and every
+/// body row fill one `GRP` in source order, each cell's content resolved as a
+/// markdown inline run, separated by `\tab` and terminated by `\cr`. A row is
+/// padded with empty cells (a `\tab` with no atom) or truncated to the column
+/// count, matching cmark-gfm's ragged-row handling.
+fn serialize_md_table(node: &SyntaxNode) -> String {
+    let text = node.text().to_string();
+    let lines: Vec<&str> = text.split('\n').map(strip_marker).collect();
+    // The header is the first line and the delimiter the second; body rows follow.
+    // The gate guarantees both exist, but stay defensive against a malformed node.
+    if lines.len() < 2 {
+        return "(\\tabular)".to_string();
+    }
+    let aligns = parse_table_delim(lines[1]);
+    let ncol = aligns.len();
+    let align_str: String = aligns.iter().map(|a| a.code()).collect();
+
+    let mut grp: Vec<String> = Vec::new();
+    let rows = std::iter::once(lines[0]).chain(lines[2..].iter().copied());
+    for row in rows {
+        let cells = split_table_row_cells(row);
+        for c in 0..ncol {
+            if c > 0 {
+                grp.push("(\\tab)".to_string());
+            }
+            if let Some(cell) = cells.get(c) {
+                let content = unescape_table_pipes(cell.trim());
+                grp.extend(serialize_inlines(
+                    &resolve_macro_arg_inlines(&content),
+                    true,
+                ));
+            }
+        }
+        grp.push("(\\cr)".to_string());
+    }
+    format!(
+        "(\\tabular (TEXT {}) (GRP {}))",
+        encode_text(&align_str),
+        grp.join(" ")
+    )
+}
+
+/// The per-column alignments of a GFM delimiter row: a leading colon means left,
+/// a trailing colon means right, both means center, none means default (left).
+fn parse_table_delim(line: &str) -> Vec<TableAlign> {
+    split_table_row_cells(line)
+        .iter()
+        .map(|cell| {
+            let t = cell.trim();
+            match (t.starts_with(':'), t.ends_with(':')) {
+                (true, true) => TableAlign::Center,
+                (false, true) => TableAlign::Right,
+                _ => TableAlign::Left,
+            }
+        })
+        .collect()
+}
+
+/// Unescape a GFM table cell's `\|` to a literal `|` — the one escape the table
+/// extension resolves during block parsing, before the cell's inline content is
+/// parsed (`x \| y` renders as `x | y`).
+fn unescape_table_pipes(cell: &str) -> String {
+    cell.replace("\\|", "|")
+}
+
 /// The verbatim `(VERB …)` atoms for an `\out` body, splitting at newlines and
 /// attaching each `\n` to the atom it ends (parse_Rd's verbatim splitting, the
 /// `VERB` analog of [`rcode_atoms`]).
@@ -3986,6 +4087,33 @@ mod tests {
             "(\\description (TEXT \"Title\"))\n\
              (\\details (TEXT \"First line second line.\"))\n\
              (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn md_table_projects_to_tabular() {
+        // A GFM table under `@md` projects to `\tabular`: the delimiter row supplies
+        // the per-column alignment (`l`/`c`/`r`), the header and body rows fill one
+        // `GRP` with `\tab` between cells and `\cr` ending each row, a short row is
+        // padded (an empty trailing cell) and a long row truncated to the column
+        // count, and each cell's content resolves as markdown.
+        let src = "#' T\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' | a | b |\n\
+                   #' | :-- | --: |\n\
+                   #' | *x* | y |\n\
+                   #' | solo |\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (\\tabular (TEXT \"lr\") (GRP \
+             (TEXT \"a\") (\\tab) (TEXT \"b\") (\\cr) \
+             (\\emph (TEXT \"x\")) (\\tab) (TEXT \"y\") (\\cr) \
+             (TEXT \"solo\") (\\tab) (\\cr))))\n\
+             (\\title (TEXT \"T\"))"
         );
     }
 
