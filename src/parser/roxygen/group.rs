@@ -245,6 +245,15 @@ fn emit_prose_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> u
 /// Emit a tag line: the marker and the marker→content whitespace sit directly
 /// under the section, then a `ROXYGEN_TAG` node wraps the `@name [arg] <prose>`
 /// content. Returns the index past the line content.
+///
+/// A tag with a *same-line prose value* folds its contiguous plain-prose
+/// continuation lines into the `ROXYGEN_TAG` node, so the whole field value is
+/// one logical run: roxygen2 treats a tag's value as spanning every line until
+/// the next `@tag` or a blank line, so an `@md` emphasis/link span opened in the
+/// value must resolve across the soft line break (the emphasis pass is bounded by
+/// the tag node, so opener and closer have to live in the *same* node). A block
+/// macro, markdown list, fenced/HTML block, blank line, or new tag ends the value
+/// and stays a section-level sibling (its own paragraph/block).
 fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     events.push(Event::Tok(start)); // RoxygenMarker
     let mut i = start + 1;
@@ -253,10 +262,55 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
         i += 1;
     }
     events.push(Event::Start(SyntaxKind::ROXYGEN_TAG));
+    let mut has_value = false;
+    let mut tag_name: Option<&str> = None;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        let tok = &tokens[i];
+        if tok.kind == TokKind::RoxygenTagName {
+            tag_name = Some(&tok.text);
+        }
+        if tok.kind.roxygen_role() == Some(RoxygenRole::Content) {
+            has_value = true;
+        }
         events.push(Event::Tok(i));
         i += 1;
     }
+    // Only a *prose* tag's field spans its continuation lines; a code/examples,
+    // verbatim-value, token-list, toggle, `@section`, or verbatim-Rd tag keeps its
+    // own line structure (the formatter reformats or passes those through per line).
+    if has_value && tag_name.is_some_and(super::tag_folds_prose_continuation) {
+        while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Newline) {
+            let mut m = i + 1;
+            while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+                m += 1;
+            }
+            if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker)
+                || !is_foldable_continuation(tokens, m)
+            {
+                break;
+            }
+            // Fold the inter-line trivia (newline + continuation indentation) and
+            // the continuation prose line into the still-open tag node.
+            for idx in i..m {
+                events.push(Event::Tok(idx));
+            }
+            i = emit_prose_line(tokens, m, events);
+        }
+    }
     events.push(Event::Finish); // ROXYGEN_TAG
     i
+}
+
+/// Whether the roxygen line whose `RoxygenMarker` is at `marker` is a plain-prose
+/// continuation that folds into a preceding tag's value: ordinary prose that is
+/// not itself a section-level block (a block macro, markdown list, fenced code, or
+/// HTML block, each of which opens its own sibling node). The markdown-list check
+/// uses the mid-paragraph interrupt rule (`in_paragraph = true`), since a marker
+/// after a prose value can only start a list if it would interrupt a paragraph.
+fn is_foldable_continuation(tokens: &[Token], marker: usize) -> bool {
+    matches!(classify_line(tokens, marker), LineKind::Prose)
+        && !is_md_html_block_start(tokens, marker)
+        && !is_md_code_block_start(tokens, marker)
+        && !is_md_list_start(tokens, marker, true)
+        && !is_block_macro_line(tokens, marker)
 }

@@ -1,0 +1,66 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..203
+  ROXYGEN_BLOCK@0..197
+    ROXYGEN_SECTION@0..52
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..51
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..9 "title"
+        WHITESPACE@9..10 " "
+        ROXYGEN_TEXT@10..51 "Same-line tag value s ..."
+      NEWLINE@51..52 "\n"
+    ROXYGEN_SECTION@52..164
+      ROXYGEN_MARKER@52..54 "#'"
+      WHITESPACE@54..55 " "
+      ROXYGEN_TAG@55..163
+        ROXYGEN_AT@55..56 "@"
+        ROXYGEN_TAG_NAME@56..63 "details"
+        WHITESPACE@63..64 " "
+        ROXYGEN_TEXT@64..74 "Text with "
+        ROXYGEN_MD_EMPH@74..96
+          ROXYGEN_MD_DELIM@74..75 "*"
+          ROXYGEN_TEXT@75..83 "emphasis"
+          NEWLINE@83..84 "\n"
+          ROXYGEN_MARKER@84..86 "#'"
+          WHITESPACE@86..87 " "
+          ROXYGEN_TEXT@87..95 "spanning"
+          ROXYGEN_MD_DELIM@95..96 "*"
+        ROXYGEN_TEXT@96..118 " the soft break, plus "
+        ROXYGEN_MD_STRONG@118..138
+          ROXYGEN_MD_DELIM@118..120 "**"
+          ROXYGEN_TEXT@120..126 "strong"
+          NEWLINE@126..127 "\n"
+          ROXYGEN_MARKER@127..129 "#'"
+          WHITESPACE@129..130 " "
+          ROXYGEN_TEXT@130..136 "across"
+          ROXYGEN_MD_DELIM@136..138 "**"
+        ROXYGEN_TEXT@138..151 " lines and a "
+        ROXYGEN_MD_CODE@151..157 "`code`"
+        ROXYGEN_TEXT@157..163 " span."
+      NEWLINE@163..164 "\n"
+    ROXYGEN_SECTION@164..171
+      ROXYGEN_MARKER@164..166 "#'"
+      WHITESPACE@166..167 " "
+      ROXYGEN_TAG@167..170
+        ROXYGEN_AT@167..168 "@"
+        ROXYGEN_TAG_NAME@168..170 "md"
+      NEWLINE@170..171 "\n"
+    ROXYGEN_SECTION@171..197
+      ROXYGEN_MARKER@171..173 "#'"
+      WHITESPACE@173..174 " "
+      ROXYGEN_TAG@174..197
+        ROXYGEN_AT@174..175 "@"
+        ROXYGEN_TAG_NAME@175..179 "name"
+        WHITESPACE@179..180 " "
+        ROXYGEN_TEXT@180..183 "tag"
+        ROXYGEN_MD_DELIM@183..184 "_"
+        ROXYGEN_TEXT@184..192 "sameline"
+        ROXYGEN_MD_DELIM@192..193 "_"
+        ROXYGEN_TEXT@193..197 "emph"
+  NEWLINE@197..198 "\n"
+  IDENT@198..202 "NULL"
+  NEWLINE@202..203 "\n"

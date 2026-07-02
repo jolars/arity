@@ -1,0 +1,3 @@
+(\description (TEXT "Same-line tag value spanning a soft break"))
+(\details (TEXT "Text with") (\emph (TEXT "emphasis spanning")) (TEXT "the soft break, plus") (\strong (TEXT "strong across")) (TEXT "lines and a") (\code (RCODE "code")) (TEXT "span."))
+(\title (TEXT "Same-line tag value spanning a soft break"))

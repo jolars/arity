@@ -34,6 +34,21 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   block errors. **`@md` must stand alone** — a prose value errors.
 
 **CST shape**
+- **A prose tag's same-line value folds its plain-prose continuation into the `ROXYGEN_TAG`.**
+  `emit_tag_line` (group.rs): when a tag has a same-line **Content** token *and* its name passes
+  `tag_folds_prose_continuation` (lex.rs — prose classes only; code/examples/value/token-list/`@section`/
+  rawRd are excluded, so `@examples`' `ExampleBody` etc. keep their per-line structure), it keeps the tag open
+  and folds each contiguous plain-prose continuation line (`is_foldable_continuation`: `LineKind::Prose`, not a
+  block-macro/list/fence/HTML) — trivia + tokens — **into** the tag. So opener and closer of an `@md` span live
+  in one node and the emphasis pass (bounded by the tag) resolves across the soft break. A blank/new-tag/block
+  ends the fold (stays a section sibling). Projector `tag_inlines` drops the folded `ROXYGEN_MARKER` and maps
+  `NEWLINE`→`SOFT_BREAK` (mirrors `paragraph_inlines`; the EMPH-node path already did via `push_inline`).
+  **Formatter:** the folded tag is **one `PhysicalLine`** (still pushed whole; no `physical_lines` change) —
+  `chunk_elements`/`chunk_into` breaks on the threaded `NEWLINE`/`WHITESPACE`, skips the `MARKER`, and descends a
+  cross-line EMPH/STRONG/LINK (shared `cur`); `tag_prose_chunks` passes `NEWLINE` through; the reflow-bail
+  linkref/`%`-swallow check reads `tag_first_line_value` (first physical line only, not the glued whole); and a
+  bailing multi-line tag re-splits its source via `emit_tag_passthrough`'s `is_multiline_tag` branch. Curated
+  `tag_sameline_emph` + a plain-fold projector unit test (`sameline_tag_value_folds_plain_continuation`).
 - **Logical, not line-based.** `ROXYGEN_BLOCK` → `ROXYGEN_SECTION`* (intro + one per `@tag`)
   → `ROXYGEN_TAG`/`ROXYGEN_PARAGRAPH`*. A **block macro / md-list / md-code-block is a direct
   `ROXYGEN_SECTION` child** (sibling of paragraphs). `#'` markers, marker→content WS, and
@@ -376,48 +391,42 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02) — soft-wrap physical-line boundary (`%`-swallow/comment)
+## Latest session (2026-07-02b) — same-line tag-value continuation folds into the tag
 
-Closed ranked-#1: the soft-wrap edge of the `%`-swallow / non-md `%`-comment strip. Both end at the
-**physical source line**, but the projector had flattened a soft-wrap break to a **space**, so a `%` on a
-soft-wrapped `#'` line ate its continuation. **Oracle-confirmed** (exact-byte probes, `block-to-sections`):
-non-md `a % swallowed`/`continuation survives` → `a continuation survives`; md `a \% swallowed`/`continuation
-survives` → `a \ continuation survives` (odd run swallows to the *physical* line, continuation survives).
+Closed ranked-#1: a *prose* tag with a **same-line value** (`@details *a` / `b` / `c*`) split its continuation
+lines into a sibling `ROXYGEN_PARAGRAPH`, so an `@md` emphasis/link span opened in the value couldn't resolve
+across the boundary (the emphasis pass is bounded by the tag/paragraph structural edge; the tree forbids an EMPH
+node straddling it, and reordering events would break losslessness). **Oracle-confirmed** identical to the
+next-line form: `@details *a`/`b`/`c*` and `@details`/`*a`/`b`/`c*` both render `(\details (\emph (TEXT
+"a b c")))`.
 
-**Fix — a `SOFT_BREAK` sentinel** (`'\u{c}'`, form feed) for a soft-wrap, distinct from the paragraph-break
-`\n`. It **is** `is_posix_space` (so `norm_ws` collapses it → no-comment prose renders identically) but is
-**not** `\n` (so the link-ref block machinery, which keys on `t.contains('\n')`, still treats only a
-paragraph break as a block start). All **5** `SyntaxKind::NEWLINE => Inline::Text(" ")` sites in
-`project_rd.rs` now emit `SOFT_BREAK`; `strip_rd_comments`/`md_percent_swallow` split on a new
-`physical_lines` helper (`split(['\n', SOFT_BREAK])`). The full projector gate (351 pins, incl. multi-line
-link/shortcut cases that carry soft-breaks inside link content) stayed green — the sentinel doesn't leak
-into refmap/skeleton behavior.
+**Fix — fold the continuation into the tag** (cross-cutting: parser + projector + formatter). `emit_tag_line`
+keeps a prose tag (`tag_folds_prose_continuation`) open and folds contiguous plain-prose continuation lines into
+the `ROXYGEN_TAG`, so opener and closer share one node and the pass resolves the span (see the CST-shape trap for
+the full mechanic). Projector `tag_inlines` drops folded markers + maps newlines to `SOFT_BREAK`. Formatter keeps
+the folded tag as one `PhysicalLine` and fixes chunking/bail (`chunk_into` cross-line descent + newline break,
+`tag_first_line_value`, `emit_tag_passthrough` multi-line split) so reflow output is byte-identical and
+idempotent; the linkref-def and `%`-swallow bails still preserve line structure.
 
-**Formatter follow-on (caught by the fixed-point net):** under `@md` the formatter *reflowed* the two
-soft-wrapped lines into one, moving the continuation past the `\%` → roxygen2 then rendered `a \` (bug).
-Added `line_has_md_percent_swallow` — the `@md` analog of the existing non-md `line_has_live_rd_comment`
-reflow gate — wired into both bail sites (`TagUnit::flush` + `prose_bails_reflow`). Now a `\%`-swallow line
-is kept verbatim, idempotent.
+**Result:** projector **333→334 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
+**68→69/69** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1 (additive** —
+only the new stem; **no existing case's format changed**, verified via the set-diff). Parser fixture
+`roxygen_tag_sameline_emph` (CST shows emphasis/strong resolving across soft breaks *inside* the tag) + a
+plain-fold projector unit test.
 
-**Result:** projector **331→333 matching, 18 divergent** (unchanged, all out-of-scope). Curated fixed-point
-**68/68** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline re-blessed
-(+2, additive — the 2 new stems; no existing case's format changed). Projector unit tests: a new
-`strip_rd_comments_stops_at_soft_wrap` + soft-wrap asserts in `md_percent_swallow_is_parity_keyed`; the
-formatter gate is covered by the fixed-point net + format baseline.
-
-**Next (ranked):** **(1)** the **tag same-line-value continuation** grouping divergence (`@details *a x` /
-`c*` splits continuation lines into separate `ROXYGEN_PARAGRAPH` siblings so an emphasis span can't cross)
-— cross-cutting (parser grouping + projector `tag_inlines` + formatter), touches losslessness/idempotence,
-overlaps the inline-pass paragraph model. **(2)** facets (c)/(d) of the `@md` `\`-escape cluster:
-run-before-letter macro-split (`\\y`), brace-less known-macro decomposition (`\emph z`/`\code z`) — tied to
-the inline-pass migration, do NOT widen the lexer. **(3)** Slice B leftover hardenings (`\value`/`\section`
-inline md; cmark-active md inside a *fragile* arg; `linkref_def_label` macro drop). **(4)** the 18 projector
-divergences stay out of scope (roxygen2 evaluation / multi-block).
+**Next (ranked):** **(1)** the **tag same-line value + blank + prose** shape (a blank after the value opens a
+*second* paragraph, still a sibling — but that's a paragraph break, not a cross-line span, so lower value) and
+the residual **multi-line inline macro bounding a run** (contrived). **(2)** facets (c)/(d) of the `@md`
+`\`-escape cluster: run-before-letter macro-split (`\\y`), brace-less known-macro decomposition (`\emph z`/
+`\code z`) — tied to the inline-pass migration, do NOT widen the lexer. **(3)** Slice B leftover hardenings
+(`\value`/`\section` inline md; cmark-active md inside a *fragile* arg; `linkref_def_label` macro drop). **(4)**
+the 18 projector divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02** — soft-wrap physical-line boundary for `%`-swallow/comment (`SOFT_BREAK` sentinel). 331→333 (no delta; format-only).
 - **2026-07-01b** — `@md` `%`-swallow (parity-keyed on the source backslash run); projector `md_percent_swallow`. 330→331.
 - **2026-07-01** — `@md` backslash-run collapse (`\\`→`\`, `ceil(k/2)`); projector `collapse_md_backslash_runs`. 329→330.
 - **2026-06-30g** — emphasis span crosses an inline Rd macro; faithful placeholder flanking in `edge_char`. 328→329.

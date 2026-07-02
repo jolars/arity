@@ -198,6 +198,7 @@ rdcomplete_off_description
 rdcomplete_off_seealso
 rdcomplete_section_drop
 rdcomplete_slot_drop
+tag_sameline_emph
 # roxygen2 projector-parity allowlist --- cases whose CST projection currently
 rx-0273da0d
 rx-031cfdcb

@@ -215,6 +215,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_unbalanced_macro",
         "roxygen_backtick_in_macro",
         "roxygen_unknown_macro",
+        "roxygen_tag_sameline_emph",
     ]
 }
 

@@ -612,7 +612,7 @@ impl TagUnit {
             header: tag_header(tag).unwrap_or_else(|| "@".to_string()),
             chunks,
             lines: vec![line.clone()],
-            first_is_linkref_def: text_is_linkref_def(&tag_rest_verbatim(tag)),
+            first_is_linkref_def: text_is_linkref_def(&tag_first_line_value(tag)),
         }
     }
 
@@ -733,7 +733,7 @@ impl SectionUnit {
         let mut chunks = Vec::new();
         tag_prose_chunks(tag, &mut chunks);
         // Form-1: the tag carries the body's first prose inline; record its value.
-        let first_text = (!chunks.is_empty()).then(|| tag_rest_verbatim(tag));
+        let first_text = (!chunks.is_empty()).then(|| tag_first_line_value(tag));
         SectionUnit {
             marker: marker_text(line),
             indent_cols,
@@ -1032,26 +1032,54 @@ where
     I: Iterator<Item = NodeOrToken<SyntaxNode, SyntaxToken>>,
 {
     let mut cur = String::new();
+    chunk_into(elements, &mut cur, out);
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+}
+
+/// Chunk `elements` into `out`, threading the in-progress chunk `cur` so a
+/// descent into a cross-line span preserves gluing across the recursion boundary.
+fn chunk_into<I>(elements: I, cur: &mut String, out: &mut Vec<String>)
+where
+    I: Iterator<Item = NodeOrToken<SyntaxNode, SyntaxToken>>,
+{
     for el in elements {
         match el {
             NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_TEXT => {
                 for ch in t.text().chars() {
                     if ch.is_whitespace() {
                         if !cur.is_empty() {
-                            out.push(std::mem::take(&mut cur));
+                            out.push(std::mem::take(cur));
                         }
                     } else {
                         cur.push(ch);
                     }
                 }
             }
+            // A folded continuation threads its inter-line trivia into the tag: a
+            // newline (soft break) and a marker→content whitespace are break
+            // opportunities, the `#'` marker is dropped. (For every other caller
+            // these never appear, so this is a no-op there.)
+            NodeOrToken::Token(t)
+                if matches!(t.kind(), SyntaxKind::NEWLINE | SyntaxKind::WHITESPACE) =>
+            {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(cur));
+                }
+            }
+            NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MARKER => {}
+            // A cross-line emphasis/strong/link span owns its inner `#'` markers and
+            // newlines: descend so its text chunks across the soft break the same
+            // way a paragraph's does (a single-line span has no marker, so it is
+            // glued whole below).
+            NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
+                chunk_into(n.children_with_tokens(), cur, out);
+            }
             // Protected span (or any other content token/node): glue it in.
             NodeOrToken::Token(t) => cur.push_str(t.text()),
             NodeOrToken::Node(n) => cur.push_str(&n.text().to_string()),
         }
-    }
-    if !cur.is_empty() {
-        out.push(cur);
     }
 }
 
@@ -1114,6 +1142,22 @@ fn emit_tag_passthrough(items: &mut Vec<Ir>, line: &PhysicalLine, tag: &RoxygenT
         return;
     };
     let marker = marker_text(line);
+    // A folded multi-line tag (a same-line value with plain-prose continuations)
+    // is not reflowed on the bail path: keep its physical-line structure so a
+    // `%`-swallow / linkref-def / live-`%` line is never joined with its
+    // continuation. Each source line is marker-normalized; the folded continuation
+    // segments already carry their `#'` markers, and the first segment carries the
+    // `@name [arg] <value>` header verbatim.
+    if is_multiline_tag(tag.syntax()) {
+        for (i, seg) in tag.syntax().text().to_string().split('\n').enumerate() {
+            if i == 0 {
+                push_line(items, format!("{marker} {}", seg.trim_end()));
+            } else {
+                push_line(items, normalize_marker_text(seg));
+            }
+        }
+        return;
+    }
     let rest = tag_rest_verbatim(tag);
     if rest.is_empty() {
         push_line(items, format!("{marker} {header}"));
@@ -1207,6 +1251,33 @@ fn tag_header(tag: &RoxygenTag) -> Option<String> {
     Some(header)
 }
 
+/// The tag's *first physical line's* prose value (everything after the header, up
+/// to the first folded soft break), trimmed. For a single-line tag this is the
+/// whole value; for a folded multi-line tag it is only the same-line value — which
+/// is what the reflow-bail check reads (a link-reference definition or `%`-swallow
+/// keys on the field's first line, not the joined continuation).
+fn tag_first_line_value(tag: &RoxygenTag) -> String {
+    let mut s = String::new();
+    for el in tag.syntax().children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::NEWLINE => break,
+            k if is_tag_prose_kind(k) => match el {
+                NodeOrToken::Token(t) => s.push_str(t.text()),
+                NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
+                    // A cross-line span extends past the first newline; take only
+                    // its first physical line's text, then stop.
+                    let text = n.text().to_string();
+                    s.push_str(text.split('\n').next().unwrap_or(&text));
+                    break;
+                }
+                NodeOrToken::Node(n) => s.push_str(&n.text().to_string()),
+            },
+            _ => {}
+        }
+    }
+    s.trim().to_string()
+}
+
 /// The tag's prose content (everything after the header) concatenated verbatim
 /// and trimmed — used for non-reflowed passthrough tags.
 fn tag_rest_verbatim(tag: &RoxygenTag) -> String {
@@ -1223,13 +1294,27 @@ fn tag_rest_verbatim(tag: &RoxygenTag) -> String {
 }
 
 /// Append the tag's prose content as breakable chunks (the same text/protected-
-/// span treatment as plain prose), descending past the `@`, name, and arg.
+/// span treatment as plain prose), descending past the `@`, name, and arg. A tag
+/// with a same-line value folds its plain-prose continuation lines in (see
+/// `emit_tag_line`), so the threaded inter-line newlines are kept as break
+/// opportunities (`chunk_elements` treats a newline as a break and drops the
+/// continuation markers), letting the whole field value reflow as one run.
 fn tag_prose_chunks(tag: &RoxygenTag, out: &mut Vec<String>) {
     let prose = tag
         .syntax()
         .children_with_tokens()
-        .filter(|el| is_tag_prose_kind(el.kind()));
+        .filter(|el| is_tag_prose_kind(el.kind()) || el.kind() == SyntaxKind::NEWLINE);
     chunk_elements(prose, out);
+}
+
+/// Whether `node` is a `ROXYGEN_TAG` that folded plain-prose continuation lines
+/// into its value (see `emit_tag_line`) — it threads one or more `#'` markers, so
+/// it spans multiple physical lines. A single-line tag never contains a marker.
+fn is_multiline_tag(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::ROXYGEN_TAG
+        && node
+            .descendants_with_tokens()
+            .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
 }
 
 /// Append `line` as an IR text node, preceded by a hard line break unless it is

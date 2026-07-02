@@ -147,6 +147,32 @@ pub(crate) fn is_raw_rd_tag(name: &str) -> bool {
     name == "rawRd"
 }
 
+/// Whether a tag's same-line value is reflowable markdown/Rd **prose** whose field
+/// spans its continuation lines — so a same-line value folds its contiguous
+/// plain-prose continuations into the `ROXYGEN_TAG` node (see `emit_tag_line`),
+/// letting an `@md` emphasis/link span resolve across the soft break. The
+/// excluded tags carry a non-prose value that must keep its own line structure:
+/// code/examples (`tag_code`/`tag_examples`), a single verbatim value
+/// (`tag_value`), a token list (`tag_words` / namespace directives), a bare toggle,
+/// `@section` (laid out specially from its `Title: body`), or verbatim Rd. Mirrors
+/// the non-prose classes of the formatter's tag classifier; an unknown tag is
+/// prose (roxygen2 defaults unknown tags to `tag_markdown`).
+pub(crate) fn tag_folds_prose_continuation(name: &str) -> bool {
+    !matches!(
+        name,
+        // tag_code / tag_examples
+        "examples" | "examplesIf" | "usage" | "eval" | "evalRd" | "evalNamespace"
+        // tag_value (single verbatim value; interior spaces significant)
+        | "name" | "rdname" | "docType" | "encoding" | "family" | "concept"
+        | "inheritParams" | "backref" | "exportClass" | "exportMethod" | "exportPattern"
+        // tag_words / namespace directives (join to one line)
+        | "keywords" | "aliases" | "import" | "importFrom" | "importClassesFrom"
+        | "importMethodsFrom" | "exportS3Method" | "useDynLib" | "rawNamespace"
+        // tag_toggle (no value anyway) + @section (special) + verbatim Rd
+        | "export" | "noRd" | "md" | "noMd" | "section" | "rawRd"
+    )
+}
+
 /// Sub-tokenize a roxygen line into `out`. `text` is the line's content with no
 /// trailing newline or `\r`; `start` is its absolute byte offset; `md` is the
 /// block's resolved markdown mode (see [`resolve_roxygen_block`]), which keys

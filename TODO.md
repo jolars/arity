@@ -701,11 +701,19 @@
       `roxygen_md_span_abuts_macro`; 1 projector unit test. Projector 328→329; curated fixed-point 63→64/64;
       format baseline +1 (additive).
       **Deferred (recorded):** **multi-line** inline macros (`Start..Finish` events) still bound the run — but
-      they are block/list macros (`\itemize`/`\describe`), emphasis around them is non-idiomatic, AND cross-line
-      spans are independently blocked by a **separate grouping divergence**: a tag with a *same-line* value
-      (`@details *a x` / `c*`) splits continuation lines into separate `ROXYGEN_PARAGRAPH` siblings (tag-alone-
-      then-prose already spans correctly, macro included). Fix the grouping first; then multi-line Step B
-      becomes demonstrable.
+      they are block/list macros (`\itemize`/`\describe`), emphasis around them is non-idiomatic.
+      **Same-line tag-value continuation LANDED (2026-07-02b):** a *prose* tag with a same-line value
+      (`@details *a` / `b*`) now **folds** its contiguous plain-prose continuation lines into the
+      `ROXYGEN_TAG` node (`emit_tag_line`, gated by `tag_folds_prose_continuation` — code/examples/value/
+      token-list/`@section`/rawRd keep their line structure), so the field value is one logical run and an
+      emphasis/link span resolves across the soft break. Projector `tag_inlines` drops the folded markers and
+      maps newlines to `SOFT_BREAK`; the formatter reflows the folded multi-line tag as one unit
+      (`chunk_elements` breaks on the threaded newline and descends cross-line spans; `tag_first_line_value`
+      keeps the reflow-bail linkref/`%`-swallow check first-line-only; `emit_tag_passthrough` splits a bailing
+      multi-line tag back into its source lines). Curated `tag_sameline_emph`; projector 333→334; curated
+      fixed-point 68→69/69. **Still backlog:** the `@details *a x` (value **and** first continuation on the tag
+      line) shape is now folded too, but a tag with a same-line value *followed by a blank* then prose is a
+      second paragraph (unchanged); multi-line inline macros bounding a run remain deferred.
       **Slice B remainder (still backlog):** `scan_md_link`'s `[`-path is **not** fully retired — it still serves
       an **`!`-bearing display** (mid-prose image marker) and the **autolink `<url>`** is on `scan_md_autolink`.
       Broader: `\value`/`\section` *inline* md (rare); and a macro arg with cmark-active markdown inside a *fragile* arg ties into

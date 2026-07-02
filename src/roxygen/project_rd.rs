@@ -2780,6 +2780,13 @@ fn paragraph_inlines(para: &RoxygenParagraph) -> Vec<Inline> {
 
 /// The inline elements of a tag line: everything after the `@`, the tag name, and
 /// an arg-bearing tag's argument (and the leading whitespace before the prose).
+///
+/// A tag with a same-line prose value folds its contiguous plain-prose
+/// continuation lines into the tag node (see `emit_tag_line`), so the tag may
+/// carry the threaded `#'` markers and inter-line newlines of those continuations
+/// — dropped and turned into a joining soft break exactly as `paragraph_inlines`
+/// does, so the folded value reads as one run (`@details *a` \n `b*` →
+/// `\emph{a b}`).
 fn tag_inlines(tag: &RoxygenTag) -> Vec<Inline> {
     let mut out = Vec::new();
     let mut seen_prose = false;
@@ -2787,6 +2794,15 @@ fn tag_inlines(tag: &RoxygenTag) -> Vec<Inline> {
         match el.kind() {
             SyntaxKind::ROXYGEN_AT | SyntaxKind::ROXYGEN_TAG_NAME | SyntaxKind::ROXYGEN_TAG_ARG => {
                 continue;
+            }
+            // A threaded continuation marker is trivia (never prose); an inter-line
+            // newline joins the continuation into one run (norm_ws collapses the
+            // soft break, which still bounds a non-markdown `%` comment).
+            SyntaxKind::ROXYGEN_MARKER => {}
+            SyntaxKind::NEWLINE => {
+                if seen_prose {
+                    out.push(Inline::Text(SOFT_BREAK.to_string()));
+                }
             }
             SyntaxKind::WHITESPACE => {
                 if seen_prose {
@@ -3886,6 +3902,26 @@ mod tests {
         assert_eq!(
             project_to_rd(src),
             "(\\description (TEXT \"Title\"))\n(\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn sameline_tag_value_folds_plain_continuation() {
+        // A tag with a same-line prose value folds its contiguous plain-prose
+        // continuation into the `ROXYGEN_TAG` node (see `emit_tag_line`), so the
+        // whole field value projects as one run. This exercises `tag_inlines`'
+        // handling of the folded threaded `#'` markers (dropped) and inter-line
+        // newlines (a soft break `norm_ws` collapses) — no markdown span involved.
+        let src = "#' Title\n\
+                   #' @details First line\n\
+                   #' second line.\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\details (TEXT \"First line second line.\"))\n\
+             (\\title (TEXT \"Title\"))"
         );
     }
 
