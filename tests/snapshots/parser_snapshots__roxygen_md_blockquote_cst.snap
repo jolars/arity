@@ -1,0 +1,55 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..146
+  ROXYGEN_BLOCK@0..140
+    ROXYGEN_SECTION@0..18
+      ROXYGEN_PARAGRAPH@0..15
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..14 "Block quote"
+        NEWLINE@14..15 "\n"
+      ROXYGEN_MARKER@15..17 "#'"
+      NEWLINE@17..18 "\n"
+    ROXYGEN_SECTION@18..25
+      ROXYGEN_MARKER@18..20 "#'"
+      WHITESPACE@20..21 " "
+      ROXYGEN_TAG@21..24
+        ROXYGEN_AT@21..22 "@"
+        ROXYGEN_TAG_NAME@22..24 "md"
+      NEWLINE@24..25 "\n"
+    ROXYGEN_SECTION@25..130
+      ROXYGEN_MARKER@25..27 "#'"
+      WHITESPACE@27..28 " "
+      ROXYGEN_TAG@28..36
+        ROXYGEN_AT@28..29 "@"
+        ROXYGEN_TAG_NAME@29..36 "details"
+      NEWLINE@36..37 "\n"
+      ROXYGEN_MD_BLOCK_QUOTE@37..94
+        ROXYGEN_MARKER@37..39 "#'"
+        WHITESPACE@39..40 " "
+        ROXYGEN_TEXT@40..63 "> a *quote* with `code`"
+        NEWLINE@63..64 "\n"
+        ROXYGEN_MARKER@64..66 "#'"
+        WHITESPACE@66..67 " "
+        ROXYGEN_TEXT@67..94 "> and [text](https:// ..."
+      NEWLINE@94..95 "\n"
+      ROXYGEN_MARKER@95..97 "#'"
+      NEWLINE@97..98 "\n"
+      ROXYGEN_PARAGRAPH@98..130
+        ROXYGEN_MARKER@98..100 "#'"
+        WHITESPACE@100..101 " "
+        ROXYGEN_TEXT@101..129 "Following prose is se ..."
+        NEWLINE@129..130 "\n"
+    ROXYGEN_SECTION@130..140
+      ROXYGEN_MARKER@130..132 "#'"
+      WHITESPACE@132..133 " "
+      ROXYGEN_TAG@133..140
+        ROXYGEN_AT@133..134 "@"
+        ROXYGEN_TAG_NAME@134..138 "name"
+        WHITESPACE@138..139 " "
+        ROXYGEN_TEXT@139..140 "x"
+  NEWLINE@140..141 "\n"
+  IDENT@141..145 "NULL"
+  NEWLINE@145..146 "\n"

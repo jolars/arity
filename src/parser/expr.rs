@@ -465,6 +465,7 @@ fn parse_prefix(
         | TokKind::RoxygenMdTableDelim
         | TokKind::RoxygenMdHeading
         | TokKind::RoxygenMdSetextUnderline
+        | TokKind::RoxygenMdBlockQuote
         | TokKind::Unknown => None,
     }
 }

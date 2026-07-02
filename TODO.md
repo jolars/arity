@@ -735,8 +735,21 @@
       (`serialize_md_table`): each cell is an independent markdown inline run (emphasis never crosses a
       `|`), `\|`→`|` per-cell, ragged rows pad with empty cells / truncate to the column count. The
       formatter passes the table through atomically (marker-normalized, never reflowed; Tenet 1).
-      Curated `md_table`/`md_table_cells`/`md_table_prose`; projector 337→340. **Backlog:**
-      **blockquotes** (roxygen2 errors → diagnostic-parity) remain.
+      Curated `md_table`/`md_table_cells`/`md_table_prose`; projector 337→340.
+      **Block quotes LANDED (2026-07-02i):** a `>` line under `@md` (after up to three spaces —
+      indentation is `#'` marker-ws trivia, so a 4+-space `>` over-recognizes vs roxygen2's indented
+      code block, an unmodeled gap shared with fence/heading/HTML-block) carves as a `RoxygenMdBlockQuote`
+      leaf (`is_block_quote_marker`); `emit_md_block_quote` gathers consecutive quote lines into a
+      `ROXYGEN_MD_BLOCK_QUOTE` node (verbatim `ROXYGEN_TEXT`, like the HTML block). roxygen2 does not
+      support block quotes: it warns and renders `escape_comment(xml_text)` — the flattened plain text
+      (`>` markers + inner markdown dropped, lines concatenated with **no separator**). The projector
+      (`serialize_md_block_quote`) strips each `>` marker, flattens per line via `inline_plain_text`
+      (softbreaks removed), and concatenates. Formatter = marker-normalized atomic passthrough (Tenet 1,
+      idempotent). Curated `md_blockquote`/`md_blockquote_multiline`; projector 345→347. **Backlog:**
+      lazy continuation (non-`>` paragraph lines in a quote); the glue-onto-preceding-paragraph case
+      (`before` / `> q` → `beforeq`, no `\n\n`); inner Rd macros (roxygen2 keeps their source); the
+      roxygen-diagnostic side-channel (roxygen2's "block quotes are not currently supported" warning);
+      indented code blocks / thematic breaks (`---` after a blank, roxygen2 renders empty).
       **Setext headings LANDED (2026-07-02h):** a `===`/`---` underline line under `@md` carves as a
       `RoxygenMdSetextUnderline` leaf (`is_setext_underline`: `=`+ or `-`{2,}, single `-`/`- ` excluded
       as an empty list bullet). At block level a paragraph immediately terminated by such an underline

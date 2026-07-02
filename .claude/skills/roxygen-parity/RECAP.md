@@ -307,6 +307,16 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): `<tag>` →
   `(\if (TEXT "html") (\out (VERB <tag>)))`. Mirrors CommonMark Raw-HTML grammar precisely; comment/PI/
   declaration/CDATA stay literal (backlog).
+- **Block quotes** (`ROXYGEN_MD_BLOCK_QUOTE` node): `is_block_quote_marker` carves a line-start `>` leaf
+  (`RoxygenMdBlockQuote`→`ROXYGEN_TEXT`); `emit_md_block_quote` gathers **consecutive** `>` lines (no lazy
+  continuation). roxygen2 **has no block-quote support** — `mdxml_unsupported` warns then renders
+  `escape_comment(xml_text)`: the **flattened plain text**, `>` + inner markdown dropped, lines glued with
+  **no separator**. Projector `serialize_md_block_quote` strips each `>`, flattens per line via
+  `inline_plain_text` with **SOFT_BREAK removed** (glue, not a space), concatenates → one `(TEXT …)`.
+  Formatter = marker-normalized passthrough. **Indent is `#'` marker-ws trivia** → a 4+-space `>`
+  over-recognizes vs roxygen2's indented code block (shared fence/heading gap). **Backlog:** lazy
+  continuation; glue-onto-preceding-paragraph (`before`+`> q`→`beforeq`, no `\n\n`); inner Rd macros;
+  the diagnostic side-channel.
 - **GFM tables** (`ROXYGEN_MD_TABLE` node) are the **only** table kind (cmark-gfm `table` ext; pandoc
   simple/grid tables stay prose). Recognition is **two-line**, so the `@md` signal is a mode-gated leaf on
   the **delimiter** row (the header is generic prose — no header leaf): `RoxygenMdTableDelim`
@@ -407,7 +417,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 345 matching (all allowlisted), 18 divergent** of 363 pinned.
+corpus (132 `cm-NNN` cases). **Current: 347 matching (all allowlisted), 18 divergent** of 365 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -416,68 +426,70 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (363 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (365 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 80/80 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 82/82 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02h) — setext markdown headings
+## Latest session (2026-07-02i) — markdown block quotes
 
-Landed **setext headings** (`Title`/`===` and `Title`/`---` underlines) → the same hoisted Rd
-`\section`/`\subsection` as ATX (ranked #2 target). The distinctive twist vs ATX: setext is a
-**block-level look-back** — the underline turns the **whole preceding paragraph** into the heading
-text (multi-line title coalesces, `intro\nSub\n---` → `\subsection` titled "intro Sub"), so detection
-happens at *paragraph open* by scanning the maximal foldable-prose run for a terminating underline.
+Landed **block quotes** (`> quoted`) → their **flattened plain text** (ranked #1 target). roxygen2 does
+not support block quotes: `mdxml_unsupported` (`R/markdown.R`) warns then renders
+`escape_comment(xml_text(node))` — the descendant text concatenated with the `>` markers and **all inner
+markdown** (emphasis, code spans, links) dropped and **no separator** between lines (softbreaks and
+paragraph breaks glue: `> a`/`> b` → `ab`, `` `code` ``+`and` → `codeand`). Thematic breaks (`hrule` /
+cmark's `thematic_break`) render empty via the same path; both were the ranked pair, block quotes landed.
 
 **Parser:**
-- **Lexer** (`lex.rs`): `is_setext_underline(bytes, i)` (up-to-3-space indent, then `=`+ *or* `-`{2,},
-  trailing ws only) carves a `RoxygenMdSetextUnderline` leaf, `@md`+line-start, after the ATX check.
-  New `TokKind::RoxygenMdSetextUnderline` → **`ROXYGEN_TEXT`** in `syntax_kind_for` (an unmatched
-  underline — a thematic-break position — stays literal prose, byte-identical to before). **Single
-  `-`/`- ` is deliberately NOT carved** — it collides with an empty list-item bullet; single-dash
-  setext H2 is deferred. `--`/`---`/`===` (the common forms) are covered.
-- **Grouper** (`build.rs`/`group.rs`): `is_md_setext_heading_start` (look-back scan via the new
-  `next_roxygen_line_marker`) + `emit_md_setext_heading` build a **multi-line** `ROXYGEN_MD_HEADING`
-  (reusing the ATX node kind) holding the prose lines + underline. Wired into the Prose arm gated on
-  `!para_open` (detected only at a fresh paragraph, so the run captured is exactly the paragraph the
-  grouper would build). `is_foldable_continuation` now excludes underlines (so a same-line tag value
-  doesn't swallow one) and is `pub(super)`.
+- **Lexer** (`lex.rs`): `is_block_quote_marker(bytes, i)` (≤3 spaces then `>`) carves a whole-line
+  `RoxygenMdBlockQuote` leaf, `@md`+line-start, after the setext check. New `TokKind::RoxygenMdBlockQuote`
+  → **`ROXYGEN_TEXT`** in `syntax_kind_for` (a leaf never gathered stays literal prose). New node
+  `SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE` (COUNT 105).
+- **Builder** (`build.rs`): `is_md_block_quote_start` + `emit_md_block_quote` gather **consecutive** `>`
+  lines into the node (like the HTML block; a blank/tag/non-`>` line ends it). Guards added to
+  `is_table_row_line` + `is_foldable_continuation` (a `>` line ends a table / is not a foldable tag-value
+  continuation).
+- **Grouper** (`group.rs`): a block quote is a direct section child that **interrupts an open paragraph**
+  (CommonMark), dispatched after the HTML-block arm.
 
-**Projector** (`project_rd.rs`): `parse_md_heading` gained a setext branch — a node whose last
-marker-stripped line is a setext underline (`setext_underline_level`: `=`→1, `-`→2) yields that level
-and a title joined from the lines above it (soft breaks → spaces). Everything downstream
-(`section_body_parts`, `emit_section_with_headings`, `HeadingFrame` outline) is unchanged — setext
-flows through the identical `Inline::MdHeading` path. **Formatter:** `emit_md_heading` already splits
-`node.text()` per line and marker-normalizes, so the multi-line node just works (idempotent — reparse
-re-forms the same heading).
+**Projector** (`project_rd.rs`): `Inline::MdBlockQuote(node)`; `section_body_parts` maps the node;
+`serialize_md_block_quote` strips each `#'` + `>` marker (`strip_block_quote_marker`), resolves each line
+via `resolve_macro_arg_inlines`, flattens with `inline_plain_text` (SOFT_BREAK chars removed so lines
+**glue** with no space), concatenates, and `text_atom`-norm_ws's to one `(TEXT …)`. **Formatter**:
+`emit_md_block_quote` = marker-normalized atomic passthrough (each `>` line kept; idempotent).
 
-**Result:** projector **343→345 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green
-(851 total), clippy + fmt clean; fixed-point net 78→**80/80** preserving; format baseline **+2 additive**
-(the 2 new curated cases only, no existing case reinterpreted). Curated `md_setext`/`md_setext_multiline`
-(+ pins); parser fixtures `roxygen_md_setext` (+`_not`: non-md literal / thematic-break position /
-single-dash list / mixed `=-=`); formatter fixture `roxygen_md_setext`; lexer unit tests
-(`md_setext_underline_recognized`/`_rejects`); projector unit tests
-(`md_setext_heading_hoists_section`/`md_setext_multiline_title_and_nesting`).
+**Result:** projector **345→347 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green,
+clippy + fmt clean; fixed-point net 80→**82/82** preserving; format baseline **+2 additive** (the 2 new
+curated cases only). Curated `md_blockquote`/`md_blockquote_multiline` (+ pins); parser fixtures
+`roxygen_md_blockquote` (+`_not`: non-md literal / mid-text `>`); formatter fixture `roxygen_md_blockquote`;
+lexer unit tests (`md_block_quote_recognized`/`_rejects`); projector unit test
+(`md_block_quote_flattens_to_plain_text`).
 
-**Trap (new):** *Setext is a look-back; detect at paragraph OPEN.* The underline promotes the whole
-contiguous paragraph, so the scan must start at the paragraph's first line (`!para_open`) and walk its
-full foldable run — not react at the underline line itself. A `RoxygenMdSetextUnderline` is Content role
-(so it reads as Prose), which is why `is_foldable_continuation` must explicitly exclude it.
+**Trap (new):** *Block quote render = flatten, glue, no `\n\n`.* roxygen2 emits `xml_text` with softbreaks
+and paragraph breaks contributing **nothing** (not a space), so the projector must **remove** SOFT_BREAK
+chars (not norm_ws them to space) and concatenate lines directly. It also emits **no `\n\n`** before the
+quote, so a quote after a prose paragraph glues onto it (`before`+`> q`→`beforeq`) — the glue-onto-preceding
+case is **deferred backlog** (my pins keep the quote as sole `@details` content, one `section_body_parts`
+part). *Indentation is `#'` marker-ws trivia:* any leading-space depth reaches the `>` recognizer as 0
+indent, so a 4+-space `>` over-recognizes vs roxygen2's indented code block (shared fence/heading gap).
 
-**Next (ranked):** **(1)** **blockquotes** (`>` line) — roxygen2 *errors* ("block quotes are not
-currently supported") → a **diagnostic-parity** fixture; check whether a roxygen-diagnostic side-channel
-exists first (also covers **thematic breaks** `---`/`***`/`___` after a blank, which error the same way —
-currently arity leaves them literal). **(2)** single-dash setext H2 (`-`/`- ` after a paragraph) — needs
-block-level promotion of an empty list-marker line, resolving the list-vs-underline ambiguity. **(3)**
-facets (c)/(d) of the `@md` `\`-escape cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass
-migration, do NOT widen the lexer. The 18 projector divergences stay out of scope (roxygen2 evaluation /
-multi-block).
+**Next (ranked):** **(1)** **thematic breaks** `---`/`***`/`___` after a blank → render **empty** (same
+`escape_comment(xml_text)`=`""` path; cmark emits `thematic_break` → roxygen's `mdxml_unknown`). Needs
+block-level promotion of a `---` at a thematic-break position (currently a literal setext-underline leaf)
+AND the paragraph-coalescing across the removed break — check the `section_body_parts` join. **(2)**
+single-dash setext H2 (`-`/`- ` after a paragraph) — block-level promotion of an empty list-marker line.
+**(3)** the roxygen-diagnostic side-channel (block-quote/thematic-break/unknown-macro warnings) as a
+second oracle surface — no diagnostic infra exists in the roxygen parser yet. **(4)** facets (c)/(d) of the
+`@md` `\`-escape cluster — tied to the inline-pass migration, do NOT widen the lexer. The 18 projector
+divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
+
+- **2026-07-02h** — setext headings (`Title`/`===`|`---`) → hoisted Rd `\section`/`\subsection` like ATX; block-level **look-back** promotes the whole preceding paragraph (`is_md_setext_heading_start`/`emit_md_setext_heading`, multi-line `ROXYGEN_MD_HEADING`; `is_foldable_continuation` excludes underlines). Single `-`/`- ` deferred. 343→345.
 
 - **2026-07-02g** — ATX headings `# Title` (levels 1-6) → hoisted Rd `\section`/`\subsection` (single-line `RoxygenMdHeading` leaf; projector `emit_section_with_headings`/`HeadingFrame` outline; trap: md mode is block-wide, so a "not a heading" fixture needs its own no-`@md` block). 340→343.
 - **2026-07-02f** — GFM pipe tables `| a | b |` + `|---|:--:|` → `\tabular{<align>}{… \tab … \cr}` (`is_table_delim_row` carve, `emit_md_table`; projector `serialize_md_table` per-cell inline runs). 337→340.

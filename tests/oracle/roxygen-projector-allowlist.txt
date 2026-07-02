@@ -356,3 +356,5 @@ md_heading_subsection
 md_heading_intro
 md_setext
 md_setext_multiline
+md_blockquote
+md_blockquote_multiline

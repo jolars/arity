@@ -170,6 +170,12 @@ enum Inline {
     /// The projected title (level and text) is read from the node with
     /// [`parse_md_heading`].
     MdHeading(SyntaxNode),
+    /// A markdown block quote resolved under `@md` mode (a `ROXYGEN_MD_BLOCK_QUOTE`
+    /// node). roxygen2 does not support block quotes: it warns and renders the node's
+    /// *flattened plain text* (`escape_comment(xml_text)` — the `>` markers and inner
+    /// markdown dropped, descendant text concatenated with no separator). The
+    /// projector reproduces that flattened text (see [`serialize_md_block_quote`]).
+    MdBlockQuote(SyntaxNode),
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -1089,6 +1095,15 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(serialize_md_html_block(node));
+            }
+            Inline::MdBlockQuote(node) => {
+                if let Some(atom) = prose_text_atom(&run, md) {
+                    atoms.push(atom);
+                }
+                run.clear();
+                if let Some(atom) = serialize_md_block_quote(node) {
+                    atoms.push(atom);
+                }
             }
             Inline::MdTable(node) => {
                 if let Some(atom) = prose_text_atom(&run, md) {
@@ -2991,6 +3006,7 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
             | SyntaxKind::ROXYGEN_MD_LIST
             | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
             | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
+            | SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE
             | SyntaxKind::ROXYGEN_MD_TABLE => {
                 let Some(node) = el.into_node() else { continue };
                 let inlines = match node.kind() {
@@ -3000,6 +3016,7 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
                     SyntaxKind::ROXYGEN_MD_LIST => vec![Inline::MdList(node)],
                     SyntaxKind::ROXYGEN_MD_CODE_BLOCK => vec![Inline::MdCodeBlock(node)],
                     SyntaxKind::ROXYGEN_MD_HTML_BLOCK => vec![Inline::MdHtmlBlock(node)],
+                    SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE => vec![Inline::MdBlockQuote(node)],
                     SyntaxKind::ROXYGEN_MD_TABLE => vec![Inline::MdTable(node)],
                     _ => vec![Inline::Macro(node)],
                 };
@@ -3799,6 +3816,45 @@ fn serialize_md_html_block(node: &SyntaxNode) -> String {
     )
 }
 
+/// Project a `ROXYGEN_MD_BLOCK_QUOTE` node into its **flattened plain text**.
+/// roxygen2 does not support block quotes (`mdxml_unsupported`, `R/markdown.R`): it
+/// warns, then renders `escape_comment(xml_text(node))` — the concatenation of every
+/// descendant text node, with the `>` markers and all inner markup (emphasis, code
+/// spans, links) dropped and **no separator** between the lines (softbreaks and
+/// paragraph breaks contribute nothing). Each quote line has its `#'` marker, its
+/// `>` marker (after up to three spaces), and one optional following space stripped;
+/// its remaining markdown resolves to inlines whose plain text ([`inline_plain_text`],
+/// softbreaks removed) is concatenated directly. The result is one whitespace-
+/// normalized `(TEXT …)` atom, or `None` when the flattened text is blank.
+///
+/// Scoped to fully-marked, self-contained quotes: an inner Rd macro (roxygen2 keeps
+/// its source), cross-line emphasis, and gluing the flattened text onto an adjacent
+/// prose paragraph (roxygen2 emits no `\n\n` before a quote, so `before` + `> q`
+/// renders `beforeq`) are deferred backlog and not pinned.
+fn serialize_md_block_quote(node: &SyntaxNode) -> Option<String> {
+    let text = node.text().to_string();
+    let mut flat = String::new();
+    for line in text.split('\n') {
+        let content = strip_marker(line);
+        let inner = strip_block_quote_marker(content);
+        let inlines = resolve_macro_arg_inlines(inner);
+        for ch in inline_plain_text(&inlines).chars() {
+            if ch != SOFT_BREAK {
+                flat.push(ch);
+            }
+        }
+    }
+    text_atom(&flat)
+}
+
+/// Strip a block-quote line's `>` marker: up to three leading spaces, the `>`, then
+/// one optional space. Mirrors [`crate::parser::roxygen`]'s `is_block_quote_marker`.
+fn strip_block_quote_marker(content: &str) -> &str {
+    let trimmed = content.trim_start_matches(' ');
+    let after = trimmed.strip_prefix('>').unwrap_or(trimmed);
+    after.strip_prefix(' ').unwrap_or(after)
+}
+
 /// Per-column alignment of a GFM table, from the delimiter row's colon markers.
 #[derive(Clone, Copy)]
 enum TableAlign {
@@ -4421,6 +4477,27 @@ mod tests {
              (TEXT \"a\") (\\tab) (TEXT \"b\") (\\cr) \
              (\\emph (TEXT \"x\")) (\\tab) (TEXT \"y\") (\\cr) \
              (TEXT \"solo\") (\\tab) (\\cr))))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn md_block_quote_flattens_to_plain_text() {
+        // roxygen2 does not support block quotes: it warns and renders the node's
+        // *flattened plain text* (`escape_comment(xml_text)`) — the `>` markers and
+        // inner markdown (emphasis, code, link) dropped, and the two lines concatenated
+        // with **no separator** (`code` + `and` glue to `codeand`).
+        let src = "#' T\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' > a *quote* with `code`\n\
+                   #' > and [text](https://x.org)\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"a quote with codeand text\"))\n\
              (\\title (TEXT \"T\"))"
         );
     }

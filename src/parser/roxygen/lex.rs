@@ -370,6 +370,22 @@ fn lex_roxygen_prose(
         );
         return;
     }
+    // Under `@md`, a prose line whose content begins (after up to three spaces) with
+    // a `>` carves the *whole* remaining line off as a `RoxygenMdBlockQuote` leaf. The
+    // block builder gathers consecutive block-quote lines into a
+    // `ROXYGEN_MD_BLOCK_QUOTE`; the leaf's existence implies `@md`, so the builder
+    // keys off the token kind, never re-deriving mode.
+    if md && line_start && is_block_quote_marker(bytes, pos) {
+        push(
+            out,
+            TokKind::RoxygenMdBlockQuote,
+            text,
+            start,
+            pos,
+            text.len() - pos,
+        );
+        return;
+    }
     // Under `@md`, a prose line whose content begins with a list marker carves it
     // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
     // run). Whether the marker actually forms a list is a block-level decision
@@ -719,6 +735,20 @@ fn is_setext_underline(bytes: &[u8], i: usize) -> bool {
         }
     }
     true
+}
+
+/// Whether the line content at `bytes[i..]` (positioned past the `#'` marker) opens
+/// a **block quote**: after up to three spaces of leading indentation, a `>`. This
+/// is the CommonMark block-quote marker (an optional single space after the `>` is
+/// part of the marker, but its presence is not required to open a quote).
+fn is_block_quote_marker(bytes: &[u8], i: usize) -> bool {
+    let mut j = i;
+    let mut indent = 0;
+    while indent < 3 && bytes.get(j) == Some(&b' ') {
+        j += 1;
+        indent += 1;
+    }
+    bytes.get(j) == Some(&b'>')
 }
 
 fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
@@ -1530,6 +1560,7 @@ mod tests {
                         | TokKind::RoxygenMdTableDelim
                         | TokKind::RoxygenMdHeading
                         | TokKind::RoxygenMdSetextUnderline
+                        | TokKind::RoxygenMdBlockQuote
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1739,6 +1770,42 @@ mod tests {
             prose_texts("#' text\n#' ===\n").last(),
             Some(&(TokKind::RoxygenText, "===".into())),
             "no `@md`: an underline-looking line is literal prose"
+        );
+    }
+
+    #[test]
+    fn md_block_quote_recognized_under_md_mode() {
+        // Under `@md`, a line whose content opens with `>` carves off as a single
+        // `RoxygenMdBlockQuote` leaf, the whole line included. The `#'` marker→content
+        // whitespace is trivia, so any leading indentation is stripped before the leaf
+        // (a `>` after 4+ spaces is roxygen2's *indented code block*, not a quote — an
+        // unmodeled gap shared with the fence/heading/HTML-block recognizers).
+        for quote in ["> quoted", ">tight"] {
+            let src = format!("#' {quote}\n#' @md\n");
+            assert_eq!(
+                prose_texts(&src).first(),
+                Some(&(TokKind::RoxygenMdBlockQuote, quote.into())),
+                "block quote {quote:?}"
+            );
+            assert_lossless(&src);
+        }
+    }
+
+    #[test]
+    fn md_block_quote_rejects_non_quotes() {
+        // A `>` not at content start stays literal prose; a `>` line without `@md`
+        // likewise stays literal (the recognizer is mode-gated).
+        let src = "#' a > b\n#' @md\n";
+        assert!(
+            !prose_texts(src)
+                .iter()
+                .any(|t| t.0 == TokKind::RoxygenMdBlockQuote),
+            "a `>` mid-text is not a block quote"
+        );
+        assert_eq!(
+            prose_texts("#' > quoted\n").first(),
+            Some(&(TokKind::RoxygenText, "> quoted".into())),
+            "no `@md`: a `>` line is literal prose"
         );
     }
 

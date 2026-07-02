@@ -115,6 +115,7 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             SyntaxKind::ROXYGEN_MD_LIST
             | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
             | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
+            | SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE
             | SyntaxKind::ROXYGEN_MD_TABLE
             | SyntaxKind::ROXYGEN_MD_HEADING => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
@@ -246,6 +247,17 @@ fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// header/delimiter/body rows is idempotent — on reparse the same header/delimiter
 /// cell counts still form the table.
 fn emit_md_table_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
+/// Emit a markdown block quote (`@md` mode) as atomic passthrough, each `#'` line
+/// marker-normalized (marker, one space, trimmed content). The node owns its own
+/// `#'` markers and newlines; the quote is never reflowed. Each line keeps its
+/// leading `>` (trimmed content, not touched), so on reparse the same consecutive
+/// `>` lines re-form the block quote — idempotent.
+fn emit_md_block_quote(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
         push_line(items, normalize_marker_text(seg));
     }
@@ -410,6 +422,11 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 // An HTML block is atomic passthrough (verbatim raw HTML), each
                 // line marker-normalized — never reflowed across lines.
                 emit_md_html_block(&mut items, macro_node);
+            } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE {
+                // A block quote is atomic passthrough, each `>` line marker-
+                // normalized — never reflowed. On reparse each line still opens with
+                // `>`, so the same block quote re-forms (idempotent).
+                emit_md_block_quote(&mut items, macro_node);
             } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_TABLE {
                 // A GFM table is atomic passthrough, each line marker-normalized —
                 // never reflowed (arity does not lay out roxygen table content).

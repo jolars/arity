@@ -211,14 +211,24 @@ pub enum SyntaxKind {
     /// `@description`/`@details`. Appended last to keep the earlier variants'
     /// `as u16` discriminants stable.
     ROXYGEN_MD_HEADING,
+    /// A markdown **block quote** (resolved `@md` mode only): a run of consecutive
+    /// `#'` lines each opening with `>` (after up to three spaces), with the `#'`
+    /// markers, marker→content whitespace, and inter-line newlines threaded in as
+    /// trivia (losslessness), the way the HTML block threads them. Its line content
+    /// is verbatim `ROXYGEN_TEXT`. roxygen2 does not support block quotes: it warns
+    /// and renders the node's *flattened plain text* (`escape_comment(xml_text)`),
+    /// which the projector reproduces (strip each `>` marker, flatten the inner
+    /// markdown, concatenate with no separator). Appended last to keep the earlier
+    /// variants' `as u16` discriminants stable.
+    ROXYGEN_MD_BLOCK_QUOTE,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_HEADING` remains
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_BLOCK_QUOTE` remains
     /// the last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_HEADING as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -386,6 +396,7 @@ impl Language for RLanguage {
             101 => SyntaxKind::ROXYGEN_MD_DELIM,
             102 => SyntaxKind::ROXYGEN_MD_TABLE,
             103 => SyntaxKind::ROXYGEN_MD_HEADING,
+            104 => SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE,
             _ => SyntaxKind::ERROR,
         }
     }

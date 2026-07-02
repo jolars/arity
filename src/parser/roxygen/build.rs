@@ -328,6 +328,72 @@ fn is_table_row_line(tokens: &[Token], marker: usize) -> bool {
         && !is_md_list_start(tokens, marker, false)
         && !is_block_macro_line(tokens, marker)
         && !is_md_heading_start(tokens, marker)
+        && !is_md_block_quote_start(tokens, marker)
+}
+
+/// Whether the prose line whose marker is at `start` opens a markdown **block
+/// quote** (`@md` mode): its first content token is a `RoxygenMdBlockQuote` leaf.
+/// The leaf is carved only under a resolved `@md` mode, so its presence is the
+/// single mode signal (the builder never re-derives mode).
+pub(super) fn is_md_block_quote_start(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdBlockQuote)
+}
+
+/// Emit a `ROXYGEN_MD_BLOCK_QUOTE` node spanning the block quote beginning at
+/// `start` (a `RoxygenMarker` whose content is a `RoxygenMdBlockQuote` opener). The
+/// node gathers the opener and every following **consecutive** block-quote line
+/// (each a `>`-opening `#'` line); a blank line, a tag, a non-`>` prose line, or a
+/// non-roxygen line ends it. The `#'` markers, marker→content whitespace, and
+/// inter-line newlines/indentation are threaded in as trivia (losslessness), the
+/// way the HTML block threads them. CommonMark **lazy continuation** (a non-`>`
+/// paragraph line that still belongs to the quote) is deferred backlog: only
+/// fully-marked quotes are gathered. The trailing newline after the last line is
+/// left to the caller. Returns the token index just past it.
+pub(super) fn emit_md_block_quote(
+    tokens: &[Token],
+    start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE));
+
+    // Opening line: marker, marker→content whitespace, then the opener content.
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+
+    loop {
+        // Line boundary: fold a following consecutive block-quote line into the node.
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            break;
+        }
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
+            break;
+        }
+        if !is_md_block_quote_start(tokens, m) {
+            break; // a blank line, tag, or non-`>` prose line ends the quote
+        }
+        // `\n` + indentation + `#'` threaded as trivia, then the line's body.
+        for idx in i..=m {
+            events.push(Event::Tok(idx));
+        }
+        i = m + 1;
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+    }
+
+    events.push(Event::Finish); // ROXYGEN_MD_BLOCK_QUOTE
+    i
 }
 
 /// Emit a `ROXYGEN_MD_TABLE` node spanning the GFM table beginning at `start` (a

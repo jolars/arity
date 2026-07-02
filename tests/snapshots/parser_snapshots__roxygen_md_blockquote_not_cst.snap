@@ -1,0 +1,68 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..228
+  ROXYGEN_BLOCK@0..70
+    ROXYGEN_SECTION@0..70
+      ROXYGEN_PARAGRAPH@0..70
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..53 "Without markdown a le ..."
+        NEWLINE@53..54 "\n"
+        ROXYGEN_MARKER@54..56 "#'"
+        WHITESPACE@56..57 " "
+        ROXYGEN_TEXT@57..70 "> not a quote"
+  NEWLINE@70..71 "\n"
+  ASSIGNMENT_EXPR@71..79
+    IDENT@71..74 "foo"
+    WHITESPACE@74..75 " "
+    ASSIGN_LEFT@75..77 "<-"
+    WHITESPACE@77..78 " "
+    INT@78..79 "1"
+  NEWLINE@79..80 "\n"
+  NEWLINE@80..81 "\n"
+  ROXYGEN_BLOCK@81..218
+    ROXYGEN_SECTION@81..146
+      ROXYGEN_PARAGRAPH@81..143
+        ROXYGEN_MARKER@81..83 "#'"
+        WHITESPACE@83..84 " "
+        ROXYGEN_TEXT@84..142 "With markdown a bare  ..."
+        NEWLINE@142..143 "\n"
+      ROXYGEN_MARKER@143..145 "#'"
+      NEWLINE@145..146 "\n"
+    ROXYGEN_SECTION@146..153
+      ROXYGEN_MARKER@146..148 "#'"
+      WHITESPACE@148..149 " "
+      ROXYGEN_TAG@149..152
+        ROXYGEN_AT@149..150 "@"
+        ROXYGEN_TAG_NAME@150..152 "md"
+      NEWLINE@152..153 "\n"
+    ROXYGEN_SECTION@153..208
+      ROXYGEN_MARKER@153..155 "#'"
+      WHITESPACE@155..156 " "
+      ROXYGEN_TAG@156..164
+        ROXYGEN_AT@156..157 "@"
+        ROXYGEN_TAG_NAME@157..164 "details"
+      NEWLINE@164..165 "\n"
+      ROXYGEN_PARAGRAPH@165..208
+        ROXYGEN_MARKER@165..167 "#'"
+        WHITESPACE@167..168 " "
+        ROXYGEN_TEXT@168..207 "Prose with a > sign i ..."
+        NEWLINE@207..208 "\n"
+    ROXYGEN_SECTION@208..218
+      ROXYGEN_MARKER@208..210 "#'"
+      WHITESPACE@210..211 " "
+      ROXYGEN_TAG@211..218
+        ROXYGEN_AT@211..212 "@"
+        ROXYGEN_TAG_NAME@212..216 "name"
+        WHITESPACE@216..217 " "
+        ROXYGEN_TEXT@217..218 "x"
+  NEWLINE@218..219 "\n"
+  ASSIGNMENT_EXPR@219..227
+    IDENT@219..222 "bar"
+    WHITESPACE@222..223 " "
+    ASSIGN_LEFT@223..225 "<-"
+    WHITESPACE@225..226 " "
+    INT@226..227 "2"
+  NEWLINE@227..228 "\n"

@@ -139,6 +139,16 @@ pub(crate) enum TokKind {
     /// here — they collide with an empty list-item marker — so a single-dash setext
     /// H2 is deferred backlog; `---` (the common form) is covered.
     RoxygenMdSetextUnderline,
+    /// A markdown **block-quote** line (`> quoted`): a line whose content, after up
+    /// to three spaces of indentation, begins with `>`, recognized only at a line's
+    /// content start under a resolved `@md` mode. The whole remaining line content is
+    /// the token. The block builder gathers consecutive block-quote lines into a
+    /// `ROXYGEN_MD_BLOCK_QUOTE` node. roxygen2 does not support block quotes: it warns
+    /// and renders the node's *flattened plain text* (`escape_comment(xml_text)` — the
+    /// `>` markers and inner markup dropped), which the projector reproduces. The tree
+    /// builder maps this kind to `ROXYGEN_TEXT`, so a leaf that is somehow never
+    /// gathered stays literal prose.
+    RoxygenMdBlockQuote,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -186,7 +196,8 @@ impl TokKind {
             | RoxygenMdHtmlBlock
             | RoxygenMdTableDelim
             | RoxygenMdHeading
-            | RoxygenMdSetextUnderline => Some(RoxygenRole::Content),
+            | RoxygenMdSetextUnderline
+            | RoxygenMdBlockQuote => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

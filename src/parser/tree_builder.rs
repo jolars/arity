@@ -225,5 +225,9 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         // a `ROXYGEN_MD_HEADING` node when it promotes a preceding paragraph, and
         // stays literal prose when it heads nothing (a thematic-break position).
         TokKind::RoxygenMdSetextUnderline => SyntaxKind::ROXYGEN_TEXT,
+        // A block-quote line (`> quoted`) is verbatim text: it lives inside a
+        // `ROXYGEN_MD_BLOCK_QUOTE` node once the builder gathers consecutive quote
+        // lines; a leaf that is never gathered stays literal prose.
+        TokKind::RoxygenMdBlockQuote => SyntaxKind::ROXYGEN_TEXT,
     }
 }
