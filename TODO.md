@@ -760,6 +760,18 @@
       `SOFT_BREAK` to a space, so no-comment prose renders identically. The formatter got the `@md`
       analog of its non-md `%`-reflow gate (`line_has_md_percent_swallow`), so a `\%`-swallow line
       is no longer joined with its continuation. Curated `rd_comment_softwrap` + `md_percent_softwrap`.
+      **HTML character references LANDED (2026-07-02c):** under `@md`, cmark decodes every
+      semicolon-terminated HTML5 named entity (`&amp;`→`&`, `&copy;`→`©`, `&hellip;`→`…`) and
+      numeric reference (`&#65;`/`&#x41;`→`A`), with U+0000, a surrogate, or an out-of-range code
+      point mapping to U+FFFD. A missing `;` (`&amp`) or an unknown name (`&nope;`) stays literal, and
+      decoding is single-pass (`&amp;amp;`→`&amp;`) and off inside code spans (separate verbatim
+      leaves). Projector-only encoding translation (CST stays lossless — raw `&amp;` prose): the full
+      2125-entry table lives in generated `src/roxygen/entities.rs` (Python `html.entities.html5`,
+      binary-searched); `decode_html_entities`/`decode_entity` extended from the 5-entity link-dest set
+      and wired into `prose_text_atom`'s `md` branch as the final text transform (after `%`-swallow /
+      backslash / bracket rules, since an entity-produced `[`/`%`/`\` is inert text). Non-md prose keeps
+      entities literal (Rd doesn't decode). Curated `md_entities`; projector 334→335; curated
+      fixed-point 69→70/70.
     - *Markdown mode is opt-in.* roxygen markdown is only active under
       `@md`/`@noMd` or `Roxygen: list(markdown = TRUE)` in `DESCRIPTION`.
       **Mode resolution landed (Stage 5, 2026-06-23):** `resolve_roxygen_block`

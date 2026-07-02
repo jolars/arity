@@ -1,0 +1,44 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..150
+  ROXYGEN_BLOCK@0..144
+    ROXYGEN_SECTION@0..37
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..36
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..9 "title"
+        WHITESPACE@9..10 " "
+        ROXYGEN_TEXT@10..36 "Entities in markdown  ..."
+      NEWLINE@36..37 "\n"
+    ROXYGEN_SECTION@37..117
+      ROXYGEN_MARKER@37..39 "#'"
+      WHITESPACE@39..40 " "
+      ROXYGEN_TAG@40..116
+        ROXYGEN_AT@40..41 "@"
+        ROXYGEN_TAG_NAME@41..48 "details"
+        WHITESPACE@48..49 " "
+        ROXYGEN_TEXT@49..116 "Named &amp; and &copy ..."
+      NEWLINE@116..117 "\n"
+    ROXYGEN_SECTION@117..124
+      ROXYGEN_MARKER@117..119 "#'"
+      WHITESPACE@119..120 " "
+      ROXYGEN_TAG@120..123
+        ROXYGEN_AT@120..121 "@"
+        ROXYGEN_TAG_NAME@121..123 "md"
+      NEWLINE@123..124 "\n"
+    ROXYGEN_SECTION@124..144
+      ROXYGEN_MARKER@124..126 "#'"
+      WHITESPACE@126..127 " "
+      ROXYGEN_TAG@127..144
+        ROXYGEN_AT@127..128 "@"
+        ROXYGEN_TAG_NAME@128..132 "name"
+        WHITESPACE@132..133 " "
+        ROXYGEN_TEXT@133..135 "md"
+        ROXYGEN_MD_DELIM@135..136 "_"
+        ROXYGEN_TEXT@136..144 "entities"
+  NEWLINE@144..145 "\n"
+  IDENT@145..149 "NULL"
+  NEWLINE@149..150 "\n"

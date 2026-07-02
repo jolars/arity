@@ -44,6 +44,7 @@ use crate::parser::roxygen::{
     MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_two_arg_rd_macro, resolve_md_inline,
     resolve_md_inline_pieces,
 };
+use crate::roxygen::entities;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 /// Project `text` to the parser-owned Rd section subtrees, one canonical
@@ -1325,8 +1326,12 @@ fn text_atom(body: &str) -> Option<String> {
 /// `norm_ws` later collapses, so the comment's end-of-line is honored either way.)
 fn prose_text_atom(run: &str, md: bool) -> Option<String> {
     if md {
-        text_atom(&unescape_md_brackets(&collapse_md_backslash_runs(
-            &md_percent_swallow(run),
+        // cmark decodes HTML entities (`&amp;`, `&copy;`, `&#65;`) as the final
+        // text transform: they are inert with respect to the `%`-swallow, bracket,
+        // and backslash rules (an entity-produced `[`/`%`/`\` is literal text, not a
+        // delimiter), so decode after those run on the raw source.
+        text_atom(&decode_html_entities(&unescape_md_brackets(
+            &collapse_md_backslash_runs(&md_percent_swallow(run)),
         )))
     } else {
         text_atom(&strip_rd_comments(run))
@@ -2335,11 +2340,14 @@ fn parse_linkref_def_dest(text: &str) -> Option<String> {
     title_rest[end + 1..].trim().is_empty().then(|| url.clone())
 }
 
-/// Decode the HTML/XML character references cmark resolves in a markdown link
-/// destination: the five named entities (`&amp;`/`&lt;`/`&gt;`/`&quot;`/`&apos;`)
-/// and numeric references (`&#NN;`, `&#xHH;`). An unrecognized `&…;` (or a bare `&`)
-/// is left verbatim. The fast path returns the input unchanged when it has no `&`,
-/// so destinations without entities are byte-identical.
+/// Decode the HTML character references cmark resolves: every semicolon-terminated
+/// HTML5 named entity (`&amp;`, `&copy;`, `&hellip;`, …) and numeric references
+/// (`&#NN;`, `&#xHH;`). CommonMark requires the trailing `;`, so a bare `&amp` (no
+/// semicolon) is left verbatim, as is an unrecognized name (`&nope;`). The fast
+/// path returns the input unchanged when it has no `&`, so text without entities is
+/// byte-identical. Used both for a markdown link destination and, via
+/// [`prose_text_atom`], for `@md` prose text (cmark decodes entities everywhere
+/// except code spans/blocks, which the projector keeps as separate verbatim leaves).
 fn decode_html_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
@@ -2349,9 +2357,8 @@ fn decode_html_entities(s: &str) -> String {
     while i < s.len() {
         if s.as_bytes()[i] == b'&'
             && let Some(rel) = s[i + 1..].find(';')
-            && let Some(ch) = decode_entity(&s[i + 1..i + 1 + rel])
+            && decode_entity(&s[i + 1..i + 1 + rel], &mut out)
         {
-            out.push(ch);
             i += 1 + rel + 1;
             continue;
         }
@@ -2362,24 +2369,33 @@ fn decode_html_entities(s: &str) -> String {
     out
 }
 
-/// Resolve one character-reference body (the text between `&` and `;`): a named
-/// entity from cmark's predefined set or a decimal/hex numeric reference. `None`
-/// for an unrecognized name or an out-of-range code point (left verbatim).
-fn decode_entity(body: &str) -> Option<char> {
-    match body {
-        "amp" => Some('&'),
-        "lt" => Some('<'),
-        "gt" => Some('>'),
-        "quot" => Some('"'),
-        "apos" => Some('\''),
-        _ => {
-            let num = body.strip_prefix('#')?;
-            let code = match num.strip_prefix(['x', 'X']) {
-                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
-                None => num.parse::<u32>().ok()?,
-            };
+/// Resolve one character-reference body (the text between `&` and `;`), appending
+/// its replacement to `out` and returning `true` on success. A named entity is
+/// looked up in the full HTML5 table ([`entities::HTML5_ENTITIES`]); a numeric
+/// reference decodes its decimal (`#NN`) or hexadecimal (`#xHH`) code point, mapping
+/// U+0000, a surrogate, or an out-of-range value to the replacement character
+/// U+FFFD (cmark's rule). Returns `false` for an unrecognized name or a malformed
+/// numeric body, leaving the source `&…;` verbatim.
+fn decode_entity(body: &str, out: &mut String) -> bool {
+    if let Some(num) = body.strip_prefix('#') {
+        let code = match num.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok(),
+            None => num.parse::<u32>().ok(),
+        };
+        let Some(code) = code else { return false };
+        out.push(
             char::from_u32(code)
+                .filter(|&c| c != '\0')
+                .unwrap_or('\u{FFFD}'),
+        );
+        return true;
+    }
+    match entities::HTML5_ENTITIES.binary_search_by_key(&body, |&(name, _)| name) {
+        Ok(idx) => {
+            out.push_str(entities::HTML5_ENTITIES[idx].1);
+            true
         }
+        Err(_) => false,
     }
 }
 

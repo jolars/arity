@@ -8,4 +8,5 @@
 //! wrapper). A divergence from the pinned roxygen2 output means the CST (or the
 //! encoding translation) is wrong --- the fix belongs in the parser, never here.
 
+mod entities;
 pub mod project_rd;

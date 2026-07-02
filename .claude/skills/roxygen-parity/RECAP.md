@@ -275,6 +275,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   letter** (`\\y` — the lexer splits it into text `\` + an UNKNOWN macro node); brace-less known-macro
   decomposition under `@md` (`\emph z`→dropped, `\code z`→`\code{ z}`, `\dots`→kept — lexer leaves them
   plain text). These tie into the inline-pass migration.
+- **HTML entities decode under `@md` only, projector-only.** cmark resolves every semicolon-terminated
+  HTML5 named entity (`&amp;`/`&copy;`/`&hellip;`) + numeric ref (`&#65;`/`&#x41;`); U+0000/surrogate/
+  out-of-range → U+FFFD; missing `;` or unknown name stays literal; single-pass (`&amp;amp;`→`&amp;`);
+  **off in code spans** (separate verbatim leaves — nothing to do). Full 2125-entry table in generated
+  `src/roxygen/entities.rs` (Python `html.entities.html5`, `;`-terminated, escaped non-ASCII, binary
+  search); `decode_html_entities`/`decode_entity` (link-dest + prose). **Wired as the *last* transform in
+  `prose_text_atom`'s `md` branch** (after `%`-swallow/backslash/bracket — an entity-produced `[`/`%`/`\`
+  is inert text). CST stays lossless (raw `&amp;` prose); non-md keeps entities literal. Curated
+  `md_entities`. Regenerate the table if the WHATWG list changes.
 - **Images** (`scan_md_image`, inline `![…](…)` only): `mdxml_image` drops alt → `\figure{url}{title}`,
   wrapped per extension (`image_format`: svg→html, pdf→pdf, raster/unknown→bare). `\figure` = 2-arg
   verbatim macro.
@@ -375,7 +384,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 333 matching (all allowlisted), 18 divergent** of 351 pinned.
+corpus (132 `cm-NNN` cases). **Current: 335 matching (all allowlisted), 18 divergent** of 353 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -384,48 +393,48 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (351 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (353 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 68/68 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 70/70 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02b) — same-line tag-value continuation folds into the tag
+## Latest session (2026-07-02c) — HTML character references decode under `@md`
 
-Closed ranked-#1: a *prose* tag with a **same-line value** (`@details *a` / `b` / `c*`) split its continuation
-lines into a sibling `ROXYGEN_PARAGRAPH`, so an `@md` emphasis/link span opened in the value couldn't resolve
-across the boundary (the emphasis pass is bounded by the tag/paragraph structural edge; the tree forbids an EMPH
-node straddling it, and reordering events would break losslessness). **Oracle-confirmed** identical to the
-next-line form: `@details *a`/`b`/`c*` and `@details`/`*a`/`b`/`c*` both render `(\details (\emph (TEXT
-"a b c")))`.
+Closed a clean, well-defined CommonMark gap found by probing (not previously ranked): under `@md`, cmark
+decodes HTML entities but arity left them literal — `A &amp; B &copy; C &#65;` projected verbatim instead of
+`A & B © C A`. Oracle-confirmed the full CommonMark surface: every semicolon-terminated HTML5 named entity +
+numeric refs, U+FFFD for null/surrogate/out-of-range, `;` required, single-pass, and **not** in code spans.
+(The sibling probes — two-space hard break, multi-backtick code span, GFM strikethrough — all already matched.)
 
-**Fix — fold the continuation into the tag** (cross-cutting: parser + projector + formatter). `emit_tag_line`
-keeps a prose tag (`tag_folds_prose_continuation`) open and folds contiguous plain-prose continuation lines into
-the `ROXYGEN_TAG`, so opener and closer share one node and the pass resolves the span (see the CST-shape trap for
-the full mechanic). Projector `tag_inlines` drops folded markers + maps newlines to `SOFT_BREAK`. Formatter keeps
-the folded tag as one `PhysicalLine` and fixes chunking/bail (`chunk_into` cross-line descent + newline break,
-`tag_first_line_value`, `emit_tag_passthrough` multi-line split) so reflow output is byte-identical and
-idempotent; the linkref-def and `%`-swallow bails still preserve line structure.
+**Fix — projector-only encoding translation** (CST untouched, stays lossless — the raw `&amp;` is preserved as
+prose). A generated `src/roxygen/entities.rs` holds the full 2125-entry HTML5 table (Python `html.entities.html5`,
+`;`-terminated, non-ASCII escaped `\u{…}` to satisfy clippy's invisible-char lint, binary-searched). Rewrote
+`decode_entity` (append-to-string for the 93 multi-codepoint values; numeric → U+FFFD on invalid) and extended
+`decode_html_entities` from the old 5-entity link-dest helper; **wired it into `prose_text_atom`'s `md` branch as
+the last text transform** so it covers prose, emphasis interiors, and link displays but runs after
+`%`-swallow/backslash/bracket (an entity-produced `[`/`%`/`\` is inert text). Non-md prose keeps entities literal.
 
-**Result:** projector **333→334 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
-**68→69/69** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1 (additive** —
-only the new stem; **no existing case's format changed**, verified via the set-diff). Parser fixture
-`roxygen_tag_sameline_emph` (CST shows emphasis/strong resolving across soft breaks *inside* the tag) + a
-plain-fold projector unit test.
+**Result:** projector **334→335 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
+**69→70/70** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1 (additive** —
+only `md_entities`; **no existing case's format changed**, verified via set-diff). Parser fixture
+`roxygen_md_entities` (CST keeps raw entities → lossless) + curated corpus `md_entities`.
 
 **Next (ranked):** **(1)** the **tag same-line value + blank + prose** shape (a blank after the value opens a
-*second* paragraph, still a sibling — but that's a paragraph break, not a cross-line span, so lower value) and
-the residual **multi-line inline macro bounding a run** (contrived). **(2)** facets (c)/(d) of the `@md`
-`\`-escape cluster: run-before-letter macro-split (`\\y`), brace-less known-macro decomposition (`\emph z`/
-`\code z`) — tied to the inline-pass migration, do NOT widen the lexer. **(3)** Slice B leftover hardenings
-(`\value`/`\section` inline md; cmark-active md inside a *fragile* arg; `linkref_def_label` macro drop). **(4)**
-the 18 projector divergences stay out of scope (roxygen2 evaluation / multi-block).
+*second* paragraph, still a sibling — a paragraph break, not a cross-line span, so lower value) and the residual
+**multi-line inline macro bounding a run** (contrived). **(2)** facets (c)/(d) of the `@md` `\`-escape cluster:
+run-before-letter macro-split (`\\y`), brace-less known-macro decomposition (`\emph z`/`\code z`) — tied to the
+inline-pass migration, do NOT widen the lexer. **(3)** Slice B leftover hardenings (`\value`/`\section` inline
+md; cmark-active md inside a *fragile* arg; `linkref_def_label` macro drop — the invalid-def `[ref]: url \emph{}`
+case where arity wrongly consumes the def). **(4)** the 18 projector divergences stay out of scope (roxygen2
+evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02b** — same-line tag-value continuation folds into the `ROXYGEN_TAG` (emphasis/link spans cross the soft break). 333→334.
 - **2026-07-02** — soft-wrap physical-line boundary for `%`-swallow/comment (`SOFT_BREAK` sentinel). 331→333 (no delta; format-only).
 - **2026-07-01b** — `@md` `%`-swallow (parity-keyed on the source backslash run); projector `md_percent_swallow`. 330→331.
 - **2026-07-01** — `@md` backslash-run collapse (`\\`→`\`, `ceil(k/2)`); projector `collapse_md_backslash_runs`. 329→330.

@@ -1,0 +1,3 @@
+(\description (TEXT "HTML character references in markdown prose"))
+(\details (TEXT "Named entities like & and © decode, as do numeric ones: A and A. A null � becomes the replacement character. An unknown &nope; and a bare &amp without a semicolon stay literal."))
+(\title (TEXT "HTML character references in markdown prose"))

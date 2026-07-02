@@ -152,6 +152,7 @@ md_backslash_run
 md_emphasis
 md_emphasis_multiline
 md_empty_list_item
+md_entities
 md_escaped_bracket
 md_escaped_close_bracket
 md_link_backslash
