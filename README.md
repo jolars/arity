@@ -89,6 +89,16 @@ The **Arity** extension for VS Code/Open VSX (and Positron) bundles the binary
 and starts the server automatically. For Neovim, Helix, and other editors, see
 the [editor setup guide](https://arity.cc/guide/editors.html).
 
+## Acknowledgements
+
+The core architecture of Arity is entirely based on
+[rust-analyzer](https://github.com/rust-lang/rust-analyzer), using salsa for
+incremental computation and rowan for lossless syntax trees. Arity also owes a
+great debt to [air](https://posit-dev.github.io/air/), on which it is heavily
+inspired and from which it has borrowed tests, rules, and formatting style. It
+is also inspired by [jarl](https://jarl.etiennebacher.com/) and has borrowed
+rules from it as well as some of its architecture.
+
 ## Documentation
 
 Full documentation lives at [arity.cc](https://arity.cc):
