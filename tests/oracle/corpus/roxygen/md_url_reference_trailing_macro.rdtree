@@ -1,0 +1,3 @@
+(\description (TEXT "Link-reference definition with a trailing macro stays prose"))
+(\details (TEXT "A definition line whose destination is followed by more content (here an") (\verb (VERB "\\emph{}")) (TEXT "macro) is not a valid definition, so the shortcut self-defines and the line stays literal prose: see") (\link (TEXT "foo")) (TEXT "here.") (\link (TEXT "foo")) (TEXT ": https://example.com") (\emph (TEXT "bar")))
+(\title (TEXT "Link-reference definition with a trailing macro stays prose"))

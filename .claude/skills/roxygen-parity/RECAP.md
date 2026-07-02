@@ -221,7 +221,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   (`&amp;`→`&`), and multi-line dests (`match_linkref_def` gathers across soft breaks). `@section`'s
   arm runs the same shared `resolve_linkrefs` pipeline. **Formatter:** the prose-reflow bail fires
   under `@md` when a paragraph's first line (or a tag's prose value) is a link-ref def
-  (`text_is_linkref_def`/`linkref_dest_is_clean`) so consecutive def lines stay unjoined. **Backlog:**
+  (`text_is_linkref_def`/`linkref_dest_is_clean`) so consecutive def lines stay unjoined.
+  **Trailing content = not a def, physical-line-scoped.** `[foo]: url \emph{bar}` is not a definition
+  (CommonMark forbids non-whitespace after the dest/optional-title *on its line*) → `foo` stays an
+  undefined shortcut. `match_linkref_def`'s `Text` loop stops at the first non-`Text` inline, so a
+  trailing macro/link was invisible; it now rejects a non-`Text` inline that follows **on the same
+  physical line** (`parse_linkref_def_dest` returns `(url, line_closed)`; `line_closed` = a `SOFT_BREAK`
+  follows the dest/title). Load-bearing: a *stacked* def's next `[r2]` label is also a non-`Text` inline
+  but sits after a `SOFT_BREAK` (a new block) → allowed. `text` never has `\n` (loop breaks at a
+  paragraph break), so a residual line boundary is always a soft wrap. **Backlog:**
   multi-line def *titles*, cross-list duplicate-label document order.
 - **A shortcut/reference link with a non-plain display is DROPPED to empty.** roxygen2's `parse_link`:
   after unwrapping a *sole* `code` child (which links — `\code{\link{…}}`), any non-text display child
@@ -400,40 +408,44 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02c) — HTML character references decode under `@md`
+## Latest session (2026-07-02d) — link-ref def with a trailing macro is not a definition
 
-Closed a clean, well-defined CommonMark gap found by probing (not previously ranked): under `@md`, cmark
-decodes HTML entities but arity left them literal — `A &amp; B &copy; C &#65;` projected verbatim instead of
-`A & B © C A`. Oracle-confirmed the full CommonMark surface: every semicolon-terminated HTML5 named entity +
-numeric refs, U+FFFD for null/surrogate/out-of-range, `;` required, single-pass, and **not** in code spans.
-(The sibling probes — two-space hard break, multi-backtick code span, GFM strikethrough — all already matched.)
+Closed Slice B backlog item `linkref_def_label` (the invalid-def case where arity **wrongly consumed**
+a def line). `[foo]: url \emph{bar}` has trailing inline content after the destination, which CommonMark
+forbids in a link-reference definition, so it is **not** a def: roxygen2 leaves `foo` an undefined
+shortcut (synthesized `R:foo` → `\link`) and renders the line literally (`(\link foo) (TEXT ": url")
+(\emph bar)`). arity had consumed it → `\href{url}{foo}`, dropping the line.
 
-**Fix — projector-only encoding translation** (CST untouched, stays lossless — the raw `&amp;` is preserved as
-prose). A generated `src/roxygen/entities.rs` holds the full 2125-entry HTML5 table (Python `html.entities.html5`,
-`;`-terminated, non-ASCII escaped `\u{…}` to satisfy clippy's invisible-char lint, binary-searched). Rewrote
-`decode_entity` (append-to-string for the 93 multi-codepoint values; numeric → U+FFFD on invalid) and extended
-`decode_html_entities` from the old 5-entity link-dest helper; **wired it into `prose_text_atom`'s `md` branch as
-the last text transform** so it covers prose, emphasis interiors, and link displays but runs after
-`%`-swallow/backslash/bracket (an entity-produced `[`/`%`/`\` is inert text). Non-md prose keeps entities literal.
+**Root cause + fix (projector-only, faithful — the CST is untouched and stays lossless):**
+`match_linkref_def`'s `Text`-accumulation loop stops at the first non-`Text` inline (the `\emph` macro),
+so trailing macro/link content was invisible to the trailing-content check. Fix rejects a def when a
+non-`Text` inline follows on the **same physical line** as the destination. The physical-line test is
+load-bearing: a *stacked* def (`[r1]: u1` newline `[r2]: u2`) also stops the loop at a non-`Text` inline
+(the next `[r2]` label), but that one sits after a `SOFT_BREAK` — a new block, allowed. So
+`parse_linkref_def_dest` now returns `(url, line_closed)` where `line_closed` = a `SOFT_BREAK` follows
+the dest/title; `match_linkref_def` only rejects the trailing inline when `!line_closed`. (Reminder:
+`text` never carries `\n` — the loop breaks at a paragraph break — so a line boundary in the residual is
+always a soft wrap.)
 
-**Result:** projector **334→335 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
-**69→70/70** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1 (additive** —
-only `md_entities`; **no existing case's format changed**, verified via set-diff). Parser fixture
-`roxygen_md_entities` (CST keeps raw entities → lossless) + curated corpus `md_entities`.
+**Result:** projector **335→336 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
+**70→71/71** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1
+(additive** — only the new `md_url_reference_trailing_macro`; no existing case's format changed, verified
+by set-diff). New unit test `linkref_definition_with_trailing_macro_is_not_a_definition` +
+`parse_linkref_def_dest` signature change; curated corpus `md_url_reference_trailing_macro` (+ pin).
 
-**Next (ranked):** **(1)** the **tag same-line value + blank + prose** shape (a blank after the value opens a
-*second* paragraph, still a sibling — a paragraph break, not a cross-line span, so lower value) and the residual
-**multi-line inline macro bounding a run** (contrived). **(2)** facets (c)/(d) of the `@md` `\`-escape cluster:
-run-before-letter macro-split (`\\y`), brace-less known-macro decomposition (`\emph z`/`\code z`) — tied to the
-inline-pass migration, do NOT widen the lexer. **(3)** Slice B leftover hardenings (`\value`/`\section` inline
-md; cmark-active md inside a *fragile* arg; `linkref_def_label` macro drop — the invalid-def `[ref]: url \emph{}`
-case where arity wrongly consumes the def). **(4)** the 18 projector divergences stay out of scope (roxygen2
-evaluation / multi-block).
+**Next (ranked):** **(1)** the **tag same-line value + blank + prose** shape (a blank after the value
+opens a *second* paragraph, still a sibling — a paragraph break, not a cross-line span, so lower value)
+and the residual **multi-line inline macro bounding a run** (contrived). **(2)** facets (c)/(d) of the
+`@md` `\`-escape cluster: run-before-letter macro-split (`\\y`), brace-less known-macro decomposition
+(`\emph z`/`\code z`) — tied to the inline-pass migration, do NOT widen the lexer. **(3)** remaining
+Slice B hardenings (`\value`/`\section` inline md; cmark-active md inside a *fragile* arg). **(4)** the 18
+projector divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02c** — HTML character references decode under `@md` (full 2125-entry HTML5 table, `decode_html_entities` wired into `prose_text_atom`). 334→335.
 - **2026-07-02b** — same-line tag-value continuation folds into the `ROXYGEN_TAG` (emphasis/link spans cross the soft break). 333→334.
 - **2026-07-02** — soft-wrap physical-line boundary for `%`-swallow/comment (`SOFT_BREAK` sentinel). 331→333 (no delta; format-only).
 - **2026-07-01b** — `@md` `%`-swallow (parity-keyed on the source backslash run); projector `md_percent_swallow`. 330→331.

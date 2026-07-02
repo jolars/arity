@@ -2280,7 +2280,18 @@ fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String, usize
     if k == j + 1 {
         return None; // no trailing text — not a definition
     }
-    let url = parse_linkref_def_dest(&text)?;
+    let (url, line_closed) = parse_linkref_def_dest(&text)?;
+    // The `Text` run stops at the first non-`Text` inline (a macro, an inline link,
+    // the next definition's label, …). When that inline sits on the *same physical
+    // line* as the destination, it is trailing content — CommonMark forbids anything
+    // but whitespace after the destination (and optional title), so this is not a
+    // definition (e.g. `[foo]: url \emph{bar}`). But when a line boundary (a
+    // `SOFT_BREAK`) already closed the destination's line, the inline begins a new
+    // block (the next stacked `[r2]: …` definition, say) and is fine. Only end-of-body
+    // or a paragraph break (a `Text` carrying `\n`) may otherwise follow.
+    if !line_closed && !matches!(body.get(k), None | Some(Inline::Text(_))) {
+        return None;
+    }
     Some((label, url, k))
 }
 
@@ -2305,10 +2316,13 @@ fn linkref_def_label(inl: &Inline) -> Option<String> {
 /// Parse a link-reference definition's destination from the `Text` that follows the
 /// label (`: <destination> [title]`). The destination is angle-bracketed (`<…>`,
 /// brackets stripped) or a non-whitespace run; an optional title (`"…"`, `'…'`, or
-/// `(…)`) may follow. Returns the destination, or `None` when the text is not a
-/// clean single-node definition (trailing non-title content makes it a paragraph,
-/// not a definition).
-fn parse_linkref_def_dest(text: &str) -> Option<String> {
+/// `(…)`) may follow. Returns `(destination, line_closed)` — where `line_closed`
+/// reports whether a line boundary ([`SOFT_BREAK`]) follows the destination/title
+/// (so a subsequent inline begins a *new* block, not trailing content) — or `None`
+/// when the text is not a clean single-node definition (trailing non-title content
+/// makes it a paragraph, not a definition). `text` never carries `\n` (the caller's
+/// loop stops at a paragraph break), so a line boundary here is always a soft wrap.
+fn parse_linkref_def_dest(text: &str) -> Option<(String, bool)> {
     let rest = text.strip_prefix(':')?.trim_start();
     let (url, after) = if let Some(r) = rest.strip_prefix('<') {
         let close = r.find('>')?;
@@ -2324,11 +2338,11 @@ fn parse_linkref_def_dest(text: &str) -> Option<String> {
     // carries the decoded URL. (The destination is otherwise verbatim — no
     // percent re-encoding.)
     let url = decode_html_entities(&url);
-    let after = after.trim_start();
-    if after.is_empty() {
-        return Some(url);
+    if after.trim_start().is_empty() {
+        return Some((url, after.contains(SOFT_BREAK)));
     }
     // An optional title; anything else means this is not a valid definition.
+    let after = after.trim_start();
     let close = match after.as_bytes()[0] {
         b'"' => '"',
         b'\'' => '\'',
@@ -2337,7 +2351,11 @@ fn parse_linkref_def_dest(text: &str) -> Option<String> {
     };
     let title_rest = &after[1..];
     let end = title_rest.find(close)?;
-    title_rest[end + 1..].trim().is_empty().then(|| url.clone())
+    let residual = &title_rest[end + 1..];
+    residual
+        .trim()
+        .is_empty()
+        .then(|| (url.clone(), residual.contains(SOFT_BREAK)))
 }
 
 /// Decode the HTML character references cmark resolves: every semicolon-terminated
@@ -5339,6 +5357,27 @@ mod tests {
         assert!(
             project_to_rd(src).contains(
                 "(\\details (TEXT \"Some prose with\") (\\link (TEXT \"r1\")) (TEXT \"here.\") (\\link (TEXT \"r1\")) (TEXT \": https://example.com\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn linkref_definition_with_trailing_macro_is_not_a_definition() {
+        // A `[foo]: url \emph{bar}` line has trailing inline content after the
+        // destination (the `\emph{bar}` macro), which CommonMark forbids in a link
+        // reference definition, so it is *not* a definition: the label stays an
+        // R-topic `\link` (synthesized `R:foo`) and the line renders literally, with
+        // the macro surfacing as its own subtree. (Regression guard: the user-def
+        // scan only sees the trailing `Text` run, so it must also reject a trailing
+        // non-`Text` inline.)
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' See [foo].\n#'\n#' [foo]: https://x.org \\emph{bar}\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"See\") (\\link (TEXT \"foo\")) (TEXT \".\") (\\link (TEXT \"foo\")) (TEXT \": https://x.org\") (\\emph (TEXT \"bar\")))"
             ),
             "got: {}",
             project_to_rd(src)

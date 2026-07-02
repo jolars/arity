@@ -720,7 +720,10 @@
       the markdown `\`-escape backlog (do NOT widen the lexer heuristically — markdown tenet); closing it + moving
       `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer` branch, and the
       projector opaque-leaf helpers be deleted. Plus: poisoning's `relink_demoted_inline_links` into list items,
-      cross-list duplicate-label document order, multi-line def *titles*. Plan:
+      cross-list duplicate-label document order, multi-line def *titles*.
+      **Trailing-content def rejection LANDED (2026-07-02d):** `[foo]: url \emph{bar}` (trailing inline on the
+      dest's physical line) is no longer consumed as a def — `match_linkref_def` rejects a non-`Text` inline
+      that follows without a `SOFT_BREAK` (`parse_linkref_def_dest` → `(url, line_closed)`). Plan:
       `~/.claude/plans/we-ll-do-the-slice-elegant-ladybug.md`.
       (`@evalRd`/`@usage` share the non-markdown semantics but are out of the projector's scope.)
       **Escaped square brackets LANDED (2026-06-25l): `\[`/`\]` are literal, not link
