@@ -370,6 +370,25 @@ fn lex_roxygen_prose(
         );
         return;
     }
+    // Under `@md`, a line whose whole content is a CommonMark **thematic break**
+    // (`***`/`___`, or a space-separated form like `- - -`) carves off as a
+    // `RoxygenMdThematicBreak` leaf. A contiguous `---`/`===` run was already claimed
+    // by the setext-underline check above (setext takes precedence), so this only
+    // catches the `*`/`_`-based and spaced forms; a bare `---` that heads no paragraph
+    // is promoted to a thematic break at block level. The block builder wraps the line
+    // in a `ROXYGEN_MD_THEMATIC_BREAK`; the leaf implies `@md`, so the builder keys off
+    // the token kind, never re-deriving mode.
+    if md && line_start && is_thematic_break(bytes, pos) {
+        push(
+            out,
+            TokKind::RoxygenMdThematicBreak,
+            text,
+            start,
+            pos,
+            text.len() - pos,
+        );
+        return;
+    }
     // Under `@md`, a prose line whose content begins (after up to three spaces) with
     // a `>` carves the *whole* remaining line off as a `RoxygenMdBlockQuote` leaf. The
     // block builder gathers consecutive block-quote lines into a
@@ -735,6 +754,41 @@ fn is_setext_underline(bytes: &[u8], i: usize) -> bool {
         }
     }
     true
+}
+
+/// Whether the whole line content at `bytes[i..]` (positioned past the `#'` marker)
+/// is a CommonMark **thematic break**: after up to three spaces of leading
+/// indentation, three or more of a single `*`/`-`/`_` character, with only spaces or
+/// tabs allowed between and after, and nothing else to the line end.
+///
+/// The `---`/`===` contiguous forms are recognized by [`is_setext_underline`] first
+/// (setext precedence), so in practice this catches the `*`- and `_`-based forms and
+/// the space-separated variants (`- - -`); a bare `---` heading no paragraph is
+/// promoted at block level. A run shorter than three, or a line mixing marker
+/// characters or carrying other text, is not a thematic break.
+fn is_thematic_break(bytes: &[u8], i: usize) -> bool {
+    let mut j = i;
+    let mut indent = 0;
+    while indent < 3 && bytes.get(j) == Some(&b' ') {
+        j += 1;
+        indent += 1;
+    }
+    let ch = match bytes.get(j) {
+        Some(&c @ (b'*' | b'-' | b'_')) => c,
+        _ => return false,
+    };
+    let mut count = 0usize;
+    while let Some(&c) = bytes.get(j) {
+        if c == ch {
+            count += 1;
+            j += 1;
+        } else if c == b' ' || c == b'\t' {
+            j += 1;
+        } else {
+            return false;
+        }
+    }
+    count >= 3
 }
 
 /// Whether the line content at `bytes[i..]` (positioned past the `#'` marker) opens
@@ -1561,6 +1615,7 @@ mod tests {
                         | TokKind::RoxygenMdHeading
                         | TokKind::RoxygenMdSetextUnderline
                         | TokKind::RoxygenMdBlockQuote
+                        | TokKind::RoxygenMdThematicBreak
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1806,6 +1861,46 @@ mod tests {
             prose_texts("#' > quoted\n").first(),
             Some(&(TokKind::RoxygenText, "> quoted".into())),
             "no `@md`: a `>` line is literal prose"
+        );
+    }
+
+    #[test]
+    fn md_thematic_break_recognized_under_md_mode() {
+        // Under `@md`, a line whose whole content is a thematic break carves off as a
+        // single `RoxygenMdThematicBreak` leaf. The lexer owns the `*`/`_`-based and
+        // space-separated forms; a contiguous `---` is claimed by the setext-underline
+        // path first (setext precedence), so it is not tested here.
+        for brk in ["***", "___", "* * *", "- - -", "_ _ _", "****", "*** "] {
+            let src = format!("#' text\n#' {brk}\n#' @md\n");
+            let toks = prose_texts(&src);
+            assert_eq!(
+                toks.last(),
+                Some(&(TokKind::RoxygenMdThematicBreak, brk.into())),
+                "thematic break {brk:?} -> {toks:?}"
+            );
+            assert_lossless(&src);
+        }
+    }
+
+    #[test]
+    fn md_thematic_break_rejects_non_breaks() {
+        // A run shorter than three (`**`, emphasis delimiters), a line with trailing
+        // text (`*** x`), a mixed run (`*-*`), and a break without `@md` all stay
+        // non-break: none carves a `RoxygenMdThematicBreak` leaf.
+        for text in ["** ", "*** x", "*-*"] {
+            let src = format!("#' first\n#' {text}\n#' @md\n");
+            assert!(
+                !prose_texts(&src)
+                    .iter()
+                    .any(|t| t.0 == TokKind::RoxygenMdThematicBreak),
+                "non-break {text:?} must not carve a thematic break"
+            );
+        }
+        assert!(
+            !prose_texts("#' text\n#' ***\n")
+                .iter()
+                .any(|t| t.0 == TokKind::RoxygenMdThematicBreak),
+            "no `@md`: a `***` line is literal prose"
         );
     }
 

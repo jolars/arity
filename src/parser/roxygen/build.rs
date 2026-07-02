@@ -329,6 +329,7 @@ fn is_table_row_line(tokens: &[Token], marker: usize) -> bool {
         && !is_block_macro_line(tokens, marker)
         && !is_md_heading_start(tokens, marker)
         && !is_md_block_quote_start(tokens, marker)
+        && !is_md_thematic_break_line(tokens, marker)
 }
 
 /// Whether the prose line whose marker is at `start` opens a markdown **block
@@ -393,6 +394,70 @@ pub(super) fn emit_md_block_quote(
     }
 
     events.push(Event::Finish); // ROXYGEN_MD_BLOCK_QUOTE
+    i
+}
+
+/// Whether the prose line whose marker is at `start` is a markdown **thematic
+/// break** (`@md` mode): either its first content token is a `RoxygenMdThematicBreak`
+/// leaf (the `*`/`_`-based and space-separated forms, carved by the lexer), or it is
+/// a `RoxygenMdSetextUnderline` leaf whose content is a run of three or more dashes.
+///
+/// The second case is the CommonMark precedence resolution for a contiguous `---`:
+/// the lexer carves it as a setext underline (so it can promote a preceding
+/// paragraph into a heading), but when it heads no paragraph it is a thematic break.
+/// This predicate is only consulted at a line that reaches block dispatch on its own
+/// (a promoting `---` is consumed with its paragraph before then), so a bare
+/// dash-run `---` here is always a thematic break. An `===` underline is never a
+/// thematic break (only `*`/`-`/`_` open one), so it stays literal prose.
+pub(super) fn is_md_thematic_break_line(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    match tokens.get(content).map(|t| &t.kind) {
+        Some(TokKind::RoxygenMdThematicBreak) => true,
+        Some(TokKind::RoxygenMdSetextUnderline) => {
+            setext_underline_is_thematic(&tokens[content].text)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a `RoxygenMdSetextUnderline` leaf's text is a **thematic break**: after
+/// up to three leading spaces, a run of three or more `-` characters. A setext
+/// underline is a contiguous run of one marker char, so a `=` underline (never a
+/// thematic break) and a `--` (too short) are both rejected here.
+fn setext_underline_is_thematic(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut j = 0;
+    while j < 3 && bytes.get(j) == Some(&b' ') {
+        j += 1;
+    }
+    let mut count = 0usize;
+    while bytes.get(j) == Some(&b'-') {
+        count += 1;
+        j += 1;
+    }
+    count >= 3
+}
+
+/// Emit a single-line `ROXYGEN_MD_THEMATIC_BREAK` node for the thematic break whose
+/// `RoxygenMarker` is at `start`. The node holds the `#'` marker and marker→content
+/// whitespace (trivia) and the break leaf; the trailing newline is left to the
+/// caller. roxygen2 renders a thematic break as empty, so the projector drops the
+/// node (it contributes nothing and lets the surrounding paragraphs coalesce).
+/// Returns the token index just past the line's content.
+pub(super) fn emit_md_thematic_break(
+    tokens: &[Token],
+    start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK));
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    events.push(Event::Finish); // ROXYGEN_MD_THEMATIC_BREAK
     i
 }
 

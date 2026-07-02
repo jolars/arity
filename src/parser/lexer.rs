@@ -149,6 +149,18 @@ pub(crate) enum TokKind {
     /// builder maps this kind to `ROXYGEN_TEXT`, so a leaf that is somehow never
     /// gathered stays literal prose.
     RoxygenMdBlockQuote,
+    /// A markdown **thematic break** line (`***`/`---`/`___`): a line whose whole
+    /// content, after up to three spaces of indentation, is three or more of a single
+    /// `*`/`-`/`_` character with only spaces/tabs between and after, recognized only
+    /// at a line's content start under a resolved `@md` mode. A contiguous `---`/`===`
+    /// run is left to `RoxygenMdSetextUnderline` (setext takes precedence), so this
+    /// kind carves the `*`/`_`-based and space-separated forms; a bare `---` becomes a
+    /// thematic break at block level when it heads no paragraph. The block builder
+    /// wraps the line in a single-line `ROXYGEN_MD_THEMATIC_BREAK` node. roxygen2 has
+    /// no thematic-break support: it warns and renders empty, so the projector drops
+    /// it. The tree builder maps this kind to `ROXYGEN_TEXT`, so a leaf that is somehow
+    /// never gathered stays literal prose.
+    RoxygenMdThematicBreak,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -197,7 +209,8 @@ impl TokKind {
             | RoxygenMdTableDelim
             | RoxygenMdHeading
             | RoxygenMdSetextUnderline
-            | RoxygenMdBlockQuote => Some(RoxygenRole::Content),
+            | RoxygenMdBlockQuote
+            | RoxygenMdThematicBreak => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

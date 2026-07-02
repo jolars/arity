@@ -221,14 +221,23 @@ pub enum SyntaxKind {
     /// markdown, concatenate with no separator). Appended last to keep the earlier
     /// variants' `as u16` discriminants stable.
     ROXYGEN_MD_BLOCK_QUOTE,
+    /// A markdown **thematic break** (resolved `@md` mode only): a single line whose
+    /// whole content is a CommonMark thematic break (`***`/`---`/`___`, three or more
+    /// of one character with optional spaces between, up to three leading spaces),
+    /// holding the `#'` marker (trivia) and the verbatim break leaf. roxygen2 has no
+    /// thematic-break support: it warns and renders the empty `escape_comment(xml_text)`
+    /// (a thematic break has no text), so the break contributes nothing and the
+    /// surrounding paragraphs coalesce. The projector drops it in `section_body_parts`.
+    /// Appended last to keep the earlier variants' `as u16` discriminants stable.
+    ROXYGEN_MD_THEMATIC_BREAK,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_BLOCK_QUOTE` remains
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_THEMATIC_BREAK` remains
     /// the last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -397,6 +406,7 @@ impl Language for RLanguage {
             102 => SyntaxKind::ROXYGEN_MD_TABLE,
             103 => SyntaxKind::ROXYGEN_MD_HEADING,
             104 => SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE,
+            105 => SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK,
             _ => SyntaxKind::ERROR,
         }
     }

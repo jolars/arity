@@ -117,7 +117,8 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
             | SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE
             | SyntaxKind::ROXYGEN_MD_TABLE
-            | SyntaxKind::ROXYGEN_MD_HEADING => {
+            | SyntaxKind::ROXYGEN_MD_HEADING
+            | SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
                 }
@@ -268,6 +269,16 @@ fn emit_md_block_quote(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// Marker-normalizing preserves the leading `#{1,6}` run (it is trimmed content,
 /// not touched), so on reparse it still forms the same heading — idempotent.
 fn emit_md_heading(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
+/// Emit a markdown thematic break (`@md` mode) as atomic passthrough, marker-
+/// normalized. A thematic break is a single line; the node owns its own `#'` marker.
+/// Marker-normalizing preserves the leading `***`/`---`/`___` run (it is trimmed
+/// content, not touched), so on reparse it still forms the same break — idempotent.
+fn emit_md_thematic_break(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
         push_line(items, normalize_marker_text(seg));
     }
@@ -434,6 +445,11 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
             } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_HEADING {
                 // An ATX heading is a single marker-normalized line — never reflowed.
                 emit_md_heading(&mut items, macro_node);
+            } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK {
+                // A thematic break is a single marker-normalized line — never reflowed.
+                // On reparse the same `***`/`---`/`___` line re-forms the break
+                // (idempotent).
+                emit_md_thematic_break(&mut items, macro_node);
             } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {

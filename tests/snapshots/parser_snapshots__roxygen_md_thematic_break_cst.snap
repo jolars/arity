@@ -1,0 +1,114 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..234
+  ROXYGEN_BLOCK@0..228
+    ROXYGEN_SECTION@0..37
+      ROXYGEN_PARAGRAPH@0..34
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..33 "Thematic breaks under ..."
+        NEWLINE@33..34 "\n"
+      ROXYGEN_MARKER@34..36 "#'"
+      NEWLINE@36..37 "\n"
+    ROXYGEN_SECTION@37..44
+      ROXYGEN_MARKER@37..39 "#'"
+      WHITESPACE@39..40 " "
+      ROXYGEN_TAG@40..43
+        ROXYGEN_AT@40..41 "@"
+        ROXYGEN_TAG_NAME@41..43 "md"
+      NEWLINE@43..44 "\n"
+    ROXYGEN_SECTION@44..202
+      ROXYGEN_MARKER@44..46 "#'"
+      WHITESPACE@46..47 " "
+      ROXYGEN_TAG@47..55
+        ROXYGEN_AT@47..48 "@"
+        ROXYGEN_TAG_NAME@48..55 "details"
+      NEWLINE@55..56 "\n"
+      ROXYGEN_PARAGRAPH@56..72
+        ROXYGEN_MARKER@56..58 "#'"
+        WHITESPACE@58..59 " "
+        ROXYGEN_TEXT@59..71 "Before para."
+        NEWLINE@71..72 "\n"
+      ROXYGEN_MARKER@72..74 "#'"
+      NEWLINE@74..75 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@75..81
+        ROXYGEN_MARKER@75..77 "#'"
+        WHITESPACE@77..78 " "
+        ROXYGEN_TEXT@78..81 "---"
+      NEWLINE@81..82 "\n"
+      ROXYGEN_MARKER@82..84 "#'"
+      NEWLINE@84..85 "\n"
+      ROXYGEN_PARAGRAPH@85..99
+        ROXYGEN_MARKER@85..87 "#'"
+        WHITESPACE@87..88 " "
+        ROXYGEN_TEXT@88..98 "Star form."
+        NEWLINE@98..99 "\n"
+      ROXYGEN_MARKER@99..101 "#'"
+      NEWLINE@101..102 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@102..108
+        ROXYGEN_MARKER@102..104 "#'"
+        WHITESPACE@104..105 " "
+        ROXYGEN_TEXT@105..108 "***"
+      NEWLINE@108..109 "\n"
+      ROXYGEN_MARKER@109..111 "#'"
+      NEWLINE@111..112 "\n"
+      ROXYGEN_PARAGRAPH@112..132
+        ROXYGEN_MARKER@112..114 "#'"
+        WHITESPACE@114..115 " "
+        ROXYGEN_TEXT@115..131 "Underscore form."
+        NEWLINE@131..132 "\n"
+      ROXYGEN_MARKER@132..134 "#'"
+      NEWLINE@134..135 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@135..141
+        ROXYGEN_MARKER@135..137 "#'"
+        WHITESPACE@137..138 " "
+        ROXYGEN_TEXT@138..141 "___"
+      NEWLINE@141..142 "\n"
+      ROXYGEN_MARKER@142..144 "#'"
+      NEWLINE@144..145 "\n"
+      ROXYGEN_PARAGRAPH@145..166
+        ROXYGEN_MARKER@145..147 "#'"
+        WHITESPACE@147..148 " "
+        ROXYGEN_TEXT@148..165 "Spaced dash form."
+        NEWLINE@165..166 "\n"
+      ROXYGEN_MARKER@166..168 "#'"
+      NEWLINE@168..169 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@169..177
+        ROXYGEN_MARKER@169..171 "#'"
+        WHITESPACE@171..172 " "
+        ROXYGEN_TEXT@172..177 "- - -"
+      NEWLINE@177..178 "\n"
+      ROXYGEN_MARKER@178..180 "#'"
+      NEWLINE@180..181 "\n"
+      ROXYGEN_PARAGRAPH@181..188
+        ROXYGEN_MARKER@181..183 "#'"
+        WHITESPACE@183..184 " "
+        ROXYGEN_TEXT@184..187 "Foo"
+        NEWLINE@187..188 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@188..194
+        ROXYGEN_MARKER@188..190 "#'"
+        WHITESPACE@190..191 " "
+        ROXYGEN_TEXT@191..194 "***"
+      NEWLINE@194..195 "\n"
+      ROXYGEN_PARAGRAPH@195..202
+        ROXYGEN_MARKER@195..197 "#'"
+        WHITESPACE@197..198 " "
+        ROXYGEN_TEXT@198..201 "bar"
+        NEWLINE@201..202 "\n"
+    ROXYGEN_SECTION@202..228
+      ROXYGEN_MARKER@202..204 "#'"
+      WHITESPACE@204..205 " "
+      ROXYGEN_TAG@205..228
+        ROXYGEN_AT@205..206 "@"
+        ROXYGEN_TAG_NAME@206..210 "name"
+        WHITESPACE@210..211 " "
+        ROXYGEN_TEXT@211..213 "md"
+        ROXYGEN_MD_DELIM@213..214 "_"
+        ROXYGEN_TEXT@214..222 "thematic"
+        ROXYGEN_MD_DELIM@222..223 "_"
+        ROXYGEN_TEXT@223..228 "break"
+  NEWLINE@228..229 "\n"
+  IDENT@229..233 "NULL"
+  NEWLINE@233..234 "\n"

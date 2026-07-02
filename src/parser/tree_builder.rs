@@ -223,11 +223,14 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::RoxygenMdHeading => SyntaxKind::ROXYGEN_TEXT,
         // A setext heading underline (`===`/`---`) is verbatim text: it lives inside
         // a `ROXYGEN_MD_HEADING` node when it promotes a preceding paragraph, and
-        // stays literal prose when it heads nothing (a thematic-break position).
+        // inside a `ROXYGEN_MD_THEMATIC_BREAK` node when a dash run heads nothing.
         TokKind::RoxygenMdSetextUnderline => SyntaxKind::ROXYGEN_TEXT,
         // A block-quote line (`> quoted`) is verbatim text: it lives inside a
         // `ROXYGEN_MD_BLOCK_QUOTE` node once the builder gathers consecutive quote
         // lines; a leaf that is never gathered stays literal prose.
         TokKind::RoxygenMdBlockQuote => SyntaxKind::ROXYGEN_TEXT,
+        // A thematic-break line (`***`/`___`/spaced forms) is verbatim text: it lives
+        // inside a `ROXYGEN_MD_THEMATIC_BREAK` node; a leaf never gathered stays prose.
+        TokKind::RoxygenMdThematicBreak => SyntaxKind::ROXYGEN_TEXT,
     }
 }

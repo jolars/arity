@@ -1,0 +1,107 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..371
+  ROXYGEN_BLOCK@0..63
+    ROXYGEN_SECTION@0..63
+      ROXYGEN_PARAGRAPH@0..63
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..49 "Without markdown a ru ..."
+        NEWLINE@49..50 "\n"
+        ROXYGEN_MARKER@50..52 "#'"
+        WHITESPACE@52..53 " "
+        ROXYGEN_TEXT@53..56 "***"
+        NEWLINE@56..57 "\n"
+        ROXYGEN_MARKER@57..59 "#'"
+        WHITESPACE@59..60 " "
+        ROXYGEN_TEXT@60..63 "---"
+  NEWLINE@63..64 "\n"
+  ASSIGNMENT_EXPR@64..72
+    IDENT@64..67 "foo"
+    WHITESPACE@67..68 " "
+    ASSIGN_LEFT@68..70 "<-"
+    WHITESPACE@70..71 " "
+    INT@71..72 "1"
+  NEWLINE@72..73 "\n"
+  NEWLINE@73..74 "\n"
+  ROXYGEN_BLOCK@74..347
+    ROXYGEN_SECTION@74..148
+      ROXYGEN_PARAGRAPH@74..145
+        ROXYGEN_MARKER@74..76 "#'"
+        WHITESPACE@76..77 " "
+        ROXYGEN_TEXT@77..144 "With markdown, look-a ..."
+        NEWLINE@144..145 "\n"
+      ROXYGEN_MARKER@145..147 "#'"
+      NEWLINE@147..148 "\n"
+    ROXYGEN_SECTION@148..155
+      ROXYGEN_MARKER@148..150 "#'"
+      WHITESPACE@150..151 " "
+      ROXYGEN_TAG@151..154
+        ROXYGEN_AT@151..152 "@"
+        ROXYGEN_TAG_NAME@152..154 "md"
+      NEWLINE@154..155 "\n"
+    ROXYGEN_SECTION@155..331
+      ROXYGEN_MARKER@155..157 "#'"
+      WHITESPACE@157..158 " "
+      ROXYGEN_TAG@158..166
+        ROXYGEN_AT@158..159 "@"
+        ROXYGEN_TAG_NAME@159..166 "details"
+      NEWLINE@166..167 "\n"
+      ROXYGEN_PARAGRAPH@167..225
+        ROXYGEN_MARKER@167..169 "#'"
+        WHITESPACE@169..170 " "
+        ROXYGEN_TEXT@170..218 "Two stars are emphasi ..."
+        ROXYGEN_MD_STRONG@218..223
+          ROXYGEN_MD_DELIM@218..220 "**"
+          ROXYGEN_TEXT@220..221 "x"
+          ROXYGEN_MD_DELIM@221..223 "**"
+        ROXYGEN_TEXT@223..224 "."
+        NEWLINE@224..225 "\n"
+      ROXYGEN_MARKER@225..227 "#'"
+      NEWLINE@227..228 "\n"
+      ROXYGEN_PARAGRAPH@228..278
+        ROXYGEN_MARKER@228..230 "#'"
+        WHITESPACE@230..231 " "
+        ROXYGEN_TEXT@231..233 "A "
+        ROXYGEN_MD_CODE@233..238 "`***`"
+        ROXYGEN_TEXT@238..277 " run inside a code sp ..."
+        NEWLINE@277..278 "\n"
+      ROXYGEN_MARKER@278..280 "#'"
+      NEWLINE@280..281 "\n"
+      ROXYGEN_PARAGRAPH@281..322
+        ROXYGEN_MARKER@281..283 "#'"
+        WHITESPACE@283..284 " "
+        ROXYGEN_TEXT@284..321 "A two-dash run is too ..."
+        NEWLINE@321..322 "\n"
+      ROXYGEN_MARKER@322..324 "#'"
+      NEWLINE@324..325 "\n"
+      ROXYGEN_PARAGRAPH@325..331
+        ROXYGEN_MARKER@325..327 "#'"
+        WHITESPACE@327..328 " "
+        ROXYGEN_TEXT@328..330 "--"
+        NEWLINE@330..331 "\n"
+    ROXYGEN_SECTION@331..347
+      ROXYGEN_MARKER@331..333 "#'"
+      WHITESPACE@333..334 " "
+      ROXYGEN_TAG@334..347
+        ROXYGEN_AT@334..335 "@"
+        ROXYGEN_TAG_NAME@335..339 "name"
+        WHITESPACE@339..340 " "
+        ROXYGEN_TEXT@340..343 "mtb"
+        ROXYGEN_MD_DELIM@343..344 "_"
+        ROXYGEN_TEXT@344..347 "not"
+  NEWLINE@347..348 "\n"
+  ASSIGNMENT_EXPR@348..370
+    IDENT@348..351 "bar"
+    WHITESPACE@351..352 " "
+    ASSIGN_LEFT@352..354 "<-"
+    WHITESPACE@354..355 " "
+    FUNCTION_EXPR@355..370
+      FUNCTION_KW@355..363 "function"
+      LPAREN@363..364 "("
+      RPAREN@364..365 ")"
+      WHITESPACE@365..366 " "
+      IDENT@366..370 "NULL"
+  NEWLINE@370..371 "\n"

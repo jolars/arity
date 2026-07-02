@@ -749,7 +749,20 @@
       lazy continuation (non-`>` paragraph lines in a quote); the glue-onto-preceding-paragraph case
       (`before` / `> q` → `beforeq`, no `\n\n`); inner Rd macros (roxygen2 keeps their source); the
       roxygen-diagnostic side-channel (roxygen2's "block quotes are not currently supported" warning);
-      indented code blocks / thematic breaks (`---` after a blank, roxygen2 renders empty).
+      indented code blocks.
+      **Thematic breaks LANDED (2026-07-02j):** a `***`/`---`/`___` line under `@md` (three or more of
+      one char, spaces allowed between, up to three leading spaces) renders **empty** — roxygen2 has no
+      thematic-break support (`mdxml_unsupported`/`mdxml_unknown`, both `escape_comment(xml_text)` = "",
+      since a break has no text), so it contributes nothing and the surrounding paragraphs coalesce. The
+      lexer (`is_thematic_break`) carves the `*`/`_`-based and space-separated forms as a
+      `RoxygenMdThematicBreak` leaf; a contiguous `---` is claimed by the setext-underline path first
+      (setext precedence) and promoted to a break at block level only when it heads no paragraph
+      (`is_md_thematic_break_line` = the `RoxygenMdThematicBreak` leaf OR a dash-run-{3,}
+      `RoxygenMdSetextUnderline`). `emit_md_thematic_break` wraps the line in a single-line
+      `ROXYGEN_MD_THEMATIC_BREAK` node (interrupts an open paragraph, like a block quote); the projector
+      drops it in `section_body_parts` (flushes the current part, adds no atom). Formatter =
+      marker-normalized atomic passthrough (Tenet 1, idempotent). Curated `md_thematic_break`/`_stars`;
+      projector 347→349. **Backlog:** the roxygen-diagnostic side-channel warning.
       **Setext headings LANDED (2026-07-02h):** a `===`/`---` underline line under `@md` carves as a
       `RoxygenMdSetextUnderline` leaf (`is_setext_underline`: `=`+ or `-`{2,}, single `-`/`- ` excluded
       as an empty list bullet). At block level a paragraph immediately terminated by such an underline

@@ -51,11 +51,12 @@ ROOT@0..328
       NEWLINE@145..146 "\n"
       ROXYGEN_MARKER@146..148 "#'"
       NEWLINE@148..149 "\n"
-      ROXYGEN_PARAGRAPH@149..226
+      ROXYGEN_MD_THEMATIC_BREAK@149..155
         ROXYGEN_MARKER@149..151 "#'"
         WHITESPACE@151..152 " "
         ROXYGEN_TEXT@152..155 "---"
-        NEWLINE@155..156 "\n"
+      NEWLINE@155..156 "\n"
+      ROXYGEN_PARAGRAPH@156..226
         ROXYGEN_MARKER@156..158 "#'"
         WHITESPACE@158..159 " "
         ROXYGEN_TEXT@159..225 "A dash run after a bl ..."

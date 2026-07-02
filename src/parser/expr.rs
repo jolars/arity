@@ -466,6 +466,7 @@ fn parse_prefix(
         | TokKind::RoxygenMdHeading
         | TokKind::RoxygenMdSetextUnderline
         | TokKind::RoxygenMdBlockQuote
+        | TokKind::RoxygenMdThematicBreak
         | TokKind::Unknown => None,
     }
 }

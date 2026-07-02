@@ -3025,6 +3025,13 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
                 }
                 cur.extend(inlines);
             }
+            // A thematic break (`***`/`---`/`___`) renders empty in roxygen2 (it has
+            // no thematic-break support and emits `escape_comment(xml_text)` = ""), so
+            // it contributes nothing. It still separates roxygen paragraphs, so it
+            // ends the current part the way a blank line does.
+            SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK if !cur.is_empty() => {
+                groups.push(std::mem::take(&mut cur));
+            }
             // A section-level `#'` marker is a blank doc-comment line: it ends the
             // current paragraph (per-line markers live *inside* the nodes above).
             SyntaxKind::ROXYGEN_MARKER if !cur.is_empty() => {
@@ -4498,6 +4505,37 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"T\"))\n\
              (\\details (TEXT \"a quote with codeand text\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn md_thematic_break_renders_empty_and_coalesces() {
+        // roxygen2 has no thematic-break support: it warns and renders the empty
+        // `escape_comment(xml_text)` (a break has no text), so the break contributes
+        // nothing and the surrounding paragraphs coalesce into one `\details` atom.
+        // A `---` after a blank (setext heads nothing), a `***` interrupting a
+        // paragraph, and an `___` all render identically.
+        let src = "#' T\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' Before.\n\
+                   #'\n\
+                   #' ---\n\
+                   #'\n\
+                   #' Foo\n\
+                   #' ***\n\
+                   #' bar\n\
+                   #'\n\
+                   #' ___\n\
+                   #'\n\
+                   #' After.\n\
+                   #' @name d\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"Before. Foo bar After.\"))\n\
              (\\title (TEXT \"T\"))"
         );
     }

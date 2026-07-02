@@ -1,0 +1,17 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' Title
+#'
+#' @md
+#' @details
+#' Before.
+#'
+#' ---
+#'
+#' After.
+#'
+#' ***
+#' @name x
+NULL
