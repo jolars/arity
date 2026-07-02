@@ -721,6 +721,12 @@
       `!`-displays onto the arena would let `scan_md_link`'s `[`-path, the opaque `classify_closer` branch, and the
       projector opaque-leaf helpers be deleted. Plus: poisoning's `relink_demoted_inline_links` into list items,
       cross-list duplicate-label document order, multi-line def *titles*.
+      **Email autolinks LANDED (2026-07-02e):** a CommonMark email autolink `<addr>` (strict spec
+      regex — local part, `@`, `.`-separated domain labels with no leading/trailing hyphen) carves as
+      a `RoxygenMdLink` (`scan_md_email_autolink`, chained after the URI `scan_md_autolink`, before raw
+      HTML) → `\href{mailto:addr}{addr}`. The projector's `<…>` arm distinguishes the two disjoint
+      autolink forms via `autolink_has_uri_scheme` (URI → `\url`, else email → mailto `\href`). Curated
+      `md_email_autolink`; projector 336→337.
       **Trailing-content def rejection LANDED (2026-07-02d):** `[foo]: url \emph{bar}` (trailing inline on the
       dest's physical line) is no longer consumed as a def — `match_linkref_def` rejects a non-`Text` inline
       that follows without a `SOFT_BREAK` (`parse_linkref_def_dest` → `(url, line_closed)`). Plan:

@@ -1,0 +1,3 @@
+(\description (TEXT "Email autolinks in markdown prose"))
+(\details (TEXT "Contact") (\href (VERB "mailto:foo@example.com") (TEXT "foo@example.com")) (TEXT "or") (\href (VERB "mailto:a.b+c@sub.example.co.uk") (TEXT "a.b+c@sub.example.co.uk")) (TEXT ". A scheme-bearing address") (\url (VERB "mailto:x@y.com")) (TEXT "is a URL autolink. A malformed one <foo@-ex.com> stays literal."))
+(\title (TEXT "Email autolinks in markdown prose"))

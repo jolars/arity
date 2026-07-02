@@ -1,0 +1,40 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..136
+  ROXYGEN_BLOCK@0..116
+    ROXYGEN_SECTION@0..110
+      ROXYGEN_PARAGRAPH@0..110
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..11 "Contact "
+        ROXYGEN_MD_LINK@11..28 "<foo@example.com>"
+        ROXYGEN_TEXT@28..32 " or "
+        ROXYGEN_MD_LINK@32..57 "<a.b+c@sub.example.co ..."
+        ROXYGEN_TEXT@57..67 " for help."
+        NEWLINE@67..68 "\n"
+        ROXYGEN_MARKER@68..70 "#'"
+        WHITESPACE@70..71 " "
+        ROXYGEN_TEXT@71..109 "A bad one <foo@-ex.co ..."
+        NEWLINE@109..110 "\n"
+    ROXYGEN_SECTION@110..116
+      ROXYGEN_MARKER@110..112 "#'"
+      WHITESPACE@112..113 " "
+      ROXYGEN_TAG@113..116
+        ROXYGEN_AT@113..114 "@"
+        ROXYGEN_TAG_NAME@114..116 "md"
+  NEWLINE@116..117 "\n"
+  ASSIGNMENT_EXPR@117..135
+    IDENT@117..118 "f"
+    WHITESPACE@118..119 " "
+    ASSIGN_LEFT@119..121 "<-"
+    WHITESPACE@121..122 " "
+    FUNCTION_EXPR@122..135
+      FUNCTION_KW@122..130 "function"
+      LPAREN@130..131 "("
+      IDENT@131..132 "x"
+      RPAREN@132..133 ")"
+      WHITESPACE@133..134 " "
+      IDENT@134..135 "x"
+  NEWLINE@135..136 "\n"

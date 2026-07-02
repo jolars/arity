@@ -183,6 +183,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_escaped_bracket",
         "roxygen_rawrd_no_markdown",
         "roxygen_md_autolink",
+        "roxygen_md_email_autolink",
         "roxygen_md_url",
         "roxygen_md_shortcut_link",
         "roxygen_md_shortcut_emphasis",

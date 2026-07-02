@@ -3000,10 +3000,21 @@ fn strip_code_span(text: &str) -> String {
 /// Returns `None` for an unrecognized shape (the leaf then stays literal prose).
 fn resolve_md_link(raw: &str) -> Option<String> {
     let bytes = raw.as_bytes();
-    // A CommonMark autolink `<scheme:…>` whose destination equals its text →
-    // `\url{…}` (roxygen2's `mdxml_link` `dest == xml_text(xml)` branch).
+    // A CommonMark autolink `<…>`. cmark has two disjoint forms:
+    //   * a URI autolink `<scheme:…>` whose destination equals its text →
+    //     `\url{…}` (roxygen2's `mdxml_link` `dest == xml_text(xml)` branch);
+    //   * an email autolink `<addr>` (no URI scheme), for which cmark sets the
+    //     destination to `mailto:addr` → `\href{mailto:addr}{addr}` (the address
+    //     is both destination and display).
+    // The lexer only carves a valid autolink here, so distinguishing the two
+    // reduces to whether a URI scheme is present ([`autolink_has_uri_scheme`]).
     if bytes.first() == Some(&b'<') {
-        return Some(url_atom(raw.strip_prefix('<')?.strip_suffix('>')?));
+        let inner = raw.strip_prefix('<')?.strip_suffix('>')?;
+        return Some(if autolink_has_uri_scheme(inner) {
+            url_atom(inner)
+        } else {
+            href_atom(inner, &format!("mailto:{inner}"))
+        });
     }
     let text_end = scan_delimited(bytes, 0, b'[', b']')?;
     let text = &raw[1..text_end - 1];
@@ -3220,6 +3231,25 @@ fn inline_link_atom(text: &str, url: &str) -> String {
     } else {
         href_atom(text, url)
     }
+}
+
+/// Whether an autolink's inner text (the `…` in `<…>`) is a CommonMark **URI**
+/// autolink rather than an **email** autolink: an ASCII letter, then 1–31 more of
+/// letter/digit/`+`/`.`/`-`, then `:` (scheme length 2–32). Mirrors the scheme
+/// check in the parser's `scan_md_autolink`; the two autolink forms are disjoint
+/// (an email address has no `:`), so a `false` here means an email autolink.
+fn autolink_has_uri_scheme(inner: &str) -> bool {
+    let b = inner.as_bytes();
+    if !b.first().is_some_and(u8::is_ascii_alphabetic) {
+        return false;
+    }
+    let mut j = 1;
+    while j < b.len()
+        && matches!(b[j], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-')
+    {
+        j += 1;
+    }
+    (2..=32).contains(&j) && b.get(j) == Some(&b':')
 }
 
 /// A bare URL → `(\url (VERB url))` (roxygen2's `\url{…}`; the URL is verbatim).

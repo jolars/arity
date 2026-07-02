@@ -392,7 +392,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 335 matching (all allowlisted), 18 divergent** of 353 pinned.
+corpus (132 `cm-NNN` cases). **Current: 337 matching (all allowlisted), 18 divergent** of 355 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -401,50 +401,59 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (353 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (355 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 70/70 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 72/72 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02d) — link-ref def with a trailing macro is not a definition
+## Latest session (2026-07-02e) — CommonMark email autolinks
 
-Closed Slice B backlog item `linkref_def_label` (the invalid-def case where arity **wrongly consumed**
-a def line). `[foo]: url \emph{bar}` has trailing inline content after the destination, which CommonMark
-forbids in a link-reference definition, so it is **not** a def: roxygen2 leaves `foo` an undefined
-shortcut (synthesized `R:foo` → `\link`) and renders the line literally (`(\link foo) (TEXT ": url")
-(\emph bar)`). arity had consumed it → `\href{url}{foo}`, dropping the line.
+Landed CommonMark **email autolinks** `<addr>` → `\href{mailto:addr}{addr}` (a parser gap: URI autolinks
+`<scheme:…>`→`\url` already worked, email was explicitly "out of scope" in `scan_md_autolink`). Probed the
+gap by differential sweep (arity projection vs `block-to-sections`): the CST was flat text, roxygen2 emits
+the mailto `\href`. Two-site change, no new SyntaxKind (reuses the `RoxygenMdLink` leaf):
+- **Lexer (`lex.rs`):** new `scan_md_email_autolink`, chained in the `b'<' if md` arm **after** the URI
+  `scan_md_autolink`, **before** raw HTML. It ports the strict CommonMark email regex — local part
+  ``[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+``, `@`, then `.`-separated domain labels each starting/ending in a
+  letter/digit (no leading/trailing hyphen, max length 63). All 8 validity edge cases calibrated against
+  roxygen2 match (single-label domain `<a@b>` valid; `<foo@-ex.com>`/`<foo@ex-.com>`/`<foo@ex_a.com>`
+  literal).
+- **Projector (`project_rd.rs`):** `resolve_md_link`'s `<…>` arm now distinguishes the two **disjoint**
+  cmark autolink forms via new `autolink_has_uri_scheme` (mirrors the scheme check in `scan_md_autolink`):
+  a URI scheme → `url_atom` (`\url`), else email → `href_atom(addr, "mailto:"+addr)`. `href_atom` already
+  emits `(\href (VERB "mailto:…") (TEXT "…"))` exactly. `<mailto:foo@x.com>` (a scheme) still lands on
+  `\url`. No other autolink site changed — the refmap/skeleton/drop machinery all key on `starts-with-<`,
+  so email autolinks (also `<…>`) are already handled identically. Formatter unchanged (same leaf kind →
+  already atomic).
 
-**Root cause + fix (projector-only, faithful — the CST is untouched and stays lossless):**
-`match_linkref_def`'s `Text`-accumulation loop stops at the first non-`Text` inline (the `\emph` macro),
-so trailing macro/link content was invisible to the trailing-content check. Fix rejects a def when a
-non-`Text` inline follows on the **same physical line** as the destination. The physical-line test is
-load-bearing: a *stacked* def (`[r1]: u1` newline `[r2]: u2`) also stops the loop at a non-`Text` inline
-(the next `[r2]` label), but that one sits after a `SOFT_BREAK` — a new block, allowed. So
-`parse_linkref_def_dest` now returns `(url, line_closed)` where `line_closed` = a `SOFT_BREAK` follows
-the dest/title; `match_linkref_def` only rejects the trailing inline when `!line_closed`. (Reminder:
-`text` never carries `\n` — the loop breaks at a paragraph break — so a line boundary in the residual is
-always a soft wrap.)
+**Result:** projector **336→337 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
+**71→72/72** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1
+(additive** — only new `md_email_autolink`). New parser fixture `roxygen_md_email_autolink` (CST +
+diagnostics snapshots), lexer unit test `md_email_autolink`, curated corpus `md_email_autolink` (+ pin).
 
-**Result:** projector **335→336 matching, 18 divergent** (unchanged, out-of-scope). Curated fixed-point
-**70→71/71** preserving, 0 blocked. `cargo test` green, clippy + fmt clean; format baseline **+1
-(additive** — only the new `md_url_reference_trailing_macro`; no existing case's format changed, verified
-by set-diff). New unit test `linkref_definition_with_trailing_macro_is_not_a_definition` +
-`parse_linkref_def_dest` signature change; curated corpus `md_url_reference_trailing_macro` (+ pin).
+**Incidental finding (recorded so it isn't re-chased):** `@return`→`\value` inline md **already works**
+(the same-line-value fold + `push_section`'s full markdown/linkref pipeline handle emphasis, code, links,
+soft-wrap). So the Slice-B backlog item "`\value` inline" is effectively closed for the same-line form;
+`@section` inline md also already matches (verified by probe). What remains genuinely unmodeled: **block**
+markdown constructs — GFM **tables** (`| … |` → `\tabular`), ATX/setext **headings** (`#`/`===` → hoisted
+`\section`/`\subsection`, requires cross-section restructuring), **blockquotes** (roxygen2 errors →
+diagnostic-parity), and thematic breaks (a roxygen2 internal error → out of scope).
 
-**Next (ranked):** **(1)** the **tag same-line value + blank + prose** shape (a blank after the value
-opens a *second* paragraph, still a sibling — a paragraph break, not a cross-line span, so lower value)
-and the residual **multi-line inline macro bounding a run** (contrived). **(2)** facets (c)/(d) of the
-`@md` `\`-escape cluster: run-before-letter macro-split (`\\y`), brace-less known-macro decomposition
-(`\emph z`/`\code z`) — tied to the inline-pass migration, do NOT widen the lexer. **(3)** remaining
-Slice B hardenings (`\value`/`\section` inline md; cmark-active md inside a *fragile* arg). **(4)** the 18
+**Next (ranked):** **(1)** GFM **tables** — self-contained block element inside a section body (like the
+existing `\itemize`/`\describe` block machinery), `| a | b |` + `|---|` alignment row → `\tabular{align}{…
+\tab … \cr}`. Highest value, cleanest fit. **(2)** markdown **headings** → `\section`/`\subsection` — common
+but invasive (hoists a `\section` out of `@details` to top level, subsection nesting). **(3)** facets (c)/(d)
+of the `@md` `\`-escape cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass migration, do NOT
+widen the lexer. **(4)** the tag same-line value **+ blank + prose** (paragraph break, low value); the 18
 projector divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02d** — link-ref def with a trailing macro on the dest line is not a definition (`match_linkref_def` rejects a non-`Text` inline without a `SOFT_BREAK`; `parse_linkref_def_dest`→`(url, line_closed)`). 335→336.
 - **2026-07-02c** — HTML character references decode under `@md` (full 2125-entry HTML5 table, `decode_html_entities` wired into `prose_text_atom`). 334→335.
 - **2026-07-02b** — same-line tag-value continuation folds into the `ROXYGEN_TAG` (emphasis/link spans cross the soft break). 333→334.
 - **2026-07-02** — soft-wrap physical-line boundary for `%`-swallow/comment (`SOFT_BREAK` sentinel). 331→333 (no delta; format-only).

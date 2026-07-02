@@ -552,6 +552,9 @@ fn lex_roxygen_prose(
             }
             b'<' if md => scan_md_autolink(bytes, i)
                 .map(|end| (TokKind::RoxygenMdLink, end))
+                .or_else(|| {
+                    scan_md_email_autolink(bytes, i).map(|end| (TokKind::RoxygenMdLink, end))
+                })
                 .or_else(|| scan_md_html_inline(bytes, i).map(|end| (TokKind::RoxygenMdHtml, end))),
             _ => None,
         };
@@ -846,7 +849,7 @@ fn is_shortcut_content(content: &[u8]) -> bool {
 /// digits, `+`, `.`, or `-`; the body runs to the next `>` and may not contain a
 /// space, `<`, or an ASCII control character. Returns the index past `>`, or
 /// `None` when it is not a valid autolink — so raw HTML (`<p>`, `<img …>`, no
-/// scheme `:`) and email autolinks (no `:`, out of scope) stay literal prose.
+/// scheme `:`) falls through (to [`scan_md_email_autolink`], then raw HTML).
 /// roxygen2's `mdxml_link` renders such a link (whose destination equals its text)
 /// as `\url{…}`.
 fn scan_md_autolink(bytes: &[u8], i: usize) -> Option<usize> {
@@ -873,6 +876,62 @@ fn scan_md_autolink(bytes: &[u8], i: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// A CommonMark email autolink at `bytes[i] == b'<'`: `<addr>` where `addr`
+/// matches the spec's email regex --- a local part of one or more
+/// ``[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]``, an `@`, then one or more `.`-separated
+/// domain labels, each an ASCII letter/digit optionally followed by up to 62
+/// letters/digits/hyphens and ending in a letter/digit (no leading/trailing
+/// hyphen; max label length 63). Returns the index past `>`, or `None` when it is
+/// not a valid email autolink (it then falls through to raw HTML / literal prose).
+/// A `scheme:`-bearing address is handled by [`scan_md_autolink`] first --- the two
+/// forms are disjoint, an email address has no `:`. roxygen2's `mdxml_link` renders
+/// this as `\href{mailto:addr}{addr}`.
+fn scan_md_email_autolink(bytes: &[u8], i: usize) -> Option<usize> {
+    fn is_local(b: u8) -> bool {
+        matches!(b,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'
+            | b'.' | b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+'
+            | b'/' | b'=' | b'?' | b'^' | b'_' | b'`' | b'{' | b'|' | b'}' | b'~' | b'-')
+    }
+    let mut j = i + 1;
+    let local_start = j;
+    while bytes.get(j).is_some_and(|&b| is_local(b)) {
+        j += 1;
+    }
+    if j == local_start || bytes.get(j) != Some(&b'@') {
+        return None;
+    }
+    j += 1; // consume '@'
+    // One or more `.`-separated domain labels.
+    loop {
+        let label_start = j;
+        if !bytes.get(j).is_some_and(u8::is_ascii_alphanumeric) {
+            return None;
+        }
+        let mut last = j; // index of the last letter/digit seen in this label
+        j += 1;
+        while bytes
+            .get(j)
+            .is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            if bytes[j] != b'-' {
+                last = j;
+            }
+            j += 1;
+        }
+        // The label must end in a letter/digit (no trailing hyphen) and be at
+        // most 63 characters long.
+        if last + 1 != j || j - label_start > 63 {
+            return None;
+        }
+        match bytes.get(j) {
+            Some(&b'.') => j += 1, // another label follows
+            Some(&b'>') => return Some(j + 1),
+            _ => return None,
+        }
+    }
 }
 
 /// A CommonMark inline raw-HTML tag at `bytes[i] == b'<'`: an open tag
@@ -1714,6 +1773,27 @@ mod tests {
             ]
         );
         assert_lossless("#' see <https://x.y/a> and <p>lit</p>\n#' @md\n");
+    }
+
+    #[test]
+    fn md_email_autolink() {
+        // A CommonMark email autolink `<addr>` carves as a `RoxygenMdLink` under
+        // `@md`; an address with an invalid domain label (a leading hyphen here)
+        // is not an autolink and stays literal prose.
+        assert_eq!(
+            prose_texts("#' mail <a.b+c@x.co> not <foo@-ex.com>\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "mail ".into()),
+                (TokKind::RoxygenMdLink, "<a.b+c@x.co>".into()),
+                (TokKind::RoxygenText, " not <foo@-ex.com>".into()),
+            ]
+        );
+        assert_lossless("#' mail <a.b+c@x.co> not <foo@-ex.com>\n#' @md\n");
+        // Without `@md`, `<` is literal prose --- no autolink recognition.
+        assert_eq!(
+            prose_texts("#' mail <a@b.com>\n"),
+            vec![(TokKind::RoxygenText, "mail <a@b.com>".into())]
+        );
     }
 
     #[test]
