@@ -407,7 +407,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 340 matching (all allowlisted), 18 divergent** of 358 pinned.
+corpus (132 `cm-NNN` cases). **Current: 343 matching (all allowlisted), 18 divergent** of 361 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -416,66 +416,65 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (358 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (361 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 75/75 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 78/78 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-02f) — GFM tables
+## Latest session (2026-07-02g) — ATX markdown headings
 
-Landed **GFM pipe tables** `| a | b |` + `|---|:--:|` + body rows → `\tabular{<align>}{… \tab … \cr}`
-(the ranked #1 target). Confirmed by probe that cmark-gfm's `table` extension is the **only** table kind
-roxygen2 enables — pandoc *simple* (space-column) and *grid* (`+---+`) tables stay literal prose. The
-outer pipes are optional; colons in the delimiter set per-column alignment (`:--`→l, `:-:`→c, `--:`→r,
-none/`---`→l).
+Landed **ATX headings** `# Title` (levels 1-6) → hoisted Rd `\section`/`\subsection` (ranked #1 target).
+This was the invasive one: a heading **restructures sections** — a `#` in `@description`/`@details`
+hoists a **top-level `\section`** (out of the enclosing tag), a `##`+ nests as `\subsection`, and content
+before the first heading stays in the enclosing tag. All seven probed variants match roxygen2 exactly.
 
-**Recognition is two-line, so a mode-gated leaf carries the `@md` signal** (the header row is generic
-prose with no md leaf — the standard block constructs each have a line-leading leaf, but a table's
-*header* does not, so the **delimiter row** is the carve site):
-- **Lexer** (`lex.rs` + shared helpers in `parser/roxygen.rs`): `scan`→`is_table_delim_row` carves a
-  whole-line `RoxygenMdTableDelim` leaf (≥1 unescaped `|` so a bare `---` stays a setext underline;
-  each cell `:?-+:?`). New `TokKind::RoxygenMdTableDelim` → **`ROXYGEN_TEXT`** in `syntax_kind_for` (so
-  an *unmatched* delimiter row is literal prose for free — no orphan-handling needed). Shared
-  `split_table_row_cells`/`count_table_cells` (honor `\|`, **not** code spans — a code-span pipe breaks
-  the count, matching cmark-gfm).
-- **Grouper** (`build.rs`/`group.rs`): `is_md_table_start` (two-line look-ahead: next line's content is
-  the delim leaf **and** header cell-count == delim cell-count) dispatches `emit_md_table`, which
-  gathers header + delim + greedily-consumed body rows (a pipeless line is a single-cell row; stops at
-  blank/tag/new-block/EOF) into a `ROXYGEN_MD_TABLE` node (verbatim, like the HTML block). Interrupts
-  an open paragraph; added to `is_foldable_continuation`'s exclusions.
-- **Projector** (`project_rd.rs`): `Inline::MdTable` → `serialize_md_table` reconstructs rows/cells from
-  `node.text()` (strip_marker per line). Delim row → alignment; header+body rows fill one `GRP`, each
-  cell an **independent** `resolve_macro_arg_inlines` run (emphasis never crosses `|`), `\|`→`|`
-  per-cell, ragged rows pad (empty trailing cell, no atom) / truncate to column count.
-- **Formatter** (`formatter/roxygen.rs`): `ROXYGEN_MD_TABLE` is atomic passthrough (marker-normalized,
-  never reflowed; Tenet 1), idempotent.
+**Parser** (mirrors the HTML-block/table single-line-opener precedent):
+- **Lexer** (`lex.rs`): `is_atx_heading(bytes, i)` (1-6 `#` then space/tab/EOL; rejects `#hashtag`, 7+ `#`)
+  carves the whole line as a `RoxygenMdHeading` leaf, `@md`+line-start only. New `TokKind::RoxygenMdHeading`
+  → **`ROXYGEN_TEXT`** in `syntax_kind_for` (an unwrapped leaf stays literal prose; no path produces one).
+- **Grouper** (`build.rs`/`group.rs`): `is_md_heading_start` → `emit_md_heading` builds a **single-line**
+  `ROXYGEN_MD_HEADING` node (marker + leaf; no following-line gather, unlike table/HTML block). Dispatched
+  as a direct section child (interrupts an open paragraph); added to both `is_foldable_continuation` and
+  `is_table_row_line` exclusions.
+- **New SyntaxKind** `ROXYGEN_MD_HEADING` (=103, last variant; COUNT bumped, `kind_from_raw` arm). The leaf
+  reached every classifier (`roxygen_role`, `expr.rs` atom fallthrough, `syntax_kind_for`, `prose_texts`
+  test helper).
 
-**New SyntaxKind** `ROXYGEN_MD_TABLE` (=102, now the last variant; COUNT bumped, `kind_from_raw` arm).
-The delim leaf reached every classifier (`roxygen_role`, `expr.rs` atom fallthrough, `syntax_kind_for`,
-`prose_texts` test helper). **CST shape = flat verbatim, reparse in projector** — the *right* shape:
-identical to the HTML-block/fenced-code precedent, and structured row/cell nodes would only pay off if
-the formatter aligned columns (it deliberately doesn't).
+**Projector** (`project_rd.rs`): `Inline::MdHeading(node)` is a **structural marker**, not serialized in
+place. `section_body_parts` emits it as its own group. `emit_section_with_headings` (used for
+`@description`/`@details` + intro-derived description/details) splits the body at heading markers, builds a
+`HeadingFrame` outline stack (frame 0 = enclosing tag at level 0; each heading's parent = nearest open
+frame of a strictly lower level), then emits: the enclosing tag (leading prose + level->=2 direct children
+as nested `\subsection`, omitted when empty) + each level-1 child as a **top-level `\section`** sibling.
+`render_heading_frame` renders `\section`/`\subsection` as a 2-arg structural macro (title, body-GRP);
+`parse_md_heading` reads level + closing-`#`-stripped title (`strip_atx_closing`); title inlines resolve
+via `resolve_macro_arg_inlines`. **Formatter:** atomic marker-normalized single-line passthrough (Tenet 1).
 
-**Result:** projector **337→340 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green
-(558 lib + all integration), clippy + fmt clean; format baseline **+3 additive** (only the 3 new curated
-cases; no existing case's format changed). Curated `md_table`/`md_table_cells`/`md_table_prose` (+ pins);
-parser fixtures `roxygen_md_table` (+`_not`, locks the literal-prose fallback); formatter fixture
-`roxygen_md_table`; lexer unit tests (`md_table_delim_*`); projector unit test
-(`md_table_projects_to_tabular`).
+**Result:** projector **340→343 matching, 18 divergent** (unchanged, out-of-scope). `cargo test` green (562
+lib + integration), clippy + fmt clean; fixed-point net 75→**78/78** preserving; format baseline **+3
+additive** (the 3 new curated cases only). Curated `md_heading`/`_subsection`/`_intro` (+ pins); parser
+fixtures `roxygen_md_heading` (+`_not`, two blocks: non-md literal + `@md` rejects `#hashtag`/7-`#`);
+formatter fixture `roxygen_md_heading`; lexer unit tests (`md_heading_recognized`/`_rejects`); projector
+unit tests (`md_heading_hoists_section_and_nests_subsection`, `md_subsection_without_level_one_stays_in_details`).
 
-**Next (ranked):** **(1)** markdown **headings** → `\section`/`\subsection` — the last common block
-construct, but invasive (hoists a `\section` out of `@details` to top level; subsection nesting;
-cross-section restructuring). **(2)** **blockquotes** — roxygen2 *errors* on them (`>` line) → a
-**diagnostic-parity** fixture, not a silent blocked. **(3)** facets (c)/(d) of the `@md` `\`-escape
-cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass migration, do NOT widen the lexer. The 18
-projector divergences stay out of scope (roxygen2 evaluation / multi-block).
+**Trap (new):** *Markdown mode is **block-wide**, not positional* — `block_md` scans the whole `#'` run for
+`@md`/`@noMd` (last wins), so an `@md` **anywhere** in a block makes an earlier `@details`'s `# x` a
+heading. A "not a heading without `@md`" fixture needs its own separate block (no `@md`).
+
+**Next (ranked):** **(1)** **blockquotes** (`>` line) — roxygen2 *errors* ("block quotes are not currently
+supported") → a **diagnostic-parity** fixture, not a silent blocked; check whether roxygen-diagnostic
+side-channel infra exists first. **(2)** **setext headings** (`===`/`---` underline) → same
+`\section`/`\subsection` hoist as ATX, reusing `emit_section_with_headings`. **(3)** facets (c)/(d) of the
+`@md` `\`-escape cluster (`\\y`, `\emph z`/`\code z`) — tied to the inline-pass migration, do NOT widen the
+lexer. The 18 projector divergences stay out of scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-02f** — GFM pipe tables `| a | b |` + `|---|:--:|` → `\tabular{<align>}{… \tab … \cr}` (`is_table_delim_row` carve, `emit_md_table`; projector `serialize_md_table` per-cell inline runs). 337→340.
 - **2026-07-02e** — CommonMark email autolinks `<addr>` → `\href{mailto:addr}{addr}` (`scan_md_email_autolink`; projector `autolink_has_uri_scheme` splits URI→`\url` vs email→mailto). 336→337.
 - **2026-07-02d** — link-ref def with a trailing macro on the dest line is not a definition (`match_linkref_def` rejects a non-`Text` inline without a `SOFT_BREAK`; `parse_linkref_def_dest`→`(url, line_closed)`). 335→336.
 - **2026-07-02c** — HTML character references decode under `@md` (full 2125-entry HTML5 table, `decode_html_entities` wired into `prose_text_atom`). 334→335.

@@ -119,6 +119,14 @@ pub(crate) enum TokKind {
     /// `ROXYGEN_MD_TABLE`; an unmatched delimiter row stays literal prose (the tree
     /// builder maps this kind to `ROXYGEN_TEXT`).
     RoxygenMdTableDelim,
+    /// An ATX **heading** line (`# Title`, `## Sub`, up to `######`): a line whose
+    /// content starts with a run of 1-6 `#` followed by a space/tab or the end of
+    /// the line, recognized only at a line's content start under a resolved `@md`
+    /// mode. The whole remaining line content is the token. The block builder wraps
+    /// it in a single-line `ROXYGEN_MD_HEADING` node; the tree builder maps this
+    /// kind to `ROXYGEN_TEXT`, so a heading leaf that is never wrapped (there is no
+    /// such path today) stays literal prose.
+    RoxygenMdHeading,
 }
 
 /// The semantic role of a roxygen line sub-token. This is the **single source**
@@ -154,9 +162,8 @@ impl TokKind {
             RoxygenTagArg => Some(RoxygenRole::TagArg),
             RoxygenText | RoxygenCode | RoxygenRdMacro | RoxygenMdLink | RoxygenMdBracket
             | RoxygenMdImage | RoxygenMdDelim | RoxygenMdCode | RoxygenMdListMarker
-            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock | RoxygenMdTableDelim => {
-                Some(RoxygenRole::Content)
-            }
+            | RoxygenMdFence | RoxygenMdHtml | RoxygenMdHtmlBlock | RoxygenMdTableDelim
+            | RoxygenMdHeading => Some(RoxygenRole::Content),
             Ident | Int | Float | Complex | String | Comment | IfKw | ElseKw | ForKw | WhileKw
             | RepeatKw | FunctionKw | LambdaFn | InKw | Tilde | Question | UserOp | LBrack
             | RBrack | LBrack2 | RBrack2 | Plus | Minus | Star | Slash | Caret | Pipe | Colon

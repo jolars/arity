@@ -162,6 +162,14 @@ enum Inline {
     /// `GRP` with each cell's markdown-resolved content, `\tab` between cells and
     /// `\cr` ending each row (see [`serialize_md_table`]).
     MdTable(SyntaxNode),
+    /// A markdown ATX heading resolved under `@md` mode (a `ROXYGEN_MD_HEADING`
+    /// node). Unlike the other block inlines it does not serialize in place: it is
+    /// a **structural marker** that splits an `@description`/`@details` body into
+    /// roxygen2's `\section` (level 1) / `\subsection` (level >= 2) outline, hoisting
+    /// level-1 headings to top-level Rd sections (see [`emit_section_with_headings`]).
+    /// The projected title (level and text) is read from the node with
+    /// [`parse_md_heading`].
+    MdHeading(SyntaxNode),
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -321,7 +329,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
         None => intro_title.clone().or(explicit_title_body),
     };
     if let Some(description) = description {
-        push_section(out, "description", &description, md, true);
+        emit_section_with_headings(out, "description", &description, md, true);
     }
 
     // The intro-derived details (and any folded-in @details).
@@ -331,7 +339,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             body.push(Inline::Text("\n".to_string()));
             body.extend(join_paras(std::slice::from_ref(ed)));
         }
-        push_section(out, "details", &body, md, true);
+        emit_section_with_headings(out, "details", &body, md, true);
     }
 
     for (name, body) in &tag_sections {
@@ -436,8 +444,8 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
         // Direct prose → section-macro mappings. `@description`/`@details` are
         // `tag_markdown_with_sections` (`sections = TRUE`), so a brace-incomplete
         // rendered section is dropped to empty; the rest are plain `tag_markdown`.
-        "description" => push_section(out, "description", body, md, true),
-        "details" => push_section(out, "details", body, md, true),
+        "description" => emit_section_with_headings(out, "description", body, md, true),
+        "details" => emit_section_with_headings(out, "details", body, md, true),
         "return" => push_section(out, "value", body, md, false),
         "seealso" => push_section(out, "seealso", body, md, false),
         "source" => push_section(out, "source", body, md, false),
@@ -543,6 +551,154 @@ fn push_section(
         out.push(format!("(\\{macro_name})"));
     } else {
         out.push(format!("(\\{macro_name} {})", atoms.join(" ")));
+    }
+}
+
+/// One node in a markdown-heading outline: an enclosing tag (level 0, no title) or
+/// a heading (level 1-6). `body` is the prose before the frame's first child
+/// heading; `children` index into the flat frame arena in source order.
+struct HeadingFrame {
+    level: usize,
+    title: Vec<Inline>,
+    body: Vec<Inline>,
+    children: Vec<usize>,
+}
+
+/// Emit a `@description`/`@details` section (macro `macro_name`) as roxygen2's
+/// markdown-heading outline. Prose before the first heading — plus any level->=2
+/// heading with no enclosing level-1 heading — stays inside the enclosing
+/// `\<macro_name>`; each level-1 heading hoists to a **top-level** `\section`
+/// sibling; a deeper heading nests as `\subsection` under the nearest shallower
+/// heading. Falls back to a plain [`push_section`] when the body has no heading.
+///
+/// roxygen2 markdown-processes the whole field as one document (so link references
+/// span it) and only *then* splits it into sections; arity splits first and
+/// resolves each piece independently, so a link reference cannot yet cross a
+/// heading (backlog). The common case — self-contained heading sections — is exact.
+/// The per-section `rdComplete` drop is likewise not applied to the hoisted
+/// `\section`/`\subsection`s (their bodies are balanced in practice; backlog).
+fn emit_section_with_headings(
+    out: &mut Vec<String>,
+    macro_name: &str,
+    body: &[Inline],
+    md: bool,
+    drop_on_incomplete: bool,
+) {
+    // Segment the body: the leading run, then one (heading, following-run) per
+    // heading marker in source order.
+    let mut segments: Vec<(Option<SyntaxNode>, Vec<Inline>)> = vec![(None, Vec::new())];
+    for inl in body {
+        if let Inline::MdHeading(node) = inl {
+            segments.push((Some(node.clone()), Vec::new()));
+        } else {
+            segments.last_mut().unwrap().1.push(inl.clone());
+        }
+    }
+    if segments.len() == 1 {
+        // No heading — the ordinary prose section path.
+        push_section(out, macro_name, body, md, drop_on_incomplete);
+        return;
+    }
+
+    // Build the outline. Frame 0 is the enclosing tag (level 0); each heading's
+    // parent is the nearest open frame of a strictly lower level.
+    let mut frames: Vec<HeadingFrame> = vec![HeadingFrame {
+        level: 0,
+        title: Vec::new(),
+        body: std::mem::take(&mut segments[0].1),
+        children: Vec::new(),
+    }];
+    let mut stack = vec![0usize];
+    for (node, run) in segments.into_iter().skip(1) {
+        let node = node.expect("a non-leading segment always carries a heading");
+        let (level, title_text) = parse_md_heading(&node);
+        let title = resolve_macro_arg_inlines(&title_text);
+        while frames[*stack.last().unwrap()].level >= level {
+            stack.pop();
+        }
+        let parent = *stack.last().unwrap();
+        let idx = frames.len();
+        frames.push(HeadingFrame {
+            level,
+            title,
+            body: run,
+            children: Vec::new(),
+        });
+        frames[parent].children.push(idx);
+        stack.push(idx);
+    }
+
+    // The enclosing tag section: its leading prose plus any level->=2 children that
+    // hang directly off it (headings before the first level-1 heading), each a
+    // nested `\subsection`. A level-1 child hoists out (below). Omit the enclosing
+    // section entirely when it has no content.
+    let mut inner = serialize_prose_with_linkrefs(&frames[0].body, md);
+    for &c in &frames[0].children {
+        if frames[c].level >= 2 {
+            inner.push(render_heading_frame(&frames, c, md, "subsection"));
+        }
+    }
+    if !inner.is_empty() {
+        out.push(format!("(\\{macro_name} {})", inner.join(" ")));
+    }
+
+    // Each level-1 child is a top-level `\section` sibling in the output.
+    for &c in &frames[0].children {
+        if frames[c].level == 1 {
+            out.push(render_heading_frame(&frames, c, md, "section"));
+        }
+    }
+}
+
+/// Render a heading frame as `(\<macro_name> <title> <body>)` — a two-arg
+/// structural macro (like `@section`): the title, then the body. Each argument is
+/// bare when a single atom, `(GRP …)`-wrapped when several, absent when empty. The
+/// frame's own prose comes first; every child heading nests one level deeper as a
+/// `\subsection`, appended in source order.
+fn render_heading_frame(frames: &[HeadingFrame], idx: usize, md: bool, macro_name: &str) -> String {
+    let f = &frames[idx];
+    let title_atoms = serialize_inlines(&f.title, md);
+    let mut body_atoms = serialize_prose_with_linkrefs(&f.body, md);
+    for &c in &f.children {
+        body_atoms.push(render_heading_frame(frames, c, md, "subsection"));
+    }
+    let mut inner = grp_arg(&title_atoms);
+    let body_arg = grp_arg(&body_atoms);
+    if !body_arg.is_empty() {
+        if !inner.is_empty() {
+            inner.push(' ');
+        }
+        inner.push_str(&body_arg);
+    }
+    format!("(\\{macro_name}{})", prefix_space(&inner))
+}
+
+/// A markdown ATX heading node's level (1-6) and title text (markdown source, with
+/// the optional closing `#` sequence stripped and surrounding whitespace trimmed).
+/// The node is a single line; the `#'` marker and its leading space are stripped.
+fn parse_md_heading(node: &SyntaxNode) -> (usize, String) {
+    let text = node.text().to_string();
+    let line = strip_marker(&text).trim_start();
+    let level = line.bytes().take_while(|&b| b == b'#').count().clamp(1, 6);
+    let rest = line.get(level..).unwrap_or("").trim();
+    (level, strip_atx_closing(rest).to_string())
+}
+
+/// Strip a CommonMark ATX **closing sequence** — a trailing run of `#` preceded by
+/// a space/tab (or forming the whole title) — from a heading title, trimming the
+/// remaining trailing whitespace. `foo ###` -> `foo`; `foo#` (no preceding space)
+/// stays `foo#`; `###` (empty heading with only a closing run) -> ``.
+fn strip_atx_closing(s: &str) -> &str {
+    let t = s.trim_end();
+    let hashes = t.len() - t.trim_end_matches('#').len();
+    if hashes == 0 {
+        return t;
+    }
+    let before = &t[..t.len() - hashes];
+    if before.is_empty() || before.ends_with([' ', '\t']) {
+        before.trim_end()
+    } else {
+        t
     }
 }
 
@@ -909,6 +1065,22 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 run.clear();
                 atoms.push(serialize_md_table(node));
+            }
+            // A heading is normally consumed by the outline builder before it
+            // reaches here (`emit_section_with_headings`). Reaching this arm means a
+            // heading in a context roxygen2 does not turn into a section (e.g.
+            // `@seealso`, where roxygen2 errors on a level-1 heading) — out of scope
+            // for the projector. Fall back to rendering the title text inline so the
+            // walk never panics; such a case is never pinned in the corpus.
+            Inline::MdHeading(node) => {
+                let (_, title) = parse_md_heading(node);
+                for atom in serialize_inlines(&resolve_macro_arg_inlines(&title), md) {
+                    if let Some(prose) = prose_text_atom(&run, md) {
+                        atoms.push(prose);
+                    }
+                    run.clear();
+                    atoms.push(atom);
+                }
             }
         }
     }
@@ -2773,6 +2945,16 @@ fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
     let mut cur: Vec<Inline> = Vec::new();
     for el in section.syntax().children_with_tokens() {
         match el.kind() {
+            // An ATX heading is a structural break: it ends the current part and
+            // stands alone as its own part (a single `Inline::MdHeading` marker), so
+            // the description/details outline builder can split cleanly on it.
+            SyntaxKind::ROXYGEN_MD_HEADING => {
+                let Some(node) = el.into_node() else { continue };
+                if !cur.is_empty() {
+                    groups.push(std::mem::take(&mut cur));
+                }
+                groups.push(vec![Inline::MdHeading(node)]);
+            }
             SyntaxKind::ROXYGEN_PARAGRAPH
             | SyntaxKind::ROXYGEN_RD_MACRO
             | SyntaxKind::ROXYGEN_MD_LIST
@@ -3873,6 +4055,53 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"A longer description.\"))\n\
              (\\title (TEXT \"Example dataset\"))"
+        );
+    }
+
+    #[test]
+    fn md_heading_hoists_section_and_nests_subsection() {
+        // A level-1 heading in `@details` hoists to a top-level `\section` (out of
+        // `\details`); a deeper heading nests as a `\subsection`. With no prose
+        // before the first heading, `\details` is omitted entirely.
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' # First\n\
+                   #' a\n\
+                   #'\n\
+                   #' ## Nested\n\
+                   #' b\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\section (TEXT \"First\") (GRP (TEXT \"a\") (\\subsection (TEXT \"Nested\") (TEXT \"b\"))))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn md_subsection_without_level_one_stays_in_details() {
+        // A level->=2 heading with no enclosing level-1 heading nests as a
+        // `\subsection` inside the enclosing `\details`, which keeps its leading
+        // prose (the section is not hoisted out).
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' Lead.\n\
+                   #'\n\
+                   #' ## Sub\n\
+                   #' body\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\details (TEXT \"Lead.\") (\\subsection (TEXT \"Sub\") (TEXT \"body\")))\n\
+             (\\title (TEXT \"Title\"))"
         );
     }
 

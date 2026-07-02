@@ -327,6 +327,7 @@ fn is_table_row_line(tokens: &[Token], marker: usize) -> bool {
         && !is_md_code_block_start(tokens, marker)
         && !is_md_list_start(tokens, marker, false)
         && !is_block_macro_line(tokens, marker)
+        && !is_md_heading_start(tokens, marker)
 }
 
 /// Emit a `ROXYGEN_MD_TABLE` node spanning the GFM table beginning at `start` (a
@@ -587,6 +588,34 @@ pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Ve
     }
 
     events.push(Event::Finish); // ROXYGEN_MD_HTML_BLOCK
+    i
+}
+
+/// Whether the prose line whose marker is at `start` is an ATX **heading**
+/// (`@md` mode): its content begins with a `RoxygenMdHeading` leaf. The leaf is
+/// carved only under a resolved `@md` mode, so its presence is the single mode
+/// signal (the builder never re-derives mode).
+pub(super) fn is_md_heading_start(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdHeading)
+}
+
+/// Emit a single-line `ROXYGEN_MD_HEADING` node for the ATX heading whose marker
+/// is at `start`: the `#'` marker, the marker→content whitespace, and the verbatim
+/// heading leaf, threaded in as its children. A heading is exactly one line
+/// (unlike the HTML block / table, which gather following lines), so the trailing
+/// newline is left to the caller. Returns the token index just past the heading
+/// content.
+pub(super) fn emit_md_heading(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HEADING));
+    events.push(Event::Tok(start));
+    let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    events.push(Event::Finish); // ROXYGEN_MD_HEADING
     i
 }
 

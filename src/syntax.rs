@@ -203,14 +203,22 @@ pub enum SyntaxKind {
     /// roxygen2's `\tabular{<align>}{… \tab … \cr}`. Appended last to keep the
     /// earlier variants' `as u16` discriminants stable.
     ROXYGEN_MD_TABLE,
+    /// A markdown ATX **heading** line (resolved `@md` mode only): a single line
+    /// whose content is `#{1,6}` followed by a space/tab or the line end, holding
+    /// the `#'` marker (trivia) and the verbatim `ROXYGEN_TEXT` heading leaf. The
+    /// projector reads the level and title from the node text and hoists it into an
+    /// Rd `\section` (level 1) / `\subsection` (level >= 2) out of the enclosing
+    /// `@description`/`@details`. Appended last to keep the earlier variants'
+    /// `as u16` discriminants stable.
+    ROXYGEN_MD_HEADING,
 }
 
 impl SyntaxKind {
     /// Number of distinct kinds, sized to the last variant. Used to allocate
     /// dispatch tables indexed by `kind as usize` (see the linter's single-walk
-    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_TABLE` remains
+    /// rule dispatch). Stays correct as long as `ROXYGEN_MD_HEADING` remains
     /// the last variant.
-    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_TABLE as usize + 1;
+    pub const COUNT: usize = SyntaxKind::ROXYGEN_MD_HEADING as usize + 1;
 
     /// A roxygen line's bytes are carried by these leaf tokens, which stand in
     /// for the single `COMMENT` token a non-roxygen comment line uses.
@@ -377,6 +385,7 @@ impl Language for RLanguage {
             100 => SyntaxKind::ROXYGEN_MD_HTML_BLOCK,
             101 => SyntaxKind::ROXYGEN_MD_DELIM,
             102 => SyntaxKind::ROXYGEN_MD_TABLE,
+            103 => SyntaxKind::ROXYGEN_MD_HEADING,
             _ => SyntaxKind::ERROR,
         }
     }

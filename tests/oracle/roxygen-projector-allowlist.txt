@@ -351,3 +351,6 @@ md_url_reference_trailing_macro
 md_table
 md_table_cells
 md_table_prose
+md_heading
+md_heading_subsection
+md_heading_intro

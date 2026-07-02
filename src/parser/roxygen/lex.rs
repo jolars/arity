@@ -339,6 +339,21 @@ fn lex_roxygen_prose(
         );
         return;
     }
+    // Under `@md`, a prose line whose content is an ATX heading (`# Title`, up to
+    // `######`) carves the *whole* remaining line off as a `RoxygenMdHeading` leaf.
+    // The block builder wraps it in a single-line `ROXYGEN_MD_HEADING` node; the
+    // leaf's existence implies `@md`, so the builder keys off the token kind.
+    if md && line_start && is_atx_heading(bytes, pos) {
+        push(
+            out,
+            TokKind::RoxygenMdHeading,
+            text,
+            start,
+            pos,
+            text.len() - pos,
+        );
+        return;
+    }
     // Under `@md`, a prose line whose content begins with a list marker carves it
     // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
     // run). Whether the marker actually forms a list is a block-level decision
@@ -642,6 +657,19 @@ fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
 /// also keeps an inline code span (`` `x` ``) that merely starts the line from
 /// being mistaken for a fence. Returns the index past the fence (the end of the
 /// line content), or `None` when the content does not open/close a fence.
+/// Whether the line content starting at `i` opens a CommonMark ATX heading: a run
+/// of 1-6 `#` characters followed by a space, a tab, or the end of the line. (The
+/// optional closing `#` sequence and title text are part of the same line and are
+/// stripped by the projector, not here.) `#hashtag`, `#5x`, and a run of seven or
+/// more `#` are not headings.
+fn is_atx_heading(bytes: &[u8], i: usize) -> bool {
+    let n = run_len(bytes, i, b'#');
+    if !(1..=6).contains(&n) {
+        return false;
+    }
+    matches!(bytes.get(i + n), None | Some(b' ' | b'\t'))
+}
+
 fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
     if run_len(bytes, i, b'`') < 3 {
         return None;
@@ -1449,6 +1477,7 @@ mod tests {
                         | TokKind::RoxygenMdHtml
                         | TokKind::RoxygenMdHtmlBlock
                         | TokKind::RoxygenMdTableDelim
+                        | TokKind::RoxygenMdHeading
                 )
             })
             .map(|t| (t.kind, t.text))
@@ -1608,6 +1637,41 @@ mod tests {
                 "non-delimiter {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn md_heading_recognized_under_md_mode() {
+        // Under `@md`, a line whose content opens an ATX heading (1-6 `#` then a
+        // space, up to the line end) carves off as a single `RoxygenMdHeading` leaf,
+        // whole line (title and any closing `#` sequence included).
+        for heading in ["# Title", "###### Deep", "# Closing #", "#"] {
+            let src = format!("#' {heading}\n#' @md\n");
+            assert_eq!(
+                prose_texts(&src),
+                vec![(TokKind::RoxygenMdHeading, heading.into())],
+                "heading {heading:?}"
+            );
+            assert_lossless(&src);
+        }
+    }
+
+    #[test]
+    fn md_heading_rejects_non_headings() {
+        // `#hashtag` (no space after the run), a run of seven `#` (over the CommonMark
+        // limit of six), and `#` off without `@md` all stay literal prose.
+        for text in ["#hashtag", "####### seven"] {
+            let src = format!("#' {text}\n#' @md\n");
+            assert_eq!(
+                prose_texts(&src),
+                vec![(TokKind::RoxygenText, text.into())],
+                "non-heading {text:?}"
+            );
+        }
+        assert_eq!(
+            prose_texts("#' # Title\n"),
+            vec![(TokKind::RoxygenText, "# Title".into())],
+            "no `@md`: a hash line is literal prose"
+        );
     }
 
     #[test]

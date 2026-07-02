@@ -1,0 +1,3 @@
+(\description (TEXT "Heading subsections"))
+(\details (TEXT "Leading prose.") (\subsection (TEXT "Only a subsection") (TEXT "Sub body.")))
+(\title (TEXT "Heading subsections"))

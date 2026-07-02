@@ -1,0 +1,63 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..226
+  ROXYGEN_BLOCK@0..67
+    ROXYGEN_SECTION@0..67
+      ROXYGEN_PARAGRAPH@0..67
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..43 "Without markdown a ha ..."
+        NEWLINE@43..44 "\n"
+        ROXYGEN_MARKER@44..46 "#'"
+        WHITESPACE@46..47 " "
+        ROXYGEN_TEXT@47..67 "# Not a heading here"
+  NEWLINE@67..68 "\n"
+  ASSIGNMENT_EXPR@68..76
+    IDENT@68..71 "foo"
+    WHITESPACE@71..72 " "
+    ASSIGN_LEFT@72..74 "<-"
+    WHITESPACE@74..75 " "
+    INT@75..76 "1"
+  NEWLINE@76..77 "\n"
+  NEWLINE@77..78 "\n"
+  ROXYGEN_BLOCK@78..216
+    ROXYGEN_SECTION@78..128
+      ROXYGEN_PARAGRAPH@78..125
+        ROXYGEN_MARKER@78..80 "#'"
+        WHITESPACE@80..81 " "
+        ROXYGEN_TEXT@81..124 "With markdown these a ..."
+        NEWLINE@124..125 "\n"
+      ROXYGEN_MARKER@125..127 "#'"
+      NEWLINE@127..128 "\n"
+    ROXYGEN_SECTION@128..135
+      ROXYGEN_MARKER@128..130 "#'"
+      WHITESPACE@130..131 " "
+      ROXYGEN_TAG@131..134
+        ROXYGEN_AT@131..132 "@"
+        ROXYGEN_TAG_NAME@132..134 "md"
+      NEWLINE@134..135 "\n"
+    ROXYGEN_SECTION@135..216
+      ROXYGEN_MARKER@135..137 "#'"
+      WHITESPACE@137..138 " "
+      ROXYGEN_TAG@138..146
+        ROXYGEN_AT@138..139 "@"
+        ROXYGEN_TAG_NAME@139..146 "details"
+      NEWLINE@146..147 "\n"
+      ROXYGEN_PARAGRAPH@147..216
+        ROXYGEN_MARKER@147..149 "#'"
+        WHITESPACE@149..150 " "
+        ROXYGEN_TEXT@150..175 "#hashtag is not a hea ..."
+        NEWLINE@175..176 "\n"
+        ROXYGEN_MARKER@176..178 "#'"
+        WHITESPACE@178..179 " "
+        ROXYGEN_TEXT@179..216 "####### seven hashes  ..."
+  NEWLINE@216..217 "\n"
+  ASSIGNMENT_EXPR@217..225
+    IDENT@217..220 "bar"
+    WHITESPACE@220..221 " "
+    ASSIGN_LEFT@221..223 "<-"
+    WHITESPACE@223..224 " "
+    INT@224..225 "2"
+  NEWLINE@225..226 "\n"

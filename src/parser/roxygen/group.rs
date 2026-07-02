@@ -8,8 +8,9 @@
 
 use super::build::{
     block_macro_opener_closes, emit_block_macro, emit_block_macro_inline, emit_md_code_block,
-    emit_md_html_block, emit_md_list, emit_md_table, is_block_macro_line, is_block_macro_opener,
-    is_md_code_block_start, is_md_html_block_start, is_md_list_start, is_md_table_start,
+    emit_md_heading, emit_md_html_block, emit_md_list, emit_md_table, is_block_macro_line,
+    is_block_macro_opener, is_md_code_block_start, is_md_heading_start, is_md_html_block_start,
+    is_md_list_start, is_md_table_start,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -123,6 +124,15 @@ fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Ev
                         para_open = false;
                     }
                     i = emit_md_table(tokens, i, events);
+                } else if is_md_heading_start(tokens, i) {
+                    // An ATX heading is a direct section child, like a block macro;
+                    // it interrupts an open paragraph. The projector hoists it into
+                    // an Rd `\section`/`\subsection`.
+                    if para_open {
+                        events.push(Event::Finish); // ROXYGEN_PARAGRAPH
+                        para_open = false;
+                    }
+                    i = emit_md_heading(tokens, i, events);
                 } else {
                     if !para_open {
                         events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
@@ -322,4 +332,5 @@ fn is_foldable_continuation(tokens: &[Token], marker: usize) -> bool {
         && !is_md_list_start(tokens, marker, true)
         && !is_block_macro_line(tokens, marker)
         && !is_md_table_start(tokens, marker)
+        && !is_md_heading_start(tokens, marker)
 }

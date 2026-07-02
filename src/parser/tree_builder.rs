@@ -217,5 +217,9 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         // delimiter row). Either way its content is plain text; the table node is
         // built by the grouping phase.
         TokKind::RoxygenMdTableDelim => SyntaxKind::ROXYGEN_TEXT,
+        // An ATX heading line is verbatim text inside a `ROXYGEN_MD_HEADING` node
+        // (the only path the grouper produces). Mapping the bare leaf to
+        // `ROXYGEN_TEXT` keeps any unwrapped heading leaf as literal prose.
+        TokKind::RoxygenMdHeading => SyntaxKind::ROXYGEN_TEXT,
     }
 }

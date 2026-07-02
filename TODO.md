@@ -735,10 +735,21 @@
       (`serialize_md_table`): each cell is an independent markdown inline run (emphasis never crosses a
       `|`), `\|`→`|` per-cell, ragged rows pad with empty cells / truncate to the column count. The
       formatter passes the table through atomically (marker-normalized, never reflowed; Tenet 1).
-      Curated `md_table`/`md_table_cells`/`md_table_prose`; projector 337→340. **Backlog:** GFM tables
-      are the last common *block* markdown construct; ATX/setext **headings** (→ hoisted
-      `\section`/`\subsection`, cross-section restructuring) and **blockquotes** (roxygen2 errors →
-      diagnostic-parity) remain.
+      Curated `md_table`/`md_table_cells`/`md_table_prose`; projector 337→340. **Backlog:** setext
+      headings, and **blockquotes** (roxygen2 errors → diagnostic-parity) remain.
+      **ATX headings LANDED (2026-07-02g):** a `#{1,6}` + space/EOL line under `@md` carves as a whole-line
+      `RoxygenMdHeading` leaf (`is_atx_heading`) wrapped in a single-line `ROXYGEN_MD_HEADING` node (a
+      direct section child, like the HTML block / table). The projector (`emit_section_with_headings`)
+      splits an `@description`/`@details` body at heading markers into roxygen2's outline: prose before
+      the first heading (plus a level->=2 heading with no enclosing level-1) stays in the enclosing
+      `\<macro>`; each level-1 heading **hoists** to a top-level `\section` sibling; deeper headings nest
+      as `\subsection` under the nearest shallower heading (a `HeadingFrame` stack, `parse_md_heading`
+      reads the level + closing-`#`-stripped title). Title inlines resolve via `resolve_macro_arg_inlines`.
+      The formatter is atomic marker-normalized passthrough (Tenet 1). Curated
+      `md_heading`/`md_heading_subsection`/`md_heading_intro`; projector 340→343. **Backlog:** a link
+      reference cannot yet cross a heading (each split piece resolves independently); the per-section
+      `rdComplete` drop is not applied to the hoisted sections; headings in `sections=FALSE` tags
+      (`@seealso` etc.) where roxygen2 errors are out of scope (diagnostic-parity).
       **Email autolinks LANDED (2026-07-02e):** a CommonMark email autolink `<addr>` (strict spec
       regex — local part, `@`, `.`-separated domain labels with no leading/trailing hyphen) carves as
       a `RoxygenMdLink` (`scan_md_email_autolink`, chained after the URI `scan_md_autolink`, before raw

@@ -115,7 +115,8 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             SyntaxKind::ROXYGEN_MD_LIST
             | SyntaxKind::ROXYGEN_MD_CODE_BLOCK
             | SyntaxKind::ROXYGEN_MD_HTML_BLOCK
-            | SyntaxKind::ROXYGEN_MD_TABLE => {
+            | SyntaxKind::ROXYGEN_MD_TABLE
+            | SyntaxKind::ROXYGEN_MD_HEADING => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
                 }
@@ -245,6 +246,16 @@ fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// header/delimiter/body rows is idempotent — on reparse the same header/delimiter
 /// cell counts still form the table.
 fn emit_md_table_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
+    for seg in node.text().to_string().split('\n') {
+        push_line(items, normalize_marker_text(seg));
+    }
+}
+
+/// Emit a markdown ATX heading (`@md` mode) as atomic passthrough, marker-
+/// normalized. A heading is a single line; the node owns its own `#'` marker.
+/// Marker-normalizing preserves the leading `#{1,6}` run (it is trimmed content,
+/// not touched), so on reparse it still forms the same heading — idempotent.
+fn emit_md_heading(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
         push_line(items, normalize_marker_text(seg));
     }
@@ -403,6 +414,9 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 // A GFM table is atomic passthrough, each line marker-normalized —
                 // never reflowed (arity does not lay out roxygen table content).
                 emit_md_table_block(&mut items, macro_node);
+            } else if macro_node.kind() == SyntaxKind::ROXYGEN_MD_HEADING {
+                // An ATX heading is a single marker-normalized line — never reflowed.
+                emit_md_heading(&mut items, macro_node);
             } else if in_examples {
                 emit_block_macro_examples(&mut items, macro_node);
             } else {

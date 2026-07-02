@@ -1,0 +1,77 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..178
+  ROXYGEN_BLOCK@0..172
+    ROXYGEN_SECTION@0..34
+      ROXYGEN_PARAGRAPH@0..31
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..30 "ATX headings under ma ..."
+        NEWLINE@30..31 "\n"
+      ROXYGEN_MARKER@31..33 "#'"
+      NEWLINE@33..34 "\n"
+    ROXYGEN_SECTION@34..41
+      ROXYGEN_MARKER@34..36 "#'"
+      WHITESPACE@36..37 " "
+      ROXYGEN_TAG@37..40
+        ROXYGEN_AT@37..38 "@"
+        ROXYGEN_TAG_NAME@38..40 "md"
+      NEWLINE@40..41 "\n"
+    ROXYGEN_SECTION@41..153
+      ROXYGEN_MARKER@41..43 "#'"
+      WHITESPACE@43..44 " "
+      ROXYGEN_TAG@44..52
+        ROXYGEN_AT@44..45 "@"
+        ROXYGEN_TAG_NAME@45..52 "details"
+      NEWLINE@52..53 "\n"
+      ROXYGEN_MD_HEADING@53..63
+        ROXYGEN_MARKER@53..55 "#'"
+        WHITESPACE@55..56 " "
+        ROXYGEN_TEXT@56..63 "# First"
+      NEWLINE@63..64 "\n"
+      ROXYGEN_MARKER@64..66 "#'"
+      NEWLINE@66..67 "\n"
+      ROXYGEN_PARAGRAPH@67..85
+        ROXYGEN_MARKER@67..69 "#'"
+        WHITESPACE@69..70 " "
+        ROXYGEN_TEXT@70..84 "Body of first."
+        NEWLINE@84..85 "\n"
+      ROXYGEN_MARKER@85..87 "#'"
+      NEWLINE@87..88 "\n"
+      ROXYGEN_MD_HEADING@88..100
+        ROXYGEN_MARKER@88..90 "#'"
+        WHITESPACE@90..91 " "
+        ROXYGEN_TEXT@91..100 "## Nested"
+      NEWLINE@100..101 "\n"
+      ROXYGEN_PARAGRAPH@101..117
+        ROXYGEN_MARKER@101..103 "#'"
+        WHITESPACE@103..104 " "
+        ROXYGEN_TEXT@104..116 "Nested body."
+        NEWLINE@116..117 "\n"
+      ROXYGEN_MARKER@117..119 "#'"
+      NEWLINE@119..120 "\n"
+      ROXYGEN_MD_HEADING@120..133
+        ROXYGEN_MARKER@120..122 "#'"
+        WHITESPACE@122..123 " "
+        ROXYGEN_TEXT@123..133 "# Second #"
+      NEWLINE@133..134 "\n"
+      ROXYGEN_PARAGRAPH@134..153
+        ROXYGEN_MARKER@134..136 "#'"
+        WHITESPACE@136..137 " "
+        ROXYGEN_TEXT@137..152 "Body of second."
+        NEWLINE@152..153 "\n"
+    ROXYGEN_SECTION@153..172
+      ROXYGEN_MARKER@153..155 "#'"
+      WHITESPACE@155..156 " "
+      ROXYGEN_TAG@156..172
+        ROXYGEN_AT@156..157 "@"
+        ROXYGEN_TAG_NAME@157..161 "name"
+        WHITESPACE@161..162 " "
+        ROXYGEN_TEXT@162..164 "md"
+        ROXYGEN_MD_DELIM@164..165 "_"
+        ROXYGEN_TEXT@165..172 "heading"
+  NEWLINE@172..173 "\n"
+  IDENT@173..177 "NULL"
+  NEWLINE@177..178 "\n"
