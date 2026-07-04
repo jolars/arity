@@ -147,6 +147,11 @@ jobs:
           cp target/completions/arity.bash target/completions/arity.fish target/completions/_arity dist/completions/
           tar czf arity-${{ matrix.target }}.tar.gz -C dist .
           rm -rf dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum arity-${{ matrix.target }}.tar.gz > arity-${{ matrix.target }}.tar.gz.sha256
+          else
+            shasum -a 256 arity-${{ matrix.target }}.tar.gz > arity-${{ matrix.target }}.tar.gz.sha256
+          fi
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'
@@ -158,6 +163,9 @@ jobs:
           Copy-Item README.md dist/
           Compress-Archive -Path dist/* -DestinationPath arity-${{ matrix.target }}.zip
           Remove-Item -Recurse -Force dist
+          $asset = "arity-${{ matrix.target }}.zip"
+          $hash = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$asset.sha256" -Value "$hash  $asset" -Encoding ascii
 
       - name: Upload archive artifact
         uses: actions/upload-artifact@v7
@@ -166,6 +174,8 @@ jobs:
           path: |
             arity-${{ matrix.target }}.tar.gz
             arity-${{ matrix.target }}.zip
+            arity-${{ matrix.target }}.tar.gz.sha256
+            arity-${{ matrix.target }}.zip.sha256
 
       - name: Upload binary to release
         if: inputs.upload == 'true'
@@ -173,10 +183,14 @@ jobs:
         run: |
           TAG="${{ inputs.tag }}"
           if [ -f arity-${{ matrix.target }}.tar.gz ]; then
-            gh release upload --clobber "$TAG" arity-${{ matrix.target }}.tar.gz
+            gh release upload --clobber "$TAG" \
+              arity-${{ matrix.target }}.tar.gz \
+              arity-${{ matrix.target }}.tar.gz.sha256
           fi
           if [ -f arity-${{ matrix.target }}.zip ]; then
-            gh release upload --clobber "$TAG" arity-${{ matrix.target }}.zip
+            gh release upload --clobber "$TAG" \
+              arity-${{ matrix.target }}.zip \
+              arity-${{ matrix.target }}.zip.sha256
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
