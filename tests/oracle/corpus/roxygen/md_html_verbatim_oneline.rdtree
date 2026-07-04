@@ -1,0 +1,3 @@
+(\description (TEXT "Verbatim HTML block closing on its opening line"))
+(\details (TEXT "Before.") (\if (TEXT "html") (\out (VERB "\n") (VERB "<style>a { color: red }</style>\n"))) (TEXT "After."))
+(\title (TEXT "Verbatim HTML block closing on its opening line"))

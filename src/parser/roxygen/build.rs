@@ -791,26 +791,99 @@ pub(super) fn is_md_html_block_start(tokens: &[Token], start: usize) -> bool {
     tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdHtmlBlock)
 }
 
+/// Whether an HTML-block opener's line content begins (case-insensitively) with a
+/// CommonMark **condition 1** verbatim tag (`<pre`/`<script`/`<style`/`<textarea`)
+/// followed by a boundary (whitespace, `>`, `/`, or the end of the line). Mirrors
+/// the lexer's [`super::lex::scan_md_html_block`] verbatim branch; the opener leaf
+/// starts at the tag (leading marker→content whitespace is stripped by
+/// [`line_raw_content`]).
+fn is_html_verbatim_opener(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    super::lex::HTML_VERBATIM_TAGS.iter().any(|tag| {
+        lower
+            .strip_prefix('<')
+            .and_then(|rest| rest.strip_prefix(tag))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t', '>', '/']))
+    })
+}
+
+/// Whether a condition-1 HTML block line **contains** a matching close tag
+/// (`</pre>`/`</script>`/`</style>`/`</textarea>`, case-insensitive — per
+/// CommonMark it need not match the opening tag). The block ends on the first such
+/// line, inclusive.
+fn html_verbatim_line_closes(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    super::lex::HTML_VERBATIM_TAGS
+        .iter()
+        .any(|tag| lower.contains(&format!("</{tag}>")))
+}
+
 /// Emit a `ROXYGEN_MD_HTML_BLOCK` node spanning the markdown HTML block beginning
 /// at `start` (a `RoxygenMarker` whose content is a `RoxygenMdHtmlBlock` opener).
-/// Per CommonMark start condition 6, the block runs to the next blank line; every
-/// line until then — the opener and any following prose — is verbatim block
-/// content (its body tokens threaded through). A tag opener or a non-roxygen line
-/// also ends it (greedy and lossless). The `#'` markers, the marker→content
-/// whitespace, and the inter-line newlines/indentation are threaded in as trivia
-/// at the block level, the way the fenced code block threads them. The trailing
-/// newline after the last consumed line is left to the caller. Returns the token
-/// index just past it.
+/// The `#'` markers, the marker→content whitespace, and the inter-line newlines/
+/// indentation are threaded in as trivia at the block level, the way the fenced
+/// code block threads them. The trailing newline after the last consumed line is
+/// left to the caller. Returns the token index just past it.
+///
+/// The block's **terminator** depends on the opener's CommonMark HTML-block start
+/// condition, re-derived here from the opener text (the leaf already implies `@md`;
+/// re-deriving the *condition* is not re-deriving the mode):
+///
+/// * **Condition 1** (`<pre>`/`<script>`/`<style>`/`<textarea>`, opening form): the
+///   block is *verbatim* and runs until a line **containing** a matching close tag
+///   (`</pre>` etc., case-insensitive, inclusive) — through blank lines. A new tag
+///   (section boundary) or a non-roxygen line/EOF also ends it. If the opener line
+///   already contains the close tag, the block is that single line.
+/// * **Condition 6** (block-level tag): the block runs to the next **blank line**;
+///   a tag opener or a non-roxygen line also ends it.
 pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HTML_BLOCK));
 
     // Opening line: marker, marker→content whitespace, then the opener content.
+    let opener = line_raw_content(tokens, start);
     events.push(Event::Tok(start));
     let mut i = start + 1;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         events.push(Event::Tok(i));
         i += 1;
+    }
+
+    if is_html_verbatim_opener(&opener) {
+        // Condition 1: run until a line containing a matching close tag, inclusive
+        // (through blank lines). Skip the loop when the opener line already closes.
+        if !html_verbatim_line_closes(&opener) {
+            loop {
+                if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+                    break;
+                }
+                let mut m = i + 1;
+                while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+                    m += 1;
+                }
+                if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
+                    break; // non-roxygen line / EOF
+                }
+                if matches!(classify_line(tokens, m), LineKind::Tag) {
+                    break; // a new tag (section boundary) ends the block
+                }
+                // Thread `\n` + indentation + `#'`, then the line's body.
+                let line = line_raw_content(tokens, m);
+                for idx in i..=m {
+                    events.push(Event::Tok(idx));
+                }
+                i = m + 1;
+                while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                    events.push(Event::Tok(i));
+                    i += 1;
+                }
+                if html_verbatim_line_closes(&line) {
+                    break;
+                }
+            }
+        }
+        events.push(Event::Finish); // ROXYGEN_MD_HTML_BLOCK
+        return i;
     }
 
     loop {

@@ -1,0 +1,3 @@
+(\description (TEXT "Verbatim HTML block"))
+(\details (TEXT "Intro prose.") (\if (TEXT "html") (\out (VERB "\n") (VERB "<pre>\n") (VERB "preformatted\n") (VERB "  indented line\n") (VERB "\n") (VERB "still inside\n") (VERB "</pre>\n"))) (TEXT "Prose after."))
+(\title (TEXT "Verbatim HTML block"))

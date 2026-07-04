@@ -1,0 +1,93 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..328
+  ROXYGEN_BLOCK@0..322
+    ROXYGEN_SECTION@0..42
+      ROXYGEN_PARAGRAPH@0..39
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..38 "Verbatim HTML blocks  ..."
+        NEWLINE@38..39 "\n"
+      ROXYGEN_MARKER@39..41 "#'"
+      NEWLINE@41..42 "\n"
+    ROXYGEN_SECTION@42..49
+      ROXYGEN_MARKER@42..44 "#'"
+      WHITESPACE@44..45 " "
+      ROXYGEN_TAG@45..48
+        ROXYGEN_AT@45..46 "@"
+        ROXYGEN_TAG_NAME@46..48 "md"
+      NEWLINE@48..49 "\n"
+    ROXYGEN_SECTION@49..297
+      ROXYGEN_MARKER@49..51 "#'"
+      WHITESPACE@51..52 " "
+      ROXYGEN_TAG@52..60
+        ROXYGEN_AT@52..53 "@"
+        ROXYGEN_TAG_NAME@53..60 "details"
+      NEWLINE@60..61 "\n"
+      ROXYGEN_PARAGRAPH@61..88
+        ROXYGEN_MARKER@61..63 "#'"
+        WHITESPACE@63..64 " "
+        ROXYGEN_TEXT@64..87 "Prose before the block."
+        NEWLINE@87..88 "\n"
+      ROXYGEN_MD_HTML_BLOCK@88..160
+        ROXYGEN_MARKER@88..90 "#'"
+        WHITESPACE@90..91 " "
+        ROXYGEN_TEXT@91..96 "<pre>"
+        NEWLINE@96..97 "\n"
+        ROXYGEN_MARKER@97..99 "#'"
+        WHITESPACE@99..100 " "
+        ROXYGEN_TEXT@100..112 "preformatted"
+        NEWLINE@112..113 "\n"
+        ROXYGEN_MARKER@113..115 "#'"
+        WHITESPACE@115..118 "   "
+        ROXYGEN_TEXT@118..131 "indented line"
+        NEWLINE@131..132 "\n"
+        ROXYGEN_MARKER@132..134 "#'"
+        NEWLINE@134..135 "\n"
+        ROXYGEN_MARKER@135..137 "#'"
+        WHITESPACE@137..138 " "
+        ROXYGEN_TEXT@138..150 "still inside"
+        NEWLINE@150..151 "\n"
+        ROXYGEN_MARKER@151..153 "#'"
+        WHITESPACE@153..154 " "
+        ROXYGEN_MD_HTML@154..160 "</pre>"
+      NEWLINE@160..161 "\n"
+      ROXYGEN_PARAGRAPH@161..187
+        ROXYGEN_MARKER@161..163 "#'"
+        WHITESPACE@163..164 " "
+        ROXYGEN_TEXT@164..186 "Prose after the block."
+        NEWLINE@186..187 "\n"
+      ROXYGEN_MARKER@187..189 "#'"
+      NEWLINE@189..190 "\n"
+      ROXYGEN_PARAGRAPH@190..232
+        ROXYGEN_MARKER@190..192 "#'"
+        WHITESPACE@192..193 " "
+        ROXYGEN_TEXT@193..231 "A block can close on  ..."
+        NEWLINE@231..232 "\n"
+      ROXYGEN_MD_HTML_BLOCK@232..266
+        ROXYGEN_MARKER@232..234 "#'"
+        WHITESPACE@234..235 " "
+        ROXYGEN_TEXT@235..266 "<style>a { color: red ..."
+      NEWLINE@266..267 "\n"
+      ROXYGEN_PARAGRAPH@267..297
+        ROXYGEN_MARKER@267..269 "#'"
+        WHITESPACE@269..270 " "
+        ROXYGEN_TEXT@270..296 "Prose after the one-l ..."
+        NEWLINE@296..297 "\n"
+    ROXYGEN_SECTION@297..322
+      ROXYGEN_MARKER@297..299 "#'"
+      WHITESPACE@299..300 " "
+      ROXYGEN_TAG@300..322
+        ROXYGEN_AT@300..301 "@"
+        ROXYGEN_TAG_NAME@301..305 "name"
+        WHITESPACE@305..306 " "
+        ROXYGEN_TEXT@306..308 "md"
+        ROXYGEN_MD_DELIM@308..309 "_"
+        ROXYGEN_TEXT@309..313 "html"
+        ROXYGEN_MD_DELIM@313..314 "_"
+        ROXYGEN_TEXT@314..322 "verbatim"
+  NEWLINE@322..323 "\n"
+  IDENT@323..327 "NULL"
+  NEWLINE@327..328 "\n"

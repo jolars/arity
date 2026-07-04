@@ -1173,38 +1173,62 @@ fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
     (bytes.get(j) == Some(&b'>')).then_some(j + 1)
 }
 
-/// A CommonMark **HTML block start condition 6** at a line's content start: `<`
-/// or `</`, then one of the block-level tag names (case-insensitive), then a
-/// space/tab, `>`, `/>`, or the end of the line. Such a line opens an HTML block
-/// that (per CommonMark) runs to the next blank line, so the whole remaining line
-/// content is the opener leaf; this returns the index past it (the end of the
-/// line). `None` otherwise.
+/// A CommonMark **HTML block start condition 1 or 6** at a line's content start:
+/// `<` or `</`, then a tag name (case-insensitive), then a space/tab, `>`, `/>`,
+/// or the end of the line. Condition 6 is one of the block-level tag names (open
+/// or close form); condition 1 is one of the *verbatim* tags `<pre>`/`<script>`/
+/// `<style>`/`<textarea>` in **opening** form (a close tag never starts condition
+/// 1, and `/>` is condition 7, not 1). Either way the whole remaining line content
+/// is the opener leaf; this returns the index past it (the end of the line). `None`
+/// otherwise. The two conditions differ only in their **terminator** (blank line
+/// vs a line containing a matching close tag), which the block builder re-derives
+/// from the opener text — see [`super::build::emit_md_html_block`].
 ///
-/// Only condition 6 is recognized. Conditions 1–5 (`<script>`/`<pre>`/comments/
-/// processing instructions/declarations/CDATA — each with its own non-blank-line
-/// terminator) and condition 7 (a complete tag alone on a line) are faithful
-/// under-handling: those forms stay literal prose or inline HTML (backlog), so the
-/// modeled block is exactly the blank-line-terminated one roxygen2's corpus uses.
+/// Conditions 2–5 (comments/processing instructions/declarations/CDATA — each with
+/// its own non-blank-line terminator) and condition 7 (a complete tag alone on a
+/// line) are faithful under-handling: those forms stay literal prose or inline HTML
+/// (backlog).
 fn scan_md_html_block(bytes: &[u8], i: usize) -> Option<usize> {
     if bytes.get(i) != Some(&b'<') {
         return None;
     }
     let mut j = i + 1;
-    if bytes.get(j) == Some(&b'/') {
+    let closing = bytes.get(j) == Some(&b'/');
+    if closing {
         j += 1;
     }
     let name_start = j;
     while bytes.get(j).is_some_and(u8::is_ascii_alphanumeric) {
         j += 1;
     }
-    if !is_html_block_tag(&bytes[name_start..j]) {
+    let name = &bytes[name_start..j];
+    let verbatim = !closing && is_html_verbatim_block_tag(name);
+    if !is_html_block_tag(name) && !verbatim {
         return None;
     }
     match bytes.get(j) {
         None | Some(b' ' | b'\t' | b'>') => Some(bytes.len()),
-        Some(b'/') if bytes.get(j + 1) == Some(&b'>') => Some(bytes.len()),
+        // `/>` opens a condition-6 block (a complete/void tag) but not a verbatim
+        // condition-1 one (CommonMark condition 1 requires whitespace, `>`, or EOL).
+        Some(b'/') if !verbatim && bytes.get(j + 1) == Some(&b'>') => Some(bytes.len()),
         _ => None,
     }
+}
+
+/// The four CommonMark **HTML block start condition 1** tag names: their content
+/// is verbatim (`<pre>`/`<script>`/`<style>`/`<textarea>`) and the block runs to a
+/// line containing a matching close tag, not to a blank line. Single source of
+/// truth, shared with the block builder's terminator ([`super::build`]).
+pub(super) const HTML_VERBATIM_TAGS: &[&str] = &["pre", "script", "style", "textarea"];
+
+/// Whether `name` (ASCII, case-insensitive) is one of the condition-1 verbatim tag
+/// names ([`HTML_VERBATIM_TAGS`]).
+fn is_html_verbatim_block_tag(name: &[u8]) -> bool {
+    let Ok(name) = std::str::from_utf8(name) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    HTML_VERBATIM_TAGS.contains(&lower.as_str())
 }
 
 /// Whether `name` (ASCII, case-insensitive) is one of CommonMark's block-level

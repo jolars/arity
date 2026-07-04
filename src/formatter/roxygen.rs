@@ -248,11 +248,15 @@ fn emit_md_indented_code(items: &mut Vec<Ir>, node: &SyntaxNode) {
 }
 
 /// Emit a markdown HTML block (`@md` mode) as atomic passthrough, each `#'` line
-/// marker-normalized (marker, one space, trimmed content). The node owns its own
-/// `#'` markers and newlines; the raw HTML is never reflowed across lines.
+/// marker-normalized. The node owns its own `#'` markers and newlines; the raw
+/// HTML is never reflowed across lines. Content indentation is **preserved**
+/// ([`normalize_list_marker_text`], not [`normalize_marker_text`]): roxygen2
+/// renders the block's lines verbatim into `\out{…}`, so a trimmed leading indent
+/// (a `<pre>` line, or condition-1 verbatim content) would change the rendered Rd
+/// — a fixed-point violation.
 fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
     for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_marker_text(seg));
+        push_line(items, normalize_list_marker_text(seg));
     }
 }
 
