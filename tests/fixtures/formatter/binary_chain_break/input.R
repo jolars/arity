@@ -1,0 +1,5 @@
+plot(fit_circle) | plot(fit_ellipse) | plot(fit_square) | plot(fit_rectangle) | plot(fit_circle)
+
+long_variable_aaaa + long_variable_bbbb * long_variable_cccc + long_variable_dddd
+
+aaaaaaaaaaaaaaaaaaaaaaaaaa - bbbbbbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccccccc

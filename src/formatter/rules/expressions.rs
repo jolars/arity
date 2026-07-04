@@ -97,53 +97,15 @@ pub(crate) fn ir_binary_expr(
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
     let elements: Vec<_> = node.children_with_tokens().collect();
-    let op_idx = elements
-        .iter()
-        .position(|el| {
-            matches!(
-                el,
-                NodeOrToken::Token(tok)
-                    if matches!(
-                        tok.kind(),
-                        SyntaxKind::PLUS
-                            | SyntaxKind::MINUS
-                            | SyntaxKind::STAR
-                            | SyntaxKind::SLASH
-                            | SyntaxKind::CARET
-                            | SyntaxKind::PIPE
-                            | SyntaxKind::COLON
-                            | SyntaxKind::OR
-                            | SyntaxKind::OR2
-                            | SyntaxKind::AND
-                            | SyntaxKind::AND2
-                            | SyntaxKind::EQUAL2
-                            | SyntaxKind::NOT_EQUAL
-                            | SyntaxKind::LESS_THAN
-                            | SyntaxKind::LESS_THAN_OR_EQUAL
-                            | SyntaxKind::GREATER_THAN
-                            | SyntaxKind::GREATER_THAN_OR_EQUAL
-                            | SyntaxKind::TILDE
-                            | SyntaxKind::QUESTION
-                            | SyntaxKind::USER_OP
-                            | SyntaxKind::COLON2
-                            | SyntaxKind::COLON3
-                            | SyntaxKind::DOLLAR
-                            | SyntaxKind::AT
-                    )
-            )
-        })
-        .ok_or_else(|| FormatError::AmbiguousConstruct {
-            context: "binary operator not found",
-            snippet: node.text().to_string(),
-        })?;
+    let op_idx = find_binary_op(&elements).ok_or_else(|| FormatError::AmbiguousConstruct {
+        context: "binary operator not found",
+        snippet: node.text().to_string(),
+    })?;
 
     let (op_kind, op_text) = match &elements[op_idx] {
         NodeOrToken::Token(tok) => (tok.kind(), tok.text().to_string()),
         NodeOrToken::Node(_) => unreachable!(),
     };
-    let lhs = ir_binary_side(&elements[..op_idx], "binary lhs", indent, ctx)?;
-    let (rhs_comments, rhs) = ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
-    let comment = comment_suffix(&rhs_comments);
 
     // Sticky operators never wrap --- unless a comment trails the operator, in
     // which case we must break after it (a comment runs to end of line, so the
@@ -157,13 +119,16 @@ pub(crate) fn ir_binary_expr(
             | SyntaxKind::DOLLAR
             | SyntaxKind::AT
     ) {
+        let lhs = ir_binary_side(&elements[..op_idx], "binary lhs", indent, ctx)?;
+        let (rhs_comments, rhs) =
+            ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
         if rhs_comments.is_empty() {
             return Ok(Ir::concat([lhs, Ir::text(op_text), rhs]));
         }
         return Ok(Ir::concat([
             lhs,
             Ir::text(op_text),
-            comment,
+            comment_suffix(&rhs_comments),
             Ir::indent(Ir::hard_line()),
             rhs,
         ]));
@@ -176,41 +141,165 @@ pub(crate) fn ir_binary_expr(
     // indent. The chain is left-associative, so only the final stage's RHS is a
     // leaf call here; deeper stages sit in the LHS and keep their own indent.
     if op_kind == SyntaxKind::PIPE || (op_kind == SyntaxKind::USER_OP && op_text == "%>%") {
+        let lhs = ir_binary_side(&elements[..op_idx], "binary lhs", indent, ctx)?;
+        let (rhs_comments, rhs) =
+            ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
         return Ok(Ir::concat([
             lhs,
             Ir::text(format!(" {op_text}")),
-            comment,
+            comment_suffix(&rhs_comments),
             Ir::indent(Ir::concat([Ir::hard_line(), rhs])),
         ]));
     }
 
-    // Non-sticky binary operators: when broken, the operator stays on the
-    // prior line so the continuation is R-valid (a leading operator on the
-    // next line would be parsed as a separate unary statement outside
-    // brackets). The right operand is indented one level.
-    let broken_lead = format!(" {op_text}");
+    // Non-sticky binary operators. A run of same-precedence operators
+    // (`a | b | c`, `a + b - c`) is flattened into a *single* group so the
+    // break decision is shared: either the whole chain fits on one line, or
+    // every operator breaks (air-style). Building each nesting level as its own
+    // group instead would produce *fill*---only as many operators break as
+    // needed to reach column width, so the break point depends on arbitrary
+    // arithmetic rather than the chain's structure. Operators of a different
+    // precedence sit in operand position (`b * c` inside `a + b * c + d`) and
+    // keep their own nested group, so they break independently.
+    let level = binary_level(op_kind, &op_text)
+        .expect("non-sticky, non-pipe binary operator has a precedence level");
+    Ok(Ir::group(ir_binary_chain_body(node, level, indent, ctx)?))
+}
 
-    // A comment trailing the operator forces the broken form (the operand
-    // cannot share the comment's line).
+/// Position of the binary operator token among a `BINARY_EXPR`'s children.
+fn find_binary_op(elements: &[SyntaxElement<RLanguage>]) -> Option<usize> {
+    elements.iter().position(|el| {
+        matches!(
+            el,
+            NodeOrToken::Token(tok)
+                if matches!(
+                    tok.kind(),
+                    SyntaxKind::PLUS
+                        | SyntaxKind::MINUS
+                        | SyntaxKind::STAR
+                        | SyntaxKind::SLASH
+                        | SyntaxKind::CARET
+                        | SyntaxKind::PIPE
+                        | SyntaxKind::COLON
+                        | SyntaxKind::OR
+                        | SyntaxKind::OR2
+                        | SyntaxKind::AND
+                        | SyntaxKind::AND2
+                        | SyntaxKind::EQUAL2
+                        | SyntaxKind::NOT_EQUAL
+                        | SyntaxKind::LESS_THAN
+                        | SyntaxKind::LESS_THAN_OR_EQUAL
+                        | SyntaxKind::GREATER_THAN
+                        | SyntaxKind::GREATER_THAN_OR_EQUAL
+                        | SyntaxKind::TILDE
+                        | SyntaxKind::QUESTION
+                        | SyntaxKind::USER_OP
+                        | SyntaxKind::COLON2
+                        | SyntaxKind::COLON3
+                        | SyntaxKind::DOLLAR
+                        | SyntaxKind::AT
+                )
+        )
+    })
+}
+
+/// Precedence level of a *flattenable* binary operator (higher binds tighter),
+/// mirroring R's operator table. Returns `None` for the sticky operators
+/// (`::`/`^`/`:`/`$`/`@`) and the pipes, which are laid out by their own paths
+/// and never participate in chain flattening. `%>%` is excluded here (it is
+/// pipe-handled); every other `%any%` user operator shares one level.
+fn binary_level(op_kind: SyntaxKind, op_text: &str) -> Option<u8> {
+    Some(match op_kind {
+        SyntaxKind::QUESTION => 0,
+        SyntaxKind::TILDE => 1,
+        SyntaxKind::OR | SyntaxKind::OR2 => 2,
+        SyntaxKind::AND | SyntaxKind::AND2 => 3,
+        SyntaxKind::EQUAL2
+        | SyntaxKind::NOT_EQUAL
+        | SyntaxKind::LESS_THAN
+        | SyntaxKind::LESS_THAN_OR_EQUAL
+        | SyntaxKind::GREATER_THAN
+        | SyntaxKind::GREATER_THAN_OR_EQUAL => 4,
+        SyntaxKind::PLUS | SyntaxKind::MINUS => 5,
+        SyntaxKind::STAR | SyntaxKind::SLASH => 6,
+        SyntaxKind::USER_OP if op_text != "%>%" => 7,
+        _ => return None,
+    })
+}
+
+/// Builds the *ungrouped* body of a non-sticky binary chain at precedence
+/// `level`: the base operand followed by each `operator + operand`. The single
+/// enclosing group is added by the caller, so every operator's break is decided
+/// together. Descends the left-associative LHS spine directly (bypassing the
+/// per-node group) as long as it stays at the same precedence level; a
+/// higher-precedence LHS is left as an operand and keeps its own nested group.
+fn ir_binary_chain_body(
+    node: &SyntaxNode,
+    level: u8,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<Ir, FormatError> {
+    let elements: Vec<_> = node.children_with_tokens().collect();
+    let op_idx = find_binary_op(&elements).ok_or_else(|| FormatError::AmbiguousConstruct {
+        context: "binary operator not found",
+        snippet: node.text().to_string(),
+    })?;
+    let op_text = match &elements[op_idx] {
+        NodeOrToken::Token(tok) => tok.text().to_string(),
+        NodeOrToken::Node(_) => unreachable!(),
+    };
+    let (rhs_comments, rhs) = ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
+
+    let lhs_elements = &elements[..op_idx];
+    let lhs = match same_level_binary_lhs(lhs_elements, level) {
+        Some(inner) => ir_binary_chain_body(&inner, level, indent, ctx)?,
+        None => ir_binary_side(lhs_elements, "binary lhs", indent, ctx)?,
+    };
+
+    // When broken, the operator stays on the prior line so the continuation is
+    // R-valid (a leading operator on the next line would parse as a separate
+    // unary statement outside brackets). The right operand is indented one
+    // level. A comment trailing the operator forces the broken form (the
+    // operand cannot share the comment's line) and, being a hard break, forces
+    // the whole enclosing group broken too.
     if !rhs_comments.is_empty() {
         return Ok(Ir::concat([
             lhs,
-            Ir::text(broken_lead),
-            comment,
+            Ir::text(format!(" {op_text}")),
+            comment_suffix(&rhs_comments),
             Ir::indent(Ir::hard_line()),
             rhs,
         ]));
     }
 
-    let flat_op = format!(" {op_text} ");
-    Ok(Ir::group(Ir::concat([
+    Ok(Ir::concat([
         lhs,
         Ir::if_break(
-            Ir::text(flat_op),
-            Ir::concat([Ir::text(broken_lead), Ir::indent(Ir::hard_line())]),
+            Ir::text(format!(" {op_text} ")),
+            Ir::concat([Ir::text(format!(" {op_text}")), Ir::indent(Ir::hard_line())]),
         ),
         rhs,
-    ])))
+    ]))
+}
+
+/// If `elements` is a single `BINARY_EXPR` whose operator is at precedence
+/// `level`, returns that node so the chain builder can descend into it. Returns
+/// `None` for anything else (a leaf, a parenthesized expression, or a
+/// different-level binary), which the caller then renders as a self-contained
+/// operand. Comments on the boundary make the side non-single and fall back to
+/// the operand path, preserving the pre-flattening layout for that shape.
+fn same_level_binary_lhs(elements: &[SyntaxElement<RLanguage>], level: u8) -> Option<SyntaxNode> {
+    let significant: Vec<_> = elements.iter().filter(|el| !is_trivia(el.kind())).collect();
+    let [NodeOrToken::Node(inner)] = significant.as_slice() else {
+        return None;
+    };
+    if inner.kind() != SyntaxKind::BINARY_EXPR {
+        return None;
+    }
+    let inner_elements: Vec<_> = inner.children_with_tokens().collect();
+    let op_idx = find_binary_op(&inner_elements)?;
+    let tok = inner_elements[op_idx].as_token()?;
+    (binary_level(tok.kind(), tok.text()) == Some(level)).then(|| inner.clone())
 }
 
 fn ir_binary_side(
