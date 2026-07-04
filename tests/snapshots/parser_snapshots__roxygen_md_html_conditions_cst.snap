@@ -1,0 +1,101 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..444
+  ROXYGEN_BLOCK@0..438
+    ROXYGEN_SECTION@0..61
+      ROXYGEN_PARAGRAPH@0..58
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..57 "HTML block start cond ..."
+        NEWLINE@57..58 "\n"
+      ROXYGEN_MARKER@58..60 "#'"
+      NEWLINE@60..61 "\n"
+    ROXYGEN_SECTION@61..68
+      ROXYGEN_MARKER@61..63 "#'"
+      WHITESPACE@63..64 " "
+      ROXYGEN_TAG@64..67
+        ROXYGEN_AT@64..65 "@"
+        ROXYGEN_TAG_NAME@65..67 "md"
+      NEWLINE@67..68 "\n"
+    ROXYGEN_SECTION@68..411
+      ROXYGEN_MARKER@68..70 "#'"
+      WHITESPACE@70..71 " "
+      ROXYGEN_TAG@71..79
+        ROXYGEN_AT@71..72 "@"
+        ROXYGEN_TAG_NAME@72..79 "details"
+      NEWLINE@79..80 "\n"
+      ROXYGEN_PARAGRAPH@80..141
+        ROXYGEN_MARKER@80..82 "#'"
+        WHITESPACE@82..83 " "
+        ROXYGEN_TEXT@83..140 "A comment block runs  ..."
+        NEWLINE@140..141 "\n"
+      ROXYGEN_MD_HTML_BLOCK@141..192
+        ROXYGEN_MARKER@141..143 "#'"
+        WHITESPACE@143..144 " "
+        ROXYGEN_TEXT@144..165 "<!-- comment line one"
+        NEWLINE@165..166 "\n"
+        ROXYGEN_MARKER@166..168 "#'"
+        NEWLINE@168..169 "\n"
+        ROXYGEN_MARKER@169..171 "#'"
+        WHITESPACE@171..172 " "
+        ROXYGEN_TEXT@172..192 "comment line two -->"
+      NEWLINE@192..193 "\n"
+      ROXYGEN_PARAGRAPH@193..221
+        ROXYGEN_MARKER@193..195 "#'"
+        WHITESPACE@195..196 " "
+        ROXYGEN_TEXT@196..220 "Prose after the comment."
+        NEWLINE@220..221 "\n"
+      ROXYGEN_MARKER@221..223 "#'"
+      NEWLINE@223..224 "\n"
+      ROXYGEN_PARAGRAPH@224..253
+        ROXYGEN_MARKER@224..226 "#'"
+        WHITESPACE@226..227 " "
+        ROXYGEN_TEXT@227..252 "A processing instruct ..."
+        NEWLINE@252..253 "\n"
+      ROXYGEN_MD_HTML_BLOCK@253..272
+        ROXYGEN_MARKER@253..255 "#'"
+        WHITESPACE@255..256 " "
+        ROXYGEN_TEXT@256..272 "<?php echo 1; ?>"
+      NEWLINE@272..273 "\n"
+      ROXYGEN_PARAGRAPH@273..315
+        ROXYGEN_MARKER@273..275 "#'"
+        WHITESPACE@275..276 " "
+        ROXYGEN_TEXT@276..314 "A declaration closes  ..."
+        NEWLINE@314..315 "\n"
+      ROXYGEN_MD_HTML_BLOCK@315..333
+        ROXYGEN_MARKER@315..317 "#'"
+        WHITESPACE@317..318 " "
+        ROXYGEN_TEXT@318..333 "<!DOCTYPE html>"
+      NEWLINE@333..334 "\n"
+      ROXYGEN_PARAGRAPH@334..354
+        ROXYGEN_MARKER@334..336 "#'"
+        WHITESPACE@336..337 " "
+        ROXYGEN_TEXT@337..353 "A CDATA section:"
+        NEWLINE@353..354 "\n"
+      ROXYGEN_MD_HTML_BLOCK@354..383
+        ROXYGEN_MARKER@354..356 "#'"
+        WHITESPACE@356..357 " "
+        ROXYGEN_TEXT@357..383 "<![CDATA[ raw < & dat ..."
+      NEWLINE@383..384 "\n"
+      ROXYGEN_PARAGRAPH@384..411
+        ROXYGEN_MARKER@384..386 "#'"
+        WHITESPACE@386..387 " "
+        ROXYGEN_TEXT@387..410 "Prose after everything."
+        NEWLINE@410..411 "\n"
+    ROXYGEN_SECTION@411..438
+      ROXYGEN_MARKER@411..413 "#'"
+      WHITESPACE@413..414 " "
+      ROXYGEN_TAG@414..438
+        ROXYGEN_AT@414..415 "@"
+        ROXYGEN_TAG_NAME@415..419 "name"
+        WHITESPACE@419..420 " "
+        ROXYGEN_TEXT@420..422 "md"
+        ROXYGEN_MD_DELIM@422..423 "_"
+        ROXYGEN_TEXT@423..427 "html"
+        ROXYGEN_MD_DELIM@427..428 "_"
+        ROXYGEN_TEXT@428..438 "conditions"
+  NEWLINE@438..439 "\n"
+  IDENT@439..443 "NULL"
+  NEWLINE@443..444 "\n"

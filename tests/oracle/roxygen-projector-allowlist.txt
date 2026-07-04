@@ -368,3 +368,4 @@ md_thematic_break_stars
 md_indented_code
 md_html_verbatim
 md_html_verbatim_oneline
+md_html_conditions

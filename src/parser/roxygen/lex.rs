@@ -1184,13 +1184,34 @@ fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
 /// vs a line containing a matching close tag), which the block builder re-derives
 /// from the opener text — see [`super::build::emit_md_html_block`].
 ///
-/// Conditions 2–5 (comments/processing instructions/declarations/CDATA — each with
-/// its own non-blank-line terminator) and condition 7 (a complete tag alone on a
-/// line) are faithful under-handling: those forms stay literal prose or inline HTML
-/// (backlog).
+/// Conditions 2–5 are handled too, each carving the whole line off as an opener
+/// leaf; their distinct terminators (`-->`/`?>`/`>`/`]]>`) are re-derived by the
+/// block builder from the opener text:
+///
+/// * **Condition 2** — a line beginning `<!--` (an HTML comment).
+/// * **Condition 3** — a line beginning `<?` (a processing instruction).
+/// * **Condition 4** — a line beginning `<!` then an ASCII letter (a declaration,
+///   e.g. `<!DOCTYPE`).
+/// * **Condition 5** — a line beginning `<![CDATA[`.
+///
+/// Condition 7 (a complete tag alone on a line) is faithful under-handling: that
+/// form stays literal prose or inline HTML (backlog).
 fn scan_md_html_block(bytes: &[u8], i: usize) -> Option<usize> {
     if bytes.get(i) != Some(&b'<') {
         return None;
+    }
+    // Conditions 2–5 (comment / CDATA / declaration / processing instruction). All
+    // carve the whole line; the terminator is re-derived in the block builder. The
+    // forms are disjoint (`<!--`/`<![CDATA[` never satisfy the condition-4 letter
+    // test), so their relative order here is immaterial.
+    let rest = &bytes[i..];
+    if rest.starts_with(b"<!--") // condition 2
+        || rest.starts_with(b"<![CDATA[") // condition 5
+        || rest.starts_with(b"<?") // condition 3
+        // condition 4: `<!` then an ASCII letter (a declaration).
+        || (rest.starts_with(b"<!") && rest.get(2).is_some_and(u8::is_ascii_alphabetic))
+    {
+        return Some(bytes.len());
     }
     let mut j = i + 1;
     let closing = bytes.get(j) == Some(&b'/');

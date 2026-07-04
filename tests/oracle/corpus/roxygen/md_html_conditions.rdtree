@@ -1,0 +1,3 @@
+(\description (TEXT "HTML block start conditions 2 through 5"))
+(\details (TEXT "A comment block runs to its closer, through a blank line:") (\if (TEXT "html") (\out (VERB "\n") (VERB "<!-- comment line one\n") (VERB "\n") (VERB "comment line two -->\n"))) (TEXT "Prose after the comment. A processing instruction:") (\if (TEXT "html") (\out (VERB "\n") (VERB "<?php echo 1; ?>\n"))) (TEXT "A declaration closes on the same line:") (\if (TEXT "html") (\out (VERB "\n") (VERB "<!DOCTYPE html>\n"))) (TEXT "A CDATA section:") (\if (TEXT "html") (\out (VERB "\n") (VERB "<![CDATA[ raw < & data ]]>\n"))) (TEXT "Prose after everything."))
+(\title (TEXT "HTML block start conditions 2 through 5"))

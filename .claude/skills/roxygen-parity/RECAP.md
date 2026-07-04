@@ -311,20 +311,21 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   line, bare `sourceCode` class — same 3-atom shape as fenced. Formatter uses `normalize_list_marker_text`
   (indent is semantic; trimming destroys the block). Tabs → prose (backlog). Curated `md_indented_code`.
 - **HTML blocks** (`ROXYGEN_MD_HTML_BLOCK` node): `scan_md_html_block` carves a line-start opener
-  (before the fence carve) for **condition 6** (a `BLOCK_TAGS` tag, open or close form) **or condition 1**
-  (`HTML_VERBATIM_TAGS` = `pre`/`script`/`style`/`textarea`, opening form only — a close tag never starts
-  cond 1, and `/>` is cond 7 not 1). Both carve the **whole line** as one leaf; they differ only in the
-  **terminator**, which `emit_md_html_block` re-derives from the opener text (`is_html_verbatim_opener`,
-  build.rs — the leaf already implies `@md`; re-deriving the *condition* is not re-deriving the mode).
-  **Cond 6:** gather opener + following Prose lines until **blank**/tag/non-roxygen. **Cond 1:** gather
-  until a line **containing** a matching close tag (`html_verbatim_line_closes`: `</pre>` etc., case-
-  insensitive, need not match the opener, **inclusive**) — **through blank lines**; a new tag (section
-  boundary) or non-roxygen/EOF also ends it; the opener line can self-close (`<pre>x</pre>`). Projector
-  `serialize_md_html_block` (unchanged, walks `node.text()`) → one `(\if (TEXT "html") (\out <verb-per-line>))`
-  for both. **Formatter** `emit_md_html_block` uses `normalize_list_marker_text` (preserves content
-  indentation — roxygen2 renders each line verbatim into `\out`, so a trimmed `<pre>`/`<div>` indent is a
-  fixed-point violation; the swap from `normalize_marker_text` fixed a latent cond-6 bug too). Conditions
-  2–5 (comments/PI/declaration/CDATA) and 7 stay literal (backlog). Curated `md_html_verbatim`/`_oneline`.
+  (before the fence carve) for **conditions 1–6**. Each carves the **whole line** as one leaf; they differ
+  only in the **terminator**, re-derived from the opener text by `html_block_closers` (build.rs) — the leaf
+  already implies `@md`; re-deriving the *condition* is not re-deriving the mode. **Terminator-based
+  (cond 1–5):** gather until a line **containing** a closer (`html_line_contains_closer`, case-insensitive,
+  **inclusive**) — **through blank lines**; a new tag (section boundary) or non-roxygen/EOF also ends it; the
+  opener line can self-close. Closer sets: cond 1 `HTML_VERBATIM_TAGS` (`pre`/`script`/`style`/`textarea`,
+  opening form only — a close tag never starts cond 1, `/>` is cond 7 not 1) → `</pre>` etc. (need not match
+  the opener); **cond 2** `<!--`→`-->`; **cond 3** `<?`→`?>`; **cond 4** `<!`+ASCII-letter→`>`; **cond 5**
+  `<![CDATA[`→`]]>` (the four forms are disjoint — `<!--`/`<![CDATA[` fail the cond-4 letter test). **Cond 6**
+  (a `BLOCK_TAGS` tag, open or close form; `html_block_closers` returns `None`): gather opener + following
+  Prose lines until **blank**/tag/non-roxygen. Projector `serialize_md_html_block` (unchanged, walks
+  `node.text()`) → one `(\if (TEXT "html") (\out (VERB "\n") <verb-per-line>))` for all. **Formatter**
+  `emit_md_html_block` uses `normalize_list_marker_text` (preserves content indentation — roxygen2 renders
+  each line verbatim into `\out`, so a trimmed indent is a fixed-point violation). Condition 7 stays literal
+  (backlog). Curated `md_html_verbatim`/`_oneline`/`md_html_conditions`.
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): `<tag>` →
   `(\if (TEXT "html") (\out (VERB <tag>)))`. Mirrors CommonMark Raw-HTML grammar precisely; comment/PI/
   declaration/CDATA stay literal (backlog).
@@ -453,7 +454,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 357 matching (all allowlisted), 18 divergent** of 375 pinned.
+corpus (132 `cm-NNN` cases). **Current: 358 matching (all allowlisted), 18 divergent** of 376 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -462,63 +463,61 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (375 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (376 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 92/92 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 93/93 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-03) — markdown HTML block condition 1 (verbatim tags)
+## Latest session (2026-07-04) — markdown HTML block conditions 2–5
 
-Landed **CommonMark HTML block start condition 1** under `@md`: a line-start `<pre>`/`<script>`/`<style>`/
-`<textarea>` (opening form) opens a *verbatim* HTML block that runs until a line **containing** a matching
-close tag (`</pre>` etc., case-insensitive, need not match the opener, **inclusive**) — **through blank
-lines** — or a new tag / non-roxygen / EOF; the opener line can self-close (`<pre>x</pre>`). roxygen2
-renders it the same `\if{html}{\out{<verb-per-line>}}` shape as condition 6 (already supported). Before,
-`<pre>` fell to **inline** HTML (`ROXYGEN_MD_HTML`) inside a run-on paragraph — the wrong structure. This
-also **fixed a latent formatter bug** shared with condition 6: `emit_md_html_block` trimmed content
-indentation (`normalize_marker_text`), but roxygen2 renders each line verbatim into `\out`, so a trimmed
-`<pre>`/`<div>` indent changes the rendered Rd — a Tenet-1/fixed-point violation.
+Landed **CommonMark HTML block start conditions 2–5** under `@md`, generalizing the condition-1 terminator
+machinery from last session. A line-start opener for a **comment** (`<!--`, cond 2), **processing
+instruction** (`<?`, cond 3), **declaration** (`<!`+ASCII-letter, cond 4), or **CDATA** (`<![CDATA[`, cond 5)
+now opens a `ROXYGEN_MD_HTML_BLOCK` running until a line **containing** its closer (`-->`/`?>`/`>`/`]]>`,
+inclusive) — **through blank lines** — exactly like cond 1. Before, each fell to literal prose / inline HTML.
+roxygen2 renders all five the same `\if{html}{\out{(VERB "\n") <verb-per-line>}}` shape.
 
-**Design — no new token, condition re-derived from the opener text.** Both conditions carve the whole
-opener line as one `RoxygenMdHtmlBlock` leaf (mode-implying) and build a `ROXYGEN_MD_HTML_BLOCK` node; they
-differ only in the **terminator**. `emit_md_html_block` (build.rs) branches on `is_html_verbatim_opener`
-(reads the opener leaf text — the leaf already implies `@md`, so re-deriving the *condition* is not
-re-deriving the *mode*; cf. the block-macro grouper reading the macro name). Cond-1 gather loop continues
-through Blank+Prose, stops at Tag/non-roxygen/EOF, and breaks *after* a line that `html_verbatim_line_closes`.
+**Design — no new token, terminator generalized.** All conditions still carve the whole opener line as one
+`RoxygenMdHtmlBlock` leaf and build the same node; they differ only in the **terminator**, now dispatched by
+`html_block_closers(opener) -> Option<&[&str]>` (build.rs): a closer-set for cond 1–5, `None` for cond 6
+(blank-line-terminated). The condition-1 loop became the shared terminator-based branch driven by
+`html_line_contains_closer`. The four cond-2..5 forms are **disjoint** (`<!--`/`<![CDATA[` fail the cond-4
+letter test), so lexer/dispatch order is immaterial.
 
-**Parser.** Lexer `scan_md_html_block` now accepts a cond-1 opener (`HTML_VERBATIM_TAGS` =
-`pre`/`script`/`style`/`textarea`, single source of truth) in **opening** form only (a close tag is not a
-cond-1 start; `/>` self-close is cond 7, gated off `!verbatim`). Grouper helpers `is_html_verbatim_opener`
-(prefix + boundary) and `html_verbatim_line_closes` (ci `contains`). Projector **unchanged** —
-`serialize_md_html_block` already walks `node.text()` generically.
+**Parser only.** Lexer `scan_md_html_block` recognizes the four new openers (whole-line carve, before the
+tag-name path). Build `emit_md_html_block` uses the generalized closer dispatch; `is_html_verbatim_opener`
+survives (feeds cond 1 into `html_block_closers`); `html_verbatim_line_closes` replaced by
+`html_line_contains_closer` + `HTML_VERBATIM_CLOSERS`. Projector + formatter **unchanged** (generic
+`node.text()` walk; `normalize_list_marker_text`).
 
-**Formatter.** `emit_md_html_block` switched to `normalize_list_marker_text` (preserves content indent) for
-**all** HTML blocks — the correct behavior for verbatim `\out` content (fixes cond 6 too). Purely additive to
-the harvested format baseline (0 harvested cases changed).
-
-**Result:** projector **355→357 matching** (all allowlisted), 18 divergent (unchanged, out-of-scope).
-`cargo test` green, clippy + fmt clean; curated fixed-point **92/92 preserving** (was 90), 0 blocked; format
-baseline **+2 additive** (re-blessed, purely additive). New fixtures: parser `roxygen_md_html_verbatim`
-(multi-line `<pre>` + blank-inside + indent + one-liner `<style>`; lossless, empty diagnostics), formatter
-`roxygen_md_html_verbatim` (indent preserved, idempotent), curated corpus `md_html_verbatim` + `_oneline`
-(+pins +allowlist).
+**Result:** projector **357→358 matching** (all allowlisted, one case covering all four conditions), 18
+divergent (unchanged, out-of-scope). `cargo test` green, clippy + fmt clean; curated fixed-point **93/93
+preserving** (was 92), 0 blocked; format baseline **+1 additive** (re-blessed). New fixtures: parser
+`roxygen_md_html_conditions` (all four + multi-line comment through a blank line; lossless, empty
+diagnostics), formatter `roxygen_md_html_conditions` (verbatim, idempotent), curated corpus
+`md_html_conditions` (+pin +allowlist).
 
 **Traps (new):**
-- *HTML block condition is re-derived from the opener text, not a distinct leaf.* Both cond 1 and cond 6 are
-  one `RoxygenMdHtmlBlock` leaf + `ROXYGEN_MD_HTML_BLOCK` node; the terminator is chosen in
-  `emit_md_html_block` via `is_html_verbatim_opener`. This is a *condition* re-derivation (fine — the leaf
-  already carries mode), NOT a mode re-derivation. **Do NOT add a second HTML-block leaf kind** for cond 1.
-- *A cond-1 close tag is not a cond-1 start.* `</pre>` at line start does not open a block (verbatim tags open
-  only in `<pre` form); `scan_md_html_block` tracks `closing` and excludes it. `<pre/>` is cond 7, not 1.
-- *HTML-block content is verbatim in the formatter.* Use `normalize_list_marker_text` (like indented code);
-  `normalize_marker_text` trims the indent roxygen2 renders into `\out` → fixed-point break.
+- *HTML-block terminator is a closer-set, re-derived from the opener text.* `html_block_closers` returns the
+  closer strings for cond 1–5 (`</pre>`.. / `-->` / `?>` / `>` / `]]>`) or `None` for cond 6. Still a
+  *condition* re-derivation off the mode-implying leaf, NOT a mode re-derivation. **Do NOT add per-condition
+  leaf kinds.**
+- *Cond 2–5 openers are disjoint.* `<!--`/`<![CDATA[` never satisfy the cond-4 `<!`+ASCII-letter test, so
+  their recognition order (lexer + `html_block_closers`) is immaterial.
+
+**Ranked next target:** inline raw-HTML comment/PI/declaration/CDATA (`scan_md_html_inline` backlog — the
+inline analog of what just landed at block level, likely a clean generalization of the same forms); then
+HTML block condition 7 (a complete standalone tag, blank-terminated, does *not* interrupt a paragraph); then
+the `@md` `\`-escape *render* cluster (do NOT widen the lexer — inline-pass migration). The 18 projector
+divergences remain out-of-scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
 
+- **2026-07-03** — markdown HTML block condition 1 (verbatim `<pre>`/`<script>`/`<style>`/`<textarea>` → run to a line containing `</tag>`, inclusive, through blanks; no new token — terminator re-derived from the opener text via `is_html_verbatim_opener`; also fixed a latent cond-6 formatter indent-trim bug by switching to `normalize_list_marker_text`). 355→357.
 - **2026-07-02o** — markdown indented code blocks (a line >= 5 space columns past the `#'` marker → same `\if{html}{\out{<div>}}`/`\preformatted`/`</div>` shape as a fenced block; no new token — the block builder re-derives `@md` via `block_md`; `is_indent_code_line`, `emit_md_indented_code`; formatter `normalize_list_marker_text` preserves the indent). Also fixed a reflow-as-prose formatter bug. 354→355.
 
 - **2026-07-02n** — setext heading whose title begins as a tag's same-line value (`@details Big Title`⏎`===` → sibling `ROXYGEN_MD_HEADING`, empty tag; `emit_tag_line` pre-scan + `emit_md_setext_heading_from_value`; formatter `mid_prose` prefix; projector unchanged). 353→354.

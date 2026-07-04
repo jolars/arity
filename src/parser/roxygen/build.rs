@@ -807,15 +807,39 @@ fn is_html_verbatim_opener(content: &str) -> bool {
     })
 }
 
-/// Whether a condition-1 HTML block line **contains** a matching close tag
-/// (`</pre>`/`</script>`/`</style>`/`</textarea>`, case-insensitive — per
-/// CommonMark it need not match the opening tag). The block ends on the first such
-/// line, inclusive.
-fn html_verbatim_line_closes(content: &str) -> bool {
+/// The condition-1 verbatim close tags (`</pre>` etc., case-insensitive — per
+/// CommonMark the closer need not match the opening tag).
+const HTML_VERBATIM_CLOSERS: &[&str] = &["</pre>", "</script>", "</style>", "</textarea>"];
+
+/// The line-containing-closer terminator strings for a **terminator-based** HTML
+/// block (CommonMark start conditions 1–5), re-derived from the opener text, or
+/// `None` for a **blank-line-terminated** block (condition 6). The closers are
+/// matched case-insensitively via [`html_line_contains_closer`].
+fn html_block_closers(opener: &str) -> Option<&'static [&'static str]> {
+    let lower = opener.to_ascii_lowercase();
+    if lower.starts_with("<!--") {
+        Some(&["-->"]) // condition 2 (comment)
+    } else if lower.starts_with("<![cdata[") {
+        Some(&["]]>"]) // condition 5 (CDATA)
+    } else if lower.starts_with("<?") {
+        Some(&["?>"]) // condition 3 (processing instruction)
+    } else if lower
+        .strip_prefix("<!")
+        .is_some_and(|rest| rest.as_bytes().first().is_some_and(u8::is_ascii_alphabetic))
+    {
+        Some(&[">"]) // condition 4 (declaration)
+    } else if is_html_verbatim_opener(opener) {
+        Some(HTML_VERBATIM_CLOSERS) // condition 1 (verbatim tag)
+    } else {
+        None // condition 6 (blank-line terminated)
+    }
+}
+
+/// Whether a terminator-based HTML block line **contains** one of `closers`
+/// (case-insensitive). The block ends on the first such line, inclusive.
+fn html_line_contains_closer(content: &str, closers: &[&str]) -> bool {
     let lower = content.to_ascii_lowercase();
-    super::lex::HTML_VERBATIM_TAGS
-        .iter()
-        .any(|tag| lower.contains(&format!("</{tag}>")))
+    closers.iter().any(|c| lower.contains(c))
 }
 
 /// Emit a `ROXYGEN_MD_HTML_BLOCK` node spanning the markdown HTML block beginning
@@ -829,11 +853,11 @@ fn html_verbatim_line_closes(content: &str) -> bool {
 /// condition, re-derived here from the opener text (the leaf already implies `@md`;
 /// re-deriving the *condition* is not re-deriving the mode):
 ///
-/// * **Condition 1** (`<pre>`/`<script>`/`<style>`/`<textarea>`, opening form): the
-///   block is *verbatim* and runs until a line **containing** a matching close tag
-///   (`</pre>` etc., case-insensitive, inclusive) — through blank lines. A new tag
-///   (section boundary) or a non-roxygen line/EOF also ends it. If the opener line
-///   already contains the close tag, the block is that single line.
+/// * **Conditions 1–5** ([`html_block_closers`] returns the closer set): the block
+///   runs until a line **containing** one of its closer strings (`</pre>` etc. /
+///   `-->` / `?>` / `>` / `]]>`, case-insensitive, inclusive) — through blank
+///   lines. A new tag (section boundary) or a non-roxygen line/EOF also ends it. If
+///   the opener line already contains the closer, the block is that single line.
 /// * **Condition 6** (block-level tag): the block runs to the next **blank line**;
 ///   a tag opener or a non-roxygen line also ends it.
 pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
@@ -849,10 +873,10 @@ pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Ve
         i += 1;
     }
 
-    if is_html_verbatim_opener(&opener) {
-        // Condition 1: run until a line containing a matching close tag, inclusive
-        // (through blank lines). Skip the loop when the opener line already closes.
-        if !html_verbatim_line_closes(&opener) {
+    if let Some(closers) = html_block_closers(&opener) {
+        // Conditions 1–5: run until a line containing a closer, inclusive (through
+        // blank lines). Skip the loop when the opener line already closes.
+        if !html_line_contains_closer(&opener, closers) {
             loop {
                 if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
                     break;
@@ -877,7 +901,7 @@ pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Ve
                     events.push(Event::Tok(i));
                     i += 1;
                 }
-                if html_verbatim_line_closes(&line) {
+                if html_line_contains_closer(&line, closers) {
                     break;
                 }
             }

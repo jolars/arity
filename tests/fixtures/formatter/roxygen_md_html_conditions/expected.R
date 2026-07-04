@@ -1,0 +1,12 @@
+#' @title Demo
+#' @md
+#' @details
+#' <!-- comment line one
+#' comment line two -->
+#' Between blocks.
+#' <?php echo 1; ?>
+#' <!DOCTYPE html>
+#' <![CDATA[ raw < & data ]]>
+#' Prose after the blocks.
+#' @name demo
+NULL
