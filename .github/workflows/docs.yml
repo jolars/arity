@@ -8,9 +8,13 @@ on:
     tags:
       - "v*"
 
+# Serialize all Documentation runs into a single Pages deployment. A release
+# pushes the release commit to `main` and the `v*` tag near-simultaneously;
+# keying on `github.ref` would put them in separate groups and let both race
+# the single `github-pages` environment ("Deployment failed, try again later").
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
