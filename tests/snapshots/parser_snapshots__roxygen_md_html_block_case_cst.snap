@@ -1,0 +1,80 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..287
+  ROXYGEN_BLOCK@0..281
+    ROXYGEN_SECTION@0..34
+      ROXYGEN_PARAGRAPH@0..31
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..30 "HTML block case sensi ..."
+        NEWLINE@30..31 "\n"
+      ROXYGEN_MARKER@31..33 "#'"
+      NEWLINE@33..34 "\n"
+    ROXYGEN_SECTION@34..247
+      ROXYGEN_MARKER@34..36 "#'"
+      WHITESPACE@36..37 " "
+      ROXYGEN_TAG@37..45
+        ROXYGEN_AT@37..38 "@"
+        ROXYGEN_TAG_NAME@38..45 "details"
+      NEWLINE@45..46 "\n"
+      ROXYGEN_PARAGRAPH@46..100
+        ROXYGEN_MARKER@46..48 "#'"
+        WHITESPACE@48..49 " "
+        ROXYGEN_TEXT@49..99 "A lowercase CDATA ope ..."
+        NEWLINE@99..100 "\n"
+      ROXYGEN_MARKER@100..102 "#'"
+      NEWLINE@102..103 "\n"
+      ROXYGEN_MD_HTML_BLOCK@103..129
+        ROXYGEN_MARKER@103..105 "#'"
+        WHITESPACE@105..106 " "
+        ROXYGEN_TEXT@106..115 "<![cdata["
+        NEWLINE@115..116 "\n"
+        ROXYGEN_MARKER@116..118 "#'"
+        WHITESPACE@118..119 " "
+        ROXYGEN_TEXT@119..126 "hidden "
+        ROXYGEN_MD_DELIM@126..127 "]"
+        ROXYGEN_MD_DELIM@127..128 "]"
+        ROXYGEN_TEXT@128..129 ">"
+      NEWLINE@129..130 "\n"
+      ROXYGEN_PARAGRAPH@130..156
+        ROXYGEN_MARKER@130..132 "#'"
+        WHITESPACE@132..133 " "
+        ROXYGEN_TEXT@133..155 "Prose after the block."
+        NEWLINE@155..156 "\n"
+      ROXYGEN_MARKER@156..158 "#'"
+      NEWLINE@158..159 "\n"
+      ROXYGEN_PARAGRAPH@159..247
+        ROXYGEN_MARKER@159..161 "#'"
+        WHITESPACE@161..162 " "
+        ROXYGEN_TEXT@162..177 "<!doctype html>"
+        NEWLINE@177..178 "\n"
+        ROXYGEN_MARKER@178..180 "#'"
+        WHITESPACE@180..181 " "
+        ROXYGEN_TEXT@181..246 "A lowercase declarati ..."
+        NEWLINE@246..247 "\n"
+    ROXYGEN_SECTION@247..254
+      ROXYGEN_MARKER@247..249 "#'"
+      WHITESPACE@249..250 " "
+      ROXYGEN_TAG@250..253
+        ROXYGEN_AT@250..251 "@"
+        ROXYGEN_TAG_NAME@251..253 "md"
+      NEWLINE@253..254 "\n"
+    ROXYGEN_SECTION@254..281
+      ROXYGEN_MARKER@254..256 "#'"
+      WHITESPACE@256..257 " "
+      ROXYGEN_TAG@257..281
+        ROXYGEN_AT@257..258 "@"
+        ROXYGEN_TAG_NAME@258..262 "name"
+        WHITESPACE@262..263 " "
+        ROXYGEN_TEXT@263..265 "md"
+        ROXYGEN_MD_DELIM@265..266 "_"
+        ROXYGEN_TEXT@266..270 "html"
+        ROXYGEN_MD_DELIM@270..271 "_"
+        ROXYGEN_TEXT@271..276 "block"
+        ROXYGEN_MD_DELIM@276..277 "_"
+        ROXYGEN_TEXT@277..281 "case"
+  NEWLINE@281..282 "\n"
+  IDENT@282..286 "NULL"
+  NEWLINE@286..287 "\n"

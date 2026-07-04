@@ -38,6 +38,7 @@ use super::core::format_with_style;
 use super::ir::Ir;
 use super::style::FormatStyle;
 use crate::ast::{AstNode, RoxygenBlock, RoxygenTag};
+use crate::parser::roxygen::starts_md_html_block;
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// One physical `#'` line, reconstructed from the logical CST for layout.
@@ -1630,6 +1631,11 @@ fn is_unsafe_line_start(chunk: &str) -> bool {
         || chunk.starts_with("```")
         || chunk.starts_with("~~~")
         || is_unsafe_ordered_marker(chunk)
+        // An HTML block opener (conditions 1–6) interrupts a paragraph, so an
+        // inline HTML span (or prose that merely looks like an opener, e.g. an
+        // unterminated `<!--`) migrating to a line start would reparse as a
+        // block and change the rendered Rd.
+        || starts_md_html_block(chunk)
 }
 
 /// Whether `chunk` is a bare ordered-list marker that would interrupt a

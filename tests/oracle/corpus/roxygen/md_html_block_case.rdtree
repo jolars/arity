@@ -1,0 +1,3 @@
+(\description (TEXT "HTML block case sensitivity"))
+(\details (TEXT "A lowercase CDATA opener still starts condition 5:") (\if (TEXT "html") (\out (VERB "\n") (VERB "<![cdata[\n") (VERB "hidden ]]>\n"))) (TEXT "Prose after the block. <!doctype html> A lowercase declaration is not a block; this stays one paragraph."))
+(\title (TEXT "HTML block case sensitivity"))

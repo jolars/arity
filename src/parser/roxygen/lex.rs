@@ -1117,19 +1117,155 @@ fn scan_md_email_autolink(bytes: &[u8], i: usize) -> Option<usize> {
     }
 }
 
-/// A CommonMark inline raw-HTML tag at `bytes[i] == b'<'`: an open tag
-/// (`<name attrs… />`) or a closing tag (`</name >`), line-scoped. Returns the
-/// index past the closing `>`, or `None` when this is not a well-formed tag (it
-/// then stays literal prose — losslessness holds either way). The recognizer
-/// mirrors the CommonMark "Raw HTML" grammar precisely so it never carves a span
-/// `commonmark` (hence roxygen2) would keep literal; over-recognition would make
-/// the projector emit a spurious `\out`. The comment / processing-instruction /
-/// declaration / CDATA forms are **not** recognized (they stay literal — a
-/// faithful under-handling, backlog).
+/// A CommonMark inline raw-HTML span at `bytes[i] == b'<'`: a tag, comment,
+/// processing instruction, declaration, or CDATA section, line-scoped. Returns
+/// the index past the span, or `None` when no form matches (it then stays
+/// literal prose — losslessness holds either way). Each recognizer mirrors the
+/// engine's "Raw HTML" grammar precisely so it never carves a span `commonmark`
+/// (hence roxygen2) would keep literal; over-recognition would make the
+/// projector emit a spurious `\out`.
 ///
-/// roxygen2's `mdxml_html_inline` renders such a tag verbatim inside
+/// roxygen2's `mdxml_html_inline` renders every form verbatim inside
 /// `\if{html}{\out{…}}`.
 fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
+    match bytes.get(i + 1) {
+        Some(&b'!') => scan_md_html_inline_bang(bytes, i),
+        Some(&b'?') => scan_md_html_inline_pi(bytes, i),
+        _ => scan_md_html_inline_tag(bytes, i),
+    }
+}
+
+/// The `<!`-headed inline raw-HTML forms: a comment (`<!-- … -->`), a CDATA
+/// section (`<![CDATA[ … ]]>`), or a declaration (`<!NAME …>`). The three are
+/// disjoint (`<!--`/`<![` never satisfy the declaration's letter test).
+fn scan_md_html_inline_bang(bytes: &[u8], i: usize) -> Option<usize> {
+    let rest = &bytes[i..];
+    if rest.starts_with(b"<!--") {
+        return scan_md_html_inline_comment(bytes, i);
+    }
+    if is_html_cdata_opener(rest) {
+        return scan_md_html_inline_cdata(bytes, i);
+    }
+    scan_md_html_inline_declaration(bytes, i)
+}
+
+/// An inline HTML comment at `bytes[i..] == b"<!--…"`. The engine follows the
+/// relaxed HTML-spec rule (CommonMark 0.31): the empty forms `<!-->`/`<!--->`
+/// are comments, otherwise the closer is the **first `-->` not preceded by a
+/// `-`** in the text — interior `--`, `->`, `>`, and even a dash-blocked `-->`
+/// are all comment text (`<!-- x ---> b -->` closes at the second `-->`), while
+/// a comment whose only `-->` abuts a dash run (`<!-- x --->`) stays literal.
+/// Returns the index past the closing `-->`.
+fn scan_md_html_inline_comment(bytes: &[u8], i: usize) -> Option<usize> {
+    let rest = &bytes[i..];
+    if rest.starts_with(b"<!-->") {
+        return Some(i + 5);
+    }
+    if rest.starts_with(b"<!--->") {
+        return Some(i + 6);
+    }
+    let text_start = i + 4;
+    let mut j = text_start;
+    loop {
+        if bytes.get(j)? == &b'-'
+            && bytes.get(j + 1) == Some(&b'-')
+            && bytes.get(j + 2) == Some(&b'>')
+            // A `-->` preceded by a text `-` is comment text, not the closer
+            // (the opener's own dashes don't count — an empty text is fine).
+            && !(j > text_start && bytes[j - 1] == b'-')
+        {
+            return Some(j + 3);
+        }
+        j += 1;
+    }
+}
+
+/// An inline CDATA section at `bytes[i..] == b"<![CDATA[…"` (the keyword is
+/// case-insensitive, per [`is_html_cdata_opener`]). The text is
+/// `("]" [^\]] | "]]" [^>] | [^\]])*`, then `]]>` closes — so `]]]>` never
+/// closes a section (the `]]` pair consumes the following `]`), matching the
+/// engine. Returns the index past the closing `]]>`.
+fn scan_md_html_inline_cdata(bytes: &[u8], i: usize) -> Option<usize> {
+    let mut j = i + 9;
+    loop {
+        match bytes.get(j)? {
+            b']' if bytes.get(j + 1) == Some(&b']') => match bytes.get(j + 2)? {
+                b'>' => return Some(j + 3),
+                _ => j += 3, // `]]` + a non-`>` byte
+            },
+            b']' => {
+                bytes.get(j + 1)?; // `]` + a non-`]` byte (must exist)
+                j += 2;
+            }
+            _ => j += 1,
+        }
+    }
+}
+
+/// An inline HTML declaration at `bytes[i..] == b"<!…"`: one or more
+/// **uppercase** ASCII letters (the engine keeps the pre-0.31 uppercase-only
+/// rule — `<!doctype` stays literal), **required** whitespace, then anything up
+/// to the first `>`. Returns the index past it.
+fn scan_md_html_inline_declaration(bytes: &[u8], i: usize) -> Option<usize> {
+    let mut j = i + 2;
+    let name_start = j;
+    while bytes.get(j).is_some_and(u8::is_ascii_uppercase) {
+        j += 1;
+    }
+    if j == name_start {
+        return None;
+    }
+    let after_ws = skip_html_ws(bytes, j);
+    if after_ws == j {
+        return None; // `<!DOCTYPE>` (no whitespace) stays literal
+    }
+    j = after_ws;
+    while let Some(&b) = bytes.get(j) {
+        if b == b'>' {
+            return Some(j + 1);
+        }
+        j += 1;
+    }
+    None
+}
+
+/// An inline processing instruction at `bytes[i..] == b"<?…"`: anything (empty
+/// included) up to the first `?>`. Returns the index past it.
+fn scan_md_html_inline_pi(bytes: &[u8], i: usize) -> Option<usize> {
+    let mut j = i + 2;
+    loop {
+        if bytes.get(j)? == &b'?' && bytes.get(j + 1) == Some(&b'>') {
+            return Some(j + 2);
+        }
+        j += 1;
+    }
+}
+
+/// Whether `text` placed at a markdown line's content start would open an HTML
+/// block (any of the start conditions 1–6 [`scan_md_html_block`] recognizes).
+/// HTML blocks interrupt a paragraph, so the formatter must never reflow such
+/// text onto a line start — an *inline* comment/PI/CDATA/declaration/block-tag
+/// (or literal prose that merely looks like an opener, e.g. an unterminated
+/// `<!--`) would reparse as a block and change the rendered Rd.
+pub(crate) fn starts_md_html_block(text: &str) -> bool {
+    scan_md_html_block(text.as_bytes(), 0).is_some()
+}
+
+/// Whether `rest` begins with a CDATA opener `<![CDATA[`. The `CDATA` keyword
+/// is **case-insensitive** (cmark's scanner spells it as a re2c case-insensitive
+/// literal), so `<![cdata[` opens too — both inline and at block level
+/// (condition 5).
+fn is_html_cdata_opener(rest: &[u8]) -> bool {
+    rest.len() >= 9
+        && rest.starts_with(b"<![")
+        && rest[3..8].eq_ignore_ascii_case(b"cdata")
+        && rest[8] == b'['
+}
+
+/// A CommonMark inline raw-HTML tag at `bytes[i] == b'<'`: an open tag
+/// (`<name attrs… />`) or a closing tag (`</name >`), line-scoped. Returns the
+/// index past the closing `>`, or `None` when this is not a well-formed tag.
+fn scan_md_html_inline_tag(bytes: &[u8], i: usize) -> Option<usize> {
     let mut j = i + 1;
     let closing = bytes.get(j) == Some(&b'/');
     if closing {
@@ -1190,9 +1326,11 @@ fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
 ///
 /// * **Condition 2** — a line beginning `<!--` (an HTML comment).
 /// * **Condition 3** — a line beginning `<?` (a processing instruction).
-/// * **Condition 4** — a line beginning `<!` then an ASCII letter (a declaration,
-///   e.g. `<!DOCTYPE`).
-/// * **Condition 5** — a line beginning `<![CDATA[`.
+/// * **Condition 4** — a line beginning `<!` then an **uppercase** ASCII letter
+///   (a declaration, e.g. `<!DOCTYPE`; the engine keeps the pre-0.31
+///   uppercase-only rule).
+/// * **Condition 5** — a line beginning `<![CDATA[` (the keyword is
+///   case-insensitive).
 ///
 /// Condition 7 (a complete tag alone on a line) is faithful under-handling: that
 /// form stays literal prose or inline HTML (backlog).
@@ -1206,10 +1344,13 @@ fn scan_md_html_block(bytes: &[u8], i: usize) -> Option<usize> {
     // test), so their relative order here is immaterial.
     let rest = &bytes[i..];
     if rest.starts_with(b"<!--") // condition 2
-        || rest.starts_with(b"<![CDATA[") // condition 5
-        || rest.starts_with(b"<?") // condition 3
-        // condition 4: `<!` then an ASCII letter (a declaration).
-        || (rest.starts_with(b"<!") && rest.get(2).is_some_and(u8::is_ascii_alphabetic))
+        || is_html_cdata_opener(rest) // condition 5 (`CDATA` is case-insensitive)
+        // condition 3
+        || rest.starts_with(b"<?")
+        // condition 4: `<!` then an **uppercase** ASCII letter (a declaration;
+        // the engine keeps the pre-0.31 uppercase-only rule, so `<!doctype`
+        // stays prose).
+        || (rest.starts_with(b"<!") && rest.get(2).is_some_and(u8::is_ascii_uppercase))
     {
         return Some(bytes.len());
     }

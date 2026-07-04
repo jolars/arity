@@ -1,0 +1,103 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..488
+  ROXYGEN_BLOCK@0..482
+    ROXYGEN_SECTION@0..54
+      ROXYGEN_PARAGRAPH@0..51
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..50 "Inline HTML comment,  ..."
+        NEWLINE@50..51 "\n"
+      ROXYGEN_MARKER@51..53 "#'"
+      NEWLINE@53..54 "\n"
+    ROXYGEN_SECTION@54..446
+      ROXYGEN_MARKER@54..56 "#'"
+      WHITESPACE@56..57 " "
+      ROXYGEN_TAG@57..65
+        ROXYGEN_AT@57..58 "@"
+        ROXYGEN_TAG_NAME@58..65 "details"
+      NEWLINE@65..66 "\n"
+      ROXYGEN_PARAGRAPH@66..132
+        ROXYGEN_MARKER@66..68 "#'"
+        WHITESPACE@68..69 " "
+        ROXYGEN_TEXT@69..76 "before "
+        ROXYGEN_MD_HTML@76..97 "<!-- hidden -- ok -->"
+        ROXYGEN_TEXT@97..111 " after, empty "
+        ROXYGEN_MD_HTML@111..116 "<!-->"
+        ROXYGEN_TEXT@116..121 " and "
+        ROXYGEN_MD_HTML@121..127 "<!--->"
+        ROXYGEN_TEXT@127..131 " too"
+        NEWLINE@131..132 "\n"
+      ROXYGEN_MARKER@132..134 "#'"
+      NEWLINE@134..135 "\n"
+      ROXYGEN_PARAGRAPH@135..178
+        ROXYGEN_MARKER@135..137 "#'"
+        WHITESPACE@137..138 " "
+        ROXYGEN_TEXT@138..141 "pi "
+        ROXYGEN_MD_HTML@141..156 "<?php echo x ?>"
+        ROXYGEN_TEXT@156..169 " here, empty "
+        ROXYGEN_MD_HTML@169..173 "<??>"
+        ROXYGEN_TEXT@173..177 " too"
+        NEWLINE@177..178 "\n"
+      ROXYGEN_MARKER@178..180 "#'"
+      NEWLINE@180..181 "\n"
+      ROXYGEN_PARAGRAPH@181..235
+        ROXYGEN_MARKER@181..183 "#'"
+        WHITESPACE@183..184 " "
+        ROXYGEN_TEXT@184..189 "decl "
+        ROXYGEN_MD_HTML@189..204 "<!DOCTYPE html>"
+        ROXYGEN_TEXT@204..223 " and single-letter "
+        ROXYGEN_MD_HTML@223..229 "<!D x>"
+        ROXYGEN_TEXT@229..234 " here"
+        NEWLINE@234..235 "\n"
+      ROXYGEN_MARKER@235..237 "#'"
+      NEWLINE@237..238 "\n"
+      ROXYGEN_PARAGRAPH@238..308
+        ROXYGEN_MARKER@238..240 "#'"
+        WHITESPACE@240..241 " "
+        ROXYGEN_TEXT@241..247 "cdata "
+        ROXYGEN_MD_HTML@247..274 "<![CDATA[raw <b> ]] t ..."
+        ROXYGEN_TEXT@274..289 " and lowercase "
+        ROXYGEN_MD_HTML@289..302 "<![cdata[y]]>"
+        ROXYGEN_TEXT@302..307 " here"
+        NEWLINE@307..308 "\n"
+      ROXYGEN_MARKER@308..310 "#'"
+      NEWLINE@310..311 "\n"
+      ROXYGEN_PARAGRAPH@311..377
+        ROXYGEN_MARKER@311..313 "#'"
+        WHITESPACE@313..314 " "
+        ROXYGEN_TEXT@314..376 "not a comment: a <!-- ..."
+        NEWLINE@376..377 "\n"
+      ROXYGEN_MARKER@377..379 "#'"
+      NEWLINE@379..380 "\n"
+      ROXYGEN_PARAGRAPH@380..446
+        ROXYGEN_MARKER@380..382 "#'"
+        WHITESPACE@382..383 " "
+        ROXYGEN_TEXT@383..445 "not a declaration: <! ..."
+        NEWLINE@445..446 "\n"
+    ROXYGEN_SECTION@446..453
+      ROXYGEN_MARKER@446..448 "#'"
+      WHITESPACE@448..449 " "
+      ROXYGEN_TAG@449..452
+        ROXYGEN_AT@449..450 "@"
+        ROXYGEN_TAG_NAME@450..452 "md"
+      NEWLINE@452..453 "\n"
+    ROXYGEN_SECTION@453..482
+      ROXYGEN_MARKER@453..455 "#'"
+      WHITESPACE@455..456 " "
+      ROXYGEN_TAG@456..482
+        ROXYGEN_AT@456..457 "@"
+        ROXYGEN_TAG_NAME@457..461 "name"
+        WHITESPACE@461..462 " "
+        ROXYGEN_TEXT@462..464 "md"
+        ROXYGEN_MD_DELIM@464..465 "_"
+        ROXYGEN_TEXT@465..469 "html"
+        ROXYGEN_MD_DELIM@469..470 "_"
+        ROXYGEN_TEXT@470..476 "inline"
+        ROXYGEN_MD_DELIM@476..477 "_"
+        ROXYGEN_TEXT@477..482 "forms"
+  NEWLINE@482..483 "\n"
+  IDENT@483..487 "NULL"
+  NEWLINE@487..488 "\n"
