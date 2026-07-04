@@ -6,10 +6,13 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rowan::{TextRange, TextSize};
+
 use crate::config::LintConfig;
 use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
 use crate::incremental::{
-    Analysis, IncrementalDatabase, IncrementalDb, SourceFile, parsed_tree_root, semantic_model,
+    Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile,
+    parsed_tree_root, semantic_model,
 };
 use crate::project::{
     ExternalResolution, FileScope, PackageCollation, Project, ProjectMember, expected_r_sources,
@@ -18,9 +21,35 @@ use crate::project::{
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
 
-use super::diagnostic::Diagnostic;
+use super::diagnostic::{Diagnostic, Severity, ViolationData};
 use super::rules::{ResolvedRules, default_symbol_provider, run_rules};
 use super::suppression::SuppressionMap;
+
+/// Synthetic rule id carried by findings that originate from the parser's error
+/// side channel rather than a lint rule. Shown as the `[code]` in CLI output and
+/// as the LSP diagnostic code.
+pub const SYNTAX_ERROR_RULE: &str = "syntax-error";
+
+/// Map the parser's side-channel diagnostics into lint [`Diagnostic`]s so they
+/// surface through the normal finding pipeline (CLI render + LSP publish).
+///
+/// Parse errors *block* the lint rules for a file (Tenet 3: parsing is the
+/// parser's job, and rules need a clean tree) — but blocking the rules must not
+/// swallow the error. Each parser diagnostic becomes a [`Severity::Error`]
+/// finding under the [`SYNTAX_ERROR_RULE`] id, preserving the message and span.
+pub fn syntax_error_diagnostics(diags: &[ParseDiagnosticData], path: &Path) -> Vec<Diagnostic> {
+    diags
+        .iter()
+        .map(|d| Diagnostic {
+            rule: SYNTAX_ERROR_RULE,
+            severity: Severity::Error,
+            path: path.to_path_buf(),
+            range: TextRange::new(TextSize::new(d.start as u32), TextSize::new(d.end as u32)),
+            message: ViolationData::new(SYNTAX_ERROR_RULE, d.message.clone()),
+            fix: None,
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LintStatus {
@@ -190,7 +219,10 @@ pub fn check_paths_with_index(
     for path in files {
         let file = tracked[&path];
         let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
-            (LintStatus::ParseDiagnostics { count }, Vec::new())
+            // Parse errors block the rules but are still reported (not swallowed):
+            // surface the parser's side-channel diagnostics as findings.
+            let diagnostics = syntax_error_diagnostics(db.parse_diagnostics(file), &path);
+            (LintStatus::ParseDiagnostics { count }, diagnostics)
         } else {
             let visibility = visible_symbols(&db, project, file);
             let file_scope = visibility.scope();
@@ -295,8 +327,9 @@ fn lint_parsed_file(
 }
 
 /// Lint a file already tracked in `db`, reusing its cached parse and model.
-/// Returns no findings when the file has parse diagnostics. Used by the LSP,
-/// which holds a long-lived `db` so edits don't re-parse from scratch.
+/// When the file has parse diagnostics, the lint rules can't run (they need a
+/// clean tree); instead of dropping them, those parser diagnostics are surfaced
+/// as [`SYNTAX_ERROR_RULE`] findings so callers still report the error.
 pub fn check_tracked_file(
     db: &IncrementalDatabase,
     file: SourceFile,
@@ -308,8 +341,9 @@ pub fn check_tracked_file(
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
-    if !db.parse_diagnostics(file).is_empty() {
-        return Ok(Vec::new());
+    let parse_diagnostics = db.parse_diagnostics(file);
+    if !parse_diagnostics.is_empty() {
+        return Ok(syntax_error_diagnostics(parse_diagnostics, path));
     }
     Ok(lint_parsed_file(
         db, file, path, &rules, provider, None, None,

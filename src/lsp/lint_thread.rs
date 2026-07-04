@@ -342,9 +342,15 @@ impl LintWorker {
             &req.lint_config,
         ) {
             Ok(Some(prepared)) => prepared,
-            // Parse errors (Ok(None)) or an unknown-rule config error (Err): clear
-            // any stale diagnostics and run no worker. Leaves the slot free.
-            Ok(None) | Err(_) => {
+            // Parse errors (Ok(None)): the rules can't run, but the parser's
+            // diagnostics are still published so the editor shows the error.
+            Ok(None) => {
+                self.publish_parse_diagnostics(&req, active);
+                return false;
+            }
+            // Unknown-rule config error (Err): clear any stale diagnostics and run
+            // no worker. Leaves the slot free.
+            Err(_) => {
                 self.publish_empty(&req);
                 return false;
             }
@@ -404,9 +410,30 @@ impl LintWorker {
         true
     }
 
+    /// Publish the parser's diagnostics for `active` as `syntax-error` findings.
+    /// Used when parse errors block the lint rules: the rules can't run on a
+    /// broken tree, but the error must still reach the editor rather than being
+    /// cleared. The findings are cached (like lint findings) so the pull path
+    /// answers with them too.
+    fn publish_parse_diagnostics(&self, req: &LintRequest, active: SourceFile) {
+        let findings =
+            crate::linter::syntax_error_diagnostics(self.db.parse_diagnostics(active), &req.path);
+        let line_index = LineIndex::new(&req.text);
+        let diags: Vec<LspDiagnostic> = findings
+            .iter()
+            .map(|d| to_lsp_diagnostic(d, &line_index))
+            .collect();
+        let _ = self.out_tx.send(Outbound::Diagnostics {
+            uri: req.uri.clone(),
+            version: req.version,
+            diags,
+            findings: Arc::new(findings),
+        });
+    }
+
     /// Publish empty diagnostics for `req` (clears any stale findings) without
-    /// running a worker. Used when the buffer can't be linted (parse error / bad
-    /// config), mirroring the old early-return that always sent diagnostics.
+    /// running a worker. Used when the buffer can't be linted (bad config),
+    /// mirroring the old early-return that always sent diagnostics.
     fn publish_empty(&self, req: &LintRequest) {
         let _ = self.out_tx.send(Outbound::Diagnostics {
             uri: req.uri.clone(),

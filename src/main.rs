@@ -700,22 +700,16 @@ fn run_lint(
     let index = lint_index(&config);
     match arity::linter::check_paths_with_index(&paths, &config.lint, &exclude, index) {
         Ok(result) => {
-            let mut has_parse_blockers = false;
+            // Both lint findings and parse-error diagnostics render the same way;
+            // parse errors block the rules but are reported as `syntax-error`
+            // findings rather than swallowed behind a bare count.
             let mut all_findings = Vec::new();
             for report in &result.reports {
                 match report.status {
                     arity::linter::LintStatus::Clean => {}
-                    arity::linter::LintStatus::Findings { .. } => {
+                    arity::linter::LintStatus::Findings { .. }
+                    | arity::linter::LintStatus::ParseDiagnostics { .. } => {
                         all_findings.extend(report.diagnostics.iter().cloned());
-                    }
-                    arity::linter::LintStatus::ParseDiagnostics { count } => {
-                        has_parse_blockers = true;
-                        eprintln!(
-                            "lint blocked by parse diagnostics: {} ({} diagnostic{})",
-                            report.path.display(),
-                            count,
-                            if count == 1 { "" } else { "s" }
-                        );
                     }
                 }
             }
@@ -727,11 +721,10 @@ fn run_lint(
                 eprintln!("{} file(s) checked, no findings", result.reports.len());
             }
 
-            let has_findings = !all_findings.is_empty();
-            if has_parse_blockers || has_findings {
-                ExitCode::from(1)
-            } else {
+            if all_findings.is_empty() {
                 ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
             }
         }
         Err(err) => {

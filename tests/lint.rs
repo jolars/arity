@@ -719,6 +719,50 @@ fn lint_reports_parse_diagnostics_pathway() {
 }
 
 #[test]
+fn syntax_error_diagnostics_map_message_range_and_rule() {
+    use arity::incremental::ParseDiagnosticData;
+    use arity::linter::syntax_error_diagnostics;
+
+    let diags = vec![ParseDiagnosticData {
+        message: "expected ')' to close function call".to_string(),
+        start: 10,
+        end: 11,
+    }];
+    let mapped = syntax_error_diagnostics(&diags, Path::new("bad.R"));
+    assert_eq!(mapped.len(), 1);
+    let d = &mapped[0];
+    assert_eq!(d.rule, "syntax-error");
+    assert_eq!(d.severity, arity::linter::Severity::Error);
+    assert_eq!(u32::from(d.range.start()), 10);
+    assert_eq!(u32::from(d.range.end()), 11);
+    assert_eq!(d.message.body, "expected ')' to close function call");
+    assert!(d.fix.is_none());
+}
+
+#[test]
+fn lint_surfaces_parse_diagnostics_as_findings() {
+    // Parse errors block the lint rules but must still be reported, not swallowed:
+    // the report carries a `syntax-error` diagnostic bearing the parser's message.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("bad.R");
+    std::fs::write(&path, "x <- cbind(1:5, 6:10\n").expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    let report = &result.reports[0];
+    assert!(matches!(report.status, LintStatus::ParseDiagnostics { .. }));
+    assert_eq!(report.diagnostics.len(), 1, "one parse diagnostic surfaced");
+    let diag = &report.diagnostics[0];
+    assert_eq!(diag.rule, "syntax-error");
+    assert!(
+        diag.message
+            .body
+            .contains("expected ')' to close function call"),
+        "got: {}",
+        diag.message.body
+    );
+}
+
+#[test]
 fn cli_lint_check_passes_when_no_findings() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("ok.R");
@@ -796,17 +840,26 @@ fn cli_lint_works_without_check_flag() {
 fn cli_lint_reports_parse_diagnostics_pathway() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("bad.R");
-    std::fs::write(&path, "x <-\n").expect("failed to write file");
+    std::fs::write(&path, "x <- cbind(1:5, 6:10\n").expect("failed to write file");
 
     let output = run_cli([
         "lint",
+        "--output=concise",
         dir.path().to_str().expect("temp dir path should be utf-8"),
     ]);
 
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("lint blocked by parse diagnostics:"));
+    // The parser's side-channel message is surfaced, not just a blocked count.
+    assert!(
+        stderr.contains("bad.R:1:11: error [syntax-error]"),
+        "got stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("expected ')' to close function call"),
+        "got stderr: {stderr}"
+    );
 }
 
 #[test]
