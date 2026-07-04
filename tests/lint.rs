@@ -740,6 +740,35 @@ fn syntax_error_diagnostics_map_message_range_and_rule() {
 }
 
 #[test]
+fn render_sorts_diagnostics_by_offset() {
+    use arity::incremental::ParseDiagnosticData;
+    use arity::linter::{OutputMode, render_findings, syntax_error_diagnostics};
+
+    // Parser recovery can emit diagnostics out of source order (a late-recovered
+    // outer call closes after inner ones). Rendering sorts them by offset.
+    let diags = syntax_error_diagnostics(
+        &[
+            ParseDiagnosticData {
+                message: "later".to_string(),
+                start: 27,
+                end: 28,
+            },
+            ParseDiagnosticData {
+                message: "earlier".to_string(),
+                start: 10,
+                end: 11,
+            },
+        ],
+        Path::new("t.R"),
+    );
+    let src = "x <- cbind(1:5, 6:10\n\nmatrix(c(2)\n".to_string();
+    let out = render_findings(&diags, OutputMode::Concise, false, &|_| Some(src.clone()));
+    let earlier = out.find("earlier").expect("earlier diagnostic rendered");
+    let later = out.find("later").expect("later diagnostic rendered");
+    assert!(earlier < later, "diagnostics not sorted by offset:\n{out}");
+}
+
+#[test]
 fn lint_surfaces_parse_diagnostics_as_findings() {
     // Parse errors block the lint rules but must still be reported, not swallowed:
     // the report carries a `syntax-error` diagnostic bearing the parser's message.

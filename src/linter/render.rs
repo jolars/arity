@@ -37,7 +37,9 @@ pub fn render_findings(
 }
 
 fn render_json(diagnostics: &[Diagnostic]) -> String {
-    serde_json::to_string_pretty(diagnostics).unwrap_or_else(|_| "[]".to_string())
+    let mut sorted: Vec<&Diagnostic> = diagnostics.iter().collect();
+    sorted.sort_by_key(|d| (&d.path, d.range.start(), d.range.end()));
+    serde_json::to_string_pretty(&sorted).unwrap_or_else(|_| "[]".to_string())
 }
 
 fn render_concise(
@@ -50,7 +52,8 @@ fn render_concise(
         by_path.entry(&d.path).or_default().push(d);
     }
     let mut out = String::new();
-    for (path, diags) in by_path {
+    for (path, mut diags) in by_path {
+        diags.sort_by_key(|d| (d.range.start(), d.range.end()));
         let source = source_for(path);
         let line_index = source.as_deref().map(LineIndex::new);
         for d in diags {
@@ -89,7 +92,8 @@ fn render_pretty(
         by_path.entry(&d.path).or_default().push(d);
     }
     let mut out = String::new();
-    for (path, diags) in by_path {
+    for (path, mut diags) in by_path {
+        diags.sort_by_key(|d| (d.range.start(), d.range.end()));
         let Some(source) = source_for(path) else {
             // Fall back to concise output for this file.
             for d in &diags {
