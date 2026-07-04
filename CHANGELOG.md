@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/jolars/arity/compare/v0.8.0...v0.9.0) (2026-07-04)
+
+### Features
+- **parser:** markdown HTML block condition 1 under @md ([`dcc35a2`](https://github.com/jolars/arity/commit/dcc35a279e49c891a72141436ccb423b0a3c0b3f))
+- **parser:** markdown indented code blocks under @md ([`9308021`](https://github.com/jolars/arity/commit/93080214f532360535948abc14d7df331ec68b63))
+- **parser:** setext heading from same-line tag value ([`6725dbe`](https://github.com/jolars/arity/commit/6725dbe4046b22a14fba0543bec11c17e7c34fba))
+- **parser:** fold block-quote lazy continuation lines ([`d3d5583`](https://github.com/jolars/arity/commit/d3d5583b55e4ba9f1e1394f92ee14251478ccd22))
+
 ## [0.8.0](https://github.com/jolars/arity/compare/v0.7.0...v0.8.0) (2026-07-02)
 
 ### Features
