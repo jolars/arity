@@ -376,6 +376,36 @@ pub(super) fn emit_md_block_quote(
         i += 1;
     }
 
+    finish_md_block_quote(tokens, i, events)
+}
+
+/// Emit a `ROXYGEN_MD_BLOCK_QUOTE` node for a block quote opening as a **tag's
+/// same-line value** (`#' @details > quoted`): the first line has no `#'` marker
+/// of its own (that marker belongs to the enclosing tag, already emitted and
+/// closed), so it starts at `ws_start` — the whitespace between the tag head and
+/// the `RoxygenMdBlockQuote` leaf. The following lines gather exactly as in
+/// [`emit_md_block_quote`] (consecutive `>` lines plus lazy continuations).
+/// Returns the token index just past the last consumed line's content.
+pub(super) fn emit_md_block_quote_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE));
+    let mut i = ws_start;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    finish_md_block_quote(tokens, i, events)
+}
+
+/// Gather a block quote's continuation lines (consecutive `>` lines and lazy
+/// paragraph continuations) after its opening line, then finish the
+/// `ROXYGEN_MD_BLOCK_QUOTE` node. `i` is at the opening line's trailing
+/// `Newline`. Shared by the line-start ([`emit_md_block_quote`]) and tag-value
+/// ([`emit_md_block_quote_from_value`]) forms.
+fn finish_md_block_quote(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
     loop {
         // Line boundary: fold a following consecutive block-quote line into the node.
         if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
@@ -471,6 +501,28 @@ pub(super) fn emit_md_thematic_break(
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK));
     events.push(Event::Tok(start));
     let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    events.push(Event::Finish); // ROXYGEN_MD_THEMATIC_BREAK
+    i
+}
+
+/// Emit a single-line `ROXYGEN_MD_THEMATIC_BREAK` node for a thematic break
+/// opening as a **tag's same-line value** (`#' @details ***`): the line has no
+/// `#'` marker of its own (that marker belongs to the enclosing tag, already
+/// emitted and closed), so it starts at `ws_start` — the whitespace between the
+/// tag head and the `RoxygenMdThematicBreak` leaf. The value position is fresh
+/// (no preceding paragraph), so a contiguous `---` value is a break here, never
+/// a setext underline. Returns the token index just past the break content.
+pub(super) fn emit_md_thematic_break_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK));
+    let mut i = ws_start;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         events.push(Event::Tok(i));
         i += 1;

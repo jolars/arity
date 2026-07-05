@@ -158,6 +158,7 @@ md_blockquote_glue
 md_blockquote_glue_around
 md_blockquote_lazy
 md_blockquote_multiline
+md_blockquote_value
 md_block_value_edges
 md_email_autolink
 md_emphasis
@@ -221,6 +222,8 @@ md_table_prose
 md_table_value
 md_thematic_break
 md_thematic_break_stars
+md_thematic_break_value
+md_thematic_break_value_edges
 md_undefined_ref
 md_undefined_shortcut
 md_undefined_shortcut_list

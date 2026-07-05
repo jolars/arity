@@ -348,10 +348,18 @@ fn emit_md_table_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// marker-normalized (marker, one space, trimmed content). The node owns its own
 /// `#'` markers and newlines; the quote is never reflowed. Each line keeps its
 /// leading `>` (trimmed content, not touched), so on reparse the same consecutive
-/// `>` lines re-form the block quote — idempotent.
+/// `>` lines re-form the block quote — idempotent. A quote opening as a tag's
+/// same-line value has a marker-less first line; it is given its own `#'` (the
+/// next-line form, projecting identically; up to three spaces before the `>` are
+/// non-semantic, so the content is trimmed).
 fn emit_md_block_quote(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_marker_text(seg));
+    let from_value = is_from_value(node);
+    for (idx, seg) in node.text().to_string().split('\n').enumerate() {
+        if idx == 0 && from_value {
+            push_value_opener_line(items, seg, false);
+        } else {
+            push_line(items, normalize_marker_text(seg));
+        }
     }
 }
 
@@ -381,9 +389,16 @@ fn emit_md_heading(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// normalized. A thematic break is a single line; the node owns its own `#'` marker.
 /// Marker-normalizing preserves the leading `***`/`---`/`___` run (it is trimmed
 /// content, not touched), so on reparse it still forms the same break — idempotent.
+/// A break opening as a tag's same-line value has a marker-less line; it is given
+/// its own `#'` (the next-line form; a `---` value re-parses as a bare dash-run
+/// heading no paragraph, which block dispatch promotes back to a break).
 fn emit_md_thematic_break(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_marker_text(seg));
+    if is_from_value(node) {
+        push_value_opener_line(items, &node.text().to_string(), false);
+    } else {
+        for seg in node.text().to_string().split('\n') {
+            push_line(items, normalize_marker_text(seg));
+        }
     }
 }
 

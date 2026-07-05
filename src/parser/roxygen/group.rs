@@ -8,15 +8,16 @@
 
 use super::build::{
     block_macro_opener_closes, emit_block_macro, emit_block_macro_inline, emit_md_block_quote,
-    emit_md_code_block, emit_md_code_block_from_value, emit_md_heading, emit_md_heading_from_value,
-    emit_md_html_block, emit_md_html_block_from_value, emit_md_indented_code,
-    emit_md_indented_code_from_value, emit_md_list, emit_md_list_from_value,
+    emit_md_block_quote_from_value, emit_md_code_block, emit_md_code_block_from_value,
+    emit_md_heading, emit_md_heading_from_value, emit_md_html_block, emit_md_html_block_from_value,
+    emit_md_indented_code, emit_md_indented_code_from_value, emit_md_list, emit_md_list_from_value,
     emit_md_setext_heading, emit_md_table, emit_md_table_from_value, emit_md_thematic_break,
-    is_block_macro_line, is_block_macro_opener, is_md_block_quote_start, is_md_code_block_start,
-    is_md_heading_start, is_md_html_block_start, is_md_html_block_value, is_md_html_block7_line,
-    is_md_indented_code_start, is_md_indented_code_value, is_md_list_start,
-    is_md_setext_heading_start, is_md_setext_underline_line, is_md_setext_underline_or_dash,
-    is_md_table_start, is_md_table_value, is_md_thematic_break_line,
+    emit_md_thematic_break_from_value, is_block_macro_line, is_block_macro_opener,
+    is_md_block_quote_start, is_md_code_block_start, is_md_heading_start, is_md_html_block_start,
+    is_md_html_block_value, is_md_html_block7_line, is_md_indented_code_start,
+    is_md_indented_code_value, is_md_list_start, is_md_setext_heading_start,
+    is_md_setext_underline_line, is_md_setext_underline_or_dash, is_md_table_start,
+    is_md_table_value, is_md_thematic_break_line,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -450,6 +451,21 @@ fn emit_tag_line(tokens: &[Token], start: usize, md: bool, events: &mut Vec<Even
     if folds && is_md_table_value(tokens, value_start.unwrap()) {
         let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
         return emit_md_table_from_value(tokens, head_end, events);
+    }
+    // A thematic break from the value (`@details ***`/`---`): roxygen2 renders
+    // it empty (the projector drops the node), so only following prose survives
+    // as the tag's content. The value position is fresh, so a `---` value is a
+    // break, never a setext underline (the lexer carved it as the break leaf).
+    if folds && tokens[value_start.unwrap()].kind == TokKind::RoxygenMdThematicBreak {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
+        return emit_md_thematic_break_from_value(tokens, head_end, events);
+    }
+    // A block quote from the value (`@details > quoted`): following `>` lines
+    // and lazy continuations join the quote, which roxygen2 flattens to plain
+    // text (no block-quote support).
+    if folds && tokens[value_start.unwrap()].kind == TokKind::RoxygenMdBlockQuote {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
+        return emit_md_block_quote_from_value(tokens, head_end, events);
     }
 
     // A same-line value whose (folded) paragraph is terminated by a `===`/`---`

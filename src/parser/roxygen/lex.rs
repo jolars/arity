@@ -264,8 +264,9 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
     // markdown document, so a value beginning with a CommonMark block start opens
     // that block exactly as at line start: carve the same leaves the line-start
     // path carves — a fence opener, an HTML-block opener (conditions 1–6), an ATX
-    // heading, or a list marker (the grouper closes the tag empty and gathers the
-    // block as a section sibling). roxygen2 strips only the single separator
+    // heading, a thematic break, a block-quote opener, or a list marker (the
+    // grouper closes the tag empty and gathers the block as a section sibling).
+    // roxygen2 strips only the single separator
     // space after the tag head, so a deeper-indented value (>= 4 columns past
     // that space) is an indented code block whose content must lex as ordinary
     // tokens — every carve is gated on the indent.
@@ -298,6 +299,33 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
                 push(
                     out,
                     TokKind::RoxygenMdHeading,
+                    text,
+                    start,
+                    pos,
+                    text.len() - pos,
+                );
+                return;
+            }
+            // A thematic break, checked before the list marker (a spaced form
+            // like `- - -` or `* * *` starts with a valid bullet marker). The
+            // value position is fresh (no preceding paragraph), so a contiguous
+            // `---` is never a setext underline here — it carves directly as a
+            // break, unlike at line start where setext takes precedence.
+            if is_thematic_break(bytes, pos) {
+                push(
+                    out,
+                    TokKind::RoxygenMdThematicBreak,
+                    text,
+                    start,
+                    pos,
+                    text.len() - pos,
+                );
+                return;
+            }
+            if is_block_quote_marker(bytes, pos) {
+                push(
+                    out,
+                    TokKind::RoxygenMdBlockQuote,
                     text,
                     start,
                     pos,
