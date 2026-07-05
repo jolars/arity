@@ -3929,9 +3929,21 @@ fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
 /// single following space stripped (like the fenced code block).
 fn serialize_md_html_block(node: &SyntaxNode) -> String {
     let text = node.text().to_string();
+    // A block opening as a tag's same-line value has a marker-less first line
+    // (the `#'` belongs to the enclosing tag): roxygen2 strips only the single
+    // separator space after the tag head, so drop exactly one leading whitespace
+    // char and keep any further indent (it is part of the rendered line —
+    // `strip_marker` would trim the whole run).
+    let mid_value = node
+        .first_token()
+        .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);
     let mut body = String::from("\n");
-    for line in text.split('\n') {
-        body.push_str(strip_marker(line));
+    for (idx, line) in text.split('\n').enumerate() {
+        if idx == 0 && mid_value {
+            body.push_str(line.strip_prefix([' ', '\t']).unwrap_or(line));
+        } else {
+            body.push_str(strip_marker(line));
+        }
         body.push('\n');
     }
     format!(

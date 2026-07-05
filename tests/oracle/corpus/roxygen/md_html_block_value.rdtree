@@ -1,0 +1,3 @@
+(\description (\if (TEXT "html") (\out (VERB "\n") (VERB "<span>\n") (VERB "folded into the block\n"))) (TEXT "after the block"))
+(\details (\if (TEXT "html") (\out (VERB "\n") (VERB "<!-- note\n") (VERB "still inside the comment -->\n"))) (TEXT "after the comment closes"))
+(\title (TEXT "HTML block opening as a tag's same-line value"))

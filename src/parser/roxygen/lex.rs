@@ -260,6 +260,32 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
         pos = take_ws(out, text, start, pos);
     }
 
+    // Under `@md`, a *prose* tag's same-line value is the start of the tag's
+    // markdown document, so a value beginning with a CommonMark HTML-block start
+    // (conditions 1–6) opens an HTML block exactly as at line start: carve the
+    // whole remaining line as a `RoxygenMdHtmlBlock` opener leaf (the grouper
+    // closes the tag empty and gathers the block as a section sibling). roxygen2
+    // strips only the single separator space after the tag head, so a deeper-
+    // indented value (>= 4 columns past that space) is an indented code block,
+    // not an HTML block (from-value indented code is backlog) — the carve is
+    // gated on the indent.
+    if md && tag_folds_prose_continuation(&name) {
+        let ws_len = pos - text[..pos].trim_end_matches([' ', '\t']).len();
+        if ws_len <= 4
+            && let Some(block_end) = scan_md_html_block(bytes, pos)
+        {
+            push(
+                out,
+                TokKind::RoxygenMdHtmlBlock,
+                text,
+                start,
+                pos,
+                block_end - pos,
+            );
+            return;
+        }
+    }
+
     lex_roxygen_prose(out, text, start, pos, md, false);
 }
 

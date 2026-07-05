@@ -824,7 +824,14 @@ pub(super) fn is_md_html_block_start(tokens: &[Token], start: usize) -> bool {
 /// continuation, while the same line after a block-quote or list line — where
 /// the container match already failed — opens a block.
 pub(super) fn is_md_html_block7_line(tokens: &[Token], start: usize) -> bool {
-    let content = line_content_start(tokens, start);
+    is_md_html_block7_at(tokens, line_content_start(tokens, start))
+}
+
+/// [`is_md_html_block7_line`] with the line-content position already resolved:
+/// whether the tokens at `content` form a complete standalone tag with nothing
+/// but whitespace to the end of the line. Shared with the tag-value form
+/// ([`is_md_html_block_value`]), where the "line" starts at the tag's value.
+fn is_md_html_block7_at(tokens: &[Token], content: usize) -> bool {
     let Some(tok) = tokens.get(content) else {
         return false;
     };
@@ -843,6 +850,30 @@ pub(super) fn is_md_html_block7_line(tokens: &[Token], start: usize) -> bool {
         .iter()
         .take_while(|t| is_line_body_kind(&t.kind))
         .all(|t| t.kind == TokKind::Whitespace)
+}
+
+/// Whether a tag's same-line value at `value_start` (its first Content token)
+/// opens a **markdown HTML block**: a `RoxygenMdHtmlBlock` opener leaf
+/// (conditions 1–6, carved by the lexer at the value position of a prose tag
+/// under `@md`), or a **condition-7** standalone complete tag — a single inline
+/// `RoxygenMdHtml` tag leaf with nothing but whitespace to the end of the line.
+/// Condition 7 cannot interrupt a paragraph, but a tag's value starts its own
+/// markdown document, so the value position is always fresh and the block opens
+/// (engine-probed). The condition-7 arm re-applies the lexer's indent gate:
+/// roxygen2 strips only the single separator space after the tag head, so a
+/// value >= 4 columns past it is an indented code block, not an HTML block
+/// (from-value indented code is backlog).
+pub(super) fn is_md_html_block_value(tokens: &[Token], value_start: usize) -> bool {
+    match tokens.get(value_start).map(|t| &t.kind) {
+        Some(TokKind::RoxygenMdHtmlBlock) => true,
+        Some(TokKind::RoxygenMdHtml) => {
+            let indent_ok = value_start == 0
+                || tokens[value_start - 1].kind != TokKind::Whitespace
+                || tokens[value_start - 1].text.len() <= 4;
+            indent_ok && is_md_html_block7_at(tokens, value_start)
+        }
+        _ => false,
+    }
 }
 
 /// Whether an HTML-block opener's line content begins (case-insensitively) with a
@@ -930,10 +961,54 @@ pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Ve
         i += 1;
     }
 
-    if let Some(closers) = html_block_closers(&opener) {
+    finish_md_html_block(tokens, i, &opener, events)
+}
+
+/// Emit a `ROXYGEN_MD_HTML_BLOCK` node for an HTML block opening as a **tag's
+/// same-line value** ([`is_md_html_block_value`]): the first line has no `#'`
+/// marker of its own (that marker belongs to the enclosing tag, already emitted
+/// and closed), so it starts at `ws_start` — the whitespace between the tag head
+/// and the value. roxygen2 strips only the single separator space after the tag
+/// head, so any further indent is part of the block's first rendered line and
+/// stays inside the node. The following lines gather per the opener's start
+/// condition exactly as in [`emit_md_html_block`]. Returns the token index just
+/// past the last consumed line's content.
+pub(super) fn emit_md_html_block_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HTML_BLOCK));
+    // First (marker-less) line: the leading whitespace and the value content. The
+    // opener text for the terminator decision starts at the first non-whitespace
+    // token (the closer-set prefixes match from `<`).
+    let mut opener = String::new();
+    let mut i = ws_start;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        if !(opener.is_empty() && tokens[i].kind == TokKind::Whitespace) {
+            opener.push_str(&tokens[i].text);
+        }
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    finish_md_html_block(tokens, i, &opener, events)
+}
+
+/// Gather an HTML block's continuation lines (after its opening line, whose
+/// content is `opener`) per the opener's start condition, then finish the
+/// `ROXYGEN_MD_HTML_BLOCK` node. `i` is at the opening line's trailing
+/// `Newline`. Shared by the line-start ([`emit_md_html_block`]) and tag-value
+/// ([`emit_md_html_block_from_value`]) forms.
+fn finish_md_html_block(
+    tokens: &[Token],
+    mut i: usize,
+    opener: &str,
+    events: &mut Vec<Event>,
+) -> usize {
+    if let Some(closers) = html_block_closers(opener) {
         // Conditions 1–5: run until a line containing a closer, inclusive (through
         // blank lines). Skip the loop when the opener line already closes.
-        if !html_line_contains_closer(&opener, closers) {
+        if !html_line_contains_closer(opener, closers) {
             loop {
                 if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
                     break;

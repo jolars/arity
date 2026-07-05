@@ -255,9 +255,30 @@ fn emit_md_indented_code(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// renders the block's lines verbatim into `\out{…}`, so a trimmed leading indent
 /// (a `<pre>` line, or condition-1 verbatim content) would change the rendered Rd
 /// — a fixed-point violation.
+///
+/// A block opening as a tag's same-line value (`#' @details <span>`) has a
+/// **marker-less** first line — the opener `#'` belonged to the tag — so, like
+/// [`emit_md_heading`]'s from-value setext form, that line is given its own
+/// `#' `, dropping the single tag-head separator space but keeping any further
+/// indent (roxygen2 renders it verbatim). On reparse the opener sits on its own
+/// `#'` line beneath the bare tag (the next-line form), which projects
+/// identically — idempotent.
 fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_list_marker_text(seg));
+    let mid_prose = node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER);
+    for (idx, seg) in node.text().to_string().split('\n').enumerate() {
+        if idx == 0 && mid_prose {
+            let content = seg.strip_prefix([' ', '\t']).unwrap_or(seg);
+            push_line(
+                items,
+                if content.is_empty() {
+                    "#'".to_string()
+                } else {
+                    format!("#' {content}")
+                },
+            );
+        } else {
+            push_line(items, normalize_list_marker_text(seg));
+        }
     }
 }
 

@@ -373,3 +373,5 @@ md_html_inline_forms
 md_html_block_case
 md_html_cond7
 md_html_cond7_edges
+md_html_block_value
+md_html_block_value_edges

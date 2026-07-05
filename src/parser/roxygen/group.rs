@@ -8,10 +8,11 @@
 
 use super::build::{
     block_macro_opener_closes, emit_block_macro, emit_block_macro_inline, emit_md_block_quote,
-    emit_md_code_block, emit_md_heading, emit_md_html_block, emit_md_indented_code, emit_md_list,
-    emit_md_setext_heading, emit_md_table, emit_md_thematic_break, is_block_macro_line,
-    is_block_macro_opener, is_md_block_quote_start, is_md_code_block_start, is_md_heading_start,
-    is_md_html_block_start, is_md_html_block7_line, is_md_indented_code_start, is_md_list_start,
+    emit_md_code_block, emit_md_heading, emit_md_html_block, emit_md_html_block_from_value,
+    emit_md_indented_code, emit_md_list, emit_md_setext_heading, emit_md_table,
+    emit_md_thematic_break, is_block_macro_line, is_block_macro_opener, is_md_block_quote_start,
+    is_md_code_block_start, is_md_heading_start, is_md_html_block_start, is_md_html_block_value,
+    is_md_html_block7_line, is_md_indented_code_start, is_md_list_start,
     is_md_setext_heading_start, is_md_setext_underline_line, is_md_setext_underline_or_dash,
     is_md_table_start, is_md_thematic_break_line,
 };
@@ -394,6 +395,36 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
         j += 1;
     }
     let has_value = value_start.is_some();
+
+    // A same-line value that begins with a CommonMark HTML-block start opens an
+    // **HTML block from the value position** — the tag's markdown document starts
+    // at the value, so a conditions-1–6 opener (a `RoxygenMdHtmlBlock` leaf,
+    // carved by the lexer at the value of a prose tag) or a condition-7
+    // standalone tag opens the block exactly as at line start, gathering the
+    // folded continuation lines. The value can't stay inside the `ROXYGEN_TAG`
+    // (the block owns its lines), so the head closes the tag empty and the value
+    // becomes a sibling `ROXYGEN_MD_HTML_BLOCK` — the shape the next-line form
+    // already produces, so the projector and formatter need no new section shape.
+    // Checked before the setext pre-scan: a blank-terminated block swallows a
+    // following `===` underline as a verbatim line (engine-probed), so the block
+    // wins.
+    if has_value
+        && tag_name.is_some_and(super::tag_folds_prose_continuation)
+        && is_md_html_block_value(tokens, value_start.unwrap())
+    {
+        // Emit the tag head, dropping the whitespace between it and the value
+        // (that gap starts the block's first, marker-less line: roxygen2 strips
+        // only the single separator space, so any further indent renders).
+        let mut head_end = value_start.unwrap();
+        while head_end > i && tokens[head_end - 1].kind == TokKind::Whitespace {
+            head_end -= 1;
+        }
+        for idx in i..head_end {
+            events.push(Event::Tok(idx));
+        }
+        events.push(Event::Finish); // ROXYGEN_TAG
+        return emit_md_html_block_from_value(tokens, head_end, events);
+    }
 
     // A same-line value whose (folded) paragraph is terminated by a `===`/`---`
     // underline is a **setext heading**, exactly as when the value starts on the

@@ -341,9 +341,22 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `emit_md_html_block` uses `normalize_list_marker_text` (preserves content indentation — roxygen2 renders
   each line verbatim into `\out`, so a trimmed indent is a fixed-point violation).
   Curated `md_html_verbatim`/`_oneline`/`md_html_conditions`/`md_html_cond7`/`md_html_cond7_edges`.
-  **Backlog:** an HTML-block opener as a tag's *same-line* value (`@details <span>` — roxygen2's md doc
-  starts at the value, so the block opens and gathers the folded continuation; arity keeps it an inline
-  tag value — applies to conds 1–6 too, analogous to the setext-from-value pre-scan).
+  **From-value form (landed 2026-07-05b):** a prose tag's same-line value IS its md-doc start, so a
+  value-leading opener opens the block (`@details <span>` / `@details <!-- note`, all conditions).
+  roxygen2 strips only the **single separator space** after the tag head — further indent renders
+  (`@details   <span>` → `(VERB "  <span>\n")`), and >= 5 columns past it is an *indented code block*
+  (from-value indented code = backlog, gated out). Lexer: `lex_roxygen_tag` carves conds 1–6 at the
+  value (`md && tag_folds_prose_continuation && ws_len <= 4`); cond 7 is builder-structural
+  (`is_md_html_block7_at`; the value position is always fresh, so no paragraph gate). Grouper:
+  `emit_tag_line` pre-scan **before the setext branch** (a blank-terminated block swallows a following
+  `===` as a verbatim line, engine-probed) — `is_md_html_block_value` → tag closes **empty**, value +
+  head→value ws become a sibling `ROXYGEN_MD_HTML_BLOCK` (`emit_md_html_block_from_value`, shared
+  `finish_md_html_block` gather; opener string skips the leading ws so the closer prefixes match).
+  Marker-less first line: projector + formatter strip exactly **one** leading ws char (`strip_marker`
+  would eat the semantic indent); formatter normalizes to the next-line form (`#' @details`⏎`#' <span>`),
+  which projects identically — idempotent. Curated `md_html_block_value`/`_edges`.
+  **Backlog:** other from-value block starts (indented code, fence, ATX heading, table — same md-doc
+  argument, separate constructs).
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): every form →
   `(\if (TEXT "html") (\out (VERB …)))`, all **line-scoped**. Dispatch on `bytes[i+1]`: `!` →
   comment/CDATA/declaration (`scan_md_html_inline_bang`), `?` → PI, else tag. **Probe the engine, not
@@ -496,7 +509,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 362 matching (all allowlisted), 18 divergent** of 380 pinned.
+corpus (132 `cm-NNN` cases). **Current: 364 matching (all allowlisted), 18 divergent** of 382 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -507,49 +520,44 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
    Curated + harvested + spec corpora (380 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 97/97 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 99/99 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-05) — HTML block condition 7 (standalone complete tag)
+## Latest session (2026-07-05b) — HTML block opening as a tag's same-line value
 
-Landed **condition 7**: a complete standalone tag on its own line (`<span>`, `</span>`, `<span
-class="a">`, `<custom-tag/>`, only ws to EOL) opens a **blank-terminated** HTML block. **No lexer
-change** — at line-content start conditions 1–6 already claim their openers, so a content-start inline
-`RoxygenMdHtml` *tag* leaf + trailing ws is exactly the cond-7 candidate set; the builder recognizes it
-structurally (`is_md_html_block7_line`) and reuses `emit_md_html_block`'s cond-6 gather.
+Landed the **from-value HTML block**: a prose tag's same-line value is the start of the tag's markdown
+document, so a value-leading opener opens the block and gathers the folded continuation
+(`@details <span>` / `@details <!-- note` / `@details <div>trailing text` — all conditions; probes
+confirmed roxygen2 renders the whole run as `\if{html}{\out{…}}` VERB lines). Mechanics in the
+HTML-blocks trap (from-value paragraph): lexer carve for conds 1–6 at the value position
+(`lex_roxygen_tag`, indent-gated — roxygen2 strips only the single separator space, so >= 5 columns
+past it is indented code, gated out as backlog), builder-structural cond 7 (`is_md_html_block7_at`),
+grouper pre-scan **before setext** (the block swallows a following `===`, engine-probed), tag closes
+empty + sibling `ROXYGEN_MD_HTML_BLOCK` with a marker-less first line (shared `finish_md_html_block`).
+Projector/formatter strip exactly one leading ws char on that line (indent is semantic and renders);
+the formatter normalizes to the next-line form, which projects identically — idempotent.
 
-**Engine grammar probed** (see the HTML-blocks trap): no tag-name exclusion in the closing/self-closing
-forms (`</pre>` and `<pre/>` both open — exposed a real bug: `is_html_verbatim_opener` treated `/` as a
-name boundary, so `<pre/>` ran as a closer-terminated cond-1 block to section end); the can't-interrupt
-gate is **positional** — a direct prose continuation folds (`@details value`⏎`<span>` stays inline), but
-the same line after a `>` quote line (NOT lazy), a table row, or a list item opens a block. Wired as the
-`!para_open` group-loop gate + exclusions in the quote lazy gather and `is_table_row_line`.
+**Result:** projector **362→364 matching** (all allowlisted), 18 divergent (unchanged, out-of-scope).
+`cargo test` green, clippy + fmt clean; curated fixed-point **99/99 preserving** (was 97), 0 blocked;
+format baseline **+2 additive** (re-blessed, reviewed). New fixtures: parser
+`roxygen_md_html_block_value` (conds 1/2/6/7 from value, indent, setext precedence + mid-prose/
+deep-indent/non-md/non-prose-tag negatives); formatter `roxygen_md_html_block_value` (next-line
+normalization incl. kept indent); curated `md_html_block_value` + `md_html_block_value_edges`
+(+pins +allowlist). Probes also established `@field f <span>` opens the block in the field desc
+(covered by the `tag_folds_prose_continuation` gate).
 
-**Formatter (new hazard class, inverse of the 1–6 guard).** Cond 7 can't interrupt, so wrapped-line
-starts stay unguarded (the recap's warning held); the hazard is a standalone tag **alone on a line that
-reparses at a fresh position**: the paragraph's first line (`wrap_chunks` glues the next chunk) and the
-first continuation line under a bare form-2 header (`wrap_chunks_hanging` keeps the tag beside the
-header). Predicate `is_md_standalone_html_tag`.
-
-**Result:** projector **360→362 matching** (all allowlisted), 18 divergent (unchanged, out-of-scope).
-`cargo test` green, clippy + fmt clean; curated fixed-point **97/97 preserving** (was 95), 0 blocked;
-format baseline **+2 additive** (re-blessed). New fixtures: parser `roxygen_md_html_cond7` (all opening
-forms + fold/trailing-text/incomplete/non-md negatives); formatter `roxygen_md_html_cond7` (block
-passthrough + the first-line glue + safe mid-paragraph line start); curated `md_html_cond7` +
-`md_html_cond7_edges` (table/list/quote interactions; +pins +allowlist).
-
-**Ranked next target:** an HTML-block opener as a tag's **same-line value** (`@details <span>` /
-`@details <div>` — roxygen2 opens the block from the value position and gathers the folded
-continuation; arity keeps it an inline tag value — new backlog found by probe, analogous to the
-setext-from-value pre-scan); then multi-line **inline** HTML (a cmark inline span crosses a soft break;
-arity is line-scoped — faithful under-handling, ties into the inline-pass migration); then the `@md`
-`\`-escape *render* cluster (do NOT widen the lexer — inline-pass migration). The 18 projector
-divergences remain out-of-scope (roxygen2 evaluation / multi-block).
+**Ranked next target:** other **from-value block starts** (indented code `@details      x`, fence,
+ATX heading, table — same md-doc-starts-at-the-value argument, found by probe; indented code is the
+concrete divergent shape already gated out); then multi-line **inline** HTML (a cmark inline span
+crosses a soft break; arity is line-scoped — faithful under-handling, ties into the inline-pass
+migration); then the `@md` `\`-escape *render* cluster (do NOT widen the lexer — inline-pass
+migration). The 18 projector divergences remain out-of-scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
+- **2026-07-05** — HTML block condition 7 (standalone complete tag on its own line → blank-terminated block; builder-structural `is_md_html_block7_line`, positional can't-interrupt gate, `<pre/>` cond-1 bug fix, formatter `is_md_standalone_html_tag` fresh-position guard). 360→362.
 - **2026-07-04b** — inline raw-HTML comment/PI/declaration/CDATA (`RoxygenMdHtml` leaves, `\if{html}{\out{…}}`; block cond 5 `CDATA` case-insensitive, cond 4 uppercase-only) + the conds-1–6 reflow line-start guard (`is_unsafe_line_start` → `starts_md_html_block`). 358→360.
 
 One-liners (date — what landed; projector matching delta). Mechanics live in the traps above and git.
