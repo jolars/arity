@@ -8,13 +8,15 @@
 
 use super::build::{
     block_macro_opener_closes, emit_block_macro, emit_block_macro_inline, emit_md_block_quote,
-    emit_md_code_block, emit_md_heading, emit_md_html_block, emit_md_html_block_from_value,
-    emit_md_indented_code, emit_md_list, emit_md_setext_heading, emit_md_table,
-    emit_md_thematic_break, is_block_macro_line, is_block_macro_opener, is_md_block_quote_start,
-    is_md_code_block_start, is_md_heading_start, is_md_html_block_start, is_md_html_block_value,
-    is_md_html_block7_line, is_md_indented_code_start, is_md_list_start,
+    emit_md_code_block, emit_md_code_block_from_value, emit_md_heading, emit_md_heading_from_value,
+    emit_md_html_block, emit_md_html_block_from_value, emit_md_indented_code,
+    emit_md_indented_code_from_value, emit_md_list, emit_md_list_from_value,
+    emit_md_setext_heading, emit_md_table, emit_md_table_from_value, emit_md_thematic_break,
+    is_block_macro_line, is_block_macro_opener, is_md_block_quote_start, is_md_code_block_start,
+    is_md_heading_start, is_md_html_block_start, is_md_html_block_value, is_md_html_block7_line,
+    is_md_indented_code_start, is_md_indented_code_value, is_md_list_start,
     is_md_setext_heading_start, is_md_setext_underline_line, is_md_setext_underline_or_dash,
-    is_md_table_start, is_md_thematic_break_line,
+    is_md_table_start, is_md_table_value, is_md_thematic_break_line,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -121,7 +123,7 @@ fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Ev
                     }
                     events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
                     section_open = true;
-                    i = emit_tag_line(tokens, i, events);
+                    i = emit_tag_line(tokens, i, md, events);
                 }
                 LineKind::Blank => {
                     if para_open {
@@ -367,7 +369,7 @@ fn emit_prose_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> u
 /// the tag node, so opener and closer have to live in the *same* node). A block
 /// macro, markdown list, fenced/HTML block, blank line, or new tag ends the value
 /// and stays a section-level sibling (its own paragraph/block).
-fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+fn emit_tag_line(tokens: &[Token], start: usize, md: bool, events: &mut Vec<Event>) -> usize {
     events.push(Event::Tok(start)); // RoxygenMarker
     let mut i = start + 1;
     while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
@@ -395,35 +397,59 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
         j += 1;
     }
     let has_value = value_start.is_some();
+    let folds = has_value && tag_name.is_some_and(super::tag_folds_prose_continuation);
 
-    // A same-line value that begins with a CommonMark HTML-block start opens an
-    // **HTML block from the value position** — the tag's markdown document starts
-    // at the value, so a conditions-1–6 opener (a `RoxygenMdHtmlBlock` leaf,
-    // carved by the lexer at the value of a prose tag) or a condition-7
-    // standalone tag opens the block exactly as at line start, gathering the
-    // folded continuation lines. The value can't stay inside the `ROXYGEN_TAG`
-    // (the block owns its lines), so the head closes the tag empty and the value
-    // becomes a sibling `ROXYGEN_MD_HTML_BLOCK` — the shape the next-line form
-    // already produces, so the projector and formatter need no new section shape.
-    // Checked before the setext pre-scan: a blank-terminated block swallows a
-    // following `===` underline as a verbatim line (engine-probed), so the block
-    // wins.
-    if has_value
-        && tag_name.is_some_and(super::tag_folds_prose_continuation)
-        && is_md_html_block_value(tokens, value_start.unwrap())
-    {
-        // Emit the tag head, dropping the whitespace between it and the value
-        // (that gap starts the block's first, marker-less line: roxygen2 strips
-        // only the single separator space, so any further indent renders).
-        let mut head_end = value_start.unwrap();
-        while head_end > i && tokens[head_end - 1].kind == TokKind::Whitespace {
-            head_end -= 1;
-        }
-        for idx in i..head_end {
-            events.push(Event::Tok(idx));
-        }
-        events.push(Event::Finish); // ROXYGEN_TAG
+    // A prose tag's same-line value is the start of the tag's **markdown
+    // document**, so a value that begins a CommonMark block opens that block
+    // exactly as at line start. The value can't stay inside the `ROXYGEN_TAG`
+    // (the block owns its lines), so the head closes the tag empty
+    // ([`close_tag_at_value`]) and the value becomes a sibling block node with a
+    // marker-less first line — the shape the next-line form already produces, so
+    // the projector and formatter need no new section shape. Dispatch order
+    // mirrors the block loop's precedence, with two forced choices: an indented
+    // code value (>= 5 whitespace columns after the tag head — roxygen2 strips
+    // only the single separator space) pre-empts everything (the lexer gated all
+    // value carves on that indent, so its content lexes as ordinary tokens), and
+    // every block check runs before the setext pre-scan (a fence/HTML block
+    // swallows a following `===` underline as a verbatim line; a list item is
+    // never setext-headed — engine-probed).
+    if folds && is_md_indented_code_value(tokens, value_start.unwrap(), md) {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
+        return emit_md_indented_code_from_value(tokens, head_end, events);
+    }
+    // An HTML block from the value: a conditions-1–6 opener (a
+    // `RoxygenMdHtmlBlock` leaf, carved by the lexer at the value of a prose
+    // tag) or a condition-7 standalone tag (the value position is always fresh,
+    // so the can't-interrupt rule never blocks it).
+    if folds && is_md_html_block_value(tokens, value_start.unwrap()) {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
         return emit_md_html_block_from_value(tokens, head_end, events);
+    }
+    // A fenced code block from the value (`@details ```r`): the opener fence
+    // leaf, then the code lines to the closing fence.
+    if folds && tokens[value_start.unwrap()].kind == TokKind::RoxygenMdFence {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
+        return emit_md_code_block_from_value(tokens, head_end, events);
+    }
+    // A markdown list from the value (`@details - item`): the value position is
+    // a fresh block position, so any marker opens a list (the mid-paragraph
+    // interrupt rule never applies); following list lines join as items.
+    if folds && tokens[value_start.unwrap()].kind == TokKind::RoxygenMdListMarker {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
+        return emit_md_list_from_value(tokens, head_end, events);
+    }
+    // An ATX heading from the value (`@details # Title`). Checked before the
+    // table: a heading line is never a GFM table header (a table's header must
+    // be a paragraph line, engine-probed), even when a delimiter row follows.
+    if folds && tokens[value_start.unwrap()].kind == TokKind::RoxygenMdHeading {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
+        return emit_md_heading_from_value(tokens, head_end, events);
+    }
+    // A GFM table whose header row is the value (`@details | a | b |`, a
+    // matching delimiter row on the next line).
+    if folds && is_md_table_value(tokens, value_start.unwrap()) {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
+        return emit_md_table_from_value(tokens, head_end, events);
     }
 
     // A same-line value whose (folded) paragraph is terminated by a `===`/`---`
@@ -433,20 +459,8 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
     // the value + underline become a sibling `ROXYGEN_MD_HEADING` — the shape the
     // next-line form already produces, so the projector hoists it (description /
     // details) or inlines the title (other prose tags) with no extra arm.
-    if has_value
-        && tag_name.is_some_and(super::tag_folds_prose_continuation)
-        && is_md_setext_heading_start(tokens, start)
-    {
-        // Emit the tag head, dropping the whitespace between it and the value (that
-        // gap starts the heading's first, marker-less line).
-        let mut head_end = value_start.unwrap();
-        while head_end > i && tokens[head_end - 1].kind == TokKind::Whitespace {
-            head_end -= 1;
-        }
-        for idx in i..head_end {
-            events.push(Event::Tok(idx));
-        }
-        events.push(Event::Finish); // ROXYGEN_TAG
+    if folds && is_md_setext_heading_start(tokens, start) {
+        let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
         return emit_md_setext_heading_from_value(tokens, head_end, events);
     }
 
@@ -478,6 +492,30 @@ fn emit_tag_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usi
     }
     events.push(Event::Finish); // ROXYGEN_TAG
     i
+}
+
+/// Close an open `ROXYGEN_TAG` **empty at its value**: emit the tag-head tokens
+/// from `head_start` up to (but not including) the whitespace run before
+/// `value_start`, then finish the tag node. That whitespace starts the sibling
+/// block's first, marker-less line — roxygen2 strips only the single separator
+/// space after the tag head, so any further indent belongs to the block and
+/// renders. Returns the whitespace run's start index (the sibling emitter's
+/// entry point).
+fn close_tag_at_value(
+    tokens: &[Token],
+    head_start: usize,
+    value_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    let mut head_end = value_start;
+    while head_end > head_start && tokens[head_end - 1].kind == TokKind::Whitespace {
+        head_end -= 1;
+    }
+    for idx in head_start..head_end {
+        events.push(Event::Tok(idx));
+    }
+    events.push(Event::Finish); // ROXYGEN_TAG
+    head_end
 }
 
 /// Emit a `ROXYGEN_MD_HEADING` node for a **setext heading** whose title begins as a

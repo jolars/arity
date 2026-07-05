@@ -1,0 +1,4 @@
+(\description (\itemize (\item)))
+(\section (TEXT "a | b") (TEXT "| --- | --- |"))
+(\title (TEXT "Edge shapes for block starts from a tag's same-line value"))
+(\value (TEXT "| a | b | | --- | a mismatched delimiter row is prose"))

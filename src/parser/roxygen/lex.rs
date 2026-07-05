@@ -261,28 +261,62 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
     }
 
     // Under `@md`, a *prose* tag's same-line value is the start of the tag's
-    // markdown document, so a value beginning with a CommonMark HTML-block start
-    // (conditions 1–6) opens an HTML block exactly as at line start: carve the
-    // whole remaining line as a `RoxygenMdHtmlBlock` opener leaf (the grouper
-    // closes the tag empty and gathers the block as a section sibling). roxygen2
-    // strips only the single separator space after the tag head, so a deeper-
-    // indented value (>= 4 columns past that space) is an indented code block,
-    // not an HTML block (from-value indented code is backlog) — the carve is
-    // gated on the indent.
+    // markdown document, so a value beginning with a CommonMark block start opens
+    // that block exactly as at line start: carve the same leaves the line-start
+    // path carves — a fence opener, an HTML-block opener (conditions 1–6), an ATX
+    // heading, or a list marker (the grouper closes the tag empty and gathers the
+    // block as a section sibling). roxygen2 strips only the single separator
+    // space after the tag head, so a deeper-indented value (>= 4 columns past
+    // that space) is an indented code block whose content must lex as ordinary
+    // tokens — every carve is gated on the indent.
     if md && tag_folds_prose_continuation(&name) {
         let ws_len = pos - text[..pos].trim_end_matches([' ', '\t']).len();
-        if ws_len <= 4
-            && let Some(block_end) = scan_md_html_block(bytes, pos)
-        {
-            push(
-                out,
-                TokKind::RoxygenMdHtmlBlock,
-                text,
-                start,
-                pos,
-                block_end - pos,
-            );
-            return;
+        if ws_len <= 4 {
+            if let Some(fence_end) = scan_md_fence(bytes, pos) {
+                push(
+                    out,
+                    TokKind::RoxygenMdFence,
+                    text,
+                    start,
+                    pos,
+                    fence_end - pos,
+                );
+                return;
+            }
+            if let Some(block_end) = scan_md_html_block(bytes, pos) {
+                push(
+                    out,
+                    TokKind::RoxygenMdHtmlBlock,
+                    text,
+                    start,
+                    pos,
+                    block_end - pos,
+                );
+                return;
+            }
+            if is_atx_heading(bytes, pos) {
+                push(
+                    out,
+                    TokKind::RoxygenMdHeading,
+                    text,
+                    start,
+                    pos,
+                    text.len() - pos,
+                );
+                return;
+            }
+            if let Some(marker_end) = scan_md_list_marker(bytes, pos) {
+                push(
+                    out,
+                    TokKind::RoxygenMdListMarker,
+                    text,
+                    start,
+                    pos,
+                    marker_end - pos,
+                );
+                lex_roxygen_prose(out, text, start, marker_end, md, false);
+                return;
+            }
         }
     }
 

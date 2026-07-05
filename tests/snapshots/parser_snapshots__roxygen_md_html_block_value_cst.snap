@@ -299,16 +299,18 @@ ROOT@0..896
     ROXYGEN_SECTION@610..695
       ROXYGEN_MARKER@610..612 "#'"
       WHITESPACE@612..613 " "
-      ROXYGEN_TAG@613..694
+      ROXYGEN_TAG@613..621
         ROXYGEN_AT@613..614 "@"
         ROXYGEN_TAG_NAME@614..621 "details"
+      ROXYGEN_MD_INDENTED_CODE@621..633
         WHITESPACE@621..627 "      "
         ROXYGEN_MD_HTML@627..633 "<span>"
-        NEWLINE@633..634 "\n"
+      NEWLINE@633..634 "\n"
+      ROXYGEN_PARAGRAPH@634..695
         ROXYGEN_MARKER@634..636 "#'"
         WHITESPACE@636..637 " "
         ROXYGEN_TEXT@637..694 "deep indent stays an  ..."
-      NEWLINE@694..695 "\n"
+        NEWLINE@694..695 "\n"
     ROXYGEN_SECTION@695..705
       ROXYGEN_MARKER@695..697 "#'"
       WHITESPACE@697..698 " "

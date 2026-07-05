@@ -1,0 +1,4 @@
+(\description (TEXT "Indented code block from a tag's same-line value"))
+(\details (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB " x\n") (VERB " y\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (TEXT "after the code"))
+(\title (TEXT "Indented code block from a tag's same-line value"))
+(\value (TEXT "four columns after the head stays prose"))

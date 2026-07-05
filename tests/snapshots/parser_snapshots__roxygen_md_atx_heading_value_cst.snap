@@ -1,0 +1,114 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..197
+  ROXYGEN_BLOCK@0..63
+    ROXYGEN_SECTION@0..9
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+    ROXYGEN_SECTION@9..16
+      ROXYGEN_MARKER@9..11 "#'"
+      WHITESPACE@11..12 " "
+      ROXYGEN_TAG@12..15
+        ROXYGEN_AT@12..13 "@"
+        ROXYGEN_TAG_NAME@13..15 "md"
+      NEWLINE@15..16 "\n"
+    ROXYGEN_SECTION@16..53
+      ROXYGEN_MARKER@16..18 "#'"
+      WHITESPACE@18..19 " "
+      ROXYGEN_TAG@19..27
+        ROXYGEN_AT@19..20 "@"
+        ROXYGEN_TAG_NAME@20..27 "details"
+      ROXYGEN_MD_HEADING@27..39
+        WHITESPACE@27..28 " "
+        ROXYGEN_TEXT@28..39 "# Big Title"
+      NEWLINE@39..40 "\n"
+      ROXYGEN_PARAGRAPH@40..53
+        ROXYGEN_MARKER@40..42 "#'"
+        WHITESPACE@42..43 " "
+        ROXYGEN_TEXT@43..52 "body text"
+        NEWLINE@52..53 "\n"
+    ROXYGEN_SECTION@53..63
+      ROXYGEN_MARKER@53..55 "#'"
+      WHITESPACE@55..56 " "
+      ROXYGEN_TAG@56..63
+        ROXYGEN_AT@56..57 "@"
+        ROXYGEN_TAG_NAME@57..61 "name"
+        WHITESPACE@61..62 " "
+        ROXYGEN_TEXT@62..63 "a"
+  NEWLINE@63..64 "\n"
+  IDENT@64..68 "NULL"
+  NEWLINE@68..69 "\n"
+  NEWLINE@69..70 "\n"
+  ROXYGEN_BLOCK@70..126
+    ROXYGEN_SECTION@70..79
+      ROXYGEN_PARAGRAPH@70..79
+        ROXYGEN_MARKER@70..72 "#'"
+        WHITESPACE@72..73 " "
+        ROXYGEN_TEXT@73..78 "Title"
+        NEWLINE@78..79 "\n"
+    ROXYGEN_SECTION@79..86
+      ROXYGEN_MARKER@79..81 "#'"
+      WHITESPACE@81..82 " "
+      ROXYGEN_TAG@82..85
+        ROXYGEN_AT@82..83 "@"
+        ROXYGEN_TAG_NAME@83..85 "md"
+      NEWLINE@85..86 "\n"
+    ROXYGEN_SECTION@86..116
+      ROXYGEN_MARKER@86..88 "#'"
+      WHITESPACE@88..89 " "
+      ROXYGEN_TAG@89..97
+        ROXYGEN_AT@89..90 "@"
+        ROXYGEN_TAG_NAME@90..97 "details"
+      ROXYGEN_MD_HEADING@97..107
+        WHITESPACE@97..98 " "
+        ROXYGEN_TEXT@98..107 "## Sub ##"
+      NEWLINE@107..108 "\n"
+      ROXYGEN_PARAGRAPH@108..116
+        ROXYGEN_MARKER@108..110 "#'"
+        WHITESPACE@110..111 " "
+        ROXYGEN_TEXT@111..115 "body"
+        NEWLINE@115..116 "\n"
+    ROXYGEN_SECTION@116..126
+      ROXYGEN_MARKER@116..118 "#'"
+      WHITESPACE@118..119 " "
+      ROXYGEN_TAG@119..126
+        ROXYGEN_AT@119..120 "@"
+        ROXYGEN_TAG_NAME@120..124 "name"
+        WHITESPACE@124..125 " "
+        ROXYGEN_TEXT@125..126 "b"
+  NEWLINE@126..127 "\n"
+  IDENT@127..131 "NULL"
+  NEWLINE@131..132 "\n"
+  NEWLINE@132..133 "\n"
+  ROXYGEN_BLOCK@133..191
+    ROXYGEN_SECTION@133..142
+      ROXYGEN_PARAGRAPH@133..142
+        ROXYGEN_MARKER@133..135 "#'"
+        WHITESPACE@135..136 " "
+        ROXYGEN_TEXT@136..141 "Title"
+        NEWLINE@141..142 "\n"
+    ROXYGEN_SECTION@142..181
+      ROXYGEN_MARKER@142..144 "#'"
+      WHITESPACE@144..145 " "
+      ROXYGEN_TAG@145..180
+        ROXYGEN_AT@145..146 "@"
+        ROXYGEN_TAG_NAME@146..153 "details"
+        WHITESPACE@153..154 " "
+        ROXYGEN_TEXT@154..180 "# not a heading witho ..."
+      NEWLINE@180..181 "\n"
+    ROXYGEN_SECTION@181..191
+      ROXYGEN_MARKER@181..183 "#'"
+      WHITESPACE@183..184 " "
+      ROXYGEN_TAG@184..191
+        ROXYGEN_AT@184..185 "@"
+        ROXYGEN_TAG_NAME@185..189 "name"
+        WHITESPACE@189..190 " "
+        ROXYGEN_TEXT@190..191 "c"
+  NEWLINE@191..192 "\n"
+  IDENT@192..196 "NULL"
+  NEWLINE@196..197 "\n"

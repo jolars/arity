@@ -1,5 +1,16 @@
 #
 # `cargo test`). Re-seed from matching cases with `task roxygen-projector-seed`.
+#   * CommonMark spec slugs cm-* (tests/oracle/corpus/commonmark-emphasis.jsonl
+#   * curated file stems  (tests/oracle/corpus/roxygen/<stem>.R vs <stem>.rdtree)
+# divergence means the CST is wrong --- never patch the projector to pass.
+# Divergent cases in ROXYGEN_PROJECTOR.md are the backlog: close the structural
+# gap in the *parser*, refresh/keep the pin, then add the id here. A faithful
+# Guarded against regression by `roxygen_projector.rs` (pure Rust, no R, plain
+#   * harvested slugs rx-* (tests/oracle/corpus/roxygen.jsonl, projector-eligible
+# matches their pinned roxygen2 section tree. Three kinds of identifier:
+# roxygen2 projector-parity allowlist --- cases whose CST projection currently
+#     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
+#     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)
 cm-352
 cm-353
 cm-354
@@ -132,23 +143,22 @@ cm-480
 cm-481
 cm-482
 cm-483
-#   * CommonMark spec slugs cm-* (tests/oracle/corpus/commonmark-emphasis.jsonl
-#   * curated file stems  (tests/oracle/corpus/roxygen/<stem>.R vs <stem>.rdtree)
 describe_format
-# divergence means the CST is wrong --- never patch the projector to pass.
-# Divergent cases in ROXYGEN_PROJECTOR.md are the backlog: close the structural
 examples
 examples_merge
-# gap in the *parser*, refresh/keep the pin, then add the id here. A faithful
-# Guarded against regression by `roxygen_projector.rs` (pure Rust, no R, plain
-#   * harvested slugs rx-* (tests/oracle/corpus/roxygen.jsonl, projector-eligible
 itemize_enumerate
 markdown_html_block
 markdown_inline
 markdown_list
 markdown_url
-# matches their pinned roxygen2 section tree. Three kinds of identifier:
+md_atx_heading_value
 md_backslash_run
+md_blockquote
+md_blockquote_glue
+md_blockquote_glue_around
+md_blockquote_lazy
+md_blockquote_multiline
+md_block_value_edges
 md_email_autolink
 md_emphasis
 md_emphasis_multiline
@@ -156,6 +166,21 @@ md_empty_list_item
 md_entities
 md_escaped_bracket
 md_escaped_close_bracket
+md_fence_value
+md_heading
+md_heading_intro
+md_heading_subsection
+md_html_block_case
+md_html_block_value
+md_html_block_value_edges
+md_html_cond7
+md_html_cond7_edges
+md_html_conditions
+md_html_inline_forms
+md_html_verbatim
+md_html_verbatim_oneline
+md_indented_code
+md_indented_code_value
 md_link_backslash
 md_link_backslash_drop
 md_link_emphasis
@@ -170,10 +195,10 @@ md_linkref_poisoning_inline_link
 md_linkref_poisoning_list
 md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
+md_list_value
 md_macro_arg_emphasis
 md_macro_arg_span
 md_macro_arg_structural
-md_span_abuts_macro
 md_nested_link
 md_nested_link_chain
 md_nested_list
@@ -181,27 +206,46 @@ md_percent_softwrap
 md_percent_swallow
 md_ref_emphasis
 md_ref_link_multiline
+md_setext
+md_setext_dash
+md_setext_multiline
+md_setext_tag_value
+md_shortcut_emphasis
 md_shortcut_link
 md_shortcut_link_multiline
 md_shortcut_list
+md_span_abuts_macro
+md_table
+md_table_cells
+md_table_prose
+md_table_value
+md_thematic_break
+md_thematic_break_stars
 md_undefined_ref
 md_undefined_shortcut
 md_undefined_shortcut_list
+md_url_reference
+md_url_reference_consecutive
+md_url_reference_entity
+md_url_reference_invalid_dest
+md_url_reference_list
+md_url_reference_list_def
+md_url_reference_multiline
+md_url_reference_section
+md_url_reference_trailing_macro
 param_prose
 preformatted
 rawrd
 rawrd_md_literal
 rd_comment
 rd_comment_softwrap
-rd_macros
-rd_nested_list
 rdcomplete_field_drop
 rdcomplete_off_description
 rdcomplete_off_seealso
 rdcomplete_section_drop
 rdcomplete_slot_drop
-tag_sameline_emph
-# roxygen2 projector-parity allowlist --- cases whose CST projection currently
+rd_macros
+rd_nested_list
 rx-0273da0d
 rx-031cfdcb
 rx-03328a0f
@@ -335,43 +379,5 @@ rx-fabb4413
 rx-fb5d2ad5
 rx-fc8242e3
 rx-fd84eacf
-#     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
 tabular
-#     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)
-md_shortcut_emphasis
-md_url_reference
-md_url_reference_consecutive
-md_url_reference_entity
-md_url_reference_invalid_dest
-md_url_reference_list
-md_url_reference_list_def
-md_url_reference_multiline
-md_url_reference_section
-md_url_reference_trailing_macro
-md_table
-md_table_cells
-md_table_prose
-md_heading
-md_heading_subsection
-md_heading_intro
-md_setext
-md_setext_dash
-md_setext_multiline
-md_setext_tag_value
-md_blockquote
-md_blockquote_glue
-md_blockquote_glue_around
-md_blockquote_lazy
-md_blockquote_multiline
-md_thematic_break
-md_thematic_break_stars
-md_indented_code
-md_html_verbatim
-md_html_verbatim_oneline
-md_html_conditions
-md_html_inline_forms
-md_html_block_case
-md_html_cond7
-md_html_cond7_edges
-md_html_block_value
-md_html_block_value_edges
+tag_sameline_emph

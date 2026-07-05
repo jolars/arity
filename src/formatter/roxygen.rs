@@ -210,16 +210,53 @@ fn emit_block_macro_examples(items: &mut Vec<Ir>, node: &SyntaxNode) {
     }
 }
 
+/// Whether a block node's first line is **marker-less** — the block opened as a
+/// tag's same-line value, so the opener `#'` belongs to the enclosing (empty)
+/// tag, not the node.
+fn is_from_value(node: &SyntaxNode) -> bool {
+    node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER)
+}
+
+/// Marker-prefix a block node's **marker-less first line** (a block opening as a
+/// tag's same-line value). Drops the single tag-head separator space roxygen2
+/// strips; `keep_indent` keeps any further indent (it is semantic — CommonMark
+/// nesting/code columns, or verbatim `\out` rendering), otherwise the content is
+/// trimmed like [`normalize_marker_text`]. On reparse the line sits on its own
+/// `#'` line beneath the bare tag (the next-line form), which projects
+/// identically — idempotent.
+fn push_value_opener_line(items: &mut Vec<Ir>, seg: &str, keep_indent: bool) {
+    let content = if keep_indent {
+        seg.strip_prefix([' ', '\t']).unwrap_or(seg)
+    } else {
+        seg.trim()
+    };
+    push_line(
+        items,
+        if content.is_empty() {
+            "#'".to_string()
+        } else {
+            format!("#' {content}")
+        },
+    );
+}
+
 /// Emit a markdown list (`@md` mode) as atomic passthrough, each `#'` line
 /// marker-normalized but **preserving the content's leading indentation**: in a
 /// markdown list that indentation is semantic (it sets the CommonMark nesting
 /// depth that the parser models as nested `ROXYGEN_MD_LIST`s), so flattening it
 /// would change the rendered Rd. Only the `#'` sigil and the single conventional
 /// space after it are normalized; everything the marker→content whitespace
-/// carries beyond that is kept.
+/// carries beyond that is kept. A list whose first item began as a tag's
+/// same-line value has a marker-less first line; its indent beyond the separator
+/// space is kept too (the same one-based column semantics).
 fn emit_md_list(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_list_marker_text(seg));
+    let from_value = is_from_value(node);
+    for (idx, seg) in node.text().to_string().split('\n').enumerate() {
+        if idx == 0 && from_value {
+            push_value_opener_line(items, seg, true);
+        } else {
+            push_line(items, normalize_list_marker_text(seg));
+        }
     }
 }
 
@@ -229,9 +266,17 @@ fn emit_md_list(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// and verbatim code lines are emitted as-is, never reflowed. (Code indentation
 /// beyond the marker is dropped, matching that prior behavior; a canonical
 /// re-indent is future work, as for the Rd-list and markdown-list passthroughs.)
+/// A block whose opener fence began as a tag's same-line value has a marker-less
+/// first line; it is given its own `#'` (the next-line form, projecting
+/// identically).
 fn emit_md_code_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_marker_text(seg));
+    let from_value = is_from_value(node);
+    for (idx, seg) in node.text().to_string().split('\n').enumerate() {
+        if idx == 0 && from_value {
+            push_value_opener_line(items, seg, false);
+        } else {
+            push_line(items, normalize_marker_text(seg));
+        }
     }
 }
 
@@ -241,10 +286,17 @@ fn emit_md_code_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// line code (trimming it, as [`normalize_marker_text`] would, turns the block back
 /// into prose and changes the rendered Rd). Reuses [`normalize_list_marker_text`],
 /// which drops only the single conventional space after the marker; on reparse the
-/// same indentation re-forms the code block, so this is idempotent.
+/// same indentation re-forms the code block, so this is idempotent. A block that
+/// began as a tag's same-line value (`@details      x`) has a marker-less first
+/// line; its indent beyond the separator space is kept (it is the code column).
 fn emit_md_indented_code(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_list_marker_text(seg));
+    let from_value = is_from_value(node);
+    for (idx, seg) in node.text().to_string().split('\n').enumerate() {
+        if idx == 0 && from_value {
+            push_value_opener_line(items, seg, true);
+        } else {
+            push_line(items, normalize_list_marker_text(seg));
+        }
     }
 }
 
@@ -264,18 +316,10 @@ fn emit_md_indented_code(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// `#'` line beneath the bare tag (the next-line form), which projects
 /// identically — idempotent.
 fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    let mid_prose = node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER);
+    let from_value = is_from_value(node);
     for (idx, seg) in node.text().to_string().split('\n').enumerate() {
-        if idx == 0 && mid_prose {
-            let content = seg.strip_prefix([' ', '\t']).unwrap_or(seg);
-            push_line(
-                items,
-                if content.is_empty() {
-                    "#'".to_string()
-                } else {
-                    format!("#' {content}")
-                },
-            );
+        if idx == 0 && from_value {
+            push_value_opener_line(items, seg, true);
         } else {
             push_line(items, normalize_list_marker_text(seg));
         }
@@ -286,10 +330,17 @@ fn emit_md_html_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// marker-normalized (marker, one space, trimmed content). The node owns its own
 /// `#'` markers and newlines; the table is never reflowed. Marker-normalizing the
 /// header/delimiter/body rows is idempotent — on reparse the same header/delimiter
-/// cell counts still form the table.
+/// cell counts still form the table. A table whose header row began as a tag's
+/// same-line value has a marker-less first line; it is given its own `#'` (the
+/// next-line form, projecting identically).
 fn emit_md_table_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    for seg in node.text().to_string().split('\n') {
-        push_line(items, normalize_marker_text(seg));
+    let from_value = is_from_value(node);
+    for (idx, seg) in node.text().to_string().split('\n').enumerate() {
+        if idx == 0 && from_value {
+            push_value_opener_line(items, seg, false);
+        } else {
+            push_line(items, normalize_marker_text(seg));
+        }
     }
 }
 
@@ -316,18 +367,10 @@ fn emit_md_block_quote(items: &mut Vec<Ir>, node: &SyntaxNode) {
 /// `#' `. On reparse the title then sits on its own `#'` line above the underline
 /// (the next-line setext form), which projects identically — idempotent.
 fn emit_md_heading(items: &mut Vec<Ir>, node: &SyntaxNode) {
-    let mid_prose = node.first_token().map(|t| t.kind()) != Some(SyntaxKind::ROXYGEN_MARKER);
+    let from_value = is_from_value(node);
     for (idx, seg) in node.text().to_string().split('\n').enumerate() {
-        if idx == 0 && mid_prose {
-            let content = seg.trim();
-            push_line(
-                items,
-                if content.is_empty() {
-                    "#'".to_string()
-                } else {
-                    format!("#' {content}")
-                },
-            );
+        if idx == 0 && from_value {
+            push_value_opener_line(items, seg, false);
         } else {
             push_line(items, normalize_marker_text(seg));
         }

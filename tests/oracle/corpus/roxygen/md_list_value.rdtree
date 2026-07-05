@@ -1,0 +1,4 @@
+(\description (TEXT "Markdown list from a tag's same-line value"))
+(\details (\itemize (\item) (TEXT "item one") (\itemize (\item) (TEXT "nested")) (\item) (TEXT "item two")))
+(\title (TEXT "Markdown list from a tag's same-line value"))
+(\value (\enumerate (\item) (TEXT "ordered") (\item) (TEXT "second")))

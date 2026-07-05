@@ -341,22 +341,39 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `emit_md_html_block` uses `normalize_list_marker_text` (preserves content indentation — roxygen2 renders
   each line verbatim into `\out`, so a trimmed indent is a fixed-point violation).
   Curated `md_html_verbatim`/`_oneline`/`md_html_conditions`/`md_html_cond7`/`md_html_cond7_edges`.
-  **From-value form (landed 2026-07-05b):** a prose tag's same-line value IS its md-doc start, so a
-  value-leading opener opens the block (`@details <span>` / `@details <!-- note`, all conditions).
-  roxygen2 strips only the **single separator space** after the tag head — further indent renders
-  (`@details   <span>` → `(VERB "  <span>\n")`), and >= 5 columns past it is an *indented code block*
-  (from-value indented code = backlog, gated out). Lexer: `lex_roxygen_tag` carves conds 1–6 at the
-  value (`md && tag_folds_prose_continuation && ws_len <= 4`); cond 7 is builder-structural
-  (`is_md_html_block7_at`; the value position is always fresh, so no paragraph gate). Grouper:
-  `emit_tag_line` pre-scan **before the setext branch** (a blank-terminated block swallows a following
-  `===` as a verbatim line, engine-probed) — `is_md_html_block_value` → tag closes **empty**, value +
-  head→value ws become a sibling `ROXYGEN_MD_HTML_BLOCK` (`emit_md_html_block_from_value`, shared
-  `finish_md_html_block` gather; opener string skips the leading ws so the closer prefixes match).
-  Marker-less first line: projector + formatter strip exactly **one** leading ws char (`strip_marker`
-  would eat the semantic indent); formatter normalizes to the next-line form (`#' @details`⏎`#' <span>`),
-  which projects identically — idempotent. Curated `md_html_block_value`/`_edges`.
-  **Backlog:** other from-value block starts (indented code, fence, ATX heading, table — same md-doc
-  argument, separate constructs).
+  **From-value form (landed 2026-07-05b, generalized 2026-07-05c):** a prose tag's same-line value IS
+  its md-doc start, so a value-leading block start opens that block — HTML block (all conditions),
+  **fence, ATX heading, list, GFM table, indented code** (`@details <span>` / `` @details ```r `` /
+  `@details # T` / `@details - item` / `@details | a | b |` / `@details      x`). roxygen2 strips only
+  the **single separator space** after the tag head — further indent renders (`@details   <span>` →
+  `(VERB "  <span>\n")`), and >= 5 columns past it is an **indented code block** (probes p1–p3:
+  5 cols → `"x\n"`, 6 → `" x\n"`, 4 → prose; merges with following >= 5-col `#'` lines). Lexer:
+  `lex_roxygen_tag` carves fence/HTML-block/ATX/list-marker at the value
+  (`md && tag_folds_prose_continuation && ws_len <= 4` — the gate keeps a deeper-indented value's
+  content lexing as ordinary tokens for the code block); cond 7 is builder-structural
+  (`is_md_html_block7_at`); the table needs **no value carve** (header = generic prose; the gate
+  `is_md_table_value` reads the *next* line's delim leaf + cell counts); indented code has no leaf at
+  all (`is_md_indented_code_value` reads the head→value ws run, `md` threaded into `emit_tag_line`).
+  Grouper: `emit_tag_line` dispatch, all **before the setext branch** — order: indented code (pre-empts
+  everything), HTML block, fence, list, **ATX before table** (a heading line is never a table header),
+  table, setext (a fence/HTML block swallows a following `===`; a list value + `---` is item +
+  thematic break, not setext — engine-probed e3/e4). Tag closes **empty** via `close_tag_at_value`;
+  value + head→value ws become the sibling block node (shared `finish_md_*` gathers; list reuses
+  `emit_md_list_level_inner` with a marker-less first item — the head→value ws has the same one-based
+  indent semantics as marker→content ws, so nesting/sibling columns work unchanged, `@details - a` ⏎
+  `#'   - nested` nests). The **value position is always fresh**: any list marker opens a list (even an
+  empty `-` → `(\itemize (\item))`, ordered `1.` → `\enumerate`). Marker-less first line: projector +
+  formatter strip exactly **one** leading ws char (`strip_marker` would eat the semantic indent — or a
+  heading's own `#` run / a header cell's `#`; `parse_md_heading`/`serialize_md_indented_code`/
+  `serialize_md_table` have explicit from-value branches; fence/list/quote arms need none); formatter
+  normalizes to the next-line form (`#' @details`⏎`#' <span>`, shared `push_value_opener_line`,
+  `keep_indent` for indented-code/list/HTML), which projects identically — idempotent. Curated
+  `md_html_block_value`/`_edges`, `md_{atx_heading,fence,indented_code,table,list}_value`,
+  `md_block_value_edges`.
+  **Backlog:** from-value block quote (`@details > q` — roxygen2 warns + flattens, probe p7) and
+  thematic break / setext-dash value (`@details ***`/`---` → renders empty, probes p8/p9) — no value
+  carve yet, stay literal tag prose; list-item **lazy continuation** (`- a` ⏎ non-list line glues into
+  the item per cmark, probe e4 — arity ends the list; a *line-start* list has the same gap).
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): every form →
   `(\if (TEXT "html") (\out (VERB …)))`, all **line-scoped**. Dispatch on `bytes[i+1]`: `!` →
   comment/CDATA/declaration (`scan_md_html_inline_bang`), `?` → PI, else tag. **Probe the engine, not
@@ -454,7 +471,11 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `\n\n`: 1st = `\title`, 2nd = `\description`, rest = `\details` (folded with explicit `@details` only
   when leftover intro paras exist). Explicit `@title`/`@description` claims its slot.
   `section_body_parts` groups by paragraph (a block macro abutting prose = same para; a section-level
-  blank-`#'` `ROXYGEN_MARKER` = break). Title-as-description fallback when no description exists.
+  blank-`#'` `ROXYGEN_MARKER` = break). **Title-as-description fallback is post-hoc**
+  (`topics_add_default_description` runs after all tags): an explicit `@description` whose content
+  hoisted entirely into `\section`s (a leading `# heading`) leaves no `\description` → fallback fires
+  (`project_block` scans `out` for a `(\description` head after the tag loop). A *dropped*
+  (`rdComplete`) description still emits an empty `(\description)` atom → correctly suppresses it.
 - **Section pins sort in byte order, not locale collation.** The driver uses `sort(secs, method =
   "radix")` (C-locale) to match the Rust projector's `sections.sort()`. Latent until a section heads
   with a bare top-level `(TEXT …)`/`(GRP …)` (from `@rawRd`): any new bare-headed section ⇒ confirm the
@@ -509,7 +530,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 364 matching (all allowlisted), 18 divergent** of 382 pinned.
+corpus (132 `cm-NNN` cases). **Current: 370 matching (all allowlisted), 18 divergent** of 388 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -518,45 +539,48 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (380 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (388 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 99/99 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 105/105 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-05b) — HTML block opening as a tag's same-line value
+## Latest session (2026-07-05c) — all remaining from-value block starts
 
-Landed the **from-value HTML block**: a prose tag's same-line value is the start of the tag's markdown
-document, so a value-leading opener opens the block and gathers the folded continuation
-(`@details <span>` / `@details <!-- note` / `@details <div>trailing text` — all conditions; probes
-confirmed roxygen2 renders the whole run as `\if{html}{\out{…}}` VERB lines). Mechanics in the
-HTML-blocks trap (from-value paragraph): lexer carve for conds 1–6 at the value position
-(`lex_roxygen_tag`, indent-gated — roxygen2 strips only the single separator space, so >= 5 columns
-past it is indented code, gated out as backlog), builder-structural cond 7 (`is_md_html_block7_at`),
-grouper pre-scan **before setext** (the block swallows a following `===`, engine-probed), tag closes
-empty + sibling `ROXYGEN_MD_HTML_BLOCK` with a marker-less first line (shared `finish_md_html_block`).
-Projector/formatter strip exactly one leading ws char on that line (indent is semantic and renders);
-the formatter normalizes to the next-line form, which projects identically — idempotent.
+Generalized the from-value dispatch to **every carved block construct**: a prose tag's same-line value
+now opens an **indented code block** (`@details      x`, >= 5 ws columns after the head), **fence**
+(`` @details ```r ``), **ATX heading** (`@details # Title` → hoisted `\section`/`\subsection`),
+**GFM table** (`@details | a | b |` + next-line delim row), and **markdown list** (`@details - item`,
+merging with following `#'` list lines — a divergence discovered this session: roxygen2 renders one
+`\itemize` where arity kept the value as tag prose). Full mechanics + dispatch order (indented code
+first; ATX before table; all before setext) in the HTML-blocks trap's from-value paragraph. One
+grouper entry (`close_tag_at_value` + per-construct `emit_md_*_from_value` sharing the line-start
+gathers), one formatter helper (`push_value_opener_line`), three projector from-value branches
+(heading/indented-code/table first line). Also fixed a **general** projector gap the ATX pin exposed:
+the title-as-description fallback is **post-hoc** (`topics_add_default_description`) — an
+`@description` hoisted entirely into `\section`s re-fires it (line-start form had the same bug; see
+the sections trap).
 
-**Result:** projector **362→364 matching** (all allowlisted), 18 divergent (unchanged, out-of-scope).
-`cargo test` green, clippy + fmt clean; curated fixed-point **99/99 preserving** (was 97), 0 blocked;
-format baseline **+2 additive** (re-blessed, reviewed). New fixtures: parser
-`roxygen_md_html_block_value` (conds 1/2/6/7 from value, indent, setext precedence + mid-prose/
-deep-indent/non-md/non-prose-tag negatives); formatter `roxygen_md_html_block_value` (next-line
-normalization incl. kept indent); curated `md_html_block_value` + `md_html_block_value_edges`
-(+pins +allowlist). Probes also established `@field f <span>` opens the block in the field desc
-(covered by the `tag_folds_prose_continuation` gate).
+**Result:** projector **364→370 matching** (all allowlisted, seeded), 18 divergent (unchanged,
+out-of-scope). `cargo test` green (863), clippy + fmt clean; curated fixed-point **105/105
+preserving**, 0 blocked; format baseline **+6 additive** (re-blessed, reviewed). New fixtures: parser
+`roxygen_md_{atx_heading,fence,indented_code,table,list}_value` (each with non-md/threshold/mismatch
+negatives); formatter `roxygen_md_block_value` (next-line normalization for all five); curated
+`md_{atx_heading,fence,indented_code,table,list}_value` + `md_block_value_edges` (empty bullet,
+ATX-vs-table precedence, mismatched delim row; +pins +allowlist). One pre-existing pin re-accepted:
+`roxygen_md_html_block_value`'s deep-indent negative now parses as the indented code block it is.
 
-**Ranked next target:** other **from-value block starts** (indented code `@details      x`, fence,
-ATX heading, table — same md-doc-starts-at-the-value argument, found by probe; indented code is the
-concrete divergent shape already gated out); then multi-line **inline** HTML (a cmark inline span
-crosses a soft break; arity is line-scoped — faithful under-handling, ties into the inline-pass
-migration); then the `@md` `\`-escape *render* cluster (do NOT widen the lexer — inline-pass
-migration). The 18 projector divergences remain out-of-scope (roxygen2 evaluation / multi-block).
+**Ranked next target:** from-value **block quote / thematic break** (`@details > q` flattens,
+`@details ***`/`---` render empty — probes p7–p9, no carve yet); then list-item **lazy continuation**
+(`- a` ⏎ plain line glues into the item, probe e4 — line-start lists share the gap); then multi-line
+**inline** HTML (cmark inline spans cross a soft break; arity is line-scoped — ties into the
+inline-pass migration); then the `@md` `\`-escape *render* cluster (do NOT widen the lexer). The 18
+projector divergences remain out-of-scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
+- **2026-07-05b** — from-value HTML block (`@details <span>` / `<!-- note`, all conditions; tag closes empty + sibling node with marker-less first line; formatter next-line normalization). 362→364.
 - **2026-07-05** — HTML block condition 7 (standalone complete tag on its own line → blank-terminated block; builder-structural `is_md_html_block7_line`, positional can't-interrupt gate, `<pre/>` cond-1 bug fix, formatter `is_md_standalone_html_tag` fresh-position guard). 360→362.
 - **2026-07-04b** — inline raw-HTML comment/PI/declaration/CDATA (`RoxygenMdHtml` leaves, `\if{html}{\out{…}}`; block cond 5 `CDATA` case-insensitive, cond 4 uppercase-only) + the conds-1–6 reflow line-start guard (`is_unsafe_line_start` → `starts_md_html_block`). 358→360.
 

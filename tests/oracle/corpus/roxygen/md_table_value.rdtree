@@ -1,0 +1,3 @@
+(\description (TEXT "GFM table from a tag's same-line value"))
+(\details (\tabular (TEXT "lc") (GRP (TEXT "a") (\tab) (TEXT "b") (\cr) (TEXT "1") (\tab) (TEXT "2") (\cr))))
+(\title (TEXT "GFM table from a tag's same-line value"))

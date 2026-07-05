@@ -1,0 +1,41 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+#' @md
+#' @details
+#' # Big Title
+#' body text
+#' @name a
+NULL
+
+#' @md
+#' @details
+#' ```r
+#' f(1)
+#' ```
+#' @name b
+NULL
+
+#' @md
+#' @details
+#'      x
+#'      y
+#' @name c
+NULL
+
+#' @md
+#' @details
+#' | a | b |
+#' | --- | :-: |
+#' | 1 | 2 |
+#' @name d
+NULL
+
+#' @md
+#' @details
+#' - item one
+#'   - nested
+#' - item two
+#' @name e
+NULL

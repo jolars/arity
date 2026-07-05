@@ -343,7 +343,7 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     let description = match intro_desc {
         Some(d) => Some(d),
         None if has_explicit_desc => None, // emitted by the tag loop below
-        None => intro_title.clone().or(explicit_title_body),
+        None => intro_title.clone().or_else(|| explicit_title_body.clone()),
     };
     if let Some(description) = description {
         emit_section_with_headings(out, "description", &description, md, true);
@@ -365,6 +365,19 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             continue;
         }
         project_tag_section(name, body, out, md);
+    }
+
+    // roxygen2's `topics_add_default_description` runs *after* the roclet has
+    // processed every tag, so an explicit `@description` whose content hoisted
+    // entirely into top-level `\section`s (a leading `# heading`, line-start or
+    // as the tag's same-line value) leaves the topic without a `\description`
+    // and the title fallback re-fires. A *dropped* description (`rdComplete`)
+    // still emits an empty `(\description)` atom — the section object exists —
+    // so it correctly suppresses the fallback here.
+    if !out.iter().any(|s| s.starts_with("(\\description"))
+        && let Some(title) = intro_title.as_ref().or(explicit_title_body.as_ref())
+    {
+        emit_section_with_headings(out, "description", title, md, true);
     }
 
     // The aggregated `@slot`/`@field` sections (roxygen2's Slots/Fields).
@@ -712,7 +725,17 @@ fn parse_md_heading(node: &SyntaxNode) -> (usize, String) {
             .join(" ");
         return (level, title);
     }
-    let line = strip_marker(&text).trim_start();
+    // An ATX heading opening as a tag's same-line value has a marker-less line
+    // (the `#'` belongs to the enclosing tag): drop only the single separator
+    // space — `strip_marker` would eat the heading's own `#` run.
+    let from_value = node
+        .first_token()
+        .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);
+    let line = if from_value {
+        text.strip_prefix([' ', '\t']).unwrap_or(&text).trim_start()
+    } else {
+        strip_marker(&text).trim_start()
+    };
     let level = line.bytes().take_while(|&b| b == b'#').count().clamp(1, 6);
     let rest = line.get(level..).unwrap_or("").trim();
     (level, strip_atx_closing(rest).to_string())
@@ -3893,11 +3916,22 @@ fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
 /// `xml_text`) and split into one `VERB` per line by `parse_Rd`.
 fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
     let text = node.text().to_string();
+    // A block opening as a tag's same-line value (`@details      x`) has a
+    // marker-less first line (the `#'` belongs to the enclosing tag): roxygen2
+    // strips only the single separator space there — `strip_marker` would trim
+    // the whole run, eating the code's semantic indent.
+    let from_value = node
+        .first_token()
+        .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);
     let mut code = String::new();
-    for line in text.split('\n') {
+    for (idx, line) in text.split('\n').enumerate() {
         // `strip_marker` removes the `#'` marker and the single conventional space;
         // the indented code block then consumes up to four further leading columns.
-        let after_marker = strip_marker(line);
+        let after_marker = if idx == 0 && from_value {
+            line.strip_prefix([' ', '\t']).unwrap_or(line)
+        } else {
+            strip_marker(line)
+        };
         let content = after_marker
             .char_indices()
             .take(4)
@@ -4038,7 +4072,17 @@ impl TableAlign {
 /// count, matching cmark-gfm's ragged-row handling.
 fn serialize_md_table(node: &SyntaxNode) -> String {
     let text = node.text().to_string();
-    let lines: Vec<&str> = text.split('\n').map(strip_marker).collect();
+    // A table whose header row opened as a tag's same-line value has a
+    // marker-less first line (the `#'` belongs to the enclosing tag): drop only
+    // the single separator space there (`strip_marker` would eat a leading `#`
+    // in the header's first cell).
+    let from_value = node
+        .first_token()
+        .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);
+    let mut lines: Vec<&str> = text.split('\n').map(strip_marker).collect();
+    if from_value && let Some(first) = text.split('\n').next() {
+        lines[0] = first.strip_prefix([' ', '\t']).unwrap_or(first);
+    }
     // The header is the first line and the delimiter the second; body rows follow.
     // The gate guarantees both exist, but stay defensive against a malformed node.
     if lines.len() < 2 {

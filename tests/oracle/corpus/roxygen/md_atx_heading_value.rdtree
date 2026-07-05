@@ -1,0 +1,4 @@
+(\description (TEXT "ATX heading from a tag's same-line value"))
+(\details (\subsection (TEXT "Sub") (TEXT "subsection body")))
+(\section (TEXT "Top") (TEXT "body after the heading"))
+(\title (TEXT "ATX heading from a tag's same-line value"))

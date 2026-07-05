@@ -499,6 +499,62 @@ pub(super) fn emit_md_table(tokens: &[Token], start: usize, events: &mut Vec<Eve
         i += 1;
     }
 
+    finish_md_table(tokens, i, events)
+}
+
+/// Whether a prose tag's same-line value opens a **GFM table** as its header row:
+/// the immediately-following line's content is a `RoxygenMdTableDelim` leaf with
+/// the same cell count as the value (the from-value analog of
+/// [`is_md_table_start`] — the header is generic prose, so the mode signal is the
+/// delimiter leaf on the next line). The value's raw text is reconstructed from
+/// its tokens (inline spans are separate tokens, as in [`line_raw_content`]).
+pub(super) fn is_md_table_value(tokens: &[Token], value_start: usize) -> bool {
+    let mut header = String::new();
+    let mut i = value_start;
+    while let Some(tok) = tokens.get(i) {
+        if !is_line_body_kind(&tok.kind) {
+            break;
+        }
+        header.push_str(&tok.text);
+        i += 1;
+    }
+    let Some(delim_marker) = following_line_marker(tokens, i) else {
+        return false;
+    };
+    let delim_content = line_content_start(tokens, delim_marker);
+    if tokens.get(delim_content).map(|t| &t.kind) != Some(&TokKind::RoxygenMdTableDelim) {
+        return false;
+    }
+    let delim = &tokens[delim_content].text;
+    super::count_table_cells(&header) == super::count_table_cells(delim)
+}
+
+/// Emit a `ROXYGEN_MD_TABLE` node for a table whose header row is a **tag's
+/// same-line value** (`#' @details | a | b |`): the first line has no `#'`
+/// marker of its own (that marker belongs to the enclosing tag, already emitted
+/// and closed), so it starts at `ws_start` — the whitespace between the tag head
+/// and the header content. The delimiter and body rows gather exactly as in
+/// [`emit_md_table`]. Returns the token index just past the last consumed row.
+pub(super) fn emit_md_table_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_TABLE));
+    // First (marker-less) header line: the leading whitespace and the row content.
+    let mut i = ws_start;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    finish_md_table(tokens, i, events)
+}
+
+/// Gather a table's delimiter and body rows after its header line, then finish
+/// the `ROXYGEN_MD_TABLE` node. `i` is at the header line's trailing `Newline`.
+/// Shared by the line-start ([`emit_md_table`]) and tag-value
+/// ([`emit_md_table_from_value`]) forms.
+fn finish_md_table(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
     // Following lines: the delimiter row (guaranteed to be the first one by the
     // gate) and any body rows. Stop at a blank line, a tag, a new block, or EOF.
     while let Some(m) = following_line_marker(tokens, i) {
@@ -528,7 +584,42 @@ pub(super) fn emit_md_table(tokens: &[Token], start: usize, events: &mut Vec<Eve
 /// to the caller. Returns the token index just past the last consumed content.
 pub(super) fn emit_md_list(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
-    emit_md_list_level(tokens, start, list_line_indent(tokens, start), events)
+    emit_md_list_level_inner(tokens, start, true, list_line_indent(tokens, start), events)
+}
+
+/// Emit a `ROXYGEN_MD_LIST` node for a list whose first item is a **tag's
+/// same-line value** (`#' @details - item`): the first item line has no `#'`
+/// marker of its own (that marker belongs to the enclosing tag, already emitted
+/// and closed), so it starts at `ws_start` — the whitespace between the tag head
+/// and the item's `RoxygenMdListMarker` leaf. That whitespace has the same
+/// one-based indent semantics as a line-start item's marker→content whitespace
+/// (roxygen2 strips the tag head plus one separator space, exactly as it strips
+/// `#'` plus one space), so nesting and sibling decisions for the following
+/// `#'` list lines work unchanged. Returns the token index just past the last
+/// consumed item content.
+pub(super) fn emit_md_list_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    let mut indent = 0;
+    let mut k = ws_start;
+    while tokens.get(k).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+        indent += tokens[k].text.chars().count();
+        k += 1;
+    }
+    emit_md_list_level_inner(tokens, ws_start, false, indent, events)
+}
+
+/// Recursion entry for nested list levels (each starts at a line's
+/// `RoxygenMarker`).
+fn emit_md_list_level(
+    tokens: &[Token],
+    start: usize,
+    list_indent: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    emit_md_list_level_inner(tokens, start, true, list_indent, events)
 }
 
 /// Emit one `ROXYGEN_MD_LIST` whose item markers sit at indentation
@@ -537,20 +628,27 @@ pub(super) fn emit_md_list(tokens: &[Token], start: usize, events: &mut Vec<Even
 /// the `#'` markers, marker→content whitespace, and inter-line
 /// newlines/indentation are threaded in as trivia (losslessness), the way the
 /// block Rd macros thread them. Recurses for nested levels.
-fn emit_md_list_level(
+fn emit_md_list_level_inner(
     tokens: &[Token],
     start: usize,
+    first_has_marker: bool,
     list_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST));
 
     let mut i = start;
+    let mut has_marker = first_has_marker;
     loop {
-        // `i` is at a `RoxygenMarker` of a list-item line at this level. The
-        // marker and the marker→content whitespace are threaded as trivia.
-        events.push(Event::Tok(i));
-        i += 1;
+        // `i` is at a `RoxygenMarker` of a list-item line at this level (or, for
+        // a marker-less tag-value first item, directly at its leading
+        // whitespace). The marker and the marker→content whitespace are threaded
+        // as trivia.
+        if has_marker {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+        has_marker = true;
         let mut indent = 0;
         while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
             indent += tokens[i].text.chars().count();
@@ -673,6 +771,53 @@ pub(super) fn emit_md_indented_code(
         i += 1;
     }
 
+    finish_md_indented_code(tokens, i, events)
+}
+
+/// Whether a prose tag's same-line value opens a markdown **indented code
+/// block**: the block is `@md` (threaded from the block builder — indented code
+/// has no mode-carrying leaf), and the whitespace run between the tag head and
+/// the value is five or more all-space columns (roxygen2 strips only the single
+/// separator space after the tag head, so four further columns reach CommonMark's
+/// indented-code threshold — the from-value analog of [`is_indent_code_line`]).
+/// The value position is always a fresh block position (the tag's markdown
+/// document starts there), so no paragraph gate applies.
+pub(super) fn is_md_indented_code_value(tokens: &[Token], value_start: usize, md: bool) -> bool {
+    if !md || value_start == 0 {
+        return false;
+    }
+    let ws = &tokens[value_start - 1];
+    ws.kind == TokKind::Whitespace && ws.text.len() >= 5 && ws.text.bytes().all(|b| b == b' ')
+}
+
+/// Emit a `ROXYGEN_MD_INDENTED_CODE` node for an indented code block opening as a
+/// **tag's same-line value** (`#' @details      x`): the first line has no `#'`
+/// marker of its own (that marker belongs to the enclosing tag, already emitted
+/// and closed), so it starts at `ws_start` — the >= 5-column whitespace between
+/// the tag head and the value. The following lines gather exactly as in
+/// [`emit_md_indented_code`]. Returns the token index just past the last code
+/// line.
+pub(super) fn emit_md_indented_code_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_INDENTED_CODE));
+    // First (marker-less) line: the leading whitespace and the code content.
+    let mut i = ws_start;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    finish_md_indented_code(tokens, i, events)
+}
+
+/// Gather an indented code block's continuation lines (following code lines and
+/// interior blanks) after its opening line, then finish the
+/// `ROXYGEN_MD_INDENTED_CODE` node. `i` is at the opening line's trailing
+/// `Newline`. Shared by the line-start ([`emit_md_indented_code`]) and tag-value
+/// ([`emit_md_indented_code_from_value`]) forms.
+fn finish_md_indented_code(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
     loop {
         // `i` is at the trailing `Newline` of the last emitted code line. Scan
         // forward across zero or more blank lines to the next code line; a blank run
@@ -752,6 +897,37 @@ pub(super) fn emit_md_code_block(tokens: &[Token], start: usize, events: &mut Ve
         i += 1;
     }
 
+    finish_md_code_block(tokens, i, events)
+}
+
+/// Emit a `ROXYGEN_MD_CODE_BLOCK` node for a fenced code block opening as a
+/// **tag's same-line value** (`#' @details ```r`): the first line has no `#'`
+/// marker of its own (that marker belongs to the enclosing tag, already emitted
+/// and closed), so it starts at `ws_start` — the whitespace between the tag head
+/// and the opener fence leaf. The following lines gather exactly as in
+/// [`emit_md_code_block`]. Returns the token index just past the last consumed
+/// line's content.
+pub(super) fn emit_md_code_block_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_CODE_BLOCK));
+    // First (marker-less) line: the leading whitespace and the opener fence.
+    let mut i = ws_start;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    finish_md_code_block(tokens, i, events)
+}
+
+/// Gather a fenced code block's lines (after its opening line) up to and
+/// including the closing fence, then finish the `ROXYGEN_MD_CODE_BLOCK` node.
+/// `i` is at the opening line's trailing `Newline`. Shared by the line-start
+/// ([`emit_md_code_block`]) and tag-value ([`emit_md_code_block_from_value`])
+/// forms.
+fn finish_md_code_block(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
     loop {
         // Line boundary: fold a continuation (`\n`, indentation, `#'`) into the
         // node unless the next line is not a roxygen line or is a tag opener
@@ -1094,6 +1270,27 @@ pub(super) fn emit_md_heading(tokens: &[Token], start: usize, events: &mut Vec<E
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HEADING));
     events.push(Event::Tok(start));
     let mut i = start + 1;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    events.push(Event::Finish); // ROXYGEN_MD_HEADING
+    i
+}
+
+/// Emit a single-line `ROXYGEN_MD_HEADING` node for an ATX heading opening as a
+/// **tag's same-line value** (`#' @details # Title`): the line has no `#'`
+/// marker of its own (that marker belongs to the enclosing tag, already emitted
+/// and closed), so it starts at `ws_start` — the whitespace between the tag head
+/// and the `RoxygenMdHeading` leaf. Returns the token index just past the
+/// heading content.
+pub(super) fn emit_md_heading_from_value(
+    tokens: &[Token],
+    ws_start: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HEADING));
+    let mut i = ws_start;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         events.push(Event::Tok(i));
         i += 1;
