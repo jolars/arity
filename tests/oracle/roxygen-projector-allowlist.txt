@@ -371,3 +371,5 @@ md_html_verbatim_oneline
 md_html_conditions
 md_html_inline_forms
 md_html_block_case
+md_html_cond7
+md_html_cond7_edges

@@ -1,0 +1,14 @@
+#' Title
+#'
+#' @md
+#' @details
+#' <span>
+#'    kept   verbatim,   never reflowed
+#'
+#' <span> aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#' bb
+#'
+#' mid-paragraph the tag may land on a wrapped line start safely <span> because
+#' condition seven cannot interrupt an open paragraph at all zzzzzzzzz yyyyyyyy
+#' @name a
+NULL

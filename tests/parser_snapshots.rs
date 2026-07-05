@@ -211,6 +211,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_html_block_case",
         "roxygen_md_html_verbatim",
         "roxygen_md_html_conditions",
+        "roxygen_md_html_cond7",
         "roxygen_md_list",
         "roxygen_md_empty_list_item",
         "roxygen_md_nested_list",

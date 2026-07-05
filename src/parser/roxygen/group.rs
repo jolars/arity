@@ -11,7 +11,7 @@ use super::build::{
     emit_md_code_block, emit_md_heading, emit_md_html_block, emit_md_indented_code, emit_md_list,
     emit_md_setext_heading, emit_md_table, emit_md_thematic_break, is_block_macro_line,
     is_block_macro_opener, is_md_block_quote_start, is_md_code_block_start, is_md_heading_start,
-    is_md_html_block_start, is_md_indented_code_start, is_md_list_start,
+    is_md_html_block_start, is_md_html_block7_line, is_md_indented_code_start, is_md_list_start,
     is_md_setext_heading_start, is_md_setext_underline_line, is_md_setext_underline_or_dash,
     is_md_table_start, is_md_thematic_break_line,
 };
@@ -146,6 +146,13 @@ fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Ev
                             events.push(Event::Finish); // ROXYGEN_PARAGRAPH
                             para_open = false;
                         }
+                        i = emit_md_html_block(tokens, i, events);
+                    } else if !para_open && is_md_html_block7_line(tokens, i) {
+                        // A complete standalone tag (HTML block start condition 7,
+                        // `@md` mode) opens a blank-line-terminated HTML block — but
+                        // only at a fresh position: condition 7 cannot interrupt a
+                        // paragraph, so mid-paragraph the line falls through and
+                        // folds in as ordinary prose (a lazy continuation).
                         i = emit_md_html_block(tokens, i, events);
                     } else if is_md_block_quote_start(tokens, i) {
                         // A markdown block quote (`> quoted`, `@md` mode) is a direct

@@ -38,7 +38,7 @@ use super::core::format_with_style;
 use super::ir::Ir;
 use super::style::FormatStyle;
 use crate::ast::{AstNode, RoxygenBlock, RoxygenTag};
-use crate::parser::roxygen::starts_md_html_block;
+use crate::parser::roxygen::{is_md_standalone_html_tag, starts_md_html_block};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// One physical `#'` line, reconstructed from the logical CST for layout.
@@ -1065,11 +1065,16 @@ fn wrap_chunks_hanging(chunks: &[String], first_budget: usize, cont_budget: usiz
         let w = chunk.chars().count();
         if cur.is_empty() {
             // The first prose chunk does not fit beside the header: leave line 1
-            // header-only and start it on a continuation line.
+            // header-only and start it on a continuation line — unless the chunk
+            // is a complete standalone tag, which alone on the line directly
+            // after a bare `@tag` header would reparse as an HTML block
+            // (CommonMark condition 7); keep it beside the header, accepting
+            // overflow.
             if lines.is_empty()
                 && budget == first_budget
                 && w > first_budget
                 && first_budget < cont_budget
+                && !is_md_standalone_html_tag(chunk)
             {
                 lines.push(String::new());
                 budget = cont_budget;
@@ -1106,7 +1111,14 @@ fn wrap_chunks(chunks: &[String], budget: usize) -> Vec<String> {
         if cur.is_empty() {
             cur.push_str(chunk);
             cur_w = w;
-        } else if cur_w + 1 + w <= budget || is_unsafe_line_start(chunk) {
+        } else if cur_w + 1 + w <= budget
+            || is_unsafe_line_start(chunk)
+            // Never end the paragraph's FIRST line as a complete standalone tag:
+            // at a fresh position that line reparses as an HTML block (CommonMark
+            // condition 7). Later lines are safe — condition 7 cannot interrupt
+            // the then-open paragraph.
+            || (lines.is_empty() && is_md_standalone_html_tag(&cur))
+        {
             // Fits, or must not break here: breaking would drop an unsafe marker
             // onto a line start, where it could reparse as a block construct
             // (breaking idempotence). Keep it inline, accepting overflow.

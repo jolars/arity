@@ -324,6 +324,11 @@ fn line_raw_content(tokens: &[Token], marker: usize) -> String {
 fn is_table_row_line(tokens: &[Token], marker: usize) -> bool {
     matches!(classify_line(tokens, marker), LineKind::Prose)
         && !is_md_html_block_start(tokens, marker)
+        // A standalone-tag line (HTML block condition 7) ends the table too: a
+        // table is not a paragraph, so condition 7 opens a block after it
+        // (engine-probed: a `<span>` line after a body row starts an HTML block,
+        // not a single-cell row).
+        && !is_md_html_block7_line(tokens, marker)
         && !is_md_code_block_start(tokens, marker)
         && !is_md_list_start(tokens, marker, false)
         && !is_block_macro_line(tokens, marker)
@@ -383,7 +388,14 @@ pub(super) fn emit_md_block_quote(
         if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
             break;
         }
-        if !is_md_block_quote_start(tokens, m) && !super::group::is_foldable_continuation(tokens, m)
+        if !is_md_block_quote_start(tokens, m)
+            && (!super::group::is_foldable_continuation(tokens, m)
+                // A standalone-tag line (HTML block condition 7) is NOT a lazy
+                // continuation here: the container match already failed at the
+                // missing `>`, so the quote's open paragraph is never reached and
+                // condition 7 opens a block (engine-probed: `> quoted` then
+                // `<span>` renders the tag as an HTML block, not quote text).
+                || is_md_html_block7_line(tokens, m))
         {
             break; // a blank line, tag, or new-block line ends the quote
         }
@@ -791,11 +803,54 @@ pub(super) fn is_md_html_block_start(tokens: &[Token], start: usize) -> bool {
     tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdHtmlBlock)
 }
 
+/// Whether the roxygen line whose marker is at `start` is a CommonMark **HTML
+/// block start condition 7** line: a complete standalone tag — its content is
+/// exactly one inline `RoxygenMdHtml` *tag* leaf (open, closing, or self-closing
+/// form) followed by nothing but whitespace. The leaf is carved only under a
+/// resolved `@md` mode, so its presence is the single mode signal.
+///
+/// Conditions 1–6 claim their openers in the lexer at line-content start (a
+/// `RoxygenMdHtmlBlock` leaf), so a content-start inline-HTML *tag* leaf is
+/// exactly the condition-7 candidate set — the engine applies no tag-name
+/// exclusion to the closing/self-closing forms (`</pre>` and `<pre/>` both
+/// open). A content-start `RoxygenMdHtml` leaf is always a tag (the block
+/// scanner claims the comment/PI/CDATA/declaration forms first), but the tag
+/// shape is checked explicitly to keep the invariant local.
+///
+/// Condition 7 **cannot interrupt a paragraph** — callers gate on the open
+/// paragraph. In the engine the gate is positional (cmark blocks condition 7
+/// only when the deepest *matched* container is an open paragraph), so a
+/// standalone-tag line directly continuing a paragraph folds as a lazy
+/// continuation, while the same line after a block-quote or list line — where
+/// the container match already failed — opens a block.
+pub(super) fn is_md_html_block7_line(tokens: &[Token], start: usize) -> bool {
+    let content = line_content_start(tokens, start);
+    let Some(tok) = tokens.get(content) else {
+        return false;
+    };
+    if tok.kind != TokKind::RoxygenMdHtml {
+        return false;
+    }
+    let bytes = tok.text.as_bytes();
+    if bytes.first() != Some(&b'<')
+        || !bytes
+            .get(1)
+            .is_some_and(|&b| b == b'/' || b.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    tokens[content + 1..]
+        .iter()
+        .take_while(|t| is_line_body_kind(&t.kind))
+        .all(|t| t.kind == TokKind::Whitespace)
+}
+
 /// Whether an HTML-block opener's line content begins (case-insensitively) with a
 /// CommonMark **condition 1** verbatim tag (`<pre`/`<script`/`<style`/`<textarea`)
-/// followed by a boundary (whitespace, `>`, `/`, or the end of the line). Mirrors
-/// the lexer's [`super::lex::scan_md_html_block`] verbatim branch; the opener leaf
-/// starts at the tag (leading marker→content whitespace is stripped by
+/// followed by a boundary (whitespace, `>`, or the end of the line — **not** `/`:
+/// a self-closing `<pre/>` is condition 7, blank-terminated, engine-probed).
+/// Mirrors the lexer's [`super::lex::scan_md_html_block`] verbatim branch; the
+/// opener leaf starts at the tag (leading marker→content whitespace is stripped by
 /// [`line_raw_content`]).
 fn is_html_verbatim_opener(content: &str) -> bool {
     let lower = content.to_ascii_lowercase();
@@ -803,7 +858,7 @@ fn is_html_verbatim_opener(content: &str) -> bool {
         lower
             .strip_prefix('<')
             .and_then(|rest| rest.strip_prefix(tag))
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t', '>', '/']))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t', '>']))
     })
 }
 
@@ -843,7 +898,8 @@ fn html_line_contains_closer(content: &str, closers: &[&str]) -> bool {
 }
 
 /// Emit a `ROXYGEN_MD_HTML_BLOCK` node spanning the markdown HTML block beginning
-/// at `start` (a `RoxygenMarker` whose content is a `RoxygenMdHtmlBlock` opener).
+/// at `start` (a `RoxygenMarker` whose content is a `RoxygenMdHtmlBlock` opener,
+/// or a standalone inline-tag line for condition 7 — [`is_md_html_block7_line`]).
 /// The `#'` markers, the marker→content whitespace, and the inter-line newlines/
 /// indentation are threaded in as trivia at the block level, the way the fenced
 /// code block threads them. The trailing newline after the last consumed line is
@@ -858,8 +914,9 @@ fn html_line_contains_closer(content: &str, closers: &[&str]) -> bool {
 ///   `-->` / `?>` / `>` / `]]>`, case-insensitive, inclusive) — through blank
 ///   lines. A new tag (section boundary) or a non-roxygen line/EOF also ends it. If
 ///   the opener line already contains the closer, the block is that single line.
-/// * **Condition 6** (block-level tag): the block runs to the next **blank line**;
-///   a tag opener or a non-roxygen line also ends it.
+/// * **Conditions 6 and 7** (block-level tag / standalone complete tag —
+///   [`html_block_closers`] returns `None` for both): the block runs to the next
+///   **blank line**; a tag opener or a non-roxygen line also ends it.
 pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HTML_BLOCK));

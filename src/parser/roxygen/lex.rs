@@ -1251,6 +1251,18 @@ pub(crate) fn starts_md_html_block(text: &str) -> bool {
     scan_md_html_block(text.as_bytes(), 0).is_some()
 }
 
+/// Whether `text` is a complete standalone HTML tag — one open/closing/
+/// self-closing tag followed by nothing but spaces or tabs. Placed alone at a
+/// markdown line's content start at a fresh (non-paragraph) position, such a
+/// line opens an HTML block (CommonMark start condition 7, blank-terminated).
+/// Condition 7 cannot *interrupt* a paragraph, so mid-paragraph line starts are
+/// safe — the formatter guards only a paragraph's **first** line with this.
+pub(crate) fn is_md_standalone_html_tag(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    scan_md_html_inline_tag(bytes, 0)
+        .is_some_and(|end| bytes[end..].iter().all(|&b| b == b' ' || b == b'\t'))
+}
+
 /// Whether `rest` begins with a CDATA opener `<![CDATA[`. The `CDATA` keyword
 /// is **case-insensitive** (cmark's scanner spells it as a re2c case-insensitive
 /// literal), so `<![cdata[` opens too — both inline and at block level
@@ -1332,8 +1344,11 @@ fn scan_md_html_inline_tag(bytes: &[u8], i: usize) -> Option<usize> {
 /// * **Condition 5** — a line beginning `<![CDATA[` (the keyword is
 ///   case-insensitive).
 ///
-/// Condition 7 (a complete tag alone on a line) is faithful under-handling: that
-/// form stays literal prose or inline HTML (backlog).
+/// Condition 7 (a complete tag alone on a line) is **not** carved here: its
+/// opener lexes as an ordinary inline `RoxygenMdHtml` tag leaf, and the block
+/// builder recognizes the standalone-tag line structurally
+/// ([`super::build::is_md_html_block7_line`]) — condition 7 cannot interrupt a
+/// paragraph, so the decision needs the paragraph state only the builder has.
 fn scan_md_html_block(bytes: &[u8], i: usize) -> Option<usize> {
     if bytes.get(i) != Some(&b'<') {
         return None;

@@ -1,0 +1,3 @@
+(\description (TEXT "Standalone-tag HTML blocks"))
+(\details (\if (TEXT "html") (\out (VERB "\n") (VERB "<span>\n") (VERB "gathered until blank\n"))) (TEXT "after the block") (\if (TEXT "html") (\out (VERB "\n") (VERB "</span>\n") (VERB "closing form opens too\n"))) (\if (TEXT "html") (\out (VERB "\n") (VERB "<pre/>\n") (VERB "self-closing verbatim name is condition 7, not 1\n"))) (TEXT "prose paragraph") (\if (TEXT "html") (\out (VERB "<span>"))) (TEXT "folds as a lazy continuation") (\if (TEXT "html") (\out (VERB "<span>"))) (TEXT "trailing text disqualifies the line"))
+(\title (TEXT "Standalone-tag HTML blocks"))
