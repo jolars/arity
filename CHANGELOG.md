@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0](https://github.com/jolars/arity/compare/v0.9.0...v0.10.0) (2026-07-05)
+
+### Features
+- **parser:** markdown block starts from same-line tag value ([`62e976c`](https://github.com/jolars/arity/commit/62e976cce1f771262a2eccbf45b4491875347c7f))
+- **parser:** markdown HTML block from same-line tag value ([`f343419`](https://github.com/jolars/arity/commit/f34341964e3bf8a28e53a2bd3655cd8b3291b19d))
+- **parser:** markdown HTML block condition 7 ([`1d6c837`](https://github.com/jolars/arity/commit/1d6c83728add061538a25156768769412612c6c7))
+- **parser:** inline markdown HTML comment, PI, decl, CDATA ([`b1b08b9`](https://github.com/jolars/arity/commit/b1b08b91afd57755f29fc3f3f46088a56e9e1b2e))
+- **parser:** markdown HTML block conditions 2-5 under @md ([`04819f4`](https://github.com/jolars/arity/commit/04819f4e74e21e86c08ec91c66b55ce1def00514))
+
+### Bug Fixes
+- **formatter:** break associative binary chains uniformly ([`2c32f0a`](https://github.com/jolars/arity/commit/2c32f0afa21e615c0080d5f9f1d7a91252e5692c))
+- **lint:** sort rendered diagnostics by source offset ([`950d223`](https://github.com/jolars/arity/commit/950d2237cac77e1000d0244a0f74049bf7243fba))
+- **lint:** surface parse errors instead of swallowing them ([`9afb39f`](https://github.com/jolars/arity/commit/9afb39ffc4f655696febddf9621bbbb8e96dc00d))
+
 ## [0.9.0](https://github.com/jolars/arity/compare/v0.8.0...v0.9.0) (2026-07-04)
 
 ### Features
