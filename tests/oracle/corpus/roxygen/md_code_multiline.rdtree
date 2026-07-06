@@ -1,0 +1,3 @@
+(\description (TEXT "Multi-line code spans"))
+(\details (TEXT "a") (\verb (VERB "code span")) (TEXT "b") (\emph (TEXT "em") (\code (RCODE "foo(1, 2)")) (TEXT "end")) (TEXT "a") (\verb (VERB "open b")) (TEXT "and") (\code (RCODE "closed")) (TEXT "u ` open no closer") (\emph (TEXT "em")) (TEXT "a") (\verb (VERB "x `y` z")) (TEXT "b a") (\verb (VERB "pad ded")) (TEXT "b a") (\verb (VERB "x <!-- y z")) (TEXT "w -->"))
+(\title (TEXT "Multi-line code spans"))

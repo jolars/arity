@@ -1,0 +1,3 @@
+(\description (TEXT "Same-line tag value opens a multi-line code span"))
+(\details (TEXT "start") (\verb (VERB "code span")) (TEXT "end"))
+(\title (TEXT "Same-line tag value opens a multi-line code span"))

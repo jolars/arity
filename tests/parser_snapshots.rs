@@ -208,6 +208,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_html_inline",
         "roxygen_md_html_inline_forms",
         "roxygen_md_html_inline_multiline",
+        "roxygen_md_code_multiline",
         "roxygen_md_html_block",
         "roxygen_md_html_block_case",
         "roxygen_md_html_verbatim",

@@ -472,11 +472,11 @@ fn collect_logical_elements(
             // *single-line* span (no marker) stays atomic, so `*foo*` and a
             // one-line `[text](url)` each glue as one chunk.
             //
-            // A cross-line raw-HTML span (`ROXYGEN_MD_HTML` node) descends too so
-            // the physical lines re-form — but unlike emphasis its soft breaks are
-            // **verbatim** `\out` content, so the paragraph carrying one bails
-            // reflow entirely ([`line_has_cross_line_md_html`]) instead of
-            // rejoining.
+            // A cross-line raw-HTML span (`ROXYGEN_MD_HTML` node) or code span
+            // (`ROXYGEN_MD_CODE` node) descends too so the physical lines
+            // re-form — but unlike emphasis the paragraph carrying one bails
+            // reflow entirely ([`line_has_cross_line_verbatim_span`]) instead
+            // of rejoining.
             NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
                 collect_logical_elements(&n, out);
             }
@@ -485,11 +485,12 @@ fn collect_logical_elements(
     }
 }
 
-/// Whether `node` is a resolved inline span (emphasis/strong, an inline link, or
-/// a raw-HTML span) the inline pass carried across a soft line break — it threads
-/// one or more `#'` markers as inter-line trivia. A single-line span never
-/// contains a marker, so its presence distinguishes the reflow-across-lines case
-/// from an atomic inline span (mirrors [`is_block_macro`]).
+/// Whether `node` is a resolved inline span (emphasis/strong, an inline link, a
+/// raw-HTML span, or a code span) the inline pass carried across a soft line
+/// break — it threads one or more `#'` markers as inter-line trivia. A
+/// single-line span never contains a marker, so its presence distinguishes the
+/// reflow-across-lines case from an atomic inline span (mirrors
+/// [`is_block_macro`]).
 fn is_cross_line_inline(node: &SyntaxNode) -> bool {
     matches!(
         node.kind(),
@@ -497,29 +498,41 @@ fn is_cross_line_inline(node: &SyntaxNode) -> bool {
             | SyntaxKind::ROXYGEN_MD_STRONG
             | SyntaxKind::ROXYGEN_MD_LINK
             | SyntaxKind::ROXYGEN_MD_HTML
+            | SyntaxKind::ROXYGEN_MD_CODE
     ) && node
         .descendants_with_tokens()
         .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
 }
 
+/// The cross-line node kinds whose paragraph bails reflow (see
+/// [`line_has_cross_line_verbatim_span`]).
+fn is_verbatim_span_kind(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::ROXYGEN_MD_HTML | SyntaxKind::ROXYGEN_MD_CODE
+    )
+}
+
 /// Whether `line` touches a cross-line raw-HTML span (a `ROXYGEN_MD_HTML`
-/// **node**): either an element sits inside one ([`collect_logical_elements`]
-/// descends the node, so a covered line's elements are its children), or an
-/// atomic element — a folded `ROXYGEN_TAG` whose same-line value opened the
-/// span — carries one as a descendant. The span's soft breaks are verbatim
-/// `\out` content (roxygen2 renders one VERB per source line), so joining or
-/// re-wrapping the lines it touches would move a newline *inside* the rendered
-/// raw HTML — a change in the rendered Rd (Tenet 1). The paragraph, section, or
-/// tag unit carrying one is kept verbatim, marker-normalized. A *single-line*
-/// raw-HTML span is a leaf (its parent is the paragraph), so it never trips
-/// this.
-fn line_has_cross_line_md_html(line: &PhysicalLine) -> bool {
+/// **node**) or code span (a `ROXYGEN_MD_CODE` **node**): either an element
+/// sits inside one ([`collect_logical_elements`] descends the node, so a
+/// covered line's elements are its children), or an atomic element — a folded
+/// `ROXYGEN_TAG` whose same-line value opened the span — carries one as a
+/// descendant. An HTML span's soft breaks are verbatim `\out` content (roxygen2
+/// renders one VERB per source line), so joining or re-wrapping the lines it
+/// touches would move a newline *inside* the rendered raw HTML — a change in
+/// the rendered Rd (Tenet 1). A code span's soft break renders as a space, so a
+/// rejoin *would* preserve the Rd — but re-wrapping could land a backtick run
+/// at a line start where it reparses as a fence opener, so it takes the same
+/// conservative bail (upgrade = backlog). The paragraph, section, or tag unit
+/// carrying one is kept verbatim, marker-normalized. A *single-line* span is a
+/// leaf (its parent is the paragraph), so it never trips this.
+fn line_has_cross_line_verbatim_span(line: &PhysicalLine) -> bool {
     line.elements.iter().any(|el| {
-        el.parent()
-            .is_some_and(|p| p.kind() == SyntaxKind::ROXYGEN_MD_HTML)
+        el.parent().is_some_and(|p| is_verbatim_span_kind(p.kind()))
             || el.as_node().is_some_and(|n| {
                 n.descendants()
-                    .any(|d| d.kind() == SyntaxKind::ROXYGEN_MD_HTML && is_cross_line_inline(&d))
+                    .any(|d| is_verbatim_span_kind(d.kind()) && is_cross_line_inline(&d))
             })
     })
 }
@@ -858,7 +871,7 @@ impl TagUnit {
             || (md
                 && (self.first_is_linkref_def
                     || self.lines.iter().any(line_has_md_percent_swallow)
-                    || self.lines.iter().any(line_has_cross_line_md_html)))
+                    || self.lines.iter().any(line_has_cross_line_verbatim_span)))
         {
             for (i, line) in self.lines.iter().enumerate() {
                 if i == 0
@@ -912,7 +925,7 @@ fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> boo
     if md {
         text_is_linkref_def(first_text)
             || lines.iter().any(line_has_md_percent_swallow)
-            || lines.iter().any(line_has_cross_line_md_html)
+            || lines.iter().any(line_has_cross_line_verbatim_span)
     } else {
         lines.iter().any(line_has_live_rd_comment)
     }

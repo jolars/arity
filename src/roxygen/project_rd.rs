@@ -3289,6 +3289,14 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_HTML => {
             out.push(Inline::MdHtml(md_html_node_text(&n)));
         }
+        // A **multi-line** code span — a `ROXYGEN_MD_CODE` *node* the inline
+        // pass resolved across soft breaks. Same cmark-visible walk, then the
+        // ordinary code-span strip: [`strip_code_span`] converts the interior
+        // line endings to spaces (CommonMark: a code span's line endings are
+        // treated like spaces) before its single-space trim.
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_CODE => {
+            out.push(Inline::MdCode(strip_code_span(&md_html_node_text(&n))));
+        }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
         // Markdown inline leaves (emitted only under `@md`): carve off their
         // delimiters and carry the inner content; the kind chooses the Rd macro.

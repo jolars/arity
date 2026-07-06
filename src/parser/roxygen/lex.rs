@@ -761,7 +761,7 @@ fn lex_roxygen_prose(
 }
 
 /// Count the run of consecutive `c` bytes starting at `i`.
-fn run_len(bytes: &[u8], i: usize, c: u8) -> usize {
+pub(super) fn run_len(bytes: &[u8], i: usize, c: u8) -> usize {
     let mut j = i;
     while j < bytes.len() && bytes[j] == c {
         j += 1;
@@ -772,7 +772,7 @@ fn run_len(bytes: &[u8], i: usize, c: u8) -> usize {
 /// A CommonMark inline-code span at `bytes[i] == b'`'`: an opening backtick run
 /// of length `n`, closed by the next run of *exactly* `n` backticks on the line.
 /// Returns the index past the closing run, or `None` if unterminated.
-fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
+pub(super) fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
     let n = run_len(bytes, i, b'`');
     let mut j = i + n;
     while j < bytes.len() {
