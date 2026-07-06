@@ -1,0 +1,3 @@
+(\description (TEXT "Loose-list edges"))
+(\details (\itemize (\item) (TEXT "a")) (\itemize (\item) (TEXT "star splits")) (\enumerate (\item) (TEXT "one")) (\enumerate (\item) (TEXT "paren splits")) (TEXT "Prose separator.") (\itemize (\item) (TEXT "x") (\itemize (\item) (TEXT "deep after blank")) (\item) (TEXT "y")) (TEXT "ends here"))
+(\title (TEXT "Loose-list edges"))

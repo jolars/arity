@@ -1,0 +1,4 @@
+(\description (TEXT "Loose lists merge across blank lines"))
+(\details (\itemize (\item) (TEXT "a") (\item) (TEXT "b") (\item) (TEXT "c after two blanks")) (TEXT "Prose separator.") (\enumerate (\item) (TEXT "one") (\item) (TEXT "five")))
+(\note (\itemize (\item) (TEXT "value a") (\item) (TEXT "value b")))
+(\title (TEXT "Loose lists merge across blank lines"))

@@ -381,9 +381,6 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   change (marker-less first line: `strip_marker` is a no-op, `block_quote_flat_text` handles it;
   the break node is dropped wholesale). Formatter: both emitters got the `is_from_value` →
   `push_value_opener_line(…, false)` branch.
-  **Backlog:** same-type lists separated by a blank line **merge** into one loose list per
-  cmark (`- a` ⏎ blank ⏎ `- b` → one `\itemize`; arity emits two — hit while authoring the
-  `md_list_lazy` corpus cases, dodged there with separator paragraphs/alternating types).
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): every form →
   `(\if (TEXT "html") (\out (VERB …)))`, all **line-scoped**. Dispatch on `bytes[i+1]`: `!` →
   comment/CDATA/declaration (`scan_md_html_inline_bang`), `?` → PI, else tag. **Probe the engine, not
@@ -479,6 +476,18 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   the `\item` via placeholder-escaping — arity ends the list, kept: needs block-macro-in-item
   machinery); the block-*quote* lazy gather still excludes setext (`> a` ⏎ `===` likely folds per
   cm-64 — unprobed).
+- **Blank lines don't end a list — they only make it *loose*, which Rd rendering ignores.** Both
+  gather sites in `emit_md_list_level_inner` cross blank roxygen lines via
+  `next_list_line_across_blanks` (build.rs; disjoint from `next_list_line`, so blanks are consumed
+  as trivia only when a list line actually follows — a trailing blank stays with the section): the
+  **nested** gather takes any deeper-than-content-column marker after blanks; the **sibling** gather
+  takes a same-indent marker only when `md_list_marker_type` matches (the bullet char itself, or the
+  ordered delimiter `.`/`)` — start numbers are irrelevant, `1.`…`5.` is one list; `-`…`*` and
+  `1.`…`2)` split, engine-probed). The no-blank sibling path stays type-blind (the no-blank
+  type-split is the separate backlog item in the lazy-continuation trap above). Projector + formatter unchanged (the item filter
+  skips blank trivia; the list emitter is per-line passthrough). **Backlog:** blank +
+  content-column *prose* continuation folds into the item per cmark (`- a` ⏎ blank ⏎ `  more` →
+  item text `a more`; arity ends the list — engine-probed e4, needs an item-paragraph model).
 - **Code span `\code`-vs-`\verb` per arity-parseability** (roxygen2 `can_parse`). A `_`-leading code
   span renders `\verb` (R's lexer rejects a `_`-leading name; `has_invalid_underscore_name` in
   `code_span_is_r`, but a lone `_` stays valid as the native-pipe placeholder, gated on `|>`).
@@ -558,7 +567,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 375 matching (all allowlisted), 18 divergent** of 393 pinned.
+corpus (132 `cm-NNN` cases). **Current: 377 matching (all allowlisted), 18 divergent** of 395 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -569,41 +578,42 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
    Curated + harvested + spec corpora (393 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 110/110 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 112/112 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-06) — list-item lazy continuation
+## Latest session (2026-07-06b) — blank-separated loose-list merge
 
-A plain line after a list item now **folds into the item** per CommonMark paragraph-continuation
-(`- a` ⏎ `lazy` → `(\item) (TEXT "a lazy")`) — line-start and from-value lists alike, any indent,
-ordered and bullet, nesting intact (a lazy line folds into the *innermost* open item; a nested list
-still opens after a folded line). Parser-only: `is_md_item_lazy_continuation` (build.rs) + a fold
-loop in `emit_md_list_level_inner` before the nested-list gather, gated on `item_has_content` (an
-empty item takes no continuation). Engine-probed edges: any marker line is a sibling item (even an
-empty `-`); `===` folds as literal text; a table header folds; `---` is a thematic break and
-interrupts; cond-7 HTML opens a block. **Projector + formatter: zero changes** (item inlines
-already handled multi-line content; the list emitter is per-line passthrough). Full mechanics in
-the new list-lazy trap.
+Blank-separated same-type list items now form **one list** per CommonMark (`- a` ⏎ blank ⏎ `- b`
+→ one `\itemize`; a blank only makes the list *loose*, which roxygen2's Rd rendering ignores) —
+across single and double blanks, line-start and from-value alike; a blank + deeper marker still
+**nests** into the open item (`- a` ⏎ blank ⏎ `  - x`). A *type change* splits: the bullet char
+(`-`…`*`) and the ordered delimiter (`1.`…`2)`) each start a new list, while start numbers are
+irrelevant (`1.`…`5.` merges) — all engine-probed. Parser-only: `next_list_line_across_blanks` +
+`md_list_marker_type` (build.rs), wired into both gather sites of `emit_md_list_level_inner`
+(nested: indent-gated; sibling: indent + type-gated); blanks are consumed as trivia only when a
+list line follows, so a trailing blank stays with the section. **Projector + formatter: zero
+changes.** Full mechanics in the new loose-list trap.
 
-**Result:** projector **373→375 matching** (all allowlisted), 18 divergent (unchanged,
-out-of-scope). `cargo test` green, clippy + fmt clean; curated fixed-point **110/110 preserving**,
-0 blocked; format baseline **+2 additive** (re-blessed, reviewed). New fixtures: parser
-`roxygen_md_list_lazy` (11 blocks: basic/nested/ordered/from-value folds, empty-bullet sibling,
-`===`/table folds, `---` break, blank-line end, empty-item no-fold); formatter
-`roxygen_md_list_lazy`; curated `md_list_lazy` + `md_list_lazy_edges` (+pins +allowlist).
+**Result:** projector **375→377 matching** (all allowlisted), 18 divergent (unchanged,
+out-of-scope). `cargo test` green, clippy + fmt clean; curated fixed-point **112/112 preserving**,
+0 blocked; format baseline **+2 additive** (re-blessed, reviewed; the only non-input byte is the
+established from-value opener normalization). New fixtures: parser `roxygen_md_list_loose`
+(5 blocks: basic/double-blank/ordered merges, all four type-splits, nested-across-blank +
+shallower sibling, from-value merge + blank-then-prose end); formatter `roxygen_md_list_loose`;
+curated `md_list_loose` + `md_list_loose_edges` (+pins +allowlist).
 
-**Ranked next target:** blank-separated same-type **loose-list merge** (`- a` ⏎ blank ⏎ `- b` is
-ONE `\itemize` per cmark; arity emits two — surfaced while authoring this session's corpus cases);
-then multi-line **inline** HTML (cmark inline spans cross a soft break; arity is line-scoped — ties
-into the inline-pass migration); then the `@md` `\`-escape *render* cluster (do NOT widen the
-lexer). Smaller list follow-ups in the list-lazy trap's backlog (marker-type split, block macro
-folding into an item, quote-lazy `===`). The 18 projector divergences remain out-of-scope
-(roxygen2 evaluation / multi-block).
+**Ranked next target:** multi-line **inline** HTML (cmark inline spans cross a soft break; arity
+is line-scoped — ties into the inline-pass migration); then the `@md` `\`-escape *render* cluster
+(do NOT widen the lexer). Smaller list follow-ups in the list traps' backlogs (no-blank
+marker-type split, blank + content-column prose folding into an item (e4), block macro folding
+into an item, quote-lazy `===`). The 18 projector divergences remain out-of-scope (roxygen2
+evaluation / multi-block).
 
 ## Earlier sessions
 
+- **2026-07-06** — list-item lazy continuation (`is_md_item_lazy_continuation` + fold loop in `emit_md_list_level_inner`, before the nested gather, gated on `item_has_content`; `===`/table headers fold, any marker line is a sibling, `---`/cond-7 interrupt). 373→375.
 - **2026-07-05d** — from-value block quote + thematic break (`@details > q` / `@details ***`; shared `finish_md_block_quote`, `is_thematic_break` at the value; projector zero changes). 370→373.
 - **2026-07-05c** — all remaining from-value block starts (indented code / fence / ATX / table / list from a tag's same-line value; `close_tag_at_value` dispatch, `push_value_opener_line`; post-hoc title-as-description fallback fix). 364→370.
 - **2026-07-05b** — from-value HTML block (`@details <span>` / `<!-- note`, all conditions; tag closes empty + sibling node with marker-less first line; formatter next-line normalization). 362→364.

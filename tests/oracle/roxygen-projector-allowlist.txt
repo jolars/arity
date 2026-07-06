@@ -198,6 +198,8 @@ md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
 md_list_lazy
 md_list_lazy_edges
+md_list_loose
+md_list_loose_edges
 md_list_value
 md_macro_arg_emphasis
 md_macro_arg_span

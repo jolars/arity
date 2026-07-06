@@ -1,0 +1,305 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..681
+  ROXYGEN_BLOCK@0..125
+    ROXYGEN_SECTION@0..66
+      ROXYGEN_PARAGRAPH@0..63
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..62 "Basic loose merge: on ..."
+        NEWLINE@62..63 "\n"
+      ROXYGEN_MARKER@63..65 "#'"
+      NEWLINE@65..66 "\n"
+    ROXYGEN_SECTION@66..73
+      ROXYGEN_MARKER@66..68 "#'"
+      WHITESPACE@68..69 " "
+      ROXYGEN_TAG@69..72
+        ROXYGEN_AT@69..70 "@"
+        ROXYGEN_TAG_NAME@70..72 "md"
+      NEWLINE@72..73 "\n"
+    ROXYGEN_SECTION@73..115
+      ROXYGEN_MARKER@73..75 "#'"
+      WHITESPACE@75..76 " "
+      ROXYGEN_TAG@76..84
+        ROXYGEN_AT@76..77 "@"
+        ROXYGEN_TAG_NAME@77..84 "details"
+      NEWLINE@84..85 "\n"
+      ROXYGEN_MD_LIST@85..114
+        ROXYGEN_MARKER@85..87 "#'"
+        WHITESPACE@87..88 " "
+        ROXYGEN_MD_LIST_ITEM@88..91
+          ROXYGEN_MD_LIST_MARKER@88..89 "-"
+          ROXYGEN_TEXT@89..91 " a"
+        NEWLINE@91..92 "\n"
+        ROXYGEN_MARKER@92..94 "#'"
+        NEWLINE@94..95 "\n"
+        ROXYGEN_MARKER@95..97 "#'"
+        WHITESPACE@97..98 " "
+        ROXYGEN_MD_LIST_ITEM@98..101
+          ROXYGEN_MD_LIST_MARKER@98..99 "-"
+          ROXYGEN_TEXT@99..101 " b"
+        NEWLINE@101..102 "\n"
+        ROXYGEN_MARKER@102..104 "#'"
+        NEWLINE@104..105 "\n"
+        ROXYGEN_MARKER@105..107 "#'"
+        NEWLINE@107..108 "\n"
+        ROXYGEN_MARKER@108..110 "#'"
+        WHITESPACE@110..111 " "
+        ROXYGEN_MD_LIST_ITEM@111..114
+          ROXYGEN_MD_LIST_MARKER@111..112 "-"
+          ROXYGEN_TEXT@112..114 " c"
+      NEWLINE@114..115 "\n"
+    ROXYGEN_SECTION@115..125
+      ROXYGEN_MARKER@115..117 "#'"
+      WHITESPACE@117..118 " "
+      ROXYGEN_TAG@118..125
+        ROXYGEN_AT@118..119 "@"
+        ROXYGEN_TAG_NAME@119..123 "name"
+        WHITESPACE@123..124 " "
+        ROXYGEN_TEXT@124..125 "a"
+  NEWLINE@125..126 "\n"
+  IDENT@126..130 "NULL"
+  NEWLINE@130..131 "\n"
+  NEWLINE@131..132 "\n"
+  ROXYGEN_BLOCK@132..241
+    ROXYGEN_SECTION@132..188
+      ROXYGEN_PARAGRAPH@132..185
+        ROXYGEN_MARKER@132..134 "#'"
+        WHITESPACE@134..135 " "
+        ROXYGEN_TEXT@135..184 "Ordered loose merge:  ..."
+        NEWLINE@184..185 "\n"
+      ROXYGEN_MARKER@185..187 "#'"
+      NEWLINE@187..188 "\n"
+    ROXYGEN_SECTION@188..195
+      ROXYGEN_MARKER@188..190 "#'"
+      WHITESPACE@190..191 " "
+      ROXYGEN_TAG@191..194
+        ROXYGEN_AT@191..192 "@"
+        ROXYGEN_TAG_NAME@192..194 "md"
+      NEWLINE@194..195 "\n"
+    ROXYGEN_SECTION@195..231
+      ROXYGEN_MARKER@195..197 "#'"
+      WHITESPACE@197..198 " "
+      ROXYGEN_TAG@198..206
+        ROXYGEN_AT@198..199 "@"
+        ROXYGEN_TAG_NAME@199..206 "details"
+      NEWLINE@206..207 "\n"
+      ROXYGEN_MD_LIST@207..230
+        ROXYGEN_MARKER@207..209 "#'"
+        WHITESPACE@209..210 " "
+        ROXYGEN_MD_LIST_ITEM@210..216
+          ROXYGEN_MD_LIST_MARKER@210..212 "1."
+          ROXYGEN_TEXT@212..216 " one"
+        NEWLINE@216..217 "\n"
+        ROXYGEN_MARKER@217..219 "#'"
+        NEWLINE@219..220 "\n"
+        ROXYGEN_MARKER@220..222 "#'"
+        WHITESPACE@222..223 " "
+        ROXYGEN_MD_LIST_ITEM@223..230
+          ROXYGEN_MD_LIST_MARKER@223..225 "5."
+          ROXYGEN_TEXT@225..230 " five"
+      NEWLINE@230..231 "\n"
+    ROXYGEN_SECTION@231..241
+      ROXYGEN_MARKER@231..233 "#'"
+      WHITESPACE@233..234 " "
+      ROXYGEN_TAG@234..241
+        ROXYGEN_AT@234..235 "@"
+        ROXYGEN_TAG_NAME@235..239 "name"
+        WHITESPACE@239..240 " "
+        ROXYGEN_TEXT@240..241 "b"
+  NEWLINE@241..242 "\n"
+  IDENT@242..246 "NULL"
+  NEWLINE@246..247 "\n"
+  NEWLINE@247..248 "\n"
+  ROXYGEN_BLOCK@248..385
+    ROXYGEN_SECTION@248..308
+      ROXYGEN_PARAGRAPH@248..305
+        ROXYGEN_MARKER@248..250 "#'"
+        WHITESPACE@250..251 " "
+        ROXYGEN_TEXT@251..304 "Type changes split: b ..."
+        NEWLINE@304..305 "\n"
+      ROXYGEN_MARKER@305..307 "#'"
+      NEWLINE@307..308 "\n"
+    ROXYGEN_SECTION@308..315
+      ROXYGEN_MARKER@308..310 "#'"
+      WHITESPACE@310..311 " "
+      ROXYGEN_TAG@311..314
+        ROXYGEN_AT@311..312 "@"
+        ROXYGEN_TAG_NAME@312..314 "md"
+      NEWLINE@314..315 "\n"
+    ROXYGEN_SECTION@315..375
+      ROXYGEN_MARKER@315..317 "#'"
+      WHITESPACE@317..318 " "
+      ROXYGEN_TAG@318..326
+        ROXYGEN_AT@318..319 "@"
+        ROXYGEN_TAG_NAME@319..326 "details"
+      NEWLINE@326..327 "\n"
+      ROXYGEN_MD_LIST@327..333
+        ROXYGEN_MARKER@327..329 "#'"
+        WHITESPACE@329..330 " "
+        ROXYGEN_MD_LIST_ITEM@330..333
+          ROXYGEN_MD_LIST_MARKER@330..331 "-"
+          ROXYGEN_TEXT@331..333 " a"
+      NEWLINE@333..334 "\n"
+      ROXYGEN_MARKER@334..336 "#'"
+      NEWLINE@336..337 "\n"
+      ROXYGEN_MD_LIST@337..346
+        ROXYGEN_MARKER@337..339 "#'"
+        WHITESPACE@339..340 " "
+        ROXYGEN_MD_LIST_ITEM@340..346
+          ROXYGEN_MD_LIST_MARKER@340..341 "*"
+          ROXYGEN_TEXT@341..346 " star"
+      NEWLINE@346..347 "\n"
+      ROXYGEN_MARKER@347..349 "#'"
+      NEWLINE@349..350 "\n"
+      ROXYGEN_MD_LIST@350..359
+        ROXYGEN_MARKER@350..352 "#'"
+        WHITESPACE@352..353 " "
+        ROXYGEN_MD_LIST_ITEM@353..359
+          ROXYGEN_MD_LIST_MARKER@353..355 "1."
+          ROXYGEN_TEXT@355..359 " one"
+      NEWLINE@359..360 "\n"
+      ROXYGEN_MARKER@360..362 "#'"
+      NEWLINE@362..363 "\n"
+      ROXYGEN_MD_LIST@363..374
+        ROXYGEN_MARKER@363..365 "#'"
+        WHITESPACE@365..366 " "
+        ROXYGEN_MD_LIST_ITEM@366..374
+          ROXYGEN_MD_LIST_MARKER@366..368 "2)"
+          ROXYGEN_TEXT@368..374 " paren"
+      NEWLINE@374..375 "\n"
+    ROXYGEN_SECTION@375..385
+      ROXYGEN_MARKER@375..377 "#'"
+      WHITESPACE@377..378 " "
+      ROXYGEN_TAG@378..385
+        ROXYGEN_AT@378..379 "@"
+        ROXYGEN_TAG_NAME@379..383 "name"
+        WHITESPACE@383..384 " "
+        ROXYGEN_TEXT@384..385 "c"
+  NEWLINE@385..386 "\n"
+  IDENT@386..390 "NULL"
+  NEWLINE@390..391 "\n"
+  NEWLINE@391..392 "\n"
+  ROXYGEN_BLOCK@392..537
+    ROXYGEN_SECTION@392..457
+      ROXYGEN_PARAGRAPH@392..454
+        ROXYGEN_MARKER@392..394 "#'"
+        WHITESPACE@394..395 " "
+        ROXYGEN_TEXT@395..453 "Nested across blanks: ..."
+        NEWLINE@453..454 "\n"
+      ROXYGEN_MARKER@454..456 "#'"
+      NEWLINE@456..457 "\n"
+    ROXYGEN_SECTION@457..464
+      ROXYGEN_MARKER@457..459 "#'"
+      WHITESPACE@459..460 " "
+      ROXYGEN_TAG@460..463
+        ROXYGEN_AT@460..461 "@"
+        ROXYGEN_TAG_NAME@461..463 "md"
+      NEWLINE@463..464 "\n"
+    ROXYGEN_SECTION@464..527
+      ROXYGEN_MARKER@464..466 "#'"
+      WHITESPACE@466..467 " "
+      ROXYGEN_TAG@467..475
+        ROXYGEN_AT@467..468 "@"
+        ROXYGEN_TAG_NAME@468..475 "details"
+      NEWLINE@475..476 "\n"
+      ROXYGEN_MD_LIST@476..526
+        ROXYGEN_MARKER@476..478 "#'"
+        WHITESPACE@478..479 " "
+        ROXYGEN_MD_LIST_ITEM@479..516
+          ROXYGEN_MD_LIST_MARKER@479..480 "-"
+          ROXYGEN_TEXT@480..482 " x"
+          NEWLINE@482..483 "\n"
+          ROXYGEN_MARKER@483..485 "#'"
+          NEWLINE@485..486 "\n"
+          ROXYGEN_MD_LIST@486..516
+            ROXYGEN_MARKER@486..488 "#'"
+            WHITESPACE@488..491 "   "
+            ROXYGEN_MD_LIST_ITEM@491..497
+              ROXYGEN_MD_LIST_MARKER@491..492 "-"
+              ROXYGEN_TEXT@492..497 " deep"
+            NEWLINE@497..498 "\n"
+            ROXYGEN_MARKER@498..500 "#'"
+            NEWLINE@500..501 "\n"
+            ROXYGEN_MARKER@501..503 "#'"
+            WHITESPACE@503..506 "   "
+            ROXYGEN_MD_LIST_ITEM@506..516
+              ROXYGEN_MD_LIST_MARKER@506..507 "-"
+              ROXYGEN_TEXT@507..516 " deep two"
+        NEWLINE@516..517 "\n"
+        ROXYGEN_MARKER@517..519 "#'"
+        NEWLINE@519..520 "\n"
+        ROXYGEN_MARKER@520..522 "#'"
+        WHITESPACE@522..523 " "
+        ROXYGEN_MD_LIST_ITEM@523..526
+          ROXYGEN_MD_LIST_MARKER@523..524 "-"
+          ROXYGEN_TEXT@524..526 " y"
+      NEWLINE@526..527 "\n"
+    ROXYGEN_SECTION@527..537
+      ROXYGEN_MARKER@527..529 "#'"
+      WHITESPACE@529..530 " "
+      ROXYGEN_TAG@530..537
+        ROXYGEN_AT@530..531 "@"
+        ROXYGEN_TAG_NAME@531..535 "name"
+        WHITESPACE@535..536 " "
+        ROXYGEN_TEXT@536..537 "d"
+  NEWLINE@537..538 "\n"
+  IDENT@538..542 "NULL"
+  NEWLINE@542..543 "\n"
+  NEWLINE@543..544 "\n"
+  ROXYGEN_BLOCK@544..675
+    ROXYGEN_SECTION@544..605
+      ROXYGEN_PARAGRAPH@544..602
+        ROXYGEN_MARKER@544..546 "#'"
+        WHITESPACE@546..547 " "
+        ROXYGEN_TEXT@547..601 "From-value loose merg ..."
+        NEWLINE@601..602 "\n"
+      ROXYGEN_MARKER@602..604 "#'"
+      NEWLINE@604..605 "\n"
+    ROXYGEN_SECTION@605..612
+      ROXYGEN_MARKER@605..607 "#'"
+      WHITESPACE@607..608 " "
+      ROXYGEN_TAG@608..611
+        ROXYGEN_AT@608..609 "@"
+        ROXYGEN_TAG_NAME@609..611 "md"
+      NEWLINE@611..612 "\n"
+    ROXYGEN_SECTION@612..665
+      ROXYGEN_MARKER@612..614 "#'"
+      WHITESPACE@614..615 " "
+      ROXYGEN_TAG@615..620
+        ROXYGEN_AT@615..616 "@"
+        ROXYGEN_TAG_NAME@616..620 "note"
+      ROXYGEN_MD_LIST@620..646
+        WHITESPACE@620..621 " "
+        ROXYGEN_MD_LIST_ITEM@621..630
+          ROXYGEN_MD_LIST_MARKER@621..622 "-"
+          ROXYGEN_TEXT@622..630 " value a"
+        NEWLINE@630..631 "\n"
+        ROXYGEN_MARKER@631..633 "#'"
+        NEWLINE@633..634 "\n"
+        ROXYGEN_MARKER@634..636 "#'"
+        WHITESPACE@636..637 " "
+        ROXYGEN_MD_LIST_ITEM@637..646
+          ROXYGEN_MD_LIST_MARKER@637..638 "-"
+          ROXYGEN_TEXT@638..646 " value b"
+      NEWLINE@646..647 "\n"
+      ROXYGEN_MARKER@647..649 "#'"
+      NEWLINE@649..650 "\n"
+      ROXYGEN_PARAGRAPH@650..665
+        ROXYGEN_MARKER@650..652 "#'"
+        WHITESPACE@652..653 " "
+        ROXYGEN_TEXT@653..664 "prose after"
+        NEWLINE@664..665 "\n"
+    ROXYGEN_SECTION@665..675
+      ROXYGEN_MARKER@665..667 "#'"
+      WHITESPACE@667..668 " "
+      ROXYGEN_TAG@668..675
+        ROXYGEN_AT@668..669 "@"
+        ROXYGEN_TAG_NAME@669..673 "name"
+        WHITESPACE@673..674 " "
+        ROXYGEN_TEXT@674..675 "e"
+  NEWLINE@675..676 "\n"
+  IDENT@676..680 "NULL"
+  NEWLINE@680..681 "\n"

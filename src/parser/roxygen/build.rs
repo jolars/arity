@@ -255,6 +255,42 @@ fn next_list_line(tokens: &[Token], i: usize) -> Option<usize> {
     .then_some(m)
 }
 
+/// From `i` (expected at a line's trailing `Newline`), the index of the next
+/// list line's `RoxygenMarker` when it is separated from the current position
+/// only by **blank** roxygen lines: CommonMark does not end a list at a blank
+/// line when another list line follows — the blank only makes the list *loose*,
+/// a distinction roxygen2's Rd rendering ignores (a loose and a tight list
+/// render the same `\itemize`). Returns `None` when no blank intervenes (the
+/// immediate case is [`next_list_line`]'s — keeping the two disjoint means
+/// blanks are consumed only when a list line actually follows them) or when
+/// the first non-blank line is not a list line (the blanks then end the list
+/// and stay with the enclosing section).
+fn next_list_line_across_blanks(tokens: &[Token], i: usize) -> Option<usize> {
+    let mut j = i;
+    let mut crossed = false;
+    loop {
+        let m = following_line_marker(tokens, j)?;
+        if matches!(classify_line(tokens, m), LineKind::Blank) {
+            crossed = true;
+            j = line_content_end(tokens, m);
+            continue;
+        }
+        return (crossed && is_md_list_continuation(tokens, m)).then_some(m);
+    }
+}
+
+/// The list-*type* discriminant of a `RoxygenMdListMarker`'s text: the bullet
+/// character itself (`-`/`*`/`+`), or the ordered delimiter (`.`/`)`).
+/// CommonMark items belong to the same list only when this matches — changing
+/// the bullet char or the ordered delimiter starts a new list, while the start
+/// number is irrelevant (`1.` … `5.` is one list, engine-probed).
+fn md_list_marker_type(marker: &str) -> u8 {
+    match marker.as_bytes().first() {
+        Some(c @ (b'-' | b'*' | b'+')) => *c,
+        _ => *marker.as_bytes().last().unwrap_or(&b'.'),
+    }
+}
+
 /// Whether the prose line whose marker is at `start` opens a **GFM table**
 /// (`@md` mode): its immediately-following line's content is a
 /// `RoxygenMdTableDelim` leaf (a delimiter row) *and* the two lines have the same
@@ -744,6 +780,7 @@ fn emit_md_list_level_inner(
         // child block must reach this item's content column to nest under it.
         events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST_ITEM));
         let marker_width = tokens[i].text.chars().count();
+        let item_marker = i;
         events.push(Event::Tok(i)); // RoxygenMdListMarker
         i += 1;
         let content_indent = indent + marker_width + content_leading_spaces(tokens, i);
@@ -779,13 +816,22 @@ fn emit_md_list_level_inner(
         }
 
         // Nested lists: every following list line indented to (or past) this
-        // item's content column is a child list inside this item.
-        while let Some(m) = next_list_line(tokens, i) {
+        // item's content column is a child list inside this item — even across
+        // blank lines (a blank ends the item's paragraph but not the item; a
+        // list line at the content column still nests, engine-probed).
+        loop {
+            let m = match next_list_line(tokens, i) {
+                Some(m) => m,
+                None => match next_list_line_across_blanks(tokens, i) {
+                    Some(m) if list_line_indent(tokens, m) >= content_indent => m,
+                    _ => break,
+                },
+            };
             if list_line_indent(tokens, m) < content_indent {
                 break;
             }
             for idx in i..m {
-                events.push(Event::Tok(idx)); // `\n` + leading indentation (trivia)
+                events.push(Event::Tok(idx)); // `\n` + blank lines + indentation (trivia)
             }
             i = emit_md_list_level(tokens, m, list_line_indent(tokens, m), events);
         }
@@ -793,14 +839,31 @@ fn emit_md_list_level_inner(
 
         // Sibling: a following list line back at this level's marker column
         // continues the list; anything shallower ends it (the caller resumes).
-        let Some(m) = next_list_line(tokens, i) else {
-            break;
+        // Blank lines do not end the list either (they only make it loose):
+        // a same-type item after blanks is still a sibling, while a *type
+        // change* — a different bullet char or ordered delimiter — starts a
+        // new list (engine-probed: `-` … `*` and `1.` … `2)` split).
+        let m = if let Some(m) = next_list_line(tokens, i) {
+            if list_line_indent(tokens, m) != list_indent {
+                break;
+            }
+            m
+        } else {
+            let Some(m) = next_list_line_across_blanks(tokens, i) else {
+                break;
+            };
+            if list_line_indent(tokens, m) != list_indent {
+                break;
+            }
+            let sibling_marker = &tokens[line_content_start(tokens, m)].text;
+            if md_list_marker_type(sibling_marker) != md_list_marker_type(&tokens[item_marker].text)
+            {
+                break;
+            }
+            m
         };
-        if list_line_indent(tokens, m) != list_indent {
-            break;
-        }
         for idx in i..m {
-            events.push(Event::Tok(idx)); // `\n` + leading indentation (trivia)
+            events.push(Event::Tok(idx)); // `\n` + blank lines + indentation (trivia)
         }
         i = m;
     }

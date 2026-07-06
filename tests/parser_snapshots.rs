@@ -220,6 +220,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_list_value",
         "roxygen_md_list",
         "roxygen_md_list_lazy",
+        "roxygen_md_list_loose",
         "roxygen_md_empty_list_item",
         "roxygen_md_nested_list",
         "roxygen_md_code_block",
