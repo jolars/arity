@@ -1,0 +1,3 @@
+(\description (TEXT "Lazy list-item continuation edges"))
+(\details (\itemize (\item) (TEXT "a") (\item)) (TEXT "Separator one.") (\itemize (\item) (TEXT "b === still item text")) (TEXT "Separator two.") (\itemize (\item) (TEXT "c | x | y | |---|---|")) (TEXT "Separator three.") (\itemize (\item) (TEXT "d")) (TEXT "after the break") (\itemize (\item)) (TEXT "not folded into an empty item"))
+(\title (TEXT "Lazy list-item continuation edges"))

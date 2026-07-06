@@ -381,8 +381,9 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   change (marker-less first line: `strip_marker` is a no-op, `block_quote_flat_text` handles it;
   the break node is dropped wholesale). Formatter: both emitters got the `is_from_value` →
   `push_value_opener_line(…, false)` branch.
-  **Backlog:** list-item **lazy continuation** (`- a` ⏎ non-list line glues into
-  the item per cmark, probe e4 — arity ends the list; a *line-start* list has the same gap).
+  **Backlog:** same-type lists separated by a blank line **merge** into one loose list per
+  cmark (`- a` ⏎ blank ⏎ `- b` → one `\itemize`; arity emits two — hit while authoring the
+  `md_list_lazy` corpus cases, dodged there with separator paragraphs/alternating types).
 - **Inline raw HTML** (`scan_md_html_inline`, chained after autolink at `b'<'`): every form →
   `(\if (TEXT "html") (\out (VERB …)))`, all **line-scoped**. Dispatch on `bytes[i+1]`: `!` →
   comment/CDATA/declaration (`scan_md_html_inline_bang`), `?` → PI, else tag. **Probe the engine, not
@@ -460,6 +461,24 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   marker column is a sibling; shallower ends it). Content indentation is **semantic** → the formatter
   preserves it (`normalize_list_marker_text`). Projector: `push_inline` maps a nested list node →
   `Inline::MdList`; `md_list_is_ordered` reads **direct-child** item markers only.
+- **List-item lazy continuation folds into the item, keyed on an item-specific predicate.** A
+  plain line after an item (any indent — unindented "lazy" or past the content column) is paragraph
+  continuation text and folds **into** the `ROXYGEN_MD_LIST_ITEM` (`emit_md_list_level_inner`'s fold
+  loop, **before** the nested-list gather; a post-nested lazy line belongs to the innermost item,
+  which the recursion folds itself). Guard `is_md_item_lazy_continuation` (build.rs) =
+  `is_foldable_continuation` with three engine-probed differences: **any marker line is the next
+  item** (even an empty `-`, which mid-paragraph could not *start* a list — sibling, not text); a
+  **setext underline folds** (`- a` ⏎ `===` → `a ===`; the underline can't apply across the container
+  boundary — `---` stays excluded, it's a thematic break here and interrupts); a **table header
+  folds** (GFM tables can't interrupt a paragraph). Cond-7 HTML stays excluded (positional gate: it
+  opens a block after an item). An **empty item never folds** (`item_has_content` gate — an item
+  starting blank needs indented content). Projector/formatter unchanged (`md_list_item_inlines`
+  already drops markers + NEWLINE→SOFT_BREAK; the list emitter is per-line passthrough). **Backlog:**
+  a marker-**type** change splits lists (`- a` ⏎ `2. b` → `\itemize`+`\enumerate`; arity keeps one
+  list); an Rd **block macro** after an item folds into it per roxygen2 (`\itemize{…}` lands *inside*
+  the `\item` via placeholder-escaping — arity ends the list, kept: needs block-macro-in-item
+  machinery); the block-*quote* lazy gather still excludes setext (`> a` ⏎ `===` likely folds per
+  cm-64 — unprobed).
 - **Code span `\code`-vs-`\verb` per arity-parseability** (roxygen2 `can_parse`). A `_`-leading code
   span renders `\verb` (R's lexer rejects a `_`-leading name; `has_invalid_underscore_name` in
   `code_span_is_r`, but a lone `_` stays valid as the native-pipe placeholder, gated on `|>`).
@@ -539,7 +558,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 373 matching (all allowlisted), 18 divergent** of 391 pinned.
+corpus (132 `cm-NNN` cases). **Current: 375 matching (all allowlisted), 18 divergent** of 393 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -548,44 +567,44 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (388 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (393 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 108/108 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 110/110 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-05d) — from-value block quote + thematic break
+## Latest session (2026-07-06) — list-item lazy continuation
 
-Closed the last two from-value block starts: a prose tag's same-line value now opens a **block
-quote** (`@details > quoted` — roxygen2 has no support: warns, flattens to plain text, glues with no
-separator; following `>` lines and lazy continuations join) and a **thematic break** (`@details ***`/
-`---`/`- - -` — renders empty, following prose survives; `@seealso ---` → empty `(\seealso)` atom).
-Lexer: `is_thematic_break` + `is_block_quote_marker` carves at the value (thematic **before** the
-list-marker carve — spaced `- - -` starts with a valid bullet; a value `---` is a break, never setext,
-the value position is fresh; `===` stays prose). Grouper: two leaf-keyed dispatch branches; builder:
-`emit_md_thematic_break_from_value` + `emit_md_block_quote_from_value` (gather factored into shared
-`finish_md_block_quote`). Formatter: `is_from_value` → `push_value_opener_line` in both emitters
-(next-line normalization). **Projector: zero changes** — `strip_marker` no-ops on the marker-less
-first line, `block_quote_flat_text` strips the `>` regardless, the break node drops wholesale, and
-the empty-section atom already emits. Full mechanics in the HTML-blocks trap's from-value paragraph.
+A plain line after a list item now **folds into the item** per CommonMark paragraph-continuation
+(`- a` ⏎ `lazy` → `(\item) (TEXT "a lazy")`) — line-start and from-value lists alike, any indent,
+ordered and bullet, nesting intact (a lazy line folds into the *innermost* open item; a nested list
+still opens after a folded line). Parser-only: `is_md_item_lazy_continuation` (build.rs) + a fold
+loop in `emit_md_list_level_inner` before the nested-list gather, gated on `item_has_content` (an
+empty item takes no continuation). Engine-probed edges: any marker line is a sibling item (even an
+empty `-`); `===` folds as literal text; a table header folds; `---` is a thematic break and
+interrupts; cond-7 HTML opens a block. **Projector + formatter: zero changes** (item inlines
+already handled multi-line content; the list emitter is per-line passthrough). Full mechanics in
+the new list-lazy trap.
 
-**Result:** projector **370→373 matching** (all allowlisted, seeded), 18 divergent (unchanged,
-out-of-scope). `cargo test` green (863), clippy + fmt clean; curated fixed-point **108/108
-preserving**, 0 blocked; format baseline **+3 additive** (re-blessed, reviewed). New fixtures: parser
-`roxygen_md_{blockquote,thematic_break}_value` (lazy continuation, 4-space indent, spaced `- - -`,
-`===`-stays-prose, non-md negatives); formatter `roxygen_md_quote_break_value`; curated
-`md_blockquote_value` + `md_thematic_break_value` + `md_thematic_break_value_edges` (+pins
-+allowlist).
+**Result:** projector **373→375 matching** (all allowlisted), 18 divergent (unchanged,
+out-of-scope). `cargo test` green, clippy + fmt clean; curated fixed-point **110/110 preserving**,
+0 blocked; format baseline **+2 additive** (re-blessed, reviewed). New fixtures: parser
+`roxygen_md_list_lazy` (11 blocks: basic/nested/ordered/from-value folds, empty-bullet sibling,
+`===`/table folds, `---` break, blank-line end, empty-item no-fold); formatter
+`roxygen_md_list_lazy`; curated `md_list_lazy` + `md_list_lazy_edges` (+pins +allowlist).
 
-**Ranked next target:** list-item **lazy continuation** (`- a` ⏎ plain line glues into the item per
-cmark, probe e4 — arity ends the list; line-start lists share the gap); then multi-line **inline**
-HTML (cmark inline spans cross a soft break; arity is line-scoped — ties into the inline-pass
-migration); then the `@md` `\`-escape *render* cluster (do NOT widen the lexer). The 18 projector
-divergences remain out-of-scope (roxygen2 evaluation / multi-block).
+**Ranked next target:** blank-separated same-type **loose-list merge** (`- a` ⏎ blank ⏎ `- b` is
+ONE `\itemize` per cmark; arity emits two — surfaced while authoring this session's corpus cases);
+then multi-line **inline** HTML (cmark inline spans cross a soft break; arity is line-scoped — ties
+into the inline-pass migration); then the `@md` `\`-escape *render* cluster (do NOT widen the
+lexer). Smaller list follow-ups in the list-lazy trap's backlog (marker-type split, block macro
+folding into an item, quote-lazy `===`). The 18 projector divergences remain out-of-scope
+(roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
+- **2026-07-05d** — from-value block quote + thematic break (`@details > q` / `@details ***`; shared `finish_md_block_quote`, `is_thematic_break` at the value; projector zero changes). 370→373.
 - **2026-07-05c** — all remaining from-value block starts (indented code / fence / ATX / table / list from a tag's same-line value; `close_tag_at_value` dispatch, `push_value_opener_line`; post-hoc title-as-description fallback fix). 364→370.
 - **2026-07-05b** — from-value HTML block (`@details <span>` / `<!-- note`, all conditions; tag closes empty + sibling node with marker-less first line; formatter next-line normalization). 362→364.
 - **2026-07-05** — HTML block condition 7 (standalone complete tag on its own line → blank-terminated block; builder-structural `is_md_html_block7_line`, positional can't-interrupt gate, `<pre/>` cond-1 bug fix, formatter `is_md_standalone_html_tag` fresh-position guard). 360→362.

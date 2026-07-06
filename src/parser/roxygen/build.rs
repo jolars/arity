@@ -337,6 +337,38 @@ fn is_table_row_line(tokens: &[Token], marker: usize) -> bool {
         && !is_md_thematic_break_line(tokens, marker)
 }
 
+/// Whether the line whose marker is at `marker` is a **lazy paragraph
+/// continuation of a list item**: ordinary prose that opens no block construct,
+/// so CommonMark folds it into the item's open paragraph — even unindented
+/// ("lazy") or indented past the content column. Mirrors
+/// [`is_foldable_continuation`](super::group::is_foldable_continuation) with
+/// three item-specific differences, all engine-probed:
+///   * **any** list-marker line is not lazy — inside a list it is the next
+///     item, even an empty `-` (which mid-paragraph could not *start* a list)
+///     becomes an empty sibling item;
+///   * a **setext underline folds** (`- a` then `===` renders `a ===`): the
+///     underline cannot apply across the container boundary, and a bare `===`
+///     opens no other block. A `---` stays excluded — in this position it is a
+///     thematic break, which interrupts;
+///   * a **table header folds** (`- a` then `| x | y |` + delimiter renders as
+///     item text): a GFM table cannot interrupt a paragraph.
+///
+/// A standalone-tag line (HTML block condition 7) is not lazy either: the
+/// container match already failed at the item's content column, so condition 7
+/// opens a block after a list item (the same positional gate as the table and
+/// block-quote gathers).
+fn is_md_item_lazy_continuation(tokens: &[Token], marker: usize) -> bool {
+    matches!(classify_line(tokens, marker), LineKind::Prose)
+        && !is_md_list_continuation(tokens, marker)
+        && !is_md_html_block_start(tokens, marker)
+        && !is_md_html_block7_line(tokens, marker)
+        && !is_md_code_block_start(tokens, marker)
+        && !is_block_macro_line(tokens, marker)
+        && !is_md_heading_start(tokens, marker)
+        && !is_md_block_quote_start(tokens, marker)
+        && !is_md_thematic_break_line(tokens, marker)
+}
+
 /// Whether the prose line whose marker is at `start` opens a markdown **block
 /// quote** (`@md` mode): its first content token is a `RoxygenMdBlockQuote` leaf.
 /// The leaf is carved only under a resolved `@md` mode, so its presence is the
@@ -715,9 +747,35 @@ fn emit_md_list_level_inner(
         events.push(Event::Tok(i)); // RoxygenMdListMarker
         i += 1;
         let content_indent = indent + marker_width + content_leading_spaces(tokens, i);
+        let content_start = i;
         while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
             events.push(Event::Tok(i));
             i += 1;
+        }
+        let item_has_content = tokens[content_start..i]
+            .iter()
+            .any(|t| !t.text.trim().is_empty());
+
+        // Lazy continuations: a following plain-prose line that opens no block
+        // folds into this item's open paragraph (CommonMark paragraph
+        // continuation text). Runs before the nested-list gather — a lazy line
+        // continues the item's opening paragraph, and a nested list may still
+        // follow it; a lazy line *after* a nested list belongs to that list's
+        // innermost item, which the recursion folds itself. An **empty** item
+        // has no open paragraph to continue (an item starting with a blank
+        // needs indented content, engine-probed), so nothing folds into it.
+        while item_has_content && let Some(m) = following_line_marker(tokens, i) {
+            if !is_md_item_lazy_continuation(tokens, m) {
+                break;
+            }
+            for idx in i..=m {
+                events.push(Event::Tok(idx)); // `\n` + indentation + `#'` (trivia)
+            }
+            i = m + 1;
+            while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                events.push(Event::Tok(i));
+                i += 1;
+            }
         }
 
         // Nested lists: every following list line indented to (or past) this

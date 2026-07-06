@@ -1,0 +1,4 @@
+(\description (TEXT "Lazy list-item continuations"))
+(\details (\itemize (\item) (TEXT "item one lazy continuation")) (\enumerate (\item) (TEXT "ordered item lazy ordered")) (\itemize (\item) (TEXT "a") (\itemize (\item) (TEXT "b folds into b"))) (\enumerate (\item) (TEXT "c folds into c") (\itemize (\item) (TEXT "nested still nests"))))
+(\note (\itemize (\item) (TEXT "value item lazy continuation")))
+(\title (TEXT "Lazy list-item continuations"))
