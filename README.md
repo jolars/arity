@@ -3,6 +3,14 @@
 [![Build and
 Test](https://github.com/jolars/arity/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/jolars/arity/actions/workflows/build-and-test.yml)
 [![Crates.io](https://img.shields.io/crates/v/arity.svg?logo=rust)](https://crates.io/crates/arity)
+[![Open
+VSX](https://img.shields.io/open-vsx/v/jolars/arity?logo=vsix)](https://open-vsx.org/extension/jolars/arity)
+[![VS
+Code](https://vsmarketplacebadges.dev/version-short/jolars.arity.svg?logo=vsix)](https://marketplace.visualstudio.com/items?itemName=jolars.arity)
+[![PyPI
+version](https://badge.fury.io/py/arity.svg?icon=si%3Apython)](https://badge.fury.io/py/arity)
+[![npm
+version](https://badge.fury.io/js/@arity-cli%2Farity.svg?icon=si%3Anpm)](https://badge.fury.io/js/@arity-cli%2Farity)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Arity is a language server, formatter, and linter for the R programming
