@@ -573,7 +573,7 @@ fn push_section(
 ) {
     let atoms = serialize_prose_with_linkrefs(body, md);
     let check_drop = if md { drop_on_incomplete } else { true };
-    if check_drop && !section_atoms_rd_complete(&atoms, md) {
+    if check_drop && !section_rd_complete(body, &atoms, md) {
         out.push(format!("(\\{macro_name})"));
         return;
     }
@@ -773,6 +773,32 @@ fn strip_atx_closing(s: &str) -> &str {
     }
 }
 
+/// Whether roxygen2 would keep (not drop) a prose section, i.e. its Rd is
+/// brace-complete under [`rd_complete`] — but from the text roxygen2 *actually*
+/// scans, which differs by mode.
+///
+/// **Markdown on:** roxygen2 runs `rdComplete(markdown(text))` — the
+/// markdown-*rendered* Rd, whose structural braces (`\emph{…}`, the
+/// trailing-`\` `\emph{\}` case) come from cmark. That render is what the
+/// canonical atoms reconstruct ([`section_atoms_rd_complete`]).
+///
+/// **Markdown off:** roxygen2 runs `rdComplete(x$raw)` on the *raw* tag value,
+/// where an escaped brace `\{`/`\}` is still backslash-escaped and therefore
+/// **not counted**. The atoms are the wrong text here: escape resolution has
+/// already collapsed `\{` → a bare `{` (see [`resolve_rd_text_escapes`]), so
+/// reconstructing from them would count the brace and false-drop the section
+/// (`a \{ b`, which roxygen2 renders "a { b", is complete). Scan the
+/// pre-resolution raw text ([`section_raw_rd`]) instead — raw ≈ rendered for the
+/// only chars `rd_complete` weighs (`{}`, `\`, `%`), and md-off never synthesizes
+/// the cmark-derived braces that make the atoms necessary.
+fn section_rd_complete(body: &[Inline], atoms: &[String], md: bool) -> bool {
+    if md {
+        section_atoms_rd_complete(atoms, md)
+    } else {
+        rd_complete(&section_raw_rd(body))
+    }
+}
+
 /// Whether a section's projected atoms reconstruct to brace-complete Rd, i.e.
 /// roxygen2 would *not* drop the section. Rebuilds the pre-parse Rd string from
 /// the canonical S-expression atoms ([`sexpr_to_rd`]) and runs [`rd_complete`]
@@ -783,6 +809,32 @@ fn section_atoms_rd_complete(atoms: &[String], md: bool) -> bool {
         sexpr_to_rd(atom, md, &mut rd);
     }
     rd_complete(&rd)
+}
+
+/// Reconstruct the raw Rd text roxygen2 runs `rdComplete` on for a markdown-OFF
+/// prose section: the tag value verbatim, *before* any escape resolution. A
+/// prose leaf contributes its raw source (so `\{`/`\}` keep the backslash that
+/// makes `rd_complete` treat the brace as escaped, not structural); an explicit
+/// Rd macro contributes its verbatim source (`\emph{x}`, balanced by
+/// construction). Markdown-off bodies hold only these two inline kinds — the
+/// cmark-synthesized inlines are md-only — so any other variant would be a
+/// contradiction and contributes nothing. The soft-wrap sentinel
+/// ([`SOFT_BREAK`]) is restored to a real newline so an unescaped `%` comment
+/// stays scoped to its physical line exactly as it is in roxygen2's `x$raw`.
+fn section_raw_rd(body: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in body {
+        match inl {
+            Inline::Text(t) => {
+                for c in t.chars() {
+                    s.push(if c == SOFT_BREAK { '\n' } else { c });
+                }
+            }
+            Inline::Macro(n) => s.push_str(&n.text().to_string()),
+            _ => {}
+        }
+    }
+    s
 }
 
 /// Reconstruct the pre-parse Rd string from one projected S-expression atom,
@@ -6338,6 +6390,34 @@ mod tests {
         let src = "#' @md\n#' @title T\n#' @return foo *\\**\n#' @name spec\nNULL\n";
         let out = project_to_rd(src);
         assert!(out.contains("(\\value"), "got: {out}");
+    }
+
+    #[test]
+    fn markdown_off_escaped_brace_does_not_drop_the_section() {
+        // Markdown-off, roxygen2 runs `rdComplete` on the *raw* tag value, where a
+        // `\{`/`\}` is still escaped and therefore not counted --- so an unbalanced
+        // *escaped* brace keeps the section (`\{` renders a bare `{`). The projector
+        // must scan the pre-resolution raw text, not the escape-resolved atoms
+        // (where `\{` has collapsed to a bare `{` that would false-drop the section).
+        let src = "#' @title A title with an escaped a \\{ brace\n\
+                   #' @description Desc with an escaped a \\} brace\n\
+                   #' @name x\nNULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains("(\\title (TEXT \"A title with an escaped a { brace\"))"),
+            "title got: {out}"
+        );
+        assert!(
+            out.contains("(\\description (TEXT \"Desc with an escaped a } brace\"))"),
+            "description got: {out}"
+        );
+        // A genuinely unbalanced *bare* brace still drops (no escape to protect it).
+        let bare = "#' @title T\n#' @description bare a { brace\n#' @name x\nNULL\n";
+        let out = project_to_rd(bare);
+        assert!(
+            out.contains("(\\description)") && !out.contains("(\\description "),
+            "bare got: {out}"
+        );
     }
 
     #[test]

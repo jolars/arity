@@ -252,6 +252,7 @@ preformatted
 rawrd
 rawrd_md_literal
 rd_backslash_parity
+rd_brace_escape_unbalanced
 rd_braceless_drop
 rd_comment
 rd_comment_softwrap

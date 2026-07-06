@@ -1,0 +1,4 @@
+(\description (TEXT "Description with an escaped a } brace"))
+(\details (TEXT "Details with a balanced { a } pair"))
+(\seealso (TEXT "See also an escaped a { brace"))
+(\title (TEXT "Title with an escaped a { brace"))
