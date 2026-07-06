@@ -211,6 +211,8 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_reflow_year_not_list_item",
         "roxygen_tag_reflow_trailing_ordered_marker",
         "roxygen_bail_ordered_list",
+        "roxygen_bail_folded_tag_list",
+        "roxygen_bail_folded_section_list",
         "roxygen_tag_normalize_spacing",
         "roxygen_tag_reflow_idempotent",
         "roxygen_tag_alone_passthrough",

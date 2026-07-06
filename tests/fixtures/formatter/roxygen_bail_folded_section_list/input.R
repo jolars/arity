@@ -1,0 +1,4 @@
+#' @description The label can be one of the following:
+#' * A string or expression to set a label verbatim.
+#' * A function to use as formatter for the default label.
+f <- function(x) x

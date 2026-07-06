@@ -867,8 +867,11 @@ impl TagUnit {
         // prose chunk that could migrate to a continuation-line start and reparse as
         // a list/header marker is not a bail: `wrap_chunks_hanging` keeps such a
         // marker off any line start, preserving idempotence without abandoning
-        // reflow.
-        if (!md && self.lines.iter().any(line_has_live_rd_comment))
+        // reflow. A *whole folded line* that is already structured is different:
+        // the sibling shape keeps it verbatim, so the folded shape must too
+        // (`tag_folds_structured_line`).
+        if self.lines.iter().any(tag_folds_structured_line)
+            || (!md && self.lines.iter().any(line_has_live_rd_comment))
             || (md
                 && (self.first_is_linkref_def
                     || self.lines.iter().any(line_has_md_percent_swallow)
@@ -999,7 +1002,10 @@ impl SectionUnit {
         let marker = &self.marker;
         let header = &self.header;
         let first_text = self.first_text.as_deref().unwrap_or("");
-        if !self.chunks.is_empty() && prose_bails_reflow(&self.lines, first_text, md) {
+        if !self.chunks.is_empty()
+            && (prose_bails_reflow(&self.lines, first_text, md)
+                || self.lines.iter().any(tag_folds_structured_line))
+        {
             // Cannot reflow safely: passthrough the source lines marker-normalized
             // (form preserved), the tag line keeping its inline value.
             for (i, line) in self.lines.iter().enumerate() {
@@ -1393,15 +1399,19 @@ fn emit_tag_passthrough(items: &mut Vec<Ir>, line: &PhysicalLine, tag: &RoxygenT
     // A folded multi-line tag (a same-line value with plain-prose continuations)
     // is not reflowed on the bail path: keep its physical-line structure so a
     // `%`-swallow / linkref-def / live-`%` line is never joined with its
-    // continuation. Each source line is marker-normalized; the folded continuation
-    // segments already carry their `#'` markers, and the first segment carries the
+    // continuation, and a folded structured line stays on its own line. Each
+    // source line is marker-normalized **keeping its content indentation** (a
+    // reflowed tag unit's hanging indent, or a list continuation's nesting
+    // indent, must survive the passthrough or the reflowed and bailed shapes
+    // would never agree on a fixed point); the folded continuation segments
+    // already carry their `#'` markers, and the first segment carries the
     // `@name [arg] <value>` header verbatim.
     if is_multiline_tag(tag.syntax()) {
         for (i, seg) in tag.syntax().text().to_string().split('\n').enumerate() {
             if i == 0 {
                 push_line(items, format!("{marker} {}", seg.trim_end()));
             } else {
-                push_line(items, normalize_marker_text(seg));
+                push_line(items, normalize_list_marker_text(seg));
             }
         }
         return;
@@ -1563,6 +1573,36 @@ fn is_multiline_tag(node: &SyntaxNode) -> bool {
         && node
             .descendants_with_tokens()
             .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
+}
+
+/// Whether `line` carries a folded multi-line tag with a **structured**
+/// continuation segment. A prose tag's same-line value folds its contiguous
+/// plain-prose continuations into the `ROXYGEN_TAG` node, and outside `@md`
+/// mode a list item (or other structured-looking line) lexes as plain prose,
+/// so it can hide inside the fold. A sibling structured line is kept verbatim
+/// by the block loop's [`is_structured`] guard; a folded one must take the
+/// same conservative bail — reflowing it would join the marker into prose that
+/// the sibling (next-line) shape preserves, so the two shapes would disagree
+/// and formatting would not reach a fixed point.
+fn tag_folds_structured_line(line: &PhysicalLine) -> bool {
+    let Some(tag) = line.tag() else {
+        return false;
+    };
+    if !is_multiline_tag(tag.syntax()) {
+        return false;
+    }
+    // Continuation segments each start with their own `#+'` marker (the fold
+    // threads it into the tag node); strip it to classify the content, which
+    // continues the tag's open prose (`in_paragraph`).
+    tag.syntax().text().to_string().lines().skip(1).any(|seg| {
+        let s = seg.trim();
+        let hashes = s.len() - s.trim_start_matches('#').len();
+        let content = match s[hashes..].strip_prefix('\'') {
+            Some(rest) if hashes > 0 => rest.trim(),
+            _ => s,
+        };
+        is_structured(content, true)
+    })
 }
 
 /// Append `line` as an IR text node, preceded by a hard line break unless it is
