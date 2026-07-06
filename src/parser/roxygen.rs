@@ -343,6 +343,56 @@ pub(crate) fn is_zero_arg_rd_macro(name: &str) -> bool {
     ZERO_ARG_RD_MACROS.contains(&name)
 }
 
+/// Known Rd macros whose brace-less misuse does **not** recover as a clean text
+/// drop: by the time parse_Rd's "expecting `{`" error fires, its lexer has
+/// already switched to the macro's argument mode, and the recovery leaves that
+/// state in place — everything to *section end* (crossing paragraph breaks)
+/// becomes per-line `RCODE`/`VERB` atoms (`\code z` → `(RCODE " z after\n") …`).
+/// `\item` is special the other way: out of list context parse_Rd tags it an
+/// `(UNKNOWN "\item")` node and the text continues. Probed exhaustively against
+/// R 4.5 (every [`KNOWN_RD_MACROS`] name as `before \name z after`); every name
+/// *not* here (and not zero-arg) drops cleanly instead — see
+/// [`is_rd_braceless_drop_macro`].
+const STICKY_BRACELESS_RD_MACROS: &[&str] = &[
+    // RCODE-argument macros: recovery leaves parse_Rd in R-code mode.
+    "code",
+    "donttest",
+    "dontshow",
+    "testonly",
+    // VERB-argument macros: recovery leaves parse_Rd in verbatim mode.
+    "verb",
+    "url",
+    "samp",
+    "env",
+    "kbd",
+    "option",
+    "out",
+    "eqn",
+    "deqn",
+    "href",
+    "figure",
+    "preformatted",
+    "dontrun",
+    "newcommand",
+    "renewcommand",
+    // Out-of-list `\item` becomes an `(UNKNOWN …)` node, not a drop.
+    "item",
+];
+
+/// Whether a brace-less `\name` in prose is dropped by parse_Rd's recovery with
+/// the surrounding text continuing as plain `TEXT` (the "unexpected TEXT/section
+/// header, expecting `{`" recovery): a known, non-zero-arg macro outside
+/// [`STICKY_BRACELESS_RD_MACROS`]. Zero-arg names are complete calls (carved by
+/// the lexer), unknown names are `(UNKNOWN …)` nodes (also carved), and the
+/// sticky set leaves parse_Rd in a code/verbatim mode (left literal here;
+/// backlog). Mode-independent: the `@md` pipeline is a net no-op on a backslash
+/// run before a letter, so parse_Rd sees the same brace-less macro either way.
+pub(crate) fn is_rd_braceless_drop_macro(name: &str) -> bool {
+    is_known_rd_macro(name)
+        && !is_zero_arg_rd_macro(name)
+        && !STICKY_BRACELESS_RD_MACROS.contains(&name)
+}
+
 /// Rd macros whose `{…}` content roxygen2 **protects** from the markdown parser
 /// (`escaped_for_md` in roxygen2's `R/markdown-escaping.R`): under `@md`,
 /// `escape_rd_for_md` swaps the whole `\tag{…}` span out for a placeholder before

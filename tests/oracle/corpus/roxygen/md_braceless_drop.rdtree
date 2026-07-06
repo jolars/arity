@@ -1,0 +1,4 @@
+(\description (TEXT "Brace-less known macro drop in markdown prose"))
+(\details (TEXT "before z after end of line an odd run \\ q keeps one backslash an even run \\emph z stays literal"))
+(\seealso (TEXT "also z here"))
+(\title (TEXT "Brace-less known macro drop in markdown prose"))

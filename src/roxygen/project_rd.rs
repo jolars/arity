@@ -41,8 +41,8 @@ use rowan::NodeOrToken;
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
 use crate::parser::parse;
 use crate::parser::roxygen::{
-    MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_two_arg_rd_macro, resolve_md_inline,
-    resolve_md_inline_pieces, split_table_row_cells,
+    MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_rd_braceless_drop_macro,
+    is_two_arg_rd_macro, resolve_md_inline, resolve_md_inline_pieces, split_table_row_cells,
 };
 use crate::roxygen::entities;
 use crate::syntax::{SyntaxKind, SyntaxNode};
@@ -1669,40 +1669,68 @@ fn process_prose(run: &str, md: bool) -> String {
 /// Resolve parse_Rd's literal-text escapes in non-`@md` prose. Backslashes pair
 /// left-to-right (`\\` → one literal `\`); an unpaired trailing backslash
 /// before one of the Rd escape characters `%`, `{`, `}` is consumed with the
-/// escape resolved (`\%` → `%`, `\{` → `{`); an unpaired backslash before
-/// anything else stays literal (`a \ b` keeps its backslash). An unpaired
-/// backslash before a letter would re-form a macro in parse_Rd — the lexer
-/// already carved those (unknown names and zero-arg known macros), and the
-/// residual brace-required misuse (`\emph z`, parse_Rd's drop-recovery) is
-/// deliberately left literal (backlog). Runs before `%` interact with the line
-/// comment: [`strip_rd_comments`] runs first with the same pairing (its
-/// `escaped` flip-flop), so a `%` that survives it is always escape-consumed
-/// here.
+/// escape resolved (`\%` → `%`, `\{` → `{`); an unpaired backslash before a
+/// brace-required known macro name not followed by `{` re-forms the macro whose
+/// missing argument triggers parse_Rd's drop-recovery — the `\name` vanishes
+/// and the text continues (`\emph z` → ` z`; see
+/// [`is_rd_braceless_drop_macro`], which excludes the sticky code/verbatim-mode
+/// names left literal as backlog); an unpaired backslash before anything else
+/// stays literal (`a \ b` keeps its backslash). Runs before `%` interact with
+/// the line comment: [`strip_rd_comments`] runs first with the same pairing
+/// (its `escaped` flip-flop), so a `%` that survives it is always
+/// escape-consumed here.
 fn resolve_rd_text_escapes(run: &str) -> String {
+    let bytes = run.as_bytes();
     let mut out = String::with_capacity(run.len());
-    let mut chars = run.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'\\' {
+                i += 1;
+            }
+            out.push_str(&run[start..i]);
             continue;
         }
-        let mut k = 1usize;
-        while chars.peek() == Some(&'\\') {
-            chars.next();
+        let mut k = 0usize;
+        while i < bytes.len() && bytes[i] == b'\\' {
+            i += 1;
             k += 1;
         }
         for _ in 0..k / 2 {
             out.push('\\');
         }
         if k % 2 == 1 {
-            if matches!(chars.peek(), Some('%' | '{' | '}')) {
-                out.push(chars.next().expect("peeked escape char"));
-            } else {
-                out.push('\\');
+            match bytes.get(i) {
+                Some(b'%' | b'{' | b'}') => {
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+                _ => {
+                    if let Some(end) = braceless_drop_name_end(run, i) {
+                        i = end;
+                    } else {
+                        out.push('\\');
+                    }
+                }
             }
         }
     }
     out
+}
+
+/// The end index of a brace-required known macro name at `run[start..]` whose
+/// brace-less misuse parse_Rd drop-recovers, or `None` when the bytes there are
+/// not such a name (or a `{` follows, making it a real macro call — those are
+/// carved by the lexer and never reach prose text, but the guard keeps the
+/// transform faithful on any input). Shared by the non-`@md` escape resolution
+/// and the `@md` backslash-run collapse: the preceding unpaired `\` plus this
+/// name vanish from the rendered text.
+fn braceless_drop_name_end(run: &str, start: usize) -> Option<usize> {
+    let bytes = run.as_bytes();
+    let end = crate::parser::roxygen::rd_macro_name_end(bytes, start);
+    (end > start && is_rd_braceless_drop_macro(&run[start..end]) && bytes.get(end) != Some(&b'{'))
+        .then_some(end)
 }
 
 /// In `@md` prose, roxygen2 honors a CommonMark backslash escape for the square
@@ -1793,26 +1821,48 @@ fn md_percent_swallow_line(line: &str) -> &str {
 /// comment character) are also left to the separate `%`-swallow modeling (a lone
 /// `\%` keeps its backslash but the bare `%` still comments to end of line);
 /// `ceil(k/2)` is a no-op for the common `k == 1` case there anyway.
+///
+/// An **odd** run before a brace-required known macro name not followed by `{`
+/// is the brace-less misuse: the `k` source backslashes reach parse_Rd intact
+/// (double → cmark halves), which pairs them into `k/2` literal backslashes and
+/// re-forms the trailing `\name` — whose missing argument drop-recovers, so the
+/// name vanishes (`\emph z` → ` z`, `\\\link q` → `\ q`; see
+/// [`braceless_drop_name_end`]). Mirrors the non-`@md`
+/// [`resolve_rd_text_escapes`].
 fn collapse_md_backslash_runs(run: &str) -> String {
+    let bytes = run.as_bytes();
     let mut out = String::with_capacity(run.len());
-    let mut chars = run.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'\\' {
+                i += 1;
+            }
+            out.push_str(&run[start..i]);
             continue;
         }
         // Consume a maximal run of backslashes.
-        let mut k = 1usize;
-        while chars.peek() == Some(&'\\') {
-            chars.next();
+        let mut k = 0usize;
+        while i < bytes.len() && bytes[i] == b'\\' {
+            i += 1;
             k += 1;
         }
         // A run abutting a square bracket is a bracket escape: leave it verbatim
         // for `unescape_md_brackets` (its `\\[` → `\[` revert is a distinct path).
-        if matches!(chars.peek(), Some('[' | ']')) {
+        if matches!(bytes.get(i), Some(b'[' | b']')) {
             for _ in 0..k {
                 out.push('\\');
             }
+        } else if k % 2 == 1
+            && let Some(end) = braceless_drop_name_end(run, i)
+        {
+            // Odd run + brace-less drop macro: the unpaired `\` re-forms the
+            // macro, whose drop-recovery consumes `\name`.
+            for _ in 0..k / 2 {
+                out.push('\\');
+            }
+            i = end;
         } else {
             for _ in 0..k.div_ceil(2) {
                 out.push('\\');
@@ -5691,6 +5741,34 @@ mod tests {
         // A run abutting a bracket is left verbatim for `unescape_md_brackets`.
         assert_eq!(collapse_md_backslash_runs(r"\\[x"), r"\\[x");
         assert_eq!(collapse_md_backslash_runs(r"a\\]b"), r"a\\]b");
+    }
+
+    #[test]
+    fn braceless_drop_macro_vanishes_from_text() {
+        // parse_Rd's drop-recovery: an unpaired `\` re-forming a brace-required
+        // known macro without its `{` drops the `\name`; the text continues.
+        assert_eq!(
+            resolve_rd_text_escapes(r"before \emph z after"),
+            "before  z after"
+        );
+        // The drop applies at end of input (the `{` never arrives) …
+        assert_eq!(
+            resolve_rd_text_escapes(r"end of line \strong"),
+            "end of line "
+        );
+        // … and to section-header names misused mid-prose.
+        assert_eq!(resolve_rd_text_escapes(r"a \title z"), "a  z");
+        // An even run is a literal backslash, not a macro: no drop.
+        assert_eq!(resolve_rd_text_escapes(r"a \\emph z"), r"a \emph z");
+        // Sticky names (code/verbatim mode-flip, `\item`) stay literal (backlog).
+        assert_eq!(resolve_rd_text_escapes(r"a \code z"), r"a \code z");
+        assert_eq!(resolve_rd_text_escapes(r"a \item z"), r"a \item z");
+        // The `@md` collapse mirrors the drop, keyed on the original run parity:
+        // odd runs drop the name and keep the paired `k/2` backslashes.
+        assert_eq!(collapse_md_backslash_runs(r"a \emph z"), "a  z");
+        assert_eq!(collapse_md_backslash_runs(r"a \\\link q"), r"a \ q");
+        assert_eq!(collapse_md_backslash_runs(r"a \\emph z"), r"a \emph z");
+        assert_eq!(collapse_md_backslash_runs(r"a \code z"), r"a \code z");
     }
 
     #[test]

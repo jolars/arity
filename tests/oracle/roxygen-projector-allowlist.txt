@@ -161,6 +161,7 @@ md_blockquote_lazy
 md_blockquote_multiline
 md_blockquote_value
 md_block_value_edges
+md_braceless_drop
 md_email_autolink
 md_emphasis
 md_emphasis_multiline
@@ -251,6 +252,7 @@ preformatted
 rawrd
 rawrd_md_literal
 rd_backslash_parity
+rd_braceless_drop
 rd_comment
 rd_comment_softwrap
 rdcomplete_field_drop

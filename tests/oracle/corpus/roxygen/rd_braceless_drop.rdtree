@@ -1,0 +1,4 @@
+(\description (TEXT "Brace-less known macro drop in literal Rd prose"))
+(\details (TEXT "before z after end of line continues with z too a section header z drops an even run \\emph z stays literal"))
+(\seealso (TEXT "also z here"))
+(\title (TEXT "Brace-less known macro drop in literal Rd prose"))
