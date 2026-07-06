@@ -118,6 +118,21 @@ tasks:
           > /tmp/roxygen-allowlist.txt && mv /tmp/roxygen-allowlist.txt tests/oracle/roxygen-allowlist.txt
         echo "seeded $(wc -l < /tmp/roxygen-pass.txt) PASS slugs into the allowlist"
 
+  roxygen-lint-oracle:
+    desc: Compare the documentation lint rules against roxygen2's own warnings (writes ROXYGEN_LINT.md; needs R + roxygen2)
+    cmds:
+      - cargo test --test roxygen_lint_oracle -- --ignored --nocapture roxygen_lint_oracle_report
+
+  roxygen-lint-oracle-seed:
+    desc: Re-seed the lint-oracle allowlist from currently matching files (needs R + roxygen2)
+    cmds:
+      - |
+        cargo test --test roxygen_lint_oracle -- --ignored --nocapture roxygen_lint_oracle_report 2>/dev/null \
+          | grep '^PASS ' | awk '{print $2}' | sort > /tmp/roxygen-lint-pass.txt
+        { grep -E '^#|^$' tests/oracle/roxygen-lint-allowlist.txt; cat /tmp/roxygen-lint-pass.txt; } \
+          > /tmp/roxygen-lint-allowlist.txt && mv /tmp/roxygen-lint-allowlist.txt tests/oracle/roxygen-lint-allowlist.txt
+        echo "seeded $(wc -l < /tmp/roxygen-lint-pass.txt) matching files into the lint-oracle allowlist"
+
   bench:
     desc: Benchmark formatter speed vs. air on large files (writes BENCH.md)
     cmds:

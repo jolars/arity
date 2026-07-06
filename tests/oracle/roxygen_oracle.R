@@ -32,6 +32,13 @@
 #                   lines (or `@@@<i>` then `!ERROR` if roxygen2 could not process
 #                   it). Loads roxygen2 once for the whole batch (the harvested
 #                   corpus would otherwise pay per-case process startup).
+#   lint-warnings   stdin = R source; stdout = one line per warning/message
+#                   roxygen2 signals while parsing + rd-roclet-processing it
+#                   (newlines escaped as \n). The lint-oracle harness
+#                   (tests/roxygen_lint_oracle.rs) maps these to arity rule ids.
+#   lint-warnings-batch  stdin = JSON array of R-source strings; stdout = one
+#                   group per element (`@@@<i>` then its lint-warnings lines,
+#                   or `!ERROR` if processing errored).
 #
 # The canonical serialization (rd_to_canonical) is what makes the comparison
 # robust: it parses Rd with tools::parse_Rd and drops everything cosmetic ---
@@ -290,7 +297,61 @@ projector_eligible <- function(src) {
   }, error = function(e) NULL)
 }
 
+# Capture every warning/message roxygen2 signals while parsing `text` and
+# processing it with the rd roclet (`roc_proc_text` triggers both the
+# parse-time checks --- unknown tag, @param two-part --- and the roclet-time
+# ones --- missing title). Returns the messages, or NULL on hard error.
+lint_warnings <- function(text) {
+  msgs <- character(0)
+  collect <- function(cnd) {
+    msgs <<- c(msgs, gsub("\n", "\\n", conditionMessage(cnd), fixed = TRUE))
+    if (inherits(cnd, "warning")) tryInvokeRestart("muffleWarning")
+    if (inherits(cnd, "message")) tryInvokeRestart("muffleMessage")
+  }
+  ok <- TRUE
+  tryCatch(
+    withCallingHandlers(
+      # Stray stdout from processing must not corrupt the protocol.
+      invisible(utils::capture.output(
+        roxygen2::roc_proc_text(roxygen2::rd_roclet(), text)
+      )),
+      warning = collect,
+      message = collect
+    ),
+    error = function(e) ok <<- FALSE
+  )
+  if (!ok) NULL else msgs
+}
+
 main <- function() {
+  if (identical(op, "lint-warnings-batch")) {
+    src <- read_stdin()
+    inputs <- jsonlite::fromJSON(src, simplifyVector = TRUE)
+    out <- character(0)
+    for (i in seq_along(inputs)) {
+      out <- c(out, paste0("@@@", i - 1L))
+      msgs <- lint_warnings(inputs[[i]])
+      if (is.null(msgs)) {
+        out <- c(out, "!ERROR")
+      } else {
+        out <- c(out, msgs)
+      }
+    }
+    cat(paste(out, collapse = "\n"), "\n", sep = "")
+    return(invisible())
+  }
+
+  if (identical(op, "lint-warnings")) {
+    msgs <- lint_warnings(read_stdin())
+    if (is.null(msgs)) {
+      stop("roxygen2 could not process the input")
+    }
+    if (length(msgs)) {
+      cat(paste(msgs, collapse = "\n"), "\n", sep = "")
+    }
+    return(invisible())
+  }
+
   if (identical(op, "projector-pins")) {
     # stdin = the harvested corpus JSONL (one {slug, input} per line); stdout =
     # JSONL {slug, sections} for the *eligible* subset only (see
