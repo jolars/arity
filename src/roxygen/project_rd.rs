@@ -1662,8 +1662,47 @@ fn process_prose(run: &str, md: bool) -> String {
             &md_percent_swallow(run),
         )))
     } else {
-        strip_rd_comments(run)
+        resolve_rd_text_escapes(&strip_rd_comments(run))
     }
+}
+
+/// Resolve parse_Rd's literal-text escapes in non-`@md` prose. Backslashes pair
+/// left-to-right (`\\` → one literal `\`); an unpaired trailing backslash
+/// before one of the Rd escape characters `%`, `{`, `}` is consumed with the
+/// escape resolved (`\%` → `%`, `\{` → `{`); an unpaired backslash before
+/// anything else stays literal (`a \ b` keeps its backslash). An unpaired
+/// backslash before a letter would re-form a macro in parse_Rd — the lexer
+/// already carved those (unknown names and zero-arg known macros), and the
+/// residual brace-required misuse (`\emph z`, parse_Rd's drop-recovery) is
+/// deliberately left literal (backlog). Runs before `%` interact with the line
+/// comment: [`strip_rd_comments`] runs first with the same pairing (its
+/// `escaped` flip-flop), so a `%` that survives it is always escape-consumed
+/// here.
+fn resolve_rd_text_escapes(run: &str) -> String {
+    let mut out = String::with_capacity(run.len());
+    let mut chars = run.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let mut k = 1usize;
+        while chars.peek() == Some(&'\\') {
+            chars.next();
+            k += 1;
+        }
+        for _ in 0..k / 2 {
+            out.push('\\');
+        }
+        if k % 2 == 1 {
+            if matches!(chars.peek(), Some('%' | '{' | '}')) {
+                out.push(chars.next().expect("peeked escape char"));
+            } else {
+                out.push('\\');
+            }
+        }
+    }
+    out
 }
 
 /// In `@md` prose, roxygen2 honors a CommonMark backslash escape for the square

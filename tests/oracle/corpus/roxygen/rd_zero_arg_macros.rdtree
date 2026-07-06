@@ -1,0 +1,3 @@
+(\description (TEXT "Zero-argument Rd macros in prose"))
+(\details (TEXT "Dots") (\dots) (TEXT "and ldots") (\ldots) (TEXT "and the") (\R) (TEXT "logo and a break") (\cr) (TEXT "end. Parity applies: even \\dots is literal, odd \\") (\dots) (TEXT "re-forms."))
+(\title (TEXT "Zero-argument Rd macros in prose"))

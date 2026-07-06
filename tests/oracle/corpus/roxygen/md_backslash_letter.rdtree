@@ -1,0 +1,3 @@
+(\description (TEXT "Backslash runs before a letter under markdown"))
+(\details (TEXT "Odd runs re-form a macro: a") (UNKNOWN "\\y") (TEXT "b and c \\") (UNKNOWN "\\y") (TEXT "d. Even runs are literal text: e \\y f and g \\\\y h. Known zero-arg macros carve: i") (\dots) (TEXT "j but even k \\dots l stays text."))
+(\title (TEXT "Backslash runs before a letter under markdown"))

@@ -2,9 +2,9 @@
 source: tests/parser_snapshots.rs
 expression: tree
 ---
-ROOT@0..110
-  ROXYGEN_BLOCK@0..88
-    ROXYGEN_SECTION@0..88
+ROOT@0..124
+  ROXYGEN_BLOCK@0..102
+    ROXYGEN_SECTION@0..102
       ROXYGEN_PARAGRAPH@0..9
         ROXYGEN_MARKER@0..2 "#'"
         WHITESPACE@2..3 " "
@@ -12,7 +12,7 @@ ROOT@0..110
         NEWLINE@8..9 "\n"
       ROXYGEN_MARKER@9..11 "#'"
       NEWLINE@11..12 "\n"
-      ROXYGEN_PARAGRAPH@12..88
+      ROXYGEN_PARAGRAPH@12..102
         ROXYGEN_MARKER@12..14 "#'"
         WHITESPACE@14..15 " "
         ROXYGEN_TEXT@15..35 "Description. It has "
@@ -25,19 +25,22 @@ ROOT@0..110
         NEWLINE@49..50 "\n"
         ROXYGEN_MARKER@50..52 "#'"
         WHITESPACE@52..53 " "
-        ROXYGEN_TEXT@53..88 "A known \\cr stays tex ..."
-  NEWLINE@88..89 "\n"
-  ASSIGNMENT_EXPR@89..109
-    IDENT@89..92 "foo"
-    WHITESPACE@92..93 " "
-    ASSIGN_LEFT@93..95 "<-"
-    WHITESPACE@95..96 " "
-    FUNCTION_EXPR@96..109
-      FUNCTION_KW@96..104 "function"
-      LPAREN@104..105 "("
-      RPAREN@105..106 ")"
-      WHITESPACE@106..107 " "
-      BLOCK_EXPR@107..109
-        LBRACE@107..108 "{"
-        RBRACE@108..109 "}"
-  NEWLINE@109..110 "\n"
+        ROXYGEN_TEXT@53..92 "A known \\emph stays t ..."
+        ROXYGEN_RD_MACRO@92..94
+          ROXYGEN_RD_MACRO_NAME@92..94 "\\R"
+        ROXYGEN_TEXT@94..102 " carves."
+  NEWLINE@102..103 "\n"
+  ASSIGNMENT_EXPR@103..123
+    IDENT@103..106 "foo"
+    WHITESPACE@106..107 " "
+    ASSIGN_LEFT@107..109 "<-"
+    WHITESPACE@109..110 " "
+    FUNCTION_EXPR@110..123
+      FUNCTION_KW@110..118 "function"
+      LPAREN@118..119 "("
+      RPAREN@119..120 ")"
+      WHITESPACE@120..121 " "
+      BLOCK_EXPR@121..123
+        LBRACE@121..122 "{"
+        RBRACE@122..123 "}"
+  NEWLINE@123..124 "\n"

@@ -152,6 +152,7 @@ markdown_inline
 markdown_list
 markdown_url
 md_atx_heading_value
+md_backslash_letter
 md_backslash_run
 md_blockquote
 md_blockquote_glue
@@ -249,6 +250,7 @@ param_prose
 preformatted
 rawrd
 rawrd_md_literal
+rd_backslash_parity
 rd_comment
 rd_comment_softwrap
 rdcomplete_field_drop
@@ -258,6 +260,7 @@ rdcomplete_section_drop
 rdcomplete_slot_drop
 rd_macros
 rd_nested_list
+rd_zero_arg_macros
 rx-0273da0d
 rx-031cfdcb
 rx-03328a0f

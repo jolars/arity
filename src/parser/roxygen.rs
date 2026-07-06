@@ -331,6 +331,18 @@ pub(crate) fn is_known_rd_macro(name: &str) -> bool {
     KNOWN_RD_MACROS.contains(&name)
 }
 
+/// The zero-argument Rd macros in `parse_Rd`'s table. A brace-less occurrence
+/// in prose is a *complete* macro call (`\dots` → `(\dots)`), so the lexer
+/// carves it — unlike other known names, whose brace-less misuse triggers
+/// parse_Rd's drop-recovery (left literal here; backlog).
+const ZERO_ARG_RD_MACROS: &[&str] = &["cr", "tab", "dots", "ldots", "R"];
+
+/// Whether `name` (without the leading `\`) is a zero-argument Rd macro. See
+/// [`ZERO_ARG_RD_MACROS`].
+pub(crate) fn is_zero_arg_rd_macro(name: &str) -> bool {
+    ZERO_ARG_RD_MACROS.contains(&name)
+}
+
 /// Rd macros whose `{…}` content roxygen2 **protects** from the markdown parser
 /// (`escaped_for_md` in roxygen2's `R/markdown-escaping.R`): under `@md`,
 /// `escape_rd_for_md` swaps the whole `\tag{…}` span out for a placeholder before

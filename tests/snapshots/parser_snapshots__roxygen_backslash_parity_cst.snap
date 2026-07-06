@@ -1,0 +1,127 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..549
+  ROXYGEN_BLOCK@0..378
+    ROXYGEN_SECTION@0..33
+      ROXYGEN_PARAGRAPH@0..30
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..29 "Backslash pairing in  ..."
+        NEWLINE@29..30 "\n"
+      ROXYGEN_MARKER@30..32 "#'"
+      NEWLINE@32..33 "\n"
+    ROXYGEN_SECTION@33..353
+      ROXYGEN_MARKER@33..35 "#'"
+      WHITESPACE@35..36 " "
+      ROXYGEN_TAG@36..44
+        ROXYGEN_AT@36..37 "@"
+        ROXYGEN_TAG_NAME@37..44 "details"
+      NEWLINE@44..45 "\n"
+      ROXYGEN_PARAGRAPH@45..353
+        ROXYGEN_MARKER@45..47 "#'"
+        WHITESPACE@47..48 " "
+        ROXYGEN_TEXT@48..94 "Even runs stay litera ..."
+        NEWLINE@94..95 "\n"
+        ROXYGEN_MARKER@95..97 "#'"
+        WHITESPACE@97..98 " "
+        ROXYGEN_TEXT@98..126 "Odd runs carve the ma ..."
+        ROXYGEN_RD_MACRO@126..128
+          ROXYGEN_RD_MACRO_NAME@126..128 "\\y"
+        ROXYGEN_TEXT@128..139 " f and g \\\\"
+        ROXYGEN_RD_MACRO@139..141
+          ROXYGEN_RD_MACRO_NAME@139..141 "\\y"
+        ROXYGEN_TEXT@141..144 " h."
+        NEWLINE@144..145 "\n"
+        ROXYGEN_MARKER@145..147 "#'"
+        WHITESPACE@147..148 " "
+        ROXYGEN_TEXT@148..177 "Zero-arg known macros ..."
+        ROXYGEN_RD_MACRO@177..182
+          ROXYGEN_RD_MACRO_NAME@177..182 "\\dots"
+        ROXYGEN_TEXT@182..187 " and "
+        ROXYGEN_RD_MACRO@187..193
+          ROXYGEN_RD_MACRO_NAME@187..193 "\\ldots"
+        ROXYGEN_TEXT@193..198 " and "
+        ROXYGEN_RD_MACRO@198..200
+          ROXYGEN_RD_MACRO_NAME@198..200 "\\R"
+        ROXYGEN_TEXT@200..205 " and "
+        ROXYGEN_RD_MACRO@205..208
+          ROXYGEN_RD_MACRO_NAME@205..208 "\\cr"
+        ROXYGEN_TEXT@208..213 " and "
+        ROXYGEN_RD_MACRO@213..217
+          ROXYGEN_RD_MACRO_NAME@213..217 "\\tab"
+        ROXYGEN_TEXT@217..218 "."
+        NEWLINE@218..219 "\n"
+        ROXYGEN_MARKER@219..221 "#'"
+        WHITESPACE@221..222 " "
+        ROXYGEN_TEXT@222..272 "Parity gates them too ..."
+        ROXYGEN_RD_MACRO@272..277
+          ROXYGEN_RD_MACRO_NAME@272..277 "\\dots"
+        ROXYGEN_TEXT@277..285 " carves."
+        NEWLINE@285..286 "\n"
+        ROXYGEN_MARKER@286..288 "#'"
+        WHITESPACE@288..289 " "
+        ROXYGEN_TEXT@289..352 "Other known names bra ..."
+        NEWLINE@352..353 "\n"
+    ROXYGEN_SECTION@353..378
+      ROXYGEN_MARKER@353..355 "#'"
+      WHITESPACE@355..356 " "
+      ROXYGEN_TAG@356..378
+        ROXYGEN_AT@356..357 "@"
+        ROXYGEN_TAG_NAME@357..361 "name"
+        WHITESPACE@361..362 " "
+        ROXYGEN_TEXT@362..378 "backslash_parity"
+  NEWLINE@378..379 "\n"
+  IDENT@379..383 "NULL"
+  NEWLINE@383..384 "\n"
+  NEWLINE@384..385 "\n"
+  ROXYGEN_BLOCK@385..543
+    ROXYGEN_SECTION@385..428
+      ROXYGEN_PARAGRAPH@385..425
+        ROXYGEN_MARKER@385..387 "#'"
+        WHITESPACE@387..388 " "
+        ROXYGEN_TEXT@388..424 "Markdown mode shares  ..."
+        NEWLINE@424..425 "\n"
+      ROXYGEN_MARKER@425..427 "#'"
+      NEWLINE@427..428 "\n"
+    ROXYGEN_SECTION@428..508
+      ROXYGEN_MARKER@428..430 "#'"
+      WHITESPACE@430..431 " "
+      ROXYGEN_TAG@431..439
+        ROXYGEN_AT@431..432 "@"
+        ROXYGEN_TAG_NAME@432..439 "details"
+      NEWLINE@439..440 "\n"
+      ROXYGEN_PARAGRAPH@440..508
+        ROXYGEN_MARKER@440..442 "#'"
+        WHITESPACE@442..443 " "
+        ROXYGEN_TEXT@443..467 "Even \\\\y literal, odd \\\\"
+        ROXYGEN_RD_MACRO@467..469
+          ROXYGEN_RD_MACRO_NAME@467..469 "\\y"
+        ROXYGEN_TEXT@469..478 " carves, "
+        ROXYGEN_RD_MACRO@478..483
+          ROXYGEN_RD_MACRO_NAME@478..483 "\\dots"
+        ROXYGEN_TEXT@483..507 " carves, \\\\dots literal."
+        NEWLINE@507..508 "\n"
+    ROXYGEN_SECTION@508..515
+      ROXYGEN_MARKER@508..510 "#'"
+      WHITESPACE@510..511 " "
+      ROXYGEN_TAG@511..514
+        ROXYGEN_AT@511..512 "@"
+        ROXYGEN_TAG_NAME@512..514 "md"
+      NEWLINE@514..515 "\n"
+    ROXYGEN_SECTION@515..543
+      ROXYGEN_MARKER@515..517 "#'"
+      WHITESPACE@517..518 " "
+      ROXYGEN_TAG@518..543
+        ROXYGEN_AT@518..519 "@"
+        ROXYGEN_TAG_NAME@519..523 "name"
+        WHITESPACE@523..524 " "
+        ROXYGEN_TEXT@524..533 "backslash"
+        ROXYGEN_MD_DELIM@533..534 "_"
+        ROXYGEN_TEXT@534..540 "parity"
+        ROXYGEN_MD_DELIM@540..541 "_"
+        ROXYGEN_TEXT@541..543 "md"
+  NEWLINE@543..544 "\n"
+  IDENT@544..548 "NULL"
+  NEWLINE@548..549 "\n"

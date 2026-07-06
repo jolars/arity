@@ -712,7 +712,12 @@ fn lex_roxygen_prose(
             // as its own `RoxygenText` token: at line start this reproduces the same
             // whole-line token, and mid-prose it splits the preceding run off so the
             // grouper can promote the opener to a block macro (when it later closes).
-            b'\\' => scan_rd_macro(bytes, i)
+            // parse_Rd pairs backslashes left-to-right (`\\` is the literal-
+            // backslash escape), so a `\` preceded by an odd-length backslash
+            // run is consumed by its pair and can never begin a macro: `\\y`
+            // is literal `\` + `y`, while `\\\y` re-forms `\y`. The parity
+            // gate applies to both the inline carve and the block opener.
+            b'\\' if !rd_backslash_is_escaped(bytes, i) => scan_rd_macro(bytes, i)
                 .map(|end| (TokKind::RoxygenRdMacro, end))
                 .or_else(|| {
                     is_block_macro_opener_at(bytes, i)
@@ -1642,6 +1647,18 @@ fn scan_html_attribute(bytes: &[u8], i: usize) -> Option<usize> {
 /// a required balanced `{…}` (and a second `{…}` for a two-argument macro like
 /// `\item`). Returns the index past the last consumed `}`, or `None` when there
 /// is no name or the first braces are unbalanced on the line.
+/// Whether the backslash at `bytes[i]` is itself escaped: the length of the
+/// maximal backslash run immediately before it is odd, so parse_Rd's
+/// left-to-right pairing consumes it (`\\` → literal `\`) and it cannot begin
+/// a macro.
+fn rd_backslash_is_escaped(bytes: &[u8], i: usize) -> bool {
+    let mut k = 0usize;
+    while k < i && bytes[i - 1 - k] == b'\\' {
+        k += 1;
+    }
+    k % 2 == 1
+}
+
 /// Whether `bytes[i] == b'\\'` begins an **unbalanced** `\name{` block-macro
 /// opener — a `\name{` whose `{` group does not close within the line (so its
 /// body spans following `#'` lines). The balanced inline case is handled by
@@ -1658,11 +1675,17 @@ pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
         return None; // `\\`, `\{`, `\n`, … are not macro calls
     }
     let name = std::str::from_utf8(&bytes[name_start..j]).unwrap_or_default();
+    // A zero-argument macro is a complete call by its name alone (`\dots` →
+    // `(\dots)`); parse_Rd never consumes a following group for it, so carve
+    // name-only even when a `{`/`[` follows.
+    if super::is_zero_arg_rd_macro(name) {
+        return Some(j);
+    }
     // A brace-less `\word` that is **not** a known Rd macro is an `UNKNOWN` macro
     // token (parse_Rd tags any unrecognized `\word` `UNKNOWN`, even without a
-    // group). A *known* name brace-less stays literal prose: a zero-arg macro's
-    // name-only rendering and an arg-requiring macro's misuse are both backlog,
-    // and leaving them as text keeps the existing tokenization (no regression).
+    // group). Any other *known* name brace-less stays literal prose: parse_Rd's
+    // drop-recovery for an arg-requiring macro's misuse (`\emph z`) is backlog,
+    // and leaving it as text keeps the existing tokenization (no regression).
     if bytes.get(j) != Some(&b'{') && bytes.get(j) != Some(&b'[') {
         return (!super::is_known_rd_macro(name)).then_some(j);
     }

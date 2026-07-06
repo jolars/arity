@@ -33,8 +33,7 @@ ROOT@0..145
         ROXYGEN_TEXT@59..61 "a "
         ROXYGEN_RD_MACRO@61..65
           ROXYGEN_RD_MACRO_NAME@61..65 "\\tab"
-        WHITESPACE@65..66 " "
-        ROXYGEN_TEXT@66..80 "the first row "
+        ROXYGEN_TEXT@65..80 " the first row "
         ROXYGEN_RD_MACRO@80..83
           ROXYGEN_RD_MACRO_NAME@80..83 "\\cr"
         NEWLINE@83..84 "\n"
@@ -43,8 +42,7 @@ ROOT@0..145
         ROXYGEN_TEXT@89..91 "b "
         ROXYGEN_RD_MACRO@91..95
           ROXYGEN_RD_MACRO_NAME@91..95 "\\tab"
-        WHITESPACE@95..96 " "
-        ROXYGEN_TEXT@96..111 "the second row "
+        ROXYGEN_TEXT@95..111 " the second row "
         ROXYGEN_RD_MACRO@111..114
           ROXYGEN_RD_MACRO_NAME@111..114 "\\cr"
         NEWLINE@114..115 "\n"
