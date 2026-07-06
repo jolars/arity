@@ -26,7 +26,7 @@
 //! - **Section** (`@section Title:`): title inline, body form-2 flush.
 //!
 //! Blank separators, block Rd macros, markdown lists, fenced code blocks, and other
-//! structured lines (tables, headers, blockquotes) are passed through
+//! structured lines (table delimiter rows, headers, blockquotes) are passed through
 //! marker-normalized but never reflowed — the conservative gate that keeps reflow
 //! correct without a full Markdown parse. A block macro always sits flush; it never
 //! hangs under a tag (the enclosing section is laid out form-2 instead).
@@ -38,7 +38,7 @@ use super::core::format_with_style;
 use super::ir::Ir;
 use super::style::FormatStyle;
 use crate::ast::{AstNode, RoxygenBlock, RoxygenTag};
-use crate::parser::roxygen::{is_md_standalone_html_tag, starts_md_html_block};
+use crate::parser::roxygen::{is_md_standalone_html_tag, is_table_delim_row, starts_md_html_block};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// One physical `#'` line, reconstructed from the logical CST for layout.
@@ -699,8 +699,9 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
             continue;
         }
 
-        // Structured line (list/blockquote/header/table): never reflowed. Inside a
-        // section it content-forces form-2, then emits flush beneath the bare tag.
+        // Structured line (list/blockquote/header/table delimiter row): never
+        // reflowed. Inside a section it content-forces form-2, then emits flush
+        // beneath the bare tag.
         if is_structured(&content, in_paragraph) {
             if let Some(s) = section.as_mut() {
                 s.force_form2 = true;
@@ -1579,10 +1580,19 @@ fn is_fence_marker(content: &str) -> bool {
 }
 
 /// Whether `content` (a line's trimmed content) is a structured line that must
-/// not be reflowed: a list item, blockquote, ATX header, table row, or fence.
-/// `in_paragraph` is whether this line continues open prose (a paragraph or a
-/// tag unit), which gates ordered-list recognition (see
+/// not be reflowed: a list item, blockquote, ATX header, table delimiter row,
+/// or fence. `in_paragraph` is whether this line continues open prose (a
+/// paragraph or a tag unit), which gates ordered-list recognition (see
 /// `starts_ordered_list_item`).
+///
+/// A line that merely *contains* a `|` (an R pipe `|>`, an `||`, prose like
+/// `this | that`) is ordinary prose: GFM recognizes a table only on a
+/// header/delimiter row pair, and the parser owns that recognition (a matched
+/// table arrives as a `ROXYGEN_MD_TABLE` block macro, handled before this
+/// check; the parser also folds pipe-bearing continuations into a tag's value,
+/// where they reflow). Only a *delimiter row* — the linchpin of table
+/// formation — is kept structured, so reflow never joins one into prose where
+/// a new header/delimiter pairing could form on reparse.
 fn is_structured(content: &str, in_paragraph: bool) -> bool {
     content.starts_with("- ")
         || content.starts_with("* ")
@@ -1590,7 +1600,7 @@ fn is_structured(content: &str, in_paragraph: bool) -> bool {
         || content.starts_with("> ")
         || content.starts_with('#')
         || is_fence_marker(content)
-        || content.contains('|')
+        || is_table_delim_row(content)
         || starts_ordered_list_item(content, in_paragraph)
 }
 

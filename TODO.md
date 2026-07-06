@@ -212,6 +212,26 @@
       dontrun_passthrough}` and `roxygen_examplesif_format`. No air-compat
       allowlist entry: air leaves roxygen untouched, so it preserves arity's
       formatted output and the fixed-point gauge sees no divergence.
+    - [x] **Pipe-bearing prose reflows; only table *delimiter rows* are
+      structured** (fixes #49, the tidyverse/tidyr idempotence regression).
+      `is_structured`'s `contains('|')` table heuristic predated the parser's
+      GFM table model and hit any prose with an R pipe (`|>`), `||`, or
+      `x | y` — but only on the physical-line path: the parser folds
+      pipe-bearing continuations into a same-line-value `ROXYGEN_TAG`, where
+      `TagUnit` reflowed them freely, so the two written forms of one `@param`
+      disagreed and pass 1's output reflowed differently on pass 2. The
+      heuristic is now the parser's own `is_table_delim_row` (Tenet 3): a
+      matched table arrives as a `ROXYGEN_MD_TABLE` block macro (`@md` mode)
+      and stays verbatim, a lone unmatched delimiter row stays a structured
+      boundary, and everything else containing a pipe is prose and reflows.
+      Fixture `roxygen_pipe_prose_reflow`.
+      - *Known edge (backlog):* in `@md` mode, re-wrapping a paragraph that
+        sits directly above an *unmatched* delimiter row can land the
+        paragraph's last line on a matching cell count, so a table forms on
+        reparse (a render change; the output is still idempotent since the
+        new table is already marker-normalized). Contrived — needs a stray
+        delimiter row plus an exact wrap landing — and the folded-tag path had
+        the same exposure before this change.
 
     LSP follow-ups: fold/semantic-token/completion awareness for roxygen
     (folding already preserved; completion may trigger inside `#'` lines).
