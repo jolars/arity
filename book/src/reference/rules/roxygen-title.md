@@ -1,0 +1,22 @@
+# `roxygen-title`
+
+Flag a documented function whose roxygen block has no title.
+
+The first untagged paragraph (or an explicit `@title`) becomes the topic title; without one, roxygen2 warns and `R CMD check` rejects the generated `.Rd`. An `@export` with no documentation at all is flagged too—`R CMD check` reports it as an undocumented export. Blocks that merge into or inherit another topic (`@rdname`, `@describeIn`, `@inherit*`, `@template`) and `@noRd` blocks are skipped.
+
+A documented, exported function with no title paragraph:
+
+```r
+#' @param x A number.
+#' @export
+add_one <- function(x) x + 1
+```
+
+```text
+warning: roxygen-title
+ --> example.R:1:1
+  |
+1 | #' @param x A number.
+  | ^^ documentation block has no title
+  = help: Add a leading prose line (the first paragraph becomes the title) or an explicit `@title`.
+```

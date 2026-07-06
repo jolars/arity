@@ -1,0 +1,28 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+# `roxygen-examples`
+
+Flag `@examples` code that does not parse.
+
+`R CMD check` runs example code, so a syntax error in an `@examples` section (or an `@examplesIf` condition) fails the package at check time. The embedded code is reparsed with arity's own parser and the first syntax error of each snippet is reported at its exact location in the comment. Rd wrappers like `\dontrun{}` are understood and their contents still checked.
+
+An unclosed call in the example:
+
+```r
+#' Add one
+#' @examples
+#' add_one(1
+#' @export
+add_one <- function(x) x + 1
+```
+
+```text
+warning: roxygen-examples
+ --> example.R:3:11
+  |
+3 | #' add_one(1
+  |           ^ example code does not parse: expected ')' to close function call
+  = help: `R CMD check` runs example code; fix the syntax error.
+```

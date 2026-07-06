@@ -424,6 +424,53 @@ Gated on the package being attached (`model.loaded_packages()`).
       `dplyr-group-by-ungroup`—needs **§I8 pipe-chain abstraction**
       (`%>%`/`|>` stage walk) that doesn't exist yet.
 
+#### Documentation rules (roxygen2), `documentation/`
+
+Lint the roxygen2 blocks the parser now models. All `syn`, no fixes (adding a
+tag/title means inventing prose; deleting one drops prose the author wrote).
+Shared helpers live in `src/linter/rules/roxygen.rs`: `documented_function`
+(strictly conservative next-sibling association—`setMethod`/R6/`"_PACKAGE"`
+yield `None` and the function-shape checks skip), the `KNOWN_TAGS` registry,
+`inherits_docs`/`wants_rd_topic` gates, `param_doc`, and the token-concat
+`extract_examples` + offset map (robust to `@md` fragmentation). Kept honest by
+the **lint differential oracle** `task roxygen-lint-oracle`
+(`tests/roxygen_lint_oracle.rs` + driver op `lint-warnings`): compares against
+roxygen2's own signals per comparable event class, allowlist-ratcheted
+(`tests/oracle/roxygen-lint-allowlist.txt`); arity-stricter findings are
+excluded from the diff by construction. `KNOWN_TAGS` validated against
+roxygen2 7.3.3.
+
+- [x] `roxygen-unknown-tag`—tag roxygen2 doesn't understand (mirrors "is not
+      a known tag").
+- [x] `roxygen-title`—documented function with no title/intro (mirrors
+      "Skipping; no name and/or title"); also fires on `@export` with no docs
+      at all (roxygen2 silent; `R CMD check` flags the undocumented export).
+- [x] `roxygen-return`—`@export` without `@return`/`@returns` (arity-extra:
+      roxygen2 never warns; CRAN requires `\value`). Skips `@noRd` and
+      inherited/merged topics.
+- [x] `roxygen-param`—missing/nonexistent/duplicate `@param` (arity-extra)
+      plus name-and-description two-part check (mirrors "requires two parts").
+      Coverage skipped under `@inheritParams`/`@rdname`/…; duplicates always
+      checked.
+- [x] `roxygen-examples`—`@examples` body or `@examplesIf` condition that
+      does not reparse as R (condition mirrors roxygen2's "condition failed to
+      parse"; body is arity-extra). Rd wrappers (`\dontrun{}` etc.) neutralized
+      name-only so offsets survive.
+- [ ] Follow-ups (deferred): run the full rule set over extracted example code
+      (needs package-context symbol handling to avoid FPs); unsafe-delete fixes
+      for duplicate/nonexistent `@param`; a missing-description variant of
+      `roxygen-title` (roxygen2 auto-copies the title into `\description`, so
+      it never warns—decide against CRAN's stance first); mine the oracle's
+      "uncovered signals" table (mismatched braces/quotes, markdown-link
+      plain-text restriction) for new rules.
+- [ ] Parser notes surfaced by this work: (a) roxygen2 never
+      markdown-processes `tag_code` bodies, but arity tokenizes markdown inside
+      `@examples` under `@md` (harmless for the lint—extraction is
+      token-concat—but a CST-fidelity gap); (b) a stray closing delimiter at
+      top level (`f(1))`) is recovered losslessly *without* a parse
+      diagnostic, though R itself errors—`roxygen-examples` and plain-file
+      linting both inherit the leniency.
+
 #### Out of scope (recorded so they aren't silently dropped)
 
 - **Formatter's domain (Tenet 1):** `quotes`, `numeric_leading_zero`, spacing,

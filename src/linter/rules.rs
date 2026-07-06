@@ -29,9 +29,11 @@ use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use super::diagnostic::{Diagnostic, Severity};
 
 pub mod correctness;
+pub mod documentation;
 pub mod matchers;
 pub mod performance;
 pub mod readability;
+pub mod roxygen;
 pub mod suspicious;
 
 /// All rules currently shipped.
@@ -54,6 +56,11 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(readability::OuterNegation),
         Box::new(performance::AnyIsNa),
         Box::new(performance::AnyDuplicated),
+        Box::new(documentation::RoxygenUnknownTag),
+        Box::new(documentation::RoxygenTitle),
+        Box::new(documentation::RoxygenReturn),
+        Box::new(documentation::RoxygenParam),
+        Box::new(documentation::RoxygenExamples),
     ]
 }
 

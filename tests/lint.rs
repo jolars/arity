@@ -2023,3 +2023,311 @@ fn run_cli_stdin<const N: usize>(args: [&str; N], stdin_input: &str) -> std::pro
         .expect("write stdin");
     child.wait_with_output().expect("failed to wait for cli")
 }
+
+// --- roxygen documentation rules --------------------------------------------
+
+#[test]
+fn roxygen_unknown_tag_flags_misspelled_tag() {
+    let src = "#' Title\n#' @exprot\nf <- function() 1\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "roxygen-unknown-tag")
+        .expect("expected a roxygen-unknown-tag finding");
+    // The span is the `@` + tag name, and there is no fix (the intended tag
+    // is unknowable).
+    assert_eq!(&src[d.range], "@exprot");
+    assert!(d.fix.is_none());
+}
+
+#[test]
+fn roxygen_unknown_tag_accepts_registry_tags() {
+    let src = "#' Title\n#'\n#' Description.\n#'\n#' @md\n#' @param x X.\n#' @returns Value.\n#' @seealso [g()]\n#' @examples\n#' f(1)\n#' @export\nf <- function(x) x\n";
+    assert!(
+        diagnostics(src)
+            .into_iter()
+            .all(|d| d.rule != "roxygen-unknown-tag"),
+        "registry tags must not be flagged"
+    );
+}
+
+#[test]
+fn roxygen_unknown_tag_ignores_escaped_and_bare_at() {
+    // `@@` is the escape for a literal `@`, and `@ ` / `@1` are prose — none
+    // lex as tags, so none can be flagged.
+    let src = "#' Send to a@@b.com @ home, @1st\nf <- function() 1\n";
+    assert!(
+        diagnostics(src)
+            .into_iter()
+            .all(|d| d.rule != "roxygen-unknown-tag")
+    );
+}
+
+#[test]
+fn roxygen_title_flags_tag_only_documented_function() {
+    let src = "#' @param x A number.\n#' @export\nf <- function(x) x\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "roxygen-title")
+        .expect("expected a roxygen-title finding");
+    // The span is the block's first marker; no fix (the title is prose).
+    assert_eq!(&src[d.range], "#'");
+    assert_eq!(u32::from(d.range.start()), 0);
+    assert!(d.fix.is_none());
+}
+
+#[test]
+fn roxygen_title_flags_export_only_block() {
+    // An `@export`ed function with no documentation at all: roxygen2 stays
+    // silent (no Rd topic is generated), but `R CMD check` flags the export
+    // as undocumented, so arity reports it here.
+    let src = "#' @export\nf <- function(x) x\n";
+    assert!(
+        diagnostics(src)
+            .into_iter()
+            .any(|d| d.rule == "roxygen-title")
+    );
+}
+
+#[test]
+fn roxygen_title_negatives() {
+    let cases: &[&str] = &[
+        // A leading prose paragraph is the title.
+        "#' Adds things.\n#' @export\nf <- function() 1\n",
+        // Explicit @title.
+        "#' @title Adds things.\n#' @export\nf <- function() 1\n",
+        // @noRd blocks generate no topic.
+        "#' @noRd\n#' @param x X.\nf <- function(x) x\n",
+        // Merged/inherited topics can carry the title elsewhere.
+        "#' @rdname topic\n#' @export\nf <- function() 1\n",
+        "#' @describeIn topic Variant.\n#' @export\nf <- function() 1\n",
+        // Import-attachment block: no topic, nothing exported.
+        "#' @importFrom pkg fn\nf <- function() 1\n",
+        // Unassociated block: not a classifiable function.
+        "#' @param x X.\nsetMethod(\"show\", \"C\", function(object) 1)\n",
+    ];
+    for src in cases {
+        assert!(
+            diagnostics(src)
+                .into_iter()
+                .all(|d| d.rule != "roxygen-title"),
+            "should not flag: {src:?}"
+        );
+    }
+}
+
+#[test]
+fn roxygen_return_flags_exported_function_without_return() {
+    let src = "#' Add one\n#' @param x A number.\n#' @export\nadd_one <- function(x) x + 1\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "roxygen-return")
+        .expect("expected a roxygen-return finding");
+    // The span is the `@export` tag; no fix (the value description is prose).
+    assert_eq!(&src[d.range], "@export");
+    assert!(d.fix.is_none());
+}
+
+#[test]
+fn roxygen_return_negatives() {
+    let cases: &[&str] = &[
+        // @return / @returns satisfy the check.
+        "#' Add one\n#' @return The sum.\n#' @export\nf <- function(x) x + 1\n",
+        "#' Add one\n#' @returns The sum.\n#' @export\nf <- function(x) x + 1\n",
+        // Not exported: internal helpers owe no @return.
+        "#' Add one\n#' @param x X.\nf <- function(x) x + 1\n",
+        // @noRd blocks generate no topic.
+        "#' Add one\n#' @export\n#' @noRd\nf <- function(x) x + 1\n",
+        // Inherited/merged topics may document the value elsewhere.
+        "#' Add one\n#' @rdname topic\n#' @export\nf <- function(x) x + 1\n",
+        "#' Add one\n#' @inherit other return\n#' @export\nf <- function(x) x + 1\n",
+        // Not a classifiable function shape.
+        "#' Add one\n#' @export\nsetMethod(\"show\", \"C\", function(object) 1)\n",
+        "#' Data set docs\n#' @export\nx <- 1\n",
+    ];
+    for src in cases {
+        assert!(
+            diagnostics(src)
+                .into_iter()
+                .all(|d| d.rule != "roxygen-return"),
+            "should not flag: {src:?}"
+        );
+    }
+}
+
+fn roxygen_param_findings(src: &str) -> Vec<arity::linter::Diagnostic> {
+    diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "roxygen-param")
+        .collect()
+}
+
+#[test]
+fn roxygen_param_flags_undocumented_formal() {
+    let src = "#' Add\n#' @param x X.\n#' @export\nf <- function(x, y) x + y\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1);
+    // The span is the undocumented formal's name token in the signature.
+    assert_eq!(&src[findings[0].range], "y");
+    assert!(u32::from(findings[0].range.start()) > src.find("function").unwrap() as u32);
+    assert!(findings[0].fix.is_none());
+}
+
+#[test]
+fn roxygen_param_flags_nonexistent_formal() {
+    let src = "#' Add\n#' @param x X.\n#' @param z Z.\nf <- function(x) x\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(&src[findings[0].range], "z");
+}
+
+#[test]
+fn roxygen_param_flags_duplicate_name() {
+    let src = "#' Add\n#' @param x X.\n#' @param x Again.\nf <- function(x) x\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1);
+    // The second occurrence is the duplicate.
+    assert_eq!(&src[findings[0].range], "x");
+    assert!(u32::from(findings[0].range.start()) > src.find("Again").unwrap() as u32 - 20);
+}
+
+#[test]
+fn roxygen_param_duplicate_checked_even_in_merged_topics() {
+    let src = "#' @rdname topic\n#' @param x X.\n#' @param x Again.\nf <- function(x) x\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1, "duplicate is a per-block fact");
+}
+
+#[test]
+fn roxygen_param_flags_missing_description() {
+    let src = "#' Add\n#' @param x\nf <- function(x) x\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(&src[findings[0].range], "@param x");
+}
+
+#[test]
+fn roxygen_param_flags_bare_tag() {
+    let src = "#' Add\n#' @param\n#' @export\nf <- function() 1\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(&src[findings[0].range], "@param");
+}
+
+#[test]
+fn roxygen_param_negatives() {
+    let cases: &[&str] = &[
+        // Exact coverage.
+        "#' Add\n#' @param x X.\n#' @param y Y.\nf <- function(x, y) x\n",
+        // Multi-name arg documents both formals.
+        "#' Add\n#' @param a,b Both.\nf <- function(a, b) a\n",
+        // `...` is documented like any formal.
+        "#' Add\n#' @param ... Extra.\nf <- function(...) 1\n",
+        // The name may sit on a continuation line (roxygen2 splits the folded
+        // value on whitespace).
+        "#' Add\n#' @param\n#' x The x value.\nf <- function(x) x\n",
+        // @inheritParams pulls the missing docs in from elsewhere.
+        "#' Add\n#' @inheritParams other\n#' @export\nf <- function(x, y) x\n",
+        // In a merged topic a param may belong to a sibling function.
+        "#' @rdname topic\n#' @param extra E.\nf <- function(x) x\n",
+        // Unassociated block: no formals to judge.
+        "#' Add\n#' @param x X.\nsetMethod(\"show\", \"C\", function(object) 1)\n",
+        // No roxygen block at all.
+        "f <- function(x) x\n",
+    ];
+    for src in cases {
+        assert!(
+            roxygen_param_findings(src).is_empty(),
+            "should not flag: {src:?}"
+        );
+    }
+}
+
+#[test]
+fn roxygen_examples_flags_parse_error() {
+    // An unclosed call: the same shape the parser diagnoses in plain R code.
+    let src = "#' Add\n#' @examples\n#' add(1\n#' @export\nf <- function(x) x\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "roxygen-examples")
+        .expect("expected a roxygen-examples finding");
+    // The span maps back into the comment, at the offending code.
+    let example_line = src.find("add(1").unwrap() as u32;
+    assert!(
+        u32::from(d.range.start()) >= example_line,
+        "range: {:?}",
+        d.range
+    );
+    assert!(u32::from(d.range.end()) <= src.find("@export").unwrap() as u32);
+    assert!(d.fix.is_none());
+}
+
+#[test]
+fn roxygen_examples_flags_error_under_md_fragmentation() {
+    // Under `@md` the example body is tokenized as markdown; the rule must
+    // reassemble the line and still see the stray brace.
+    let src = "#' Add\n#' @md\n#' @examples\n#' x <- *emph* + 1}\nf <- function(x) x\n";
+    assert!(
+        diagnostics(src)
+            .into_iter()
+            .any(|d| d.rule == "roxygen-examples")
+    );
+}
+
+#[test]
+fn roxygen_examples_flags_bad_examples_if_condition() {
+    let src = "#' Add\n#' @examplesIf interactive((\n#' f(1)\nf <- function(x) x\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "roxygen-examples")
+        .expect("expected a finding for the condition");
+    assert!(u32::from(d.range.start()) >= src.find("interactive").unwrap() as u32);
+    assert!(
+        u32::from(d.range.end())
+            <= src
+                .find('\n')
+                .map(|_| src.find("\n#' f(1)").unwrap())
+                .unwrap() as u32
+                + 1
+    );
+}
+
+#[test]
+fn roxygen_examples_negatives() {
+    let cases: &[&str] = &[
+        // Clean examples, including multi-line and blank separator lines.
+        "#' Add\n#' @examples\n#' f(1)\n#'\n#' f(\n#'   2\n#' )\nf <- function(x) x\n",
+        // Same-line code after the tag.
+        "#' Add\n#' @examples f(1)\nf <- function(x) x\n",
+        // \dontrun{} is valid R (a call with a braced arg).
+        "#' Add\n#' @examples\n#' \\dontrun{\n#'   f(1)\n#' }\nf <- function(x) x\n",
+        // Good condition and body.
+        "#' Add\n#' @examplesIf interactive()\n#' f(1)\nf <- function(x) x\n",
+        // Empty examples section: nothing to parse.
+        "#' Add\n#' @examples\nf <- function(x) x\n",
+    ];
+    for src in cases {
+        assert!(
+            diagnostics(src)
+                .into_iter()
+                .all(|d| d.rule != "roxygen-examples"),
+            "should not flag: {src:?}"
+        );
+    }
+}
+
+#[test]
+fn roxygen_examples_multiline_error_range_stays_in_block() {
+    // A diagnostic spanning extracted lines must map back inside the roxygen
+    // block, not spill into the code that follows it.
+    let src = "#' Add\n#' @examples\n#' f(1\n#' g(2\nf <- function(x) x\n";
+    for d in diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "roxygen-examples")
+    {
+        assert!(
+            u32::from(d.range.end()) <= src.rfind("f <- function").unwrap() as u32,
+            "range {:?} escapes the block",
+            d.range
+        );
+    }
+}

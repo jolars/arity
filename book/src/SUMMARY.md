@@ -29,3 +29,8 @@
   - [outer-negation](reference/rules/outer-negation.md)
   - [any-is-na](reference/rules/any-is-na.md)
   - [any-duplicated](reference/rules/any-duplicated.md)
+  - [roxygen-unknown-tag](reference/rules/roxygen-unknown-tag.md)
+  - [roxygen-title](reference/rules/roxygen-title.md)
+  - [roxygen-return](reference/rules/roxygen-return.md)
+  - [roxygen-param](reference/rules/roxygen-param.md)
+  - [roxygen-examples](reference/rules/roxygen-examples.md)

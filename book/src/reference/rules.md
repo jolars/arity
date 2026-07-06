@@ -31,3 +31,11 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 
 - [`any-is-na`](rules/any-is-na.md)
 - [`any-duplicated`](rules/any-duplicated.md)
+
+## Documentation
+
+- [`roxygen-unknown-tag`](rules/roxygen-unknown-tag.md)
+- [`roxygen-title`](rules/roxygen-title.md)
+- [`roxygen-return`](rules/roxygen-return.md)
+- [`roxygen-param`](rules/roxygen-param.md)
+- [`roxygen-examples`](rules/roxygen-examples.md)
