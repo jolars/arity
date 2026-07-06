@@ -1,5 +1,5 @@
 use rowan::ast::support;
-use rowan::{SyntaxElement, SyntaxToken};
+use rowan::{SyntaxElement, SyntaxToken, TextRange, TextSize};
 use smol_str::SmolStr;
 
 use crate::ast::AstNode;
@@ -61,6 +61,22 @@ impl RoxygenBlock {
     pub fn sections(&self) -> impl Iterator<Item = RoxygenSection> + '_ {
         self.0.children().filter_map(RoxygenSection::cast)
     }
+
+    /// The tags of this block, in source order (`@param`, `@export`, …).
+    pub fn tags(&self) -> impl Iterator<Item = RoxygenTag> + '_ {
+        self.sections().filter_map(|section| section.tag())
+    }
+
+    /// Whether any tag of this block is named `name` (without the leading `@`).
+    pub fn has_tag(&self, name: &str) -> bool {
+        self.tags().any(|tag| tag.name().as_deref() == Some(name))
+    }
+
+    /// The intro section — the untagged leading prose whose first paragraph is
+    /// the topic title. `None` when the block starts with a tag.
+    pub fn intro(&self) -> Option<RoxygenSection> {
+        self.sections().find(|section| section.tag().is_none())
+    }
 }
 
 impl RoxygenSection {
@@ -73,6 +89,12 @@ impl RoxygenSection {
     /// The prose paragraphs of this section, in source order.
     pub fn paragraphs(&self) -> impl Iterator<Item = RoxygenParagraph> + '_ {
         self.0.children().filter_map(RoxygenParagraph::cast)
+    }
+
+    /// Whether the section carries any prose beyond the tag head: text folded
+    /// onto the tag line (`@param x A number.`) or a continuation paragraph.
+    pub fn has_prose(&self) -> bool {
+        self.tag().is_some_and(|tag| tag.text().is_some()) || self.paragraphs().next().is_some()
     }
 }
 
@@ -100,6 +122,31 @@ impl RoxygenTag {
     /// Whether this is an `@examples`/`@examplesIf` tag (embedded R code).
     pub fn is_examples(&self) -> bool {
         matches!(self.name().as_deref(), Some("examples" | "examplesIf"))
+    }
+
+    /// The comma-separated names in the tag's arg (`@param a,b` documents both
+    /// `a` and `b`), each with the sub-range of its own text inside the arg
+    /// token. Empty for a tag with no arg.
+    pub fn arg_names(&self) -> Vec<(SmolStr, TextRange)> {
+        let Some(arg) = self.arg() else {
+            return Vec::new();
+        };
+        let arg_start = arg.text_range().start();
+        let mut names = Vec::new();
+        let mut offset = 0usize;
+        for piece in arg.text().split(',') {
+            let trimmed = piece.trim();
+            if !trimmed.is_empty() {
+                let lead = piece.len() - piece.trim_start().len();
+                let start = arg_start + TextSize::from((offset + lead) as u32);
+                names.push((
+                    SmolStr::new(trimmed),
+                    TextRange::at(start, TextSize::of(trimmed)),
+                ));
+            }
+            offset += piece.len() + 1;
+        }
+        names
     }
 }
 

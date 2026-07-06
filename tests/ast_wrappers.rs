@@ -272,3 +272,67 @@ fn roxygen_block_sections_classify_intro_and_tags() {
     assert!(examples.is_examples());
     assert!(examples.arg().is_none());
 }
+
+#[test]
+fn roxygen_block_tag_lookup() {
+    let block = first_roxygen_block(
+        "#' Title\n#'\n#' @param x A number.\n#' @export\nf <- function(x) x\n",
+    );
+    let names: Vec<_> = block.tags().filter_map(|t| t.name()).collect();
+    assert_eq!(names, ["param", "export"]);
+    assert!(block.has_tag("export"));
+    assert!(!block.has_tag("return"));
+
+    // The intro is the untagged leading section.
+    let intro = block.intro().expect("intro section");
+    assert!(intro.tag().is_none());
+    assert_eq!(intro.paragraphs().count(), 1);
+}
+
+#[test]
+fn roxygen_block_without_intro() {
+    let block = first_roxygen_block("#' @export\nf <- function() 1\n");
+    assert!(block.intro().is_none());
+    assert!(block.has_tag("export"));
+}
+
+#[test]
+fn roxygen_tag_arg_names_splits_comma_lists() {
+    let src = "#' @param a,b Both arguments.\nf <- function(a, b) a\n";
+    let block = first_roxygen_block(src);
+    let tag = block.tags().next().expect("param tag");
+    let names = tag.arg_names();
+    assert_eq!(names.len(), 2);
+    // Each name carries the sub-range of its own text inside the arg token.
+    assert_eq!(names[0].0, "a");
+    assert_eq!(&src[names[0].1], "a");
+    assert_eq!(names[1].0, "b");
+    assert_eq!(&src[names[1].1], "b");
+}
+
+#[test]
+fn roxygen_tag_arg_names_single_and_missing() {
+    let block = first_roxygen_block("#' @param x A number.\n#' @param\nf <- function(x) x\n");
+    let tags: Vec<_> = block.tags().collect();
+    let names = tags[0].arg_names();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].0, "x");
+    // A bare `@param` has no arg token, hence no names.
+    assert!(tags[1].arg_names().is_empty());
+}
+
+#[test]
+fn roxygen_section_has_prose() {
+    let block = first_roxygen_block(
+        "#' @param x A number.\n#' @param y\n#'   Continuation.\n#' @param z\n#' @export\nf <- function(x, y, z) x\n",
+    );
+    let sections: Vec<_> = block.sections().collect();
+    // `@param x A number.` — description folded onto the tag line.
+    assert!(sections[0].has_prose());
+    // `@param y` + continuation paragraph.
+    assert!(sections[1].has_prose());
+    // `@param z` with no description at all.
+    assert!(!sections[2].has_prose());
+    // `@export` carries no prose.
+    assert!(!sections[3].has_prose());
+}
