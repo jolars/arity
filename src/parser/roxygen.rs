@@ -470,7 +470,10 @@ fn resolve_md_inline_tokens(tokens: Vec<crate::parser::lexer::Token>) -> crate::
     events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
     events.extend((0..tokens.len()).map(Event::Tok));
     events.push(Event::Finish);
-    inline::resolve_emphasis(&tokens, &mut events);
+    // Fragments are markdown by construction (`lex_roxygen_prose_fragment` runs
+    // md-on); they carry no soft breaks, so the multi-line HTML resolution is
+    // inert here.
+    inline::resolve_emphasis(&tokens, &mut events, true);
     let root = crate::parser::tree_builder::build_tree(&tokens, &events);
     root.first_child()
         .expect("build_tree always wraps the paragraph in ROOT")

@@ -471,6 +471,12 @@ fn collect_logical_elements(
             // and bracket pairing are invariant under whitespace normalization). A
             // *single-line* span (no marker) stays atomic, so `*foo*` and a
             // one-line `[text](url)` each glue as one chunk.
+            //
+            // A cross-line raw-HTML span (`ROXYGEN_MD_HTML` node) descends too so
+            // the physical lines re-form — but unlike emphasis its soft breaks are
+            // **verbatim** `\out` content, so the paragraph carrying one bails
+            // reflow entirely ([`line_has_cross_line_md_html`]) instead of
+            // rejoining.
             NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
                 collect_logical_elements(&n, out);
             }
@@ -479,18 +485,43 @@ fn collect_logical_elements(
     }
 }
 
-/// Whether `node` is a resolved inline span (emphasis/strong or an inline link)
-/// the inline pass carried across a soft line break — it threads one or more `#'`
-/// markers as inter-line trivia. A single-line span never contains a marker, so
-/// its presence distinguishes the reflow-across-lines case from an atomic inline
-/// span (mirrors [`is_block_macro`]).
+/// Whether `node` is a resolved inline span (emphasis/strong, an inline link, or
+/// a raw-HTML span) the inline pass carried across a soft line break — it threads
+/// one or more `#'` markers as inter-line trivia. A single-line span never
+/// contains a marker, so its presence distinguishes the reflow-across-lines case
+/// from an atomic inline span (mirrors [`is_block_macro`]).
 fn is_cross_line_inline(node: &SyntaxNode) -> bool {
     matches!(
         node.kind(),
-        SyntaxKind::ROXYGEN_MD_EMPH | SyntaxKind::ROXYGEN_MD_STRONG | SyntaxKind::ROXYGEN_MD_LINK
+        SyntaxKind::ROXYGEN_MD_EMPH
+            | SyntaxKind::ROXYGEN_MD_STRONG
+            | SyntaxKind::ROXYGEN_MD_LINK
+            | SyntaxKind::ROXYGEN_MD_HTML
     ) && node
         .descendants_with_tokens()
         .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
+}
+
+/// Whether `line` touches a cross-line raw-HTML span (a `ROXYGEN_MD_HTML`
+/// **node**): either an element sits inside one ([`collect_logical_elements`]
+/// descends the node, so a covered line's elements are its children), or an
+/// atomic element — a folded `ROXYGEN_TAG` whose same-line value opened the
+/// span — carries one as a descendant. The span's soft breaks are verbatim
+/// `\out` content (roxygen2 renders one VERB per source line), so joining or
+/// re-wrapping the lines it touches would move a newline *inside* the rendered
+/// raw HTML — a change in the rendered Rd (Tenet 1). The paragraph, section, or
+/// tag unit carrying one is kept verbatim, marker-normalized. A *single-line*
+/// raw-HTML span is a leaf (its parent is the paragraph), so it never trips
+/// this.
+fn line_has_cross_line_md_html(line: &PhysicalLine) -> bool {
+    line.elements.iter().any(|el| {
+        el.parent()
+            .is_some_and(|p| p.kind() == SyntaxKind::ROXYGEN_MD_HTML)
+            || el.as_node().is_some_and(|n| {
+                n.descendants()
+                    .any(|d| d.kind() == SyntaxKind::ROXYGEN_MD_HTML && is_cross_line_inline(&d))
+            })
+    })
 }
 
 /// Build the IR for a `ROXYGEN_BLOCK` at the given nesting `indent`.
@@ -826,7 +857,8 @@ impl TagUnit {
         if (!md && self.lines.iter().any(line_has_live_rd_comment))
             || (md
                 && (self.first_is_linkref_def
-                    || self.lines.iter().any(line_has_md_percent_swallow)))
+                    || self.lines.iter().any(line_has_md_percent_swallow)
+                    || self.lines.iter().any(line_has_cross_line_md_html)))
         {
             for (i, line) in self.lines.iter().enumerate() {
                 if i == 0
@@ -878,7 +910,9 @@ fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: u
 /// rather than the whole `@tag …` line, so the linkref check reads the right text.
 fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> bool {
     if md {
-        text_is_linkref_def(first_text) || lines.iter().any(line_has_md_percent_swallow)
+        text_is_linkref_def(first_text)
+            || lines.iter().any(line_has_md_percent_swallow)
+            || lines.iter().any(line_has_cross_line_md_html)
     } else {
         lines.iter().any(line_has_live_rd_comment)
     }

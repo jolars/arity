@@ -391,8 +391,36 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   old rule (**uppercase** letters + **required** whitespace + `[^>]*>` — `<!doctype …>`/`<!DOCTYPE>`
   literal, `<!D x>` fine). **PI** `<?`…first `?>` (empty `<??>` fine). **CDATA** `<![CDATA[` (keyword
   case-insensitive) + `("]" [^\]] | "]]" [^>] | [^\]])*` + `]]>` — `]]]>` never closes (the `]]` pair
-  eats the third `]`). **Backlog:** multi-line inline HTML (cmark inline spans cross a soft break;
-  arity is line-scoped — faithful under-handling). Curated `md_html_inline_forms`.
+  eats the third `]`). Curated `md_html_inline_forms`.
+- **Multi-line inline HTML resolves in the inline pass** (`resolve_multiline_html`, inline.rs). Every
+  form crosses soft breaks (comment/PI/CDATA/declaration text, tag ws, quoted attr values — even a
+  newline as a declaration's *required* ws; `skip_html_ws` accepts `\n`, engine-probed). The pass scans
+  each run's **logical text** — content tokens verbatim, NEWLINE→`\n`, MARKER/WS→ε (roxygen2 strips
+  `#' `, cmark strips remaining continuation indent: `#'    y -->` renders `y -->`),
+  `RoxygenRdMacro`→`"x-"` (the escape-placeholder shape: leading alnum + trailing `-`, which
+  dash-blocks an abutting `-->` exactly like roxygen2's real `-<i>-` placeholder) — with the *same*
+  `scan_md_html_inline`, starting only at a `<` in a `RoxygenText` token. A match becomes a
+  `ROXYGEN_MD_HTML` **node** (leaf+node coexistence, the `ROXYGEN_MD_LINK` precedent): covered tokens
+  (inter-line trivia included) move inside; a partially covered token splits into `ROXYGEN_TEXT`
+  `Event::Leaf` pieces tiling it exactly. The node enters the emphasis arena as an opaque
+  `RunItem::Html` (run = `Vec<RunItem>` now: `Tok`/`Text`/`Html`; edge chars `<`/`>`), so an emphasis
+  span **wraps** it (`*a <!-- x`⏎`y --> b*` → `\emph` around the `\if`). An unmatched opener stays
+  untouched tokens — later emphasis still resolves, as cmark's re-scan would. **Gating:** `md` threaded
+  from `block_md` at the group.rs call site (the `<`-in-prose candidate has no mode-carrying leaf — the
+  sanctioned-exception shape) + linear rawRd-scope suppression in the event walk (tag-name token seen
+  in-run; reset at `Start(ROXYGEN_SECTION)`). **Projector:** `push_inline` node arm →
+  `md_html_node_text` (MARKER/WS→ε, NEWLINE→real `\n`, else raw — a covered macro/leaf renders its raw
+  source, roxygen2 restores placeholders) → `html_inline_atom` emits **one VERB per line**
+  (`split_inclusive('\n')`, matching parse_Rd: `(VERB "<!-- x\n") (VERB "y -->")`). **Formatter:** the
+  cross-line node descends in `collect_logical_elements` (physical lines re-form) and any
+  paragraph/tag/section touching one **bails reflow** (`line_has_cross_line_md_html`: element parent ==
+  the node, or a folded `ROXYGEN_TAG` element carrying a cross-line MD_HTML descendant — the from-value
+  case) — the span's `\n` is verbatim `\out` content, so joining changes rendered Rd. **Backlog:** a
+  split piece cut from an *opaque* leaf may hide markdown cmark would re-scan (contrived); non-fragile
+  macro raw text carrying a closer char (`\emph{>}`) — the all-macros-placeholder simplification shared
+  with `edge_char`; multi-line **code spans** still line-scoped (same pass shape would fit); the
+  single-line lexer's raw-vs-placeholder divergences (`\code{}-->` closes for the lexer, not roxygen2).
+  Curated `md_html_inline_multiline`/`_edges`/`_value`.
 - **Reflow must never move an HTML-block opener to a line start** (`is_unsafe_line_start` →
   `starts_md_html_block`, the lexer's block scanner as a `pub(crate)` predicate). Blocks 1–6
   **interrupt a paragraph**, so an *inline* comment/PI/CDATA/declaration/block-tag atom (or literal
@@ -567,7 +595,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 377 matching (all allowlisted), 18 divergent** of 395 pinned.
+corpus (132 `cm-NNN` cases). **Current: 380 matching (all allowlisted), 18 divergent** of 398 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -578,41 +606,45 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
    Curated + harvested + spec corpora (393 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 112/112 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 115/115 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-06b) — blank-separated loose-list merge
+## Latest session (2026-07-06c) — multi-line inline HTML (inline-pass step)
 
-Blank-separated same-type list items now form **one list** per CommonMark (`- a` ⏎ blank ⏎ `- b`
-→ one `\itemize`; a blank only makes the list *loose*, which roxygen2's Rd rendering ignores) —
-across single and double blanks, line-start and from-value alike; a blank + deeper marker still
-**nests** into the open item (`- a` ⏎ blank ⏎ `  - x`). A *type change* splits: the bullet char
-(`-`…`*`) and the ordered delimiter (`1.`…`2)`) each start a new list, while start numbers are
-irrelevant (`1.`…`5.` merges) — all engine-probed. Parser-only: `next_list_line_across_blanks` +
-`md_list_marker_type` (build.rs), wired into both gather sites of `emit_md_list_level_inner`
-(nested: indent-gated; sibling: indent + type-gated); blanks are consumed as trivia only when a
-list line follows, so a trailing blank stays with the section. **Projector + formatter: zero
-changes.** Full mechanics in the new loose-list trap.
+Inline raw HTML now **crosses soft breaks** for all five forms — comment, PI, CDATA, declaration,
+and tags (attribute whitespace and quoted values span lines; a newline even serves as a
+declaration's required whitespace) — resolved at run granularity in the inline pass, the first
+construct after emphasis/links to land there (design doc §9.3). `resolve_multiline_html`
+(inline.rs) scans the run's joined logical text with the *same* engine-probed
+`scan_md_html_inline`; a match becomes a `ROXYGEN_MD_HTML` **node** the emphasis arena treats as
+opaque, so a span wraps it (`*a <!-- x`⏎`y --> b*` → `\emph` around the `\if`); partial tokens
+split into `ROXYGEN_TEXT` Leaf pieces (lossless tiling); an unterminated opener stays untouched
+(later emphasis still resolves). The run generalized from `Vec<usize>` to `Vec<RunItem>`
+(`Tok`/`Text`/`Html`). Projector: node arm + per-line VERBs. Formatter: node descends +
+whole-paragraph/tag/section reflow bail (the span's `\n` is verbatim `\out` content). Full
+mechanics in the new multi-line inline HTML trap.
 
-**Result:** projector **375→377 matching** (all allowlisted), 18 divergent (unchanged,
-out-of-scope). `cargo test` green, clippy + fmt clean; curated fixed-point **112/112 preserving**,
-0 blocked; format baseline **+2 additive** (re-blessed, reviewed; the only non-input byte is the
-established from-value opener normalization). New fixtures: parser `roxygen_md_list_loose`
-(5 blocks: basic/double-blank/ordered merges, all four type-splits, nested-across-blank +
-shallower sibling, from-value merge + blank-then-prose end); formatter `roxygen_md_list_loose`;
-curated `md_list_loose` + `md_list_loose_edges` (+pins +allowlist).
+**Result:** projector **377→380 matching** (all allowlisted), 18 divergent (unchanged,
+out-of-scope). `cargo test` green, clippy + fmt clean; curated fixed-point **115/115 preserving**
+(ran, 0 blocked); format baseline **+3 additive** (re-blessed, reviewed — pure new-case inserts).
+New fixtures: parser `roxygen_md_html_inline_multiline` (7 blocks: basic, emphasis-wrapped +
+tag + declaration forms, CDATA/PI + two spans, dash-at-EOL + interior-markup literalization,
+unterminated + later emphasis, from-value, non-md literal); formatter
+`roxygen_md_html_inline_multiline` (bail + sibling-paragraph reflow); curated
+`md_html_inline_multiline`/`_edges`/`_value` (+pins +allowlist).
 
-**Ranked next target:** multi-line **inline** HTML (cmark inline spans cross a soft break; arity
-is line-scoped — ties into the inline-pass migration); then the `@md` `\`-escape *render* cluster
-(do NOT widen the lexer). Smaller list follow-ups in the list traps' backlogs (no-blank
-marker-type split, blank + content-column prose folding into an item (e4), block macro folding
-into an item, quote-lazy `===`). The 18 projector divergences remain out-of-scope (roxygen2
-evaluation / multi-block).
+**Ranked next target:** the `@md` `\`-escape *render* cluster (run before a letter, brace-less
+known-macro decomposition — do NOT widen the lexer); or multi-line **code spans** (line-scoped
+today; the new `RunItem` pass shape fits it directly). Smaller list follow-ups in the list traps'
+backlogs (no-blank marker-type split, blank + content-column prose folding into an item (e4),
+block macro folding into an item, quote-lazy `===`). The 18 projector divergences remain
+out-of-scope (roxygen2 evaluation / multi-block).
 
 ## Earlier sessions
 
+- **2026-07-06b** — blank-separated loose-list merge (`next_list_line_across_blanks` + `md_list_marker_type`, both gather sites of `emit_md_list_level_inner`; a blank only loosens, type change splits, deeper marker nests). 375→377.
 - **2026-07-06** — list-item lazy continuation (`is_md_item_lazy_continuation` + fold loop in `emit_md_list_level_inner`, before the nested gather, gated on `item_has_content`; `===`/table headers fold, any marker line is a sibling, `---`/cond-7 interrupt). 373→375.
 - **2026-07-05d** — from-value block quote + thematic break (`@details > q` / `@details ***`; shared `finish_md_block_quote`, `is_thematic_break` at the value; projector zero changes). 370→373.
 - **2026-07-05c** — all remaining from-value block starts (indented code / fence / ATX / table / list from a tag's same-line value; `close_tag_at_value` dispatch, `push_value_opener_line`; post-hoc title-as-description fallback fix). 364→370.

@@ -1,0 +1,3 @@
+(\description (TEXT "Multi-line inline HTML spans"))
+(\details (TEXT "a") (\if (TEXT "html") (\out (VERB "<!-- x\n") (VERB "y -->"))) (TEXT "b t") (\if (TEXT "html") (\out (VERB "<span\n") (VERB "class=\"v\">"))) (TEXT "u d") (\if (TEXT "html") (\out (VERB "<!A\n") (VERB "y>"))) (TEXT "e c") (\if (TEXT "html") (\out (VERB "<![CDATA[ x\n") (VERB "y ]]>"))) (TEXT "d p") (\if (TEXT "html") (\out (VERB "<?php q\n") (VERB "r ?>"))) (TEXT "s") (\emph (TEXT "a") (\if (TEXT "html") (\out (VERB "<!-- x\n") (VERB "y -->"))) (TEXT "b")))
+(\title (TEXT "Multi-line inline HTML spans"))

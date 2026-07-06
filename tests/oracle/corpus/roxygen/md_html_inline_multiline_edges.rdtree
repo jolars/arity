@@ -1,0 +1,3 @@
+(\description (TEXT "Multi-line inline HTML edges"))
+(\details (TEXT "a") (\if (TEXT "html") (\out (VERB "<!-- x -\n") (VERB "-->"))) (TEXT "b a") (\if (TEXT "html") (\out (VERB "<!-- *x*\n") (VERB "`y` -->"))) (\emph (TEXT "b")) (TEXT "a") (\if (TEXT "html") (\out (VERB "<!-- x\n") (VERB "-->"))) (\if (TEXT "html") (\out (VERB "<?y\n") (VERB "z ?>"))) (TEXT "b i") (\if (TEXT "html") (\out (VERB "<!-- x\n") (VERB "y -->"))) (TEXT "j u <!-- x y") (\emph (TEXT "z")) (TEXT "w"))
+(\title (TEXT "Multi-line inline HTML edges"))

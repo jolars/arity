@@ -39,12 +39,16 @@ use crate::syntax::SyntaxKind;
 /// the caller, so blank-line and statement separation are unaffected.
 pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     // Build the block's events into a local buffer, run the `@md` inline pass over
-    // it (resolving emphasis/strong delimiter runs into nodes), then splice the
-    // result into the caller's stream. The pass is a no-op without delimiter runs,
-    // so non-`@md` (and delimiter-free) blocks stay byte-identical.
+    // it (resolving emphasis/strong delimiter runs and multi-line raw-HTML spans
+    // into nodes), then splice the result into the caller's stream. The pass is a
+    // no-op without delimiter runs or (under `@md`) a `<` in prose, so non-`@md`
+    // (and unaffected) blocks stay byte-identical. The block's resolved markdown
+    // mode is threaded in for the HTML resolution, whose `<`-in-prose candidate
+    // has no mode-carrying leaf (the same re-derivation the indented-code
+    // recognition uses).
     let mut block = Vec::new();
     let end = emit_roxygen_block_events(tokens, start, &mut block);
-    super::inline::resolve_emphasis(tokens, &mut block);
+    super::inline::resolve_emphasis(tokens, &mut block, block_md(tokens, start));
     events.append(&mut block);
     end
 }

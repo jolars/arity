@@ -3281,6 +3281,14 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
                 });
             }
         }
+        // A **multi-line** raw inline-HTML span — a `ROXYGEN_MD_HTML` *node* the
+        // inline pass resolved across soft breaks. Its rendered text is the
+        // span's cmark-visible content ([`md_html_node_text`]): the `#'` markers
+        // and continuation indentation strip, the soft breaks stay as real
+        // newlines (the span text is verbatim `\out` content, one VERB per line).
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_HTML => {
+            out.push(Inline::MdHtml(md_html_node_text(&n)));
+        }
         NodeOrToken::Node(n) => out.push(Inline::Text(n.text().to_string())),
         // Markdown inline leaves (emitted only under `@md`): carve off their
         // delimiters and carry the inner content; the kind chooses the Rd macro.
@@ -3315,6 +3323,28 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         // interrupt rule kept it inline. roxygen2 renders it as literal text.
         NodeOrToken::Token(t) => out.push(Inline::Text(t.text().to_string())),
     }
+}
+
+/// The cmark-visible text of a multi-line raw inline-HTML span
+/// (`ROXYGEN_MD_HTML` node): content children verbatim (a covered Rd macro or
+/// carved leaf contributes its raw source — roxygen2 restores a placeholder to
+/// its original text in the rendered output), a soft break as a real `\n`, and
+/// the threaded `#'` markers and marker→content indentation dropped (roxygen2
+/// strips `#' `, and cmark strips a paragraph continuation line's remaining
+/// leading whitespace — engine-probed: `#'    y -->` renders `y -->`).
+fn md_html_node_text(node: &SyntaxNode) -> String {
+    let mut s = String::new();
+    for el in node.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ROXYGEN_MARKER | SyntaxKind::WHITESPACE => {}
+            SyntaxKind::NEWLINE => s.push('\n'),
+            _ => match el {
+                NodeOrToken::Token(t) => s.push_str(t.text()),
+                NodeOrToken::Node(n) => s.push_str(&n.text().to_string()),
+            },
+        }
+    }
+    s
 }
 
 /// The content of a markdown code span: drop the matched backtick runs, then
@@ -4157,16 +4187,22 @@ fn verb_atoms(body: &str) -> Vec<String> {
     atoms
 }
 
-/// Project a raw inline-HTML leaf into roxygen2's `\if{html}{\out{<tag>}}`
+/// Project a raw inline-HTML span into roxygen2's `\if{html}{\out{<tag>}}`
 /// (`mdxml_html_inline`, `markdown.R`): the tag text goes verbatim into a `\out`
 /// inside an `\if{html}{…}`. roxygen2 `escape_verb`-escapes `}` (→ `\}`) but
 /// `parse_Rd` decodes it, so the pin (and thus the projector) carries the raw
-/// tag.
+/// tag. A **multi-line** span keeps its newlines: `parse_Rd` splits the `\out`
+/// body into one VERB leaf per line, each carrying its trailing `\n`
+/// (engine-probed: `<!-- x`⏎`y -->` → `(VERB "<!-- x\n") (VERB "y -->")`).
 fn html_inline_atom(raw: &str) -> String {
+    let verbs: Vec<String> = raw
+        .split_inclusive('\n')
+        .map(|seg| format!("(VERB {})", encode_text(seg)))
+        .collect();
     format!(
-        "(\\if (TEXT {}) (\\out (VERB {})))",
+        "(\\if (TEXT {}) (\\out {}))",
         encode_text("html"),
-        encode_text(raw)
+        verbs.join(" ")
     )
 }
 

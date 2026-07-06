@@ -1215,7 +1215,11 @@ fn scan_md_email_autolink(bytes: &[u8], i: usize) -> Option<usize> {
 ///
 /// roxygen2's `mdxml_html_inline` renders every form verbatim inside
 /// `\if{html}{\out{…}}`.
-fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
+///
+/// Also the scanner for **multi-line** spans: the inline pass calls it on a
+/// paragraph's joined logical text (soft breaks as `\n`), where every form's
+/// text/whitespace loops cross line boundaries exactly as the engine's do.
+pub(super) fn scan_md_html_inline(bytes: &[u8], i: usize) -> Option<usize> {
     match bytes.get(i + 1) {
         Some(&b'!') => scan_md_html_inline_bang(bytes, i),
         Some(&b'?') => scan_md_html_inline_pi(bytes, i),
@@ -1570,11 +1574,17 @@ fn is_html_block_tag(name: &[u8]) -> bool {
     BLOCK_TAGS.contains(&lower.as_str())
 }
 
-/// Advance past a run of ASCII spaces and tabs (the line-scoped subset of
-/// CommonMark "whitespace" — line endings cannot occur inside a sub-lexed line).
+/// Advance past a run of CommonMark HTML whitespace: ASCII spaces, tabs, and
+/// line endings. A sub-lexed *line* never contains a `\n`, so the line-scoped
+/// scanners are unaffected; the newline arm serves the inline pass's joined
+/// paragraph text, where a soft break is whitespace inside a tag or declaration
+/// (`<span`⏎`class="v">`, `<!A`⏎`y>` — both engine-probed).
 fn skip_html_ws(bytes: &[u8], i: usize) -> usize {
     let mut j = i;
-    while bytes.get(j).is_some_and(|&b| matches!(b, b' ' | b'\t')) {
+    while bytes
+        .get(j)
+        .is_some_and(|&b| matches!(b, b' ' | b'\t' | b'\n'))
+    {
         j += 1;
     }
     j

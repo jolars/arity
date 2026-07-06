@@ -178,6 +178,9 @@ md_html_cond7
 md_html_cond7_edges
 md_html_conditions
 md_html_inline_forms
+md_html_inline_multiline
+md_html_inline_multiline_edges
+md_html_inline_multiline_value
 md_html_verbatim
 md_html_verbatim_oneline
 md_indented_code

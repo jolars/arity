@@ -22,9 +22,13 @@
 //! inter-line trivia present as **whitespace** for flanking (a soft break is a
 //! single space; the `#'` marker is treated as whitespace too) and pass through
 //! verbatim — landing *inside* the resolved node when the span crosses a line.
-//! Code spans, links, images, and raw HTML stay opaque local-span leaves, resolved
-//! by the lexer *before* this pass — matching CommonMark precedence (they bind
-//! tighter than emphasis), so the pass treats each as one opaque inline.
+//! Code spans, links, images, and single-line raw HTML stay opaque local-span
+//! leaves, resolved by the lexer *before* this pass — matching CommonMark
+//! precedence (they bind tighter than emphasis), so the pass treats each as one
+//! opaque inline. **Multi-line raw HTML** is the exception the lexer cannot see:
+//! [`resolve_multiline_html`] carves it here, per run, before the delimiter
+//! stack — the resolved `ROXYGEN_MD_HTML` node then joins the arena as one
+//! opaque inline like any leaf.
 
 use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
@@ -37,18 +41,39 @@ fn is_inline_markup(kind: &TokKind) -> bool {
     matches!(kind, TokKind::RoxygenMdDelim | TokKind::RoxygenMdBracket)
 }
 
-/// Resolve markdown emphasis/strong and inline links in `events` (in place). A
-/// no-op unless the block carries at least one raw delimiter run or link bracket.
-pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>) {
+/// Whether token `i` could open a **multi-line** raw-HTML span the line-scoped
+/// lexer missed: a `<` in plain prose text (a `<` inside any carved leaf was
+/// already consumed or rejected by a tighter-binding recognizer).
+fn is_html_candidate(tok: &Token) -> bool {
+    tok.kind == TokKind::RoxygenText && tok.text.contains('<')
+}
+
+/// Resolve markdown emphasis/strong, inline links, and multi-line raw HTML in
+/// `events` (in place). A no-op unless the block carries at least one raw
+/// delimiter run, link bracket, or (under `md`) a `<` in plain prose text.
+///
+/// `md` is the block's resolved markdown mode (threaded from the caller — the
+/// group phase's `block_md`). The multi-line HTML resolution is additionally
+/// suppressed inside a raw-Rd tag's scope (`@rawRd` bodies are verbatim Rd,
+/// never markdown — mirroring the lexer's per-tag keying, whose body tokens
+/// carry no md leaves; the `<`-in-prose candidate has no mode-carrying leaf, so
+/// the pass tracks the tag scope itself: a raw tag's same-line value and its
+/// following body paragraphs share the tag's `ROXYGEN_SECTION`).
+pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>, md: bool) {
     let has_markup = events
         .iter()
         .any(|e| matches!(e, Event::Tok(i) if is_inline_markup(&tokens[*i].kind)));
-    if !has_markup {
+    let has_html_candidate = md
+        && events
+            .iter()
+            .any(|e| matches!(e, Event::Tok(i) if is_html_candidate(&tokens[*i])));
+    if !has_markup && !has_html_candidate {
         return;
     }
 
     let mut out = Vec::with_capacity(events.len());
     let mut run: Vec<usize> = Vec::new();
+    let mut raw_scope = false;
     for ev in std::mem::take(events) {
         match ev {
             // Every paragraph-body token joins the run — content *and* the
@@ -56,41 +81,266 @@ pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>) {
             // folds in — so a span resolves across soft line breaks. A structural
             // event (a paragraph/section/tag boundary, or an inline `ROXYGEN_RD_MACRO`
             // which binds tighter than emphasis) bounds the run.
-            Event::Tok(i) => run.push(i),
+            Event::Tok(i) => {
+                if tokens[i].kind == TokKind::RoxygenTagName {
+                    raw_scope = super::lex::is_raw_rd_tag(&tokens[i].text);
+                }
+                run.push(i);
+            }
             other => {
-                flush_run(tokens, &mut run, &mut out);
+                // A new section leaves any raw-Rd tag's scope (the raw body
+                // paragraphs are siblings inside the tag's own section).
+                if matches!(other, Event::Start(SyntaxKind::ROXYGEN_SECTION)) {
+                    raw_scope = false;
+                }
+                flush_run(tokens, &mut run, &mut out, md && !raw_scope);
                 out.push(other);
             }
         }
     }
-    flush_run(tokens, &mut run, &mut out);
+    flush_run(tokens, &mut run, &mut out, md && !raw_scope);
     *events = out;
 }
 
 /// Resolve one top-level inline run and append its events to `out`, then clear
-/// `run`. A run with no markup re-emits its tokens verbatim (byte-identical), so
-/// only markup-bearing runs are rebuilt. The run's edges are the start/end of the
+/// `run`. Multi-line raw-HTML spans are carved first (under `md`); a run with no
+/// markup and no HTML span re-emits its tokens verbatim (byte-identical), so
+/// only affected runs are rebuilt. The run's edges are the start/end of the
 /// inline content (whitespace, for flanking).
-fn flush_run(tokens: &[Token], run: &mut Vec<usize>, out: &mut Vec<Event>) {
+fn flush_run(tokens: &[Token], run: &mut Vec<usize>, out: &mut Vec<Event>, md: bool) {
     if run.is_empty() {
         return;
     }
-    if !run.iter().any(|&i| is_inline_markup(&tokens[i].kind)) {
-        out.extend(run.drain(..).map(Event::Tok));
-        return;
+    let has_markup = run.iter().any(|&i| is_inline_markup(&tokens[i].kind));
+    let html_items = if md {
+        resolve_multiline_html(tokens, run)
+    } else {
+        None
+    };
+    match html_items {
+        None if !has_markup => {
+            out.extend(run.drain(..).map(Event::Tok));
+            return;
+        }
+        None => {
+            let items: Vec<RunItem> = run.iter().map(|&i| RunItem::Tok(i)).collect();
+            resolve_run(tokens, &items, None, None, out);
+        }
+        Some(items) => resolve_run(tokens, &items, None, None, out),
     }
-    resolve_run(tokens, run, None, None, out);
     run.clear();
 }
 
-/// Resolve an inline run (`run` token indices) into events appended to `out`,
-/// given the flanking-relevant characters immediately `before`/`after` the run
-/// (`None` = a whitespace boundary). Builds the arena (collapsing inline links
-/// into opaque `ROXYGEN_MD_LINK` nodes, their text resolved by a recursive call),
-/// resolves emphasis over the resulting top-level node list, and emits.
+/// One element of an inline run, generalizing a token index so a resolved
+/// multi-line raw-HTML span (and the synthetic pieces of a token it splits) can
+/// join the emphasis arena as opaque inlines — an enclosing emphasis span wraps
+/// a raw-HTML inline exactly as cmark does.
+pub(super) enum RunItem {
+    /// An original lexed token, by index.
+    Tok(usize),
+    /// A synthetic piece of a split token: literal text, inert to delimiter and
+    /// bracket matching (emitted as a `ROXYGEN_TEXT` leaf). A split remainder
+    /// never carries an *active* delimiter — the lexer carves those as their own
+    /// tokens out of plain prose — though a piece cut from an opaque leaf may
+    /// hide markdown cmark would re-scan (a faithful under-handling, backlog).
+    Text(String),
+    /// A resolved multi-line raw-HTML span: the pre-built `ROXYGEN_MD_HTML`
+    /// node events, plus the span's cmark-visible text (for the bracket
+    /// interior check). Opaque to emphasis, like any inline leaf.
+    Html { events: Vec<Event>, text: String },
+}
+
+/// The token behind a run item, when it is one.
+fn item_token<'a>(tokens: &'a [Token], item: &RunItem) -> Option<&'a Token> {
+    match item {
+        RunItem::Tok(i) => Some(&tokens[*i]),
+        _ => None,
+    }
+}
+
+/// The raw text a run item contributes (a resolved HTML span contributes its
+/// cmark-visible text).
+fn item_text<'a>(tokens: &'a [Token], item: &'a RunItem) -> &'a str {
+    match item {
+        RunItem::Tok(i) => &tokens[*i].text,
+        RunItem::Text(s) => s,
+        RunItem::Html { text, .. } => text,
+    }
+}
+
+/// The flanking-relevant edge char of a run item (see [`edge_char`]). A resolved
+/// HTML span always spans `<…>` in the source, so its edges are those bytes.
+fn item_edge_char(tokens: &[Token], item: &RunItem, leading: bool) -> Option<char> {
+    match item {
+        RunItem::Tok(i) => edge_char(&tokens[*i], leading),
+        RunItem::Text(s) => {
+            if leading {
+                s.chars().next()
+            } else {
+                s.chars().next_back()
+            }
+        }
+        RunItem::Html { .. } => Some(if leading { '<' } else { '>' }),
+    }
+}
+
+/// Resolve the multi-line raw-HTML spans of a run, or `None` when it has none.
+///
+/// The scan mirrors what roxygen2 hands cmark for the paragraph — the run's
+/// **logical text**: content tokens verbatim, a soft break as `\n`, the `#'`
+/// markers and marker→content indentation stripped (roxygen2 strips `#' `, and
+/// cmark strips a paragraph continuation line's remaining leading whitespace),
+/// and an inline Rd macro as its escape-placeholder shape (a leading
+/// alphanumeric and a trailing hyphen — `escape_rd_for_md` swaps the macro for
+/// an alphanumeric placeholder suffixed `-<i>-` *before* cmark, so a macro
+/// never carries a span terminator, and its trailing `-` dash-blocks an
+/// abutting `-->` exactly as the real placeholder does; the raw macro text is
+/// restored in the rendered output by the projector's node-text walk).
+///
+/// Each `<` in plain prose text is scanned with the engine's own inline
+/// grammar ([`super::lex::scan_md_html_inline`]) over the joined bytes, so a
+/// span crosses soft breaks per form (comment/PI/CDATA/declaration text, tag
+/// whitespace, quoted attribute values). A match becomes a `ROXYGEN_MD_HTML`
+/// **node**: the covered tokens (inter-line trivia included) move inside it and
+/// a partially covered token is split into synthetic `ROXYGEN_TEXT` pieces that
+/// tile it exactly (losslessness holds by construction). An unmatched `<` — an
+/// unterminated opener — stays untouched literal prose, so interior markdown
+/// after it still resolves, as cmark's re-scan would.
+fn resolve_multiline_html(tokens: &[Token], run: &[usize]) -> Option<Vec<RunItem>> {
+    if !run.iter().any(|&i| is_html_candidate(&tokens[i])) {
+        return None;
+    }
+
+    // The logical text and each run position's byte range within it.
+    let mut logical = String::new();
+    let mut ranges = Vec::with_capacity(run.len());
+    for &i in run {
+        let s = logical.len();
+        match tokens[i].kind {
+            TokKind::Newline => logical.push('\n'),
+            TokKind::RoxygenMarker | TokKind::Whitespace => {}
+            TokKind::RoxygenRdMacro => logical.push_str("x-"),
+            _ => logical.push_str(&tokens[i].text),
+        }
+        ranges.push(s..logical.len());
+    }
+
+    // Scan left-to-right, consuming each matched span (cmark's single pass).
+    let bytes = logical.as_bytes();
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+    let mut pos = 0;
+    while let Some(off) = logical[pos..].find('<') {
+        let at = pos + off;
+        let in_prose = run
+            .iter()
+            .zip(&ranges)
+            .any(|(&i, r)| r.contains(&at) && tokens[i].kind == TokKind::RoxygenText);
+        pos = match in_prose
+            .then(|| super::lex::scan_md_html_inline(bytes, at))
+            .flatten()
+        {
+            Some(end) => {
+                matches.push((at, end));
+                end
+            }
+            None => at + 1,
+        };
+    }
+    if matches.is_empty() {
+        return None;
+    }
+
+    // Rebuild the run around the matches. A macro placeholder never carries a
+    // terminator and a match starts at a verbatim `<`, so every span boundary
+    // falls inside a verbatim-contributing token — in-token offsets are valid.
+    let mut items: Vec<RunItem> = Vec::new();
+    // The open node's events and its span's logical range, once entered.
+    let mut open: Option<(Vec<Event>, usize, usize)> = None;
+    let mut mi = 0;
+    for (p, &i) in run.iter().enumerate() {
+        let (rs, re) = (ranges[p].start, ranges[p].end);
+        let piece = |a: usize, b: usize| tokens[i].text[a - rs..b - rs].to_string();
+        // First unconsumed logical offset of this token.
+        let mut a = rs;
+        loop {
+            if let Some((ev, _, end)) = open.as_mut() {
+                let end = *end;
+                if rs == re {
+                    // A zero-width trivia token (marker / stripped whitespace):
+                    // inside while strictly before the span's end; at or past it,
+                    // close the node and re-route the token outside.
+                    if rs < end {
+                        ev.push(Event::Tok(i));
+                        break;
+                    }
+                } else if re <= end {
+                    // Fully consumed by the span (whole token or its tail).
+                    if a == rs {
+                        ev.push(Event::Tok(i));
+                    } else {
+                        ev.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, piece(a, re)));
+                    }
+                    a = re;
+                    if re < end {
+                        break;
+                    }
+                } else {
+                    // Straddles the span's end: the covered head goes inside.
+                    if a < end {
+                        ev.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, piece(a, end)));
+                        a = end;
+                    }
+                }
+                // Reached the span's end: close the node, then re-route any
+                // remainder of this token through the outside branch.
+                let (mut ev, s, e) = open.take().expect("checked above");
+                ev.push(Event::Finish);
+                items.push(RunItem::Html {
+                    events: ev,
+                    text: logical[s..e].to_string(),
+                });
+                if a >= re && rs != re {
+                    break;
+                }
+                continue;
+            }
+            // Outside any span: does the next match start within this token?
+            match matches.get(mi) {
+                Some(&(s, e)) if re > s => {
+                    // The pre-piece is always partial: the match's `<` sits
+                    // strictly inside this token's range (`s < re` by the guard,
+                    // and `s >= a` since matches are ordered and consumed).
+                    if a < s {
+                        items.push(RunItem::Text(piece(a, s)));
+                    }
+                    open = Some((vec![Event::Start(SyntaxKind::ROXYGEN_MD_HTML)], s, e));
+                    mi += 1;
+                    a = s;
+                }
+                _ => {
+                    if a == rs {
+                        items.push(RunItem::Tok(i));
+                    } else if a < re {
+                        items.push(RunItem::Text(piece(a, re)));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    debug_assert!(open.is_none(), "a span never outruns its closer's token");
+    Some(items)
+}
+
+/// Resolve an inline run (a slice of [`RunItem`]s) into events appended to
+/// `out`, given the flanking-relevant characters immediately `before`/`after`
+/// the run (`None` = a whitespace boundary). Builds the arena (collapsing
+/// inline links into opaque `ROXYGEN_MD_LINK` nodes, their text resolved by a
+/// recursive call), resolves emphasis over the resulting top-level node list,
+/// and emits.
 fn resolve_run(
     tokens: &[Token],
-    run: &[usize],
+    run: &[RunItem],
     before: Option<char>,
     after: Option<char>,
     out: &mut Vec<Event>,
@@ -137,6 +387,12 @@ enum NodeData {
         close: String,
         body: Vec<Event>,
     },
+    /// A synthetic literal-text piece of a split token ([`RunItem::Text`]),
+    /// emitted as a `ROXYGEN_TEXT` leaf. Inert to emphasis (never a delimiter).
+    Text(String),
+    /// A resolved multi-line raw-HTML span ([`RunItem::Html`]): its pre-built
+    /// `ROXYGEN_MD_HTML` node events, re-emitted verbatim. Opaque to emphasis.
+    Html(Vec<Event>),
 }
 
 /// A delimiter-stack entry (its own doubly linked list, threaded by `prev`/`next`
@@ -171,7 +427,12 @@ impl Arena {
     /// **collapsed** into one opaque [`NodeData::Link`] whose body is the recursively
     /// resolved link text — so the brackets never reach the emphasis stack and an
     /// enclosing span wraps the whole link.
-    fn build(tokens: &[Token], run: &[usize], before: Option<char>, after: Option<char>) -> Arena {
+    fn build(
+        tokens: &[Token],
+        run: &[RunItem],
+        before: Option<char>,
+        after: Option<char>,
+    ) -> Arena {
         let mut arena = Arena {
             nodes: Vec::new(),
             delims: Vec::new(),
@@ -180,15 +441,15 @@ impl Arena {
             last_delim: None,
         };
         // The flanking neighbor char at run position `p` on the given side: an
-        // interior position reads its neighbor token's edge char; a run edge uses
+        // interior position reads its neighbor item's edge char; a run edge uses
         // the passed boundary (the link-text `[`/`]` for a recursive call, else ws).
         let neighbor = |p: usize, leading: bool| -> Option<char> {
             if leading {
                 run.get(p + 1)
-                    .map_or(after, |&j| edge_char(&tokens[j], true))
+                    .map_or(after, |it| item_edge_char(tokens, it, true))
             } else {
                 match p.checked_sub(1) {
-                    Some(q) => edge_char(&tokens[run[q]], false),
+                    Some(q) => item_edge_char(tokens, &run[q], false),
                     None => before,
                 }
             }
@@ -201,7 +462,7 @@ impl Arena {
         while p < run.len() {
             match &roles[p] {
                 // A matched link opener collapses with its closer into one Link
-                // node; the inner tokens resolve recursively, bounded by the bracket
+                // node; the inner items resolve recursively, bounded by the bracket
                 // chars (`[` before, `]` after) for flanking. A matched link's
                 // interior provably contains no further matched link (an inner link
                 // would have deactivated this opener), so the recursion only resolves
@@ -214,7 +475,7 @@ impl Arena {
                     after,
                     close_text,
                 } => {
-                    let open = tokens[run[p]].text.clone();
+                    let open = item_text(tokens, &run[p]).to_string();
                     let close = close_text.clone();
                     let (closer, after_p) = (*closer, *after);
                     let mut body = Vec::new();
@@ -233,7 +494,7 @@ impl Arena {
                 // node, projected as plain text) — a deactivated outer opener, a `]`
                 // whose opener never appeared, or a closer that formed no link.
                 BracketRole::LiteralBracket => {
-                    arena.push_node(NodeData::Delim(tokens[run[p]].text.clone()));
+                    arena.push_node(NodeData::Delim(item_text(tokens, &run[p]).to_string()));
                     p += 1;
                     continue;
                 }
@@ -244,15 +505,24 @@ impl Arena {
                 }
                 BracketRole::Other => {}
             }
-            let tok = &tokens[run[p]];
-            if tok.kind == TokKind::RoxygenMdDelim {
-                let ch = tok.text.as_bytes()[0];
-                let len = tok.text.len(); // a same-char ASCII run: bytes == chars
-                let (can_open, can_close) = flanking(ch, neighbor(p, false), neighbor(p, true));
-                let node = arena.push_node(NodeData::Delim(tok.text.clone()));
-                arena.push_delim(node, ch, len, can_open, can_close);
-            } else {
-                arena.push_node(NodeData::Token(run[p]));
+            match &run[p] {
+                RunItem::Tok(idx) if tokens[*idx].kind == TokKind::RoxygenMdDelim => {
+                    let tok = &tokens[*idx];
+                    let ch = tok.text.as_bytes()[0];
+                    let len = tok.text.len(); // a same-char ASCII run: bytes == chars
+                    let (can_open, can_close) = flanking(ch, neighbor(p, false), neighbor(p, true));
+                    let node = arena.push_node(NodeData::Delim(tok.text.clone()));
+                    arena.push_delim(node, ch, len, can_open, can_close);
+                }
+                RunItem::Tok(idx) => {
+                    arena.push_node(NodeData::Token(*idx));
+                }
+                RunItem::Text(s) => {
+                    arena.push_node(NodeData::Text(s.clone()));
+                }
+                RunItem::Html { events, .. } => {
+                    arena.push_node(NodeData::Html(events.clone()));
+                }
             }
             p += 1;
         }
@@ -555,6 +825,12 @@ impl Arena {
                 out.push(Event::Leaf(SyntaxKind::ROXYGEN_MD_DELIM, close.clone()));
                 out.push(Event::Finish);
             }
+            NodeData::Text(s) => {
+                if !s.is_empty() {
+                    out.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, s.clone()));
+                }
+            }
+            NodeData::Html(events) => out.extend(events.iter().cloned()),
         }
     }
 }
@@ -586,14 +862,17 @@ enum BracketRole {
 /// literal (`[a [b] c](url)` → literal `[a `, `\link{b}`, literal ` c](url)`).
 /// Images are opaque leaves and autolinks are not brackets, so neither reaches
 /// here; every opener is a link opener. Returns a role per run position.
-fn match_brackets(tokens: &[Token], run: &[usize]) -> Vec<BracketRole> {
+fn match_brackets(tokens: &[Token], run: &[RunItem]) -> Vec<BracketRole> {
     let mut roles = Vec::with_capacity(run.len());
     roles.resize_with(run.len(), || BracketRole::Other);
     // Stack of (run position of an open `[`, still active).
     let mut stack: Vec<(usize, bool)> = Vec::new();
     let mut q = 0;
     while q < run.len() {
-        let tok = &tokens[run[q]];
+        let Some(tok) = item_token(tokens, &run[q]) else {
+            q += 1;
+            continue;
+        };
         if tok.kind != TokKind::RoxygenMdBracket {
             q += 1;
             continue;
@@ -654,11 +933,11 @@ fn match_brackets(tokens: &[Token], run: &[usize]) -> Vec<BracketRole> {
 /// only for a bracket-free shortcut label) — a bracket-bearing shortcut is not a link.
 fn classify_closer(
     tokens: &[Token],
-    run: &[usize],
+    run: &[RunItem],
     o_pos: usize,
     closer_q: usize,
 ) -> Option<(String, usize)> {
-    let close_tok = &tokens[run[closer_q]];
+    let close_tok = item_token(tokens, &run[closer_q])?;
     if close_tok.text != "]" {
         return Some((close_tok.text.clone(), closer_q + 1));
     }
@@ -667,10 +946,11 @@ fn classify_closer(
         return Some((format!("][{label}]"), after));
     }
     // Legacy: a `\`-bearing label still carved as one opaque `scan_md_link` leaf.
-    if let Some(&j) = run.get(closer_q + 1)
-        && tokens[j].kind == TokKind::RoxygenMdLink
+    if let Some(next) = run.get(closer_q + 1)
+        && let Some(tok) = item_token(tokens, next)
+        && tok.kind == TokKind::RoxygenMdLink
     {
-        return Some((format!("]{}", tokens[j].text), closer_q + 2));
+        return Some((format!("]{}", tok.text), closer_q + 2));
     }
     interior_bracket_free(tokens, run, o_pos, closer_q).then(|| ("]".to_string(), closer_q + 1))
 }
@@ -682,33 +962,36 @@ fn classify_closer(
 /// when `run[label_open]` is not a neutral `[` opener or no closing `]` follows.
 fn neutral_ref_label(
     tokens: &[Token],
-    run: &[usize],
+    run: &[RunItem],
     label_open: usize,
 ) -> Option<(String, usize)> {
-    let open = run.get(label_open).map(|&j| &tokens[j])?;
+    let open = run.get(label_open).and_then(|it| item_token(tokens, it))?;
     if open.kind != TokKind::RoxygenMdBracket || !open.text.starts_with('[') {
         return None;
     }
     let mut label = String::new();
     let mut k = label_open + 1;
-    while let Some(&j) = run.get(k) {
-        let tok = &tokens[j];
-        if tok.kind == TokKind::RoxygenMdBracket {
+    while let Some(item) = run.get(k) {
+        if let Some(tok) = item_token(tokens, item)
+            && tok.kind == TokKind::RoxygenMdBracket
+        {
             return (tok.text == "]").then_some((label, k + 1));
         }
-        label.push_str(&tok.text);
+        label.push_str(item_text(tokens, item));
         k += 1;
     }
     None
 }
 
 /// Whether the raw interior between an opener at `run[o_pos]` and a closer at
-/// `run[closer_q]` carries no `[`/`]` in any token — the roxygen shortcut/reference
+/// `run[closer_q]` carries no `[`/`]` in any item — the roxygen shortcut/reference
 /// validity test (a bracket-bearing label is not a synthesized reference).
-fn interior_bracket_free(tokens: &[Token], run: &[usize], o_pos: usize, closer_q: usize) -> bool {
-    run[o_pos + 1..closer_q]
-        .iter()
-        .all(|&j| !tokens[j].text.bytes().any(|b| matches!(b, b'[' | b']')))
+fn interior_bracket_free(tokens: &[Token], run: &[RunItem], o_pos: usize, closer_q: usize) -> bool {
+    run[o_pos + 1..closer_q].iter().all(|item| {
+        !item_text(tokens, item)
+            .bytes()
+            .any(|b| matches!(b, b'[' | b']'))
+    })
 }
 
 /// CommonMark flanking for a delimiter run of char `ch`, given the characters
