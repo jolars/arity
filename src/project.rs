@@ -21,6 +21,7 @@ pub use graph::{
 pub use scope::{FileFacts, FileScope, ProjectScope, ReadBinding, ReadSite, package_root};
 pub use sequence::{collect_top_level_events, collect_top_level_events_spanned};
 pub use source::{
-    SourceEdge, SourceEdgeKey, SourceLiteralEdge, SourceTarget, TopLevelEvent,
-    collect_source_edge_keys, collect_source_edges, collect_source_literal_edges, relative_path,
+    LinkLiteral, SourceEdge, SourceEdgeKey, SourceLiteralEdge, SourceTarget, TopLevelEvent,
+    collect_link_literals, collect_source_edge_keys, collect_source_edges,
+    collect_source_literal_edges, relative_path,
 };

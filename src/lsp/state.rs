@@ -147,6 +147,7 @@ impl GlobalState {
             DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
             DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
             FoldingRangeRequest::METHOD => self.on_folding_range(req),
+            DocumentLinkRequest::METHOD => self.on_document_link(req),
             SemanticTokensFullRequest::METHOD => self.on_semantic_tokens(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
@@ -541,6 +542,31 @@ impl GlobalState {
         self.read_spawner.spawn(move || {
             let ranges = compute_folding_ranges(&text);
             let _ = sender.send(Message::Response(Response::new_ok(id, ranges)));
+        });
+    }
+
+    /// `textDocument/documentLink`: string literals that name existing files,
+    /// made clickable. Relative spellings resolve against the document's own
+    /// directory. A pure CST walk plus per-literal `stat` (no semantic model or
+    /// workspace snapshot), so it runs straight on the read pool like folding.
+    /// See [`compute_document_links`].
+    fn on_document_link(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<DocumentLinkParams>(DocumentLinkRequest::METHOD) else {
+            self.respond_err(id, "invalid documentLink params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let base_dir = uri::to_path(&uri).and_then(|p| p.parent().map(Path::to_path_buf));
+        let size_limit = self.editor_settings.link_file_size_limit();
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let links = compute_document_links(&text, base_dir.as_deref(), size_limit);
+            let _ = sender.send(Message::Response(Response::new_ok(id, links)));
         });
     }
 

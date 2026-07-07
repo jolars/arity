@@ -1,8 +1,9 @@
 //! Stdio-based LSP server (built on `lsp-server`): formatting (whole-document
 //! and range), pushed and pull diagnostics, quick-fix code actions, hover,
 //! completion, signature help, go-to-definition and references, rename, document
-//! and workspace symbols, semantic tokens, folding ranges, and call hierarchy,
-//! backed by the introspection index and a per-file semantic model.
+//! and workspace symbols, semantic tokens, folding ranges, document links, and
+//! call hierarchy, backed by the introspection index and a per-file semantic
+//! model.
 //!
 //! Architecture (see the dedicated-lint-thread design): the main loop owns no
 //! salsa database. A dedicated thread owns the persistent [`IncrementalDatabase`]
@@ -71,10 +72,10 @@ use lsp_types::notification::{
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, Completion, DocumentDiagnosticRequest, DocumentHighlightRequest,
-    DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest,
-    PrepareRenameRequest, RangeFormatting, References, Rename, Request as RequestTrait,
-    ResolveCompletionItem, SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles,
-    WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
+    DocumentLinkRequest, DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition,
+    HoverRequest, PrepareRenameRequest, RangeFormatting, References, Rename,
+    Request as RequestTrait, ResolveCompletionItem, SemanticTokensFullRequest,
+    SignatureHelpRequest, WillRenameFiles, WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
@@ -86,22 +87,22 @@ use lsp_types::{
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentDiagnosticParams,
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, DocumentFormattingParams,
-    DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
-    DocumentRangeFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    Documentation, FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions,
-    FoldingRange, FoldingRangeKind, FoldingRangeParams, FoldingRangeProviderCapability,
-    FullDocumentDiagnosticReport, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverContents, HoverParams, HoverProviderCapability, InitializeResult, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, ParameterInformation, ParameterLabel, Position,
-    PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams,
-    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    RenameFilesParams, RenameOptions, RenameParams, SemanticToken, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    UnchangedDocumentDiagnosticReport, Uri, WorkspaceEdit,
+    DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams, DocumentLink,
+    DocumentLinkOptions, DocumentLinkParams, DocumentRangeFormattingParams, DocumentSymbol,
+    DocumentSymbolParams, DocumentSymbolResponse, Documentation, FileOperationFilter,
+    FileOperationPattern, FileOperationRegistrationOptions, FoldingRange, FoldingRangeKind,
+    FoldingRangeParams, FoldingRangeProviderCapability, FullDocumentDiagnosticReport,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
+    OneOf, ParameterInformation, ParameterLabel, Position, PrepareRenameResponse,
+    PublishDiagnosticsParams, Range, ReferenceParams, RelatedFullDocumentDiagnosticReport,
+    RelatedUnchangedDocumentDiagnosticReport, RenameFilesParams, RenameOptions, RenameParams,
+    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SignatureInformation,
+    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, UnchangedDocumentDiagnosticReport, Uri, WorkspaceEdit,
     WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities, WorkspaceSymbol,
     WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
@@ -135,6 +136,7 @@ use task_pool::{Spawner, TaskPool, read_pool_size};
 mod call_hierarchy;
 mod code_actions;
 mod completion;
+mod document_links;
 mod file_rename;
 mod folding;
 mod format;
@@ -168,6 +170,7 @@ pub(crate) use workspace_symbols::*;
 
 pub use code_actions::compute_code_actions;
 pub use completion::{compute_completions, resolve_completion};
+pub use document_links::compute_document_links;
 pub use folding::compute_folding_ranges;
 pub use format::{compute_format_edits, compute_format_range_edits};
 pub use hover::compute_hover;

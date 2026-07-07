@@ -924,16 +924,16 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   edit in a CRLF buffer splices LF); fix that first, then advertise. (2026-07-02
   languageserver survey.)
 
-- [ ] **Document links** (`textDocument/documentLink` + resolve). The
-  languageserver scans string constants that resolve to existing files (relative
-  to the workspace root, raw-string aware) and makes them clickable, resolving to
-  the file URI on demand under a `link_file_size_limit` setting (`link.R`). arity
-  already has a range-bearing source-literal extractor
-  (`collect_source_literal_edges`, `src/project/source.rs`) built for file
-  rename—generalize it from `source()`/`readLines()`-style args to *any* string
-  literal naming an existing file, and emit `DocumentLink`s. Pure read-pool CST
-  walk; needs the workspace root for relative resolution (already available).
-  (2026-07-02 languageserver survey.)
+- [x] **Document links** (`textDocument/documentLink`). Emits a `DocumentLink`
+  for every string literal that resolves to an existing regular file: a new pure
+  extractor `collect_link_literals` (`src/project/source.rs`, raw-string aware)
+  walks *all* string tokens, and `compute_document_links`
+  (`src/lsp/document_links.rs`) resolves + `stat`s each on the read pool. Gated by
+  a `link_file_size_limit` editor setting. Deviations from the languageserver
+  survey: resolution is relative to the file's own directory (arity's `source()`
+  convention), not the workspace root, and targets are resolved eagerly (no
+  `documentLink/resolve` round-trip). (2026-07-02 languageserver survey; done
+  2026-07-08.)
 
 - [ ] **Document color** (`textDocument/documentColor` + `colorPresentation`). The
   languageserver turns any single-line string literal matching `#RRGGBB[AA]` or a

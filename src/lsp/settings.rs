@@ -16,7 +16,16 @@ pub(crate) struct ResolvedSettings {
 pub(crate) struct EditorSettings {
     line_width: Option<u32>,
     indent_width: Option<u32>,
+    /// Maximum document size (bytes) for which `textDocument/documentLink` scans
+    /// for file links. Documents larger than this are skipped so link discovery
+    /// never walks a huge generated file. Unset uses [`DEFAULT_LINK_FILE_SIZE_LIMIT`].
+    link_file_size_limit: Option<u64>,
 }
+
+/// Default cap for [`EditorSettings::link_file_size_limit`]: documents up to this
+/// many bytes are scanned for document links. Sized to comfortably cover any
+/// hand-written R source while excluding pathological generated files.
+pub(crate) const DEFAULT_LINK_FILE_SIZE_LIMIT: u64 = 4 * 1024 * 1024;
 
 impl EditorSettings {
     /// Extract our settings from a client-supplied JSON value. Accepts either
@@ -29,6 +38,13 @@ impl EditorSettings {
             .filter(|v| v.is_object())
             .unwrap_or(value);
         serde_json::from_value(section.clone()).unwrap_or_default()
+    }
+
+    /// The document-link size cap in bytes, falling back to
+    /// [`DEFAULT_LINK_FILE_SIZE_LIMIT`] when the client left it unset.
+    pub(crate) fn link_file_size_limit(&self) -> u64 {
+        self.link_file_size_limit
+            .unwrap_or(DEFAULT_LINK_FILE_SIZE_LIMIT)
     }
 
     /// The [`FormatStyle`] these settings imply, layered over the built-in
@@ -124,10 +140,27 @@ mod tests {
     }
 
     #[test]
+    fn editor_settings_parse_link_file_size_limit() {
+        let value = serde_json::json!({ "linkFileSizeLimit": 8192 });
+        let settings = EditorSettings::from_client_value(&value);
+        assert_eq!(settings.link_file_size_limit(), 8192);
+    }
+
+    #[test]
+    fn editor_settings_link_file_size_limit_defaults_when_unset() {
+        let settings = EditorSettings::default();
+        assert_eq!(
+            settings.link_file_size_limit(),
+            DEFAULT_LINK_FILE_SIZE_LIMIT
+        );
+    }
+
+    #[test]
     fn editor_settings_to_style_layers_over_defaults() {
         let settings = EditorSettings {
             line_width: Some(100),
             indent_width: None,
+            ..Default::default()
         };
         let style = settings.to_format_style();
         assert_eq!(style.line_width, 100);
@@ -141,6 +174,7 @@ mod tests {
         let settings = EditorSettings {
             line_width: Some(0),
             indent_width: Some(4),
+            ..Default::default()
         };
         assert_eq!(settings.to_format_style(), FormatStyle::default());
     }
@@ -152,6 +186,7 @@ mod tests {
         let editor = EditorSettings {
             line_width: Some(120),
             indent_width: Some(8),
+            ..Default::default()
         };
         // arity.toml present → editor settings ignored entirely.
         let style = resolve_format_style(&config, true, &editor);

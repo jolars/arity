@@ -1,8 +1,9 @@
 use arity::formatter::{FormatStyle, format_with_style};
 use arity::lsp::{
-    compute_completions, compute_definition, compute_document_highlights, compute_document_symbols,
-    compute_folding_ranges, compute_format_edits, compute_format_range_edits,
-    compute_prepare_rename, compute_references, compute_rename, compute_rename_with_anchor,
+    compute_completions, compute_definition, compute_document_highlights, compute_document_links,
+    compute_document_symbols, compute_folding_ranges, compute_format_edits,
+    compute_format_range_edits, compute_prepare_rename, compute_references, compute_rename,
+    compute_rename_with_anchor,
 };
 use arity::rindex::provider::IndexedProvider;
 use lsp_types::{
@@ -487,4 +488,61 @@ fn folding_ranges_fold_a_run_of_comments() {
 #[test]
 fn folding_ranges_ignore_a_lone_comment() {
     assert!(compute_folding_ranges("# solo\nx <- 1\n").is_empty());
+}
+
+// --- document links -------------------------------------------------------
+
+const NO_LIMIT: u64 = u64::MAX;
+
+#[test]
+fn document_links_link_existing_relative_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("helpers.R"), "f <- function() 1\n").unwrap();
+    // A source() arg and a bare literal both name the existing file.
+    let text = "source(\"helpers.R\")\nx <- \"helpers.R\"\n";
+    let links = compute_document_links(text, Some(dir.path()), NO_LIMIT);
+    assert_eq!(links.len(), 2, "both literals resolve to the file");
+    // Each link targets a file:// URI naming the resolved file.
+    for link in &links {
+        let target = link.target.as_ref().expect("link has a target");
+        let target = target.to_string();
+        assert!(
+            target.starts_with("file://"),
+            "target is a file URI: {target}"
+        );
+        assert!(
+            target.ends_with("helpers.R"),
+            "target names the file: {target}"
+        );
+        // The link stays on a single line (one quoted token).
+        assert_eq!(link.range.start.line, link.range.end.line);
+    }
+    // First link is on line 0 (the source() call), second on line 1.
+    assert_eq!(links[0].range.start.line, 0);
+    assert_eq!(links[1].range.start.line, 1);
+}
+
+#[test]
+fn document_links_skip_nonexistent_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let links = compute_document_links("x <- \"missing.R\"\n", Some(dir.path()), NO_LIMIT);
+    assert!(links.is_empty(), "a path with no file is not linked");
+}
+
+#[test]
+fn document_links_skip_directories() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("subdir")).unwrap();
+    let links = compute_document_links("x <- \"subdir\"\n", Some(dir.path()), NO_LIMIT);
+    assert!(links.is_empty(), "a directory is not a linkable file");
+}
+
+#[test]
+fn document_links_respect_size_limit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("helpers.R"), "f <- function() 1\n").unwrap();
+    let text = "x <- \"helpers.R\"\n";
+    // A limit below the document size skips scanning entirely.
+    let limit = (text.len() - 1) as u64;
+    assert!(compute_document_links(text, Some(dir.path()), limit).is_empty());
 }

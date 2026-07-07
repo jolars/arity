@@ -169,6 +169,103 @@ pub fn collect_source_literal_edges(
         .collect()
 }
 
+/// A string literal that may name a file, carrying the byte range of the string
+/// token (quotes included) and the unquoted spelling. Unlike
+/// [`SourceLiteralEdge`], this is not tied to `source()`: it is collected from
+/// *every* string literal in the file, so the LSP document-link walk can turn
+/// any file-naming constant into a clickable link. Filesystem resolution and
+/// existence checks are the caller's job, keeping this extractor pure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkLiteral {
+    /// Range of the string token (including its quotes).
+    pub literal_range: TextRange,
+    /// The inner text as written, without quotes (raw-string aware).
+    pub spelling: String,
+    /// Whether the spelling is a relative path (see [`is_relative_spelling`]).
+    pub was_relative: bool,
+}
+
+/// Collect every string literal in `root` as a [`LinkLiteral`]. Pure: no
+/// filesystem access and no `base_dir` resolution — the caller resolves each
+/// spelling and filters by existence (see `compute_document_links`). Empty
+/// spellings are skipped since they can never name a file.
+pub fn collect_link_literals(root: &SyntaxNode) -> Vec<LinkLiteral> {
+    root.descendants_with_tokens()
+        .filter_map(|element| match element {
+            NodeOrToken::Token(token) if token.kind() == SyntaxKind::STRING => Some(token),
+            _ => None,
+        })
+        .filter_map(|token| {
+            let spelling = string_literal_content(token.text())?;
+            if spelling.is_empty() {
+                return None;
+            }
+            let was_relative = is_relative_spelling(spelling);
+            Some(LinkLiteral {
+                literal_range: token.text_range(),
+                spelling: spelling.to_string(),
+                was_relative,
+            })
+        })
+        .collect()
+}
+
+/// The inner text of a string literal, stripped of its quotes. Handles the three
+/// plain quote bytes (`"`, `'`, `` ` ``) like [`strip_quotes`], and additionally
+/// R raw strings of the form `r"delim(content)delim"` (also `R`, `'` quote, and
+/// `[`/`{` bracket variants). Escape sequences inside plain strings are *not*
+/// decoded — the inner text is returned verbatim, matching [`strip_quotes`].
+fn string_literal_content(text: &str) -> Option<&str> {
+    if let Some(raw) = raw_string_content(text) {
+        return Some(raw);
+    }
+    strip_quotes(text)
+}
+
+/// The content of an R raw string (`r"delim(content)delim"`), or `None` if `text`
+/// is not a raw string. Accepts the `r`/`R` prefix, a `"` or `'` quote, an
+/// optional run of `-` delimiter characters, and a `(`/`[`/`{` open bracket with
+/// its matching close. The lexer currently only emits the paren+double-quote
+/// form, but accepting the variants keeps this robust to future lexer growth.
+fn raw_string_content(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let prefix = bytes.first()?;
+    if *prefix != b'r' && *prefix != b'R' {
+        return None;
+    }
+    let quote = *bytes.get(1)?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    // Delimiter dashes, then the opening bracket.
+    let mut i = 2;
+    while bytes.get(i) == Some(&b'-') {
+        i += 1;
+    }
+    let (open, close) = match bytes.get(i)? {
+        b'(' => (b'(', b')'),
+        b'[' => (b'[', b']'),
+        b'{' => (b'{', b'}'),
+        _ => return None,
+    };
+    let dashes = i - 2;
+    let content_start = i + 1;
+    // The closer mirrors the opener: `)`, the same dash run, then the quote.
+    if bytes.last() != Some(&quote) {
+        return None;
+    }
+    let close_seq_len = 1 + dashes + 1; // close bracket + dashes + quote
+    if bytes.len() < content_start + close_seq_len {
+        return None;
+    }
+    let content_end = bytes.len() - close_seq_len;
+    if bytes[content_end] != close {
+        return None;
+    }
+    let _ = open;
+    Some(&text[content_start..content_end])
+}
+
 /// Whether a `source()` path spelling should be resolved against the base
 /// directory. Decided by the spelling alone, independent of the host OS, so the
 /// classification is identical on Unix and Windows: a leading `/` or `\`, a
@@ -505,6 +602,70 @@ mod tests {
     fn literal_edge_skips_dynamic_arguments() {
         assert!(literal_edges("source(paste0(dir, \"x.R\"))\n", None).is_empty());
         assert!(literal_edges("source(path)\n", None).is_empty());
+    }
+
+    fn link_literals(src: &str) -> Vec<LinkLiteral> {
+        collect_link_literals(&parse(src).cst)
+    }
+
+    #[test]
+    fn link_literal_captures_range_and_spelling() {
+        let src = "x <- \"helpers.R\"\n";
+        let e = link_literals(src);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].spelling, "helpers.R");
+        assert!(e[0].was_relative);
+        let range = e[0].literal_range;
+        assert_eq!(
+            &src[range.start().into()..range.end().into()],
+            "\"helpers.R\"",
+            "range slices the quoted token, quotes included"
+        );
+    }
+
+    #[test]
+    fn link_literal_collects_from_any_position() {
+        // Not just source(): assignment RHS, arbitrary call args, bare literal.
+        let e = link_literals("readLines('a.R')\nb <- \"c.R\"\n\"d.R\"\n");
+        let spellings: Vec<_> = e.iter().map(|l| l.spelling.as_str()).collect();
+        assert_eq!(spellings, ["a.R", "c.R", "d.R"]);
+    }
+
+    #[test]
+    fn link_literal_is_raw_string_aware() {
+        let e = link_literals("x <- r\"(sub/helpers.R)\"\n");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].spelling, "sub/helpers.R");
+        assert!(e[0].was_relative);
+    }
+
+    #[test]
+    fn link_literal_raw_string_with_dashes() {
+        let e = link_literals("x <- r\"-(a.R)-\"\n");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].spelling, "a.R");
+    }
+
+    #[test]
+    fn link_literal_marks_absolute_spelling() {
+        let e = link_literals("x <- \"/abs/util.R\"\n");
+        assert_eq!(e.len(), 1);
+        assert!(!e[0].was_relative);
+    }
+
+    #[test]
+    fn link_literal_skips_empty_strings() {
+        assert!(link_literals("x <- \"\"\n").is_empty());
+    }
+
+    #[test]
+    fn string_literal_content_handles_quote_forms() {
+        assert_eq!(string_literal_content("\"a.R\""), Some("a.R"));
+        assert_eq!(string_literal_content("'a.R'"), Some("a.R"));
+        assert_eq!(string_literal_content("`a.R`"), Some("a.R"));
+        assert_eq!(string_literal_content("r\"(a.R)\""), Some("a.R"));
+        assert_eq!(string_literal_content("r\"--(a.R)--\""), Some("a.R"));
+        assert_eq!(string_literal_content("R\"[a.R]\""), Some("a.R"));
     }
 
     #[test]
