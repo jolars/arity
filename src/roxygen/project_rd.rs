@@ -1362,9 +1362,13 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     // bodies as R code, preserving whitespace and splitting at newlines); every
     // other macro coalesces prose into one whitespace-normalized `(TEXT …)`.
     let flush = |run: &mut String, group: &mut Vec<String>, code: bool| {
+        // parse_Rd resolves the Rd-string escapes (`\{`/`\}`/`\%`/`\\`) inside every
+        // braced argument, verbatim `RCODE` or prose `TEXT` alike (mode-independent;
+        // a markdown code span keeps its `\{` via a different projection path).
+        let resolved = resolve_rd_arg_escapes(run);
         if code {
-            group.extend(rcode_atoms(run));
-        } else if let Some(atom) = text_atom(run) {
+            group.extend(rcode_atoms(&resolved));
+        } else if let Some(atom) = text_atom(&resolved) {
             group.push(atom);
         }
         run.clear();
@@ -1396,7 +1400,10 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
                     .as_token()
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
-                group.push(format!("(VERB {})", encode_text(&raw)));
+                group.push(format!(
+                    "(VERB {})",
+                    encode_text(&resolve_rd_arg_escapes(&raw))
+                ));
             }
             SyntaxKind::ROXYGEN_RD_MACRO => {
                 flush(&mut run, &mut group, head == "\\code");
@@ -1779,6 +1786,57 @@ fn resolve_rd_text_escapes(run: &str) -> String {
                         out.push('\\');
                     }
                 }
+            }
+        }
+    }
+    out
+}
+
+/// Resolve parse_Rd's Rd-string escapes inside a **literal Rd macro's braced
+/// argument** (`\code{…}`, `\verb{…}`, `\emph{…}`, `\link{…}`, `\url{…}`, …).
+/// parse_Rd lexes every braced argument — verbatim `RCODE`/`VERB` or prose `TEXT`
+/// alike — with the same escape rules: backslashes pair left-to-right (`\\` → one
+/// literal `\`), and an unpaired trailing backslash before one of the Rd
+/// metacharacters `{`, `}`, `%` is consumed with the character rendered bare
+/// (`\{` → `{`, `\}` → `}`, `\%` → `%`); any other unpaired backslash stays literal.
+///
+/// Unlike [`resolve_rd_text_escapes`] this does **no** brace-less-macro drop
+/// recovery (an in-argument `\word` is a real nested macro, already carved into a
+/// child node, so the run between children is pure argument text) and **no**
+/// `%`-comment stripping (`%` inside a braced argument is literal, never a comment).
+///
+/// Mode-independent: parse_Rd resolves these escapes in a fragile macro's argument
+/// under `@md` exactly as it does with markdown off (engine-probed). A markdown
+/// code span or fence keeps its `\{` because it projects through a *different* path
+/// ([`md_code_atom`]/[`serialize_md_code_block`]/[`verb_atoms`]), never this one.
+fn resolve_rd_arg_escapes(run: &str) -> String {
+    let bytes = run.as_bytes();
+    let mut out = String::with_capacity(run.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'\\' {
+                i += 1;
+            }
+            out.push_str(&run[start..i]);
+            continue;
+        }
+        let mut k = 0usize;
+        while i < bytes.len() && bytes[i] == b'\\' {
+            i += 1;
+            k += 1;
+        }
+        for _ in 0..k / 2 {
+            out.push('\\');
+        }
+        if k % 2 == 1 {
+            match bytes.get(i) {
+                Some(b'%' | b'{' | b'}') => {
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+                _ => out.push('\\'),
             }
         }
     }
@@ -6600,6 +6658,58 @@ mod tests {
         assert!(
             out.contains("(\\details)") && !out.contains("(\\details "),
             "bare got: {out}"
+        );
+    }
+
+    #[test]
+    fn resolve_rd_arg_escapes_resolves_the_rd_metacharacter_escapes() {
+        // The four braced-argument escapes render bare; backslashes pair
+        // left-to-right; any other lone backslash stays literal.
+        assert_eq!(resolve_rd_arg_escapes(r"a \{ b \} c"), "a { b } c");
+        assert_eq!(resolve_rd_arg_escapes(r"a \% b"), "a % b");
+        assert_eq!(resolve_rd_arg_escapes(r"a \\ b"), r"a \ b");
+        assert_eq!(resolve_rd_arg_escapes(r"a \* \b c"), r"a \* \b c");
+        // A paired `\\` before a metacharacter is a literal backslash, not an escape.
+        assert_eq!(resolve_rd_arg_escapes(r"a \\{ b"), r"a \{ b");
+    }
+
+    #[test]
+    fn literal_macro_args_resolve_rd_escapes_both_modes() {
+        // A literal `\code`/`\emph`/`\url` argument resolves parse_Rd's Rd-string
+        // escapes (`\{`/`\}`/`\%`/`\\`), verbatim `RCODE`/`VERB` and prose `TEXT`
+        // alike, with markdown off.
+        let src = "#' @title T\n\
+                   #' @details c \\code{a \\{ b \\% d} e \\emph{f \\} g} u \\url{h/\\%20}\n\
+                   #' @name x\nNULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains("(\\code (RCODE \"a { b % d\"))")
+                && out.contains("(\\emph (TEXT \"f } g\"))")
+                && out.contains("(\\url (VERB \"h/%20\"))"),
+            "non-md got: {out}"
+        );
+        // A fragile macro's argument resolves the same braces under `@md` (the
+        // TEXT-only post-pass never reaches its verbatim `RCODE`/`VERB`).
+        let md = "#' @title T\n#' @md\n\
+                  #' @details span \\code{a \\{ b \\} c} verb \\verb{d \\{ e \\} f}\n\
+                  #' @name x\nNULL\n";
+        let out = project_to_rd(md);
+        assert!(
+            out.contains("(\\code (RCODE \"a { b } c\"))")
+                && out.contains("(\\verb (VERB \"d { e } f\"))"),
+            "md got: {out}"
+        );
+    }
+
+    #[test]
+    fn markdown_code_span_keeps_its_backslash_brace() {
+        // A markdown code span projects through a *different* path than a literal
+        // `\verb`, so it must NOT resolve `\{` (roxygen2 renders the span verbatim).
+        let src = "#' @title T\n#' @md\n#' @details a `x \\{ y` z\n#' @name w\nNULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains("(\\verb (VERB \"x \\\\{ y\"))"),
+            "code span got: {out}"
         );
     }
 

@@ -1,0 +1,3 @@
+(\description (TEXT "Title here"))
+(\details (TEXT "Code") (\code (RCODE "a { b } \\ c % d")) (TEXT ", emphasis") (\emph (TEXT "e { f }")) (TEXT ", and a URL") (\url (VERB "http://x/%20")) (TEXT "."))
+(\title (TEXT "Title here"))

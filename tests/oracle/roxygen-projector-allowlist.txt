@@ -210,6 +210,7 @@ md_list_loose
 md_list_loose_edges
 md_list_value
 md_macro_arg_emphasis
+md_macro_arg_escapes
 md_macro_arg_span
 md_macro_arg_structural
 md_nested_link
@@ -257,6 +258,7 @@ rd_brace_escape_unbalanced
 rd_braceless_drop
 rd_comment
 rd_comment_softwrap
+rd_macro_arg_escapes
 rdcomplete_field_drop
 rdcomplete_off_description
 rdcomplete_off_seealso
