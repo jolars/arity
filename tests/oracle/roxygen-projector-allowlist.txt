@@ -163,6 +163,7 @@ md_blockquote_value
 md_block_value_edges
 md_brace_escape
 md_brace_escape_runs
+md_brace_group
 md_braceless_drop
 md_email_autolink
 md_emphasis

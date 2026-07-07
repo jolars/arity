@@ -189,7 +189,7 @@ enum Inline {
     /// projects `(TEXT "a") (LIST (TEXT "b c")) (TEXT "d")`. Groups nest, span
     /// macros and soft breaks, and carry the recursively-grouped inner run;
     /// projects to `(LIST <children…>)` (empty group → `(LIST)`). Produced only by
-    /// [`group_brace_lists`] on a **balanced** non-`@md` prose run.
+    /// [`group_brace_lists`] on a **balanced** prose run (both markdown modes).
     BraceGroup(Vec<Inline>),
 }
 
@@ -595,7 +595,7 @@ fn push_section(
 ) {
     let atoms = serialize_prose_with_linkrefs(body, md);
     let check_drop = if md { drop_on_incomplete } else { true };
-    if check_drop && !section_rd_complete(body, &atoms, md) {
+    if check_drop && !section_rd_complete(body, md) {
         out.push(format!("(\\{macro_name})"));
         return;
     }
@@ -802,7 +802,10 @@ fn strip_atx_closing(s: &str) -> &str {
 /// **Markdown on:** roxygen2 runs `rdComplete(markdown(text))` — the
 /// markdown-*rendered* Rd, whose structural braces (`\emph{…}`, the
 /// trailing-`\` `\emph{\}` case) come from cmark. That render is what the
-/// canonical atoms reconstruct ([`section_atoms_rd_complete`]).
+/// canonical *ungrouped* atoms reconstruct ([`section_atoms_rd_complete`]); the
+/// scan re-serializes with grouping off ([`serialize_prose`]) because a bare
+/// `{…}` `LIST` group loses the brace-abutting backslash parity — the flat atoms
+/// *are* `markdown(text)`.
 ///
 /// **Markdown off:** roxygen2 runs `rdComplete(x$raw)` on the *raw* tag value,
 /// where an escaped brace `\{`/`\}` is still backslash-escaped and therefore
@@ -813,9 +816,12 @@ fn strip_atx_closing(s: &str) -> &str {
 /// pre-resolution raw text ([`section_raw_rd`]) instead — raw ≈ rendered for the
 /// only chars `rd_complete` weighs (`{}`, `\`, `%`), and md-off never synthesizes
 /// the cmark-derived braces that make the atoms necessary.
-fn section_rd_complete(body: &[Inline], atoms: &[String], md: bool) -> bool {
+fn section_rd_complete(body: &[Inline], md: bool) -> bool {
     if md {
-        section_atoms_rd_complete(atoms, md)
+        // Scan the *ungrouped* atoms: they reconstruct `markdown(text)` faithfully,
+        // whereas grouping a balanced brace pair into a `LIST` loses the backslash
+        // parity rd_complete weighs (see [`serialize_prose`]).
+        section_atoms_rd_complete(&serialize_prose(body, md, false), md)
     } else {
         rd_complete(&section_raw_rd(body))
     }
@@ -1071,19 +1077,42 @@ fn rd_complete(s: &str) -> bool {
 /// definitions consistent), then [`leaked_linkref_text`] appends the leaked
 /// definitions to the trailing prose.
 fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
+    serialize_prose(body, md, true)
+}
+
+/// The shared prose serializer behind [`serialize_prose_with_linkrefs`]. `group`
+/// controls whether a balanced bare `{…}` run is partitioned into an Rd `LIST`
+/// group ([`group_brace_lists`]).
+///
+/// **Output uses `group = true`** — a bare group renders `(LIST …)` in both
+/// markdown modes. **The md `rdComplete` drop scan uses `group = false`**: roxygen2
+/// decides the drop on `markdown(text)`, whose braces are the flat cmark-rendered
+/// ones, and grouping loses the backslash parity that scan weighs. A structural
+/// brace comes from an *even* (non-escaping) run, which [`collapse_md_backslash_runs`]
+/// keeps verbatim while it abuts the brace; grouping consumes the brace, so the run
+/// collapses early (`\\` → `\`) and a trailing `\` before the `LIST`'s brace would
+/// read as a spurious escape in the reconstruction. Scanning the ungrouped flat
+/// atoms sidesteps that — they *are* `markdown(text)`.
+fn serialize_prose(body: &[Inline], md: bool, group: bool) -> Vec<String> {
     let transformed = md.then(|| resolve_linkrefs(body)).flatten();
     let body = transformed.as_deref().unwrap_or(body);
-    // With markdown off, a bare `{…}` in prose is an Rd `LIST` group (markdown mode
-    // is deferred backlog — cmark's escaping muddies the brace/comment scan). The
-    // caller keeps the ungrouped `body` for the `rdComplete` drop scan, which reads
-    // the raw source, so grouping here is projection-only.
-    let grouped = (!md).then(|| group_brace_lists(body));
-    let body = grouped.as_deref().unwrap_or(body);
-    let mut atoms = serialize_inlines(body, md);
-    if md {
-        for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
-            append_rendered_text(&mut atoms, &leaked);
-        }
+    // The md leaked-linkref scan reconstructs the raw markdown source, so it reads
+    // the *ungrouped* body — brace groups are Rd `LIST` structure, not markdown, and
+    // never affect the link-reference candidate scan. Capture it before grouping.
+    let leaked = if md {
+        leaked_linkref_text(&inline_source_skeleton(body))
+    } else {
+        Vec::new()
+    };
+    // A bare `{…}` in prose is an Rd `LIST` group in both modes. The brace/comment
+    // parity is shared (an odd backslash run escapes the brace, an even run opens
+    // it); only the `%`-comment trigger differs by mode (`group_brace_lists` handles
+    // that internally).
+    let grouped = group.then(|| group_brace_lists(body, md));
+    let scan = grouped.as_deref().unwrap_or(body);
+    let mut atoms = serialize_inlines(scan, md);
+    for l in leaked {
+        append_rendered_text(&mut atoms, &l);
     }
     atoms
 }
@@ -1194,18 +1223,27 @@ fn flush_run(run: &mut Vec<RunSeg>, md: bool) -> Option<String> {
 /// group), and cross soft breaks; the inner text pieces keep their raw form so the
 /// downstream [`process_prose`] still resolves escapes and strips `%` comments.
 ///
-/// Brace parity mirrors [`resolve_rd_text_escapes`]: an odd-length backslash run
-/// escapes the following brace (`\{`/`\}` stay literal, no group), an even run
-/// leaves it bare (`\\{` opens a group). A `%` line comment hides braces to the
-/// physical line end (parse_Rd would strip that text before matching braces), so
-/// the scan copies a comment verbatim without treating its braces as delimiters.
+/// Brace parity mirrors [`resolve_rd_text_escapes`] and is mode-independent: an
+/// odd-length backslash run escapes the following brace (`\{`/`\}` stay literal, no
+/// group), an even run leaves it bare (`\\{` opens a group). Under `@md` a source
+/// `\\{y}` is exactly what parse_Rd receives from `markdown(text)` — cmark pairs the
+/// doubled run back to `\` and leaves the brace bare — so the same parity applies.
+///
+/// The **`%` comment trigger is inverted between modes**, mirroring
+/// [`md_percent_swallow`]. Non-md: a bare `%` opens an Rd comment that hides braces
+/// to the physical line end (an escaped `\%` was already consumed by the backslash
+/// arm, so only a bare `%` reaches the `%` arm). Md: roxygen2 escapes a rendered `%`
+/// to `\%`, so a bare/even-preceded `%` stays literal and does **not** hide braces;
+/// only a `%` preceded by an **odd** backslash run renders bare and opens a comment
+/// (the escaping backslash collides). Either way a comment's text is copied verbatim
+/// (the prose pipeline drops it later) without treating its braces as delimiters.
 ///
 /// Only a **balanced** run is grouped; an unbalanced one is returned unchanged (its
 /// section drops via `rdComplete` before the atoms are used — see
 /// [`section_rd_complete`]), so the pass never models parse_Rd's error recovery. A
 /// brace-free run is likewise returned as-is, keeping its byte-identical
 /// serialization.
-fn group_brace_lists(body: &[Inline]) -> Vec<Inline> {
+fn group_brace_lists(body: &[Inline], md: bool) -> Vec<Inline> {
     // `stack[0]` is the output level; each deeper frame is an open `{` group.
     let mut stack: Vec<Vec<Inline>> = vec![Vec::new()];
     let mut buf = String::new();
@@ -1237,9 +1275,11 @@ fn group_brace_lists(body: &[Inline]) -> Vec<Inline> {
                     }
                     let run_len = i - start;
                     buf.push_str(&s[start..i]);
-                    // An odd run escapes the next char (brace/percent/letter): copy
-                    // it verbatim so it is never read as a group delimiter.
-                    if run_len % 2 == 1 && i < bytes.len() {
+                    // An odd run escapes the next char (brace/letter): copy it
+                    // verbatim so it is never read as a group delimiter. Under `@md`
+                    // a `%` is *not* escape-consumed here — its comment-ness is
+                    // decided by the `%` arm (odd preceding run → bare `%` → comment).
+                    if run_len % 2 == 1 && i < bytes.len() && !(md && bytes[i] == b'%') {
                         let mut end = i + 1;
                         while !s.is_char_boundary(end) {
                             end += 1;
@@ -1249,13 +1289,33 @@ fn group_brace_lists(body: &[Inline]) -> Vec<Inline> {
                     }
                 }
                 b'%' => {
-                    // A line comment: copy verbatim to the physical line end (a real
-                    // newline or a SOFT_BREAK); its braces are inert.
-                    let start = i;
-                    while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\x0c' {
+                    // Whether this `%` opens an Rd comment (hiding following braces to
+                    // the physical line end). Non-md: a bare `%` always does (an
+                    // escaped `\%` was consumed by the backslash arm). Md: only a `%`
+                    // rendered bare — one preceded by an *odd* backslash run — does
+                    // (roxygen2 escapes an even/zero-run `%` to `\%`); mirrors
+                    // [`md_percent_swallow`].
+                    let opens_comment = if md {
+                        let mut k = 0usize;
+                        while k < i && bytes[i - 1 - k] == b'\\' {
+                            k += 1;
+                        }
+                        k % 2 == 1
+                    } else {
+                        true
+                    };
+                    if opens_comment {
+                        // Copy verbatim to the physical line end (a real newline or a
+                        // SOFT_BREAK); its braces are inert.
+                        let start = i;
+                        while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\x0c' {
+                            i += 1;
+                        }
+                        buf.push_str(&s[start..i]);
+                    } else {
+                        buf.push('%');
                         i += 1;
                     }
-                    buf.push_str(&s[start..i]);
                 }
                 b'{' => {
                     flush(&mut stack, &mut buf);
@@ -6829,6 +6889,53 @@ mod tests {
         assert!(
             out.contains("(\\description)") && !out.contains("(\\description "),
             "bare got: {out}"
+        );
+    }
+
+    #[test]
+    fn md_bare_brace_groups_project_as_lists() {
+        // Under `@md` a balanced bare `{…}` is an Rd `LIST` too. The brace parity
+        // is shared with non-md (odd run escapes, even run opens), but the
+        // `%`-comment trigger is inverted (`group_brace_lists` mirrors
+        // `md_percent_swallow`): a bare/even-preceded `%` stays literal and does
+        // *not* hide a following group, while an odd-preceded `\%` renders bare and
+        // swallows to the physical line end.
+        let case = |body: &str| {
+            let src = format!("#' @md\n#' @title T\n#' @details {body}\n#' @name x\nNULL\n");
+            let out = project_to_rd(&src);
+            out.lines()
+                .find(|l| l.starts_with("(\\details"))
+                .unwrap_or("")
+                .to_string()
+        };
+        // Simple / nested / empty groups.
+        assert_eq!(
+            case("a {b c} d"),
+            "(\\details (TEXT \"a\") (LIST (TEXT \"b c\")) (TEXT \"d\"))"
+        );
+        assert_eq!(
+            case("a {b {c} d} e"),
+            "(\\details (TEXT \"a\") (LIST (TEXT \"b\") (LIST (TEXT \"c\")) (TEXT \"d\")) (TEXT \"e\"))"
+        );
+        assert_eq!(
+            case("a {} b"),
+            "(\\details (TEXT \"a\") (LIST) (TEXT \"b\"))"
+        );
+        // An even backslash run opens the group (one literal backslash kept).
+        assert_eq!(
+            case(r"s \\{t} u"),
+            "(\\details (TEXT \"s \\\\\") (LIST (TEXT \"t\")) (TEXT \"u\"))"
+        );
+        // An odd run escapes the braces: literal, no group.
+        assert_eq!(case(r"p \{q\} r"), "(\\details (TEXT \"p {q} r\"))");
+        // A bare/even `%` is literal (roxygen2 escapes it) and does not hide braces.
+        assert_eq!(
+            case("v % {w} x"),
+            "(\\details (TEXT \"v %\") (LIST (TEXT \"w\")) (TEXT \"x\"))"
+        );
+        assert_eq!(
+            case(r"v \\% {w} x"),
+            "(\\details (TEXT \"v \\\\%\") (LIST (TEXT \"w\")) (TEXT \"x\"))"
         );
     }
 

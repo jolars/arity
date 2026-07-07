@@ -1,0 +1,62 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..260
+  ROXYGEN_BLOCK@0..254
+    ROXYGEN_SECTION@0..42
+      ROXYGEN_PARAGRAPH@0..39
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..38 "Bare brace groups in  ..."
+        NEWLINE@38..39 "\n"
+      ROXYGEN_MARKER@39..41 "#'"
+      NEWLINE@41..42 "\n"
+    ROXYGEN_SECTION@42..49
+      ROXYGEN_MARKER@42..44 "#'"
+      WHITESPACE@44..45 " "
+      ROXYGEN_TAG@45..48
+        ROXYGEN_AT@45..46 "@"
+        ROXYGEN_TAG_NAME@46..48 "md"
+      NEWLINE@48..49 "\n"
+    ROXYGEN_SECTION@49..231
+      ROXYGEN_MARKER@49..51 "#'"
+      WHITESPACE@51..52 " "
+      ROXYGEN_TAG@52..230
+        ROXYGEN_AT@52..53 "@"
+        ROXYGEN_TAG_NAME@53..60 "details"
+        WHITESPACE@60..61 " "
+        ROXYGEN_TEXT@61..95 "A bare group is a lis ..."
+        NEWLINE@95..96 "\n"
+        ROXYGEN_MARKER@96..98 "#'"
+        WHITESPACE@98..99 " "
+        ROXYGEN_TEXT@99..139 "Groups nest and span  ..."
+        ROXYGEN_MD_EMPH@139..142
+          ROXYGEN_MD_DELIM@139..140 "*"
+          ROXYGEN_TEXT@140..141 "h"
+          ROXYGEN_MD_DELIM@141..142 "*"
+        ROXYGEN_TEXT@142..146 "} i."
+        NEWLINE@146..147 "\n"
+        ROXYGEN_MARKER@147..149 "#'"
+        WHITESPACE@149..150 " "
+        ROXYGEN_TEXT@150..189 "Escaped braces stay l ..."
+        NEWLINE@189..190 "\n"
+        ROXYGEN_MARKER@190..192 "#'"
+        WHITESPACE@192..193 " "
+        ROXYGEN_TEXT@193..230 "An even run opens a g ..."
+      NEWLINE@230..231 "\n"
+    ROXYGEN_SECTION@231..254
+      ROXYGEN_MARKER@231..233 "#'"
+      WHITESPACE@233..234 " "
+      ROXYGEN_TAG@234..254
+        ROXYGEN_AT@234..235 "@"
+        ROXYGEN_TAG_NAME@235..239 "name"
+        WHITESPACE@239..240 " "
+        ROXYGEN_TEXT@240..242 "md"
+        ROXYGEN_MD_DELIM@242..243 "_"
+        ROXYGEN_TEXT@243..248 "brace"
+        ROXYGEN_MD_DELIM@248..249 "_"
+        ROXYGEN_TEXT@249..254 "group"
+  NEWLINE@254..255 "\n"
+  IDENT@255..259 "NULL"
+  NEWLINE@259..260 "\n"

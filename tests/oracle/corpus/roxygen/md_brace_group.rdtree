@@ -1,0 +1,3 @@
+(\description (TEXT "Bare brace groups in markdown prose"))
+(\details (TEXT "A bare group is a list: a") (LIST (TEXT "b c")) (TEXT "d. Groups nest: e") (LIST (TEXT "f") (LIST (TEXT "g")) (TEXT "h")) (TEXT "i. A group spans emphasis: j") (LIST (TEXT "k") (\emph (TEXT "x")) (TEXT "l")) (TEXT "m. An empty group is a bare list: n") (LIST) (TEXT "o. Escaped braces stay literal: p {q} r. An even run opens a group: s \\") (LIST (TEXT "t")) (TEXT "u. A literal percent keeps a group: v %") (LIST (TEXT "w")) (TEXT "x. A comment percent hides one: y \\ but the next line groups:") (LIST (TEXT "aa")) (TEXT "bb."))
+(\title (TEXT "Bare brace groups in markdown prose"))

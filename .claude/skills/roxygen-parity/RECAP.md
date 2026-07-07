@@ -315,24 +315,42 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   in-arg parity/escapes (`build_rd_content` ungated); md `\{`/`\}` (probed 2026-07-06f: render bare
   `{`/`}` like non-md — **blocked on the rdComplete false-drop fix below**, else resolving them
   widens the false-drop to md).
-- **Bare `{…}` prose groups are Rd `LIST`s, non-md landed (2026-07-07g), projector-only.** parse_Rd
-  models an *unescaped* brace pair in prose text as a `(LIST …)` node over its parsed contents (a
+- **Bare `{…}` prose groups are Rd `LIST`s, BOTH modes landed (non-md 2026-07-07g, md 2026-07-07h), projector-only.**
+  parse_Rd models an *unescaped* brace pair in prose text as a `(LIST …)` node over its parsed contents (a
   macro's own braces live inside its CST node — only *bare* text braces reach here): `a {b c} d` →
   `(TEXT "a") (LIST (TEXT "b c")) (TEXT "d")`. Groups **nest** (`{a {b} c}` → nested `LIST`), **span
-  macros** (`{k \emph{x} l}` → `(LIST (TEXT "k") (\emph …) (TEXT "l"))`), cross **soft breaks**, and an
-  empty `{}` → `(LIST)`. Projector-only (CST keeps flat TEXT — lossless): `group_brace_lists`
-  (project_rd.rs), a group-stack pre-pass over the inline run in `serialize_prose_with_linkrefs`
-  (non-md gate), producing an `Inline::BraceGroup(Vec<Inline>)` variant; `serialize_inlines`' new arm
-  emits `(LIST …)`/`(LIST)`. **Escape/comment parity mirrors `resolve_rd_text_escapes`**: an
-  odd-length backslash run escapes the brace (`\{`/`\}` literal, no group), an even run leaves it bare
-  (`\\{` opens); a `%` line comment hides braces to the physical line end. The text pieces keep their
-  raw form (escapes/comments resolved later by `process_prose`). **Balanced-only**: an unbalanced run
-  returns unchanged (the section drops via `rdComplete` first, reading the *raw* body — `push_section`
-  keeps the ungrouped `body` for the drop scan), so the pass never models recovery. Curated
-  `rd_brace_group` + fixture `roxygen_rd_brace_group`. **Backlog:** md bare groups (`{y}` under `@md` —
-  cmark's escaping + the `resolve_md_text_braces` post-pass + `section_atoms_rd_complete` interaction);
-  even-`k` backslash-brace under md; a bare group inside a *macro arg* / heading title (the pass runs
-  only at the prose-section entry).
+  macros/emphasis** (`{k \emph{x} l}`, `{k *x* l}` → `(LIST (TEXT "k") (\emph …) (TEXT "l"))`), cross
+  **soft breaks**, and an empty `{}` → `(LIST)`. Projector-only (CST keeps flat TEXT — lossless):
+  `group_brace_lists(body, md)` (project_rd.rs), a group-stack pre-pass over the inline run in
+  `serialize_prose(body, md, group=true)`, producing an `Inline::BraceGroup(Vec<Inline>)` variant;
+  `serialize_inlines`' arm emits `(LIST …)`/`(LIST)`. **Brace parity is mode-independent** (mirrors
+  `resolve_rd_text_escapes`): an odd backslash run escapes the brace (`\{`/`\}` literal, no group), an
+  even run opens it (`\\{` groups; md source `\\{y}` = cmark's `\`+bare-brace, so `s \\{t}` → `(TEXT
+  "s \\") (LIST (TEXT "t"))`). **The `%`-comment trigger is INVERTED by mode** (mirrors
+  `md_percent_swallow`): non-md a bare `%` hides braces to the physical line end (an escaped `\%` was
+  consumed by the backslash arm); **md a bare/even-preceded `%` stays literal** (roxygen2 escapes it →
+  `\%`, does NOT hide — `v % {w}` groups) and only an **odd-preceded `\%`** renders bare + swallows.
+  Implemented in `group_brace_lists`: the backslash arm skips escape-consuming a `%` under md; the `%`
+  arm looks back at the preceding backslash-run parity (md) vs always-comment (non-md). Text pieces keep
+  raw form (escapes/comments resolved later by `process_prose`). **Drop scan reads UNGROUPED atoms under
+  md** (`section_rd_complete` → `serialize_prose(body, md, group=false)`): roxygen2 decides the drop on
+  `markdown(text)` whose braces are flat; grouping a balanced pair into a `LIST` loses the brace-abutting
+  backslash parity `rd_complete` weighs (an even run that opened a group collapses `\\`→`\` once the brace
+  leaves the text, and the trailing `\` would spuriously escape the `LIST`'s `{` in the reconstruction).
+  **Balanced-only**: an unbalanced run returns unchanged (section drops via `rdComplete` first, reading
+  the *raw*/ungrouped body). Curated `rd_brace_group`+`md_brace_group`, fixtures
+  `roxygen_{rd,md}_brace_group`, unit `md_bare_brace_groups_project_as_lists`. **Backlog:** a bare group
+  inside a *macro arg* / heading title (the pass runs only at the prose-section entry); the pre-existing
+  `%`-swallow trailing-`\` false-drop below.
+- **PRE-EXISTING: a `%`-swallow leaving a trailing `\` at a physical line end false-drops the md section.**
+  `@details y \% {z} end.` (odd-run `\%` swallows `{z} end.` → keeps `y \`) → arity drops (`rd_complete`
+  sees `y \` ending mid-escape → `state == RdEscape` → incomplete), but roxygen2 KEEPS it: it scans
+  `markdown(text)` = `y \\% {z} end.` (the `\\` pairs, the bare `%` comments, braces balanced → complete).
+  Root cause: `serialize_prose` atoms have already run `md_percent_swallow` (dropping the comment), so
+  the drop scan reads the *post*-swallow text, not `markdown(text)`. Predates the bare-group work (stash-
+  verified); **avoided** in the `md_brace_group` corpus by using a soft-wrap continuation (the swallow's
+  trailing `\` is resolved by the following `\n`, so no dangling escape). Fix needs the md drop scan to
+  reconstruct `markdown(text)` without the comment-swallow — backlog.
 - **HTML entities decode under `@md` only, projector-only.** cmark resolves every semicolon-terminated
   HTML5 named entity (`&amp;`/`&copy;`/`&hellip;`) + numeric ref (`&#65;`/`&#x41;`); U+0000/surrogate/
   out-of-range → U+FFFD; missing `;` or unknown name stays literal; single-pass (`&amp;amp;`→`&amp;`);
@@ -681,20 +699,21 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `process_prose` would feed the resolved bare brace to `section_atoms_rd_complete` and **false-drop**
   `a \{ b` — the post-pass sidesteps that (drop scan reads the escaped brace, output reads bare). Curated
   `md_brace_escape`.
-- **Multi-backslash before a brace resolves at the right stage (LANDED 2026-07-07e).** A run of `k` source
-  backslashes before a `@md` prose `{`/`}` renders `floor(k/2)` literal backslashes + a **bare** brace for
-  **odd** `k` (`\{`→`{`, `\\\{`→`\{`, `\\\\\{`→`\\{`; matches roxygen2 exactly), and an **even** `k` leaves
-  an Rd `(LIST …)` group (bare-brace-group backlog; arity halves to `k/2` backslashes + flat bare brace,
-  still divergent, no compounding). The old code mis-collapsed: `collapse_md_backslash_runs` halved the run
+- **Multi-backslash before a brace resolves at the right stage (LANDED 2026-07-07e; even-`k` group landed 2026-07-07h).**
+  A run of `k` source backslashes before a `@md` prose `{`/`}` renders `floor(k/2)` literal backslashes + a
+  **bare** brace for **odd** `k` (`\{`→`{`, `\\\{`→`\{`, `\\\\\{`→`\\{`; matches roxygen2 exactly), and an
+  **even** `k` opens an Rd `(LIST …)` group with `k/2` backslashes before it (`\\{y}` → `(TEXT "\\") (LIST
+  (TEXT "y"))`) — now modeled by `group_brace_lists` under md (see the bare-group trap above). The old code
+  mis-collapsed: `collapse_md_backslash_runs` halved the run
   to `ceil(k/2)` (destroying the parity the post-pass needs — a latent wrong-drop for `k >= 2`), and the
   post-pass only unescaped a **lone** `\{`. Fix: `collapse_md_backslash_runs` now leaves a run abutting `{`/`}`
   **verbatim** (like a bracket run) at cmark's `k`-backslash stage — which is *exactly* what roxygen2's
   `rdComplete(markdown(text))` scans, so the drop decision reads the right braces (an unbalanced *even* run
   like `a \\{ b` now correctly **drops**, as roxygen2 does) — and the parity-dependent parse_Rd resolution is
   deferred to the post-pass `resolve_md_brace_runs` (pairs the run → `floor(k/2)` backslashes + bare brace,
-  odd or even). CST/formatter untouched (projector-only). Curated `md_brace_escape_runs`. **Backlog:** the
-  even-`k` `(LIST …)` bare-brace-group model itself; multi-backslash before a brace inside a *fragile*
-  VERB/RCODE macro arg under `@md` (a separate path — `resolve_rd_arg_escapes`).
+  odd or even). CST/formatter untouched (projector-only). Curated `md_brace_escape_runs`. **Backlog:**
+  multi-backslash before a brace inside a *fragile* VERB/RCODE macro arg under `@md` (a separate path —
+  `resolve_rd_arg_escapes`).
 - **Literal Rd macro args resolve parse_Rd's Rd-string escapes (LANDED 2026-07-07c), mode-independent.**
   parse_Rd lexes every braced arg (`\code{…}`, `\verb{…}`, `\emph{…}`, `\link{…}`, `\url{…}`) with the same
   escape rules: `\{`→`{`, `\}`→`}`, `\%`→`%`, `\\`→`\` (backslashes pair left-to-right), for verbatim
@@ -765,44 +784,48 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-07g) — bare `{…}` prose brace groups → Rd `(LIST …)`, non-md (escape-cluster slice 9)
+## Latest session (2026-07-07h) — bare `{…}` prose brace groups → Rd `(LIST …)`, md (escape-cluster slice 10)
 
-Landed the **bare brace group** model for non-`@md` prose, the top-ranked escape-cluster remainder.
-parse_Rd treats an *unescaped* brace pair in prose text as a `(LIST …)` node over its parsed contents (a
-macro's own braces live inside its CST node, so only *bare* text braces reach here): `a {b c} d` →
-`(TEXT "a") (LIST (TEXT "b c")) (TEXT "d")`. arity kept it flat TEXT. **Fix (projector-only, CST stays
-lossless):** `group_brace_lists` (project_rd.rs) — a **group-stack pre-pass** over the inline run, called
-in `serialize_prose_with_linkrefs` under the non-md gate. It walks each `Inline::Text` byte-by-byte with
-the **same escape/comment parity as `resolve_rd_text_escapes`** (odd backslash run escapes the brace →
-literal, even run opens; a `%` line comment hides braces to the physical line end), splitting text at
-unescaped `{`/`}` and dropping non-text inlines (macros, resolved md nodes) into the current frame — so a
-group **spans a macro** (`{k \emph{x} l}`), **nests** (`{a {b} c}`), crosses **soft breaks**, and `{}` →
-`(LIST)`. The text pieces keep their raw form (escapes/comments resolved downstream by `process_prose`).
-Output is a new `Inline::BraceGroup(Vec<Inline>)` variant; `serialize_inlines`' new arm emits
-`(LIST <children…>)`. **Balanced-only**: an unbalanced run returns unchanged and the section drops via
-`rdComplete` first — `push_section` keeps the *ungrouped* `body` for the drop scan (which reads the raw
-source), so grouping is projection-only and never has to model recovery. Verified against roxygen2 for
-simple/nested/macro-spanning/empty/escaped/even-run/soft-break cases. Full classification in the bare-group
-trap above.
+Completed the **bare brace group** model for `@md` prose (the non-md sibling landed 2026-07-07g). Under
+`@md` parse_Rd groups an unescaped brace pair identically: `a {b c} d` → `(TEXT "a") (LIST (TEXT "b c"))
+(TEXT "d")`, spanning emphasis/macros, nesting, empty `{}` → `(LIST)`. **Fix (projector-only, CST stays
+lossless):** `group_brace_lists` now takes `md` and runs in **both** modes (`serialize_prose(body, md,
+group)`, the renamed `serialize_prose_with_linkrefs` impl). Two mode-keyed points, both probed exhaustively
+against roxygen2: **(1) brace parity is mode-independent** — odd run escapes, even opens; a source `\\{y}`
+is cmark's `\`+bare-brace, so `s \\{t}` → `(TEXT "s \\") (LIST (TEXT "t"))` (this also closes the even-`k`
+`(LIST)` backlog from 2026-07-07e). **(2) the `%`-comment trigger is INVERTED by mode** (mirrors
+`md_percent_swallow`): md a bare/even-`%` stays literal and does NOT hide braces (`v % {w}` groups), only an
+odd-preceded `\%` swallows; the backslash arm skips escape-consuming a `%` under md, and the `%` arm looks
+back at the preceding backslash-run parity. **The md `rdComplete` drop scan now reads UNGROUPED atoms**
+(`section_rd_complete` → `serialize_prose(body, md, false)`): roxygen2 decides the drop on `markdown(text)`
+whose braces are flat, and grouping loses the brace-abutting backslash parity `rd_complete` weighs (the
+even-run backslashes collapse `\\`→`\` once the brace leaves the text, and the trailing `\` would spuriously
+escape the `LIST`'s `{` in the reconstruction). Full classification in the bare-group trap above.
 
-**Result:** projector **395→396 matching** (all allowlisted, 0 regressions), 18 divergent (unchanged,
-out-of-scope). `cargo test` green (594 lib + all integration), clippy + fmt clean; curated fixed-point
-**131/131 preserving** (ran, 0 blocked); format baseline **+1 additive** (the new curated corpus file adds
-its key — the enumerated key set drifted; re-blessed, reviewed: only `curated/rd_brace_group`, formatter
-behavior unchanged since the change is projector-only). New: parser fixture `roxygen_rd_brace_group`
-(+cst/diagnostics snapshots) and curated projector case `rd_brace_group` (+pin +allowlist).
+**Discovered (pre-existing, backlog):** a `%`-swallow that leaves a trailing `\` at a physical line end
+false-drops the md section (`@details y \% {z} end.` → arity drops on the dangling `\`, roxygen2 keeps it —
+the atoms are post-swallow, not `markdown(text)`). Stash-verified as predating this work; the `md_brace_group`
+corpus sidesteps it with a soft-wrap continuation (the trailing `\` is resolved by the following `\n`). New
+trap added.
 
-**Ranked next target:** **md bare groups** — `{y}` under `@md` (the natural completion of this slice): the
-detection parity is nearly mode-independent (cmark's backslash-brace round trip is a net no-op, so `\{`
-stays escaped and a bare `{` forms a group at the parse_Rd stage), but the md path entangles with
-`resolve_md_text_braces` (the `\{`→bare post-pass), `collapse_md_backslash_runs` (even-`k` verbatim), and
-`section_atoms_rd_complete` (the `(LIST …)` atom must reconstruct balanced braces in the drop scan) — probe
-each before enabling the non-md gate for md. Then **sticky brace-less mode-flips** (`\code z` leaves RCODE
-state to section end). Smaller list follow-ups (no-blank marker-type split, blank + content-column prose
-folding (e4), block macro folding into an item, quote-lazy `===`). Formatter upgrade: reflow-rejoin for
-cross-line code spans (needs a fence-at-line-start guard). The 18 projector divergences remain out-of-scope.
+**Result:** projector **396→397 matching** (all 397 allowlisted, 0 regressions), 18 divergent (down from 19).
+`cargo test` green (595 lib + all integration), clippy + fmt clean; curated fixed-point **132/132
+preserving** (ran, 0 blocked); format baseline **+1 additive** (only `curated/md_brace_group`, re-blessed +
+reviewed — projector-only, formatter unchanged). New: parser fixture `roxygen_md_brace_group`
+(+cst/diagnostics), curated projector case `md_brace_group` (+pin +allowlist), unit test
+`md_bare_brace_groups_project_as_lists`.
+
+**Ranked next target:** **the `%`-swallow trailing-`\` false-drop** (discovered this session, a clean
+standalone fix — the md drop scan needs to reconstruct `markdown(text)` without the comment-swallow).
+Then **bare groups inside a macro arg / heading title** (the pass runs only at the prose-section entry) and
+**sticky brace-less mode-flips** (`\code z` leaves RCODE state to section end). Smaller list follow-ups
+(no-blank marker-type split, blank + content-column prose folding (e4), block macro folding into an item,
+quote-lazy `===`). Formatter upgrade: reflow-rejoin for cross-line code spans (needs a fence-at-line-start
+guard). The 18 projector divergences remain out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-07g** — bare `{…}` prose brace groups → Rd `(LIST …)`, non-md (`group_brace_lists`, a group-stack pre-pass in `serialize_prose_with_linkrefs`; `Inline::BraceGroup`; escape/comment parity mirrors `resolve_rd_text_escapes`; balanced-only, unbalanced drops via `rdComplete` on the ungrouped body). Curated `rd_brace_group` + fixture `roxygen_rd_brace_group`. 395→396.
 
 - **2026-07-07f** — in-arg backslash parity in `build_rd_content` (`rd_backslash_is_escaped` made `pub(crate)` + added to the `b'\\'` macro-carve guard so `\emph{\\y}`→`(\emph (TEXT "\\y"))`; text-escape half already handled by `resolve_rd_arg_escapes`; CST-level, baseline +1 additive). Curated `rd_arg_backslash_parity`. 394→395.
 - **2026-07-07e** — multi-backslash before a brace resolves at the right stage (`collapse_md_backslash_runs` leaves a run abutting `{`/`}` verbatim at cmark's `k`-backslash stage so the md `rdComplete` scan reads true braces and even runs drop correctly; parity-dependent pairing → `floor(k/2)` backslashes + bare brace moved to post-pass `resolve_md_brace_runs`; odd `k` exact, even `k` still `(LIST)` backlog). Curated `md_brace_escape_runs`. 393→394.
