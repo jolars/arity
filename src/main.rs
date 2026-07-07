@@ -139,8 +139,8 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let config = match load_config(config_source, &anchor) {
-        Ok(config) => config,
+    let (config, config_path) = match load_config_with_source(config_source, &anchor) {
+        Ok(pair) => pair,
         Err(err) => {
             eprintln!("error: {err}");
             return ExitCode::from(2);
@@ -153,9 +153,16 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
         paths
     };
 
+    // Honor `exclude`/`extend-exclude` so `arity index` never harvests packages
+    // referenced only from generated or vendored sources the user opted out of.
+    let exclude = match build_exclude_filter(&config, config_path.as_deref(), &anchor, &[]) {
+        Ok(exclude) => exclude,
+        Err(code) => return code,
+    };
+
     // Always index R's default packages (base, stats, …) on top of the project's
     // explicit dependencies, so hover and signatures resolve for base-R symbols.
-    let packages = match referenced_packages(&scan_paths) {
+    let packages = match referenced_packages(&scan_paths, &exclude) {
         Ok(pkgs) => with_default_packages(pkgs),
         Err(err) => {
             eprintln!("error: {}", arity::linter::LintError::from(err));
@@ -313,13 +320,9 @@ struct LintOverrides {
     ignore: Vec<String>,
 }
 
-fn load_config(source: &ConfigSource, anchor: &Path) -> Result<Config, ConfigError> {
-    let (config, _path) = Config::resolve(source.explicit.as_deref(), source.no_config, anchor)?;
-    Ok(config)
-}
-
-/// Like [`load_config`] but also returns the loaded file's path (if any), needed
-/// to root exclude patterns relative to the directory containing `arity.toml`.
+/// Resolve the config and return it alongside the loaded file's path (if any),
+/// needed to root exclude patterns relative to the directory containing
+/// `arity.toml`.
 fn load_config_with_source(
     source: &ConfigSource,
     anchor: &Path,
@@ -336,17 +339,12 @@ fn build_exclude_filter(
     anchor: &Path,
     cli_excludes: &[String],
 ) -> Result<ExcludeFilter, ExitCode> {
-    let root = config_path
-        .and_then(Path::parent)
-        .unwrap_or(anchor)
-        .to_path_buf();
-    let mut patterns = config.exclude.clone();
-    patterns.extend(config.extend_exclude.iter().cloned());
-    patterns.extend(cli_excludes.iter().cloned());
-    ExcludeFilter::new(&root, &patterns).map_err(|err| {
-        eprintln!("error: {err}");
-        ExitCode::from(2)
-    })
+    config
+        .exclude_filter(config_path, anchor, cli_excludes)
+        .map_err(|err| {
+            eprintln!("error: {err}");
+            ExitCode::from(2)
+        })
 }
 
 /// Apply `--line-width`/`--indent-width` overrides over a loaded config and

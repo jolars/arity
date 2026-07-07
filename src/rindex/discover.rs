@@ -12,12 +12,14 @@ use crate::parser::parse;
 use crate::semantic::SemanticModel;
 
 /// The set of package names referenced anywhere under `paths`, sorted and
-/// deduplicated. Parse failures on individual files are skipped (discovery is
-/// best-effort).
+/// deduplicated. Files matching `exclude` are skipped so `arity index` never
+/// harvests packages referenced only from generated or vendored sources. Parse
+/// failures on individual files are skipped (discovery is best-effort).
 pub fn referenced_packages(
     paths: &[std::path::PathBuf],
+    exclude: &ExcludeFilter,
 ) -> Result<Vec<SmolStr>, FileDiscoveryError> {
-    let files = collect_r_files(paths, &ExcludeFilter::none())?;
+    let files = collect_r_files(paths, exclude)?;
     let mut set: BTreeSet<SmolStr> = BTreeSet::new();
     for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else {
@@ -82,6 +84,28 @@ mod tests {
         for expected in ["dplyr", "tidyr", "purrr", "rlang", "stringr"] {
             assert!(pkgs.contains(&expected), "missing {expected} in {pkgs:?}");
         }
+    }
+
+    #[test]
+    fn referenced_packages_honors_exclude() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("keep.R"), "library(dplyr)\n").unwrap();
+        fs::create_dir(root.join("renv")).unwrap();
+        fs::write(root.join("renv").join("activate.R"), "library(secret)\n").unwrap();
+
+        let filter = ExcludeFilter::new(root, &["renv/".to_string()]).unwrap();
+        let pkgs = referenced_packages(&[root.to_path_buf()], &filter).unwrap();
+        let names: Vec<&str> = pkgs.iter().map(|s| s.as_str()).collect();
+        assert!(
+            names.contains(&"dplyr"),
+            "kept file should be scanned: {names:?}"
+        );
+        assert!(
+            !names.contains(&"secret"),
+            "excluded renv/ leaked into discovery: {names:?}"
+        );
     }
 
     #[test]

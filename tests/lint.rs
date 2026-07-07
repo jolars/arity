@@ -557,6 +557,41 @@ fn project_aware_document_resolves_cross_file() {
 }
 
 #[test]
+fn project_aware_document_keeps_excluded_generated_scope() {
+    // The single-document seed path (check_document_in_project -> seed_workspace_for)
+    // must apply the exclude config yet keep generated package sources in scope:
+    // `cpp11.R` is default-excluded (never a lint member) but defines wrappers the
+    // active file calls, so dropping it from scope would be a false undefined-symbol.
+    use arity::incremental::IncrementalDatabase;
+    use arity::linter::check_document_in_project;
+    use arity::rindex::provider::CompositeProvider;
+
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(
+        r_dir.join("cpp11.R"),
+        "native_fn <- function(x) .Call(`_testpkg_native_fn`, x)\n",
+    )
+    .unwrap();
+    let b = r_dir.join("use.R");
+    std::fs::write(&b, "wrap <- function(x) native_fn(x)\nwrap(1)\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    let provider = CompositeProvider::base_only();
+
+    let diags = check_document_in_project(&mut db, &b, active, &LintConfig::default(), &provider)
+        .expect("lint should succeed");
+    let rules: Vec<&str> = diags.iter().map(|d| d.rule).collect();
+    assert!(
+        !rules.contains(&"undefined-symbol"),
+        "excluded cpp11.R wrapper should still resolve: {rules:?}"
+    );
+}
+
+#[test]
 fn project_aware_relint_reuses_unchanged_siblings() {
     // Re-linting with unchanged content must not re-parse sibling files: the
     // salsa caches stay warm across LSP keystrokes.
@@ -676,7 +711,7 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     // membership now comes from the explicit file-set, not a per-call walk.
     let mut db = IncrementalDatabase::default();
     let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
-    seed_workspace_for(&mut db, &b, active);
+    seed_workspace_for(&mut db, &b, active, &ExcludeFilter::none());
     let prepared = prepare_document_in_project(&mut db, &b, active, &cfg)
         .unwrap()
         .expect("clean file should prepare");

@@ -112,7 +112,6 @@ use smol_str::SmolStr;
 
 use crate::ast::{ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
-use crate::file_discovery::collect_r_files;
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
 use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
 use crate::linter::{Diagnostic, Severity};

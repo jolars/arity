@@ -51,13 +51,15 @@
   like `format_node` does. Low urgency: the CLI `format` path (whole-document) is
   correct; this only affects LSP range edits in CRLF files.
 
-- [ ] `exclude`/`extend-exclude` (landed for the CLI `format`/`lint` walk via
-  `ExcludeFilter` in `src/file_discovery.rs`) is **not** consulted by LSP
-  workspace seeding (`src/lsp/lint_thread.rs` `seed_workspace`), salsa sibling
-  discovery (`src/linter/check.rs`), or `arity index` package discovery
-  (`src/rindex/discover.rs`)—all pass `ExcludeFilter::none()`. Wire the resolved
-  config's excludes through those paths so excluded files don't get indexed/linted
-  in-editor either.
+- [x] `exclude`/`extend-exclude` (landed for the CLI `format`/`lint` walk via
+  `ExcludeFilter` in `src/file_discovery.rs`) is now consulted by LSP workspace
+  seeding (`src/lsp/lint_thread.rs` `seed_workspace`), salsa sibling discovery
+  (`src/linter/check.rs` `seed_workspace_for`/`check_document_in_project`), and
+  `arity index` package discovery (`src/rindex/discover.rs`). All resolve config
+  through the shared `Config::exclude_filter`; the single-document seed paths use
+  `check::resolve_exclude_at`. Excluded files no longer get indexed/linted
+  in-editor, while `check::scope_members` re-adds generated package sources
+  (`cpp11.R`, `RcppExports.R`, …) so cross-file resolution stays complete.
 
 - [ ] Trailing comments are not line suffixes (width-counted). A same-line
   trailing comment counts toward its line's width for fit measurement, so a long

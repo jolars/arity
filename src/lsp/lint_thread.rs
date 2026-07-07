@@ -232,16 +232,20 @@ impl LintWorker {
     /// anything already tracked. Pre-warms cross-file membership so later edits
     /// don't re-walk (see [`seed_workspace_for`](crate::linter::check::seed_workspace_for)).
     fn seed_workspace(&mut self, roots: Vec<PathBuf>) {
-        let discovered = collect_r_files(&roots, &crate::file_discovery::ExcludeFilter::none())
-            .unwrap_or_default();
         let mut files: Vec<SourceFile> = self
             .db
             .workspace()
             .map(|ws| ws.members(&self.db).to_vec())
             .unwrap_or_default();
-        for path in discovered {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                files.push(self.db.upsert_file(&path, text));
+        // Resolve the exclude config per root (each may live under a different
+        // `arity.toml`) and seed its scope: kept files plus the generated package
+        // sources exclusion drops, so cross-file resolution stays complete.
+        for root in &roots {
+            let exclude = crate::linter::check::resolve_exclude_at(root);
+            for path in crate::linter::check::scope_members(std::slice::from_ref(root), &exclude) {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    files.push(self.db.upsert_file(&path, text));
+                }
             }
         }
         self.db.set_workspace_members(files, roots);
@@ -333,7 +337,8 @@ impl LintWorker {
             .workspace()
             .is_some_and(|ws| ws.members(&self.db).contains(&active));
         if !already_member {
-            crate::linter::check::seed_workspace_for(&mut self.db, &req.path, active);
+            let exclude = crate::linter::check::resolve_exclude_at(&anchor);
+            crate::linter::check::seed_workspace_for(&mut self.db, &req.path, active, &exclude);
         }
         let prepared = match crate::linter::check::prepare_document_in_project(
             &mut self.db,

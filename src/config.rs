@@ -1,8 +1,10 @@
 //! `arity.toml` configuration: schema, file loading, and ancestor-walk discovery.
 //!
-//! The CLI is the only consumer; the library API (`format_with_style`,
+//! The CLI is the primary consumer; the library API (`format_with_style`,
 //! `check_paths_with_style`, ...) continues to take a fully-resolved
-//! [`FormatStyle`].
+//! [`FormatStyle`]. The LSP and `arity index` also resolve config for the
+//! [`Config::exclude_filter`] path so in-editor and index walks honor the same
+//! `exclude`/`extend-exclude` as the CLI.
 
 use std::fmt;
 use std::fs;
@@ -10,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::file_discovery::{ExcludeError, ExcludeFilter};
 use crate::formatter::{FormatStyle, LineEnding};
 
 pub const CONFIG_FILE_NAME: &str = "arity.toml";
@@ -339,6 +342,25 @@ impl Config {
             None => Ok((Self::default(), None)),
         }
     }
+
+    /// Build the file-discovery [`ExcludeFilter`] from this config's `exclude` +
+    /// `extend-exclude` (plus any `extra` patterns, e.g. CLI `--exclude`).
+    /// Patterns are rooted at the directory containing the loaded config file
+    /// (`source`), or at `anchor` when there is no config file. This is the single
+    /// source of truth for turning a resolved config into an exclude filter, shared
+    /// by the CLI walks, the LSP workspace seed, and `arity index` discovery.
+    pub fn exclude_filter(
+        &self,
+        source: Option<&Path>,
+        anchor: &Path,
+        extra: &[String],
+    ) -> Result<ExcludeFilter, ExcludeError> {
+        let root = source.and_then(Path::parent).unwrap_or(anchor);
+        let mut patterns = self.exclude.clone();
+        patterns.extend(self.extend_exclude.iter().cloned());
+        patterns.extend(extra.iter().cloned());
+        ExcludeFilter::new(root, &patterns)
+    }
 }
 
 fn validate_width(field: &'static str, value: u32, path: Option<&Path>) -> Result<(), ConfigError> {
@@ -374,6 +396,55 @@ mod tests {
 
     fn parse(text: &str) -> Result<Config, ConfigError> {
         Config::parse_str(text, Path::new("arity.toml"))
+    }
+
+    #[test]
+    fn exclude_filter_from_config_applies_patterns() {
+        use std::fs;
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("keep.R"), "x <- 1\n").unwrap();
+        fs::create_dir(root.join("vendor")).unwrap();
+        fs::write(root.join("vendor").join("skip.R"), "y <- 2\n").unwrap();
+
+        let config = Config {
+            exclude: vec!["vendor/".to_string()],
+            ..Config::default()
+        };
+        let filter = config.exclude_filter(None, root, &[]).unwrap();
+        let files = crate::file_discovery::collect_r_files(&[root.to_path_buf()], &filter).unwrap();
+        let names: Vec<_> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["keep.R".to_string()]);
+    }
+
+    #[test]
+    fn exclude_filter_extra_and_extend_apply_together() {
+        use std::fs;
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("keep.R"), "x <- 1\n").unwrap();
+        fs::create_dir(root.join("gen")).unwrap();
+        fs::write(root.join("gen").join("a.R"), "y <- 2\n").unwrap();
+        fs::create_dir(root.join("cli")).unwrap();
+        fs::write(root.join("cli").join("b.R"), "z <- 3\n").unwrap();
+
+        let config = Config {
+            exclude: Vec::new(),
+            extend_exclude: vec!["gen/".to_string()],
+            ..Config::default()
+        };
+        let filter = config
+            .exclude_filter(None, root, &["cli/".to_string()])
+            .unwrap();
+        let files = crate::file_discovery::collect_r_files(&[root.to_path_buf()], &filter).unwrap();
+        let names: Vec<_> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["keep.R".to_string()]);
     }
 
     #[test]

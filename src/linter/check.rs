@@ -429,7 +429,12 @@ pub fn prepare_document_in_project(
 /// a repeat call with an unchanged set a no-op. The LSP calls this lazily (only
 /// when the active file isn't yet a member), so the walk leaves the per-keystroke
 /// path; one-shot callers ([`check_document_in_project`]) call it each time.
-pub fn seed_workspace_for(db: &mut IncrementalDatabase, path: &Path, active: SourceFile) {
+pub fn seed_workspace_for(
+    db: &mut IncrementalDatabase,
+    path: &Path,
+    active: SourceFile,
+    exclude: &ExcludeFilter,
+) {
     let (mut files, mut roots) = match db.workspace() {
         Some(ws) => (ws.members(&*db).to_vec(), ws.roots(&*db).to_vec()),
         None => (Vec::new(), Vec::new()),
@@ -439,9 +444,7 @@ pub fn seed_workspace_for(db: &mut IncrementalDatabase, path: &Path, active: Sou
     let search_dir =
         package_root(path).or_else(|| path.parent().filter(|p| p.is_dir()).map(Path::to_path_buf));
     if let Some(dir) = search_dir {
-        for sibling in
-            collect_r_files(std::slice::from_ref(&dir), &ExcludeFilter::none()).unwrap_or_default()
-        {
+        for sibling in scope_members(std::slice::from_ref(&dir), exclude) {
             if sibling == path {
                 continue;
             }
@@ -454,6 +457,33 @@ pub fn seed_workspace_for(db: &mut IncrementalDatabase, path: &Path, active: Sou
         }
     }
     db.set_workspace_members(files, roots);
+}
+
+/// Resolve the [`ExcludeFilter`] governing files under `anchor`, discovering the
+/// `arity.toml` upward from it exactly as the CLI does. Falls back to an
+/// exclude-nothing filter when config resolution or pattern compilation fails,
+/// so seeding never hard-errors on a malformed workspace config. Used by the
+/// single-document seed paths (the LSP and [`check_document_in_project`]).
+pub fn resolve_exclude_at(anchor: &Path) -> ExcludeFilter {
+    match crate::config::Config::resolve(None, false, anchor) {
+        Ok((config, source)) => config
+            .exclude_filter(source.as_deref(), anchor, &[])
+            .unwrap_or_else(|_| ExcludeFilter::none()),
+        Err(_) => ExcludeFilter::none(),
+    }
+}
+
+/// Discover the R files under `dirs` that belong in the workspace *scope*: every
+/// file `exclude` keeps, plus the generated package sources it drops (so their
+/// wrappers still populate the package namespace). Mirrors the scope-only
+/// handling in [`check_paths_with_index`] — without the re-add, excluding
+/// `cpp11.R`/`RcppExports.R` would make every caller a false `undefined-symbol`.
+pub fn scope_members(dirs: &[PathBuf], exclude: &ExcludeFilter) -> Vec<PathBuf> {
+    let mut files = collect_r_files(dirs, exclude).unwrap_or_default();
+    files.extend(excluded_package_sources(&files));
+    files.sort();
+    files.dedup();
+    files
 }
 
 /// Read-phase of cross-file linting (`&db` only — no disk, no writes). Builds the
@@ -512,7 +542,8 @@ pub fn check_document_in_project(
     config: &LintConfig,
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
-    seed_workspace_for(db, path, active);
+    let exclude = resolve_exclude_at(path.parent().unwrap_or(path));
+    seed_workspace_for(db, path, active, &exclude);
     match prepare_document_in_project(db, path, active, config)? {
         Some(prepared) => {
             let analysis = db.snapshot();
