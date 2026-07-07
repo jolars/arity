@@ -1,0 +1,3 @@
+(\description (TEXT "Title here"))
+(\details (TEXT "Code") (\code (RCODE "a { b")) (TEXT ", verb") (\verb (VERB "c { d")) (TEXT ", url") (\url (VERB "e { f")) (TEXT ", link") (\link (TEXT "g { h")) (TEXT "."))
+(\title (TEXT "Title here"))

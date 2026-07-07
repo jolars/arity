@@ -864,10 +864,21 @@ fn section_raw_rd(body: &[Inline]) -> String {
 fn sexpr_to_rd(atom: &str, md: bool, out: &mut String) {
     let bytes = atom.as_bytes();
     let mut i = 0;
-    render_sexpr(bytes, &mut i, md, out);
+    render_sexpr(bytes, &mut i, md, false, out);
 }
 
-fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, out: &mut String) {
+/// `verbatim` marks a subtree living inside a **fragile** macro (`\verb`, `\code`,
+/// `\link`, `\url`, `\preformatted`, …). markdown() keeps such a macro's argument
+/// **raw** — an escaped `\{`/`\}` stays backslash-escaped — so it contributes a
+/// brace-balanced `{…}` pair to the `rdComplete` scan regardless of its interior.
+/// The projected atoms, however, have already resolved `\{` → a bare `{` (see
+/// [`resolve_rd_arg_escapes`]), so counting those bare braces would false-drop a
+/// section whose fragile argument merely holds an odd escaped brace
+/// (`\verb{d \{ e}`). Neutralizing the leaf braces inside a fragile subtree
+/// ([`append_leaf_text`] drops them) restores the balanced count markdown()
+/// actually presents. Cmark-*derived* braces (`*\**` → `\emph{\}`) are outside
+/// any fragile macro, so they still count and drop correctly.
+fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut String) {
     if bytes.get(*i) != Some(&b'(') {
         return;
     }
@@ -888,7 +899,7 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, out: &mut String) {
         skip_spaces(bytes, i);
         if bytes.get(*i) == Some(&b'"') {
             let text = read_quoted(bytes, i);
-            append_leaf_text(&text, escape_percent, out);
+            append_leaf_text(&text, escape_percent, verbatim, out);
         }
         // consume the closing ')'
         while let Some(&c) = bytes.get(*i) {
@@ -900,6 +911,15 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, out: &mut String) {
         return;
     }
     let is_grp = head == b"GRP";
+    // A fragile macro keeps its argument raw in markdown() output, so its whole
+    // subtree stays brace-balanced regardless of the resolved leaf braces beneath.
+    let child_verbatim = verbatim
+        || (!is_grp
+            && is_fragile_for_md(
+                std::str::from_utf8(head)
+                    .unwrap_or("")
+                    .trim_start_matches('\\'),
+            ));
     if !is_grp {
         // A macro head: `\name`. Its leading backslash escapes the first name
         // letter for `rd_complete`, which is harmless (a letter, never a brace).
@@ -915,10 +935,10 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, out: &mut String) {
             }
             Some(_) => {
                 if is_grp {
-                    render_sexpr(bytes, i, md, out);
+                    render_sexpr(bytes, i, md, child_verbatim, out);
                 } else {
                     out.push('{');
-                    render_sexpr(bytes, i, md, out);
+                    render_sexpr(bytes, i, md, child_verbatim, out);
                     out.push('}');
                 }
             }
@@ -967,8 +987,25 @@ fn read_quoted(bytes: &[u8], i: &mut usize) -> String {
 /// `escape_percent` (any leaf under `@md`, where roxygen2 escapes `%` so it never
 /// opens an Rd comment). Other special chars (`{`/`}`/`\`) pass through verbatim —
 /// they are exactly what `rd_complete` must weigh against the structural braces.
-fn append_leaf_text(text: &str, escape_percent: bool, out: &mut String) {
-    if escape_percent {
+fn append_leaf_text(text: &str, escape_percent: bool, verbatim: bool, out: &mut String) {
+    if verbatim {
+        // A fragile macro's argument is raw and brace-balanced in markdown()
+        // output, so it contributes exactly one balanced `{…}` pair (the enclosing
+        // delimiters) to the `rd_complete` scan regardless of its interior. The
+        // projected atom, however, may carry either **resolved** braces (a literal
+        // `\verb{d \{ e}` -> bare `{`, via [`resolve_rd_arg_escapes`]) or
+        // **escaped** ones (a markdown code span -> `\{`, kept verbatim), so neither
+        // re-escaping nor pass-through is uniformly right. Drop every
+        // `rd_complete`-significant char (`{`, `}`, `\`, `%`) so the interior is
+        // inert and only the enclosing pair counts.
+        for c in text.chars() {
+            if !matches!(c, '{' | '}' | '\\' | '%') {
+                out.push(c);
+            }
+        }
+    } else if escape_percent {
+        // Under `@md`, roxygen2 escapes every `%` to `\%` in the rendered Rd, so
+        // none opens an Rd comment against the brace count.
         for c in text.chars() {
             if c == '%' {
                 out.push('\\');
@@ -1655,7 +1692,11 @@ fn preformatted_atoms(node: &SyntaxNode) -> Vec<String> {
             body.push_str(strip_marker(line));
         }
     }
-    verb_atoms(&body)
+    // parse_Rd resolves the Rd-string escapes inside a `\preformatted` body exactly
+    // as it does for any other verbatim macro argument (`\{` -> `{`, `\%` -> `%`,
+    // `\\` -> `\`), so the projected `(VERB …)` matches — and the rd_complete scan
+    // (which neutralizes fragile-macro braces) counts a balanced pair.
+    verb_atoms(&resolve_rd_arg_escapes(&body))
 }
 
 /// Split an `@section` body at roxygen2's title separator (the first literal `:`,
@@ -6557,6 +6598,32 @@ mod tests {
         // trailing `\` escapes the closing brace --- exactly roxygen2's `*\**` bug.
         assert!(!section_atoms_rd_complete(
             &["(TEXT \"foo\")".into(), "(\\emph (TEXT \"\\\\\"))".into()],
+            true,
+        ));
+    }
+
+    #[test]
+    fn fragile_macro_arg_never_unbalances_the_scan() {
+        // A fragile macro's argument is raw + brace-balanced in markdown() output,
+        // so its interior braces (resolved to bare `{` in the atom, or kept as `\{`
+        // in a code span) must not count against `rd_complete`. Both the resolved
+        // and escaped forms stay complete; only the enclosing `\name{…}` pair counts.
+        assert!(section_atoms_rd_complete(
+            &["(\\verb (VERB \"d { e\"))".into()], // literal `\verb{d \{ e}`, resolved
+            true,
+        ));
+        assert!(section_atoms_rd_complete(
+            &["(\\verb (VERB \"x \\\\{ y\"))".into()], // code span, kept as `\{`
+            true,
+        ));
+        assert!(section_atoms_rd_complete(
+            &["(\\code (RCODE \"a { b\"))".into()],
+            true,
+        ));
+        // The fragile-macro neutralization is confined to fragile heads: a
+        // cmark-derived `\emph{\}` still counts its escaping backslash and drops.
+        assert!(!section_atoms_rd_complete(
+            &["(\\emph (TEXT \"\\\\\"))".into()],
             true,
         ));
     }

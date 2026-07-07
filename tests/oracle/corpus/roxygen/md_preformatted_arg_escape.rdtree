@@ -1,0 +1,3 @@
+(\description (TEXT "Title here"))
+(\details (TEXT "A preformatted block:") (\preformatted (VERB "\n") (VERB "  line one with { an odd brace\n") (VERB "  and % a percent\n")))
+(\title (TEXT "Title here"))
