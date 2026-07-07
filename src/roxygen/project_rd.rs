@@ -183,6 +183,14 @@ enum Inline {
     /// Its flattened text glues onto adjacent prose with no paragraph separator
     /// (see [`block_quote_flat_text`]), pushed as a `Final` run segment.
     MdBlockQuote(SyntaxNode),
+    /// A bare `{…}` brace group in prose — *not* a macro's argument delimiters,
+    /// which live inside the macro's CST node. parse_Rd models an unescaped brace
+    /// pair in prose text as a `LIST` node over its parsed contents, so `a {b c} d`
+    /// projects `(TEXT "a") (LIST (TEXT "b c")) (TEXT "d")`. Groups nest, span
+    /// macros and soft breaks, and carry the recursively-grouped inner run;
+    /// projects to `(LIST <children…>)` (empty group → `(LIST)`). Produced only by
+    /// [`group_brace_lists`] on a **balanced** non-`@md` prose run.
+    BraceGroup(Vec<Inline>),
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -1065,6 +1073,12 @@ fn rd_complete(s: &str) -> bool {
 fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
     let transformed = md.then(|| resolve_linkrefs(body)).flatten();
     let body = transformed.as_deref().unwrap_or(body);
+    // With markdown off, a bare `{…}` in prose is an Rd `LIST` group (markdown mode
+    // is deferred backlog — cmark's escaping muddies the brace/comment scan). The
+    // caller keeps the ungrouped `body` for the `rdComplete` drop scan, which reads
+    // the raw source, so grouping here is projection-only.
+    let grouped = (!md).then(|| group_brace_lists(body));
+    let body = grouped.as_deref().unwrap_or(body);
     let mut atoms = serialize_inlines(body, md);
     if md {
         for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
@@ -1170,6 +1184,110 @@ fn flush_run(run: &mut Vec<RunSeg>, md: bool) -> Option<String> {
     }
     run.clear();
     text_atom(&combined)
+}
+
+/// Partition a non-`@md` prose run's bare `{…}` brace groups into [`Inline::BraceGroup`]
+/// nodes. parse_Rd treats an unescaped brace pair in prose text as a `LIST`
+/// delimiter (a macro's own braces live inside its CST node, so only *bare* text
+/// braces reach here): `a {b c} d` → `(TEXT "a") (LIST (TEXT "b c")) (TEXT "d")`.
+/// Groups nest, span macros (an `Inline::Macro` between the braces lands inside the
+/// group), and cross soft breaks; the inner text pieces keep their raw form so the
+/// downstream [`process_prose`] still resolves escapes and strips `%` comments.
+///
+/// Brace parity mirrors [`resolve_rd_text_escapes`]: an odd-length backslash run
+/// escapes the following brace (`\{`/`\}` stay literal, no group), an even run
+/// leaves it bare (`\\{` opens a group). A `%` line comment hides braces to the
+/// physical line end (parse_Rd would strip that text before matching braces), so
+/// the scan copies a comment verbatim without treating its braces as delimiters.
+///
+/// Only a **balanced** run is grouped; an unbalanced one is returned unchanged (its
+/// section drops via `rdComplete` before the atoms are used — see
+/// [`section_rd_complete`]), so the pass never models parse_Rd's error recovery. A
+/// brace-free run is likewise returned as-is, keeping its byte-identical
+/// serialization.
+fn group_brace_lists(body: &[Inline]) -> Vec<Inline> {
+    // `stack[0]` is the output level; each deeper frame is an open `{` group.
+    let mut stack: Vec<Vec<Inline>> = vec![Vec::new()];
+    let mut buf = String::new();
+    let mut grouped = false;
+    let flush = |stack: &mut Vec<Vec<Inline>>, buf: &mut String| {
+        if !buf.is_empty() {
+            stack
+                .last_mut()
+                .unwrap()
+                .push(Inline::Text(std::mem::take(buf)));
+        }
+    };
+    for inl in body {
+        let Inline::Text(s) = inl else {
+            // A non-text inline (macro, resolved md node) is opaque to brace
+            // scanning; flush the pending text and drop it into the current group.
+            flush(&mut stack, &mut buf);
+            stack.last_mut().unwrap().push(inl.clone());
+            continue;
+        };
+        let bytes = s.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => {
+                    let start = i;
+                    while i < bytes.len() && bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    let run_len = i - start;
+                    buf.push_str(&s[start..i]);
+                    // An odd run escapes the next char (brace/percent/letter): copy
+                    // it verbatim so it is never read as a group delimiter.
+                    if run_len % 2 == 1 && i < bytes.len() {
+                        let mut end = i + 1;
+                        while !s.is_char_boundary(end) {
+                            end += 1;
+                        }
+                        buf.push_str(&s[i..end]);
+                        i = end;
+                    }
+                }
+                b'%' => {
+                    // A line comment: copy verbatim to the physical line end (a real
+                    // newline or a SOFT_BREAK); its braces are inert.
+                    let start = i;
+                    while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\x0c' {
+                        i += 1;
+                    }
+                    buf.push_str(&s[start..i]);
+                }
+                b'{' => {
+                    flush(&mut stack, &mut buf);
+                    stack.push(Vec::new());
+                    grouped = true;
+                    i += 1;
+                }
+                b'}' if stack.len() > 1 => {
+                    flush(&mut stack, &mut buf);
+                    let g = stack.pop().unwrap();
+                    stack.last_mut().unwrap().push(Inline::BraceGroup(g));
+                    grouped = true;
+                    i += 1;
+                }
+                _ => {
+                    let start = i;
+                    i += 1;
+                    while i < bytes.len() && !matches!(bytes[i], b'\\' | b'%' | b'{' | b'}') {
+                        i += 1;
+                    }
+                    buf.push_str(&s[start..i]);
+                }
+            }
+        }
+        flush(&mut stack, &mut buf);
+    }
+    // An unclosed group means the braces are unbalanced: leave the run flat (the
+    // section drops anyway), never a partial tree.
+    if !grouped || stack.len() != 1 {
+        return body.to_vec();
+    }
+    stack.pop().unwrap()
 }
 
 /// Serialize an inline run into the canonical atom sequence: maximal prose runs
@@ -1287,6 +1405,17 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                     atoms.push(atom);
                 }
                 atoms.push(serialize_md_html_block(node));
+            }
+            Inline::BraceGroup(children) => {
+                if let Some(atom) = flush_run(&mut run, md) {
+                    atoms.push(atom);
+                }
+                let inner = serialize_inlines(children, md).join(" ");
+                atoms.push(if inner.is_empty() {
+                    "(LIST)".to_string()
+                } else {
+                    format!("(LIST {inner})")
+                });
             }
             Inline::MdBlockQuote(node) => {
                 // roxygen2 has no block-quote support: it renders the flattened

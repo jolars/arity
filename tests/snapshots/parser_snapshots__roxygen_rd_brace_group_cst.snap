@@ -1,0 +1,48 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..186
+  ROXYGEN_BLOCK@0..180
+    ROXYGEN_SECTION@0..33
+      ROXYGEN_PARAGRAPH@0..30
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..29 "Bare brace groups in  ..."
+        NEWLINE@29..30 "\n"
+      ROXYGEN_MARKER@30..32 "#'"
+      NEWLINE@32..33 "\n"
+    ROXYGEN_SECTION@33..157
+      ROXYGEN_MARKER@33..35 "#'"
+      WHITESPACE@35..36 " "
+      ROXYGEN_TAG@36..156
+        ROXYGEN_AT@36..37 "@"
+        ROXYGEN_TAG_NAME@37..44 "details"
+        WHITESPACE@44..45 " "
+        ROXYGEN_TEXT@45..79 "A bare group is a lis ..."
+        NEWLINE@79..80 "\n"
+        ROXYGEN_MARKER@80..82 "#'"
+        WHITESPACE@82..83 " "
+        ROXYGEN_TEXT@83..110 "Groups nest: e {f {g} ..."
+        NEWLINE@110..111 "\n"
+        ROXYGEN_MARKER@111..113 "#'"
+        WHITESPACE@113..114 " "
+        ROXYGEN_TEXT@114..142 "A group spans a macro ..."
+        ROXYGEN_RD_MACRO@142..150
+          ROXYGEN_RD_MACRO_NAME@142..147 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@147..148 "{"
+          ROXYGEN_TEXT@148..149 "x"
+          ROXYGEN_RD_MACRO_DELIM@149..150 "}"
+        ROXYGEN_TEXT@150..156 " l} m."
+      NEWLINE@156..157 "\n"
+    ROXYGEN_SECTION@157..180
+      ROXYGEN_MARKER@157..159 "#'"
+      WHITESPACE@159..160 " "
+      ROXYGEN_TAG@160..180
+        ROXYGEN_AT@160..161 "@"
+        ROXYGEN_TAG_NAME@161..165 "name"
+        WHITESPACE@165..166 " "
+        ROXYGEN_TEXT@166..180 "rd_brace_group"
+  NEWLINE@180..181 "\n"
+  IDENT@181..185 "NULL"
+  NEWLINE@185..186 "\n"

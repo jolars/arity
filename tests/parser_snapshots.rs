@@ -249,6 +249,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_unknown_macro",
         "roxygen_backslash_parity",
         "roxygen_rd_arg_backslash_parity",
+        "roxygen_rd_brace_group",
         "roxygen_tag_sameline_emph",
         "roxygen_md_entities",
     ]
