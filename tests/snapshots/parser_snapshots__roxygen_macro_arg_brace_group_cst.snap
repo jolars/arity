@@ -1,0 +1,82 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..286
+  ROXYGEN_BLOCK@0..280
+    ROXYGEN_SECTION@0..43
+      ROXYGEN_PARAGRAPH@0..40
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..39 "Bare brace groups ins ..."
+        NEWLINE@39..40 "\n"
+      ROXYGEN_MARKER@40..42 "#'"
+      NEWLINE@42..43 "\n"
+    ROXYGEN_SECTION@43..250
+      ROXYGEN_MARKER@43..45 "#'"
+      WHITESPACE@45..46 " "
+      ROXYGEN_TAG@46..54
+        ROXYGEN_AT@46..47 "@"
+        ROXYGEN_TAG_NAME@47..54 "details"
+      NEWLINE@54..55 "\n"
+      ROXYGEN_PARAGRAPH@55..250
+        ROXYGEN_MARKER@55..57 "#'"
+        WHITESPACE@57..58 " "
+        ROXYGEN_TEXT@58..75 "A latexlike arg: "
+        ROXYGEN_RD_MACRO@75..89
+          ROXYGEN_RD_MACRO_NAME@75..80 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@80..81 "{"
+          ROXYGEN_TEXT@81..88 "a {b} c"
+          ROXYGEN_RD_MACRO_DELIM@88..89 "}"
+        ROXYGEN_TEXT@89..90 "."
+        NEWLINE@90..91 "\n"
+        ROXYGEN_MARKER@91..93 "#'"
+        WHITESPACE@93..94 " "
+        ROXYGEN_TEXT@94..117 "A group spans a macro: "
+        ROXYGEN_RD_MACRO@117..144
+          ROXYGEN_RD_MACRO_NAME@117..122 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@122..123 "{"
+          ROXYGEN_TEXT@123..128 "i {j "
+          ROXYGEN_RD_MACRO@128..138
+            ROXYGEN_RD_MACRO_NAME@128..135 "\\strong"
+            ROXYGEN_RD_MACRO_DELIM@135..136 "{"
+            ROXYGEN_TEXT@136..137 "k"
+            ROXYGEN_RD_MACRO_DELIM@137..138 "}"
+          ROXYGEN_TEXT@138..143 " l} m"
+          ROXYGEN_RD_MACRO_DELIM@143..144 "}"
+        ROXYGEN_TEXT@144..145 "."
+        NEWLINE@145..146 "\n"
+        ROXYGEN_MARKER@146..148 "#'"
+        WHITESPACE@148..149 " "
+        ROXYGEN_TEXT@149..171 "A structural display: "
+        ROXYGEN_RD_MACRO@171..199
+          ROXYGEN_RD_MACRO_NAME@171..176 "\\href"
+          ROXYGEN_RD_MACRO_DELIM@176..177 "{"
+          ROXYGEN_RD_MACRO_VERB@177..189 "http://x.org"
+          ROXYGEN_RD_MACRO_DELIM@189..190 "}"
+          ROXYGEN_RD_MACRO_DELIM@190..191 "{"
+          ROXYGEN_TEXT@191..198 "s {t} u"
+          ROXYGEN_RD_MACRO_DELIM@198..199 "}"
+        ROXYGEN_TEXT@199..200 "."
+        NEWLINE@200..201 "\n"
+        ROXYGEN_MARKER@201..203 "#'"
+        WHITESPACE@203..204 " "
+        ROXYGEN_TEXT@204..234 "A verbatim arg stays  ..."
+        ROXYGEN_RD_MACRO@234..248
+          ROXYGEN_RD_MACRO_NAME@234..239 "\\code"
+          ROXYGEN_RD_MACRO_DELIM@239..240 "{"
+          ROXYGEN_TEXT@240..247 "v {w} x"
+          ROXYGEN_RD_MACRO_DELIM@247..248 "}"
+        ROXYGEN_TEXT@248..249 "."
+        NEWLINE@249..250 "\n"
+    ROXYGEN_SECTION@250..280
+      ROXYGEN_MARKER@250..252 "#'"
+      WHITESPACE@252..253 " "
+      ROXYGEN_TAG@253..280
+        ROXYGEN_AT@253..254 "@"
+        ROXYGEN_TAG_NAME@254..258 "name"
+        WHITESPACE@258..259 " "
+        ROXYGEN_TEXT@259..280 "macro_arg_brace_group"
+  NEWLINE@280..281 "\n"
+  IDENT@281..285 "NULL"
+  NEWLINE@285..286 "\n"

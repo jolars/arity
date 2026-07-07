@@ -212,6 +212,7 @@ md_list_lazy_edges
 md_list_loose
 md_list_loose_edges
 md_list_value
+md_macro_arg_brace_group
 md_macro_arg_emphasis
 md_macro_arg_escapes
 md_macro_arg_span
@@ -265,6 +266,7 @@ rd_brace_group
 rd_braceless_drop
 rd_comment
 rd_comment_softwrap
+rd_macro_arg_brace_group
 rd_macro_arg_escapes
 rdcomplete_field_drop
 rdcomplete_off_description

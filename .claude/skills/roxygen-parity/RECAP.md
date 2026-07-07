@@ -339,9 +339,26 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   leaves the text, and the trailing `\` would spuriously escape the `LIST`'s `{` in the reconstruction).
   **Balanced-only**: an unbalanced run returns unchanged (section drops via `rdComplete` first, reading
   the *raw*/ungrouped body). Curated `rd_brace_group`+`md_brace_group`, fixtures
-  `roxygen_{rd,md}_brace_group`, unit `md_bare_brace_groups_project_as_lists`. **Backlog:** a bare group
-  inside a *macro arg* / heading title (the pass runs only at the prose-section entry). (The pre-existing
+  `roxygen_{rd,md}_brace_group`, unit `md_bare_brace_groups_project_as_lists`. (The pre-existing
   `%`-swallow trailing-`\` false-drop below is now RESOLVED, 2026-07-07i.)
+- **Bare `{…}` groups inside a *prose macro arg* are `LIST`s too, both modes landed (2026-07-08), projector-only.**
+  parse_Rd lexes a braced arg with the same bare-group rule as prose (`\emph{a {b} c}` → `(\emph (TEXT "a")
+  (LIST (TEXT "b")) (TEXT "c"))`); groups nest, span a nested macro (`\emph{i {j \strong{k} l} m}`), and an
+  empty `{}` → `(LIST)`. **Non-md:** `serialize_macro` no longer accumulates a raw `run: String`; it collects
+  per-argument `Vec<ArgPiece>` (`Text(raw)` | `Atom(serialized nested macro/VERB)`), and `finalize_macro_arg`
+  folds bare groups via `group_arg_pieces` (a stack pass mirroring `group_brace_lists` but on pieces; a nested
+  `Atom` is opaque, lands inside the group). Returns `None` when no group / unbalanced → byte-identical
+  ungrouped atomization (drop via `rdComplete`). **Verbatim never groups**: `\code` (RCODE, `code==true`) and
+  VERB-leaf macros (`\verb`/`\url`/…) skip grouping — braces literal (`\code{v {w} x}` → `(RCODE "v {w} x")`).
+  Brace parity = `resolve_rd_arg_escapes` (odd `\`-run escapes `\{`, no group); **`%` is literal in an arg**
+  (no comment — an in-arg `%` actually drops the section via mismatched braces, out of scope). **Structural**
+  (`\href`/`\item`/`\tabular`) GRP-wraps a multi-atom arg with the group counted as one atom
+  (`\href{u}{s {t} u}` → `(GRP (TEXT "s") (LIST (TEXT "t")) (TEXT "u"))`). **Md:** the `is_md_inline_text_macro`
+  branch and `serialize_md_structural_macro` now run `group_brace_lists` on the resolved arg inlines before
+  `serialize_inlines` (fragile macros route through the non-md loop → `code`-guard covers `\code`). Curated
+  `rd_macro_arg_brace_group`+`md_macro_arg_brace_group`, fixture `roxygen_macro_arg_brace_group`, unit
+  `macro_arg_bare_groups_project_as_lists`. **Backlog:** a bare group inside a **heading title** (the pass
+  still runs only at the prose-section + macro-arg entries).
 - **`%`-swallow trailing-`\` false-drop RESOLVED (2026-07-07i), projector-only.** `@details y \% {z} end.`
   (odd-run `\%` swallows `{z} end.` → renders `y \`) — arity **used to drop** the md section (`rd_complete`
   saw the output atom `y \` ending mid-escape → `RdEscape` → incomplete), but roxygen2 KEEPS it: it scans
@@ -775,7 +792,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 398 matching (all allowlisted), 18 divergent** of 416 pinned.
+corpus (132 `cm-NNN` cases). **Current: 400 matching (all allowlisted), 18 divergent** of 418 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -784,47 +801,49 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (416 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (418 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 133/133 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 135/135 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-07i) — `%`-swallow trailing-`\` false-drop fixed (md drop scan)
+## Latest session (2026-07-08) — bare `{…}` groups inside a prose macro arg → `LIST`, both modes
 
-Fixed the **pre-existing `%`-swallow trailing-`\` false-drop** (discovered 2026-07-07h). Under `@md`,
-`@details y \% {z} end.` (odd-run `\%` swallows `{z} end.`, renders `y \`) used to **drop** the section
-in arity while roxygen2 KEEPS it. Root cause: the md `rdComplete` drop scan reconstructs from the **output**
-atoms, which have already run `md_percent_swallow` — that keeps `ceil(k/2)` backslashes (parse_Rd's rendered
-text) and drops the comment tail, leaving an odd trailing `\` at the section end that `rd_complete` reads as
-a dangling escape → incomplete → drop. roxygen2 instead scans `markdown(text)` = `y \\% {z} end.`, where the
-odd source run renders **even** (`\\`, pairs cleanly) plus a bare comment `%` (eats to EOL) → balanced →
-complete. **Fix (projector-only):** `section_rd_complete`'s md arm now runs `strip_scan_percent_comments`
-over the body's top-level `TEXT` leaves **before** serializing the scan atoms — dropping each odd-run `\%`
-region *whole* (the backslash run + `%` + line tail), so the scan matches `markdown(text)` with no dangling
-escape. Only an **odd** run is stripped; an **even**-run `%` (a literal percent roxygen2 escapes to `\%`) is
-left untouched for render-time re-escaping (`append_leaf_text`). The bug bit **only at a physical line end**
-(a soft-wrap continuation resolved the escape via the following `\n`), which is why `md_brace_group`
-(2026-07-07h) sidestepped it with a soft-wrap. Full mechanics in the resolved trap above.
+Extended the bare-group work (2026-07-07g/h, prose-section entry) into **macro arguments**. parse_Rd lexes a
+braced arg with the same bare-group rule as prose, so `\emph{a {b} c}` → `(\emph (TEXT "a") (LIST (TEXT "b"))
+(TEXT "c"))`; groups nest, span a nested macro (`\emph{i {j \strong{k} l} m}`), and empty `{}` → `(LIST)`.
+**Non-md:** refactored `serialize_macro` — it no longer accumulates a raw `run: String`; it collects a
+per-argument `Vec<ArgPiece>` (`Text(raw)` | `Atom(serialized nested macro/VERB)`), and `finalize_macro_arg`
+folds bare groups via the new `group_arg_pieces` (a stack pass mirroring `group_brace_lists` but on pieces —
+a nested `Atom` is opaque and lands inside the group; text pieces keep raw backslashes, `resolve_rd_arg_escapes`
+resolves them at `text_atom`). It returns `None` (no group / unbalanced) → byte-identical ungrouped atomization
+(the ungrouped no-group case is the common path, zero churn). **Verbatim never groups** (`\code` RCODE + VERB
+macros skip via the `code` guard); **structural** (`\href`/`\item`/`\tabular`) GRP-wraps a multi-atom arg with
+the group counted as one atom. **Md:** the `is_md_inline_text_macro` branch and `serialize_md_structural_macro`
+now run `group_brace_lists` on the resolved arg inlines before `serialize_inlines` (fragile macros route
+through the non-md loop, so the `code` guard already covers `\code`). Brace parity = `resolve_rd_arg_escapes`
+(odd `\`-run escapes `\{`); `%` is literal in an arg (an in-arg `%` actually drops the section via mismatched
+braces → out of scope). Full mechanics in the new trap above.
 
-**Result:** projector **397→398 matching** (all 398 allowlisted, 0 regressions), 18 divergent (down from 19).
-`cargo test` green (596 lib + all integration), clippy + fmt clean; curated fixed-point **133/133 preserving**
-(ran, 0 blocked); format baseline **+1 additive** (only `curated/md_percent_trailing`, re-blessed + reviewed —
-projector-only, formatter unchanged, diff was one new key). New: curated projector case `md_percent_trailing`
-(+pin +allowlist), unit test `trailing_percent_swallow_does_not_false_drop`. No parser/CST change (the fix is
-entirely in `project_rd.rs`), so no new parser fixture.
+**Result:** projector **398→400 matching** (all 400 allowlisted, 0 regressions), 18 divergent (unchanged).
+`cargo test` green (600 lib + all integration), clippy + fmt clean; curated fixed-point **135/135 preserving**
+(ran, 0 blocked); format baseline **+2 additive** (`curated/{rd,md}_macro_arg_brace_group`, re-blessed +
+reviewed — formatter unchanged, diff was two new keys). New: curated projector cases
+`{rd,md}_macro_arg_brace_group` (+pins +allowlist), parser fixture `roxygen_macro_arg_brace_group` (CST
+unchanged — bare braces stay flat text in the arg; grouping is projector-only), unit test
+`macro_arg_bare_groups_project_as_lists`.
 
-**Ranked next target:** **bare groups inside a macro arg / heading title** (the `group_brace_lists` pass runs
-only at the prose-section entry) — the natural continuation of the bare-group work. Then **sticky brace-less
-mode-flips** (`\code z` leaves RCODE state to section end) and **an odd-run `\%` inside a macro arg** (the new
-strip is top-level only; a balanced-brace arg contributes a balanced pair, so low priority). Smaller list
-follow-ups (no-blank marker-type split, blank + content-column prose folding (e4), block macro folding into an
-item, quote-lazy `===`). Formatter upgrade: reflow-rejoin for cross-line code spans (needs a fence-at-line-start
-guard). The 18 projector divergences remain out-of-scope.
+**Ranked next target:** **bare groups inside a heading title** (ATX/setext — the group pass still runs only at
+the prose-section + macro-arg entries). Then **sticky brace-less mode-flips** (`\code z` leaves RCODE state to
+section end) and **an odd-run `\%` inside a macro arg** (top-level strip only; a balanced-brace arg contributes
+a balanced pair, low priority). Smaller list follow-ups (no-blank marker-type split, blank + content-column
+prose folding (e4), block macro folding into an item, quote-lazy `===`). Formatter upgrade: reflow-rejoin for
+cross-line code spans (needs a fence-at-line-start guard). The 18 projector divergences remain out-of-scope.
 
 ## Earlier sessions
 
+- **2026-07-07i** — `%`-swallow trailing-`\` false-drop fixed (md drop scan; `section_rd_complete`'s md arm runs `strip_scan_percent_comments` over top-level `TEXT` leaves before serializing scan atoms, dropping each odd-run `\%` region whole so the scan matches `markdown(text)`; only odd runs stripped). Curated `md_percent_trailing`, unit `trailing_percent_swallow_does_not_false_drop`. 397→398.
 - **2026-07-07h** — bare `{…}` prose brace groups → Rd `(LIST …)`, md (`group_brace_lists` threaded `md`, runs both modes; brace parity mode-independent, `%`-comment trigger inverted by mode; md `rdComplete` scan reads ungrouped atoms). Curated `md_brace_group` + fixture `roxygen_md_brace_group`. 396→397.
 - **2026-07-07g** — bare `{…}` prose brace groups → Rd `(LIST …)`, non-md (`group_brace_lists`, a group-stack pre-pass in `serialize_prose_with_linkrefs`; `Inline::BraceGroup`; escape/comment parity mirrors `resolve_rd_text_escapes`; balanced-only, unbalanced drops via `rdComplete` on the ungrouped body). Curated `rd_brace_group` + fixture `roxygen_rd_brace_group`. 395→396.
 

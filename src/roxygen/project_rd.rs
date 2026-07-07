@@ -1569,7 +1569,10 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
         && is_md_inline_text_macro(name)
         && let Some(content) = macro_single_arg_content(node)
     {
-        let atoms = serialize_inlines(&resolve_macro_arg_inlines(&content), md);
+        // A bare `{…}` in the argument is an Rd `LIST` group, exactly as in prose
+        // (`\emph{a {b} c}` → `(\emph (TEXT "a") (LIST (TEXT "b")) (TEXT "c"))`).
+        let grouped = group_brace_lists(&resolve_macro_arg_inlines(&content), md);
+        let atoms = serialize_inlines(&grouped, md);
         return if atoms.is_empty() {
             format!("({head_full})")
         } else {
@@ -1586,34 +1589,17 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     let mut head = String::new();
     let mut structural = false;
     let mut out_atoms: Vec<String> = Vec::new();
-    let mut group: Vec<String> = Vec::new();
-    let mut run = String::new();
-    // Flush the pending text run into the current argument group. A `\code` macro
-    // tags its textual content as verbatim `(RCODE …)` (parse_Rd treats `\code`
-    // bodies as R code, preserving whitespace and splitting at newlines); every
-    // other macro coalesces prose into one whitespace-normalized `(TEXT …)`.
-    let flush = |run: &mut String, group: &mut Vec<String>, code: bool| {
-        // parse_Rd resolves the Rd-string escapes (`\{`/`\}`/`\%`/`\\`) inside every
-        // braced argument, verbatim `RCODE` or prose `TEXT` alike (mode-independent;
-        // a markdown code span keeps its `\{` via a different projection path).
-        let resolved = resolve_rd_arg_escapes(run);
-        if code {
-            group.extend(rcode_atoms(&resolved));
-        } else if let Some(atom) = text_atom(&resolved) {
-            group.push(atom);
-        }
-        run.clear();
-    };
-    // Finalize a `{…}` argument group at its closing `}`: a structural macro's
-    // multi-atom argument becomes a `(GRP …)` (parse_Rd models it as a list);
-    // everything else (a single-atom argument, or a latexlike macro's inlined
-    // content) splices its atoms in directly.
-    let finalize = |group: &mut Vec<String>, out: &mut Vec<String>, structural: bool| {
-        if structural && group.len() > 1 {
-            out.push(format!("(GRP {})", group.join(" ")));
-            group.clear();
-        } else {
-            out.append(group);
+    // Per-argument pieces: raw prose text (escapes unresolved) and already-serialized
+    // atoms (nested macros, verbatim `(VERB …)`). Collected between the argument's
+    // `{`…`}` so a bare `{…}` brace group can be folded across a nested macro (see
+    // [`finalize_macro_arg`] / [`group_arg_pieces`]).
+    let mut pieces: Vec<ArgPiece> = Vec::new();
+    let mut text_buf = String::new();
+    // Push the pending prose run as one text piece, coalescing contiguous text tokens
+    // (parse_Rd models one `(TEXT …)` per uninterrupted run).
+    let flush_text = |text_buf: &mut String, pieces: &mut Vec<ArgPiece>| {
+        if !text_buf.is_empty() {
+            pieces.push(ArgPiece::Text(std::mem::take(text_buf)));
         }
     };
     for el in node.children_with_tokens() {
@@ -1626,29 +1612,30 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
                 structural = is_two_arg_rd_macro(head.trim_start_matches('\\'));
             }
             SyntaxKind::ROXYGEN_RD_MACRO_VERB => {
-                flush(&mut run, &mut group, head == "\\code");
+                flush_text(&mut text_buf, &mut pieces);
                 let raw = el
                     .as_token()
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
-                group.push(format!(
+                pieces.push(ArgPiece::Atom(format!(
                     "(VERB {})",
                     encode_text(&resolve_rd_arg_escapes(&raw))
-                ));
+                )));
             }
             SyntaxKind::ROXYGEN_RD_MACRO => {
-                flush(&mut run, &mut group, head == "\\code");
+                flush_text(&mut text_buf, &mut pieces);
                 if let Some(n) = el.as_node() {
-                    group.push(serialize_macro(n, md));
+                    pieces.push(ArgPiece::Atom(serialize_macro(n, md)));
                 }
             }
-            // A closing `}` ends an argument group: flush the run, then finalize
-            // the group (GRP-wrapping a structural macro's multi-atom argument).
-            // The opening `{` carries no content.
+            // A closing `}` ends an argument group: flush the run, then atomize the
+            // argument's pieces (folding bare `{…}` groups into `(LIST …)`) and
+            // finalize (GRP-wrapping a structural macro's multi-atom argument). The
+            // opening `{` carries no content.
             SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
                 if el.as_token().is_some_and(|t| t.text() == "}") {
-                    flush(&mut run, &mut group, head == "\\code");
-                    finalize(&mut group, &mut out_atoms, structural);
+                    flush_text(&mut text_buf, &mut pieces);
+                    finalize_macro_arg(&mut pieces, head == "\\code", structural, &mut out_atoms);
                 }
             }
             // The dropped option and the `#'` markers threaded into a multi-line
@@ -1657,14 +1644,14 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
             SyntaxKind::ROXYGEN_RD_MACRO_OPT | SyntaxKind::ROXYGEN_MARKER => {}
             _ => {
                 if let Some(t) = el.as_token() {
-                    run.push_str(t.text());
+                    text_buf.push_str(t.text());
                 }
             }
         }
     }
     // Defensive: trailing content with no closing brace (a malformed macro).
-    flush(&mut run, &mut group, head == "\\code");
-    finalize(&mut group, &mut out_atoms, structural);
+    flush_text(&mut text_buf, &mut pieces);
+    finalize_macro_arg(&mut pieces, head == "\\code", structural, &mut out_atoms);
     if out_atoms.is_empty() {
         // A name-only macro node (no `{…}` content). A known zero-argument macro
         // (`\cr`, or a list child `\item` under `\itemize`) renders name-only;
@@ -1678,6 +1665,171 @@ fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     } else {
         format!("({head} {})", out_atoms.join(" "))
     }
+}
+
+/// A piece of a non-`@md` (or fragile) macro argument while folding bare `{…}`
+/// brace groups: raw prose text (escapes unresolved) or an already-serialized atom
+/// (a nested macro or a verbatim `(VERB …)`), opaque to the brace scan.
+enum ArgPiece {
+    Text(String),
+    Atom(String),
+}
+
+/// Atomize one macro argument's [`ArgPiece`]s into `out`, folding bare `{…}` groups
+/// into `(LIST …)` atoms and GRP-wrapping a structural macro's multi-atom argument.
+///
+/// A **verbatim** argument (`\code`'s RCODE body, `code == true`) is never grouped:
+/// its braces are literal R code, so each text piece splits into `(RCODE …)` line
+/// atoms and nested macros splice in. A **prose** argument folds bare groups via
+/// [`group_arg_pieces`]; when that finds no group (or the braces are unbalanced —
+/// the section drops via `rdComplete`), each text piece coalesces into one
+/// whitespace-normalized `(TEXT …)`, byte-identical to the ungrouped path.
+///
+/// Finalization matches parse_Rd: a structural two-arg macro (`\item`/`\tabular`/
+/// `\href`) wraps a multi-atom argument in `(GRP …)` (a bare group counts as one
+/// atom); a single-atom argument or a latexlike macro's inlined content splices in.
+fn finalize_macro_arg(
+    pieces: &mut Vec<ArgPiece>,
+    code: bool,
+    structural: bool,
+    out: &mut Vec<String>,
+) {
+    if pieces.is_empty() {
+        return;
+    }
+    let atoms = if code {
+        let mut v = Vec::new();
+        for p in pieces.drain(..) {
+            match p {
+                ArgPiece::Text(s) => v.extend(rcode_atoms(&resolve_rd_arg_escapes(&s))),
+                ArgPiece::Atom(a) => v.push(a),
+            }
+        }
+        v
+    } else if let Some(a) = group_arg_pieces(pieces) {
+        pieces.clear();
+        a
+    } else {
+        let mut v = Vec::new();
+        for p in pieces.drain(..) {
+            match p {
+                ArgPiece::Text(s) => {
+                    if let Some(a) = text_atom(&resolve_rd_arg_escapes(&s)) {
+                        v.push(a);
+                    }
+                }
+                ArgPiece::Atom(a) => v.push(a),
+            }
+        }
+        v
+    };
+    if structural && atoms.len() > 1 {
+        out.push(format!("(GRP {})", atoms.join(" ")));
+    } else {
+        out.extend(atoms);
+    }
+}
+
+/// Fold a **prose** macro argument's [`ArgPiece`]s into serialized atoms, turning
+/// each bare `{…}` brace pair into a `(LIST …)` atom (empty group → `(LIST)`).
+/// parse_Rd lexes a braced argument with the same bare-group rule as prose text —
+/// an unescaped `{`/`}` is a `LIST` delimiter — so `\emph{a {b} c}` projects
+/// `(\emph (TEXT "a") (LIST (TEXT "b")) (TEXT "c"))`; groups nest and span nested
+/// macros (an opaque `Atom` lands inside the group). Mirrors [`group_brace_lists`]
+/// but on already-carved pieces, and unlike prose text a braced argument has **no**
+/// `%` comment (an in-arg `%` is literal) and no brace-less-macro drop, so the scan
+/// only weighs backslash-escaping and braces.
+///
+/// Brace parity matches [`resolve_rd_arg_escapes`]: an odd-length backslash run
+/// escapes the following brace (`\{`/`\}` stay literal, no group), an even run opens
+/// it. Text pieces keep their raw backslashes; [`text_atom`] resolves them once each
+/// run flushes.
+///
+/// Returns `None` when the argument holds no bare group (so the caller keeps the
+/// byte-identical ungrouped atomization) or the braces are unbalanced (the section
+/// drops via `rdComplete` before these atoms are used — never a partial tree).
+fn group_arg_pieces(pieces: &[ArgPiece]) -> Option<Vec<String>> {
+    // `stack[0]` is the argument's output level; each deeper frame is an open `{`.
+    let mut stack: Vec<Vec<String>> = vec![Vec::new()];
+    let mut buf = String::new();
+    let mut grouped = false;
+    let flush = |stack: &mut Vec<Vec<String>>, buf: &mut String| {
+        if !buf.is_empty() {
+            if let Some(a) = text_atom(&resolve_rd_arg_escapes(buf)) {
+                stack.last_mut().unwrap().push(a);
+            }
+            buf.clear();
+        }
+    };
+    for piece in pieces {
+        match piece {
+            // A nested macro / verbatim atom is opaque to the brace scan: flush the
+            // pending text and drop it into the current group.
+            ArgPiece::Atom(a) => {
+                flush(&mut stack, &mut buf);
+                stack.last_mut().unwrap().push(a.clone());
+            }
+            ArgPiece::Text(s) => {
+                let bytes = s.as_bytes();
+                let mut i = 0usize;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => {
+                            let start = i;
+                            while i < bytes.len() && bytes[i] == b'\\' {
+                                i += 1;
+                            }
+                            let run_len = i - start;
+                            buf.push_str(&s[start..i]);
+                            // An odd run escapes the next char (a brace stays literal):
+                            // copy it verbatim so it is never read as a delimiter.
+                            if run_len % 2 == 1 && i < bytes.len() {
+                                let mut end = i + 1;
+                                while !s.is_char_boundary(end) {
+                                    end += 1;
+                                }
+                                buf.push_str(&s[i..end]);
+                                i = end;
+                            }
+                        }
+                        b'{' => {
+                            flush(&mut stack, &mut buf);
+                            stack.push(Vec::new());
+                            grouped = true;
+                            i += 1;
+                        }
+                        b'}' if stack.len() > 1 => {
+                            flush(&mut stack, &mut buf);
+                            let g = stack.pop().unwrap();
+                            let inner = g.join(" ");
+                            stack.last_mut().unwrap().push(if inner.is_empty() {
+                                "(LIST)".to_string()
+                            } else {
+                                format!("(LIST {inner})")
+                            });
+                            grouped = true;
+                            i += 1;
+                        }
+                        _ => {
+                            let start = i;
+                            i += 1;
+                            while i < bytes.len() && !matches!(bytes[i], b'\\' | b'{' | b'}') {
+                                i += 1;
+                            }
+                            buf.push_str(&s[start..i]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    flush(&mut stack, &mut buf);
+    // No bare group, or unbalanced braces (the section drops anyway): keep the run
+    // flat, never a partial tree.
+    if !grouped || stack.len() != 1 {
+        return None;
+    }
+    Some(stack.pop().unwrap())
 }
 
 /// Project a **structural** two-arg macro (`\item`/`\tabular`/`\href`) under `@md`,
@@ -1739,7 +1891,9 @@ fn serialize_md_structural_macro(node: &SyntaxNode, head_full: &str) -> String {
                         out_atoms.push(v);
                     } else {
                         let para = resolve_md_inline_pieces(&pieces);
-                        let atoms = serialize_inlines(&para_to_inlines(&para), true);
+                        // Fold bare `{…}` groups (Rd `LIST`s) in the resolved run.
+                        let grouped = group_brace_lists(&para_to_inlines(&para), true);
+                        let atoms = serialize_inlines(&grouped, true);
                         match atoms.len() {
                             0 => {}
                             1 => out_atoms.push(atoms.into_iter().next().unwrap()),
@@ -7051,6 +7205,55 @@ mod tests {
         assert_eq!(
             case(r"v \\% {w} x"),
             "(\\details (TEXT \"v \\\\%\") (LIST (TEXT \"w\")) (TEXT \"x\"))"
+        );
+    }
+
+    #[test]
+    fn macro_arg_bare_groups_project_as_lists() {
+        // A bare `{…}` inside a *prose* macro argument is an Rd `LIST` too
+        // (parse_Rd lexes the argument with the same bare-group rule). Verbatim
+        // arguments (`\code`) never group; structural macros (`\href`) GRP-wrap a
+        // multi-atom display with the group counted as one atom.
+        let case = |md: bool, body: &str| {
+            let md_line = if md { "#' @md\n" } else { "" };
+            let src = format!("{md_line}#' @title T\n#' @details {body}\n#' @name x\nNULL\n");
+            project_to_rd(&src)
+                .lines()
+                .find(|l| l.starts_with("(\\details"))
+                .unwrap_or("")
+                .to_string()
+        };
+        for md in [false, true] {
+            // A latexlike single-arg macro folds a bare group.
+            assert_eq!(
+                case(md, r"\emph{a {b} c}"),
+                "(\\details (\\emph (TEXT \"a\") (LIST (TEXT \"b\")) (TEXT \"c\")))"
+            );
+            // Groups nest and span a nested macro.
+            assert_eq!(
+                case(md, r"\emph{i {j \strong{k} l} m}"),
+                "(\\details (\\emph (TEXT \"i\") (LIST (TEXT \"j\") (\\strong (TEXT \"k\")) (TEXT \"l\")) (TEXT \"m\")))"
+            );
+            // An empty group is a bare `(LIST)`.
+            assert_eq!(
+                case(md, r"\emph{n {} o}"),
+                "(\\details (\\emph (TEXT \"n\") (LIST) (TEXT \"o\")))"
+            );
+            // A structural display GRP-wraps; the group counts as one atom.
+            assert_eq!(
+                case(md, r"\href{http://x.org}{s {t} u}"),
+                "(\\details (\\href (VERB \"http://x.org\") (GRP (TEXT \"s\") (LIST (TEXT \"t\")) (TEXT \"u\"))))"
+            );
+            // A verbatim `\code` argument is R code: braces stay literal, no group.
+            assert_eq!(
+                case(md, r"\code{v {w} x}"),
+                "(\\details (\\code (RCODE \"v {w} x\")))"
+            );
+        }
+        // Non-md only: escaped braces stay literal (an odd backslash run escapes).
+        assert_eq!(
+            case(false, r"\emph{p \{q\} r}"),
+            "(\\details (\\emph (TEXT \"p {q} r\")))"
         );
     }
 
