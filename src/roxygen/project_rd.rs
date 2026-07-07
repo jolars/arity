@@ -222,6 +222,10 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     // so the projector re-derives it here: it keys whether prose is literal Rd
     // (where an unescaped `%` is a comment) or escaped markdown (where it survives).
     let md = block_md(block);
+    // The section strings this block contributes; a `@md` block's `TEXT` leaves get
+    // their escaped braces (`\{`/`\}`) resolved to bare braces once every section
+    // (and its `rdComplete` drop decision) is built (see `resolve_md_text_braces`).
+    let block_start = out.len();
     let mut intro_paras: Vec<Vec<Inline>> = Vec::new();
     let mut tag_sections: Vec<(String, Vec<Inline>)> = Vec::new();
     // `@slot` (S4) and `@field` (reference class) each aggregate every tag of a
@@ -391,6 +395,16 @@ fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     // The single aggregated `\examples` section (body reformatted R → placeholder).
     if has_examples {
         out.push("(\\examples ...)".to_string());
+    }
+
+    // parse_Rd renders a `@md` prose escape `\{`/`\}` as a bare brace in the final
+    // TEXT node. This runs after every section (and its `rdComplete` drop) is built
+    // so the drop scan still weighs the escaped brace (an unbalanced *escaped* brace
+    // does not drop the section), while the rendered TEXT carries the bare brace.
+    if md {
+        for section in &mut out[block_start..] {
+            *section = resolve_md_text_braces(section);
+        }
     }
 }
 
@@ -1806,6 +1820,130 @@ fn unescape_md_brackets(run: &str) -> String {
             out.push(chars.next().expect("peeked bracket"));
         } else {
             out.push(c);
+        }
+    }
+    out
+}
+
+/// Resolve `parse_Rd`'s escaped-brace rendering in the **projected `@md` TEXT**
+/// leaves: a single backslash immediately before `{`/`}` is an Rd brace escape,
+/// so `parse_Rd` renders the brace **bare** (`a \{ b \} c` → `a { b } c`, `a \{ b`
+/// → `a { b`). Under `@md` the source escape survives the `double_escape_md` →
+/// cmark round trip unchanged (a run before a brace is a net no-op, exactly like
+/// a run before `[`/`]`), so the rendered Rd still carries the `\{`; parse_Rd
+/// resolves it only when producing the final TEXT node — which is this transform.
+///
+/// This is applied **after** the section's `rdComplete` drop decision (see
+/// [`resolve_md_text_braces`]), which is why it lives here and not in
+/// [`process_prose`]: the drop scan must weigh the *escaped* (pre-resolution) brace
+/// (roxygen2 runs `rdComplete(markdown(text))` where `\{` is still escaped, so an
+/// unbalanced *escaped* brace does not drop the section — `a \{ b` is kept),
+/// whereas the rendered TEXT wants the bare brace. Resolving before the scan would
+/// count the bare brace and false-drop.
+///
+/// Only a **lone** backslash is consumed (`\{` → `{`); a longer backslash run
+/// before a brace (`\\{`, `\\\{`) mixes literal backslashes with the escape and is
+/// left as backlog (mirrors [`unescape_md_brackets`]'s single-backslash limit). A
+/// **bare** brace with no preceding backslash is untouched — roxygen2 models it as
+/// an Rd group (`(LIST …)`), which arity still projects as flat text (the
+/// bare-brace-group model is separate backlog), so leaving it verbatim keeps that
+/// divergence unchanged rather than compounding it.
+fn unescape_lone_rd_brace(run: &str) -> String {
+    let bytes = run.as_bytes();
+    let mut out = String::with_capacity(run.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            // Measure the maximal backslash run; only a lone `\` before a brace is
+            // the Rd escape parse_Rd resolves.
+            let mut k = 0usize;
+            while i + k < bytes.len() && bytes[i + k] == b'\\' {
+                k += 1;
+            }
+            if k == 1 && matches!(bytes.get(i + 1), Some(b'{' | b'}')) {
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            for _ in 0..k {
+                out.push('\\');
+            }
+            i += k;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i] != b'\\' {
+            i += 1;
+        }
+        out.push_str(&run[start..i]);
+    }
+    out
+}
+
+/// Apply [`unescape_lone_rd_brace`] to every `(TEXT "…")` leaf in a projected
+/// `@md` section string, leaving every other leaf verbatim. The escaped-brace
+/// resolution is a **`@md`-mode, prose-TEXT-only** encoding difference: a code
+/// span's verbatim `VERB` keeps its `\{` (roxygen2 renders `\verb` content
+/// literally), a data-name `RCODE`/`\code` body resolves the brace but is left as
+/// backlog here, and non-`@md` TEXT already had its escapes resolved upstream
+/// ([`resolve_rd_text_escapes`]). So the transform is gated to `@md` sections by
+/// its single caller ([`project_block`]) and scoped to `TEXT` heads here.
+///
+/// The scan tracks quote state so a literal `(TEXT "` *inside* another leaf's
+/// string (e.g. a code span) is copied as data, never mistaken for a leaf opener.
+fn resolve_md_text_braces(sexpr: &str) -> String {
+    let bytes = sexpr.as_bytes();
+    let mut out = String::with_capacity(sexpr.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => {
+                out.push('(');
+                i += 1;
+                // Read the head token (up to a space, ')', or '"').
+                let head_start = i;
+                while i < bytes.len() && !matches!(bytes[i], b' ' | b')' | b'"') {
+                    i += 1;
+                }
+                let head = &sexpr[head_start..i];
+                out.push_str(head);
+                if head == "TEXT" {
+                    // Copy the single separating space, then transform the quoted
+                    // content (a `TEXT` leaf is always `(TEXT "…")`).
+                    while i < bytes.len() && bytes[i] == b' ' {
+                        out.push(' ');
+                        i += 1;
+                    }
+                    if bytes.get(i) == Some(&b'"') {
+                        let text = read_quoted(bytes, &mut i);
+                        out.push_str(&encode_text(&unescape_lone_rd_brace(&text)));
+                    }
+                }
+            }
+            b'"' => {
+                // A leaf's quoted string in non-`TEXT` position: copy it verbatim,
+                // honoring `\"`/`\\` escapes so an interior `(` or `"` is data.
+                let start = i;
+                i += 1;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => i += if i + 1 < bytes.len() { 2 } else { 1 },
+                        b'"' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+                out.push_str(&sexpr[start..i]);
+            }
+            _ => {
+                let start = i;
+                while i < bytes.len() && !matches!(bytes[i], b'(' | b'"') {
+                    i += 1;
+                }
+                out.push_str(&sexpr[start..i]);
+            }
         }
     }
     out
@@ -6416,6 +6554,51 @@ mod tests {
         let out = project_to_rd(bare);
         assert!(
             out.contains("(\\description)") && !out.contains("(\\description "),
+            "bare got: {out}"
+        );
+    }
+
+    #[test]
+    fn unescape_lone_rd_brace_resolves_a_single_backslash_before_a_brace() {
+        // A lone `\{`/`\}` renders bare; a bare brace and a deeper run are untouched.
+        assert_eq!(unescape_lone_rd_brace(r"a \{ b \} c"), "a { b } c");
+        assert_eq!(unescape_lone_rd_brace(r"a \{ b"), "a { b");
+        assert_eq!(unescape_lone_rd_brace("a { b } c"), "a { b } c");
+        assert_eq!(unescape_lone_rd_brace(r"a \\{ b"), r"a \\{ b");
+        // Non-brace escapes and lone backslashes are left alone.
+        assert_eq!(unescape_lone_rd_brace(r"a \* \b c"), r"a \* \b c");
+    }
+
+    #[test]
+    fn resolve_md_text_braces_only_touches_text_leaves() {
+        // A `TEXT` leaf resolves its escaped braces; a `VERB` leaf (a verbatim code
+        // span / URL) keeps them, and structure is copied verbatim.
+        let sexpr = "(\\details (TEXT \"a \\\\{ b\") (\\verb (VERB \"c \\\\{ d\")))";
+        assert_eq!(
+            resolve_md_text_braces(sexpr),
+            "(\\details (TEXT \"a { b\") (\\verb (VERB \"c \\\\{ d\")))"
+        );
+        // A literal `(TEXT "` inside a non-`TEXT` string is data, not a leaf opener.
+        let tricky = "(\\verb (VERB \"see (TEXT \\\"x \\\\{ y\\\")\"))";
+        assert_eq!(resolve_md_text_braces(tricky), tricky);
+    }
+
+    #[test]
+    fn markdown_on_escaped_brace_renders_bare_but_does_not_drop() {
+        // Under `@md` the source escape survives the double->cmark round trip, so an
+        // unbalanced *escaped* brace is kept (not dropped) and the rendered TEXT is
+        // bare; a `\code`-fragile arg and a verbatim code span are unaffected here.
+        let src = "#' @title T\n#' @md\n#' @details a \\{ b\n#' @name x\nNULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains("(\\details (TEXT \"a { b\"))"),
+            "details got: {out}"
+        );
+        // A genuinely unbalanced *bare* brace still drops under `@md` too.
+        let bare = "#' @title T\n#' @md\n#' @details a { b\n#' @name x\nNULL\n";
+        let out = project_to_rd(bare);
+        assert!(
+            out.contains("(\\details)") && !out.contains("(\\details "),
             "bare got: {out}"
         );
     }

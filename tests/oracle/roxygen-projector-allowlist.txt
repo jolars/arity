@@ -161,6 +161,7 @@ md_blockquote_lazy
 md_blockquote_multiline
 md_blockquote_value
 md_block_value_edges
+md_brace_escape
 md_braceless_drop
 md_email_autolink
 md_emphasis
