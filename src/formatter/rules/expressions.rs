@@ -163,7 +163,18 @@ pub(crate) fn ir_binary_expr(
     // keep their own nested group, so they break independently.
     let level = binary_level(op_kind, &op_text)
         .expect("non-sticky, non-pipe binary operator has a precedence level");
-    Ok(Ir::group(ir_binary_chain_body(node, level, indent, ctx)?))
+    let (first, segments) = collect_binary_chain(node, level, indent, ctx)?;
+    // The first operand sits at the chain's base; every continuation---operator
+    // *and* right operand---lives one level in, wrapped in a single `Ir::indent`.
+    // Indenting the operand (not just the newline before it) is what makes a
+    // nested breaking operand---e.g. a parenthesized `||` chain that is the RHS
+    // of `&&`---break relative to its own line rather than the chain base. All
+    // continuations share the one indent so same-level operators stay aligned
+    // (air-style) instead of stair-stepping. This mirrors the pipe path.
+    Ok(Ir::group(Ir::concat([
+        first,
+        Ir::indent(Ir::concat(segments)),
+    ])))
 }
 
 /// Position of the binary operator token among a `BINARY_EXPR`'s children.
@@ -227,18 +238,20 @@ fn binary_level(op_kind: SyntaxKind, op_text: &str) -> Option<u8> {
     })
 }
 
-/// Builds the *ungrouped* body of a non-sticky binary chain at precedence
-/// `level`: the base operand followed by each `operator + operand`. The single
-/// enclosing group is added by the caller, so every operator's break is decided
-/// together. Descends the left-associative LHS spine directly (bypassing the
-/// per-node group) as long as it stays at the same precedence level; a
-/// higher-precedence LHS is left as an operand and keeps its own nested group.
-fn ir_binary_chain_body(
+/// Collects a flattened non-sticky binary chain at precedence `level` into its
+/// first operand and the ordered continuation segments (each an
+/// `operator + right operand`). The caller wraps the segments in one enclosing
+/// group (so every operator's break is decided together) and one `Ir::indent`
+/// (so the whole continuation nests a single level). Descends the
+/// left-associative LHS spine directly (bypassing the per-node group) as long as
+/// it stays at the same precedence level; a higher-precedence LHS is left as an
+/// operand and keeps its own nested group.
+fn collect_binary_chain(
     node: &SyntaxNode,
     level: u8,
     indent: usize,
     ctx: FormatContext,
-) -> Result<Ir, FormatError> {
+) -> Result<(Ir, Vec<Ir>), FormatError> {
     let elements: Vec<_> = node.children_with_tokens().collect();
     let op_idx = find_binary_op(&elements).ok_or_else(|| FormatError::AmbiguousConstruct {
         context: "binary operator not found",
@@ -251,35 +264,39 @@ fn ir_binary_chain_body(
     let (rhs_comments, rhs) = ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
 
     let lhs_elements = &elements[..op_idx];
-    let lhs = match same_level_binary_lhs(lhs_elements, level) {
-        Some(inner) => ir_binary_chain_body(&inner, level, indent, ctx)?,
-        None => ir_binary_side(lhs_elements, "binary lhs", indent, ctx)?,
+    let (first, mut segments) = match same_level_binary_lhs(lhs_elements, level) {
+        Some(inner) => collect_binary_chain(&inner, level, indent, ctx)?,
+        None => (
+            ir_binary_side(lhs_elements, "binary lhs", indent, ctx)?,
+            Vec::new(),
+        ),
     };
 
     // When broken, the operator stays on the prior line so the continuation is
     // R-valid (a leading operator on the next line would parse as a separate
-    // unary statement outside brackets). The right operand is indented one
-    // level. A comment trailing the operator forces the broken form (the
-    // operand cannot share the comment's line) and, being a hard break, forces
-    // the whole enclosing group broken too.
-    if !rhs_comments.is_empty() {
-        return Ok(Ir::concat([
-            lhs,
+    // unary statement outside brackets). The newline is a bare `hard_line`; the
+    // caller's single `Ir::indent` supplies the continuation's indentation. A
+    // comment trailing the operator forces the broken form (the operand cannot
+    // share the comment's line) and, being a hard break, forces the whole
+    // enclosing group broken too.
+    let segment = if rhs_comments.is_empty() {
+        Ir::concat([
+            Ir::if_break(
+                Ir::text(format!(" {op_text} ")),
+                Ir::concat([Ir::text(format!(" {op_text}")), Ir::hard_line()]),
+            ),
+            rhs,
+        ])
+    } else {
+        Ir::concat([
             Ir::text(format!(" {op_text}")),
             comment_suffix(&rhs_comments),
-            Ir::indent(Ir::hard_line()),
+            Ir::hard_line(),
             rhs,
-        ]));
-    }
-
-    Ok(Ir::concat([
-        lhs,
-        Ir::if_break(
-            Ir::text(format!(" {op_text} ")),
-            Ir::concat([Ir::text(format!(" {op_text}")), Ir::indent(Ir::hard_line())]),
-        ),
-        rhs,
-    ]))
+        ])
+    };
+    segments.push(segment);
+    Ok((first, segments))
 }
 
 /// If `elements` is a single `BINARY_EXPR` whose operator is at precedence
