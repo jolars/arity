@@ -653,15 +653,26 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `\{`-preserving atoms (it keeps `a \{ b`, drops genuine bare `a { b`); only the rendered TEXT was wrong.
   Fix (projector-only, drop decision UNCHANGED): a `@md`-gated post-pass in `project_block` runs **after**
   every section (and its `rdComplete` drop) is built — `resolve_md_text_braces` walks the block's section
-  strings and applies `unescape_lone_rd_brace` (drop a lone `\` before `{`/`}`) to **`TEXT` leaves only**.
+  strings and applies `resolve_md_brace_runs` (see the multi-backslash trap below) to **`TEXT` leaves only**.
   **VERB keeps `\{`** (verbatim `\verb`/`\url`/fenced code — engine-probed), and the resolution is
   quote-state-aware so a literal `(TEXT "` inside a code span is data, not a leaf opener. Doing it in
   `process_prose` would feed the resolved bare brace to `section_atoms_rd_complete` and **false-drop**
   `a \{ b` — the post-pass sidesteps that (drop scan reads the escaped brace, output reads bare). Curated
-  `md_brace_escape`. **Backlog:** **bare** `{ }` → Rd `(LIST …)` group (arity keeps flat TEXT); multi-backslash before
-  a brace (`\\{`/`\\\{` — `unescape_lone_rd_brace` only consumes a lone `\`, mirroring
-  `unescape_md_brackets`; note `collapse_md_backslash_runs` still mis-collapses `\\\{`→`\\{`, a latent
-  wrong-drop).
+  `md_brace_escape`.
+- **Multi-backslash before a brace resolves at the right stage (LANDED 2026-07-07e).** A run of `k` source
+  backslashes before a `@md` prose `{`/`}` renders `floor(k/2)` literal backslashes + a **bare** brace for
+  **odd** `k` (`\{`→`{`, `\\\{`→`\{`, `\\\\\{`→`\\{`; matches roxygen2 exactly), and an **even** `k` leaves
+  an Rd `(LIST …)` group (bare-brace-group backlog; arity halves to `k/2` backslashes + flat bare brace,
+  still divergent, no compounding). The old code mis-collapsed: `collapse_md_backslash_runs` halved the run
+  to `ceil(k/2)` (destroying the parity the post-pass needs — a latent wrong-drop for `k >= 2`), and the
+  post-pass only unescaped a **lone** `\{`. Fix: `collapse_md_backslash_runs` now leaves a run abutting `{`/`}`
+  **verbatim** (like a bracket run) at cmark's `k`-backslash stage — which is *exactly* what roxygen2's
+  `rdComplete(markdown(text))` scans, so the drop decision reads the right braces (an unbalanced *even* run
+  like `a \\{ b` now correctly **drops**, as roxygen2 does) — and the parity-dependent parse_Rd resolution is
+  deferred to the post-pass `resolve_md_brace_runs` (pairs the run → `floor(k/2)` backslashes + bare brace,
+  odd or even). CST/formatter untouched (projector-only). Curated `md_brace_escape_runs`. **Backlog:** the
+  even-`k` `(LIST …)` bare-brace-group model itself; multi-backslash before a brace inside a *fragile*
+  VERB/RCODE macro arg under `@md` (a separate path — `resolve_rd_arg_escapes`).
 - **Literal Rd macro args resolve parse_Rd's Rd-string escapes (LANDED 2026-07-07c), mode-independent.**
   parse_Rd lexes every braced arg (`\code{…}`, `\verb{…}`, `\emph{…}`, `\link{…}`, `\url{…}`) with the same
   escape rules: `\{`→`{`, `\}`→`}`, `\%`→`%`, `\\`→`\` (backslashes pair left-to-right), for verbatim
@@ -716,7 +727,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 393 matching (all allowlisted), 18 divergent** of 411 pinned.
+corpus (132 `cm-NNN` cases). **Current: 394 matching (all allowlisted), 18 divergent** of 412 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -732,43 +743,41 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-07d) — md rdComplete scan neutralizes fragile-macro braces (escape-cluster slice 6)
+## Latest session (2026-07-07e) — multi-backslash before a brace resolves at the right stage (escape-cluster slice 7)
 
-Fixed the false-drop the 2026-07-07c escape resolution introduced: under `@md` an **odd** escaped brace in a
-*fragile* macro arg (`\verb{d \{ e}`, and `\code`/`\url`/`\link`/`\preformatted`) dropped the section to
-`(\details)`. The md `rdComplete` scan (`section_atoms_rd_complete`) rebuilds the `markdown(text)` Rd from the
-projected atoms via `render_sexpr`, but 07c had collapsed the arg's `\{`→bare `{`, so the reconstruction
-counted an unbalanced brace. **Key fact:** every Rd macro node in the CST is brace-balanced *by construction*,
-and markdown() keeps a **fragile** macro's arg **raw** (escapes preserved), so a fragile macro contributes
-exactly **one balanced `{…}` pair** to the scan regardless of interior. Fix (scan-path only, output untouched):
-`render_sexpr` threads a `verbatim` flag set on entering a fragile head (`is_fragile_for_md`), propagated to the
-whole subtree; a `verbatim` leaf **drops every `rd_complete`-significant char** (`{`/`}`/`\`/`%`) so the interior
-is inert. **Dropping, not re-escaping, is load-bearing:** the atom may carry resolved braces (literal macro →
-bare `{`) *or* escaped ones (markdown code span → `\{`, verbatim via a different path), so re-escaping would
-double-escape the code-span form into `\\{` and unbalance it (`markdown_code_span_keeps_its_backslash_brace`
-caught exactly this). Cmark-derived `\emph{\}` (`*\**`) is outside any fragile macro → still counts → still
-drops (correct). Also fixed `preformatted_atoms` to run `resolve_rd_arg_escapes` on its body (it skipped it,
-leaving `\{` unresolved in output) — a prerequisite, since resolving it would otherwise false-drop
-`\preformatted` too. Full classification in the "md rdComplete scan neutralizes …" trap above.
+Fixed the latent wrong-collapse the 07b brace work left behind: a run of `k` source backslashes before a
+`@md` prose brace mis-rendered for `k >= 2`. `collapse_md_backslash_runs` had halved the run to `ceil(k/2)`
+before the brace and the post-pass only unescaped a **lone** `\{`, so `\\\{` (k=3) projected `\\{` instead of
+roxygen2's `\{`, `\\\\\{` (k=5) projected `\\\{` instead of `\\{`, etc. Halving *before* the parse_Rd stage
+also destroyed the run parity the brace resolution depends on and fed the wrong braces to the md `rdComplete`
+scan (a latent drop-parity bug for even runs). **Fix (projector-only):** `collapse_md_backslash_runs` now
+leaves a run abutting `{`/`}` **verbatim** (same treatment as a bracket run) at cmark's `k`-backslash stage —
+which is exactly the text roxygen2's `rdComplete(markdown(text))` scans, so the drop decision reads the true
+braces (an unbalanced *even* run `a \\{ b` now correctly **drops**, matching roxygen2) — and the
+parity-dependent resolution moves to the renamed post-pass leaf resolver `resolve_md_brace_runs` (pairs the
+run → `floor(k/2)` backslashes + a bare brace, odd or even). Odd `k` now matches roxygen2 exactly; even `k`
+stays the `(LIST …)` bare-brace-group backlog (arity flat-TEXT approximation, still divergent, but no longer
+compounding the backslash count). CST + formatter untouched. Full classification in the "Multi-backslash
+before a brace resolves at the right stage" trap above.
 
-**Result:** projector **391→393 matching** (all allowlisted, 0 regressions), 18 divergent (unchanged,
+**Result:** projector **393→394 matching** (all allowlisted, 0 regressions), 18 divergent (unchanged,
 out-of-scope). `cargo test` green (lib + all integration), clippy + fmt clean; curated fixed-point
-**128/128 preserving** (ran, 0 blocked); format baseline **+2 additive** (re-blessed, reviewed — only the two
-new curated keys, no existing entry changed). New: curated `md_fragile_odd_brace` (verb/code/url/link, inline) +
-`md_preformatted_arg_escape`, both +pin +allowlist; unit `fragile_macro_arg_never_unbalances_the_scan`.
+**129/129 preserving** (ran, 0 blocked); format baseline **+1 additive** (re-blessed, reviewed — only the one
+new curated key). New: curated `md_brace_escape_runs` (+pin +allowlist); renamed unit
+`resolve_md_brace_runs_pairs_a_backslash_run_before_a_brace`.
 
-**Ranked next target:** the escape-cluster remainder — **bare** `{ }`→Rd `(LIST …)` group (arity keeps flat
-TEXT — the bare-brace-group model, also covers md bare `{y}`); multi-backslash before a brace (`\\{`/`\\\{`
-— `collapse_md_backslash_runs` mis-collapses `\\\{`→`\\{`, a latent wrong-drop); sticky brace-less
-mode-flips; in-arg `\`-parity + text-escape resolution in `build_rd_content`; md `\{`/`\}` inside a
-*fragile* arg (the *TEXT*-path is now handled two ways — 07c resolve + 07b post-pass — but a fragile
-*VERB*/*RCODE* arg's `\{` under `@md` is not md-unescaped by `resolve_md_text_braces`; probe whether roxygen
-renders it bare). Smaller list follow-ups (no-blank marker-type split, blank + content-column prose folding
-(e4), block macro folding into an item, quote-lazy `===`). Formatter upgrade: reflow-rejoin for cross-line
-code spans (needs a fence-at-line-start guard). The 18 projector divergences remain out-of-scope.
+**Ranked next target:** the escape-cluster remainder — the **bare** `{ }` → Rd `(LIST …)` group model (arity
+keeps flat TEXT — covers the even-`k` backslash-brace cases and md bare `{y}`); sticky brace-less mode-flips;
+in-arg `\`-parity + text-escape resolution in `build_rd_content`; md `\{`/`\}` inside a *fragile*
+VERB/RCODE arg (the TEXT path is handled; probe whether roxygen renders a fragile VERB/RCODE `\{` bare under
+`@md`, then possibly extend `resolve_md_text_braces`/`resolve_rd_arg_escapes`). Smaller list follow-ups
+(no-blank marker-type split, blank + content-column prose folding (e4), block macro folding into an item,
+quote-lazy `===`). Formatter upgrade: reflow-rejoin for cross-line code spans (needs a fence-at-line-start
+guard). The 18 projector divergences remain out-of-scope.
 
 ## Earlier sessions
 
+- **2026-07-07d** — md rdComplete scan neutralizes fragile-macro interior braces (`render_sexpr` threads a `verbatim` flag from a fragile head via `is_fragile_for_md`; a verbatim leaf drops every `rd_complete`-significant char so a fragile arg contributes one balanced pair; also `preformatted_atoms` now runs `resolve_rd_arg_escapes`). Curated `md_fragile_odd_brace` + `md_preformatted_arg_escape`. 391→393.
 - **2026-07-07c** — literal Rd macro args resolve parse_Rd's Rd-string escapes (`resolve_rd_arg_escapes`: `\{`→`{`/`\}`→`}`/`\%`→`%`/`\\`→`\`, left-to-right pairing, mode-independent; wired into `serialize_macro`'s flush + VERB arm; a markdown code span keeps its `\{` via a different path). Curated `rd_macro_arg_escapes` + `md_macro_arg_escapes`. 391 (389→391).
 - **2026-07-07b** — md `\{`/`\}` render bare in TEXT (projector-only, drop decision UNCHANGED; `@md`-gated post-pass `resolve_md_text_braces` applies `unescape_lone_rd_brace` to TEXT leaves only, after each section's `rdComplete` drop — the `double_escape_md`→cmark round trip is a net no-op on a backslash-brace run, so the drop was already correct on the `\{`-preserving atoms). Curated `md_brace_escape`. 388→389.
 - **2026-07-07** — rdComplete scans raw text md-off (`section_rd_complete` dispatch: md-off routes through `rd_complete(section_raw_rd(body))` on the raw tag value, so an unbalanced *escaped* brace keeps the section; the atoms path already collapsed `\{`→`{` and false-dropped). Curated `rd_brace_escape_unbalanced`. 387→388.

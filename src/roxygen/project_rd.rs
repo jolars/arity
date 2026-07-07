@@ -1925,43 +1925,47 @@ fn unescape_md_brackets(run: &str) -> String {
 }
 
 /// Resolve `parse_Rd`'s escaped-brace rendering in the **projected `@md` TEXT**
-/// leaves: a single backslash immediately before `{`/`}` is an Rd brace escape,
-/// so `parse_Rd` renders the brace **bare** (`a \{ b \} c` → `a { b } c`, `a \{ b`
-/// → `a { b`). Under `@md` the source escape survives the `double_escape_md` →
-/// cmark round trip unchanged (a run before a brace is a net no-op, exactly like
-/// a run before `[`/`]`), so the rendered Rd still carries the `\{`; parse_Rd
-/// resolves it only when producing the final TEXT node — which is this transform.
+/// leaves. The leaf arrives carrying the cmark-stage backslash runs
+/// ([`collapse_md_backslash_runs`] leaves a run abutting `{`/`}` verbatim), so a run
+/// of `k` backslashes before a brace is exactly what parse_Rd receives from
+/// `markdown(text)`: it pairs the backslashes left-to-right into `floor(k/2)` literal
+/// backslashes, and for **odd** `k` the trailing unpaired `\` escapes the brace to a
+/// **bare** literal (`\{` → `{`, `\\\{` → `\{`, `\\\\\{` → `\\{`). A run before any
+/// non-brace character — or a bare brace with no preceding backslash — is untouched.
 ///
-/// This is applied **after** the section's `rdComplete` drop decision (see
+/// This runs **after** the section's `rdComplete` drop decision (see
 /// [`resolve_md_text_braces`]), which is why it lives here and not in
 /// [`process_prose`]: the drop scan must weigh the *escaped* (pre-resolution) brace
 /// (roxygen2 runs `rdComplete(markdown(text))` where `\{` is still escaped, so an
-/// unbalanced *escaped* brace does not drop the section — `a \{ b` is kept),
-/// whereas the rendered TEXT wants the bare brace. Resolving before the scan would
-/// count the bare brace and false-drop.
+/// unbalanced *escaped* brace does not drop the section — `a \{ b` is kept), whereas
+/// the rendered TEXT wants the bare brace. Resolving before the scan would count the
+/// bare brace and false-drop.
 ///
-/// Only a **lone** backslash is consumed (`\{` → `{`); a longer backslash run
-/// before a brace (`\\{`, `\\\{`) mixes literal backslashes with the escape and is
-/// left as backlog (mirrors [`unescape_md_brackets`]'s single-backslash limit). A
-/// **bare** brace with no preceding backslash is untouched — roxygen2 models it as
-/// an Rd group (`(LIST …)`), which arity still projects as flat text (the
-/// bare-brace-group model is separate backlog), so leaving it verbatim keeps that
-/// divergence unchanged rather than compounding it.
-fn unescape_lone_rd_brace(run: &str) -> String {
+/// An **even** `k` pairs off entirely and leaves the brace *unescaped* — a real Rd
+/// brace group parse_Rd models as `(LIST …)`. arity keeps flat `TEXT` there (the
+/// bare-brace-group model is separate backlog); this transform still halves the
+/// backslashes to `k/2` and copies the brace bare, so the projection stays divergent
+/// for that shape without compounding the backslash count.
+fn resolve_md_brace_runs(run: &str) -> String {
     let bytes = run.as_bytes();
     let mut out = String::with_capacity(run.len());
     let mut i = 0usize;
     while i < bytes.len() {
         if bytes[i] == b'\\' {
-            // Measure the maximal backslash run; only a lone `\` before a brace is
-            // the Rd escape parse_Rd resolves.
+            // Measure the maximal backslash run.
             let mut k = 0usize;
             while i + k < bytes.len() && bytes[i + k] == b'\\' {
                 k += 1;
             }
-            if k == 1 && matches!(bytes.get(i + 1), Some(b'{' | b'}')) {
-                out.push(bytes[i + 1] as char);
-                i += 2;
+            if matches!(bytes.get(i + k), Some(b'{' | b'}')) {
+                // parse_Rd pairs the run into `floor(k/2)` literal backslashes; an
+                // odd trailing `\` escapes the brace bare, an even run leaves it bare
+                // too (the `(LIST …)` group backlog). Either way: emit the bare brace.
+                for _ in 0..k / 2 {
+                    out.push('\\');
+                }
+                out.push(bytes[i + k] as char);
+                i += k + 1;
                 continue;
             }
             for _ in 0..k {
@@ -1979,7 +1983,7 @@ fn unescape_lone_rd_brace(run: &str) -> String {
     out
 }
 
-/// Apply [`unescape_lone_rd_brace`] to every `(TEXT "…")` leaf in a projected
+/// Apply [`resolve_md_brace_runs`] to every `(TEXT "…")` leaf in a projected
 /// `@md` section string, leaving every other leaf verbatim. The escaped-brace
 /// resolution is a **`@md`-mode, prose-TEXT-only** encoding difference: a code
 /// span's verbatim `VERB` keeps its `\{` (roxygen2 renders `\verb` content
@@ -2015,7 +2019,7 @@ fn resolve_md_text_braces(sexpr: &str) -> String {
                     }
                     if bytes.get(i) == Some(&b'"') {
                         let text = read_quoted(bytes, &mut i);
-                        out.push_str(&encode_text(&unescape_lone_rd_brace(&text)));
+                        out.push_str(&encode_text(&resolve_md_brace_runs(&text)));
                     }
                 }
             }
@@ -2106,9 +2110,13 @@ fn md_percent_swallow_line(line: &str) -> &str {
 ///
 /// A run immediately before `[`/`]` is left untouched — those bracket escapes
 /// follow `double_escape_md`'s revert (`\\[` → `\[`) and are resolved separately
-/// by [`unescape_md_brackets`], which runs after this. Runs before `%` (the Rd
-/// comment character) are also left to the separate `%`-swallow modeling (a lone
-/// `\%` keeps its backslash but the bare `%` still comments to end of line);
+/// by [`unescape_md_brackets`], which runs after this. A run before `{`/`}` is
+/// **also** left untouched, at cmark's `k`-backslash stage: parse_Rd's brace
+/// resolution is parity-dependent and is deferred to the post-pass
+/// ([`resolve_md_brace_runs`]) so the `rdComplete` scan can weigh the still-escaped
+/// brace first (halving here would destroy the parity it needs). Runs before `%`
+/// (the Rd comment character) are also left to the separate `%`-swallow modeling (a
+/// lone `\%` keeps its backslash but the bare `%` still comments to end of line);
 /// `ceil(k/2)` is a no-op for the common `k == 1` case there anyway.
 ///
 /// An **odd** run before a brace-required known macro name not followed by `{`
@@ -2140,6 +2148,18 @@ fn collapse_md_backslash_runs(run: &str) -> String {
         // A run abutting a square bracket is a bracket escape: leave it verbatim
         // for `unescape_md_brackets` (its `\\[` → `\[` revert is a distinct path).
         if matches!(bytes.get(i), Some(b'[' | b']')) {
+            for _ in 0..k {
+                out.push('\\');
+            }
+        } else if matches!(bytes.get(i), Some(b'{' | b'}')) {
+            // A run abutting a brace is left at cmark's stage: `double_escape_md`
+            // doubles the run and cmark halves it back, so the atom carries the
+            // same `k` backslashes roxygen2's `rdComplete` scans in `markdown(text)`
+            // (a brace's escape does not drop the section — the scan sees `\{`).
+            // parse_Rd's brace resolution is parity-dependent (odd `k` escapes the
+            // brace bare, even `k` leaves an Rd group), and the general `ceil(k/2)`
+            // halving would destroy that parity, so it is deferred to the post-pass
+            // ([`resolve_md_text_braces`] → [`resolve_md_brace_runs`]).
             for _ in 0..k {
                 out.push('\\');
             }
@@ -6684,14 +6704,18 @@ mod tests {
     }
 
     #[test]
-    fn unescape_lone_rd_brace_resolves_a_single_backslash_before_a_brace() {
-        // A lone `\{`/`\}` renders bare; a bare brace and a deeper run are untouched.
-        assert_eq!(unescape_lone_rd_brace(r"a \{ b \} c"), "a { b } c");
-        assert_eq!(unescape_lone_rd_brace(r"a \{ b"), "a { b");
-        assert_eq!(unescape_lone_rd_brace("a { b } c"), "a { b } c");
-        assert_eq!(unescape_lone_rd_brace(r"a \\{ b"), r"a \\{ b");
-        // Non-brace escapes and lone backslashes are left alone.
-        assert_eq!(unescape_lone_rd_brace(r"a \* \b c"), r"a \* \b c");
+    fn resolve_md_brace_runs_pairs_a_backslash_run_before_a_brace() {
+        // parse_Rd pairs the cmark-stage run into `floor(k/2)` backslashes; an odd
+        // trailing `\` escapes the brace bare. Matches roxygen2 for odd `k`.
+        assert_eq!(resolve_md_brace_runs(r"a \{ b \} c"), "a { b } c"); // k=1
+        assert_eq!(resolve_md_brace_runs(r"a \{ b"), "a { b");
+        assert_eq!(resolve_md_brace_runs(r"a \\\{ b \\\} c"), r"a \{ b \} c"); // k=3
+        assert_eq!(resolve_md_brace_runs(r"a \\\\\{ c"), r"a \\{ c"); // k=5
+        // An even run halves and leaves the brace bare (the `(LIST …)` backlog).
+        assert_eq!(resolve_md_brace_runs(r"a \\{ b"), r"a \{ b"); // k=2
+        // A bare brace and non-brace escapes are left alone.
+        assert_eq!(resolve_md_brace_runs("a { b } c"), "a { b } c");
+        assert_eq!(resolve_md_brace_runs(r"a \* \b c"), r"a \* \b c");
     }
 
     #[test]

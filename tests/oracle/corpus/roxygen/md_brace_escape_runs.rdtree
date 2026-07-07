@@ -1,0 +1,4 @@
+(\description (TEXT "Title with a triple-run \\{ brace \\}"))
+(\details (TEXT "A triple \\{ run \\} and a quintuple \\\\{ run \\\\}"))
+(\seealso (TEXT "Single { next to a triple \\{ escaped } brace \\}"))
+(\title (TEXT "Title with a triple-run \\{ brace \\}"))
