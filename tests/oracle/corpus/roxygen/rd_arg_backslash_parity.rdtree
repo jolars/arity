@@ -1,0 +1,3 @@
+(\description (TEXT "Backslash pairing inside a macro argument"))
+(\details (TEXT "Paired runs stay literal text: a") (\emph (TEXT "\\y")) (TEXT "b and c") (\emph (TEXT "\\dots")) (TEXT "d. Odd runs carve the nested macro: e") (\emph (UNKNOWN "\\y")) (TEXT "f and g") (\emph (TEXT "\\") (\dots)) (TEXT "h. Genuine nesting still carves:") (\emph (TEXT "p") (\strong (TEXT "q")) (TEXT "r")) (TEXT "and") (\emph (TEXT "x") (\dots) (TEXT "y")) (TEXT "."))
+(\title (TEXT "Backslash pairing inside a macro argument"))

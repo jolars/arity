@@ -256,6 +256,7 @@ param_prose
 preformatted
 rawrd
 rawrd_md_literal
+rd_arg_backslash_parity
 rd_backslash_parity
 rd_brace_escape_unbalanced
 rd_braceless_drop

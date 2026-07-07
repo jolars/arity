@@ -1,0 +1,93 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..321
+  ROXYGEN_BLOCK@0..315
+    ROXYGEN_SECTION@0..48
+      ROXYGEN_PARAGRAPH@0..45
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..44 "Backslash pairing ins ..."
+        NEWLINE@44..45 "\n"
+      ROXYGEN_MARKER@45..47 "#'"
+      NEWLINE@47..48 "\n"
+    ROXYGEN_SECTION@48..283
+      ROXYGEN_MARKER@48..50 "#'"
+      WHITESPACE@50..51 " "
+      ROXYGEN_TAG@51..59
+        ROXYGEN_AT@51..52 "@"
+        ROXYGEN_TAG_NAME@52..59 "details"
+      NEWLINE@59..60 "\n"
+      ROXYGEN_PARAGRAPH@60..283
+        ROXYGEN_MARKER@60..62 "#'"
+        WHITESPACE@62..63 " "
+        ROXYGEN_TEXT@63..96 "Paired runs stay lite ..."
+        ROXYGEN_RD_MACRO@96..106
+          ROXYGEN_RD_MACRO_NAME@96..101 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@101..102 "{"
+          ROXYGEN_TEXT@102..105 "\\\\y"
+          ROXYGEN_RD_MACRO_DELIM@105..106 "}"
+        ROXYGEN_TEXT@106..115 " b and c "
+        ROXYGEN_RD_MACRO@115..128
+          ROXYGEN_RD_MACRO_NAME@115..120 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@120..121 "{"
+          ROXYGEN_TEXT@121..127 "\\\\dots"
+          ROXYGEN_RD_MACRO_DELIM@127..128 "}"
+        ROXYGEN_TEXT@128..131 " d."
+        NEWLINE@131..132 "\n"
+        ROXYGEN_MARKER@132..134 "#'"
+        WHITESPACE@134..135 " "
+        ROXYGEN_TEXT@135..170 "Odd runs carve the ne ..."
+        ROXYGEN_RD_MACRO@170..179
+          ROXYGEN_RD_MACRO_NAME@170..175 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@175..176 "{"
+          ROXYGEN_RD_MACRO@176..178
+            ROXYGEN_RD_MACRO_NAME@176..178 "\\y"
+          ROXYGEN_RD_MACRO_DELIM@178..179 "}"
+        ROXYGEN_TEXT@179..188 " f and g "
+        ROXYGEN_RD_MACRO@188..202
+          ROXYGEN_RD_MACRO_NAME@188..193 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@193..194 "{"
+          ROXYGEN_TEXT@194..196 "\\\\"
+          ROXYGEN_RD_MACRO@196..201
+            ROXYGEN_RD_MACRO_NAME@196..201 "\\dots"
+          ROXYGEN_RD_MACRO_DELIM@201..202 "}"
+        ROXYGEN_TEXT@202..205 " h."
+        NEWLINE@205..206 "\n"
+        ROXYGEN_MARKER@206..208 "#'"
+        WHITESPACE@208..209 " "
+        ROXYGEN_TEXT@209..239 "Genuine nesting still ..."
+        ROXYGEN_RD_MACRO@239..260
+          ROXYGEN_RD_MACRO_NAME@239..244 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@244..245 "{"
+          ROXYGEN_TEXT@245..247 "p "
+          ROXYGEN_RD_MACRO@247..257
+            ROXYGEN_RD_MACRO_NAME@247..254 "\\strong"
+            ROXYGEN_RD_MACRO_DELIM@254..255 "{"
+            ROXYGEN_TEXT@255..256 "q"
+            ROXYGEN_RD_MACRO_DELIM@256..257 "}"
+          ROXYGEN_TEXT@257..259 " r"
+          ROXYGEN_RD_MACRO_DELIM@259..260 "}"
+        ROXYGEN_TEXT@260..265 " and "
+        ROXYGEN_RD_MACRO@265..281
+          ROXYGEN_RD_MACRO_NAME@265..270 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@270..271 "{"
+          ROXYGEN_TEXT@271..273 "x "
+          ROXYGEN_RD_MACRO@273..278
+            ROXYGEN_RD_MACRO_NAME@273..278 "\\dots"
+          ROXYGEN_TEXT@278..280 " y"
+          ROXYGEN_RD_MACRO_DELIM@280..281 "}"
+        ROXYGEN_TEXT@281..282 "."
+        NEWLINE@282..283 "\n"
+    ROXYGEN_SECTION@283..315
+      ROXYGEN_MARKER@283..285 "#'"
+      WHITESPACE@285..286 " "
+      ROXYGEN_TAG@286..315
+        ROXYGEN_AT@286..287 "@"
+        ROXYGEN_TAG_NAME@287..291 "name"
+        WHITESPACE@291..292 " "
+        ROXYGEN_TEXT@292..315 "rd_arg_backslash_parity"
+  NEWLINE@315..316 "\n"
+  IDENT@316..320 "NULL"
+  NEWLINE@320..321 "\n"

@@ -1651,7 +1651,7 @@ fn scan_html_attribute(bytes: &[u8], i: usize) -> Option<usize> {
 /// maximal backslash run immediately before it is odd, so parse_Rd's
 /// left-to-right pairing consumes it (`\\` → literal `\`) and it cannot begin
 /// a macro.
-fn rd_backslash_is_escaped(bytes: &[u8], i: usize) -> bool {
+pub(crate) fn rd_backslash_is_escaped(bytes: &[u8], i: usize) -> bool {
     let mut k = 0usize;
     while k < i && bytes[i - 1 - k] == b'\\' {
         k += 1;

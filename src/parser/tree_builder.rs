@@ -3,7 +3,8 @@ use rowan::GreenNodeBuilder;
 use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
 use crate::parser::roxygen::{
-    is_two_arg_rd_macro, is_verbatim_rd_arg, rd_macro_name_end, scan_balanced, scan_rd_macro,
+    is_two_arg_rd_macro, is_verbatim_rd_arg, rd_backslash_is_escaped, rd_macro_name_end,
+    scan_balanced, scan_rd_macro,
 };
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -99,12 +100,19 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
 /// Sub-parse the content of a latexlike Rd macro into alternating `ROXYGEN_TEXT`
 /// runs and nested `ROXYGEN_RD_MACRO` nodes. Only a `\macro` call is structural;
 /// everything else (including `\}` escapes and stray backslashes) is literal text.
+///
+/// A `\` that is itself escaped never begins a macro: parse_Rd pairs backslashes
+/// left-to-right inside a braced argument exactly as it does in prose, so a `\`
+/// preceded by an odd-length backslash run is consumed by its pair
+/// ([`rd_backslash_is_escaped`]). `\\y` is a literal `\` + `y`, not a `\y` macro;
+/// `\\\dots` re-forms `\dots` (the third backslash is unescaped).
 fn build_rd_content(builder: &mut GreenNodeBuilder<'_>, content: &str) {
     let bytes = content.as_bytes();
     let mut run_start = 0;
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'\\'
+            && !rd_backslash_is_escaped(bytes, i)
             && let Some(end) = scan_rd_macro(bytes, i)
         {
             if run_start < i {
