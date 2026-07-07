@@ -1,0 +1,98 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..284
+  ROXYGEN_BLOCK@0..278
+    ROXYGEN_SECTION@0..51
+      ROXYGEN_PARAGRAPH@0..48
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..47 "Bare brace groups in  ..."
+        NEWLINE@47..48 "\n"
+      ROXYGEN_MARKER@48..50 "#'"
+      NEWLINE@50..51 "\n"
+    ROXYGEN_SECTION@51..58
+      ROXYGEN_MARKER@51..53 "#'"
+      WHITESPACE@53..54 " "
+      ROXYGEN_TAG@54..57
+        ROXYGEN_AT@54..55 "@"
+        ROXYGEN_TAG_NAME@55..57 "md"
+      NEWLINE@57..58 "\n"
+    ROXYGEN_SECTION@58..247
+      ROXYGEN_MARKER@58..60 "#'"
+      WHITESPACE@60..61 " "
+      ROXYGEN_TAG@61..81
+        ROXYGEN_AT@61..62 "@"
+        ROXYGEN_TAG_NAME@62..69 "details"
+        WHITESPACE@69..70 " "
+        ROXYGEN_TEXT@70..81 "Intro body."
+      NEWLINE@81..82 "\n"
+      ROXYGEN_MARKER@82..84 "#'"
+      NEWLINE@84..85 "\n"
+      ROXYGEN_MD_HEADING@85..107
+        ROXYGEN_MARKER@85..87 "#'"
+        WHITESPACE@87..88 " "
+        ROXYGEN_TEXT@88..107 "# ATX {grp} heading"
+      NEWLINE@107..108 "\n"
+      ROXYGEN_MARKER@108..110 "#'"
+      NEWLINE@110..111 "\n"
+      ROXYGEN_PARAGRAPH@111..129
+        ROXYGEN_MARKER@111..113 "#'"
+        WHITESPACE@113..114 " "
+        ROXYGEN_TEXT@114..128 "Section prose."
+        NEWLINE@128..129 "\n"
+      ROXYGEN_MARKER@129..131 "#'"
+      NEWLINE@131..132 "\n"
+      ROXYGEN_MD_HEADING@132..158
+        ROXYGEN_MARKER@132..134 "#'"
+        WHITESPACE@134..135 " "
+        ROXYGEN_TEXT@135..158 "## Nested {a {b} c} sub"
+      NEWLINE@158..159 "\n"
+      ROXYGEN_MARKER@159..161 "#'"
+      NEWLINE@161..162 "\n"
+      ROXYGEN_PARAGRAPH@162..176
+        ROXYGEN_MARKER@162..164 "#'"
+        WHITESPACE@164..165 " "
+        ROXYGEN_TEXT@165..175 "Sub prose."
+        NEWLINE@175..176 "\n"
+      ROXYGEN_MARKER@176..178 "#'"
+      NEWLINE@178..179 "\n"
+      ROXYGEN_MD_HEADING@179..226
+        ROXYGEN_MARKER@179..181 "#'"
+        WHITESPACE@181..182 " "
+        ROXYGEN_TEXT@182..208 "A group spans emphasi ..."
+        ROXYGEN_MD_EMPH@208..211
+          ROXYGEN_MD_DELIM@208..209 "*"
+          ROXYGEN_TEXT@209..210 "x"
+          ROXYGEN_MD_DELIM@210..211 "*"
+        ROXYGEN_TEXT@211..219 " l} here"
+        NEWLINE@219..220 "\n"
+        ROXYGEN_MARKER@220..222 "#'"
+        WHITESPACE@222..223 " "
+        ROXYGEN_TEXT@223..226 "==="
+      NEWLINE@226..227 "\n"
+      ROXYGEN_MARKER@227..229 "#'"
+      NEWLINE@229..230 "\n"
+      ROXYGEN_PARAGRAPH@230..247
+        ROXYGEN_MARKER@230..232 "#'"
+        WHITESPACE@232..233 " "
+        ROXYGEN_TEXT@233..246 "Setext prose."
+        NEWLINE@246..247 "\n"
+    ROXYGEN_SECTION@247..278
+      ROXYGEN_MARKER@247..249 "#'"
+      WHITESPACE@249..250 " "
+      ROXYGEN_TAG@250..278
+        ROXYGEN_AT@250..251 "@"
+        ROXYGEN_TAG_NAME@251..255 "name"
+        WHITESPACE@255..256 " "
+        ROXYGEN_TEXT@256..258 "md"
+        ROXYGEN_MD_DELIM@258..259 "_"
+        ROXYGEN_TEXT@259..266 "heading"
+        ROXYGEN_MD_DELIM@266..267 "_"
+        ROXYGEN_TEXT@267..272 "brace"
+        ROXYGEN_MD_DELIM@272..273 "_"
+        ROXYGEN_TEXT@273..278 "group"
+  NEWLINE@278..279 "\n"
+  IDENT@279..283 "NULL"
+  NEWLINE@283..284 "\n"

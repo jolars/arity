@@ -1,0 +1,5 @@
+(\description (TEXT "Bare brace groups in markdown heading titles"))
+(\details (TEXT "Intro body."))
+(\section (GRP (TEXT "A group spans emphasis") (LIST (TEXT "k") (\emph (TEXT "x")) (TEXT "l")) (TEXT "here")) (TEXT "Setext prose."))
+(\section (GRP (TEXT "ATX") (LIST (TEXT "grp")) (TEXT "heading")) (GRP (TEXT "Section prose.") (\subsection (GRP (TEXT "Nested") (LIST (TEXT "a") (LIST (TEXT "b")) (TEXT "c")) (TEXT "sub")) (TEXT "Sub prose."))))
+(\title (TEXT "Bare brace groups in markdown heading titles"))

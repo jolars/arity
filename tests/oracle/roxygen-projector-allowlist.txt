@@ -411,3 +411,4 @@ rx-fc8242e3
 rx-fd84eacf
 tabular
 tag_sameline_emph
+md_heading_brace_group

@@ -709,7 +709,9 @@ fn emit_section_with_headings(
 /// `\subsection`, appended in source order.
 fn render_heading_frame(frames: &[HeadingFrame], idx: usize, md: bool, macro_name: &str) -> String {
     let f = &frames[idx];
-    let title_atoms = serialize_inlines(&f.title, md);
+    // A bare `{…}` in the heading title is an Rd `LIST` group, exactly as in prose
+    // and macro args (`# H {a b}` → `(GRP (TEXT "H") (LIST (TEXT "a b")))`).
+    let title_atoms = serialize_inlines(&group_brace_lists(&f.title, md), md);
     let mut body_atoms = serialize_prose_with_linkrefs(&f.body, md);
     for &c in &f.children {
         body_atoms.push(render_heading_frame(frames, c, md, "subsection"));
@@ -7254,6 +7256,39 @@ mod tests {
         assert_eq!(
             case(false, r"\emph{p \{q\} r}"),
             "(\\details (\\emph (TEXT \"p {q} r\")))"
+        );
+    }
+
+    #[test]
+    fn heading_title_bare_groups_project_as_lists() {
+        // A bare `{…}` in a markdown heading title is an Rd `LIST`, exactly as in
+        // prose and macro args; the multi-atom title GRP-wraps. ATX and setext
+        // share the path (both flow through `render_heading_frame`); groups nest
+        // and span emphasis.
+        let section = |body: &str| {
+            let src = format!(
+                "#' @md\n#' @title T\n#' @details Intro.\n#'\n#' {body}\n#' body prose.\n#' @name x\nNULL\n"
+            );
+            project_to_rd(&src)
+                .lines()
+                .find(|l| l.starts_with("(\\section"))
+                .unwrap_or("")
+                .to_string()
+        };
+        // A bare group in an ATX title.
+        assert_eq!(
+            section("# H {a b}"),
+            "(\\section (GRP (TEXT \"H\") (LIST (TEXT \"a b\"))) (TEXT \"body prose.\"))"
+        );
+        // Groups nest.
+        assert_eq!(
+            section("# H {a {b} c}"),
+            "(\\section (GRP (TEXT \"H\") (LIST (TEXT \"a\") (LIST (TEXT \"b\")) (TEXT \"c\"))) (TEXT \"body prose.\"))"
+        );
+        // A group spans emphasis.
+        assert_eq!(
+            section("# H {k *x* l}"),
+            "(\\section (GRP (TEXT \"H\") (LIST (TEXT \"k\") (\\emph (TEXT \"x\")) (TEXT \"l\"))) (TEXT \"body prose.\"))"
         );
     }
 
