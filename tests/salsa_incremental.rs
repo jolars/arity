@@ -193,6 +193,42 @@ fn body_edit_uses_incremental_reparse_and_stays_correct() {
 }
 
 #[test]
+fn toplevel_edit_uses_incremental_reparse_and_stays_correct() {
+    // An edit to a bare, non-braced top-level statement splices just that
+    // statement rather than re-parsing the whole file. The result must match a
+    // from-scratch parse of the new text.
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let file = db.upsert_file(
+        path,
+        "library(dplyr)\nx <- foo(a, b)\nn <- 10\n".to_string(),
+    );
+
+    // First parse: a full parse, no reparse hit.
+    let _ = db.parsed_tree(file);
+    assert_eq!(db.reparse_hits(), 0);
+
+    // Edit the middle statement's call arguments (outside any `{ }` block).
+    let edited = "library(dplyr)\nx <- foo(a, b, z)\nn <- 10\n";
+    db.upsert_file(path, edited.to_string());
+    let spliced = db.parsed_tree(file).text().to_string();
+    assert_eq!(spliced, edited);
+    assert_eq!(
+        db.reparse_hits(),
+        1,
+        "top-level statement edit should be served by an incremental reparse"
+    );
+
+    // The spliced tree is byte-identical to a from-scratch parse.
+    let fresh = arity::parser::parse(edited);
+    assert_eq!(
+        db.parsed_tree(file).text().to_string(),
+        fresh.cst.text().to_string()
+    );
+    assert!(db.parse_diagnostics(file).is_empty());
+}
+
+#[test]
 fn body_edit_keeps_model_in_sync() {
     // Editing a file's contents recomputes its semantic model so downstream
     // consumers see the new bindings.

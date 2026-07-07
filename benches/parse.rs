@@ -49,6 +49,18 @@ fn incremental(c: &mut Criterion) {
         insert: "\n  acc <- acc + 1".to_string(),
     };
 
+    // Top-level edit: a flat corpus of bare (non-braced) statements, editing a
+    // call argument in one of them — the case that used to force a full parse.
+    let flat_src = "value <- transform(data, weight, offset)\n".repeat(500);
+    let flat_parsed = parse(&flat_src);
+    let flat_root = flat_parsed.cst.clone();
+    let flat_diags = flat_parsed.diagnostics.clone();
+    let toplevel_at = flat_src.rfind("transform(data").unwrap() + "transform(data".len();
+    let toplevel_edit = Edit {
+        range: toplevel_at..toplevel_at,
+        insert: ", scale".to_string(),
+    };
+
     // Sanity: these must actually exercise the intended strategies.
     assert_eq!(
         reparse(&old_root, &src, &diags, &token_edit).map(|r| r.kind),
@@ -58,6 +70,10 @@ fn incremental(c: &mut Criterion) {
         reparse(&old_root, &src, &diags, &block_edit).map(|r| r.kind),
         Some(arity::parser::ReparseKind::Block),
     );
+    assert_eq!(
+        reparse(&flat_root, &flat_src, &flat_diags, &toplevel_edit).map(|r| r.kind),
+        Some(arity::parser::ReparseKind::TopLevel),
+    );
 
     let mut group = c.benchmark_group("incremental");
     group.bench_function("reparse_token", |b| {
@@ -65,6 +81,16 @@ fn incremental(c: &mut Criterion) {
     });
     group.bench_function("reparse_block", |b| {
         b.iter(|| reparse(&old_root, &src, &diags, black_box(&block_edit)))
+    });
+    group.bench_function("reparse_toplevel", |b| {
+        b.iter(|| {
+            reparse(
+                &flat_root,
+                &flat_src,
+                &flat_diags,
+                black_box(&toplevel_edit),
+            )
+        })
     });
     // Reference: a full parse of the same edited text (what reparse replaces).
     let token_new = token_edit.apply(&src);

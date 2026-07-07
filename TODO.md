@@ -23,10 +23,22 @@
   Serves Tenet 2. No `SyntaxNodePtr`/`AstPtr` added (no feature needs a
   stable cross-edit reference yet). See `ARCHITECTURE_AUDIT.md` §3.4.
 
-  - [ ] Follow-up: top-level-statement reparse (non-braced). v1 reparses
-    only brace blocks + single tokens; edits elsewhere fall back to a
-    full parse (correct, just not incremental). Could also use the LSP's
-    precise edit ranges instead of the prefix/suffix text diff.
+  - [x] Follow-up: top-level-statement reparse (non-braced). Added
+    `reparse_toplevel` (`src/parser/reparse.rs`), tried after token/block:
+    it reparses a single top-level statement (a direct child of `ROOT`) in
+    isolation, pinning the boundary with a *consume-all* guard (rejects the
+    statement shrinking) and a *forward-merge* guard against the next sibling
+    (rejects it growing, e.g. a trailing operator). The backward direction is
+    inherently safe (R continues only via a *trailing* operator). Covered by
+    the oracle sweep (extended `SOURCES` with flat multi-statement fixtures)
+    plus a strategy/boundary test and a salsa-level test
+    (`toplevel_edit_uses_incremental_reparse_and_stays_correct`); benched as
+    `reparse_toplevel`.
+  - [ ] Follow-up: use the LSP's precise edit ranges instead of the
+    prefix/suffix text diff. The LSP declares `TextDocumentSyncKind::FULL`, so
+    `parsed_document` recovers the edit via a whole-text `diff_edit`; threading
+    the client's exact change ranges (switching to INCREMENTAL sync) would keep
+    disjoint edits from coalescing into one wide span.
 
 ## Formatter
 

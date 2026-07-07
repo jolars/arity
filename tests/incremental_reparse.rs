@@ -116,6 +116,13 @@ const SOURCES: &[&str] = &[
     "g <- function() {\n  #' inner doc\n  #' @param y z\n  h <- 1\n  h\n}\n",
     "#' Use `x + y` and \\code{f} per [docs](u).\nf <- function(x) x\n",
     "#' See \\link[base]{sum} or [mean()] now.\nf <- function(x) x\n",
+    // Flat, non-braced top-level statements: the `reparse_toplevel` path.
+    "library(dplyr)\nx <- read.csv(\"f\")\nresult <- foo(a, b)\n",
+    "a <- 1\nb <- a + 2\nc <- b |> sqrt()\n",
+    "f <- function(a, b = 1) a + b\ng <- function(x) x\n",
+    // Multi-line top-level statement continued by a trailing operator, so edits
+    // near the line break exercise the merge/split boundary.
+    "total <- first +\n  second\nn <- 10\n",
 ];
 
 #[test]
@@ -161,4 +168,79 @@ fn body_edit_uses_block_strategy() {
     let old = parse(src);
     let r = reparse(&old.cst, src, &old.diagnostics, &edit).expect("block reparse");
     assert_eq!(r.kind, ReparseKind::Block);
+}
+
+#[test]
+fn toplevel_edit_uses_toplevel_strategy() {
+    // Edit inside a bare, non-braced top-level call argument — not a single
+    // token (spans a call boundary) and not inside any `{ }` block.
+    let src = "library(dplyr)\nresult <- foo(a, b)\nn <- 10\n";
+    let at = src.find("foo(a, b)").unwrap() + "foo(a".len();
+    let edit = Edit {
+        range: at..at,
+        insert: ", z".to_string(),
+    };
+    let old = parse(src);
+    let r = reparse(&old.cst, src, &old.diagnostics, &edit).expect("toplevel reparse");
+    assert_eq!(r.kind, ReparseKind::TopLevel);
+}
+
+#[test]
+fn toplevel_signature_edit_uses_toplevel_strategy() {
+    // Edit inside a top-level function *signature* (outside the body block).
+    let src = "f <- function(a, b) a + b\ng <- function(x) x\n";
+    let at = src.find("function(a").unwrap() + "function(a".len();
+    let edit = Edit {
+        range: at..at,
+        insert: ", c".to_string(),
+    };
+    let old = parse(src);
+    let r = reparse(&old.cst, src, &old.diagnostics, &edit).expect("toplevel reparse");
+    assert_eq!(r.kind, ReparseKind::TopLevel);
+}
+
+/// A trailing-operator merge: appending `+` at the end of a top-level statement
+/// makes it continue onto the next line. Whatever strategy is chosen, the result
+/// must match a full parse (the oracle here is an explicit spot check).
+#[test]
+fn toplevel_trailing_operator_merge_matches_full_parse() {
+    let src = "x <- 1\ny <- 2\n";
+    let at = src.find("x <- 1").unwrap() + "x <- 1".len();
+    let edit = Edit {
+        range: at..at,
+        insert: " +".to_string(),
+    };
+    let old = parse(src);
+    let new_text = edit.apply(src);
+    let full = parse(&new_text);
+    if let Some(r) = reparse(&old.cst, src, &old.diagnostics, &edit) {
+        assert_eq!(
+            fingerprint(&SyntaxNode::new_root(r.green.clone())),
+            fingerprint(&full.cst),
+            "trailing-operator merge diverged from full parse",
+        );
+    }
+}
+
+/// A trailing-operator split: deleting the `+` that continued a multi-line
+/// statement splits it into two. Must match a full parse if reparse fires.
+#[test]
+fn toplevel_trailing_operator_split_matches_full_parse() {
+    let src = "total <- first +\n  second\n";
+    // delete the `+` (and keep the surrounding spaces intact otherwise)
+    let plus = src.find('+').unwrap();
+    let edit = Edit {
+        range: plus..plus + 1,
+        insert: String::new(),
+    };
+    let old = parse(src);
+    let new_text = edit.apply(src);
+    let full = parse(&new_text);
+    if let Some(r) = reparse(&old.cst, src, &old.diagnostics, &edit) {
+        assert_eq!(
+            fingerprint(&SyntaxNode::new_root(r.green.clone())),
+            fingerprint(&full.cst),
+            "trailing-operator split diverged from full parse",
+        );
+    }
 }

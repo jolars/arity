@@ -11,7 +11,18 @@
 //!    and re-parse just that block (it is self-contained — braces delimit it, so
 //!    its subtree never depends on the surrounding context) and splice the new
 //!    block subtree in place.
-//! 3. Otherwise return `None`; the caller does a full [`crate::parser::parse`].
+//! 3. [`reparse_toplevel`] — the edit lands inside a single top-level statement
+//!    (a direct child of the `ROOT` node) that isn't inside any `{ … }`. Unlike a
+//!    block, a bare statement has no delimiter tokens, so its boundary is pinned
+//!    by two guards: a *consume-all* check (the reparse must consume every token
+//!    of the statement text — this rules out the statement shrinking and releasing
+//!    trailing tokens) and a *forward-merge* guard (re-parsing the statement with
+//!    the next sibling appended must still end at the statement's original length
+//!    — this rules out the statement growing to absorb what follows, e.g. a
+//!    trailing binary operator). The backward direction is inherently safe: R only
+//!    continues a statement across a newline via a *trailing* operator, never a
+//!    *leading* one, and the previous sibling's tokens are untouched by the edit.
+//! 4. Otherwise return `None`; the caller does a full [`crate::parser::parse`].
 //!
 //! **Correctness invariant (Tenet 4):** a successful reparse must yield a green
 //! tree *and* diagnostics byte-identical to a full parse of the edited text.
@@ -104,6 +115,7 @@ pub fn map_range_through_edits(range: TextRange, edits: &[Edit]) -> Option<TextR
 pub enum ReparseKind {
     Token,
     Block,
+    TopLevel,
 }
 
 /// The result of a successful incremental reparse: the new whole-file green tree
@@ -159,7 +171,8 @@ pub fn reparse(
     edit: &Edit,
 ) -> Option<Reparsed> {
     let result = reparse_token(old_root, old_text, old_diags, edit)
-        .or_else(|| reparse_block(old_root, old_text, old_diags, edit));
+        .or_else(|| reparse_block(old_root, old_text, old_diags, edit))
+        .or_else(|| reparse_toplevel(old_root, old_text, old_diags, edit));
 
     if let Some(reparsed) = &result {
         debug_assert_eq!(
@@ -323,6 +336,145 @@ fn reparse_block(
         diagnostics,
         kind: ReparseKind::Block,
     })
+}
+
+/// Reparse a single top-level statement (a direct child of `ROOT`) that isn't
+/// inside any `{ … }` block. See the module doc for the boundary argument.
+fn reparse_toplevel(
+    old_root: &SyntaxNode,
+    old_text: &str,
+    old_diags: &[ParseDiagnostic],
+    edit: &Edit,
+) -> Option<Reparsed> {
+    let (s, e) = (edit.range.start, edit.range.end);
+    let elem = old_root.covering_element(text_range(s, e));
+    let start_node = match elem {
+        rowan::NodeOrToken::Node(n) => n,
+        rowan::NodeOrToken::Token(t) => t.parent()?,
+    };
+
+    // The top-level statement: the ancestor whose parent is `ROOT`. When the
+    // covering element is a trivia token directly under `ROOT` (an edit in
+    // inter-statement whitespace), `start_node` *is* the root and there is no such
+    // ancestor — fall back.
+    let stmt = start_node
+        .ancestors()
+        .find(|node| node.parent().map(|p| p.kind()) == Some(SyntaxKind::ROOT))?;
+
+    // Roxygen blocks come from the dedicated `emit_roxygen_block` path, not
+    // `parse_expr`, so reparsing one via `parse_expr` would be wrong. (The kind
+    // match in `parse_stmt_in_isolation` would also reject it, but bail early.)
+    if stmt.kind() == SyntaxKind::ROXYGEN_BLOCK {
+        return None;
+    }
+
+    let r = stmt.text_range();
+    let (ss, se) = (usize::from(r.start()), usize::from(r.end()));
+    // The covering-element walk guarantees the statement contains the edit.
+    debug_assert!(ss <= s && e <= se);
+
+    // New statement text: the old statement slice with the edit applied at its
+    // relative offset. The edit is interior, so the slice still begins at the
+    // statement's first significant token.
+    let mut stmt_text = old_text[ss..se].to_string();
+    stmt_text.replace_range((s - ss)..(e - ss), &edit.insert);
+
+    // Isolation parse: one expression consuming every token, of the same node
+    // kind. Consume-all rejects the *shrink* case (the edit split the statement,
+    // e.g. removing a trailing operator, so some tokens leak past the boundary).
+    let (stmt_green, stmt_diags) = parse_stmt_in_isolation(&stmt_text, stmt.kind())?;
+
+    // Forward-merge guard: reparsing the statement with the next sibling's text
+    // appended must still end exactly at the statement's length. Rejects the
+    // *grow* case (the edit made the statement continue onto what follows, e.g. a
+    // trailing binary operator). One sibling of context is sufficient and bounded:
+    // `parse_expr` reads a single expression, so a merge past the boundary is
+    // detected immediately; a statement that doesn't merge into its immediate
+    // successor cannot reach anything further.
+    let forward_end = match stmt.next_sibling() {
+        Some(next) => usize::from(next.text_range().end()),
+        None => old_text.len(),
+    };
+    if !toplevel_boundary_stable(&stmt_text, &old_text[se..forward_end]) {
+        return None;
+    }
+
+    let delta = edit.delta();
+    let mut diagnostics: Vec<ParseDiagnostic> =
+        Vec::with_capacity(old_diags.len() + stmt_diags.len());
+    for d in old_diags {
+        if d.end <= ss {
+            diagnostics.push(d.clone());
+        } else if d.start >= se {
+            diagnostics.push(shift(d, delta));
+        }
+        // diagnostics inside the old statement are dropped; the reparse regenerates them
+    }
+    for d in &stmt_diags {
+        diagnostics.push(ParseDiagnostic {
+            message: d.message.clone(),
+            start: d.start + ss,
+            end: d.end + ss,
+        });
+    }
+    diagnostics.sort_by_key(|d| (d.start, d.end));
+
+    let green = stmt.replace_with(stmt_green);
+    Some(Reparsed {
+        green,
+        diagnostics,
+        kind: ReparseKind::TopLevel,
+    })
+}
+
+/// Parse a bare top-level statement's text on its own and return the green node
+/// for the single top-level node it produces (which must be of `expected_kind`),
+/// with statement-relative diagnostics. Returns `None` unless the text parses to
+/// exactly one expression consuming every token — the consume-all guard.
+fn parse_stmt_in_isolation(
+    stmt_text: &str,
+    expected_kind: SyntaxKind,
+) -> Option<(GreenNode, Vec<ParseDiagnostic>)> {
+    let tokens = rebalance_brackets(lex(stmt_text));
+    let mut diagnostics = Vec::new();
+    let expr = parse_expr(&tokens, 0, 0, &mut diagnostics)?;
+    if expr.start != 0 || expr.end != tokens.len() {
+        return None;
+    }
+
+    let root = build_tree(&tokens, &expr.events);
+    let mut children = root.children();
+    let node = children.next()?;
+    if children.next().is_some() || node.kind() != expected_kind {
+        return None;
+    }
+    Some((node.green().into_owned(), diagnostics))
+}
+
+/// Whether `stmt_text` still ends at the same boundary once `forward_ctx` (the
+/// text up to the end of the next top-level sibling) is appended. `parse_expr`
+/// over the concatenation must consume a first expression that ends exactly at
+/// `stmt_text.len()`; anything else means the edit made the statement merge
+/// forward. Empty context (statement at end of file) is trivially stable.
+fn toplevel_boundary_stable(stmt_text: &str, forward_ctx: &str) -> bool {
+    if forward_ctx.is_empty() {
+        return true;
+    }
+    let mut combined = String::with_capacity(stmt_text.len() + forward_ctx.len());
+    combined.push_str(stmt_text);
+    combined.push_str(forward_ctx);
+
+    let tokens = rebalance_brackets(lex(&combined));
+    let mut diagnostics = Vec::new();
+    let Some(expr) = parse_expr(&tokens, 0, 0, &mut diagnostics) else {
+        return false;
+    };
+    // Byte offset one past the last token the first expression consumed. A stable
+    // boundary lands it exactly at the (unchanged) end of the statement text.
+    expr.end
+        .checked_sub(1)
+        .and_then(|last| tokens.get(last))
+        .is_some_and(|last| last.end == stmt_text.len())
 }
 
 /// Parse `{ … }` text on its own and return the green node for the single
