@@ -820,8 +820,13 @@ fn section_rd_complete(body: &[Inline], md: bool) -> bool {
     if md {
         // Scan the *ungrouped* atoms: they reconstruct `markdown(text)` faithfully,
         // whereas grouping a balanced brace pair into a `LIST` loses the backslash
-        // parity rd_complete weighs (see [`serialize_prose`]).
-        section_atoms_rd_complete(&serialize_prose(body, md, false), md)
+        // parity rd_complete weighs (see [`serialize_prose`]). First drop each
+        // odd-run `\%` comment region ([`strip_scan_percent_comments`]): the output
+        // swallow keeps `ceil(k/2)` backslashes (parse_Rd's rendered text), which
+        // can leave a dangling trailing escape that false-drops a kept section.
+        let stripped = strip_scan_percent_comments(body);
+        let scan_body = stripped.as_deref().unwrap_or(body);
+        section_atoms_rd_complete(&serialize_prose(scan_body, md, false), md)
     } else {
         rd_complete(&section_raw_rd(body))
     }
@@ -2285,6 +2290,78 @@ fn md_percent_swallow_line(line: &str) -> &str {
         }
     }
     line
+}
+
+/// Strip each odd-run `\%` comment region from a prose `TEXT` leaf **for the
+/// `@md` `rdComplete` drop scan only**. Per physical line, the backslash run, the
+/// `%`, and everything to the line's end are dropped.
+///
+/// roxygen2 decides the drop on `rdComplete(markdown(text))`. In `markdown(text)`
+/// an odd source backslash run before a `%` renders an *even* run plus a bare
+/// comment `%` (`\%` → `\\%`, `\\\%` → `\\\%`): the even run pairs cleanly and the
+/// bare `%` comments to end of line, so the region contributes nothing to the
+/// brace balance and never leaves a dangling escape. The **output** serializer
+/// models the same swallow via [`md_percent_swallow`], but it keeps `ceil(k/2)`
+/// backslashes — parse_Rd's rendered text (`y \% …` → `y \`) — which can leave an
+/// *odd* trailing backslash at the section's end. Reconstructing the scan from
+/// those output atoms then reads a dangling escape and false-drops a section
+/// roxygen2 keeps (`@details y \% {z} end.`). Dropping the whole region here (not
+/// just the tail) removes that backslash so the scan matches `markdown(text)`. An
+/// **even**-run `%` — a genuine literal percent roxygen2 escapes to `\%` — is left
+/// untouched for render-time re-escaping ([`append_leaf_text`]).
+fn strip_scan_percent_comment(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for seg in text.split_inclusive(['\n', SOFT_BREAK]) {
+        match seg.chars().next_back() {
+            Some(c @ ('\n' | SOFT_BREAK)) => {
+                out.push_str(scan_line_before_odd_percent(
+                    &seg[..seg.len() - c.len_utf8()],
+                ));
+                out.push(c);
+            }
+            _ => out.push_str(scan_line_before_odd_percent(seg)),
+        }
+    }
+    out
+}
+
+/// The prefix of `line` up to (not including) the backslash run of the first `%`
+/// whose preceding maximal backslash run has **odd** length (the whole line if
+/// none). Unlike [`md_percent_swallow_line`], the backslashes are dropped too, so
+/// no trailing escape survives into the [`rd_complete`] scan.
+fn scan_line_before_odd_percent(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, _) in line.char_indices().filter(|&(i, _)| bytes[i] == b'%') {
+        let mut k = 0usize;
+        while i > k && bytes[i - 1 - k] == b'\\' {
+            k += 1;
+        }
+        if k % 2 == 1 {
+            return &line[..i - k];
+        }
+    }
+    line
+}
+
+/// Rewrite a prose body's top-level `TEXT` leaves for the `@md` `rdComplete` drop
+/// scan, applying [`strip_scan_percent_comment`]. Returns `None` when no leaf
+/// changed (the common case — no odd-run `\%`), so the scan reuses the original
+/// body. Only top-level prose is stripped: a `%`-comment inside a balanced macro
+/// argument contributes a balanced pair regardless (backlog).
+fn strip_scan_percent_comments(body: &[Inline]) -> Option<Vec<Inline>> {
+    let mut changed = false;
+    let new: Vec<Inline> = body
+        .iter()
+        .map(|inl| match inl {
+            Inline::Text(t) => {
+                let stripped = strip_scan_percent_comment(t);
+                changed |= stripped != *t;
+                Inline::Text(stripped)
+            }
+            other => other.clone(),
+        })
+        .collect();
+    changed.then_some(new)
 }
 
 /// In `@md` prose, a run of literal backslashes collapses per CommonMark's
@@ -6809,6 +6886,44 @@ mod tests {
             &["(TEXT \"foo\")".into(), "(\\emph (TEXT \"\\\\\"))".into()],
             true,
         ));
+    }
+
+    #[test]
+    fn trailing_percent_swallow_does_not_false_drop() {
+        // An odd-run `\%` swallow at a section's end keeps a dangling `\` in the
+        // output atom (`y \% {z} end.` renders `y \`), but roxygen2 scans
+        // `markdown(text)` = `y \\% {z} end.` (even run pairs, bare `%` comments) and
+        // keeps the section. The drop scan must strip the whole region so no trailing
+        // escape survives. A soft-wrap continuation already resolved the escape; a
+        // physical line end did not (the bug).
+        assert!(section_rd_complete(
+            &[Inline::Text("y \\% {z} end.".into())],
+            true,
+        ));
+        // A longer odd run behaves the same (comments to end of line).
+        assert!(section_rd_complete(
+            &[Inline::Text("a \\\\\\% b {c} d.".into())],
+            true,
+        ));
+        // An even-run `%` is a genuine literal percent (escaped, not a comment): a
+        // following unbalanced `{` still drops.
+        assert!(!section_rd_complete(
+            &[Inline::Text("a % b {c".into())],
+            true
+        ));
+        // A real brace imbalance before the `%` still drops (`{` opens, the comment
+        // eats the closer).
+        assert!(!section_rd_complete(
+            &[Inline::Text("{a \\% b}".into())],
+            true,
+        ));
+        // The stripper drops the run + `%` + line tail, but keeps later physical
+        // lines and an even-run `%`.
+        assert_eq!(strip_scan_percent_comment("y \\% {z} end."), "y ");
+        assert_eq!(
+            strip_scan_percent_comment("y \\% gone\nkept % here"),
+            "y \nkept % here"
+        );
     }
 
     #[test]

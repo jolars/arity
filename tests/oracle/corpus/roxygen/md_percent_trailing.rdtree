@@ -1,0 +1,3 @@
+(\description (TEXT "A trailing comment must not drop the section: y \\"))
+(\details (TEXT "A longer run also comments to the line end: a \\\\"))
+(\title (TEXT "Trailing percent swallow keeps the section"))

@@ -221,6 +221,7 @@ md_nested_link_chain
 md_nested_list
 md_percent_softwrap
 md_percent_swallow
+md_percent_trailing
 md_preformatted_arg_escape
 md_ref_emphasis
 md_ref_link_multiline
