@@ -1,0 +1,3 @@
+(\description (TEXT "Even run before a braced macro"))
+(\details (TEXT "An even run keeps the name literal: a \\emph") (LIST (TEXT "x")) (TEXT "b. A longer even run halves: c \\\\emph") (LIST (TEXT "y")) (TEXT "d. A brace-required section macro too: e \\link") (LIST (TEXT "z")) (TEXT "f. The group still nests: g \\emph") (LIST (TEXT "h") (LIST (TEXT "i")) (TEXT "j")) (TEXT "k."))
+(\title (TEXT "Even run before a braced macro"))

@@ -7616,6 +7616,49 @@ mod tests {
     }
 
     #[test]
+    fn even_run_braced_macro_projects_as_literal_plus_list() {
+        // An *even* backslash run before a brace-required macro name defeats the
+        // macro carve: parse_Rd pairs the backslashes to a literal `\`, leaves the
+        // name as plain text (`\\emph` -> `\emph`), and the following `{…}` is an
+        // ordinary bare-brace `LIST` -- never the macro's argument. This is the
+        // even-run twin of `md_bare_brace_groups_project_as_lists`; it falls out of
+        // the backslash-parity gate (no macro carve) plus `group_brace_lists`, and
+        // holds identically in both modes.
+        let case = |md: bool, body: &str| {
+            let md_line = if md { "#' @md\n" } else { "" };
+            let src = format!("{md_line}#' @title T\n#' @details {body}\n#' @name x\nNULL\n");
+            project_to_rd(&src)
+                .lines()
+                .find(|l| l.starts_with("(\\details"))
+                .unwrap_or("")
+                .to_string()
+        };
+        for md in [false, true] {
+            // Even run (k=2): one literal backslash kept, `emph` literal, `{x}` a LIST.
+            assert_eq!(
+                case(md, r"a \\emph{x} b"),
+                "(\\details (TEXT \"a \\\\emph\") (LIST (TEXT \"x\")) (TEXT \"b\"))"
+            );
+            // A longer even run (k=4) halves to two literal backslashes.
+            assert_eq!(
+                case(md, r"c \\\\emph{y} d"),
+                "(\\details (TEXT \"c \\\\\\\\emph\") (LIST (TEXT \"y\")) (TEXT \"d\"))"
+            );
+            // Even runs also spare a brace-required section macro from its
+            // brace-less drop (`\link` normally drops when brace-less).
+            assert_eq!(
+                case(md, r"e \\link{z} f"),
+                "(\\details (TEXT \"e \\\\link\") (LIST (TEXT \"z\")) (TEXT \"f\"))"
+            );
+            // The trailing group still nests.
+            assert_eq!(
+                case(md, r"g \\emph{h {i} j} k"),
+                "(\\details (TEXT \"g \\\\emph\") (LIST (TEXT \"h\") (LIST (TEXT \"i\")) (TEXT \"j\")) (TEXT \"k\"))"
+            );
+        }
+    }
+
+    #[test]
     fn heading_title_bare_groups_project_as_lists() {
         // A bare `{…}` in a markdown heading title is an Rd `LIST`, exactly as in
         // prose and macro args; the multi-atom title GRP-wraps. ATX and setext

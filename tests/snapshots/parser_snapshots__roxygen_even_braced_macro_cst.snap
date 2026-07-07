@@ -1,0 +1,38 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..182
+  ROXYGEN_BLOCK@0..176
+    ROXYGEN_SECTION@0..37
+      ROXYGEN_PARAGRAPH@0..34
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..33 "Even run before a bra ..."
+        NEWLINE@33..34 "\n"
+      ROXYGEN_MARKER@34..36 "#'"
+      NEWLINE@36..37 "\n"
+    ROXYGEN_SECTION@37..147
+      ROXYGEN_MARKER@37..39 "#'"
+      WHITESPACE@39..40 " "
+      ROXYGEN_TAG@40..146
+        ROXYGEN_AT@40..41 "@"
+        ROXYGEN_TAG_NAME@41..48 "details"
+        WHITESPACE@48..49 " "
+        ROXYGEN_TEXT@49..99 "An even run keeps the ..."
+        NEWLINE@99..100 "\n"
+        ROXYGEN_MARKER@100..102 "#'"
+        WHITESPACE@102..103 " "
+        ROXYGEN_TEXT@103..146 "The group still nests ..."
+      NEWLINE@146..147 "\n"
+    ROXYGEN_SECTION@147..176
+      ROXYGEN_MARKER@147..149 "#'"
+      WHITESPACE@149..150 " "
+      ROXYGEN_TAG@150..176
+        ROXYGEN_AT@150..151 "@"
+        ROXYGEN_TAG_NAME@151..155 "name"
+        WHITESPACE@155..156 " "
+        ROXYGEN_TEXT@156..176 "rd_even_braced_macro"
+  NEWLINE@176..177 "\n"
+  IDENT@177..181 "NULL"
+  NEWLINE@181..182 "\n"
