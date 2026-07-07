@@ -1,0 +1,42 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..186
+  ROXYGEN_BLOCK@0..180
+    ROXYGEN_SECTION@0..29
+      ROXYGEN_PARAGRAPH@0..26
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..25 "Brace-less item macros"
+        NEWLINE@25..26 "\n"
+      ROXYGEN_MARKER@26..28 "#'"
+      NEWLINE@28..29 "\n"
+    ROXYGEN_SECTION@29..157
+      ROXYGEN_MARKER@29..31 "#'"
+      WHITESPACE@31..32 " "
+      ROXYGEN_TAG@32..156
+        ROXYGEN_AT@32..33 "@"
+        ROXYGEN_TAG_NAME@33..40 "details"
+        WHITESPACE@40..41 " "
+        ROXYGEN_TEXT@41..75 "A bare item is unknow ..."
+        NEWLINE@75..76 "\n"
+        ROXYGEN_MARKER@76..78 "#'"
+        WHITESPACE@78..79 " "
+        ROXYGEN_TEXT@79..110 "An item can end a lin ..."
+        NEWLINE@110..111 "\n"
+        ROXYGEN_MARKER@111..113 "#'"
+        WHITESPACE@113..114 " "
+        ROXYGEN_TEXT@114..156 "An escaped item stays ..."
+      NEWLINE@156..157 "\n"
+    ROXYGEN_SECTION@157..180
+      ROXYGEN_MARKER@157..159 "#'"
+      WHITESPACE@159..160 " "
+      ROXYGEN_TAG@160..180
+        ROXYGEN_AT@160..161 "@"
+        ROXYGEN_TAG_NAME@161..165 "name"
+        WHITESPACE@165..166 " "
+        ROXYGEN_TEXT@166..180 "braceless_item"
+  NEWLINE@180..181 "\n"
+  IDENT@181..185 "NULL"
+  NEWLINE@185..186 "\n"

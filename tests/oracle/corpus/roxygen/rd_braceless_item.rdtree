@@ -1,0 +1,3 @@
+(\description (TEXT "Brace-less item macros in literal Rd prose"))
+(\details (TEXT "A bare item is unknown: a") (UNKNOWN "\\item") (TEXT "b. An item can start a line:") (UNKNOWN "\\item") (TEXT "c. An item can end a line: d") (UNKNOWN "\\item") (TEXT "An escaped item stays literal: e \\item f. Two on a line: g") (UNKNOWN "\\item") (TEXT "h") (UNKNOWN "\\item") (TEXT "i."))
+(\title (TEXT "Brace-less item macros in literal Rd prose"))

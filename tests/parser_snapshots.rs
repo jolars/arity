@@ -253,6 +253,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_brace_group",
         "roxygen_macro_arg_brace_group",
         "roxygen_md_heading_brace_group",
+        "roxygen_braceless_item",
         "roxygen_tag_sameline_emph",
         "roxygen_md_entities",
     ]

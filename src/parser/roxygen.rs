@@ -384,9 +384,12 @@ const STICKY_BRACELESS_RD_MACROS: &[&str] = &[
 /// header, expecting `{`" recovery): a known, non-zero-arg macro outside
 /// [`STICKY_BRACELESS_RD_MACROS`]. Zero-arg names are complete calls (carved by
 /// the lexer), unknown names are `(UNKNOWN …)` nodes (also carved), and the
-/// sticky set leaves parse_Rd in a code/verbatim mode (left literal here;
-/// backlog). Mode-independent: the `@md` pipeline is a net no-op on a backslash
-/// run before a letter, so parse_Rd sees the same brace-less macro either way.
+/// sticky set leaves parse_Rd in a code/verbatim mode. Of that set, brace-less
+/// `\item` is projected as an `(UNKNOWN "\item")` node (`split_braceless_items` in
+/// the projector); the code/verbatim mode-flip names (`\code`/`\verb`/…) are still
+/// left literal (backlog). Mode-independent: the `@md` pipeline is a net no-op on a
+/// backslash run before a letter, so parse_Rd sees the same brace-less macro either
+/// way.
 pub(crate) fn is_rd_braceless_drop_macro(name: &str) -> bool {
     is_known_rd_macro(name)
         && !is_zero_arg_rd_macro(name)

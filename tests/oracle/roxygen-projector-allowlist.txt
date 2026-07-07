@@ -165,6 +165,7 @@ md_brace_escape
 md_brace_escape_runs
 md_brace_group
 md_braceless_drop
+md_braceless_item
 md_email_autolink
 md_emphasis
 md_emphasis_multiline
@@ -264,6 +265,7 @@ rd_backslash_parity
 rd_brace_escape_unbalanced
 rd_brace_group
 rd_braceless_drop
+rd_braceless_item
 rd_comment
 rd_comment_softwrap
 rd_macro_arg_brace_group

@@ -191,6 +191,16 @@ enum Inline {
     /// projects to `(LIST <children…>)` (empty group → `(LIST)`). Produced only by
     /// [`group_brace_lists`] on a **balanced** prose run (both markdown modes).
     BraceGroup(Vec<Inline>),
+    /// A brace-less `\item` in prose text, projecting to `(UNKNOWN "\item")`.
+    /// `\item` is the one [`STICKY_BRACELESS_RD_MACROS`](crate::parser::roxygen)
+    /// name whose brace-less misuse is neither a clean text drop (the other known
+    /// brace-required macros) nor a code/verbatim-mode swallow (`\code`/`\verb`/…):
+    /// out of list context parse_Rd tags it an unknown-macro node and the
+    /// surrounding prose continues (`a \item b` → `(TEXT "a") (UNKNOWN "\item")
+    /// (TEXT "b")`). Produced only by [`split_braceless_items`] on a prose run
+    /// (both markdown modes; the `@md` pipeline is a net no-op on a backslash run
+    /// before a letter, so parse_Rd sees the same brace-less `\item` either way).
+    BracelessItem,
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -1117,6 +1127,13 @@ fn serialize_prose(body: &[Inline], md: bool, group: bool) -> Vec<String> {
     // that internally).
     let grouped = group.then(|| group_brace_lists(body, md));
     let scan = grouped.as_deref().unwrap_or(body);
+    // A brace-less `\item` in prose is parse_Rd's out-of-list recovery: an
+    // `(UNKNOWN "\item")` node splitting the surrounding text. Carve it out of the
+    // (already brace-grouped) run before serializing. Output path only: the
+    // `group = false` md `rdComplete` scan reads the raw `\item` text, which counts
+    // no braces either way, so it needs no split.
+    let split = group.then(|| split_braceless_items(scan)).flatten();
+    let scan = split.as_deref().unwrap_or(scan);
     let mut atoms = serialize_inlines(scan, md);
     for l in leaked {
         append_rendered_text(&mut atoms, &l);
@@ -1472,6 +1489,12 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                     atoms.push(atom);
                 }
                 atoms.push(serialize_md_html_block(node));
+            }
+            Inline::BracelessItem => {
+                if let Some(atom) = flush_run(&mut run, md) {
+                    atoms.push(atom);
+                }
+                atoms.push(format!("(UNKNOWN {})", encode_text("\\item")));
             }
             Inline::BraceGroup(children) => {
                 if let Some(atom) = flush_run(&mut run, md) {
@@ -2246,6 +2269,97 @@ fn braceless_drop_name_end(run: &str, start: usize) -> Option<usize> {
     let end = crate::parser::roxygen::rd_macro_name_end(bytes, start);
     (end > start && is_rd_braceless_drop_macro(&run[start..end]) && bytes.get(end) != Some(&b'{'))
         .then_some(end)
+}
+
+/// Split each unescaped, brace-less `\item` in a prose inline run into its own
+/// [`Inline::BracelessItem`] node, mirroring parse_Rd's out-of-list recovery
+/// (`a \item b` → `(TEXT "a") (UNKNOWN "\item") (TEXT "b")`). Recurses into bare
+/// brace groups (`{a \item b}` → `(LIST (TEXT "a") (UNKNOWN "\item") (TEXT "b"))`)
+/// and emphasis spans so a nested `\item` splits too. Returns `None` when the run
+/// contains no brace-less `\item` (the caller keeps the original body). Runs after
+/// [`group_brace_lists`], so a following `{…}` has already become an
+/// `Inline::BraceGroup` (`\item{x}` → `(UNKNOWN "\item") (LIST (TEXT "x"))`,
+/// matching parse_Rd, which never binds the group to the unknown macro).
+fn split_braceless_items(body: &[Inline]) -> Option<Vec<Inline>> {
+    let mut changed = false;
+    let mut out: Vec<Inline> = Vec::with_capacity(body.len());
+    for inl in body {
+        match inl {
+            Inline::Text(s) => match split_item_text(s) {
+                Some(pieces) => {
+                    changed = true;
+                    out.extend(pieces);
+                }
+                None => out.push(inl.clone()),
+            },
+            Inline::BraceGroup(children) => match split_braceless_items(children) {
+                Some(new) => {
+                    changed = true;
+                    out.push(Inline::BraceGroup(new));
+                }
+                None => out.push(inl.clone()),
+            },
+            Inline::MdEmphasis { strong, children } => match split_braceless_items(children) {
+                Some(new) => {
+                    changed = true;
+                    out.push(Inline::MdEmphasis {
+                        strong: *strong,
+                        children: new,
+                    });
+                }
+                None => out.push(inl.clone()),
+            },
+            _ => out.push(inl.clone()),
+        }
+    }
+    changed.then_some(out)
+}
+
+/// Partition one prose text string at each unescaped, brace-less `\item` (see
+/// [`split_braceless_items`]). The interleaved `Inline::Text` (raw, escapes
+/// unresolved for the downstream [`process_prose`]) and [`Inline::BracelessItem`]
+/// pieces, or `None` when there is no split. Parity-gated like every `\`-carve: a
+/// backslash run of even length keeps the final `\` escaped (`\\item` stays literal
+/// `\item` text), so only a run of odd length that abuts the exact name `item`
+/// begins the macro. The name must be exactly `item` (a longer `\itemize`/`\itemx`
+/// is a different macro — the lexer or the drop-recovery handles those).
+fn split_item_text(s: &str) -> Option<Vec<Inline>> {
+    let bytes = s.as_bytes();
+    let mut out: Vec<Inline> = Vec::new();
+    let mut seg_start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        let run_start = i;
+        while i < bytes.len() && bytes[i] == b'\\' {
+            i += 1;
+        }
+        // An even run pairs off entirely (the `\item` is escaped); an odd run leaves
+        // the final `\` (at `i - 1`) unescaped, opening a macro at `run[i..]`.
+        if (i - run_start) % 2 == 1 {
+            let name_end = crate::parser::roxygen::rd_macro_name_end(bytes, i);
+            if &s[i..name_end] == "item" {
+                let before = &s[seg_start..i - 1];
+                if !before.is_empty() {
+                    out.push(Inline::Text(before.to_string()));
+                }
+                out.push(Inline::BracelessItem);
+                seg_start = name_end;
+                i = name_end;
+            }
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    let tail = &s[seg_start..];
+    if !tail.is_empty() {
+        out.push(Inline::Text(tail.to_string()));
+    }
+    Some(out)
 }
 
 /// In `@md` prose, roxygen2 honors a CommonMark backslash escape for the square
@@ -6472,6 +6586,26 @@ mod tests {
         // A run abutting a bracket is left verbatim for `unescape_md_brackets`.
         assert_eq!(collapse_md_backslash_runs(r"\\[x"), r"\\[x");
         assert_eq!(collapse_md_backslash_runs(r"a\\]b"), r"a\\]b");
+    }
+
+    #[test]
+    fn braceless_item_projects_as_unknown_node() {
+        // A brace-less `\item` outside a list is parse_Rd's out-of-list recovery:
+        // an `(UNKNOWN "\item")` node splitting the surrounding text (mode-
+        // independent). It can start, sit mid-prose, or end a line; an escaped
+        // `\\item` stays literal; two items on a line split twice.
+        let src = "#' T\n\
+                   #' @details a \\item b. c \\item. d \\\\item e. f \\item g \\item h.\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"a\") (UNKNOWN \"\\\\item\") (TEXT \"b. c\") (UNKNOWN \"\\\\item\") \
+             (TEXT \". d \\\\item e. f\") (UNKNOWN \"\\\\item\") (TEXT \"g\") (UNKNOWN \"\\\\item\") \
+             (TEXT \"h.\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
     }
 
     #[test]
