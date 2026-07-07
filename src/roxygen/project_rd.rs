@@ -43,6 +43,7 @@ use crate::parser::parse;
 use crate::parser::roxygen::{
     MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_rd_braceless_drop_macro,
     is_two_arg_rd_macro, resolve_md_inline, resolve_md_inline_pieces, split_table_row_cells,
+    sticky_braceless_code_mode,
 };
 use crate::roxygen::entities;
 use crate::syntax::{SyntaxKind, SyntaxNode};
@@ -201,6 +202,22 @@ enum Inline {
     /// (both markdown modes; the `@md` pipeline is a net no-op on a backslash run
     /// before a letter, so parse_Rd sees the same brace-less `\item` either way).
     BracelessItem,
+    /// The swallowed tail of a brace-less sticky code/verbatim Rd macro
+    /// (`\code`/`\verb`/…, see [`sticky_braceless_code_mode`]). Out of an argument
+    /// context parse_Rd's "expecting `{`" recovery leaves its lexer in R-code
+    /// (`code = true`) or verbatim (`code = false`) mode, so everything from the
+    /// dropped `\name` to section end becomes one atom **per physical source
+    /// line**: `\code z here` (line-wrapped) → `(RCODE " z here\n") (RCODE
+    /// "continued\n")`. `lines` holds each physical line's verbatim content (no
+    /// trailing `\n`); it projects to `(RCODE …)`/`(VERB …)`, one per line.
+    /// Produced only by [`split_sticky_braceless_swallow`] on an explicit prose
+    /// tag's body whose tail is a single-paragraph plain-text run (no
+    /// macro/list/emphasis, and no `\ { } %` or paragraph break — those cases are
+    /// withheld).
+    StickyVerbatim {
+        code: bool,
+        lines: Vec<String>,
+    },
 }
 
 /// One topic's worth of sections from a single roxygen block.
@@ -487,6 +504,15 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
     if NULL_SUPPRESSIBLE.contains(&name) && is_null_section(body, md) {
         return;
     }
+    // A brace-less sticky code/verbatim macro (`\code z`/`\verb z`/…) swallows its
+    // tail into per-line `RCODE`/`VERB` atoms. It is a plain-prose-section effect,
+    // so it applies to the ordinary prose tags but not `@rawRd` (raw Rd, injected
+    // verbatim) or `@section` (a two-part `title: body` value); the intro paragraph
+    // (out of scope) is excluded structurally — it never reaches this function.
+    let swallowed = (!matches!(name, "rawRd" | "section"))
+        .then(|| split_sticky_braceless_swallow(body, md))
+        .flatten();
+    let body = swallowed.as_deref().unwrap_or(body);
     match name {
         // `@rawRd` injects its content verbatim into the Rd file at top level;
         // roxygen2 does not wrap it in a section macro. parse_Rd then splits it
@@ -1496,6 +1522,19 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 atoms.push(format!("(UNKNOWN {})", encode_text("\\item")));
             }
+            // A brace-less sticky code/verbatim macro's swallowed tail: one verbatim
+            // `(RCODE …)`/`(VERB …)` atom per physical source line, each carrying its
+            // own trailing `\n` (`\code z here` line-wrapped → `(RCODE " z here\n")
+            // (RCODE "continued\n")`).
+            Inline::StickyVerbatim { code, lines } => {
+                if let Some(atom) = flush_run(&mut run, md) {
+                    atoms.push(atom);
+                }
+                let head = if *code { "RCODE" } else { "VERB" };
+                for line in lines {
+                    atoms.push(format!("({head} {})", encode_text(&format!("{line}\n"))));
+                }
+            }
             Inline::BraceGroup(children) => {
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
@@ -2360,6 +2399,128 @@ fn split_item_text(s: &str) -> Option<Vec<Inline>> {
         out.push(Inline::Text(tail.to_string()));
     }
     Some(out)
+}
+
+/// Rewrite an explicit prose tag's body when a brace-less sticky code/verbatim Rd
+/// macro (`\code`/`\verb`/…, see [`sticky_braceless_code_mode`]) triggers
+/// parse_Rd's argument-mode swallow, or `None` when no such trigger applies (the
+/// caller keeps the body). The dropped `\name` and everything after it, to section
+/// end, becomes an [`Inline::StickyVerbatim`] — one `RCODE`/`VERB` atom per
+/// physical source line — while the prose *before* the trigger stays ordinary text
+/// (`a \code z here` → `(TEXT "a") (RCODE " z here\n")`).
+///
+/// **Scope (this slice): an explicit prose tag with a single-paragraph plain-text
+/// tail.** The swallow crosses paragraph breaks in roxygen2, but arity's paragraph
+/// model collapses blank-line *counts* (many blanks → one part boundary), so a
+/// cross-paragraph tail cannot be reconstructed faithfully from the inline run and
+/// is withheld. The tail must also be free of macros/lists/emphasis (they still
+/// parse inside the swallow, splitting the RCODE — `\code z \emph{x}` →
+/// `(RCODE " z ") (\emph …) …`) and of the raw chars `\ { } %` (a bare `{`/`}`
+/// breaks the section's field braces, a `%` acts as an Rd line comment, a stray
+/// `\` risks a nested carve) — all withheld as backlog. Withholding leaves the
+/// `\code` literal (its current projection), never a wrong shape.
+///
+/// The intro paragraph is deliberately excluded: its swallow crosses roxygen2's
+/// generated field braces (`{`/`}` scaffolding leaks into the atoms), which is
+/// unmodelable at section granularity. Only [`project_tag_section`] calls this, so
+/// the intro (emitted directly in [`project_block`]) never reaches it.
+fn split_sticky_braceless_swallow(body: &[Inline], md: bool) -> Option<Vec<Inline>> {
+    for (idx, inl) in body.iter().enumerate() {
+        let Inline::Text(s) = inl else { continue };
+        let Some((backslash, name_end, code)) = find_sticky_trigger(s) else {
+            continue;
+        };
+        // Reject a same-line `%` before the trigger: a non-`@md` Rd comment there
+        // would swallow the `\name` itself (there is no `SOFT_BREAK` between them in
+        // one text piece, so the whole pre-trigger portion is one physical line).
+        if s[..backslash].contains('%') {
+            return None;
+        }
+        // The tail = this text from `name_end`, plus every following inline. A
+        // single-paragraph plain-text tail is all `Inline::Text` with none of the
+        // section-breaking / mode-shifting chars; anything else is withheld.
+        let mut content = s[name_end..].to_string();
+        for later in &body[idx + 1..] {
+            match later {
+                Inline::Text(t) => content.push_str(t),
+                _ => return None,
+            }
+        }
+        if content.contains(['\n', '\\', '{', '}', '%']) {
+            return None;
+        }
+        let mut out: Vec<Inline> = body[..idx].to_vec();
+        let before = &s[..backslash];
+        if !before.is_empty() {
+            out.push(Inline::Text(before.to_string()));
+        }
+        out.push(Inline::StickyVerbatim {
+            code,
+            lines: sticky_swallow_lines(&content, md),
+        });
+        return Some(out);
+    }
+    None
+}
+
+/// Find the first brace-less sticky code/verbatim macro trigger in one prose text
+/// piece: `(backslash index, name end, code)` where `backslash` is the position of
+/// the opening `\`, `name_end` is one past the macro name, and `code` is
+/// [`sticky_braceless_code_mode`]'s R-code/verbatim flag. Parity-gated like every
+/// `\`-carve — only an odd-length backslash run opens a macro (`\\code` is an
+/// escaped literal) — and brace-less only (a `{` follows a real macro call, carved
+/// by the lexer and never reaching prose text; guarded regardless).
+fn find_sticky_trigger(s: &str) -> Option<(usize, usize, bool)> {
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        let run_start = i;
+        while i < bytes.len() && bytes[i] == b'\\' {
+            i += 1;
+        }
+        if (i - run_start) % 2 == 1 {
+            let name_end = crate::parser::roxygen::rd_macro_name_end(bytes, i);
+            if name_end > i
+                && bytes.get(name_end) != Some(&b'{')
+                && let Some(code) = sticky_braceless_code_mode(&s[i..name_end])
+            {
+                return Some((i - 1, name_end, code));
+            }
+        }
+    }
+    None
+}
+
+/// Split a sticky swallow's tail into its per-physical-line contents. Physical
+/// lines are the [`SOFT_BREAK`] boundaries of the folded run; the first line (the
+/// trigger line's remainder) keeps its leading whitespace verbatim
+/// (`(RCODE " z here\n")`) in both modes.
+///
+/// Continuation-line leading whitespace differs by mode. **Non-`@md`:** roxygen2
+/// strips only the `#'` comment prefix and one following space, so a `#'   cont`
+/// line surfaces as `"  cont"` (two spaces surviving). **`@md`:** cmark
+/// additionally strips a paragraph continuation line's remaining leading
+/// whitespace before the swallow captures the rendered text, so `#'   cont`
+/// surfaces as `"cont"` (fully flush). Trailing `\n` is added per line by the
+/// serializer.
+fn sticky_swallow_lines(content: &str, md: bool) -> Vec<String> {
+    content
+        .split(SOFT_BREAK)
+        .enumerate()
+        .map(|(i, line)| {
+            if i == 0 {
+                line.to_string()
+            } else if md {
+                line.trim_start_matches(is_posix_space).to_string()
+            } else {
+                line.strip_prefix(' ').unwrap_or(line).to_string()
+            }
+        })
+        .collect()
 }
 
 /// In `@md` prose, roxygen2 honors a CommonMark backslash escape for the square
@@ -6606,6 +6767,67 @@ mod tests {
              (TEXT \"h.\"))\n\
              (\\title (TEXT \"T\"))"
         );
+    }
+
+    #[test]
+    fn braceless_sticky_swallows_tail_per_line() {
+        // A brace-less `\code`/`\verb` leaves parse_Rd in R-code/verbatim mode: the
+        // dropped `\name` and everything after it, to section end, becomes one
+        // `RCODE`/`VERB` atom per physical source line. The prose *before* the
+        // trigger stays ordinary text. Non-`@md`: a continuation line keeps all but
+        // the one `#'`-marker space.
+        let src = "#' T\n\
+                   #' @details a \\code z here\n\
+                   #'   cont line.\n\
+                   #' @seealso b \\verb c d.\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"a\") (RCODE \" z here\\n\") (RCODE \"  cont line.\\n\"))\n\
+             (\\seealso (TEXT \"b\") (VERB \" c d.\\n\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn braceless_sticky_md_strips_continuation_indent() {
+        // Under `@md`, cmark strips a continuation line's remaining leading
+        // whitespace before the swallow captures it (`#'   cont` → flush `cont`),
+        // unlike non-`@md` (two spaces survive above).
+        let src = "#' T\n\
+                   #' @md\n\
+                   #' @details a \\code z here\n\
+                   #'   cont line.\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"a\") (RCODE \" z here\\n\") (RCODE \"cont line.\\n\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn braceless_sticky_withholds_impure_tail() {
+        // A tail carrying a real macro node still parses inside the swallow (it
+        // splits the RCODE), and a bare `{`/`}` or `%` breaks the section or acts
+        // as a comment — none are modeled at section granularity, so the swallow is
+        // withheld and the `\code` stays literal prose (its prior projection).
+        for tail in [
+            "\\emph{x} after", // a macro node in the tail
+            "{grp} after",     // a bare brace group
+            "50% done",        // an Rd `%` comment
+        ] {
+            let src = format!("#' T\n#' @details a \\code z {tail}\n#' @name x\nNULL\n",);
+            let out = project_to_rd(&src);
+            assert!(
+                !out.contains("(RCODE"),
+                "expected withhold (no swallow) for tail {tail:?}, got: {out}"
+            );
+        }
     }
 
     #[test]

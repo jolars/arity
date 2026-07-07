@@ -871,6 +871,7 @@ impl TagUnit {
         // the sibling shape keeps it verbatim, so the folded shape must too
         // (`tag_folds_structured_line`).
         if self.lines.iter().any(tag_folds_structured_line)
+            || self.lines.iter().any(line_has_sticky_swallow)
             || (!md && self.lines.iter().any(line_has_live_rd_comment))
             || (md
                 && (self.first_is_linkref_def
@@ -926,13 +927,17 @@ fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: u
 /// is the paragraph's first prose line — for a tag-headed body, the tag *value*
 /// rather than the whole `@tag …` line, so the linkref check reads the right text.
 fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> bool {
-    if md {
-        text_is_linkref_def(first_text)
-            || lines.iter().any(line_has_md_percent_swallow)
-            || lines.iter().any(line_has_cross_line_verbatim_span)
-    } else {
-        lines.iter().any(line_has_live_rd_comment)
-    }
+    // A brace-less sticky code/verbatim swallow forbids reflow in either mode: it
+    // makes each physical line a verbatim `RCODE`/`VERB` atom, so joining/splitting
+    // changes the atom count (Tenet 1).
+    lines.iter().any(line_has_sticky_swallow)
+        || if md {
+            text_is_linkref_def(first_text)
+                || lines.iter().any(line_has_md_percent_swallow)
+                || lines.iter().any(line_has_cross_line_verbatim_span)
+        } else {
+            lines.iter().any(line_has_live_rd_comment)
+        }
 }
 
 /// A `SectioningProse` tag (`@details`, `@return`, …) together with its body,
@@ -1712,6 +1717,44 @@ fn line_has_md_percent_swallow(line: &PhysicalLine) -> bool {
                 return true;
             }
             backslashes = 0;
+        }
+    }
+    false
+}
+
+/// Whether `line`'s content carries a brace-less sticky code/verbatim Rd-macro
+/// trigger (`\code z`/`\verb z`/…). Out of an argument context such a macro drops
+/// parse_Rd into R-code/verbatim mode, so every *physical source line* from there
+/// to section end becomes its own `RCODE`/`VERB` atom (the projector's
+/// [`split_sticky_braceless_swallow`](crate::roxygen::project_rd)). Reflowing —
+/// joining a soft-wrapped continuation, or splitting an overlong line — changes the
+/// atom count and thus the rendered Rd (Tenet 1), so a paragraph or tag unit
+/// containing one is kept verbatim, both markdown modes (the swallow is
+/// mode-independent). The scan mirrors the projector's `find_sticky_trigger`: an
+/// odd-length backslash run opening a brace-less sticky name. Conservative — it
+/// fires even where the projector then withholds the swallow (an impure tail),
+/// which only forgoes a reflow and never changes the rendered Rd.
+fn line_has_sticky_swallow(line: &PhysicalLine) -> bool {
+    let text = content_text(line);
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        let run_start = i;
+        while i < bytes.len() && bytes[i] == b'\\' {
+            i += 1;
+        }
+        if (i - run_start) % 2 == 1 {
+            let name_end = crate::parser::roxygen::rd_macro_name_end(bytes, i);
+            if name_end > i
+                && bytes.get(name_end) != Some(&b'{')
+                && crate::parser::roxygen::sticky_braceless_code_mode(&text[i..name_end]).is_some()
+            {
+                return true;
+            }
         }
     }
     false

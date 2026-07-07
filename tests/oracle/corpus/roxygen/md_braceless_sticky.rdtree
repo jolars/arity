@@ -1,0 +1,5 @@
+(\description (TEXT "Brace-less sticky code and verbatim macros under markdown"))
+(\details (TEXT "A code macro swallows its tail: before") (RCODE " z after.\n"))
+(\note (TEXT "Soft-wrapped past the trigger: x") (RCODE " y here\n") (RCODE "and a continued line.\n"))
+(\seealso (TEXT "A verbatim macro does too: a") (VERB " b c.\n"))
+(\title (TEXT "Brace-less sticky code and verbatim macros under markdown"))

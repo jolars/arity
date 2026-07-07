@@ -396,6 +396,24 @@ pub(crate) fn is_rd_braceless_drop_macro(name: &str) -> bool {
         && !STICKY_BRACELESS_RD_MACROS.contains(&name)
 }
 
+/// For a brace-less sticky Rd macro name (`\code`/`\verb`/…, see
+/// [`STICKY_BRACELESS_RD_MACROS`]), which parse_Rd lexer state its "expecting `{`"
+/// recovery leaves in place: `Some(true)` for the **R-code** macros (the recovery
+/// stays in R-code mode → per-line `RCODE` atoms) and `Some(false)` for the
+/// **verbatim** macros (verbatim mode → per-line `VERB` atoms). `None` for a
+/// non-sticky name and for `item`, whose out-of-list misuse is instead an
+/// `(UNKNOWN "\item")` node (handled by the projector's `split_braceless_items`).
+/// The two sets are exactly [`STICKY_BRACELESS_RD_MACROS`] minus `item`, probed
+/// against R 4.5 (see that list's doc).
+pub(crate) fn sticky_braceless_code_mode(name: &str) -> Option<bool> {
+    match name {
+        "code" | "donttest" | "dontshow" | "testonly" => Some(true),
+        "verb" | "url" | "samp" | "env" | "kbd" | "option" | "out" | "eqn" | "deqn" | "href"
+        | "figure" | "preformatted" | "dontrun" | "newcommand" | "renewcommand" => Some(false),
+        _ => None,
+    }
+}
+
 /// Rd macros whose `{…}` content roxygen2 **protects** from the markdown parser
 /// (`escaped_for_md` in roxygen2's `R/markdown-escaping.R`): under `@md`,
 /// `escape_rd_for_md` swaps the whole `\tag{…}` span out for a placeholder before

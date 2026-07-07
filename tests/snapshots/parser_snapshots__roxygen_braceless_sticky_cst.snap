@@ -1,0 +1,56 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..280
+  ROXYGEN_BLOCK@0..274
+    ROXYGEN_SECTION@0..49
+      ROXYGEN_PARAGRAPH@0..46
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..45 "Brace-less sticky cod ..."
+        NEWLINE@45..46 "\n"
+      ROXYGEN_MARKER@46..48 "#'"
+      NEWLINE@48..49 "\n"
+    ROXYGEN_SECTION@49..115
+      ROXYGEN_MARKER@49..51 "#'"
+      WHITESPACE@51..52 " "
+      ROXYGEN_TAG@52..114
+        ROXYGEN_AT@52..53 "@"
+        ROXYGEN_TAG_NAME@53..60 "details"
+        WHITESPACE@60..61 " "
+        ROXYGEN_TEXT@61..114 "A code macro swallows ..."
+      NEWLINE@114..115 "\n"
+    ROXYGEN_SECTION@115..167
+      ROXYGEN_MARKER@115..117 "#'"
+      WHITESPACE@117..118 " "
+      ROXYGEN_TAG@118..166
+        ROXYGEN_AT@118..119 "@"
+        ROXYGEN_TAG_NAME@119..126 "seealso"
+        WHITESPACE@126..127 " "
+        ROXYGEN_TEXT@127..166 "A verbatim macro does ..."
+      NEWLINE@166..167 "\n"
+    ROXYGEN_SECTION@167..249
+      ROXYGEN_MARKER@167..169 "#'"
+      WHITESPACE@169..170 " "
+      ROXYGEN_TAG@170..248
+        ROXYGEN_AT@170..171 "@"
+        ROXYGEN_TAG_NAME@171..175 "note"
+        WHITESPACE@175..176 " "
+        ROXYGEN_TEXT@176..221 "Soft-wrapped past the ..."
+        NEWLINE@221..222 "\n"
+        ROXYGEN_MARKER@222..224 "#'"
+        WHITESPACE@224..227 "   "
+        ROXYGEN_TEXT@227..248 "and a continued line."
+      NEWLINE@248..249 "\n"
+    ROXYGEN_SECTION@249..274
+      ROXYGEN_MARKER@249..251 "#'"
+      WHITESPACE@251..252 " "
+      ROXYGEN_TAG@252..274
+        ROXYGEN_AT@252..253 "@"
+        ROXYGEN_TAG_NAME@253..257 "name"
+        WHITESPACE@257..258 " "
+        ROXYGEN_TEXT@258..274 "braceless_sticky"
+  NEWLINE@274..275 "\n"
+  IDENT@275..279 "NULL"
+  NEWLINE@279..280 "\n"

@@ -309,8 +309,8 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   **VERB** (`verb, url, samp, env, kbd, option, out, eqn, deqn, href, figure, preformatted,
   dontrun, newcommand, renewcommand`) state and every line to *section end* (crossing paragraph
   breaks) becomes a per-line atom; `\item` instead becomes an `(UNKNOWN "\item")` node mid-text.
-  The code/verb sticky set stays literal in projection (backlog); brace-less `\item` is now projected
-  (next trap). **Escape-cluster remainder (backlog):**
+  The code/verb sticky swallow (explicit prose tag, single-paragraph plain-text tail) is now projected
+  (2026-07-08d trap below); brace-less `\item` too. **Escape-cluster remainder (backlog):**
   the sticky-mode flips; an *even*-run braced macro (`\\emph{x}` → literal `\emph` + orphaned
   `(LIST (TEXT "x"))` — needs a bare-brace-group-in-prose model, which also covers md bare `{y}`);
   in-arg parity/escapes (`build_rd_content` ungated); md `\{`/`\}` (probed 2026-07-06f: render bare
@@ -333,6 +333,34 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `braceless_item_projects_as_unknown_node`. **Backlog:** a *braced* `\item{x}` in prose that arity's
   lexer CARVES as a real `\item` macro node (→ `(\item (TEXT "x"))` vs roxygen2's `(UNKNOWN "\item")
   (LIST …)`) — a parser carve-suppression (don't carve `\item` outside a list body); contrived.
+- **Sticky brace-less RCODE/VERB swallow — explicit prose tag, plain-text tail, BOTH modes landed (2026-07-08d), projector-only.**
+  Of `STICKY_BRACELESS_RD_MACROS` minus `item`, a brace-less `\code z`/`\verb z`/… drops parse_Rd's
+  lexer into R-code (`code, donttest, dontshow, testonly` → `RCODE`) or verbatim (the rest → `VERB`)
+  mode; the `\name` is deleted and everything from there to *section end* becomes **one atom per physical
+  source line** (`before \code z here` line-wrapped → `(TEXT "before") (RCODE " z here\n") (RCODE
+  "continued\n")`). New parser `sticky_braceless_code_mode(name)->Option<bool>` (roxygen.rs, Some=RCODE)
+  is the RCODE/VERB split. Projector-only (CST keeps `\code` literal — lossless): `split_sticky_braceless_swallow`
+  (project_rd.rs), a pre-pass at `project_tag_section` entry (explicit prose tags only — excludes `@rawRd`/`@section`;
+  the **intro is out of scope**, its swallow crosses roxygen2's generated field braces, and it never reaches
+  `project_tag_section`). Finds the first parity-gated (odd `\`-run) brace-less trigger via `find_sticky_trigger`,
+  splits the containing `Inline::Text` at the trigger, and emits `Inline::StickyVerbatim{code,lines}` →
+  per-line `(RCODE …)`/`(VERB …)` in `serialize_inlines`. `sticky_swallow_lines` splits the tail on `SOFT_BREAK`;
+  the trigger line keeps its leading ws verbatim, continuation lines strip **one** `#'`-marker space (non-md) or
+  **all** leading ws (md — cmark strips paragraph-continuation indent, engine-probed). **Withhold (leave `\code`
+  literal, its prior projection) for anything but a single-paragraph plain-text tail:** a following non-Text inline
+  (a real macro/list/emphasis still parses *inside* the swallow, splitting the RCODE — `\code z \emph{x}`, and md
+  `*b*` → an `MdEmphasis` node), any `\n` (crosses a paragraph break — arity's model collapses blank-line *counts*,
+  unreconstructable), or a raw `{`/`}` (breaks the section's field braces → leaks a stray `(TEXT …)`), `%` (an Rd
+  line comment), or `\` (nested carve) in the tail; also a same-line `%` *before* the trigger (a non-md comment
+  eats the `\name`). **Formatter (Tenet 1):** a swallowed tail is verbatim-per-line, so reflow — joining a
+  soft-wrap or splitting an overlong line — changes the atom count. `line_has_sticky_swallow` (formatter/roxygen.rs,
+  mirrors `find_sticky_trigger`, mode-independent, conservative: fires even where the projector withholds) bails
+  reflow in both `prose_bails_reflow` and `TagUnit::flush`, keeping physical lines (like the `%`-swallow bail).
+  Curated `rd_braceless_sticky`+`md_braceless_sticky`, fixture `roxygen_braceless_sticky` (CST literal), units
+  `braceless_sticky_{swallows_tail_per_line,md_strips_continuation_indent,withholds_impure_tail}`, format baseline
+  +2 (re-blessed; `@note` continuation stays 2 lines). **Backlog:** cross-paragraph tail (blank-line counts lost);
+  `%`/`{`/`}`/`\`/macro-bearing tails; the **intro-paragraph** swallow (crosses generated field braces —
+  unmodelable at section granularity); `@rawRd`/`@section` swallow.
 - **Bare `{…}` prose groups are Rd `LIST`s, BOTH modes landed (non-md 2026-07-07g, md 2026-07-07h), projector-only.**
   parse_Rd models an *unescaped* brace pair in prose text as a `(LIST …)` node over its parsed contents (a
   macro's own braces live inside its CST node — only *bare* text braces reach here): `a {b c} d` →
@@ -820,7 +848,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 403 matching (all allowlisted), 18 divergent** of 421 pinned.
+corpus (132 `cm-NNN` cases). **Current: 405 matching (all allowlisted), 18 divergent** of 423 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -829,54 +857,53 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (421 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (423 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 138/138 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 140/140 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-08c) — brace-less `\item` → `(UNKNOWN "\item")` node
+## Latest session (2026-07-08d) — sticky brace-less RCODE/VERB swallow (explicit tag, plain-text tail)
 
-Landed the `\item` slice of the **sticky brace-less** target. Of `STICKY_BRACELESS_RD_MACROS`, `\item` is
-the one name whose brace-less misuse is neither a clean text drop (the other known brace-required macros)
-nor a code/verb-mode swallow (`\code`/`\verb`/…): out of list context parse_Rd tags it `(UNKNOWN "\item")`
-and the surrounding text continues (`a \item b` → `(TEXT "a") (UNKNOWN "\item") (TEXT "b")`, both modes,
-oracle-confirmed). CST keeps it literal prose (lossless); new projector pre-pass `split_braceless_items`/
-`split_item_text` (project_rd.rs) runs in `serialize_prose` **after** `group_brace_lists`, gated `group=true`
-(output path only — the `group=false` md `rdComplete` scan reads the raw text, which counts no braces),
-emitting a new `Inline::BracelessItem` → `(UNKNOWN "\item")`. Parity-gated (odd `\`-run only, `\\item`
-literal), name-exact (`rd_macro_name_end == "item"`), recurses into `BraceGroup`/`MdEmphasis`. Running after
-grouping makes `\item{x}` → `(UNKNOWN "\item") (LIST (TEXT "x"))` fall out for free. Full mechanics in the new
-trap above.
+Landed the code/verb slice of the **sticky brace-less** target. A brace-less `\code z`/`\verb z`/… drops
+parse_Rd into R-code/verbatim mode; the `\name` is deleted and everything to *section end* becomes **one
+`RCODE`/`VERB` atom per physical source line** (`before \code z here` → `(TEXT "before") (RCODE " z here\n")`).
+New parser `sticky_braceless_code_mode(name)->Option<bool>` (Some=RCODE: `code/donttest/dontshow/testonly`;
+Some(false)=VERB: the rest; None for `item`). Projector-only (CST keeps `\code` literal — lossless):
+`split_sticky_braceless_swallow` runs at `project_tag_section` entry (explicit prose tags only; the **intro is
+structurally excluded** — its swallow crosses roxygen2's generated field braces, out of scope), finds the first
+parity-gated brace-less trigger (`find_sticky_trigger`), splits the `Inline::Text`, and emits
+`Inline::StickyVerbatim{code,lines}` → per-line atoms. `sticky_swallow_lines` is mode-keyed on continuation
+indent (non-md strips one `#'` space; md strips all — cmark continuation-indent removal, engine-probed).
+**Scope = single-paragraph plain-text tail**; withhold (leave `\code` literal) on a non-Text tail (macros/
+emphasis still parse *inside*, splitting the RCODE), a paragraph break (blank-line counts lost), or raw
+`{ } % \` in the tail (section break / Rd comment / nested carve). **Formatter (Tenet 1):** the swallow makes
+each physical line verbatim, so reflow would change the atom count — `line_has_sticky_swallow` bails reflow in
+`prose_bails_reflow` + `TagUnit::flush` (both modes, conservative), like the `%`-swallow bail. Full mechanics
+in the new trap above.
 
-**Result:** projector **401→403 matching** (all 403 allowlisted, 0 regressions), 18 divergent (unchanged —
-all out-of-scope). `cargo test` green (602 lib + all integration), clippy + fmt clean; curated fixed-point
-**138/138 preserving, strict pass** (ran, 0 blocked); format baseline **+2 additive**
-(`curated/{rd,md}_braceless_item`, re-blessed + reviewed — formatter unchanged, diff was 2 new keys with
-`\item` preserved literally + prose reflowed per Tenet 1). New: curated projector cases
-`{rd,md}_braceless_item` (+pins +allowlist), parser fixture `roxygen_braceless_item` (CST literal —
-projection-only), unit test `braceless_item_projects_as_unknown_node`.
+**Result:** projector **403→405 matching** (all 405 allowlisted, 0 regressions), 18 divergent (unchanged —
+all out-of-scope). `cargo test` green (605 lib + all integration), clippy + fmt clean; curated fixed-point
+**140/140 preserving, strict pass** (ran, 0 blocked); format baseline **+2** (`curated/{rd,md}_braceless_sticky`,
+re-blessed + reviewed — only 2 new keys; the `@note` soft-wrap continuation stays 2 lines via the new reflow
+bail, and I verified `roxygen2(format(x)) == roxygen2(x)` holds). New: curated projector cases
+`{rd,md}_braceless_sticky` (+pins +allowlist), parser fixture `roxygen_braceless_sticky` (CST literal —
+projection-only), units `braceless_sticky_{swallows_tail_per_line,md_strips_continuation_indent,withholds_impure_tail}`.
 
-**Ranked next target:** **sticky brace-less RCODE/VERB mode-flips** (a brace-less `\code z`/`\verb z`/… leaves
-the arg lexer in RCODE/VERB state; every physical line from there to *section end* becomes a per-line
-`(RCODE …)`/`(VERB …)` atom, crossing paragraph breaks — the RCODE names `code/donttest/dontshow/testonly`,
-the rest VERB). **Newly characterized complications** (probe this session): (1) the tail is NOT pure verbatim —
-a *braced* macro after the trigger still parses (`before \code z \emph{x} after` →
-`(RCODE " z ") (\emph (TEXT "x")) (RCODE " after\n")`), so only a **plain-text tail** is a clean per-line
-split; withhold (or handle later) a tail with a real macro node/heading/list. (2) An **explicit tag** swallow
-stays within its tag (`@details \code`↛`@seealso`), but an **intro-paragraph** swallow crosses roxygen2's
-generated field braces (`Title \code z here` → `(\title (TEXT "Title") (RCODE " z here}\n") (RCODE "{\n")
-(RCODE "Desc para\n"))` — the `}`/`{` scaffolding leaks in) — **unmodelable at section granularity, out of
-scope**. So target the **explicit prose tag, plain-text tail** case; the swallow is bounded by the section
-`body` (all paragraphs joined). Then **braced `\item{x}` in prose** (parser carve-suppression — don't carve
-`\item` outside a list; contrived), **an odd-run `\%` inside a macro arg**, and the **escape-cluster
-remainder** (even-run braced macro `\\emph{x}` → literal `\emph` + orphaned `(LIST (TEXT "x"))`). Smaller list
-follow-ups (no-blank marker-type split, blank + content-column prose folding (e4), block macro folding into an
-item, quote-lazy `===`). Formatter upgrade: reflow-rejoin for cross-line code spans (needs a fence-at-line-start
-guard). The 18 projector divergences remain out-of-scope.
+**Ranked next target:** the **cross-paragraph / impure-tail** sticky-swallow extensions are all backlog (a
+cross-paragraph tail needs blank-line counts arity's paragraph model drops; a `%`/`{`/`}`/`\`/macro-bearing tail,
+and the **intro-paragraph** swallow, are unmodelable at section granularity). Better-scoped next picks:
+**braced `\item{x}` in prose** (parser carve-suppression — don't carve `\item` outside a list; contrived), **an
+odd-run `\%` inside a macro arg**, and the **escape-cluster remainder** (even-run braced macro `\\emph{x}` →
+literal `\emph` + orphaned `(LIST (TEXT "x"))`). Smaller list follow-ups (no-blank marker-type split, blank +
+content-column prose folding (e4), block macro folding into an item, quote-lazy `===`). Formatter upgrade:
+reflow-rejoin for cross-line code spans (needs a fence-at-line-start guard). The 18 projector divergences remain
+out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-08c** — brace-less `\item` → `(UNKNOWN "\item")` node, both modes (`split_braceless_items`/`split_item_text` pre-pass in `serialize_prose` after `group_brace_lists`, gated `group=true`; `Inline::BracelessItem`; parity-gated, name-exact, recurses into `BraceGroup`/`MdEmphasis`; `\item{x}` → `(UNKNOWN "\item") (LIST …)` falls out). Curated `{rd,md}_braceless_item`, fixture `roxygen_braceless_item`, unit `braceless_item_projects_as_unknown_node`. 401→403.
 
 - **2026-07-08b** — bare `{…}` groups inside a *markdown heading title* → Rd `(LIST …)`, `@md` (`render_heading_frame` folds the frame `title` via `group_brace_lists` before `serialize_inlines`; CST unchanged, projector-only). Curated `md_heading_brace_group`, fixture `roxygen_md_heading_brace_group`, unit `heading_title_bare_groups_project_as_lists`. 400→401.
 - **2026-07-08** — bare `{…}` groups inside a *prose macro arg* → Rd `(LIST …)`, both modes (`serialize_macro` collects per-arg `Vec<ArgPiece>` + `finalize_macro_arg`/`group_arg_pieces`; verbatim never groups, structural GRP-wraps; md branch + `serialize_md_structural_macro` run `group_brace_lists` on resolved arg inlines). Curated `{rd,md}_macro_arg_brace_group`, fixture `roxygen_macro_arg_brace_group`, unit `macro_arg_bare_groups_project_as_lists`. 398→400.
