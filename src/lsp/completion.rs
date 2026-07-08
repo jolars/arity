@@ -178,8 +178,7 @@ fn member_context(root: &SyntaxNode, offset: TextSize) -> Option<(SmolStr, bool,
     // Partial name: the cursor is on the RHS name of a `pkg::name` access.
     if let Some(token) = pick_name_token(root, offset) {
         for ancestor in token.parent_ancestors() {
-            if ancestor.kind() == SyntaxKind::BINARY_EXPR
-                && let Some(access) = BinaryExpr::cast(ancestor).and_then(|b| b.namespace_access())
+            if let Some(access) = BinaryExpr::cast(ancestor).and_then(|b| b.namespace_access())
                 && access.name_token == token
             {
                 return Some((

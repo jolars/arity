@@ -83,10 +83,7 @@ fn enclosing_call(root: &SyntaxNode, offset: TextSize) -> Option<CallExpr> {
         TokenAtOffset::Single(t) => t,
         TokenAtOffset::Between(_left, right) => right,
     };
-    let call = token
-        .parent_ancestors()
-        .find(|n| n.kind() == SyntaxKind::CALL_EXPR)
-        .and_then(CallExpr::cast)?;
+    let call = token.parent_ancestors().find_map(CallExpr::cast)?;
     // Reject a cursor past the closing paren: signature help is for *inside* the
     // call. An unclosed call (no `)`) has no such bound and always qualifies.
     if let Some(rparen) = call.arg_list().and_then(|al| {

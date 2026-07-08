@@ -85,8 +85,7 @@ pub(crate) fn hover_from_node(
 pub(crate) fn symbol_query_at(root: &SyntaxNode, offset: TextSize) -> Option<SymbolQuery> {
     let token = pick_name_token(root, offset)?;
     for ancestor in token.parent_ancestors() {
-        if ancestor.kind() == SyntaxKind::BINARY_EXPR
-            && let Some(access) = BinaryExpr::cast(ancestor).and_then(|b| b.namespace_access())
+        if let Some(access) = BinaryExpr::cast(ancestor).and_then(|b| b.namespace_access())
             && access.name_token == token
         {
             return Some(SymbolQuery::Namespaced {

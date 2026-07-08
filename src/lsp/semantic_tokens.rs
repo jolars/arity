@@ -161,20 +161,16 @@ fn classify_structural(tok: &SyntaxToken<RLanguage>) -> Option<(TokKind, u32)> {
                 .then_some((TokKind::Function, 0))
         }
         SyntaxKind::BINARY_EXPR => {
-            let op = parent.children_with_tokens().find_map(|e| match e {
-                NodeOrToken::Token(t)
-                    if matches!(
-                        t.kind(),
-                        SyntaxKind::COLON2
-                            | SyntaxKind::COLON3
-                            | SyntaxKind::DOLLAR
-                            | SyntaxKind::AT
-                    ) =>
-                {
-                    Some(t)
-                }
-                _ => None,
-            })?;
+            // Only the access operators mark a structural position; other binary
+            // operators leave both operands as ordinary reads. Access operators
+            // bind tightest, so `BinaryExpr::op` is the access token when present.
+            let op = BinaryExpr::cast(parent)?.op()?;
+            if !matches!(
+                op.kind(),
+                SyntaxKind::COLON2 | SyntaxKind::COLON3 | SyntaxKind::DOLLAR | SyntaxKind::AT
+            ) {
+                return None;
+            }
             let before_op = range.start() < op.text_range().start();
             match op.kind() {
                 // `pkg::name`: the package (LHS) is a namespace; the bare name
