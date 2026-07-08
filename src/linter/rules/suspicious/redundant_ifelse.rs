@@ -3,7 +3,7 @@
 
 use rowan::ast::AstNode as _;
 
-use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -78,7 +78,7 @@ impl Rule for RedundantIfelse {
         };
         sink.push(Diagnostic {
             rule: "redundant-ifelse",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range: r,
             message: ViolationData::new(

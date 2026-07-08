@@ -322,6 +322,25 @@ concern, as `all_rule_ids()` already is).
 - [x] **Registration single source of truth** (landed). `all_rules()` is now
       the sole list; `ALL_RULE_IDS` is replaced by `all_rule_ids()`, which
       derives the valid-ID set from `all_rules()` so the two can't drift.
+- [x] **Severity is engine-stamped, not per-finding** (landed). Rules build
+      findings with a placeholder severity (`Default::default()`, like `path`);
+      `run_rules` stamps each with its rule's `default_severity()`. This makes
+      the override live (it was previously dead—rules hardcoded the literal, so
+      overriding `default_severity()` did nothing) and is the seam for a future
+      per-rule severity config override (`config.unwrap_or(default_severity())`).
+- [x] **Rule-set-derived dispatch state precomputed once** (landed).
+      `ResolvedRules` now carries the node-dispatch table (`by_kind`), the
+      `any_node_rules` flag, and the severity map, all built in `resolve` instead
+      of rebuilt per file in `run_rules`. The LSP lint worker caches the
+      `Arc<ResolvedRules>` per config, so resolution (registry instantiation +
+      table build) leaves the per-keystroke path; `resolve` also instantiates the
+      registry once rather than twice.
+- [ ] *Speculative micro-opt (deferred):* `resolves_to_base` does a linear
+      `model.idents().iter().any(...)` scan for the callee's shadow check. It runs
+      only after a rule fully shape-matches (`any(is.na(x))`, unreachable
+      `return`/`stop`), so the call count is tiny and it is not currently hot—not
+      worth an offset->ident index yet. If it ever becomes hot, resolve via the
+      covering element at the callee offset instead of scanning.
 
 #### Phase 1—High-signal, purely syntactic, safe fixes (`syn`)
 

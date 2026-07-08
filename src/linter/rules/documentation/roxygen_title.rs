@@ -15,7 +15,7 @@
 use rowan::ast::AstNode as _;
 
 use crate::ast::RoxygenBlock;
-use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{documented_function, inherits_docs, wants_rd_topic};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -77,7 +77,7 @@ impl Rule for RoxygenTitle {
         };
         sink.push(Diagnostic {
             rule: "roxygen-title",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range: marker.text_range(),
             message: ViolationData::new("roxygen-title", "documentation block has no title")

@@ -2,7 +2,7 @@
 //! a mistake for `is.na(x)`. Only the `==` form is rewritten; `!=` is left for a
 //! separate rule.
 
-use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -56,7 +56,7 @@ impl Rule for EqualsNa {
         );
         sink.push(Diagnostic {
             rule: "equals-na",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range: r,
             message: ViolationData::new(

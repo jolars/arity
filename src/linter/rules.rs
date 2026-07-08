@@ -16,6 +16,7 @@
 //!    valid rule IDs ([`all_rule_ids`]) is derived from it, so there is no
 //!    second list to keep in sync.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use rowan::ast::AstNode as _;
@@ -211,12 +212,53 @@ fn origin_is_default(origin: PackageOrigin) -> bool {
     pkg.is_some_and(|p| crate::semantic::symbols::default_packages().contains(&p))
 }
 
-/// Configured set of rules and severities for a single linting run.
+/// Configured set of rules for a single linting run, plus the derived dispatch
+/// state that only depends on the rule set: the node-dispatch table and each
+/// rule's stamped severity. Both are computed once here (in [`from_rules`], via
+/// [`resolve`]) rather than rebuilt per file in [`run_rules`], so reusing one
+/// `ResolvedRules` across many files — the CLI batch pass, and the LSP lint
+/// worker, which caches it across keystrokes — pays that cost only once.
+///
+/// [`from_rules`]: ResolvedRules::from_rules
+/// [`resolve`]: ResolvedRules::resolve
 pub struct ResolvedRules {
     pub rules: Vec<Box<dyn Rule>>,
+    /// Node-dispatch table: `kind as usize` -> indices into `rules` of the rules
+    /// that subscribed to that kind via [`Rule::interests`]. `SyntaxKind` is a
+    /// contiguous `#[repr(u16)]`, so a flat Vec indexed by kind beats a hash map.
+    by_kind: Vec<Vec<usize>>,
+    /// Whether any rule subscribed to a node kind at all — lets [`run_rules`]
+    /// skip the whole-tree traversal when every rule is `check_file`-only.
+    any_node_rules: bool,
+    /// Each rule ID's [`Rule::default_severity`], so the severity-stamping pass
+    /// is an `O(1)` lookup keyed by the finding's rule ID.
+    severities: HashMap<&'static str, Severity>,
 }
 
 impl ResolvedRules {
+    /// Build the derived dispatch state (`by_kind`, `severities`) for a chosen
+    /// rule set. The single place that knows how a rule set maps to dispatch.
+    fn from_rules(rules: Vec<Box<dyn Rule>>) -> Self {
+        let mut by_kind: Vec<Vec<usize>> = vec![Vec::new(); SyntaxKind::COUNT];
+        let mut any_node_rules = false;
+        for (i, rule) in rules.iter().enumerate() {
+            for kind in rule.interests() {
+                by_kind[*kind as usize].push(i);
+                any_node_rules = true;
+            }
+        }
+        let severities = rules
+            .iter()
+            .map(|r| (r.id(), r.default_severity()))
+            .collect();
+        Self {
+            rules,
+            by_kind,
+            any_node_rules,
+            severities,
+        }
+    }
+
     /// Build the rule set honoring `select` / `ignore` from `LintConfig`.
     ///
     /// Resolution order:
@@ -226,25 +268,25 @@ impl ResolvedRules {
     /// 3. Unknown rule IDs in `select` or `ignore` are returned via the second
     ///    element of the tuple so the caller can surface them.
     pub fn resolve(select: Option<&[String]>, ignore: &[String]) -> (Self, Vec<String>) {
-        let known = all_rule_ids();
+        // Instantiate the registry once and derive the known-ID set from it —
+        // rather than calling `all_rule_ids()` (a second `all_rules()`) — since
+        // this runs per file on the CLI batch pass.
+        let all = all_rules();
         let mut unknown = Vec::new();
         for id in select.iter().flat_map(|v| v.iter()).chain(ignore.iter()) {
-            if !known.contains(&id.as_str()) {
+            if !all.iter().any(|r| r.id() == id.as_str()) {
                 unknown.push(id.clone());
             }
         }
         let mut chosen: Vec<Box<dyn Rule>> = match select {
-            Some(picks) => all_rules()
+            Some(picks) => all
                 .into_iter()
                 .filter(|r| picks.iter().any(|p| p == r.id()))
                 .collect(),
-            None => all_rules()
-                .into_iter()
-                .filter(|r| r.default_enabled())
-                .collect(),
+            None => all.into_iter().filter(|r| r.default_enabled()).collect(),
         };
         chosen.retain(|r| !ignore.iter().any(|i| i == r.id()));
-        (Self { rules: chosen }, unknown)
+        (Self::from_rules(chosen), unknown)
     }
 
     pub fn default_set() -> Self {
@@ -255,8 +297,12 @@ impl ResolvedRules {
 
 /// Run every configured rule against a single file's CST + model. Diagnostics
 /// are stably sorted by `(start, end, rule)` before returning.
+///
+/// The dispatch table (`resolved.by_kind`) and severity map are precomputed on
+/// `resolved`, so this is on the hot path only for the per-file traversal and
+/// the rules' own work, not for rebuilding the rule-set-derived state.
 pub fn run_rules(
-    rules: &[Box<dyn Rule>],
+    resolved: &ResolvedRules,
     path: &Path,
     root: &SyntaxNode,
     model: &SemanticModel,
@@ -272,26 +318,15 @@ pub fn run_rules(
         project,
         resolution,
     };
+    let rules = &resolved.rules;
     let mut all = Vec::new();
-
-    // Build the node-dispatch table: kind discriminant -> indices of subscribed
-    // rules. `SyntaxKind` is a contiguous `#[repr(u16)]`, so a flat Vec indexed
-    // by `kind as usize` beats a hash map.
-    let mut by_kind: Vec<Vec<usize>> = vec![Vec::new(); SyntaxKind::COUNT];
-    let mut any_node_rules = false;
-    for (i, rule) in rules.iter().enumerate() {
-        for kind in rule.interests() {
-            by_kind[*kind as usize].push(i);
-            any_node_rules = true;
-        }
-    }
 
     // Single shared traversal feeding every node-shape rule. Visits tokens too
     // (`descendants_with_tokens`) so token-level rules can subscribe to e.g.
     // `IDENT` or `COMMENT`.
-    if any_node_rules {
+    if resolved.any_node_rules {
         for el in root.descendants_with_tokens() {
-            for &i in &by_kind[el.kind() as usize] {
+            for &i in &resolved.by_kind[el.kind() as usize] {
                 rules[i].check(&el, &ctx, &mut all);
             }
         }
@@ -300,6 +335,19 @@ pub fn run_rules(
     // Whole-file pass for model-/comment-driven rules.
     for rule in rules {
         rule.check_file(&ctx, &mut all);
+    }
+
+    // Stamp each finding's severity from its rule's `default_severity()`. Rules
+    // build findings with a placeholder severity (`Default::default()`); the
+    // authoritative value lives on the rule, so overriding `default_severity()`
+    // actually takes effect here (and is the natural seam for a future per-rule
+    // severity config override). Keyed by rule ID against the parallel `rules`
+    // /`severities` vecs — a whole-file pass may interleave findings from
+    // several rules, so post-hoc lookup is simpler than tracking emit order.
+    for d in &mut all {
+        if let Some(&sev) = resolved.severities.get(d.rule) {
+            d.severity = sev;
+        }
     }
 
     all.sort_by(|a, b| {
@@ -322,6 +370,55 @@ pub fn default_symbol_provider() -> CompositeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::linter::diagnostic::ViolationData;
+
+    /// A rule that subscribes to every `CALL_EXPR` and emits a finding carrying
+    /// the *placeholder* severity (`Default::default()` == `Warning`). Its
+    /// `default_severity` is overridden to `Error`, so a run that respects the
+    /// override must stamp `Error` — proving `default_severity` is live, not the
+    /// dead trait method it used to be.
+    struct FakeError;
+    impl Rule for FakeError {
+        fn id(&self) -> &'static str {
+            "fake-error"
+        }
+        fn default_severity(&self) -> Severity {
+            Severity::Error
+        }
+        fn interests(&self) -> &'static [SyntaxKind] {
+            &[SyntaxKind::CALL_EXPR]
+        }
+        fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+            sink.push(Diagnostic {
+                rule: "fake-error",
+                severity: Default::default(),
+                path: Default::default(),
+                range: el.text_range(),
+                message: ViolationData::new("fake-error", "boom"),
+                fix: None,
+            });
+        }
+    }
+
+    #[test]
+    fn run_rules_stamps_default_severity() {
+        let root = crate::parser::parse("f(1)").cst;
+        let model = SemanticModel::build(&root);
+        let symbols = crate::semantic::StaticBaseR::new();
+        let resolved = ResolvedRules::from_rules(vec![Box::new(FakeError)]);
+        let diags = run_rules(
+            &resolved,
+            Path::new("test.R"),
+            &root,
+            &model,
+            &symbols,
+            None,
+            None,
+        );
+        assert_eq!(diags.len(), 1);
+        // Emitted with the `Warning` placeholder; the override stamps `Error`.
+        assert_eq!(diags[0].severity, Severity::Error);
+    }
 
     /// `resolves_to_base` for the first `CallExpr` in `src`, over the base-only
     /// `StaticBaseR` provider (the single-file / LSP path).

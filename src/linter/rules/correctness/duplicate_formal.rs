@@ -49,7 +49,7 @@ impl Rule for DuplicateFormal {
             if seen.insert(param.name.to_string(), ()).is_some() {
                 sink.push(Diagnostic {
                     rule: "duplicate-formal",
-                    severity: Severity::Error,
+                    severity: Default::default(),
                     path: Default::default(),
                     range: param.name_token.text_range(),
                     message: ViolationData::new(

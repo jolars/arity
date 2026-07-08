@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use rowan::ast::AstNode as _;
 
 use crate::ast::CallExpr;
-use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -59,7 +59,7 @@ impl Rule for DuplicatedArguments {
             if !seen.insert(name.to_string()) {
                 sink.push(Diagnostic {
                     rule: "duplicated-arguments",
-                    severity: Severity::Warning,
+                    severity: Default::default(),
                     path: Default::default(),
                     range: token.text_range(),
                     message: ViolationData::new(

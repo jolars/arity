@@ -9,7 +9,7 @@
 use rowan::ast::AstNode as _;
 
 use crate::ast::RoxygenTag;
-use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::is_known_tag;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -66,7 +66,7 @@ impl Rule for RoxygenUnknownTag {
         let range = rowan::TextRange::new(at.text_range().start(), name_token.text_range().end());
         sink.push(Diagnostic {
             rule: "roxygen-unknown-tag",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range,
             message: ViolationData::new(

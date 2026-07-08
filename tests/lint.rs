@@ -712,8 +712,9 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     let mut db = IncrementalDatabase::default();
     let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
     seed_workspace_for(&mut db, &b, active, &ExcludeFilter::none());
-    let prepared = prepare_document_in_project(&mut db, &b, active, &cfg)
-        .unwrap()
+    let (rules, _) =
+        arity::linter::rules::ResolvedRules::resolve(cfg.select.as_deref(), &cfg.ignore);
+    let prepared = prepare_document_in_project(&mut db, &b, active, std::sync::Arc::new(rules))
         .expect("clean file should prepare");
     let snapshot = db.snapshot();
     let got = analyze_prepared(&snapshot, &prepared, &provider);
@@ -724,10 +725,11 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
 
 #[test]
 fn prepare_returns_none_on_parse_error() {
-    // A parse-erroring active buffer skips analysis entirely (Ok(None)), mirroring
+    // A parse-erroring active buffer skips analysis entirely (None), mirroring
     // the wrapper's empty-diagnostics early return.
     use arity::incremental::IncrementalDatabase;
     use arity::linter::prepare_document_in_project;
+    use arity::linter::rules::ResolvedRules;
 
     let dir = tempdir().expect("failed to create temp dir");
     let f = dir.path().join("broken.R");
@@ -735,9 +737,9 @@ fn prepare_returns_none_on_parse_error() {
 
     let mut db = IncrementalDatabase::default();
     let active = db.upsert_file(&f, std::fs::read_to_string(&f).unwrap());
-    let prepared =
-        prepare_document_in_project(&mut db, &f, active, &LintConfig::default()).unwrap();
-    assert!(prepared.is_none(), "parse error should yield Ok(None)");
+    let rules = std::sync::Arc::new(ResolvedRules::default_set());
+    let prepared = prepare_document_in_project(&mut db, &f, active, rules);
+    assert!(prepared.is_none(), "parse error should yield None");
 }
 
 #[test]

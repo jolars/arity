@@ -13,7 +13,7 @@
 //! [`SemanticModel::idents`]: crate::semantic::SemanticModel::idents
 //! [`resolve_local`]: crate::semantic::SemanticModel::resolve_local
 
-use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext};
 
 pub struct TrueFalseSymbol;
@@ -56,7 +56,7 @@ impl Rule for TrueFalseSymbol {
             let r = ident.range;
             sink.push(Diagnostic {
                 rule: "true-false-symbol",
-                severity: Severity::Warning,
+                severity: Default::default(),
                 path: Default::default(),
                 range: r,
                 message: ViolationData::new(

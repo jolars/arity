@@ -58,6 +58,7 @@ pub(crate) fn spawn_lint_thread(
                 pending: HashMap::new(),
                 read_spawner,
                 index_pool: TaskPool::new("arity-index", 1),
+                resolved_rules: None,
             };
             worker.run(&lint_rx, &read_rx, &build_rx, &remote_rx, &done_rx);
         })
@@ -150,6 +151,14 @@ pub(crate) struct LintWorker {
     /// Single-thread pool that isolates background package indexing — the one
     /// unbounded-duration job — from the read pool.
     index_pool: TaskPool,
+    /// The resolved rule set, cached across keystrokes and rebuilt only when the
+    /// lint config changes. Resolving instantiates the rule registry and derives
+    /// the dispatch table + severity map ([`ResolvedRules`]); doing it once per
+    /// config keeps that off the per-keystroke path. Shared into each
+    /// [`prepare_document_in_project`](crate::linter::check::prepare_document_in_project)
+    /// as an `Arc`. `None` until the first lint; the tuple's first element is the
+    /// config it was resolved for.
+    resolved_rules: Option<(LintConfig, Arc<ResolvedRules>)>,
 }
 
 impl LintWorker {
@@ -309,6 +318,25 @@ impl LintWorker {
         }
     }
 
+    /// Resolve the rule set for `config`, reusing the cached `Arc` when the config
+    /// is unchanged (the common keystroke case). On the first lint or a config
+    /// change it re-resolves and re-caches; an unknown rule ID surfaces as `Err`
+    /// and is *not* cached, so a corrected config on the next lint re-resolves.
+    fn resolved_rules(&mut self, config: &LintConfig) -> Result<Arc<ResolvedRules>, LintError> {
+        if let Some((cfg, rules)) = &self.resolved_rules
+            && cfg == config
+        {
+            return Ok(Arc::clone(rules));
+        }
+        let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+        if let Some(rule) = unknown.into_iter().next() {
+            return Err(LintError::UnknownRule { rule });
+        }
+        let rules = Arc::new(rules);
+        self.resolved_rules = Some((config.clone(), Arc::clone(&rules)));
+        Ok(rules)
+    }
+
     /// Run one lint: the write-phase (`&mut db`, on this thread) then the
     /// read-phase analyze on the read pool holding a db clone. Returning to
     /// `select!` right after spawning keeps reads responsive (problem 2) and lets
@@ -340,23 +368,27 @@ impl LintWorker {
             let exclude = crate::linter::check::resolve_exclude_at(&anchor);
             crate::linter::check::seed_workspace_for(&mut self.db, &req.path, active, &exclude);
         }
+        // Resolve the rule set (cached across keystrokes; rebuilt only on a config
+        // change). An unknown-rule config error clears stale diagnostics and runs
+        // no worker, leaving the slot free.
+        let rules = match self.resolved_rules(&req.lint_config) {
+            Ok(rules) => rules,
+            Err(_) => {
+                self.publish_empty(&req);
+                return false;
+            }
+        };
         let prepared = match crate::linter::check::prepare_document_in_project(
             &mut self.db,
             &req.path,
             active,
-            &req.lint_config,
+            rules,
         ) {
-            Ok(Some(prepared)) => prepared,
-            // Parse errors (Ok(None)): the rules can't run, but the parser's
+            Some(prepared) => prepared,
+            // Parse errors (None): the rules can't run, but the parser's
             // diagnostics are still published so the editor shows the error.
-            Ok(None) => {
+            None => {
                 self.publish_parse_diagnostics(&req, active);
-                return false;
-            }
-            // Unknown-rule config error (Err): clear any stale diagnostics and run
-            // no worker. Leaves the slot free.
-            Err(_) => {
-                self.publish_empty(&req);
                 return false;
             }
         };

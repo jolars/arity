@@ -10,7 +10,7 @@
 //! guard is required. The fix is withheld when a comment in the operand would
 //! be dropped.
 
-use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
@@ -96,7 +96,7 @@ impl Rule for ComparisonNegation {
         };
         sink.push(Diagnostic {
             rule: "comparison-negation",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range: r,
             message: ViolationData::new(

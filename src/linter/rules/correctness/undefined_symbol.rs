@@ -146,7 +146,7 @@ impl UndefinedSymbol {
 fn undefined(name: &str, range: rowan::TextRange) -> Diagnostic {
     Diagnostic {
         rule: "undefined-symbol",
-        severity: Severity::Warning,
+        severity: Default::default(),
         path: Default::default(),
         range,
         message: ViolationData::new(

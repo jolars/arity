@@ -53,7 +53,7 @@ impl Rule for UnusedBinding {
                     let fix = deletion_fix(ctx.root, &src, &b.name, b.def_range);
                     Diagnostic {
                         rule: "unused-binding",
-                        severity: Severity::Warning,
+                        severity: Default::default(),
                         path: Default::default(),
                         range: b.def_range,
                         message: ViolationData::new(

@@ -6,9 +6,19 @@ use rowan::TextRange;
 use serde::Serialize;
 
 /// Severity levels for a diagnostic. Mirrors LSP's severity enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+///
+/// The `Default` is `Warning` — but a diagnostic's severity is not chosen at
+/// its construction site. Rules build findings with `Default::default()` as a
+/// placeholder (the same idiom the `path` field uses) and [`run_rules`] stamps
+/// each finding with its rule's [`Rule::default_severity`]. The default here is
+/// only a sentinel; the stamping pass always overwrites it.
+///
+/// [`run_rules`]: crate::linter::rules::run_rules
+/// [`Rule::default_severity`]: crate::linter::rules::Rule::default_severity
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Severity {
     Error,
+    #[default]
     Warning,
     Info,
     Hint,

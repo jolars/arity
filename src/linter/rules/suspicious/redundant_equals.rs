@@ -1,7 +1,7 @@
 //! `redundant-equals`: comparing to a logical literal is redundant —
 //! `x == TRUE` is just `x`, and `x == FALSE` is `!x`.
 
-use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -73,7 +73,7 @@ impl Rule for RedundantEquals {
         };
         sink.push(Diagnostic {
             rule: "redundant-equals",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range: r,
             message: ViolationData::new(

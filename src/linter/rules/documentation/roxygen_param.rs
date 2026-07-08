@@ -16,7 +16,7 @@ use rowan::TextRange;
 use rowan::ast::AstNode as _;
 
 use crate::ast::{RoxygenBlock, RoxygenTag};
-use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{ParamDoc, documented_function, inherits_docs, param_doc};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -156,7 +156,7 @@ impl Rule for RoxygenParam {
 fn diagnostic(range: TextRange, body: String, suggestion: &str) -> Diagnostic {
     Diagnostic {
         rule: "roxygen-param",
-        severity: Severity::Warning,
+        severity: Default::default(),
         path: Default::default(),
         range,
         message: ViolationData::new("roxygen-param", body).with_suggestion(suggestion),

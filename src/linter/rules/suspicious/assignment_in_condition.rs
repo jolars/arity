@@ -59,7 +59,7 @@ impl Rule for AssignmentInCondition {
                 });
             sink.push(Diagnostic {
                 rule: "assignment-in-condition",
-                severity: Severity::Warning,
+                severity: Default::default(),
                 path: Default::default(),
                 range: assign.text_range(),
                 message: ViolationData::new(

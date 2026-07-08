@@ -12,7 +12,7 @@
 use rowan::ast::AstNode as _;
 
 use crate::ast::RoxygenBlock;
-use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{documented_function, inherits_docs};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -66,7 +66,7 @@ impl Rule for RoxygenReturn {
         }
         sink.push(Diagnostic {
             rule: "roxygen-return",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range: export.syntax().text_range(),
             message: ViolationData::new(

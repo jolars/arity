@@ -17,7 +17,7 @@ use rowan::ast::AstNode as _;
 use rowan::{TextRange, TextSize};
 
 use crate::ast::RoxygenBlock;
-use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{ExtractedCode, extract_examples};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::parser::parse;
@@ -61,7 +61,7 @@ fn check_snippet(snippet: &ExtractedCode, what: &str, sink: &mut Vec<Diagnostic>
     );
     sink.push(Diagnostic {
         rule: "roxygen-examples",
-        severity: Severity::Warning,
+        severity: Default::default(),
         path: Default::default(),
         range: snippet.map_range(extracted),
         message: ViolationData::new(

@@ -29,7 +29,7 @@
 
 use rowan::TextRange;
 
-use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext, matchers};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
@@ -117,7 +117,7 @@ impl Rule for UnreachableCode {
 
         sink.push(Diagnostic {
             rule: "unreachable-code",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range: region,
             message: ViolationData::new(

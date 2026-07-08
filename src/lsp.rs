@@ -121,7 +121,8 @@ use crate::ast::{ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, Fu
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
 use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
-use crate::linter::{Diagnostic, Severity};
+use crate::linter::rules::ResolvedRules;
+use crate::linter::{Diagnostic, LintError, Severity};
 use crate::parser::{diff_edit, map_range_through_edit, parse};
 use crate::project::DefKind;
 use crate::rindex::build::{BuildOptions, build_index};

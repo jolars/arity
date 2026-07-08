@@ -12,7 +12,7 @@
 use rowan::ast::AstNode as _;
 
 use crate::ast::WhileExpr;
-use crate::linter::diagnostic::{Diagnostic, Fix, Severity, ViolationData};
+use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -83,7 +83,7 @@ impl Rule for Repeat {
 
         sink.push(Diagnostic {
             rule: "repeat",
-            severity: Severity::Warning,
+            severity: Default::default(),
             path: Default::default(),
             range,
             message: ViolationData::new(

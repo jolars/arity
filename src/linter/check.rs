@@ -5,6 +5,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rowan::{TextRange, TextSize};
 
@@ -310,13 +311,7 @@ fn lint_parsed_file(
     let root_node = parsed_tree_root(db, file);
     let model = semantic_model(db, file);
     let mut diagnostics = run_rules(
-        &rules.rules,
-        path,
-        &root_node,
-        model,
-        provider,
-        project,
-        resolution,
+        rules, path, &root_node, model, provider, project, resolution,
     );
     let suppress = SuppressionMap::build(&root_node);
     diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));
@@ -360,7 +355,10 @@ pub fn check_tracked_file(
 /// where it can be canceled by a fresher edit (see `src/lsp.rs`).
 pub struct PreparedProject {
     active: SourceFile,
-    rules: ResolvedRules,
+    /// The resolved rule set, shared (not rebuilt) across lints. The LSP lint
+    /// worker caches one `Arc` per lint config and hands a clone to each
+    /// keystroke's prepare; the read-phase borrows through it.
+    rules: Arc<ResolvedRules>,
     /// Cleanly-parsing project members (incl. `active`), with their tracked
     /// inputs and package roots; files with parse diagnostics are dropped, as
     /// before. Plain owned data — *not* an interned [`Project`] — because the
@@ -381,22 +379,20 @@ pub struct PreparedProject {
 /// and reads the relevant `NAMESPACE` files. `active` must already be tracked in
 /// `db` carrying the live editor buffer.
 ///
-/// Returns `Ok(None)` when the active file has parse diagnostics (the caller
-/// publishes no findings, as the old early-return did). All `db` *writes*
-/// (`upsert_file`) happen here; the returned [`PreparedProject`] is then consumed
-/// by the read-only [`analyze_prepared`].
+/// Returns `None` when the active file has parse diagnostics (the caller
+/// publishes no findings, as the old early-return did). The `rules` are resolved
+/// by the caller (so the LSP can cache them across keystrokes) and shared into
+/// the returned [`PreparedProject`]. All `db` *writes* (`upsert_file`) happen
+/// here; the `PreparedProject` is then consumed by the read-only
+/// [`analyze_prepared`].
 pub fn prepare_document_in_project(
     db: &mut IncrementalDatabase,
     _path: &Path,
     active: SourceFile,
-    config: &LintConfig,
-) -> Result<Option<PreparedProject>, LintError> {
-    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
-    if let Some(rule) = unknown.into_iter().next() {
-        return Err(LintError::UnknownRule { rule });
-    }
+    rules: Arc<ResolvedRules>,
+) -> Option<PreparedProject> {
     if !db.parse_diagnostics(active).is_empty() {
-        return Ok(None);
+        return None;
     }
 
     // Membership comes from the explicit `Workspace` file-set (seeded by the
@@ -410,13 +406,13 @@ pub fn prepare_document_in_project(
     let namespaces = project.namespaces(&*db).clone();
     let collations = project.collations(&*db).clone();
 
-    Ok(Some(PreparedProject {
+    Some(PreparedProject {
         active,
         rules,
         members,
         namespaces,
         collations,
-    }))
+    })
 }
 
 /// Fold the project enclosing `path` — its R package root, else its directory —
@@ -542,9 +538,13 @@ pub fn check_document_in_project(
     config: &LintConfig,
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
+    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+    if let Some(rule) = unknown.into_iter().next() {
+        return Err(LintError::UnknownRule { rule });
+    }
     let exclude = resolve_exclude_at(path.parent().unwrap_or(path));
     seed_workspace_for(db, path, active, &exclude);
-    match prepare_document_in_project(db, path, active, config)? {
+    match prepare_document_in_project(db, path, active, Arc::new(rules)) {
         Some(prepared) => {
             let analysis = db.snapshot();
             Ok(analyze_prepared(&analysis, &prepared, provider))

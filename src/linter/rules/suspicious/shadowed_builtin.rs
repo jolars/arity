@@ -111,7 +111,7 @@ impl Rule for ShadowedBuiltin {
             }
             sink.push(Diagnostic {
                 rule: "shadowed-builtin",
-                severity: Severity::Warning,
+                severity: Default::default(),
                 path: Default::default(),
                 range: binding.def_range,
                 message: ViolationData::new(
