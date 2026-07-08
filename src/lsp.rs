@@ -1,9 +1,9 @@
 //! Stdio-based LSP server (built on `lsp-server`): formatting (whole-document
 //! and range), pushed and pull diagnostics, quick-fix code actions, hover,
 //! completion, signature help, go-to-definition and references, rename, document
-//! and workspace symbols, semantic tokens, folding ranges, document links, and
-//! call and type hierarchy, backed by the introspection index and a per-file
-//! semantic model.
+//! and workspace symbols, semantic tokens, folding and selection ranges,
+//! document links, and call and type hierarchy, backed by the introspection
+//! index and a per-file semantic model.
 //!
 //! Architecture (see the dedicated-lint-thread design): the main loop owns no
 //! salsa database. A dedicated thread owns the persistent [`IncrementalDatabase`]
@@ -74,9 +74,9 @@ use lsp_types::request::{
     CodeActionRequest, Completion, DocumentDiagnosticRequest, DocumentHighlightRequest,
     DocumentLinkRequest, DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition,
     HoverRequest, PrepareRenameRequest, RangeFormatting, References, Rename,
-    Request as RequestTrait, ResolveCompletionItem, SemanticTokensFullRequest,
-    SignatureHelpRequest, TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes,
-    WillRenameFiles, WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
+    Request as RequestTrait, ResolveCompletionItem, SelectionRangeRequest,
+    SemanticTokensFullRequest, SignatureHelpRequest, TypeHierarchyPrepare, TypeHierarchySubtypes,
+    TypeHierarchySupertypes, WillRenameFiles, WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
@@ -98,15 +98,16 @@ use lsp_types::{
     OneOf, ParameterInformation, ParameterLabel, Position, PrepareRenameResponse,
     PublishDiagnosticsParams, Range, ReferenceParams, RelatedFullDocumentDiagnosticReport,
     RelatedUnchangedDocumentDiagnosticReport, RenameFilesParams, RenameOptions, RenameParams,
-    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
-    SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SignatureInformation,
-    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, TypeHierarchyItem, TypeHierarchyPrepareParams,
-    TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, UnchangedDocumentDiagnosticReport,
-    Uri, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
-    WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeHierarchyItem, TypeHierarchyPrepareParams, TypeHierarchySubtypesParams,
+    TypeHierarchySupertypesParams, UnchangedDocumentDiagnosticReport, Uri, WorkspaceEdit,
+    WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities, WorkspaceSymbol,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -147,6 +148,7 @@ mod lint_thread;
 mod navigation;
 mod read_jobs;
 mod roxygen_action;
+mod selection_range;
 mod semantic_tokens;
 mod server;
 mod settings;
@@ -184,6 +186,7 @@ pub use navigation::{
     PreparedRename, RenameAnchor, compute_definition, compute_document_highlights,
     compute_prepare_rename, compute_references, compute_rename, compute_rename_with_anchor,
 };
+pub use selection_range::compute_selection_ranges;
 pub use semantic_tokens::compute_semantic_tokens;
 pub use server::run;
 pub use signature::compute_signature_help;

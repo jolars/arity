@@ -3,12 +3,12 @@ use arity::lsp::{
     compute_completions, compute_definition, compute_document_highlights, compute_document_links,
     compute_document_symbols, compute_folding_ranges, compute_format_edits,
     compute_format_range_edits, compute_prepare_rename, compute_references, compute_rename,
-    compute_rename_with_anchor,
+    compute_rename_with_anchor, compute_selection_ranges,
 };
 use arity::rindex::provider::IndexedProvider;
 use lsp_types::{
     DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Position, Range,
-    SymbolKind, TextEdit,
+    SelectionRange, SymbolKind, TextEdit,
 };
 
 #[test]
@@ -545,4 +545,101 @@ fn document_links_respect_size_limit() {
     // A limit below the document size skips scanning entirely.
     let limit = (text.len() - 1) as u64;
     assert!(compute_document_links(text, Some(dir.path()), limit).is_empty());
+}
+
+fn pos(line: u32, character: u32) -> Position {
+    Position { line, character }
+}
+
+fn rng(sl: u32, sc: u32, el: u32, ec: u32) -> Range {
+    Range {
+        start: pos(sl, sc),
+        end: pos(el, ec),
+    }
+}
+
+/// Flatten a selection-range chain into its ranges, innermost first.
+fn chain(sr: &SelectionRange) -> Vec<Range> {
+    let mut out = vec![sr.range];
+    let mut cur = sr.parent.as_deref();
+    while let Some(p) = cur {
+        out.push(p.range);
+        cur = p.parent.as_deref();
+    }
+    out
+}
+
+fn le(a: Position, b: Position) -> bool {
+    (a.line, a.character) <= (b.line, b.character)
+}
+
+/// `outer` strictly contains `inner`: covers it and is not identical.
+fn contains_strictly(outer: Range, inner: Range) -> bool {
+    le(outer.start, inner.start) && le(inner.end, outer.end) && outer != inner
+}
+
+#[test]
+fn selection_range_expands_from_identifier_outward() {
+    let text = "f <- function() g(x + 1)\n";
+    let x = text.find('x').unwrap() as u32;
+    let ranges = compute_selection_ranges(text, &[pos(0, x)]);
+    assert_eq!(ranges.len(), 1);
+    let chain = chain(&ranges[0]);
+
+    // Innermost is the identifier under the cursor.
+    assert_eq!(chain[0], rng(0, 18, 0, 19));
+    // The binary expression `x + 1` is a step out.
+    assert!(chain.contains(&rng(0, 18, 0, 23)));
+    // Each step strictly contains the previous one (no degenerate links).
+    for w in chain.windows(2) {
+        assert!(
+            contains_strictly(w[1], w[0]),
+            "{:?} should strictly contain {:?}",
+            w[1],
+            w[0]
+        );
+    }
+    // The outermost range covers the whole file.
+    assert_eq!(chain.last().unwrap().start, pos(0, 0));
+}
+
+#[test]
+fn selection_range_on_whitespace_expands_from_enclosing_node() {
+    // Cursor on the indentation before `x`, not on any real token.
+    let text = "foo(\n  x\n)\n";
+    let ranges = compute_selection_ranges(text, &[pos(1, 1)]);
+    assert_eq!(ranges.len(), 1);
+    let chain = chain(&ranges[0]);
+    // The innermost range is a real (non-empty) enclosing node, never zero-width.
+    assert_ne!(chain[0].start, chain[0].end);
+    for w in chain.windows(2) {
+        assert!(contains_strictly(w[1], w[0]));
+    }
+}
+
+#[test]
+fn selection_range_returns_one_chain_per_position() {
+    let text = "a <- 1\nb <- 2\n";
+    let ranges = compute_selection_ranges(text, &[pos(0, 0), pos(1, 0)]);
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(ranges[0].range, rng(0, 0, 0, 1));
+    assert_eq!(ranges[1].range, rng(1, 0, 1, 1));
+}
+
+#[test]
+fn selection_range_bare_identifier_expands_to_file() {
+    let text = "x\n";
+    let ranges = compute_selection_ranges(text, &[pos(0, 0)]);
+    let chain = chain(&ranges[0]);
+    assert_eq!(chain[0], rng(0, 0, 0, 1));
+    assert_eq!(chain.last().unwrap().start, pos(0, 0));
+}
+
+#[test]
+fn selection_range_empty_input_does_not_panic() {
+    let ranges = compute_selection_ranges("", &[pos(0, 0)]);
+    assert_eq!(ranges.len(), 1);
+    // A whole-file (empty) range, and no parent.
+    assert_eq!(ranges[0].range, rng(0, 0, 0, 0));
+    assert!(ranges[0].parent.is_none());
 }

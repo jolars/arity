@@ -889,7 +889,7 @@ landed; the second is still open but only matters for cross-edit-stable handles:
 - [x] **Folding ranges** (`textDocument/foldingRange`). Pure CST walk—brace
   blocks, function/parameter and argument lists, parenthesized and
   subscript expressions, comment runs. No semantic model needed.
-- [ ] **Selection ranges** (`textDocument/selectionRange`). Pure CST walk:
+- [x] **Selection ranges** (`textDocument/selectionRange`). Pure CST walk:
   incremental scope expansion from the cursor outward through enclosing nodes.
 
 - [x] **Call hierarchy** (`textDocument/prepareCallHierarchy` + incoming/

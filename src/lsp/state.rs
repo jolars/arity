@@ -147,6 +147,7 @@ impl GlobalState {
             DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
             DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
             FoldingRangeRequest::METHOD => self.on_folding_range(req),
+            SelectionRangeRequest::METHOD => self.on_selection_range(req),
             DocumentLinkRequest::METHOD => self.on_document_link(req),
             SemanticTokensFullRequest::METHOD => self.on_semantic_tokens(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
@@ -544,6 +545,30 @@ impl GlobalState {
         let sender = self.sender.clone();
         self.read_spawner.spawn(move || {
             let ranges = compute_folding_ranges(&text);
+            let _ = sender.send(Message::Response(Response::new_ok(id, ranges)));
+        });
+    }
+
+    /// `textDocument/selectionRange`: "smart selection" chains that expand from
+    /// each cursor position outward through the enclosing CST nodes. A pure
+    /// single-file CST walk with no semantic model, so it runs straight on the
+    /// read pool like folding range. See [`compute_selection_ranges`].
+    fn on_selection_range(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<SelectionRangeParams>(SelectionRangeRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid selectionRange params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let positions = params.positions;
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let ranges = compute_selection_ranges(&text, &positions);
             let _ = sender.send(Message::Response(Response::new_ok(id, ranges)));
         });
     }
