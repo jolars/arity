@@ -3,6 +3,8 @@ use rowan::{SyntaxElement, SyntaxToken, TextRange, TextSize};
 use smol_str::SmolStr;
 
 use crate::ast::AstNode;
+use crate::ast::kinds::{is_binary_operator, is_trivia, is_unary_operator};
+use crate::ast::tokens::{AstToken, StringLit, token_name};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
 macro_rules! ast_node {
@@ -34,11 +36,14 @@ ast_node!(BinaryExpr, SyntaxKind::BINARY_EXPR);
 ast_node!(UnaryExpr, SyntaxKind::UNARY_EXPR);
 ast_node!(ParenExpr, SyntaxKind::PAREN_EXPR);
 ast_node!(CallExpr, SyntaxKind::CALL_EXPR);
+ast_node!(SubsetExpr, SyntaxKind::SUBSET_EXPR);
+ast_node!(Subset2Expr, SyntaxKind::SUBSET2_EXPR);
 ast_node!(ArgList, SyntaxKind::ARG_LIST);
 ast_node!(Arg, SyntaxKind::ARG);
 ast_node!(IfExpr, SyntaxKind::IF_EXPR);
 ast_node!(ForExpr, SyntaxKind::FOR_EXPR);
 ast_node!(WhileExpr, SyntaxKind::WHILE_EXPR);
+ast_node!(RepeatExpr, SyntaxKind::REPEAT_EXPR);
 ast_node!(FunctionExpr, SyntaxKind::FUNCTION_EXPR);
 ast_node!(BlockExpr, SyntaxKind::BLOCK_EXPR);
 ast_node!(RoxygenBlock, SyntaxKind::ROXYGEN_BLOCK);
@@ -239,7 +244,7 @@ impl AssignmentExpr {
                 Some(SmolStr::new(token.text()))
             }
             SyntaxElement::Token(token) if token.kind() == SyntaxKind::STRING => {
-                strip_string_quotes(token.text()).map(SmolStr::new)
+                StringLit::cast(token).and_then(|s| s.unquote().map(SmolStr::new))
             }
             _ => None,
         }
@@ -388,18 +393,6 @@ fn element_kind(element: &SyntaxElement<RLanguage>) -> Option<SyntaxKind> {
     Some(element.kind())
 }
 
-fn strip_string_quotes(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    if bytes.len() >= 2 {
-        let first = bytes[0];
-        let last = bytes[bytes.len() - 1];
-        if (first == b'"' || first == b'\'' || first == b'`') && first == last {
-            return Some(text[1..text.len() - 1].to_string());
-        }
-    }
-    None
-}
-
 impl CallExpr {
     pub fn arg_list(&self) -> Option<ArgList> {
         support::child(self.syntax())
@@ -427,6 +420,86 @@ impl CallExpr {
         }
         None
     }
+
+    /// The callee name (`foo` in `foo(…)`, `` + `` in `` `+`(…) ``), unquoted,
+    /// when the callee is a simple name. `None` for a computed callee.
+    pub fn callee_name(&self) -> Option<SmolStr> {
+        self.callee_token().as_ref().map(token_name)
+    }
+
+    /// The callee element — everything before the argument list's `(`. Generalizes
+    /// [`CallExpr::callee_token`] to the computed-callee case (`(g())(…)`,
+    /// `x$f(…)`), where it returns the callee *node* instead of a name token.
+    pub fn base(&self) -> Option<SyntaxElement<RLanguage>> {
+        last_element_before(self.syntax(), SyntaxKind::LPAREN)
+    }
+}
+
+impl SubsetExpr {
+    /// The base being indexed — everything before the `[`.
+    pub fn base(&self) -> Option<SyntaxElement<RLanguage>> {
+        last_element_before(self.syntax(), SyntaxKind::LBRACK)
+    }
+
+    pub fn open_bracket(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::LBRACK)
+    }
+
+    pub fn close_bracket(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::RBRACK)
+    }
+
+    pub fn arg_list(&self) -> Option<ArgList> {
+        support::child(self.syntax())
+    }
+
+    pub fn args(&self) -> impl Iterator<Item = Arg> {
+        self.arg_list()
+            .map(|list| list.args().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+    }
+}
+
+impl Subset2Expr {
+    /// The base being indexed — everything before the `[[`.
+    pub fn base(&self) -> Option<SyntaxElement<RLanguage>> {
+        last_element_before(self.syntax(), SyntaxKind::LBRACK2)
+    }
+
+    pub fn open_bracket(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::LBRACK2)
+    }
+
+    pub fn close_bracket(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::RBRACK2)
+    }
+
+    pub fn arg_list(&self) -> Option<ArgList> {
+        support::child(self.syntax())
+    }
+
+    pub fn args(&self) -> impl Iterator<Item = Arg> {
+        self.arg_list()
+            .map(|list| list.args().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+    }
+}
+
+/// The last non-trivia, non-comment element before the first direct-child token
+/// of `boundary` kind (e.g. the callee before `(`, the base before `[`).
+fn last_element_before(
+    node: &SyntaxNode,
+    boundary: SyntaxKind,
+) -> Option<SyntaxElement<RLanguage>> {
+    let elements: Vec<_> = node.children_with_tokens().collect();
+    let idx = elements.iter().position(|e| e.kind() == boundary)?;
+    elements[..idx]
+        .iter()
+        .rev()
+        .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
+        .cloned()
 }
 
 /// A resolved namespace access (`pkg::name` / `pkg:::name`), as extracted from a
@@ -489,17 +562,6 @@ impl BinaryExpr {
             name_token,
         })
     }
-}
-
-/// The textual name a token denotes: the raw text for an `IDENT`, or the
-/// unquoted contents for a backtick/quoted `STRING`.
-fn token_name(token: &SyntaxToken<RLanguage>) -> SmolStr {
-    if token.kind() == SyntaxKind::STRING
-        && let Some(inner) = strip_string_quotes(token.text())
-    {
-        return SmolStr::new(inner);
-    }
-    SmolStr::new(token.text())
 }
 
 impl ArgList {
@@ -813,6 +875,194 @@ impl WhileExpr {
     }
 }
 
+impl BinaryExpr {
+    /// The left-hand operand — an element, since a leaf operand is a bare token
+    /// (`x`, `1`, `TRUE`) while a compound operand is a node (`a + b`).
+    pub fn lhs(&self) -> Option<SyntaxElement<RLanguage>> {
+        self.parts().map(|(lhs, _, _)| lhs)
+    }
+
+    /// The operator token (`==`, `+`, `%in%`, `::`, …).
+    pub fn op(&self) -> Option<SyntaxToken<RLanguage>> {
+        self.parts().map(|(_, op, _)| op)
+    }
+
+    pub fn op_kind(&self) -> Option<SyntaxKind> {
+        self.op().map(|op| op.kind())
+    }
+
+    /// The right-hand operand element.
+    pub fn rhs(&self) -> Option<SyntaxElement<RLanguage>> {
+        self.parts().map(|(_, _, rhs)| rhs)
+    }
+
+    /// Split into `(lhs, operator, rhs)` at the top-level operator token.
+    pub fn parts(
+        &self,
+    ) -> Option<(
+        SyntaxElement<RLanguage>,
+        SyntaxToken<RLanguage>,
+        SyntaxElement<RLanguage>,
+    )> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let op_idx = elements
+            .iter()
+            .position(|e| matches!(e, SyntaxElement::Token(t) if is_binary_operator(t.kind())))?;
+        let op = elements[op_idx].as_token()?.clone();
+        let lhs = elements[..op_idx]
+            .iter()
+            .rev()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)?
+            .clone();
+        let rhs = elements[op_idx + 1..]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)?
+            .clone();
+        Some((lhs, op, rhs))
+    }
+}
+
+impl UnaryExpr {
+    /// The prefix operator token (`!`, `-`, `+`, `~`, `?`).
+    pub fn op(&self) -> Option<SyntaxToken<RLanguage>> {
+        self.syntax().children_with_tokens().find_map(|e| match e {
+            SyntaxElement::Token(t) if is_unary_operator(t.kind()) => Some(t),
+            _ => None,
+        })
+    }
+
+    pub fn op_kind(&self) -> Option<SyntaxKind> {
+        self.op().map(|op| op.kind())
+    }
+
+    /// The operand element following the operator.
+    pub fn operand(&self) -> Option<SyntaxElement<RLanguage>> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let op_idx = elements
+            .iter()
+            .position(|e| matches!(e, SyntaxElement::Token(t) if is_unary_operator(t.kind())))?;
+        elements[op_idx + 1..]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
+            .cloned()
+    }
+}
+
+impl ParenExpr {
+    pub fn lparen(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::LPAREN)
+    }
+
+    pub fn rparen(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::RPAREN)
+    }
+
+    /// The parenthesized inner expression element.
+    pub fn inner(&self) -> Option<SyntaxElement<RLanguage>> {
+        self.syntax().children_with_tokens().find(|e| {
+            !is_trivia(e.kind())
+                && !matches!(
+                    e.kind(),
+                    SyntaxKind::COMMENT | SyntaxKind::LPAREN | SyntaxKind::RPAREN
+                )
+        })
+    }
+}
+
+impl BlockExpr {
+    pub fn lbrace(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::LBRACE)
+    }
+
+    pub fn rbrace(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::RBRACE)
+    }
+
+    /// The statement elements between the braces, in source order — the
+    /// non-trivia children that are not the braces, comments, or `;` separators.
+    /// Each is a bare token (`x`) or an expression node.
+    pub fn statements(&self) -> impl Iterator<Item = SyntaxElement<RLanguage>> + '_ {
+        self.syntax().children_with_tokens().filter(|e| {
+            !is_trivia(e.kind())
+                && !matches!(
+                    e.kind(),
+                    SyntaxKind::COMMENT
+                        | SyntaxKind::LBRACE
+                        | SyntaxKind::RBRACE
+                        | SyntaxKind::SEMICOLON
+                )
+        })
+    }
+}
+
+impl Arg {
+    /// The `=` token of a named argument (`name = value`), if any.
+    pub fn eq_token(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::ASSIGN_EQ)
+    }
+
+    /// The name token of a named argument — the `IDENT`/`STRING` immediately
+    /// before `=`. `None` for a positional argument.
+    pub fn name_token(&self) -> Option<SyntaxToken<RLanguage>> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let eq = elements
+            .iter()
+            .position(|e| e.kind() == SyntaxKind::ASSIGN_EQ)?;
+        elements[..eq].iter().rev().find_map(|e| match e {
+            SyntaxElement::Token(t)
+                if matches!(t.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) =>
+            {
+                Some(t.clone())
+            }
+            _ => None,
+        })
+    }
+
+    /// The argument name, unquoted. `None` for a positional argument.
+    pub fn name(&self) -> Option<SmolStr> {
+        self.name_token().as_ref().map(token_name)
+    }
+
+    pub fn is_named(&self) -> bool {
+        self.name_token().is_some()
+    }
+
+    /// The value element: for `name = value`, the first non-trivia element after
+    /// `=`; for a positional argument, its first non-trivia element.
+    pub fn value(&self) -> Option<SyntaxElement<RLanguage>> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let start = match elements
+            .iter()
+            .position(|e| e.kind() == SyntaxKind::ASSIGN_EQ)
+        {
+            Some(eq) => eq + 1,
+            None => 0,
+        };
+        elements[start..]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
+            .cloned()
+    }
+}
+
+impl RepeatExpr {
+    pub fn repeat_keyword(&self) -> Option<SyntaxToken<RLanguage>> {
+        first_child_token(self.syntax(), SyntaxKind::REPEAT_KW)
+    }
+
+    /// The loop body element following the `repeat` keyword.
+    pub fn body(&self) -> Option<SyntaxElement<RLanguage>> {
+        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
+        let kw_idx = elements
+            .iter()
+            .position(|e| e.kind() == SyntaxKind::REPEAT_KW)?;
+        elements[kw_idx + 1..]
+            .iter()
+            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
+            .cloned()
+    }
+}
+
 fn find_token_index(elements: &[SyntaxElement<RLanguage>], kind: SyntaxKind) -> Option<usize> {
     elements
         .iter()
@@ -832,8 +1082,4 @@ fn find_token_after_index(
             SyntaxElement::Token(token) if token.kind() == kind => Some(idx),
             _ => None,
         })
-}
-
-fn is_trivia(kind: SyntaxKind) -> bool {
-    matches!(kind, SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE)
 }
