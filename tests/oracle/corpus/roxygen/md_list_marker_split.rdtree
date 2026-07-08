@@ -1,0 +1,3 @@
+(\description (TEXT "Marker-type changes split a list with no intervening blank"))
+(\details (\itemize (\item) (TEXT "a")) (\itemize (\item) (TEXT "star")) (\itemize (\item) (TEXT "plus")) (\enumerate (\item) (TEXT "one")) (\enumerate (\item) (TEXT "paren")))
+(\title (TEXT "Marker-type changes split a list with no intervening blank"))

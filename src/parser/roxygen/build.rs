@@ -839,10 +839,8 @@ fn emit_md_list_level_inner(
 
         // Sibling: a following list line back at this level's marker column
         // continues the list; anything shallower ends it (the caller resumes).
-        // Blank lines do not end the list either (they only make it loose):
-        // a same-type item after blanks is still a sibling, while a *type
-        // change* — a different bullet char or ordered delimiter — starts a
-        // new list (engine-probed: `-` … `*` and `1.` … `2)` split).
+        // Blank lines do not end the list either (they only make it loose): a
+        // same-type item — with or without intervening blanks — is a sibling.
         let m = if let Some(m) = next_list_line(tokens, i) {
             if list_line_indent(tokens, m) != list_indent {
                 break;
@@ -855,13 +853,16 @@ fn emit_md_list_level_inner(
             if list_line_indent(tokens, m) != list_indent {
                 break;
             }
-            let sibling_marker = &tokens[line_content_start(tokens, m)].text;
-            if md_list_marker_type(sibling_marker) != md_list_marker_type(&tokens[item_marker].text)
-            {
-                break;
-            }
             m
         };
+        // A change of list *type* — a different bullet char or ordered
+        // delimiter — starts a new list rather than continuing this one
+        // (CommonMark; engine-probed: `-` … `*` and `1.` … `2)` split), whether
+        // or not a blank line intervenes.
+        let sibling_marker = &tokens[line_content_start(tokens, m)].text;
+        if md_list_marker_type(sibling_marker) != md_list_marker_type(&tokens[item_marker].text) {
+            break;
+        }
         for idx in i..m {
             events.push(Event::Tok(idx)); // `\n` + blank lines + indentation (trivia)
         }

@@ -213,6 +213,7 @@ md_list_lazy
 md_list_lazy_edges
 md_list_loose
 md_list_loose_edges
+md_list_marker_split
 md_list_value
 md_macro_arg_brace_group
 md_macro_arg_emphasis
