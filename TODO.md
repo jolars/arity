@@ -944,16 +944,20 @@ landed; the second is still open but only matters for cross-edit-stable handles:
   with the tenets. `range: true`-style capability, read-pool CST walk.
   (2026-07-02 languageserver survey.)
 
-- [ ] **Type hierarchy** (`textDocument/prepareTypeHierarchy` + supertypes/
-  subtypes). The class-hierarchy analog of the call hierarchy already shipped.
-  The languageserver detects an S3/S4/RefClass/R6 class definition at the cursor
-  and walks its super/subtypes (`type_hierarchy.R`). arity has **no OOP class
-  model** yet—`setClass`/`R6Class`/`setRefClass` shapes are the same ones deferred
-  in document symbols—so this is the larger item: it first needs a static model of
-  class definitions and their inheritance edges (`setClass(contains=)`,
-  `R6Class(inherit=)`, `setRefClass(contains=)`), which would *also* feed the
-  deferred `R6`/`setClass` document-symbol shapes. Higher effort, lower priority
-  than the three above. (2026-07-02 languageserver survey.)
+- [x] **Type hierarchy** (`textDocument/prepareTypeHierarchy` + supertypes/
+  subtypes). Shipped for **S4/R6/RefClass**: a static OOP class model
+  (`src/project/classes.rs`) projects each file's class definitions and their
+  inheritance edges (`setClass(contains=)`, `R6Class(inherit=)`,
+  `setRefClass(contains=)`), aggregated into a range-free, backdating salsa index
+  (`project_classes`/`ClassIndex` in `src/project/graph.rs`), consumed by
+  `src/lsp/type_hierarchy.rs` (mirrors call hierarchy). The capability is injected
+  into the initialize JSON—`lsp-types` 0.97 has no typed field. Follow-ups:
+  - **S3** is out of scope (no formal class definition; inheritance is implicit
+    via `class(x) <- c(...)` / `structure(class=)`, not statically reliable).
+  - R6 `inherit = Symbol` is resolved by the identifier text, assuming the
+    generator binding name equals the class string (the standard convention).
+  - The `ClassIndex` now unblocks the deferred `R6`/`setClass` **document-symbol**
+    shapes—wire `file_class_defs` into `src/lsp/symbols.rs`.
 
 - [ ] **Minor capability-conformance gaps vs. the R languageserver** (2026-07-02
   survey). (a) arity's completion trigger set is `:` only; the languageserver

@@ -2,8 +2,8 @@
 //! and range), pushed and pull diagnostics, quick-fix code actions, hover,
 //! completion, signature help, go-to-definition and references, rename, document
 //! and workspace symbols, semantic tokens, folding ranges, document links, and
-//! call hierarchy, backed by the introspection index and a per-file semantic
-//! model.
+//! call and type hierarchy, backed by the introspection index and a per-file
+//! semantic model.
 //!
 //! Architecture (see the dedicated-lint-thread design): the main loop owns no
 //! salsa database. A dedicated thread owns the persistent [`IncrementalDatabase`]
@@ -75,7 +75,8 @@ use lsp_types::request::{
     DocumentLinkRequest, DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition,
     HoverRequest, PrepareRenameRequest, RangeFormatting, References, Rename,
     Request as RequestTrait, ResolveCompletionItem, SemanticTokensFullRequest,
-    SignatureHelpRequest, WillRenameFiles, WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
+    SignatureHelpRequest, TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes,
+    WillRenameFiles, WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
@@ -102,9 +103,10 @@ use lsp_types::{
     SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
     SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SignatureInformation,
     SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, UnchangedDocumentDiagnosticReport, Uri, WorkspaceEdit,
-    WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities, WorkspaceSymbol,
-    WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    TextDocumentSyncKind, TextEdit, TypeHierarchyItem, TypeHierarchyPrepareParams,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, UnchangedDocumentDiagnosticReport,
+    Uri, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
+    WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -150,6 +152,7 @@ mod settings;
 mod signature;
 mod state;
 mod symbols;
+mod type_hierarchy;
 mod uri;
 mod workspace_symbols;
 
@@ -166,6 +169,7 @@ pub(crate) use semantic_tokens::*;
 pub(crate) use settings::*;
 pub(crate) use signature::*;
 pub(crate) use state::*;
+pub(crate) use type_hierarchy::*;
 pub(crate) use workspace_symbols::*;
 
 pub use code_actions::compute_code_actions;

@@ -115,6 +115,28 @@ pub(crate) enum ReadJob {
         item: Box<CallHierarchyItem>,
         sender: Sender<Message>,
     },
+    PrepareTypeHierarchy {
+        id: RequestId,
+        path: PathBuf,
+        /// An intra-file item reports back into this URI; cross-file items carry
+        /// their own.
+        uri: Uri,
+        text: String,
+        position: Position,
+        sender: Sender<Message>,
+    },
+    Supertypes {
+        id: RequestId,
+        /// The prepared item, round-tripped from the client; the target class is
+        /// recovered from its `name`.
+        item: Box<TypeHierarchyItem>,
+        sender: Sender<Message>,
+    },
+    Subtypes {
+        id: RequestId,
+        item: Box<TypeHierarchyItem>,
+        sender: Sender<Message>,
+    },
 }
 
 /// Service a read-only job against a db `snapshot`, replying to the client.
@@ -243,6 +265,25 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
         }
         ReadJob::OutgoingCalls { id, item, sender } => {
             let result = outgoing_calls_via_db(&snapshot, &item);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::PrepareTypeHierarchy {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            sender,
+        } => {
+            let result = prepare_type_hierarchy_via_db(&snapshot, &path, &uri, &text, position);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::Supertypes { id, item, sender } => {
+            let result = supertypes_via_db(&snapshot, &item);
+            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+        }
+        ReadJob::Subtypes { id, item, sender } => {
+            let result = subtypes_via_db(&snapshot, &item);
             let _ = sender.send(Message::Response(Response::new_ok(id, result)));
         }
     }

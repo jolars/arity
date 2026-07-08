@@ -22,7 +22,13 @@ pub fn run() -> Result<(), DynError> {
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }),
     };
-    connection.initialize_finish(id, serde_json::to_value(init_result)?)?;
+    // `lsp-types` 0.97 has no `type_hierarchy_provider` field on
+    // `ServerCapabilities`, so advertise it by injecting the key directly into
+    // the serialized capabilities. The method-string dispatch (see
+    // `GlobalState::on_request`) is independent of the typed struct.
+    let mut init_value = serde_json::to_value(init_result)?;
+    init_value["capabilities"]["typeHierarchyProvider"] = serde_json::json!(true);
+    connection.initialize_finish(id, init_value)?;
 
     main_loop(connection, editor_settings, workspace_roots, pull_mode)?;
     io_threads.join()?;

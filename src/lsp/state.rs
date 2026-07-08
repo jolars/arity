@@ -156,6 +156,9 @@ impl GlobalState {
             CallHierarchyPrepare::METHOD => self.on_prepare_call_hierarchy(req),
             CallHierarchyIncomingCalls::METHOD => self.on_incoming_calls(req),
             CallHierarchyOutgoingCalls::METHOD => self.on_outgoing_calls(req),
+            TypeHierarchyPrepare::METHOD => self.on_prepare_type_hierarchy(req),
+            TypeHierarchySupertypes::METHOD => self.on_supertypes(req),
+            TypeHierarchySubtypes::METHOD => self.on_subtypes(req),
             _ => {
                 let resp = Response::new_err(
                     req.id,
@@ -783,6 +786,71 @@ impl GlobalState {
         });
     }
 
+    /// `textDocument/prepareTypeHierarchy`: resolve the cursor to the class(es)
+    /// it names, returning items the client round-trips back to
+    /// supertypes/subtypes. Dispatched like prepare-call-hierarchy; the live
+    /// buffer is parsed on the read pool. See [`prepare_type_hierarchy_via_db`].
+    fn on_prepare_type_hierarchy(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<TypeHierarchyPrepareParams>(TypeHierarchyPrepare::METHOD)
+        else {
+            self.respond_err(id, "invalid prepareTypeHierarchy params");
+            return;
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        self.dispatch_read(ReadJob::PrepareTypeHierarchy {
+            id,
+            path,
+            uri,
+            text,
+            position,
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `typeHierarchy/supertypes`: the declared parent classes of the item's
+    /// class. The item carries its own identity (`name`), so this does no
+    /// document lookup and works off the db snapshot. See [`supertypes_via_db`].
+    fn on_supertypes(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<TypeHierarchySupertypesParams>(TypeHierarchySupertypes::METHOD)
+        else {
+            self.respond_err(id, "invalid supertypes params");
+            return;
+        };
+        self.dispatch_read(ReadJob::Supertypes {
+            id,
+            item: Box::new(params.item),
+            sender: self.sender.clone(),
+        });
+    }
+
+    /// `typeHierarchy/subtypes`: the classes that declare the item's class a
+    /// supertype. Like supertypes, served off the db snapshot from the item's
+    /// identity. See [`subtypes_via_db`].
+    fn on_subtypes(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<TypeHierarchySubtypesParams>(TypeHierarchySubtypes::METHOD)
+        else {
+            self.respond_err(id, "invalid subtypes params");
+            return;
+        };
+        self.dispatch_read(ReadJob::Subtypes {
+            id,
+            item: Box::new(params.item),
+            sender: self.sender.clone(),
+        });
+    }
+
     /// Hand a read-only job to the lint thread (db owner), which snapshots the db
     /// and runs it on the read pool. If that channel is gone (shutdown in flight),
     /// reply `null` so the client isn't left waiting.
@@ -803,6 +871,9 @@ impl GlobalState {
                 ReadJob::PrepareCallHierarchy { id, sender, .. } => (id, sender),
                 ReadJob::IncomingCalls { id, sender, .. } => (id, sender),
                 ReadJob::OutgoingCalls { id, sender, .. } => (id, sender),
+                ReadJob::PrepareTypeHierarchy { id, sender, .. } => (id, sender),
+                ReadJob::Supertypes { id, sender, .. } => (id, sender),
+                ReadJob::Subtypes { id, sender, .. } => (id, sender),
             };
             let _ = sender.send(Message::Response(Response::new_ok(
                 id,

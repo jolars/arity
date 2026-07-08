@@ -24,9 +24,10 @@ use smol_str::SmolStr;
 
 use crate::incremental::{
     IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile, Workspace,
-    file_def_sites, file_exports, file_free_reads, file_qualified_reads, loaded_names,
-    parse_diagnostics, source_edges, top_level_events,
+    file_class_defs, file_def_sites, file_exports, file_free_reads, file_qualified_reads,
+    loaded_names, parse_diagnostics, source_edges, top_level_events,
 };
+use crate::project::classes::ClassSystem;
 use crate::project::exports::DefKind;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
@@ -445,6 +446,61 @@ pub fn project_defs<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> D
                 .entry(name.clone())
                 .or_default()
                 .insert((member.path.clone(), *kind));
+        }
+    }
+    index
+}
+
+/// A project-wide OOP class index: for each declared class, the `(member path,
+/// system)` sites it is defined at, its declared supertypes, and the inverse
+/// subtype edges. Range-free (no spans), aggregated from the per-file
+/// [`file_class_defs`] firewall, so it backdates across body edits; a consumer
+/// recovers a class's span per request via
+/// [`crate::project::locate_class_def`].
+///
+/// The class-hierarchy analog of [`DefIndex`]: it backs LSP type hierarchy
+/// (`prepareTypeHierarchy` + supertypes/subtypes).
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+pub struct ClassIndex {
+    /// Class name -> the sites (path, system) it is defined at.
+    pub def_sites: BTreeMap<String, BTreeSet<(PathBuf, ClassSystem)>>,
+    /// Class name -> its declared supertype names.
+    pub supertypes: BTreeMap<String, BTreeSet<String>>,
+    /// Parent class name -> the classes that declare it a supertype (the
+    /// inverse of [`supertypes`](Self::supertypes)).
+    pub subtypes: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Aggregate every member's [`file_class_defs`] into the project-wide
+/// [`ClassIndex`], recording both the forward supertype edges and their inverse.
+/// Keyed on the interned [`Project`] and the per-file firewall, so it backdates
+/// across body edits and re-runs only when some file's class definitions change.
+#[salsa::tracked(returns(ref))]
+pub fn project_classes<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> ClassIndex {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ProjectClasses,
+        file: None,
+    });
+    let mut index = ClassIndex::default();
+    for member in project.members(db) {
+        for (name, def) in file_class_defs(db, member.file) {
+            index
+                .def_sites
+                .entry(name.clone())
+                .or_default()
+                .insert((member.path.clone(), def.system));
+            for parent in &def.parents {
+                index
+                    .supertypes
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(parent.clone());
+                index
+                    .subtypes
+                    .entry(parent.clone())
+                    .or_default()
+                    .insert(name.clone());
+            }
         }
     }
     index

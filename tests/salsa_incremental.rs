@@ -5,8 +5,8 @@ use arity::incremental::{
     IncrementalDatabase, QueryKind, SourceFile, file_def_sites, top_level_events,
 };
 use arity::project::{
-    DefKind, Project, ProjectMember, external_resolution, project_defs, project_reads,
-    reverse_source_edges, visible_symbols, workspace_project,
+    DefKind, Project, ProjectMember, external_resolution, project_classes, project_defs,
+    project_reads, reverse_source_edges, visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -416,6 +416,93 @@ fn body_edit_does_not_rebuild_project_defs() {
         counts.get(&QueryKind::ProjectDefs),
         None,
         "a body edit must not rebuild project_defs"
+    );
+}
+
+#[test]
+fn project_classes_aggregates_inheritance_edges() {
+    let (db, a, b) = package_ab(
+        "setClass(\"Animal\")\n",
+        "setClass(\"Dog\", contains = \"Animal\")\n",
+    );
+    let project = project_ab(&db, a, b);
+    let classes = project_classes(&db, project);
+
+    // Forward edge: Dog -> Animal; inverse edge: Animal -> Dog.
+    assert!(
+        classes
+            .supertypes
+            .get("Dog")
+            .is_some_and(|p| p.contains("Animal"))
+    );
+    assert!(
+        classes
+            .subtypes
+            .get("Animal")
+            .is_some_and(|c| c.contains("Dog"))
+    );
+    // Def sites are recorded per class, tagged by system.
+    assert!(classes.def_sites.contains_key("Animal"));
+    assert!(classes.def_sites.contains_key("Dog"));
+}
+
+#[test]
+fn body_edit_does_not_rebuild_project_classes() {
+    // The firewall: editing a function body in b.R re-runs its model, but the
+    // class-def set is unchanged, so the project-wide class aggregate is reused.
+    let (mut db, a, b) = package_ab(
+        "setClass(\"Animal\")\n",
+        "setClass(\"Dog\", contains = \"Animal\")\nf <- function() {\n  1\n}\n",
+    );
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_classes(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(
+        b,
+        "setClass(\"Dog\", contains = \"Animal\")\nf <- function() {\n  2\n}\n",
+    );
+
+    let project = project_ab(&db, a, b);
+    let _ = project_classes(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ProjectClasses),
+        None,
+        "a body edit must not rebuild project_classes"
+    );
+}
+
+#[test]
+fn adding_a_class_rebuilds_project_classes() {
+    let (mut db, a, b) = package_ab("setClass(\"Animal\")\n", "x <- 1\n");
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_classes(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "x <- 1\nsetClass(\"Dog\", contains = \"Animal\")\n");
+
+    let project = project_ab(&db, a, b);
+    let classes = project_classes(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ProjectClasses),
+        Some(&1),
+        "a new class definition must rebuild project_classes"
+    );
+    assert!(
+        classes
+            .subtypes
+            .get("Animal")
+            .is_some_and(|c| c.contains("Dog"))
     );
 }
 

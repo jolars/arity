@@ -18,9 +18,9 @@ use salsa::{Durability, Setter};
 
 use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
 use crate::project::{
-    DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
+    ClassSystem, DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
     collect_source_literal_edges, collect_top_level_events, collect_top_level_events_spanned,
-    discover_packages, project_defs, project_graph, project_reads, relative_path,
+    discover_packages, project_classes, project_defs, project_graph, project_reads, relative_path,
     reverse_source_edges, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
@@ -184,12 +184,14 @@ pub enum QueryKind {
     FileFreeReads,
     FileQualifiedReads,
     FileDefSites,
+    FileClassDefs,
     SourceEdges,
     TopLevelEvents,
     ReverseSourceEdges,
     WorkspaceProject,
     ProjectGraph,
     ProjectDefs,
+    ProjectClasses,
     ProjectReads,
     VisibleSymbols,
     LoadedNames,
@@ -374,6 +376,24 @@ pub fn file_def_sites(db: &dyn IncrementalDb, file: SourceFile) -> BTreeMap<Stri
         file: Some(file),
     });
     crate::project::file_def_sites(semantic_model(db, file), &parsed_tree_root(db, file))
+}
+
+/// The file's OOP class definitions and their supertype edges
+/// ([`crate::project::file_class_defs`]), as a tracked query. Range-free like
+/// [`file_def_sites`] — it turns on the class-def calls' shapes, not any body —
+/// so it backdates across a body edit; a consumer recovers a class's span from
+/// the fresh parse tree per request via
+/// [`crate::project::locate_class_def`].
+#[salsa::tracked(returns(ref))]
+pub fn file_class_defs(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> BTreeMap<String, crate::project::ClassDef> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FileClassDefs,
+        file: Some(file),
+    });
+    crate::project::file_class_defs(&parsed_tree_root(db, file))
 }
 
 /// The names of the packages attached via `library()`/`require()` in the file,
@@ -943,6 +963,61 @@ impl Analysis {
                     self.def_range_in(file, name)?,
                 ))
             })
+            .collect()
+    }
+
+    /// The workspace sites defining the class `name`, as `(member path,
+    /// system)`. Empty when no workspace is seeded or no member declares the
+    /// class. The class-hierarchy analog of
+    /// [`workspace_def_sites`](Self::workspace_def_sites), reading the range-free
+    /// [`project_classes`](crate::project::project_classes) index; a consumer
+    /// recovers each span from the fresh tree via
+    /// [`crate::project::locate_class_def`]. A pure read — the caller wraps it in
+    /// [`salsa::Cancelled::catch`].
+    pub fn class_def_sites(&self, name: &str) -> Vec<(PathBuf, ClassSystem)> {
+        if self.0.workspace().is_none() {
+            return Vec::new();
+        }
+        let project = workspace_project(&self.0);
+        let index = project_classes(&self.0, project);
+        index
+            .def_sites
+            .get(name)
+            .into_iter()
+            .flat_map(|sites| sites.iter().cloned())
+            .collect()
+    }
+
+    /// The declared supertypes (parents) of the class `name`, across the
+    /// workspace. Empty when the class has no recorded parents. A pure read —
+    /// the caller wraps it in [`salsa::Cancelled::catch`].
+    pub fn class_supertypes(&self, name: &str) -> Vec<String> {
+        self.class_edges(name, true)
+    }
+
+    /// The subtypes (children) of the class `name`: every class that declares it
+    /// a supertype, across the workspace. Empty when nothing inherits from it. A
+    /// pure read — the caller wraps it in [`salsa::Cancelled::catch`].
+    pub fn class_subtypes(&self, name: &str) -> Vec<String> {
+        self.class_edges(name, false)
+    }
+
+    /// Shared reader for the class index's forward (`supertypes`) and inverse
+    /// (`subtypes`) edge maps.
+    fn class_edges(&self, name: &str, super_edge: bool) -> Vec<String> {
+        if self.0.workspace().is_none() {
+            return Vec::new();
+        }
+        let project = workspace_project(&self.0);
+        let index = project_classes(&self.0, project);
+        let map = if super_edge {
+            &index.supertypes
+        } else {
+            &index.subtypes
+        };
+        map.get(name)
+            .into_iter()
+            .flat_map(|names| names.iter().cloned())
             .collect()
     }
 
