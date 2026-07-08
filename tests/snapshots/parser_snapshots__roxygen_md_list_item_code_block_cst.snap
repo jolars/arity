@@ -1,0 +1,75 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..173
+  ROXYGEN_BLOCK@0..167
+    ROXYGEN_SECTION@0..71
+      ROXYGEN_PARAGRAPH@0..68
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..67 "A fenced code block a ..."
+        NEWLINE@67..68 "\n"
+      ROXYGEN_MARKER@68..70 "#'"
+      NEWLINE@70..71 "\n"
+    ROXYGEN_SECTION@71..78
+      ROXYGEN_MARKER@71..73 "#'"
+      WHITESPACE@73..74 " "
+      ROXYGEN_TAG@74..77
+        ROXYGEN_AT@74..75 "@"
+        ROXYGEN_TAG_NAME@75..77 "md"
+      NEWLINE@77..78 "\n"
+    ROXYGEN_SECTION@78..135
+      ROXYGEN_MARKER@78..80 "#'"
+      WHITESPACE@80..81 " "
+      ROXYGEN_TAG@81..89
+        ROXYGEN_AT@81..82 "@"
+        ROXYGEN_TAG_NAME@82..89 "details"
+      NEWLINE@89..90 "\n"
+      ROXYGEN_MD_LIST@90..134
+        ROXYGEN_MARKER@90..92 "#'"
+        WHITESPACE@92..93 " "
+        ROXYGEN_MD_LIST_ITEM@93..127
+          ROXYGEN_MD_LIST_MARKER@93..94 "-"
+          ROXYGEN_TEXT@94..96 " a"
+          NEWLINE@96..97 "\n"
+          ROXYGEN_MARKER@97..99 "#'"
+          NEWLINE@99..100 "\n"
+          ROXYGEN_MD_CODE_BLOCK@100..127
+            ROXYGEN_MARKER@100..102 "#'"
+            WHITESPACE@102..105 "   "
+            ROXYGEN_MD_FENCE@105..108 "```"
+            NEWLINE@108..109 "\n"
+            ROXYGEN_MARKER@109..111 "#'"
+            WHITESPACE@111..114 "   "
+            ROXYGEN_TEXT@114..118 "code"
+            NEWLINE@118..119 "\n"
+            ROXYGEN_MARKER@119..121 "#'"
+            WHITESPACE@121..124 "   "
+            ROXYGEN_MD_FENCE@124..127 "```"
+        NEWLINE@127..128 "\n"
+        ROXYGEN_MARKER@128..130 "#'"
+        WHITESPACE@130..131 " "
+        ROXYGEN_MD_LIST_ITEM@131..134
+          ROXYGEN_MD_LIST_MARKER@131..132 "-"
+          ROXYGEN_TEXT@132..134 " b"
+      NEWLINE@134..135 "\n"
+    ROXYGEN_SECTION@135..167
+      ROXYGEN_MARKER@135..137 "#'"
+      WHITESPACE@137..138 " "
+      ROXYGEN_TAG@138..167
+        ROXYGEN_AT@138..139 "@"
+        ROXYGEN_TAG_NAME@139..143 "name"
+        WHITESPACE@143..144 " "
+        ROXYGEN_TEXT@144..146 "md"
+        ROXYGEN_MD_DELIM@146..147 "_"
+        ROXYGEN_TEXT@147..151 "list"
+        ROXYGEN_MD_DELIM@151..152 "_"
+        ROXYGEN_TEXT@152..156 "item"
+        ROXYGEN_MD_DELIM@156..157 "_"
+        ROXYGEN_TEXT@157..161 "code"
+        ROXYGEN_MD_DELIM@161..162 "_"
+        ROXYGEN_TEXT@162..167 "block"
+  NEWLINE@167..168 "\n"
+  IDENT@168..172 "NULL"
+  NEWLINE@172..173 "\n"

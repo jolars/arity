@@ -4315,6 +4315,13 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LIST => {
             out.push(Inline::MdList(n));
         }
+        // A `ROXYGEN_MD_CODE_BLOCK` folded into a list item (a fenced code block
+        // at the item's content column) projects to roxygen2's three-atom
+        // `\if{html}…\preformatted…\if{html}` sequence, the same as a
+        // section-level fenced block.
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
+            out.push(Inline::MdCodeBlock(n));
+        }
         // A resolved emphasis/strong *node* (the inline pass's output): recurse
         // into its inner inline run, skipping the opener/closer delimiter leaves
         // (and any inter-line trivia), so nesting projects as structure.
@@ -5319,10 +5326,18 @@ fn md_code_block_parts(node: &SyntaxNode) -> (String, String) {
     let text = node.text().to_string();
     let lines: Vec<&str> = text.split('\n').collect();
     // The opener is the first line, the closer the last; the code is in between.
-    let info = lines
-        .first()
-        .map(|l| strip_marker(l).trim_start_matches('`').trim().to_string())
-        .unwrap_or_default();
+    // The opener fence may itself be indented (up to three columns at the top
+    // level, or to a list item's content column when the block is folded into an
+    // item). CommonMark removes the opener fence's own indentation both before
+    // the info string and from up to that many leading columns of each content
+    // line, so the leading spaces surviving in the code are `max(0, body_col -
+    // fence_col)` — computable from the node text alone (`content_col` cancels).
+    let opener = lines.first().map(|l| strip_marker(l)).unwrap_or_default();
+    let fence_indent = opener.bytes().take_while(|&b| b == b' ').count();
+    let info = opener[fence_indent..]
+        .trim_start_matches('`')
+        .trim()
+        .to_string();
     let body = if lines.len() > 2 {
         &lines[1..lines.len() - 1]
     } else {
@@ -5330,7 +5345,14 @@ fn md_code_block_parts(node: &SyntaxNode) -> (String, String) {
     };
     let mut code = String::new();
     for line in body {
-        code.push_str(strip_marker(line));
+        let after_marker = strip_marker(line);
+        // Strip up to the opener fence's indentation, never past what the line has.
+        let strip = after_marker
+            .bytes()
+            .take_while(|&b| b == b' ')
+            .count()
+            .min(fence_indent);
+        code.push_str(&after_marker[strip..]);
         code.push('\n');
     }
     (info, code)
@@ -7963,6 +7985,57 @@ mod tests {
         assert!(
             project_to_rd(src)
                 .contains("(\\details (\\itemize (\\item) (TEXT \"a\")) (TEXT \"more\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn fence_at_content_column_folds_into_item() {
+        // A fenced code block indented to the item's content column folds into the
+        // item as a child block (the three-atom `\if…\preformatted…\if` sequence
+        // inside the `\itemize`), with a below content-column marker after it a
+        // sibling item — a fenced block interrupts the item's paragraph.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'   ```\n#'   code\n#'   ```\n\
+                   #' - b\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\") \
+                 (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) \
+                 (\\preformatted (VERB \"code\\n\")) \
+                 (\\if (TEXT \"html\") (\\out (VERB \"</div>\"))) (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn fence_below_content_column_ends_the_list() {
+        // A fenced code block *below* the item's content column is a section-level
+        // block, not part of the item: the list ends at the `\item` and the code
+        // block is a sibling of the `\itemize`.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#' ```\n#' code\n#' ```\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\")) \
+                 (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn folded_fence_strips_only_its_own_indentation() {
+        // CommonMark removes up to the opener fence's indentation from each content
+        // line, so a body line indented *past* the fence keeps the surplus: fence at
+        // column 3, body at column 5 → `  code` (two leading spaces survive).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'    ```\n#'      code\n#'    ```\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\preformatted (VERB \"  code\\n\"))"),
             "got: {}",
             project_to_rd(src)
         );

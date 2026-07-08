@@ -445,7 +445,24 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
 - **Fenced code blocks** (`scan_md_fence`, carved whole *before* the list-marker carve; bails if a
   backtick follows). `emit_md_code_block` pairs opener↔closer into `ROXYGEN_MD_CODE_BLOCK`. Projector
   emits 3 atoms: `\if{html}{\out{<div…>}}` / `\preformatted{<code+\n>}` / `\if{html}{\out{</div>}}`.
-  Out of scope: ` ```{r} ` knitr-eval blocks.
+  Out of scope: ` ```{r} ` knitr-eval blocks. **Fence-indent strip is CommonMark, not just marker
+  strip** (`md_code_block_parts`, 2026-07-08h): a fence indented past `#' ` (top-level 1–3 cols, or to a
+  list item's content column) removes its own indentation from the info string *and* up to that many
+  leading cols of each body line — surviving leading spaces = `max(0, body_col − fence_col)`, computable
+  from the node text alone (the item content column cancels). Was latently wrong for any indented fence.
+- **A fenced code block at a list item's content column folds INTO the item (2026-07-08h).** In
+  `emit_md_list_level_inner`'s item-body loop, after the prose/blank/nested-list arms, a
+  `next_content_line` at indent `>= content_indent` that `is_md_code_block_start` is emitted **inside** the
+  `ROXYGEN_MD_LIST_ITEM` via `emit_md_code_block` (blanks threaded as trivia). Folds **with or without** an
+  intervening blank (a fence interrupts the item paragraph; a blank only loosens) and into an **empty** item
+  (no `item_has_content` gate — unlike the prose arms); a **below**-content-column fence ends the list (a
+  section sibling). Projector: `push_inline` maps a `ROXYGEN_MD_CODE_BLOCK` list-item child →
+  `Inline::MdCodeBlock` (serialize_inlines already handled it). **Formatter unchanged** — the whole
+  `ROXYGEN_MD_LIST` is atomic passthrough (`emit_md_list`), and `normalize_list_marker_text` is byte-idempotent
+  on the fence/code/blank lines. Curated `md_list_item_code_block`, fixture, 3 units, baseline +1.
+  **Backlog: only the fence folds so far** — a **heading / block-macro / block-quote / table / thematic-break /
+  indented-code / HTML block** at the content column still ends the list (each has its own interrupt semantics
+  + projector nuance; add per-construct arms as needed).
 - **Indented code blocks** (`ROXYGEN_MD_INDENTED_CODE` node): a line indented **>= 5 space columns** past
   the marker (roxygen2 strips `#'` + one space, cmark needs 4). **No mode-carrying leaf** — the content
   lexes as ordinary tokens, so the block builder re-derives `@md` via `block_md` (reusing
@@ -870,7 +887,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 409 matching (all allowlisted), 18 divergent** of 427 pinned.
+corpus (132 `cm-NNN` cases). **Current: 410 matching (all allowlisted), 18 divergent** of 428 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -879,58 +896,54 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (427 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (428 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 144/144 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 145/145 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-08g) — blank + content-column prose folds into a list item
+## Latest session (2026-07-08h) — fenced code block folds into a list item
 
-Closed the **e4 backlog**: a blank line closes a list item's paragraph, but the item continues — a following
-prose line indented to (or past) the item's **content column** opens a new paragraph *inside the same item* (a
-loose item), which Rd rendering flattens into the item text. arity previously ended the list at the blank and
-made the continuation sibling prose (`- a` ⏎ blank ⏎ `  more` → item `a` + separate `more`; roxygen2 gives one
-item `a more`). Boundary probed against roxygen2: content-column indent folds (a); below-content-column ends
-the list (b/c); multiple blank-separated paragraphs all fold (`a more even more`, d); a nested list at the
-column still nests (g, already handled); a `===` folds as text (`a ===`, h).
+Opened the **block-within-a-list-item** backlog with its first construct: a fenced code block indented to (or
+past) a list item's **content column** is a child block **inside** the `\item` — with or without an intervening
+blank, and into an empty item — while a **below**-content-column fence stays a section-level block that ends the
+list. Boundaries probed against roxygen2: content-column fence folds (no-blank and blank alike); col-0 fence
+(below content) ends the list even without a blank; a sibling `- b` after the folded fence resumes the list; an
+empty item `-` folds a content-column fence; over-indented body keeps the surplus (`max(0, body_col−fence_col)`).
 
-**One-site parser fix** (`src/parser/roxygen/build.rs`, `emit_md_list_level_inner`): the item-body gather —
-previously a no-blank lazy-continuation loop *then* a separate nested-list loop — is now a **single loop**
-trying, in source order: (1) no-blank lazy prose (`following_line_marker` + `is_md_item_lazy_continuation`);
-(2) blank-separated content-column prose (new helper `next_prose_line_across_blanks`, mirroring
-`next_list_line_across_blanks` but requiring a following `is_md_item_lazy_continuation` line, with the caller
-gating `list_line_indent(m) >= content_indent`); (3) a nested list. Unifying into one loop lets the three
-interleave in source order. `is_md_item_lazy_continuation` is the right guard for the blank case too (folds
-`===`, excludes `---`/block openers).
+**Parser** (`src/parser/roxygen/build.rs`): new `next_content_line` (next non-blank line across any blanks, no
+kind constraint) + a fence arm in `emit_md_list_level_inner`'s item-body loop — `is_md_code_block_start` at
+`list_line_indent(m) >= content_indent` → `emit_md_code_block` inside the item, blanks threaded as trivia, **no**
+`item_has_content` gate. **Projector** (`project_rd.rs`): one `push_inline` arm mapping a `ROXYGEN_MD_CODE_BLOCK`
+list-item child → `Inline::MdCodeBlock` (serialize_inlines already handled the variant). **Plus a latent
+projector fix in `md_code_block_parts`:** it stripped only `#' `+space, so an *indented* fence (now common
+inside items, but also any 1–3-col top-level fence) leaked its indent into the info string (`sourceCode ```` `)
+and body (`  code`); now it strips the opener fence's own indentation (CommonMark) — surviving spaces =
+`max(0, body_col − fence_col)`. **Formatter unchanged**: the whole `ROXYGEN_MD_LIST` is atomic passthrough and
+`normalize_list_marker_text` is byte-idempotent on the fence/code/blank lines (verified byte-identical).
 
-**Projector + formatter unchanged.** The folded paragraphs land inside the one `ROXYGEN_MD_LIST_ITEM` with the
-blank lines threaded as trivia; `md_list_item_inlines` already drops markers + maps NEWLINE→SOFT_BREAK, and
-norm_ws coalesces the soft breaks → one space (`a more even more`). The formatter is per-line passthrough, so
-formatted bytes are **byte-identical** to input (idempotence verified); format baseline +1 for the new case
-only (**no existing case re-blessed**).
+**Result:** projector **409→410 matching** (all 410 allowlisted, 0 regressions), 18 divergent (unchanged — all
+out-of-scope). `cargo test` fully green, clippy + fmt clean, curated fixed-point **145/145 preserving** (was
+144; 0 blocked, 0 gate failures, R present). New: curated projector case `md_list_item_code_block` (+pin
++allowlist), fixture `roxygen_md_list_item_code_block` (CST asserts the code block nests in item 1, blank as
+trivia, `- b` a sibling; losslessness + empty diagnostics), units `fence_at_content_column_folds_into_item` +
+`fence_below_content_column_ends_the_list` + `folded_fence_strips_only_its_own_indentation`, baseline +1
+(additive; no existing case re-blessed).
 
-**Result:** projector **408→409 matching** (all 409 allowlisted, 0 regressions), 18 divergent (unchanged —
-all out-of-scope). `cargo test` fully green, clippy + fmt clean, curated fixed-point **144/144 preserving**
-(0 blocked, 0 gate failures, R present). New: curated projector case `md_list_item_para` (+pin +allowlist),
-parser fixture `roxygen_md_list_item_para` (CST asserts three paragraphs in one item, blanks as trivia,
-losslessness + empty diagnostics), units `blank_separated_content_column_prose_folds_into_item` +
-`blank_then_underindented_prose_ends_the_list`.
-
-**Ranked next target:** the escape-cluster remainder is down to the **sticky-mode flips** (a brace-less
-`\code`/`\verb` mid-cluster) and cross-paragraph sticky tails (both need blank-line counts arity drops — hard).
-Other picks, all confirmed genuine divergences by probe: **braced `\item{x}` in prose** →
-`(UNKNOWN "\item") (LIST …)` (roxygen2 treats a top-level `\item` as unknown; arity's lexer carves it as a
-real two-arg macro node). *Fix is awkward:* the carve is load-bearing for block-body `\describe{\item{a}{b}}`
-(the re-scan path `emit_block_content` only handles one-arg nested macros), so suppression must be
-grouper-level and prose-context-specific (scattered content-emission sites) — deferred. Smaller list
-follow-ups: a **block within a list item** (a heading/fence/`\itemize` block macro at the content column after
-a blank — arity ends the list; needs the item-block model), quote-lazy `===`. Formatter upgrade: reflow-rejoin
-for cross-line code spans (needs a fence-at-line-start guard). The 18 projector divergences remain out-of-scope.
+**Ranked next target:** continue the block-within-a-list-item series — the **next construct to fold** is likely
+a **nested block macro** (`\itemize`/`\describe` at the content column) or an **ATX heading**; each needs its
+own item-body arm + a `push_inline` map to the right `Inline`, and its own interrupt/indent probe (a heading
+interrupts; indented code and setext do not). Other standing picks: the escape-cluster **sticky-mode flips**
+(brace-less `\code`/`\verb` mid-cluster) and cross-paragraph sticky tails (need blank-line counts arity drops —
+hard); **braced `\item{x}` in prose** → `(UNKNOWN "\item") (LIST …)` (arity's lexer carves a real macro node;
+suppression is grouper-level, load-bearing for block-body `\describe{\item{a}{b}}` — awkward, deferred);
+quote-lazy `===`; formatter reflow-rejoin for cross-line code spans. The 18 projector divergences remain
+out-of-scope.
 
 ## Earlier sessions
 
+- **2026-07-08g** — blank + content-column prose folds into a list item (single item-body loop in `emit_md_list_level_inner`: no-blank lazy prose, blank-separated content-column prose via new `next_prose_line_across_blanks`, nested list — interleaved in source order; projector/formatter unchanged, per-line passthrough byte-identical). Curated `md_list_item_para`, fixture, units `blank_separated_content_column_prose_folds_into_item` + `blank_then_underindented_prose_ends_the_list`. 408→409.
 - **2026-07-08f** — no-blank list marker-type split, both modes (hoisted the `md_list_marker_type` check out of the blank-path `else` branch in `emit_md_list_level_inner`'s sibling gather so a type change ends the list with or without a blank; `- a` ⏎ `* b` → two `\itemize`, `1.` ⏎ `2)` → two `\enumerate`; projector/formatter unchanged, structural). Curated `md_list_marker_split`, fixture `roxygen_md_list_marker_split`. 407→408.
 - **2026-07-08e** — even-run braced macro → literal `\name` + `(LIST …)`, both modes (no code change; falls out from the backslash-parity gate + `group_brace_lists` + escape resolution; `\\emph{x}` → `(TEXT "\emph") (LIST (TEXT "x"))`, `\link` spared). Curated `{rd,md}_even_braced_macro`, fixture `roxygen_even_braced_macro`, unit `even_run_braced_macro_projects_as_literal_plus_list`. 405→407.
 

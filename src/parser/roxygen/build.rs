@@ -305,6 +305,25 @@ fn next_prose_line_across_blanks(tokens: &[Token], i: usize) -> Option<usize> {
     }
 }
 
+/// From `i` (expected at a line's trailing `Newline`), the next **non-blank**
+/// roxygen line's `RoxygenMarker`, crossing any number of intervening **blank**
+/// lines; `None` at a non-roxygen line / EOF. Unlike
+/// [`next_prose_line_across_blanks`] this places no requirement on the line's
+/// kind and does not require a blank to intervene — a caller inspects the
+/// returned line itself (e.g. a child block start at the item's content column,
+/// which folds into the item with or without a separating blank).
+fn next_content_line(tokens: &[Token], i: usize) -> Option<usize> {
+    let mut j = i;
+    loop {
+        let m = following_line_marker(tokens, j)?;
+        if matches!(classify_line(tokens, m), LineKind::Blank) {
+            j = line_content_end(tokens, m);
+            continue;
+        }
+        return Some(m);
+    }
+}
+
 /// The list-*type* discriminant of a `RoxygenMdListMarker`'s text: the bullet
 /// character itself (`-`/`*`/`+`), or the ordered delimiter (`.`/`)`).
 /// CommonMark items belong to the same list only when this matches — changing
@@ -862,6 +881,25 @@ fn emit_md_list_level_inner(
                     events.push(Event::Tok(i));
                     i += 1;
                 }
+                continue;
+            }
+
+            // A fenced code block indented to (or past) the item's content
+            // column is a child block inside this item — with or without an
+            // intervening blank line (a fenced code block interrupts the item's
+            // paragraph, and a blank only makes the item loose; roxygen2 renders
+            // both as the code block inside the `\item`, engine-probed). A
+            // below-content-column fence is a section-level block that ends the
+            // list instead. Unlike the prose continuations above this needs no
+            // `item_has_content` gate — a fence folds into an empty item too.
+            if let Some(m) = next_content_line(tokens, i)
+                && list_line_indent(tokens, m) >= content_indent
+                && is_md_code_block_start(tokens, m)
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
+                }
+                i = emit_md_code_block(tokens, m, events);
                 continue;
             }
 
