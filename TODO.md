@@ -412,6 +412,14 @@ harden against shadowing in Phase 4.
       tighter than a comparison (arithmetic, indexing, `$`/`@`, ...) where the bare
       rewrite would misparse, and also when a comment outside the preserved inner
       argument would be dropped. The finding is still reported in both cases.
+- [x] `crossprod` `t(x) %*% y` -> `crossprod(x, y)`, `x %*% t(y)` ->
+      `tcrossprod(x, y)` (performance, `ns`, safe; landed). Fires on a `%*%`
+      `BINARY_EXPR` where one operand is a single-positional-arg `t()` call
+      (left preferred; both-`t()` yields `crossprod(x, t(y))`), namespace-confirms
+      `t` resolves to base R. Collapses to the single-arg form when both operands
+      are the same bare symbol. The replacement is a call (a primary), so no
+      precedence guard is needed and the fix is `Safe`; withheld when a comment
+      outside the preserved operands would be dropped.
 - [ ] `lengths` `sapply(x, length)` -> `lengths(x)` (performance, safe).
 - [ ] `nzchar` `nchar(x) > 0` -> `nzchar(x)` (performance, safe).
 - [ ] `seq`/`seq2` `1:length(x)` -> `seq_along`, `1:n` -> `seq_len`

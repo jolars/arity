@@ -57,6 +57,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(readability::OuterNegation),
         Box::new(performance::AnyIsNa),
         Box::new(performance::AnyDuplicated),
+        Box::new(performance::Crossprod),
         Box::new(documentation::RoxygenUnknownTag),
         Box::new(documentation::RoxygenTitle),
         Box::new(documentation::RoxygenReturn),

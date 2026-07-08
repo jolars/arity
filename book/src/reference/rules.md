@@ -31,6 +31,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 
 - [`any-is-na`](rules/any-is-na.md)
 - [`any-duplicated`](rules/any-duplicated.md)
+- [`crossprod`](rules/crossprod.md)
 
 ## Documentation
 

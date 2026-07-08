@@ -1817,6 +1817,93 @@ fn any_duplicated_withholds_fix_in_tight_context() {
 }
 
 #[test]
+fn crossprod_rewrites_transposed_matmul() {
+    // `t(x) %*% y` is `crossprod(x, y)`; `x %*% t(y)` is `tcrossprod(x, y)`.
+    assert_eq!(
+        fixed_output("t(x) %*% y\n", "crossprod"),
+        "crossprod(x, y)\n"
+    );
+    assert_eq!(
+        fixed_output("x %*% t(y)\n", "crossprod"),
+        "tcrossprod(x, y)\n"
+    );
+    // The operands are preserved verbatim, whatever their shape.
+    assert_eq!(
+        fixed_output("out <- t(a$m) %*% b[[1]]\n", "crossprod"),
+        "out <- crossprod(a$m, b[[1]])\n"
+    );
+}
+
+#[test]
+fn crossprod_collapses_same_symbol() {
+    // When both operands are the same simple symbol, the single-argument form is
+    // equivalent and more idiomatic.
+    assert_eq!(fixed_output("t(x) %*% x\n", "crossprod"), "crossprod(x)\n");
+    assert_eq!(fixed_output("x %*% t(x)\n", "crossprod"), "tcrossprod(x)\n");
+}
+
+#[test]
+fn crossprod_fixes_inner_of_chain() {
+    // `%*%` is left-associative, so `t(a) %*% b %*% c` parses as
+    // `(t(a) %*% b) %*% c`; the rule fires on the inner expr and the call
+    // replacement preserves associativity.
+    assert_eq!(
+        fixed_output("t(a) %*% b %*% c\n", "crossprod"),
+        "crossprod(a, b) %*% c\n"
+    );
+}
+
+#[test]
+fn crossprod_both_transposed_prefers_crossprod() {
+    // With `t()` on both sides the crossprod branch wins; the surviving `t()` is
+    // left in the second argument (still correct, a partial win).
+    assert_eq!(
+        fixed_output("t(x) %*% t(y)\n", "crossprod"),
+        "crossprod(x, t(y))\n"
+    );
+}
+
+#[test]
+fn crossprod_ignores_other_shapes() {
+    for src in [
+        "x %*% y\n",         // no transpose
+        "crossprod(x, y)\n", // already the idiom
+        "t(x) * y\n",        // elementwise, not matrix multiply
+        "t(x, y) %*% z\n",   // t with two args — not the clean shape
+        "x %o% t(y)\n",      // a different special operator
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"crossprod"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn crossprod_skips_shadowed_t() {
+    // A user redefinition of `t` means the call no longer invokes base R's
+    // transpose, so the rewrite would be wrong — don't flag.
+    let src = "t <- function(z) z\nt(x) %*% y\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(
+        !rules.contains(&"crossprod"),
+        "{src:?} should not flag, got: {rules:?}"
+    );
+}
+
+#[test]
+fn crossprod_withholds_fix_for_dropped_comment() {
+    // A comment inside the expression but outside the preserved operands would be
+    // dropped by the rewrite, so the fix is withheld — the finding still reports.
+    let d = diagnostics("t(x) %*% # note\n  y\n")
+        .into_iter()
+        .find(|d| d.rule == "crossprod")
+        .expect("expected a crossprod finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
 fn unreachable_code_flags_after_return_and_stop() {
     // A statement after an unconditional `return()` in a function body can never
     // run; the finding spans it and the (unsafe) fix deletes it.
@@ -2024,6 +2111,10 @@ fn fixed_output_is_parseable_and_clean() {
         // any-duplicated (`any(duplicated(x))` → `anyDuplicated(x) > 0`)
         "if (any(duplicated(x))) f()\n",
         "flag <- any(duplicated(df$col))\n",
+        // crossprod (`t(x) %*% y` → `crossprod`, `x %*% t(y)` → `tcrossprod`)
+        "z <- t(x) %*% y\n",
+        "z <- x %*% t(y)\n",
+        "z <- t(x) %*% x\n",
         // unreachable-code deletion (after `return()`/`stop()`)
         "f <- function() {\n  g()\n  return(1)\n  2\n}\nf()\n",
         "{\n  stop()\n  f()\n}\n",

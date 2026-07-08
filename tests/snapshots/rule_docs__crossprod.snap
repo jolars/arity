@@ -1,0 +1,38 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+# `crossprod`
+
+Flag `t(x) %*% y` and `x %*% t(y)`, which are the purpose-built `crossprod(x, y)` and `tcrossprod(x, y)`—faster (they go straight to BLAS and never materialize the transpose that `t()` builds) and clearer.
+
+The rule fires only when one operand is a single-argument `t()` call and that `t` resolves to base R; a local redefinition is left alone. When both operands are the same symbol the single-argument form (`crossprod(x)`) is used.
+
+Transposed matrix products:
+
+```r
+a <- t(x) %*% y
+b <- x %*% t(y)
+```
+
+```text
+warning: crossprod
+ --> example.R:1:6
+  |
+1 | a <- t(x) %*% y
+  |      ^^^^^^^^^^ `t(x) %*% y` is the faster, clearer `crossprod(x, y)`
+  = help: Use `crossprod(x, y)`.
+warning: crossprod
+ --> example.R:2:6
+  |
+2 | b <- x %*% t(y)
+  |      ^^^^^^^^^^ `x %*% t(y)` is the faster, clearer `tcrossprod(x, y)`
+  = help: Use `tcrossprod(x, y)`.
+```
+
+After applying the fix:
+
+```r
+a <- crossprod(x, y)
+b <- tcrossprod(x, y)
+```
