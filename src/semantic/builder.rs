@@ -21,12 +21,12 @@ use rowan::ast::AstNode as _;
 use rowan::{NodeOrToken, SyntaxToken, TextRange};
 use smol_str::SmolStr;
 
-use crate::ast::{AssignmentExpr, CallExpr, FunctionExpr};
+use crate::ast::{AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ident};
 use crate::semantic::binding::{Binding, BindingId, BindingKind};
 use crate::semantic::scope::{Scope, ScopeId, ScopeKind};
 use crate::semantic::symbols::LoadedPackage;
 use crate::semantic::{IdentRef, SemanticModel};
-use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
+use crate::syntax::{RLanguage, SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Build a fresh semantic model from a root CST node.
 pub fn build(root: &SyntaxNode) -> SemanticModel {
@@ -77,13 +77,21 @@ fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
 /// IDENT token as a read site.
 fn walk_generic(ctx: &mut BuildCtx<'_>, parent: &SyntaxNode, scope: ScopeId) {
     for el in parent.children_with_tokens() {
-        match el {
-            NodeOrToken::Node(child) => walk_node(ctx, &child, scope),
-            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
-                record_ident_read(ctx, &tok, scope);
-            }
-            _ => {}
+        walk_element(ctx, &el, scope);
+    }
+}
+
+/// Walk one child element in read position: recurse into a node, or record a
+/// bare `IDENT` token as a read. Trivia and other tokens (operators, literals,
+/// punctuation) are ignored. This is the shared arm the structural handlers
+/// use once they have carved off their special children.
+fn walk_element(ctx: &mut BuildCtx<'_>, el: &SyntaxElement, scope: ScopeId) {
+    match el {
+        NodeOrToken::Node(child) => walk_node(ctx, child, scope),
+        NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
+            record_ident_read(ctx, tok, scope);
         }
+        _ => {}
     }
 }
 
@@ -92,19 +100,17 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
     if ctx.suppress_read == Some(tok.text_range()) {
         return;
     }
-    let name = tok.text();
-    // `...`, `..1`, etc. are lexed as IDENT but are not scope-resolvable.
-    if name.starts_with('.') && name.chars().all(|c| c == '.' || c.is_ascii_digit()) {
-        return;
-    }
-    // Reserved literal constants (`TRUE`, `NA`, `NULL`, `Inf`, …) lex as IDENT
-    // but are values, not symbol references — never reads. (`T`/`F` are *not*
-    // here: they are rebindable base bindings.)
-    if crate::parser::expr::ident_is_special_constant(name) {
+    // `...`, `..1`, etc. are lexed as IDENT but are not scope-resolvable; the
+    // reserved literal constants (`TRUE`, `NA`, `NULL`, `Inf`, …) lex as IDENT
+    // but are values, not symbol references. (`T`/`F` are *not* excluded: they
+    // are rebindable base bindings.)
+    if let Some(ident) = Ident::cast(tok.clone())
+        && (ident.is_dots() || ident.is_reserved_constant())
+    {
         return;
     }
     ctx.model.idents.push(IdentRef {
-        name: SmolStr::new(name),
+        name: SmolStr::new(tok.text()),
         range: tok.text_range(),
         scope,
         data_masked: ctx.mask_depth > 0,
@@ -159,13 +165,7 @@ fn handle_function(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
     walk_function_param_defaults(ctx, &fn_expr, fn_scope);
     if let Some(body) = fn_expr.body() {
         ctx.function_depth += 1;
-        match body {
-            NodeOrToken::Node(child) => walk_node(ctx, &child, fn_scope),
-            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
-                record_ident_read(ctx, &tok, fn_scope);
-            }
-            _ => {}
-        }
+        walk_element(ctx, &body, fn_scope);
         ctx.function_depth -= 1;
     }
 }
@@ -201,15 +201,8 @@ fn walk_function_param_defaults(ctx: &mut BuildCtx<'_>, fn_expr: &FunctionExpr, 
         if !after_eq {
             continue;
         }
-        // After `=`, this token belongs to the default expression. Recurse into
-        // any node and record IDENT reads.
-        match el {
-            NodeOrToken::Node(child) => walk_node(ctx, child, scope),
-            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
-                record_ident_read(ctx, tok, scope);
-            }
-            _ => {}
-        }
+        // After `=`, this element belongs to the default expression.
+        walk_element(ctx, el, scope);
     }
 }
 
@@ -242,26 +235,14 @@ fn handle_for(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
     // Walk the *sequence* expression (between `in` and `)`).
     if let (Some(in_pos), Some(rp)) = (in_idx, rparen_idx) {
         for el in &elements[in_pos + 1..rp] {
-            match el {
-                NodeOrToken::Node(child) => walk_node(ctx, child, for_scope),
-                NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
-                    record_ident_read(ctx, tok, for_scope);
-                }
-                _ => {}
-            }
+            walk_element(ctx, el, for_scope);
         }
     }
 
     // Walk the body (everything after `)`).
     if let Some(rp) = rparen_idx {
         for el in &elements[rp + 1..] {
-            match el {
-                NodeOrToken::Node(child) => walk_node(ctx, child, for_scope),
-                NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
-                    record_ident_read(ctx, tok, for_scope);
-                }
-                _ => {}
-            }
+            walk_element(ctx, el, for_scope);
         }
     }
 }
@@ -276,12 +257,8 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
     let target = assign.target_element();
 
     // 1. Recurse the value side FIRST so RHS reads see the pre-assignment scope.
-    if let Some(NodeOrToken::Node(value_node)) = &value {
-        walk_node(ctx, value_node, scope);
-    } else if let Some(NodeOrToken::Token(tok)) = &value
-        && tok.kind() == SyntaxKind::IDENT
-    {
-        record_ident_read(ctx, tok, scope);
+    if let Some(value) = &value {
+        walk_element(ctx, value, scope);
     }
 
     // 2. Record the binding.
@@ -334,17 +311,16 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     // list so its bare reads aren't flagged.
     if call_is_data_masking(node) {
         for el in node.children_with_tokens() {
-            match el {
-                NodeOrToken::Node(child) if child.kind() == SyntaxKind::ARG_LIST => {
-                    ctx.mask_depth += 1;
-                    walk_node(ctx, &child, scope);
-                    ctx.mask_depth -= 1;
-                }
-                NodeOrToken::Node(child) => walk_node(ctx, &child, scope),
-                NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
-                    record_ident_read(ctx, &tok, scope);
-                }
-                _ => {}
+            // Mask the argument list (bare names there may be data columns);
+            // walk everything else (the callee) unmasked.
+            if let NodeOrToken::Node(child) = &el
+                && child.kind() == SyntaxKind::ARG_LIST
+            {
+                ctx.mask_depth += 1;
+                walk_node(ctx, child, scope);
+                ctx.mask_depth -= 1;
+            } else {
+                walk_element(ctx, &el, scope);
             }
         }
         return;
@@ -538,13 +514,7 @@ fn handle_arg(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         {
             continue;
         }
-        match el {
-            NodeOrToken::Node(child) => walk_node(ctx, child, scope),
-            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
-                record_ident_read(ctx, tok, scope);
-            }
-            _ => {}
-        }
+        walk_element(ctx, el, scope);
     }
 }
 
