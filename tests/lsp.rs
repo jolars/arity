@@ -1,13 +1,14 @@
 use arity::formatter::{FormatStyle, format_with_style};
 use arity::lsp::{
-    compute_completions, compute_definition, compute_document_highlights, compute_document_links,
-    compute_document_symbols, compute_folding_ranges, compute_format_edits,
-    compute_format_range_edits, compute_prepare_rename, compute_references, compute_rename,
-    compute_rename_with_anchor, compute_selection_ranges,
+    compute_color_presentations, compute_completions, compute_definition, compute_document_colors,
+    compute_document_highlights, compute_document_links, compute_document_symbols,
+    compute_folding_ranges, compute_format_edits, compute_format_range_edits,
+    compute_prepare_rename, compute_references, compute_rename, compute_rename_with_anchor,
+    compute_selection_ranges,
 };
 use arity::rindex::provider::IndexedProvider;
 use lsp_types::{
-    DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Position, Range,
+    Color, DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Position, Range,
     SelectionRange, SymbolKind, TextEdit,
 };
 
@@ -642,4 +643,135 @@ fn selection_range_empty_input_does_not_panic() {
     // A whole-file (empty) range, and no parent.
     assert_eq!(ranges[0].range, rng(0, 0, 0, 0));
     assert!(ranges[0].parent.is_none());
+}
+
+// --- document color ---------------------------------------------------------
+
+fn color(r: f32, g: f32, b: f32, a: f32) -> Color {
+    Color {
+        red: r,
+        green: g,
+        blue: b,
+        alpha: a,
+    }
+}
+
+#[test]
+fn document_color_recognizes_six_digit_hex() {
+    let text = "x <- \"#ff0000\"\n";
+    let colors = compute_document_colors(text);
+    assert_eq!(colors.len(), 1);
+    assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
+    // The swatch range slices the whole quoted token and stays on one line.
+    assert_eq!(colors[0].range, rng(0, 5, 0, 14));
+}
+
+#[test]
+fn document_color_recognizes_eight_digit_hex_alpha() {
+    let colors = compute_document_colors("x <- \"#ff000080\"\n");
+    assert_eq!(colors.len(), 1);
+    assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 128.0 / 255.0));
+}
+
+#[test]
+fn document_color_hex_is_case_insensitive() {
+    let upper = compute_document_colors("x <- \"#FF0000\"\n");
+    let lower = compute_document_colors("x <- \"#ff0000\"\n");
+    assert_eq!(upper[0].color, lower[0].color);
+}
+
+#[test]
+fn document_color_recognizes_named_colors() {
+    let colors = compute_document_colors("x <- \"red\"\n");
+    assert_eq!(colors.len(), 1);
+    assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
+}
+
+#[test]
+fn document_color_named_lookup_is_case_insensitive() {
+    let colors = compute_document_colors("x <- \"Red\"\n");
+    assert_eq!(colors.len(), 1);
+    assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
+}
+
+#[test]
+fn document_color_grey_and_gray_agree() {
+    let grey = compute_document_colors("x <- \"grey40\"\n");
+    let gray = compute_document_colors("x <- \"gray40\"\n");
+    assert_eq!(grey[0].color, gray[0].color);
+}
+
+#[test]
+fn document_color_skips_non_colors() {
+    // A plain word, the 3/4-digit short form, and trailing junk are not colors.
+    for src in [
+        "x <- \"hello\"\n",
+        "x <- \"#fff\"\n",
+        "x <- \"#ff00\"\n",
+        "x <- \"#ff0000 \"\n",
+        "x <- \"\"\n",
+    ] {
+        assert!(
+            compute_document_colors(src).is_empty(),
+            "expected no color for {src:?}"
+        );
+    }
+}
+
+#[test]
+fn document_color_recognizes_single_line_raw_string() {
+    let colors = compute_document_colors("x <- r\"(#ff0000)\"\n");
+    assert_eq!(colors.len(), 1);
+    assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
+}
+
+#[test]
+fn document_color_reports_each_literal() {
+    let colors = compute_document_colors("a <- \"red\"\nb <- \"#0000ff\"\n");
+    assert_eq!(colors.len(), 2);
+    assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
+    assert_eq!(colors[0].range, rng(0, 5, 0, 10));
+    assert_eq!(colors[1].color, color(0.0, 0.0, 1.0, 1.0));
+    assert_eq!(colors[1].range, rng(1, 5, 1, 14));
+}
+
+// --- color presentation -----------------------------------------------------
+
+#[test]
+fn color_presentation_round_trips_and_preserves_double_quote() {
+    let text = "x <- \"#ff0000\"\n";
+    let range = rng(0, 5, 0, 14); // the token range, quotes included
+    let out = compute_color_presentations(text, &color(0.0, 1.0, 0.0, 1.0), range);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].label, "#00ff00");
+    let edit = out[0].text_edit.as_ref().expect("text edit");
+    assert_eq!(edit.range, range);
+    assert_eq!(edit.new_text, "\"#00ff00\"");
+}
+
+#[test]
+fn color_presentation_preserves_single_quote() {
+    let text = "x <- '#ff0000'\n";
+    let range = rng(0, 5, 0, 14);
+    let out = compute_color_presentations(text, &color(0.0, 1.0, 0.0, 1.0), range);
+    assert_eq!(out[0].text_edit.as_ref().unwrap().new_text, "'#00ff00'");
+}
+
+#[test]
+fn color_presentation_emits_eight_digits_for_alpha() {
+    let text = "x <- \"#ff0000\"\n";
+    let range = rng(0, 5, 0, 14);
+    let out = compute_color_presentations(text, &color(1.0, 0.0, 0.0, 0.5), range);
+    // 0.5 rounds to 0x80; alpha < 1 keeps the RRGGBBAA form.
+    assert_eq!(out[0].label, "#ff000080");
+    assert_eq!(out[0].text_edit.as_ref().unwrap().new_text, "\"#ff000080\"");
+}
+
+#[test]
+fn color_presentation_defaults_to_double_quote_for_raw_string() {
+    let text = "x <- r\"(#ff0000)\"\n";
+    // The token starts at the `r`; the peek isn't a quote, so we default to `"`.
+    let range = rng(0, 5, 0, 17);
+    let out = compute_color_presentations(text, &color(0.0, 1.0, 0.0, 1.0), range);
+    assert_eq!(out[0].text_edit.as_ref().unwrap().new_text, "\"#00ff00\"");
 }

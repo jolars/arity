@@ -96,6 +96,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
         selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+        color_provider: Some(ColorProviderCapability::Simple(true)),
         document_link_provider: Some(DocumentLinkOptions {
             // Targets are resolved eagerly in the initial response.
             resolve_provider: Some(false),

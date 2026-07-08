@@ -3,7 +3,8 @@
 Arity ships a language server, started with `arity lsp` (stdio, JSON-RPC). It
 offers formatting, diagnostics with quick fixes, hover, completion, signature
 help, go-to-definition and find-references, rename, document and workspace
-symbols, semantic tokens, folding ranges, and call hierarchy.
+symbols, semantic tokens, folding and selection ranges, document links, document
+color swatches, and call and type hierarchy.
 
 Configuration is read from an `arity.toml` discovered from each file's directory
 (see the [configuration reference](../reference/configuration.md)).

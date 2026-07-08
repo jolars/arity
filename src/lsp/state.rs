@@ -148,6 +148,8 @@ impl GlobalState {
             DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
             FoldingRangeRequest::METHOD => self.on_folding_range(req),
             SelectionRangeRequest::METHOD => self.on_selection_range(req),
+            DocumentColor::METHOD => self.on_document_color(req),
+            ColorPresentationRequest::METHOD => self.on_color_presentation(req),
             DocumentLinkRequest::METHOD => self.on_document_link(req),
             SemanticTokensFullRequest::METHOD => self.on_semantic_tokens(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
@@ -595,6 +597,52 @@ impl GlobalState {
         self.read_spawner.spawn(move || {
             let links = compute_document_links(&text, base_dir.as_deref(), size_limit);
             let _ = sender.send(Message::Response(Response::new_ok(id, links)));
+        });
+    }
+
+    /// `textDocument/documentColor`: inline color swatches for string literals
+    /// that spell a hex code or a named `grDevices` color. A pure single-file CST
+    /// walk (no semantic model or workspace snapshot), so it runs straight on the
+    /// read pool like folding. See [`compute_document_colors`].
+    fn on_document_color(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<DocumentColorParams>(DocumentColor::METHOD) else {
+            self.respond_err(id, "invalid documentColor params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let colors = compute_document_colors(&text);
+            let _ = sender.send(Message::Response(Response::new_ok(id, colors)));
+        });
+    }
+
+    /// `textDocument/colorPresentation`: the hex spelling(s) the picker offers for
+    /// a chosen color, with an edit that rewrites the literal in place. Pure text
+    /// work on the read pool. See [`compute_color_presentations`].
+    fn on_color_presentation(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) =
+            req.extract::<ColorPresentationParams>(ColorPresentationRequest::METHOD)
+        else {
+            self.respond_err(id, "invalid colorPresentation params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        let (color, range) = (params.color, params.range);
+        let sender = self.sender.clone();
+        self.read_spawner.spawn(move || {
+            let presentations = compute_color_presentations(&text, &color, range);
+            let _ = sender.send(Message::Response(Response::new_ok(id, presentations)));
         });
     }
 

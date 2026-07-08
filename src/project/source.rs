@@ -169,6 +169,46 @@ pub fn collect_source_literal_edges(
         .collect()
 }
 
+/// A string literal, carrying the byte range of the string token (quotes
+/// included) and the unquoted spelling. Collected from *every* string literal in
+/// the file (not tied to any call), so read-only LSP walks can classify string
+/// constants: the document-link walk turns file-naming spellings into clickable
+/// links, and the document-color walk recognizes color spellings. Classification
+/// and any filesystem access are the caller's job, keeping this extractor pure.
+///
+/// Only genuine string tokens (`"`/`'`/raw `r"..."`) are collected;
+/// backtick-quoted non-syntactic names lex as `IDENT`, not `STRING`, so they
+/// never appear here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StringLiteral {
+    /// Range of the string token (including its quotes).
+    pub literal_range: TextRange,
+    /// The inner text as written, without quotes (raw-string aware). Never empty.
+    pub spelling: String,
+}
+
+/// Collect every non-empty string literal in `root` as a [`StringLiteral`]. Pure:
+/// no filesystem access and no classification — the caller inspects each
+/// spelling. Empty spellings are skipped since they carry no useful content.
+pub fn collect_string_literals(root: &SyntaxNode) -> Vec<StringLiteral> {
+    root.descendants_with_tokens()
+        .filter_map(|element| match element {
+            NodeOrToken::Token(token) if token.kind() == SyntaxKind::STRING => Some(token),
+            _ => None,
+        })
+        .filter_map(|token| {
+            let spelling = string_literal_content(token.text())?;
+            if spelling.is_empty() {
+                return None;
+            }
+            Some(StringLiteral {
+                literal_range: token.text_range(),
+                spelling: spelling.to_string(),
+            })
+        })
+        .collect()
+}
+
 /// A string literal that may name a file, carrying the byte range of the string
 /// token (quotes included) and the unquoted spelling. Unlike
 /// [`SourceLiteralEdge`], this is not tied to `source()`: it is collected from
@@ -188,24 +228,15 @@ pub struct LinkLiteral {
 /// Collect every string literal in `root` as a [`LinkLiteral`]. Pure: no
 /// filesystem access and no `base_dir` resolution — the caller resolves each
 /// spelling and filters by existence (see `compute_document_links`). Empty
-/// spellings are skipped since they can never name a file.
+/// spellings are skipped since they can never name a file. Layered over
+/// [`collect_string_literals`], adding the path-relativity classification.
 pub fn collect_link_literals(root: &SyntaxNode) -> Vec<LinkLiteral> {
-    root.descendants_with_tokens()
-        .filter_map(|element| match element {
-            NodeOrToken::Token(token) if token.kind() == SyntaxKind::STRING => Some(token),
-            _ => None,
-        })
-        .filter_map(|token| {
-            let spelling = string_literal_content(token.text())?;
-            if spelling.is_empty() {
-                return None;
-            }
-            let was_relative = is_relative_spelling(spelling);
-            Some(LinkLiteral {
-                literal_range: token.text_range(),
-                spelling: spelling.to_string(),
-                was_relative,
-            })
+    collect_string_literals(root)
+        .into_iter()
+        .map(|literal| LinkLiteral {
+            was_relative: is_relative_spelling(&literal.spelling),
+            literal_range: literal.literal_range,
+            spelling: literal.spelling,
         })
         .collect()
 }
@@ -656,6 +687,36 @@ mod tests {
     #[test]
     fn link_literal_skips_empty_strings() {
         assert!(link_literals("x <- \"\"\n").is_empty());
+    }
+
+    fn string_literals(src: &str) -> Vec<StringLiteral> {
+        collect_string_literals(&parse(src).cst)
+    }
+
+    #[test]
+    fn string_literal_captures_range_and_spelling() {
+        let src = "x <- \"helpers.R\"\n";
+        let e = string_literals(src);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].spelling, "helpers.R");
+        let range = e[0].literal_range;
+        assert_eq!(
+            &src[range.start().into()..range.end().into()],
+            "\"helpers.R\"",
+            "range slices the quoted token, quotes included"
+        );
+    }
+
+    #[test]
+    fn string_literal_is_raw_string_aware_and_skips_empty() {
+        assert_eq!(string_literals("x <- r\"(a.R)\"\n")[0].spelling, "a.R");
+        assert!(string_literals("x <- \"\"\n").is_empty());
+    }
+
+    #[test]
+    fn string_literal_excludes_backtick_names() {
+        // Backtick-quoted non-syntactic names lex as IDENT, never STRING.
+        assert!(string_literals("`a` <- 1\n").is_empty());
     }
 
     #[test]
