@@ -10,6 +10,7 @@
 //! guard is required. The fix is withheld when a comment in the operand would
 //! be dropped.
 
+use crate::ast::{AstNode, UnaryExpr};
 use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
@@ -42,19 +43,16 @@ impl Rule for ComparisonNegation {
     }
 
     fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-        let Some(unary) = el.as_node() else {
+        let Some(unary) = el.as_node().cloned().and_then(UnaryExpr::cast) else {
             return;
         };
         // The operator must be `!`.
-        let Some(op) = unary.children_with_tokens().find_map(|e| e.into_token()) else {
-            return;
-        };
-        if op.kind() != SyntaxKind::BANG {
+        if unary.op_kind() != Some(SyntaxKind::BANG) {
             return;
         }
         // The operand is the comparison — either bare (`!a == b`) or wrapped in
         // parens (`!(a == b)`).
-        let Some(operand) = unary.children().next() else {
+        let Some(operand) = unary.operand().and_then(|o| o.into_node()) else {
             return;
         };
         let inner = match operand.kind() {
@@ -77,10 +75,10 @@ impl Rule for ComparisonNegation {
             return;
         };
 
-        let r = unary.text_range();
+        let r = unary.syntax().text_range();
         // The rewrite reconstructs from the operands' text only, so a comment
         // anywhere in the subtree would be dropped — withhold the fix then.
-        let fix = if has_comment(unary) {
+        let fix = if has_comment(unary.syntax()) {
             None
         } else {
             Some(Fix::safe(
