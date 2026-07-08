@@ -1,0 +1,3 @@
+(\description (TEXT "An indented code block at the content column folds into a list item"))
+(\details (\itemize (\item) (TEXT "a") (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "code\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (\item) (TEXT "b")))
+(\title (TEXT "An indented code block at the content column folds into a list item"))

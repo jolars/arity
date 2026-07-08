@@ -4322,6 +4322,14 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
             out.push(Inline::MdCodeBlock(n));
         }
+        // A `ROXYGEN_MD_INDENTED_CODE` folded into a list item (a block indented
+        // four columns past the item's content column) projects to the same
+        // three-atom sequence; [`serialize_md_indented_code`] strips the item's
+        // content column on top of CommonMark's four (the item container consumes
+        // the content indentation first).
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_INDENTED_CODE => {
+            out.push(Inline::MdIndentedCode(n));
+        }
         // A resolved emphasis/strong *node* (the inline pass's output): recurse
         // into its inner inline run, skipping the opener/closer delimiter leaves
         // (and any inter-line trivia), so nesting projects as structure.
@@ -5056,6 +5064,11 @@ fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
 /// `xml_text`) and split into one `VERB` per line by `parse_Rd`.
 fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
     let text = node.text().to_string();
+    // When the block is folded into a list item, roxygen2 strips the item's
+    // content column *before* CommonMark's four (the item container consumes its
+    // content indentation), so each line loses `content_col + 4` leading spaces
+    // rather than just four. A section-level block adds nothing (`extra == 0`).
+    let extra = md_indented_code_extra_strip(node);
     // A block opening as a tag's same-line value (`@details      x`) has a
     // marker-less first line (the `#'` belongs to the enclosing tag): roxygen2
     // strips only the single separator space there — `strip_marker` would trim
@@ -5074,7 +5087,7 @@ fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
         };
         let content = after_marker
             .char_indices()
-            .take(4)
+            .take(4 + extra)
             .take_while(|&(_, c)| c == ' ')
             .count();
         code.push_str(&after_marker[content..]);
@@ -5092,6 +5105,60 @@ fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
             encode_text("</div>")
         ),
     ]
+}
+
+/// The number of **extra** leading columns [`serialize_md_indented_code`] must
+/// strip when an indented code block is folded into a list item: the item's
+/// content column, which CommonMark's item container consumes before the code
+/// block's own four columns apply. Zero for a section-level block (no
+/// `ROXYGEN_MD_LIST_ITEM` parent).
+///
+/// The content column is `marker_col + marker_width + content_leading`, all in
+/// the markdown-source coordinate roxygen2 works in (the `#'` marker and one
+/// conventional space already stripped). `marker_col` is the indentation before
+/// the item's marker (its enclosing list's nesting) less that one stripped
+/// space; `content_leading` is the spaces between the marker and the item text,
+/// clamped to CommonMark's 1..=4.
+fn md_indented_code_extra_strip(node: &SyntaxNode) -> usize {
+    let Some(item) = node
+        .parent()
+        .filter(|p| p.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+    else {
+        return 0;
+    };
+    let Some(marker) = item
+        .children_with_tokens()
+        .find(|el| el.kind() == SyntaxKind::ROXYGEN_MD_LIST_MARKER)
+        .and_then(|el| el.into_token())
+    else {
+        return 0;
+    };
+    let marker_width = marker.text().chars().count();
+    // The marker's markdown column: the whitespace before it (the enclosing
+    // list's indentation) less the one conventional space roxygen2 strips.
+    let mut indent_before = 0;
+    let mut prev = marker.prev_token();
+    while let Some(tok) = prev {
+        if tok.kind() != SyntaxKind::WHITESPACE {
+            break;
+        }
+        indent_before += tok.text().chars().count();
+        prev = tok.prev_token();
+    }
+    let marker_col = indent_before.saturating_sub(1);
+    // The item's content leading spaces (the text right after the marker leaf),
+    // clamped to CommonMark's 1..=4.
+    let content_leading = marker
+        .next_token()
+        .map(|t| {
+            t.text()
+                .chars()
+                .take_while(|c| *c == ' ')
+                .count()
+                .clamp(1, 4)
+        })
+        .unwrap_or(1);
+    marker_col + marker_width + content_leading
 }
 
 /// Project a `ROXYGEN_MD_HTML_BLOCK` node into roxygen2's `\if{html}{\out{…}}`
@@ -8033,6 +8100,56 @@ mod tests {
         // line, so a body line indented *past* the fence keeps the surplus: fence at
         // column 3, body at column 5 → `  code` (two leading spaces survive).
         let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'    ```\n#'      code\n#'    ```\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\preformatted (VERB \"  code\\n\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn indented_code_at_content_column_folds_into_item() {
+        // A blank-separated line indented four columns past the item's content
+        // column (2 + 4 = 6) is an indented code block inside the item, projecting
+        // to the same three-atom sequence as a fenced block, with `- b` a sibling.
+        // The item's content column is stripped on top of CommonMark's four, so the
+        // code renders flush (`code`, no leading spaces).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#'       code\n\
+                   #' - b\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\") \
+                 (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) \
+                 (\\preformatted (VERB \"code\\n\")) \
+                 (\\if (TEXT \"html\") (\\out (VERB \"</div>\"))) (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn indented_code_without_blank_is_lazy_continuation() {
+        // A CommonMark indented code block cannot interrupt a paragraph, so an
+        // over-indented line *immediately* after the item text (no blank) is a lazy
+        // paragraph continuation folded into the item (`a code`), not a code block.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'       code\n\
+                   #' @name spec\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\details (\\itemize (\\item) (TEXT \"a code\")))"),
+            "got: {rd}"
+        );
+        assert!(!rd.contains("\\preformatted"), "got: {rd}");
+    }
+
+    #[test]
+    fn folded_indented_code_keeps_surplus_indentation() {
+        // Only the item's content column plus CommonMark's four are stripped, so a
+        // code line indented *past* that threshold keeps the surplus: content column
+        // 2, strip 6, a line at markdown column 8 → `  code` (two spaces survive).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#'         code\n\
                    #' @name spec\nNULL\n";
         assert!(
             project_to_rd(src).contains("(\\preformatted (VERB \"  code\\n\"))"),

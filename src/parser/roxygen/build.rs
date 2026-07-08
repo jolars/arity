@@ -324,6 +324,28 @@ fn next_content_line(tokens: &[Token], i: usize) -> Option<usize> {
     }
 }
 
+/// From `i` (expected at a line's trailing `Newline`), the next **non-blank**
+/// roxygen line's `RoxygenMarker` reached across one or more **blank** lines —
+/// like [`next_content_line`] but *requiring* at least one intervening blank.
+/// A blank line closes a list item's open paragraph, which an indented code
+/// block folded into the item needs: a CommonMark indented code block cannot
+/// interrupt a paragraph, so a no-blank over-indented line is a lazy
+/// continuation instead. `None` when no blank intervenes or the block ends
+/// first. The indent test is the caller's.
+fn next_content_line_across_blanks(tokens: &[Token], i: usize) -> Option<usize> {
+    let mut j = i;
+    let mut crossed = false;
+    loop {
+        let m = following_line_marker(tokens, j)?;
+        if matches!(classify_line(tokens, m), LineKind::Blank) {
+            crossed = true;
+            j = line_content_end(tokens, m);
+            continue;
+        }
+        return crossed.then_some(m);
+    }
+}
+
 /// The list-*type* discriminant of a `RoxygenMdListMarker`'s text: the bullet
 /// character itself (`-`/`*`/`+`), or the ordered delimiter (`.`/`)`).
 /// CommonMark items belong to the same list only when this matches — changing
@@ -863,6 +885,29 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
+            // A blank-separated indented code block: after a blank line closes
+            // the item's paragraph, a line indented four or more columns past the
+            // item's content column is an indented code block *inside* the item
+            // (CommonMark). The blank is required — an indented code block cannot
+            // interrupt a paragraph, so a no-blank over-indented line is a lazy
+            // continuation (folded above); a line indented to the content column
+            // but fewer than four columns past it is a loose paragraph (folded
+            // below). An **empty** item does not fold indented code (it ends the
+            // list instead, engine-probed), hence the `item_has_content` gate.
+            // Placed before the loose-paragraph arm, which would otherwise claim
+            // the over-indented line as prose. The continuation-line threshold is
+            // the same content-relative gauge, threaded into the emitter.
+            if item_has_content
+                && let Some(m) = next_content_line_across_blanks(tokens, i)
+                && is_indent_code_line_min(tokens, m, content_indent + 4)
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` + blank lines + `#'` (trivia)
+                }
+                i = emit_md_indented_code_min(tokens, m, content_indent + 4, events);
+                continue;
+            }
+
             // A blank-separated paragraph: after a blank line closes the item's
             // paragraph, a following prose line indented to (or past) the item's
             // content column opens a new paragraph *inside the same item* (a
@@ -977,10 +1022,24 @@ pub(super) fn is_md_code_block_start(tokens: &[Token], start: usize) -> bool {
 /// the leading whitespace is ordinary `Whitespace` (no special leaf), so the
 /// block-macro machinery's whitespace handling is unaffected.
 fn is_indent_code_line(tokens: &[Token], start: usize) -> bool {
+    is_indent_code_line_min(tokens, start, 5)
+}
+
+/// Like [`is_indent_code_line`] but with a caller-supplied minimum indentation
+/// (in all-space columns after the `#'` marker). A **top-level** indented code
+/// line needs five columns (roxygen2 strips the marker and one space, leaving
+/// CommonMark's four); an indented code block **folded into a list item** needs
+/// the item's content column plus four (the item container consumes the content
+/// column before CommonMark's four apply), so the caller passes
+/// `content_indent + 4`.
+fn is_indent_code_line_min(tokens: &[Token], start: usize, min_ws: usize) -> bool {
     let Some(ws) = tokens.get(start + 1) else {
         return false;
     };
-    if ws.kind != TokKind::Whitespace || ws.text.len() < 5 || !ws.text.bytes().all(|b| b == b' ') {
+    if ws.kind != TokKind::Whitespace
+        || ws.text.len() < min_ws
+        || !ws.text.bytes().all(|b| b == b' ')
+    {
         return false;
     }
     let content = line_content_start(tokens, start);
@@ -1021,6 +1080,19 @@ pub(super) fn emit_md_indented_code(
     start: usize,
     events: &mut Vec<Event>,
 ) -> usize {
+    emit_md_indented_code_min(tokens, start, 5, events)
+}
+
+/// Like [`emit_md_indented_code`] but with a caller-supplied minimum indentation
+/// (see [`is_indent_code_line_min`]): a block folded into a list item passes
+/// `content_indent + 4` so both its opening line and its continuation lines are
+/// gauged against the item's content column, not the top-level threshold.
+pub(super) fn emit_md_indented_code_min(
+    tokens: &[Token],
+    start: usize,
+    min_ws: usize,
+    events: &mut Vec<Event>,
+) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_INDENTED_CODE));
 
@@ -1032,7 +1104,7 @@ pub(super) fn emit_md_indented_code(
         i += 1;
     }
 
-    finish_md_indented_code(tokens, i, events)
+    finish_md_indented_code(tokens, i, min_ws, events)
 }
 
 /// Whether a prose tag's same-line value opens a markdown **indented code
@@ -1070,15 +1142,22 @@ pub(super) fn emit_md_indented_code_from_value(
         events.push(Event::Tok(i));
         i += 1;
     }
-    finish_md_indented_code(tokens, i, events)
+    finish_md_indented_code(tokens, i, 5, events)
 }
 
 /// Gather an indented code block's continuation lines (following code lines and
 /// interior blanks) after its opening line, then finish the
 /// `ROXYGEN_MD_INDENTED_CODE` node. `i` is at the opening line's trailing
-/// `Newline`. Shared by the line-start ([`emit_md_indented_code`]) and tag-value
-/// ([`emit_md_indented_code_from_value`]) forms.
-fn finish_md_indented_code(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
+/// `Newline`; `min_ws` is the continuation-line indentation threshold (see
+/// [`is_indent_code_line_min`]). Shared by the line-start
+/// ([`emit_md_indented_code`]), tag-value ([`emit_md_indented_code_from_value`]),
+/// and folded-into-a-list-item forms.
+fn finish_md_indented_code(
+    tokens: &[Token],
+    mut i: usize,
+    min_ws: usize,
+    events: &mut Vec<Event>,
+) -> usize {
     loop {
         // `i` is at the trailing `Newline` of the last emitted code line. Scan
         // forward across zero or more blank lines to the next code line; a blank run
@@ -1095,7 +1174,7 @@ fn finish_md_indented_code(tokens: &[Token], mut i: usize, events: &mut Vec<Even
             if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
                 break None; // a non-roxygen line ends the block
             }
-            if is_indent_code_line(tokens, m) {
+            if is_indent_code_line_min(tokens, m, min_ws) {
                 let mut e = m + 1;
                 while tokens.get(e).is_some_and(|t| is_line_body_kind(&t.kind)) {
                     e += 1;

@@ -211,6 +211,7 @@ md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
 md_list_lazy
 md_list_item_code_block
+md_list_item_indented_code
 md_list_item_para
 md_list_lazy_edges
 md_list_loose

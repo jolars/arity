@@ -1,0 +1,67 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..165
+  ROXYGEN_BLOCK@0..159
+    ROXYGEN_SECTION@0..74
+      ROXYGEN_PARAGRAPH@0..71
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..70 "An indented code bloc ..."
+        NEWLINE@70..71 "\n"
+      ROXYGEN_MARKER@71..73 "#'"
+      NEWLINE@73..74 "\n"
+    ROXYGEN_SECTION@74..81
+      ROXYGEN_MARKER@74..76 "#'"
+      WHITESPACE@76..77 " "
+      ROXYGEN_TAG@77..80
+        ROXYGEN_AT@77..78 "@"
+        ROXYGEN_TAG_NAME@78..80 "md"
+      NEWLINE@80..81 "\n"
+    ROXYGEN_SECTION@81..124
+      ROXYGEN_MARKER@81..83 "#'"
+      WHITESPACE@83..84 " "
+      ROXYGEN_TAG@84..92
+        ROXYGEN_AT@84..85 "@"
+        ROXYGEN_TAG_NAME@85..92 "details"
+      NEWLINE@92..93 "\n"
+      ROXYGEN_MD_LIST@93..123
+        ROXYGEN_MARKER@93..95 "#'"
+        WHITESPACE@95..96 " "
+        ROXYGEN_MD_LIST_ITEM@96..116
+          ROXYGEN_MD_LIST_MARKER@96..97 "-"
+          ROXYGEN_TEXT@97..99 " a"
+          NEWLINE@99..100 "\n"
+          ROXYGEN_MARKER@100..102 "#'"
+          NEWLINE@102..103 "\n"
+          ROXYGEN_MD_INDENTED_CODE@103..116
+            ROXYGEN_MARKER@103..105 "#'"
+            WHITESPACE@105..112 "       "
+            ROXYGEN_TEXT@112..116 "code"
+        NEWLINE@116..117 "\n"
+        ROXYGEN_MARKER@117..119 "#'"
+        WHITESPACE@119..120 " "
+        ROXYGEN_MD_LIST_ITEM@120..123
+          ROXYGEN_MD_LIST_MARKER@120..121 "-"
+          ROXYGEN_TEXT@121..123 " b"
+      NEWLINE@123..124 "\n"
+    ROXYGEN_SECTION@124..159
+      ROXYGEN_MARKER@124..126 "#'"
+      WHITESPACE@126..127 " "
+      ROXYGEN_TAG@127..159
+        ROXYGEN_AT@127..128 "@"
+        ROXYGEN_TAG_NAME@128..132 "name"
+        WHITESPACE@132..133 " "
+        ROXYGEN_TEXT@133..135 "md"
+        ROXYGEN_MD_DELIM@135..136 "_"
+        ROXYGEN_TEXT@136..140 "list"
+        ROXYGEN_MD_DELIM@140..141 "_"
+        ROXYGEN_TEXT@141..145 "item"
+        ROXYGEN_MD_DELIM@145..146 "_"
+        ROXYGEN_TEXT@146..154 "indented"
+        ROXYGEN_MD_DELIM@154..155 "_"
+        ROXYGEN_TEXT@155..159 "code"
+  NEWLINE@159..160 "\n"
+  IDENT@160..164 "NULL"
+  NEWLINE@164..165 "\n"
