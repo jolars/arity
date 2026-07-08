@@ -279,6 +279,32 @@ fn next_list_line_across_blanks(tokens: &[Token], i: usize) -> Option<usize> {
     }
 }
 
+/// From `i` (expected at a line's trailing `Newline`), the next roxygen line's
+/// `RoxygenMarker` when it is a **paragraph-continuation** of a list item
+/// reached only across one or more **blank** roxygen lines. A blank line closes
+/// an item's open paragraph, but the item continues: a subsequent line indented
+/// to (or past) the item's content column opens a *new* paragraph inside the
+/// same item (a loose list item), which Rd rendering flattens into the item text
+/// (`- a` / blank / `  more` → item text `a more`, engine-probed). Requires at
+/// least one intervening blank (the no-blank lazy case is the direct fold loop),
+/// a following non-blank line that opens no block
+/// ([`is_md_item_lazy_continuation`] — a list marker nests/siblings instead, a
+/// block opener is out of scope), and `None` otherwise. The indent test is the
+/// caller's (a below-content-column line ends the item).
+fn next_prose_line_across_blanks(tokens: &[Token], i: usize) -> Option<usize> {
+    let mut j = i;
+    let mut crossed = false;
+    loop {
+        let m = following_line_marker(tokens, j)?;
+        if matches!(classify_line(tokens, m), LineKind::Blank) {
+            crossed = true;
+            j = line_content_end(tokens, m);
+            continue;
+        }
+        return (crossed && is_md_item_lazy_continuation(tokens, m)).then_some(m);
+    }
+}
+
 /// The list-*type* discriminant of a `RoxygenMdListMarker`'s text: the bullet
 /// character itself (`-`/`*`/`+`), or the ordered delimiter (`.`/`)`).
 /// CommonMark items belong to the same list only when this matches — changing
@@ -793,33 +819,56 @@ fn emit_md_list_level_inner(
             .iter()
             .any(|t| !t.text.trim().is_empty());
 
-        // Lazy continuations: a following plain-prose line that opens no block
-        // folds into this item's open paragraph (CommonMark paragraph
-        // continuation text). Runs before the nested-list gather — a lazy line
-        // continues the item's opening paragraph, and a nested list may still
-        // follow it; a lazy line *after* a nested list belongs to that list's
-        // innermost item, which the recursion folds itself. An **empty** item
-        // has no open paragraph to continue (an item starting with a blank
-        // needs indented content, engine-probed), so nothing folds into it.
-        while item_has_content && let Some(m) = following_line_marker(tokens, i) {
-            if !is_md_item_lazy_continuation(tokens, m) {
-                break;
-            }
-            for idx in i..=m {
-                events.push(Event::Tok(idx)); // `\n` + indentation + `#'` (trivia)
-            }
-            i = m + 1;
-            while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
-                events.push(Event::Tok(i));
-                i += 1;
-            }
-        }
-
-        // Nested lists: every following list line indented to (or past) this
-        // item's content column is a child list inside this item — even across
-        // blank lines (a blank ends the item's paragraph but not the item; a
-        // list line at the content column still nests, engine-probed).
+        // The item body: paragraph continuations and nested lists, in source
+        // order. Each iteration folds one continuation into the item, so a
+        // lazy line, a blank-separated paragraph, and a nested list interleave
+        // as they appear. An **empty** item has no open paragraph to continue
+        // (an item starting with a blank needs indented content,
+        // engine-probed), so no prose continuation folds into it.
         loop {
+            // A no-blank lazy continuation: a following plain-prose line that
+            // opens no block folds into the item's open paragraph (CommonMark
+            // paragraph continuation text) — even unindented or over-indented.
+            if item_has_content
+                && let Some(m) = following_line_marker(tokens, i)
+                && is_md_item_lazy_continuation(tokens, m)
+            {
+                for idx in i..=m {
+                    events.push(Event::Tok(idx)); // `\n` + indentation + `#'` (trivia)
+                }
+                i = m + 1;
+                while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                    events.push(Event::Tok(i));
+                    i += 1;
+                }
+                continue;
+            }
+
+            // A blank-separated paragraph: after a blank line closes the item's
+            // paragraph, a following prose line indented to (or past) the item's
+            // content column opens a new paragraph *inside the same item* (a
+            // loose item), which Rd rendering flattens into the item text
+            // (`- a` / blank / `  more` → `a more`, engine-probed). A
+            // below-content-column line ends the item instead.
+            if item_has_content
+                && let Some(m) = next_prose_line_across_blanks(tokens, i)
+                && list_line_indent(tokens, m) >= content_indent
+            {
+                for idx in i..=m {
+                    events.push(Event::Tok(idx)); // `\n` + blank lines + indentation + `#'`
+                }
+                i = m + 1;
+                while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                    events.push(Event::Tok(i));
+                    i += 1;
+                }
+                continue;
+            }
+
+            // A nested list: a following list line indented to (or past) the
+            // item's content column is a child list inside this item — even
+            // across blank lines (a blank ends the item's paragraph but not the
+            // item; a list line at the content column still nests).
             let m = match next_list_line(tokens, i) {
                 Some(m) => m,
                 None => match next_list_line_across_blanks(tokens, i) {

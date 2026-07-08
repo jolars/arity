@@ -1,0 +1,6 @@
+---
+source: tests/parser_snapshots.rs
+assertion_line: 14
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[]

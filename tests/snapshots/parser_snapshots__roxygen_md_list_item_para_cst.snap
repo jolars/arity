@@ -1,0 +1,64 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..155
+  ROXYGEN_BLOCK@0..149
+    ROXYGEN_SECTION@0..66
+      ROXYGEN_PARAGRAPH@0..63
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..62 "Blank-separated conte ..."
+        NEWLINE@62..63 "\n"
+      ROXYGEN_MARKER@63..65 "#'"
+      NEWLINE@65..66 "\n"
+    ROXYGEN_SECTION@66..73
+      ROXYGEN_MARKER@66..68 "#'"
+      WHITESPACE@68..69 " "
+      ROXYGEN_TAG@69..72
+        ROXYGEN_AT@69..70 "@"
+        ROXYGEN_TAG_NAME@70..72 "md"
+      NEWLINE@72..73 "\n"
+    ROXYGEN_SECTION@73..123
+      ROXYGEN_MARKER@73..75 "#'"
+      WHITESPACE@75..76 " "
+      ROXYGEN_TAG@76..84
+        ROXYGEN_AT@76..77 "@"
+        ROXYGEN_TAG_NAME@77..84 "details"
+      NEWLINE@84..85 "\n"
+      ROXYGEN_MD_LIST@85..122
+        ROXYGEN_MARKER@85..87 "#'"
+        WHITESPACE@87..88 " "
+        ROXYGEN_MD_LIST_ITEM@88..122
+          ROXYGEN_MD_LIST_MARKER@88..89 "-"
+          ROXYGEN_TEXT@89..91 " a"
+          NEWLINE@91..92 "\n"
+          ROXYGEN_MARKER@92..94 "#'"
+          NEWLINE@94..95 "\n"
+          ROXYGEN_MARKER@95..97 "#'"
+          WHITESPACE@97..100 "   "
+          ROXYGEN_TEXT@100..104 "more"
+          NEWLINE@104..105 "\n"
+          ROXYGEN_MARKER@105..107 "#'"
+          NEWLINE@107..108 "\n"
+          ROXYGEN_MARKER@108..110 "#'"
+          WHITESPACE@110..113 "   "
+          ROXYGEN_TEXT@113..122 "even more"
+      NEWLINE@122..123 "\n"
+    ROXYGEN_SECTION@123..149
+      ROXYGEN_MARKER@123..125 "#'"
+      WHITESPACE@125..126 " "
+      ROXYGEN_TAG@126..149
+        ROXYGEN_AT@126..127 "@"
+        ROXYGEN_TAG_NAME@127..131 "name"
+        WHITESPACE@131..132 " "
+        ROXYGEN_TEXT@132..134 "md"
+        ROXYGEN_MD_DELIM@134..135 "_"
+        ROXYGEN_TEXT@135..139 "list"
+        ROXYGEN_MD_DELIM@139..140 "_"
+        ROXYGEN_TEXT@140..144 "item"
+        ROXYGEN_MD_DELIM@144..145 "_"
+        ROXYGEN_TEXT@145..149 "para"
+  NEWLINE@149..150 "\n"
+  IDENT@150..154 "NULL"
+  NEWLINE@154..155 "\n"

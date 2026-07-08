@@ -1,0 +1,3 @@
+(\description (TEXT "Blank-separated content-column prose folds into a list item"))
+(\details (\itemize (\item) (TEXT "a more even more")))
+(\title (TEXT "Blank-separated content-column prose folds into a list item"))

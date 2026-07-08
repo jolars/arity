@@ -7936,4 +7936,35 @@ mod tests {
             project_to_rd(src)
         );
     }
+
+    #[test]
+    fn blank_separated_content_column_prose_folds_into_item() {
+        // A blank line closes a list item's paragraph, but a following prose line
+        // indented to the item's content column opens a new paragraph *inside the
+        // same item* (a loose item), which Rd rendering flattens into the item
+        // text. Both blank-separated paragraphs fold — `- a` / blank / `  more` /
+        // blank / `  even more` → one item, `a more even more`.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#'   more\n#'\n#'   even more\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\details (\\itemize (\\item) (TEXT \"a more even more\")))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn blank_then_underindented_prose_ends_the_list() {
+        // A blank-separated continuation below the content column does *not* fold:
+        // it ends the list and becomes sibling section prose (`- a` / blank /
+        // `more` at column 1 → item `a`, then a separate `more`).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#' more\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\details (\\itemize (\\item) (TEXT \"a\")) (TEXT \"more\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
 }
