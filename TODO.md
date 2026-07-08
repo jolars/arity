@@ -40,6 +40,33 @@
     the client's exact change ranges (switching to INCREMENTAL sync) would keep
     disjoint edits from coalescing into one wide span.
 
+## AST wrappers
+
+The typed AST layer (`src/ast/`) is a read-only, rust-analyzer-style navigation
+view over the CST (see the Architecture note in `AGENTS.md`). The foundation and
+the linter-matcher fold have landed; the remaining consumer migrations are pure
+cleanup and must keep behavior byte-identical (a passing suite is the proof).
+
+- [x] **Foundation.** `AstToken` trait + token wrappers (`Ident`/`StringLit`/
+  `IntLit`/…), `RConstant`, the missing node wrappers
+  (`RepeatExpr`/`SubsetExpr`/`Subset2Expr`), and accessors on the previously thin
+  wrappers (`BinaryExpr` lhs/op/rhs/parts, `UnaryExpr`, `ParenExpr`, `BlockExpr`,
+  `Arg` name/value). Shared kind predicates in `ast::kinds`.
+- [x] **`Expr` union + `HasArgList`.** `Expr` casts from a `SyntaxElement` and
+  carries token-atom variants (R's leaves are tokens); `HasArgList` unifies
+  `CallExpr`/`SubsetExpr`/`Subset2Expr` argument access.
+- [x] **Fold `matchers.rs`** onto the layer (public free-fn surface preserved).
+- [ ] **Migrate linter rules** to call `Arg`/`BinaryExpr::parts`/`Ident`/
+  `StringLit`/`Expr` directly, then drop the element-level matcher shims once no
+  rule imports them. `tests/lint.rs` snapshots must stay byte-identical.
+- [ ] **Migrate the semantic builder** (`src/semantic/builder.rs`): replace
+  `walk_node`'s hand-rolled dispatch and the duplicated `Node/Token(IDENT)` arms
+  with `match Expr::cast(el)` + `Ident`; `handle_for`/param scans -> `ForExpr`/
+  `FunctionExpr` accessors; quote-stripping -> `StringLit::unquote`.
+- [ ] **Migrate LSP** (`hover`/`signature`/`semantic_tokens`/`folding`): drop the
+  redundant `kind()==X` pre-checks before `X::cast()`; use `HasArgList`/`Arg`/
+  `Ident`.
+
 ## Formatter
 
 - [ ] Tribbles

@@ -116,9 +116,25 @@ build_tree (tree_builder.rs) → rowan SyntaxNode (CST)
   and `%...%`/`[[`/`]]` tokens are preserved; `reconstruct(text)` must equal
   `text`. Parser work prioritizes stable, recoverable CST shape over early
   semantic precision. Semantics stay **static**—no R evaluation.
-- `src/ast/nodes.rs` (`src/ast.rs`) provides zero-cost typed AST wrappers over
-  the CST using rowan's `AstNode` support (e.g. `AssignmentExpr`, `IfExpr`,
-  `FunctionExpr`).
+- The **AST-wrapper layer** (`src/ast/`) is a zero-cost typed *navigation* view
+  over the CST, in rust-analyzer's mould: `AstNode` wrappers (`nodes.rs`) type
+  each node kind (`AssignmentExpr`, `IfExpr`, `FunctionExpr`, …) and `AstToken`
+  wrappers (`tokens.rs`, arity's own trait—rowan ships no `AstToken`) type each
+  leaf kind (`Ident`, `StringLit`, `IntLit`, …). Because R's atomic operands are
+  **bare tokens**, not `LITERAL` nodes—`1 + 2` is `BINARY_EXPR { INT, PLUS,
+  INT }`, and every special constant (`TRUE`, `NA`, `NULL`, …) is an `IDENT`
+  classified by text—accessors over operands return `SyntaxElement`
+  (node-or-token), and the `Expr` union (`expr.rs`) casts from a `SyntaxElement`
+  with both node variants and token-atom variants (`Name`, `IntLiteral`, …) so a
+  single `match Expr::cast(el)` covers any expression. `HasArgList` is the shared
+  trait for the argument-bearing nodes (`CallExpr`/`SubsetExpr`/`Subset2Expr`);
+  `kinds.rs` holds shared `SyntaxKind` predicates. The linter's `matchers.rs` and
+  the other consumers (semantic model builder, LSP) navigate through these
+  wrappers rather than re-walking raw CST. The **formatter deliberately stays on
+  raw CST** (byte-level layout precision, Tenet 1) and is not migrated. This is a
+  read-only layer—it changes no parser or formatter output, so losslessness and
+  idempotence are unaffected; `tests/ast_wrappers.rs` is its integration-test
+  home.
 - `src/incremental.rs` models file text → tokens → events → CST as `salsa`
   queries for incremental reparse.
 
