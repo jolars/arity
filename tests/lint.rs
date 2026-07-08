@@ -1903,6 +1903,151 @@ fn crossprod_withholds_fix_for_dropped_comment() {
     assert!(d.fix.is_none(), "dropped comment should withhold the fix");
 }
 
+/// The (unsafe) fix carried by the single finding of `rule` in `src`, applied.
+fn unsafe_fixed_output(src: &str, rule: &str) -> String {
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == rule)
+        .unwrap_or_else(|| panic!("expected a {rule} finding"));
+    let fix = d.fix.as_ref().expect("finding should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Unsafe);
+    apply_fixes(src, std::slice::from_ref(fix), true).output
+}
+
+#[test]
+fn string_boundary_rewrites_anchored_grepl() {
+    // A leading `^` is a prefix test; a trailing `$` is a suffix test. The
+    // subject moves to the first argument and the anchor is stripped from the
+    // pattern (quote character preserved).
+    assert_eq!(
+        unsafe_fixed_output("grepl(\"^abc\", x)\n", "string-boundary"),
+        "startsWith(x, \"abc\")\n"
+    );
+    assert_eq!(
+        unsafe_fixed_output("grepl(\"xyz$\", y)\n", "string-boundary"),
+        "endsWith(y, \"xyz\")\n"
+    );
+    assert_eq!(
+        unsafe_fixed_output("grepl('a$', df$col)\n", "string-boundary"),
+        "endsWith(df$col, 'a')\n"
+    );
+}
+
+#[test]
+fn string_boundary_fix_is_unsafe() {
+    // `startsWith`/`endsWith` diverge from `grepl` on `NA`/non-character input,
+    // so the fix must be unsafe (never applied on a plain `--fix`).
+    let d = diagnostics("grepl(\"^abc\", x)\n")
+        .into_iter()
+        .find(|d| d.rule == "string-boundary")
+        .expect("expected a string-boundary finding");
+    assert_eq!(
+        d.fix.as_ref().expect("should carry a fix").applicability,
+        Applicability::Unsafe
+    );
+}
+
+#[test]
+fn string_boundary_ignores_non_boundary_shapes() {
+    for src in [
+        "grepl(\"^a.b\", x)\n",               // metacharacter after the anchor
+        "grepl(\"a|b$\", x)\n",               // alternation is a real regex
+        "grepl(\"^abc$\", x)\n",              // both ends anchored — an exact match
+        "grepl(\"abc\", x)\n",                // no anchor at all
+        "grepl(\"^\", x)\n",                  // anchor only, empty literal
+        "grepl(\"^abc\", x, fixed = TRUE)\n", // extra (named) argument
+        "grepl(\"^abc\", x, ignore.case = TRUE)\n",
+        "grepl(pattern = \"^abc\", x)\n", // named pattern — not the clean shape
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"string-boundary"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn string_boundary_skips_shadowed_grepl() {
+    // A user redefinition of `grepl` means the call no longer invokes base R, so
+    // the rewrite would be wrong — don't flag.
+    let src = "grepl <- function(p, x) TRUE\ngrepl(\"^abc\", x)\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(
+        !rules.contains(&"string-boundary"),
+        "{src:?} should not flag, got: {rules:?}"
+    );
+}
+
+#[test]
+fn string_boundary_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved subject/pattern would be dropped, so the
+    // fix is withheld — the finding still reports.
+    let d = diagnostics("grepl(\"^abc\", # note\n  x)\n")
+        .into_iter()
+        .find(|d| d.rule == "string-boundary")
+        .expect("expected a string-boundary finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
+fn fixed_regex_adds_fixed_true_for_literal_pattern() {
+    // A metacharacter-free pattern matches identically with `fixed = TRUE`, which
+    // the fix inserts after the last argument.
+    assert_eq!(
+        fixed_output("grepl(\"abc\", x)\n", "fixed-regex"),
+        "grepl(\"abc\", x, fixed = TRUE)\n"
+    );
+    assert_eq!(
+        fixed_output("gsub(\"lit\", \"R\", s)\n", "fixed-regex"),
+        "gsub(\"lit\", \"R\", s, fixed = TRUE)\n"
+    );
+}
+
+#[test]
+fn fixed_regex_ignores_metacharacter_patterns() {
+    for src in [
+        "grepl(\"a.b\", x)\n",     // `.` is a metacharacter
+        "grepl(\"^abc\", x)\n",    // anchored — a real regex (and string-boundary's)
+        "grepl(\"a\\\\.b\", x)\n", // an escaped literal dot — has a backslash
+        "grepl(\"\", x)\n",        // empty pattern
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"fixed-regex"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn fixed_regex_skips_when_mode_flag_present() {
+    // `fixed`/`ignore.case`/`perl` already govern matching mode; adding
+    // `fixed = TRUE` would be redundant or contradictory.
+    for src in [
+        "grepl(\"abc\", x, fixed = TRUE)\n",
+        "grepl(\"abc\", x, fixed = FALSE)\n",
+        "grepl(\"abc\", x, ignore.case = TRUE)\n",
+        "grepl(\"abc\", x, perl = TRUE)\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"fixed-regex"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn fixed_regex_skips_shadowed_callee() {
+    let src = "grepl <- function(p, x) TRUE\ngrepl(\"abc\", x)\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(
+        !rules.contains(&"fixed-regex"),
+        "{src:?} should not flag, got: {rules:?}"
+    );
+}
+
 #[test]
 fn unreachable_code_flags_after_return_and_stop() {
     // A statement after an unconditional `return()` in a function body can never
@@ -2115,6 +2260,12 @@ fn fixed_output_is_parseable_and_clean() {
         "z <- t(x) %*% y\n",
         "z <- x %*% t(y)\n",
         "z <- t(x) %*% x\n",
+        // string-boundary (`grepl("^a", x)` → `startsWith`; unsafe)
+        "flag <- grepl(\"^abc\", x)\n",
+        "flag <- grepl(\"xyz$\", y)\n",
+        // fixed-regex (add `fixed = TRUE` for a literal pattern)
+        "flag <- grepl(\"abc\", x)\n",
+        "out <- gsub(\"lit\", \"R\", s)\n",
         // unreachable-code deletion (after `return()`/`stop()`)
         "f <- function() {\n  g()\n  return(1)\n  2\n}\nf()\n",
         "{\n  stop()\n  f()\n}\n",

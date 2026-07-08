@@ -26,12 +26,14 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`true-false-symbol`](rules/true-false-symbol.md)
 - [`comparison-negation`](rules/comparison-negation.md)
 - [`outer-negation`](rules/outer-negation.md)
+- [`string-boundary`](rules/string-boundary.md)
 
 ## Performance
 
 - [`any-is-na`](rules/any-is-na.md)
 - [`any-duplicated`](rules/any-duplicated.md)
 - [`crossprod`](rules/crossprod.md)
+- [`fixed-regex`](rules/fixed-regex.md)
 
 ## Documentation
 

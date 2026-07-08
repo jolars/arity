@@ -426,9 +426,19 @@ harden against shadowing in Phase 4.
       (performance, safe)—off-by-one safety, high value.
 - [ ] `is-numeric` (correctness, safe); `class-equals` `class(x) == ...` ->
       `inherits` (performance, unsafe—`class()` is a vector).
-- [ ] `string-boundary` `grepl("^a", x)` -> `startsWith` (readability, safe when
-      fixed literal + single anchor); `fixed-regex` add `fixed = TRUE`
-      (performance, safe).
+- [x] `string-boundary` `grepl("^a", x)` -> `startsWith`, `grepl("a$", x)` ->
+      `endsWith` (readability, `ns`); `fixed-regex` add `fixed = TRUE`
+      (performance, `ns`, safe). Both landed. `string-boundary` fires only on the
+      clean two-positional-arg shape with a one-end-anchored plain-literal pattern
+      and namespace-confirms `grepl`; its fix is **unsafe** (not safe as first
+      sketched)—`startsWith`/`endsWith` diverge from `grepl` on `NA` (`NA` vs
+      `FALSE`) and non-character input (error vs coercion). `fixed-regex` fires on
+      the base regex functions (`grepl`/`grep`/`sub`/`gsub`/`regexpr`/`gregexpr`/
+      `regexec`) when the first positional arg is a metacharacter-free string
+      literal and no `fixed`/`ignore.case`/`perl` flag is set; the fix is a pure
+      insertion of `, fixed = TRUE` (lossless, safe). Both withhold/skip per the
+      autofix-correctness discipline (`string-boundary` withholds on a dropped
+      comment; `fixed-regex` needs none—it drops nothing).
 - [ ] `sort` `sort(x)[1]` -> `min`, etc. (performance, unsafe).
 - [ ] `internal-function` `pkg:::fn` via
       `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.

@@ -174,6 +174,51 @@ pub fn is_nan(el: &SyntaxElement) -> bool {
     ident_text(el) == Some("NaN")
 }
 
+// --- string literals -------------------------------------------------------
+
+/// The `(quote, inner)` of a single string-literal token, when it is quoted with
+/// `"` or `'` (not a backtick name). `inner` is the raw text between the quotes,
+/// escapes and all. `None` for a non-string token or a backtick-quoted name.
+pub fn string_literal(token: &SyntaxToken) -> Option<(char, &str)> {
+    if token.kind() != SyntaxKind::STRING {
+        return None;
+    }
+    let text = token.text();
+    let bytes = text.as_bytes();
+    if bytes.len() < 2 {
+        return None;
+    }
+    let quote = bytes[0];
+    if !matches!(quote, b'"' | b'\'') || bytes[bytes.len() - 1] != quote {
+        return None;
+    }
+    Some((quote as char, &text[1..text.len() - 1]))
+}
+
+/// Whether `s` contains no regex metacharacter (and no backslash escape), so it
+/// matches literally and identically under both regex and `fixed = TRUE`
+/// semantics. All metacharacters are ASCII, so a byte scan is sufficient.
+pub fn is_plain_regex_literal(s: &str) -> bool {
+    !s.bytes().any(|b| {
+        matches!(
+            b,
+            b'.' | b'\\'
+                | b'|'
+                | b'('
+                | b')'
+                | b'['
+                | b']'
+                | b'{'
+                | b'}'
+                | b'^'
+                | b'$'
+                | b'*'
+                | b'+'
+                | b'?'
+        )
+    })
+}
+
 // --- shared helpers --------------------------------------------------------
 
 /// The source text of an element: a token's text, or a node's full text.
@@ -395,6 +440,26 @@ mod tests {
         assert!(is_null(&rhs));
         let (lhs, _, _) = binary_parts(&first_binary("T == x")).unwrap();
         assert!(is_bool_symbol(&lhs));
+    }
+
+    #[test]
+    fn string_literal_extracts_quote_and_inner() {
+        let call = first_call("grepl(\"^abc\", x)");
+        let tok = nth_arg(&call, 0).unwrap().into_token().unwrap();
+        assert_eq!(string_literal(&tok), Some(('"', "^abc")));
+        let call = first_call("grepl('a.b', x)");
+        let tok = nth_arg(&call, 0).unwrap().into_token().unwrap();
+        assert_eq!(string_literal(&tok), Some(('\'', "a.b")));
+    }
+
+    #[test]
+    fn plain_regex_literal_rejects_metacharacters() {
+        assert!(is_plain_regex_literal("abc"));
+        assert!(is_plain_regex_literal("hello world"));
+        assert!(!is_plain_regex_literal("a.b"));
+        assert!(!is_plain_regex_literal("a\\.b"));
+        assert!(!is_plain_regex_literal("^abc"));
+        assert!(!is_plain_regex_literal("a+b"));
     }
 
     #[test]
