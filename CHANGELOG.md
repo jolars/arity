@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.11.0](https://github.com/jolars/arity/compare/v0.10.0...v0.11.0) (2026-07-08)
+
+### Features
+- **linter:** add string-boundary and fixed-regex rules ([`bddd07b`](https://github.com/jolars/arity/commit/bddd07bee82b47e531e5f8e7d2161098cafd3282))
+- **linter:** add crossprod rule for %*% with t() ([`de48640`](https://github.com/jolars/arity/commit/de486400a234f5094508010629e08ca36fcac1c5))
+- **parser:** fold blank-separated list item paragraphs ([`92772ce`](https://github.com/jolars/arity/commit/92772ce78c18051b5a394dfe95ff373056a5a1a7))
+- **parser:** split roxygen md lists on no-blank marker-type change ([`f65195d`](https://github.com/jolars/arity/commit/f65195d9223d9b3494e7ae600fa8d9944a073273))
+- **lsp:** add document color support ([`3f8b048`](https://github.com/jolars/arity/commit/3f8b0486526ceea67d67b902ef30636bfa13a493))
+- **lsp:** add selection ranges ([`43dd077`](https://github.com/jolars/arity/commit/43dd07717152161aefab34097cf68b051dd43681))
+- **lsp:** add roxygen skeleton code action ([`8cac459`](https://github.com/jolars/arity/commit/8cac459d0b16d8a26b321a003b0ac7b792a76b74))
+- **lsp:** add type hierarchy for S4/R6/RefClass ([`b4c3133`](https://github.com/jolars/arity/commit/b4c313363e5f06c13540998f34b654c8f0a2f1c3))
+- **lsp:** add document link support ([`b0f5a92`](https://github.com/jolars/arity/commit/b0f5a92911cdffa443f821e1fe3c89e47c4253be))
+- **roxygen:** project sticky brace-less RCODE/VERB swallow ([`917fca5`](https://github.com/jolars/arity/commit/917fca558cb2294aa8c878b328d7010cc6a1203f))
+- **roxygen:** project brace-less `\item` as UNKNOWN node ([`0b3f1cf`](https://github.com/jolars/arity/commit/0b3f1cf5a9a2dfee85408bda426b486df4bfba74))
+- **roxygen:** group bare braces in md heading titles as LIST ([`a479f00`](https://github.com/jolars/arity/commit/a479f0057ce5b6726ce1b87ba0db2035d890ca38))
+- **roxygen:** group bare braces in macro args as Rd LIST ([`1143364`](https://github.com/jolars/arity/commit/1143364985f7671d502279f687cf0d89c54dea9f))
+- **config:** honor excludes in LSP, sibling, and index walks ([`66e7680`](https://github.com/jolars/arity/commit/66e76805f4659a918e050b251e0595e4e46c0d16))
+- **parser:** reparse non-braced top-level statements ([`81124a5`](https://github.com/jolars/arity/commit/81124a53c199d726bb73d2af68ab6009c20ef36f))
+- **roxygen:** project md bare brace groups as Rd LIST ([`9edfcfa`](https://github.com/jolars/arity/commit/9edfcfa4ec97485c90275361e8ffa575c6b0ebc5))
+- **roxygen:** project bare prose brace groups as Rd LIST ([`0e2cbd7`](https://github.com/jolars/arity/commit/0e2cbd76e230a21fe3bee18430e1ccf27820fce7))
+- **parser:** gate in-arg macro carve on backslash parity ([`b5fa27f`](https://github.com/jolars/arity/commit/b5fa27f4e35ad2a429ff4842073da8ea083b2a44))
+- **roxygen:** resolve Rd-string escapes in macro args ([`8d08c7a`](https://github.com/jolars/arity/commit/8d08c7ab8a423b52327f6676d6d4cf84439b48af))
+- **roxygen:** render md escaped braces bare in TEXT ([`146da14`](https://github.com/jolars/arity/commit/146da14cb17669e0852bdd47d47f03dafb6e6da6))
+- **roxygen:** drop brace-less known Rd macros in projection ([`3eba086`](https://github.com/jolars/arity/commit/3eba086499f11536868833afe00d359c7da9c050))
+- **parser:** parity-gate Rd macro carves on backslash runs ([`ba1a9e0`](https://github.com/jolars/arity/commit/ba1a9e0bc93f56497774450d915994d2b8da7793))
+- **parser:** resolve multi-line code spans in the inline pass ([`c3575f5`](https://github.com/jolars/arity/commit/c3575f552777ab01ef2068ce41c44eb98d001e3e))
+- **parser:** resolve multi-line inline HTML in the inline pass ([`62ca1f3`](https://github.com/jolars/arity/commit/62ca1f34e78d3bc8a26f40a0a675b41bd04208af))
+- **parser:** merge blank-separated same-type markdown lists ([`164d519`](https://github.com/jolars/arity/commit/164d51922e70f181bf6ea3c8a8005b697cbcc783))
+- **parser:** fold lazy continuations into markdown list items ([`54f56f9`](https://github.com/jolars/arity/commit/54f56f9695a366c693936b387ac17e07a0e7c017))
+- **linter:** add roxygen documentation rules ([`167ae38`](https://github.com/jolars/arity/commit/167ae3853a1709e7f1d26e89b64bc989bd2b0742))
+- **ast:** add roxygen tag and prose accessors ([`792ec6b`](https://github.com/jolars/arity/commit/792ec6b4f2cb8c9cd31a7cb9406437dac638d73d))
+- **parser:** block quote, thematic break from tag value ([`ff3f647`](https://github.com/jolars/arity/commit/ff3f647bc52f82a756a91a95b3c9afe4159c6198))
+
+### Bug Fixes
+- **formatter:** indent nested operand of binary chain ([`ef14a99`](https://github.com/jolars/arity/commit/ef14a99d8755f587b7b0a3f9aa954192fcf34837))
+- **roxygen:** keep md section on trailing \% swallow ([`4425971`](https://github.com/jolars/arity/commit/4425971db505387458e70b5a21b1bf21032465db))
+- **roxygen:** resolve multi-backslash md brace runs at cmark stage ([`756aacd`](https://github.com/jolars/arity/commit/756aacde2c753c1a911195f8804dcb2820913794))
+- **roxygen:** keep fragile-macro escaped braces in md drop scan ([`0674bc7`](https://github.com/jolars/arity/commit/0674bc7f3bb5c44c7a1670f5b0211b64392c2411))
+- **roxygen:** scan raw text for md-off rdComplete drop ([`f291ab1`](https://github.com/jolars/arity/commit/f291ab13cc059a90384ae3cd1626003dd3e894d9))
+- **formatter:** bail folded roxygen tags on structured lines ([`b251e40`](https://github.com/jolars/arity/commit/b251e40b5128a0bfe6d393ac6010a9fbfedc8ff7))
+- **formatter:** reflow roxygen prose containing pipes ([`6b17cad`](https://github.com/jolars/arity/commit/6b17cad8dda09cec9039cea8780232b28f8df613))
+
 ## [0.10.0](https://github.com/jolars/arity/compare/v0.9.0...v0.10.0) (2026-07-05)
 
 ### Features
