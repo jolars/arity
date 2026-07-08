@@ -3,14 +3,16 @@
 //! These collapse the common "is this a call to `foo` / what is its nth
 //! argument / is this operand a `TRUE` literal" patterns that otherwise get
 //! rewritten ad hoc in every rule, reducing a typical syntactic rule to ~30
-//! lines. They build on the typed AST wrappers (`CallExpr`, `ArgList`, `Arg`,
-//! `BinaryExpr`) rather than re-walking raw CST wherever a wrapper exists.
+//! lines. They are thin adapters over the typed AST layer (`CallExpr`, `Arg`,
+//! `BinaryExpr`, `Ident`, `StringLit`, `Expr`) — the structural navigation
+//! lives on the wrappers, not here. What remains local is the root/range,
+//! string-predicate, and byte-span logic that has no single node/token home.
 
 use rowan::NodeOrToken;
 use rowan::ast::AstNode as _;
 use smol_str::SmolStr;
 
-use crate::ast::CallExpr;
+use crate::ast::{Arg, AstToken as _, BinaryExpr, CallExpr, Expr, HasArgList as _, Ident};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 // --- calls & callees -------------------------------------------------------
@@ -18,7 +20,7 @@ use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 /// The callee name of a call, when it is a simple name (`foo(…)`, `` `+`(…) ``).
 /// `None` for a computed callee (`(g())(…)`, `x$f(…)`).
 pub fn callee_name(call: &CallExpr) -> Option<SmolStr> {
-    call.callee_token().map(|t| token_name(&t))
+    call.callee_name()
 }
 
 /// `node` cast to a [`CallExpr`] whose callee is exactly `name`.
@@ -54,59 +56,25 @@ pub struct ArgMatch {
 
 /// The arguments of a call, each split into name and value.
 pub fn args(call: &CallExpr) -> Vec<ArgMatch> {
-    let Some(list) = call.arg_list() else {
-        return Vec::new();
-    };
-    list.args().map(|arg| arg_parts(arg.syntax())).collect()
+    call.args().map(arg_match).collect()
 }
 
 /// The value of the `n`th positional (unnamed) argument, 0-indexed.
 pub fn nth_arg(call: &CallExpr, n: usize) -> Option<SyntaxElement> {
-    args(call)
-        .into_iter()
-        .filter(|a| a.name.is_none())
-        .nth(n)
-        .and_then(|a| a.value)
+    call.nth_positional(n)
 }
 
 /// The value of the argument named `name`, if present.
 pub fn named_arg(call: &CallExpr, name: &str) -> Option<SyntaxElement> {
-    args(call)
-        .into_iter()
-        .find(|a| a.name.as_deref() == Some(name))
-        .and_then(|a| a.value)
+    call.named_arg(name)
 }
 
-fn arg_parts(arg: &SyntaxNode) -> ArgMatch {
-    let elements: Vec<SyntaxElement> = arg.children_with_tokens().collect();
-    match elements
-        .iter()
-        .position(|e| e.kind() == SyntaxKind::ASSIGN_EQ)
-    {
-        Some(eq) => {
-            let name_token = elements[..eq].iter().rev().find_map(|e| match e {
-                NodeOrToken::Token(t)
-                    if matches!(t.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) =>
-                {
-                    Some(t.clone())
-                }
-                _ => None,
-            });
-            let value = elements[eq + 1..]
-                .iter()
-                .find(|e| !is_trivia(e.kind()))
-                .cloned();
-            ArgMatch {
-                name: name_token.as_ref().map(token_name),
-                name_token,
-                value,
-            }
-        }
-        None => ArgMatch {
-            name: None,
-            name_token: None,
-            value: elements.iter().find(|e| !is_trivia(e.kind())).cloned(),
-        },
+/// Split a typed [`Arg`] into the flat [`ArgMatch`] shape the rules consume.
+fn arg_match(arg: Arg) -> ArgMatch {
+    ArgMatch {
+        name: arg.name(),
+        name_token: arg.name_token(),
+        value: arg.value(),
     }
 }
 
@@ -116,62 +84,48 @@ fn arg_parts(arg: &SyntaxNode) -> ArgMatch {
 /// token. Operands are elements: they may be tokens (`x`, `TRUE`) or nodes
 /// (`a + b`).
 pub fn binary_parts(expr: &SyntaxNode) -> Option<(SyntaxElement, SyntaxToken, SyntaxElement)> {
-    if expr.kind() != SyntaxKind::BINARY_EXPR {
-        return None;
-    }
-    let elements: Vec<SyntaxElement> = expr.children_with_tokens().collect();
-    let op_idx = elements
-        .iter()
-        .position(|e| matches!(e, NodeOrToken::Token(t) if is_binary_operator(t.kind())))?;
-    let op = elements[op_idx].as_token()?.clone();
-    let lhs = elements[..op_idx]
-        .iter()
-        .rev()
-        .find(|e| !is_trivia(e.kind()))?
-        .clone();
-    let rhs = elements[op_idx + 1..]
-        .iter()
-        .find(|e| !is_trivia(e.kind()))?
-        .clone();
-    Some((lhs, op, rhs))
+    BinaryExpr::cast(expr.clone())?.parts()
 }
 
 // --- literal classifiers ---------------------------------------------------
 //
-// R's special constants (`TRUE`, `NA`, …) are all `IDENT` tokens; they are
-// classified by text, mirroring `parser::expr::ident_is_special_constant`.
+// R's special constants (`TRUE`, `NA`, …) are all `IDENT` tokens classified by
+// text. These element-level helpers cast an operand to an [`Ident`] and defer
+// to its classifiers, the single source of truth.
+
+/// Cast an operand element to an [`Ident`] token, if it is one.
+fn as_ident(el: &SyntaxElement) -> Option<Ident> {
+    el.as_token().cloned().and_then(Ident::cast)
+}
 
 /// `TRUE`.
 pub fn is_true(el: &SyntaxElement) -> bool {
-    ident_text(el) == Some("TRUE")
+    as_ident(el).is_some_and(|i| i.is_true())
 }
 
 /// `FALSE`.
 pub fn is_false(el: &SyntaxElement) -> bool {
-    ident_text(el) == Some("FALSE")
+    as_ident(el).is_some_and(|i| i.is_false())
 }
 
 /// The rebindable boolean symbols `T` / `F`.
 pub fn is_bool_symbol(el: &SyntaxElement) -> bool {
-    matches!(ident_text(el), Some("T" | "F"))
+    as_ident(el).is_some_and(|i| i.is_bool_symbol())
 }
 
 /// `NA` or one of its typed variants (`NA_integer_`, …).
 pub fn is_na(el: &SyntaxElement) -> bool {
-    matches!(
-        ident_text(el),
-        Some("NA" | "NA_integer_" | "NA_real_" | "NA_complex_" | "NA_character_")
-    )
+    as_ident(el).is_some_and(|i| i.is_na())
 }
 
 /// `NULL`.
 pub fn is_null(el: &SyntaxElement) -> bool {
-    ident_text(el) == Some("NULL")
+    as_ident(el).is_some_and(|i| i.is_null())
 }
 
 /// `NaN`.
 pub fn is_nan(el: &SyntaxElement) -> bool {
-    ident_text(el) == Some("NaN")
+    as_ident(el).is_some_and(|i| i.is_nan())
 }
 
 // --- string literals -------------------------------------------------------
@@ -233,83 +187,7 @@ pub fn element_text(el: &SyntaxElement) -> String {
 /// `!` (or dropped) without changing how the result parses — the guard a
 /// negating rewrite like `x == FALSE` → `!x` needs to stay correct.
 pub fn is_atom(el: &SyntaxElement) -> bool {
-    match el {
-        NodeOrToken::Token(t) => matches!(
-            t.kind(),
-            SyntaxKind::IDENT
-                | SyntaxKind::INT
-                | SyntaxKind::FLOAT
-                | SyntaxKind::STRING
-                | SyntaxKind::COMPLEX
-        ),
-        NodeOrToken::Node(n) => matches!(
-            n.kind(),
-            SyntaxKind::CALL_EXPR
-                | SyntaxKind::PAREN_EXPR
-                | SyntaxKind::SUBSET_EXPR
-                | SyntaxKind::SUBSET2_EXPR
-        ),
-    }
-}
-
-fn ident_text(el: &SyntaxElement) -> Option<&str> {
-    match el {
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::IDENT => Some(t.text()),
-        _ => None,
-    }
-}
-
-fn is_binary_operator(kind: SyntaxKind) -> bool {
-    matches!(
-        kind,
-        SyntaxKind::PLUS
-            | SyntaxKind::MINUS
-            | SyntaxKind::STAR
-            | SyntaxKind::SLASH
-            | SyntaxKind::CARET
-            | SyntaxKind::PIPE
-            | SyntaxKind::COLON
-            | SyntaxKind::COLON2
-            | SyntaxKind::COLON3
-            | SyntaxKind::DOLLAR
-            | SyntaxKind::AT
-            | SyntaxKind::OR
-            | SyntaxKind::OR2
-            | SyntaxKind::AND
-            | SyntaxKind::AND2
-            | SyntaxKind::EQUAL2
-            | SyntaxKind::NOT_EQUAL
-            | SyntaxKind::LESS_THAN
-            | SyntaxKind::LESS_THAN_OR_EQUAL
-            | SyntaxKind::GREATER_THAN
-            | SyntaxKind::GREATER_THAN_OR_EQUAL
-            | SyntaxKind::USER_OP
-            | SyntaxKind::TILDE
-            | SyntaxKind::QUESTION
-    )
-}
-
-fn is_trivia(kind: SyntaxKind) -> bool {
-    matches!(
-        kind,
-        SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
-    )
-}
-
-/// The name a token denotes: raw text for an `IDENT`, the unquoted contents for
-/// a backtick/quoted `STRING`.
-fn token_name(token: &SyntaxToken) -> SmolStr {
-    if token.kind() == SyntaxKind::STRING {
-        let text = token.text();
-        let bytes = text.as_bytes();
-        if bytes.len() >= 2 {
-            let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
-            if matches!(first, b'"' | b'\'' | b'`') && first == last {
-                return SmolStr::new(&text[1..text.len() - 1]);
-            }
-        }
-    }
-    SmolStr::new(token.text())
+    Expr::cast(el.clone()).is_some_and(|e| e.is_atom())
 }
 
 // --- deletion spans --------------------------------------------------------
