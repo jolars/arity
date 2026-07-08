@@ -25,7 +25,7 @@ pub(crate) fn code_actions_from_findings(
 ) -> CodeActionResponse {
     let line_index = LineIndex::new(text);
 
-    findings
+    let mut actions: CodeActionResponse = findings
         .iter()
         .filter_map(|d| {
             let fix = d.fix.as_ref()?;
@@ -56,7 +56,14 @@ pub(crate) fn code_actions_from_findings(
                 ..Default::default()
             }))
         })
-        .collect()
+        .collect();
+
+    // Cursor-context roxygen skeleton action (not diagnostic-backed).
+    if let Some(action) = roxygen_code_action(text, uri, range) {
+        actions.push(action);
+    }
+
+    actions
 }
 
 /// Inclusive overlap test for two LSP ranges (a zero-width cursor touching a
