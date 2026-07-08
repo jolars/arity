@@ -1,8 +1,11 @@
 pub use rowan::ast::{AstChildren, AstNode, AstPtr, SyntaxNodePtr, support};
 
+pub mod expr;
 pub mod kinds;
 pub mod nodes;
 pub mod tokens;
+
+pub use expr::{Expr, HasArgList};
 
 pub use nodes::{
     Arg, ArgList, AssignmentExpr, BinaryExpr, BlockExpr, CallExpr, ForExpr, ForExprParts,

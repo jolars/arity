@@ -1,7 +1,7 @@
 use arity::ast::{
     Arg, ArgList, AssignmentExpr, AstNode, AstToken, BinaryExpr, BlockExpr, CallExpr, Comment,
-    FloatLit, ForExpr, FunctionExpr, Ident, IfExpr, IntLit, ParenExpr, RConstant, RepeatExpr,
-    RoxygenBlock, StringLit, Subset2Expr, SubsetExpr, UnaryExpr,
+    Expr, FloatLit, ForExpr, FunctionExpr, HasArgList, Ident, IfExpr, IntLit, ParenExpr, RConstant,
+    RepeatExpr, RoxygenBlock, StringLit, Subset2Expr, SubsetExpr, UnaryExpr,
 };
 use arity::parser::parse;
 use arity::syntax::{SyntaxElement, SyntaxKind};
@@ -585,4 +585,115 @@ fn call_expr_callee_name_and_base() {
     let call = first_node::<CallExpr>("(g())(1)");
     assert_eq!(call.callee_name(), None);
     assert_eq!(element_text(&call.base().unwrap()), "(g())");
+}
+
+// --- Phase 2: Expr enum + HasArgList ----------------------------------------
+
+fn first_binary_rhs_lhs(src: &str) -> (SyntaxElement, SyntaxElement) {
+    let b = first_binary(src);
+    let (lhs, _, rhs) = b.parts().unwrap();
+    (lhs, rhs)
+}
+
+#[test]
+fn expr_cast_classifies_token_atoms() {
+    let (lhs, rhs) = first_binary_rhs_lhs("x == TRUE");
+    assert!(matches!(Expr::cast(lhs), Some(Expr::Name(_))));
+    // `TRUE` is a Name atom; distinguish the constant via Ident::constant.
+    match Expr::cast(rhs) {
+        Some(Expr::Name(id)) => assert_eq!(id.constant(), Some(RConstant::True)),
+        other => panic!("expected Name, got {other:?}"),
+    }
+    let (int, _) = first_binary_rhs_lhs("1 + x");
+    assert!(matches!(Expr::cast(int), Some(Expr::IntLiteral(_))));
+    let (flt, _) = first_binary_rhs_lhs("1.5 + x");
+    assert!(matches!(Expr::cast(flt), Some(Expr::FloatLiteral(_))));
+}
+
+#[test]
+fn expr_cast_classifies_compound_nodes() {
+    let node = |src: &str| -> SyntaxElement {
+        parse(src)
+            .cst
+            .first_child()
+            .expect("a top-level node")
+            .into()
+    };
+    assert!(matches!(
+        Expr::cast(node("x <- 1")),
+        Some(Expr::Assignment(_))
+    ));
+    assert!(matches!(Expr::cast(node("a + b")), Some(Expr::Binary(_))));
+    assert!(matches!(Expr::cast(node("!x")), Some(Expr::Unary(_))));
+    assert!(matches!(Expr::cast(node("(x)")), Some(Expr::Paren(_))));
+    assert!(matches!(Expr::cast(node("f(1)")), Some(Expr::Call(_))));
+    assert!(matches!(Expr::cast(node("x[1]")), Some(Expr::Subset(_))));
+    assert!(matches!(Expr::cast(node("x[[1]]")), Some(Expr::Subset2(_))));
+    assert!(matches!(Expr::cast(node("if (x) y")), Some(Expr::If(_))));
+    assert!(matches!(
+        Expr::cast(node("for (i in x) i")),
+        Some(Expr::For(_))
+    ));
+    assert!(matches!(
+        Expr::cast(node("while (x) y")),
+        Some(Expr::While(_))
+    ));
+    assert!(matches!(
+        Expr::cast(node("repeat break")),
+        Some(Expr::Repeat(_))
+    ));
+    assert!(matches!(
+        Expr::cast(node("function(x) x")),
+        Some(Expr::Function(_))
+    ));
+    assert!(matches!(Expr::cast(node("{ x }")), Some(Expr::Block(_))));
+}
+
+#[test]
+fn expr_cast_rejects_non_expressions() {
+    // An operator token is not an expression.
+    let b = first_binary("a + b");
+    let op = b.op().unwrap();
+    assert!(Expr::cast(op.into()).is_none());
+    // An ARG_LIST node is not an expression.
+    let call = first_node::<CallExpr>("f(1)");
+    let arg_list = call.arg_list().unwrap();
+    assert!(Expr::cast_node(arg_list.syntax().clone()).is_none());
+}
+
+#[test]
+fn expr_syntax_and_text_range_round_trip() {
+    let (lhs, _) = first_binary_rhs_lhs("foo + 1");
+    let expr = Expr::cast(lhs.clone()).unwrap();
+    assert_eq!(expr.syntax(), lhs);
+    assert_eq!(expr.text_range(), lhs.text_range());
+}
+
+#[test]
+fn expr_is_atom_guards_negation() {
+    // `x` is a primary atom.
+    let (lhs, _) = first_binary_rhs_lhs("x == FALSE");
+    assert!(Expr::cast(lhs).unwrap().is_atom());
+    // `a > b` is a binary expr, not a primary — negation would misparse.
+    let (lhs, _) = first_binary_rhs_lhs("a > b == FALSE");
+    assert!(!Expr::cast(lhs).unwrap().is_atom());
+}
+
+#[test]
+fn has_arg_list_positional_and_named() {
+    let call = first_node::<CallExpr>("f(1, b = 2, 3)");
+    assert_eq!(element_text(&call.nth_positional(0).unwrap()), "1");
+    // `b = 2` is named, so positional indexing skips it.
+    assert_eq!(element_text(&call.nth_positional(1).unwrap()), "3");
+    assert_eq!(element_text(&call.named_arg("b").unwrap()), "2");
+    assert!(call.named_arg("z").is_none());
+}
+
+#[test]
+fn has_arg_list_works_for_subscripts() {
+    let subset = first_node::<SubsetExpr>("x[i, j = 2]");
+    assert_eq!(element_text(&subset.nth_positional(0).unwrap()), "i");
+    assert_eq!(element_text(&subset.named_arg("j").unwrap()), "2");
+    let subset2 = first_node::<Subset2Expr>("x[[k]]");
+    assert_eq!(element_text(&subset2.nth_positional(0).unwrap()), "k");
 }
