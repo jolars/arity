@@ -4532,8 +4532,12 @@ fn resolve_md_link(raw: &str) -> Option<String> {
     match bytes.get(text_end) {
         Some(&b'(') => {
             let url_end = scan_delimited(bytes, text_end, b'(', b')')?;
-            (url_end == bytes.len())
-                .then(|| inline_link_atom(text, &raw[text_end + 1..url_end - 1]))
+            (url_end == bytes.len()).then(|| {
+                inline_link_atom(
+                    text,
+                    &inline_link_destination(&raw[text_end + 1..url_end - 1]),
+                )
+            })
         }
         Some(&b'[') => {
             let ref_end = scan_delimited(bytes, text_end, b'[', b']')?;
@@ -4546,13 +4550,38 @@ fn resolve_md_link(raw: &str) -> Option<String> {
 }
 
 /// The destination of an inline-link closer leaf `](dest)`: the text between the
-/// parentheses (verbatim, mirroring the opaque path's `&raw[text_end+1..url_end-1]`).
+/// parentheses ([`inline_link_destination`] parses the CommonMark destination out of
+/// it, dropping any title).
 fn inline_link_dest(close: &str) -> String {
-    close
+    let content = close
         .strip_prefix("](")
         .and_then(|s| s.strip_suffix(')'))
-        .unwrap_or("")
-        .to_string()
+        .unwrap_or("");
+    inline_link_destination(content)
+}
+
+/// Parse the destination from an inline link's parenthesized content
+/// `( destination [title] )`, mirroring cmark's inline-link parse: optional
+/// surrounding whitespace, then an angle-bracketed (`<…>`, brackets stripped) or
+/// bare (a run up to the first whitespace) destination, then an **optional title**
+/// (`"…"`/`'…'`/`(…)`) that roxygen2 discards. So `[t](url "x")`, `[t](url 'x')`, and
+/// `[t](url (x))` all render `\href{url}{t}` (probed), while a `"` not preceded by
+/// whitespace stays part of the destination (`[t](url"x")` → `url"x"`). The
+/// destination is entity-decoded (`&amp;`→`&`) like a reference definition's
+/// ([`parse_linkref_def_dest`]). Cross-line links carry [`SOFT_BREAK`] separators,
+/// which count as whitespace here (a CommonMark destination spans no line break).
+fn inline_link_destination(content: &str) -> String {
+    let rest = content.trim_start();
+    let url = if let Some(r) = rest.strip_prefix('<') {
+        match r.find('>') {
+            Some(close) => &r[..close],
+            None => rest, // unterminated angle destination: keep verbatim
+        }
+    } else {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        &rest[..end]
+    };
+    decode_html_entities(url)
 }
 
 /// Project a `ROXYGEN_MD_LINK` node `[display](url)`: `\href{url}{display}` with
@@ -8285,6 +8314,47 @@ mod tests {
             "got: {}",
             project_to_rd(src)
         );
+    }
+
+    #[test]
+    fn inline_link_title_is_dropped_from_href() {
+        // cmark parses an inline link's `(dest title)` and roxygen2 renders only
+        // the destination into `\href`; the title is discarded, whatever its quote
+        // form (all engine-probed).
+        let cases = [
+            (
+                "[t](https://ex.org \"the title\")",
+                "(VERB \"https://ex.org\")",
+            ),
+            (
+                "[t](https://ex.org 'the title')",
+                "(VERB \"https://ex.org\")",
+            ),
+            (
+                "[t](https://ex.org (the title))",
+                "(VERB \"https://ex.org\")",
+            ),
+            // No whitespace before the quote: it stays part of the destination.
+            ("[t](url\"x\")", "(VERB \"url\\\"x\\\"\")"),
+            // Angle-bracketed destination (may contain spaces), title dropped.
+            (
+                "[t](<https://ex.org/a b> \"x\")",
+                "(VERB \"https://ex.org/a b\")",
+            ),
+            // The destination is entity-decoded like a reference definition's.
+            (
+                "[t](https://ex.org/a?x&amp;y)",
+                "(VERB \"https://ex.org/a?x&y\")",
+            ),
+        ];
+        for (link, want) in cases {
+            let src = format!("#' T\n#'\n#' @md\n#' @details\n#' {link}\n#' @name x\nNULL\n");
+            let rd = project_to_rd(&src);
+            assert!(
+                rd.contains(&format!("(\\href {want} (TEXT \"t\"))")),
+                "link {link:?}: want href with {want}, got: {rd}"
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,61 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..219
+  ROXYGEN_BLOCK@0..213
+    ROXYGEN_SECTION@0..25
+      ROXYGEN_PARAGRAPH@0..22
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..21 "Inline link titles"
+        NEWLINE@21..22 "\n"
+      ROXYGEN_MARKER@22..24 "#'"
+      NEWLINE@24..25 "\n"
+    ROXYGEN_SECTION@25..184
+      ROXYGEN_MARKER@25..27 "#'"
+      WHITESPACE@27..28 " "
+      ROXYGEN_TAG@28..36
+        ROXYGEN_AT@28..29 "@"
+        ROXYGEN_TAG_NAME@29..36 "details"
+      NEWLINE@36..37 "\n"
+      ROXYGEN_PARAGRAPH@37..184
+        ROXYGEN_MARKER@37..39 "#'"
+        WHITESPACE@39..40 " "
+        ROXYGEN_TEXT@40..54 "A titled link "
+        ROXYGEN_MD_LINK@54..87
+          ROXYGEN_MD_DELIM@54..55 "["
+          ROXYGEN_TEXT@55..56 "a"
+          ROXYGEN_MD_DELIM@56..87 "](https://ex.org/a \"t ..."
+        ROXYGEN_TEXT@87..110 " and an angle-bracketed"
+        NEWLINE@110..111 "\n"
+        ROXYGEN_MARKER@111..113 "#'"
+        WHITESPACE@113..114 " "
+        ROXYGEN_MD_LINK@114..148
+          ROXYGEN_MD_DELIM@114..115 "["
+          ROXYGEN_TEXT@115..116 "b"
+          ROXYGEN_MD_DELIM@116..148 "](<https://ex.org/b w ..."
+        ROXYGEN_TEXT@148..183 " destination round-tr ..."
+        NEWLINE@183..184 "\n"
+    ROXYGEN_SECTION@184..191
+      ROXYGEN_MARKER@184..186 "#'"
+      WHITESPACE@186..187 " "
+      ROXYGEN_TAG@187..190
+        ROXYGEN_AT@187..188 "@"
+        ROXYGEN_TAG_NAME@188..190 "md"
+      NEWLINE@190..191 "\n"
+    ROXYGEN_SECTION@191..213
+      ROXYGEN_MARKER@191..193 "#'"
+      WHITESPACE@193..194 " "
+      ROXYGEN_TAG@194..213
+        ROXYGEN_AT@194..195 "@"
+        ROXYGEN_TAG_NAME@195..199 "name"
+        WHITESPACE@199..200 " "
+        ROXYGEN_TEXT@200..202 "md"
+        ROXYGEN_MD_DELIM@202..203 "_"
+        ROXYGEN_TEXT@203..207 "link"
+        ROXYGEN_MD_DELIM@207..208 "_"
+        ROXYGEN_TEXT@208..213 "title"
+  NEWLINE@213..214 "\n"
+  IDENT@214..218 "NULL"
+  NEWLINE@218..219 "\n"

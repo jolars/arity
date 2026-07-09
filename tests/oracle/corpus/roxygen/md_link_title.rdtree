@@ -1,0 +1,3 @@
+(\description (TEXT "Inline link titles are dropped from the href"))
+(\details (TEXT "A titled link") (\href (VERB "https://ex.org/a") (TEXT "a")) (TEXT "drops its title, as do the single-quote") (\href (VERB "https://ex.org/b") (TEXT "b")) (TEXT "and parenthesized") (\href (VERB "https://ex.org/c") (TEXT "c")) (TEXT "forms. An angle-bracketed") (\href (VERB "https://ex.org/d with space") (TEXT "d")) (TEXT "destination keeps its spaces, and an entity") (\href (VERB "https://ex.org/e?x&y") (TEXT "e")) (TEXT "decodes."))
+(\title (TEXT "Inline link titles are dropped from the href"))

@@ -938,7 +938,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 413 matching (all allowlisted), 18 divergent** of 431 pinned.
+corpus (132 `cm-NNN` cases). **Current: 415 matching (all allowlisted), 18 divergent** of 433 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -947,52 +947,52 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (431 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (433 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 148/148 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 150/150 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-09d) — setext underline folds into a block quote lazily
+## Latest session (2026-07-10) — inline link titles are dropped from the `\href` destination
 
-A setext underline (`===`/`==`, or a `--` dash run too short to be a thematic break) following a `> quote`
-line now **folds into the `ROXYGEN_MD_BLOCK_QUOTE`** as lazy paragraph-continuation text (arity previously
-split it into a sibling `ROXYGEN_PARAGRAPH`). **Key insight (CommonMark, engine-probed):** a setext underline
-*cannot be a lazy continuation line* in a block quote, so it never acts as an underline (never promotes the
-quote's paragraph into a heading) — it is just paragraph text. roxygen2 has no block-quote support
-(`mdxml_unsupported`), so the whole quote flattens to one `(TEXT …)` with no separators: `> foo` / `===` →
-`(\details (TEXT "foo==="))`; `> foo` / `===` / `> bar baz` / `--` → `foo===bar baz--`. The one **non-fold**
-is a *thematic break* (`---`+, 3+ dashes): it interrupts a paragraph, so it ends the quote — arity already did
-this (and `---` is also a roxygen2 internal-error oracle, so it's asserted only via a Rust unit, not pinned).
+An inline link `[text](dest "title")` now projects with the CommonMark **title dropped** —
+`(\href (VERB "dest") (TEXT "text"))` — instead of arity's prior bug of stuffing the whole paren content
+(`dest "title"`) into the URL VERB. **Projector gap, not a parser gap:** the CST already preserves the raw
+`](dest "title")` closer verbatim (lossless); only the *destination extraction* was wrong. Both the resolved
+`ROXYGEN_MD_LINK` **node** path (`inline_link_dest`) and the leaf `resolve_md_link` path returned the paren
+content verbatim. The reference-def path (`parse_linkref_def_dest`) already handled titles, so `[t][r]` +
+`[r]: url "title"` was already correct — only the inline `(…)` form leaked the title.
 
-**Parser** (`src/parser/roxygen/build.rs`, `finish_md_block_quote`): the fold loop's break condition gains an
-`is_lazy_setext` exception = `is_md_setext_underline_line(m) && !is_md_thematic_break_line(m)`. Deliberately
-**block-quote-local**, NOT folded into `is_foldable_continuation`: that predicate *excludes* setext underlines
-on purpose, because in a **tag's prose value** an underline *does* promote (`===` after `@details text` is a
-real setext heading). At the token level the `===`/`--` line is a `RoxygenMdSetextUnderline` token (the tree
-builder maps it to `ROXYGEN_TEXT` when it heads nothing), so `is_md_setext_underline_line` reads true.
-**Projector + formatter unchanged** — `block_quote_flat_text` resolves each folded line's raw text string
-(kind-agnostic), and the whole `ROXYGEN_MD_BLOCK_QUOTE` is atomic passthrough (byte-identical + idempotent).
+**Fix (`src/roxygen/project_rd.rs`):** new shared `inline_link_destination(content)` mirrors cmark's inline-link
+destination parse — trim surrounding whitespace, take an **angle-bracketed** `<…>` dest (brackets stripped, may
+contain spaces) or a **bare run up to the first whitespace**, then entity-decode (`&amp;`→`&`, like a ref def).
+Anything after (the title) is discarded. Wired into `inline_link_dest` (node path) and the leaf inline-link arm
+of `resolve_md_link`. Engine-probed cluster, all now matching: `"…"`/`'…'`/`(…)` titles all drop; a `"` **not**
+preceded by whitespace stays in the dest (`[t](url"x")`→`url"x"`); `<url with space>` keeps its spaces; `&amp;`
+decodes; surrounding whitespace trims. Cross-line links carry `SOFT_BREAK` separators, which count as
+whitespace here (a CommonMark dest spans no line break). CST + formatter **unchanged** (projector-only).
 
-**Result:** projector **413→414 matching** (all 414 allowlisted, 0 regressions), 18 divergent (unchanged — all
-out-of-scope harvested). `cargo test` fully green, clippy + fmt clean, curated fixed-point **149/149 preserving**
-(was 148; 0 blocked, 0 gate failures, R present). New: curated projector case `md_blockquote_setext` (+pin
-+allowlist), fixture `roxygen_md_blockquote_setext` (CST asserts all four lines nest in
-`ROXYGEN_MD_BLOCK_QUOTE`; losslessness + empty diagnostics), units
-`setext_underline_folds_into_block_quote_lazily` + `thematic_break_ends_block_quote`, baseline +1 (additive; no
+**Result:** projector **414→415 matching** (all 415 allowlisted, 0 regressions), 18 divergent (unchanged — all
+out-of-scope harvested). `cargo test` fully green (678 lib), clippy + fmt clean, curated fixed-point
+**150/150 preserving** (was 149; 0 blocked, 0 gate failures, R present). New: curated projector case
+`md_link_title` (+pin +allowlist; five link forms in one `@details`), fixture `roxygen_md_link_title` (CST
+asserts the `ROXYGEN_MD_LINK` closer keeps `](dest "title")`/`](<…>)` verbatim; losslessness + empty
+diagnostics), unit `inline_link_title_is_dropped_from_href` (the six-form cluster), baseline +1 (additive; no
 existing case re-blessed).
 
-**Ranked next target:** block-quote lazy continuation is closed for setext underlines; other in-quote lazy edges
-(a lone `-` empty-bullet, a fence/ATX/HTML line) already end the quote or fold correctly (spot-check before
-picking). Standing picks unchanged: the escape-cluster **sticky-mode flips** (brace-less `\code`/`\verb`
-mid-cluster) and cross-paragraph sticky tails (need blank-line counts arity drops — hard); **braced `\item{x}`
-in prose** → `(UNKNOWN "\item") (LIST …)` (arity's lexer carves a real macro node; suppression is grouper-level,
-load-bearing for block-body `\describe{\item{a}{b}}` — awkward, deferred); formatter reflow-rejoin for
-cross-line code spans. The 18 projector divergences remain out-of-scope.
+**Ranked next target:** the link-destination parse is now faithful for inline `(…)` and reference-def forms;
+a natural adjacent probe is **link/image destinations with escaped chars** (`[t](foo\)bar)`, `[t](a\ b)`) and
+**image titles** `![alt](url "t")` (does `scan_md_image` drop the title? — probe, likely the same leak).
+Standing picks unchanged: the escape-cluster **sticky-mode flips** (brace-less `\code`/`\verb` mid-cluster) and
+cross-paragraph sticky tails (need blank-line counts arity drops — hard); **braced `\item{x}` in prose** →
+`(UNKNOWN "\item") (LIST …)` (arity's lexer carves a real macro node; suppression is grouper-level, load-bearing
+for block-body `\describe{\item{a}{b}}` — awkward, deferred); formatter reflow-rejoin for cross-line code spans.
+The 18 projector divergences remain out-of-scope.
 
 ## Earlier sessions
 
+- **2026-07-09d** — setext underline folds into a block quote lazily (a `===`/`--`-too-short-for-a-thematic-break line after `> quote` folds into `ROXYGEN_MD_BLOCK_QUOTE` as lazy paragraph text — a setext underline can't be a lazy continuation *underline* in a quote, so it never promotes; roxygen2 flattens the whole quote to one `(TEXT …)`, `> foo`/`===`→`foo===`; `finish_md_block_quote`'s break gains an `is_lazy_setext` exception, block-quote-local, NOT in `is_foldable_continuation` which excludes underlines because a tag-value underline *does* promote; projector/formatter unchanged; `---` thematic break still ends the quote). Curated `md_blockquote_setext`, fixture, 2 units, baseline +1. 413→414.
 - **2026-07-09c** — block Rd macro folds into a list item (closes the block-within-a-list-item series; a nested `\itemize{…}`/`\describe{…}`/`\tabular{…}{…}` after a `- a` item folds **into** the `\item` as an `Inline::Macro` child, `- b` resuming the same `\itemize`; a raw `\name{…}` is not a markdown block so it folds by CommonMark's *paragraph-continuation* rule — no blank → any indent, blank → content column only; two arms at the top of `emit_md_list_level_inner` calling `emit_block_macro`; projector/formatter unchanged). Curated `md_list_item_block_macro`, fixture, 3 units, baseline +1. 412→413.
 - **2026-07-09b** — GFM table folds into a list item (third in-item construct; a `is_md_table_start` header at the item's content column folds inside the `\item` → `\tabular` between the `\item`s, with/without a blank, `- b` sibling; unindented header is lazy prose; new arm at the top of `emit_md_list_level_inner` mirroring the fence + a `push_inline` `ROXYGEN_MD_TABLE` arm that was missing; formatter unchanged). Curated `md_list_item_table`, fixture, 3 units, baseline +1. 411→412.
 

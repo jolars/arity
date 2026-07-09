@@ -201,6 +201,7 @@ md_link_emphasis
 md_link_macro_arg_drop
 md_link_macro_pure
 md_link_multiline
+md_link_title
 md_linkref_poisoning
 md_linkref_poisoning_autolink
 md_linkref_poisoning_field
