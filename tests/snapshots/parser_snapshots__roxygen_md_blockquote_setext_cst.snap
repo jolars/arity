@@ -1,0 +1,60 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..119
+  ROXYGEN_BLOCK@0..113
+    ROXYGEN_SECTION@0..30
+      ROXYGEN_PARAGRAPH@0..27
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..26 "Block quote setext lazy"
+        NEWLINE@26..27 "\n"
+      ROXYGEN_MARKER@27..29 "#'"
+      NEWLINE@29..30 "\n"
+    ROXYGEN_SECTION@30..37
+      ROXYGEN_MARKER@30..32 "#'"
+      WHITESPACE@32..33 " "
+      ROXYGEN_TAG@33..36
+        ROXYGEN_AT@33..34 "@"
+        ROXYGEN_TAG_NAME@34..36 "md"
+      NEWLINE@36..37 "\n"
+    ROXYGEN_SECTION@37..84
+      ROXYGEN_MARKER@37..39 "#'"
+      WHITESPACE@39..40 " "
+      ROXYGEN_TAG@40..48
+        ROXYGEN_AT@40..41 "@"
+        ROXYGEN_TAG_NAME@41..48 "details"
+      NEWLINE@48..49 "\n"
+      ROXYGEN_MD_BLOCK_QUOTE@49..83
+        ROXYGEN_MARKER@49..51 "#'"
+        WHITESPACE@51..52 " "
+        ROXYGEN_TEXT@52..57 "> foo"
+        NEWLINE@57..58 "\n"
+        ROXYGEN_MARKER@58..60 "#'"
+        WHITESPACE@60..61 " "
+        ROXYGEN_TEXT@61..64 "==="
+        NEWLINE@64..65 "\n"
+        ROXYGEN_MARKER@65..67 "#'"
+        WHITESPACE@67..68 " "
+        ROXYGEN_TEXT@68..77 "> bar baz"
+        NEWLINE@77..78 "\n"
+        ROXYGEN_MARKER@78..80 "#'"
+        WHITESPACE@80..81 " "
+        ROXYGEN_TEXT@81..83 "--"
+      NEWLINE@83..84 "\n"
+    ROXYGEN_SECTION@84..113
+      ROXYGEN_MARKER@84..86 "#'"
+      WHITESPACE@86..87 " "
+      ROXYGEN_TAG@87..113
+        ROXYGEN_AT@87..88 "@"
+        ROXYGEN_TAG_NAME@88..92 "name"
+        WHITESPACE@92..93 " "
+        ROXYGEN_TEXT@93..95 "md"
+        ROXYGEN_MD_DELIM@95..96 "_"
+        ROXYGEN_TEXT@96..106 "blockquote"
+        ROXYGEN_MD_DELIM@106..107 "_"
+        ROXYGEN_TEXT@107..113 "setext"
+  NEWLINE@113..114 "\n"
+  IDENT@114..118 "NULL"
+  NEWLINE@118..119 "\n"

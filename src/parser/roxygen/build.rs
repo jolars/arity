@@ -553,7 +553,19 @@ fn finish_md_block_quote(tokens: &[Token], mut i: usize, events: &mut Vec<Event>
         if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
             break;
         }
+        // A setext underline (`===`/`==`, or a `--` dash run too short to be a
+        // thematic break) cannot be a lazy continuation *underline* in a block
+        // quote (CommonMark), so it never promotes the quote's paragraph into a
+        // heading; instead it folds in as ordinary paragraph-continuation text
+        // (engine-probed: `> foo` then `===` renders `foo===`). It is excluded
+        // from `is_foldable_continuation` — correct for a tag's prose value,
+        // where an underline *does* promote — so fold it explicitly here. A `---`
+        // (or longer) dash run is a thematic break, which interrupts a paragraph
+        // and ends the quote, so it is not folded.
+        let is_lazy_setext =
+            is_md_setext_underline_line(tokens, m) && !is_md_thematic_break_line(tokens, m);
         if !is_md_block_quote_start(tokens, m)
+            && !is_lazy_setext
             && (!super::group::is_foldable_continuation(tokens, m)
                 // A standalone-tag line (HTML block condition 7) is NOT a lazy
                 // continuation here: the container match already failed at the

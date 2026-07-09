@@ -8271,4 +8271,32 @@ mod tests {
             project_to_rd(src)
         );
     }
+
+    #[test]
+    fn setext_underline_folds_into_block_quote_lazily() {
+        // A setext underline (`===`) cannot be a lazy continuation *underline* in a
+        // block quote (CommonMark), so it never promotes the quote's paragraph into
+        // a heading; it folds in as ordinary paragraph-continuation text. roxygen2
+        // has no block-quote support, so the whole quote flattens to one `(TEXT …)`
+        // with no separators: `> foo` + `===` -> `foo===` (engine-probed).
+        let src = "#' @md\n#' @title T\n#' @details\n#' > foo\n#' ===\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"foo===\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn thematic_break_ends_block_quote() {
+        // A `---` (three-plus dash run) is a thematic break, which *interrupts* a
+        // paragraph, so it is not a lazy continuation: it ends the quote (and
+        // renders empty). Only `foo` remains in the flattened quote.
+        let src = "#' @md\n#' @title T\n#' @details\n#' > foo\n#' ---\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"foo\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
 }
