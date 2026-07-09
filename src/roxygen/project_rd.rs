@@ -8358,6 +8358,38 @@ mod tests {
     }
 
     #[test]
+    fn invalid_inline_dest_falls_back_to_shortcut() {
+        // A bare inline destination may not contain ASCII whitespace (a backslash
+        // never escapes whitespace), and a stray space before non-title text
+        // invalidates the link — cmark then leaves the `[…]` a shortcut reference
+        // (`\link`) and the `(…)` literal prose. A valid destination (percent-
+        // encoded, angle-bracketed, or titled) still links.
+        let invalid = [
+            ("[t](a\\ b)", "(\\link (TEXT \"t\")) (TEXT \"(a\\\\ b) z\")"),
+            ("[t](a b c)", "(\\link (TEXT \"t\")) (TEXT \"(a b c) z\")"),
+            ("[t](url ok)", "(\\link (TEXT \"t\")) (TEXT \"(url ok) z\")"),
+        ];
+        for (link, want) in invalid {
+            let src = format!("#' T\n#'\n#' @md\n#' @details\n#' {link} z\n#' @name x\nNULL\n");
+            let rd = project_to_rd(&src);
+            assert!(
+                rd.contains(want),
+                "link {link:?}: want shortcut fallback {want}, got: {rd}"
+            );
+        }
+        // A valid destination still resolves to an inline link.
+        for (link, want) in [
+            ("[t](a%20b)", "(\\href (VERB \"a%20b\") (TEXT \"t\"))"),
+            ("[t](<a b>)", "(\\href (VERB \"a b\") (TEXT \"t\"))"),
+            ("[t](url \"x\")", "(\\href (VERB \"url\") (TEXT \"t\"))"),
+        ] {
+            let src = format!("#' T\n#'\n#' @md\n#' @details\n#' {link} z\n#' @name x\nNULL\n");
+            let rd = project_to_rd(&src);
+            assert!(rd.contains(want), "link {link:?}: want {want}, got: {rd}");
+        }
+    }
+
+    #[test]
     fn thematic_break_ends_block_quote() {
         // A `---` (three-plus dash run) is a thematic break, which *interrupts* a
         // paragraph, so it is not a lazy continuation: it ends the quote (and

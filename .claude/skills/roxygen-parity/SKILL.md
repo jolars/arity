@@ -160,7 +160,7 @@ duplicated here, so this skill stays timeless).
 
 10. **Update `RECAP.md`** (write the new "Latest session", demote the old one to a
     one-liner under "Earlier sessions", refresh the ranked next target and any new
-    trap) and **`TODO.md`** (mark the grammar bullet, trim the backlog). **Commit**
+    trap). **Commit**
     (Conventional Commits; `feat(parser)` for new capability, `test(roxygen)` for
     test-infra-only; the pre-commit hook runs clippy + rustfmt + panache-format—never
     `--no-verify`). Don't push unless asked; commit straight to `main`

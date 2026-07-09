@@ -701,7 +701,14 @@ fn lex_roxygen_prose(
         // leaf. The inline pass pairs it with an earlier cross-line opener (a shortcut
         // link) or, with no opener, re-emits it as literal text — so a truly stray `]`
         // is unchanged.
-        if md && bytes[i] == b']' && !matches!(bytes.get(i + 1), Some(b'(' | b'[' | b'{')) {
+        if md
+            && bytes[i] == b']'
+            && !matches!(bytes.get(i + 1), Some(b'[' | b'{'))
+            // A following `(…)` blocks the closer only when it is a *valid* inline
+            // destination (a real `](url)`); an invalid `(…)` (`[t](a\ b)`) still
+            // closes the shortcut and leaves the `(…)` literal prose.
+            && !(bytes.get(i + 1) == Some(&b'(') && inline_dest_span(bytes, i + 1).is_some())
+        {
             push(
                 out,
                 TokKind::RoxygenText,
@@ -1012,8 +1019,91 @@ fn inline_link_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
     if bytes.get(text_end) != Some(&b'(') {
         return None;
     }
-    let url_end = scan_balanced(bytes, text_end, b'(', b')')?;
+    let url_end = inline_dest_span(bytes, text_end)?;
     Some((text_end, url_end))
+}
+
+/// The end index of a *valid* CommonMark inline link/image destination `(…)` at
+/// `bytes[i] == b'('` — the index past the matching `)`, or `None` when the
+/// parenthesized content is not a well-formed destination (optionally followed by
+/// a title). A bare destination with an interior ASCII space then non-title text
+/// (`[t](a\ b)`) is **not** a link: cmark leaves the `[t]` a shortcut reference and
+/// the `(a\ b)` literal prose. Callers that previously accepted any balanced `(…)`
+/// (see [`scan_balanced`]) route through here so the recognizers agree with cmark.
+fn inline_dest_span(bytes: &[u8], i: usize) -> Option<usize> {
+    let end = scan_balanced(bytes, i, b'(', b')')?;
+    valid_inline_dest_content(&bytes[i + 1..end - 1]).then_some(end)
+}
+
+/// Whether `inner` (the bytes between an inline destination's parentheses) is a
+/// valid CommonMark link destination optionally followed by a title. A bare
+/// destination runs to the first ASCII whitespace (a backslash never escapes
+/// whitespace); an angle-bracketed `<…>` destination may contain spaces. After the
+/// destination, only trailing whitespace — or whitespace then a single
+/// `"…"`/`'…'`/`(…)` title then trailing whitespace — may follow. Mirrors cmark's
+/// inline-link parse so a stray space before non-title text invalidates the link.
+fn valid_inline_dest_content(inner: &[u8]) -> bool {
+    let n = inner.len();
+    let mut j = 0;
+    while j < n && inner[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if inner.get(j) == Some(&b'<') {
+        // Angle-bracketed destination: to the first unescaped `>`; no raw `<`/newline.
+        j += 1;
+        loop {
+            match inner.get(j) {
+                None => return false,
+                Some(b'\\') => j += 2,
+                Some(b'>') => {
+                    j += 1;
+                    break;
+                }
+                Some(b'<') | Some(b'\n') => return false,
+                Some(_) => j += 1,
+            }
+        }
+    } else {
+        // Bare destination: runs to the first ASCII whitespace (may be empty).
+        while j < n && !inner[j].is_ascii_whitespace() {
+            j += 1;
+        }
+    }
+    let ws_start = j;
+    while j < n && inner[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if j == n {
+        return true; // destination only (with optional trailing whitespace)
+    }
+    if j == ws_start {
+        return false; // trailing content with no separating whitespace
+    }
+    let close = match inner[j] {
+        b'"' => b'"',
+        b'\'' => b'\'',
+        b'(' => b')',
+        _ => return false,
+    };
+    let nested_open = inner[j];
+    j += 1;
+    loop {
+        match inner.get(j) {
+            None => return false,
+            Some(b'\\') => j += 2,
+            Some(&c) if c == close => {
+                j += 1;
+                break;
+            }
+            // A `(…)` title may not contain an unescaped `(`.
+            Some(&c) if nested_open == b'(' && c == b'(' => return false,
+            Some(_) => j += 1,
+        }
+    }
+    while j < n && inner[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    j == n
 }
 
 /// Whether a `[` at `bytes[i]` opens a *cross-line* inline link: the remainder of
@@ -1059,7 +1149,11 @@ fn same_line_bracket_opener(bytes: &[u8], i: usize) -> bool {
     let content = &bytes[i + 1..close - 1];
     is_shortcut_content(content)
         && !content.contains(&b'!')
-        && !matches!(bytes.get(close), Some(b'(' | b'{'))
+        && bytes.get(close) != Some(&b'{')
+        // A following `(…)` blocks the shortcut carve only when it is a *valid*
+        // inline destination (a real `[…](url)` link, handled by `inline_link_span`);
+        // an invalid `(…)` (`[t](a\ b)`) leaves `[t]` a shortcut and `(…)` literal.
+        && !(bytes.get(close) == Some(&b'(') && inline_dest_span(bytes, close).is_some())
 }
 
 /// Whether a `[` at `bytes[i]` opens a *nested-bracket* same-line link: its
@@ -1099,7 +1193,7 @@ fn cross_line_link_closer(bytes: &[u8], i: usize) -> Option<usize> {
     if bytes.get(i + 1) != Some(&b'(') {
         return None;
     }
-    scan_balanced(bytes, i + 1, b'(', b')')
+    inline_dest_span(bytes, i + 1)
 }
 
 /// Whether a `]` at `bytes[i]` is a *cross-line* reference-link closer: it is
@@ -1124,7 +1218,10 @@ fn cross_line_ref_closer(bytes: &[u8], i: usize) -> bool {
 fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
     let after_text = scan_balanced(bytes, i, b'[', b']')?;
     match bytes.get(after_text) {
-        Some(&b'(') => scan_balanced(bytes, after_text, b'(', b')'),
+        // A valid inline `(url)` destination, else fall back to the bare shortcut
+        // `[…]` (leaving the invalid `(…)` as literal prose, like cmark).
+        Some(&b'(') => inline_dest_span(bytes, after_text)
+            .or_else(|| is_shortcut_content(&bytes[i + 1..after_text - 1]).then_some(after_text)),
         Some(&b'[') => scan_balanced(bytes, after_text, b'[', b']'),
         // A bare `[…]` followed by `{` is not a link (roxygen2's lookahead).
         Some(&b'{') => None,

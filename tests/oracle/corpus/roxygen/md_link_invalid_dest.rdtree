@@ -1,0 +1,3 @@
+(\description (TEXT "Invalid inline link destinations fall back to shortcuts"))
+(\details (TEXT "A bare destination with an interior space") (\link (TEXT "a")) (TEXT "(x\\ y) is not an inline link, so the") (\link (TEXT "a")) (TEXT "resolves as a shortcut and the (x\\ y) stays literal, as do the multi-space") (\link (TEXT "b")) (TEXT "(p q r) and the still-spaced") (\link (TEXT "c")) (TEXT "(url ok) forms. A valid destination keeps its link:") (\href (VERB "x%20y") (TEXT "d")) (TEXT "percent-encodes,") (\href (VERB "x y") (TEXT "e")) (TEXT "uses angle brackets, and") (\href (VERB "url") (TEXT "f")) (TEXT "carries a title."))
+(\title (TEXT "Invalid inline link destinations fall back to shortcuts"))

@@ -1,0 +1,78 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..265
+  ROXYGEN_BLOCK@0..259
+    ROXYGEN_SECTION@0..39
+      ROXYGEN_PARAGRAPH@0..36
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..35 "Invalid inline link d ..."
+        NEWLINE@35..36 "\n"
+      ROXYGEN_MARKER@36..38 "#'"
+      NEWLINE@38..39 "\n"
+    ROXYGEN_SECTION@39..223
+      ROXYGEN_MARKER@39..41 "#'"
+      WHITESPACE@41..42 " "
+      ROXYGEN_TAG@42..50
+        ROXYGEN_AT@42..43 "@"
+        ROXYGEN_TAG_NAME@43..50 "details"
+      NEWLINE@50..51 "\n"
+      ROXYGEN_PARAGRAPH@51..223
+        ROXYGEN_MARKER@51..53 "#'"
+        WHITESPACE@53..54 " "
+        ROXYGEN_TEXT@54..84 "A space in a bare des ..."
+        ROXYGEN_MD_LINK@84..87
+          ROXYGEN_MD_DELIM@84..85 "["
+          ROXYGEN_TEXT@85..86 "t"
+          ROXYGEN_MD_DELIM@86..87 "]"
+        ROXYGEN_TEXT@87..112 "(a\\ b) is not a link, ..."
+        ROXYGEN_MD_LINK@112..115
+          ROXYGEN_MD_DELIM@112..113 "["
+          ROXYGEN_TEXT@113..114 "t"
+          ROXYGEN_MD_DELIM@114..115 "]"
+        ROXYGEN_TEXT@115..129 " is a shortcut"
+        NEWLINE@129..130 "\n"
+        ROXYGEN_MARKER@130..132 "#'"
+        WHITESPACE@132..133 " "
+        ROXYGEN_TEXT@133..167 "and (a\\ b) stays lite ..."
+        ROXYGEN_MD_LINK@167..177
+          ROXYGEN_MD_DELIM@167..168 "["
+          ROXYGEN_TEXT@168..169 "u"
+          ROXYGEN_MD_DELIM@169..177 "](a%20b)"
+        ROXYGEN_TEXT@177..182 " and "
+        ROXYGEN_MD_LINK@182..198
+          ROXYGEN_MD_DELIM@182..183 "["
+          ROXYGEN_TEXT@183..184 "v"
+          ROXYGEN_MD_DELIM@184..198 "](url \"title\")"
+        ROXYGEN_TEXT@198..205 " remain"
+        NEWLINE@205..206 "\n"
+        ROXYGEN_MARKER@206..208 "#'"
+        WHITESPACE@208..209 " "
+        ROXYGEN_TEXT@209..222 "inline links."
+        NEWLINE@222..223 "\n"
+    ROXYGEN_SECTION@223..230
+      ROXYGEN_MARKER@223..225 "#'"
+      WHITESPACE@225..226 " "
+      ROXYGEN_TAG@226..229
+        ROXYGEN_AT@226..227 "@"
+        ROXYGEN_TAG_NAME@227..229 "md"
+      NEWLINE@229..230 "\n"
+    ROXYGEN_SECTION@230..259
+      ROXYGEN_MARKER@230..232 "#'"
+      WHITESPACE@232..233 " "
+      ROXYGEN_TAG@233..259
+        ROXYGEN_AT@233..234 "@"
+        ROXYGEN_TAG_NAME@234..238 "name"
+        WHITESPACE@238..239 " "
+        ROXYGEN_TEXT@239..241 "md"
+        ROXYGEN_MD_DELIM@241..242 "_"
+        ROXYGEN_TEXT@242..246 "link"
+        ROXYGEN_MD_DELIM@246..247 "_"
+        ROXYGEN_TEXT@247..254 "invalid"
+        ROXYGEN_MD_DELIM@254..255 "_"
+        ROXYGEN_TEXT@255..259 "dest"
+  NEWLINE@259..260 "\n"
+  IDENT@260..264 "NULL"
+  NEWLINE@264..265 "\n"
