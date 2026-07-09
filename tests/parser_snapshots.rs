@@ -163,6 +163,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_blank_line",
         "roxygen_tag_param",
         "roxygen_tag_examples",
+        "roxygen_md_examples_code_body",
         "roxygen_multi_hash",
         "roxygen_not_roxygen",
         "roxygen_shebang",

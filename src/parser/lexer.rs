@@ -249,11 +249,12 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
     // block end, so a `@md` directive anywhere in a block keys the whole block.
     let mut rox_md = false;
     let mut rox_block_end = 0usize;
-    // Whether the current line belongs to a verbatim-Rd tag's body (`@rawRd`),
-    // whose content is never markdown even when the block is `@md`. Reset at each
-    // block boundary; a line opening a tag resets it to that tag's raw-ness, while
-    // a prose/continuation line keeps the enclosing tag's setting.
-    let mut rox_raw = false;
+    // Whether the current line belongs to a tag whose body is never markdown even
+    // when the block is `@md` — verbatim Rd (`@rawRd`) or verbatim code
+    // (`@examples`, …). Reset at each block boundary; a line opening a tag resets
+    // it to that tag's setting, while a prose/continuation line keeps the
+    // enclosing tag's.
+    let mut rox_no_md = false;
 
     while i < bytes.len() {
         let c = bytes[i] as char;
@@ -303,23 +304,25 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     if start >= rox_block_end {
                         (rox_md, rox_block_end) =
                             crate::parser::roxygen::resolve_roxygen_block(input, start);
-                        rox_raw = false;
+                        rox_no_md = false;
                     }
                     // Leave a trailing `\r` (and the `\n`) to the main loop so
                     // CRLF stays one Newline token and roxygen content is clean.
                     let content_end = if line.ends_with('\r') { j - 1 } else { j };
                     let line_text = &input[start..content_end];
-                    // A line opening a tag re-keys the raw-Rd region to that tag's
-                    // body (`@rawRd` is verbatim Rd, never markdown); a prose or
-                    // continuation line keeps the enclosing tag's setting.
+                    // A line opening a tag re-keys the no-markdown region to that
+                    // tag's body (`@rawRd` is verbatim Rd, `@examples` and the
+                    // other code tags are verbatim R — neither is markdown even
+                    // under `@md`); a prose or continuation line keeps the
+                    // enclosing tag's setting.
                     if let Some(tag) = crate::parser::roxygen::roxygen_line_tag(line_text) {
-                        rox_raw = crate::parser::roxygen::is_raw_rd_tag(tag);
+                        rox_no_md = crate::parser::roxygen::tag_body_skips_markdown(tag);
                     }
                     crate::parser::roxygen::lex_roxygen_line(
                         &mut out,
                         line_text,
                         start,
-                        rox_md && !rox_raw,
+                        rox_md && !rox_no_md,
                     );
                     i = content_end;
                 } else {

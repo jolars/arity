@@ -304,10 +304,14 @@ roxygen2 7.3.3.
       it never warns—decide against CRAN's stance first); mine the oracle's
       "uncovered signals" table (mismatched braces/quotes, markdown-link
       plain-text restriction) for new rules.
-- [ ] Parser note surfaced by this work: roxygen2 never markdown-processes
-      `tag_code` bodies, but arity tokenizes markdown inside `@examples` under
+- [x] Parser note surfaced by this work: roxygen2 never markdown-processes
+      `tag_code` bodies, but arity tokenized markdown inside `@examples` under
       `@md` (harmless for the lint—extraction is token-concat—but a CST-fidelity
-      gap).
+      gap). The lexer and inline builder now suppress markdown for the code tags
+      (`is_code_tag`/`tag_body_skips_markdown`), mirroring `@rawRd`; fixture
+      `roxygen_md_examples_code_body`. (The Rd inline spans these bodies still
+      tokenize—`ROXYGEN_CODE` for a backtick span—remain a separate,
+      pre-existing gap.)
 - [x] Parser leniency surfaced by this work: a stray closing delimiter at top
       level (`f(1))`) was recovered losslessly *without* a parse diagnostic,
       though R itself errors, so `roxygen-examples` and plain-file linting both

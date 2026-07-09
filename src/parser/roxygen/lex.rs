@@ -147,6 +147,27 @@ pub(crate) fn is_raw_rd_tag(name: &str) -> bool {
     name == "rawRd"
 }
 
+/// Tags whose body roxygen2 treats as verbatim R code (`tag_code`/`tag_examples`)
+/// and never markdown-processes, so their content must not gain markdown leaves
+/// even inside an `@md` block (`x <- `code`` in an `@examples` body is R, not a
+/// markdown code span). This governs only the markdown grammar the `@md` mode
+/// switches on; the Rd inline spans these bodies still tokenize as (a separate,
+/// pre-existing gap) are unaffected.
+pub(crate) fn is_code_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "examples" | "examplesIf" | "usage" | "eval" | "evalRd" | "evalNamespace"
+    )
+}
+
+/// Whether a tag's body is never markdown-processed even inside an `@md` block —
+/// the verbatim-Rd tag (`@rawRd`) or a verbatim-code tag (`@examples`, …). Keyed
+/// by both the lexer driver and the inline span builder so `@md` markdown leaves
+/// are suppressed consistently across such a tag's lines.
+pub(crate) fn tag_body_skips_markdown(name: &str) -> bool {
+    is_raw_rd_tag(name) || is_code_tag(name)
+}
+
 /// Whether a tag's same-line value is reflowable markdown/Rd **prose** whose field
 /// spans its continuation lines — so a same-line value folds its contiguous
 /// plain-prose continuations into the `ROXYGEN_TAG` node (see `emit_tag_line`),

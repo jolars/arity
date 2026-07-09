@@ -88,13 +88,13 @@ pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>, md: bo
             // which binds tighter than emphasis) bounds the run.
             Event::Tok(i) => {
                 if tokens[i].kind == TokKind::RoxygenTagName {
-                    raw_scope = super::lex::is_raw_rd_tag(&tokens[i].text);
+                    raw_scope = super::lex::tag_body_skips_markdown(&tokens[i].text);
                 }
                 run.push(i);
             }
             other => {
-                // A new section leaves any raw-Rd tag's scope (the raw body
-                // paragraphs are siblings inside the tag's own section).
+                // A new section leaves any no-markdown tag's scope (the verbatim
+                // body paragraphs are siblings inside the tag's own section).
                 if matches!(other, Event::Start(SyntaxKind::ROXYGEN_SECTION)) {
                     raw_scope = false;
                 }

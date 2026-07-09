@@ -1,0 +1,39 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..64
+  ROXYGEN_BLOCK@0..45
+    ROXYGEN_SECTION@0..7
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+    ROXYGEN_SECTION@7..45
+      ROXYGEN_MARKER@7..9 "#'"
+      WHITESPACE@9..10 " "
+      ROXYGEN_TAG@10..19
+        ROXYGEN_AT@10..11 "@"
+        ROXYGEN_TAG_NAME@11..19 "examples"
+      NEWLINE@19..20 "\n"
+      ROXYGEN_PARAGRAPH@20..45
+        ROXYGEN_MARKER@20..22 "#'"
+        WHITESPACE@22..23 " "
+        ROXYGEN_TEXT@23..28 "x <- "
+        ROXYGEN_CODE@28..34 "`code`"
+        ROXYGEN_TEXT@34..45 " and _emph_"
+  NEWLINE@45..46 "\n"
+  ASSIGNMENT_EXPR@46..63
+    IDENT@46..47 "f"
+    WHITESPACE@47..48 " "
+    ASSIGN_LEFT@48..50 "<-"
+    WHITESPACE@50..51 " "
+    FUNCTION_EXPR@51..63
+      FUNCTION_KW@51..59 "function"
+      LPAREN@59..60 "("
+      RPAREN@60..61 ")"
+      WHITESPACE@61..62 " "
+      INT@62..63 "1"
+  NEWLINE@63..64 "\n"
