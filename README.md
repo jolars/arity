@@ -41,29 +41,6 @@ Arity is available from several sources:
   [`arity-bin`](https://aur.archlinux.org/packages/arity/),
   [`arity`](https://aur.archlinux.org/packages/arity-bin/))
 
-### From npm
-
-Install with [npx](https://www.npmjs.com/package/npx) or `npm`:
-
-```sh
-# One-shot run, no install:
-npx arity-cli format file.R
-
-# Persistent install:
-npm install -g arity-cli
-```
-
-The package detects your platform at install time and pulls in a prebuilt binary
-via npm's optional dependencies; no Rust toolchain required.
-
-### From crates.io
-
-If you have Rust installed:
-
-```sh
-cargo install arity
-```
-
 ## Formatter
 
 To format your code, you can use:
