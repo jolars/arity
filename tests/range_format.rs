@@ -28,8 +28,8 @@ fn range_format(marked: &str) -> String {
         "fixture must parse cleanly: {:?}",
         parsed.diagnostics
     );
-    let Some(formatted) =
-        format_range(&parsed.cst, range, FormatStyle::default()).expect("format_range failed")
+    let Some(formatted) = format_range(&parsed.cst, range, FormatStyle::default(), &text)
+        .expect("format_range failed")
     else {
         return text;
     };
@@ -109,7 +109,7 @@ fn refuses_when_document_has_parse_errors() {
     // format_range only guards stray ERROR tokens; the LSP layer rejects parse
     // diagnostics. Here we assert it does not panic and is a no-op-ish result.
     let range = TextRange::new(TextSize::new(0), TextSize::new(text.len() as u32));
-    let _ = format_range(&parsed.cst, range, FormatStyle::default());
+    let _ = format_range(&parsed.cst, range, FormatStyle::default(), text);
 }
 
 /// Range-formatting an already-formatted region must be a no-op.
@@ -142,4 +142,42 @@ fn whole_document_range_matches_full_format() {
         let via_full = format_with_style(input, FormatStyle::default()).unwrap();
         assert_eq!(via_range, via_full, "mismatch for {input:?}");
     }
+}
+
+/// In a CRLF document, the emitted edit must use the source's line ending
+/// (`LineEnding::Auto`), never splice bare LF into a CRLF buffer.
+#[test]
+fn crlf_source_yields_crlf_edit() {
+    // Single-statement selection: no internal breaks, but the edit must still
+    // not introduce a stray LF.
+    let text = "x<-1\r\ny<-2\r\n";
+    let parsed = parse(text);
+    assert!(parsed.diagnostics.is_empty());
+    let range = TextRange::new(TextSize::new(6), TextSize::new(10)); // `y<-2`
+    let formatted = format_range(&parsed.cst, range, FormatStyle::default(), text)
+        .expect("format_range failed")
+        .expect("emits an edit");
+    assert!(
+        !formatted.text.contains('\n'),
+        "unexpected bare LF: {formatted:?}"
+    );
+    assert_eq!(formatted.text, "y <- 2");
+
+    // Multi-statement selection: the internal break between statements must be
+    // CRLF, and there must be no bare LF anywhere.
+    let text = "f<-function(){\r\n1+1\r\n2+2\r\n}\r\n";
+    let parsed = parse(text);
+    assert!(parsed.diagnostics.is_empty());
+    let range = TextRange::new(TextSize::new(0), TextSize::new(text.len() as u32));
+    let formatted = format_range(&parsed.cst, range, FormatStyle::default(), text)
+        .expect("format_range failed")
+        .expect("emits an edit");
+    assert!(
+        formatted.text.contains("\r\n"),
+        "expected CRLF break: {formatted:?}"
+    );
+    assert!(
+        !formatted.text.replace("\r\n", "").contains('\n'),
+        "unexpected bare LF: {formatted:?}"
+    );
 }

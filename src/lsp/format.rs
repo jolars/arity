@@ -53,7 +53,7 @@ pub(crate) fn format_range_edits_via_db(
         let root = snapshot.parsed_tree(file);
         let line_index = LineIndex::new(text);
         let text_range = lsp_range_to_text_range(&line_index, range);
-        let edits = match format_range(&root, text_range, style) {
+        let edits = match format_range(&root, text_range, style, text) {
             Ok(Some(formatted)) => Some(range_edits(&line_index, text, formatted)),
             Ok(None) => Some(Vec::new()),
             Err(_) => None,
@@ -93,7 +93,7 @@ pub fn compute_format_range_edits(
     }
     let line_index = LineIndex::new(text);
     let text_range = lsp_range_to_text_range(&line_index, range);
-    match format_range(&parsed.cst, text_range, style).ok()? {
+    match format_range(&parsed.cst, text_range, style, text).ok()? {
         Some(formatted) => Some(range_edits(&line_index, text, formatted)),
         None => Some(Vec::new()),
     }

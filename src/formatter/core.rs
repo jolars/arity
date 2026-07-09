@@ -126,6 +126,7 @@ pub fn format_range(
     root: &SyntaxNode,
     range: TextRange,
     style: FormatStyle,
+    source: &str,
 ) -> Result<Option<RangeFormatted>, FormatError> {
     validate_supported_tokens(root)?;
     let ctx = FormatContext::new(style);
@@ -185,6 +186,9 @@ pub fn format_range(
     while text.ends_with('\n') {
         text.pop();
     }
+    // The printer emits `\n`-only; convert internal breaks to the source's
+    // ending so a range edit never splices LF into a CRLF buffer (Tenet 1).
+    let text = apply_line_ending(&text, style.line_ending.resolve(source));
 
     Ok(Some(RangeFormatted {
         range: TextRange::new(start, end),
