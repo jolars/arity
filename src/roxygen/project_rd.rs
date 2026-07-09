@@ -8217,4 +8217,58 @@ mod tests {
         );
         assert!(!rd.contains("\\tabular"), "got: {rd}");
     }
+
+    #[test]
+    fn block_macro_at_content_column_folds_into_item() {
+        // A block Rd macro (`\itemize{…}`) at the item's content column is not a
+        // markdown block — cmark passes the raw Rd through as the item's paragraph
+        // text — so it folds into the item as a nested `\itemize` child (between the
+        // two `\item`s), with `- b` a sibling.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'   \\itemize{\n\
+                   #'     \\item x\n#'   }\n#' - b\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\") \
+                 (\\itemize (\\item) (TEXT \"x\")) (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn block_macro_below_content_column_folds_lazily() {
+        // With no intervening blank, a block macro folds as a *lazy* paragraph
+        // continuation regardless of indent (CommonMark paragraph continuation does
+        // not require the content column), so a macro indented *below* the content
+        // column still nests — same shape as the content-column case.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#' \\itemize{\n\
+                   #'   \\item x\n#' }\n#' - b\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\") \
+                 (\\itemize (\\item) (TEXT \"x\")) (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn blank_separated_below_column_block_macro_ends_list() {
+        // A blank line closes the item's paragraph; a following block macro *below*
+        // the content column then cannot belong to the item, so it is a
+        // section-level block that ends the list — `- a`, the `\itemize`, and `- b`
+        // become three separate `\itemize`s (engine-probed).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#' \\itemize{\n\
+                   #'   \\item x\n#' }\n#' - b\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\")) \
+                 (\\itemize (\\item) (TEXT \"x\")) (\\itemize (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
 }

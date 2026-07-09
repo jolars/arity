@@ -493,13 +493,27 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `ROXYGEN_MD_LIST` passthrough, byte-identical + idempotent). Curated `md_list_item_table`, fixture
   `roxygen_md_list_item_table`, 3 units (`table_at_content_column_folds_into_item`,
   `table_without_blank_folds_into_item`, `unindented_table_is_lazy_continuation`), baseline +1.
-  **Backlog: fence + indented-code + table fold so far** — a **heading / block-macro / block-quote /
-  thematic-break / HTML block** at the content column still ends the list. Probed 2026-07-09: in-item
-  **block-quote** (roxygen2 errors "block quotes are not currently supported"), **thematic-break** (roxygen2
-  internal error "unknown xml node thematic_break"), and an **ATX heading** (roxygen2 "mismatched braces" /
-  hoists to `\section`) are all roxygen2-**unsupported** → out of scope, not clean targets. The one remaining
-  clean fold is a **nested block macro** (`\itemize`/`\describe` at the content column); it needs its own
-  interrupt/indent probe + `push_inline` map (a macro line is `is_block_macro_line`).
+- **A block Rd macro after a list item folds INTO the item too, but by the PARAGRAPH-CONTINUATION rule, not the
+  block-interrupt gate (2026-07-09c).** A `\itemize{…}`/`\describe{…}`/`\tabular{…}{…}` following a list item
+  folds in as a `ROXYGEN_RD_MACRO` child → nested `\itemize`/… inside the `\item`, `- b` a sibling. **A raw
+  `\name{…}` is NOT a markdown block** — to cmark the backslash-word is literal text, so it folds as the item's
+  paragraph continuation and parse_Rd reads the macro only afterward. So the gate is CommonMark paragraph
+  continuation, **not** the fence/table `>= content_indent` block-interrupt gate: **no blank → folds at *any*
+  indent** (lazy, even below the content column), **blank → folds only at content column** (loose paragraph). The
+  **only** non-fold is *blank + below-column* → a section-level macro that ends the list, splitting into three
+  `\itemize`s (arity's prior behavior — no change). Parser: **two arms at the top** of the item-body loop (before
+  every other — a block-macro line matches no other predicate, `is_md_item_lazy_continuation` even excludes it,
+  but its multi-line opener must be consumed whole by `emit_block_macro`). Arm 1 (`following_line_marker`, no
+  blank) gated `item_has_content || indent >= content_indent`; arm 2 (`next_content_line_across_blanks`, blank)
+  gated `(content_indent..content_indent+4).contains(indent)` (cedes a 4+-indent macro to the indented-code arm).
+  **Projector + formatter unchanged** — `push_inline` already maps `ROXYGEN_RD_MACRO` → `Inline::Macro`, the list
+  is atomic passthrough. Curated `md_list_item_block_macro`, fixture `roxygen_md_list_item_block_macro`, 3 units
+  (`block_macro_at_content_column_folds_into_item`, `block_macro_below_content_column_folds_lazily`,
+  `blank_separated_below_column_block_macro_ends_list`), baseline +1.
+  **In-item fold series COMPLETE** — fence + indented-code + table + block-macro land. A **heading / block-quote /
+  thematic-break / HTML block** at the content column still ends the list, but all are roxygen2-**unsupported**
+  in-item (probed 2026-07-09: block-quote "block quotes are not currently supported"; thematic-break internal
+  "unknown xml node thematic_break"; ATX heading "mismatched braces" / hoists to `\section`) → out of scope.
 - **Indented code blocks** (`ROXYGEN_MD_INDENTED_CODE` node): a line indented **>= 5 space columns** past
   the marker (roxygen2 strips `#'` + one space, cmark needs 4). **No mode-carrying leaf** — the content
   lexes as ordinary tokens, so the block builder re-derives `@md` via `block_md` (reusing
@@ -924,7 +938,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 412 matching (all allowlisted), 18 divergent** of 430 pinned.
+corpus (132 `cm-NNN` cases). **Current: 413 matching (all allowlisted), 18 divergent** of 431 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -933,53 +947,56 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (430 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (431 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 147/147 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 148/148 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-09b) — GFM table folds into a list item
+## Latest session (2026-07-09c) — block Rd macro folds into a list item
 
-Continued the **block-within-a-list-item** series with its third construct: a GFM table header (the
-`is_md_table_start` two-line look-ahead) indented to a list item's **content column** folds **inside** the
-`\item`, projecting to a `\tabular` between the two `\item`s, with a sibling `- b` resuming the list. The table
-folds **with or without** an intervening blank (a table interrupts the item's paragraph at the content column;
-a blank only loosens it — both engine-probed → `\tabular`). An **unindented** header (below the content
-column) is instead a **lazy paragraph continuation** flattened as prose (`a | x | y | ...`), the case
-`is_md_item_lazy_continuation` already folds — so the fold is **indentation-gated**, not blank-gated (unlike
-indented code). Like the fence, no `item_has_content` gate.
+Closed the **block-within-a-list-item** series: a nested block Rd macro (`\itemize{…}`/`\describe{…}`/
+`\tabular{…}{…}`) following a list item folds **into** the `\item` as an `Inline::Macro` child, with a sibling
+`- b` resuming the same `\itemize`. **Key insight (engine-probed):** a raw `\name{…}` is **not** a markdown
+block — to cmark the backslash-word is literal text, so it folds as the item's **paragraph continuation** and
+parse_Rd interprets the macro only afterward. So the gate is CommonMark's *paragraph-continuation* rule, **not**
+the block-interrupt indent gate the fence/table/indented-code arms use: **no blank → folds at *any* indent**
+(lazy, even below the content column — case D), **blank → folds only at the content column** (loose paragraph,
+below indented-code territory). The **one non-fold** is *blank + below-column* (case E): a section-level macro
+that ends the list, splitting `- a`/`\itemize`/`- b` into **three** separate `\itemize`s — which is what arity
+already did, so E needed no change. Empty item folds a content-column macro (`item_has_content ||
+indent >= content_indent` in the no-blank arm) but not a lazy below-column one.
 
-**Parser** (`src/parser/roxygen/build.rs`): a new arm at the **top** of `emit_md_list_level_inner`'s item-body
-loop (before the lazy-continuation and blank-prose arms, either of which would else claim a content-column
-header as text), mirroring the fence: `next_content_line` (crosses blanks, none required) + `list_line_indent
->= content_indent` + `is_md_table_start` → `emit_md_table`. `finish_md_table`'s `is_table_row_line` already
-excludes list starts, so a sibling `- b` ends the table cleanly with no new logic. **Projector**
-(`project_rd.rs`): a `push_inline` `ROXYGEN_MD_TABLE` arm (was **missing** — an in-item node would else hit the
-text fallback) → `Inline::MdTable`; `serialize_md_table` needed **no change** (its per-line `strip_marker`
-strips the content-column indentation, and cells split on `|` then trim). **Formatter unchanged** (atomic
-`ROXYGEN_MD_LIST` passthrough — verified byte-identical + idempotent).
+**Parser** (`src/parser/roxygen/build.rs`): **two arms at the top** of `emit_md_list_level_inner`'s item-body
+loop (before every other arm — a block-macro line matches none of their predicates, `is_md_item_lazy_continuation`
+even *excludes* it, but its multi-line opener must be consumed whole by `emit_block_macro`, never split by a prose
+arm). Arm 1: `following_line_marker` (no blank) + `is_block_macro_line` + `(item_has_content || indent >=
+content_indent)` → any-indent lazy fold. Arm 2: `next_content_line_across_blanks` (blank) + `is_block_macro_line` +
+`(content_indent..content_indent+4).contains(indent)` → content-column loose fold, ceding a 4+-indent macro to the
+indented-code arm. Both thread `i..m` trivia then `emit_block_macro(tokens, m, events)`. **Projector unchanged** —
+`push_inline` already maps `ROXYGEN_RD_MACRO` → `Inline::Macro`, and `md_list_item_inlines` routes item children
+through it. **Formatter unchanged** (atomic `ROXYGEN_MD_LIST` passthrough — verified byte-identical + idempotent).
 
-**Result:** projector **411→412 matching** (all 412 allowlisted, 0 regressions), 18 divergent (unchanged — all
-out-of-scope). `cargo test` fully green, clippy + fmt clean, curated fixed-point **147/147 preserving** (was
-146; 0 blocked, 0 gate failures, R present). New: curated projector case `md_list_item_table` (+pin +allowlist),
-fixture `roxygen_md_list_item_table` (CST asserts the table nests in item 1, blank as trivia, `- b` a sibling;
-losslessness + empty diagnostics), units `table_at_content_column_folds_into_item` +
-`table_without_blank_folds_into_item` + `unindented_table_is_lazy_continuation`, baseline +1 (additive; no
-existing case re-blessed).
+**Result:** projector **412→413 matching** (all 413 allowlisted, 0 regressions), 18 divergent (unchanged — all
+out-of-scope). `cargo test` fully green, clippy + fmt clean, curated fixed-point **148/148 preserving** (was 147;
+0 blocked, 0 gate failures, R present). New: curated projector case `md_list_item_block_macro` (+pin +allowlist),
+fixture `roxygen_md_list_item_block_macro` (CST asserts `\itemize` nests in item 1, `- b` a sibling; losslessness
++ empty diagnostics), units `block_macro_at_content_column_folds_into_item` +
+`block_macro_below_content_column_folds_lazily` + `blank_separated_below_column_block_macro_ends_list`, baseline
++1 (additive; no existing case re-blessed).
 
-**Ranked next target:** the **one remaining clean in-item fold** — a **nested block macro** (`\itemize`/
-`\describe` at the content column; a macro line is `is_block_macro_line`) — needs its own item-body arm +
-`push_inline` map + interrupt/indent probe. (Heading/block-quote/thematic-break are all roxygen2-unsupported
-in-item, confirmed 2026-07-09; fence + indented-code + table now land.) Other standing picks: the escape-cluster
+**Ranked next target:** the in-item fold series is done (fence + indented-code + table + block-macro land;
+heading/block-quote/thematic-break are roxygen2-unsupported in-item). Standing picks: the escape-cluster
 **sticky-mode flips** (brace-less `\code`/`\verb` mid-cluster) and cross-paragraph sticky tails (need blank-line
-counts arity drops — hard); **braced `\item{x}` in prose** → `(UNKNOWN "\item") (LIST …)` (arity's lexer carves
-a real macro node; suppression is grouper-level, load-bearing for block-body `\describe{\item{a}{b}}` — awkward,
+counts arity drops — hard); **braced `\item{x}` in prose** → `(UNKNOWN "\item") (LIST …)` (arity's lexer carves a
+real macro node; suppression is grouper-level, load-bearing for block-body `\describe{\item{a}{b}}` — awkward,
 deferred); quote-lazy `===`; formatter reflow-rejoin for cross-line code spans. The 18 projector divergences
 remain out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-09b** — GFM table folds into a list item (third in-item construct; a `is_md_table_start` header at the item's content column folds inside the `\item` → `\tabular` between the `\item`s, with/without a blank, `- b` sibling; unindented header is lazy prose; new arm at the top of `emit_md_list_level_inner` mirroring the fence + a `push_inline` `ROXYGEN_MD_TABLE` arm that was missing; formatter unchanged). Curated `md_list_item_table`, fixture, 3 units, baseline +1. 411→412.
 
 - **2026-07-09** — indented code block folds into a list item (blank-separated line indented `content_indent + 4` → indented code inside the `\item`, three-atom `\if…\preformatted…\if`; **blank required** — no-blank over-indented is a lazy continuation; **empty** item doesn't fold — `item_has_content` gate; new arm before the loose-prose arm using `next_content_line_across_blanks` + `is_indent_code_line_min` + `emit_md_indented_code_min`; projector `push_inline` `MdIndentedCode` arm + `md_indented_code_extra_strip` strips `content_col + 4` since the content column does NOT cancel; formatter unchanged). Curated `md_list_item_indented_code`, fixture, 3 units, baseline +1. 410→411.
 - **2026-07-08h** — fenced code block folds into a list item (first block-within-a-list-item construct; `next_content_line` + a fence arm in `emit_md_list_level_inner` at `>= content_indent`, no `item_has_content` gate — folds with/without a blank and into an empty item; projector `push_inline` `MdCodeBlock` arm + a latent `md_code_block_parts` indent-strip fix so an indented fence's info string/body don't leak indent, surviving = `max(0, body_col−fence_col)`). Curated `md_list_item_code_block`, fixture, 3 units, baseline +1. 409→410.

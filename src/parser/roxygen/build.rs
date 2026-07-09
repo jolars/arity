@@ -867,6 +867,43 @@ fn emit_md_list_level_inner(
         // (an item starting with a blank needs indented content,
         // engine-probed), so no prose continuation folds into it.
         loop {
+            // A block Rd macro (`\itemize{…}`, `\describe{…}`, `\tabular{…}{…}`)
+            // following a list item is **not** a markdown block: to cmark the raw
+            // `\name{…}` is literal text, so it folds into the item as paragraph
+            // content (parse_Rd interprets the macro only afterward). It therefore
+            // obeys CommonMark's *paragraph-continuation* rule, not the
+            // block-interrupt indent gate the fence/table/indented-code arms use: a
+            // no-blank continuation folds at **any** indent (lazy), while a
+            // blank-separated line folds at the content column (below indented-code
+            // territory). A blank-separated *below*-column macro is a section-level
+            // block that ends the list (engine-probed). Placed before every other
+            // arm: a block-macro line matches none of their predicates
+            // (`is_md_item_lazy_continuation` even excludes it), but its multi-line
+            // opener must be consumed whole by `emit_block_macro`, never split by a
+            // prose arm. An empty item folds a content-column macro (its first
+            // block starts on the next line) but not a lazy below-column one.
+            if let Some(m) = following_line_marker(tokens, i)
+                && is_block_macro_line(tokens, m)
+                && (item_has_content || list_line_indent(tokens, m) >= content_indent)
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` (trivia)
+                }
+                i = emit_block_macro(tokens, m, events);
+                continue;
+            }
+            if item_has_content
+                && let Some(m) = next_content_line_across_blanks(tokens, i)
+                && is_block_macro_line(tokens, m)
+                && (content_indent..content_indent + 4).contains(&list_line_indent(tokens, m))
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
+                }
+                i = emit_block_macro(tokens, m, events);
+                continue;
+            }
+
             // A GFM table indented to (or past) the item's content column is a
             // child block inside this item — with or without an intervening
             // blank line (a table interrupts the item's paragraph at the content
