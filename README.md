@@ -37,8 +37,8 @@ Arity is available from several sources:
   page](https://github.com/jolars/arity/releases)
 - **VS Code/Open VSX**: the **Arity** extension (also works in Positron)
 - **Arch Linux**: `pacman -S arity-bin` (or `arity`) (from the AUR:
-  [`arity-bin`](https://aur.archlinux.org/packages/arity/),
-  [`arity`](https://aur.archlinux.org/packages/arity-bin/))
+  [`arity-bin`](https://aur.archlinux.org/packages/arity-bin/),
+  [`arity`](https://aur.archlinux.org/packages/arity/))
 
 ## Formatter
 

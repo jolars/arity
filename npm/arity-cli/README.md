@@ -25,7 +25,7 @@ npx arity-cli format file.R
 arity format file.R             # format in place
 arity format <file.R            # read stdin, write stdout
 arity format --check path/      # check without writing
-arity lint --check file.R       # lint
+arity lint file.R               # lint
 arity lsp                       # start the language server
 ```
 
