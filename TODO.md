@@ -570,9 +570,13 @@ roxygen2 7.3.3.
   comments that didn't actually suppress anything (rule ID is reserved but
   the rule is not yet wired in).
 
-- [ ] **Harvest lazy-data symbols.** The index now covers R's default packages
+- [x] **Harvest lazy-data symbols.** The index now covers R's default packages
   (so hover/signatures work for base-R functions), but `harvest_package`
   only reads `NAMESPACE`/object exports—it skips a package's lazy-data
   (`.getNamespaceInfo(ns, "lazydata")`). So `datasets` harvests 0 symbols and
   hovering a dataset (e.g. `iris`) resolves the package but finds no entry.
   The static name lists already include lazydata; the harvest does not.
+  Done: `harvest_package` now reads `data/Rdata.rdx` (the on-disk lazydata
+  index) and folds those objects in as `Data` symbols, reusing the existing
+  `Meta/Rd.rds`/help path for titles. `datasets` harvests all 108 symbols
+  (`iris` included).

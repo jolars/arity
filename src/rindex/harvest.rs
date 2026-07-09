@@ -5,6 +5,9 @@
 //! - `DESCRIPTION` → version (and the building R version, when present).
 //! - `NAMESPACE` → exported names (explicit `export()` plus `exportPattern()`
 //!   expanded against the lazy-load object names).
+//! - `data/Rdata.rdx` → lazy-data (`LazyData`) object names — what R exposes
+//!   via `.getNamespaceInfo(ns, "lazydata")`, classified `Data`. (`datasets`
+//!   is entirely lazy-data.)
 //! - `R/{pkg}.rdb` → function formals and symbol-kind refinement.
 //! - `Meta/Rd.rds` → per-symbol help titles + the help-page key for each alias.
 //! - `help/{pkg}.rdb` → full Rd bodies (description/usage/arguments), rendered
@@ -83,6 +86,7 @@ pub fn harvest_package(
 
     let object_names = read_object_names(pkg_dir, &package);
     let exports = resolve_package_exports(pkg_dir, &object_names);
+    let lazydata = read_lazydata_names(pkg_dir);
 
     let help_index = if opts.help {
         read_help_index(pkg_dir)
@@ -102,13 +106,14 @@ pub fn harvest_package(
         None
     };
 
+    let export_set: BTreeSet<&str> = exports.iter().map(String::as_str).collect();
     let mut symbols: Vec<SymbolEntry> = exports
-        .into_iter()
+        .iter()
         .map(|name| {
-            let help = build_help(&help_index, help_db.as_ref(), &name);
-            let (kind, formals) = refine_symbol(db.as_ref(), &name);
+            let help = build_help(&help_index, help_db.as_ref(), name);
+            let (kind, formals) = refine_symbol(db.as_ref(), name);
             SymbolEntry {
-                name: SmolStr::new(&name),
+                name: SmolStr::new(name),
                 kind,
                 exported: true,
                 formals,
@@ -116,6 +121,25 @@ pub fn harvest_package(
             }
         })
         .collect();
+
+    // Lazy-data objects are available as `pkg::name` (and after attach) even
+    // though NAMESPACE exports nothing, so treat them as exported. They are
+    // `Data` by definition — no need to decode the (potentially large)
+    // `data/Rdata.rdb` to re-derive a kind we already know. A name that is both
+    // a code export and a dataset keeps its richer export classification.
+    for name in &lazydata {
+        if export_set.contains(name.as_str()) {
+            continue;
+        }
+        let help = build_help(&help_index, help_db.as_ref(), name);
+        symbols.push(SymbolEntry {
+            name: SmolStr::new(name),
+            kind: SymbolKind::Data,
+            exported: true,
+            formals: None,
+            help,
+        });
+    }
     symbols.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(PackageIndex {
@@ -151,6 +175,15 @@ fn resolve_package_exports(pkg_dir: &Path, object_names: &[String]) -> Vec<Strin
 /// Read the lazy-load object names from `R/{pkg}.rdx`, if present.
 fn read_object_names(pkg_dir: &Path, package: &str) -> Vec<String> {
     let rdx = pkg_dir.join("R").join(format!("{package}.rdx"));
+    lazyload::read_index_names(&rdx).unwrap_or_default()
+}
+
+/// Read lazy-data (`LazyData`) object names from `data/Rdata.rdx`, if present.
+/// These are the names R exposes via `.getNamespaceInfo(ns, "lazydata")`;
+/// `datasets` is entirely lazy-data. The `.rdx` index alone is read (cheap — no
+/// `.rdb` decode). The file uses the fixed `Rdata` stem, not `{pkg}`.
+fn read_lazydata_names(pkg_dir: &Path) -> Vec<String> {
+    let rdx = pkg_dir.join("data").join("Rdata.rdx");
     lazyload::read_index_names(&rdx).unwrap_or_default()
 }
 

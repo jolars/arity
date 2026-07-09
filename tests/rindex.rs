@@ -207,6 +207,38 @@ fn missing_help_db_degrades_to_title_only() {
 }
 
 #[test]
+fn harvests_lazydata_as_data_symbols() {
+    // `lazydata` mimics `datasets`: its NAMESPACE exports nothing and it has no
+    // `R/` code DB — every symbol comes from the `data/Rdata` lazy-load DB.
+    let idx = harvest_package(&fixture("lazydata"), HarvestOptions::default(), 0)
+        .expect("harvest lazydata");
+    assert_eq!(idx.package, "lazydata");
+
+    for name in ["toy_frame", "toy_vec"] {
+        let sym = find(&idx.symbols, name).unwrap_or_else(|| panic!("{name} harvested"));
+        assert_eq!(sym.kind, SymbolKind::Data, "{name} is data");
+        assert!(sym.exported, "{name} available as pkg::{name}");
+        assert!(sym.formals.is_none(), "{name} has no formals");
+    }
+
+    // Symbols stay sorted.
+    let mut sorted = idx.symbols.clone();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    assert_eq!(idx.symbols, sorted);
+}
+
+#[test]
+fn lazydata_resolves_help_title() {
+    // Lazy-data aliases resolve titles through the same `Meta/Rd.rds` path as
+    // code exports.
+    let idx = harvest_package(&fixture("lazydata"), HarvestOptions::default(), 0)
+        .expect("harvest lazydata");
+    let frame = find(&idx.symbols, "toy_frame").expect("toy_frame harvested");
+    let title = frame.help.as_ref().and_then(|h| h.title.as_deref());
+    assert_eq!(title, Some("A toy data frame"));
+}
+
+#[test]
 fn help_body_snapshot() {
     let idx = harvest_package(&fixture("magrittr"), HarvestOptions::default(), 0)
         .expect("harvest magrittr");
