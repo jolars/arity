@@ -9,10 +9,10 @@ Arity is a Rust CLI providing a language server, formatter, and linter for the R
 language. Single-crate Cargo package (published to crates.io as `arity`, edition
 2024; the binary and library crate are both named `arity`), not a workspace.
 
-**Strategy (see `TODO.md`):** bring the parser + formatter foundation to
-near-completion *first*; the linter and LSP are deferred to later phases. When
-in doubt about scope/priority, `TODO.md` is the live roadmap and records known
-issues and follow-ups.
+**Strategy (see `TODO.md`):** the parser + formatter foundation was brought to
+near-completion *first*; the linter and LSP were then built out on top of it and
+are now substantially complete. When in doubt about scope/priority, `TODO.md` is
+the live roadmap and records known issues and follow-ups.
 
 The dev environment is provided via `devenv`/Nix (`devenv.nix`, `.envrc`) and
 includes `R`.
@@ -144,15 +144,18 @@ best-fit layout engine (`printer.rs`) that makes all line-break decisions.
 `rules/` builds the IR per construct; `core.rs` exposes `format` and
 `format_with_style`; `check.rs` exposes `check_paths`; `style.rs` is
 `FormatStyle`; `trivia.rs`/`context.rs`/`render.rs` are support. Target style is
-the tidyverse R style guide. The native-IR migration is largely complete
-(subset/call/function arg-lists, curly-curly, parens, if/else, and external-body
-control flow all build native IR). The remaining `Ir::verbatim` legacy bridge is
-**comment-bearing `if`/`else`** (`ir_if_expr_legacy`), whose comment relocation is
-not yet ported (see `TODO.md` follow-ups).
+the tidyverse R style guide. The native-IR migration is complete
+(subset/call/function arg-lists, curly-curly, parens, if/else including
+comment-bearing chains, and external-body control flow all build native IR, with
+comment relocation handled structurally). `Ir::verbatim`/`verbatim_forced` no
+longer bridges a whole construct; it now only carries relocated comment text and
+rendered-flat `conditional_group` candidates.
 
 **Linter** (`src/linter/`): `check_paths` walks files, parses, and reports
 `LintStatus` (`Clean`/`Findings`/`ParseDiagnostics`); parse diagnostics
-block linting a file. Largely a placeholder ahead of Phase 6.
+block linting a file. Ships 25 rules across five categories (correctness,
+suspicious, readability, performance, documentation) with autofixes, suppression
+handling, and generated per-rule docs; `src/linter/rules.rs` is the registry.
 
 *Autofix correctness.* A fix is a textual edit, so the bar it must clear is
 **correctness, not formatting**: applying it must leave code that still parses
@@ -167,10 +170,15 @@ discipline is what keeps the current rules' fixes safe; `tests/lint.rs` checks
 that fixed output parses (and stays format-clean on the curated width-safe
 cases).
 
-**Language server** (`src/lsp.rs`, CLI `arity lsp`): a stdio JSON-RPC server on
-the `lsp-server` crate (rust-analyzer's transport)—offers formatting, pushed
-diagnostics, quick-fix code actions, and index-backed hover. The main loop owns
-no salsa database: read-only requests run on `rayon`, and linting is serialized
+**Language server** (`src/lsp.rs`, a facade over the `src/lsp/*` submodules; CLI
+`arity lsp`): a stdio JSON-RPC server on the `lsp-server` crate (rust-analyzer's
+transport)—offers formatting (document and range), pushed and pull diagnostics,
+quick-fix code actions, hover, completion, signature help, go-to-definition and
+references, rename, document and workspace symbols, semantic tokens, folding and
+selection ranges, document links, and call and type hierarchy, backed by the
+introspection index and a per-file semantic model. The main loop owns
+no salsa database: read-only requests run on a purpose-built read `TaskPool` (not
+rayon's global pool), and linting is serialized
 on a **dedicated thread** that owns the persistent `IncrementalDatabase`. This is
 forced by salsa being strictly single-writer (a `set_*` setter blocks until all
 other db handles drop) combined with cross-file lint *writing* sibling files into
