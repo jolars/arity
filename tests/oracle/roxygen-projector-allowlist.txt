@@ -422,3 +422,4 @@ tag_sameline_emph
 md_heading_brace_group
 rd_even_braced_macro
 md_even_braced_macro
+md_list_item_table

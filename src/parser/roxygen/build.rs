@@ -867,6 +867,28 @@ fn emit_md_list_level_inner(
         // (an item starting with a blank needs indented content,
         // engine-probed), so no prose continuation folds into it.
         loop {
+            // A GFM table indented to (or past) the item's content column is a
+            // child block inside this item — with or without an intervening
+            // blank line (a table interrupts the item's paragraph at the content
+            // column; a blank only makes the item loose; roxygen2 renders both as
+            // a `\tabular` inside the `\item`, engine-probed). An **unindented**
+            // table header (below the content column) is instead a lazy paragraph
+            // continuation folded as prose (`is_md_item_lazy_continuation` allows
+            // it — a table cannot interrupt a paragraph across the container
+            // boundary). Like the fence, this needs no `item_has_content` gate.
+            // Placed before the lazy-continuation and blank-prose arms, either of
+            // which would otherwise claim a content-column table header as text.
+            if let Some(m) = next_content_line(tokens, i)
+                && list_line_indent(tokens, m) >= content_indent
+                && is_md_table_start(tokens, m)
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
+                }
+                i = emit_md_table(tokens, m, events);
+                continue;
+            }
+
             // A no-blank lazy continuation: a following plain-prose line that
             // opens no block folds into the item's open paragraph (CommonMark
             // paragraph continuation text) — even unindented or over-indented.

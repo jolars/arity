@@ -4330,6 +4330,13 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_INDENTED_CODE => {
             out.push(Inline::MdIndentedCode(n));
         }
+        // A `ROXYGEN_MD_TABLE` folded into a list item (a GFM table at the item's
+        // content column) projects to roxygen2's `\tabular`, the same as a
+        // section-level table; [`serialize_md_table`] strips the item's content
+        // indentation per line via `strip_marker`.
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_TABLE => {
+            out.push(Inline::MdTable(n));
+        }
         // A resolved emphasis/strong *node* (the inline pass's output): recurse
         // into its inner inline run, skipping the opener/closer delimiter leaves
         // (and any inter-line trivia), so nesting projects as structure.
@@ -8156,5 +8163,58 @@ mod tests {
             "got: {}",
             project_to_rd(src)
         );
+    }
+
+    #[test]
+    fn table_at_content_column_folds_into_item() {
+        // A GFM table indented to the item's content column folds into the item as
+        // a `\tabular` child (between the two `\item`s), with `- b` a sibling. A
+        // blank line before the table only makes the item loose.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#'   | x | y |\n\
+                   #'   | --- | --- |\n#'   | 1 | 2 |\n#' - b\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\") \
+                 (\\tabular (TEXT \"ll\") (GRP (TEXT \"x\") (\\tab) (TEXT \"y\") (\\cr) \
+                 (TEXT \"1\") (\\tab) (TEXT \"2\") (\\cr))) (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn table_without_blank_folds_into_item() {
+        // A GFM table interrupts the item's paragraph at the content column, so it
+        // folds in with *no* intervening blank line too (same `\tabular` shape).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'   | x | y |\n\
+                   #'   | --- | --- |\n#'   | 1 | 2 |\n#' - b\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\") \
+                 (\\tabular (TEXT \"ll\") (GRP (TEXT \"x\") (\\tab) (TEXT \"y\") (\\cr) \
+                 (TEXT \"1\") (\\tab) (TEXT \"2\") (\\cr))) (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn unindented_table_is_lazy_continuation() {
+        // A table header *below* the item's content column cannot interrupt the
+        // item's paragraph across the container boundary, so the whole table folds
+        // in as lazy paragraph-continuation prose (`a | x | y | ...`), not a
+        // `\tabular` — engine-probed.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#' | x | y |\n\
+                   #' | --- | --- |\n#' | 1 | 2 |\n#' @name spec\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a | x | y | | --- | --- | | 1 | 2 |\")))"
+            ),
+            "got: {rd}"
+        );
+        assert!(!rd.contains("\\tabular"), "got: {rd}");
     }
 }

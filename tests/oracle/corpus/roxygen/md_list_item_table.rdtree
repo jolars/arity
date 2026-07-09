@@ -1,0 +1,3 @@
+(\description (TEXT "A GFM table at the content column folds into a list item"))
+(\details (\itemize (\item) (TEXT "a") (\tabular (TEXT "ll") (GRP (TEXT "x") (\tab) (TEXT "y") (\cr) (TEXT "1") (\tab) (TEXT "2") (\cr))) (\item) (TEXT "b")))
+(\title (TEXT "A GFM table at the content column folds into a list item"))
