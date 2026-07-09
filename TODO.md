@@ -443,17 +443,6 @@ roxygen2 7.3.3.
   edit in a CRLF buffer splices LF); fix that first, then advertise. (2026-07-02
   languageserver survey.)
 
-- [x] **Document links** (`textDocument/documentLink`). Emits a `DocumentLink`
-  for every string literal that resolves to an existing regular file: a new pure
-  extractor `collect_link_literals` (`src/project/source.rs`, raw-string aware)
-  walks *all* string tokens, and `compute_document_links`
-  (`src/lsp/document_links.rs`) resolves + `stat`s each on the read pool. Gated by
-  a `link_file_size_limit` editor setting. Deviations from the languageserver
-  survey: resolution is relative to the file's own directory (arity's `source()`
-  convention), not the workspace root, and targets are resolved eagerly (no
-  `documentLink/resolve` round-trip). (2026-07-02 languageserver survey; done
-  2026-07-08.)
-
 - [ ] **Minor capability-conformance gaps vs. the R languageserver** (2026-07-02
   survey). (a) arity's completion trigger set is `:` only; the languageserver
   also triggers on `.` (ubiquitous in R names)—fold into the existing completion
