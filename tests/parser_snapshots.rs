@@ -106,6 +106,7 @@ fn fixture_names() -> &'static [&'static str] {
         "function_missing_body",
         "function_missing_rparen_body",
         "unclosed_block",
+        "stray_close_paren_toplevel",
         "call_simple",
         "call_lambda_and_dot_named",
         "call_named_args",

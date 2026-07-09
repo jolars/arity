@@ -38,6 +38,15 @@ pub fn parse(text: &str) -> ParseOutput {
             root_events.extend(expr.events);
             i = expr.end;
         } else {
+            // A token that can't start an expression at the top level (a stray
+            // closing delimiter like the second `)` in `f(1))`, or lexer junk).
+            // R rejects these outright; flag one so the leniency isn't silent,
+            // but keep the token in the tree to preserve losslessness (Tenet 4).
+            crate::parser::diagnostics::push_token_diagnostic(
+                &mut diagnostics,
+                &format!("unexpected '{}'", tokens[i].text),
+                &tokens[i],
+            );
             root_events.push(Event::Tok(i));
             i += 1;
         }

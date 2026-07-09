@@ -304,13 +304,15 @@ roxygen2 7.3.3.
       it never warns—decide against CRAN's stance first); mine the oracle's
       "uncovered signals" table (mismatched braces/quotes, markdown-link
       plain-text restriction) for new rules.
-- [ ] Parser notes surfaced by this work: (a) roxygen2 never
-      markdown-processes `tag_code` bodies, but arity tokenizes markdown inside
-      `@examples` under `@md` (harmless for the lint—extraction is
-      token-concat—but a CST-fidelity gap); (b) a stray closing delimiter at
-      top level (`f(1))`) is recovered losslessly *without* a parse
-      diagnostic, though R itself errors—`roxygen-examples` and plain-file
-      linting both inherit the leniency.
+- [ ] Parser note surfaced by this work: roxygen2 never markdown-processes
+      `tag_code` bodies, but arity tokenizes markdown inside `@examples` under
+      `@md` (harmless for the lint—extraction is token-concat—but a CST-fidelity
+      gap).
+- [x] Parser leniency surfaced by this work: a stray closing delimiter at top
+      level (`f(1))`) was recovered losslessly *without* a parse diagnostic,
+      though R itself errors, so `roxygen-examples` and plain-file linting both
+      inherited the leniency. The top-level loop now emits an `unexpected '<tok>'`
+      diagnostic (still lossless); fixture `stray_close_paren_toplevel`.
 
 #### Out of scope (recorded so they aren't silently dropped)
 
