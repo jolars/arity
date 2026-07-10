@@ -1,0 +1,655 @@
+{"slug":"cm-001","input":"#' @md\n#' @title T\n#' @details\n#' \tfoo\tbaz\t\tbim\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-002","input":"#' @md\n#' @title T\n#' @details\n#'   \tfoo\tbaz\t\tbim\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-003","input":"#' @md\n#' @title T\n#' @details\n#'     a\ta\n#'     ὐ\ta\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-004","input":"#' @md\n#' @title T\n#' @details\n#'   - foo\n#'\n#' \tbar\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-005","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#'\n#' \t\tbar\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-006","input":"#' @md\n#' @title T\n#' @details\n#' >\t\tfoo\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-007","input":"#' @md\n#' @title T\n#' @details\n#' -\t\tfoo\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-008","input":"#' @md\n#' @title T\n#' @details\n#'     foo\n#' \tbar\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-009","input":"#' @md\n#' @title T\n#' @details\n#'  - foo\n#'    - bar\n#' \t - baz\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-010","input":"#' @md\n#' @title T\n#' @details\n#' #\tFoo\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-011","input":"#' @md\n#' @title T\n#' @details\n#' *\t*\t*\t\n#' @name spec\nNULL\n","section":"Tabs"}
+{"slug":"cm-012","input":"#' @md\n#' @title T\n#' @details\n#' \\!\\\"\\#\\$\\%\\&\\'\\(\\)\\*\\+\\,\\-\\.\\/\\:\\;\\<\\=\\>\\?\\@\\[\\\\\\]\\^\\_\\`\\{\\|\\}\\~\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-013","input":"#' @md\n#' @title T\n#' @details\n#' \\\t\\A\\a\\ \\3\\φ\\«\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-014","input":"#' @md\n#' @title T\n#' @details\n#' \\*not emphasized*\n#' \\<br/> not a tag\n#' \\[not a link](/foo)\n#' \\`not code`\n#' 1\\. not a list\n#' \\* not a list\n#' \\# not a heading\n#' \\[foo]: /url \"not a reference\"\n#' \\&ouml; not a character entity\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-015","input":"#' @md\n#' @title T\n#' @details\n#' \\\\*emphasis*\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-016","input":"#' @md\n#' @title T\n#' @details\n#' foo\\\n#' bar\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-017","input":"#' @md\n#' @title T\n#' @details\n#' `` \\[\\` ``\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-018","input":"#' @md\n#' @title T\n#' @details\n#'     \\[\\]\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-019","input":"#' @md\n#' @title T\n#' @details\n#' ~~~\n#' \\[\\]\n#' ~~~\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-020","input":"#' @md\n#' @title T\n#' @details\n#' <https://example.com?find=\\*>\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-021","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"/bar\\/)\">\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-022","input":"#' @md\n#' @title T\n#' @details\n#' [foo](/bar\\* \"ti\\*tle\")\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-023","input":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n#' [foo]: /bar\\* \"ti\\*tle\"\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-024","input":"#' @md\n#' @title T\n#' @details\n#' ``` foo\\+bar\n#' foo\n#' ```\n#' @name spec\nNULL\n","section":"Backslash escapes"}
+{"slug":"cm-025","input":"#' @md\n#' @title T\n#' @details\n#' &nbsp; &amp; &copy; &AElig; &Dcaron;\n#' &frac34; &HilbertSpace; &DifferentialD;\n#' &ClockwiseContourIntegral; &ngE;\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-026","input":"#' @md\n#' @title T\n#' @details\n#' &#35; &#1234; &#992; &#0;\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-027","input":"#' @md\n#' @title T\n#' @details\n#' &#X22; &#XD06; &#xcab;\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-028","input":"#' @md\n#' @title T\n#' @details\n#' &nbsp &x; &#; &#x;\n#' &#87654321;\n#' &#abcdef0;\n#' &ThisIsNotDefined; &hi?;\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-029","input":"#' @md\n#' @title T\n#' @details\n#' &copy\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-030","input":"#' @md\n#' @title T\n#' @details\n#' &MadeUpEntity;\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-031","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"&ouml;&ouml;.html\">\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-032","input":"#' @md\n#' @title T\n#' @details\n#' [foo](/f&ouml;&ouml; \"f&ouml;&ouml;\")\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-033","input":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n#' [foo]: /f&ouml;&ouml; \"f&ouml;&ouml;\"\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-034","input":"#' @md\n#' @title T\n#' @details\n#' ``` f&ouml;&ouml;\n#' foo\n#' ```\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-035","input":"#' @md\n#' @title T\n#' @details\n#' `f&ouml;&ouml;`\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-036","input":"#' @md\n#' @title T\n#' @details\n#'     f&ouml;f&ouml;\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-037","input":"#' @md\n#' @title T\n#' @details\n#' &#42;foo&#42;\n#' *foo*\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-038","input":"#' @md\n#' @title T\n#' @details\n#' &#42; foo\n#'\n#' * foo\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-039","input":"#' @md\n#' @title T\n#' @details\n#' foo&#10;&#10;bar\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-040","input":"#' @md\n#' @title T\n#' @details\n#' &#9;foo\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-041","input":"#' @md\n#' @title T\n#' @details\n#' [a](url &quot;tit&quot;)\n#' @name spec\nNULL\n","section":"Entity and numeric character references"}
+{"slug":"cm-042","input":"#' @md\n#' @title T\n#' @details\n#' - `one\n#' - two`\n#' @name spec\nNULL\n","section":"Precedence"}
+{"slug":"cm-043","input":"#' @md\n#' @title T\n#' @details\n#' ***\n#' ---\n#' ___\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-044","input":"#' @md\n#' @title T\n#' @details\n#' +++\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-045","input":"#' @md\n#' @title T\n#' @details\n#' ===\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-046","input":"#' @md\n#' @title T\n#' @details\n#' --\n#' **\n#' __\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-047","input":"#' @md\n#' @title T\n#' @details\n#'  ***\n#'   ***\n#'    ***\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-048","input":"#' @md\n#' @title T\n#' @details\n#'     ***\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-049","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#'     ***\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-050","input":"#' @md\n#' @title T\n#' @details\n#' _____________________________________\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-051","input":"#' @md\n#' @title T\n#' @details\n#'  - - -\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-052","input":"#' @md\n#' @title T\n#' @details\n#'  **  * ** * ** * **\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-053","input":"#' @md\n#' @title T\n#' @details\n#' -     -      -      -\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-054","input":"#' @md\n#' @title T\n#' @details\n#' - - - -    \n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-055","input":"#' @md\n#' @title T\n#' @details\n#' _ _ _ _ a\n#'\n#' a------\n#'\n#' ---a---\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-056","input":"#' @md\n#' @title T\n#' @details\n#'  *-*\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-057","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#' ***\n#' - bar\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-058","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' ***\n#' bar\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-059","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' ---\n#' bar\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-060","input":"#' @md\n#' @title T\n#' @details\n#' * Foo\n#' * * *\n#' * Bar\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-061","input":"#' @md\n#' @title T\n#' @details\n#' - Foo\n#' - * * *\n#' @name spec\nNULL\n","section":"Thematic breaks"}
+{"slug":"cm-062","input":"#' @md\n#' @title T\n#' @details\n#' # foo\n#' ## foo\n#' ### foo\n#' #### foo\n#' ##### foo\n#' ###### foo\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-063","input":"#' @md\n#' @title T\n#' @details\n#' ####### foo\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-064","input":"#' @md\n#' @title T\n#' @details\n#' #5 bolt\n#'\n#' #hashtag\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-065","input":"#' @md\n#' @title T\n#' @details\n#' \\## foo\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-066","input":"#' @md\n#' @title T\n#' @details\n#' # foo *bar* \\*baz\\*\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-067","input":"#' @md\n#' @title T\n#' @details\n#' #                  foo                     \n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-068","input":"#' @md\n#' @title T\n#' @details\n#'  ### foo\n#'   ## foo\n#'    # foo\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-069","input":"#' @md\n#' @title T\n#' @details\n#'     # foo\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-070","input":"#' @md\n#' @title T\n#' @details\n#' foo\n#'     # bar\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-071","input":"#' @md\n#' @title T\n#' @details\n#' ## foo ##\n#'   ###   bar    ###\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-072","input":"#' @md\n#' @title T\n#' @details\n#' # foo ##################################\n#' ##### foo ##\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-073","input":"#' @md\n#' @title T\n#' @details\n#' ### foo ###     \n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-074","input":"#' @md\n#' @title T\n#' @details\n#' ### foo ### b\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-075","input":"#' @md\n#' @title T\n#' @details\n#' # foo#\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-076","input":"#' @md\n#' @title T\n#' @details\n#' ### foo \\###\n#' ## foo #\\##\n#' # foo \\#\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-077","input":"#' @md\n#' @title T\n#' @details\n#' ****\n#' ## foo\n#' ****\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-078","input":"#' @md\n#' @title T\n#' @details\n#' Foo bar\n#' # baz\n#' Bar foo\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-079","input":"#' @md\n#' @title T\n#' @details\n#' ## \n#' #\n#' ### ###\n#' @name spec\nNULL\n","section":"ATX headings"}
+{"slug":"cm-080","input":"#' @md\n#' @title T\n#' @details\n#' Foo *bar*\n#' =========\n#'\n#' Foo *bar*\n#' ---------\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-081","input":"#' @md\n#' @title T\n#' @details\n#' Foo *bar\n#' baz*\n#' ====\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-082","input":"#' @md\n#' @title T\n#' @details\n#'   Foo *bar\n#' baz*\t\n#' ====\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-083","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' -------------------------\n#'\n#' Foo\n#' =\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-084","input":"#' @md\n#' @title T\n#' @details\n#'    Foo\n#' ---\n#'\n#'   Foo\n#' -----\n#'\n#'   Foo\n#'   ===\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-085","input":"#' @md\n#' @title T\n#' @details\n#'     Foo\n#'     ---\n#'\n#'     Foo\n#' ---\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-086","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#'    ----      \n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-087","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#'     ---\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-088","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' = =\n#'\n#' Foo\n#' --- -\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-089","input":"#' @md\n#' @title T\n#' @details\n#' Foo  \n#' -----\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-090","input":"#' @md\n#' @title T\n#' @details\n#' Foo\\\n#' ----\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-091","input":"#' @md\n#' @title T\n#' @details\n#' `Foo\n#' ----\n#' `\n#'\n#' <a title=\"a lot\n#' ---\n#' of dashes\"/>\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-092","input":"#' @md\n#' @title T\n#' @details\n#' > Foo\n#' ---\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-093","input":"#' @md\n#' @title T\n#' @details\n#' > foo\n#' bar\n#' ===\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-094","input":"#' @md\n#' @title T\n#' @details\n#' - Foo\n#' ---\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-095","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' Bar\n#' ---\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-096","input":"#' @md\n#' @title T\n#' @details\n#' ---\n#' Foo\n#' ---\n#' Bar\n#' ---\n#' Baz\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-097","input":"#' @md\n#' @title T\n#' @details\n#'\n#' ====\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-098","input":"#' @md\n#' @title T\n#' @details\n#' ---\n#' ---\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-099","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#' -----\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-100","input":"#' @md\n#' @title T\n#' @details\n#'     foo\n#' ---\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-101","input":"#' @md\n#' @title T\n#' @details\n#' > foo\n#' -----\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-102","input":"#' @md\n#' @title T\n#' @details\n#' \\> foo\n#' ------\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-103","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#'\n#' bar\n#' ---\n#' baz\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-104","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' bar\n#'\n#' ---\n#'\n#' baz\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-105","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' bar\n#' * * *\n#' baz\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-106","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' bar\n#' \\---\n#' baz\n#' @name spec\nNULL\n","section":"Setext headings"}
+{"slug":"cm-107","input":"#' @md\n#' @title T\n#' @details\n#'     a simple\n#'       indented code block\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-108","input":"#' @md\n#' @title T\n#' @details\n#'   - foo\n#'\n#'     bar\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-109","input":"#' @md\n#' @title T\n#' @details\n#' 1.  foo\n#'\n#'     - bar\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-110","input":"#' @md\n#' @title T\n#' @details\n#'     <a/>\n#'     *hi*\n#'\n#'     - one\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-111","input":"#' @md\n#' @title T\n#' @details\n#'     chunk1\n#'\n#'     chunk2\n#'   \n#'  \n#'  \n#'     chunk3\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-112","input":"#' @md\n#' @title T\n#' @details\n#'     chunk1\n#'       \n#'       chunk2\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-113","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#'     bar\n#'\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-114","input":"#' @md\n#' @title T\n#' @details\n#'     foo\n#' bar\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-115","input":"#' @md\n#' @title T\n#' @details\n#' # Heading\n#'     foo\n#' Heading\n#' ------\n#'     foo\n#' ----\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-116","input":"#' @md\n#' @title T\n#' @details\n#'         foo\n#'     bar\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-117","input":"#' @md\n#' @title T\n#' @details\n#'\n#'     \n#'     foo\n#'     \n#'\n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-118","input":"#' @md\n#' @title T\n#' @details\n#'     foo  \n#' @name spec\nNULL\n","section":"Indented code blocks"}
+{"slug":"cm-119","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' <\n#'  >\n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-120","input":"#' @md\n#' @title T\n#' @details\n#' ~~~\n#' <\n#'  >\n#' ~~~\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-121","input":"#' @md\n#' @title T\n#' @details\n#' ``\n#' foo\n#' ``\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-122","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' aaa\n#' ~~~\n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-123","input":"#' @md\n#' @title T\n#' @details\n#' ~~~\n#' aaa\n#' ```\n#' ~~~\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-124","input":"#' @md\n#' @title T\n#' @details\n#' ````\n#' aaa\n#' ```\n#' ``````\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-125","input":"#' @md\n#' @title T\n#' @details\n#' ~~~~\n#' aaa\n#' ~~~\n#' ~~~~\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-126","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-127","input":"#' @md\n#' @title T\n#' @details\n#' `````\n#'\n#' ```\n#' aaa\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-128","input":"#' @md\n#' @title T\n#' @details\n#' > ```\n#' > aaa\n#'\n#' bbb\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-129","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#'\n#'   \n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-130","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-131","input":"#' @md\n#' @title T\n#' @details\n#'  ```\n#'  aaa\n#' aaa\n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-132","input":"#' @md\n#' @title T\n#' @details\n#'   ```\n#' aaa\n#'   aaa\n#' aaa\n#'   ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-133","input":"#' @md\n#' @title T\n#' @details\n#'    ```\n#'    aaa\n#'     aaa\n#'   aaa\n#'    ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-134","input":"#' @md\n#' @title T\n#' @details\n#'     ```\n#'     aaa\n#'     ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-135","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' aaa\n#'   ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-136","input":"#' @md\n#' @title T\n#' @details\n#'    ```\n#' aaa\n#'   ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-137","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' aaa\n#'     ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-138","input":"#' @md\n#' @title T\n#' @details\n#' ``` ```\n#' aaa\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-139","input":"#' @md\n#' @title T\n#' @details\n#' ~~~~~~\n#' aaa\n#' ~~~ ~~\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-140","input":"#' @md\n#' @title T\n#' @details\n#' foo\n#' ```\n#' bar\n#' ```\n#' baz\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-141","input":"#' @md\n#' @title T\n#' @details\n#' foo\n#' ---\n#' ~~~\n#' bar\n#' ~~~\n#' # baz\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-142","input":"#' @md\n#' @title T\n#' @details\n#' ```ruby\n#' def foo(x)\n#'   return 3\n#' end\n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-143","input":"#' @md\n#' @title T\n#' @details\n#' ~~~~    ruby startline=3 $%@#$\n#' def foo(x)\n#'   return 3\n#' end\n#' ~~~~~~~\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-144","input":"#' @md\n#' @title T\n#' @details\n#' ````;\n#' ````\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-145","input":"#' @md\n#' @title T\n#' @details\n#' ``` aa ```\n#' foo\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-146","input":"#' @md\n#' @title T\n#' @details\n#' ~~~ aa ``` ~~~\n#' foo\n#' ~~~\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-147","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' ``` aaa\n#' ```\n#' @name spec\nNULL\n","section":"Fenced code blocks"}
+{"slug":"cm-148","input":"#' @md\n#' @title T\n#' @details\n#' <table><tr><td>\n#' <pre>\n#' **Hello**,\n#'\n#' _world_.\n#' <\/pre>\n#' <\/td><\/tr><\/table>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-149","input":"#' @md\n#' @title T\n#' @details\n#' <table>\n#'   <tr>\n#'     <td>\n#'            hi\n#'     <\/td>\n#'   <\/tr>\n#' <\/table>\n#'\n#' okay.\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-150","input":"#' @md\n#' @title T\n#' @details\n#'  <div>\n#'   *hello*\n#'          <foo><a>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-151","input":"#' @md\n#' @title T\n#' @details\n#' <\/div>\n#' *foo*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-152","input":"#' @md\n#' @title T\n#' @details\n#' <DIV CLASS=\"foo\">\n#'\n#' *Markdown*\n#'\n#' <\/DIV>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-153","input":"#' @md\n#' @title T\n#' @details\n#' <div id=\"foo\"\n#'   class=\"bar\">\n#' <\/div>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-154","input":"#' @md\n#' @title T\n#' @details\n#' <div id=\"foo\" class=\"bar\n#'   baz\">\n#' <\/div>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-155","input":"#' @md\n#' @title T\n#' @details\n#' <div>\n#' *foo*\n#'\n#' *bar*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-156","input":"#' @md\n#' @title T\n#' @details\n#' <div id=\"foo\"\n#' *hi*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-157","input":"#' @md\n#' @title T\n#' @details\n#' <div class\n#' foo\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-158","input":"#' @md\n#' @title T\n#' @details\n#' <div *???-&&&-<---\n#' *foo*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-159","input":"#' @md\n#' @title T\n#' @details\n#' <div><a href=\"bar\">*foo*<\/a><\/div>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-160","input":"#' @md\n#' @title T\n#' @details\n#' <table><tr><td>\n#' foo\n#' <\/td><\/tr><\/table>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-161","input":"#' @md\n#' @title T\n#' @details\n#' <div><\/div>\n#' ``` c\n#' int x = 33;\n#' ```\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-162","input":"#' @md\n#' @title T\n#' @details\n#' <div\n#' > not quoted text\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-163","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"foo\">\n#' *bar*\n#' <\/a>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-164","input":"#' @md\n#' @title T\n#' @details\n#' <Warning>\n#' *bar*\n#' <\/Warning>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-165","input":"#' @md\n#' @title T\n#' @details\n#' <i class=\"foo\">\n#' *bar*\n#' <\/i>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-166","input":"#' @md\n#' @title T\n#' @details\n#' <\/ins>\n#' *bar*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-167","input":"#' @md\n#' @title T\n#' @details\n#' <del>\n#' *foo*\n#' <\/del>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-168","input":"#' @md\n#' @title T\n#' @details\n#' <del>\n#'\n#' *foo*\n#'\n#' <\/del>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-169","input":"#' @md\n#' @title T\n#' @details\n#' <del>*foo*<\/del>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-170","input":"#' @md\n#' @title T\n#' @details\n#' <del\n#' class=\"foo\">\n#' *foo*\n#' <\/del>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-171","input":"#' @md\n#' @title T\n#' @details\n#' <pre language=\"haskell\"><code>\n#' import Text.HTML.TagSoup\n#'\n#' main :: IO ()\n#' main = print $ parseTags tags\n#' <\/code><\/pre>\n#' okay\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-172","input":"#' @md\n#' @title T\n#' @details\n#' <script type=\"text/javascript\">\n#' // JavaScript example\n#'\n#' document.getElementById(\"demo\").innerHTML = \"Hello JavaScript!\";\n#' <\/script>\n#' okay\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-173","input":"#' @md\n#' @title T\n#' @details\n#' <textarea>\n#'\n#' *foo*\n#'\n#' _bar_\n#'\n#' <\/textarea>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-174","input":"#' @md\n#' @title T\n#' @details\n#' <style\n#'   type=\"text/css\">\n#' h1 {color:red;}\n#'\n#' p {color:blue;}\n#' <\/style>\n#' okay\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-175","input":"#' @md\n#' @title T\n#' @details\n#' <style\n#'   type=\"text/css\">\n#'\n#' foo\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-176","input":"#' @md\n#' @title T\n#' @details\n#' > <div>\n#' > foo\n#'\n#' bar\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-177","input":"#' @md\n#' @title T\n#' @details\n#' - <div>\n#' - foo\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-178","input":"#' @md\n#' @title T\n#' @details\n#' <style>p{color:red;}<\/style>\n#' *foo*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-179","input":"#' @md\n#' @title T\n#' @details\n#' <!-- foo -->*bar*\n#' *baz*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-180","input":"#' @md\n#' @title T\n#' @details\n#' <script>\n#' foo\n#' <\/script>1. *bar*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-181","input":"#' @md\n#' @title T\n#' @details\n#' <!-- Foo\n#'\n#' bar\n#'    baz -->\n#' okay\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-182","input":"#' @md\n#' @title T\n#' @details\n#' <?php\n#'\n#'   echo '>';\n#'\n#' ?>\n#' okay\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-183","input":"#' @md\n#' @title T\n#' @details\n#' <!DOCTYPE html>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-184","input":"#' @md\n#' @title T\n#' @details\n#' <![CDATA[\n#' function matchwo(a,b)\n#' {\n#'   if (a < b && a < 0) then {\n#'     return 1;\n#'\n#'   } else {\n#'\n#'     return 0;\n#'   }\n#' }\n#' ]]>\n#' okay\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-185","input":"#' @md\n#' @title T\n#' @details\n#'   <!-- foo -->\n#'\n#'     <!-- foo -->\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-186","input":"#' @md\n#' @title T\n#' @details\n#'   <div>\n#'\n#'     <div>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-187","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' <div>\n#' bar\n#' <\/div>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-188","input":"#' @md\n#' @title T\n#' @details\n#' <div>\n#' bar\n#' <\/div>\n#' *foo*\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-189","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' <a href=\"bar\">\n#' baz\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-190","input":"#' @md\n#' @title T\n#' @details\n#' <div>\n#'\n#' *Emphasized* text.\n#'\n#' <\/div>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-191","input":"#' @md\n#' @title T\n#' @details\n#' <div>\n#' *Emphasized* text.\n#' <\/div>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-192","input":"#' @md\n#' @title T\n#' @details\n#' <table>\n#'\n#' <tr>\n#'\n#' <td>\n#' Hi\n#' <\/td>\n#'\n#' <\/tr>\n#'\n#' <\/table>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-193","input":"#' @md\n#' @title T\n#' @details\n#' <table>\n#'\n#'   <tr>\n#'\n#'     <td>\n#'       Hi\n#'     <\/td>\n#'\n#'   <\/tr>\n#'\n#' <\/table>\n#' @name spec\nNULL\n","section":"HTML blocks"}
+{"slug":"cm-194","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url \"title\"\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-195","input":"#' @md\n#' @title T\n#' @details\n#'    [foo]: \n#'       /url  \n#'            'the title'  \n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-196","input":"#' @md\n#' @title T\n#' @details\n#' [Foo*bar\\]]:my_(url) 'title (with parens)'\n#'\n#' [Foo*bar\\]]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-197","input":"#' @md\n#' @title T\n#' @details\n#' [Foo bar]:\n#' <my url>\n#' 'title'\n#'\n#' [Foo bar]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-198","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url '\n#' title\n#' line1\n#' line2\n#' '\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-199","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url 'title\n#'\n#' with blank line'\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-200","input":"#' @md\n#' @title T\n#' @details\n#' [foo]:\n#' /url\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-201","input":"#' @md\n#' @title T\n#' @details\n#' [foo]:\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-202","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: <>\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-203","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: <bar>(baz)\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-204","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url\\bar\\*baz \"foo\\\"bar\\baz\"\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-205","input":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n#' [foo]: url\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-206","input":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n#' [foo]: first\n#' [foo]: second\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-207","input":"#' @md\n#' @title T\n#' @details\n#' [FOO]: /url\n#'\n#' [Foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-208","input":"#' @md\n#' @title T\n#' @details\n#' [ΑΓΩ]: /φου\n#'\n#' [αγω]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-209","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-210","input":"#' @md\n#' @title T\n#' @details\n#' [\n#' foo\n#' ]: /url\n#' bar\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-211","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url \"title\" ok\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-212","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url\n#' \"title\" ok\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-213","input":"#' @md\n#' @title T\n#' @details\n#'     [foo]: /url \"title\"\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-214","input":"#' @md\n#' @title T\n#' @details\n#' ```\n#' [foo]: /url\n#' ```\n#'\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-215","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' [bar]: /baz\n#'\n#' [bar]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-216","input":"#' @md\n#' @title T\n#' @details\n#' # [Foo]\n#' [foo]: /url\n#' > bar\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-217","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url\n#' bar\n#' ===\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-218","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url\n#' ===\n#' [foo]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-219","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /foo-url \"foo\"\n#' [bar]: /bar-url\n#'   \"bar\"\n#' [baz]: /baz-url\n#'\n#' [foo],\n#' [bar],\n#' [baz]\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-220","input":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n#' > [foo]: /url\n#' @name spec\nNULL\n","section":"Link reference definitions"}
+{"slug":"cm-221","input":"#' @md\n#' @title T\n#' @details\n#' aaa\n#'\n#' bbb\n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-222","input":"#' @md\n#' @title T\n#' @details\n#' aaa\n#' bbb\n#'\n#' ccc\n#' ddd\n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-223","input":"#' @md\n#' @title T\n#' @details\n#' aaa\n#'\n#'\n#' bbb\n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-224","input":"#' @md\n#' @title T\n#' @details\n#'   aaa\n#'  bbb\n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-225","input":"#' @md\n#' @title T\n#' @details\n#' aaa\n#'              bbb\n#'                                        ccc\n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-226","input":"#' @md\n#' @title T\n#' @details\n#'    aaa\n#' bbb\n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-227","input":"#' @md\n#' @title T\n#' @details\n#'     aaa\n#' bbb\n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-228","input":"#' @md\n#' @title T\n#' @details\n#' aaa     \n#' bbb     \n#' @name spec\nNULL\n","section":"Paragraphs"}
+{"slug":"cm-229","input":"#' @md\n#' @title T\n#' @details\n#'   \n#'\n#' aaa\n#'   \n#'\n#' # aaa\n#'\n#'   \n#' @name spec\nNULL\n","section":"Blank lines"}
+{"slug":"cm-230","input":"#' @md\n#' @title T\n#' @details\n#' > # Foo\n#' > bar\n#' > baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-231","input":"#' @md\n#' @title T\n#' @details\n#' ># Foo\n#' >bar\n#' > baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-232","input":"#' @md\n#' @title T\n#' @details\n#'    > # Foo\n#'    > bar\n#'  > baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-233","input":"#' @md\n#' @title T\n#' @details\n#'     > # Foo\n#'     > bar\n#'     > baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-234","input":"#' @md\n#' @title T\n#' @details\n#' > # Foo\n#' > bar\n#' baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-235","input":"#' @md\n#' @title T\n#' @details\n#' > bar\n#' baz\n#' > foo\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-236","input":"#' @md\n#' @title T\n#' @details\n#' > foo\n#' ---\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-237","input":"#' @md\n#' @title T\n#' @details\n#' > - foo\n#' - bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-238","input":"#' @md\n#' @title T\n#' @details\n#' >     foo\n#'     bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-239","input":"#' @md\n#' @title T\n#' @details\n#' > ```\n#' foo\n#' ```\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-240","input":"#' @md\n#' @title T\n#' @details\n#' > foo\n#'     - bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-241","input":"#' @md\n#' @title T\n#' @details\n#' >\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-242","input":"#' @md\n#' @title T\n#' @details\n#' >\n#' >  \n#' > \n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-243","input":"#' @md\n#' @title T\n#' @details\n#' >\n#' > foo\n#' >  \n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-244","input":"#' @md\n#' @title T\n#' @details\n#' > foo\n#'\n#' > bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-245","input":"#' @md\n#' @title T\n#' @details\n#' > foo\n#' > bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-246","input":"#' @md\n#' @title T\n#' @details\n#' > foo\n#' >\n#' > bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-247","input":"#' @md\n#' @title T\n#' @details\n#' foo\n#' > bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-248","input":"#' @md\n#' @title T\n#' @details\n#' > aaa\n#' ***\n#' > bbb\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-249","input":"#' @md\n#' @title T\n#' @details\n#' > bar\n#' baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-250","input":"#' @md\n#' @title T\n#' @details\n#' > bar\n#'\n#' baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-251","input":"#' @md\n#' @title T\n#' @details\n#' > bar\n#' >\n#' baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-252","input":"#' @md\n#' @title T\n#' @details\n#' > > > foo\n#' bar\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-253","input":"#' @md\n#' @title T\n#' @details\n#' >>> foo\n#' > bar\n#' >>baz\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-254","input":"#' @md\n#' @title T\n#' @details\n#' >     code\n#'\n#' >    not code\n#' @name spec\nNULL\n","section":"Block quotes"}
+{"slug":"cm-255","input":"#' @md\n#' @title T\n#' @details\n#' A paragraph\n#' with two lines.\n#'\n#'     indented code\n#'\n#' > A block quote.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-256","input":"#' @md\n#' @title T\n#' @details\n#' 1.  A paragraph\n#'     with two lines.\n#'\n#'         indented code\n#'\n#'     > A block quote.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-257","input":"#' @md\n#' @title T\n#' @details\n#' - one\n#'\n#'  two\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-258","input":"#' @md\n#' @title T\n#' @details\n#' - one\n#'\n#'   two\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-259","input":"#' @md\n#' @title T\n#' @details\n#'  -    one\n#'\n#'      two\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-260","input":"#' @md\n#' @title T\n#' @details\n#'  -    one\n#'\n#'       two\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-261","input":"#' @md\n#' @title T\n#' @details\n#'    > > 1.  one\n#' >>\n#' >>     two\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-262","input":"#' @md\n#' @title T\n#' @details\n#' >>- one\n#' >>\n#'   >  > two\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-263","input":"#' @md\n#' @title T\n#' @details\n#' -one\n#'\n#' 2.two\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-264","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#'\n#'\n#'   bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-265","input":"#' @md\n#' @title T\n#' @details\n#' 1.  foo\n#'\n#'     ```\n#'     bar\n#'     ```\n#'\n#'     baz\n#'\n#'     > bam\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-266","input":"#' @md\n#' @title T\n#' @details\n#' - Foo\n#'\n#'       bar\n#'\n#'\n#'       baz\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-267","input":"#' @md\n#' @title T\n#' @details\n#' 123456789. ok\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-268","input":"#' @md\n#' @title T\n#' @details\n#' 1234567890. not ok\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-269","input":"#' @md\n#' @title T\n#' @details\n#' 0. ok\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-270","input":"#' @md\n#' @title T\n#' @details\n#' 003. ok\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-271","input":"#' @md\n#' @title T\n#' @details\n#' -1. not ok\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-272","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#'\n#'       bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-273","input":"#' @md\n#' @title T\n#' @details\n#'   10.  foo\n#'\n#'            bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-274","input":"#' @md\n#' @title T\n#' @details\n#'     indented code\n#'\n#' paragraph\n#'\n#'     more code\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-275","input":"#' @md\n#' @title T\n#' @details\n#' 1.     indented code\n#'\n#'    paragraph\n#'\n#'        more code\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-276","input":"#' @md\n#' @title T\n#' @details\n#' 1.      indented code\n#'\n#'    paragraph\n#'\n#'        more code\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-277","input":"#' @md\n#' @title T\n#' @details\n#'    foo\n#'\n#' bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-278","input":"#' @md\n#' @title T\n#' @details\n#' -    foo\n#'\n#'   bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-279","input":"#' @md\n#' @title T\n#' @details\n#' -  foo\n#'\n#'    bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-280","input":"#' @md\n#' @title T\n#' @details\n#' -\n#'   foo\n#' -\n#'   ```\n#'   bar\n#'   ```\n#' -\n#'       baz\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-281","input":"#' @md\n#' @title T\n#' @details\n#' -   \n#'   foo\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-282","input":"#' @md\n#' @title T\n#' @details\n#' -\n#'\n#'   foo\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-283","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#' -\n#' - bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-284","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#' -   \n#' - bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-285","input":"#' @md\n#' @title T\n#' @details\n#' 1. foo\n#' 2.\n#' 3. bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-286","input":"#' @md\n#' @title T\n#' @details\n#' *\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-287","input":"#' @md\n#' @title T\n#' @details\n#' foo\n#' *\n#'\n#' foo\n#' 1.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-288","input":"#' @md\n#' @title T\n#' @details\n#'  1.  A paragraph\n#'      with two lines.\n#'\n#'          indented code\n#'\n#'      > A block quote.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-289","input":"#' @md\n#' @title T\n#' @details\n#'   1.  A paragraph\n#'       with two lines.\n#'\n#'           indented code\n#'\n#'       > A block quote.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-290","input":"#' @md\n#' @title T\n#' @details\n#'    1.  A paragraph\n#'        with two lines.\n#'\n#'            indented code\n#'\n#'        > A block quote.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-291","input":"#' @md\n#' @title T\n#' @details\n#'     1.  A paragraph\n#'         with two lines.\n#'\n#'             indented code\n#'\n#'         > A block quote.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-292","input":"#' @md\n#' @title T\n#' @details\n#'   1.  A paragraph\n#' with two lines.\n#'\n#'           indented code\n#'\n#'       > A block quote.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-293","input":"#' @md\n#' @title T\n#' @details\n#'   1.  A paragraph\n#'     with two lines.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-294","input":"#' @md\n#' @title T\n#' @details\n#' > 1. > Blockquote\n#' continued here.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-295","input":"#' @md\n#' @title T\n#' @details\n#' > 1. > Blockquote\n#' > continued here.\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-296","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#'   - bar\n#'     - baz\n#'       - boo\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-297","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#'  - bar\n#'   - baz\n#'    - boo\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-298","input":"#' @md\n#' @title T\n#' @details\n#' 10) foo\n#'     - bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-299","input":"#' @md\n#' @title T\n#' @details\n#' 10) foo\n#'    - bar\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-300","input":"#' @md\n#' @title T\n#' @details\n#' - - foo\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-301","input":"#' @md\n#' @title T\n#' @details\n#' 1. - 2. foo\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-302","input":"#' @md\n#' @title T\n#' @details\n#' - # Foo\n#' - Bar\n#'   ---\n#'   baz\n#' @name spec\nNULL\n","section":"List items"}
+{"slug":"cm-303","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#' - bar\n#' + baz\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-304","input":"#' @md\n#' @title T\n#' @details\n#' 1. foo\n#' 2. bar\n#' 3) baz\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-305","input":"#' @md\n#' @title T\n#' @details\n#' Foo\n#' - bar\n#' - baz\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-306","input":"#' @md\n#' @title T\n#' @details\n#' The number of windows in my house is\n#' 14.  The number of doors is 6.\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-307","input":"#' @md\n#' @title T\n#' @details\n#' The number of windows in my house is\n#' 1.  The number of doors is 6.\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-308","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#'\n#' - bar\n#'\n#'\n#' - baz\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-309","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#'   - bar\n#'     - baz\n#'\n#'\n#'       bim\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-310","input":"#' @md\n#' @title T\n#' @details\n#' - foo\n#' - bar\n#'\n#' <!-- -->\n#'\n#' - baz\n#' - bim\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-311","input":"#' @md\n#' @title T\n#' @details\n#' -   foo\n#'\n#'     notcode\n#'\n#' -   foo\n#'\n#' <!-- -->\n#'\n#'     code\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-312","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#'  - b\n#'   - c\n#'    - d\n#'   - e\n#'  - f\n#' - g\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-313","input":"#' @md\n#' @title T\n#' @details\n#' 1. a\n#'\n#'   2. b\n#'\n#'    3. c\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-314","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#'  - b\n#'   - c\n#'    - d\n#'     - e\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-315","input":"#' @md\n#' @title T\n#' @details\n#' 1. a\n#'\n#'   2. b\n#'\n#'     3. c\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-316","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#' - b\n#'\n#' - c\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-317","input":"#' @md\n#' @title T\n#' @details\n#' * a\n#' *\n#'\n#' * c\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-318","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#' - b\n#'\n#'   c\n#' - d\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-319","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#' - b\n#'\n#'   [ref]: /url\n#' - d\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-320","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#' - ```\n#'   b\n#'\n#'\n#'   ```\n#' - c\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-321","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#'   - b\n#'\n#'     c\n#' - d\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-322","input":"#' @md\n#' @title T\n#' @details\n#' * a\n#'   > b\n#'   >\n#' * c\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-323","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#'   > b\n#'   ```\n#'   c\n#'   ```\n#' - d\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-324","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-325","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#'   - b\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-326","input":"#' @md\n#' @title T\n#' @details\n#' 1. ```\n#'    foo\n#'    ```\n#'\n#'    bar\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-327","input":"#' @md\n#' @title T\n#' @details\n#' * foo\n#'   * bar\n#'\n#'   baz\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-328","input":"#' @md\n#' @title T\n#' @details\n#' - a\n#'   - b\n#'   - c\n#'\n#' - d\n#'   - e\n#'   - f\n#' @name spec\nNULL\n","section":"Lists"}
+{"slug":"cm-329","input":"#' @md\n#' @title T\n#' @details\n#' `hi`lo`\n#' @name spec\nNULL\n","section":"Inlines"}
+{"slug":"cm-330","input":"#' @md\n#' @title T\n#' @details\n#' `foo`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-331","input":"#' @md\n#' @title T\n#' @details\n#' `` foo ` bar ``\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-332","input":"#' @md\n#' @title T\n#' @details\n#' ` `` `\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-333","input":"#' @md\n#' @title T\n#' @details\n#' `  ``  `\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-334","input":"#' @md\n#' @title T\n#' @details\n#' ` a`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-335","input":"#' @md\n#' @title T\n#' @details\n#' ` b `\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-336","input":"#' @md\n#' @title T\n#' @details\n#' ` `\n#' `  `\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-337","input":"#' @md\n#' @title T\n#' @details\n#' ``\n#' foo\n#' bar  \n#' baz\n#' ``\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-338","input":"#' @md\n#' @title T\n#' @details\n#' ``\n#' foo \n#' ``\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-339","input":"#' @md\n#' @title T\n#' @details\n#' `foo   bar \n#' baz`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-340","input":"#' @md\n#' @title T\n#' @details\n#' `foo\\`bar`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-341","input":"#' @md\n#' @title T\n#' @details\n#' ``foo`bar``\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-342","input":"#' @md\n#' @title T\n#' @details\n#' ` foo `` bar `\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-343","input":"#' @md\n#' @title T\n#' @details\n#' *foo`*`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-344","input":"#' @md\n#' @title T\n#' @details\n#' [not a `link](/foo`)\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-345","input":"#' @md\n#' @title T\n#' @details\n#' `<a href=\"`\">`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-346","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"`\">`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-347","input":"#' @md\n#' @title T\n#' @details\n#' `<https://foo.bar.`baz>`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-348","input":"#' @md\n#' @title T\n#' @details\n#' <https://foo.bar.`baz>`\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-349","input":"#' @md\n#' @title T\n#' @details\n#' ```foo``\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-350","input":"#' @md\n#' @title T\n#' @details\n#' `foo\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-351","input":"#' @md\n#' @title T\n#' @details\n#' `foo``bar``\n#' @name spec\nNULL\n","section":"Code spans"}
+{"slug":"cm-352","input":"#' @md\n#' @title T\n#' @details\n#' *foo bar*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-353","input":"#' @md\n#' @title T\n#' @details\n#' a * foo bar*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-354","input":"#' @md\n#' @title T\n#' @details\n#' a*\"foo\"*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-355","input":"#' @md\n#' @title T\n#' @details\n#' * a *\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-356","input":"#' @md\n#' @title T\n#' @details\n#' *$*alpha.\n#'\n#' *£*bravo.\n#'\n#' *€*charlie.\n#'\n#' *𞋿*delta.\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-357","input":"#' @md\n#' @title T\n#' @details\n#' foo*bar*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-358","input":"#' @md\n#' @title T\n#' @details\n#' 5*6*78\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-359","input":"#' @md\n#' @title T\n#' @details\n#' _foo bar_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-360","input":"#' @md\n#' @title T\n#' @details\n#' _ foo bar_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-361","input":"#' @md\n#' @title T\n#' @details\n#' a_\"foo\"_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-362","input":"#' @md\n#' @title T\n#' @details\n#' foo_bar_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-363","input":"#' @md\n#' @title T\n#' @details\n#' 5_6_78\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-364","input":"#' @md\n#' @title T\n#' @details\n#' пристаням_стремятся_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-365","input":"#' @md\n#' @title T\n#' @details\n#' aa_\"bb\"_cc\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-366","input":"#' @md\n#' @title T\n#' @details\n#' foo-_(bar)_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-367","input":"#' @md\n#' @title T\n#' @details\n#' _foo*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-368","input":"#' @md\n#' @title T\n#' @details\n#' *foo bar *\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-369","input":"#' @md\n#' @title T\n#' @details\n#' *foo bar\n#' *\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-370","input":"#' @md\n#' @title T\n#' @details\n#' *(*foo)\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-371","input":"#' @md\n#' @title T\n#' @details\n#' *(*foo*)*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-372","input":"#' @md\n#' @title T\n#' @details\n#' *foo*bar\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-373","input":"#' @md\n#' @title T\n#' @details\n#' _foo bar _\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-374","input":"#' @md\n#' @title T\n#' @details\n#' _(_foo)\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-375","input":"#' @md\n#' @title T\n#' @details\n#' _(_foo_)_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-376","input":"#' @md\n#' @title T\n#' @details\n#' _foo_bar\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-377","input":"#' @md\n#' @title T\n#' @details\n#' _пристаням_стремятся\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-378","input":"#' @md\n#' @title T\n#' @details\n#' _foo_bar_baz_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-379","input":"#' @md\n#' @title T\n#' @details\n#' _(bar)_.\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-380","input":"#' @md\n#' @title T\n#' @details\n#' **foo bar**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-381","input":"#' @md\n#' @title T\n#' @details\n#' ** foo bar**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-382","input":"#' @md\n#' @title T\n#' @details\n#' a**\"foo\"**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-383","input":"#' @md\n#' @title T\n#' @details\n#' foo**bar**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-384","input":"#' @md\n#' @title T\n#' @details\n#' __foo bar__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-385","input":"#' @md\n#' @title T\n#' @details\n#' __ foo bar__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-386","input":"#' @md\n#' @title T\n#' @details\n#' __\n#' foo bar__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-387","input":"#' @md\n#' @title T\n#' @details\n#' a__\"foo\"__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-388","input":"#' @md\n#' @title T\n#' @details\n#' foo__bar__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-389","input":"#' @md\n#' @title T\n#' @details\n#' 5__6__78\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-390","input":"#' @md\n#' @title T\n#' @details\n#' пристаням__стремятся__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-391","input":"#' @md\n#' @title T\n#' @details\n#' __foo, __bar__, baz__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-392","input":"#' @md\n#' @title T\n#' @details\n#' foo-__(bar)__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-393","input":"#' @md\n#' @title T\n#' @details\n#' **foo bar **\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-394","input":"#' @md\n#' @title T\n#' @details\n#' **(**foo)\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-395","input":"#' @md\n#' @title T\n#' @details\n#' *(**foo**)*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-396","input":"#' @md\n#' @title T\n#' @details\n#' **Gomphocarpus (*Gomphocarpus physocarpus*, syn.\n#' *Asclepias physocarpa*)**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-397","input":"#' @md\n#' @title T\n#' @details\n#' **foo \"*bar*\" foo**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-398","input":"#' @md\n#' @title T\n#' @details\n#' **foo**bar\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-399","input":"#' @md\n#' @title T\n#' @details\n#' __foo bar __\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-400","input":"#' @md\n#' @title T\n#' @details\n#' __(__foo)\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-401","input":"#' @md\n#' @title T\n#' @details\n#' _(__foo__)_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-402","input":"#' @md\n#' @title T\n#' @details\n#' __foo__bar\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-403","input":"#' @md\n#' @title T\n#' @details\n#' __пристаням__стремятся\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-404","input":"#' @md\n#' @title T\n#' @details\n#' __foo__bar__baz__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-405","input":"#' @md\n#' @title T\n#' @details\n#' __(bar)__.\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-406","input":"#' @md\n#' @title T\n#' @details\n#' *foo [bar](/url)*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-407","input":"#' @md\n#' @title T\n#' @details\n#' *foo\n#' bar*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-408","input":"#' @md\n#' @title T\n#' @details\n#' _foo __bar__ baz_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-409","input":"#' @md\n#' @title T\n#' @details\n#' _foo _bar_ baz_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-410","input":"#' @md\n#' @title T\n#' @details\n#' __foo_ bar_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-411","input":"#' @md\n#' @title T\n#' @details\n#' *foo *bar**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-412","input":"#' @md\n#' @title T\n#' @details\n#' *foo **bar** baz*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-413","input":"#' @md\n#' @title T\n#' @details\n#' *foo**bar**baz*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-414","input":"#' @md\n#' @title T\n#' @details\n#' *foo**bar*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-415","input":"#' @md\n#' @title T\n#' @details\n#' ***foo** bar*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-416","input":"#' @md\n#' @title T\n#' @details\n#' *foo **bar***\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-417","input":"#' @md\n#' @title T\n#' @details\n#' *foo**bar***\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-418","input":"#' @md\n#' @title T\n#' @details\n#' foo***bar***baz\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-419","input":"#' @md\n#' @title T\n#' @details\n#' foo******bar*********baz\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-420","input":"#' @md\n#' @title T\n#' @details\n#' *foo **bar *baz* bim** bop*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-421","input":"#' @md\n#' @title T\n#' @details\n#' *foo [*bar*](/url)*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-422","input":"#' @md\n#' @title T\n#' @details\n#' ** is not an empty emphasis\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-423","input":"#' @md\n#' @title T\n#' @details\n#' **** is not an empty strong emphasis\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-424","input":"#' @md\n#' @title T\n#' @details\n#' **foo [bar](/url)**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-425","input":"#' @md\n#' @title T\n#' @details\n#' **foo\n#' bar**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-426","input":"#' @md\n#' @title T\n#' @details\n#' __foo _bar_ baz__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-427","input":"#' @md\n#' @title T\n#' @details\n#' __foo __bar__ baz__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-428","input":"#' @md\n#' @title T\n#' @details\n#' ____foo__ bar__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-429","input":"#' @md\n#' @title T\n#' @details\n#' **foo **bar****\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-430","input":"#' @md\n#' @title T\n#' @details\n#' **foo *bar* baz**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-431","input":"#' @md\n#' @title T\n#' @details\n#' **foo*bar*baz**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-432","input":"#' @md\n#' @title T\n#' @details\n#' ***foo* bar**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-433","input":"#' @md\n#' @title T\n#' @details\n#' **foo *bar***\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-434","input":"#' @md\n#' @title T\n#' @details\n#' **foo *bar **baz**\n#' bim* bop**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-435","input":"#' @md\n#' @title T\n#' @details\n#' **foo [*bar*](/url)**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-436","input":"#' @md\n#' @title T\n#' @details\n#' __ is not an empty emphasis\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-437","input":"#' @md\n#' @title T\n#' @details\n#' ____ is not an empty strong emphasis\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-438","input":"#' @md\n#' @title T\n#' @details\n#' foo ***\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-439","input":"#' @md\n#' @title T\n#' @details\n#' foo *\\**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-440","input":"#' @md\n#' @title T\n#' @details\n#' foo *_*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-441","input":"#' @md\n#' @title T\n#' @details\n#' foo *****\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-442","input":"#' @md\n#' @title T\n#' @details\n#' foo **\\***\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-443","input":"#' @md\n#' @title T\n#' @details\n#' foo **_**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-444","input":"#' @md\n#' @title T\n#' @details\n#' **foo*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-445","input":"#' @md\n#' @title T\n#' @details\n#' *foo**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-446","input":"#' @md\n#' @title T\n#' @details\n#' ***foo**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-447","input":"#' @md\n#' @title T\n#' @details\n#' ****foo*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-448","input":"#' @md\n#' @title T\n#' @details\n#' **foo***\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-449","input":"#' @md\n#' @title T\n#' @details\n#' *foo****\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-450","input":"#' @md\n#' @title T\n#' @details\n#' foo ___\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-451","input":"#' @md\n#' @title T\n#' @details\n#' foo _\\__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-452","input":"#' @md\n#' @title T\n#' @details\n#' foo _*_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-453","input":"#' @md\n#' @title T\n#' @details\n#' foo _____\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-454","input":"#' @md\n#' @title T\n#' @details\n#' foo __\\___\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-455","input":"#' @md\n#' @title T\n#' @details\n#' foo __*__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-456","input":"#' @md\n#' @title T\n#' @details\n#' __foo_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-457","input":"#' @md\n#' @title T\n#' @details\n#' _foo__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-458","input":"#' @md\n#' @title T\n#' @details\n#' ___foo__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-459","input":"#' @md\n#' @title T\n#' @details\n#' ____foo_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-460","input":"#' @md\n#' @title T\n#' @details\n#' __foo___\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-461","input":"#' @md\n#' @title T\n#' @details\n#' _foo____\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-462","input":"#' @md\n#' @title T\n#' @details\n#' **foo**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-463","input":"#' @md\n#' @title T\n#' @details\n#' *_foo_*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-464","input":"#' @md\n#' @title T\n#' @details\n#' __foo__\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-465","input":"#' @md\n#' @title T\n#' @details\n#' _*foo*_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-466","input":"#' @md\n#' @title T\n#' @details\n#' ****foo****\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-467","input":"#' @md\n#' @title T\n#' @details\n#' ____foo____\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-468","input":"#' @md\n#' @title T\n#' @details\n#' ******foo******\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-469","input":"#' @md\n#' @title T\n#' @details\n#' ***foo***\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-470","input":"#' @md\n#' @title T\n#' @details\n#' _____foo_____\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-471","input":"#' @md\n#' @title T\n#' @details\n#' *foo _bar* baz_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-472","input":"#' @md\n#' @title T\n#' @details\n#' *foo __bar *baz bim__ bam*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-473","input":"#' @md\n#' @title T\n#' @details\n#' **foo **bar baz**\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-474","input":"#' @md\n#' @title T\n#' @details\n#' *foo *bar baz*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-475","input":"#' @md\n#' @title T\n#' @details\n#' *[bar*](/url)\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-476","input":"#' @md\n#' @title T\n#' @details\n#' _foo [bar_](/url)\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-477","input":"#' @md\n#' @title T\n#' @details\n#' *<img src=\"foo\" title=\"*\"/>\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-478","input":"#' @md\n#' @title T\n#' @details\n#' **<a href=\"**\">\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-479","input":"#' @md\n#' @title T\n#' @details\n#' __<a href=\"__\">\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-480","input":"#' @md\n#' @title T\n#' @details\n#' *a `*`*\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-481","input":"#' @md\n#' @title T\n#' @details\n#' _a `_`_\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-482","input":"#' @md\n#' @title T\n#' @details\n#' **a<https://foo.bar/?q=**>\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-483","input":"#' @md\n#' @title T\n#' @details\n#' __a<https://foo.bar/?q=__>\n#' @name spec\nNULL\n","section":"Emphasis and strong emphasis"}
+{"slug":"cm-484","input":"#' @md\n#' @title T\n#' @details\n#' [link](/uri \"title\")\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-485","input":"#' @md\n#' @title T\n#' @details\n#' [link](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-486","input":"#' @md\n#' @title T\n#' @details\n#' [](./target.md)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-487","input":"#' @md\n#' @title T\n#' @details\n#' [link]()\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-488","input":"#' @md\n#' @title T\n#' @details\n#' [link](<>)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-489","input":"#' @md\n#' @title T\n#' @details\n#' []()\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-490","input":"#' @md\n#' @title T\n#' @details\n#' [link](/my uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-491","input":"#' @md\n#' @title T\n#' @details\n#' [link](<\/my uri>)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-492","input":"#' @md\n#' @title T\n#' @details\n#' [link](foo\n#' bar)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-493","input":"#' @md\n#' @title T\n#' @details\n#' [link](<foo\n#' bar>)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-494","input":"#' @md\n#' @title T\n#' @details\n#' [a](<b)c>)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-495","input":"#' @md\n#' @title T\n#' @details\n#' [link](<foo\\>)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-496","input":"#' @md\n#' @title T\n#' @details\n#' [a](<b)c\n#' [a](<b)c>\n#' [a](<b>c)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-497","input":"#' @md\n#' @title T\n#' @details\n#' [link](\\(foo\\))\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-498","input":"#' @md\n#' @title T\n#' @details\n#' [link](foo(and(bar)))\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-499","input":"#' @md\n#' @title T\n#' @details\n#' [link](foo(and(bar))\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-500","input":"#' @md\n#' @title T\n#' @details\n#' [link](foo\\(and\\(bar\\))\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-501","input":"#' @md\n#' @title T\n#' @details\n#' [link](<foo(and(bar)>)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-502","input":"#' @md\n#' @title T\n#' @details\n#' [link](foo\\)\\:)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-503","input":"#' @md\n#' @title T\n#' @details\n#' [link](#fragment)\n#'\n#' [link](https://example.com#fragment)\n#'\n#' [link](https://example.com?foo=3#frag)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-504","input":"#' @md\n#' @title T\n#' @details\n#' [link](foo\\bar)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-505","input":"#' @md\n#' @title T\n#' @details\n#' [link](foo%20b&auml;)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-506","input":"#' @md\n#' @title T\n#' @details\n#' [link](\"title\")\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-507","input":"#' @md\n#' @title T\n#' @details\n#' [link](/url \"title\")\n#' [link](/url 'title')\n#' [link](/url (title))\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-508","input":"#' @md\n#' @title T\n#' @details\n#' [link](/url \"title \\\"&quot;\")\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-509","input":"#' @md\n#' @title T\n#' @details\n#' [link](/url \"title\")\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-510","input":"#' @md\n#' @title T\n#' @details\n#' [link](/url \"title \"and\" title\")\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-511","input":"#' @md\n#' @title T\n#' @details\n#' [link](/url 'title \"and\" title')\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-512","input":"#' @md\n#' @title T\n#' @details\n#' [link](   /uri\n#'   \"title\"  )\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-513","input":"#' @md\n#' @title T\n#' @details\n#' [link] (/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-514","input":"#' @md\n#' @title T\n#' @details\n#' [link [foo [bar]]](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-515","input":"#' @md\n#' @title T\n#' @details\n#' [link] bar](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-516","input":"#' @md\n#' @title T\n#' @details\n#' [link [bar](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-517","input":"#' @md\n#' @title T\n#' @details\n#' [link \\[bar](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-518","input":"#' @md\n#' @title T\n#' @details\n#' [link *foo **bar** `#`*](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-519","input":"#' @md\n#' @title T\n#' @details\n#' [![moon](moon.jpg)](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-520","input":"#' @md\n#' @title T\n#' @details\n#' [foo [bar](/uri)](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-521","input":"#' @md\n#' @title T\n#' @details\n#' [foo *[bar [baz](/uri)](/uri)*](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-522","input":"#' @md\n#' @title T\n#' @details\n#' ![[[foo](uri1)](uri2)](uri3)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-523","input":"#' @md\n#' @title T\n#' @details\n#' *[foo*](/uri)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-524","input":"#' @md\n#' @title T\n#' @details\n#' [foo *bar](baz*)\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-525","input":"#' @md\n#' @title T\n#' @details\n#' *foo [bar* baz]\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-526","input":"#' @md\n#' @title T\n#' @details\n#' [foo <bar attr=\"](baz)\">\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-527","input":"#' @md\n#' @title T\n#' @details\n#' [foo`](/uri)`\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-528","input":"#' @md\n#' @title T\n#' @details\n#' [foo<https://example.com/?search=](uri)>\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-529","input":"#' @md\n#' @title T\n#' @details\n#' [foo][bar]\n#'\n#' [bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-530","input":"#' @md\n#' @title T\n#' @details\n#' [link [foo [bar]]][ref]\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-531","input":"#' @md\n#' @title T\n#' @details\n#' [link \\[bar][ref]\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-532","input":"#' @md\n#' @title T\n#' @details\n#' [link *foo **bar** `#`*][ref]\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-533","input":"#' @md\n#' @title T\n#' @details\n#' [![moon](moon.jpg)][ref]\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-534","input":"#' @md\n#' @title T\n#' @details\n#' [foo [bar](/uri)][ref]\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-535","input":"#' @md\n#' @title T\n#' @details\n#' [foo *bar [baz][ref]*][ref]\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-536","input":"#' @md\n#' @title T\n#' @details\n#' *[foo*][ref]\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-537","input":"#' @md\n#' @title T\n#' @details\n#' [foo *bar][ref]*\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-538","input":"#' @md\n#' @title T\n#' @details\n#' [foo <bar attr=\"][ref]\">\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-539","input":"#' @md\n#' @title T\n#' @details\n#' [foo`][ref]`\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-540","input":"#' @md\n#' @title T\n#' @details\n#' [foo<https://example.com/?search=][ref]>\n#'\n#' [ref]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-541","input":"#' @md\n#' @title T\n#' @details\n#' [foo][BaR]\n#'\n#' [bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-542","input":"#' @md\n#' @title T\n#' @details\n#' [ẞ]\n#'\n#' [SS]: /url\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-543","input":"#' @md\n#' @title T\n#' @details\n#' [Foo\n#'   bar]: /url\n#'\n#' [Baz][Foo bar]\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-544","input":"#' @md\n#' @title T\n#' @details\n#' [foo] [bar]\n#'\n#' [bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-545","input":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#' [bar]\n#'\n#' [bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-546","input":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url1\n#'\n#' [foo]: /url2\n#'\n#' [bar][foo]\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-547","input":"#' @md\n#' @title T\n#' @details\n#' [bar][foo\\!]\n#'\n#' [foo!]: /url\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-548","input":"#' @md\n#' @title T\n#' @details\n#' [foo][ref[]\n#'\n#' [ref[]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-549","input":"#' @md\n#' @title T\n#' @details\n#' [foo][ref[bar]]\n#'\n#' [ref[bar]]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-550","input":"#' @md\n#' @title T\n#' @details\n#' [[[foo]]]\n#'\n#' [[[foo]]]: /url\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-551","input":"#' @md\n#' @title T\n#' @details\n#' [foo][ref\\[]\n#'\n#' [ref\\[]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-552","input":"#' @md\n#' @title T\n#' @details\n#' [bar\\\\]: /uri\n#'\n#' [bar\\\\]\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-553","input":"#' @md\n#' @title T\n#' @details\n#' []\n#'\n#' []: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-554","input":"#' @md\n#' @title T\n#' @details\n#' [\n#'  ]\n#'\n#' [\n#'  ]: /uri\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-555","input":"#' @md\n#' @title T\n#' @details\n#' [foo][]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-556","input":"#' @md\n#' @title T\n#' @details\n#' [*foo* bar][]\n#'\n#' [*foo* bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-557","input":"#' @md\n#' @title T\n#' @details\n#' [Foo][]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-558","input":"#' @md\n#' @title T\n#' @details\n#' [foo] \n#' []\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-559","input":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-560","input":"#' @md\n#' @title T\n#' @details\n#' [*foo* bar]\n#'\n#' [*foo* bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-561","input":"#' @md\n#' @title T\n#' @details\n#' [[*foo* bar]]\n#'\n#' [*foo* bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-562","input":"#' @md\n#' @title T\n#' @details\n#' [[bar [foo]\n#'\n#' [foo]: /url\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-563","input":"#' @md\n#' @title T\n#' @details\n#' [Foo]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-564","input":"#' @md\n#' @title T\n#' @details\n#' [foo] bar\n#'\n#' [foo]: /url\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-565","input":"#' @md\n#' @title T\n#' @details\n#' \\[foo]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-566","input":"#' @md\n#' @title T\n#' @details\n#' [foo*]: /url\n#'\n#' *[foo*]\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-567","input":"#' @md\n#' @title T\n#' @details\n#' [foo][bar]\n#'\n#' [foo]: /url1\n#' [bar]: /url2\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-568","input":"#' @md\n#' @title T\n#' @details\n#' [foo][]\n#'\n#' [foo]: /url1\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-569","input":"#' @md\n#' @title T\n#' @details\n#' [foo]()\n#'\n#' [foo]: /url1\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-570","input":"#' @md\n#' @title T\n#' @details\n#' [foo](not a link)\n#'\n#' [foo]: /url1\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-571","input":"#' @md\n#' @title T\n#' @details\n#' [foo][bar][baz]\n#'\n#' [baz]: /url\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-572","input":"#' @md\n#' @title T\n#' @details\n#' [foo][bar][baz]\n#'\n#' [baz]: /url1\n#' [bar]: /url2\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-573","input":"#' @md\n#' @title T\n#' @details\n#' [foo][bar][baz]\n#'\n#' [baz]: /url1\n#' [foo]: /url2\n#' @name spec\nNULL\n","section":"Links"}
+{"slug":"cm-574","input":"#' @md\n#' @title T\n#' @details\n#' ![foo](/url \"title\")\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-575","input":"#' @md\n#' @title T\n#' @details\n#' ![foo *bar*]\n#'\n#' [foo *bar*]: train.jpg \"train & tracks\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-576","input":"#' @md\n#' @title T\n#' @details\n#' ![foo ![bar](/url)](/url2)\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-577","input":"#' @md\n#' @title T\n#' @details\n#' ![foo [bar](/url)](/url2)\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-578","input":"#' @md\n#' @title T\n#' @details\n#' ![foo *bar*][]\n#'\n#' [foo *bar*]: train.jpg \"train & tracks\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-579","input":"#' @md\n#' @title T\n#' @details\n#' ![foo *bar*][foobar]\n#'\n#' [FOOBAR]: train.jpg \"train & tracks\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-580","input":"#' @md\n#' @title T\n#' @details\n#' ![foo](train.jpg)\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-581","input":"#' @md\n#' @title T\n#' @details\n#' My ![foo bar](/path/to/train.jpg  \"title\"   )\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-582","input":"#' @md\n#' @title T\n#' @details\n#' ![foo](<url>)\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-583","input":"#' @md\n#' @title T\n#' @details\n#' ![](/url)\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-584","input":"#' @md\n#' @title T\n#' @details\n#' ![foo][bar]\n#'\n#' [bar]: /url\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-585","input":"#' @md\n#' @title T\n#' @details\n#' ![foo][bar]\n#'\n#' [BAR]: /url\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-586","input":"#' @md\n#' @title T\n#' @details\n#' ![foo][]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-587","input":"#' @md\n#' @title T\n#' @details\n#' ![*foo* bar][]\n#'\n#' [*foo* bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-588","input":"#' @md\n#' @title T\n#' @details\n#' ![Foo][]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-589","input":"#' @md\n#' @title T\n#' @details\n#' ![foo] \n#' []\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-590","input":"#' @md\n#' @title T\n#' @details\n#' ![foo]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-591","input":"#' @md\n#' @title T\n#' @details\n#' ![*foo* bar]\n#'\n#' [*foo* bar]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-592","input":"#' @md\n#' @title T\n#' @details\n#' ![[foo]]\n#'\n#' [[foo]]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-593","input":"#' @md\n#' @title T\n#' @details\n#' ![Foo]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-594","input":"#' @md\n#' @title T\n#' @details\n#' !\\[foo]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-595","input":"#' @md\n#' @title T\n#' @details\n#' \\![foo]\n#'\n#' [foo]: /url \"title\"\n#' @name spec\nNULL\n","section":"Images"}
+{"slug":"cm-596","input":"#' @md\n#' @title T\n#' @details\n#' <http://foo.bar.baz>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-597","input":"#' @md\n#' @title T\n#' @details\n#' <https://foo.bar.baz/test?q=hello&id=22&boolean>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-598","input":"#' @md\n#' @title T\n#' @details\n#' <irc://foo.bar:2233/baz>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-599","input":"#' @md\n#' @title T\n#' @details\n#' <MAILTO:FOO@BAR.BAZ>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-600","input":"#' @md\n#' @title T\n#' @details\n#' <a+b+c:d>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-601","input":"#' @md\n#' @title T\n#' @details\n#' <made-up-scheme://foo,bar>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-602","input":"#' @md\n#' @title T\n#' @details\n#' <https://../>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-603","input":"#' @md\n#' @title T\n#' @details\n#' <localhost:5001/foo>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-604","input":"#' @md\n#' @title T\n#' @details\n#' <https://foo.bar/baz bim>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-605","input":"#' @md\n#' @title T\n#' @details\n#' <https://example.com/\\[\\>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-606","input":"#' @md\n#' @title T\n#' @details\n#' <foo@bar.example.com>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-607","input":"#' @md\n#' @title T\n#' @details\n#' <foo+special@Bar.baz-bar0.com>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-608","input":"#' @md\n#' @title T\n#' @details\n#' <foo\\+@bar.example.com>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-609","input":"#' @md\n#' @title T\n#' @details\n#' <>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-610","input":"#' @md\n#' @title T\n#' @details\n#' < https://foo.bar >\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-611","input":"#' @md\n#' @title T\n#' @details\n#' <m:abc>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-612","input":"#' @md\n#' @title T\n#' @details\n#' <foo.bar.baz>\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-613","input":"#' @md\n#' @title T\n#' @details\n#' https://example.com\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-614","input":"#' @md\n#' @title T\n#' @details\n#' foo@bar.example.com\n#' @name spec\nNULL\n","section":"Autolinks"}
+{"slug":"cm-615","input":"#' @md\n#' @title T\n#' @details\n#' <a><bab><c2c>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-616","input":"#' @md\n#' @title T\n#' @details\n#' <a/><b2/>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-617","input":"#' @md\n#' @title T\n#' @details\n#' <a  /><b2\n#' data=\"foo\" >\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-618","input":"#' @md\n#' @title T\n#' @details\n#' <a foo=\"bar\" bam = 'baz <em>\"<\/em>'\n#' _boolean zoop:33=zoop:33 />\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-619","input":"#' @md\n#' @title T\n#' @details\n#' Foo <responsive-image src=\"foo.jpg\" />\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-620","input":"#' @md\n#' @title T\n#' @details\n#' <33> <__>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-621","input":"#' @md\n#' @title T\n#' @details\n#' <a h*#ref=\"hi\">\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-622","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"hi'> <a href=hi'>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-623","input":"#' @md\n#' @title T\n#' @details\n#' < a><\n#' foo><bar/ >\n#' <foo bar=baz\n#' bim!bop />\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-624","input":"#' @md\n#' @title T\n#' @details\n#' <a href='bar'title=title>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-625","input":"#' @md\n#' @title T\n#' @details\n#' <\/a><\/foo >\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-626","input":"#' @md\n#' @title T\n#' @details\n#' <\/a href=\"foo\">\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-627","input":"#' @md\n#' @title T\n#' @details\n#' foo <!-- this is a --\n#' comment - with hyphens -->\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-628","input":"#' @md\n#' @title T\n#' @details\n#' foo <!--> foo -->\n#'\n#' foo <!---> foo -->\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-629","input":"#' @md\n#' @title T\n#' @details\n#' foo <?php echo $a; ?>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-630","input":"#' @md\n#' @title T\n#' @details\n#' foo <!ELEMENT br EMPTY>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-631","input":"#' @md\n#' @title T\n#' @details\n#' foo <![CDATA[>&<]]>\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-632","input":"#' @md\n#' @title T\n#' @details\n#' foo <a href=\"&ouml;\">\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-633","input":"#' @md\n#' @title T\n#' @details\n#' foo <a href=\"\\*\">\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-634","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"\\\"\">\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-635","input":"#' @md\n#' @title T\n#' @details\n#' <a\n#' > quoted text\n#' @name spec\nNULL\n","section":"Raw HTML"}
+{"slug":"cm-636","input":"#' @md\n#' @title T\n#' @details\n#' foo  \n#' baz\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-637","input":"#' @md\n#' @title T\n#' @details\n#' foo\\\n#' baz\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-638","input":"#' @md\n#' @title T\n#' @details\n#' foo       \n#' baz\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-639","input":"#' @md\n#' @title T\n#' @details\n#' foo  \n#'      bar\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-640","input":"#' @md\n#' @title T\n#' @details\n#' foo\\\n#'      bar\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-641","input":"#' @md\n#' @title T\n#' @details\n#' *foo  \n#' bar*\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-642","input":"#' @md\n#' @title T\n#' @details\n#' *foo\\\n#' bar*\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-643","input":"#' @md\n#' @title T\n#' @details\n#' `code  \n#' span`\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-644","input":"#' @md\n#' @title T\n#' @details\n#' `code\\\n#' span`\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-645","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"foo  \n#' bar\">\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-646","input":"#' @md\n#' @title T\n#' @details\n#' <a href=\"foo\\\n#' bar\">\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-647","input":"#' @md\n#' @title T\n#' @details\n#' foo\\\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-648","input":"#' @md\n#' @title T\n#' @details\n#' foo  \n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-649","input":"#' @md\n#' @title T\n#' @details\n#' ### foo\\\n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-650","input":"#' @md\n#' @title T\n#' @details\n#' ### foo  \n#' @name spec\nNULL\n","section":"Hard line breaks"}
+{"slug":"cm-651","input":"#' @md\n#' @title T\n#' @details\n#' foo\n#' baz\n#' @name spec\nNULL\n","section":"Soft line breaks"}
+{"slug":"cm-652","input":"#' @md\n#' @title T\n#' @details\n#' foo \n#'  baz\n#' @name spec\nNULL\n","section":"Soft line breaks"}
+{"slug":"cm-653","input":"#' @md\n#' @title T\n#' @details\n#' hello $.;'there\n#' @name spec\nNULL\n","section":"Textual content"}
+{"slug":"cm-654","input":"#' @md\n#' @title T\n#' @details\n#' Foo χρῆν\n#' @name spec\nNULL\n","section":"Textual content"}
+{"slug":"cm-655","input":"#' @md\n#' @title T\n#' @details\n#' Multiple     spaces\n#' @name spec\nNULL\n","section":"Textual content"}

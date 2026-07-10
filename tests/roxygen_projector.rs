@@ -40,22 +40,34 @@ use std::path::{Path, PathBuf};
 use arity::roxygen::project_rd::project_to_rd;
 
 const ALLOWLIST_REL: &str = "tests/oracle/roxygen-projector-allowlist.txt";
+/// Cases we deliberately do **not** target (a dialect divergence where roxygen2's
+/// Rd subset differs from CommonMark by design, or a construct out of arity's
+/// static scope), each with a one-line reason. Excluded from the backlog so the
+/// remaining divergences are genuine, reachable parser work. Same file shape as the
+/// allowlist. Mirrors panache's `blocked.txt`.
+const BLOCKED_REL: &str = "tests/oracle/roxygen-projector-blocked.txt";
 /// Harvested corpus inputs (`{slug, input}` per line) and their minted section
 /// pins (`{slug, sections}`, the projector-eligible subset). See
 /// `tests/oracle/roxygen_oracle.R`'s `projector-pins` op.
 const HARVEST_CORPUS_REL: &str = "tests/oracle/corpus/roxygen.jsonl";
 const HARVEST_PINS_REL: &str = "tests/oracle/corpus/roxygen-sections.jsonl";
-/// CommonMark spec examples wrapped into `@md` blocks (`{slug, input}`) and their
-/// minted pins (`{slug, sections}`). The spec is a broad *input* corpus only ---
-/// roxygen2 is the oracle (see `docs/design/roxygen-inline-pass.md` §10). Built by
-/// `scripts/build-commonmark-corpus.R`; same JSONL shape as the harvested corpus.
-const SPEC_CORPUS_REL: &str = "tests/oracle/corpus/commonmark-emphasis.jsonl";
-const SPEC_PINS_REL: &str = "tests/oracle/corpus/commonmark-emphasis-sections.jsonl";
+/// The **whole** CommonMark spec test set, each example's markdown wrapped into an
+/// `@md` block (`{slug, input, section}`) and its minted pin (`{slug, sections}`).
+/// The spec is a broad *input* corpus only --- roxygen2 is the oracle (see
+/// `docs/design/roxygen-inline-pass.md` §10). Adopted whole, as a measured backlog
+/// with a per-section burndown (mirroring panache's conformance skills), rather
+/// than one section at a time. Built by `scripts/build-commonmark-corpus.R ... ALL`.
+const SPEC_CORPUS_REL: &str = "tests/oracle/corpus/commonmark-spec.jsonl";
+const SPEC_PINS_REL: &str = "tests/oracle/corpus/commonmark-spec-sections.jsonl";
 
 #[derive(serde::Deserialize)]
 struct HarvestInput {
     slug: String,
     input: String,
+    /// The spec section this example came from, for per-section grouping in the
+    /// report. Absent for the harvested corpus (grouped under a default label).
+    #[serde(default)]
+    section: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -77,6 +89,9 @@ enum Outcome {
 struct Report {
     key: String,
     outcome: Outcome,
+    /// The group this case is reported under: its CommonMark spec section, or
+    /// `curated`/`harvested` for the other two corpora.
+    group: String,
 }
 
 fn manifest_path(rel: &str) -> PathBuf {
@@ -106,18 +121,24 @@ fn collect_corpus() -> Vec<(String, PathBuf, PathBuf)> {
 }
 
 /// Reads a slug-list file (one entry per line; `#` comments and blanks ignored).
-fn read_allowlist() -> BTreeSet<String> {
+/// A trailing inline `# reason` is stripped, so a blocked entry may carry its
+/// rationale on the same line.
+fn read_slug_list(rel: &str) -> BTreeSet<String> {
     let mut set = BTreeSet::new();
-    let Ok(text) = fs::read_to_string(manifest_path(ALLOWLIST_REL)) else {
+    let Ok(text) = fs::read_to_string(manifest_path(rel)) else {
         return set;
     };
     for line in text.lines() {
-        let line = line.trim();
-        if !line.is_empty() && !line.starts_with('#') {
-            set.insert(line.to_string());
+        let slug = line.split('#').next().unwrap_or("").trim();
+        if !slug.is_empty() {
+            set.insert(slug.to_string());
         }
     }
     set
+}
+
+fn read_allowlist() -> BTreeSet<String> {
+    read_slug_list(ALLOWLIST_REL)
 }
 
 /// Reads a JSONL file into `T` per non-blank line.
@@ -145,25 +166,31 @@ fn evaluate_curated() -> Vec<Report> {
                 Ok(_) => Outcome::Divergent,
                 Err(_) => Outcome::Unpinned,
             };
-            Report { key, outcome }
+            Report {
+                key,
+                outcome,
+                group: "curated".to_string(),
+            }
         })
         .collect()
 }
 
-/// A slug-keyed JSONL corpus (`{slug, input}`) against its minted section pins
-/// (`{slug, sections}`, the projector-eligible subset --- pins carry no trailing
-/// newline, so compared directly). Slugs without a corpus input are skipped. Both
-/// the harvested corpus and the CommonMark spec corpus share this shape.
-fn evaluate_jsonl_corpus(corpus_rel: &str, pins_rel: &str) -> Vec<Report> {
-    let inputs: BTreeMap<String, String> = load_jsonl::<HarvestInput>(corpus_rel)
+/// A slug-keyed JSONL corpus (`{slug, input, section?}`) against its minted section
+/// pins (`{slug, sections}`, the projector-eligible subset --- pins carry no
+/// trailing newline, so compared directly). Slugs without a corpus input are
+/// skipped. Both the harvested corpus and the CommonMark spec corpus share this
+/// shape; the spec carries a `section`, so its cases group by section while the
+/// harvested corpus falls under `default_group`.
+fn evaluate_jsonl_corpus(corpus_rel: &str, pins_rel: &str, default_group: &str) -> Vec<Report> {
+    let inputs: BTreeMap<String, HarvestInput> = load_jsonl::<HarvestInput>(corpus_rel)
         .into_iter()
-        .map(|c| (c.slug, c.input))
+        .map(|c| (c.slug.clone(), c))
         .collect();
     load_jsonl::<HarvestPin>(pins_rel)
         .into_iter()
         .filter_map(|pin| {
             let input = inputs.get(&pin.slug)?;
-            let outcome = if project_to_rd(input) == pin.sections {
+            let outcome = if project_to_rd(&input.input) == pin.sections {
                 Outcome::Match
             } else {
                 Outcome::Divergent
@@ -171,6 +198,10 @@ fn evaluate_jsonl_corpus(corpus_rel: &str, pins_rel: &str) -> Vec<Report> {
             Some(Report {
                 key: pin.slug,
                 outcome,
+                group: input
+                    .section
+                    .clone()
+                    .unwrap_or_else(|| default_group.to_string()),
             })
         })
         .collect()
@@ -178,8 +209,16 @@ fn evaluate_jsonl_corpus(corpus_rel: &str, pins_rel: &str) -> Vec<Report> {
 
 fn evaluate() -> Vec<Report> {
     let mut reports = evaluate_curated();
-    reports.extend(evaluate_jsonl_corpus(HARVEST_CORPUS_REL, HARVEST_PINS_REL));
-    reports.extend(evaluate_jsonl_corpus(SPEC_CORPUS_REL, SPEC_PINS_REL));
+    reports.extend(evaluate_jsonl_corpus(
+        HARVEST_CORPUS_REL,
+        HARVEST_PINS_REL,
+        "harvested",
+    ));
+    reports.extend(evaluate_jsonl_corpus(
+        SPEC_CORPUS_REL,
+        SPEC_PINS_REL,
+        "spec",
+    ));
     reports
 }
 
@@ -187,17 +226,9 @@ fn evaluate() -> Vec<Report> {
 fn projector_parity() {
     let reports = evaluate();
     let allow = read_allowlist();
+    let blocked = read_slug_list(BLOCKED_REL);
 
-    let (mut matched, mut divergent, mut unpinned) = (0, 0, 0);
-    for r in &reports {
-        match r.outcome {
-            Outcome::Match => matched += 1,
-            Outcome::Divergent => divergent += 1,
-            Outcome::Unpinned => unpinned += 1,
-        }
-    }
-
-    write_report(&reports, &allow, matched, divergent, unpinned);
+    write_report(&reports, &allow, &blocked);
 
     // Greppable lines for re-seeding the allowlist (`task roxygen-projector-seed`):
     // every currently-matching case, allowlisted or not.
@@ -222,28 +253,48 @@ fn projector_parity() {
             stale.push(slug);
         }
     }
+    // A case cannot be both a regression floor and deliberately un-targeted.
+    let both: Vec<&str> = allow.intersection(&blocked).map(String::as_str).collect();
 
     assert!(
-        regressed.is_empty() && stale.is_empty(),
+        regressed.is_empty() && stale.is_empty() && both.is_empty(),
         "projector-parity gate failed:\n  \
          {} allowlisted case(s) no longer match their pin: {:?}\n  \
          {} allowlisted case(s) absent from the corpus (stale entry): {:?}\n  \
+         {} case(s) in both the allowlist and the blocked list: {:?}\n  \
          A faithful divergence means the CST is wrong --- fix the parser, never the \
          projector. If a pin is outdated, refresh it with `task roxygen-projector-refresh`.",
         regressed.len(),
         regressed,
         stale.len(),
         stale,
+        both.len(),
+        both,
     );
 }
 
-fn write_report(
-    reports: &[Report],
-    allow: &BTreeSet<String>,
-    matched: usize,
-    divergent: usize,
-    unpinned: usize,
-) {
+fn write_report(reports: &[Report], allow: &BTreeSet<String>, blocked: &BTreeSet<String>) {
+    // A blocked case is neither a match to celebrate nor a backlog item to chase;
+    // it is a deliberate non-target, counted on its own.
+    let is_blocked = |r: &Report| blocked.contains(&r.key);
+    let matched = reports
+        .iter()
+        .filter(|r| r.outcome == Outcome::Match && !is_blocked(r))
+        .count();
+    let allowlisted = reports
+        .iter()
+        .filter(|r| r.outcome == Outcome::Match && allow.contains(&r.key))
+        .count();
+    let divergent = reports
+        .iter()
+        .filter(|r| r.outcome == Outcome::Divergent && !is_blocked(r))
+        .count();
+    let blocked_n = reports.iter().filter(|r| is_blocked(r)).count();
+    let unpinned = reports
+        .iter()
+        .filter(|r| r.outcome == Outcome::Unpinned)
+        .count();
+
     let mut md = String::new();
     md.push_str("# roxygen2 projector parity (CST → Rd sections)\n\n");
     md.push_str(
@@ -253,44 +304,88 @@ fn write_report(
     md.push_str(
         "The **primary, CI-safe** conformance gate: `project_to_rd(parse(x))` vs roxygen2 \
          section pins, over the curated dir corpus (`<stem>.rdtree`), the harvested \
-         corpus's projector-eligible subset (`roxygen-sections.jsonl`), and the CommonMark \
-         spec corpus (`commonmark-emphasis*.jsonl`, the inline-pass driver). It compares Rd \
-         **structure**, so it catches what the semantic fixed-point oracle cannot --- a \
-         `\\describe`/`\\itemize`/`\\tabular` the CST has not modeled as a block, or markdown \
-         still flat prose. Allowlisted cases (`tests/oracle/roxygen-projector-allowlist.txt`) \
-         are guarded against regression; **divergent** cases are the backlog: close them in the \
-         *parser*, then ratchet in (`task roxygen-projector-seed`).\n\n",
+         corpus's projector-eligible subset (`roxygen-sections.jsonl`), and the **whole \
+         CommonMark spec** (`commonmark-spec*.jsonl`, adopted as a measured backlog with the \
+         per-section burndown below). It compares Rd **structure**, so it catches what the \
+         semantic fixed-point oracle cannot --- a `\\describe`/`\\itemize`/`\\tabular` the CST \
+         has not modeled as a block, or markdown still flat prose. Allowlisted cases \
+         (`tests/oracle/roxygen-projector-allowlist.txt`) are guarded against regression; \
+         **divergent** cases are the backlog: close them in the *parser*, then ratchet in \
+         (`task roxygen-projector-seed`). **Blocked** cases \
+         (`tests/oracle/roxygen-projector-blocked.txt`) are deliberate non-targets \
+         (roxygen2-vs-CommonMark dialect divergences, or out of arity's static scope).\n\n",
     );
     md.push_str(&format!(
-        "- **Matching (pinned):** {matched}  ({} allowlisted)\n",
-        reports
-            .iter()
-            .filter(|r| r.outcome == Outcome::Match && allow.contains(&r.key))
-            .count()
+        "- **Matching (pinned):** {matched}  ({allowlisted} allowlisted)\n"
     ));
     md.push_str(&format!("- **Divergent (backlog):** {divergent}\n"));
+    if blocked_n > 0 {
+        md.push_str(&format!("- **Blocked (not targeted):** {blocked_n}\n"));
+    }
     if unpinned > 0 {
         md.push_str(&format!("- **Unpinned:** {unpinned} (no `.rdtree`)\n"));
     }
     md.push('\n');
 
-    let backlog: Vec<&str> = reports
-        .iter()
-        .filter(|r| r.outcome == Outcome::Divergent)
-        .map(|r| r.key.as_str())
-        .collect();
-    if !backlog.is_empty() {
-        md.push_str("## Divergent (backlog)\n\n");
-        md.push_str(
-            "These project structurally differently from roxygen2 --- the parser work to pick \
-             off, then ratchet into the allowlist.\n\n| Case |\n|---|\n",
-        );
-        for key in &backlog {
-            md.push_str(&format!("| `{key}` |\n"));
-        }
-        md.push('\n');
-    }
+    write_section_burndown(&mut md, reports, blocked);
+    write_backlog(&mut md, reports, blocked);
 
     let out_path = manifest_path(".claude/skills/roxygen-parity/ROXYGEN_PROJECTOR.md");
     let _ = fs::write(&out_path, &md);
+}
+
+/// Per-group coverage: matching / total for each spec section (plus `curated`,
+/// `harvested`), sorted by remaining gap (most divergent first) so the biggest
+/// unclosed constructs surface at the top. Blocked cases are dropped from the
+/// denominator --- they are not work to be done.
+fn write_section_burndown(md: &mut String, reports: &[Report], blocked: &BTreeSet<String>) {
+    // group -> (matching, total-excluding-blocked)
+    let mut groups: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for r in reports {
+        if blocked.contains(&r.key) || r.outcome == Outcome::Unpinned {
+            continue;
+        }
+        let e = groups.entry(r.group.as_str()).or_default();
+        e.1 += 1;
+        if r.outcome == Outcome::Match {
+            e.0 += 1;
+        }
+    }
+    let mut rows: Vec<(&str, usize, usize)> =
+        groups.into_iter().map(|(g, (m, t))| (g, m, t)).collect();
+    // Biggest remaining gap first, then by group name for stability.
+    rows.sort_by(|a, b| (b.2 - b.1).cmp(&(a.2 - a.1)).then(a.0.cmp(b.0)));
+
+    md.push_str("## Coverage by section\n\n");
+    md.push_str("| Section | Matching | Total | Remaining |\n|---|---:|---:|---:|\n");
+    for (g, m, t) in rows {
+        md.push_str(&format!("| {g} | {m} | {t} | {} |\n", t - m));
+    }
+    md.push('\n');
+}
+
+/// The divergent backlog, grouped under its section heading so the list is
+/// navigable. Blocked cases are omitted (they are non-targets, not backlog).
+fn write_backlog(md: &mut String, reports: &[Report], blocked: &BTreeSet<String>) {
+    let mut by_group: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for r in reports {
+        if r.outcome == Outcome::Divergent && !blocked.contains(&r.key) {
+            by_group.entry(r.group.as_str()).or_default().push(&r.key);
+        }
+    }
+    if by_group.is_empty() {
+        return;
+    }
+    md.push_str("## Divergent (backlog)\n\n");
+    md.push_str(
+        "These project structurally differently from roxygen2 --- the parser work to pick \
+         off, then ratchet into the allowlist.\n\n",
+    );
+    for (group, keys) in &by_group {
+        md.push_str(&format!("### {group} ({})\n\n", keys.len()));
+        for key in keys {
+            md.push_str(&format!("- `{key}`\n"));
+        }
+        md.push('\n');
+    }
 }

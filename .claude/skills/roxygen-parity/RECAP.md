@@ -968,7 +968,11 @@ subtrees, excluding roclet-generated scaffolding** (`\name`/`\alias`/`\usage`/`\
 The local lexer span-scanners are the **wrong shape** — the path is the block→inline delimiter-stack
 pass (`docs/design/roxygen-inline-pass.md`). **Driver = the real CommonMark spec test set** (inputs
 only; roxygen2 supplies every answer), vendored as a **third corpus source** alongside curated +
-harvested. Full design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`.
+harvested. **The WHOLE spec is adopted at once as a measured backlog** (not section-by-section) with a
+per-section burndown + an allowlist floor + a `blocked` bucket — panache's `commonmark`/`pandoc`
+conformance model (2026-07-10f; superseded the emphasis-only slice). A fix now shows its blast radius
+(cases drop in clusters), and already-passing cases are visible immediately. Full design:
+`~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`.
 
 ## Progress
 
@@ -977,59 +981,64 @@ Phase 0 **done**. **Phase 1 skeleton done:** the projector + pinned projector-pa
 to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against roxygen2 section pins —
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
-(`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 420 matching (all allowlisted), 18 divergent** of 438 pinned.
-The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
-docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
+(`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
+(`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
+**Current: 808 matching (all allowlisted), 153 divergent** of 961 pinned. The divergent 153 are the
+per-section backlog (Fenced code blocks 22, Links 18, List items 18, harvested 18, Block quotes 11,
+Images 11, …). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
-`ROXYGEN_PROJECTOR.md`.
+`ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (438 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + whole-spec corpora (961 pinned); 153 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
    strict semantic preservation of the formatter; 155/155 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-10e) — user-defined image reference override
+## Latest session (2026-07-10f) — adopt the WHOLE CommonMark spec as measured backlog
 
-A reference `![alt][ref]` or shortcut `![alt]` image whose label has a **user-written** `[label]: url` definition now
-resolves to that URL, not roxygen2's synthesized `R:label` — matching how a user def already overrides the synthesized
-def for *links*. So `![alt][ref]` + `[ref]: https://…/img.png` → `\figure{https://…/img.png}` (was `\figure{R:ref}`),
-and a shortcut keys on its alt. Image-format wrapping flows through for free: `[s]: diagram.svg` → `\if{html}{\figure{diagram.svg}}`.
+Switched the spec corpus from an emphasis-only slice (132 `cm-NNN`) to the **entire spec at once** (655
+examples), adopting panache's `commonmark`/`pandoc` conformance model: a measured backlog with a
+per-section burndown, an allowlist floor, and a `blocked` bucket. The section-by-section approach was
+hiding a huge latent pass rate — **just measuring** what already worked jumped the projector from
+**420→808 matching** (+388, all ratcheted into the allowlist), 153 divergent. Per-section coverage now
+visible (`ROXYGEN_PROJECTOR.md`): Autolinks 19/19, Emphasis 132/132, Indented code 12/12, HTML blocks
+43/46, Links 72/90, Code spans 19/22, …; biggest gaps Fenced code blocks (7/29), Links (18), List items
+(18). This is the "a fix drops many cases / the report makes the gap visible" property the user wanted.
 
-**Projector-only, tiny.** CST is unchanged (the image leaf already parses; the def lines are lossless prose). In
-`apply_user_linkrefs` (project_rd.rs), a new arm mirrors the link arm: for an `Inline::MdImage(raw)`, `image_user_ref`
-returns the lookup label (the `ref` bracket, or the alt for a shortcut; `None` for inline `![alt](dest)`, collapsed
-`![alt][]`, empty, `{`-followed) and the `[alt]` span; when the label ∈ the field refmap (`urls`, already built by
-`collect_user_linkrefs_tree`), the image is **rewritten to the inline form** `![alt](url)`, so the existing
-`resolve_md_image`/`figure_atom` path renders it — reusing the destination split *and* the `\if{html/pdf}` image-format
-wrapping with no new logic. An undefined label still falls back to synthesized `R:label` (unchanged). Formatter untouched
-(image leaves stay atomic passthrough; idempotent + lossless verified).
+**Build + gate changes.** `build-commonmark-corpus.R` gained an `ALL` sentinel (every example-bearing
+section) and emits a `section` field, tracked at the top level so example-content headings never leak in
+(`task roxygen-spec-corpus` now mints `commonmark-spec.jsonl` + `-sections.jsonl`, the emphasis files
+removed). `roxygen_projector.rs`: `HarvestInput` gained `section`; `Report` gained a `group` (spec
+section, or `curated`/`harvested`); the report writes a **Coverage by section** table (sorted by biggest
+remaining gap) + a section-grouped backlog; a new `roxygen-projector-blocked.txt` (read like the
+allowlist, inline `# reason`) is excluded from the backlog and asserted disjoint from the allowlist
+(empty for now — the fresh spec backlog is almost all reachable parser work).
 
-**Result:** projector **419→420 matching** (all 420 allowlisted, 0 regressions), 18 divergent (unchanged, all
-out-of-scope harvested). `cargo test` green, clippy + fmt clean, curated fixed-point **155/155 preserving** (was 154;
-0 blocked, 0 gate failures, R present); format baseline **+1** (additive corpus key). New: curated projector case
-`md_image_user_def` (+pin +allowlist), fixture `roxygen_md_image_user_def` (lossless, empty diagnostics), unit
-`user_defined_image_refs_override_synthesized_destination`.
+**Surfaced + fixed a real lexer bug (the corpus's first payoff).** The broad corpus panicked the R
+lexer: its two-/three-char operator lookahead sliced `&input[i..i+2/3]` **inside a multibyte UTF-8 char**
+(a U+00A0 non-breaking space in 4 spec examples). Fixed with byte-safe `two_bytes`/`three_bytes` helpers
+(16 sites), and the unknown-char catch-all — which emitted `bytes[i] as char` per byte, Latin-1-mangling
+a nbsp into `Â`+nbsp and leaving `i` mid-char — now reads the whole UTF-8 char and advances by its width
+(lossless). Committed **separately** as `fix(parser)` with a lexer unit test (`lexes_multibyte_char_before_two_char_operator_without_panicking`).
 
-**Ranked next target:** **user-def image *titles*** — a def `[ref]: url "t"` makes `![a][ref]` → `\figure{url}{t}`
-(roxygen2 keeps the title; probed). The refmap is url-only (shared with the title-dropping link path), so carrying the
-title needs either a parallel title map or a `LinkrefDef { url, title }` value type; the current url-only rewrite is
-faithful for untitled defs (the common case) and drops the title otherwise. Also: **space/paren user URLs** (the
-rewrite `![alt](url)` re-lexes, so a URL with a space or `)` breaks — wrap in `<…>` or resolve directly). Related image
-backlog unchanged: the **URL-unsafe-label section drop** (`![see this]`→`R:see%20this`, the `%` comments out the
-`\figure` `}` → roxygen2 drops the section; arity's fragile-macro neutralizer keeps it); reference images in the
-poisoning skeleton; cross-line images. Standing picks unchanged: the **surviving even-run href dest** content
-(`\href{foo\\}{t}` vs roxygen2's `foo\`); escape-cluster **sticky-mode flips** + cross-paragraph sticky tails;
-**braced `\item{x}` in prose** → `(UNKNOWN "\item") (LIST …)` (grouper carve-suppression, load-bearing for
-`\describe{\item{a}{b}}`); formatter reflow-rejoin for cross-line code spans. The 18 projector divergences remain
-out-of-scope.
+**Result:** projector **808 matching** (all 808 allowlisted, 0 regressions), 153 divergent, 0 blocked, of
+961 pinned. `cargo test` green, clippy + fmt clean. The 153 divergent are the parser-growth backlog,
+now navigable by section — that is the next-target menu (biggest levers: Fenced code blocks, Links,
+List items).
+
+**Ranked next target:** pick the **biggest-lever section** from the burndown — **Fenced code blocks**
+(7/29, 22 remaining) or **Links** (72/90, 18) or **List items** (30/48, 18) — and close a construct
+cluster, ratcheting the section toward 100%. The old image-title / space-paren-URL picks (2026-07-10e)
+remain, now visible as specific `cm-NNN` divergences in Images (11/22). The harvested 18 stay out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-10e** — user-defined image reference override (`![alt][ref]`/`![alt]` whose label has a user `[label]: url` def resolves to that URL, not synthesized `R:label`; projector-only `apply_user_linkrefs` arm rewrites the image to inline `![alt](url)` so `resolve_md_image`/`figure_atom` render it, image-format wrapping for free; undefined label unchanged). Curated `md_image_user_def`, fixture, unit, baseline +1, fixed-point 155/155. 419→420. (Superseded numerically by the whole-spec adoption above.)
 
 - **2026-07-10d** — shortcut + reference markdown images (all three CommonMark image forms; `scan_md_image` rewritten to mirror `scan_md_link`, `resolve_md_image` dispatches on the char after `![alt]`; shortcut `![alt]`/reference `![alt][ref]` → synthesized `\figure{R:label}`, inline `![alt](dest)` validates its dest via `inline_dest_span`; collapsed/empty/`{`-followed stay literal). Curated `md_ref_image` + `md_image_invalid_dest`, fixtures, unit, baseline +2. 417→419.
 

@@ -1,0 +1,18 @@
+# Projector-parity BLOCKED list (deliberate non-targets).
+#
+# One `cm-NNN`/slug per line, with a one-line reason after `#`. A blocked case is
+# excluded from the divergent backlog and the per-section burndown denominator in
+# ROXYGEN_PROJECTOR.md: it is neither work to be done nor a regression to guard,
+# but a conscious decision that arity will *not* match roxygen2 here. Mirrors
+# panache's `commonmark`/`pandoc` `blocked.txt`.
+#
+# Use this only for genuine non-targets, not "not implemented yet" (that is the
+# backlog). Two legitimate reasons:
+#   - a roxygen2-vs-CommonMark *dialect divergence* (roxygen2's Rd subset differs
+#     from CommonMark by design, e.g. a construct roxygen2 renders degraded);
+#   - a construct out of arity's *static* scope.
+# A blocked case must not also be allowlisted (the gate asserts the two are
+# disjoint). When a blocked case starts matching, move it to the allowlist.
+#
+# (Empty for now: the freshly-adopted spec backlog is almost all reachable parser
+# work. Populate as genuine dialect divergences are identified during triage.)

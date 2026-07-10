@@ -12,9 +12,13 @@
 #
 #   Rscript scripts/build-commonmark-corpus.R <spec.txt> <section-substr> <out.jsonl>
 #
-# `section-substr` matches an ATX heading (e.g. "Emphasis and strong emphasis").
-# Slug = `cm-<NNN>`, the spec's canonical *global* example number (stable across
-# sections, so later slices --- links, code spans --- extend the same keyspace).
+# `section-substr` matches an ATX heading (e.g. "Emphasis and strong emphasis"),
+# or the literal `ALL` to take *every* example-bearing section (the whole spec as
+# one measured backlog). Slug = `cm-<NNN>`, the spec's canonical *global* example
+# number (stable across sections, so slices --- links, code spans --- extend the
+# same keyspace). Each record also carries the `section` it came from (the current
+# ATX heading, tracked at the top level so example-content headings never leak in)
+# for per-section grouping in the projector report.
 
 suppressWarnings(suppressMessages(library(jsonlite)))
 
@@ -30,16 +34,22 @@ lines <- readLines(spec_path, warn = FALSE)
 fence_re <- "^`{32,} example"     # an example opener (32+ backticks, ` example`)
 close_re <- "^`{32,}$"            # the matching closer
 
+match_all <- identical(section_match, "ALL")
+
 records <- list()
 example_no <- 0L                  # global counter over *every* example fence
 in_section <- FALSE
+current_section <- NA_character_  # heading text of the section we are inside
 i <- 1L
 n <- length(lines)
 while (i <= n) {
   line <- lines[[i]]
   # ATX heading: a section boundary. Examples are numbered globally regardless.
+  # Only *top-level* lines reach here --- example content is consumed inside the
+  # fence block below --- so heading-shaped example lines never set the section.
   if (grepl("^#+ ", line)) {
-    in_section <- grepl(section_match, line, fixed = TRUE)
+    current_section <- sub("\\s+#*\\s*$", "", sub("^#+\\s+", "", line))
+    in_section <- match_all || grepl(section_match, line, fixed = TRUE)
     i <- i + 1L
     next
   }
@@ -69,7 +79,9 @@ while (i <= n) {
         "\n"
       )
       slug <- sprintf("cm-%03d", example_no)
-      records[[length(records) + 1L]] <- list(slug = slug, input = input)
+      records[[length(records) + 1L]] <- list(
+        slug = slug, input = input, section = current_section
+      )
     }
     next
   }
@@ -80,6 +92,8 @@ con <- file(out_path, "w")
 on.exit(close(con))
 for (r in records) writeLines(toJSON(r, auto_unbox = TRUE), con)
 cat(sprintf(
-  "wrote %d example(s) from section '%s' -> %s\n",
-  length(records), section_match, out_path
+  "wrote %d example(s) from %s -> %s\n",
+  length(records),
+  if (match_all) "ALL sections" else sprintf("section '%s'", section_match),
+  out_path
 ), file = stderr())
