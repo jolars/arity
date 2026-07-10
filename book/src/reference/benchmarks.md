@@ -1,11 +1,11 @@
 # Benchmarks
 
-Wall-clock formatting speed of `arity` against other R formatters, measured
-with [hyperfine]. The default comparison is against
-[`air`](https://github.com/posit-dev/air);
-[`styler`](https://styler.r-lib.org/) can be added opt-in (see below). Every
-tool formats stdin to stdout (exit 0 regardless of changes), so the comparison
-is free of file-mutation and exit-code noise.
+Wall-clock formatting speed of `arity` against other R formatters, measured with
+[hyperfine]. The default comparison is against
+[`air`](https://github.com/posit-dev/air); [`styler`](https://styler.r-lib.org/)
+can be added opt-in (see below). Every tool formats stdin to stdout (exit 0
+regardless of changes), so the comparison is free of file-mutation and exit-code
+noise.
 
 **This is not a CI gate and not a parity target.** Timings are machine- and
 run-dependent, and these numbers measure *speed only*, never output equivalence
@@ -25,11 +25,11 @@ re-measured when this site is built or in CI.
 Each tool is invoked exactly as a user would pipe a file through it, stdin to
 stdout:
 
-| Tool     | Invocation                                              |
-| -------- | ------------------------------------------------------- |
-| `arity`  | `arity format`                                          |
-| `air`    | `air format --stdin-file-path bench.R`                  |
-| `styler` | `Rscript -e 'styler::style_text(readLines(file("stdin")))'` |
+  | Tool     | Invocation                                                  |
+  | -------- | ----------------------------------------------------------- |
+  | `arity`  | `arity format`                                              |
+  | `air`    | `air format --stdin-file-path bench.R`                      |
+  | `styler` | `Rscript -e 'styler::style_text(readLines(file("stdin")))'` |
 
 `arity` is the baseline; every other tool's time is reported relative to it.
 Comparison tools absent from the machine are skipped, so a run with only `air`
