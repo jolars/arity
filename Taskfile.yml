@@ -153,14 +153,14 @@ tasks:
     deps:
       - docs-gen
     cmds:
-      - mdbook serve book --open
+      - mdbook serve docs --open
 
   docs-build:
     desc: Regenerate generated pages and build the mdBook
     deps:
       - docs-gen
     cmds:
-      - mdbook build book
+      - mdbook build docs
       - task: docs-canonical
       - task: docs-sitemap
 
@@ -169,14 +169,14 @@ tasks:
     cmds:
       - >-
         cargo run --quiet --example canonical --
-        book/book https://arity.cc/
+        docs/book https://arity.cc/
 
   docs-sitemap:
-    desc: Generate book/book/sitemap.xml from the rendered book
+    desc: Generate docs/book/sitemap.xml from the rendered book
     cmds:
       - >-
         cargo run --quiet --example sitemap --
-        book/book https://arity.cc/
+        docs/book https://arity.cc/
 
   docs-lighthouse:
     desc: Run a Lighthouse desktop audit on the built docs (perf, a11y, best-practices, SEO)
@@ -187,7 +187,7 @@ tasks:
     cmds:
       - mkdir -p .lighthouse
       - >-
-        python3 -m http.server {{.PORT}} --directory book/book
+        python3 -m http.server {{.PORT}} --directory docs/book
         >/dev/null 2>&1 &
         SERVER_PID=$!;
         trap "kill $SERVER_PID 2>/dev/null" EXIT;

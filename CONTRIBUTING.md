@@ -112,7 +112,7 @@ broken output.
 
 ## Documentation
 
-The docs site (`book/`) is an [mdBook](https://rust-lang.github.io/mdBook/).
+The docs site (`docs/`) is an [mdBook](https://rust-lang.github.io/mdBook/).
 Some reference pages are generated: `build.rs` writes the CLI reference from the
 clap definitions, and `cargo run --example docgen` renders the per-rule pages by
 running the real linter on each rule's examples. Regenerate with `task docs-gen`

@@ -8,7 +8,7 @@ src = "src"
 [output.html]
 site-url = "https://arity.cc/"
 git-repository-url = "https://github.com/jolars/arity"
-edit-url-template = "https://github.com/jolars/arity/edit/main/book/{path}"
+edit-url-template = "https://github.com/jolars/arity/edit/main/docs/{path}"
 default-theme = "light"
 preferred-dark-theme = "navy"
 additional-css = ["theme/arity.css", "theme/bench-charts.css"]

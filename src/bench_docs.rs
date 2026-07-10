@@ -8,7 +8,7 @@
 //!
 //! - a **meta** bullet list (tool versions, timing backend, host, run date);
 //! - a **results** block: an interactive Vega-Lite dot plot (driven by
-//!   `book/theme/bench-charts.js`) plus a collapsed HTML fallback table.
+//!   `docs/theme/bench-charts.js`) plus a collapsed HTML fallback table.
 //!
 //! The renderer is deliberately **tool-generic**: it treats `arity` as the
 //! baseline and every other formatter as a comparison point, deriving the
@@ -77,7 +77,7 @@ struct BenchResult {
 
 /// One dot in the results chart: a (document, formatter) timing, its ratio to
 /// the arity baseline, and the numbers the tooltip shows. Serialized inline
-/// into the page for `book/theme/bench-charts.js` to plot with Vega-Lite.
+/// into the page for `docs/theme/bench-charts.js` to plot with Vega-Lite.
 #[derive(Serialize)]
 struct ChartPoint {
     document: String,
@@ -149,7 +149,7 @@ fn render_meta(meta: &Meta) -> String {
 }
 
 /// The results block: an interactive Vega-Lite dot plot (driven by
-/// `book/theme/bench-charts.js`, wired via `book.toml`'s `additional-js`) plus
+/// `docs/theme/bench-charts.js`, wired via `book.toml`'s `additional-js`) plus
 /// a collapsed HTML table with the same numbers as a no-JS/print fallback.
 ///
 /// The chart data rides inline in a `<script type="application/json">`; the JS

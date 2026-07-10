@@ -61,17 +61,17 @@ jobs:
         run: cargo run --example docgen
 
       - name: Build mdBook
-        run: mdbook build book
+        run: mdbook build docs
 
       # mdBook has no `canonical-site-url` setting (rust-lang/mdBook#2706), so
       # inject a <link rel="canonical"> into every rendered page post-build.
       - name: Inject canonical links
-        run: cargo run --quiet --example canonical -- book/book https://arity.cc/
+        run: cargo run --quiet --example canonical -- docs/book https://arity.cc/
 
       # mdBook has no built-in sitemap; generate one from the rendered pages.
       # `lastmod` is derived from git history, so this needs full history.
       - name: Generate sitemap
-        run: cargo run --quiet --example sitemap -- book/book https://arity.cc/
+        run: cargo run --quiet --example sitemap -- docs/book https://arity.cc/
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
@@ -79,7 +79,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: book/book
+          path: docs/book
 
       - name: Deploy to GitHub Pages
         id: deployment

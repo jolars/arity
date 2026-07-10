@@ -19,7 +19,7 @@ use arity::linter::docs::render_rule_doc;
 use arity::linter::rules::all_rules;
 
 fn main() -> io::Result<()> {
-    let rules_dir = Path::new("book/src/reference/rules");
+    let rules_dir = Path::new("docs/src/reference/rules");
     fs::create_dir_all(rules_dir)?;
 
     for rule in all_rules() {
@@ -33,7 +33,7 @@ fn main() -> io::Result<()> {
 
     // Version stamp, included by the introduction page.
     let version = format!("arity v{}\n", env!("CARGO_PKG_VERSION"));
-    write_if_changed(Path::new("book/src/version.md"), &version)?;
+    write_if_changed(Path::new("docs/src/version.md"), &version)?;
 
     generate_benchmarks()?;
 
@@ -46,7 +46,7 @@ fn main() -> io::Result<()> {
 /// `task bench`), not at doc-gen time. A missing artifact degrades to an
 /// "unavailable" note so a fresh checkout still builds.
 fn generate_benchmarks() -> io::Result<()> {
-    let ref_dir = Path::new("book/src/reference");
+    let ref_dir = Path::new("docs/src/reference");
     let json = fs::read_to_string("benches/benchmark_results.json").ok();
     let (meta, results) = render_partials(json.as_deref());
     write_if_changed(&ref_dir.join("benchmarks_meta.md"), &meta)?;

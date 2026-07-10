@@ -51,6 +51,6 @@ devenv.local.yaml
 /images/trials
 
 # mdBook build output
-/book/book
+/docs/book
 roxygen2-ref
 /.lighthouse

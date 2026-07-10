@@ -72,7 +72,7 @@ the rule's correctness actually requires.
   `fixed_output_all(src,   rule)` (all of a rule's fixes), and the
   autofix-correctness harness `assert_fixed_output_is_clean` and
   `fixed_output_is_parseable_and_clean`.
-- `examples/docgen.rs`—generates `book/src/reference/rules/<id>.md` from
+- `examples/docgen.rs`—generates `docs/src/reference/rules/<id>.md` from
   `render_rule_doc` (and stamps `version.md`). Run with
   `cargo run --example   docgen`. It only writes per-rule pages; it does **not**
   touch the indexes.
@@ -81,7 +81,7 @@ the rule's correctness actually requires.
   `description()` + at least one `examples()` entry, **and that each example
   actually triggers its own rule**. Accept new snapshots with
   `cargo insta   accept`.
-- `book/src/reference/rules.md` and `book/src/SUMMARY.md`—**hand-maintained**
+- `docs/src/reference/rules.md` and `docs/src/SUMMARY.md`—**hand-maintained**
   rule indexes. `docgen` does NOT regenerate these; add the
   new rule's line to both, in the right category, matching `all_rules()` order.
 - `TODO.md`—the live roadmap. Check off the rule's item (with a one-line
@@ -162,12 +162,12 @@ the rule's correctness actually requires.
      and `--select`/`--ignore` validation derive from this list.
 
 6. **Generate and pin the docs:**
-   - `cargo run --example docgen` → writes `book/src/reference/rules/<id>.md`.
+   - `cargo run --example docgen` → writes `docs/src/reference/rules/<id>.md`.
    - `cargo test --test rule_docs` will fail on the new snapshot; eyeball the
      `.snap.new` (the example must show the finding and, if fixable, the
      after-fix block), then `cargo insta accept`.
-   - **Manually** add the rule to `book/src/reference/rules.md` (under its
-     category heading) **and** `book/src/SUMMARY.md`—`docgen` does not.
+   - **Manually** add the rule to `docs/src/reference/rules.md` (under its
+     category heading) **and** `docs/src/SUMMARY.md`—`docgen` does not.
 
 7. **Update `TODO.md`**—check off the item and add a one-line scope/safety
    note matching the other landed entries.
@@ -195,7 +195,7 @@ the rule's correctness actually requires.
 - **Don't** run the formatter inside a fix (Tenet 1: the formatter is the sole
   layout authority), or ship a fix that produces broken or lossy code (autofix
   correctness). A fix needn't satisfy line-width—that's the formatter's job.
-- **Don't** hand-edit `book/src/reference/rules/<id>.md`—regenerate via
+- **Don't** hand-edit `docs/src/reference/rules/<id>.md`—regenerate via
   `docgen`. (But the two indexes *are* hand-edited.)
 
 ## Report-back format

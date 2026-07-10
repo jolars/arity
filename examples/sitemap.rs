@@ -8,7 +8,7 @@
 //! sitemap <book-dir> <base-url>
 //! ```
 //!
-//! e.g. `cargo run --example sitemap -- book/book https://arity.cc/`. The base
+//! e.g. `cargo run --example sitemap -- docs/book https://arity.cc/`. The base
 //! URL is the public root the book is served from (arity's custom domain).
 //!
 //! Living as an `examples/` target (not a `[[bin]]`) keeps arity a single,
@@ -56,7 +56,7 @@ fn main() {
 }
 
 /// Best-effort last-modified date from git, derived from the page's source
-/// markdown (`book/book/guide/x.html` -> `book/src/guide/x.md`). Returns `None`
+/// markdown (`docs/book/guide/x.html` -> `docs/src/guide/x.md`). Returns `None`
 /// when the source can't be mapped or git isn't available, in which case the
 /// entry is emitted without a `<lastmod>`.
 fn source_lastmod(root: &Path, html: &Path) -> Option<String> {

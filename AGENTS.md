@@ -84,10 +84,10 @@ cargo run -- format --verify <file.R>        # check idempotence; does not write
 cargo run -- lint <path>                     # lint (stdin if no path); exits 1 on findings
 ```
 
-The documentation site (`book/`) is an mdBook. Its reference pages are
-generated: `build.rs` writes `book/src/reference/cli.md` from the clap CLI, and
+The documentation site (`docs/`) is an mdBook. Its reference pages are
+generated: `build.rs` writes `docs/src/reference/cli.md` from the clap CLI, and
 `cargo run --example docgen` renders the per-rule pages (and `version.md`) by
-running the real linter on each rule's examples. `mdbook build book` then builds
+running the real linter on each rule's examples. `mdbook build docs` then builds
 the site; `.github/workflows/docs.yml` deploys it to GitHub Pages. The rendered
 rule docs are pinned by `tests/rule_docs.rs` so they can't drift from behavior.
 
