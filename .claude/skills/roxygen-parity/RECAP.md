@@ -216,12 +216,24 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `inline_link_span`, `same_line_bracket_opener`'s after-`]` `(` exclusion, the bare-`]` closer arm (**line ~704** —
   a `]` followed by an *invalid* `(` must still close so the shortcut pairs; missing this left `[t]` un-carved),
   and `scan_md_link`'s `(` arm (falls to the shortcut on an invalid dest); `cross_line_link_closer` too. Projector
-  + formatter **unchanged** (lexer decides link-vs-not; the arena/projector follow). **NOT fixed (backlog):**
-  `[t](foo\)bar)` — cmark's `double_escape_md` turns `\)` into `\\)` → dest ends in a literal `\` → unbalanced Rd
-  brace → roxygen2 **drops the whole section** (a drop-parity case, like the `%`-swallow trailing-`\`); arity keeps
-  it as `\href{foo\)bar}{t}`. **Reference images** (`![x](a\ b)` → `\figure{R:x}` via the synthesized linkref) —
-  arity models inline images only, so `scan_md_image` is untouched. Curated `md_link_invalid_dest`, fixture
-  `roxygen_md_link_invalid_dest`, unit `invalid_inline_dest_falls_back_to_shortcut`.
+  + formatter **unchanged** (lexer decides link-vs-not; the arena/projector follow). Curated `md_link_invalid_dest`,
+  fixture `roxygen_md_link_invalid_dest`, unit `invalid_inline_dest_falls_back_to_shortcut`. **Reference images**
+  (`![x](a\ b)` → `\figure{R:x}` via the synthesized linkref) — arity models inline images only, so `scan_md_image`
+  is untouched (still backlog).
+- **A trailing-backslash inline-link destination DROPS the section, projector-only (2026-07-10c).** `[t](foo\)bar)`:
+  cmark's `double_escape_md` turns `\)` into `\\)` → a literal `\` then a closing `)`, so cmark's destination is
+  `foo\` — a trailing backslash that escapes the `\href{…}` brace → `\href{foo\}{t}` is `rdComplete`-incomplete →
+  roxygen2 **drops the whole section** (`(\details)`). arity's `scan_balanced` treats `\)` as an escaped paren, so
+  the CST link node keeps the *wider* span `[t](foo\)bar)` (lossless; `\href{foo\)bar}{t}`) — **not** re-boundaried;
+  the drop is detected projector-side. New `body_has_dropping_href`/`md_href_dest_drops` (project_rd.rs), gated into
+  `section_rd_complete`'s md arm **before** the atom scan: find cmark's closer (first paren-depth-0 `)`, `\` literal),
+  then the backslash run before it survives `double_escape`→cmark→`parse_Rd` as `r` backslashes, so an **odd** `r`
+  escapes the brace (`foo\)bar` r=1 drops; `foo\\)bar` r=2 keeps). Recurses into emphasis/brace-group/list-item/display.
+  Curated `md_link_dest_backslash_drop` (+pin `(\details)` +allowlist), fixture `roxygen_md_link_dest_backslash_drop`
+  (CST link node spans the whole `[t](foo\)bar)`; lossless), unit `trailing_backslash_inline_dest_drops_the_section`,
+  format baseline +1 (additive — the corpus key set). **Backlog:** the SURVIVING even-run case content still diverges
+  (`\href{foo\\}{t}` vs roxygen2's `foo\` — the URL needs the `double_escape`→cmark→`parse_Rd` backslash-run collapse
+  *and* the cmark link boundary, both untracked); an odd-run trailing `\` inside a *reference/shortcut* label or an image dest.
 - **Arena does CommonMark opener deactivation; nested links resolve inner-first.** `match_brackets`
   (`inline.rs`): a stack pairs each `]` to the nearest *active* `[`, a formed link deactivates every
   opener below it, a lone `]` does the `][ref]` lookahead and is a shortcut only on a bracket-free
@@ -954,7 +966,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 416 matching (all allowlisted), 18 divergent** of 434 pinned.
+corpus (132 `cm-NNN` cases). **Current: 417 matching (all allowlisted), 18 divergent** of 435 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -963,51 +975,50 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (433 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (435 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 150/150 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 152/152 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-10b) — an invalid inline `(…)` destination is not a link
+## Latest session (2026-07-10c) — a trailing-backslash inline-link destination drops the section
 
-A `[t](a\ b)` no longer becomes a bogus `\href{a\ b}{t}` (arity was even *dropping* the section). A **bare**
-CommonMark inline destination runs to the first ASCII whitespace — a backslash never escapes whitespace, so `\ ` is
-a literal backslash then a terminating space — which means `[t](a\ b)`/`[t](a b c)`/`[t](url ok)` are **not** inline
-links: `[t]` falls back to a shortcut `\link{t}` and the `(…)` stays literal prose, exactly as roxygen2 does. A valid
-destination still links: `[t](a%20b)`, `[t](<a b>)` (angle brackets may hold spaces), `[t]( url )` (padding), and
-`[t](url "t")` (a `"…"`/`'…'`/`(…)` title after whitespace).
+`[t](foo\)bar)` now drops its whole `@details` to `(\details)`, matching roxygen2 (arity was keeping a bogus
+`\href{foo\)bar}{t}`). The mechanism: roxygen2 runs `double_escape_md` before cmark, so the `\)` becomes a literal
+`\` then a closing `)` → cmark's destination is `foo\`, and `\href{foo\}{t}` is `rdComplete`-incomplete (the trailing
+`\` escapes the closing brace) → the section is dropped. Sibling (1) of the Link-B cluster; same family as the
+`%`-swallow trailing-`\` false-drop.
 
-**Parser gap, projector untouched.** The old carve sites accepted *any* balanced `(…)` via raw
-`scan_balanced(…,'(',')')`. New `valid_inline_dest_content` + `inline_dest_span` (`lex.rs`) validate the
-CommonMark destination (+ optional title) and replace that call at **all four** carve sites: `inline_link_span`,
-`same_line_bracket_opener`'s after-`]` `(` exclusion, `scan_md_link`'s `(` arm (falls to the shortcut on an
-invalid dest), and `cross_line_link_closer`. **The load-bearing subtlety:** the bare-`]` closer arm (`lex.rs`
-~L704) also excluded a `]` followed by `(`; without relaxing it (still close when the `(` is an *invalid* dest),
-`same_line_bracket_opener` carved `[t]` as an opener but the `]` never carved → an unmatched opener → literal `[t]`.
-Once both agree, the arena pairs the shortcut and the projector/formatter follow with **no changes**.
+**Projector-only, CST kept lossless.** arity's `scan_balanced` treats `\)` as an escaped paren, so the CST link node
+keeps the *wider* span `[t](foo\)bar)` — deliberately **not** re-boundaried (that would touch the lexer + every
+fixture and only matters for the surviving even-run case, still backlog). The drop is detected in the projector:
+new `body_has_dropping_href`/`md_href_dest_drops` (project_rd.rs) gate into `section_rd_complete`'s md arm **before**
+the atom scan (the `\href` is fragile → neutralized there, so the trailing `\` is invisible to it). `md_href_dest_drops`
+re-finds cmark's closer (first paren-depth-0 `)`, `\` literal) and counts the backslash run before it: it survives
+`double_escape`→cmark→`parse_Rd` as `r` backslashes, so an **odd** `r` escapes the brace (`foo\)bar` r=1 drops,
+`foo\\)bar` r=2 keeps). Recurses into emphasis/brace-group/list-item/display.
 
-**Result:** projector **415→416 matching** (all 416 allowlisted, 0 regressions), 18 divergent (unchanged — all
-out-of-scope harvested). `cargo test` green (679 lib), clippy + fmt clean, curated fixed-point **151/151
-preserving** (was 150; 0 blocked, 0 gate failures, R present); baseline unchanged (additive). New: curated
-projector case `md_link_invalid_dest` (+pin +allowlist; three invalid + three valid forms in one `@details`),
-fixture `roxygen_md_link_invalid_dest` (CST shows the invalid `[t]` as a shortcut `ROXYGEN_MD_LINK` with the `(…)`
-literal; losslessness + empty diagnostics), unit `invalid_inline_dest_falls_back_to_shortcut`.
+**Result:** projector **416→417 matching** (all 417 allowlisted, 0 regressions), 18 divergent (unchanged — all
+out-of-scope harvested). `cargo test` green (all 23 bins), clippy + fmt clean, curated fixed-point **152/152
+preserving** (was 151; 0 blocked, 0 gate failures, R present); format baseline **+1** (additive corpus key set).
+New: curated projector case `md_link_dest_backslash_drop` (+pin `(\details)` +allowlist), fixture
+`roxygen_md_link_dest_backslash_drop` (CST link node spans the whole `[t](foo\)bar)`; lossless, empty diagnostics),
+unit `trailing_backslash_inline_dest_drops_the_section`.
 
-**Ranked next target:** two siblings in this cluster stay divergent, both **harder** than Link B was.
-(1) **Drop-parity `[t](foo\)bar)`** — cmark's `double_escape_md` doubles `\)`→`\\)`, so the dest resolves to a
-literal trailing `\` → unbalanced Rd brace → roxygen2 **drops the whole section**; arity keeps `\href{foo\)bar}{t}`.
-Same family as the `%`-swallow trailing-`\` false-drop; needs the section `rd_complete` scan to see the dest's
-trailing backslash. (2) **Reference images** `![x](a\ b)` → `\figure{R:x}` (the synthesized `R:`-linkref) — arity
-models *inline* images only, so this needs a new reference-image path in `scan_md_image`/the projector. Standing
-picks unchanged: escape-cluster **sticky-mode flips** (brace-less `\code`/`\verb` mid-cluster) + cross-paragraph
-sticky tails (blank-line counts arity drops — hard); **braced `\item{x}` in prose** → `(UNKNOWN "\item") (LIST …)`
-(grouper-level carve-suppression, load-bearing for `\describe{\item{a}{b}}` — deferred); formatter reflow-rejoin
-for cross-line code spans. The 18 projector divergences remain out-of-scope.
+**Ranked next target:** sibling (2) of this cluster — **reference images** `![x](a\ b)` → `\figure{R:x}` (the
+synthesized `R:`-linkref); arity models *inline* images only, so this needs a new reference-image path in
+`scan_md_image`/the projector. Also newly surfaced by this session: the **surviving even-run dest** content diverges
+(`\href{foo\\}{t}` vs roxygen2's `foo\`) — the URL needs the `double_escape`→cmark→`parse_Rd` backslash-run collapse
+*plus* the cmark link boundary (both untracked; not a corpus case yet). Standing picks unchanged: escape-cluster
+**sticky-mode flips** (brace-less `\code`/`\verb` mid-cluster) + cross-paragraph sticky tails (blank-line counts arity
+drops — hard); **braced `\item{x}` in prose** → `(UNKNOWN "\item") (LIST …)` (grouper-level carve-suppression,
+load-bearing for `\describe{\item{a}{b}}` — deferred); formatter reflow-rejoin for cross-line code spans. The 18
+projector divergences remain out-of-scope.
 
 ## Earlier sessions
 
+- **2026-07-10b** — an invalid inline `(…)` destination is not a link (`valid_inline_dest_content` + `inline_dest_span` replace raw `scan_balanced(…,'(',')')` at all four carve sites; a bare dest runs to the first ASCII whitespace, `<…>` may hold spaces, an optional `"…"`/`'…'`/`(…)` title after ws; the bare-`]` closer arm relaxed to still close on an *invalid* `(` so the shortcut pairs; projector + formatter unchanged). Curated `md_link_invalid_dest`, fixture `roxygen_md_link_invalid_dest`, unit `invalid_inline_dest_falls_back_to_shortcut`. 415→416.
 - **2026-07-10** — inline link titles dropped from the `\href` destination (projector-only; `inline_link_destination` mirrors cmark's dest parse — trim ws, `<…>` or bare-run-to-first-ws, entity-decode, discard the title; wired into `inline_link_dest` node path + `resolve_md_link` leaf arm; `[t](url"x")` no-ws keeps the quote in the dest, `<url with space>` keeps spaces). Curated `md_link_title`, fixture `roxygen_md_link_title`, unit `inline_link_title_is_dropped_from_href`, baseline +1. 414→415.
 
 - **2026-07-09d** — setext underline folds into a block quote lazily (a `===`/`--`-too-short-for-a-thematic-break line after `> quote` folds into `ROXYGEN_MD_BLOCK_QUOTE` as lazy paragraph text — a setext underline can't be a lazy continuation *underline* in a quote, so it never promotes; roxygen2 flattens the whole quote to one `(TEXT …)`, `> foo`/`===`→`foo===`; `finish_md_block_quote`'s break gains an `is_lazy_setext` exception, block-quote-local, NOT in `is_foldable_continuation` which excludes underlines because a tag-value underline *does* promote; projector/formatter unchanged; `---` thematic break still ends the quote). Curated `md_blockquote_setext`, fixture, 2 units, baseline +1. 413→414.

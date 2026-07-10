@@ -1,0 +1,54 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..149
+  ROXYGEN_BLOCK@0..143
+    ROXYGEN_SECTION@0..67
+      ROXYGEN_PARAGRAPH@0..64
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..63 "Trailing backslash in ..."
+        NEWLINE@63..64 "\n"
+      ROXYGEN_MARKER@64..66 "#'"
+      NEWLINE@66..67 "\n"
+    ROXYGEN_SECTION@67..100
+      ROXYGEN_MARKER@67..69 "#'"
+      WHITESPACE@69..70 " "
+      ROXYGEN_TAG@70..99
+        ROXYGEN_AT@70..71 "@"
+        ROXYGEN_TAG_NAME@71..78 "details"
+        WHITESPACE@78..79 " "
+        ROXYGEN_TEXT@79..81 "A "
+        ROXYGEN_MD_LINK@81..94
+          ROXYGEN_MD_DELIM@81..82 "["
+          ROXYGEN_TEXT@82..83 "t"
+          ROXYGEN_MD_DELIM@83..94 "](foo\\)bar)"
+        ROXYGEN_TEXT@94..99 " end."
+      NEWLINE@99..100 "\n"
+    ROXYGEN_SECTION@100..107
+      ROXYGEN_MARKER@100..102 "#'"
+      WHITESPACE@102..103 " "
+      ROXYGEN_TAG@103..106
+        ROXYGEN_AT@103..104 "@"
+        ROXYGEN_TAG_NAME@104..106 "md"
+      NEWLINE@106..107 "\n"
+    ROXYGEN_SECTION@107..143
+      ROXYGEN_MARKER@107..109 "#'"
+      WHITESPACE@109..110 " "
+      ROXYGEN_TAG@110..143
+        ROXYGEN_AT@110..111 "@"
+        ROXYGEN_TAG_NAME@111..115 "name"
+        WHITESPACE@115..116 " "
+        ROXYGEN_TEXT@116..118 "md"
+        ROXYGEN_MD_DELIM@118..119 "_"
+        ROXYGEN_TEXT@119..123 "link"
+        ROXYGEN_MD_DELIM@123..124 "_"
+        ROXYGEN_TEXT@124..128 "dest"
+        ROXYGEN_MD_DELIM@128..129 "_"
+        ROXYGEN_TEXT@129..138 "backslash"
+        ROXYGEN_MD_DELIM@138..139 "_"
+        ROXYGEN_TEXT@139..143 "drop"
+  NEWLINE@143..144 "\n"
+  IDENT@144..148 "NULL"
+  NEWLINE@148..149 "\n"

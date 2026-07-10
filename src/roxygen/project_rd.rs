@@ -856,6 +856,16 @@ fn strip_atx_closing(s: &str) -> &str {
 /// the cmark-derived braces that make the atoms necessary.
 fn section_rd_complete(body: &[Inline], md: bool) -> bool {
     if md {
+        // An inline `[text](dest)` link whose cmark destination truncates to a
+        // trailing **odd** backslash run makes roxygen2's `\href{dest}{text}`
+        // brace-incomplete (the trailing `\` escapes the closing brace), so the whole
+        // section drops. arity carves a wider destination than cmark (its
+        // `scan_balanced` treats `\)` as an escaped paren, so `[t](foo\)bar)` keeps
+        // the whole `foo\)bar`), which hides the imbalance from the atom scan below;
+        // detect it directly on the raw destination (see [`md_href_dest_drops`]).
+        if body_has_dropping_href(body) {
+            return false;
+        }
         // Scan the *ungrouped* atoms: they reconstruct `markdown(text)` faithfully,
         // whereas grouping a balanced brace pair into a `LIST` loses the backslash
         // parity rd_complete weighs (see [`serialize_prose`]). First drop each
@@ -868,6 +878,69 @@ fn section_rd_complete(body: &[Inline], md: bool) -> bool {
     } else {
         rd_complete(&section_raw_rd(body))
     }
+}
+
+/// Whether any inline `[text](dest)` link in `body` has a destination that
+/// roxygen2 renders into a brace-incomplete `\href{dest}{text}`, dropping the whole
+/// section. Recurses into every container that can hold an inline link (emphasis,
+/// bare brace groups, resolved list items, and a link's own display). Reference and
+/// shortcut links (`\link`, whose topic option is dropped) never carry the
+/// destination into a brace argument, so only the inline-link (`\href`) form is
+/// checked.
+fn body_has_dropping_href(body: &[Inline]) -> bool {
+    body.iter().any(|inl| match inl {
+        Inline::MdInlineLink { url, display } => {
+            md_href_dest_drops(url) || body_has_dropping_href(display)
+        }
+        Inline::MdRefLink { display, .. } | Inline::MdShortcutLink { display } => {
+            body_has_dropping_href(display)
+        }
+        Inline::MdEmphasis { children, .. } => body_has_dropping_href(children),
+        Inline::BraceGroup(children) => body_has_dropping_href(children),
+        Inline::MdListResolved { items, .. } => items.iter().any(|it| body_has_dropping_href(it)),
+        _ => false,
+    })
+}
+
+/// Whether an inline-link destination `url` (arity's carved bare destination, which
+/// may run past cmark's closer) renders into an `\href{…}` argument that ends in a
+/// backslash escaping the closing brace — so roxygen2's `rdComplete` fails and the
+/// section drops.
+///
+/// roxygen2 runs `double_escape_md` (every `\` doubled) before cmark, so a backslash
+/// is a **literal** char in the destination and never escapes a paren: cmark closes
+/// the bare destination at the first paren-depth-0 `)`. arity's `scan_balanced`
+/// instead treats `\)` as an escaped paren and carries the destination further, so
+/// `url` here is the *wider* span (`foo\)bar`), and this function re-finds cmark's
+/// closer. A backslash run of length `r` immediately before that closer survives the
+/// `double_escape_md` → cmark → `parse_Rd` round-trip as `r` backslashes in the Rd
+/// destination (double to `2r`, cmark pairs to `r`), so the `\href{…}` brace is
+/// escaped exactly when `r` is **odd**: `foo\)bar` (r = 1) drops, `foo\\)bar` (r = 2)
+/// keeps.
+fn md_href_dest_drops(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    // cmark's closer: the first paren-depth-0 `)` (a `\` is literal, never escaping).
+    let mut depth = 0usize;
+    let mut close = bytes.len();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' if depth == 0 => {
+                close = i;
+                break;
+            }
+            b')' => depth -= 1,
+            _ => {}
+        }
+    }
+    // The backslash run immediately before the closer; an odd run escapes the brace.
+    let mut run = 0usize;
+    let mut k = close;
+    while k > 0 && bytes[k - 1] == b'\\' {
+        run += 1;
+        k -= 1;
+    }
+    run % 2 == 1
 }
 
 /// Whether a section's projected atoms reconstruct to brace-complete Rd, i.e.
@@ -7521,6 +7594,41 @@ mod tests {
         // trailing `\` escapes the closing brace --- exactly roxygen2's `*\**` bug.
         assert!(!section_atoms_rd_complete(
             &["(TEXT \"foo\")".into(), "(\\emph (TEXT \"\\\\\"))".into()],
+            true,
+        ));
+    }
+
+    #[test]
+    fn trailing_backslash_inline_dest_drops_the_section() {
+        // `[t](foo\)bar)`: `double_escape_md` turns the `\)` into a literal `\` + a
+        // closing `)`, so cmark's destination is `foo\` — a trailing backslash that
+        // escapes the `\href{…}` brace → roxygen2 drops the whole section.
+        let drop = Inline::MdInlineLink {
+            url: "foo\\)bar".into(),
+            display: vec![Inline::Text("t".into())],
+        };
+        assert!(md_href_dest_drops("foo\\)bar"));
+        assert!(!section_rd_complete(std::slice::from_ref(&drop), true));
+        // An **even** backslash run before the `)` pairs off (`foo\\)bar` → `foo\\`),
+        // so the brace closes and the section is kept.
+        assert!(!md_href_dest_drops("foo\\\\)bar"));
+        assert!(section_rd_complete(
+            &[Inline::MdInlineLink {
+                url: "foo\\\\)bar".into(),
+                display: vec![Inline::Text("t".into())],
+            }],
+            true,
+        ));
+        // A destination with no closer, ending in a lone backslash, drops too; an
+        // ordinary destination is unaffected.
+        assert!(md_href_dest_drops("foo\\"));
+        assert!(!md_href_dest_drops("foo/bar"));
+        // A dropping href nested inside emphasis still drops the section.
+        assert!(!section_rd_complete(
+            &[Inline::MdEmphasis {
+                strong: false,
+                children: vec![drop],
+            }],
             true,
         ));
     }
