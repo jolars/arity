@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "generated_at": "2026-07-10T00:58:49Z",
+    "host": {"os": "linux", "arch": "x86_64", "cpu": "Intel(R) Core(TM) Ultra 7 155U"},
+    "backend": "hyperfine",
+    "min_runs": 3,
+    "tools": {
+      "arity": {"version": "0.11.0"},
+      "air": {"version": "0.10.0"}
+    }
+  },
+  "documents": [
+    {"id":"small","name":"small","file":"corpus_small.R","size_bytes":123094,"lines":8498,"iterations":50},
+    {"id":"large","name":"large","file":"corpus_large.R","size_bytes":1477128,"lines":101976,"iterations":5}
+  ],
+  "results": [
+    {"document":"small","formatter":"arity","mean_ms":25.0912,"stddev_ms":1.6294,"min_ms":21.0695,"max_ms":32.0858,"runs":104},
+    {"document":"small","formatter":"air","mean_ms":31.6320,"stddev_ms":2.1308,"min_ms":28.2261,"max_ms":41.2459,"runs":90},
+    {"document":"large","formatter":"arity","mean_ms":761.7270,"stddev_ms":50.2538,"min_ms":713.3926,"max_ms":815.4131,"runs":4},
+    {"document":"large","formatter":"air","mean_ms":368.2495,"stddev_ms":12.4938,"min_ms":359.3317,"max_ms":393.7535,"runs":8}
+  ]
+}

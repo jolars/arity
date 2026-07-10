@@ -3,11 +3,13 @@ extend-exclude = [
   "AGENTS.md",
   "CHANGELOG.md",
   "AIR_COMPAT.md",
-  "BENCH.md",
   "ARCHITECTURE_AUDIT.md",
-  # Generated mdBook pages (clap reference + per-rule docs); not hand-written prose.
+  # Generated mdBook pages (clap reference + per-rule docs + benchmark partials);
+  # not hand-written prose.
   "book/src/reference/cli.md",
   "book/src/reference/rules/**",
+  "book/src/reference/benchmarks_meta.md",
+  "book/src/reference/benchmarks_results.md",
   "book/src/version.md",
   # mdBook's SUMMARY.md is structural (one chapter per line); prose reflow breaks it.
   "book/src/SUMMARY.md",

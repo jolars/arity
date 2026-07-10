@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod bench_docs;
 pub mod cli;
 pub mod config;
 pub mod file_discovery;

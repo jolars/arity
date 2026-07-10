@@ -14,6 +14,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use arity::bench_docs::render_partials;
 use arity::linter::docs::render_rule_doc;
 use arity::linter::rules::all_rules;
 
@@ -34,6 +35,22 @@ fn main() -> io::Result<()> {
     let version = format!("arity v{}\n", env!("CARGO_PKG_VERSION"));
     write_if_changed(Path::new("book/src/version.md"), &version)?;
 
+    generate_benchmarks()?;
+
+    Ok(())
+}
+
+/// Render the benchmark partials included by `reference/benchmarks.md` from the
+/// committed artifact `benches/benchmark_results.json`. The JSON is read but
+/// never regenerated here, so the benchmark is only ever run manually (via
+/// `task bench`), not at doc-gen time. A missing artifact degrades to an
+/// "unavailable" note so a fresh checkout still builds.
+fn generate_benchmarks() -> io::Result<()> {
+    let ref_dir = Path::new("book/src/reference");
+    let json = fs::read_to_string("benches/benchmark_results.json").ok();
+    let (meta, results) = render_partials(json.as_deref());
+    write_if_changed(&ref_dir.join("benchmarks_meta.md"), &meta)?;
+    write_if_changed(&ref_dir.join("benchmarks_results.md"), &results)?;
     Ok(())
 }
 

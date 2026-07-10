@@ -134,7 +134,7 @@ tasks:
         echo "seeded $(wc -l < /tmp/roxygen-lint-pass.txt) matching files into the lint-oracle allowlist"
 
   bench:
-    desc: Benchmark formatter speed vs. air on large files (writes BENCH.md)
+    desc: Benchmark formatter speed vs. air/styler (writes benches/benchmark_results.json; run docgen to refresh the docs page)
     cmds:
       - ./scripts/bench-format.sh
 

@@ -47,6 +47,7 @@
             # explicitly rather than relying on languageserver pulling them in.
             roxygen2
             commonmark
+            styler
           ];
         }
       );
