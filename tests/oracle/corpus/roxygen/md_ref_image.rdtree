@@ -1,0 +1,3 @@
+(\description (TEXT "Reference and shortcut images"))
+(\details (TEXT "A") (\figure (VERB "R:x")) (TEXT "and") (\figure (VERB "R:ref")) (TEXT "and an inline") (\figure (VERB "img.png")) (TEXT "here."))
+(\title (TEXT "Reference and shortcut images"))

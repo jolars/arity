@@ -4954,15 +4954,53 @@ fn resolve_md_image(raw: &str) -> Option<String> {
     let bytes = raw.as_bytes();
     // The leaf always begins `![`; the alt span is `[…]` starting at index 1.
     let alt_end = scan_delimited(bytes, 1, b'[', b']')?;
-    if bytes.get(alt_end) != Some(&b'(') {
-        return None;
+    match bytes.get(alt_end) {
+        // Inline image `![alt](url "title")`.
+        Some(&b'(') => {
+            let dest_end = scan_delimited(bytes, alt_end, b'(', b')')?;
+            if dest_end != bytes.len() {
+                return None;
+            }
+            let (url, title) = split_image_dest(&raw[alt_end + 1..dest_end - 1]);
+            Some(figure_atom(url, title))
+        }
+        // Reference image `![alt][ref]`: roxygen2's `add_linkrefs_to_md` synthesizes
+        // a `[ref]: R:URLencode(ref)` definition for the bracket-free `ref`
+        // candidate, so the image destination is `R:ref`.
+        Some(&b'[') => {
+            let ref_end = scan_delimited(bytes, alt_end, b'[', b']')?;
+            if ref_end != bytes.len() {
+                return None;
+            }
+            Some(figure_atom(
+                &synthesized_image_dest(&raw[alt_end + 1..ref_end - 1]),
+                "",
+            ))
+        }
+        // Shortcut image `![alt]`: the label is the alt, resolved against the
+        // synthesized `[alt]: R:URLencode(alt)` definition.
+        None => Some(figure_atom(
+            &synthesized_image_dest(&raw[2..alt_end - 1]),
+            "",
+        )),
+        _ => None,
     }
-    let dest_end = scan_delimited(bytes, alt_end, b'(', b')')?;
-    if dest_end != bytes.len() {
-        return None;
-    }
-    let (url, title) = split_image_dest(&raw[alt_end + 1..dest_end - 1]);
-    Some(figure_atom(url, title))
+}
+
+/// The synthesized destination for a shortcut/reference image whose `label` has no
+/// user-defined `[label]: url` reference definition: roxygen2's `add_linkrefs_to_md`
+/// appends `[label]: R:URLencode(label)`, so the image resolves to `R:label`.
+///
+/// A user-defined destination (`[ref]: https://…`) would override this; that path is
+/// backlog (it requires threading the whole-field refmap into image resolution, the
+/// way [`apply_user_linkrefs`] rewrites links). A label with URL-unsafe characters
+/// (a space → `%20`, a backslash → `%5C`) is likewise backlog: the `%` is the Rd
+/// comment char, so roxygen2 renders `\figure{R:see%20this}` and the `%` comments out
+/// the closing brace, dropping the whole section — arity's fragile-macro neutralizer
+/// keeps the section instead. Both diverge only for such labels; the common
+/// bracket-free ASCII label (`R:x`) matches exactly.
+fn synthesized_image_dest(label: &str) -> String {
+    format!("R:{}", url_encode(label))
 }
 
 /// Split a CommonMark image destination `url "title"` into `(url, title)`. The URL
@@ -8494,6 +8532,40 @@ mod tests {
             let src = format!("#' T\n#'\n#' @md\n#' @details\n#' {link} z\n#' @name x\nNULL\n");
             let rd = project_to_rd(&src);
             assert!(rd.contains(want), "link {link:?}: want {want}, got: {rd}");
+        }
+    }
+
+    #[test]
+    fn shortcut_and_reference_images_resolve_to_synthesized_figures() {
+        // A shortcut image `![alt]` and a reference image `![alt][ref]` (with no
+        // user-defined destination) resolve against roxygen2's synthesized
+        // `[label]: R:label` reference definition, so both become `\figure{R:label}`
+        // — the shortcut keyed on its alt, the reference on its label.
+        for (image, want) in [
+            ("![x]", "(\\figure (VERB \"R:x\"))"),
+            ("![y][ref]", "(\\figure (VERB \"R:ref\"))"),
+        ] {
+            let src = format!("#' T\n#'\n#' @md\n#' @details\n#' a {image} b\n#' @name x\nNULL\n");
+            let rd = project_to_rd(&src);
+            assert!(rd.contains(want), "image {image:?}: want {want}, got: {rd}");
+        }
+        // An invalid inline destination `(a\ b)` is not consumed: the `![z]` stays a
+        // shortcut image and the `(a\ b)` is left literal prose.
+        let src = "#' T\n#'\n#' @md\n#' @details\n#' see ![z](a\\ b) end\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\figure (VERB \"R:z\")) (TEXT \"(a\\\\ b) end\")"),
+            "got: {rd}"
+        );
+        // A collapsed `![alt][]` and an empty `![]` are not images (no synthesized
+        // definition) — they stay literal prose.
+        for image in ["![alt][]", "![]"] {
+            let src = format!("#' T\n#'\n#' @md\n#' @details\n#' {image} z\n#' @name x\nNULL\n");
+            let rd = project_to_rd(&src);
+            assert!(
+                !rd.contains("\\figure"),
+                "image {image:?} should stay literal, got: {rd}"
+            );
         }
     }
 

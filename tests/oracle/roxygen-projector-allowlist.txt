@@ -428,3 +428,5 @@ rd_even_braced_macro
 md_even_braced_macro
 md_list_item_table
 md_blockquote_setext
+md_ref_image
+md_image_invalid_dest

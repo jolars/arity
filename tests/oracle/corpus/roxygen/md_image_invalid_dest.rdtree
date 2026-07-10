@@ -1,0 +1,3 @@
+(\description (TEXT "Shortcut image before an invalid inline destination"))
+(\details (TEXT "See") (\figure (VERB "R:z")) (TEXT "(a\\ b) end."))
+(\title (TEXT "Shortcut image before an invalid inline destination"))

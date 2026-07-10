@@ -1,0 +1,49 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..133
+  ROXYGEN_BLOCK@0..127
+    ROXYGEN_SECTION@0..58
+      ROXYGEN_PARAGRAPH@0..55
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..54 "Shortcut image before ..."
+        NEWLINE@54..55 "\n"
+      ROXYGEN_MARKER@55..57 "#'"
+      NEWLINE@57..58 "\n"
+    ROXYGEN_SECTION@58..90
+      ROXYGEN_MARKER@58..60 "#'"
+      WHITESPACE@60..61 " "
+      ROXYGEN_TAG@61..89
+        ROXYGEN_AT@61..62 "@"
+        ROXYGEN_TAG_NAME@62..69 "details"
+        WHITESPACE@69..70 " "
+        ROXYGEN_TEXT@70..74 "See "
+        ROXYGEN_MD_IMAGE@74..78 "![z]"
+        ROXYGEN_TEXT@78..89 "(a\\ b) end."
+      NEWLINE@89..90 "\n"
+    ROXYGEN_SECTION@90..97
+      ROXYGEN_MARKER@90..92 "#'"
+      WHITESPACE@92..93 " "
+      ROXYGEN_TAG@93..96
+        ROXYGEN_AT@93..94 "@"
+        ROXYGEN_TAG_NAME@94..96 "md"
+      NEWLINE@96..97 "\n"
+    ROXYGEN_SECTION@97..127
+      ROXYGEN_MARKER@97..99 "#'"
+      WHITESPACE@99..100 " "
+      ROXYGEN_TAG@100..127
+        ROXYGEN_AT@100..101 "@"
+        ROXYGEN_TAG_NAME@101..105 "name"
+        WHITESPACE@105..106 " "
+        ROXYGEN_TEXT@106..108 "md"
+        ROXYGEN_MD_DELIM@108..109 "_"
+        ROXYGEN_TEXT@109..114 "image"
+        ROXYGEN_MD_DELIM@114..115 "_"
+        ROXYGEN_TEXT@115..122 "invalid"
+        ROXYGEN_MD_DELIM@122..123 "_"
+        ROXYGEN_TEXT@123..127 "dest"
+  NEWLINE@127..128 "\n"
+  IDENT@128..132 "NULL"
+  NEWLINE@132..133 "\n"

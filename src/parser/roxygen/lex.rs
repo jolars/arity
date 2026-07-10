@@ -981,9 +981,29 @@ fn scan_md_image(bytes: &[u8], i: usize) -> Option<usize> {
         return None;
     }
     let after_alt = scan_balanced(bytes, i + 1, b'[', b']')?;
+    let alt = &bytes[i + 2..after_alt - 1];
     match bytes.get(after_alt) {
-        Some(&b'(') => scan_balanced(bytes, after_alt, b'(', b')'),
-        _ => None,
+        // Inline image `![alt](url)`: a valid CommonMark destination. An invalid
+        // `(…)` (`![z](a\ b)`) falls back to the bare shortcut `![alt]`, leaving the
+        // `(…)` as literal prose — cmark keeps `![z]` a shortcut reference image.
+        Some(&b'(') => inline_dest_span(bytes, after_alt)
+            .or_else(|| is_shortcut_content(alt).then_some(after_alt)),
+        // Reference image `![alt][ref]`: a bracket-free, non-empty `[ref]` label
+        // (the alt must also be a shortcut candidate). A collapsed `![alt][]` or a
+        // bracketed ref is not carved (roxygen2 leaves it literal).
+        Some(&b'[') => {
+            if !is_shortcut_content(alt) {
+                return None;
+            }
+            let ref_end = scan_balanced(bytes, after_alt, b'[', b']')?;
+            is_shortcut_content(&bytes[after_alt + 1..ref_end - 1]).then_some(ref_end)
+        }
+        // A shortcut `![alt]` followed by `{` is not an image (candidate blocked by
+        // roxygen2's `(?=[^\[{])` lookahead), matching the link shortcut rule.
+        Some(&b'{') => None,
+        // Shortcut image `![alt]`: a bracket-free, non-empty alt resolves against the
+        // synthesized `[alt]: R:alt` reference definition.
+        _ => is_shortcut_content(alt).then_some(after_alt),
     }
 }
 

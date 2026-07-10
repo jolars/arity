@@ -1,0 +1,51 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..137
+  ROXYGEN_BLOCK@0..131
+    ROXYGEN_SECTION@0..36
+      ROXYGEN_PARAGRAPH@0..33
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..32 "Reference and shortcu ..."
+        NEWLINE@32..33 "\n"
+      ROXYGEN_MARKER@33..35 "#'"
+      NEWLINE@35..36 "\n"
+    ROXYGEN_SECTION@36..103
+      ROXYGEN_MARKER@36..38 "#'"
+      WHITESPACE@38..39 " "
+      ROXYGEN_TAG@39..102
+        ROXYGEN_AT@39..40 "@"
+        ROXYGEN_TAG_NAME@40..47 "details"
+        WHITESPACE@47..48 " "
+        ROXYGEN_TEXT@48..50 "A "
+        ROXYGEN_MD_IMAGE@50..54 "![x]"
+        ROXYGEN_TEXT@54..59 " and "
+        ROXYGEN_MD_IMAGE@59..68 "![y][ref]"
+        ROXYGEN_TEXT@68..83 " and an inline "
+        ROXYGEN_MD_IMAGE@83..96 "![w](img.png)"
+        ROXYGEN_TEXT@96..102 " here."
+      NEWLINE@102..103 "\n"
+    ROXYGEN_SECTION@103..110
+      ROXYGEN_MARKER@103..105 "#'"
+      WHITESPACE@105..106 " "
+      ROXYGEN_TAG@106..109
+        ROXYGEN_AT@106..107 "@"
+        ROXYGEN_TAG_NAME@107..109 "md"
+      NEWLINE@109..110 "\n"
+    ROXYGEN_SECTION@110..131
+      ROXYGEN_MARKER@110..112 "#'"
+      WHITESPACE@112..113 " "
+      ROXYGEN_TAG@113..131
+        ROXYGEN_AT@113..114 "@"
+        ROXYGEN_TAG_NAME@114..118 "name"
+        WHITESPACE@118..119 " "
+        ROXYGEN_TEXT@119..121 "md"
+        ROXYGEN_MD_DELIM@121..122 "_"
+        ROXYGEN_TEXT@122..125 "ref"
+        ROXYGEN_MD_DELIM@125..126 "_"
+        ROXYGEN_TEXT@126..131 "image"
+  NEWLINE@131..132 "\n"
+  IDENT@132..136 "NULL"
+  NEWLINE@136..137 "\n"
