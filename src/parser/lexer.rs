@@ -239,6 +239,24 @@ pub(crate) struct Token {
     pub(crate) end: usize,
 }
 
+/// True when the two bytes at `i` are exactly `pat` --- a char-boundary-safe
+/// two-char operator lookahead. Slicing `&input[i..i + 2]` panics when `i` (or
+/// `i + 1`) lands inside a multibyte UTF-8 char (e.g. a U+00A0 non-breaking
+/// space); comparing raw bytes never does, and every operator we scan for is
+/// two ASCII bytes.
+#[inline]
+fn two_bytes(bytes: &[u8], i: usize, pat: &[u8; 2]) -> bool {
+    bytes.get(i) == Some(&pat[0]) && bytes.get(i + 1) == Some(&pat[1])
+}
+
+/// [`two_bytes`] for a three-ASCII-byte operator (`:::`, `<<-`, `->>`).
+#[inline]
+fn three_bytes(bytes: &[u8], i: usize, pat: &[u8; 3]) -> bool {
+    bytes.get(i) == Some(&pat[0])
+        && bytes.get(i + 1) == Some(&pat[1])
+        && bytes.get(i + 2) == Some(&pat[2])
+}
+
 pub(crate) fn lex(input: &str) -> Vec<Token> {
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -561,7 +579,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "||" {
+                if two_bytes(bytes, i, b"||") {
                     out.push(Token {
                         kind: TokKind::Or2,
                         text: "||".to_string(),
@@ -572,7 +590,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "&&" {
+                if two_bytes(bytes, i, b"&&") {
                     out.push(Token {
                         kind: TokKind::And2,
                         text: "&&".to_string(),
@@ -721,7 +739,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "==" {
+                if two_bytes(bytes, i, b"==") {
                     out.push(Token {
                         kind: TokKind::Equal2,
                         text: "==".to_string(),
@@ -732,7 +750,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "!=" {
+                if two_bytes(bytes, i, b"!=") {
                     out.push(Token {
                         kind: TokKind::NotEqual,
                         text: "!=".to_string(),
@@ -754,7 +772,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 2 < bytes.len() && &input[i..i + 3] == ":::" {
+                if three_bytes(bytes, i, b":::") {
                     out.push(Token {
                         kind: TokKind::Colon3,
                         text: ":::".to_string(),
@@ -765,7 +783,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "::" {
+                if two_bytes(bytes, i, b"::") {
                     out.push(Token {
                         kind: TokKind::Colon2,
                         text: "::".to_string(),
@@ -776,7 +794,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == ":=" {
+                if two_bytes(bytes, i, b":=") {
                     out.push(Token {
                         kind: TokKind::Walrus,
                         text: ":=".to_string(),
@@ -787,7 +805,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "|>" {
+                if two_bytes(bytes, i, b"|>") {
                     out.push(Token {
                         kind: TokKind::Pipe,
                         text: "|>".to_string(),
@@ -798,7 +816,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 2 < bytes.len() && &input[i..i + 3] == "<<-" {
+                if three_bytes(bytes, i, b"<<-") {
                     out.push(Token {
                         kind: TokKind::SuperAssign,
                         text: "<<-".to_string(),
@@ -809,7 +827,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 2 < bytes.len() && &input[i..i + 3] == "->>" {
+                if three_bytes(bytes, i, b"->>") {
                     out.push(Token {
                         kind: TokKind::SuperAssignRight,
                         text: "->>".to_string(),
@@ -820,7 +838,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "<-" {
+                if two_bytes(bytes, i, b"<-") {
                     out.push(Token {
                         kind: TokKind::AssignLeft,
                         text: "<-".to_string(),
@@ -831,7 +849,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "->" {
+                if two_bytes(bytes, i, b"->") {
                     out.push(Token {
                         kind: TokKind::AssignRight,
                         text: "->".to_string(),
@@ -875,7 +893,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "<=" {
+                if two_bytes(bytes, i, b"<=") {
                     out.push(Token {
                         kind: TokKind::LessThanOrEqual,
                         text: "<=".to_string(),
@@ -886,7 +904,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == ">=" {
+                if two_bytes(bytes, i, b">=") {
                     out.push(Token {
                         kind: TokKind::GreaterThanOrEqual,
                         text: ">=".to_string(),
@@ -952,7 +970,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "[[" {
+                if two_bytes(bytes, i, b"[[") {
                     out.push(Token {
                         kind: TokKind::LBrack2,
                         text: "[[".to_string(),
@@ -963,7 +981,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                if i + 1 < bytes.len() && &input[i..i + 2] == "]]" {
+                if two_bytes(bytes, i, b"]]") {
                     out.push(Token {
                         kind: TokKind::RBrack2,
                         text: "]]".to_string(),
@@ -1190,13 +1208,22 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
+                // Catch-all. `c` (= `bytes[i] as char`) is only a faithful char
+                // for ASCII; a non-ASCII byte begins a multibyte UTF-8 char, so
+                // read the whole char from the source and advance by its full
+                // width. Emitting one byte at a time would Latin-1-mangle it (a
+                // U+00A0 → `Â` + U+00A0) and leave `i` mid-char for the next
+                // iteration --- both a losslessness break. `i` is always on a
+                // char boundary here, so `chars().next()` cannot fail.
+                let ch = input[i..].chars().next().unwrap_or(c);
+                let len = ch.len_utf8();
                 out.push(Token {
                     kind: TokKind::Unknown,
-                    text: c.to_string(),
+                    text: input[i..i + len].to_string(),
                     start: i,
-                    end: i + 1,
+                    end: i + len,
                 });
-                i += 1;
+                i += len;
             }
         }
     }
@@ -1315,6 +1342,18 @@ mod tests {
         assert_eq!(sig[1].text, "..1");
         assert_eq!(sig[2].kind, TokKind::Ident);
         assert_eq!(sig[2].text, "..123");
+    }
+
+    #[test]
+    fn lexes_multibyte_char_before_two_char_operator_without_panicking() {
+        // A U+00A0 (2-byte non-breaking space) sitting just before a two-char
+        // operator must not make the operator lookahead slice inside the char.
+        // Lossless round-trip (every byte accounted for) confirms no panic and no
+        // dropped input.
+        for input in ["\u{a0}||", "a\u{a0}&&b", "\u{a0}<-1", "x\u{a0}[[1]]"] {
+            let reconstructed: String = lex(input).iter().map(|t| t.text.as_str()).collect();
+            assert_eq!(reconstructed, input, "lossless lex of {input:?}");
+        }
     }
 
     #[test]
