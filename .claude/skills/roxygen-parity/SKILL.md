@@ -28,9 +28,19 @@ means arity changed what roxygen2 *renders* from the user's docs—a behavior-
 preservation bug, the same family as a losslessness or idempotence failure. So
 this mirrors fatou's `parser-parity` (strict conformance, `allowlist` +
 `blocked`, faithful projector, pinned expecteds), **not** air-compat's
-"subordinate to Tenet 1." Every corpus case is accounted for: PASS (allowlisted)
-or BLOCKED (a deliberate/deferred divergence with a one-line rationale). An
-unaccounted divergence is RED.
+"subordinate to Tenet 1."
+
+Two accounting regimes, don't conflate them:
+- **Curated corpus = strict.** Every case is PASS (allowlisted) or BLOCKED (a
+  deliberate divergence with a one-line rationale); an unaccounted divergence is
+  RED.
+- **Harvested + whole-CommonMark-spec corpora = measured backlog.** These are
+  broad nets; an un-allowlisted divergence is **backlog, never a build failure**.
+  The spec is adopted *whole* (all 655 `cm-NNN`) with a per-section burndown in
+  `ROXYGEN_PROJECTOR.md` and a `roxygen-projector-blocked.txt` for genuine
+  non-targets — panache's conformance model. What is always RED, in both regimes,
+  is an **allowlisted** case that regresses. Pick the next target off the
+  per-section backlog; close a construct cluster; ratchet the now-passing cases in.
 
 ## The oracle in one paragraph
 
@@ -190,7 +200,13 @@ failing test you're chasing).
   `cargo test`): `project_to_rd(parse(x))` vs pinned `<stem>.rdtree`, allowlist-gated;
   writes `ROXYGEN_PROJECTOR.md`.
 - `tests/oracle/roxygen-projector-allowlist.txt`—projector allowlist (by file
-  stem); `tests/oracle/corpus/roxygen/<stem>.rdtree`—the pins.
+  stem or slug); `tests/oracle/corpus/roxygen/<stem>.rdtree`—the curated pins.
+- `tests/oracle/roxygen-projector-blocked.txt`—projector `blocked` list
+  (deliberate non-targets, inline `# reason`; asserted disjoint from the
+  allowlist, excluded from the backlog).
+- `tests/oracle/corpus/commonmark-spec.jsonl` (+ `-sections.jsonl` pins)—the
+  **whole** CommonMark spec as a measured backlog, `{slug, input, section}` built
+  by `scripts/build-commonmark-corpus.R ... ALL` (`task roxygen-spec-corpus`).
 - `tests/roxygen_oracle.rs`—secondary R harness: curated `roxygen_oracle_report`
   (strict) + harvested `roxygen_harvested_{report,allowlist}` (opt-in). `#[ignore]`d;
   skip-if-no-R.

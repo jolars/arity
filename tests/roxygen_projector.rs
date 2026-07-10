@@ -10,11 +10,16 @@
 //!     `tests/oracle/corpus/roxygen.jsonl` (single-topic, self-contained blocks;
 //!     `@inherit`/`@template`/`@eval`/… are filtered out as resolve-from-elsewhere)
 //!     vs the minted `tests/oracle/corpus/roxygen-sections.jsonl`;
-//!   * the **CommonMark spec** corpus --- each spec example's markdown wrapped into
-//!     an `@md` block (`tests/oracle/corpus/commonmark-emphasis.jsonl`) vs its
+//!   * the **whole CommonMark spec** --- every spec example's markdown wrapped
+//!     into an `@md` block (`tests/oracle/corpus/commonmark-spec.jsonl`) vs its
 //!     minted pin. The spec is a broad *input* corpus only; roxygen2 remains the
-//!     oracle (see `docs/design/roxygen-inline-pass.md` §10). It drives the
-//!     inline-pass (emphasis-first) parity work.
+//!     oracle (see `docs/design/roxygen-inline-pass.md` §10). Adopted as a
+//!     measured backlog with a per-section burndown (see [`write_report`]).
+//!
+//! The harvested and spec corpora are a measured backlog (un-allowlisted
+//! divergences are work to do, never a failure); the curated corpus is strict.
+//! A `blocked` list (`tests/oracle/roxygen-projector-blocked.txt`) carries
+//! deliberate non-targets, excluded from the backlog.
 //!
 //! Pins are minted from roxygen2 by `task roxygen-projector-refresh`. *Pinned ⇒ no
 //! R at test time ⇒ this runs in plain `cargo test`* and is a hard gate, unlike
