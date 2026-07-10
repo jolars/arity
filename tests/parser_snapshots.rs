@@ -212,6 +212,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_image",
         "roxygen_md_ref_image",
         "roxygen_md_image_invalid_dest",
+        "roxygen_md_image_user_def",
         "roxygen_md_html_inline",
         "roxygen_md_html_inline_forms",
         "roxygen_md_html_inline_multiline",

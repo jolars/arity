@@ -3655,6 +3655,20 @@ fn apply_user_linkrefs(
             changed = true;
             continue;
         }
+        // A reference/shortcut image whose label is user-defined resolves to that
+        // destination, not the synthesized `R:label`. Rewrite it to the inline form
+        // `![alt](url)` so the ordinary image path ([`resolve_md_image`]) renders it —
+        // reusing its destination split and image-format wrapping (`svg` → `\if{html}`,
+        // …). The user definition wins over roxygen2's appended `[label]: R:label` for
+        // the same reason as links (cmark keeps the first definition).
+        if let Inline::MdImage(raw) = inl
+            && let Some((label, alt)) = image_user_ref(raw)
+            && let Some(url) = urls.get(&normalize_linkref_label(label))
+        {
+            out.push(Inline::MdImage(format!("!{alt}({url})")));
+            changed = true;
+            continue;
+        }
         if let Inline::MdList(node) = inl {
             let items: Vec<Vec<Inline>> = node
                 .children()
@@ -4987,14 +5001,45 @@ fn resolve_md_image(raw: &str) -> Option<String> {
     }
 }
 
+/// For a **reference** (`![alt][ref]`) or **shortcut** (`![alt]`) markdown image,
+/// the label roxygen2 resolves against the link-reference map — the `ref` bracket, or
+/// the alt for a shortcut — paired with the `[alt]` span (brackets included) needed to
+/// rebuild an inline image. `None` for an inline image (`![alt](dest)`, which carries
+/// its own destination), a collapsed `![alt][]`, or a `{`-followed leaf. Mirrors the
+/// arms of [`resolve_md_image`]; used by [`apply_user_linkrefs`] to override the
+/// synthesized `R:label` destination with a user-defined one.
+fn image_user_ref(raw: &str) -> Option<(&str, &str)> {
+    let bytes = raw.as_bytes();
+    let alt_end = scan_delimited(bytes, 1, b'[', b']')?;
+    let alt = &raw[1..alt_end]; // the `[alt]` span, brackets included
+    match bytes.get(alt_end) {
+        // Reference `![alt][ref]`: resolve `ref` (a collapsed empty `[]` is not a
+        // reference-map candidate — leave it to the synthesized path, which is `None`).
+        Some(&b'[') => {
+            let ref_end = scan_delimited(bytes, alt_end, b'[', b']')?;
+            if ref_end != bytes.len() {
+                return None;
+            }
+            let label = &raw[alt_end + 1..ref_end - 1];
+            (!label.is_empty()).then_some((label, alt))
+        }
+        // Shortcut `![alt]`: the alt is the label.
+        None => {
+            let label = &raw[2..alt_end - 1];
+            (!label.is_empty()).then_some((label, alt))
+        }
+        _ => None,
+    }
+}
+
 /// The synthesized destination for a shortcut/reference image whose `label` has no
 /// user-defined `[label]: url` reference definition: roxygen2's `add_linkrefs_to_md`
 /// appends `[label]: R:URLencode(label)`, so the image resolves to `R:label`.
 ///
-/// A user-defined destination (`[ref]: https://…`) would override this; that path is
-/// backlog (it requires threading the whole-field refmap into image resolution, the
-/// way [`apply_user_linkrefs`] rewrites links). A label with URL-unsafe characters
-/// (a space → `%20`, a backslash → `%5C`) is likewise backlog: the `%` is the Rd
+/// A *user-defined* destination (`[ref]: https://…`) overrides this — handled by
+/// [`apply_user_linkrefs`], which rewrites the reference/shortcut image to the inline
+/// form `![alt](url)` before serialization. A label with URL-unsafe characters
+/// (a space → `%20`, a backslash → `%5C`) is still backlog: the `%` is the Rd
 /// comment char, so roxygen2 renders `\figure{R:see%20this}` and the `%` comments out
 /// the closing brace, dropping the whole section — arity's fragile-macro neutralizer
 /// keeps the section instead. Both diverge only for such labels; the common
@@ -8567,6 +8612,43 @@ mod tests {
                 "image {image:?} should stay literal, got: {rd}"
             );
         }
+    }
+
+    #[test]
+    fn user_defined_image_refs_override_synthesized_destination() {
+        // A reference/shortcut image whose label has a user-written `[label]: url`
+        // definition resolves to that URL (not the synthesized `R:label`), and the
+        // image-format wrapping still applies (an `svg` destination -> `\if{html}`).
+        for (image, def, want) in [
+            (
+                "![a][ref]",
+                "[ref]: https://example.com/img.png",
+                "(\\figure (VERB \"https://example.com/img.png\"))",
+            ),
+            (
+                "![pic]",
+                "[pic]: https://example.com/pic.gif",
+                "(\\figure (VERB \"https://example.com/pic.gif\"))",
+            ),
+            (
+                "![d][s]",
+                "[s]: diagram.svg",
+                "(\\if (TEXT \"html\") (\\figure (VERB \"diagram.svg\")))",
+            ),
+        ] {
+            let src = format!(
+                "#' T\n#'\n#' @md\n#' @details x {image} y\n#'\n#' {def}\n#' @name x\nNULL\n"
+            );
+            let rd = project_to_rd(&src);
+            assert!(rd.contains(want), "image {image:?}: want {want}, got: {rd}");
+        }
+        // An undefined reference label still falls back to the synthesized `R:label`.
+        let src = "#' T\n#'\n#' @md\n#' @details a ![y][ref] b\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\figure (VERB \"R:ref\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
     }
 
     #[test]

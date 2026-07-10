@@ -1,0 +1,70 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..208
+  ROXYGEN_BLOCK@0..202
+    ROXYGEN_SECTION@0..36
+      ROXYGEN_PARAGRAPH@0..33
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..32 "User-defined image re ..."
+        NEWLINE@32..33 "\n"
+      ROXYGEN_MARKER@33..35 "#'"
+      NEWLINE@35..36 "\n"
+    ROXYGEN_SECTION@36..169
+      ROXYGEN_MARKER@36..38 "#'"
+      WHITESPACE@38..39 " "
+      ROXYGEN_TAG@39..89
+        ROXYGEN_AT@39..40 "@"
+        ROXYGEN_TAG_NAME@40..47 "details"
+        WHITESPACE@47..48 " "
+        ROXYGEN_TEXT@48..50 "A "
+        ROXYGEN_MD_IMAGE@50..61 "![alt][ref]"
+        ROXYGEN_TEXT@61..77 " and a shortcut "
+        ROXYGEN_MD_IMAGE@77..83 "![pic]"
+        ROXYGEN_TEXT@83..89 " here."
+      NEWLINE@89..90 "\n"
+      ROXYGEN_MARKER@90..92 "#'"
+      NEWLINE@92..93 "\n"
+      ROXYGEN_PARAGRAPH@93..169
+        ROXYGEN_MARKER@93..95 "#'"
+        WHITESPACE@95..96 " "
+        ROXYGEN_MD_LINK@96..101
+          ROXYGEN_MD_DELIM@96..97 "["
+          ROXYGEN_TEXT@97..100 "ref"
+          ROXYGEN_MD_DELIM@100..101 "]"
+        ROXYGEN_TEXT@101..130 ": https://example.com ..."
+        NEWLINE@130..131 "\n"
+        ROXYGEN_MARKER@131..133 "#'"
+        WHITESPACE@133..134 " "
+        ROXYGEN_MD_LINK@134..139
+          ROXYGEN_MD_DELIM@134..135 "["
+          ROXYGEN_TEXT@135..138 "pic"
+          ROXYGEN_MD_DELIM@138..139 "]"
+        ROXYGEN_TEXT@139..168 ": https://example.com ..."
+        NEWLINE@168..169 "\n"
+    ROXYGEN_SECTION@169..176
+      ROXYGEN_MARKER@169..171 "#'"
+      WHITESPACE@171..172 " "
+      ROXYGEN_TAG@172..175
+        ROXYGEN_AT@172..173 "@"
+        ROXYGEN_TAG_NAME@173..175 "md"
+      NEWLINE@175..176 "\n"
+    ROXYGEN_SECTION@176..202
+      ROXYGEN_MARKER@176..178 "#'"
+      WHITESPACE@178..179 " "
+      ROXYGEN_TAG@179..202
+        ROXYGEN_AT@179..180 "@"
+        ROXYGEN_TAG_NAME@180..184 "name"
+        WHITESPACE@184..185 " "
+        ROXYGEN_TEXT@185..187 "md"
+        ROXYGEN_MD_DELIM@187..188 "_"
+        ROXYGEN_TEXT@188..193 "image"
+        ROXYGEN_MD_DELIM@193..194 "_"
+        ROXYGEN_TEXT@194..198 "user"
+        ROXYGEN_MD_DELIM@198..199 "_"
+        ROXYGEN_TEXT@199..202 "def"
+  NEWLINE@202..203 "\n"
+  IDENT@203..207 "NULL"
+  NEWLINE@207..208 "\n"

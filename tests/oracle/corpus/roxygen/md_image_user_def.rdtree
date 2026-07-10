@@ -1,0 +1,3 @@
+(\description (TEXT "User-defined image references"))
+(\details (TEXT "A") (\figure (VERB "https://example.com/img.png")) (TEXT "and a shortcut") (\figure (VERB "https://example.com/pic.gif")) (TEXT "here."))
+(\title (TEXT "User-defined image references"))

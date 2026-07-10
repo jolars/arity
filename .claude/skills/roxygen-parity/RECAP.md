@@ -978,7 +978,7 @@ to parser-owned Rd section subtrees; `tests/roxygen_projector.rs` diffs against 
 pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.txt`). **Three pin
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the CommonMark spec emphasis
-corpus (132 `cm-NNN` cases). **Current: 419 matching (all allowlisted), 18 divergent** of 437 pinned.
+corpus (132 `cm-NNN` cases). **Current: 420 matching (all allowlisted), 18 divergent** of 438 pinned.
 The 18 left are all roxygen2-*evaluation*/multi-block gaps (out of scope — knitr eval, RefClass
 docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -987,50 +987,51 @@ docstrings, cross-block `@name`/reexport). Tasks: `task roxygen-projector` (the 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + spec corpora (437 pinned). The 18 divergences are out-of-scope.
+   Curated + harvested + spec corpora (438 pinned). The 18 divergences are out-of-scope.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 154/154 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 155/155 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-10d) — shortcut + reference markdown images
+## Latest session (2026-07-10e) — user-defined image reference override
 
-Markdown images now cover **all three CommonMark forms**, not just inline. A shortcut `![alt]` and a reference
-`![alt][ref]` (both alt+ref bracket-free non-empty) resolve against roxygen2's synthesized
-`[label]: R:URLencode(label)` def → `\figure{R:label}` (shortcut keys on alt, reference on ref). The inline form
-`![alt](dest)` now **validates** its destination (`inline_dest_span`, the 2026-07-10b link machinery): an invalid
-`(…)` falls back to the shortcut, so `![z](a\ b)` → `\figure{R:z}` + literal `(a\ b)` (this was the ranked target —
-sibling (2) of the Link-B cluster). A collapsed `![alt][]`, empty `![]`, or `![alt]{` stays literal (no synthesized
-def), mirroring the link shortcut rule.
+A reference `![alt][ref]` or shortcut `![alt]` image whose label has a **user-written** `[label]: url` definition now
+resolves to that URL, not roxygen2's synthesized `R:label` — matching how a user def already overrides the synthesized
+def for *links*. So `![alt][ref]` + `[ref]: https://…/img.png` → `\figure{https://…/img.png}` (was `\figure{R:ref}`),
+and a shortcut keys on its alt. Image-format wrapping flows through for free: `[s]: diagram.svg` → `\if{html}{\figure{diagram.svg}}`.
 
-**Parser + projector, both small.** Lexer `scan_md_image` (roxygen/lex.rs) rewritten to mirror `scan_md_link`: the
-char after `![alt]` dispatches inline (`inline_dest_span`, else shortcut fallback) / reference (`[ref]` bracket-free) /
-`{`→None / shortcut (bare, `is_shortcut_content` alt). Projector `resolve_md_image` (project_rd.rs) matches the same
-char: `(`→existing inline `split_image_dest`+`figure_atom`, `[`→`figure_atom(synthesized_image_dest(ref), "")`,
-end→shortcut alt; new `synthesized_image_dest(label) = R:url_encode(label)`. The `push_inline` image gate already keys
-on `resolve_md_image(...).is_some()`, so the new forms flow through unchanged. Formatter untouched (image leaves stay
-atomic passthrough; idempotent + lossless verified).
+**Projector-only, tiny.** CST is unchanged (the image leaf already parses; the def lines are lossless prose). In
+`apply_user_linkrefs` (project_rd.rs), a new arm mirrors the link arm: for an `Inline::MdImage(raw)`, `image_user_ref`
+returns the lookup label (the `ref` bracket, or the alt for a shortcut; `None` for inline `![alt](dest)`, collapsed
+`![alt][]`, empty, `{`-followed) and the `[alt]` span; when the label ∈ the field refmap (`urls`, already built by
+`collect_user_linkrefs_tree`), the image is **rewritten to the inline form** `![alt](url)`, so the existing
+`resolve_md_image`/`figure_atom` path renders it — reusing the destination split *and* the `\if{html/pdf}` image-format
+wrapping with no new logic. An undefined label still falls back to synthesized `R:label` (unchanged). Formatter untouched
+(image leaves stay atomic passthrough; idempotent + lossless verified).
 
-**Result:** projector **417→419 matching** (all 419 allowlisted, 0 regressions), 18 divergent (unchanged, all
-out-of-scope harvested). `cargo test` green (all 23 bins), clippy + fmt clean, curated fixed-point **154/154
-preserving** (was 152; 0 blocked, 0 gate failures, R present); format baseline **+2** (additive corpus key set). New:
-curated projector cases `md_ref_image` + `md_image_invalid_dest` (+pins +allowlist), fixtures `roxygen_md_ref_image` +
-`roxygen_md_image_invalid_dest` (lossless, empty diagnostics), unit
-`shortcut_and_reference_images_resolve_to_synthesized_figures`.
+**Result:** projector **419→420 matching** (all 420 allowlisted, 0 regressions), 18 divergent (unchanged, all
+out-of-scope harvested). `cargo test` green, clippy + fmt clean, curated fixed-point **155/155 preserving** (was 154;
+0 blocked, 0 gate failures, R present); format baseline **+1** (additive corpus key). New: curated projector case
+`md_image_user_def` (+pin +allowlist), fixture `roxygen_md_image_user_def` (lossless, empty diagnostics), unit
+`user_defined_image_refs_override_synthesized_destination`.
 
-**Ranked next target:** the **user-def image override** (`![alt][ref]` + `[ref]: url` → `\figure{url}`, not `R:ref`) —
-needs the whole-field refmap threaded into image resolution, the way `apply_user_linkrefs` rewrites links (a clean
-extension: rewrite the reference/shortcut image to inline form `![alt](url)` when the label ∈ urls). Related image
-backlog: the **URL-unsafe-label section drop** (`![see this]`→`R:see%20this`, the `%` comments out the `\figure` `}` →
-roxygen2 drops the whole section; arity's fragile-macro neutralizer keeps it — a `%`-in-`\figure` drop gap); reference
-images in the poisoning skeleton; cross-line images. Standing picks unchanged: the **surviving even-run href dest**
-content (`\href{foo\\}{t}` vs roxygen2's `foo\`); escape-cluster **sticky-mode flips** + cross-paragraph sticky tails;
+**Ranked next target:** **user-def image *titles*** — a def `[ref]: url "t"` makes `![a][ref]` → `\figure{url}{t}`
+(roxygen2 keeps the title; probed). The refmap is url-only (shared with the title-dropping link path), so carrying the
+title needs either a parallel title map or a `LinkrefDef { url, title }` value type; the current url-only rewrite is
+faithful for untitled defs (the common case) and drops the title otherwise. Also: **space/paren user URLs** (the
+rewrite `![alt](url)` re-lexes, so a URL with a space or `)` breaks — wrap in `<…>` or resolve directly). Related image
+backlog unchanged: the **URL-unsafe-label section drop** (`![see this]`→`R:see%20this`, the `%` comments out the
+`\figure` `}` → roxygen2 drops the section; arity's fragile-macro neutralizer keeps it); reference images in the
+poisoning skeleton; cross-line images. Standing picks unchanged: the **surviving even-run href dest** content
+(`\href{foo\\}{t}` vs roxygen2's `foo\`); escape-cluster **sticky-mode flips** + cross-paragraph sticky tails;
 **braced `\item{x}` in prose** → `(UNKNOWN "\item") (LIST …)` (grouper carve-suppression, load-bearing for
 `\describe{\item{a}{b}}`); formatter reflow-rejoin for cross-line code spans. The 18 projector divergences remain
 out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-10d** — shortcut + reference markdown images (all three CommonMark image forms; `scan_md_image` rewritten to mirror `scan_md_link`, `resolve_md_image` dispatches on the char after `![alt]`; shortcut `![alt]`/reference `![alt][ref]` → synthesized `\figure{R:label}`, inline `![alt](dest)` validates its dest via `inline_dest_span`; collapsed/empty/`{`-followed stay literal). Curated `md_ref_image` + `md_image_invalid_dest`, fixtures, unit, baseline +2. 417→419.
 
 - **2026-07-10c** — a trailing-backslash inline-link destination drops the section (`[t](foo\)bar)` → `(\details)`; `double_escape_md` makes `\)` a literal `\`+`)`, so cmark's dest is `foo\` and `\href{foo\}{t}` is `rdComplete`-incomplete → drop; projector-only, CST keeps the wider span; `body_has_dropping_href`/`md_href_dest_drops` gate into `section_rd_complete`'s md arm before the atom scan, counting the pre-closer backslash run — odd `r` drops, even keeps; recurses into emphasis/brace-group/list-item/display). Curated `md_link_dest_backslash_drop`, fixture, unit, baseline +1. 416→417.
 - **2026-07-10b** — an invalid inline `(…)` destination is not a link (`valid_inline_dest_content` + `inline_dest_span` replace raw `scan_balanced(…,'(',')')` at all four carve sites; a bare dest runs to the first ASCII whitespace, `<…>` may hold spaces, an optional `"…"`/`'…'`/`(…)` title after ws; the bare-`]` closer arm relaxed to still close on an *invalid* `(` so the shortcut pairs; projector + formatter unchanged). Curated `md_link_invalid_dest`, fixture `roxygen_md_link_invalid_dest`, unit `invalid_inline_dest_falls_back_to_shortcut`. 415→416.
