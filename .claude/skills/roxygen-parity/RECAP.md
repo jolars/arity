@@ -999,44 +999,39 @@ Images 11, …). Tasks: `task roxygen-projector` (the gate),
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-10f) — adopt the WHOLE CommonMark spec as measured backlog
+## Latest session (2026-07-10g) — fenced code block body: one VERB per line, empty body no child
 
-Switched the spec corpus from an emphasis-only slice (132 `cm-NNN`) to the **entire spec at once** (655
-examples), adopting panache's `commonmark`/`pandoc` conformance model: a measured backlog with a
-per-section burndown, an allowlist floor, and a `blocked` bucket. The section-by-section approach was
-hiding a huge latent pass rate — **just measuring** what already worked jumped the projector from
-**420→808 matching** (+388, all ratcheted into the allowlist), 153 divergent. Per-section coverage now
-visible (`ROXYGEN_PROJECTOR.md`): Autolinks 19/19, Emphasis 132/132, Indented code 12/12, HTML blocks
-43/46, Links 72/90, Code spans 19/22, …; biggest gaps Fenced code blocks (7/29), Links (18), List items
-(18). This is the "a fix drops many cases / the report makes the gap visible" property the user wanted.
+Projector-only fix, biggest-lever section. `serialize_md_code_block` (project_rd.rs) glued the whole
+fenced code body into a **single** `(\preformatted (VERB "aaa\n~~~\n"))`, but parse_Rd splits a
+`\preformatted` body into **one `VERB` leaf per source line** (each carrying its `\n`), and an **empty**
+body yields **no child** (`(\preformatted)`, not `(\preformatted (VERB ""))`). The indented-code path
+already did this (`verb_atoms` + empty guard); the fenced path just wasn't mirroring it. One edit:
+replace `format!("(\\preformatted (VERB {}))", encode_text(&code))` with `verb_atoms(&code)` +
+`(\preformatted)`-on-empty. No parser/lexer/CST change (the code-block body was already threaded
+correctly; only its *rendering* was wrong), so losslessness/idempotence untouched and no format-baseline
+churn. Closed **10** cases in one shot: per-line split (cm-119, cm-122, cm-129, cm-131, cm-132, cm-133,
+cm-142) + empty-body (cm-126, cm-130, cm-144), each the case's **only** divergence.
 
-**Build + gate changes.** `build-commonmark-corpus.R` gained an `ALL` sentinel (every example-bearing
-section) and emits a `section` field, tracked at the top level so example-content headings never leak in
-(`task roxygen-spec-corpus` now mints `commonmark-spec.jsonl` + `-sections.jsonl`, the emphasis files
-removed). `roxygen_projector.rs`: `HarvestInput` gained `section`; `Report` gained a `group` (spec
-section, or `curated`/`harvested`); the report writes a **Coverage by section** table (sorted by biggest
-remaining gap) + a section-grouped backlog; a new `roxygen-projector-blocked.txt` (read like the
-allowlist, inline `# reason`) is excluded from the backlog and asserted disjoint from the allowlist
-(empty for now — the fresh spec backlog is almost all reachable parser work).
+**Result:** projector **818 matching** (all 818 allowlisted, 0 regressions), **143 divergent**, 0 blocked,
+of 961 pinned. **Fenced code blocks 7→17/29** (12 remaining). `cargo test` green, clippy + fmt clean.
+Two projector unit tests (`fenced_code_block_body_is_one_verb_per_line`,
+`empty_fenced_code_block_has_no_verb_child`) lock it; the 10 cm slugs ratcheted into the allowlist. No
+new curated fixture (projector-only rendering fix on an existing arm — the spec pins are the lock).
 
-**Surfaced + fixed a real lexer bug (the corpus's first payoff).** The broad corpus panicked the R
-lexer: its two-/three-char operator lookahead sliced `&input[i..i+2/3]` **inside a multibyte UTF-8 char**
-(a U+00A0 non-breaking space in 4 spec examples). Fixed with byte-safe `two_bytes`/`three_bytes` helpers
-(16 sites), and the unknown-char catch-all — which emitted `bytes[i] as char` per byte, Latin-1-mangling
-a nbsp into `Â`+nbsp and leaving `i` mid-char — now reads the whole UTF-8 char and advances by its width
-(lossless). Committed **separately** as `fix(parser)` with a lexer unit test (`lexes_multibyte_char_before_two_char_operator_without_panicking`).
-
-**Result:** projector **808 matching** (all 808 allowlisted, 0 regressions), 153 divergent, 0 blocked, of
-961 pinned. `cargo test` green, clippy + fmt clean. The 153 divergent are the parser-growth backlog,
-now navigable by section — that is the next-target menu (biggest levers: Fenced code blocks, Links,
-List items).
-
-**Ranked next target:** pick the **biggest-lever section** from the burndown — **Fenced code blocks**
-(7/29, 22 remaining) or **Links** (72/90, 18) or **List items** (30/48, 18) — and close a construct
-cluster, ratcheting the section toward 100%. The old image-title / space-paren-URL picks (2026-07-10e)
-remain, now visible as specific `cm-NNN` divergences in Images (11/22). The harvested 18 stay out-of-scope.
+**Ranked next target:** finish **Fenced code blocks** (17/29, 12 left) — the remaining cases split into
+two clusters that are *parser*, not projector, work: **(1) tilde `~~~` fences** — `scan_md_fence`
+(roxygen/lex.rs) only recognizes backtick runs, so `~~~` blocks lex as prose (cm-120, cm-123, cm-125,
+cm-139, cm-146); add `~`-fence support (mind info-string rules differ: a `~` info string may contain
+backticks). **(2) closer matching** — `finish_md_code_block` (roxygen/build.rs) treats *any* `RoxygenMdFence`
+leaf as a closer, but CommonMark requires **same fence char, length ≥ opener, no info, ≤3-space indent**;
+a non-matching fence line is *content* (cm-124, cm-127, cm-137, cm-147). These two together also unlock
+the tilde cases that need both. Then **Links** (72/90) and **List items** (30/48) are the next big levers.
+Harvested 18 stay out-of-scope. (cm-128 block-quote-fence, cm-141 setext/`~~~`, cm-143 `%`-in-info-drop
+are one-offs, defer.)
 
 ## Earlier sessions
+
+- **2026-07-10f** — adopt the WHOLE CommonMark spec (655 `cm-NNN`) as a measured backlog (panache's conformance model: per-section burndown + allowlist floor + `blocked` bucket); `build-commonmark-corpus.R` `ALL` sentinel + `section` field, `roxygen_projector.rs` groups by section and writes a Coverage table; just *measuring* jumped the projector 420→808 matching (+388 latent), 153 divergent. Surfaced + separately fixed a real UTF-8 lexer panic (two/three-char operator lookahead slicing mid-char on U+00A0). 808 matching, 0 blocked.
 
 - **2026-07-10e** — user-defined image reference override (`![alt][ref]`/`![alt]` whose label has a user `[label]: url` def resolves to that URL, not synthesized `R:label`; projector-only `apply_user_linkrefs` arm rewrites the image to inline `![alt](url)` so `resolve_md_image`/`figure_atom` render it, image-format wrapping for free; undefined label unchanged). Curated `md_image_user_def`, fixture, unit, baseline +1, fixed-point 155/155. 419→420. (Superseded numerically by the whole-spec adoption above.)
 

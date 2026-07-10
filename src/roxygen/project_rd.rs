@@ -5232,13 +5232,22 @@ fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
     } else {
         format!("sourceCode {info}")
     };
+    // parse_Rd splits a `\preformatted` body into one `VERB` leaf per line (each
+    // carrying its trailing `\n`), and an empty body yields no child at all — the
+    // same treatment as an indented code block (`serialize_md_indented_code`).
+    let body = verb_atoms(&code);
+    let preformatted = if body.is_empty() {
+        "(\\preformatted)".to_string()
+    } else {
+        format!("(\\preformatted {})", body.join(" "))
+    };
     let html = encode_text("html");
     vec![
         format!(
             "(\\if (TEXT {html}) (\\out (VERB {})))",
             encode_text(&format!("<div class=\"{class}\">"))
         ),
-        format!("(\\preformatted (VERB {}))", encode_text(&code)),
+        preformatted,
         format!(
             "(\\if (TEXT {html}) (\\out (VERB {})))",
             encode_text("</div>")
@@ -8298,6 +8307,35 @@ mod tests {
                  (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) \
                  (\\preformatted (VERB \"code\\n\")) \
                  (\\if (TEXT \"html\") (\\out (VERB \"</div>\"))) (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn fenced_code_block_body_is_one_verb_per_line() {
+        // parse_Rd splits a `\preformatted` body into one `VERB` leaf per source
+        // line (each carrying its trailing `\n`), never one glued atom.
+        let src = "#' @md\n#' @title T\n#' @details\n#' ```\n#' aaa\n#' bbb\n#' ```\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\preformatted (VERB \"aaa\\n\") (VERB \"bbb\\n\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn empty_fenced_code_block_has_no_verb_child() {
+        // An empty fenced code block yields a childless `\preformatted` (parse_Rd
+        // emits no `VERB` leaf for an empty body).
+        let src = "#' @md\n#' @title T\n#' @details\n#' ```\n#' ```\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) \
+                 (\\preformatted) \
+                 (\\if (TEXT \"html\") (\\out (VERB \"</div>\")))"
             ),
             "got: {}",
             project_to_rd(src)
