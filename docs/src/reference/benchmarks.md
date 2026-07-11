@@ -3,10 +3,10 @@
 Wall-clock speed of `arity` against other R tooling, measured with [hyperfine].
 Two operations are covered:
 
-- the **formatter**, compared against
-  [`air`](https://github.com/posit-dev/air) (with
-  [`styler`](https://styler.r-lib.org/) available opt-in);
-- the **linter**, compared against [`jarl`](https://github.com/etiennebacher/jarl).
+- the **formatter**, compared against [`air`](https://github.com/posit-dev/air)
+  (with [`styler`](https://styler.r-lib.org/) available opt-in);
+- the **linter**, compared against
+  [`jarl`](https://github.com/etiennebacher/jarl).
 
 Each operation is measured at two scopes: **single files** (synthetic corpus
 tiers) and a whole **project** (a real R package). `arity` is the baseline in
@@ -42,11 +42,11 @@ For projects, each tool walks the package's `R/` source tree in one invocation.
 Formatters run in check mode so nothing is mutated, but the full formatting work
 is still done:
 
-  | Tool     | Invocation                    |
-  | -------- | ----------------------------- |
-  | `arity`  | `arity format --check R/` / `arity lint R/` |
-  | `air`    | `air format --check R/`       |
-  | `jarl`   | `jarl check R/`               |
+  | Tool    | Invocation                                  |
+  | ------- | ------------------------------------------- |
+  | `arity` | `arity format --check R/` / `arity lint R/` |
+  | `air`   | `air format --check R/`                     |
+  | `jarl`  | `jarl check R/`                             |
 
 `arity` is the baseline; every other tool's time is reported relative to it.
 Comparison tools absent from the machine are skipped, so a run without `jarl`
@@ -71,8 +71,9 @@ rough scaling, not to model a real workload.
 
 **Projects** use a real R package (the [`tidyr`](https://tidyr.tidyverse.org/)
 source tree by default), cloned once at a pinned tag into a local cache. Point
-the benchmark at your own checkout with `ARITY_BENCH_PROJECT=/path/to/pkg task
-bench`; only its `R/` directory is measured.
+the benchmark at your own checkout with
+`ARITY_BENCH_PROJECT=/path/to/pkg task bench`; only its `R/` directory is
+measured.
 
 ## Setup
 
