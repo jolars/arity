@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 
 use smol_str::SmolStr;
 
-use crate::rindex::schema::{IndexMeta, PackageIndex, SCHEMA_VERSION};
+use rayon::prelude::*;
+
+use crate::rindex::schema::{IndexMeta, PackageExports, PackageIndex, SCHEMA_VERSION};
 
 #[derive(Debug)]
 pub enum CacheError {
@@ -116,6 +118,15 @@ impl Cache {
         (idx.schema_version == SCHEMA_VERSION).then_some(idx)
     }
 
+    /// Read only the export-membership view of a package index (see
+    /// [`PackageExports`]): same file, same staleness rule, but the rich
+    /// payload (formals + help) is skipped during deserialization.
+    pub fn read_package_exports(&self, package: &str, version: &str) -> Option<PackageExports> {
+        let bytes = std::fs::read(self.package_path(package, version)).ok()?;
+        let idx = serde_json::from_slice::<PackageExports>(&bytes).ok()?;
+        (idx.schema_version == SCHEMA_VERSION).then_some(idx)
+    }
+
     /// Write a single package index file (`pkg@ver.json`) **without** touching
     /// `meta.json`. Safe to call concurrently for distinct packages: each writes
     /// its own path (via a uniquely-named temp file), and the only shared
@@ -152,12 +163,27 @@ impl Cache {
         self.record_indexed(&[(idx.package.clone(), idx.version.clone())])
     }
 
-    /// Load every package index currently named by `meta.json`.
+    /// Load every package index currently named by `meta.json`. Reads and
+    /// deserializes packages in parallel: the files are independent and the
+    /// big ones (base, stats) dominate a sequential load.
     pub fn load_all(&self) -> Vec<PackageIndex> {
         let meta = self.read_meta();
-        meta.packages
-            .iter()
+        let entries: Vec<_> = meta.packages.iter().collect();
+        entries
+            .par_iter()
             .filter_map(|(pkg, ver)| self.read_package(pkg, ver))
+            .collect()
+    }
+
+    /// Load the export-membership view of every package named by `meta.json`,
+    /// in parallel. The cheap counterpart of [`load_all`] for consumers that
+    /// never touch the rich per-symbol data (the lint CLI).
+    pub fn load_all_exports(&self) -> Vec<PackageExports> {
+        let meta = self.read_meta();
+        let entries: Vec<_> = meta.packages.iter().collect();
+        entries
+            .par_iter()
+            .filter_map(|(pkg, ver)| self.read_package_exports(pkg, ver))
             .collect()
     }
 
@@ -247,6 +273,34 @@ mod tests {
         assert_eq!(all[0].version, "2.0");
         // The stale file is still readable directly but not loaded by load_all.
         assert!(cache.read_package("pkg", "1.0").is_some());
+    }
+
+    #[test]
+    fn load_all_exports_follows_meta_and_schema() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        cache.write_package(&sample("magrittr", "2.0.4")).unwrap();
+        cache.write_package(&sample("pkg", "1.0")).unwrap();
+        cache.write_package(&sample("pkg", "2.0")).unwrap();
+
+        let mut exports = cache.load_all_exports();
+        exports.sort_by(|a, b| a.package.cmp(&b.package));
+        // Meta names one version per package; the stale pkg@1.0 is not loaded.
+        assert_eq!(exports.len(), 2);
+        assert_eq!(exports[0].package, "magrittr");
+        assert_eq!(exports[1].package, "pkg");
+        assert_eq!(exports[1].version, "2.0");
+        assert_eq!(exports[0].symbols.len(), 1);
+        assert_eq!(exports[0].symbols[0].name, "foo");
+        assert!(exports[0].symbols[0].exported);
+
+        // A schema-version mismatch means "treat as absent", same as the full read.
+        let mut stale = sample("old", "0.1");
+        stale.schema_version = SCHEMA_VERSION + 1;
+        // Write the file directly (write_package would stamp meta with it too,
+        // which is exactly what a future-schema writer would do).
+        cache.write_package(&stale).unwrap();
+        assert!(cache.read_package_exports("old", "0.1").is_none());
     }
 
     #[test]

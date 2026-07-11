@@ -79,6 +79,27 @@ pub struct Formal {
     pub default: Option<String>,
 }
 
+/// Names-only projection of a [`PackageIndex`], deserialized from the same
+/// `{pkg}@{ver}.json` file. For consumers that need export *membership* but
+/// none of the rich payload (linting: `resolve_origin`/`package_indexed`),
+/// deserializing this instead of [`PackageIndex`] skips the formals and help
+/// bodies — the bulk of the file — without a schema change.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PackageExports {
+    /// Must equal [`SCHEMA_VERSION`]; a mismatch means "treat as absent".
+    pub schema_version: u32,
+    pub package: SmolStr,
+    pub version: SmolStr,
+    pub symbols: Vec<ExportEntry>,
+}
+
+/// The membership fields of a [`SymbolEntry`]; everything else is skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ExportEntry {
+    pub name: SmolStr,
+    pub exported: bool,
+}
+
 /// Rendered help for a symbol.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct HelpDoc {

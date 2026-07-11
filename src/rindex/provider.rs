@@ -157,6 +157,34 @@ impl IndexedProvider {
         Self::from_indices(cache.load_all())
     }
 
+    /// Load only export *membership* from the cache: `has_package` and the
+    /// `exports` tests behave exactly as after [`from_cache`], but the rich
+    /// per-symbol data is never deserialized, so [`lookup`](Self::lookup) and
+    /// [`package`](Self::package) return `None`. This is the lint CLI's load:
+    /// resolution (`resolve_origin`/`package_indexed`) only asks membership
+    /// questions, and skipping the formals + help bodies makes loading a large
+    /// harvested cache cheap. Consumers of the rich data (LSP hover and
+    /// completion) must use [`from_cache`].
+    pub fn from_cache_exports(cache: &Cache) -> Self {
+        let pkg_exports = cache
+            .load_all_exports()
+            .into_iter()
+            .map(|exp| {
+                let names: HashSet<SmolStr> = exp
+                    .symbols
+                    .into_iter()
+                    .filter(|s| s.exported)
+                    .map(|s| s.name)
+                    .collect();
+                (exp.package, names)
+            })
+            .collect();
+        IndexedProvider {
+            pkg_exports,
+            indices: HashMap::new(),
+        }
+    }
+
     /// True if this provider has an index for `package`.
     pub fn has_package(&self, package: &str) -> bool {
         self.pkg_exports.contains_key(package)
@@ -447,6 +475,49 @@ mod tests {
             p.origin("not_a_real_export_xyz", &[loaded("tidyverse")]),
             PackageOrigin::Unknown
         );
+    }
+
+    #[test]
+    fn exports_only_load_matches_full_load_membership() {
+        use crate::rindex::cache::Cache;
+        use crate::rindex::schema::{Formal, HelpDoc};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let mut idx = pkg("dplyr", &["filter", "across"]);
+        // Rich payload on one symbol, plus an unexported internal.
+        idx.symbols[0].formals = Some(vec![Formal {
+            name: SmolStr::new(".data"),
+            default: None,
+        }]);
+        idx.symbols[0].help = Some(HelpDoc {
+            title: Some("Keep rows".to_string()),
+            ..Default::default()
+        });
+        idx.symbols.push(SymbolEntry {
+            name: SmolStr::new("internal_helper"),
+            kind: SymbolKind::Function,
+            exported: false,
+            formals: None,
+            help: None,
+        });
+        cache.write_package(&idx).unwrap();
+
+        let full = IndexedProvider::from_cache(&cache);
+        let lean = IndexedProvider::from_cache_exports(&cache);
+
+        // Membership semantics are identical to the full load...
+        assert!(lean.has_package("dplyr"));
+        for name in ["filter", "across", "internal_helper", "nope"] {
+            assert_eq!(
+                lean.exports("dplyr", name),
+                full.exports("dplyr", name),
+                "membership diverged for {name}"
+            );
+        }
+        // ...but the rich per-symbol data is deliberately not loaded.
+        assert!(lean.lookup("dplyr", "filter").is_none());
+        assert!(lean.package("dplyr").is_none());
     }
 
     #[test]
