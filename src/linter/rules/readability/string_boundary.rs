@@ -145,12 +145,11 @@ fn classify(token: &SyntaxToken) -> Option<(&'static str, String)> {
             return None;
         }
         ("startsWith", rest)
-    } else if let Some(rest) = inner.strip_suffix('$') {
+    } else {
         // Reached only when `inner` does not start with `^`, so this is a lone
         // trailing anchor.
+        let rest = inner.strip_suffix('$')?;
         ("endsWith", rest)
-    } else {
-        return None;
     };
     if rest.is_empty() || !matchers::is_plain_regex_literal(rest) {
         return None;
