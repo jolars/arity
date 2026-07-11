@@ -35,6 +35,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`crossprod`](rules/crossprod.md)
 - [`lengths`](rules/lengths.md)
 - [`nzchar`](rules/nzchar.md)
+- [`seq`](rules/seq.md)
 - [`fixed-regex`](rules/fixed-regex.md)
 
 ## Documentation

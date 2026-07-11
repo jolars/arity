@@ -6,6 +6,7 @@ mod crossprod;
 mod fixed_regex;
 mod lengths;
 mod nzchar;
+mod seq;
 
 pub use any_duplicated::AnyDuplicated;
 pub use any_is_na::AnyIsNa;
@@ -13,3 +14,4 @@ pub use crossprod::Crossprod;
 pub use fixed_regex::FixedRegex;
 pub use lengths::Lengths;
 pub use nzchar::Nzchar;
+pub use seq::Seq;

@@ -2219,6 +2219,96 @@ fn nzchar_withholds_fix_for_dropped_comment() {
 }
 
 #[test]
+fn seq_rewrites_colon_length_to_seq_along() {
+    assert_eq!(
+        fixed_output("for (i in 1:length(x)) print(i)\n", "seq"),
+        "for (i in seq_along(x)) print(i)\n"
+    );
+    // The argument is preserved verbatim, whatever its shape; `1L` counts too.
+    assert_eq!(
+        fixed_output("idx <- 1:length(df$col)\n", "seq"),
+        "idx <- seq_along(df$col)\n"
+    );
+    assert_eq!(
+        fixed_output("idx <- 1L:length(x)\n", "seq"),
+        "idx <- seq_along(x)\n"
+    );
+}
+
+#[test]
+fn seq_rewrites_colon_ident_to_seq_len() {
+    assert_eq!(
+        fixed_output("for (i in 1:n) f(i)\n", "seq"),
+        "for (i in seq_len(n)) f(i)\n"
+    );
+}
+
+#[test]
+fn seq_rewrites_dim_calls_to_seq_len() {
+    // `nrow`/`ncol`/`NROW`/`NCOL` share `length`'s zero hazard; the call is
+    // preserved whole inside `seq_len(...)`.
+    assert_eq!(
+        fixed_output("for (i in 1:nrow(df)) f(i)\n", "seq"),
+        "for (i in seq_len(nrow(df))) f(i)\n"
+    );
+    assert_eq!(
+        fixed_output("idx <- 1:NCOL(m)\n", "seq"),
+        "idx <- seq_len(NCOL(m))\n"
+    );
+}
+
+#[test]
+fn seq_ignores_other_shapes() {
+    for src in [
+        "1:10\n",           // literal range — well-defined and clear
+        "2:n\n",            // does not start at 1
+        "n:1\n",            // descending on purpose
+        "-1:n\n",           // parses as `(-1):n` — not a from-1 range
+        "1:(n)\n",          // parenthesized RHS — not the bare shape
+        "1:n^2\n",          // RHS is an expression, not a bare name
+        "1:NA\n",           // special constant, not a length variable
+        "1:foo(x)\n",       // arbitrary call — nothing says it is a length
+        "1:length(x, y)\n", // not the sole-positional-argument shape
+        "seq_along(x)\n",   // already the idiom
+        "x[2:length(x)]\n", // tail slice — `2:` is not the hazard shape
+        "pkg::foo(1:3)\n",  // literal again, inside an argument
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"seq"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn seq_skips_shadowed_length() {
+    // A user redefinition of `length` (or `nrow`, ...) means the range bound is
+    // no longer base R's length, so the rewrite would be wrong.
+    for src in [
+        "length <- function(x) 42\nfor (i in 1:length(x)) f(i)\n",
+        "nrow <- function(x) 2\nidx <- 1:nrow(df)\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"seq"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn seq_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved operand would be dropped by the rewrite,
+    // so the fix is withheld — the finding is still reported.
+    let d = diagnostics("idx <- 1: # note\n  length(x)\n")
+        .into_iter()
+        .find(|d| d.rule == "seq")
+        .expect("expected a seq finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
 fn unreachable_code_flags_after_return_and_stop() {
     // A statement after an unconditional `return()` in a function body can never
     // run; the finding spans it and the (unsafe) fix deletes it.
@@ -2433,6 +2523,10 @@ fn fixed_output_is_parseable_and_clean() {
         // lengths (`sapply(x, length)` → `lengths(x)`)
         "n <- sapply(x, length)\n",
         "n <- sapply(df$col, length)\n",
+        // seq (`1:length(x)` → `seq_along(x)`, `1:n` → `seq_len(n)`)
+        "for (i in 1:length(x)) print(i)\n",
+        "for (i in 1:n) f(i)\n",
+        "idx <- 1:nrow(df)\n",
         // nzchar (`nchar(x) > 0` → `nzchar(x)`; unsafe)
         "flag <- nchar(x) > 0\n",
         "flag <- nchar(x) == 0\n",

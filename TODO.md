@@ -211,8 +211,18 @@ harden against shadowing in Phase 4.
       that binds tighter than `!` (via `matchers::is_safe_splice_context`, the
       now-shared guard `any-duplicated`/`outer-negation` also use); both forms
       are withheld when a comment outside the preserved argument would drop.
-- [ ] `seq`/`seq2` `1:length(x)` -> `seq_along`, `1:n` -> `seq_len`
-      (performance, safe)—off-by-one safety, high value.
+- [x] `seq` `1:length(x)` -> `seq_along(x)`, `1:n` -> `seq_len(n)`
+      (performance, `ns`, safe; landed)—off-by-one safety, high value. Fires
+      on a `:` `BINARY_EXPR` whose LHS is the literal `1`/`1L` and whose RHS is
+      a single-positional-arg `length` call (-> `seq_along(x)`), one of
+      `nrow`/`ncol`/`NROW`/`NCOL` (-> `seq_len(nrow(x))`)—both
+      namespace-confirmed base—or a bare name (-> `seq_len(n)`, excluding
+      special constants and dots). Literal ranges, ranges not starting at `1`,
+      and computed bounds are left alone. The fix is deliberately **safe**
+      despite diverging on zero length: the forms agree wherever the range is
+      well-defined, and the empty-case divergence (`1:0` counts down) is the
+      very bug the rule exists to fix. Withheld when a comment outside the
+      preserved operand would be dropped.
 - [ ] `is-numeric` (correctness, safe); `class-equals` `class(x) == ...` ->
       `inherits` (performance, unsafe—`class()` is a vector).
 - [x] `string-boundary` `grepl("^a", x)` -> `startsWith`, `grepl("a$", x)` ->
