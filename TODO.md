@@ -62,7 +62,7 @@ the linter's.
 formatter's. Public rule IDs stay flat kebab-case (category is a directory
 concern, as `all_rule_ids()` already is).
 
-#### Phase 0—Infrastructure (unblocks everything)
+### Phase 0—Infrastructure (unblocks everything)
 
 - [x] **§I0 Single-walk dispatch** (landed). Rules declare interest via
       `Rule::interests() -> &[SyntaxKind]` and receive `Rule::check(element, ctx,
@@ -112,7 +112,7 @@ concern, as `all_rule_ids()` already is).
       worth an offset->ident index yet. If it ever becomes hot, resolve via the
       covering element at the callee offset instead of scanning.
 
-#### Phase 1—High-signal, purely syntactic, safe fixes (`syn`)
+### Phase 1—High-signal, purely syntactic, safe fixes (`syn`)
 
 Match a call/operator shape with deterministic fixes. Match bare names for now;
 harden against shadowing in Phase 4.
@@ -159,7 +159,7 @@ harden against shadowing in Phase 4.
 - [ ] `implicit-assignment` (suspicious, none)—scope to avoid overlap with
       existing `assignment-in-condition`.
 
-#### Phase 2—Call-rewrite idioms, namespace-confirmed (`ns`)
+### Phase 2—Call-rewrite idioms, namespace-confirmed (`ns`)
 
 - [ ] **§I2 regex/string-literal helper** first: read a `STRING` token's
       unquoted contents; classify regex metachars/single anchor (`^`/`$`).
@@ -213,7 +213,7 @@ harden against shadowing in Phase 4.
 - [ ] `internal-function` `pkg:::fn` via
       `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.
 
-#### Phase 3—SemanticModel rules + config plumbing
+### Phase 3—SemanticModel rules + config plumbing
 
 - [ ] **§I4 per-rule config**: add a `[lint.rules.<id>]` TOML table + typed
       per-rule struct in `src/config.rs`, threaded into rules via a
@@ -237,7 +237,7 @@ harden against shadowing in Phase 4.
 - [ ] `undesirable-function` (suspicious, ns + config, none)—needs §I4;
       **default-off**. `download-file` (correctness, ns, none)—low priority.
 
-#### Phase 4—Meta (suppression) rules + hardening
+### Phase 4—Meta (suppression) rules + hardening
 
 - [ ] **§I6 suppression refactor**: have `SuppressionMap` expose the parsed
       directive list (rule, range, has-reason, raw) and surface it on
@@ -253,7 +253,7 @@ harden against shadowing in Phase 4.
       rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
       user-redefined. (`true-false-symbol` already shipped shadow-checked.)
 
-#### Phase 5—Package-aware rules
+### Phase 5—Package-aware rules
 
 Gated on the package being attached (`model.loaded_packages()`).
 
@@ -265,7 +265,7 @@ Gated on the package being attached (`model.loaded_packages()`).
       `dplyr-group-by-ungroup`—needs **§I8 pipe-chain abstraction**
       (`%>%`/`|>` stage walk) that doesn't exist yet.
 
-#### Documentation rules (roxygen2), `documentation/`
+### Documentation rules (roxygen2), `documentation/`
 
 Lint the roxygen2 blocks the parser now models. All `syn`, no fixes (adding a
 tag/title means inventing prose; deleting one drops prose the author wrote).
