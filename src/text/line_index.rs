@@ -86,6 +86,16 @@ impl<'a> LineIndex<'a> {
         self.line_starts.len()
     }
 
+    /// Byte offset of the start of the 0-indexed `line`. A line past the end
+    /// clamps to the buffer end, so `line_start(n)..line_start(n + 1)` is
+    /// always a valid slice range covering line `n` (including its newline).
+    pub fn line_start(&self, line: usize) -> usize {
+        self.line_starts
+            .get(line)
+            .copied()
+            .unwrap_or(self.text.len())
+    }
+
     fn line_index_for(&self, offset: usize) -> usize {
         match self.line_starts.binary_search(&offset) {
             Ok(idx) => idx,
@@ -155,6 +165,15 @@ mod tests {
     fn trailing_newline() {
         let idx = LineIndex::new("ab\n");
         assert_eq!(idx.byte_to_lc(3), LineCol { line: 2, column: 1 });
+    }
+
+    #[test]
+    fn line_start_clamps_past_the_end() {
+        let idx = LineIndex::new("ab\ncd");
+        assert_eq!(idx.line_start(0), 0);
+        assert_eq!(idx.line_start(1), 3);
+        assert_eq!(idx.line_start(2), 5);
+        assert_eq!(idx.line_start(99), 5);
     }
 
     #[test]
