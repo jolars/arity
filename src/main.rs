@@ -18,6 +18,13 @@ use clap::Parser;
 use similar::{ChangeTag, TextDiff};
 use std::io::IsTerminal;
 
+/// Parsing, formatting, and the parallel lint passes are allocation-heavy;
+/// glibc malloc serializes badly under rayon (30%+ of profile samples in
+/// malloc/free on a project lint). mimalloc's per-thread heaps remove that
+/// contention.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Autofix selection for `lint --fix`.
 #[derive(Debug, Clone, Copy)]
 struct FixOptions {
