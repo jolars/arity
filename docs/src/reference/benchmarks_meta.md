@@ -1,5 +1,6 @@
 - **arity**: `0.11.0`
 - **air**: `0.10.0`
+- **jarl**: `0.5.0`
 - **backend**: hyperfine (min runs: 3)
 - **host**: linux/x86_64, Intel(R) Core(TM) Ultra 7 155U
-- **generated**: 2026-07-10T00:58:49Z
+- **generated**: 2026-07-11T01:11:34Z

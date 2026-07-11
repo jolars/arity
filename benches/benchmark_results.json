@@ -1,23 +1,82 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "meta": {
-    "generated_at": "2026-07-10T00:58:49Z",
+    "generated_at": "2026-07-11T01:11:34Z",
     "host": {"os": "linux", "arch": "x86_64", "cpu": "Intel(R) Core(TM) Ultra 7 155U"},
     "backend": "hyperfine",
     "min_runs": 3,
     "tools": {
       "arity": {"version": "0.11.0"},
-      "air": {"version": "0.10.0"}
+      "air": {"version": "0.10.0"},
+      "jarl": {"version": "0.5.0"}
     }
   },
-  "documents": [
-    {"id":"small","name":"small","file":"corpus_small.R","size_bytes":123094,"lines":8498,"iterations":50},
-    {"id":"large","name":"large","file":"corpus_large.R","size_bytes":1477128,"lines":101976,"iterations":5}
-  ],
-  "results": [
-    {"document":"small","formatter":"arity","mean_ms":25.0912,"stddev_ms":1.6294,"min_ms":21.0695,"max_ms":32.0858,"runs":104},
-    {"document":"small","formatter":"air","mean_ms":31.6320,"stddev_ms":2.1308,"min_ms":28.2261,"max_ms":41.2459,"runs":90},
-    {"document":"large","formatter":"arity","mean_ms":761.7270,"stddev_ms":50.2538,"min_ms":713.3926,"max_ms":815.4131,"runs":4},
-    {"document":"large","formatter":"air","mean_ms":368.2495,"stddev_ms":12.4938,"min_ms":359.3317,"max_ms":393.7535,"runs":8}
+  "sections": [
+    {
+      "id":"formatter",
+      "title":"Formatter",
+      "charts":[
+        {
+          "id":"formatter-files",
+          "title":"Single files",
+          "caption":"Formatting speed on single files relative to arity, one dot per synthetic corpus tier. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.",
+          "documents":[
+            {"id":"small","name":"small","size_bytes":123094,"lines":8498},
+            {"id":"large","name":"large","size_bytes":1477128,"lines":101976}
+          ],
+          "results":[
+            {"document":"small","tool":"arity","mean_ms":32.0396,"stddev_ms":4.4454,"min_ms":24.9245,"max_ms":44.8228},
+            {"document":"small","tool":"air","mean_ms":48.1975,"stddev_ms":9.6100,"min_ms":30.7659,"max_ms":73.3525},
+            {"document":"large","tool":"arity","mean_ms":1496.6197,"stddev_ms":403.0458,"min_ms":1036.8584,"max_ms":1789.0344},
+            {"document":"large","tool":"air","mean_ms":500.2822,"stddev_ms":62.1606,"min_ms":414.6125,"max_ms":591.5527}
+          ]
+        },
+        {
+          "id":"formatter-projects",
+          "title":"Projects",
+          "caption":"Formatting speed on a real R package (the tidyr source tree) relative to arity, on the same log-ratio axis.",
+          "documents":[
+            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
+          ],
+          "results":[
+            {"document":"tidyr","tool":"arity","mean_ms":47.5794,"stddev_ms":5.5011,"min_ms":39.5130,"max_ms":65.5785},
+            {"document":"tidyr","tool":"air","mean_ms":55.2943,"stddev_ms":4.8034,"min_ms":47.7175,"max_ms":63.6572}
+          ]
+        }
+      ]
+    },
+    {
+      "id":"linter",
+      "title":"Linter",
+      "charts":[
+        {
+          "id":"linter-files",
+          "title":"Single files",
+          "caption":"Linting speed on single files relative to arity, one dot per synthetic corpus tier, on the same log-ratio axis as the formatter charts.",
+          "documents":[
+            {"id":"small","name":"small","size_bytes":123094,"lines":8498},
+            {"id":"large","name":"large","size_bytes":1477128,"lines":101976}
+          ],
+          "results":[
+            {"document":"small","tool":"arity","mean_ms":650.1199,"stddev_ms":45.7249,"min_ms":585.1538,"max_ms":686.1183},
+            {"document":"small","tool":"jarl","mean_ms":39.2111,"stddev_ms":4.5893,"min_ms":32.7493,"max_ms":48.4486},
+            {"document":"large","tool":"arity","mean_ms":88268.1460,"stddev_ms":3247.7992,"min_ms":84522.2220,"max_ms":90296.7985},
+            {"document":"large","tool":"jarl","mean_ms":540.0730,"stddev_ms":33.4740,"min_ms":507.9284,"max_ms":595.3187}
+          ]
+        },
+        {
+          "id":"linter-projects",
+          "title":"Projects",
+          "caption":"Linting speed on a real R package (the tidyr source tree) relative to arity, on the same log-ratio axis.",
+          "documents":[
+            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
+          ],
+          "results":[
+            {"document":"tidyr","tool":"arity","mean_ms":80.5273,"stddev_ms":8.5004,"min_ms":68.5035,"max_ms":97.1317},
+            {"document":"tidyr","tool":"jarl","mean_ms":20.4900,"stddev_ms":2.1116,"min_ms":16.9229,"max_ms":27.4366}
+          ]
+        }
+      ]
+    }
   ]
 }

@@ -7,9 +7,10 @@
 // and loaded before this file via book.toml's `additional-js`, so nothing is
 // fetched at view time.
 //
-// Chart: x = formatter, y = time relative to arity (log scale, baseline = 1),
-// color = document (corpus tier), one dot per (document, formatter), with a
-// hover tooltip.
+// Chart: x = tool, y = time relative to arity (log scale, baseline = 1),
+// color = document (corpus tier or project), one dot per (document, tool), with
+// a hover tooltip. One such chart per (operation, scope): formatter/linter x
+// single-files/projects.
 (function () {
   "use strict";
 
@@ -19,8 +20,8 @@
     return c.contains("coal") || c.contains("navy") || c.contains("ayu");
   }
 
-  // Unique values in first-appearance (corpus / results) order, so the axis and
-  // legend read arity -> air -> styler rather than alphabetized.
+  // Unique values in first-appearance (results) order, so the axis and legend
+  // read arity -> comparison tool rather than alphabetized.
   function orderedUnique(rows, key) {
     var seen = Object.create(null);
     var out = [];
@@ -37,14 +38,14 @@
     var dark = isDark();
     var fg = dark ? "#c8c9db" : "#333333";
     var grid = dark ? "#3b3f5c" : "#dddddd";
-    var formatters = orderedUnique(points, "formatter");
+    var tools = orderedUnique(points, "tool");
     var documents = orderedUnique(points, "document");
 
     return {
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
       description:
-        "Dot plot of formatting speed relative to arity. Each dot is one " +
-        "corpus tier formatted by one tool; the vertical axis is mean time as a " +
+        "Dot plot of speed relative to arity. Each dot is one input " +
+        "processed by one tool; the vertical axis is mean time as a " +
         "ratio to arity on a log scale, with arity on a dashed baseline " +
         "at 1, faster tools below and slower tools above. See the data table " +
         "for the underlying numbers.",
@@ -61,10 +62,10 @@
           mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
           encoding: {
             x: {
-              field: "formatter",
+              field: "tool",
               type: "nominal",
-              title: "Formatter",
-              sort: formatters,
+              title: "Tool",
+              sort: tools,
               axis: { labelAngle: 0 },
             },
             // Dodge dots of different documents so same-ratio points (all the
@@ -80,12 +81,12 @@
             color: {
               field: "document",
               type: "nominal",
-              title: "Corpus tier",
+              title: "Input",
               sort: documents,
             },
             tooltip: [
-              { field: "document", title: "Corpus tier" },
-              { field: "formatter", title: "Formatter" },
+              { field: "document", title: "Input" },
+              { field: "tool", title: "Tool" },
               { field: "mean_ms", title: "Mean (ms)", format: ".3f" },
               { field: "ratio_label", title: "Relative" },
               { field: "min_ms", title: "Min (ms)", format: ".3f" },

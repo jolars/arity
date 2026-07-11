@@ -4,34 +4,39 @@
 //! generator (`examples/docgen.rs`, which writes the generated partials into
 //! the mdBook source tree) and its test (`tests/benchmarks_docs.rs`). It reads
 //! the machine-readable `benches/benchmark_results.json` produced by
-//! `scripts/bench-format.sh` and renders two Markdown partials:
+//! `scripts/bench.sh` and renders two Markdown partials:
 //!
 //! - a **meta** bullet list (tool versions, timing backend, host, run date);
-//! - a **results** block: an interactive Vega-Lite dot plot (driven by
-//!   `docs/theme/bench-charts.js`) plus a collapsed HTML fallback table.
+//! - a **body**: one `###` section per benchmarked operation (formatter,
+//!   linter), each holding one `####` chart per scope (single files, projects).
+//!   Every chart is an interactive Vega-Lite dot plot (driven by
+//!   `docs/theme/bench-charts.js`) plus a collapsed HTML fallback table. The
+//!   page includes it under a `## Results` heading, so sections nest as `###`.
 //!
-//! The renderer is deliberately **tool-generic**: it treats `arity` as the
-//! baseline and every other formatter as a comparison point, deriving the
-//! tool order from the results themselves. Adding a new comparison tool (e.g.
-//! `styler`) to the benchmark artifact therefore needs no change here.
+//! The renderer is deliberately **tool-generic**: within each chart it treats
+//! `arity` as the baseline and every other tool as a comparison point, deriving
+//! the tool order from the results themselves. Adding a new comparison tool
+//! (e.g. `styler`, `jarl`) to the benchmark artifact therefore needs no change
+//! here; nor does adding a section or chart.
 
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
-/// The formatter treated as the baseline (ratio `1.0`); every other tool's
-/// timing is reported relative to it. The benchmark script always lists arity
-/// first, so this is also the first tool to appear in the results.
+/// The tool treated as the baseline (ratio `1.0`) within every chart; each
+/// other tool's timing is reported relative to it. The benchmark script always
+/// lists arity first, so this is also the first tool to appear in the results.
 const BASELINE: &str = "arity";
 
 /// The committed benchmark artifact, deserialized straight from
-/// `benches/benchmark_results.json`. See `scripts/bench-format.sh` for the
-/// producer and the schema.
+/// `benches/benchmark_results.json`. See `scripts/bench.sh` for the producer and
+/// the schema.
 #[derive(Deserialize)]
 struct Benchmarks {
     meta: Meta,
-    documents: Vec<Document>,
-    results: Vec<BenchResult>,
+    /// One section per benchmarked operation (formatter, linter), in the order
+    /// they should appear on the page.
+    sections: Vec<Section>,
 }
 
 #[derive(Deserialize)]
@@ -40,8 +45,8 @@ struct Meta {
     host: Host,
     backend: String,
     min_runs: u32,
-    /// Version per tool, keyed by formatter name. Kept as a free-form map so a
-    /// new tool needs no code change; display order comes from `results`.
+    /// Version per tool, keyed by tool name. Kept as a free-form map so a new
+    /// tool needs no code change; display order hoists the baseline first.
     tools: std::collections::BTreeMap<String, Tool>,
 }
 
@@ -57,6 +62,27 @@ struct Tool {
     version: String,
 }
 
+/// One `##` section on the page (e.g. the formatter), holding one chart per
+/// scope.
+#[derive(Deserialize)]
+struct Section {
+    title: String,
+    charts: Vec<Chart>,
+}
+
+/// One `###` chart within a section (e.g. single files, or projects). Each chart
+/// is self-contained: its own documents, its own results, and its own arity
+/// baseline, so ratios never cross charts.
+#[derive(Deserialize)]
+struct Chart {
+    title: String,
+    /// The `<figcaption>` prose (verb differs by operation: "Formatting speed…"
+    /// vs "Linting speed…"), supplied by the producing script.
+    caption: String,
+    documents: Vec<Document>,
+    results: Vec<BenchResult>,
+}
+
 #[derive(Deserialize)]
 struct Document {
     id: String,
@@ -68,20 +94,20 @@ struct Document {
 #[derive(Deserialize)]
 struct BenchResult {
     document: String,
-    formatter: String,
+    tool: String,
     mean_ms: f64,
     stddev_ms: Option<f64>,
     min_ms: Option<f64>,
     max_ms: Option<f64>,
 }
 
-/// One dot in the results chart: a (document, formatter) timing, its ratio to
-/// the arity baseline, and the numbers the tooltip shows. Serialized inline
-/// into the page for `docs/theme/bench-charts.js` to plot with Vega-Lite.
+/// One dot in a chart: a (document, tool) timing, its ratio to the arity
+/// baseline, and the numbers the tooltip shows. Serialized inline into the page
+/// for `docs/theme/bench-charts.js` to plot with Vega-Lite.
 #[derive(Serialize)]
 struct ChartPoint {
     document: String,
-    formatter: String,
+    tool: String,
     mean_ms: f64,
     ratio: f64,
     ratio_label: String,
@@ -90,7 +116,7 @@ struct ChartPoint {
     max_ms: Option<f64>,
 }
 
-/// Render the two benchmark partials `(meta, results)` from the artifact JSON.
+/// Render the two benchmark partials `(meta, body)` from the artifact JSON.
 ///
 /// `json` is the contents of `benches/benchmark_results.json`, or `None` when
 /// the artifact is missing. On a missing or unparseable artifact both partials
@@ -98,7 +124,7 @@ struct ChartPoint {
 /// checkout that has not run `task bench` yet.
 pub fn render_partials(json: Option<&str>) -> (String, String) {
     match json.and_then(|s| serde_json::from_str::<Benchmarks>(s).ok()) {
-        Some(b) => (render_meta(&b.meta), render_results(&b)),
+        Some(b) => (render_meta(&b.meta), render_body(&b)),
         None => {
             let note = "_Benchmark data unavailable \
                         (`benches/benchmark_results.json` missing or unreadable; \
@@ -109,25 +135,12 @@ pub fn render_partials(json: Option<&str>) -> (String, String) {
     }
 }
 
-/// Tools in the order they first appear across `results` (arity first). This is
-/// the display order for the meta list, matching the chart's axis order.
-fn tool_order(results: &[BenchResult]) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut order = Vec::new();
-    for r in results {
-        if seen.insert(r.formatter.clone()) {
-            order.push(r.formatter.clone());
-        }
-    }
-    order
-}
-
 /// A Markdown bullet list of tool versions, timing backend, host, and run date.
 fn render_meta(meta: &Meta) -> String {
     let mut out = String::new();
-    // Order arity-first, then alphabetically. The results-appearance order used
-    // for the chart isn't available from `meta` alone, so hoist the baseline and
-    // fall back to the map's own (sorted) key order for the rest.
+    // Order arity-first, then alphabetically. The per-chart appearance order
+    // isn't available from `meta` alone, so hoist the baseline and fall back to
+    // the map's own (sorted) key order for the rest.
     let mut names: Vec<&String> = meta.tools.keys().collect();
     names.sort_by_key(|n| (*n != BASELINE, (*n).clone()));
     for name in names {
@@ -148,16 +161,44 @@ fn render_meta(meta: &Meta) -> String {
     out
 }
 
-/// The results block: an interactive Vega-Lite dot plot (driven by
-/// `docs/theme/bench-charts.js`, wired via `book.toml`'s `additional-js`) plus
-/// a collapsed HTML table with the same numbers as a no-JS/print fallback.
+/// The page body: one `###` section per operation, each with one `####` chart
+/// per scope. It is included under the page's `## Results` heading, so sections
+/// nest one level below it. A section or chart carrying no results is skipped so
+/// a partial run (e.g. jarl absent) leaves no empty headers.
+fn render_body(b: &Benchmarks) -> String {
+    let mut out = String::new();
+    for section in &b.sections {
+        let charts: Vec<&Chart> = section
+            .charts
+            .iter()
+            .filter(|c| !c.results.is_empty())
+            .collect();
+        if charts.is_empty() {
+            continue;
+        }
+        let _ = writeln!(out, "### {}\n", section.title);
+        for chart in charts {
+            let _ = writeln!(out, "#### {}\n", chart.title);
+            out.push_str(&render_chart(chart));
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        out.push_str("_No benchmark results recorded._\n");
+    }
+    out
+}
+
+/// One chart: an interactive Vega-Lite dot plot (driven by
+/// `docs/theme/bench-charts.js`, wired via `book.toml`'s `additional-js`) plus a
+/// collapsed HTML table with the same numbers as a no-JS/print fallback.
 ///
 /// The chart data rides inline in a `<script type="application/json">`; the JS
-/// plots time-relative-to-arity on a log axis, one dot per (document,
-/// formatter). Kept as raw HTML (not a Markdown pipe table) so the fallback
-/// renders inside `<details>`.
-fn render_results(b: &Benchmarks) -> String {
-    let points = chart_points(b);
+/// plots time-relative-to-arity on a log axis, one dot per (document, tool).
+/// Kept as raw HTML (not a Markdown pipe table) so the fallback renders inside
+/// `<details>`.
+fn render_chart(chart: &Chart) -> String {
+    let points = chart_points(chart);
     let data_json = serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string());
 
     let mut out = String::new();
@@ -170,45 +211,39 @@ fn render_results(b: &Benchmarks) -> String {
     out.push_str("<script type=\"application/json\" class=\"bench-data\">");
     out.push_str(&data_json);
     out.push_str("</script>\n");
-    out.push_str(
-        "<figcaption>Formatting speed relative to <code>arity</code>. Each dot is one \
-         corpus tier formatted by one tool; the vertical position is mean wall-clock time as a \
-         ratio to <code>arity</code> on a log scale, so <code>arity</code> lies on the \
-         dashed baseline at 1, faster tools fall below it and slower tools rise above. Color \
-         distinguishes tiers; hover a dot for the exact millisecond figures.</figcaption>\n",
-    );
+    let _ = writeln!(out, "<figcaption>{}</figcaption>", esc(&chart.caption));
     out.push_str("</figure>\n");
     out.push_str(
         "<noscript>Enable JavaScript for the interactive chart; \
          the data table below has the same numbers.</noscript>\n",
     );
     out.push_str("<details class=\"bench-table\">\n<summary>Data table</summary>\n");
-    out.push_str(&render_results_tables_html(b));
+    out.push_str(&render_chart_tables_html(chart));
     out.push_str("</details>\n");
     out.push_str("</div>\n");
     out
 }
 
-/// One dot per (document, formatter): its mean time as a ratio to that
-/// document's arity baseline (arity itself is `1.0`), in corpus order.
-/// Documents whose baseline is missing or non-positive are skipped (they carry
-/// no meaningful ratio); they still appear in the fallback table.
-fn chart_points(b: &Benchmarks) -> Vec<ChartPoint> {
+/// One dot per (document, tool): its mean time as a ratio to that document's
+/// arity baseline (arity itself is `1.0`), in document order. Documents whose
+/// baseline is missing or non-positive are skipped (they carry no meaningful
+/// ratio); they still appear in the fallback table.
+fn chart_points(chart: &Chart) -> Vec<ChartPoint> {
     let mut points = Vec::new();
-    for doc in &b.documents {
-        let base = baseline_mean(b, &doc.id);
+    for doc in &chart.documents {
+        let base = baseline_mean(chart, &doc.id);
         let Some(base) = base.filter(|&b| b > 0.0) else {
             continue;
         };
-        for r in b.results.iter().filter(|r| r.document == doc.id) {
-            let ratio_label = if r.formatter == BASELINE {
+        for r in chart.results.iter().filter(|r| r.document == doc.id) {
+            let ratio_label = if r.tool == BASELINE {
                 "baseline".to_string()
             } else {
                 relative_cell(r.mean_ms, Some(base))
             };
             points.push(ChartPoint {
                 document: doc.name.clone(),
-                formatter: r.formatter.clone(),
+                tool: r.tool.clone(),
                 mean_ms: r.mean_ms,
                 ratio: r.mean_ms / base,
                 ratio_label,
@@ -221,18 +256,18 @@ fn chart_points(b: &Benchmarks) -> Vec<ChartPoint> {
     points
 }
 
-/// One `<h3>` + HTML `<table>` per benchmarked document, in corpus order; rows
-/// follow the order tools appear in `results`. `arity` is the baseline and
-/// every other tool's `Relative` cell is its mean ratio to it.
-fn render_results_tables_html(b: &Benchmarks) -> String {
-    let order = tool_order(&b.results);
+/// One `<h5>` + HTML `<table>` per document in a chart, in document order; rows
+/// follow the order tools appear in `results`. `arity` is the baseline and every
+/// other tool's `Relative` cell is its mean ratio to it.
+fn render_chart_tables_html(chart: &Chart) -> String {
+    let order = tool_order(&chart.results);
     let mut out = String::new();
-    for doc in &b.documents {
-        let base = baseline_mean(b, &doc.id);
+    for doc in &chart.documents {
+        let base = baseline_mean(chart, &doc.id);
 
         let _ = writeln!(
             out,
-            "<h3>{} ({} bytes, {} lines)</h3>",
+            "<h5>{} ({} bytes, {} lines)</h5>",
             esc(&doc.name),
             doc.size_bytes,
             doc.lines
@@ -244,14 +279,14 @@ fn render_results_tables_html(b: &Benchmarks) -> String {
         // Walk tools in artifact order so rows read arity-first, skipping any a
         // tool did not run on this document.
         for tool in &order {
-            let Some(r) = b
+            let Some(r) = chart
                 .results
                 .iter()
-                .find(|r| r.document == doc.id && &r.formatter == tool)
+                .find(|r| r.document == doc.id && &r.tool == tool)
             else {
                 continue;
             };
-            let relative = if r.formatter == BASELINE {
+            let relative = if r.tool == BASELINE {
                 "baseline".to_string()
             } else {
                 relative_cell(r.mean_ms, base)
@@ -259,7 +294,7 @@ fn render_results_tables_html(b: &Benchmarks) -> String {
             let _ = writeln!(
                 out,
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                esc(&r.formatter),
+                esc(&r.tool),
                 fmt_ms(Some(r.mean_ms)),
                 fmt_ms(r.min_ms),
                 fmt_ms(r.max_ms),
@@ -271,11 +306,27 @@ fn render_results_tables_html(b: &Benchmarks) -> String {
     out
 }
 
-/// The arity baseline mean for a document, if arity was measured on it.
-fn baseline_mean(b: &Benchmarks, doc_id: &str) -> Option<f64> {
-    b.results
+/// Tools in the order they first appear across a chart's `results` (arity
+/// first). This is the row order for the fallback table, matching the chart's
+/// axis order.
+fn tool_order(results: &[BenchResult]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut order = Vec::new();
+    for r in results {
+        if seen.insert(r.tool.clone()) {
+            order.push(r.tool.clone());
+        }
+    }
+    order
+}
+
+/// The arity baseline mean for a document within a chart, if arity was measured
+/// on it.
+fn baseline_mean(chart: &Chart, doc_id: &str) -> Option<f64> {
+    chart
+        .results
         .iter()
-        .find(|r| r.document == doc_id && r.formatter == BASELINE)
+        .find(|r| r.document == doc_id && r.tool == BASELINE)
         .map(|r| r.mean_ms)
 }
 
