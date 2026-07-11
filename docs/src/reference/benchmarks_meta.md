@@ -3,4 +3,4 @@
 - **jarl**: `0.5.0`
 - **backend**: hyperfine (min runs: 3)
 - **host**: linux/x86_64, Intel(R) Core(TM) Ultra 7 155U
-- **generated**: 2026-07-11T01:58:59Z
+- **generated**: 2026-07-11T02:55:45Z

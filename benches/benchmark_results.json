@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "meta": {
-    "generated_at": "2026-07-11T01:58:59Z",
+    "generated_at": "2026-07-11T02:55:45Z",
     "host": {"os": "linux", "arch": "x86_64", "cpu": "Intel(R) Core(TM) Ultra 7 155U"},
     "backend": "hyperfine",
     "min_runs": 3,
@@ -25,10 +25,10 @@
             {"id":"large","name":"large","size_bytes":1477128,"lines":101976}
           ],
           "results":[
-            {"document":"small","tool":"arity","mean_ms":28.9723,"stddev_ms":2.1666,"min_ms":24.1047,"max_ms":34.3484},
-            {"document":"small","tool":"air","mean_ms":34.8371,"stddev_ms":2.9993,"min_ms":29.5340,"max_ms":42.9128},
-            {"document":"large","tool":"arity","mean_ms":804.4884,"stddev_ms":14.4069,"min_ms":794.7676,"max_ms":821.0402},
-            {"document":"large","tool":"air","mean_ms":395.0042,"stddev_ms":16.1603,"min_ms":373.4905,"max_ms":414.9392}
+            {"document":"small","tool":"arity","mean_ms":26.3464,"stddev_ms":3.1223,"min_ms":20.5507,"max_ms":36.0864},
+            {"document":"small","tool":"air","mean_ms":35.9680,"stddev_ms":3.3876,"min_ms":29.4418,"max_ms":47.8633},
+            {"document":"large","tool":"arity","mean_ms":791.3714,"stddev_ms":18.5129,"min_ms":773.7293,"max_ms":810.6469},
+            {"document":"large","tool":"air","mean_ms":449.5672,"stddev_ms":80.7891,"min_ms":387.3011,"max_ms":588.7086}
           ]
         },
         {
@@ -39,8 +39,8 @@
             {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":44.2919,"stddev_ms":2.5445,"min_ms":39.4409,"max_ms":52.2134},
-            {"document":"tidyr","tool":"air","mean_ms":52.5817,"stddev_ms":2.6026,"min_ms":47.6156,"max_ms":58.4515}
+            {"document":"tidyr","tool":"arity","mean_ms":39.4097,"stddev_ms":4.0046,"min_ms":32.7052,"max_ms":49.4364},
+            {"document":"tidyr","tool":"air","mean_ms":56.7434,"stddev_ms":5.0946,"min_ms":48.2065,"max_ms":70.0263}
           ]
         }
       ]
@@ -58,10 +58,10 @@
             {"id":"large","name":"large","size_bytes":1477128,"lines":101976}
           ],
           "results":[
-            {"document":"small","tool":"arity","mean_ms":54.4162,"stddev_ms":4.8700,"min_ms":47.6500,"max_ms":68.7513},
-            {"document":"small","tool":"jarl","mean_ms":37.7893,"stddev_ms":3.0096,"min_ms":32.7067,"max_ms":47.5714},
-            {"document":"large","tool":"arity","mean_ms":391.3159,"stddev_ms":25.2648,"min_ms":359.4516,"max_ms":423.6041},
-            {"document":"large","tool":"jarl","mean_ms":520.3245,"stddev_ms":4.4140,"min_ms":515.8793,"max_ms":527.6512}
+            {"document":"small","tool":"arity","mean_ms":37.6006,"stddev_ms":3.6100,"min_ms":30.2579,"max_ms":44.9339},
+            {"document":"small","tool":"jarl","mean_ms":44.5027,"stddev_ms":4.9298,"min_ms":32.8220,"max_ms":55.5076},
+            {"document":"large","tool":"arity","mean_ms":385.7874,"stddev_ms":43.3018,"min_ms":307.3075,"max_ms":435.3728},
+            {"document":"large","tool":"jarl","mean_ms":673.2606,"stddev_ms":75.4781,"min_ms":628.6883,"max_ms":760.4076}
           ]
         },
         {
@@ -72,8 +72,8 @@
             {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":75.5673,"stddev_ms":4.7311,"min_ms":69.0003,"max_ms":91.4882},
-            {"document":"tidyr","tool":"jarl","mean_ms":19.4321,"stddev_ms":1.9103,"min_ms":15.8706,"max_ms":31.6497}
+            {"document":"tidyr","tool":"arity","mean_ms":34.4145,"stddev_ms":3.5912,"min_ms":28.2005,"max_ms":43.7791},
+            {"document":"tidyr","tool":"jarl","mean_ms":23.1374,"stddev_ms":2.7275,"min_ms":17.6572,"max_ms":30.6717}
           ]
         }
       ]
