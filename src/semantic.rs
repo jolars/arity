@@ -10,7 +10,7 @@ pub mod builder;
 pub mod scope;
 pub mod symbols;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
@@ -56,6 +56,13 @@ pub struct SemanticModel {
     /// `undefined-symbol`; they exist only to mark a same-package binding *used*
     /// across files (e.g. `pkg:::helper()` in a test reads `helper`).
     qualified_reads: Vec<SmolStr>,
+    /// Each scope's directly-declared bindings keyed by name, in
+    /// [`Scope::bindings`] order — the constant-time backend for
+    /// [`resolve_local`](Self::resolve_local) and the builder's read marking
+    /// (a linear scan of a scope's bindings per lookup is quadratic over a
+    /// file's worth of idents). Fully derived from [`bindings`](Self::bindings),
+    /// maintained by the builder alongside it.
+    bindings_by_name: HashMap<(ScopeId, SmolStr), Vec<BindingId>>,
 }
 
 impl SemanticModel {
@@ -147,16 +154,23 @@ impl SemanticModel {
         out
     }
 
+    /// The bindings named `name` directly declared in `scope`, in declaration
+    /// ([`Scope::bindings`]) order. Empty if the scope declares no such name.
+    pub(crate) fn scope_bindings_named(&self, scope: ScopeId, name: &SmolStr) -> &[BindingId] {
+        self.bindings_by_name
+            .get(&(scope, name.clone()))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
     /// Resolve a single identifier read against the scope tree. Walks
     /// outward from `ident.scope` looking for a matching binding. Returns
     /// `None` if no binding is found within any enclosing scope.
     pub fn resolve_local(&self, ident: &IdentRef) -> Option<BindingId> {
         let mut current = Some(ident.scope);
         while let Some(scope_id) = current {
-            for binding in &self.scope(scope_id).bindings {
-                if self.binding(*binding).name == ident.name {
-                    return Some(*binding);
-                }
+            if let Some(first) = self.scope_bindings_named(scope_id, &ident.name).first() {
+                return Some(*first);
             }
             current = self.scope(scope_id).parent;
         }
@@ -202,6 +216,73 @@ mod tests {
         let m = model_of("x <- 1");
         assert_eq!(binding_names(&m), vec!["x"]);
         assert_eq!(m.bindings[0].kind, BindingKind::Local);
+    }
+
+    fn ident_named<'a>(model: &'a SemanticModel, name: &str) -> &'a IdentRef {
+        model
+            .idents
+            .iter()
+            .find(|ident| ident.name == name)
+            .unwrap_or_else(|| panic!("no ident read of `{name}`"))
+    }
+
+    #[test]
+    fn resolve_local_returns_the_first_same_scope_binding() {
+        // Two defs of `x` in the same (file) scope: resolution pins to the
+        // first-recorded binding, not the nearest.
+        let m = model_of("x <- 1\nx <- 2\ny <- x\n");
+        let resolved = m.resolve_local(ident_named(&m, "x")).expect("x resolves");
+        let first_x = m
+            .bindings
+            .iter()
+            .position(|b| b.name == "x")
+            .map(BindingId::from_index)
+            .unwrap();
+        assert_eq!(resolved, first_x);
+    }
+
+    #[test]
+    fn resolve_local_prefers_the_innermost_scope() {
+        // The body read of `x` resolves to the parameter, not the file-scope
+        // def; the top-level read resolves to the file-scope def.
+        let m = model_of("x <- 1\nf <- function(x) x + 1\ng <- x\n");
+        let param = m.bindings.iter().position(|b| b.kind == BindingKind::Param);
+        let param = BindingId::from_index(param.unwrap());
+        let body_read = m
+            .idents
+            .iter()
+            .find(|ident| ident.name == "x" && m.scope(ident.scope).kind != ScopeKind::File)
+            .expect("a body read of x");
+        assert_eq!(m.resolve_local(body_read), Some(param));
+
+        let top_read = m
+            .idents
+            .iter()
+            .find(|ident| ident.name == "x" && m.scope(ident.scope).kind == ScopeKind::File)
+            .expect("a top-level read of x");
+        let file_x = m
+            .bindings
+            .iter()
+            .position(|b| b.name == "x" && m.scope(b.scope).kind == ScopeKind::File)
+            .map(BindingId::from_index)
+            .unwrap();
+        assert_eq!(m.resolve_local(top_read), Some(file_x));
+    }
+
+    #[test]
+    fn resolve_local_walks_out_to_enclosing_scopes_or_none() {
+        // `y` in the body resolves outward to the file scope; `zz` resolves
+        // nowhere.
+        let m = model_of("y <- 1\nf <- function() y + zz\n");
+        let y_read = ident_named(&m, "y");
+        let file_y = m
+            .bindings
+            .iter()
+            .position(|b| b.name == "y")
+            .map(BindingId::from_index)
+            .unwrap();
+        assert_eq!(m.resolve_local(y_read), Some(file_y));
+        assert_eq!(m.resolve_local(ident_named(&m, "zz")), None);
     }
 
     #[test]

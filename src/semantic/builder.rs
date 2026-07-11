@@ -633,6 +633,11 @@ fn push_binding(
     def_range: TextRange,
 ) -> BindingId {
     let id = BindingId::from_index(model.bindings.len());
+    model
+        .bindings_by_name
+        .entry((scope, name.clone()))
+        .or_default()
+        .push(id);
     model.bindings.push(Binding {
         name,
         kind,
@@ -680,11 +685,14 @@ fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
     let mut in_frame = true;
     while let Some(scope_id) = current {
         let scope_ref = &model.scopes[scope_id.0 as usize];
+        // Only this scope's same-name bindings, via the name index; their
+        // order is `scope_ref.bindings` order by construction.
+        let named = model.scope_bindings_named(scope_id, &ident.name);
         let matches = || {
-            scope_ref.bindings.iter().copied().filter(|id| {
-                let b = &model.bindings[id.0 as usize];
-                b.name == ident.name && b.def_range != ident.range
-            })
+            named
+                .iter()
+                .copied()
+                .filter(|id| model.bindings[id.0 as usize].def_range != ident.range)
         };
 
         if in_frame {
