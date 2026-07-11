@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.12.0](https://github.com/jolars/arity/compare/v0.11.0...v0.12.0) (2026-07-11)
+
+### Features
+- **lint:** add `is-numeric` and `class-equals` rules ([`b3c8443`](https://github.com/jolars/arity/commit/b3c84434ac7568e92381707fc6c12e1c7b261ad9))
+- **lint:** add `seq` rule ([`d3cf745`](https://github.com/jolars/arity/commit/d3cf74576e01da7d25c03b6eb1f39ae0c5a6c202))
+- **lint:** add `nzchar` rule ([`e903216`](https://github.com/jolars/arity/commit/e903216f7eb164660401a40d0d262a90d1c34e58))
+- **lint:** add `lengths` rule ([`94b8f67`](https://github.com/jolars/arity/commit/94b8f677c6a984f7c6bb512cccfa1cc160a56a9a))
+- **bench:** add linter and project benchmarks ([`9852172`](https://github.com/jolars/arity/commit/98521720335845c2a9e45b1f3ec67a5754147a6c))
+- **roxygen:** split fenced code body into per-line VERBs ([`5f27595`](https://github.com/jolars/arity/commit/5f27595f9763d4cb062a52113eb65ba1942741d8))
+- **parser:** resolve user-defined markdown image refs ([`aa59fd4`](https://github.com/jolars/arity/commit/aa59fd4e3bd1c277ff417456552fd58678ea0bf9))
+- **docs:** add benchmark page with plots ([`e17bcf9`](https://github.com/jolars/arity/commit/e17bcf9592948d259fa72f7cfcd273470138f511))
+- **parser:** resolve shortcut and reference markdown images ([`9c0f625`](https://github.com/jolars/arity/commit/9c0f6251ab6862443abf0cf19156b03d275613e4))
+- **parser:** drop section on trailing-backslash link dest ([`355f6c8`](https://github.com/jolars/arity/commit/355f6c8b4b6501857fa5dd3388e9bed688b1dbde))
+- **parser:** reject invalid inline link destinations ([`3054434`](https://github.com/jolars/arity/commit/30544340cd9d7c28b1395a7e00c354b6fc6b2889))
+- **roxygen:** drop inline link title from href destination ([`b34e06d`](https://github.com/jolars/arity/commit/b34e06d7f32aa47352af8163142098528f4a12c1))
+- **parser:** fold setext underline into block quote lazily ([`2d40e13`](https://github.com/jolars/arity/commit/2d40e1331588c4bc5bdb644f592a7830ac849b00))
+- **parser:** fold block Rd macro into list item under `@md` ([`27caa31`](https://github.com/jolars/arity/commit/27caa31ca65aa236297588afbade01a25b181226))
+- **parser:** fold GFM table into list item under `@md` ([`5cb6589`](https://github.com/jolars/arity/commit/5cb6589a675f3ff6344ca2b5e879c8b70a5eba6f))
+- **rindex:** harvest lazy-data symbols ([`5f35fab`](https://github.com/jolars/arity/commit/5f35fabfa72713a1a285f82ca5e5bcd77c5cee30))
+- **ast:** add Expr union and HasArgList trait ([`6c11cf5`](https://github.com/jolars/arity/commit/6c11cf5926754a1f8ccb82c0b2c88b95eed84683))
+- **ast:** add AstToken layer and complete node wrappers ([`9167928`](https://github.com/jolars/arity/commit/9167928a6b6a3c5ac844c65dbfcec095cc42eaf6))
+- **parser:** fold indented code block into list item ([`c22ae83`](https://github.com/jolars/arity/commit/c22ae834fbc3e4f3c4b253a9fa1196f619a59eb7))
+- **parser:** fold fenced code block into list item ([`bf274b3`](https://github.com/jolars/arity/commit/bf274b37e4a436d242bb367a88eb9e6d18d43455))
+
+### Bug Fixes
+- **parser:** make operator lexing UTF-8-safe ([`2e5e9d9`](https://github.com/jolars/arity/commit/2e5e9d99fdffdaf59b48bb5d625e25ad9d8d1ea7))
+- **roxygen:** don't markdown-process code-tag bodies under @md ([`ceb0dba`](https://github.com/jolars/arity/commit/ceb0dba9e150f63693d7f3dbbbf5ef5612107624))
+- **parser:** flag stray closing delimiter at top level ([`51f3023`](https://github.com/jolars/arity/commit/51f30235f06c6eea7ad3addb592f0185b2b927dc))
+- **formatter:** honor line-ending in format_range ([`5800f16`](https://github.com/jolars/arity/commit/5800f1677a6609aed47f2673c1d6c6fd4f680257))
+
+### Performance Improvements
+- use mimalloc as the global allocator ([`fb60bf0`](https://github.com/jolars/arity/commit/fb60bf0b7aa2030c608578ccd257bb7527754240))
+- **lint:** parallelize project lint over salsa db clones ([`820ca43`](https://github.com/jolars/arity/commit/820ca43be869dfc2fc6ab5723a3c3e688d538dce))
+- **rindex:** load lint index names-only and in parallel ([`915bd80`](https://github.com/jolars/arity/commit/915bd807f2d38d100de1db26a075ac73a97e1605))
+- **semantic:** index scope bindings by name ([`bccb478`](https://github.com/jolars/arity/commit/bccb4780d08ae9fddceada97d255b1311b1d2538))
+- **project:** bucket top-level events in one model pass ([`c9f668a`](https://github.com/jolars/arity/commit/c9f668a6d0c1f78d812b467a11014254a877321f))
+- **lint:** render pretty snippets from a line window ([`11a4558`](https://github.com/jolars/arity/commit/11a4558c530ca47ebaa3100e44fd8981791ae991))
+
 ## [0.11.0](https://github.com/jolars/arity/compare/v0.10.0...v0.11.0) (2026-07-08)
 
 ### Features
