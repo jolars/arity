@@ -9,7 +9,7 @@ VSX](https://img.shields.io/open-vsx/v/jolars/arity?logo=vsix)](https://open-vsx
 Code](https://vsmarketplacebadges.dev/version-short/jolars.arity.svg?logo=vsix)](https://marketplace.visualstudio.com/items?itemName=jolars.arity)
 [![PyPI
 version](https://badge.fury.io/py/arity.svg?icon=si%3Apython)](https://badge.fury.io/py/arity)
-[![npm version](https://badge.fury.io/js/@arity-cli%2Farity.svg?icon=si%3Anpm)](https://badge.fury.io/js/@arity-cli%2Farity)
+[![npm version](https://badge.fury.io/js/@arity-cli%2Farity-cli.svg?icon=si%3Anpm)](https://www.npmjs.com/package/arity-cli)
 
 Arity is a language server, formatter, and linter for the R programming
 language, built in Rust on a lossless, incremental parser. It provides a fast,
