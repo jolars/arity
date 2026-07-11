@@ -34,6 +34,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`any-duplicated`](rules/any-duplicated.md)
 - [`crossprod`](rules/crossprod.md)
 - [`lengths`](rules/lengths.md)
+- [`nzchar`](rules/nzchar.md)
 - [`fixed-regex`](rules/fixed-regex.md)
 
 ## Documentation

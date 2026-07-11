@@ -18,17 +18,16 @@
 //! *comparison*, which binds looser than arithmetic, indexing, `$`/`@`, and the
 //! like. Spliced bare into a parent that binds tighter than a comparison it would
 //! misparse (`any(duplicated(x)) + 1` → `anyDuplicated(x) > 0 + 1`), so the fix
-//! is withheld in such a context (see [`is_safe_context`]); the finding is still
-//! reported. The fix is likewise withheld when a comment outside the preserved
-//! inner argument would be dropped.
+//! is withheld in such a context (see [`matchers::is_safe_splice_context`]); the
+//! finding is still reported. The fix is likewise withheld when a comment
+//! outside the preserved inner argument would be dropped.
 
 use rowan::ast::AstNode as _;
 
-use crate::ast::CallExpr;
 use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
-use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
+use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct AnyDuplicated;
 
@@ -70,7 +69,7 @@ impl Rule for AnyDuplicated {
         // `any` must carry exactly one positional, value-bearing argument (a
         // stray comment parses as a value-less `ARG`, so match on value-bearing
         // args and let the comment-withholding check below handle it)…
-        let Some(outer_arg) = sole_positional(&call) else {
+        let Some(outer_arg) = matchers::sole_positional(&call) else {
             return;
         };
         // …which is a call to `duplicated`…
@@ -81,7 +80,7 @@ impl Rule for AnyDuplicated {
             return;
         };
         // …with exactly one positional argument of its own.
-        let Some(arg) = sole_positional(&inner) else {
+        let Some(arg) = matchers::sole_positional(&inner) else {
             return;
         };
 
@@ -101,7 +100,7 @@ impl Rule for AnyDuplicated {
             .any(|e| e.kind() == SyntaxKind::COMMENT && !arg_range.contains_range(e.text_range()));
         // The replacement is a comparison, which binds looser than the call it
         // replaces; only splice it bare where a comparison can sit unparenthesized.
-        let fix = (!drops_comment && is_safe_context(call.syntax())).then(|| {
+        let fix = (!drops_comment && matchers::is_safe_splice_context(call.syntax())).then(|| {
             Fix::safe(
                 usize::from(r.start()),
                 usize::from(r.end()),
@@ -122,59 +121,5 @@ impl Rule for AnyDuplicated {
             .with_suggestion("Use `anyDuplicated(x) > 0`."),
             fix,
         });
-    }
-}
-
-/// The value of `call`'s sole positional argument, or `None` unless it has
-/// exactly one value-bearing argument and that argument is positional. A stray
-/// comment parses as a value-less `ARG`, so it is ignored here (the caller
-/// withholds the fix on a comment that would be dropped) rather than counted as
-/// a second argument.
-fn sole_positional(call: &CallExpr) -> Option<SyntaxElement> {
-    let mut valued = matchers::args(call)
-        .into_iter()
-        .filter(|a| a.value.is_some());
-    let only = valued.next()?;
-    if valued.next().is_some() || only.name.is_some() {
-        return None;
-    }
-    only.value
-}
-
-/// Whether a comparison expression is safe to splice in unparenthesized at
-/// `node`'s position. Safe when the parent does not bind tighter than a
-/// comparison: a statement position, a delimited clause/argument, an assignment,
-/// an outer `!`, or a looser logical/formula operator. Anything tighter
-/// (arithmetic, indexing, `$`/`@`, `:`, a call, another comparison) would capture
-/// the rewrite, so it is unsafe.
-fn is_safe_context(node: &SyntaxNode) -> bool {
-    let Some(parent) = node.parent() else {
-        return true;
-    };
-    match parent.kind() {
-        SyntaxKind::ROOT
-        | SyntaxKind::BLOCK_EXPR
-        | SyntaxKind::PAREN_EXPR
-        | SyntaxKind::ARG
-        | SyntaxKind::IF_EXPR
-        | SyntaxKind::WHILE_EXPR
-        | SyntaxKind::FOR_EXPR
-        | SyntaxKind::REPEAT_EXPR
-        | SyntaxKind::ASSIGNMENT_EXPR => true,
-        SyntaxKind::BINARY_EXPR => matchers::binary_parts(&parent).is_some_and(|(_, op, _)| {
-            matches!(
-                op.kind(),
-                SyntaxKind::AND
-                    | SyntaxKind::AND2
-                    | SyntaxKind::OR
-                    | SyntaxKind::OR2
-                    | SyntaxKind::TILDE
-            )
-        }),
-        SyntaxKind::UNARY_EXPR => parent
-            .children_with_tokens()
-            .find_map(|e| e.into_token())
-            .is_some_and(|t| t.kind() == SyntaxKind::BANG),
-        _ => false,
     }
 }

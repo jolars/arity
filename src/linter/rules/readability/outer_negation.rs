@@ -11,8 +11,8 @@
 //! The rewrite replaces a call (a primary) with a `!`-expression, which binds
 //! *looser* than the call it replaces. In a parent context that binds tighter
 //! than `!` (arithmetic, comparison, indexing, `$`/`@`, …) the bare `!all(x)`
-//! would misparse, so the fix is withheld there — see [`is_safe_context`]. The
-//! finding is still reported.
+//! would misparse, so the fix is withheld there — see
+//! [`matchers::is_safe_splice_context`]. The finding is still reported.
 
 use rowan::NodeOrToken;
 use rowan::ast::AstNode as _;
@@ -87,7 +87,7 @@ impl Rule for OuterNegation {
         }
 
         let r = call.syntax().text_range();
-        let fix = if is_safe_context(call.syntax()) {
+        let fix = if matchers::is_safe_splice_context(call.syntax()) {
             build_replacement(&call, other).map(|content| {
                 Fix::safe(
                     usize::from(r.start()),
@@ -173,41 +173,4 @@ fn render_arg(arg: &SyntaxNode) -> String {
         return format!("{}{}", &text[..rel], &text[rel + 1..]);
     }
     text
-}
-
-/// Whether a `!`-expression is safe to splice in unparenthesized at `node`'s
-/// position. Safe when the parent does not bind tighter than `!`: a statement
-/// position, a delimited clause/argument, an assignment, an outer `!`, or a
-/// looser logical/formula operator. Anything tighter (arithmetic, comparison,
-/// indexing, `$`/`@`, a call) would capture the rewrite, so it is unsafe.
-fn is_safe_context(node: &SyntaxNode) -> bool {
-    let Some(parent) = node.parent() else {
-        return true;
-    };
-    match parent.kind() {
-        SyntaxKind::ROOT
-        | SyntaxKind::BLOCK_EXPR
-        | SyntaxKind::PAREN_EXPR
-        | SyntaxKind::ARG
-        | SyntaxKind::IF_EXPR
-        | SyntaxKind::WHILE_EXPR
-        | SyntaxKind::FOR_EXPR
-        | SyntaxKind::REPEAT_EXPR
-        | SyntaxKind::ASSIGNMENT_EXPR => true,
-        SyntaxKind::BINARY_EXPR => matchers::binary_parts(&parent).is_some_and(|(_, op, _)| {
-            matches!(
-                op.kind(),
-                SyntaxKind::AND
-                    | SyntaxKind::AND2
-                    | SyntaxKind::OR
-                    | SyntaxKind::OR2
-                    | SyntaxKind::TILDE
-            )
-        }),
-        SyntaxKind::UNARY_EXPR => parent
-            .children_with_tokens()
-            .find_map(|e| e.into_token())
-            .is_some_and(|t| t.kind() == SyntaxKind::BANG),
-        _ => false,
-    }
 }

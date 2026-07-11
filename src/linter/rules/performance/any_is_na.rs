@@ -17,7 +17,6 @@
 
 use rowan::ast::AstNode as _;
 
-use crate::ast::CallExpr;
 use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
@@ -61,7 +60,7 @@ impl Rule for AnyIsNa {
         // `any` must carry exactly one positional, value-bearing argument (a
         // stray comment parses as a value-less `ARG`, so match on value-bearing
         // args and let the comment-withholding check below handle it)…
-        let Some(outer_arg) = sole_positional(&call) else {
+        let Some(outer_arg) = matchers::sole_positional(&call) else {
             return;
         };
         // …which is a call to `is.na`…
@@ -72,7 +71,7 @@ impl Rule for AnyIsNa {
             return;
         };
         // …with exactly one positional argument of its own.
-        let Some(arg) = sole_positional(&inner) else {
+        let Some(arg) = matchers::sole_positional(&inner) else {
             return;
         };
 
@@ -112,20 +111,4 @@ impl Rule for AnyIsNa {
             fix,
         });
     }
-}
-
-/// The value of `call`'s sole positional argument, or `None` unless it has
-/// exactly one value-bearing argument and that argument is positional. A stray
-/// comment parses as a value-less `ARG`, so it is ignored here (the caller
-/// withholds the fix on a comment that would be dropped) rather than counted as
-/// a second argument.
-fn sole_positional(call: &CallExpr) -> Option<SyntaxElement> {
-    let mut valued = matchers::args(call)
-        .into_iter()
-        .filter(|a| a.value.is_some());
-    let only = valued.next()?;
-    if valued.next().is_some() || only.name.is_some() {
-        return None;
-    }
-    only.value
 }

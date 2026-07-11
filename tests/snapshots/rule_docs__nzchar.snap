@@ -1,0 +1,24 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+# `nzchar`
+
+Flag comparisons of `nchar(x)` against zero—`nchar(x) > 0`, `nchar(x) >= 1`, `nchar(x) != 0`, and their mirrored and negated spellings—which are the purpose-built `nzchar(x)` (or `!nzchar(x)` for the empty test): faster, and it states the intent directly.
+
+The rule fires only on the clean single-argument shape and only when `nchar` resolves to base R; a local redefinition is left alone. The fix is **unsafe**: on `NA_character_` input `nzchar` yields `TRUE` where the `nchar` comparison yields `NA` (exact equivalence would need `nzchar(x, keepNA = TRUE)`).
+
+Testing for non-empty strings:
+
+```r
+keep <- x[nchar(x) > 0]
+```
+
+```text
+warning: nzchar
+ --> example.R:1:11
+  |
+1 | keep <- x[nchar(x) > 0]
+  |           ^^^^^^^^^^^^ comparing `nchar()` to zero is the faster, clearer `nzchar()`
+  = help: Use `nzchar(x)` for non-empty, `!nzchar(x)` for empty.
+```

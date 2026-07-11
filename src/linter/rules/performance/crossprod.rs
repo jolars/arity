@@ -163,7 +163,7 @@ impl Rule for Crossprod {
 fn transposed(el: &SyntaxElement) -> Option<(crate::ast::CallExpr, SyntaxElement)> {
     let node = el.as_node()?;
     let call = matchers::call_named(node, "t")?;
-    let arg = sole_positional(&call)?;
+    let arg = matchers::sole_positional(&call)?;
     Some((call, arg))
 }
 
@@ -174,20 +174,4 @@ fn ident_text(el: &SyntaxElement) -> Option<String> {
     el.as_token()
         .filter(|t| t.kind() == SyntaxKind::IDENT)
         .map(|t| t.text().to_string())
-}
-
-/// The value of `call`'s sole positional argument, or `None` unless it has
-/// exactly one value-bearing argument and that argument is positional. A stray
-/// comment parses as a value-less `ARG`, so it is ignored here (the caller
-/// withholds the fix on a comment that would be dropped) rather than counted as
-/// a second argument.
-fn sole_positional(call: &crate::ast::CallExpr) -> Option<SyntaxElement> {
-    let mut valued = matchers::args(call)
-        .into_iter()
-        .filter(|a| a.value.is_some());
-    let only = valued.next()?;
-    if valued.next().is_some() || only.name.is_some() {
-        return None;
-    }
-    only.value
 }

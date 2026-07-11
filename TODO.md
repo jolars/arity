@@ -198,7 +198,19 @@ harden against shadowing in Phase 4.
       counterpart of `resolves_to_base`). The replacement is a call (a primary),
       so no precedence guard is needed and the fix is `Safe`; withheld when a
       comment outside the preserved first argument would be dropped.
-- [ ] `nzchar` `nchar(x) > 0` -> `nzchar(x)` (performance, safe).
+- [x] `nzchar` `nchar(x) > 0` -> `nzchar(x)` (performance, `ns`; landed). Fires
+      on the emptiness comparisons of a single-positional-arg `nchar` call
+      against a literal `0`/`1` (`> 0`, `>= 1`, `!= 0` -> `nzchar(x)`; `== 0`,
+      `<= 0`, `< 1` -> `!nzchar(x)`; mirrored literal-first forms included) and
+      namespace-confirms `nchar` resolves to base R; a `type`/`allowNA`/`keepNA`
+      argument skips the shape. The fix is **unsafe** (not safe as first
+      sketched)—on `NA_character_` the `nchar` comparison yields `NA` while
+      `nzchar` yields `TRUE` under its default `keepNA` (exact equivalence would
+      need `nzchar(x, keepNA = TRUE)`). The negated `!nzchar(x)` binds looser
+      than the comparison it replaces, so that form is withheld in a context
+      that binds tighter than `!` (via `matchers::is_safe_splice_context`, the
+      now-shared guard `any-duplicated`/`outer-negation` also use); both forms
+      are withheld when a comment outside the preserved argument would drop.
 - [ ] `seq`/`seq2` `1:length(x)` -> `seq_along`, `1:n` -> `seq_len`
       (performance, safe)—off-by-one safety, high value.
 - [ ] `is-numeric` (correctness, safe); `class-equals` `class(x) == ...` ->

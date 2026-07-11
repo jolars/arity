@@ -60,6 +60,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(performance::AnyDuplicated),
         Box::new(performance::Crossprod),
         Box::new(performance::Lengths),
+        Box::new(performance::Nzchar),
         Box::new(performance::FixedRegex),
         Box::new(documentation::RoxygenUnknownTag),
         Box::new(documentation::RoxygenTitle),

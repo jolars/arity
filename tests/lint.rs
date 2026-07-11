@@ -2110,6 +2110,115 @@ fn fixed_regex_skips_shadowed_callee() {
 }
 
 #[test]
+fn nzchar_rewrites_nonempty_comparisons() {
+    // Every "length is nonzero" spelling collapses to `nzchar(x)`, the mirrored
+    // literal-first forms included.
+    for src in [
+        "flag <- nchar(x) > 0\n",
+        "flag <- nchar(x) >= 1\n",
+        "flag <- nchar(x) != 0\n",
+        "flag <- 0 < nchar(x)\n",
+        "flag <- 1 <= nchar(x)\n",
+        "flag <- 0 != nchar(x)\n",
+    ] {
+        assert_eq!(
+            unsafe_fixed_output(src, "nzchar"),
+            "flag <- nzchar(x)\n",
+            "from {src:?}"
+        );
+    }
+}
+
+#[test]
+fn nzchar_rewrites_empty_comparisons_negated() {
+    // The "length is zero" spellings negate: `!nzchar(x)`.
+    for src in [
+        "flag <- nchar(x) == 0\n",
+        "flag <- nchar(x) <= 0\n",
+        "flag <- nchar(x) < 1\n",
+        "flag <- 0 == nchar(x)\n",
+        "flag <- 0 >= nchar(x)\n",
+        "flag <- 1 > nchar(x)\n",
+    ] {
+        assert_eq!(
+            unsafe_fixed_output(src, "nzchar"),
+            "flag <- !nzchar(x)\n",
+            "from {src:?}"
+        );
+    }
+}
+
+#[test]
+fn nzchar_fix_is_unsafe() {
+    // `nzchar` diverges from the `nchar` comparison on `NA_character_` input
+    // (`TRUE` vs `NA` under the default `keepNA`), so the fix must be unsafe.
+    let d = diagnostics("flag <- nchar(x) > 0\n")
+        .into_iter()
+        .find(|d| d.rule == "nzchar")
+        .expect("expected an nzchar finding");
+    assert_eq!(
+        d.fix.as_ref().expect("should carry a fix").applicability,
+        Applicability::Unsafe
+    );
+}
+
+#[test]
+fn nzchar_ignores_non_emptiness_shapes() {
+    for src in [
+        "nchar(x) > 1\n", // a real length threshold, not an emptiness test
+        "nchar(x) == 2\n",
+        "nchar(x) >= 0\n",                  // vacuously true — not the shape
+        "nchar(x, type = \"bytes\") > 0\n", // extra argument changes semantics
+        "nchar(x, keepNA = TRUE) == 0\n",
+        "nchar(x) + 0\n", // not a comparison
+        "f(x) > 0\n",     // different callee
+        "nchar(x) > y\n", // non-literal bound
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"nzchar"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn nzchar_skips_shadowed_nchar() {
+    // A user redefinition of `nchar` means the comparison no longer tests string
+    // length, so the rewrite would be wrong — don't flag.
+    let src = "nchar <- function(x) 1\nnchar(x) > 0\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(
+        !rules.contains(&"nzchar"),
+        "{src:?} should not flag, got: {rules:?}"
+    );
+}
+
+#[test]
+fn nzchar_withholds_negating_fix_in_tight_context() {
+    // The negated rewrite `!nzchar(x)` binds looser than the comparison it
+    // replaces; chained into another comparison it would misparse
+    // (`!nzchar(x) == y` is `!(nzchar(x) == y)`), so the fix is withheld — the
+    // finding still reports.
+    let d = diagnostics("z <- nchar(x) == 0 == y\n")
+        .into_iter()
+        .find(|d| d.rule == "nzchar")
+        .expect("expected an nzchar finding");
+    assert!(d.fix.is_none(), "tight context should withhold the fix");
+}
+
+#[test]
+fn nzchar_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved argument would be dropped by the rewrite,
+    // so the fix is withheld — the finding is still reported.
+    let d = diagnostics("flag <- nchar(x) > # note\n  0\n")
+        .into_iter()
+        .find(|d| d.rule == "nzchar")
+        .expect("expected an nzchar finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
 fn unreachable_code_flags_after_return_and_stop() {
     // A statement after an unconditional `return()` in a function body can never
     // run; the finding spans it and the (unsafe) fix deletes it.
@@ -2324,6 +2433,10 @@ fn fixed_output_is_parseable_and_clean() {
         // lengths (`sapply(x, length)` → `lengths(x)`)
         "n <- sapply(x, length)\n",
         "n <- sapply(df$col, length)\n",
+        // nzchar (`nchar(x) > 0` → `nzchar(x)`; unsafe)
+        "flag <- nchar(x) > 0\n",
+        "flag <- nchar(x) == 0\n",
+        "if (nchar(x) >= 1) f()\n",
         // string-boundary (`grepl("^a", x)` → `startsWith`; unsafe)
         "flag <- grepl(\"^abc\", x)\n",
         "flag <- grepl(\"xyz$\", y)\n",

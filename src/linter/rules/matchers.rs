@@ -78,6 +78,20 @@ fn arg_match(arg: Arg) -> ArgMatch {
     }
 }
 
+/// The value of `call`'s sole positional argument, or `None` unless it has
+/// exactly one value-bearing argument and that argument is positional. A stray
+/// comment parses as a value-less `ARG`, so it is ignored here (the caller
+/// withholds the fix on a comment that would be dropped) rather than counted as
+/// a second argument.
+pub fn sole_positional(call: &CallExpr) -> Option<SyntaxElement> {
+    let mut valued = args(call).into_iter().filter(|a| a.value.is_some());
+    let only = valued.next()?;
+    if valued.next().is_some() || only.name.is_some() {
+        return None;
+    }
+    only.value
+}
+
 // --- binary expressions ----------------------------------------------------
 
 /// Split a `BINARY_EXPR` into `(lhs, operator, rhs)` at its top-level operator
@@ -171,6 +185,48 @@ pub fn is_plain_regex_literal(s: &str) -> bool {
                 | b'?'
         )
     })
+}
+
+// --- splice contexts -------------------------------------------------------
+
+/// Whether an expression that binds as loosely as `!` (a negation, or the
+/// comparison it is at least as tight as) is safe to splice in unparenthesized
+/// at `node`'s position. Safe when the parent does not bind tighter than `!`: a
+/// statement position, a delimited clause/argument, an assignment, an outer `!`,
+/// or a looser logical/formula operator. Anything tighter (arithmetic, another
+/// comparison, indexing, `$`/`@`, a call) would capture the rewrite, so it is
+/// unsafe — the caller withholds the fix there. Unknown parents are unsafe by
+/// default, keeping the guard conservative.
+pub fn is_safe_splice_context(node: &SyntaxNode) -> bool {
+    let Some(parent) = node.parent() else {
+        return true;
+    };
+    match parent.kind() {
+        SyntaxKind::ROOT
+        | SyntaxKind::BLOCK_EXPR
+        | SyntaxKind::PAREN_EXPR
+        | SyntaxKind::ARG
+        | SyntaxKind::IF_EXPR
+        | SyntaxKind::WHILE_EXPR
+        | SyntaxKind::FOR_EXPR
+        | SyntaxKind::REPEAT_EXPR
+        | SyntaxKind::ASSIGNMENT_EXPR => true,
+        SyntaxKind::BINARY_EXPR => binary_parts(&parent).is_some_and(|(_, op, _)| {
+            matches!(
+                op.kind(),
+                SyntaxKind::AND
+                    | SyntaxKind::AND2
+                    | SyntaxKind::OR
+                    | SyntaxKind::OR2
+                    | SyntaxKind::TILDE
+            )
+        }),
+        SyntaxKind::UNARY_EXPR => parent
+            .children_with_tokens()
+            .find_map(|e| e.into_token())
+            .is_some_and(|t| t.kind() == SyntaxKind::BANG),
+        _ => false,
+    }
 }
 
 // --- shared helpers --------------------------------------------------------
