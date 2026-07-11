@@ -7,13 +7,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use rowan::{TextRange, TextSize};
 
 use crate::config::LintConfig;
 use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
 use crate::incremental::{
-    Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile,
-    parsed_tree_root, semantic_model,
+    Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, file_exports,
+    file_free_reads, file_qualified_reads, parsed_tree_root, semantic_model, source_edges,
+    top_level_events,
 };
 use crate::project::{
     ExternalResolution, FileScope, PackageCollation, Project, ProjectMember, expected_r_sources,
@@ -163,10 +165,10 @@ pub fn check_paths_with_index(
     let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
 
-    // Pass 1: track every file, recording parse-error counts for reporting.
-    // Membership is derived from the workspace file-set below; files with parse
-    // diagnostics are tracked but `workspace_project` drops them from the scope.
-    let mut parse_errors: HashMap<PathBuf, usize> = HashMap::new();
+    // Pass 1: track every file. Parsing is deferred to the parallel warm-up
+    // below, so this loop is disk reads and salsa input writes only. Membership
+    // is derived from the workspace file-set below; files with parse diagnostics
+    // are tracked but `workspace_project` drops them from the scope.
     for path in &files {
         let content = fs::read_to_string(path).map_err(|err| LintError::ReadError {
             path: path.clone(),
@@ -174,11 +176,6 @@ pub fn check_paths_with_index(
         })?;
         let file = db.upsert_file(path, content);
         tracked.insert(path.clone(), file);
-
-        let parse_diag_count = db.parse_diagnostics(file).len();
-        if parse_diag_count != 0 {
-            parse_errors.insert(path.clone(), parse_diag_count);
-        }
     }
 
     // Scope-only members: a package's generated R sources (`cpp11.R`,
@@ -196,61 +193,120 @@ pub fn check_paths_with_index(
         }
     }
 
-    // Install the harvested index as the HIGH-durability library singleton
-    // before deriving the project (which borrows `&db`). `external_resolution`
-    // reads it.
+    // Install the harvested index as the HIGH-durability library singleton;
+    // `external_resolution` reads it in pass 2. This write must precede the
+    // parallel warm-up: a HIGH write bumps every durability's revision, so
+    // doing it after would strip the shallow-verify fast path from all the
+    // freshly warmed memos.
     let manifest = db.set_library_index(indexed);
 
     // Seed the explicit workspace file-set and derive the interned project from
     // it. `workspace_project` filters to cleanly-parsing members, reads each
     // package's NAMESPACE, and interns — the same membership the inline build
     // produced, now keyed off the salsa `Workspace` input.
-    let members: Vec<SourceFile> = tracked.values().copied().chain(scope_only).collect();
+    let members: Vec<SourceFile> = tracked
+        .values()
+        .copied()
+        .chain(scope_only.iter().copied())
+        .collect();
     db.set_workspace_members(members, files.clone());
-    let project = workspace_project(&db);
+
+    // All salsa writes are done; everything below is reads. Warm every member's
+    // per-file memos in parallel: the parse, and — for cleanly parsing files —
+    // the firewall projections `project_graph` folds over (each of which forces
+    // `semantic_model`). Without this the first worker to touch the project
+    // graph would compute every member's model *sequentially inside one query*
+    // while the rest block on it. Salsa db handles are `Send` but not `Sync`,
+    // so each rayon worker gets its own clone (the LSP's read pattern); clones
+    // share the memo storage and are all dropped when the parallel call
+    // returns, before the owner handle is used again.
+    let warm_file = |worker: &IncrementalDatabase, file: SourceFile| -> usize {
+        let count = worker.parse_diagnostics(file).len();
+        if count == 0 {
+            file_exports(worker, file);
+            file_free_reads(worker, file);
+            file_qualified_reads(worker, file);
+            source_edges(worker, file);
+            top_level_events(worker, file);
+        }
+        count
+    };
+    let parse_errors: HashMap<PathBuf, usize> = files
+        .par_iter()
+        .map_with(db.clone(), |worker, path| {
+            (path.clone(), warm_file(worker, tracked[path]))
+        })
+        .filter(|&(_, count)| count != 0)
+        .collect();
+    scope_only
+        .par_iter()
+        .map_with(db.clone(), |worker, &file| {
+            warm_file(worker, file);
+        })
+        .collect::<Vec<()>>();
+
+    // Derive the interned project and its graph once on the owner handle —
+    // with the per-file memos warm this is a fold over cached values — so the
+    // pass-2 workers' re-derives are memo hits rather than a
+    // first-computation stampede.
+    let _ = workspace_project(&db);
 
     // The cross-file path resolves undefined symbols through `external_resolution`
     // (which uses the salsa library index), so the provider passed to the rules is
     // only the fallback for rules that read static base-R facts (`is_base`).
     let fallback = default_symbol_provider();
 
-    // Pass 2: lint each cleanly parsed file with its cross-file scope.
-    let mut reports = Vec::new();
-    let mut total_findings = 0usize;
-    for path in files {
-        let file = tracked[&path];
-        let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
-            // Parse errors block the rules but are still reported (not swallowed):
-            // surface the parser's side-channel diagnostics as findings.
-            let diagnostics = syntax_error_diagnostics(db.parse_diagnostics(file), &path);
-            (LintStatus::ParseDiagnostics { count }, diagnostics)
-        } else {
-            let visibility = visible_symbols(&db, project, file);
-            let file_scope = visibility.scope();
-            let resolution = external_resolution(&db, manifest, project, file);
-            let kept = lint_parsed_file(
-                &db,
-                file,
-                &path,
-                &rules,
-                &fallback,
-                Some(&file_scope),
-                Some(resolution),
-            );
-            total_findings += kept.len();
-            let status = if kept.is_empty() {
-                LintStatus::Clean
+    // Pass 2: lint each cleanly parsed file with its cross-file scope, in
+    // parallel on db clones. `Project<'db>` is lifetime-bound to its handle, so
+    // each worker re-derives it from its own clone (a memo hit after the force
+    // above). The ordered collect keeps reports in `files` order.
+    let reports: Vec<LintFileReport> = files
+        .into_par_iter()
+        .map_with(db.clone(), |worker, path| {
+            let worker = &*worker;
+            let file = tracked[&path];
+            let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
+                // Parse errors block the rules but are still reported (not
+                // swallowed): surface the parser's side-channel diagnostics as
+                // findings.
+                let diagnostics = syntax_error_diagnostics(worker.parse_diagnostics(file), &path);
+                (LintStatus::ParseDiagnostics { count }, diagnostics)
             } else {
-                LintStatus::Findings { count: kept.len() }
+                let project = workspace_project(worker);
+                let visibility = visible_symbols(worker, project, file);
+                let file_scope = visibility.scope();
+                let resolution = external_resolution(worker, manifest, project, file);
+                let kept = lint_parsed_file(
+                    worker,
+                    file,
+                    &path,
+                    &rules,
+                    &fallback,
+                    Some(&file_scope),
+                    Some(resolution),
+                );
+                let status = if kept.is_empty() {
+                    LintStatus::Clean
+                } else {
+                    LintStatus::Findings { count: kept.len() }
+                };
+                (status, kept)
             };
-            (status, kept)
-        };
-        reports.push(LintFileReport {
-            path,
-            status,
-            diagnostics,
-        });
-    }
+            LintFileReport {
+                path,
+                status,
+                diagnostics,
+            }
+        })
+        .collect();
+
+    let total_findings = reports
+        .iter()
+        .map(|r| match r.status {
+            LintStatus::Findings { count } => count,
+            _ => 0,
+        })
+        .sum();
 
     Ok(LintResult {
         checked_files: tracked.len(),
