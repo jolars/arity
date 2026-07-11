@@ -223,8 +223,21 @@ harden against shadowing in Phase 4.
       well-defined, and the empty-case divergence (`1:0` counts down) is the
       very bug the rule exists to fix. Withheld when a comment outside the
       preserved operand would be dropped.
-- [ ] `is-numeric` (correctness, safe); `class-equals` `class(x) == ...` ->
-      `inherits` (performance, unsafe—`class()` is a vector).
+- [x] `is-numeric` `is.numeric(x) || is.integer(x)` -> `is.numeric(x)`
+      (correctness, `ns`, safe; landed). Fires only when both operands are
+      single-positional-arg calls on textually identical arguments (the `|`
+      spelling included) and both callees resolve to base R. The replacement is
+      a call (a primary), so no precedence guard is needed; withheld when a
+      comment outside the preserved argument would be dropped.
+- [x] `class-equals` `class(x) == "cls"` -> `inherits(x, "cls")` (performance,
+      `ns`, unsafe—`class()` is a vector; landed). Fires on `==`, `!=`, and
+      `%in%` against a single string literal with a sole-positional-arg `class`
+      call, namespace-confirmed. The fix is **unsafe**: elementwise vector vs
+      scalar membership on a multi-class object, and S4 `inherits` follows the
+      formal chain. The negated `!inherits(...)` form is withheld in a context
+      that binds tighter than `!` (`is_safe_splice_context`); both forms are
+      withheld when a comment outside the preserved argument and string would
+      be dropped.
 - [x] `string-boundary` `grepl("^a", x)` -> `startsWith`, `grepl("a$", x)` ->
       `endsWith` (readability, `ns`); `fixed-regex` add `fixed = TRUE`
       (performance, `ns`, safe). Both landed. `string-boundary` fires only on the

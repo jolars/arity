@@ -2309,6 +2309,178 @@ fn seq_withholds_fix_for_dropped_comment() {
 }
 
 #[test]
+fn is_numeric_collapses_redundant_or() {
+    // `is.numeric()` is already `TRUE` for integer vectors, so `||`-ing it with
+    // `is.integer()` is redundant; either operand order collapses.
+    assert_eq!(
+        fixed_output("if (is.numeric(x) || is.integer(x)) f()\n", "is-numeric"),
+        "if (is.numeric(x)) f()\n"
+    );
+    assert_eq!(
+        fixed_output("if (is.integer(x) || is.numeric(x)) f()\n", "is-numeric"),
+        "if (is.numeric(x)) f()\n"
+    );
+    // The vectorized `|` spelling counts too, and the argument is preserved
+    // verbatim, whatever its shape.
+    assert_eq!(
+        fixed_output(
+            "flag <- is.numeric(df$col) | is.integer(df$col)\n",
+            "is-numeric"
+        ),
+        "flag <- is.numeric(df$col)\n"
+    );
+}
+
+#[test]
+fn is_numeric_ignores_other_shapes() {
+    for src in [
+        "is.numeric(x) || is.integer(y)\n",   // different arguments
+        "is.numeric(x) && is.integer(x)\n",   // conjunction is not redundant
+        "is.numeric(x) || is.character(x)\n", // a genuine two-type test
+        "is.numeric(x)\n",                    // already the idiom
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"is-numeric"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn is_numeric_skips_shadowed_callee() {
+    // A user redefinition of either callee means the disjunction is no longer
+    // the base-R type test, so the rewrite would be wrong.
+    for src in [
+        "is.numeric <- function(x) FALSE\nis.numeric(x) || is.integer(x)\n",
+        "is.integer <- function(x) TRUE\nis.numeric(x) || is.integer(x)\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"is-numeric"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn is_numeric_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved argument would be dropped by the rewrite,
+    // so the fix is withheld — the finding is still reported.
+    let d = diagnostics("flag <- is.numeric(x) || # note\n  is.integer(x)\n")
+        .into_iter()
+        .find(|d| d.rule == "is-numeric")
+        .expect("expected an is-numeric finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
+fn class_equals_rewrites_to_inherits() {
+    // `class()` returns a vector, so `==` compares elementwise; `inherits()`
+    // asks the intended question directly. Literal on either side.
+    assert_eq!(
+        unsafe_fixed_output("if (class(x) == \"factor\") f()\n", "class-equals"),
+        "if (inherits(x, \"factor\")) f()\n"
+    );
+    assert_eq!(
+        unsafe_fixed_output("if (\"factor\" == class(x)) f()\n", "class-equals"),
+        "if (inherits(x, \"factor\")) f()\n"
+    );
+    // The original string token is preserved verbatim, quotes and all.
+    assert_eq!(
+        unsafe_fixed_output("flag <- class(df$col) == 'Date'\n", "class-equals"),
+        "flag <- inherits(df$col, 'Date')\n"
+    );
+}
+
+#[test]
+fn class_equals_rewrites_not_equal_negated() {
+    assert_eq!(
+        unsafe_fixed_output("if (class(x) != \"factor\") f()\n", "class-equals"),
+        "if (!inherits(x, \"factor\")) f()\n"
+    );
+}
+
+#[test]
+fn class_equals_rewrites_in_operator() {
+    // `"cls" %in% class(x)` (and the mirrored membership) is the same question.
+    assert_eq!(
+        unsafe_fixed_output("if (\"factor\" %in% class(x)) f()\n", "class-equals"),
+        "if (inherits(x, \"factor\")) f()\n"
+    );
+    assert_eq!(
+        unsafe_fixed_output("if (class(x) %in% \"factor\") f()\n", "class-equals"),
+        "if (inherits(x, \"factor\")) f()\n"
+    );
+}
+
+#[test]
+fn class_equals_fix_is_unsafe() {
+    // `class()` returns a vector: on a multi-class object the comparison is
+    // elementwise while `inherits()` is a scalar membership test, so the
+    // rewrite can change behavior — the fix needs the `--unsafe-fixes` opt-in.
+    let d = diagnostics("flag <- class(x) == \"factor\"\n")
+        .into_iter()
+        .find(|d| d.rule == "class-equals")
+        .expect("expected a class-equals finding");
+    let fix = d.fix.as_ref().expect("should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Unsafe);
+}
+
+#[test]
+fn class_equals_ignores_other_shapes() {
+    for src in [
+        "class(x) == y\n",               // not a string literal
+        "class(x) == c(\"a\", \"b\")\n", // vector comparand — deliberate
+        "class(x) <- \"foo\"\n",         // assignment, not comparison
+        "inherits(x, \"factor\")\n",     // already the idiom
+        "typeof(x) == \"integer\"\n",    // different function
+        "class(x, y) == \"foo\"\n",      // not the sole-positional shape
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"class-equals"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn class_equals_skips_shadowed_class() {
+    // A user redefinition of `class` means the comparison no longer inspects
+    // the class attribute, so the rewrite would be wrong.
+    let src = "class <- function(x) \"a\"\nclass(x) == \"a\"\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(
+        !rules.contains(&"class-equals"),
+        "{src:?} should not flag, got: {rules:?}"
+    );
+}
+
+#[test]
+fn class_equals_withholds_negating_fix_in_tight_context() {
+    // The negated rewrite `!inherits(...)` binds looser than the comparison it
+    // replaces; chained into another comparison it would misparse, so the fix
+    // is withheld — the finding still reports.
+    let d = diagnostics("z <- class(x) != \"a\" == y\n")
+        .into_iter()
+        .find(|d| d.rule == "class-equals")
+        .expect("expected a class-equals finding");
+    assert!(d.fix.is_none(), "tight context should withhold the fix");
+}
+
+#[test]
+fn class_equals_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved argument and string would be dropped by
+    // the rewrite, so the fix is withheld — the finding is still reported.
+    let d = diagnostics("flag <- class(x) == # note\n  \"factor\"\n")
+        .into_iter()
+        .find(|d| d.rule == "class-equals")
+        .expect("expected a class-equals finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
 fn unreachable_code_flags_after_return_and_stop() {
     // A statement after an unconditional `return()` in a function body can never
     // run; the finding spans it and the (unsafe) fix deletes it.
@@ -2531,6 +2703,13 @@ fn fixed_output_is_parseable_and_clean() {
         "flag <- nchar(x) > 0\n",
         "flag <- nchar(x) == 0\n",
         "if (nchar(x) >= 1) f()\n",
+        // is-numeric (`is.numeric(x) || is.integer(x)` → `is.numeric(x)`)
+        "if (is.numeric(x) || is.integer(x)) f()\n",
+        "flag <- is.integer(df$col) | is.numeric(df$col)\n",
+        // class-equals (`class(x) == "cls"` → `inherits(x, "cls")`; unsafe)
+        "if (class(x) == \"factor\") f()\n",
+        "flag <- class(x) != \"factor\"\n",
+        "if (\"data.frame\" %in% class(x)) f()\n",
         // string-boundary (`grepl("^a", x)` → `startsWith`; unsafe)
         "flag <- grepl(\"^abc\", x)\n",
         "flag <- grepl(\"xyz$\", y)\n",

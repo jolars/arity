@@ -12,6 +12,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`equals-na`](rules/equals-na.md)
 - [`vector-logic`](rules/vector-logic.md)
 - [`unreachable-code`](rules/unreachable-code.md)
+- [`is-numeric`](rules/is-numeric.md)
 
 ## Suspicious
 
@@ -36,6 +37,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`lengths`](rules/lengths.md)
 - [`nzchar`](rules/nzchar.md)
 - [`seq`](rules/seq.md)
+- [`class-equals`](rules/class-equals.md)
 - [`fixed-regex`](rules/fixed-regex.md)
 
 ## Documentation
