@@ -25,7 +25,7 @@ use crate::ast::{BinaryExpr, CallExpr};
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{PackageOrigin, SemanticModel, SymbolProvider};
-use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
+use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 use super::diagnostic::{Diagnostic, Severity};
 
@@ -59,6 +59,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(performance::AnyIsNa),
         Box::new(performance::AnyDuplicated),
         Box::new(performance::Crossprod),
+        Box::new(performance::Lengths),
         Box::new(performance::FixedRegex),
         Box::new(documentation::RoxygenUnknownTag),
         Box::new(documentation::RoxygenTitle),
@@ -188,6 +189,29 @@ impl RuleContext<'_> {
         }
         // Not masked by an attached non-default package.
         origin_is_default(self.symbols.origin(&name, self.model.loaded_packages()))
+    }
+
+    /// Whether a bare value read (an `IDENT` token used as a value, e.g. a
+    /// function passed as an argument: `sapply(x, length)`) is confirmed to be
+    /// base R: exported by a default package, not shadowed by a local binding,
+    /// and not masked by an attached non-default package. The value-position
+    /// counterpart of [`RuleContext::resolves_to_base`], sharing its
+    /// conservative stance — anything unconfirmed returns `false`.
+    pub fn read_resolves_to_base(&self, token: &SyntaxToken) -> bool {
+        let name = token.text();
+        if !self.symbols.is_base(name) {
+            return false;
+        }
+        let range = token.text_range();
+        let shadowed = self
+            .model
+            .idents()
+            .iter()
+            .any(|i| i.range == range && self.model.resolve_local(i).is_some());
+        if shadowed {
+            return false;
+        }
+        origin_is_default(self.symbols.origin(name, self.model.loaded_packages()))
     }
 }
 

@@ -32,6 +32,7 @@
   - [any-is-na](reference/rules/any-is-na.md)
   - [any-duplicated](reference/rules/any-duplicated.md)
   - [crossprod](reference/rules/crossprod.md)
+  - [lengths](reference/rules/lengths.md)
   - [fixed-regex](reference/rules/fixed-regex.md)
   - [roxygen-unknown-tag](reference/rules/roxygen-unknown-tag.md)
   - [roxygen-title](reference/rules/roxygen-title.md)

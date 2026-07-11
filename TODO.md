@@ -190,7 +190,14 @@ harden against shadowing in Phase 4.
       are the same bare symbol. The replacement is a call (a primary), so no
       precedence guard is needed and the fix is `Safe`; withheld when a comment
       outside the preserved operands would be dropped.
-- [ ] `lengths` `sapply(x, length)` -> `lengths(x)` (performance, safe).
+- [x] `lengths` `sapply(x, length)` -> `lengths(x)` (performance, `ns`, safe;
+      landed). Fires only on the clean two-positional-arg shape whose second
+      argument is the bare name `length`; namespace-confirms `sapply` resolves
+      to base R and that the `length` read is not locally rebound or masked
+      (via the new `RuleContext::read_resolves_to_base`, the value-position
+      counterpart of `resolves_to_base`). The replacement is a call (a primary),
+      so no precedence guard is needed and the fix is `Safe`; withheld when a
+      comment outside the preserved first argument would be dropped.
 - [ ] `nzchar` `nchar(x) > 0` -> `nzchar(x)` (performance, safe).
 - [ ] `seq`/`seq2` `1:length(x)` -> `seq_along`, `1:n` -> `seq_len`
       (performance, safe)—off-by-one safety, high value.

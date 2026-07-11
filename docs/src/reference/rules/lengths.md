@@ -1,0 +1,26 @@
+# `lengths`
+
+Flag `sapply(x, length)`, which is the purpose-built `lengths(x)`—faster (a single C pass instead of an R call per element) and clearer. Both return an integer vector and keep `x`'s names by default.
+
+The rule fires only on the clean two-positional-argument shape and only when `sapply` resolves to base R and `length` is not locally rebound; a redefinition of either is left alone.
+
+Per-element lengths of a list:
+
+```r
+n <- sapply(x, length)
+```
+
+```text
+warning: lengths
+ --> example.R:1:6
+  |
+1 | n <- sapply(x, length)
+  |      ^^^^^^^^^^^^^^^^^ `sapply(x, length)` is the faster, clearer `lengths(x)`
+  = help: Use `lengths(x)`.
+```
+
+After applying the fix:
+
+```r
+n <- lengths(x)
+```

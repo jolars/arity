@@ -153,7 +153,7 @@ rendered-flat `conditional_group` candidates.
 
 **Linter** (`src/linter/`): `check_paths` walks files, parses, and reports
 `LintStatus` (`Clean`/`Findings`/`ParseDiagnostics`); parse diagnostics
-block linting a file. Ships 25 rules across five categories (correctness,
+block linting a file. Ships 26 rules across five categories (correctness,
 suspicious, readability, performance, documentation) with autofixes, suppression
 handling, and generated per-rule docs; `src/linter/rules.rs` is the registry.
 

@@ -1903,6 +1903,67 @@ fn crossprod_withholds_fix_for_dropped_comment() {
     assert!(d.fix.is_none(), "dropped comment should withhold the fix");
 }
 
+#[test]
+fn lengths_rewrites_sapply() {
+    assert_eq!(
+        fixed_output("n <- sapply(x, length)\n", "lengths"),
+        "n <- lengths(x)\n"
+    );
+    // The first argument is preserved verbatim, whatever its shape.
+    assert_eq!(
+        fixed_output("n <- sapply(df$col, length)\n", "lengths"),
+        "n <- lengths(df$col)\n"
+    );
+}
+
+#[test]
+fn lengths_ignores_other_shapes() {
+    for src in [
+        "lengths(x)\n",                           // already the idiom
+        "sapply(x, sum)\n",                       // not length
+        "sapply(x)\n",                            // no FUN argument
+        "sapply(x, length, USE.NAMES = FALSE)\n", // extra arg — not the clean shape
+        "sapply(x, length, y)\n",                 // extra positional arg
+        "sapply(x, length(y))\n",                 // FUN is a call, not the bare name
+        "sapply(x, \"length\")\n",                // string FUN — match.fun form
+        "sapply(x, FUN = length)\n",              // named FUN — not the clean shape
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"lengths"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn lengths_skips_shadowed_names() {
+    // A user redefinition of `sapply` or `length` means the call no longer
+    // computes per-element base lengths, so the rewrite would be wrong.
+    for src in [
+        "sapply <- function(...) 1\nsapply(x, length)\n",
+        "length <- function(x) 42\nsapply(x, length)\n",
+        "f <- function() {\n  length <- function(x) 42\n  sapply(x, length)\n}\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"lengths"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn lengths_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved first argument would be dropped by the
+    // rewrite, so the fix is withheld — but the finding is still reported.
+    let d = diagnostics("sapply(x, # note\n  length)\n")
+        .into_iter()
+        .find(|d| d.rule == "lengths")
+        .expect("expected a lengths finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
 /// The (unsafe) fix carried by the single finding of `rule` in `src`, applied.
 fn unsafe_fixed_output(src: &str, rule: &str) -> String {
     let d = diagnostics(src)
@@ -2260,6 +2321,9 @@ fn fixed_output_is_parseable_and_clean() {
         "z <- t(x) %*% y\n",
         "z <- x %*% t(y)\n",
         "z <- t(x) %*% x\n",
+        // lengths (`sapply(x, length)` → `lengths(x)`)
+        "n <- sapply(x, length)\n",
+        "n <- sapply(df$col, length)\n",
         // string-boundary (`grepl("^a", x)` → `startsWith`; unsafe)
         "flag <- grepl(\"^abc\", x)\n",
         "flag <- grepl(\"xyz$\", y)\n",
