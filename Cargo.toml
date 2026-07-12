@@ -36,7 +36,7 @@ flate2 = "1.0"
 globset = "0.4.18"
 ignore = "0.4.26"
 log = { version = "0.4.32", features = ["release_max_level_info"] }
-lsp-server = "0.8"
+lsp-server = "0.9"
 lsp-types = "0.97"
 mimalloc = "0.1.52"
 rayon = "1.12.0"
