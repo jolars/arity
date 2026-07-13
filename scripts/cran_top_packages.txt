@@ -45,6 +45,7 @@ RSQLite
 RSpectra
 RUnit
 Rcpp
+RcppAnnoy
 RcppArmadillo
 RcppEigen
 RcppHNSW
@@ -145,6 +146,7 @@ doParallel
 dotCall64
 downlit
 dplyr
+dqrng
 drc
 dtplyr
 duckdb
@@ -384,6 +386,7 @@ ranger
 rapidjsonr
 rappdirs
 raster
+rbenchmark
 rbibutils
 rcmdcheck
 reactR
