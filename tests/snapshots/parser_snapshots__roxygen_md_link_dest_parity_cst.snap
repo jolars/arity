@@ -1,0 +1,91 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..181
+  ROXYGEN_BLOCK@0..175
+    ROXYGEN_SECTION@0..12
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+      ROXYGEN_MARKER@9..11 "#'"
+      NEWLINE@11..12 "\n"
+    ROXYGEN_SECTION@12..19
+      ROXYGEN_MARKER@12..14 "#'"
+      WHITESPACE@14..15 " "
+      ROXYGEN_TAG@15..18
+        ROXYGEN_AT@15..16 "@"
+        ROXYGEN_TAG_NAME@16..18 "md"
+      NEWLINE@18..19 "\n"
+    ROXYGEN_SECTION@19..138
+      ROXYGEN_MARKER@19..21 "#'"
+      WHITESPACE@21..22 " "
+      ROXYGEN_TAG@22..30
+        ROXYGEN_AT@22..23 "@"
+        ROXYGEN_TAG_NAME@23..30 "details"
+      NEWLINE@30..31 "\n"
+      ROXYGEN_PARAGRAPH@31..69
+        ROXYGEN_MARKER@31..33 "#'"
+        WHITESPACE@33..34 " "
+        ROXYGEN_MD_LINK@34..44
+          ROXYGEN_MD_DELIM@34..35 "["
+          ROXYGEN_TEXT@35..36 "a"
+          ROXYGEN_MD_DELIM@36..44 "](<b)c>)"
+        ROXYGEN_TEXT@44..49 " and "
+        ROXYGEN_MD_LINK@49..68
+          ROXYGEN_MD_DELIM@49..50 "["
+          ROXYGEN_TEXT@50..51 "d"
+          ROXYGEN_MD_DELIM@51..68 "](<foo(and(bar)>)"
+        NEWLINE@68..69 "\n"
+      ROXYGEN_MARKER@69..71 "#'"
+      NEWLINE@71..72 "\n"
+      ROXYGEN_PARAGRAPH@72..99
+        ROXYGEN_MARKER@72..74 "#'"
+        WHITESPACE@74..75 " "
+        ROXYGEN_MD_LINK@75..81
+          ROXYGEN_MD_DELIM@75..76 "["
+          ROXYGEN_TEXT@76..80 "link"
+          ROXYGEN_MD_DELIM@80..81 "]"
+        ROXYGEN_TEXT@81..98 "(foo\\(and\\(bar\\))"
+        NEWLINE@98..99 "\n"
+      ROXYGEN_MARKER@99..101 "#'"
+      NEWLINE@101..102 "\n"
+      ROXYGEN_PARAGRAPH@102..138
+        ROXYGEN_MARKER@102..104 "#'"
+        WHITESPACE@104..105 " "
+        ROXYGEN_MD_LINK@105..123
+          ROXYGEN_MD_DELIM@105..106 "["
+          ROXYGEN_TEXT@106..107 "t"
+          ROXYGEN_MD_DELIM@107..123 "](/url\u{a0}\"title\")"
+        ROXYGEN_TEXT@123..129 " plus "
+        ROXYGEN_MD_LINK@129..133
+          ROXYGEN_MD_DELIM@129..130 "["
+          ROXYGEN_MD_DELIM@130..133 "]()"
+        ROXYGEN_TEXT@133..137 " end"
+        NEWLINE@137..138 "\n"
+    ROXYGEN_SECTION@138..165
+      ROXYGEN_MARKER@138..140 "#'"
+      WHITESPACE@140..141 " "
+      ROXYGEN_TAG@141..164
+        ROXYGEN_AT@141..142 "@"
+        ROXYGEN_TAG_NAME@142..146 "note"
+        WHITESPACE@146..147 " "
+        ROXYGEN_MD_LINK@147..158
+          ROXYGEN_MD_DELIM@147..148 "["
+          ROXYGEN_TEXT@148..149 "x"
+          ROXYGEN_MD_DELIM@149..158 "](<foo\\>)"
+        ROXYGEN_TEXT@158..164 " drops"
+      NEWLINE@164..165 "\n"
+    ROXYGEN_SECTION@165..175
+      ROXYGEN_MARKER@165..167 "#'"
+      WHITESPACE@167..168 " "
+      ROXYGEN_TAG@168..175
+        ROXYGEN_AT@168..169 "@"
+        ROXYGEN_TAG_NAME@169..173 "name"
+        WHITESPACE@173..174 " "
+        ROXYGEN_TEXT@174..175 "x"
+  NEWLINE@175..176 "\n"
+  IDENT@176..180 "NULL"
+  NEWLINE@180..181 "\n"

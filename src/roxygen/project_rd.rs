@@ -856,13 +856,13 @@ fn strip_atx_closing(s: &str) -> &str {
 /// the cmark-derived braces that make the atoms necessary.
 fn section_rd_complete(body: &[Inline], md: bool) -> bool {
     if md {
-        // An inline `[text](dest)` link whose cmark destination truncates to a
+        // An inline `[text](dest)` link whose cmark destination ends in a
         // trailing **odd** backslash run makes roxygen2's `\href{dest}{text}`
         // brace-incomplete (the trailing `\` escapes the closing brace), so the whole
-        // section drops. arity carves a wider destination than cmark (its
-        // `scan_balanced` treats `\)` as an escaped paren, so `[t](foo\)bar)` keeps
-        // the whole `foo\)bar`), which hides the imbalance from the atom scan below;
-        // detect it directly on the raw destination (see [`md_href_dest_drops`]).
+        // section drops — `[t](foo\)bar)` (cmark's bare destination closes at the
+        // raw `)`, leaving `foo\`) and `[t](<foo\>)` alike. The link node hides the
+        // trailing `\` from the atom scan below; detect it directly on the parsed
+        // destination (see [`md_href_dest_drops`]).
         if body_has_dropping_href(body) {
             return false;
         }
@@ -902,21 +902,21 @@ fn body_has_dropping_href(body: &[Inline]) -> bool {
     })
 }
 
-/// Whether an inline-link destination `url` (arity's carved bare destination, which
-/// may run past cmark's closer) renders into an `\href{…}` argument that ends in a
-/// backslash escaping the closing brace — so roxygen2's `rdComplete` fails and the
-/// section drops.
+/// Whether an inline-link destination `url` (the parsed destination — the lexer's
+/// `inline_dest_span` already closes it where cmark does) renders into an `\href{…}`
+/// argument that ends in a backslash escaping the closing brace — so roxygen2's
+/// `rdComplete` fails and the section drops.
 ///
 /// roxygen2 runs `double_escape_md` (every `\` doubled) before cmark, so a backslash
-/// is a **literal** char in the destination and never escapes a paren: cmark closes
-/// the bare destination at the first paren-depth-0 `)`. arity's `scan_balanced`
-/// instead treats `\)` as an escaped paren and carries the destination further, so
-/// `url` here is the *wider* span (`foo\)bar`), and this function re-finds cmark's
-/// closer. A backslash run of length `r` immediately before that closer survives the
+/// is a **literal** char in the destination and never escapes a paren or an angle
+/// bracket: a bare destination closes at the first raw paren-depth-0 `)` (`[t](foo\)bar)`
+/// → `foo\`), an angle-bracketed one at the first `>` (`[t](<foo\>)` → `foo\`). A
+/// backslash run of length `r` at the end of the destination survives the
 /// `double_escape_md` → cmark → `parse_Rd` round-trip as `r` backslashes in the Rd
 /// destination (double to `2r`, cmark pairs to `r`), so the `\href{…}` brace is
-/// escaped exactly when `r` is **odd**: `foo\)bar` (r = 1) drops, `foo\\)bar` (r = 2)
-/// keeps.
+/// escaped exactly when `r` is **odd**: `foo\` (r = 1) drops, `foo\\` (r = 2) keeps.
+/// The depth-0 re-scan below is a no-op on an already-narrow bare destination but
+/// keeps an angle destination's interior `)` (`<b)c>` → no drop) out of the count.
 fn md_href_dest_drops(url: &str) -> bool {
     let bytes = url.as_bytes();
     // cmark's closer: the first paren-depth-0 `)` (a `\` is literal, never escaping).
@@ -4686,7 +4686,11 @@ fn inline_link_destination(content: &str) -> String {
             None => rest, // unterminated angle destination: keep verbatim
         }
     } else {
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        // ASCII whitespace only, like cmark: a U+00A0 is destination content, so
+        // it never separates a title (`[t](/url\u{a0}"x")` keeps the whole run).
+        let end = rest
+            .find(|c: char| c.is_ascii_whitespace())
+            .unwrap_or(rest.len());
         &rest[..end]
     };
     decode_html_entities(url)
@@ -4901,7 +4905,12 @@ fn autolink_has_uri_scheme(inner: &str) -> bool {
 }
 
 /// A bare URL → `(\url (VERB url))` (roxygen2's `\url{…}`; the URL is verbatim).
+/// An empty URL (`[]()` — roxygen2's `\url{}`) has no content atom: parse_Rd
+/// gives the macro no child, so the projection is a bare `(\url)`.
 fn url_atom(url: &str) -> String {
+    if url.is_empty() {
+        return "(\\url)".to_string();
+    }
     format!("(\\url (VERB {}))", encode_text(url))
 }
 
@@ -9047,6 +9056,51 @@ mod tests {
             let rd = project_to_rd(&src);
             assert!(rd.contains(want), "link {link:?}: want {want}, got: {rd}");
         }
+    }
+
+    #[test]
+    fn inline_dest_parity_mirrors_cmark_after_double_escape() {
+        // roxygen2 runs `double_escape_md` before cmark, so every source backslash
+        // reaches cmark self-paired (literal) and never escapes a paren, an angle
+        // bracket, or a title quote; and cmark's destination whitespace is ASCII
+        // only (a U+00A0 is destination content). All engine-probed (CommonMark
+        // spec examples 489/494/495/500/501/509).
+        let cases = [
+            // An angle-bracketed destination may contain parens.
+            ("[t](<b)c>)", "(\\href (VERB \"b)c\") (TEXT \"t\"))"),
+            (
+                "[t](<foo(and(bar)>)",
+                "(\\href (VERB \"foo(and(bar)\") (TEXT \"t\"))",
+            ),
+            // A bare destination counts every paren raw (`\(` is literal `\` then
+            // an active paren), so this never balances: not a link.
+            (
+                "[t](foo\\(and\\(bar\\))",
+                "(\\link (TEXT \"t\")) (TEXT \"(foo\\\\(and\\\\(bar\\\\))\")",
+            ),
+            // A U+00A0 is not ASCII whitespace: the whole run is the destination
+            // (no title separation).
+            (
+                "[t](/url\u{a0}\"title\")",
+                "(\\href (VERB \"/url\u{a0}\\\"title\\\"\") (TEXT \"t\"))",
+            ),
+            // An empty destination with empty text renders roxygen2's `\url{}`.
+            ("[]()", "(\\url)"),
+        ];
+        for (link, want) in cases {
+            let src = format!("#' T\n#'\n#' @md\n#' @details\n#' {link}\n#' @name x\nNULL\n");
+            let rd = project_to_rd(&src);
+            assert!(rd.contains(want), "link {link:?}: want {want}, got: {rd}");
+        }
+        // `<foo\>` closes at the `>` (the backslash is literal), so cmark's
+        // destination is `foo\` — a trailing backslash that escapes the `\href`
+        // brace, dropping the whole section.
+        let src = "#' T\n#'\n#' @md\n#' @details\n#' [t](<foo\\>)\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\details)"),
+            "angle dest with trailing backslash must drop the section, got: {rd}"
+        );
     }
 
     #[test]

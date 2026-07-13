@@ -1094,86 +1094,116 @@ fn inline_link_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
 }
 
 /// The end index of a *valid* CommonMark inline link/image destination `(…)` at
-/// `bytes[i] == b'('` — the index past the matching `)`, or `None` when the
+/// `bytes[i] == b'('` — the index past the closing `)`, or `None` when the
 /// parenthesized content is not a well-formed destination (optionally followed by
-/// a title). A bare destination with an interior ASCII space then non-title text
-/// (`[t](a\ b)`) is **not** a link: cmark leaves the `[t]` a shortcut reference and
-/// the `(a\ b)` literal prose. Callers that previously accepted any balanced `(…)`
-/// (see [`scan_balanced`]) route through here so the recognizers agree with cmark.
+/// a title). Mirrors cmark's inline-link parse *after* roxygen2's
+/// `double_escape_md`: every source backslash doubles, so cmark resolves each pair
+/// back to a literal `\` and **no source backslash ever escapes** a paren, an
+/// angle bracket, or a title quote. A bare destination runs to the first ASCII
+/// whitespace or to the `)` at raw paren depth 0 (interior parens must balance by
+/// raw count — `[t](foo\(bar)` never closes, not a link); an angle-bracketed
+/// `<…>` destination runs to the first `>` and may contain spaces and parens.
+/// After the destination, only trailing whitespace — or whitespace then a single
+/// `"…"`/`'…'`/`(…)` title then trailing whitespace — may precede the closing
+/// `)`. Whitespace is ASCII-only throughout (a U+00A0 is destination content). So
+/// a bare destination with an interior ASCII space then non-title text
+/// (`[t](a\ b)`) is **not** a link: cmark leaves the `[t]` a shortcut reference
+/// and the `(a\ b)` literal prose.
 fn inline_dest_span(bytes: &[u8], i: usize) -> Option<usize> {
-    let end = scan_balanced(bytes, i, b'(', b')')?;
-    valid_inline_dest_content(&bytes[i + 1..end - 1]).then_some(end)
-}
-
-/// Whether `inner` (the bytes between an inline destination's parentheses) is a
-/// valid CommonMark link destination optionally followed by a title. A bare
-/// destination runs to the first ASCII whitespace (a backslash never escapes
-/// whitespace); an angle-bracketed `<…>` destination may contain spaces. After the
-/// destination, only trailing whitespace — or whitespace then a single
-/// `"…"`/`'…'`/`(…)` title then trailing whitespace — may follow. Mirrors cmark's
-/// inline-link parse so a stray space before non-title text invalidates the link.
-fn valid_inline_dest_content(inner: &[u8]) -> bool {
-    let n = inner.len();
-    let mut j = 0;
-    while j < n && inner[j].is_ascii_whitespace() {
+    debug_assert_eq!(bytes.get(i), Some(&b'('));
+    let mut j = i + 1;
+    while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
         j += 1;
     }
-    if inner.get(j) == Some(&b'<') {
-        // Angle-bracketed destination: to the first unescaped `>`; no raw `<`/newline.
+    if bytes.get(j) == Some(&b'<') {
+        // Angle-bracketed destination: to the first `>`; no raw `<`/newline inside.
         j += 1;
         loop {
-            match inner.get(j) {
-                None => return false,
-                Some(b'\\') => j += 2,
+            match bytes.get(j) {
+                None | Some(b'<') | Some(b'\n') => return None,
                 Some(b'>') => {
                     j += 1;
                     break;
                 }
-                Some(b'<') | Some(b'\n') => return false,
                 Some(_) => j += 1,
             }
         }
     } else {
-        // Bare destination: runs to the first ASCII whitespace (may be empty).
-        while j < n && !inner[j].is_ascii_whitespace() {
-            j += 1;
+        // Bare destination: to the first ASCII whitespace or the depth-0 `)`.
+        let mut depth = 0usize;
+        loop {
+            match bytes.get(j) {
+                None => return None,
+                Some(&b) if b.is_ascii_whitespace() => break,
+                Some(b'(') => {
+                    depth += 1;
+                    j += 1;
+                }
+                Some(b')') if depth == 0 => break,
+                Some(b')') => {
+                    depth -= 1;
+                    j += 1;
+                }
+                Some(_) => j += 1,
+            }
         }
     }
     let ws_start = j;
-    while j < n && inner[j].is_ascii_whitespace() {
+    while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
         j += 1;
     }
-    if j == n {
-        return true; // destination only (with optional trailing whitespace)
+    match bytes.get(j) {
+        Some(b')') => return Some(j + 1),
+        None => return None,
+        // Content abutting the destination (no separating whitespace).
+        _ if j == ws_start => return None,
+        _ => {}
     }
-    if j == ws_start {
-        return false; // trailing content with no separating whitespace
-    }
-    let close = match inner[j] {
+    let nested_open = bytes[j];
+    let close = match nested_open {
         b'"' => b'"',
         b'\'' => b'\'',
         b'(' => b')',
-        _ => return false,
+        _ => return None,
     };
-    let nested_open = inner[j];
     j += 1;
+    // The title, unlike the destination, is scanned longest-match (cmark's re2c
+    // title pattern): after doubling, a source-backslash-preceded closer is
+    // *optionally* escaped, so the title runs to the first closer NOT preceded
+    // by a `\` — or, when every closer is `\`-preceded, to the last one. An
+    // interior `(` in a `(…)` title is likewise allowed only when `\`-preceded.
+    let mut escapable_close = None;
     loop {
-        match inner.get(j) {
-            None => return false,
-            Some(b'\\') => j += 2,
-            Some(&c) if c == close => {
-                j += 1;
+        match bytes.get(j) {
+            // No unpreceded closer: longest-match falls back to the last
+            // backslash-preceded one.
+            None => {
+                j = escapable_close? + 1;
                 break;
             }
-            // A `(…)` title may not contain an unescaped `(`.
-            Some(&c) if nested_open == b'(' && c == b'(' => return false,
+            Some(&c) if c == close => {
+                if bytes[j - 1] == b'\\' {
+                    escapable_close = Some(j);
+                    j += 1;
+                } else {
+                    j += 1;
+                    break;
+                }
+            }
+            Some(&c) if nested_open == b'(' && c == b'(' => {
+                if bytes[j - 1] == b'\\' {
+                    j += 1;
+                } else {
+                    return None;
+                }
+            }
             Some(_) => j += 1,
         }
     }
-    while j < n && inner[j].is_ascii_whitespace() {
+    while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
         j += 1;
     }
-    j == n
+    (bytes.get(j) == Some(&b')')).then(|| j + 1)
 }
 
 /// Whether a `[` at `bytes[i]` opens a *cross-line* inline link: the remainder of

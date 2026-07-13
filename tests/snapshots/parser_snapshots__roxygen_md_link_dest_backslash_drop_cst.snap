@@ -20,11 +20,11 @@ ROOT@0..149
         ROXYGEN_TAG_NAME@71..78 "details"
         WHITESPACE@78..79 " "
         ROXYGEN_TEXT@79..81 "A "
-        ROXYGEN_MD_LINK@81..94
+        ROXYGEN_MD_LINK@81..90
           ROXYGEN_MD_DELIM@81..82 "["
           ROXYGEN_TEXT@82..83 "t"
-          ROXYGEN_MD_DELIM@83..94 "](foo\\)bar)"
-        ROXYGEN_TEXT@94..99 " end."
+          ROXYGEN_MD_DELIM@83..90 "](foo\\)"
+        ROXYGEN_TEXT@90..99 "bar) end."
       NEWLINE@99..100 "\n"
     ROXYGEN_SECTION@100..107
       ROXYGEN_MARKER@100..102 "#'"

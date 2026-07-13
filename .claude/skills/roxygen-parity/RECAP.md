@@ -229,34 +229,41 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   empty dest and the serialize arm routes it to `shortcut_link_node_atom` (cmark's dest is the
   synthesized `R:label` — shortcut shape). Never make an empty-dest ref link reach
   `ref_link_node_atom`.
-- **A `[…](…)` is an inline link only when the `(…)` is a VALID CommonMark destination** (2026-07-10b).
-  A bare destination runs to the first ASCII whitespace (a `\` never escapes whitespace — `\ ` is a literal
-  backslash then a terminating space), so `[t](a\ b)`/`[t](a b c)`/`[t](url ok)` are **not** links: `[t]` falls
-  back to a shortcut `\link{t}` and the `(…)` stays literal prose. A `<…>` destination may contain spaces; after
-  the destination only trailing whitespace — or whitespace then one `"…"`/`'…'`/`(…)` title then trailing
-  whitespace — may follow (`[t]( url )`/`[t](url "t")` link, `[t](<a b>)` links). Single source: `valid_inline_dest_content`
-  + `inline_dest_span` (`lex.rs`) replace the old raw `scan_balanced(…,'(',')')` at **all four** carve sites —
-  `inline_link_span`, `same_line_bracket_opener`'s after-`]` `(` exclusion, the bare-`]` closer arm (**line ~704** —
-  a `]` followed by an *invalid* `(` must still close so the shortcut pairs; missing this left `[t]` un-carved),
-  and `scan_md_link`'s `(` arm (falls to the shortcut on an invalid dest); `cross_line_link_closer` too. Projector
-  + formatter **unchanged** (lexer decides link-vs-not; the arena/projector follow). Curated `md_link_invalid_dest`,
-  fixture `roxygen_md_link_invalid_dest`, unit `invalid_inline_dest_falls_back_to_shortcut`. **Reference images**
-  (`![x](a\ b)` → `\figure{R:x}` via the synthesized linkref) — arity models inline images only, so `scan_md_image`
-  is untouched (still backlog).
-- **A trailing-backslash inline-link destination DROPS the section, projector-only (2026-07-10c).** `[t](foo\)bar)`:
-  cmark's `double_escape_md` turns `\)` into `\\)` → a literal `\` then a closing `)`, so cmark's destination is
-  `foo\` — a trailing backslash that escapes the `\href{…}` brace → `\href{foo\}{t}` is `rdComplete`-incomplete →
-  roxygen2 **drops the whole section** (`(\details)`). arity's `scan_balanced` treats `\)` as an escaped paren, so
-  the CST link node keeps the *wider* span `[t](foo\)bar)` (lossless; `\href{foo\)bar}{t}`) — **not** re-boundaried;
-  the drop is detected projector-side. New `body_has_dropping_href`/`md_href_dest_drops` (project_rd.rs), gated into
-  `section_rd_complete`'s md arm **before** the atom scan: find cmark's closer (first paren-depth-0 `)`, `\` literal),
-  then the backslash run before it survives `double_escape`→cmark→`parse_Rd` as `r` backslashes, so an **odd** `r`
-  escapes the brace (`foo\)bar` r=1 drops; `foo\\)bar` r=2 keeps). Recurses into emphasis/brace-group/list-item/display.
-  Curated `md_link_dest_backslash_drop` (+pin `(\details)` +allowlist), fixture `roxygen_md_link_dest_backslash_drop`
-  (CST link node spans the whole `[t](foo\)bar)`; lossless), unit `trailing_backslash_inline_dest_drops_the_section`,
-  format baseline +1 (additive — the corpus key set). **Backlog:** the SURVIVING even-run case content still diverges
-  (`\href{foo\\}{t}` vs roxygen2's `foo\` — the URL needs the `double_escape`→cmark→`parse_Rd` backslash-run collapse
-  *and* the cmark link boundary, both untracked); an odd-run trailing `\` inside a *reference/shortcut* label or an image dest.
+- **A `[…](…)` is an inline link only when the `(…)` is a VALID CommonMark destination — parsed with
+  cmark-after-double-escape semantics** (2026-07-10b, tightened 2026-07-13e). `double_escape_md` doubles every
+  `\`, so cmark resolves each pair back to a literal `\` and **no source backslash ever escapes** anything in
+  a destination: a bare destination runs to the first **ASCII** whitespace (U+00A0 is content — `[t](/url\u{a0}"x")`
+  keeps the whole run, cm-509) or to the `)` at **raw** paren depth 0 (`\(`/`\)` are active parens: `[t](foo\(and\(bar\))`
+  never balances → not a link, cm-500; `[t](foo\)bar)` closes at the raw `)` → dest `foo\`); a `<…>` destination
+  runs to the first `>` and may contain spaces **and parens** (`[a](<b)c>)` → `\href{b)c}{a}` cm-494, `<foo(and(bar)>`
+  cm-501; interior raw `<`/newline invalid). The **title** alone is longest-match (cmark's re2c pattern): it closes
+  at the first quote NOT immediately preceded by `\`, or — every closer `\`-preceded (escapable after doubling) —
+  at the **last** one (`"title \"&quot;"` runs to the last quote, cm-508); an interior `(` in a `(…)` title needs a
+  preceding `\`. Invalid `(…)` → `[t]` falls back to a shortcut `\link{t}`, the `(…)` literal prose. Single source:
+  `inline_dest_span` (`lex.rs`, `valid_inline_dest_content` folded in) at all carve sites — `inline_link_span`,
+  `same_line_bracket_opener`'s after-`]` `(` exclusion, the bare-`]` closer arm (a `]` followed by an *invalid* `(`
+  must still close so the shortcut pairs), `scan_md_link`'s `(` arm, `cross_line_link_closer`, `scan_md_image`.
+  Projector mirror: `inline_link_destination` (project_rd.rs) is ASCII-ws-only too. Empty dest + empty display
+  `[]()` = roxygen2's `\url{}` → `(\url)` with **no** VERB child (`url_atom`, cm-489). Curated `md_link_invalid_dest`
+  + `md_link_dest_parity`, fixtures `roxygen_md_link_{invalid_dest,dest_parity}`, units
+  `invalid_inline_dest_falls_back_to_shortcut` + `inline_dest_parity_mirrors_cmark_after_double_escape`.
+  **Reference images** (`![x](a\ b)` → `\figure{R:x}` via the synthesized linkref) still backlog.
+- **A trailing-backslash inline-link destination DROPS the section (2026-07-10c; boundary now in the lexer,
+  2026-07-13e).** `[t](foo\)bar)`: after `double_escape_md`, cmark's bare destination closes at the **raw** `)` →
+  dest `foo\` — a trailing backslash that escapes the `\href{…}` brace → `rdComplete`-incomplete → roxygen2
+  **drops the whole section** (`(\details)`). Same for an angle destination: `[t](<foo\>)` → dest `foo\` → drop
+  (cm-495). Since 2026-07-13e the **lexer carves cmark's boundary itself** (`inline_dest_span`), so the CST link
+  node is `[t](foo\)` and `bar)` stays literal prose (still lossless — the old wider-span carve is gone).
+  `body_has_dropping_href`/`md_href_dest_drops` (project_rd.rs), gated into `section_rd_complete`'s md arm **before**
+  the atom scan, reads the *parsed* destination: the trailing backslash run survives `double_escape`→cmark→`parse_Rd`
+  as `r` backslashes, so an **odd** `r` escapes the brace (r=1 drops; r=2 keeps); its depth-0 re-scan keeps an angle
+  dest's interior `)` (`<b)c>`) out of the count. Recurses into emphasis/brace-group/list-item/display. Curated
+  `md_link_dest_backslash_drop` (pin `(\details)`), fixture `roxygen_md_link_dest_backslash_drop` (CST link node
+  ends at cmark's closer), unit `trailing_backslash_inline_dest_drops_the_section`. **Backlog:** the SURVIVING
+  even-run case content still diverges (`\href{foo\\}{t}` vs roxygen2's `foo\` — the URL needs the backslash-run
+  collapse); an odd-run trailing `\` inside a *reference/shortcut* label or an image dest; **per-tag drop parity**
+  (probed 2026-07-13e: `@details` drops the incomplete field, but `@note` KEEPS it and parse_Rd mangles the tail —
+  `@note [x](<foo\>) drops` → `(\note (\href (VERB "foo}{x} drops\n")))` — arity drops both).
 - **Arena does CommonMark opener deactivation; nested links resolve inner-first.** `match_brackets`
   (`inline.rs`): a stack pairs each `]` to the nearest *active* `[`, a formed link deactivates every
   opener below it, a lone `]` does the `][ref]` lookahead and is a shortcut only on a bracket-free
@@ -1006,8 +1013,8 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 860 matching (all allowlisted), 106 divergent** of 966 pinned. The divergent 106 are the
-per-section backlog (harvested 18, Links 14, Images 11, Link reference definitions 10, List items 10,
+**Current: 867 matching (all allowlisted), 100 divergent** of 967 pinned. The divergent 100 are the
+per-section backlog (harvested 18, Images 11, Link reference definitions 10, List items 10, Links 8,
 Tabs 8, Lists 7, ATX 6, Setext 6, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1015,57 +1022,52 @@ Tabs 8, Lists 7, ATX 6, Setext 6, …; Block quotes COMPLETE). Tasks: `task roxy
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (966 pinned); 106 divergent backlog.
+   Curated + harvested + whole-spec corpora (967 pinned); 100 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 160/160 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 161/161 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-13d) — quote interior flattens via reparse: Block quotes 14→25/25 COMPLETE
+## Latest session (2026-07-13e) — inline-destination parity: Links 76→82/90
 
-The ranked `xml_text` cluster, three root causes closed together. **Projector** (project_rd.rs):
-`block_quote_flat_text` rewritten — strip the `#'` marker, the *container's content column*
-(`md_indented_code_extra_strip`; an in-item quote carries the item's column on every line), and
-**one** quote level per line (`strip_one_quote_level`: ≤3 spaces + `>` + one optional space; a lazy
-line returns unchanged, indent included), then **re-parse the stripped body as a synthesized `#' @md`
-fragment through the real parser** and flatten the block tree recursively (`quote_flat_section`/
-`quote_flat_node`/`quote_flat_unit`/`quote_flat_inlines`) — heading titles, list items, nested quotes
-(recurse → next level stripped), fence/indented bodies (literal text), tables (cell text) all glue
-with **no separator**; a prose unit collapses `[ \t]*SOFT_BREAK[ \t]*` to nothing and trims its edges
-(cmark strips line-edge ws; breaks contribute nothing to `xml_text`). **A *lazy* setext underline
-glues onto the previous line at synthesis** — re-emitted on its own line the reparse would promote a
-heading (this is what protects the allowlisted `md_blockquote_setext`). Withhold → legacy per-line
-flatten when the reparse yields any tag section besides the synthesized `@md` (an `@`-line in a quote
-is literal to cmark). **Parser** (build.rs): `finish_md_block_quote` gained a `QuoteInnerState`
-per-line state machine — laziness now requires an **open paragraph** (blank `>` line, inner
-indented-code line, inner fence opener (tracked to its closer), ATX/thematic/promoting-setext all
-close it; plain prose and a content-bearing list item open it; state classified on the all-levels
-stripped inner text, `quote_inner_content`). And `is_md_list_start`'s interrupt arm is now
-indent-gated (`!is_indent_code_line`): a ≥4-column marker line is would-be indented code → lazy
-paragraph text, both in quotes (cm-240 `foo- bar`) and at section level (`foo - bar`, engine-probed).
+The ranked destination cluster — one root cause: `inline_dest_span` (lex.rs) didn't mirror what
+cmark sees **after `double_escape_md`**. Rewritten (with `valid_inline_dest_content` folded in) to
+the post-doubling semantics: every source backslash is literal (self-paired after doubling), so a
+**bare** destination closes at the first ASCII whitespace or the **raw**-depth-0 `)` (interior
+parens count raw — `[t](foo\(and\(bar\))` never balances → shortcut fallback, cm-500), and an
+**angle** `<…>` destination runs to the first `>` and may contain parens (cm-494/501) — `<foo\>`
+closes with dest `foo\` → trailing odd run → section drop via the untouched `md_href_dest_drops`
+(cm-495; it reads the *parsed* url, so it covered angle dests for free). The **title** alone is
+longest-match (cm-508 regressed the first no-escape attempt and taught the rule): closes at the
+first quote not `\`-preceded, else the last quote; interior `(` in a `(…)` title needs a `\`.
+Projector: `inline_link_destination` Unicode→**ASCII** whitespace (cm-509's U+00A0 dest keeps its
+"title"); `url_atom("")` → `(\url)` no VERB child (cm-489 `[]()`). The old wider-span carve for
+`[t](foo\)bar)` is gone — the CST link node now ends at cmark's closer (fixture snapshot
+re-reviewed; losslessness holds).
 
-**Result:** projector **860 matching (all allowlisted after seed), 106 divergent**, 0 blocked, of 966
-pinned; 0 regressions. **Block quotes 14→25/25 — the section is COMPLETE** (cm-230/231/232/234/237/
-238/239/240/251/252/253); **List items 36→38/48** (cm-261/262); cm-128 (Fenced 27/29) + cm-176 (HTML
-blocks 44/46) fell out for free. Curated `md_blockquote_nested` (+pin `Foobarbaz tail`), fixture
-`roxygen_md_blockquote_para_state` (blank-`>`/indented-code/fence laziness ends + over-indent lazy
-fold; lossless), units `quote_interior_structure_flattens_via_reparse`,
-`blank_quote_line_ends_lazy_continuation`, `indented_code_in_quote_blocks_laziness`,
-`overindented_prose_is_lazy_when_quote_paragraph_open`,
-`indented_list_marker_does_not_interrupt_paragraph`. Format baseline +1 (additive, byte-stable).
-Fixed-point 160/160. Full suite + clippy + fmt green.
+**Result:** projector **867 matching (all allowlisted), 100 divergent**, 0 blocked, of 967 pinned;
+0 regressions. **Links 76→82/90** (cm-489/494/495/500/501/509). Curated `md_link_dest_parity`
+(+pin; NBSP is a literal byte — exact-byte trap), fixture `roxygen_md_link_dest_parity` (angle
+dests, raw-paren fallback, NBSP, `[]()`, `@note` drop shape; lossless), unit
+`inline_dest_parity_mirrors_cmark_after_double_escape`. Format baseline +1 (additive). Fixed-point
+161/161. Full suite + clippy + fmt green. **New backlog found while probing:** per-tag drop parity —
+`@details` drops an `rdComplete`-incomplete field but `@note` keeps it (parse_Rd mangles the tail);
+arity drops both (see the 2026-07-10c trap).
 
-**Ranked next target:** **Links** (76/90, 14 left) — the inline-destination parity cluster: cm-489
-empty-dest `(\url)` child, cm-494/501 angle-bracket dests with parens, cm-509 title *kept* in the
-dest; probe each with the R driver first. Alternatives: the remaining **List-items indent shapes**
-(cm-294/295 item-head quote `1. > x` — the lexer carves block leaves only at *line start*, so an
-item's same-line content never opens a quote/fence; cm-275/276 item starting with indented code —
-content col = marker+1; cm-280/281 content on the line after a bare marker; cm-297 drifting sibling
-marker indents; cm-300/301 `- - foo` stacked markers; cm-302 heading-in-item hoists to `\section`)
-or **Images** (11/22) / **Link reference definitions** (17/27). Harvested 18 stay out-of-scope.
+**Ranked next target:** **Links** (82/90, 8 left), the label sub-cluster: cm-542 (`[ẞ]` needs
+Unicode case-fold label normalization vs `[SS]: /url` — `normalize_linkref_label` is
+lowercase-only), cm-551 (escaped `[` inside a ref label `[ref\[]` — the escaped-close backlog),
+cm-552/554 (invalid def labels: trailing `\\`, whitespace-only multi-line `[\n ]` — must de-link +
+leak, arity currently drops/links), then the pairing sub-cluster cm-535/572 (`[foo][bar][baz]`
+pairs left-to-right; inner ref-in-emphasis) and cm-528 (autolink swallows `]` — left-to-right
+precedence). cm-512 (dest + title split across a soft break — no cross-line dest-span machinery)
+is likely the hardest. Alternatives: **Images** (11/22), **Link reference definitions** (17/27),
+**List items** (38/48, the indent shapes). Harvested 18 stay out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-13d** — quote interior flattens via reparse (block_quote_flat_text strips one quote level + reparses as a synthesized `@md` fragment, recursive flatten; `QuoteInnerState` paragraph-open laziness; `is_md_list_start` indent-gated interrupt). Block quotes 14→25/25 COMPLETE, List items +2, cm-128/176 free. 844→860.
 
 - **2026-07-13c** — block quote folds into a list item (item-body arm in `emit_md_list_level_inner`, indent window `content_indent..+4`, `item_has_content` gate; projector `push_inline` `MdBlockQuote` arm — a missing arm leaked raw `#'` markers). Closed cm-256/265/288/289/290/292 + cm-322/323 free. Curated `md_list_item_block_quote`, fixture, 3 units, baseline +1. 830→844, List items 30→36/48.
 

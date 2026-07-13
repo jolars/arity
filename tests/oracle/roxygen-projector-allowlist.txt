@@ -438,14 +438,19 @@ cm-485
 cm-486
 cm-487
 cm-488
+cm-489
 cm-490
 cm-491
 cm-492
 cm-493
+cm-494
+cm-495
 cm-496
 cm-497
 cm-498
 cm-499
+cm-500
+cm-501
 cm-502
 cm-503
 cm-504
@@ -453,6 +458,7 @@ cm-505
 cm-506
 cm-507
 cm-508
+cm-509
 cm-510
 cm-511
 cm-513
@@ -642,6 +648,7 @@ md_link_backslash
 md_link_backslash_drop
 md_link_collapsed
 md_link_dest_backslash_drop
+md_link_dest_parity
 md_link_emphasis
 md_link_invalid_dest
 md_link_macro_arg_drop

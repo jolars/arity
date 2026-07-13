@@ -1,0 +1,3 @@
+(\description (TEXT "Title"))
+(\details (\href (VERB "b)c") (TEXT "a")) (TEXT "and") (\href (VERB "foo(and(bar)") (TEXT "d")) (\link (TEXT "link")) (TEXT "(foo\\(and\\(bar\\))") (\href (VERB "/url \"title\"") (TEXT "t")) (TEXT "plus") (\url) (TEXT "end"))
+(\title (TEXT "Title"))
