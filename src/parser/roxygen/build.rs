@@ -938,6 +938,29 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
+            // A block quote at the item's content column folds into this item —
+            // with or without an intervening blank line (a block quote
+            // interrupts the item's paragraph; a blank only makes the item
+            // loose; roxygen2 flattens the quote to plain text glued onto the
+            // item's prose, engine-probed). Four or more columns past the
+            // content column it is indented code instead (the blank-separated
+            // indented-code arm — the lexer carves the quote leaf indent-blind,
+            // so the window here is what keeps the two apart), and below the
+            // content column it is a section-level block that ends the list. An
+            // **empty** item folds no quote (the list ends instead,
+            // engine-probed, the same gate as indented code).
+            if item_has_content
+                && let Some(m) = next_content_line(tokens, i)
+                && (content_indent..content_indent + 4).contains(&list_line_indent(tokens, m))
+                && is_md_block_quote_start(tokens, m)
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
+                }
+                i = emit_md_block_quote(tokens, m, events);
+                continue;
+            }
+
             // A no-blank lazy continuation: a following plain-prose line that
             // opens no block folds into the item's open paragraph (CommonMark
             // paragraph continuation text) — even unindented or over-indented.

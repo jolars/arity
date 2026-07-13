@@ -238,6 +238,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_list_item_indented_code",
         "roxygen_md_list_item_table",
         "roxygen_md_list_item_block_macro",
+        "roxygen_md_list_item_block_quote",
         "roxygen_md_empty_list_item",
         "roxygen_md_nested_list",
         "roxygen_md_code_block",

@@ -212,12 +212,14 @@ cm-249
 cm-250
 cm-254
 cm-255
+cm-256
 cm-257
 cm-258
 cm-259
 cm-260
 cm-263
 cm-264
+cm-265
 cm-266
 cm-267
 cm-268
@@ -236,7 +238,11 @@ cm-284
 cm-285
 cm-286
 cm-287
+cm-288
+cm-289
+cm-290
 cm-291
+cm-292
 cm-293
 cm-296
 cm-298
@@ -254,6 +260,8 @@ cm-316
 cm-317
 cm-318
 cm-321
+cm-322
+cm-323
 cm-324
 cm-325
 cm-327
@@ -633,6 +641,7 @@ md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
 md_link_title
 md_list_item_block_macro
+md_list_item_block_quote
 md_list_item_code_block
 md_list_item_indented_code
 md_list_item_para

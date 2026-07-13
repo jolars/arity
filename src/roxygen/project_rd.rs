@@ -4429,6 +4429,13 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_INDENTED_CODE => {
             out.push(Inline::MdIndentedCode(n));
         }
+        // A `ROXYGEN_MD_BLOCK_QUOTE` folded into a list item (a quote at the
+        // item's content column) flattens to plain text glued onto the item's
+        // prose, the same as a section-level quote (roxygen2 has no block-quote
+        // support and renders the concatenated descendant text).
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE => {
+            out.push(Inline::MdBlockQuote(n));
+        }
         // A `ROXYGEN_MD_TABLE` folded into a list item (a GFM table at the item's
         // content column) projects to roxygen2's `\tabular`, the same as a
         // section-level table; [`serialize_md_table`] strips the item's content
@@ -8334,6 +8341,49 @@ mod tests {
                  (\\preformatted (VERB \"code\\n\")) \
                  (\\if (TEXT \"html\") (\\out (VERB \"</div>\"))) (\\item) (TEXT \"b\")))"
             ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn block_quote_at_content_column_folds_into_item() {
+        // A block quote indented to the item's content column folds into the
+        // item — a blank only makes the item loose — and roxygen2 flattens the
+        // quote to plain text glued onto the item's prose (`- a` / blank /
+        // `  > q` → item text `aq`, engine-probed). A following below-column
+        // list marker is a sibling item.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#'   > q\n#' - b\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\details (\\itemize (\\item) (TEXT \"aq\") (\\item) (TEXT \"b\")))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn block_quote_without_blank_folds_into_item() {
+        // A block quote interrupts the item's open paragraph, so it folds with
+        // no intervening blank too (`- a` / `  > q` → item text `aq`,
+        // engine-probed).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'   > q\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (\\itemize (\\item) (TEXT \"aq\")))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn empty_item_does_not_fold_block_quote() {
+        // An empty item folds no blank-separated block quote: the list ends and
+        // the quote is section-level content instead (engine-probed, the same
+        // gate as indented code).
+        let src = "#' @md\n#' @title T\n#' @details\n#' -\n#'\n#'   > q\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (\\itemize (\\item)) (TEXT \"q\"))"),
             "got: {}",
             project_to_rd(src)
         );
