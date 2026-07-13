@@ -112,6 +112,7 @@ cm-124
 cm-125
 cm-126
 cm-127
+cm-128
 cm-129
 cm-130
 cm-131
@@ -157,6 +158,7 @@ cm-172
 cm-173
 cm-174
 cm-175
+cm-176
 cm-178
 cm-179
 cm-180
@@ -197,9 +199,17 @@ cm-225
 cm-226
 cm-227
 cm-228
+cm-230
+cm-231
+cm-232
 cm-233
+cm-234
 cm-235
 cm-236
+cm-237
+cm-238
+cm-239
+cm-240
 cm-241
 cm-242
 cm-243
@@ -210,6 +220,9 @@ cm-247
 cm-248
 cm-249
 cm-250
+cm-251
+cm-252
+cm-253
 cm-254
 cm-255
 cm-256
@@ -217,6 +230,8 @@ cm-257
 cm-258
 cm-259
 cm-260
+cm-261
+cm-262
 cm-263
 cm-264
 cm-265
@@ -579,6 +594,7 @@ md_blockquote_glue
 md_blockquote_glue_around
 md_blockquote_lazy
 md_blockquote_multiline
+md_blockquote_nested
 md_blockquote_setext
 md_blockquote_value
 md_block_value_edges

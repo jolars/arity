@@ -1,0 +1,104 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..344
+  ROXYGEN_BLOCK@0..338
+    ROXYGEN_SECTION@0..34
+      ROXYGEN_PARAGRAPH@0..31
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..30 "Block quote paragraph ..."
+        NEWLINE@30..31 "\n"
+      ROXYGEN_MARKER@31..33 "#'"
+      NEWLINE@33..34 "\n"
+    ROXYGEN_SECTION@34..41
+      ROXYGEN_MARKER@34..36 "#'"
+      WHITESPACE@36..37 " "
+      ROXYGEN_TAG@37..40
+        ROXYGEN_AT@37..38 "@"
+        ROXYGEN_TAG_NAME@38..40 "md"
+      NEWLINE@40..41 "\n"
+    ROXYGEN_SECTION@41..328
+      ROXYGEN_MARKER@41..43 "#'"
+      WHITESPACE@43..44 " "
+      ROXYGEN_TAG@44..52
+        ROXYGEN_AT@44..45 "@"
+        ROXYGEN_TAG_NAME@45..52 "details"
+      NEWLINE@52..53 "\n"
+      ROXYGEN_MD_BLOCK_QUOTE@53..66
+        ROXYGEN_MARKER@53..55 "#'"
+        WHITESPACE@55..56 " "
+        ROXYGEN_TEXT@56..61 "> bar"
+        NEWLINE@61..62 "\n"
+        ROXYGEN_MARKER@62..64 "#'"
+        WHITESPACE@64..65 " "
+        ROXYGEN_TEXT@65..66 ">"
+      NEWLINE@66..67 "\n"
+      ROXYGEN_PARAGRAPH@67..74
+        ROXYGEN_MARKER@67..69 "#'"
+        WHITESPACE@69..70 " "
+        ROXYGEN_TEXT@70..73 "baz"
+        NEWLINE@73..74 "\n"
+      ROXYGEN_MARKER@74..76 "#'"
+      NEWLINE@76..77 "\n"
+      ROXYGEN_PARAGRAPH@77..129
+        ROXYGEN_MARKER@77..79 "#'"
+        WHITESPACE@79..80 " "
+        ROXYGEN_TEXT@80..128 "Indented code inside  ..."
+        NEWLINE@128..129 "\n"
+      ROXYGEN_MD_BLOCK_QUOTE@129..142
+        ROXYGEN_MARKER@129..131 "#'"
+        WHITESPACE@131..132 " "
+        ROXYGEN_TEXT@132..142 ">     code"
+      NEWLINE@142..143 "\n"
+      ROXYGEN_MD_INDENTED_CODE@143..157
+        ROXYGEN_MARKER@143..145 "#'"
+        WHITESPACE@145..150 "     "
+        ROXYGEN_TEXT@150..157 "outside"
+      NEWLINE@157..158 "\n"
+      ROXYGEN_MARKER@158..160 "#'"
+      NEWLINE@160..161 "\n"
+      ROXYGEN_PARAGRAPH@161..211
+        ROXYGEN_MARKER@161..163 "#'"
+        WHITESPACE@163..164 " "
+        ROXYGEN_TEXT@164..210 "A fence opener inside ..."
+        NEWLINE@210..211 "\n"
+      ROXYGEN_MD_BLOCK_QUOTE@211..219
+        ROXYGEN_MARKER@211..213 "#'"
+        WHITESPACE@213..214 " "
+        ROXYGEN_TEXT@214..219 "> ```"
+      NEWLINE@219..220 "\n"
+      ROXYGEN_PARAGRAPH@220..231
+        ROXYGEN_MARKER@220..222 "#'"
+        WHITESPACE@222..223 " "
+        ROXYGEN_TEXT@223..230 "outside"
+        NEWLINE@230..231 "\n"
+      ROXYGEN_MARKER@231..233 "#'"
+      NEWLINE@233..234 "\n"
+      ROXYGEN_PARAGRAPH@234..294
+        ROXYGEN_MARKER@234..236 "#'"
+        WHITESPACE@236..237 " "
+        ROXYGEN_TEXT@237..293 "Over-indented prose i ..."
+        NEWLINE@293..294 "\n"
+      ROXYGEN_MD_BLOCK_QUOTE@294..327
+        ROXYGEN_MARKER@294..296 "#'"
+        WHITESPACE@296..297 " "
+        ROXYGEN_TEXT@297..302 "> foo"
+        NEWLINE@302..303 "\n"
+        ROXYGEN_MARKER@303..305 "#'"
+        WHITESPACE@305..310 "     "
+        ROXYGEN_MD_LIST_MARKER@310..311 "-"
+        ROXYGEN_TEXT@311..327 " still lazy text"
+      NEWLINE@327..328 "\n"
+    ROXYGEN_SECTION@328..338
+      ROXYGEN_MARKER@328..330 "#'"
+      WHITESPACE@330..331 " "
+      ROXYGEN_TAG@331..338
+        ROXYGEN_AT@331..332 "@"
+        ROXYGEN_TAG_NAME@332..336 "name"
+        WHITESPACE@336..337 " "
+        ROXYGEN_TEXT@337..338 "x"
+  NEWLINE@338..339 "\n"
+  IDENT@339..343 "NULL"
+  NEWLINE@343..344 "\n"

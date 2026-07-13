@@ -5285,6 +5285,24 @@ fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
 /// result is joined with newlines (a trailing newline per line, commonmark's
 /// `xml_text`) and split into one `VERB` per line by `parse_Rd`.
 fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
+    let code = md_indented_code_text(node);
+    let html = encode_text("html");
+    vec![
+        format!(
+            "(\\if (TEXT {html}) (\\out (VERB {})))",
+            encode_text("<div class=\"sourceCode\">")
+        ),
+        format!("(\\preformatted {})", verb_atoms(&code).join(" ")),
+        format!(
+            "(\\if (TEXT {html}) (\\out (VERB {})))",
+            encode_text("</div>")
+        ),
+    ]
+}
+
+/// The dedented verbatim text of a `ROXYGEN_MD_INDENTED_CODE` node — commonmark's
+/// `xml_text` for the block, one trailing `\n` per line.
+fn md_indented_code_text(node: &SyntaxNode) -> String {
     let text = node.text().to_string();
     // When the block is folded into a list item, roxygen2 strips the item's
     // content column *before* CommonMark's four (the item container consumes its
@@ -5315,18 +5333,7 @@ fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
         code.push_str(&after_marker[content..]);
         code.push('\n');
     }
-    let html = encode_text("html");
-    vec![
-        format!(
-            "(\\if (TEXT {html}) (\\out (VERB {})))",
-            encode_text("<div class=\"sourceCode\">")
-        ),
-        format!("(\\preformatted {})", verb_atoms(&code).join(" ")),
-        format!(
-            "(\\if (TEXT {html}) (\\out (VERB {})))",
-            encode_text("</div>")
-        ),
-    ]
+    code
 }
 
 /// The number of **extra** leading columns [`serialize_md_indented_code`] must
@@ -5416,61 +5423,285 @@ fn serialize_md_html_block(node: &SyntaxNode) -> String {
     )
 }
 
-/// Project a `ROXYGEN_MD_BLOCK_QUOTE` node into its **flattened plain text**.
-/// roxygen2 does not support block quotes (`mdxml_unsupported`, `R/markdown.R`): it
-/// warns, then renders `escape_comment(xml_text(node))` — the concatenation of every
-/// descendant text node, with the `>` markers and all inner markup (emphasis, code
-/// spans, links) dropped and **no separator** between the lines (softbreaks and
-/// paragraph breaks contribute nothing). Each quote line has its `#'` marker, its
-/// `>` marker (after up to three spaces), and one optional following space stripped;
-/// its remaining markdown resolves to inlines whose plain text ([`inline_plain_text`],
-/// softbreaks removed) is concatenated directly. The result is one whitespace-
-/// normalized `(TEXT …)` atom, or `None` when the flattened text is blank.
-///
-/// Scoped to fully-marked, self-contained quotes: an inner Rd macro (roxygen2 keeps
-/// its source), cross-line emphasis, and gluing the flattened text onto an adjacent
-/// prose paragraph (roxygen2 emits no `\n\n` before a quote, so `before` + `> q`
-/// renders `beforeq`) are deferred backlog and not pinned.
 /// The **un-normalized** flattened plain text of a `ROXYGEN_MD_BLOCK_QUOTE`.
 /// roxygen2 has no block-quote support (`mdxml_unsupported`, `R/markdown.R`): it
 /// warns, then renders `escape_comment(xml_text(node))` — the concatenation of
-/// every descendant text node, with the `>` markers and all inner markup
-/// (emphasis, code spans, links) dropped and **no separator** between the lines
-/// (softbreaks and paragraph breaks contribute nothing). Each quote line has its
-/// `#'` marker, its `>` marker (after up to three spaces), and one optional
-/// following space stripped; its remaining markdown resolves to inlines whose plain
-/// text ([`inline_plain_text`], softbreaks removed) is concatenated directly.
+/// every descendant text node of cmark's **parsed** quote body, with the `>`
+/// markers and all markup (block *and* inline: nested quote markers, heading
+/// `#`s, list bullets, fence lines, emphasis delimiters) dropped and **no
+/// separator** between blocks or lines (softbreaks and paragraph breaks
+/// contribute nothing; code blocks keep their literal content and newlines).
+///
+/// The projection mirrors that pipeline: each line drops its `#'` marker and
+/// **one** quote level ([`strip_one_quote_level`]; a lazy line keeps its content,
+/// including indentation), the stripped body **re-parses as a fresh `@md`
+/// roxygen fragment through the real parser**, and the resulting block tree
+/// flattens recursively ([`quote_flat_section`]) — a nested quote strips its next
+/// level on recursion. A *lazy* setext underline glues onto the previous line at
+/// synthesis (it is paragraph text in the quote; re-emitted on its own line it
+/// would spuriously promote a heading). A body whose re-parse yields any tag
+/// section besides the synthesized `@md` (an `@`-opening line inside the quote —
+/// literal text to cmark) withholds the re-parse and falls back to the legacy
+/// per-line flatten.
 ///
 /// Returned raw (not wrapped in a `(TEXT …)` atom, not whitespace-normalized) so
 /// [`serialize_inlines`] can push it as a `Final` segment that glues onto adjacent
 /// prose (roxygen2 emits no `\n\n` before a quote, so `before` + `> q` renders
 /// `beforeq`), deferring the single `norm_ws` to the coalesced atom.
 ///
-/// Scoped to fully-marked, self-contained quotes: an inner Rd macro (roxygen2 keeps
-/// its source) and CommonMark lazy continuation (a non-`>` line folded into the
-/// quote) are deferred backlog and not pinned.
+/// Known limits (unpinned backlog): an inner Rd macro contributes nothing
+/// (roxygen2 keeps its placeholder-swapped source); an opaque link/image/HTML
+/// leaf contributes nothing (`xml_text` keeps its display/alt/raw text); trailing
+/// spaces on a prose line survive (cmark strips them).
 fn block_quote_flat_text(node: &SyntaxNode) -> String {
     let text = node.text().to_string();
-    let mut flat = String::new();
+    // A quote folded into a list item carries the item's content column on every
+    // line; the item container consumes it before the quote marker is read (the
+    // same coordinate shift as an in-item indented code block).
+    let container = md_indented_code_extra_strip(node);
+    let mut lines: Vec<String> = Vec::new();
     for line in text.split('\n') {
         let content = strip_marker(line);
-        let inner = strip_block_quote_marker(content);
-        let inlines = resolve_macro_arg_inlines(inner);
-        for ch in inline_plain_text(&inlines).chars() {
-            if ch != SOFT_BREAK {
-                flat.push(ch);
+        let consumed = content
+            .bytes()
+            .take(container)
+            .take_while(|&b| b == b' ')
+            .count();
+        let content = &content[consumed..];
+        match strip_one_quote_level(content) {
+            Some(inner) => lines.push(inner.to_string()),
+            // A lazy continuation line: paragraph text of the quote's open
+            // paragraph. A setext-underline-shaped one must not be re-emitted at
+            // line start (the re-parse would promote the paragraph into a
+            // heading, dropping the underline text); cmark reads it as
+            // continuation text, so glue it onto the previous line — softbreaks
+            // contribute nothing to `xml_text`, so the glue is separator-free.
+            None if is_lazy_setext_shape(content) && !lines.is_empty() => {
+                let last = lines.last_mut().expect("checked non-empty");
+                last.push_str(content.trim_start_matches(' '));
+            }
+            None => lines.push(content.to_string()),
+        }
+    }
+    quote_flat_reparse(&lines).unwrap_or_else(|| {
+        // Legacy per-line flatten: each line's markdown resolves as an inline
+        // fragment; block structure stays literal.
+        let mut flat = String::new();
+        for line in &lines {
+            let inlines = resolve_macro_arg_inlines(line);
+            for ch in inline_plain_text(&inlines).chars() {
+                if ch != SOFT_BREAK {
+                    flat.push(ch);
+                }
+            }
+        }
+        flat
+    })
+}
+
+/// Strip **one** block-quote marker level from a quote line's content: up to
+/// three leading spaces, the `>`, then one optional space. Returns `None` for a
+/// lazy continuation line (no `>` within the first three columns), whose content
+/// — indentation included — is paragraph text and must survive unchanged.
+fn strip_one_quote_level(content: &str) -> Option<&str> {
+    let b = content.as_bytes();
+    let mut j = 0;
+    while j < 3 && b.get(j) == Some(&b' ') {
+        j += 1;
+    }
+    if b.get(j) != Some(&b'>') {
+        return None;
+    }
+    j += 1;
+    if b.get(j) == Some(&b' ') {
+        j += 1;
+    }
+    Some(&content[j..])
+}
+
+/// Whether a lazy continuation line is setext-underline-shaped — a run of `=`, or
+/// a dash run too short to be a thematic break (`--`), with only trailing
+/// whitespace. Mirrors the parser's lazy-setext fold (`finish_md_block_quote`):
+/// only such lines fold into a quote without a `>` marker while *not* being plain
+/// paragraph prose to a fresh re-parse.
+fn is_lazy_setext_shape(content: &str) -> bool {
+    let t = content.trim_start_matches(' ');
+    let ch = match t.as_bytes().first() {
+        Some(&c @ (b'=' | b'-')) => c,
+        _ => return false,
+    };
+    let run = t.bytes().take_while(|&b| b == ch).count();
+    if !t[run..].trim().is_empty() {
+        return false;
+    }
+    // `---` (three or more dashes, no interior spaces here) is a thematic break,
+    // which the parser never folds lazily — it cannot reach this path.
+    !(ch == b'-' && run >= 3)
+}
+
+/// Re-parse a quote's one-level-stripped body as a fresh `@md` roxygen fragment
+/// and flatten its block tree ([`quote_flat_section`]). Returns `None` when the
+/// re-parse yields any tag section besides the synthesized `@md` (an `@`-opening
+/// body line — cmark reads it as literal text, so the re-parse mis-sections it).
+fn quote_flat_reparse(lines: &[String]) -> Option<String> {
+    let mut src = String::from("#' @md\n");
+    for line in lines {
+        if line.is_empty() {
+            src.push_str("#'\n");
+        } else {
+            src.push_str("#' ");
+            src.push_str(line);
+            src.push('\n');
+        }
+    }
+    let cst = crate::parser::parse(&src).cst;
+    let block = cst.descendants().find_map(RoxygenBlock::cast)?;
+    if block.sections().filter(|s| s.tag().is_some()).count() != 1 {
+        return None;
+    }
+    let mut flat = String::new();
+    for section in block.sections() {
+        quote_flat_section(&section, &mut flat);
+    }
+    Some(flat)
+}
+
+/// Flatten one re-parsed section of a quote body: every block child contributes
+/// its `xml_text` — prose units via [`quote_flat_unit`], block nodes via
+/// [`quote_flat_node`] — glued with no separator. The synthesized `@md` tag node
+/// contributes nothing.
+fn quote_flat_section(section: &RoxygenSection, out: &mut String) {
+    for el in section.syntax().children_with_tokens() {
+        let NodeOrToken::Node(node) = el else {
+            continue;
+        };
+        match node.kind() {
+            SyntaxKind::ROXYGEN_TAG => {}
+            SyntaxKind::ROXYGEN_PARAGRAPH => {
+                if let Some(p) = RoxygenParagraph::cast(node) {
+                    out.push_str(&quote_flat_unit(&paragraph_inlines(&p)));
+                }
+            }
+            _ => quote_flat_node(&node, out),
+        }
+    }
+}
+
+/// Flatten one re-parsed block node of a quote body to its `xml_text`.
+fn quote_flat_node(node: &SyntaxNode, out: &mut String) {
+    match node.kind() {
+        SyntaxKind::ROXYGEN_MD_LIST => {
+            for item in node
+                .children()
+                .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+            {
+                out.push_str(&quote_flat_unit(&md_list_item_inlines(&item)));
+            }
+        }
+        SyntaxKind::ROXYGEN_MD_HEADING => {
+            let (_, title) = parse_md_heading(node);
+            out.push_str(&quote_flat_unit(&resolve_macro_arg_inlines(&title)));
+        }
+        SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE => out.push_str(&block_quote_flat_text(node)),
+        SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
+            let (_, code) = md_code_block_parts(node);
+            out.push_str(&code);
+        }
+        SyntaxKind::ROXYGEN_MD_INDENTED_CODE => out.push_str(&md_indented_code_text(node)),
+        // `xml_text` over a table is its cell text glued in source order; the
+        // delimiter row is table syntax, not content.
+        SyntaxKind::ROXYGEN_MD_TABLE => {
+            let text = node.text().to_string();
+            for (idx, line) in text.split('\n').enumerate() {
+                if idx == 1 {
+                    continue; // delimiter row
+                }
+                for cell in split_table_row_cells(strip_marker(line)) {
+                    let content = unescape_table_pipes(cell.trim());
+                    out.push_str(&quote_flat_unit(&resolve_macro_arg_inlines(&content)));
+                }
+            }
+        }
+        // An HTML block's `xml_text` is its raw content, one line each.
+        SyntaxKind::ROXYGEN_MD_HTML_BLOCK => {
+            let text = node.text().to_string();
+            for line in text.split('\n') {
+                out.push_str(strip_marker(line));
+                out.push('\n');
+            }
+        }
+        // A thematic break renders empty; an Rd macro contributes nothing
+        // (roxygen2 keeps its placeholder-swapped source — deferred backlog).
+        _ => {}
+    }
+}
+
+/// Flatten one prose unit (a paragraph, list item, or heading title) to its
+/// `xml_text`: inline markup contributes its textual content
+/// ([`quote_flat_inlines`]), then every soft line break — with the line-trailing
+/// whitespace before it and the continuation indent after it — collapses to
+/// nothing, and the unit's edges trim (cmark strips a line's leading and trailing
+/// whitespace; breaks contribute nothing to `xml_text`).
+fn quote_flat_unit(inlines: &[Inline]) -> String {
+    let mut s = String::new();
+    quote_flat_inlines(inlines, &mut s);
+    let mut out = String::new();
+    let mut pending_ws = String::new();
+    let mut after_break = false;
+    for ch in s.chars() {
+        match ch {
+            ' ' | '\t' => pending_ws.push(ch),
+            SOFT_BREAK => {
+                pending_ws.clear();
+                after_break = true;
+            }
+            _ => {
+                if !after_break {
+                    out.push_str(&pending_ws);
+                }
+                pending_ws.clear();
+                after_break = false;
+                out.push(ch);
             }
         }
     }
-    flat
+    out.trim_matches([' ', '\t', '\n']).to_string()
 }
 
-/// Strip a block-quote line's `>` marker: up to three leading spaces, the `>`, then
-/// one optional space. Mirrors [`crate::parser::roxygen`]'s `is_block_quote_marker`.
-fn strip_block_quote_marker(content: &str) -> &str {
-    let trimmed = content.trim_start_matches(' ');
-    let after = trimmed.strip_prefix('>').unwrap_or(trimmed);
-    after.strip_prefix(' ').unwrap_or(after)
+/// Flatten a resolved inline run to its `xml_text`: text and code spans
+/// contribute their content (a code span's soft break is a space — cmark converts
+/// a code span's interior line ending), emphasis and link nodes their inner text,
+/// and a nested block node ([`quote_flat_node`]) its own flattened text. Opaque
+/// leaves (an unresolved link/image/HTML leaf, an Rd macro) contribute nothing —
+/// the legacy behavior, kept deliberately (see [`block_quote_flat_text`]).
+fn quote_flat_inlines(inlines: &[Inline], out: &mut String) {
+    for inl in inlines {
+        match inl {
+            Inline::Text(t) => out.push_str(t),
+            Inline::MdCode(t) => {
+                for ch in t.chars() {
+                    out.push(if ch == SOFT_BREAK { ' ' } else { ch });
+                }
+            }
+            Inline::MdEmphasis { children, .. } => quote_flat_inlines(children, out),
+            Inline::MdInlineLink { display, .. }
+            | Inline::MdRefLink { display, .. }
+            | Inline::MdShortcutLink { display } => quote_flat_inlines(display, out),
+            Inline::MdList(n)
+            | Inline::MdCodeBlock(n)
+            | Inline::MdIndentedCode(n)
+            | Inline::MdTable(n)
+            | Inline::MdHtmlBlock(n)
+            | Inline::MdHeading(n) => quote_flat_node(n, out),
+            Inline::MdBlockQuote(n) => out.push_str(&block_quote_flat_text(n)),
+            Inline::MdListResolved { items, .. } => {
+                for item in items {
+                    out.push_str(&quote_flat_unit(item));
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Per-column alignment of a GFM table, from the delimiter row's colon markers.
@@ -8371,6 +8602,82 @@ mod tests {
         let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'   > q\n#' @name spec\nNULL\n";
         assert!(
             project_to_rd(src).contains("(\\details (\\itemize (\\item) (TEXT \"aq\")))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn quote_interior_structure_flattens_via_reparse() {
+        // roxygen2 renders a quote as `xml_text` over cmark's *parsed* body, so
+        // interior markup vanishes: nested `>` markers, a heading's `#`s, and a
+        // list bullet all contribute only their text, glued with no separator
+        // (`> # Foo` / `> > bar` / `> - baz` → `Foobarbaz`, engine-probed;
+        // cm-230/253/237 are the spec pins).
+        let src = "#' @md\n#' @title T\n#' @details\n#' > # Foo\n#' > > bar\n#' > - baz\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"Foobarbaz\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn blank_quote_line_ends_lazy_continuation() {
+        // A blank `>` line closes the quote's paragraph, so a following unmarked
+        // line is not a lazy continuation: the quote ends and the line is a
+        // sibling paragraph, joined by roxygen2's `\n\n` paragraph separator
+        // (`> bar` / `>` / `baz` → `bar baz`, cm-251).
+        let src = "#' @md\n#' @title T\n#' @details\n#' > bar\n#' >\n#' baz\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"bar baz\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn indented_code_in_quote_blocks_laziness() {
+        // Laziness continues only a paragraph: after `>     foo` (indented code
+        // inside the quote) an unmarked `    bar` does not fold — the quote ends
+        // and the line is section-level indented code (cm-238).
+        let src = "#' @md\n#' @title T\n#' @details\n#' >     foo\n#'     bar\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"foo\") \
+                 (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) \
+                 (\\preformatted (VERB \"bar\\n\")) \
+                 (\\if (TEXT \"html\") (\\out (VERB \"</div>\"))))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn overindented_prose_is_lazy_when_quote_paragraph_open() {
+        // A >= 4-column line cannot interrupt a paragraph (would-be indented
+        // code), so with the quote's paragraph open it folds as lazy paragraph
+        // text — the would-be list marker stays literal (`> foo` / `    - bar` →
+        // `foo- bar`, cm-240).
+        let src = "#' @md\n#' @title T\n#' @details\n#' > foo\n#'     - bar\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"foo- bar\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn indented_list_marker_does_not_interrupt_paragraph() {
+        // The same interrupt gate at section level, no quote: a >= 4-column
+        // marker line after an open paragraph is lazy prose, not a list
+        // (`foo` / `    - bar` → `foo - bar`, engine-probed).
+        let src = "#' @md\n#' @title T\n#' @details\n#' foo\n#'     - bar\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"foo - bar\"))"),
             "got: {}",
             project_to_rd(src)
         );

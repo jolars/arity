@@ -155,15 +155,18 @@ fn brace_scan(text: &str, depth: &mut i32) -> bool {
 /// (`@md` mode): its content begins with a `RoxygenMdListMarker` leaf, and —
 /// when it would interrupt an open paragraph (`para_open`) — the CommonMark
 /// interrupt rule admits it (a bullet always, an ordered marker only if its
-/// start number is 1). A marker that fails the gate stays inline prose (its
-/// `RoxygenMdListMarker` leaf renders as literal text).
+/// start number is 1, and never at four or more columns of indentation: such
+/// a line is would-be indented code, which cannot interrupt a paragraph, so
+/// the marker is lazy paragraph text). A marker that fails the gate stays
+/// inline prose (its `RoxygenMdListMarker` leaf renders as literal text).
 pub(super) fn is_md_list_start(tokens: &[Token], start: usize, para_open: bool) -> bool {
     let content = line_content_start(tokens, start);
     match tokens.get(content) {
         Some(tok) if tok.kind == TokKind::RoxygenMdListMarker => {
             !para_open
                 || (md_list_marker_can_interrupt(&tok.text)
-                    && !md_list_item_is_empty(tokens, content))
+                    && !md_list_item_is_empty(tokens, content)
+                    && !is_indent_code_line(tokens, start))
         }
         _ => false,
     }
@@ -505,13 +508,15 @@ pub(super) fn emit_md_block_quote(
 
     // Opening line: marker, marker→content whitespace, then the opener content.
     events.push(Event::Tok(start));
+    let mut state = QuoteInnerState::default();
+    quote_state_update_line(tokens, start, &mut state);
     let mut i = start + 1;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         events.push(Event::Tok(i));
         i += 1;
     }
 
-    finish_md_block_quote(tokens, i, events)
+    finish_md_block_quote(tokens, i, state, events)
 }
 
 /// Emit a `ROXYGEN_MD_BLOCK_QUOTE` node for a block quote opening as a **tag's
@@ -527,20 +532,181 @@ pub(super) fn emit_md_block_quote_from_value(
     events: &mut Vec<Event>,
 ) -> usize {
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_BLOCK_QUOTE));
+    let mut state = QuoteInnerState::default();
     let mut i = ws_start;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        if tokens[i].kind == TokKind::RoxygenMdBlockQuote {
+            quote_state_update(&mut state, quote_inner_content(&tokens[i].text));
+        }
         events.push(Event::Tok(i));
         i += 1;
     }
-    finish_md_block_quote(tokens, i, events)
+    finish_md_block_quote(tokens, i, state, events)
+}
+
+/// Block-level state of a quote's **innermost** content, tracked line-by-line so
+/// lazy continuation can be gated on an *open paragraph* (CommonMark: laziness
+/// only continues a paragraph). Each folded `>` line's inner content — every
+/// quote level stripped ([`quote_inner_content`]) — updates it: plain prose opens
+/// a paragraph; a blank line, an indented-code line (when no paragraph is open),
+/// a fence opener (until its closer), an ATX heading, a thematic break, or a
+/// promoting setext underline closes it. This is a per-line approximation, not a
+/// block tree: a fence opened in a *nested* quote is tracked as if it were the
+/// innermost block (a mixed-depth quote around a fence can misclassify — deferred
+/// to the block→inline pass), and HTML blocks are not modeled.
+#[derive(Default)]
+struct QuoteInnerState {
+    /// The innermost content's paragraph is open (a lazy line may continue it).
+    para_open: bool,
+    /// An open fenced code block: fence character and opening run length.
+    fence: Option<(u8, usize)>,
+}
+
+/// Update the quote-inner block state with one `>` line's inner content.
+fn quote_state_update(state: &mut QuoteInnerState, inner: &str) {
+    if let Some((ch, run)) = state.fence {
+        state.para_open = false;
+        // A closing fence: <= 3 columns of indentation, a run of the opening
+        // character at least as long as the opener, and nothing else.
+        let t = inner.trim_start_matches(' ');
+        if inner.len() - t.len() <= 3 {
+            let r = t.bytes().take_while(|&b| b == ch).count();
+            if r >= run && t[r..].trim().is_empty() {
+                state.fence = None;
+            }
+        }
+        return;
+    }
+    let t = inner.trim_start_matches(' ');
+    if t.is_empty() {
+        state.para_open = false; // blank line: the paragraph ends
+        return;
+    }
+    let indent = inner.len() - t.len();
+    if indent >= 4 {
+        // >= 4 columns: paragraph continuation when open (indented code cannot
+        // interrupt a paragraph), indented code when closed — either way the
+        // paragraph-open state is unchanged.
+        return;
+    }
+    if let Some(fence) = quote_inner_fence_opener(t) {
+        state.fence = Some(fence);
+        state.para_open = false;
+        return;
+    }
+    if quote_inner_is_atx_heading(t) || quote_inner_is_thematic_break(t) {
+        state.para_open = false;
+        return;
+    }
+    if state.para_open && quote_inner_is_setext_underline(t) {
+        state.para_open = false; // the underline promotes the paragraph
+        return;
+    }
+    if !state.para_open && matches!(t.as_bytes()[0], b'-' | b'*' | b'+') && t[1..].trim().is_empty()
+    {
+        return; // an empty list item opens no paragraph
+    }
+    // Plain prose — or a list item with content, whose own paragraph opens.
+    state.para_open = true;
+}
+
+/// Update the quote-inner state from the quote line whose `RoxygenMarker` is at
+/// `start` (its content is the whole-line `RoxygenMdBlockQuote` leaf).
+fn quote_state_update_line(tokens: &[Token], start: usize, state: &mut QuoteInnerState) {
+    let content = line_content_start(tokens, start);
+    if let Some(tok) = tokens.get(content)
+        && tok.kind == TokKind::RoxygenMdBlockQuote
+    {
+        quote_state_update(state, quote_inner_content(&tok.text));
+    }
+}
+
+/// Strip every leading block-quote marker level (up to three spaces, `>`, one
+/// optional space, repeatedly) from a quote line's content, yielding the
+/// innermost content the state machine classifies.
+pub(super) fn quote_inner_content(mut s: &str) -> &str {
+    loop {
+        let b = s.as_bytes();
+        let mut j = 0;
+        while j < 3 && b.get(j) == Some(&b' ') {
+            j += 1;
+        }
+        if b.get(j) != Some(&b'>') {
+            return s;
+        }
+        j += 1;
+        if b.get(j) == Some(&b' ') {
+            j += 1;
+        }
+        s = &s[j..];
+    }
+}
+
+/// A CommonMark fence opener in a quote's inner content (already indent-trimmed):
+/// a run of three or more backticks or tildes; a backtick fence's info string may
+/// not contain a backtick. Returns the fence character and run length.
+fn quote_inner_fence_opener(t: &str) -> Option<(u8, usize)> {
+    let ch = match t.as_bytes().first() {
+        Some(&c @ (b'`' | b'~')) => c,
+        _ => return None,
+    };
+    let run = t.bytes().take_while(|&b| b == ch).count();
+    if run < 3 || (ch == b'`' && t[run..].contains('`')) {
+        return None;
+    }
+    Some((ch, run))
+}
+
+/// An ATX heading in a quote's inner content: one to six `#`, then a space or
+/// the end of the line.
+fn quote_inner_is_atx_heading(t: &str) -> bool {
+    let hashes = t.bytes().take_while(|&b| b == b'#').count();
+    (1..=6).contains(&hashes) && t.as_bytes().get(hashes).is_none_or(|&b| b == b' ')
+}
+
+/// A thematic break in a quote's inner content: three or more of one of
+/// `*`/`-`/`_`, interleaved with spaces only.
+fn quote_inner_is_thematic_break(t: &str) -> bool {
+    let ch = match t.as_bytes().first() {
+        Some(&c @ (b'*' | b'-' | b'_')) => c,
+        _ => return false,
+    };
+    let mut count = 0;
+    for b in t.bytes() {
+        match b {
+            _ if b == ch => count += 1,
+            b' ' | b'\t' => {}
+            _ => return false,
+        }
+    }
+    count >= 3
+}
+
+/// A setext underline in a quote's inner content: a run of `=` or `-` with only
+/// trailing whitespace. (A `---` run is also a thematic break — the caller checks
+/// that first; while a paragraph is open the promoting reading closes it either
+/// way.)
+fn quote_inner_is_setext_underline(t: &str) -> bool {
+    let ch = match t.as_bytes().first() {
+        Some(&c @ (b'=' | b'-')) => c,
+        _ => return false,
+    };
+    let run = t.bytes().take_while(|&b| b == ch).count();
+    t[run..].trim().is_empty()
 }
 
 /// Gather a block quote's continuation lines (consecutive `>` lines and lazy
 /// paragraph continuations) after its opening line, then finish the
 /// `ROXYGEN_MD_BLOCK_QUOTE` node. `i` is at the opening line's trailing
-/// `Newline`. Shared by the line-start ([`emit_md_block_quote`]) and tag-value
+/// `Newline`; `state` reflects the opening line ([`QuoteInnerState`]). Shared by
+/// the line-start ([`emit_md_block_quote`]) and tag-value
 /// ([`emit_md_block_quote_from_value`]) forms.
-fn finish_md_block_quote(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
+fn finish_md_block_quote(
+    tokens: &[Token],
+    mut i: usize,
+    mut state: QuoteInnerState,
+    events: &mut Vec<Event>,
+) -> usize {
     loop {
         // Line boundary: fold a following consecutive block-quote line into the node.
         if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
@@ -553,28 +719,39 @@ fn finish_md_block_quote(tokens: &[Token], mut i: usize, events: &mut Vec<Event>
         if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker) {
             break;
         }
-        // A setext underline (`===`/`==`, or a `--` dash run too short to be a
-        // thematic break) cannot be a lazy continuation *underline* in a block
-        // quote (CommonMark), so it never promotes the quote's paragraph into a
-        // heading; instead it folds in as ordinary paragraph-continuation text
-        // (engine-probed: `> foo` then `===` renders `foo===`). It is excluded
-        // from `is_foldable_continuation` — correct for a tag's prose value,
-        // where an underline *does* promote — so fold it explicitly here. A `---`
-        // (or longer) dash run is a thematic break, which interrupts a paragraph
-        // and ends the quote, so it is not folded.
-        let is_lazy_setext =
-            is_md_setext_underline_line(tokens, m) && !is_md_thematic_break_line(tokens, m);
-        if !is_md_block_quote_start(tokens, m)
-            && !is_lazy_setext
-            && (!super::group::is_foldable_continuation(tokens, m)
-                // A standalone-tag line (HTML block condition 7) is NOT a lazy
-                // continuation here: the container match already failed at the
-                // missing `>`, so the quote's open paragraph is never reached and
-                // condition 7 opens a block (engine-probed: `> quoted` then
-                // `<span>` renders the tag as an HTML block, not quote text).
-                || is_md_html_block7_line(tokens, m))
-        {
-            break; // a blank line, tag, or new-block line ends the quote
+        if is_md_block_quote_start(tokens, m) {
+            quote_state_update_line(tokens, m, &mut state);
+        } else {
+            // An unmarked line folds only as a lazy continuation of the quote's
+            // open paragraph (CommonMark laziness continues paragraphs, nothing
+            // else): after a blank `>` line, an indented-code line, or a fence
+            // opener inside the quote, the paragraph is closed and the quote ends.
+            if !state.para_open {
+                break;
+            }
+            // A setext underline (`===`/`==`, or a `--` dash run too short to be a
+            // thematic break) cannot be a lazy continuation *underline* in a block
+            // quote (CommonMark), so it never promotes the quote's paragraph into a
+            // heading; instead it folds in as ordinary paragraph-continuation text
+            // (engine-probed: `> foo` then `===` renders `foo===`). It is excluded
+            // from `is_foldable_continuation` — correct for a tag's prose value,
+            // where an underline *does* promote — so fold it explicitly here. A `---`
+            // (or longer) dash run is a thematic break, which interrupts a paragraph
+            // and ends the quote, so it is not folded.
+            let is_lazy_setext =
+                is_md_setext_underline_line(tokens, m) && !is_md_thematic_break_line(tokens, m);
+            if !is_lazy_setext
+                && (!super::group::is_foldable_continuation(tokens, m)
+                    // A standalone-tag line (HTML block condition 7) is NOT a lazy
+                    // continuation here: the container match already failed at the
+                    // missing `>`, so the quote's open paragraph is never reached and
+                    // condition 7 opens a block (engine-probed: `> quoted` then
+                    // `<span>` renders the tag as an HTML block, not quote text).
+                    || is_md_html_block7_line(tokens, m))
+            {
+                break; // a blank line, tag, or new-block line ends the quote
+            }
+            // A lazy line is paragraph text: the paragraph stays open.
         }
         // A `>` line or a lazy paragraph-continuation line: `\n` + indentation + `#'`
         // threaded as trivia, then the line's body.

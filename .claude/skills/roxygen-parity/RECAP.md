@@ -70,6 +70,19 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   a missing arm falls into the text fallback silently and leaks raw `#'` markers into the item
   text. Fold arm in `emit_md_list_level_inner` + `push_inline` arm come as a pair (fence, table,
   indented code, block macro, block quote all have both).
+- **Block-quote flatten = strip one level + REPARSE; quote laziness = paragraph-open.**
+  `block_quote_flat_text` (project_rd.rs) strips the container content column
+  (`md_indented_code_extra_strip`) + one `>` level per line (`strip_one_quote_level`; lazy lines
+  unchanged) and **re-parses the body as a synthesized `#' @md` fragment** — never widen a per-line
+  scanner instead. A *lazy* setext underline must **glue onto the previous line at synthesis** (own
+  line → the reparse spuriously promotes a heading; guards `md_blockquote_setext`). Withhold to the
+  legacy per-line flatten on any non-`@md` tag section in the reparse. Parser: `finish_md_block_quote`
+  folds an unmarked line only while `QuoteInnerState.para_open` (blank `>`, inner indented code, inner
+  fence (tracked to closer), ATX/thematic/promoting setext close it) — a per-line approximation over
+  the all-levels-stripped inner text (`quote_inner_content`), not a block tree (nested-fence depth and
+  HTML blocks misclassify; the block→inline pass is the real fix). `is_md_list_start`'s interrupt arm
+  is indent-gated: a ≥4-column marker line never interrupts a paragraph (lazy text, both modes' quote
+  and section level).
 
 **Rd macros**
 - **Name = `[A-Za-z][A-Za-z0-9]*`** (digits allowed, `\linkS4class`). One source for the name
@@ -993,67 +1006,68 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 844 matching (all allowlisted), 121 divergent** of 965 pinned. The divergent 121 are the
-per-section backlog (harvested 18, Links 14, List items 12, Block quotes 11, Images 11,
-Link reference definitions 10, Tabs 8, Lists 7, …). Tasks: `task roxygen-projector` (the gate),
+**Current: 860 matching (all allowlisted), 106 divergent** of 966 pinned. The divergent 106 are the
+per-section backlog (harvested 18, Links 14, Images 11, Link reference definitions 10, List items 10,
+Tabs 8, Lists 7, ATX 6, Setext 6, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (965 pinned); 121 divergent backlog.
+   Curated + harvested + whole-spec corpora (966 pinned); 106 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 159/159 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 160/160 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-13c) — block quote folds into a list item: List items 30→36/48, Lists +2
+## Latest session (2026-07-13d) — quote interior flattens via reparse: Block quotes 14→25/25 COMPLETE
 
-The ranked List-items cluster, one root cause: a `> quote` line at a list item's **content column**
-never folded into the item — no item-body arm matched it, the list ended, and the ≥5-column line was
-then claimed at section level by `is_md_indented_code_start` (mis-projected as `\preformatted` with a
-literal `>`). **Parser** (roxygen/build.rs): new arm in `emit_md_list_level_inner`'s item-body loop
-(placed after the table arm) — `next_content_line` (a quote interrupts the item's paragraph, so a
-blank is optional and only makes the item loose) + indent window
-`content_indent..content_indent + 4` (at +4 it is indented code inside the item — the existing
-blank-separated indented-code arm; the lexer carves the `RoxygenMdBlockQuote` leaf indent-blind, so
-this window is what keeps the two apart) + **`item_has_content` gate** (an empty item folds no quote;
-the list ends and the quote is section-level, engine-probed — same gate as indented code, unlike the
-fence) → `emit_md_block_quote` inside the `ROXYGEN_MD_LIST_ITEM`. A following sibling item resumes
-the list (`is_foldable_continuation` already excludes list lines, so `finish_md_block_quote` stops
-there). **Projector** (project_rd.rs): `push_inline` was missing a `ROXYGEN_MD_BLOCK_QUOTE` arm — the
-folded node fell into the text fallback and leaked its raw `#'` markers into the item text. One new
-arm pushing `Inline::MdBlockQuote` (mirrors the fence/table/indented-code in-item arms); the existing
-serialize arm then flattens the quote to plain text **glued** onto the item's prose with no separator
-(`- a` / `  > q` → `(TEXT "aq")`; cm-265's `(TEXT "bazbam")`), exactly the section-level behavior.
+The ranked `xml_text` cluster, three root causes closed together. **Projector** (project_rd.rs):
+`block_quote_flat_text` rewritten — strip the `#'` marker, the *container's content column*
+(`md_indented_code_extra_strip`; an in-item quote carries the item's column on every line), and
+**one** quote level per line (`strip_one_quote_level`: ≤3 spaces + `>` + one optional space; a lazy
+line returns unchanged, indent included), then **re-parse the stripped body as a synthesized `#' @md`
+fragment through the real parser** and flatten the block tree recursively (`quote_flat_section`/
+`quote_flat_node`/`quote_flat_unit`/`quote_flat_inlines`) — heading titles, list items, nested quotes
+(recurse → next level stripped), fence/indented bodies (literal text), tables (cell text) all glue
+with **no separator**; a prose unit collapses `[ \t]*SOFT_BREAK[ \t]*` to nothing and trims its edges
+(cmark strips line-edge ws; breaks contribute nothing to `xml_text`). **A *lazy* setext underline
+glues onto the previous line at synthesis** — re-emitted on its own line the reparse would promote a
+heading (this is what protects the allowlisted `md_blockquote_setext`). Withhold → legacy per-line
+flatten when the reparse yields any tag section besides the synthesized `@md` (an `@`-line in a quote
+is literal to cmark). **Parser** (build.rs): `finish_md_block_quote` gained a `QuoteInnerState`
+per-line state machine — laziness now requires an **open paragraph** (blank `>` line, inner
+indented-code line, inner fence opener (tracked to its closer), ATX/thematic/promoting-setext all
+close it; plain prose and a content-bearing list item open it; state classified on the all-levels
+stripped inner text, `quote_inner_content`). And `is_md_list_start`'s interrupt arm is now
+indent-gated (`!is_indent_code_line`): a ≥4-column marker line is would-be indented code → lazy
+paragraph text, both in quotes (cm-240 `foo- bar`) and at section level (`foo - bar`, engine-probed).
 
-**Result:** projector **844 matching (all allowlisted after seed), 121 divergent**, 0 blocked, of 965
-pinned; 0 regressions. **List items 30→36/48** (closed cm-256/265/288/289/290/292) and **Lists 19/26**
-(cm-322/323 fell out for free). Curated `md_list_item_block_quote` (+pin), fixture
-`roxygen_md_list_item_block_quote` (quote + sibling item; lossless), units
-`block_quote_at_content_column_folds_into_item` + `block_quote_without_blank_folds_into_item` +
-`empty_item_does_not_fold_block_quote`. Format baseline +1 (additive — the new corpus key; formatter
-byte-stable on it, list passthrough unchanged). Fixed-point 159/159. Full suite + clippy + fmt green.
+**Result:** projector **860 matching (all allowlisted after seed), 106 divergent**, 0 blocked, of 966
+pinned; 0 regressions. **Block quotes 14→25/25 — the section is COMPLETE** (cm-230/231/232/234/237/
+238/239/240/251/252/253); **List items 36→38/48** (cm-261/262); cm-128 (Fenced 27/29) + cm-176 (HTML
+blocks 44/46) fell out for free. Curated `md_blockquote_nested` (+pin `Foobarbaz tail`), fixture
+`roxygen_md_blockquote_para_state` (blank-`>`/indented-code/fence laziness ends + over-indent lazy
+fold; lossless), units `quote_interior_structure_flattens_via_reparse`,
+`blank_quote_line_ends_lazy_continuation`, `indented_code_in_quote_blocks_laziness`,
+`overindented_prose_is_lazy_when_quote_paragraph_open`,
+`indented_list_marker_does_not_interrupt_paragraph`. Format baseline +1 (additive, byte-stable).
+Fixed-point 160/160. Full suite + clippy + fmt green.
 
-**Ranked next target:** **block-quote interior structure flattens via `xml_text`** — one root cause
-spanning ~15 cases across two sections: Block quotes (14/25, 11 left: cm-230/231 heading-in-quote
-drops the `#`s, cm-237 `> - foo` list-in-quote → bare `(TEXT "foo")`, cm-251/252/253 blank-`>` lines
-and paragraph joins) + the List-items leftovers cm-261/262/294/295 (nested `>>`/list-in-quote →
-`(TEXT "onetwo")`). arity's `block_quote_flat_text` strips only ONE `>` per line and keeps interior
-markers literal; roxygen2 renders `escape_comment(xml_text(node))` over cmark's *parsed* quote body,
-so nested quote markers, heading `#`s, and list bullets all vanish. Likely projector-side (re-lex the
-stripped quote body as markdown and take `inline_plain_text` recursively) — probe cm-251's space-join
-("bar baz", vs cm-261's "onetwo") first to pin down when a separator survives. Alternatives: **Links**
-(76/90; the inline-destination parity cluster — cm-489 empty-dest `(\url)` child, cm-494/501
-angle-bracket dests with parens, cm-509 title *kept* in the dest, probe first) or the remaining
-List-items indent shapes (cm-275/276 item starting with indented code — content col = marker+1;
-cm-280/281 content on the line after a bare marker; cm-297 drifting sibling marker indents;
-cm-300/301 `- - foo` markers stacked on one line; cm-302 heading-in-item hoists to `\section`).
-Harvested 18 stay out-of-scope.
+**Ranked next target:** **Links** (76/90, 14 left) — the inline-destination parity cluster: cm-489
+empty-dest `(\url)` child, cm-494/501 angle-bracket dests with parens, cm-509 title *kept* in the
+dest; probe each with the R driver first. Alternatives: the remaining **List-items indent shapes**
+(cm-294/295 item-head quote `1. > x` — the lexer carves block leaves only at *line start*, so an
+item's same-line content never opens a quote/fence; cm-275/276 item starting with indented code —
+content col = marker+1; cm-280/281 content on the line after a bare marker; cm-297 drifting sibling
+marker indents; cm-300/301 `- - foo` stacked markers; cm-302 heading-in-item hoists to `\section`)
+or **Images** (11/22) / **Link reference definitions** (17/27). Harvested 18 stay out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-13c** — block quote folds into a list item (item-body arm in `emit_md_list_level_inner`, indent window `content_indent..+4`, `item_has_content` gate; projector `push_inline` `MdBlockQuote` arm — a missing arm leaked raw `#'` markers). Closed cm-256/265/288/289/290/292 + cm-322/323 free. Curated `md_list_item_block_quote`, fixture, 3 units, baseline +1. 830→844, List items 30→36/48.
 
 - **2026-07-13b** — collapsed reference links `[text][]` (lexer carves `][]` as one composite neutral closer leaf, like `](url)`; empty `MdRefLink.dest` = collapsed, label from display via `link_ref_label`, serialized shortcut-style; user defs/demotion/skeleton fell out free; backlog: a collapsed closer on an opaque `!`-bearing display leaf). Closed cm-555/556/557/568. Curated `md_link_collapsed`, fixture, 2 units, baseline +1. 830→835, Links 72→76/90.
 - **2026-07-13** — tilde fences + CommonMark closer matching (`scan_md_fence` accepts `~` runs; `md_fence_run_closes` shared predicate — same char, run ≥ opener, no info, ≤3 past container, per-site indent coords; `md_code_block_parts` mirrors it so an unterminated block keeps its last line; formatter `emit_md_code_block` preserves content indent — fence indent is semantic). Closed cm-120/123/124/125/127/137/139/146/147 + cm-019. Curated `md_fence_tilde`+`md_fence_closer`, 2 fixtures, 4 units, baseline +2. 818→830, Fenced 17→26/29.

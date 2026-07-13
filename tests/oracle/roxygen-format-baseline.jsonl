@@ -15,6 +15,7 @@
 {"key":"curated/md_blockquote_glue_around","formatted":"#' Block quote glue around\n#'\n#' @md\n#' @details\n#' before\n#'\n#' > quoted\n#'\n#' after\n#' @name md_blockquote_glue_around\nNULL\n"}
 {"key":"curated/md_blockquote_lazy","formatted":"#' Block quote lazy\n#'\n#' @md\n#' @details\n#' > quoted line one\n#' lazy continuation\n#'\n#' Separate paragraph.\n#' @name md_blockquote_lazy\nNULL\n"}
 {"key":"curated/md_blockquote_multiline","formatted":"#' Block quote across lines\n#'\n#' @md\n#' @details\n#' > line one\n#' > and [text](https://x.org)\n#' @name md_blockquote_multiline\nNULL\n"}
+{"key":"curated/md_blockquote_nested","formatted":"#' Title\n#'\n#' @md\n#' @details\n#' > # Foo\n#' > > bar\n#' > - baz\n#' >\n#' tail\n#' @name x\nNULL\n"}
 {"key":"curated/md_blockquote_setext","formatted":"#' Block quote setext lazy\n#'\n#' @md\n#' @details\n#' > foo\n#' ===\n#' > bar baz\n#' --\n#' @name md_blockquote_setext\nNULL\n"}
 {"key":"curated/md_blockquote_value","formatted":"#' Block quote from tag value\n#'\n#' @md\n#' @details\n#' > quoted line\n#' > second line\n#' lazy continuation\n#' @name md_blockquote_value\nNULL\n"}
 {"key":"curated/md_brace_escape","formatted":"#' Title with an escaped a \\{ brace\n#'\n#' @description Description with an escaped a \\} brace\n#' @md\n#' @details Details with a balanced \\{ a \\} pair\n#' @seealso See also an escaped a \\{ brace\n#' @name md_brace_escape\nNULL\n"}
