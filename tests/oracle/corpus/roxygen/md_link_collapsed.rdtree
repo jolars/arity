@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (TEXT "a") (\href (VERB "/url") (TEXT "Foo")) (TEXT "b, c") (\href (VERB "/other") (GRP (\emph (TEXT "foo")) (TEXT "bar"))) (TEXT "d, e [nope][] f"))
+(\title (TEXT "T"))

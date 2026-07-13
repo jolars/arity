@@ -206,6 +206,12 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `[a\emph{x}]` renders the macro via `display_has_macro`/`link_over_display`, `[a\*b\*]` drops).
   `scan_md_link`'s `[`-path survives ONLY for an `!`-bearing display; autolink `<url>` is on
   `scan_md_autolink`.
+- **Collapsed reference `[text][]`: the `][]` closer is ONE composite bracket token; empty
+  `MdRefLink.dest` = collapsed.** The empty label can't carve alone, so the lexer carves `][]` whole
+  (arm after `cross_line_ref_closer`); downstream, `link_ref_label` reads label-from-display on an
+  empty dest and the serialize arm routes it to `shortcut_link_node_atom` (cmark's dest is the
+  synthesized `R:label` — shortcut shape). Never make an empty-dest ref link reach
+  `ref_link_node_atom`.
 - **A `[…](…)` is an inline link only when the `(…)` is a VALID CommonMark destination** (2026-07-10b).
   A bare destination runs to the first ASCII whitespace (a `\` never escapes whitespace — `\ ` is a literal
   backslash then a terminating space), so `[t](a\ b)`/`[t](a b c)`/`[t](url ok)` are **not** links: `[t]` falls
@@ -983,8 +989,8 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 830 matching (all allowlisted), 133 divergent** of 963 pinned. The divergent 133 are the
-per-section backlog (Links 18, List items 18, harvested 18, Block quotes 11, Images 11,
+**Current: 835 matching (all allowlisted), 129 divergent** of 964 pinned. The divergent 129 are the
+per-section backlog (List items 18, harvested 18, Links 14, Block quotes 11, Images 11,
 Link reference definitions 10, Lists 9, Tabs 8, …). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -994,51 +1000,52 @@ Link reference definitions 10, Lists 9, Tabs 8, …). Tasks: `task roxygen-proje
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
    Curated + harvested + whole-spec corpora (963 pinned); 133 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 157/157 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 158/158 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-13) — tilde fences + closer matching: Fenced code blocks 17→26/29
+## Latest session (2026-07-13b) — collapsed reference links `[text][]`: Links 72→76/90
 
-Parser work, both planned clusters in one pass. **(1) Tilde fences:** `scan_md_fence` (roxygen/lex.rs)
-now accepts a 3+ run of `` ` `` **or** `~`; the no-backtick-in-info rule stays backtick-fence-specific
-(a `~` fence's info may contain backticks *and* tildes — cm-146's info is ``aa ``` ~~~``). **(2) Closer
-matching:** `finish_md_code_block` (roxygen/build.rs) treated *any* `RoxygenMdFence` leaf as the closer;
-CommonMark requires **same fence char, run ≥ opener's, no info string, ≤3 columns past the container**.
-New shared predicate `md_fence_run_closes(opener, closer)` (lex.rs, re-exported from parser::roxygen)
-does the char/run/ws-only-tail check; indent is checked per-site in its own coordinates —
-`finish_md_code_block` gains `opener: &str` + `base_indent: usize` (ws-width coords: `1` at section
-level and in `emit_md_code_block_from_value`; the list-item arm passes `content_indent`) and compares
-the closer line's marker→content ws width against `base_indent + 3`. A non-matching fence line —
-short, wrong char, info-bearing, over-indented — is verbatim **content**. **Projector:**
-`md_code_block_parts` (project_rd.rs) strips the info by fence char (not hard-coded backtick) and no
-longer assumes the last line is a closer: it mirrors the builder's test (`md_fence_run_closes` +
-`indent <= fence_indent + 3`), so an **unterminated** block's last line is code, not silently dropped
-(cm-127's `aaa` used to vanish). **Formatter fix (caught by the fixed-point net):** `emit_md_code_block`
-(formatter/roxygen.rs) trimmed content indentation (`normalize_marker_text`), which turned the curated
-case's over-indented `    ```` ` *content* line into a valid *closer* on reparse — a rendered-Rd change.
-It now preserves content indentation (`normalize_list_marker_text` + `push_value_opener_line(…, true)`),
-the same rule as indented-code/HTML-block/list passthroughs; fence content indent is semantic twice over
-(the opener's indent sets CommonMark's per-line strip, and a code line's indent renders verbatim into
-`\preformatted`).
+The Links cluster with one shared root cause: CommonMark's **collapsed** reference form `[foo][]`
+(label = display text) never linked — the empty `[]` label can't carve on its own (`is_shortcut_content`
+rejects empty) and the lone-`]` closer arm excludes a `]` followed by `[`. **Lexer** (roxygen/lex.rs):
+new arm after the `cross_line_ref_closer` carve — a `]` followed by exactly `[]` carves the whole `][]`
+as **one** neutral `RoxygenMdBracket` closer leaf (like the `](url)` composite closer); unmatched it
+re-emits literal (`[][]` stays text). The arena needs zero changes (`classify_closer`'s composite-text
+branch already returns it). **Projector** (project_rd.rs): the node dispatch's existing
+`strip_prefix("][")`+`strip_suffix("]")` yields `MdRefLink { dest: "" }` — **empty dest = collapsed**,
+documented. Two small arms read it: `link_ref_label` derives the label from the display
+(`link_label_text`) when dest is empty, and the serialize arm routes empty dest to
+`shortcut_link_node_atom` (cmark hands roxygen2 the synthesized `R:label` dest — exactly the shortcut
+shape, so `()`-autolink/`pkg::`/S4 refinements apply). Everything else fell out for free:
+`demoted_link_source` and `linkref_skeleton_push` already render `[label][]` from the generic
+`[label][dest]` shape (faithful skeleton → candidacy is correctly *blocked*, matching `get_md_linkrefs`'
+`(?=[^\[{])` lookahead), `apply_user_linkrefs` resolves via the shared `link_ref_label` (case-insensitive
+via `normalize_linkref_label`; display **kept**, GRP-wrapped when multi-atom — cm-556's `[*foo* bar][]`),
+and `demote_undefined_links` demotes an undefined label to the literal `[foo][]`. Engine-probed:
+undefined collapsed stays literal; a same-label shortcut candidate elsewhere resolves *both* to
+`\link{label}`.
 
-**Result:** projector **830 matching (all allowlisted after seed), 133 divergent**, 0 blocked, of 963
-pinned; 0 regressions. **Fenced code blocks 17→26/29**; closed cm-120/123/124/125/127/137/139/146/147
-+ bonus **cm-019** (Backslash escapes — a tilde-fence input). Curated `md_fence_tilde` +
-`md_fence_closer` (+pins), fixtures `roxygen_md_fence_tilde` + `roxygen_md_fence_closer_match`, units
-`md_fence_recognizes_tilde_runs` (lexer) + `tilde_fence_opens_a_code_block` /
-`non_matching_fence_lines_are_content` / `unterminated_fenced_block_keeps_its_last_line` (projector).
-Format baseline +2 (additive — the two new corpus keys; no existing entry changed, so the formatter
-indent fix altered no covered case). Fixed-point 157/157. Full suite + clippy + fmt green.
+**Result:** projector **835 matching (all allowlisted after seed), 129 divergent**, 0 blocked, of 964
+pinned; 0 regressions. **Links 72→76/90**; closed cm-555/556/557/568. Curated `md_link_collapsed`
+(+pin), fixture `roxygen_md_link_collapsed`, units `md_collapsed_ref_closer_carves_whole` (lexer) +
+`collapsed_ref_link_resolves_label_from_display` (projector). Format baseline +1 (additive — the new
+corpus key; formatter byte-stable on it). Fixed-point 158/158. Full suite + clippy + fmt green.
+**Backlog noted:** a collapsed closer on an opaque `!`-bearing display leaf (`[a!b][]`, via
+`scan_md_link`'s `[` arm) still resolves ref-style with an empty label — contrived, untargeted.
 
-**Ranked next target:** **Links** (72/90, 18 left) or **List items** (30/48, 18 left) — the two biggest
-levers; pick a shared-root-cause cluster within one (run `task roxygen-projector`, read the section list
-in `ROXYGEN_PROJECTOR.md`, and diff a few cases first). Fenced leftovers are one-offs (cm-128
-block-quote-fence, cm-141 setext/`~~~` interplay, cm-143 `%`-in-info section drop); harvested 18 stay
-out-of-scope.
+**Ranked next target:** **List items** (30/48, 18 left) — now the biggest section lever; the dumped
+cases cluster around *block quotes folding into a list item* (cm-256/265: `> quote` at the item's
+content column should continue the `\item`; roxygen2 flattens the quote to plain TEXT inside it) and
+nested-quote/list interplay (cm-261/262). Or continue **Links** (76/90): the inline-destination parity
+cluster (cm-489 empty-dest `(\url)` child, cm-494/501 angle-bracket dests with parens, cm-500 backslash
+paren-parity, cm-509 title *kept* in the href dest — probe first, it contradicts the 2026-07-10
+title-drop rule, cm-512 multi-line dest). Harvested 18 stay out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-13** — tilde fences + CommonMark closer matching (`scan_md_fence` accepts `~` runs; `md_fence_run_closes` shared predicate — same char, run ≥ opener, no info, ≤3 past container, per-site indent coords; `md_code_block_parts` mirrors it so an unterminated block keeps its last line; formatter `emit_md_code_block` preserves content indent — fence indent is semantic). Closed cm-120/123/124/125/127/137/139/146/147 + cm-019. Curated `md_fence_tilde`+`md_fence_closer`, 2 fixtures, 4 units, baseline +2. 818→830, Fenced 17→26/29.
 
 - **2026-07-10g** — fenced code block body rendered one `VERB` per line + empty body no child (`serialize_md_code_block` mirrors the indented-code `verb_atoms` path; projector-only). Closed 10 cm cases. 808→818, Fenced 7→17/29.
 

@@ -1546,7 +1546,14 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
-                atoms.push(ref_link_node_atom(display, dest));
+                // A *collapsed* reference (`[text][]`, empty `dest`) resolves its
+                // label from the display, so cmark hands roxygen2 the synthesized
+                // `R:label` destination — exactly the shortcut shape.
+                atoms.push(if dest.is_empty() {
+                    shortcut_link_node_atom(display)
+                } else {
+                    ref_link_node_atom(display, dest)
+                });
             }
             Inline::MdShortcutLink { display } => {
                 if link_display_is_droppable(display) {
@@ -3474,11 +3481,16 @@ fn normalize_linkref_label(label: &str) -> String {
 /// defined in the field's link-reference map for the link to resolve — or `None`
 /// for any inline that does not depend on a reference definition (an inline link or
 /// autolink carries its own destination; text/code/macros are not links). For a
-/// reference link the label is the `[ref]` topic; for a shortcut it is the display.
+/// reference link the label is the `[ref]` topic; for a shortcut — or a *collapsed*
+/// reference (`[text][]`, an empty `dest`) — it is the display.
 fn link_ref_label(inl: &Inline) -> Option<String> {
     match inl {
         Inline::MdShortcutLink { display } => Some(link_label_text(display)),
-        Inline::MdRefLink { dest, .. } => Some(dest.clone()),
+        Inline::MdRefLink { dest, display } => Some(if dest.is_empty() {
+            link_label_text(display)
+        } else {
+            dest.clone()
+        }),
         Inline::MdLink(raw) => opaque_link_ref_label(raw),
         _ => None,
     }
@@ -4457,7 +4469,9 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         // distinguishes the three paired forms: `](url)` is an inline link carrying
         // its destination (`\href`/`\url`); `][ref]` is a *reference* link whose
         // `[ref]` topic option is dropped, projecting to `\link{display}`; a bare `]`
-        // is a *shortcut* link whose display is the destination.
+        // is a *shortcut* link whose display is the destination. A *collapsed*
+        // reference (`][]`) strips to an **empty** `dest`, which downstream reads as
+        // "label = display" ([`link_ref_label`]) and renders shortcut-style.
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LINK => {
             let kids: Vec<_> = n.children_with_tokens().collect();
             let closer = kids.last().map(|c| c.to_string()).unwrap_or_default();
@@ -8676,6 +8690,36 @@ mod tests {
             let rd = project_to_rd(&src);
             assert!(rd.contains(want), "link {link:?}: want {want}, got: {rd}");
         }
+    }
+
+    #[test]
+    fn collapsed_ref_link_resolves_label_from_display() {
+        // A collapsed reference `[text][]` (CommonMark) takes its label from the
+        // display. A user definition resolves it to `\href` with the display kept
+        // (label match is case-insensitive); a label that is a shortcut candidate
+        // elsewhere in the field resolves through the synthesized `R:label`
+        // definition exactly like a shortcut (`\link`); an undefined label stays
+        // literal source text.
+        let defined =
+            "#' T\n#'\n#' @md\n#' @details\n#' a [Foo][] b\n#'\n#' [foo]: /url\n#' @name x\nNULL\n";
+        let rd = project_to_rd(defined);
+        assert!(
+            rd.contains("(\\href (VERB \"/url\") (TEXT \"Foo\"))"),
+            "user-defined collapsed link: got {rd}"
+        );
+        let synthesized =
+            "#' T\n#'\n#' @md\n#' @details\n#' a [foo][] b and [foo] c\n#' @name x\nNULL\n";
+        let rd = project_to_rd(synthesized);
+        assert!(
+            rd.contains("(\\link (TEXT \"foo\")) (TEXT \"b and\") (\\link (TEXT \"foo\"))"),
+            "candidate-synthesized collapsed link: got {rd}"
+        );
+        let undefined = "#' T\n#'\n#' @md\n#' @details\n#' a [nope][] b\n#' @name x\nNULL\n";
+        let rd = project_to_rd(undefined);
+        assert!(
+            rd.contains("(TEXT \"a [nope][] b\")"),
+            "undefined collapsed link stays literal: got {rd}"
+        );
     }
 
     #[test]

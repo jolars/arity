@@ -693,6 +693,32 @@ fn lex_roxygen_prose(
             run_start = i;
             continue;
         }
+        // A *collapsed* reference-link closer: a `]` immediately followed by an
+        // empty `[]` label (CommonMark's collapsed form `[text][]`, whose reference
+        // label is the display text itself). The empty label cannot carve on its own
+        // (a bracket carve needs non-empty content), so carve the whole `][]` as one
+        // neutral bracket closer leaf — like the `](url)` composite closer — and let
+        // the inline pass pair it with an earlier opener (literal text when
+        // unmatched, e.g. `[][]`). The projector resolves the label from the
+        // display, so `[foo][]` links iff `foo` is defined in the refmap.
+        if md
+            && bytes[i] == b']'
+            && bytes.get(i + 1) == Some(&b'[')
+            && bytes.get(i + 2) == Some(&b']')
+        {
+            push(
+                out,
+                TokKind::RoxygenText,
+                text,
+                start,
+                run_start,
+                i - run_start,
+            );
+            push(out, TokKind::RoxygenMdBracket, text, start, i, 3);
+            i += 3;
+            run_start = i;
+            continue;
+        }
         // A *cross-line* shortcut-link closer: a lone `]` that closes a `[` opened on
         // an earlier `#'` line (a `[text]` shortcut spanning lines). Line-locally
         // *every* `]` is ambiguous — the lexer cannot see an earlier opener — so carve
@@ -2621,6 +2647,29 @@ mod tests {
             ]
         );
         assert_lossless("#' a [broken\n#' link](/u) b\n");
+    }
+
+    #[test]
+    fn md_collapsed_ref_closer_carves_whole() {
+        // A collapsed reference `[text][]` carves its `][]` closer as one neutral
+        // bracket leaf (the empty label cannot carve on its own); the inline pass
+        // pairs it with the `[` opener into a `ROXYGEN_MD_LINK` node whose label
+        // resolves from the display.
+        assert_eq!(
+            prose_texts("#' a [foo][] b\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenMdBracket, "[".into()),
+                (TokKind::RoxygenText, "foo".into()),
+                (TokKind::RoxygenMdBracket, "][]".into()),
+                (TokKind::RoxygenText, " b".into()),
+            ]
+        );
+        assert_lossless("#' a [foo][] b\n#' @md\n");
+        // Without an opener the composite closer stays literal (`[][]` never
+        // links: an empty display carves no opener, and the unmatched `][]`
+        // re-emits as text).
+        assert_lossless("#' a [][] b\n#' @md\n");
     }
 
     #[test]

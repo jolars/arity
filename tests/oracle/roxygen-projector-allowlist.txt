@@ -468,6 +468,9 @@ cm-548
 cm-549
 cm-550
 cm-553
+cm-555
+cm-556
+cm-557
 cm-558
 cm-559
 cm-560
@@ -478,6 +481,7 @@ cm-564
 cm-565
 cm-566
 cm-567
+cm-568
 cm-569
 cm-570
 cm-571
@@ -612,6 +616,7 @@ md_indented_code
 md_indented_code_value
 md_link_backslash
 md_link_backslash_drop
+md_link_collapsed
 md_link_dest_backslash_drop
 md_link_emphasis
 md_link_invalid_dest
