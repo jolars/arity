@@ -20,6 +20,7 @@ cm-015
 cm-016
 cm-017
 cm-018
+cm-019
 cm-020
 cm-021
 cm-022
@@ -103,9 +104,14 @@ cm-116
 cm-117
 cm-118
 cm-119
+cm-120
 cm-121
 cm-122
+cm-123
+cm-124
+cm-125
 cm-126
+cm-127
 cm-129
 cm-130
 cm-131
@@ -114,11 +120,15 @@ cm-133
 cm-134
 cm-135
 cm-136
+cm-137
 cm-138
+cm-139
 cm-140
 cm-142
 cm-144
 cm-145
+cm-146
+cm-147
 cm-148
 cm-149
 cm-150
@@ -576,6 +586,8 @@ md_entities
 md_escaped_bracket
 md_escaped_close_bracket
 md_even_braced_macro
+md_fence_closer
+md_fence_tilde
 md_fence_value
 md_fragile_odd_brace
 md_heading

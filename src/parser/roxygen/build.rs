@@ -7,7 +7,7 @@
 //! indentation trivia in losslessly.
 
 use super::group::{LineKind, classify_line, is_line_body_kind, line_content_start};
-use super::{is_two_arg_rd_macro, scan_balanced, utf8_len};
+use super::{is_two_arg_rd_macro, md_fence_run_closes, scan_balanced, utf8_len};
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
 use crate::syntax::SyntaxKind;
@@ -1015,7 +1015,7 @@ fn emit_md_list_level_inner(
                 for idx in i..m {
                     events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
                 }
-                i = emit_md_code_block(tokens, m, events);
+                i = emit_md_code_block(tokens, m, content_indent, events);
                 continue;
             }
 
@@ -1291,8 +1291,18 @@ fn finish_md_indented_code(
 /// block level (losslessness), the way the block Rd macros and markdown lists
 /// thread them. An unterminated block ends at the next tag opener / block end
 /// (greedy and lossless, no closing fence). The trailing newline after the last
-/// consumed line is left to the caller. Returns the token index just past it.
-pub(super) fn emit_md_code_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+/// consumed line is left to the caller. `base_indent` is the enclosing
+/// container's content column in marker→content whitespace width (`1` at
+/// section level — the single conventional space; a list item's
+/// `content_indent` when the block is folded into an item): a closing fence may
+/// be indented at most three columns past it. Returns the token index just past
+/// the last consumed line's content.
+pub(super) fn emit_md_code_block(
+    tokens: &[Token],
+    start: usize,
+    base_indent: usize,
+    events: &mut Vec<Event>,
+) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_CODE_BLOCK));
 
@@ -1303,12 +1313,14 @@ pub(super) fn emit_md_code_block(tokens: &[Token], start: usize, events: &mut Ve
         events.push(Event::Tok(i));
         i += 1;
     }
+    let mut opener = "";
     if tokens.get(i).map(|t| &t.kind) == Some(&TokKind::RoxygenMdFence) {
         events.push(Event::Tok(i)); // opener fence
+        opener = &tokens[i].text;
         i += 1;
     }
 
-    finish_md_code_block(tokens, i, events)
+    finish_md_code_block(tokens, i, opener, base_indent, events)
 }
 
 /// Emit a `ROXYGEN_MD_CODE_BLOCK` node for a fenced code block opening as a
@@ -1326,19 +1338,35 @@ pub(super) fn emit_md_code_block_from_value(
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_CODE_BLOCK));
     // First (marker-less) line: the leading whitespace and the opener fence.
     let mut i = ws_start;
+    let mut opener = "";
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        if tokens[i].kind == TokKind::RoxygenMdFence && opener.is_empty() {
+            opener = &tokens[i].text;
+        }
         events.push(Event::Tok(i));
         i += 1;
     }
-    finish_md_code_block(tokens, i, events)
+    // The following closer lines sit at section level (the opener was the tag's
+    // value): the container content column is the single conventional space.
+    finish_md_code_block(tokens, i, opener, 1, events)
 }
 
 /// Gather a fenced code block's lines (after its opening line) up to and
 /// including the closing fence, then finish the `ROXYGEN_MD_CODE_BLOCK` node.
-/// `i` is at the opening line's trailing `Newline`. Shared by the line-start
-/// ([`emit_md_code_block`]) and tag-value ([`emit_md_code_block_from_value`])
-/// forms.
-fn finish_md_code_block(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
+/// `i` is at the opening line's trailing `Newline`. A fence line is a **closer**
+/// only when it matches the `opener` fence — same fence character, a run at
+/// least as long, no info string ([`md_fence_run_closes`]) — and is indented at
+/// most three columns past `base_indent` (the container's content column, in
+/// marker→content whitespace width); any other fence line is verbatim content
+/// (CommonMark 4.5). Shared by the line-start ([`emit_md_code_block`]) and
+/// tag-value ([`emit_md_code_block_from_value`]) forms.
+fn finish_md_code_block(
+    tokens: &[Token],
+    mut i: usize,
+    opener: &str,
+    base_indent: usize,
+    events: &mut Vec<Event>,
+) -> usize {
     loop {
         // Line boundary: fold a continuation (`\n`, indentation, `#'`) into the
         // node unless the next line is not a roxygen line or is a tag opener
@@ -1361,13 +1389,21 @@ fn finish_md_code_block(tokens: &[Token], mut i: usize, events: &mut Vec<Event>)
             events.push(Event::Tok(idx));
         }
         i = m + 1;
+        let mut ws_width = 0;
         while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            ws_width += tokens[i].text.chars().count();
             events.push(Event::Tok(i));
             i += 1;
         }
-        // A closing fence ends the block; any other line is verbatim code (its
-        // body tokens threaded through). Both consume the whole line's content.
-        let is_closer = tokens.get(i).map(|t| &t.kind) == Some(&TokKind::RoxygenMdFence);
+        // A matching closing fence ends the block; any other line — including a
+        // fence that is too short, the wrong character, info-string-bearing, or
+        // over-indented — is verbatim code (its body tokens threaded through).
+        // Both consume the whole line's content.
+        let is_closer = tokens.get(i).is_some_and(|t| {
+            t.kind == TokKind::RoxygenMdFence
+                && ws_width <= base_indent + 3
+                && md_fence_run_closes(opener, &t.text)
+        });
         while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
             events.push(Event::Tok(i));
             i += 1;

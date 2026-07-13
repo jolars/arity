@@ -1,0 +1,3 @@
+(\description (TEXT "Tilde code fence with an info string holding backticks and tildes"))
+(\details (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode aa ``` ~~~\">"))) (\preformatted (VERB "foo\n")) (\if (TEXT "html") (\out (VERB "</div>"))))
+(\title (TEXT "Tilde code fence with an info string holding backticks and tildes"))

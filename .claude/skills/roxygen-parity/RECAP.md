@@ -983,53 +983,64 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 808 matching (all allowlisted), 153 divergent** of 961 pinned. The divergent 153 are the
-per-section backlog (Fenced code blocks 22, Links 18, List items 18, harvested 18, Block quotes 11,
-Images 11, …). Tasks: `task roxygen-projector` (the gate),
+**Current: 830 matching (all allowlisted), 133 divergent** of 963 pinned. The divergent 133 are the
+per-section backlog (Links 18, List items 18, harvested 18, Block quotes 11, Images 11,
+Link reference definitions 10, Lists 9, Tabs 8, …). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (961 pinned); 153 divergent backlog.
+   Curated + harvested + whole-spec corpora (963 pinned); 133 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 155/155 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 157/157 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-10g) — fenced code block body: one VERB per line, empty body no child
+## Latest session (2026-07-13) — tilde fences + closer matching: Fenced code blocks 17→26/29
 
-Projector-only fix, biggest-lever section. `serialize_md_code_block` (project_rd.rs) glued the whole
-fenced code body into a **single** `(\preformatted (VERB "aaa\n~~~\n"))`, but parse_Rd splits a
-`\preformatted` body into **one `VERB` leaf per source line** (each carrying its `\n`), and an **empty**
-body yields **no child** (`(\preformatted)`, not `(\preformatted (VERB ""))`). The indented-code path
-already did this (`verb_atoms` + empty guard); the fenced path just wasn't mirroring it. One edit:
-replace `format!("(\\preformatted (VERB {}))", encode_text(&code))` with `verb_atoms(&code)` +
-`(\preformatted)`-on-empty. No parser/lexer/CST change (the code-block body was already threaded
-correctly; only its *rendering* was wrong), so losslessness/idempotence untouched and no format-baseline
-churn. Closed **10** cases in one shot: per-line split (cm-119, cm-122, cm-129, cm-131, cm-132, cm-133,
-cm-142) + empty-body (cm-126, cm-130, cm-144), each the case's **only** divergence.
+Parser work, both planned clusters in one pass. **(1) Tilde fences:** `scan_md_fence` (roxygen/lex.rs)
+now accepts a 3+ run of `` ` `` **or** `~`; the no-backtick-in-info rule stays backtick-fence-specific
+(a `~` fence's info may contain backticks *and* tildes — cm-146's info is ``aa ``` ~~~``). **(2) Closer
+matching:** `finish_md_code_block` (roxygen/build.rs) treated *any* `RoxygenMdFence` leaf as the closer;
+CommonMark requires **same fence char, run ≥ opener's, no info string, ≤3 columns past the container**.
+New shared predicate `md_fence_run_closes(opener, closer)` (lex.rs, re-exported from parser::roxygen)
+does the char/run/ws-only-tail check; indent is checked per-site in its own coordinates —
+`finish_md_code_block` gains `opener: &str` + `base_indent: usize` (ws-width coords: `1` at section
+level and in `emit_md_code_block_from_value`; the list-item arm passes `content_indent`) and compares
+the closer line's marker→content ws width against `base_indent + 3`. A non-matching fence line —
+short, wrong char, info-bearing, over-indented — is verbatim **content**. **Projector:**
+`md_code_block_parts` (project_rd.rs) strips the info by fence char (not hard-coded backtick) and no
+longer assumes the last line is a closer: it mirrors the builder's test (`md_fence_run_closes` +
+`indent <= fence_indent + 3`), so an **unterminated** block's last line is code, not silently dropped
+(cm-127's `aaa` used to vanish). **Formatter fix (caught by the fixed-point net):** `emit_md_code_block`
+(formatter/roxygen.rs) trimmed content indentation (`normalize_marker_text`), which turned the curated
+case's over-indented `    ```` ` *content* line into a valid *closer* on reparse — a rendered-Rd change.
+It now preserves content indentation (`normalize_list_marker_text` + `push_value_opener_line(…, true)`),
+the same rule as indented-code/HTML-block/list passthroughs; fence content indent is semantic twice over
+(the opener's indent sets CommonMark's per-line strip, and a code line's indent renders verbatim into
+`\preformatted`).
 
-**Result:** projector **818 matching** (all 818 allowlisted, 0 regressions), **143 divergent**, 0 blocked,
-of 961 pinned. **Fenced code blocks 7→17/29** (12 remaining). `cargo test` green, clippy + fmt clean.
-Two projector unit tests (`fenced_code_block_body_is_one_verb_per_line`,
-`empty_fenced_code_block_has_no_verb_child`) lock it; the 10 cm slugs ratcheted into the allowlist. No
-new curated fixture (projector-only rendering fix on an existing arm — the spec pins are the lock).
+**Result:** projector **830 matching (all allowlisted after seed), 133 divergent**, 0 blocked, of 963
+pinned; 0 regressions. **Fenced code blocks 17→26/29**; closed cm-120/123/124/125/127/137/139/146/147
++ bonus **cm-019** (Backslash escapes — a tilde-fence input). Curated `md_fence_tilde` +
+`md_fence_closer` (+pins), fixtures `roxygen_md_fence_tilde` + `roxygen_md_fence_closer_match`, units
+`md_fence_recognizes_tilde_runs` (lexer) + `tilde_fence_opens_a_code_block` /
+`non_matching_fence_lines_are_content` / `unterminated_fenced_block_keeps_its_last_line` (projector).
+Format baseline +2 (additive — the two new corpus keys; no existing entry changed, so the formatter
+indent fix altered no covered case). Fixed-point 157/157. Full suite + clippy + fmt green.
 
-**Ranked next target:** finish **Fenced code blocks** (17/29, 12 left) — the remaining cases split into
-two clusters that are *parser*, not projector, work: **(1) tilde `~~~` fences** — `scan_md_fence`
-(roxygen/lex.rs) only recognizes backtick runs, so `~~~` blocks lex as prose (cm-120, cm-123, cm-125,
-cm-139, cm-146); add `~`-fence support (mind info-string rules differ: a `~` info string may contain
-backticks). **(2) closer matching** — `finish_md_code_block` (roxygen/build.rs) treats *any* `RoxygenMdFence`
-leaf as a closer, but CommonMark requires **same fence char, length ≥ opener, no info, ≤3-space indent**;
-a non-matching fence line is *content* (cm-124, cm-127, cm-137, cm-147). These two together also unlock
-the tilde cases that need both. Then **Links** (72/90) and **List items** (30/48) are the next big levers.
-Harvested 18 stay out-of-scope. (cm-128 block-quote-fence, cm-141 setext/`~~~`, cm-143 `%`-in-info-drop
-are one-offs, defer.)
+**Ranked next target:** **Links** (72/90, 18 left) or **List items** (30/48, 18 left) — the two biggest
+levers; pick a shared-root-cause cluster within one (run `task roxygen-projector`, read the section list
+in `ROXYGEN_PROJECTOR.md`, and diff a few cases first). Fenced leftovers are one-offs (cm-128
+block-quote-fence, cm-141 setext/`~~~` interplay, cm-143 `%`-in-info section drop); harvested 18 stay
+out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-10g** — fenced code block body rendered one `VERB` per line + empty body no child (`serialize_md_code_block` mirrors the indented-code `verb_atoms` path; projector-only). Closed 10 cm cases. 808→818, Fenced 7→17/29.
 
 - **2026-07-10f** — adopt the WHOLE CommonMark spec (655 `cm-NNN`) as a measured backlog (panache's conformance model: per-section burndown + allowlist floor + `blocked` bucket); `build-commonmark-corpus.R` `ALL` sentinel + `section` field, `roxygen_projector.rs` groups by section and writes a Coverage table; just *measuring* jumped the projector 420→808 matching (+388 latent), 153 divergent. Surfaced + separately fixed a real UTF-8 lexer panic (two/three-char operator lookahead slicing mid-char on U+00A0). 808 matching, 0 blocked.
 

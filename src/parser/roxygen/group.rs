@@ -179,7 +179,9 @@ fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Ev
                             events.push(Event::Finish); // ROXYGEN_PARAGRAPH
                             para_open = false;
                         }
-                        i = emit_md_code_block(tokens, i, events);
+                        // Section level: the container content column is the
+                        // single conventional space after the `#'` marker.
+                        i = emit_md_code_block(tokens, i, 1, events);
                     } else if is_md_list_start(tokens, i, para_open) {
                         // A markdown list (`@md` mode) is a direct section child, like
                         // a block macro: close any open paragraph and build the list.

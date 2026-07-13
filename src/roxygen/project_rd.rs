@@ -42,8 +42,8 @@ use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, Roxyge
 use crate::parser::parse;
 use crate::parser::roxygen::{
     MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_rd_braceless_drop_macro,
-    is_two_arg_rd_macro, resolve_md_inline, resolve_md_inline_pieces, split_table_row_cells,
-    sticky_braceless_code_mode,
+    is_two_arg_rd_macro, md_fence_run_closes, resolve_md_inline, resolve_md_inline_pieces,
+    split_table_row_cells, sticky_braceless_code_mode,
 };
 use crate::roxygen::entities;
 use crate::syntax::{SyntaxKind, SyntaxNode};
@@ -5585,11 +5585,11 @@ fn html_inline_atom(raw: &str) -> String {
 }
 
 /// Extract a fenced code block's `(info, code)` from its node. The info string is
-/// the opener `ROXYGEN_MD_FENCE` leaf with its leading backtick run stripped and
-/// trimmed (matching commonmark's `info` attribute). The code is every line
-/// between the opener and closer fence lines, each with its `#'` marker and the
-/// single following space stripped, joined by newlines with a trailing newline
-/// (commonmark's `xml_text` for a code block).
+/// the opener `ROXYGEN_MD_FENCE` leaf with its leading fence run (backticks or
+/// tildes) stripped and trimmed (matching commonmark's `info` attribute). The
+/// code is every line between the opener and closer fence lines, each with its
+/// `#'` marker and the single following space stripped, joined by newlines with a
+/// trailing newline (commonmark's `xml_text` for a code block).
 fn md_code_block_parts(node: &SyntaxNode) -> (String, String) {
     let text = node.text().to_string();
     let lines: Vec<&str> = text.split('\n').collect();
@@ -5602,14 +5602,26 @@ fn md_code_block_parts(node: &SyntaxNode) -> (String, String) {
     // fence_col)` — computable from the node text alone (`content_col` cancels).
     let opener = lines.first().map(|l| strip_marker(l)).unwrap_or_default();
     let fence_indent = opener.bytes().take_while(|&b| b == b' ').count();
-    let info = opener[fence_indent..]
-        .trim_start_matches('`')
+    let fence = &opener[fence_indent..];
+    let info = fence
+        .trim_start_matches(fence.chars().next().unwrap_or('`'))
         .trim()
         .to_string();
-    let body = if lines.len() > 2 {
+    // An *unterminated* block (the builder stopped at a tag opener or the block
+    // end without a matching closer) ends on a content line, not a closing
+    // fence: mirror the builder's closer test (same character, run length >=
+    // the opener's, no info string, at most three columns further indented) to
+    // decide whether the last line is the closer (dropped) or code (kept).
+    let has_closer = lines.len() > 1
+        && lines.last().is_some_and(|l| {
+            let content = strip_marker(l);
+            let indent = content.bytes().take_while(|&b| b == b' ').count();
+            indent <= fence_indent + 3 && md_fence_run_closes(fence, &content[indent..])
+        });
+    let body = if has_closer {
         &lines[1..lines.len() - 1]
     } else {
-        &[]
+        &lines[1..]
     };
     let mut code = String::new();
     for line in body {
@@ -8337,6 +8349,54 @@ mod tests {
                  (\\preformatted) \
                  (\\if (TEXT \"html\") (\\out (VERB \"</div>\")))"
             ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn tilde_fence_opens_a_code_block() {
+        // A run of three-plus tildes is a code fence too, and a tilde fence's
+        // info string may contain backticks and tildes (CommonMark 4.5); the
+        // info lands in the `<div>` class after `sourceCode`.
+        let src = "#' @md\n#' @title T\n#' @details\n#' ~~~ aa ``` ~~~\n#' foo\n#' ~~~\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode aa ``` ~~~\\\">\"))) \
+                 (\\preformatted (VERB \"foo\\n\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn non_matching_fence_lines_are_content() {
+        // Only a matching fence closes a block: a shorter run, a different fence
+        // character, an info-string-bearing fence, or one indented four-plus
+        // columns is verbatim content (CommonMark 4.5).
+        let src = "#' @md\n#' @title T\n#' @details\n#' ````\n#' ~~~~\n#' ```\n#' ``` bbb\n\
+                   #'     ````\n#' ``````\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\preformatted (VERB \"~~~~\\n\") (VERB \"```\\n\") \
+                 (VERB \"``` bbb\\n\") (VERB \"    ````\\n\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn unterminated_fenced_block_keeps_its_last_line() {
+        // An unterminated block runs to the section end; its last line is code,
+        // not a dropped closer (the closer test decides, not position).
+        let src = "#' @md\n#' @title T\n#' @details\n#' `````\n#'\n#' ```\n#' aaa\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\preformatted (VERB \"\\n\") (VERB \"```\\n\") (VERB \"aaa\\n\"))"),
             "got: {}",
             project_to_rd(src)
         );

@@ -26,9 +26,9 @@ mod lex;
 
 pub(crate) use group::emit_roxygen_block;
 pub(crate) use lex::{
-    is_md_standalone_html_tag, is_roxygen_comment, lex_roxygen_line, rd_backslash_is_escaped,
-    resolve_roxygen_block, roxygen_line_tag, scan_rd_macro, starts_md_html_block,
-    tag_body_skips_markdown, tag_folds_prose_continuation,
+    is_md_standalone_html_tag, is_roxygen_comment, lex_roxygen_line, md_fence_run_closes,
+    rd_backslash_is_escaped, resolve_roxygen_block, roxygen_line_tag, scan_rd_macro,
+    starts_md_html_block, tag_body_skips_markdown, tag_folds_prose_continuation,
 };
 
 /// Inline Rd macros whose `{…}` content is **verbatim** (`VERB` in

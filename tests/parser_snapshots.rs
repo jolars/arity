@@ -240,6 +240,8 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_empty_list_item",
         "roxygen_md_nested_list",
         "roxygen_md_code_block",
+        "roxygen_md_fence_tilde",
+        "roxygen_md_fence_closer_match",
         "roxygen_md_table",
         "roxygen_md_table_not",
         "roxygen_md_heading",

@@ -1,0 +1,3 @@
+(\description (TEXT "Only a matching fence closes: short, info-bearing, and over-indented stay content"))
+(\details (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "aaa\n") (VERB "```\n") (VERB "``` bbb\n") (VERB "    ````\n")) (\if (TEXT "html") (\out (VERB "</div>"))))
+(\title (TEXT "Only a matching fence closes: short, info-bearing, and over-indented stay content"))

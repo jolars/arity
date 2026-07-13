@@ -261,21 +261,24 @@ fn emit_md_list(items: &mut Vec<Ir>, node: &SyntaxNode) {
 }
 
 /// Emit a markdown fenced code block (`@md` mode) as atomic passthrough, each
-/// `#'` line marker-normalized (marker, one space, trimmed content). Mirrors the
-/// pre-node textual fence path (`is_fence`/`emit_normalized`): the fence lines
-/// and verbatim code lines are emitted as-is, never reflowed. (Code indentation
-/// beyond the marker is dropped, matching that prior behavior; a canonical
-/// re-indent is future work, as for the Rd-list and markdown-list passthroughs.)
-/// A block whose opener fence began as a tag's same-line value has a marker-less
-/// first line; it is given its own `#'` (the next-line form, projecting
-/// identically).
+/// `#'` line marker-normalized but **keeping the content's leading
+/// indentation** ([`normalize_list_marker_text`]): the fence lines and verbatim
+/// code lines are emitted as-is, never reflowed. That indentation is semantic
+/// twice over — the opener fence's own indent sets how many columns CommonMark
+/// strips from each code line, and a code line's indent both renders verbatim
+/// into `\preformatted` and can be exactly what keeps a fence-lookalike line
+/// *content* (a closing fence may be indented at most three columns; trimming a
+/// four-space `    ```` ` line would turn it into the closer and change the
+/// rendered Rd). A block whose opener fence began as a tag's same-line value
+/// has a marker-less first line; it is given its own `#'` (the next-line form,
+/// projecting identically).
 fn emit_md_code_block(items: &mut Vec<Ir>, node: &SyntaxNode) {
     let from_value = is_from_value(node);
     for (idx, seg) in node.text().to_string().split('\n').enumerate() {
         if idx == 0 && from_value {
-            push_value_opener_line(items, seg, false);
+            push_value_opener_line(items, seg, true);
         } else {
-            push_line(items, normalize_marker_text(seg));
+            push_line(items, normalize_list_marker_text(seg));
         }
     }
 }

@@ -793,6 +793,22 @@ fn lex_roxygen_prose(
     );
 }
 
+/// Whether the fence line `closer` closes a code block opened by the fence line
+/// `opener` (both given as their fence-leaf text, starting at the fence run;
+/// indentation is checked by the caller in its own coordinate system): the same
+/// fence character, a run at least as long as the opener's, and nothing but
+/// whitespace after the run — a closing fence has no info string (CommonMark
+/// 4.5). A non-matching fence line is *content*.
+pub(crate) fn md_fence_run_closes(opener: &str, closer: &str) -> bool {
+    let (ob, cb) = (opener.as_bytes(), closer.as_bytes());
+    let ch = match ob.first() {
+        Some(&c @ (b'`' | b'~')) => c,
+        _ => return false,
+    };
+    let run = run_len(cb, 0, ch);
+    run >= run_len(ob, 0, ch) && closer[run..].trim_ascii().is_empty()
+}
+
 /// Count the run of consecutive `c` bytes starting at `i`.
 pub(super) fn run_len(bytes: &[u8], i: usize, c: u8) -> usize {
     let mut j = i;
@@ -928,12 +944,20 @@ fn is_block_quote_marker(bytes: &[u8], i: usize) -> bool {
     bytes.get(j) == Some(&b'>')
 }
 
+/// A CommonMark code-fence line at `bytes[i..]`: a run of at least three
+/// backticks or tildes, then the info string to the end of the line. A
+/// *backtick* fence's info string may not contain a backtick; a *tilde* fence's
+/// info string may contain both backticks and tildes (CommonMark 4.5).
 fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
-    if run_len(bytes, i, b'`') < 3 {
+    let ch = match bytes.get(i) {
+        Some(&c @ (b'`' | b'~')) => c,
+        _ => return None,
+    };
+    let run = run_len(bytes, i, ch);
+    if run < 3 {
         return None;
     }
-    let info = i + run_len(bytes, i, b'`');
-    if bytes[info..].contains(&b'`') {
+    if ch == b'`' && bytes[i + run..].contains(&b'`') {
         return None;
     }
     Some(bytes.len())
@@ -2429,6 +2453,21 @@ mod tests {
             ]
         );
         assert_lossless(inline);
+    }
+
+    #[test]
+    fn md_fence_recognizes_tilde_runs() {
+        // A run of three-plus tildes opens a fence; its info string may contain
+        // backticks and tildes (CommonMark 4.5 — the backtick-in-info rule is
+        // backtick-fence-specific). A two-tilde run is not a fence.
+        assert_eq!(
+            prose_texts("#' ~~~ aa ``` ~~~\n#' @md\n"),
+            vec![(TokKind::RoxygenMdFence, "~~~ aa ``` ~~~".into())]
+        );
+        assert_eq!(
+            prose_texts("#' ~~ not a fence\n#' @md\n"),
+            vec![(TokKind::RoxygenText, "~~ not a fence".into())]
+        );
     }
 
     #[test]
