@@ -3465,16 +3465,18 @@ fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
     }
 }
 
-/// Normalize a link-reference label for matching, mirroring CommonMark's
-/// case-insensitive, whitespace-collapsing comparison: trim, fold internal
-/// whitespace runs to one space, and lowercase. (Full Unicode case-folding is
-/// approximated by `to_lowercase`; sufficient for the labels roxygen2 produces.)
+/// Normalize a link-reference label for matching, mirroring cmark's
+/// `normalize_reference`: trim and fold internal whitespace runs to one space
+/// (**ASCII** whitespace only — `cmark_isspace`; a NBSP is label content), then
+/// apply the full Unicode case fold (CaseFolding C+F: `ẞ`/`SS` → `ss`, cm-542),
+/// not a mere lowercase.
 fn normalize_linkref_label(label: &str) -> String {
-    label
-        .split_whitespace()
+    let collapsed = label
+        .split(|c: char| c.is_ascii_whitespace())
+        .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+        .join(" ");
+    crate::roxygen::casefold::case_fold(&collapsed)
 }
 
 /// The resolution label of a shortcut or reference link — the label that must be
@@ -8425,6 +8427,43 @@ mod tests {
             project_to_rd(src).contains(
                 "(\\details (TEXT \"See\") (\\href (VERB \"https://example.com\") (TEXT \"r1\")) (TEXT \"here.\"))"
             ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn linkref_labels_match_by_unicode_case_fold() {
+        // cmark's `normalize_reference` uses full Unicode case folding (CaseFolding
+        // C+F), not lowercasing: `ẞ` folds to `ss` (matching `SS`), micro sign `µ`
+        // to Greek `μ` (matching `Μ`), and the `ﬁ` ligature expands to `fi`
+        // (cm-542; engine-probed 2026-07-14).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [\u{1e9e}] and [\u{b5}w] and [\u{fb01}n]\n#'\n\
+                   #' [SS]: /a\n#' [\u{39c}W]: /b\n#' [FIN]: /c\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\href (VERB \"/a\") (TEXT \"\u{1e9e}\")) (TEXT \"and\") \
+                 (\\href (VERB \"/b\") (TEXT \"\u{b5}w\")) (TEXT \"and\") \
+                 (\\href (VERB \"/c\") (TEXT \"\u{fb01}n\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn nbsp_in_linkref_label_is_content_not_whitespace() {
+        // cmark's `normalize_reference` collapses only ASCII whitespace; a NBSP is
+        // label content, so `[a\u{a0}b]` does NOT match `[a b]: /d` — the shortcut
+        // resolves against its synthesized `R:` definition instead (engine-probed
+        // 2026-07-14).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [a\u{a0}b]\n#'\n#' [a b]: /d\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (\\link (TEXT \"a\u{a0}b\")))"),
             "got: {}",
             project_to_rd(src)
         );

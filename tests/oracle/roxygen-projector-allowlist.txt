@@ -488,6 +488,7 @@ cm-538
 cm-539
 cm-540
 cm-541
+cm-542
 cm-543
 cm-544
 cm-545
@@ -654,6 +655,8 @@ md_link_invalid_dest
 md_link_macro_arg_drop
 md_link_macro_pure
 md_link_multiline
+md_linkref_casefold
+md_linkref_nbsp
 md_linkref_poisoning
 md_linkref_poisoning_autolink
 md_linkref_poisoning_field

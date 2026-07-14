@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\href (VERB "/a") (TEXT "ẞ")) (TEXT "and") (\href (VERB "/b") (TEXT "µw")) (TEXT "and") (\href (VERB "/c") (TEXT "ﬁn")))
+(\title (TEXT "T"))
