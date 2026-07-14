@@ -328,6 +328,19 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   defs still **leak** (`inline_skeleton_fragment` exposes `[text] `/`[alt] `/inner `[b] ` via
   `opaque_inline_link_display`/`image_alt_text`) though the link is not demoted. **Backlog:** `@rawRd`
   leaks; `relink_demoted_inline_links` nested-in-list.
+- **An INVALID label (trailing `\` run OR blank) never defines or links, both directions (2026-07-14b).**
+  `linkref_label_is_usable`/`linkref_label_is_blank` (project_rd.rs): the def is rejected in
+  `match_linkref_def` (line stays prose), the link demotes in `demote_undefined_links` regardless of
+  refmap, and both leak scans count it invalid. Three self-inflicted traps: (1) judge usability on
+  **source-exact labels only** (`link_ref_label_unusable` — a shortcut display flatten drops emphasis
+  delimiters, so gate on all-`Inline::Text`); (2) `inline_skeleton_fragment`'s stand-in for resolved
+  structure must be **non-whitespace** (`SKELETON_STAND_IN_STR` `\u{1}`) or a resolved inner link
+  fabricates a blank `[ ]` candidate and poisons the field (cm-550/592) — list guards stay spaces
+  (they stand for newlines); (3) a leaked label's bytes render into the `R:` dest, so
+  `leaked_linkref_text` maps SOFT_BREAK→`\n` (`%0A`), the MD_LINK node walk strips exactly ONE
+  marker-separator space, and the **formatter** must not reflow a leaky multi-line label
+  (`line_has_leaky_cross_line_link` bail + byte-verbatim `normalize_roxygen_line` arm — leading
+  indent and trailing spaces are label bytes).
 - **Escaped brackets are the ONLY honored punctuation escape.** roxygen2's `double_escape_md` doubles
   every `\` but **reverts** `\\[`→`\[`, `\\]`→`\]`, so only `[`/`]` keep a CommonMark escape: `\[`
   neither opens a link nor keeps its backslash, whereas `\*`/`` \` ``/`\%`/… keep their **single**
@@ -1016,54 +1029,68 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 870 matching (all allowlisted), 99 divergent** of 969 pinned. The divergent 99 are the
+**Current: 874 matching (all allowlisted), 97 divergent** of 971 pinned. The divergent 97 are the
 per-section backlog (harvested 18, Images 11, Link reference definitions 10, List items 10, Tabs 8,
-Links 7, Lists 7, ATX 6, Setext 6, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
+Lists 7, ATX 6, Setext 6, Links 5, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (969 pinned); 99 divergent backlog.
+   Curated + harvested + whole-spec corpora (971 pinned); 97 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 163/163 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 165/165 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-14) — link-ref label normalization parity: Links 82→83/90
+## Latest session (2026-07-14b) — invalid link-ref labels never define or link: Links 83→85/90
 
-The ranked cm-542 target, projector-only: `normalize_linkref_label` (project_rd.rs) was
-`split_whitespace().…to_lowercase()`, but cmark's `normalize_reference` is **trim + ASCII-only
-whitespace collapse (`cmark_isspace`) + full Unicode case fold** (utf8proc, CaseFolding C+F).
-Two real divergences, both engine-probed: (1) fold ≠ lowercase — `[ẞ]` must match `[SS]: /url`
-(fold `ss`; lowercase gives `ß`), `[µw]`↔`[ΜW]` (micro sign folds to Greek mu), `[ﬁn]`↔`[FIN]`
-(ligature expands); (2) Unicode-wide `split_whitespace` collapsed a NBSP, wrongly matching
-`[a\u{a0}b]` against `[a b]: /d` — roxygen2 keeps the NBSP as content (the shortcut resolves via
-its synthesized `R:` def to `\link{a b}` instead). Fix: generated `src/roxygen/casefold.rs`
-(entities.rs precedent — every code point whose Python `str.casefold()` (C+F) differs from itself,
-1530 entries, Unicode 15.1, binary search) + `normalize_linkref_label` rewritten to ASCII-collapse
-then `case_fold`. Single choke point — all refmap sites (`linkref_keys`, `demote_undefined_links`,
-`collect/apply_user_linkrefs`) went through it, so one edit covered defs, demotion, and images.
+The ranked cm-552/554 cluster, one root cause: **label validity was never checked** in the
+user-def/refmap machinery. Two invalid classes, both engine-probed: a **trailing backslash run**
+(any k≥1 — `double_escape_md` doubles then the `\\]`→`\]` revert leaves an odd escaping run, so
+the label's closing `]` never closes: cm-552's `[bar\\]` leaks with the post-escape THREE-backslash
+label `R:bar%5C%5C%5C`) and a **blank** label (no non-ASCII-whitespace char, cm-554's `[\n ]` —
+NBSP is content). Projector: `linkref_label_is_usable` + `linkref_label_is_blank` (project_rd.rs),
+wired into `match_linkref_def` (def rejected → line stays prose), `demote_undefined_links` (link
+demoted regardless of refmap, via `link_ref_label_unusable` — **source-exact labels only**: ref
+`dest`/opaque raw verbatim, a shortcut's display flatten only when all-`Inline::Text`, else the
+flatten drops emphasis delimiters and `[a\*b\*]`'s `a\b\` spuriously "ends with `\`" — it must
+reach the non-plain-display drop instead), and both leak scans (`first_invalid_linkref_offset`,
+`leaked_linkref_text` — the latter now maps SOFT_BREAK→`\n` at entry so a multi-line label
+URL-encodes `%0A`, 1-byte so offsets hold). Two follow-on fixes the gate forced: (1)
+`inline_skeleton_fragment`'s stand-in for resolved/opaque structure is now **non-whitespace**
+`SKELETON_STAND_IN_STR` (`\u{1}`) — a space stand-in fabricated blank `[ ]` candidates around a
+resolved inner link and spuriously poisoned cm-550/592/`md_nested_link`; list guards stay real
+spaces (they stand for source newlines). (2) The `ROXYGEN_MD_LINK` node walk strips ONE
+marker-separator space from a continuation line's whitespace (the rest is label content — `%20`).
+**Formatter:** joining a leaky multi-line label re-encodes its soft break `%0A`→`%20` in the leaked
+dest — a rendered-Rd change the fixed-point net caught. New reflow bail
+`line_has_leaky_cross_line_link`/`link_label_leaks` (formatter/roxygen.rs, md arm of
+`prose_bails_reflow`), and `normalize_roxygen_line` keeps such lines **byte-verbatim after the
+marker** (leading indent AND trailing spaces are label bytes).
 
-**Result:** projector **870 matching (all allowlisted), 99 divergent**, 0 blocked, of 969 pinned;
-0 regressions. **Links 82→83/90** (cm-542). Curated `md_linkref_casefold` + `md_linkref_nbsp`
-(+pins; NBSP is a literal byte — exact-byte trap). No parser fixture (CST unchanged,
-projector-only). Units `linkref_labels_match_by_unicode_case_fold` +
-`nbsp_in_linkref_label_is_content_not_whitespace`. Format baseline +2 (additive; both cases
-format-identity). Fixed-point 163/163. Full suite + clippy + fmt green.
+**Result:** projector **874 matching (all allowlisted), 97 divergent**, 0 blocked, of 971 pinned;
+0 regressions. **Links 83→85/90** (cm-552, cm-554). Curated `md_linkref_backslash_label` +
+`md_linkref_blank_label` (+pins). No parser fixture (CST unchanged — projector + formatter only).
+Units `trailing_backslash_label_never_defines_or_links`, `blank_label_never_defines_or_links`,
+`resolved_inner_link_is_not_a_blank_label`. Format baseline +2 (additive; both format-identity
+after the bail). Fixed-point 165/165. Full suite + clippy + fmt green. **New backlog:** a leaked
+def whose label IS defined re-links inside the leak text (`[good]: R:good` renders `(\href …)
+(TEXT ": R:good")` — probed, deliberately kept out of the curated case).
 
-**Ranked next target:** **Links** (83/90, 7 left): cm-551 (escaped `[` inside a ref label
-`[ref\[]` — the escaped-close backlog; label must match its def), cm-552/554 (invalid def labels:
-trailing `\\`, whitespace-only multi-line `[\n ]` — must de-link + leak, arity currently
-drops/links), then the pairing sub-cluster cm-535/572 (`[foo][bar][baz]` pairs left-to-right;
-inner ref-in-emphasis) and cm-528 (autolink swallows `]` — left-to-right precedence). cm-512
-(dest + title split across a soft break — no cross-line dest-span machinery) is likely the
-hardest. Alternatives: **Images** (11/22), **Link reference definitions** (17/27), **List items**
-(38/48, the indent shapes). Harvested 18 stay out-of-scope.
+**Ranked next target:** **Links** (85/90, 5 left): cm-551 (escaped `[` inside a ref label
+`[ref\[]` — the escaped-close backlog; lexer must carve a label with `\[`/`\]` content and match
+it against its def), then the pairing sub-cluster cm-535/572 (`[foo][bar][baz]` pairs
+left-to-right; inner ref-in-emphasis) and cm-528 (autolink swallows `]` — left-to-right
+precedence). cm-512 (dest + title split across a soft break — no cross-line dest-span machinery)
+is likely the hardest. Alternatives: **Images** (11/22), **Link reference definitions** (17/27),
+**List items** (38/48, the indent shapes). Harvested 18 stay out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-14** — link-ref label normalization parity (cmark `normalize_reference` = ASCII-only ws collapse + full Unicode case fold via generated `src/roxygen/casefold.rs`; NBSP is label content; single choke point `normalize_linkref_label`). Curated `md_linkref_casefold`+`md_linkref_nbsp`, 2 units, baseline +2. 867→870, Links 82→83/90.
 
 - **2026-07-13e** — inline-destination parity (`inline_dest_span` rewritten to cmark-after-`double_escape_md` semantics: bare dest to first ASCII ws or raw-depth-0 `)`, angle dest to first `>` (parens ok), title longest-match; projector `inline_link_destination` ASCII-ws; `url_atom("")` → `(\url)`; the wider-span carve gone — CST link node ends at cmark's closer). Closed cm-489/494/495/500/501/509. Curated `md_link_dest_parity`, fixture, unit, baseline +1. 860→867, Links 76→82/90. New backlog: per-tag drop parity (`@note` keeps an incomplete field).
 

@@ -1,0 +1,3 @@
+(\description (TEXT "Whitespace-only link labels never define or link"))
+(\details (TEXT "[ ] [ ]: /uri [ ]: R:%0A%20 [ ]: R:%0A%20"))
+(\title (TEXT "Whitespace-only link labels never define or link"))

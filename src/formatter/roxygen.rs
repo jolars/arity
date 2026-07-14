@@ -540,6 +540,53 @@ fn line_has_cross_line_verbatim_span(line: &PhysicalLine) -> bool {
     })
 }
 
+/// Whether `line` touches a cross-line shortcut (`]`) or collapsed-reference
+/// (`][]`) link node whose label is **invalid** — blank, or ending in a backslash
+/// that escapes the closer after roxygen2's double-escape. Such a label never
+/// defines or resolves, so its synthesized `[label]: R:…` definition *leaks* into
+/// the rendered Rd with the label's soft break URL-encoded as `%0A`; joining the
+/// wrap would re-encode it as `%20` — a rendered-Rd change — so the paragraph is
+/// kept verbatim. A *valid* multi-line label is join-safe (it resolves through
+/// whitespace-collapsing normalization and its destination encoding never
+/// renders), and an inline/reference closer carries the label outside the wrapped
+/// display, so neither bails.
+fn line_has_leaky_cross_line_link(line: &PhysicalLine) -> bool {
+    line.elements.iter().any(|el| {
+        el.parent()
+            .is_some_and(|p| p.kind() == SyntaxKind::ROXYGEN_MD_LINK && link_label_leaks(&p))
+            || el.as_node().is_some_and(|n| {
+                n.descendants().any(|d| {
+                    d.kind() == SyntaxKind::ROXYGEN_MD_LINK
+                        && is_cross_line_inline(&d)
+                        && link_label_leaks(&d)
+                })
+            })
+    })
+}
+
+/// Whether a `ROXYGEN_MD_LINK` node's label is the leak-invalid set of
+/// [`line_has_leaky_cross_line_link`]: a shortcut/collapsed closer (the label is
+/// the display) whose interior text — markers dropped — is blank or ends with a
+/// backslash. Mirrors the projector's `linkref_label_is_usable` on the raw source.
+fn link_label_leaks(node: &SyntaxNode) -> bool {
+    let kids: Vec<_> = node.children_with_tokens().collect();
+    let Some(closer) = kids.last() else {
+        return false;
+    };
+    let closer_text = closer.to_string();
+    if closer_text != "]" && closer_text != "][]" {
+        return false;
+    }
+    let interior = kids.len().saturating_sub(1);
+    let mut label = String::new();
+    for el in kids.into_iter().take(interior).skip(1) {
+        if el.kind() != SyntaxKind::ROXYGEN_MARKER {
+            label.push_str(&el.to_string());
+        }
+    }
+    label.ends_with('\\') || label.chars().all(|c| c.is_ascii_whitespace())
+}
+
 /// Build the IR for a `ROXYGEN_BLOCK` at the given nesting `indent`.
 pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatContext) -> Ir {
     let style = ctx.style();
@@ -938,6 +985,7 @@ fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> boo
             text_is_linkref_def(first_text)
                 || lines.iter().any(line_has_md_percent_swallow)
                 || lines.iter().any(line_has_cross_line_verbatim_span)
+                || lines.iter().any(line_has_leaky_cross_line_link)
         } else {
             lines.iter().any(line_has_live_rd_comment)
         }
@@ -1892,6 +1940,21 @@ fn is_unsafe_ordered_marker(chunk: &str) -> bool {
 /// verbatim (its normalization is a later transform).
 fn normalize_roxygen_line(line: &PhysicalLine) -> String {
     let marker = marker_text(line);
+    // A line inside a leaky cross-line link keeps everything after the marker
+    // byte-verbatim: the marker→content whitespace past the separator space and
+    // any trailing whitespace before the soft break are *label content*, and the
+    // label's exact bytes URL-encode into the leaked `R:` destination (see
+    // [`line_has_leaky_cross_line_link`]).
+    if line_has_leaky_cross_line_link(line) {
+        let mut content = String::new();
+        for el in &line.elements {
+            match el {
+                NodeOrToken::Token(t) => content.push_str(t.text()),
+                NodeOrToken::Node(n) => content.push_str(&n.text().to_string()),
+            }
+        }
+        return format!("{marker}{content}");
+    }
     let mut content = String::new();
     for el in content_elements(line) {
         match el {

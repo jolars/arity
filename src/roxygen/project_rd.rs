@@ -3002,15 +3002,15 @@ fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
         }
         Inline::MdImage(raw) => match image_alt_text(raw) {
             Some(alt) => Cow::Owned(format!("[{alt}] ")),
-            None => Cow::Borrowed(" "),
+            None => Cow::Borrowed(SKELETON_STAND_IN_STR),
         },
         // An opaque inline-link leaf (nested-bracket display): expose the raw
         // display so its inner bracket-free candidate surfaces, with a space
         // placeholder for the consumed `(url)`. A shortcut/reference leaf is
-        // handled by demotion, an autolink carries no candidate — both a space.
+        // handled by demotion, an autolink carries no candidate — both a stand-in.
         Inline::MdLink(raw) => match opaque_inline_link_display(raw) {
             Some(display) => Cow::Owned(format!("[{display}] ")),
-            None => Cow::Borrowed(" "),
+            None => Cow::Borrowed(SKELETON_STAND_IN_STR),
         },
         // A markdown list is part of the same cmark document, so an escaped-close
         // candidate (or a post-demotion literal bracket) inside a list item must
@@ -3044,9 +3044,20 @@ fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
             s.push(' ');
             Cow::Owned(s)
         }
-        _ => Cow::Borrowed(" "),
+        _ => Cow::Borrowed(SKELETON_STAND_IN_STR),
     }
 }
+
+/// One-byte stand-in for resolved or opaque structure in
+/// [`inline_source_skeleton`]. Deliberately **non-whitespace**: the source it
+/// replaces (a resolved link, emphasis run, code span, autolink, macro, …) always
+/// carries non-whitespace bytes, so a literal `[` + resolved inner link + literal
+/// `]` must not read as a *blank* link-reference label
+/// ([`linkref_label_is_blank`]) and spuriously poison the field (cm-550, cm-592,
+/// `md_nested_link`). Otherwise neutral to the candidate scan — not
+/// `[`/`]`/`\`/`{`, non-blocking exactly like the space it replaces. The list
+/// guards stay real spaces (they stand for source *newlines*, genuine whitespace).
+const SKELETON_STAND_IN_STR: &str = "\u{1}";
 
 /// The verbatim bracketed display of an **opaque inline-link** leaf
 /// (`[display](url)` → `display`), or `None` for a shortcut/reference leaf (no `(`
@@ -3107,9 +3118,15 @@ fn image_alt_text(raw: &str) -> Option<&str> {
 /// Returns the cmark-rendered leaked definition lines (already final text), in
 /// document order. `@md` only; empty when no candidate is invalid.
 fn leaked_linkref_text(source: &str) -> Vec<String> {
-    let escaped = double_escape_md(source);
+    // The skeleton stands in for the raw markdown source, whose soft wraps are
+    // real newlines — map the sentinel back so a multi-line label URL-encodes as
+    // roxygen2's does (`%0A`, cm-554). Same byte width, so offsets are unmoved.
+    let escaped = double_escape_md(&source.replace(SOFT_BREAK, "\n"));
     let labels = md_linkref_labels(&escaped);
-    let Some(first_invalid) = labels.iter().position(|label| !linkref_label_closes(label)) else {
+    let Some(first_invalid) = labels
+        .iter()
+        .position(|label| !linkref_label_closes(label) || linkref_label_is_blank(label))
+    else {
         return Vec::new();
     };
     labels[first_invalid..]
@@ -3498,6 +3515,36 @@ fn link_ref_label(inl: &Inline) -> Option<String> {
     }
 }
 
+/// Whether a link's resolution label can never define or resolve in roxygen2's
+/// pipeline ([`linkref_label_is_usable`]) — judged on a **source-exact** label
+/// only. A reference link's `dest` and an opaque leaf's bracket text are verbatim
+/// source; a shortcut's (or collapsed reference's) label is its display flatten,
+/// which is source-exact only when every display inline is plain `Inline::Text`
+/// (an emphasis or code-span flatten drops its source delimiters, so
+/// `[a\*b\*]`'s flatten `a\b\` spuriously ends in a backslash while the real
+/// label `a\*b\*` closes fine — that link must instead reach the non-plain-display
+/// drop decision in `serialize_inlines`).
+fn link_ref_label_unusable(inl: &Inline) -> bool {
+    let display_unusable = |display: &[Inline]| {
+        display.iter().all(|d| matches!(d, Inline::Text(_)))
+            && !linkref_label_is_usable(&link_label_text(display))
+    };
+    match inl {
+        Inline::MdShortcutLink { display } => display_unusable(display),
+        Inline::MdRefLink { dest, display } => {
+            if dest.is_empty() {
+                display_unusable(display)
+            } else {
+                !linkref_label_is_usable(dest)
+            }
+        }
+        Inline::MdLink(raw) => {
+            opaque_link_ref_label(raw).is_some_and(|label| !linkref_label_is_usable(&label))
+        }
+        _ => false,
+    }
+}
+
 /// The resolution label of an *opaque* shortcut/reference `ROXYGEN_MD_LINK` leaf
 /// (`[dest]` → `dest`, `[text][ref]` → `ref`), or `None` for an inline link
 /// (own destination) or autolink. Mirrors the closer dispatch in [`resolve_md_link`].
@@ -3529,8 +3576,12 @@ fn demote_undefined_links(
     let out: Vec<Inline> = body
         .iter()
         .map(|inl| {
+            // An unusable label (trailing backslash, blank) never closes/resolves
+            // in roxygen2's pipeline, so the link is literal bracket text no matter
+            // what the refmap holds (cm-552, cm-554).
             if let Some(label) = link_ref_label(inl)
-                && !keys.contains(&normalize_linkref_label(&label))
+                && (!keys.contains(&normalize_linkref_label(&label))
+                    || link_ref_label_unusable(inl))
                 && let Some(text) = demoted_link_source(inl)
             {
                 changed = true;
@@ -3791,7 +3842,14 @@ fn scan_linkref_run(
 /// body index just past the consumed definition, or `None` when the shape does not
 /// hold.
 fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String, usize)> {
-    let label = linkref_def_label(body.get(j)?)?;
+    let inl = body.get(j)?;
+    let label = linkref_def_label(inl)?;
+    // A label that cannot close (trailing backslash) or is blank defines nothing —
+    // the would-be definition line stays literal prose (cm-552, cm-554). Judged
+    // source-exact only (see `link_ref_label_unusable`).
+    if link_ref_label_unusable(inl) {
+        return None;
+    }
     let mut text = String::new();
     let mut k = j + 1;
     while let Some(Inline::Text(t)) = body.get(k) {
@@ -4022,18 +4080,18 @@ fn md_linkref_scan(text: &str) -> Vec<(String, usize)> {
 }
 
 /// The byte offset (in `skeleton`, the body's reconstructed markdown source) of the
-/// opening `[` of the first **invalid** (escaped-close) link-reference candidate, or
-/// `None` if every candidate closes. This is where leaked-definition poisoning
+/// opening `[` of the first **invalid** link-reference candidate, or `None` if
+/// every candidate is a valid definition. This is where leaked-definition poisoning
 /// begins — every shortcut/reference link after it is de-linked (see
-/// [`demote_poisoned_links`]). The skeleton carries raw (single) backslashes, so a
-/// candidate is invalid exactly when its label ends with a backslash:
-/// `double_escape_md` turns any non-empty trailing backslash run into an odd run
-/// (`2k-1`) that fails to close (`linkref_label_closes`), so any trailing backslash
-/// poisons — matching the escaped-label classification the leak itself uses.
+/// [`demote_poisoned_links`]). The skeleton carries raw (single) backslashes, so
+/// [`linkref_label_is_usable`] is the exact test: a trailing backslash becomes an
+/// odd (escaping) run after `double_escape_md` (`2k-1`, fails
+/// `linkref_label_closes`), and a blank label can never define — matching the
+/// classification the leak itself uses.
 fn first_invalid_linkref_offset(skeleton: &str) -> Option<usize> {
     md_linkref_scan(skeleton)
         .into_iter()
-        .find(|(label, _)| label.ends_with('\\'))
+        .find(|(label, _)| !linkref_label_is_usable(label))
         .map(|(_, start)| start)
 }
 
@@ -4059,6 +4117,26 @@ fn bracket_free_group(bytes: &[u8], open: usize) -> Option<(&[u8], usize)> {
 /// a link, handled by arity's own link path); an invalid one leaks.
 fn linkref_label_closes(label: &str) -> bool {
     label.bytes().rev().take_while(|&b| b == b'\\').count() % 2 == 0
+}
+
+/// Whether a link-reference label is **blank** — no character that is not a space,
+/// tab, or line ending (ASCII whitespace; the [`SOFT_BREAK`] sentinel counts, a
+/// NBSP is content). CommonMark requires a label to contain at least one
+/// non-whitespace character, so a blank label neither defines a reference nor
+/// resolves a link, and its synthesized `[label]: R:…` definition leaks (cm-554).
+fn linkref_label_is_blank(label: &str) -> bool {
+    label.chars().all(|c| c.is_ascii_whitespace())
+}
+
+/// Whether a **raw-source** link-reference label can define or resolve at all in
+/// roxygen2's pipeline. Two failures, both leaving the def line literal prose and
+/// the shortcut/reference un-linked:
+/// - a **trailing backslash run** (any length): `double_escape_md` doubles the run
+///   and the `\\]`→`\]` revert makes it odd, so the label's closing `]` is escaped
+///   and the label never closes (cm-552);
+/// - a **blank** label ([`linkref_label_is_blank`], cm-554).
+fn linkref_label_is_usable(label: &str) -> bool {
+    !label.ends_with('\\') && !linkref_label_is_blank(label)
 }
 
 /// R's `URLencode(x, reserved = FALSE)`: keep ASCII alphanumerics and the
@@ -4486,11 +4564,30 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
             let closer = kids.last().map(|c| c.to_string()).unwrap_or_default();
             let interior = kids.len().saturating_sub(1);
             let mut display = Vec::new();
+            let mut after_marker = false;
             for child in kids.into_iter().take(interior).skip(1) {
                 match child.kind() {
-                    SyntaxKind::ROXYGEN_MARKER => {} // threaded trivia: never prose
-                    SyntaxKind::NEWLINE => display.push(Inline::Text(SOFT_BREAK.to_string())),
-                    _ => push_inline(&mut display, child),
+                    SyntaxKind::ROXYGEN_MARKER => after_marker = true, // threaded trivia
+                    SyntaxKind::NEWLINE => {
+                        after_marker = false;
+                        display.push(Inline::Text(SOFT_BREAK.to_string()));
+                    }
+                    // A continuation line's marker→content whitespace: the first
+                    // space is the marker separator (roxygen2 strips `#' ?`), the
+                    // rest is label content — observable in the URL-encoded
+                    // synthesized destination (`[\n ]` → `R:%0A%20`, cm-554).
+                    SyntaxKind::WHITESPACE if after_marker => {
+                        after_marker = false;
+                        let text = child.to_string();
+                        let content = text.strip_prefix(' ').unwrap_or(&text);
+                        if !content.is_empty() {
+                            display.push(Inline::Text(content.to_string()));
+                        }
+                    }
+                    _ => {
+                        after_marker = false;
+                        push_inline(&mut display, child);
+                    }
                 }
             }
             if closer == "]" {
@@ -8464,6 +8561,61 @@ mod tests {
                    #' @name spec\nNULL\n";
         assert!(
             project_to_rd(src).contains("(\\details (\\link (TEXT \"a\u{a0}b\")))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn trailing_backslash_label_never_defines_or_links() {
+        // A label with a trailing backslash run never closes after roxygen2's
+        // double-escape (`\\]` reverts to `\]`, leaving an odd escaping run): the
+        // def line stays literal prose, the shortcut de-links, and both candidate
+        // definitions leak with the post-escape three-backslash label (cm-552).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [bar\\\\]: /uri\n#'\n#' [bar\\\\]\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"[bar\\\\]: /uri [bar\\\\] \
+                 [bar\\\\]: R:bar%5C%5C%5C [bar\\\\]: R:bar%5C%5C%5C\"))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn blank_label_never_defines_or_links() {
+        // A whitespace-only label (`[` + newline + space + `]`) has no
+        // non-whitespace character, so it neither defines nor resolves
+        // (CommonMark); both candidates leak, URL-encoding the real newline as
+        // `%0A` and the continuation line's content space as `%20` (cm-554).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [\n#'  ]\n#'\n#' [\n#'  ]: /uri\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\details (TEXT \"[ ] [ ]: /uri [ ]: R:%0A%20 [ ]: R:%0A%20\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn resolved_inner_link_is_not_a_blank_label() {
+        // A literal `[` + resolved inner shortcut + literal `]` (`[[x]](url)`)
+        // must not read as a blank `[ ]` candidate in the poisoning skeleton —
+        // the stand-in for resolved structure is non-whitespace, so the inner
+        // link survives and the outer brackets stay literal (cm-550, cm-592).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' a [[x]](https://example.com) b\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"a [\") (\\link (TEXT \"x\")) \
+                 (TEXT \"](https://example.com) b\"))"
+            ),
             "got: {}",
             project_to_rd(src)
         );

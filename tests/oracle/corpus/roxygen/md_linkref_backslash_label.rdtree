@@ -1,0 +1,3 @@
+(\description (TEXT "Trailing-backslash link labels never define or link"))
+(\details (TEXT "[bad\\]: /uri Use [bad\\] here. [bad\\]: R:bad%5C%5C%5C [bad\\]: R:bad%5C%5C%5C"))
+(\title (TEXT "Trailing-backslash link labels never define or link"))
