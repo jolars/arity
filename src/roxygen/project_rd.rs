@@ -4778,6 +4778,18 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         // is a *shortcut* link whose display is the destination. A *collapsed*
         // reference (`][]`) strips to an **empty** `dest`, which downstream reads as
         // "label = display" ([`link_ref_label`]) and renders shortcut-style.
+        // An **autolink** `ROXYGEN_MD_LINK` node: the inline pass's whole-run
+        // rescan carved a `<scheme:…>`/`<addr>` autolink across already-carved
+        // tokens (its span consumed a `](url)` closer's `]` left-to-right,
+        // cm-528). No bracket structure — the node text is the autolink source
+        // (always single-line: an autolink body admits no whitespace or control
+        // chars), so it projects exactly like the opaque autolink leaf.
+        NodeOrToken::Node(n)
+            if n.kind() == SyntaxKind::ROXYGEN_MD_LINK
+                && n.text().char_at(0.into()) == Some('<') =>
+        {
+            out.push(Inline::MdLink(n.text().to_string()));
+        }
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LINK => {
             let kids: Vec<_> = n.children_with_tokens().collect();
             let closer = kids.last().map(|c| c.to_string()).unwrap_or_default();
@@ -7257,6 +7269,30 @@ mod tests {
         assert!(link_display_is_droppable(&[Inline::MdLink(
             "<https://e.org>".into()
         )]));
+    }
+
+    #[test]
+    fn autolink_wins_over_bracket_carve() {
+        // cmark scans inlines left-to-right at equal precedence: an autolink
+        // whose span covers the `]` consumes it, so the bracket never closes and
+        // the `[` stays literal (cm-528). The inline pass's whole-paragraph
+        // rescan carves the autolink across the already-carved `](uri)` token.
+        let src = "#' @details\n\
+                   #' [foo<https://example.com/?search=](uri)>\n\
+                   #' @md\n\
+                   #' @name x\n\
+                   NULL\n";
+        let expected = "(\\details (TEXT \"[foo\") \
+                        (\\url (VERB \"https://example.com/?search=](uri)\")))";
+        assert_eq!(project_to_rd(src), expected);
+        // The formatter folds the value onto the tag line; the whole-run rescan
+        // must resolve the autolink identically in a same-line tag value (the
+        // pure-Rust fixed-point analog for the curated corpus case).
+        let folded = "#' @details [foo<https://example.com/?search=](uri)>\n\
+                      #' @md\n\
+                      #' @name x\n\
+                      NULL\n";
+        assert_eq!(project_to_rd(folded), expected);
     }
 
     #[test]

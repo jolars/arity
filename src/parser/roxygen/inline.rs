@@ -42,7 +42,8 @@ fn is_inline_markup(kind: &TokKind) -> bool {
 }
 
 /// Whether token `tok` could open a **multi-line** span the line-scoped lexer
-/// missed: a `<` (raw HTML) or a `` ` `` (code span) in plain prose text. A `<`
+/// missed: a `<` (autolink or raw HTML) or a `` ` `` (code span) in plain prose
+/// text. A `<`
 /// inside any carved leaf was already consumed or rejected by a tighter-binding
 /// recognizer; a prose backtick is an opener run left unterminated on its line
 /// (a terminated one was carved as a `RoxygenMdCode` leaf) — and its presence is
@@ -175,8 +176,9 @@ fn item_text<'a>(tokens: &'a [Token], item: &'a RunItem) -> &'a str {
 }
 
 /// The flanking-relevant edge char of a run item (see [`edge_char`]). A resolved
-/// multi-line span's edges are its own delimiter bytes — `<`/`>` for raw HTML,
-/// backticks for a code span — which are the first/last chars of its text.
+/// multi-line span's edges are its own delimiter bytes — `<`/`>` for an autolink
+/// or raw HTML, backticks for a code span — which are the first/last chars of
+/// its text.
 fn item_edge_char(tokens: &[Token], item: &RunItem, leading: bool) -> Option<char> {
     match item {
         RunItem::Tok(i) => edge_char(&tokens[*i], leading),
@@ -190,8 +192,8 @@ fn item_edge_char(tokens: &[Token], item: &RunItem, leading: bool) -> Option<cha
     }
 }
 
-/// Resolve the multi-line raw-HTML and code spans of a run, or `None` when it
-/// has none.
+/// Resolve the multi-line raw-HTML and code spans — and the autolinks the
+/// line-scoped carve missed — of a run, or `None` when it has none.
 ///
 /// The scan mirrors what roxygen2 hands cmark for the paragraph — the run's
 /// **logical text**: content tokens verbatim, a soft break as `\n`, the `#'`
@@ -204,11 +206,16 @@ fn item_edge_char(tokens: &[Token], item: &RunItem, leading: bool) -> Option<cha
 /// abutting `-->` exactly as the real placeholder does; the raw macro text is
 /// restored in the rendered output by the projector's node-text walk).
 ///
-/// The joined bytes are scanned left-to-right for `<` (raw HTML) and `` ` ``
-/// (code span) candidates with the engine's own inline grammars
-/// ([`super::lex::scan_md_html_inline`], [`super::lex::scan_inline_code`]) —
+/// The joined bytes are scanned left-to-right for `<` (autolink or raw HTML)
+/// and `` ` `` (code span) candidates with the engine's own inline grammars
+/// ([`super::lex::scan_md_autolink`], [`super::lex::scan_md_email_autolink`],
+/// [`super::lex::scan_md_html_inline`], [`super::lex::scan_inline_code`]) —
 /// one pass, leftmost successful match wins, matching cmark's equal-precedence
-/// scan of code spans and raw HTML. A `<` is a candidate only in plain prose
+/// scan of code spans, autolinks, and raw HTML. An autolink never spans lines
+/// (its body admits no whitespace or control characters), but the rescan is
+/// still what repairs precedence: its span can cover an already-carved
+/// `](url)` closer whose `]` cmark consumed left-to-right, so the bracket
+/// never closes (cm-528). A `<` is a candidate only in plain prose
 /// text (a `<` inside a carved leaf was consumed by a tighter-binding
 /// recognizer). A backtick is a candidate in plain prose *or* inside a carved
 /// `RoxygenMdCode` leaf: an unterminated prose opener on an earlier line must
@@ -221,7 +228,8 @@ fn item_edge_char(tokens: &[Token], item: &RunItem, leading: bool) -> Option<cha
 /// byte-identically. An unmatched opener run is literal and the scan continues
 /// past it.
 ///
-/// A match becomes a `ROXYGEN_MD_HTML`/`ROXYGEN_MD_CODE` **node**: the covered
+/// A match becomes a `ROXYGEN_MD_LINK`/`ROXYGEN_MD_HTML`/`ROXYGEN_MD_CODE`
+/// **node**: the covered
 /// tokens (inter-line trivia included) move inside it and a partially covered
 /// token is split into synthetic `ROXYGEN_TEXT` pieces that tile it exactly
 /// (losslessness holds by construction). An unmatched opener stays untouched
@@ -263,11 +271,24 @@ fn resolve_multiline_spans(tokens: &[Token], run: &[usize]) -> Option<Vec<RunIte
         pos = if bytes[at] == b'<' {
             let in_prose = covering_kind(at) == Some(&TokKind::RoxygenText);
             match in_prose
-                .then(|| super::lex::scan_md_html_inline(bytes, at))
+                .then(|| {
+                    // cmark's `handle_pointy_brace` order: URI autolink, email
+                    // autolink, then raw HTML. An autolink never spans lines (no
+                    // whitespace or control chars in its body), but it can still
+                    // cover an already-carved token — a `](url)` closer whose `]`
+                    // the autolink consumes left-to-right (cm-528).
+                    super::lex::scan_md_autolink(bytes, at)
+                        .or_else(|| super::lex::scan_md_email_autolink(bytes, at))
+                        .map(|end| (end, SyntaxKind::ROXYGEN_MD_LINK))
+                        .or_else(|| {
+                            super::lex::scan_md_html_inline(bytes, at)
+                                .map(|end| (end, SyntaxKind::ROXYGEN_MD_HTML))
+                        })
+                })
                 .flatten()
             {
-                Some(end) => {
-                    matches.push((at, end, SyntaxKind::ROXYGEN_MD_HTML));
+                Some((end, kind)) => {
+                    matches.push((at, end, kind));
                     end
                 }
                 None => at + 1,
@@ -440,8 +461,8 @@ enum NodeData {
     /// emitted as a `ROXYGEN_TEXT` leaf. Inert to emphasis (never a delimiter).
     Text(String),
     /// A resolved multi-line span ([`RunItem::Span`]): its pre-built
-    /// `ROXYGEN_MD_HTML`/`ROXYGEN_MD_CODE` node events, re-emitted verbatim.
-    /// Opaque to emphasis.
+    /// `ROXYGEN_MD_LINK` (autolink)/`ROXYGEN_MD_HTML`/`ROXYGEN_MD_CODE` node
+    /// events, re-emitted verbatim. Opaque to emphasis.
     Span(Vec<Event>),
 }
 

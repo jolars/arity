@@ -1,0 +1,41 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..82
+  ROXYGEN_BLOCK@0..76
+    ROXYGEN_SECTION@0..7
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+    ROXYGEN_SECTION@7..63
+      ROXYGEN_MARKER@7..9 "#'"
+      WHITESPACE@9..10 " "
+      ROXYGEN_TAG@10..18
+        ROXYGEN_AT@10..11 "@"
+        ROXYGEN_TAG_NAME@11..18 "details"
+      NEWLINE@18..19 "\n"
+      ROXYGEN_PARAGRAPH@19..63
+        ROXYGEN_MARKER@19..21 "#'"
+        WHITESPACE@21..22 " "
+        ROXYGEN_MD_DELIM@22..23 "["
+        ROXYGEN_TEXT@23..26 "foo"
+        ROXYGEN_MD_LINK@26..62
+          ROXYGEN_TEXT@26..55 "<https://example.com/ ..."
+          ROXYGEN_MD_DELIM@55..61 "](uri)"
+          ROXYGEN_TEXT@61..62 ">"
+        NEWLINE@62..63 "\n"
+    ROXYGEN_SECTION@63..76
+      ROXYGEN_MARKER@63..65 "#'"
+      WHITESPACE@65..66 " "
+      ROXYGEN_TAG@66..76
+        ROXYGEN_AT@66..67 "@"
+        ROXYGEN_TAG_NAME@67..71 "name"
+        WHITESPACE@71..72 " "
+        ROXYGEN_TEXT@72..76 "spec"
+  NEWLINE@76..77 "\n"
+  IDENT@77..81 "NULL"
+  NEWLINE@81..82 "\n"

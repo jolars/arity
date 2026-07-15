@@ -476,6 +476,7 @@ cm-524
 cm-525
 cm-526
 cm-527
+cm-528
 cm-529
 cm-530
 cm-531
@@ -599,6 +600,7 @@ markdown_inline
 markdown_list
 markdown_url
 md_atx_heading_value
+md_autolink_bracket
 md_backslash_letter
 md_backslash_run
 md_blockquote

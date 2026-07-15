@@ -1360,7 +1360,7 @@ fn is_shortcut_content(content: &[u8]) -> bool {
 /// scheme `:`) falls through (to [`scan_md_email_autolink`], then raw HTML).
 /// roxygen2's `mdxml_link` renders such a link (whose destination equals its text)
 /// as `\url{…}`.
-fn scan_md_autolink(bytes: &[u8], i: usize) -> Option<usize> {
+pub(super) fn scan_md_autolink(bytes: &[u8], i: usize) -> Option<usize> {
     let scheme_start = i + 1;
     if !bytes.get(scheme_start).is_some_and(u8::is_ascii_alphabetic) {
         return None;
@@ -1396,7 +1396,7 @@ fn scan_md_autolink(bytes: &[u8], i: usize) -> Option<usize> {
 /// A `scheme:`-bearing address is handled by [`scan_md_autolink`] first --- the two
 /// forms are disjoint, an email address has no `:`. roxygen2's `mdxml_link` renders
 /// this as `\href{mailto:addr}{addr}`.
-fn scan_md_email_autolink(bytes: &[u8], i: usize) -> Option<usize> {
+pub(super) fn scan_md_email_autolink(bytes: &[u8], i: usize) -> Option<usize> {
     fn is_local(b: u8) -> bool {
         matches!(b,
             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'

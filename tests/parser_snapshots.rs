@@ -186,6 +186,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_link_collapsed",
         "roxygen_md_link_label_escaped_bracket",
         "roxygen_md_link_chain",
+        "roxygen_md_autolink_bracket",
         "roxygen_md_ref_link_multiline",
         "roxygen_md_nested_link",
         "roxygen_md_shortcut_link_multiline",

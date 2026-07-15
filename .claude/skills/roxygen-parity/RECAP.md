@@ -196,7 +196,16 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   is literal text. **Formatter:** `collect_logical_elements` descends into a cross-line EMPH/STRONG
   node (`is_cross_line_emph`) so reflow rejoins it (a contained macro is one atomic reflow unit); a
   single-line span stays atomic. Idempotent.
-- **An inline Rd macro flanks like roxygen2's placeholder, NOT its own punctuation** (`edge_char`).
+- **The arena's whole-run rescan (`resolve_multiline_spans`, inline.rs) is the cmark precedence
+  repair — extend it, never the `[`-carve.** The lexer carves brackets optimistically; the rescan
+  then runs cmark's one-pass leftmost scan over the run's logical text — at `` ` `` code spans, at a
+  prose `<` autolink → email autolink → raw HTML (`handle_pointy_brace` order) — and a match **covers
+  an already-carved `](url)`/`][ref]` token**, so the bracket never closes and the `[` demotes to a
+  literal delim (cm-526 HTML, cm-527 code, cm-528 autolink). The match becomes a
+  `ROXYGEN_MD_LINK`/`MD_HTML`/`MD_CODE` node; an autolink never spans lines (no ws/control in its
+  body) yet still routes here. Projector: an MD_LINK *node* whose text starts `<` is the autolink
+  shape — projected as the opaque leaf (`Inline::MdLink`) *before* the bracket-node closer dispatch
+  (whose `kids.last()` closer read would misfire on `>`).
   roxygen2 swaps a fragile tag for an **alphanumeric** placeholder suffixed `-<i>-` before cmark
   (`escape_rd_for_md`), so for flanking a `RoxygenRdMacro` token presents `'x'` (alnum) at its
   **leading** edge and `'-'` (hyphen) at its **trailing** edge — NOT its raw `\`/`}`. Asymmetry is
@@ -1048,56 +1057,54 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 880 matching (all allowlisted), 94 divergent** of 974 pinned. The divergent 94 are the
+**Current: 882 matching (all allowlisted), 93 divergent** of 975 pinned. The divergent 93 are the
 per-section backlog (harvested 18, Images 11, Link reference definitions 10, List items 10, Tabs 8,
-Lists 7, ATX 6, Setext 6, Links 2, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
+Lists 7, ATX 6, Setext 6, Links 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (974 pinned); 94 divergent backlog.
+   Curated + harvested + whole-spec corpora (975 pinned); 93 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 168/168 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 169/169 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-15b) — refmap-aware link-chain pairing: Links 86→88/90
+## Latest session (2026-07-15c) — autolink wins over the bracket carve: Links 88→89/90
 
-The ranked pairing sub-cluster cm-535/572, which turned out to be two root causes plus a
-refmap-dependence the eager fix exposed (cm-571/573 regressed mid-session, then both repaired):
+The ranked cm-528 (`[foo<https://…?search=](uri)>`): cmark's left-to-right inline scan reaches the
+`<` and the autolink span consumes the `]`, so the bracket never closes — expected is literal
+`[foo` + `\url{https://…?search=](uri)}`, while arity's `[`-carve (`inline_link_span`) had eagerly
+committed the `](uri)` closer. One-bucket **parser gap**, and the fix is the existing machinery's
+missing third scanner: `resolve_multiline_spans` (inline.rs) — the arena's whole-run cmark rescan
+that already repairs code-span (cm-527) and raw-HTML (cm-526) precedence over carved brackets — now
+tries `scan_md_autolink` → `scan_md_email_autolink` → `scan_md_html_inline` at a prose `<` (cmark's
+`handle_pointy_brace` order; the two autolink scanners went `pub(super)`). An autolink match becomes
+a **`ROXYGEN_MD_LINK` node** (the covered `](uri)` token moves inside; always single-line — an
+autolink body admits no whitespace/control chars, so no formatter/cross-line impact). Projector:
+one new `push_inline` arm ahead of the bracket-node arm — an MD_LINK node whose text starts `<`
+projects as the opaque autolink leaf (`Inline::MdLink`), so all downstream Inline machinery
+(skeleton stand-in, demotion, chains) is untouched.
 
-1. **cm-572 (parser gap):** `cross_line_ref_closer` (lex.rs) rejected a `[label]` followed by `[`,
-   so in `[foo][bar][baz]` the `]` after `foo` never carved and the arena paired `[bar][baz]`.
-   cmark consumes the label regardless of what follows — the `[` exclusion is gone (`(`/`{` still
-   block, backlog). The arena now pairs eager-left uniformly.
-2. **The regression (projector):** eager-left is right only when the label is defined — cmark
-   rewinds a failed label so it re-pairs (`[foo][bar][baz]` with `bar` undefined = literal `[foo]`
-   + `[bar][baz]`, cm-571/573). New projector **stage 0** `repair_ref_link_chains`/
-   `repair_chain_run` (project_rd.rs, before user defs, keys from the original body) runs cmark's
-   sequential unit scan over each maximal adjacent chain run; aligned defined pairs and original
-   shortcut nodes pass through untouched (stage-2 demotion stays the literal-rewrite choke point).
-   See the new persistent trap for the full rules.
-3. **cm-535 (projector gap):** `apply_user_linkrefs` never descended into emphasis, so a user def
-   didn't resolve `[baz][ref]` inside `*…*`. New `MdEmphasis` arm recursing with a new
-   `consume_defs=false` mode (a def-shaped text inside emphasis is prose, never a definition).
+**Result:** projector **882 matching (all allowlisted), 93 divergent**, 0 blocked, of 975 pinned;
+0 regressions. **Links 88→89/90** (cm-528; only cm-512 left). Curated `md_autolink_bracket` (+pin),
+fixture `roxygen_md_autolink_bracket` (lossless, no diagnostics; CST = literal `[` delim + `foo`
+text + MD_LINK autolink node). Unit `autolink_wins_over_bracket_carve` (also pins the
+formatter-folded same-line tag-value shape — the pure-Rust fixed-point analog). Format baseline +1
+(tag-fold, verified Rd-identical via roxygen2 directly). Fixed-point 169/169. Full suite + clippy +
+fmt green.
 
-**Result:** projector **880 matching (all allowlisted), 94 divergent**, 0 blocked, of 974 pinned;
-0 regressions (cm-571/573 preserved). **Links 86→88/90** (cm-535, cm-572). Curated `md_link_chain`
-(both refmap flavors in one field) + `md_link_ref_in_emphasis` (+pins), fixture
-`roxygen_md_link_chain` (lossless, no diagnostics). Units `ref_link_chain_pairs_left_to_right`,
-`user_def_resolves_ref_link_inside_emphasis`. Format baseline +2 (both format-identity).
-Fixed-point 168/168. Full suite + clippy + fmt green.
-
-**Ranked next target:** **Links** (88/90, 2 left): cm-528 (autolink swallows `]` — cmark's
-left-to-right precedence: the autolink/code-span scan must win over the bracket carve when its span
-covers the `]`), then cm-512 (dest + title split across a soft break — no cross-line dest-span
-machinery; likely the hardest). Alternatives: **Images** (11/22), **Link reference definitions**
-(17/27), **List items** (38/48, the indent shapes). Harvested 18 stay out-of-scope.
+**Ranked next target:** **Links** cm-512 is the last one (dest + title split across a soft break —
+no cross-line dest-span machinery; likely the hardest, fine to defer). Better clusters:
+**Images** (11/22), **Link reference definitions** (17/27), **List items** (38/48, the indent
+shapes). Harvested 18 stay out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-15b** — refmap-aware link-chain pairing (cm-572 lexer: `cross_line_ref_closer` no longer blocks on a following `[`, arena pairs eager-left; projector stage-0 `repair_ref_link_chains` re-pairs per refmap — cm-571/573 preserved; cm-535: `apply_user_linkrefs` recurses into emphasis with `consume_defs=false`). Curated `md_link_chain`+`md_link_ref_in_emphasis`, fixture, 2 units, baseline +2. 876→880, Links 86→88/90.
 
 - **2026-07-15** — escaped `[` is link-label content (cm-551; `is_shortcut_content` = cmark's label-content test, `interior_bracket_free` mirrors; label machinery source-exact, undefined `[ref\[]` not a candidate → demotes literal). Curated `md_linkref_escaped_open_bracket`, fixture, 2 units, baseline +1. 874→876, Links 85→86/90.
 
