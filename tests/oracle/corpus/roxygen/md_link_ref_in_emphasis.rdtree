@@ -1,0 +1,3 @@
+(\description (TEXT "Emph"))
+(\details (TEXT "[foo") (\emph (TEXT "bar") (\href (VERB "/uri") (TEXT "baz"))) (TEXT "]") (\href (VERB "/uri") (TEXT "ref")))
+(\title (TEXT "Emph"))

@@ -482,6 +482,7 @@ cm-531
 cm-532
 cm-533
 cm-534
+cm-535
 cm-536
 cm-537
 cm-538
@@ -518,6 +519,7 @@ cm-568
 cm-569
 cm-570
 cm-571
+cm-572
 cm-573
 cm-574
 cm-576
@@ -650,6 +652,7 @@ md_indented_code
 md_indented_code_value
 md_link_backslash
 md_link_backslash_drop
+md_link_chain
 md_link_collapsed
 md_link_dest_backslash_drop
 md_link_dest_parity
@@ -662,6 +665,7 @@ md_linkref_backslash_label
 md_linkref_blank_label
 md_linkref_casefold
 md_linkref_escaped_open_bracket
+md_link_ref_in_emphasis
 md_linkref_nbsp
 md_linkref_poisoning
 md_linkref_poisoning_autolink

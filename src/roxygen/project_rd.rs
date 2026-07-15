@@ -1242,12 +1242,17 @@ fn serialize_prose(body: &[Inline], md: bool, group: bool) -> Vec<String> {
 
 /// Apply roxygen2's full markdown link-reference pipeline to a prose body,
 /// returning the rewritten inline run (or `None` when nothing changed). The
-/// caller has already checked that markdown is active. Three composing stages,
+/// caller has already checked that markdown is active. Four composing stages,
 /// each turning links into other links or literal text:
 ///
+/// 0. **Refmap-dependent re-pairing** ([`repair_ref_link_chains`]): the arena
+///    pairs an adjacent bracket chain `[foo][bar][baz]` eagerly without the
+///    refmap; cmark consumes a following `[label]` only when the label is
+///    defined, rewinding it otherwise so it re-pairs with what follows. Runs
+///    first, on the original body, so the later stages see cmark's pairing.
 /// 1. **User definitions** (`[ref]: url`): a referencing shortcut/reference link
 ///    whose label is defined becomes a `\href{url}{display}` (display kept), and
-///    the definition lines are consumed. Runs on the original body so the refmap
+///    the definition lines are consumed. Runs before the demotions so the refmap
 ///    below still sees every bracket the way roxygen2's raw-source scan does.
 /// 2. **Undefined-label demotion** (the `(?<!\])`/`(?=[^\[{])` link-reference-map
 ///    gap): a shortcut/reference link whose label roxygen2 never defines demotes
@@ -1259,17 +1264,19 @@ fn serialize_prose(body: &[Inline], md: bool, group: bool) -> Vec<String> {
 /// correctness; the refmap (stage 2) runs after stage 1 so it sees every bracket
 /// the user defs left behind.
 fn resolve_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
+    let repaired = repair_ref_link_chains(body, &linkref_keys(body));
+    let b0 = repaired.as_deref().unwrap_or(body);
     let mut urls: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    collect_user_linkrefs_tree(body, &mut urls);
+    collect_user_linkrefs_tree(b0, &mut urls);
     let resolved = (!urls.is_empty())
-        .then(|| apply_user_linkrefs(body, &urls))
+        .then(|| apply_user_linkrefs(b0, &urls, true))
         .flatten();
-    let b1 = resolved.as_deref().unwrap_or(body);
+    let b1 = resolved.as_deref().unwrap_or(b0);
     let undefined = demote_undefined_links(b1, &linkref_keys(b1));
     let b2 = undefined.as_deref().unwrap_or(b1);
     let demoted = demote_poisoned_links(b2);
     // Materialize an owned body only when some stage actually rewrote it.
-    if resolved.is_some() || undefined.is_some() || demoted.is_some() {
+    if repaired.is_some() || resolved.is_some() || undefined.is_some() || demoted.is_some() {
         Some(demoted.unwrap_or_else(|| b2.to_vec()))
     } else {
         None
@@ -3564,6 +3571,194 @@ fn opaque_link_ref_label(raw: &str) -> Option<String> {
     }
 }
 
+/// One bracket unit of an adjacent shortcut/reference-link chain, for the
+/// refmap-dependent re-pairing scan ([`repair_ref_link_chains`]). A reference
+/// link contributes two units (its display and its `[label]`); a shortcut one.
+struct ChainUnit {
+    /// The unit's resolved display inlines when it serves as a link *display*
+    /// (a label unit carries its source-exact label text as a single `Text`).
+    display: Vec<Inline>,
+    /// The refmap-lookup label when the unit serves as a *label* or *shortcut*:
+    /// a label unit's source-exact `dest`, or a display flatten (mirrors
+    /// [`link_ref_label`]). `None` = never resolves (an unusable source-exact
+    /// label, per [`link_ref_label_unusable`]'s all-`Text` gate).
+    label: Option<String>,
+    /// Index of the originating inline in the chain run, and whether this unit
+    /// is a reference link's label slot — used to detect when the scan merely
+    /// reproduces the arena's original pairing.
+    node: usize,
+    is_label_slot: bool,
+}
+
+/// Re-pair each maximal run of *adjacent* shortcut/reference links against the
+/// whole-field refmap `keys`, mirroring cmark's `handle_close_bracket`: a closer
+/// consumes a following `[label]` only when the label is **defined** — on lookup
+/// failure the label is rewound, the `]` goes literal with no shortcut fallback,
+/// and the label's own bracket re-opens to pair with what follows. The arena is
+/// refmap-blind and pairs eagerly left (`[foo][bar][baz]` → `[foo][bar]` +
+/// `[baz]`), which is right only when `bar` is defined (cm-572); with `bar`
+/// undefined cmark instead gives literal `[foo]` + `[bar][baz]` (cm-571/573).
+///
+/// Adjacency = consecutive inline positions (any intervening text, even a soft
+/// break, breaks a run). A collapsed reference (`[text][]`, empty dest) binds
+/// positionally, not by refmap, so it breaks a run too. Recurses into emphasis
+/// children; a chain inside a list item is backlog (stage 1 cannot descend into
+/// an `MdListResolved` this early). Returns `None` when nothing changed.
+fn repair_ref_link_chains(
+    body: &[Inline],
+    keys: &std::collections::HashSet<String>,
+) -> Option<Vec<Inline>> {
+    let is_chain_node = |inl: &Inline| {
+        matches!(inl, Inline::MdShortcutLink { .. })
+            || matches!(inl, Inline::MdRefLink { dest, .. } if !dest.is_empty())
+    };
+    let mut out = Vec::with_capacity(body.len());
+    let mut changed = false;
+    let mut i = 0;
+    while i < body.len() {
+        if is_chain_node(&body[i]) {
+            let mut j = i + 1;
+            while j < body.len() && is_chain_node(&body[j]) {
+                j += 1;
+            }
+            match (j - i >= 2)
+                .then(|| repair_chain_run(&body[i..j], keys))
+                .flatten()
+            {
+                Some(rewritten) => {
+                    out.extend(rewritten);
+                    changed = true;
+                }
+                None => out.extend(body[i..j].iter().cloned()),
+            }
+            i = j;
+            continue;
+        }
+        if let Inline::MdEmphasis { strong, children } = &body[i]
+            && let Some(rewritten) = repair_ref_link_chains(children, keys)
+        {
+            out.push(Inline::MdEmphasis {
+                strong: *strong,
+                children: rewritten,
+            });
+            changed = true;
+        } else {
+            out.push(body[i].clone());
+        }
+        i += 1;
+    }
+    changed.then_some(out)
+}
+
+/// cmark's sequential bracket scan over one adjacent chain run (every inline a
+/// shortcut or non-collapsed reference link): at each unit, a following defined
+/// label forms a reference link (consuming both units); a following *undefined*
+/// label leaves this unit's brackets literal (found-label failure has no
+/// shortcut fallback) and frees the label to re-pair; the last unit is a
+/// shortcut attempt. A unit that reproduces its original inline is cloned
+/// unchanged, so an all-defined run (or one whose failures the ordinary
+/// demotion stage would rewrite identically) reports no change. An undefined
+/// *final* shortcut node is also left for the demotion stage (identical
+/// output, single choke point).
+fn repair_chain_run(
+    run: &[Inline],
+    keys: &std::collections::HashSet<String>,
+) -> Option<Vec<Inline>> {
+    let mut units = Vec::new();
+    for (n, inl) in run.iter().enumerate() {
+        match inl {
+            Inline::MdShortcutLink { display } => units.push(ChainUnit {
+                label: display_chain_label(display),
+                display: display.clone(),
+                node: n,
+                is_label_slot: false,
+            }),
+            Inline::MdRefLink { dest, display } if !dest.is_empty() => {
+                units.push(ChainUnit {
+                    label: display_chain_label(display),
+                    display: display.clone(),
+                    node: n,
+                    is_label_slot: false,
+                });
+                units.push(ChainUnit {
+                    display: vec![Inline::Text(dest.clone())],
+                    label: linkref_label_is_usable(dest).then(|| dest.clone()),
+                    node: n,
+                    is_label_slot: true,
+                });
+            }
+            _ => return None,
+        }
+    }
+    let defined = |u: &ChainUnit| {
+        u.label
+            .as_ref()
+            .is_some_and(|l| keys.contains(&normalize_linkref_label(l)))
+    };
+    let mut out = Vec::new();
+    let mut changed = false;
+    let mut i = 0;
+    while i < units.len() {
+        if i + 1 < units.len() {
+            if defined(&units[i + 1]) {
+                let aligned = units[i + 1].is_label_slot
+                    && !units[i].is_label_slot
+                    && units[i].node == units[i + 1].node;
+                if aligned {
+                    out.push(run[units[i].node].clone());
+                } else {
+                    out.push(Inline::MdRefLink {
+                        dest: units[i + 1].label.clone().unwrap_or_default(),
+                        display: units[i].display.clone(),
+                    });
+                    changed = true;
+                }
+                i += 2;
+            } else {
+                out.push(Inline::Text(format!(
+                    "[{}]",
+                    link_label_text(&units[i].display)
+                )));
+                changed = true;
+                i += 1;
+            }
+        } else {
+            // Last unit: a shortcut attempt. An original shortcut node passes
+            // through untouched either way (a defined one already is a shortcut
+            // link; an undefined one is the demotion stage's job) — only a
+            // label-slot leftover materializes here.
+            if units[i].is_label_slot {
+                if defined(&units[i]) {
+                    out.push(Inline::MdShortcutLink {
+                        display: units[i].display.clone(),
+                    });
+                } else {
+                    out.push(Inline::Text(format!(
+                        "[{}]",
+                        link_label_text(&units[i].display)
+                    )));
+                }
+                changed = true;
+            } else {
+                out.push(run[units[i].node].clone());
+            }
+            i += 1;
+        }
+    }
+    changed.then_some(out)
+}
+
+/// The refmap-lookup label a chain unit presents when its *display* serves as a
+/// shortcut/collapsed label: the display flatten (mirrors [`link_ref_label`]),
+/// or `None` when the flatten is source-exact yet unusable (mirrors
+/// [`link_ref_label_unusable`]'s all-`Text` gate — a rich display's flatten is
+/// not source-exact, so it stays eligible for the plain refmap lookup).
+fn display_chain_label(display: &[Inline]) -> Option<String> {
+    let flat = link_label_text(display);
+    let source_exact = display.iter().all(|d| matches!(d, Inline::Text(_)));
+    (!source_exact || linkref_label_is_usable(&flat)).then_some(flat)
+}
+
 /// Demote shortcut/reference links whose label is absent from the field's
 /// link-reference map (`keys`) to their literal bracket source — roxygen2 leaves
 /// such links unresolved (see [`linkref_keys`]). Returns `None` when nothing is
@@ -3698,11 +3893,21 @@ fn collect_user_linkrefs_tree(
 /// same-line title — now resolved across paragraphs and list items of the same
 /// field. Multi-line definitions, titles spanning lines, and URL normalization
 /// (percent-encoding, entities) are backlog.
+///
+/// `consume_defs` is true for a body that can hold block-level definitions (a
+/// field body, a list item); the emphasis recursion passes false, since emphasis
+/// children are mid-paragraph inline content where a def-shaped `[ref]: url` is
+/// ordinary prose, never a definition.
 fn apply_user_linkrefs(
     body: &[Inline],
     urls: &std::collections::HashMap<String, String>,
+    consume_defs: bool,
 ) -> Option<Vec<Inline>> {
-    let (_, dropped) = collect_user_linkrefs(body);
+    let dropped = if consume_defs {
+        collect_user_linkrefs(body).1
+    } else {
+        std::collections::BTreeSet::new()
+    };
     let mut out = Vec::with_capacity(body.len());
     let mut changed = !dropped.is_empty();
     for (i, inl) in body.iter().enumerate() {
@@ -3734,6 +3939,20 @@ fn apply_user_linkrefs(
             changed = true;
             continue;
         }
+        // A reference link nested inside emphasis resolves against the same user
+        // definitions (`[foo *bar [baz][ref]*][ref]` — the inner `[baz][ref]`
+        // rewrites to `\href` exactly like a top-level one, cm-535). Defs are
+        // never consumed here (see above).
+        if let Inline::MdEmphasis { strong, children } = inl
+            && let Some(rewritten) = apply_user_linkrefs(children, urls, false)
+        {
+            out.push(Inline::MdEmphasis {
+                strong: *strong,
+                children: rewritten,
+            });
+            changed = true;
+            continue;
+        }
         if let Inline::MdList(node) = inl {
             let items: Vec<Vec<Inline>> = node
                 .children()
@@ -3743,7 +3962,7 @@ fn apply_user_linkrefs(
             let mut new_items = Vec::with_capacity(items.len());
             let mut item_changed = false;
             for item in &items {
-                match apply_user_linkrefs(item, urls) {
+                match apply_user_linkrefs(item, urls, true) {
                     Some(rewritten) => {
                         new_items.push(rewritten);
                         item_changed = true;
@@ -8634,6 +8853,46 @@ mod tests {
                    #' @name spec\nNULL\n";
         assert!(
             project_to_rd(src).contains("(\\details (TEXT \"a [ref[] b\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn ref_link_chain_pairs_left_to_right() {
+        // `[foo][bar][baz]` pairs left-to-right (cmark): the first `]` consumes
+        // the following `[bar]` as its reference label — regardless of the
+        // `[baz]` that follows it — and `[baz]` is a separate shortcut. With
+        // user definitions for both labels, that is `\href{/url2}{foo}` +
+        // `\href{/url1}{baz}` (cm-572).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [foo][bar][baz]\n#'\n#' [baz]: /url1\n#' [bar]: /url2\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\href (VERB \"/url2\") (TEXT \"foo\")) \
+                 (\\href (VERB \"/url1\") (TEXT \"baz\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn user_def_resolves_ref_link_inside_emphasis() {
+        // A user `[ref]: /uri` definition resolves a reference link nested
+        // inside emphasis: the inner `[baz][ref]` forms (deactivating the outer
+        // opener, which stays literal) and rewrites to `\href{/uri}{baz}`, just
+        // like the top-level trailing `[ref]` shortcut (cm-535).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [foo *bar [baz][ref]*][ref]\n#'\n#' [ref]: /uri\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (TEXT \"[foo\") \
+                 (\\emph (TEXT \"bar\") (\\href (VERB \"/uri\") (TEXT \"baz\"))) \
+                 (TEXT \"]\") (\\href (VERB \"/uri\") (TEXT \"ref\")))"
+            ),
             "got: {}",
             project_to_rd(src)
         );

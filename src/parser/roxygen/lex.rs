@@ -1298,9 +1298,12 @@ fn cross_line_link_closer(bytes: &[u8], i: usize) -> Option<usize> {
 
 /// Whether a `]` at `bytes[i]` is a *cross-line* reference-link closer: it is
 /// immediately followed by a balanced, bracket-free `[ref]` label that is a clean
-/// shortcut (not itself followed by `(`, `[`, or `{`, the shapes that would make
-/// [`scan_md_link`] reject or re-read it). Used to carve the lone `]` as a neutral
-/// bracket leaf; the `[ref]` label is carved separately as a shortcut `MD_LINK`,
+/// shortcut (not itself followed by `(` or `{`, the shapes that would make
+/// [`scan_md_link`] reject or re-read it). A following `[` does NOT block the
+/// closer: cmark consumes the label regardless of what comes after it, so
+/// `[foo][bar][baz]` pairs left-to-right — `[foo][bar]` a reference link, `[baz]`
+/// a separate shortcut (cm-572). Used to carve the lone `]` as a neutral bracket
+/// leaf; the `[ref]` label is carved separately as a shortcut `MD_LINK`,
 /// and the inline pass pairs the `]` with an earlier cross-line `[` opener (a
 /// `[text][ref]` reference link spanning lines, the label consumed as the dropped
 /// topic) or — with no opener — leaves the `]` literal and the `[ref]` a standalone
@@ -1311,7 +1314,7 @@ fn cross_line_ref_closer(bytes: &[u8], i: usize) -> bool {
     bytes.get(i + 1) == Some(&b'[')
         && scan_balanced(bytes, i + 1, b'[', b']').is_some_and(|end| {
             is_shortcut_content(&bytes[i + 2..end - 1])
-                && !matches!(bytes.get(end), Some(b'(' | b'[' | b'{'))
+                && !matches!(bytes.get(end), Some(b'(' | b'{'))
         })
 }
 

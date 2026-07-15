@@ -1,0 +1,3 @@
+(\description (TEXT "Chain"))
+(\details (\href (VERB "/url2") (TEXT "foo")) (\href (VERB "/url1") (TEXT "baz")) (TEXT "and [p]") (\href (VERB "/url3") (TEXT "q")))
+(\title (TEXT "Chain"))
