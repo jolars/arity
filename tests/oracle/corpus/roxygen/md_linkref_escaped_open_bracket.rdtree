@@ -1,0 +1,3 @@
+(\description (TEXT "Escaped open brackets are link-label content"))
+(\details (\href (VERB "/uri") (TEXT "foo")) (TEXT "links via the user def. A defined shortcut") (\href (VERB "/uri") (TEXT "ref[")) (TEXT "links; an undefined [other[] stays literal."))
+(\title (TEXT "Escaped open brackets are link-label content"))

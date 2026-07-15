@@ -8603,6 +8603,43 @@ mod tests {
     }
 
     #[test]
+    fn escaped_open_bracket_is_label_content() {
+        // A backslash-escaped `[` inside a link label is content (cmark): a
+        // reference link `[foo][ref\[]` matches its user definition `[ref\[]: /uri`
+        // source-exactly (cmark's `normalize_reference` does not unescape), the
+        // def line is consumed, and the rendered `\href` display is `foo`. A
+        // defined *shortcut* `[ref\[]` links too, with the escape resolved in its
+        // display text (`ref[`) (cm-551).
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [foo][ref\\[] and [ref\\[]\n#'\n#' [ref\\[]: /uri\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\href (VERB \"/uri\") (TEXT \"foo\")) (TEXT \"and\") \
+                 (\\href (VERB \"/uri\") (TEXT \"ref[\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn undefined_escaped_bracket_label_demotes_to_literal() {
+        // With no matching definition, an escaped-`[` label is not a
+        // `get_md_linkrefs` candidate (its content is not bracket-free), so no
+        // reference is synthesized and the link demotes to literal text with the
+        // bracket escape resolved (`[ref[]`), not an `R:`-dest link.
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' a [ref\\[] b\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"a [ref[] b\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
     fn resolved_inner_link_is_not_a_blank_label() {
         // A literal `[` + resolved inner shortcut + literal `]` (`[[x]](url)`)
         // must not read as a blank `[ ]` candidate in the poisoning skeleton —

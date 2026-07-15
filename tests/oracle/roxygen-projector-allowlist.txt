@@ -497,6 +497,7 @@ cm-547
 cm-548
 cm-549
 cm-550
+cm-551
 cm-552
 cm-553
 cm-554
@@ -660,6 +661,7 @@ md_link_multiline
 md_linkref_backslash_label
 md_linkref_blank_label
 md_linkref_casefold
+md_linkref_escaped_open_bracket
 md_linkref_nbsp
 md_linkref_poisoning
 md_linkref_poisoning_autolink

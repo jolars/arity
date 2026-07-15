@@ -345,8 +345,12 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   every `\` but **reverts** `\\[`→`\[`, `\\]`→`\]`, so only `[`/`]` keep a CommonMark escape: `\[`
   neither opens a link nor keeps its backslash, whereas `\*`/`` \` ``/`\%`/… keep their **single**
   backslash (do **not** add general escape handling). Lexer `bracket_is_escaped` guards the three
-  `[`-openers; projector `unescape_md_brackets` drops one `\` before `[`/`]`. Escaped-*close* `[text\]`
-  stays backlog.
+  `[`-openers; projector `unescape_md_brackets` drops one `\` before `[`/`]`. An escaped `\[` **is
+  link-label content** (2026-07-15, cm-551): `is_shortcut_content` (lex.rs) + `interior_bracket_free`
+  (inline.rs) both accept a `\`-preceded `[` (any `]` still rejects); def matching is **source-exact**
+  (cmark's `normalize_reference` does not unescape), and an undefined `[ref\[]` is not a
+  `get_md_linkrefs` candidate (its regex stays bracket-free — the projector's `md_linkref_scan` is the
+  candidate mirror, NOT the lexer's label rule). Escaped-*close* `[text\]` stays backlog.
 - **A backslash *run* in `@md` prose text collapses `ceil(k/2)`.** `double_escape_md` doubles (`k`→`2k`),
   cmark resolves `\\` pairs (`2k`→`k`), parse_Rd collapses again (`k`→`ceil(k/2)`): `\\`→`\`, `\\\\`→`\\`;
   `k==1` is a **no-op** (so the single-escape trap above still holds). Projector-only
@@ -1029,66 +1033,54 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 874 matching (all allowlisted), 97 divergent** of 971 pinned. The divergent 97 are the
+**Current: 876 matching (all allowlisted), 96 divergent** of 972 pinned. The divergent 96 are the
 per-section backlog (harvested 18, Images 11, Link reference definitions 10, List items 10, Tabs 8,
-Lists 7, ATX 6, Setext 6, Links 5, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
+Lists 7, ATX 6, Setext 6, Links 4, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (971 pinned); 97 divergent backlog.
+   Curated + harvested + whole-spec corpora (972 pinned); 96 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 165/165 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 166/166 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-14b) — invalid link-ref labels never define or link: Links 83→85/90
+## Latest session (2026-07-15) — escaped `[` is link-label content: Links 85→86/90
 
-The ranked cm-552/554 cluster, one root cause: **label validity was never checked** in the
-user-def/refmap machinery. Two invalid classes, both engine-probed: a **trailing backslash run**
-(any k≥1 — `double_escape_md` doubles then the `\\]`→`\]` revert leaves an odd escaping run, so
-the label's closing `]` never closes: cm-552's `[bar\\]` leaks with the post-escape THREE-backslash
-label `R:bar%5C%5C%5C`) and a **blank** label (no non-ASCII-whitespace char, cm-554's `[\n ]` —
-NBSP is content). Projector: `linkref_label_is_usable` + `linkref_label_is_blank` (project_rd.rs),
-wired into `match_linkref_def` (def rejected → line stays prose), `demote_undefined_links` (link
-demoted regardless of refmap, via `link_ref_label_unusable` — **source-exact labels only**: ref
-`dest`/opaque raw verbatim, a shortcut's display flatten only when all-`Inline::Text`, else the
-flatten drops emphasis delimiters and `[a\*b\*]`'s `a\b\` spuriously "ends with `\`" — it must
-reach the non-plain-display drop instead), and both leak scans (`first_invalid_linkref_offset`,
-`leaked_linkref_text` — the latter now maps SOFT_BREAK→`\n` at entry so a multi-line label
-URL-encodes `%0A`, 1-byte so offsets hold). Two follow-on fixes the gate forced: (1)
-`inline_skeleton_fragment`'s stand-in for resolved/opaque structure is now **non-whitespace**
-`SKELETON_STAND_IN_STR` (`\u{1}`) — a space stand-in fabricated blank `[ ]` candidates around a
-resolved inner link and spuriously poisoned cm-550/592/`md_nested_link`; list guards stay real
-spaces (they stand for source newlines). (2) The `ROXYGEN_MD_LINK` node walk strips ONE
-marker-separator space from a continuation line's whitespace (the rest is label content — `%20`).
-**Formatter:** joining a leaky multi-line label re-encodes its soft break `%0A`→`%20` in the leaked
-dest — a rendered-Rd change the fixed-point net caught. New reflow bail
-`line_has_leaky_cross_line_link`/`link_label_leaks` (formatter/roxygen.rs, md arm of
-`prose_bails_reflow`), and `normalize_roxygen_line` keeps such lines **byte-verbatim after the
-marker** (leading indent AND trailing spaces are label bytes).
+The ranked cm-551: `[foo][ref\[]` + `[ref\[]: /uri` must link (label content may contain a
+backslash-escaped `[`). One rule, two carve sites, **parser-only** (no projector code change):
+`is_shortcut_content` (lex.rs) now implements cmark's *label-content* test — non-empty, every `[`
+preceded by `\` (a single `\` suffices; `double_escape_md`'s `\\[`→`\[` revert keeps the escape
+live), any `]` rejected even escaped (the escaped-close backlog engages the poisoning machinery
+instead) — and `interior_bracket_free` (inline.rs) mirrors it so the arena pairs the composite
+`][ref\[]` closer. Everything downstream fell out free, because the label machinery is
+**source-exact** (cmark's `normalize_reference` does not unescape): the user def `[ref\[]: /uri`
+matches byte-for-byte and is consumed; a defined shortcut's display unescapes via the existing
+`unescape_md_brackets` (`ref[`); an *undefined* `[ref\[]` is not a `get_md_linkrefs` candidate
+(that regex is bracket-free — the projector's `md_linkref_scan` mirrors *it*, deliberately NOT the
+lexer's label rule), so nothing is synthesized and the link demotes to literal `[ref[]`.
 
-**Result:** projector **874 matching (all allowlisted), 97 divergent**, 0 blocked, of 971 pinned;
-0 regressions. **Links 83→85/90** (cm-552, cm-554). Curated `md_linkref_backslash_label` +
-`md_linkref_blank_label` (+pins). No parser fixture (CST unchanged — projector + formatter only).
-Units `trailing_backslash_label_never_defines_or_links`, `blank_label_never_defines_or_links`,
-`resolved_inner_link_is_not_a_blank_label`. Format baseline +2 (additive; both format-identity
-after the bail). Fixed-point 165/165. Full suite + clippy + fmt green. **New backlog:** a leaked
-def whose label IS defined re-links inside the leak text (`[good]: R:good` renders `(\href …)
-(TEXT ": R:good")` — probed, deliberately kept out of the curated case).
+**Result:** projector **876 matching (all allowlisted), 96 divergent**, 0 blocked, of 972 pinned;
+0 regressions. **Links 85→86/90** (cm-551). Curated `md_linkref_escaped_open_bracket` (+pin),
+fixture `roxygen_md_link_label_escaped_bracket` (lossless, no diagnostics). Units
+`escaped_open_bracket_is_label_content`, `undefined_escaped_bracket_label_demotes_to_literal`.
+Format baseline +1 (format-identity). Fixed-point 166/166. Full suite + clippy + fmt green.
+(Session was interrupted pre-commit; finished 2026-07-15 — verified green, removed the stray
+`examples/project_dump.rs` debug aid, committed.)
 
-**Ranked next target:** **Links** (85/90, 5 left): cm-551 (escaped `[` inside a ref label
-`[ref\[]` — the escaped-close backlog; lexer must carve a label with `\[`/`\]` content and match
-it against its def), then the pairing sub-cluster cm-535/572 (`[foo][bar][baz]` pairs
-left-to-right; inner ref-in-emphasis) and cm-528 (autolink swallows `]` — left-to-right
-precedence). cm-512 (dest + title split across a soft break — no cross-line dest-span machinery)
-is likely the hardest. Alternatives: **Images** (11/22), **Link reference definitions** (17/27),
-**List items** (38/48, the indent shapes). Harvested 18 stay out-of-scope.
+**Ranked next target:** **Links** (86/90, 4 left): the pairing sub-cluster cm-535/572
+(`[foo][bar][baz]` pairs left-to-right; inner ref-in-emphasis), then cm-528 (autolink swallows
+`]` — left-to-right precedence). cm-512 (dest + title split across a soft break — no cross-line
+dest-span machinery) is likely the hardest. Alternatives: **Images** (11/22), **Link reference
+definitions** (17/27), **List items** (38/48, the indent shapes). Harvested 18 stay out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-14b** — invalid link-ref labels never define or link (trailing-`\`-run + blank labels; `linkref_label_is_usable`/`linkref_label_is_blank` wired into def-match, demotion — source-exact labels only — and both leak scans; non-whitespace `SKELETON_STAND_IN_STR` `\u{1}`; leaky multi-line label `%0A` + formatter byte-verbatim bail `line_has_leaky_cross_line_link`). Curated `md_linkref_backslash_label`+`md_linkref_blank_label`, 3 units, baseline +2. 870→874, Links 83→85/90. New backlog: a leaked def whose label IS defined re-links inside the leak text.
 
 - **2026-07-14** — link-ref label normalization parity (cmark `normalize_reference` = ASCII-only ws collapse + full Unicode case fold via generated `src/roxygen/casefold.rs`; NBSP is label content; single choke point `normalize_linkref_label`). Curated `md_linkref_casefold`+`md_linkref_nbsp`, 2 units, baseline +2. 867→870, Links 82→83/90.
 

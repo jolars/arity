@@ -1330,12 +1330,23 @@ fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
 }
 
 /// Whether `content` (the bytes inside a bare `[…]`) is a markdown shortcut-link
-/// reference. roxygen2's `get_md_linkrefs` regex accepts any non-empty span that
-/// contains no brackets (`[^\]\[]+`), so spaces, digits, and `::` are all fine
-/// (`[note]`, `[see this]`, `[pkg::obj]`); only an empty or bracket-bearing span
-/// is rejected (the latter so nested `[a[b]c]` re-scans the inner `[b]`).
+/// reference or label. cmark accepts any non-empty span whose brackets are all
+/// backslash-escaped, so spaces, digits, `::`, and an escaped `\[` are all fine
+/// (`[note]`, `[see this]`, `[pkg::obj]`, `[ref\[]`); an empty span or a *bare*
+/// `[` is rejected (the latter so nested `[a[b]c]` re-scans the inner `[b]`).
+/// The escaped-`[` rule mirrors [`bracket_is_escaped`] (a single adjacent `\`
+/// suffices — `double_escape_md`'s `\\[`→`\[` revert keeps the escape live).
+/// Any `]` is still rejected, even escaped: an escaped-*close* `\]` engages
+/// roxygen2's linkref leak machinery and stays backlog. Note this is cmark's
+/// *label-content* rule, not `get_md_linkrefs`' bracket-free candidate regex —
+/// the synthesized-def mirror lives in the projector (`md_linkref_scan`).
 fn is_shortcut_content(content: &[u8]) -> bool {
-    !content.is_empty() && !content.iter().any(|&b| matches!(b, b'[' | b']'))
+    !content.is_empty()
+        && content.iter().enumerate().all(|(k, &b)| match b {
+            b']' => false,
+            b'[' => k > 0 && content[k - 1] == b'\\',
+            _ => true,
+        })
 }
 
 /// A CommonMark absolute-URI autolink at `bytes[i] == b'<'`: `<scheme:body>` where
