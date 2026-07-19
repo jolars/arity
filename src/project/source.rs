@@ -21,7 +21,7 @@ type SyntaxToken = rowan::SyntaxToken<RLanguage>;
 type SyntaxElement = NodeOrToken<SyntaxNode, SyntaxToken>;
 
 /// The target file of a `source()` call.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum SourceTarget {
     /// A statically-resolved path: the literal string argument, joined onto the
     /// sourcing file's directory when relative and a base directory is known.
@@ -33,9 +33,9 @@ pub enum SourceTarget {
 /// A `source()` edge stripped of its byte range — the part the cross-file graph
 /// depends on. Carries no positional data, so a body edit that merely shifts a
 /// `source()` call's offset leaves it unchanged and the project graph memo holds
-/// (the firewall this module feeds). It also satisfies `salsa::Update`, which
+/// (the firewall this module feeds). It also satisfies `salsa::SalsaValue`, which
 /// [`SourceEdge`] cannot because of its `TextRange` field.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct SourceEdgeKey {
     pub target: SourceTarget,
     pub local: bool,
@@ -75,7 +75,7 @@ impl SourceEdge {
 /// firewall this feeds backdates, exactly like [`SourceEdgeKey`]. It is to a
 /// span what [`crate::project::DefKind`] is to a value: the order-bearing,
 /// range-free projection cross-file load-order resolution consumes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum TopLevelEvent {
     /// A top-level binding `name <- ...` becomes live at this point.
     Define(String),

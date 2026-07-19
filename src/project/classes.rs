@@ -25,7 +25,7 @@ use crate::ast::{AssignmentExpr, CallExpr};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// Which R OOP system a class definition belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
 pub enum ClassSystem {
     /// `setClass("X", contains = ...)`.
     S4,
@@ -57,7 +57,7 @@ impl ClassSystem {
 }
 
 /// One class definition: its system and the declared supertype names.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
 pub struct ClassDef {
     pub system: ClassSystem,
     pub parents: Vec<String>,
