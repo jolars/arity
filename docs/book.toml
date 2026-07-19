@@ -1,6 +1,6 @@
 [book]
 title = "Arity"
-description = "Language server, formatter, and linter for R"
+description = "Arity is a language server, formatter, and linter for R."
 authors = ["Johan Larsson"]
 language = "en"
 src = "src"
