@@ -2,7 +2,7 @@
 //!
 //! The CST is cached as a `rowan::GreenNode` (Arc-backed, `Send + Sync`) rather
 //! than a `SyntaxNode` (which holds non-`Send` cursor state and is neither
-//! `Eq` nor `salsa::Update`). Callers materialize a fresh cursor via
+//! `Eq` nor `salsa::SalsaValue`). Callers materialize a fresh cursor via
 //! [`parsed_tree_root`] — a cheap atomic clone — so each consumer gets its own
 //! tree without leaking the salsa cell. The per-file [`semantic_model`] query
 //! builds on the cached tree, so the linter and LSP no longer re-parse and
@@ -216,8 +216,8 @@ pub struct ParseDiagnosticData {
 /// A cached parse: the green tree plus parse diagnostics, computed once per
 /// `(db, file)`.
 ///
-/// The `GreenNode` is not `Eq`/`salsa::Update`, so [`parsed_document`] is
-/// `no_eq, unsafe(non_update_types)`: salsa never compares parse outputs and
+/// The `GreenNode` is not `Eq`/`salsa::SalsaValue`, so [`parsed_document`] is
+/// `no_eq, unsafe(non_salsa_values)`: salsa never compares parse outputs and
 /// relies purely on input (text) change detection to invalidate. That is sound
 /// because the tree is a pure function of the text.
 #[derive(Debug, Clone)]
@@ -253,7 +253,7 @@ pub trait IncrementalDb: salsa::Database {
     fn reparse_store(&self, file: SourceFile, prev: PrevParse, incremental: bool);
 }
 
-#[salsa::tracked(returns(ref), no_eq, unsafe(non_update_types))]
+#[salsa::tracked(returns(ref), no_eq, unsafe(non_salsa_values))]
 pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocument {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ParsedDocument,

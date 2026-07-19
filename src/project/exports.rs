@@ -57,7 +57,7 @@ pub fn file_qualified_reads(model: &SemanticModel) -> BTreeSet<String> {
 /// lambda) versus any other value. Stable across body edits — the classification
 /// turns on the *shape* of the right-hand side, not its contents — so it keeps
 /// [`file_def_sites`] a backdating firewall like [`file_exports`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
 pub enum DefKind {
     Function,
     Value,

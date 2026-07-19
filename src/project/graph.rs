@@ -67,7 +67,7 @@ pub struct PackageCollation {
 /// in the write-phase by [`discover_packages`] (the sole disk reader), refreshed
 /// in lockstep with workspace membership, and a future `didChangeWatchedFiles`
 /// watcher's invalidation target.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PackageInfo {
     /// The package root: a directory with `DESCRIPTION` + `R/` (see
     /// [`package_root`]).
@@ -98,7 +98,7 @@ pub struct Project<'db> {
 /// One file's owned view of its project: the names it can see, the names of its
 /// own bindings used elsewhere, and whether its visibility is incomplete. Owned
 /// (and `Eq`) so the salsa memo backdates when a file's visibility is unchanged.
-#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct Visibility {
     pub visible: BTreeSet<String>,
     pub used_by_others: BTreeSet<String>,
@@ -209,7 +209,7 @@ pub fn expected_r_sources(root: &Path) -> BTreeSet<String> {
 /// [`PackageGraph`](crate::incremental::PackageGraph) input (populated in the
 /// write-phase by [`discover_packages`]), so a keystroke re-run does only
 /// in-memory work and a watcher can invalidate disk changes correctly.
-#[salsa::tracked]
+#[salsa::tracked(returns(copy))]
 pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::WorkspaceProject,
@@ -282,12 +282,12 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
 /// The cross-file scope for `project`, built from the per-file firewall queries.
 ///
 /// `no_eq` because its output ([`ProjectScope`]) holds `HashMap`s that aren't
-/// `salsa::Update`/`Eq`-comparable here; `unsafe(non_update_types)` asserts it
+/// `salsa::SalsaValue`/`Eq`-comparable here; `unsafe(non_salsa_values)` asserts it
 /// carries no salsa references. This costs nothing for the firewall: a body edit
 /// leaves the per-file inputs backdated, so this query simply isn't re-executed.
 /// `no_eq` only forgoes backdating *when it does re-run* (an export actually
 /// changed), and [`visible_symbols`] re-establishes per-file backdating above it.
-#[salsa::tracked(returns(ref), no_eq, unsafe(non_update_types))]
+#[salsa::tracked(returns(ref), no_eq, unsafe(non_salsa_values))]
 pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> ProjectScope {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ProjectGraph,
@@ -357,11 +357,11 @@ pub fn visible_symbols<'db>(
 ///   builder treats them as incomplete visibility), so renaming an as-yet-
 ///   unopened file still finds its sourcers.
 ///
-/// `BTreeMap`/`BTreeSet` so the type is `Eq`/`salsa::Update` and the query
+/// `BTreeMap`/`BTreeSet` so the type is `Eq`/`salsa::SalsaValue` and the query
 /// backdates: a body edit leaves every `source_edges` unchanged (it is
 /// range-free), so this re-runs only when a `source()` call is actually
 /// added/removed/retargeted.
-#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ReverseSources {
     /// Target path → the member paths that `source()` it.
     pub sourced_by: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
@@ -423,7 +423,7 @@ pub fn reverse_source_edges<'db>(
 ///
 /// This is the index that backs workspace symbols, cross-file go-to-definition
 /// and references, and call hierarchy.
-#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct DefIndex {
     pub by_name: BTreeMap<String, BTreeSet<(PathBuf, DefKind)>>,
 }
@@ -460,7 +460,7 @@ pub fn project_defs<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> D
 ///
 /// The class-hierarchy analog of [`DefIndex`]: it backs LSP type hierarchy
 /// (`prepareTypeHierarchy` + supertypes/subtypes).
-#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassIndex {
     /// Class name -> the sites (path, system) it is defined at.
     pub def_sites: BTreeMap<String, BTreeSet<(PathBuf, ClassSystem)>>,
@@ -514,7 +514,7 @@ pub fn project_classes<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -
 ///
 /// The read-site mirror of [`DefIndex`]: it backs cross-file find-references (the
 /// inverse of the def index that backs cross-file go-to-definition).
-#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ReadIndex {
     pub by_name: BTreeMap<String, BTreeSet<PathBuf>>,
 }
@@ -549,7 +549,7 @@ pub fn project_reads<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
 /// edits. Empty when the rule's conservative gates trip — an attached package
 /// whose exports are unknown, or incomplete cross-file visibility — since either
 /// could supply the otherwise-unresolved names.
-#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ExternalResolution {
     pub unresolved: BTreeSet<String>,
 }
