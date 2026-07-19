@@ -36,13 +36,13 @@ flate2 = "1.0"
 globset = "0.4.18"
 ignore = "0.4.26"
 log = { version = "0.4.32", features = ["release_max_level_info"] }
-lsp-server = "0.9"
+lsp-server = "0.10"
 lsp-types = "0.97"
 mimalloc = "0.1.52"
 rayon = "1.12.0"
 regex = "1.11"
 rowan = "0.16.1"
-salsa = "0.27.0"
+salsa = "0.28.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 similar = { version = "3.1.1", features = ["text"] }
