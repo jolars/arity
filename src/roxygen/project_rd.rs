@@ -1266,7 +1266,7 @@ fn serialize_prose(body: &[Inline], md: bool, group: bool) -> Vec<String> {
 fn resolve_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
     let repaired = repair_ref_link_chains(body, &linkref_keys(body));
     let b0 = repaired.as_deref().unwrap_or(body);
-    let mut urls: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut urls: std::collections::HashMap<String, UserLinkDef> = std::collections::HashMap::new();
     collect_user_linkrefs_tree(b0, &mut urls);
     let resolved = (!urls.is_empty())
         .then(|| apply_user_linkrefs(b0, &urls, true))
@@ -1571,14 +1571,19 @@ fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 atoms.push(shortcut_link_node_atom(display));
             }
-            Inline::MdImage(raw) => {
-                if let Some(atom) = flush_run(&mut run, md) {
+            Inline::MdImage(raw) => match resolve_md_image(raw) {
+                Some(atom) => {
+                    if let Some(flushed) = flush_run(&mut run, md) {
+                        atoms.push(flushed);
+                    }
                     atoms.push(atom);
                 }
-                if let Some(atom) = resolve_md_image(raw) {
-                    atoms.push(atom);
-                }
-            }
+                // An image that resolves to nothing — an undefined *collapsed*
+                // reference `![alt][]` (see [`resolve_md_image`]) — is literal
+                // cmark text: it stays in the prose run, gluing with the
+                // surrounding text.
+                None => push_raw(&mut run, raw),
+            },
             Inline::MdCodeBlock(node) => {
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
@@ -3007,8 +3012,8 @@ fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
         Inline::MdInlineLink { display, .. } => {
             Cow::Owned(format!("[{}] ", inline_plain_text(display)))
         }
-        Inline::MdImage(raw) => match image_alt_text(raw) {
-            Some(alt) => Cow::Owned(format!("[{alt}] ")),
+        Inline::MdImage(raw) => match image_skeleton_fragment(raw) {
+            Some(fragment) => Cow::Owned(fragment),
             None => Cow::Borrowed(SKELETON_STAND_IN_STR),
         },
         // An opaque inline-link leaf (nested-bracket display): expose the raw
@@ -3093,6 +3098,34 @@ fn image_alt_text(raw: &str) -> Option<&str> {
     // The leaf always begins `![`; the alt span is `[…]` starting at index 1.
     let alt_end = scan_delimited(bytes, 1, b'[', b']')?;
     Some(&raw[2..alt_end - 1])
+}
+
+/// Whether an image leaf is the **collapsed** reference form `![alt][]` — the
+/// shape that resolves only through a user definition ([`image_user_ref`]) and
+/// whose skeleton exposure must re-emit the trailing `[]` (the `[alt]` span is
+/// followed by `[` in the real source, so `get_md_linkrefs`' `(?=[^\[{])`
+/// lookahead blocks its candidate — a space stand-in would spuriously unblock it).
+fn image_is_collapsed(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let Some(alt_end) = scan_delimited(bytes, 1, b'[', b']') else {
+        return false;
+    };
+    alt_end + 2 == bytes.len() && bytes[alt_end..] == *b"[]"
+}
+
+/// The candidate-scan exposure of an image leaf in the link-reference skeletons:
+/// the verbatim `[alt]` bracket, followed by what the real source follows it with
+/// — the literal `[]` for a collapsed form (candidate-blocking, see
+/// [`image_is_collapsed`]), a space stand-in for a consumed `(url)`/`[ref]`
+/// otherwise (non-blocking like the real `(`). `None` when the leaf has no
+/// balanced alt span (exposed as a plain stand-in by the callers).
+fn image_skeleton_fragment(raw: &str) -> Option<String> {
+    let alt = image_alt_text(raw)?;
+    Some(if image_is_collapsed(raw) {
+        format!("[{alt}][]")
+    } else {
+        format!("[{alt}] ")
+    })
 }
 
 /// The **leaked** link-reference definitions roxygen2's `add_linkrefs_to_md`
@@ -3439,12 +3472,8 @@ fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
             s.push_str(&inline_plain_text(display));
             s.push_str("] ");
         }
-        Inline::MdImage(raw) => match image_alt_text(raw) {
-            Some(alt) => {
-                s.push('[');
-                s.push_str(alt);
-                s.push_str("] ");
-            }
+        Inline::MdImage(raw) => match image_skeleton_fragment(raw) {
+            Some(fragment) => s.push_str(&fragment),
             None => s.push(' '),
         },
         // An opaque leaf is its own verbatim source — a same-line shortcut/reference
@@ -3847,11 +3876,11 @@ fn demote_undefined_in_list(
 /// document order would differ; backlog).
 fn collect_user_linkrefs_tree(
     body: &[Inline],
-    urls: &mut std::collections::HashMap<String, String>,
+    urls: &mut std::collections::HashMap<String, UserLinkDef>,
 ) {
     let (level, _dropped) = collect_user_linkrefs(body);
-    for (label, url) in level {
-        urls.entry(label).or_insert(url);
+    for (label, def) in level {
+        urls.entry(label).or_insert(def);
     }
     for inl in body {
         match inl {
@@ -3900,7 +3929,7 @@ fn collect_user_linkrefs_tree(
 /// ordinary prose, never a definition.
 fn apply_user_linkrefs(
     body: &[Inline],
-    urls: &std::collections::HashMap<String, String>,
+    urls: &std::collections::HashMap<String, UserLinkDef>,
     consume_defs: bool,
 ) -> Option<Vec<Inline>> {
     let dropped = if consume_defs {
@@ -3915,11 +3944,11 @@ fn apply_user_linkrefs(
             continue;
         }
         if let Some(label) = link_ref_label(inl)
-            && let Some(url) = urls.get(&normalize_linkref_label(&label))
+            && let Some(def) = urls.get(&normalize_linkref_label(&label))
             && let Some(display) = link_display_inlines(inl)
         {
             out.push(Inline::MdInlineLink {
-                url: url.clone(),
+                url: def.url.clone(),
                 display,
             });
             changed = true;
@@ -3933,9 +3962,9 @@ fn apply_user_linkrefs(
         // the same reason as links (cmark keeps the first definition).
         if let Inline::MdImage(raw) = inl
             && let Some((label, alt)) = image_user_ref(raw)
-            && let Some(url) = urls.get(&normalize_linkref_label(label))
+            && let Some(def) = urls.get(&normalize_linkref_label(&md_label_flatten(label)))
         {
-            out.push(Inline::MdImage(format!("!{alt}({url})")));
+            out.push(Inline::MdImage(rebuilt_inline_image(alt, def)));
             changed = true;
             continue;
         }
@@ -3984,6 +4013,38 @@ fn apply_user_linkrefs(
     changed.then_some(out)
 }
 
+/// A user link-reference definition's payload: the destination, and the optional
+/// title (empty when absent). A *link* resolving through the definition uses only
+/// the URL — roxygen2's `mdxml_link` ignores the title — but an *image* keeps it:
+/// `mdxml_image` renders the title as `\figure`'s second argument
+/// (`![foo][]` + `[foo]: /url "title"` → `\figure{/url}{title}`, cm-586).
+#[derive(Clone)]
+struct UserLinkDef {
+    url: String,
+    title: String,
+}
+
+/// Rebuild a reference/shortcut image whose label resolved to a user definition as
+/// an *inline* image (`![alt](<url> "title")`), so the ordinary image path
+/// ([`resolve_md_image`]) renders it — reusing its destination split and
+/// image-format wrapping. The destination is angle-bracketed so a URL with
+/// whitespace (an angle-form definition) round-trips; a URL containing `>` cannot
+/// have come from an angle form (which closes at the first `>`) and so has no
+/// whitespace — it takes the bare form. The title round-trips through
+/// [`strip_title_delims`]'s outer-pair strip, so interior quotes survive.
+fn rebuilt_inline_image(alt: &str, def: &UserLinkDef) -> String {
+    let dest = if def.url.contains('>') {
+        def.url.clone()
+    } else {
+        format!("<{}>", def.url)
+    };
+    if def.title.is_empty() {
+        format!("!{alt}({dest})")
+    } else {
+        format!("!{alt}({dest} \"{}\")", def.title)
+    }
+}
+
 /// Scan a field body for user link-reference definitions, returning the
 /// (normalized-label → destination) map and the set of body indices that are part
 /// of a definition (and so must be dropped from the rendered output). A definition
@@ -3994,10 +4055,10 @@ fn apply_user_linkrefs(
 fn collect_user_linkrefs(
     body: &[Inline],
 ) -> (
-    std::collections::HashMap<String, String>,
+    std::collections::HashMap<String, UserLinkDef>,
     std::collections::BTreeSet<usize>,
 ) {
-    let mut urls: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut urls: std::collections::HashMap<String, UserLinkDef> = std::collections::HashMap::new();
     let mut dropped = std::collections::BTreeSet::new();
     let mut i = 0;
     let mut block_start = true;
@@ -4024,7 +4085,7 @@ fn collect_user_linkrefs(
 fn scan_linkref_run(
     body: &[Inline],
     start: usize,
-    urls: &mut std::collections::HashMap<String, String>,
+    urls: &mut std::collections::HashMap<String, UserLinkDef>,
     dropped: &mut std::collections::BTreeSet<usize>,
 ) -> Option<usize> {
     let mut end = start;
@@ -4039,10 +4100,10 @@ fn scan_linkref_run(
             }
             k += 1;
         }
-        let Some((label, url, def_end)) = match_linkref_def(body, k) else {
+        let Some((label, def, def_end)) = match_linkref_def(body, k) else {
             break;
         };
-        urls.entry(normalize_linkref_label(&label)).or_insert(url);
+        urls.entry(normalize_linkref_label(&label)).or_insert(def);
         for idx in end..def_end {
             dropped.insert(idx);
         }
@@ -4057,10 +4118,10 @@ fn scan_linkref_run(
 /// The destination (and optional title) may continue across soft line breaks, so
 /// the trailing `Text` run is concatenated — joining continuation lines — up to (but
 /// not including) a paragraph break (a `Text` containing `\n`) or a non-`Text`
-/// inline. Returns `(label, destination, def_end)` where `def_end` is the exclusive
+/// inline. Returns `(label, definition, def_end)` where `def_end` is the exclusive
 /// body index just past the consumed definition, or `None` when the shape does not
 /// hold.
-fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String, usize)> {
+fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, UserLinkDef, usize)> {
     let inl = body.get(j)?;
     let label = linkref_def_label(inl)?;
     // A label that cannot close (trailing backslash) or is blank defines nothing —
@@ -4081,7 +4142,7 @@ fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String, usize
     if k == j + 1 {
         return None; // no trailing text — not a definition
     }
-    let (url, line_closed) = parse_linkref_def_dest(&text)?;
+    let (def, line_closed) = parse_linkref_def_dest(&text)?;
     // The `Text` run stops at the first non-`Text` inline (a macro, an inline link,
     // the next definition's label, …). When that inline sits on the *same physical
     // line* as the destination, it is trailing content — CommonMark forbids anything
@@ -4093,7 +4154,7 @@ fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, String, usize
     if !line_closed && !matches!(body.get(k), None | Some(Inline::Text(_))) {
         return None;
     }
-    Some((label, url, k))
+    Some((label, def, k))
 }
 
 /// The label of a shortcut-shaped link (`[label]`) — the form a link-reference
@@ -4117,13 +4178,13 @@ fn linkref_def_label(inl: &Inline) -> Option<String> {
 /// Parse a link-reference definition's destination from the `Text` that follows the
 /// label (`: <destination> [title]`). The destination is angle-bracketed (`<…>`,
 /// brackets stripped) or a non-whitespace run; an optional title (`"…"`, `'…'`, or
-/// `(…)`) may follow. Returns `(destination, line_closed)` — where `line_closed`
+/// `(…)`) may follow. Returns `(definition, line_closed)` — where `line_closed`
 /// reports whether a line boundary ([`SOFT_BREAK`]) follows the destination/title
 /// (so a subsequent inline begins a *new* block, not trailing content) — or `None`
 /// when the text is not a clean single-node definition (trailing non-title content
 /// makes it a paragraph, not a definition). `text` never carries `\n` (the caller's
 /// loop stops at a paragraph break), so a line boundary here is always a soft wrap.
-fn parse_linkref_def_dest(text: &str) -> Option<(String, bool)> {
+fn parse_linkref_def_dest(text: &str) -> Option<(UserLinkDef, bool)> {
     let rest = text.strip_prefix(':')?.trim_start();
     let (url, after) = if let Some(r) = rest.strip_prefix('<') {
         let close = r.find('>')?;
@@ -4140,7 +4201,11 @@ fn parse_linkref_def_dest(text: &str) -> Option<(String, bool)> {
     // percent re-encoding.)
     let url = decode_html_entities(&url);
     if after.trim_start().is_empty() {
-        return Some((url, after.contains(SOFT_BREAK)));
+        let def = UserLinkDef {
+            url,
+            title: String::new(),
+        };
+        return Some((def, after.contains(SOFT_BREAK)));
     }
     // An optional title; anything else means this is not a valid definition.
     let after = after.trim_start();
@@ -4153,10 +4218,14 @@ fn parse_linkref_def_dest(text: &str) -> Option<(String, bool)> {
     let title_rest = &after[1..];
     let end = title_rest.find(close)?;
     let residual = &title_rest[end + 1..];
-    residual
-        .trim()
-        .is_empty()
-        .then(|| (url.clone(), residual.contains(SOFT_BREAK)))
+    residual.trim().is_empty().then(|| {
+        let def = UserLinkDef {
+            url,
+            // The title is cmark-visible text, so entities decode there too.
+            title: decode_html_entities(&title_rest[..end]),
+        };
+        (def, residual.contains(SOFT_BREAK))
+    })
 }
 
 /// Decode the HTML character references cmark resolves: every semicolon-terminated
@@ -4870,9 +4939,13 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         }
         // A markdown image leaf `![alt](url "title")` → `\figure` (see
         // [`resolve_md_image`]). A leaf that resolves to nothing falls through to
-        // literal prose.
+        // literal prose — except the *collapsed* form `![alt][]`, which resolves
+        // to nothing on its own yet must still materialize so a user
+        // `[alt]: url` definition can rewrite it ([`apply_user_linkrefs`]);
+        // undefined, it serializes back into the prose run.
         NodeOrToken::Token(t)
-            if t.kind() == SyntaxKind::ROXYGEN_MD_IMAGE && resolve_md_image(t.text()).is_some() =>
+            if t.kind() == SyntaxKind::ROXYGEN_MD_IMAGE
+                && (resolve_md_image(t.text()).is_some() || image_is_collapsed(t.text())) =>
         {
             out.push(Inline::MdImage(t.text().to_string()));
         }
@@ -5346,10 +5419,17 @@ fn resolve_md_image(raw: &str) -> Option<String> {
             if ref_end != bytes.len() {
                 return None;
             }
-            Some(figure_atom(
-                &synthesized_image_dest(&raw[alt_end + 1..ref_end - 1]),
-                "",
-            ))
+            let label = &raw[alt_end + 1..ref_end - 1];
+            // A collapsed `![alt][]` resolves only through a *user* definition
+            // (rewritten to the inline form upstream, `apply_user_linkrefs`):
+            // its own `[alt]` candidate is blocked by `get_md_linkrefs`'
+            // `(?=[^\[{])` lookahead (the span is followed by `[`), so no
+            // `R:alt` definition is synthesized and cmark leaves the undefined
+            // image literal — `None` keeps it in the prose run.
+            if label.is_empty() {
+                return None;
+            }
+            Some(figure_atom(&synthesized_image_dest(label), ""))
         }
         // Shortcut image `![alt]`: the label is the alt, resolved against the
         // synthesized `[alt]: R:URLencode(alt)` definition.
@@ -5361,27 +5441,34 @@ fn resolve_md_image(raw: &str) -> Option<String> {
     }
 }
 
-/// For a **reference** (`![alt][ref]`) or **shortcut** (`![alt]`) markdown image,
-/// the label roxygen2 resolves against the link-reference map — the `ref` bracket, or
-/// the alt for a shortcut — paired with the `[alt]` span (brackets included) needed to
-/// rebuild an inline image. `None` for an inline image (`![alt](dest)`, which carries
-/// its own destination), a collapsed `![alt][]`, or a `{`-followed leaf. Mirrors the
-/// arms of [`resolve_md_image`]; used by [`apply_user_linkrefs`] to override the
-/// synthesized `R:label` destination with a user-defined one.
+/// For a **reference** (`![alt][ref]`), **collapsed** (`![alt][]`), or **shortcut**
+/// (`![alt]`) markdown image, the label roxygen2 resolves against the link-reference
+/// map — the `ref` bracket, or the alt for a collapsed/shortcut form — paired with
+/// the `[alt]` span (brackets included) needed to rebuild an inline image. `None`
+/// for an inline image (`![alt](dest)`, which carries its own destination) or a
+/// `{`-followed leaf. Mirrors the arms of [`resolve_md_image`]; used by
+/// [`apply_user_linkrefs`] to override the synthesized `R:label` destination with a
+/// user-defined one.
 fn image_user_ref(raw: &str) -> Option<(&str, &str)> {
     let bytes = raw.as_bytes();
     let alt_end = scan_delimited(bytes, 1, b'[', b']')?;
     let alt = &raw[1..alt_end]; // the `[alt]` span, brackets included
     match bytes.get(alt_end) {
-        // Reference `![alt][ref]`: resolve `ref` (a collapsed empty `[]` is not a
-        // reference-map candidate — leave it to the synthesized path, which is `None`).
+        // Reference `![alt][ref]`: resolve `ref`. Collapsed `![alt][]`: the alt
+        // is the label (cm-586) — and the only resolution path, since the
+        // collapsed occurrence synthesizes no definition of its own (see
+        // [`resolve_md_image`]).
         Some(&b'[') => {
             let ref_end = scan_delimited(bytes, alt_end, b'[', b']')?;
             if ref_end != bytes.len() {
                 return None;
             }
             let label = &raw[alt_end + 1..ref_end - 1];
-            (!label.is_empty()).then_some((label, alt))
+            if label.is_empty() {
+                let alt_content = &raw[2..alt_end - 1];
+                return (!alt_content.is_empty()).then_some((alt_content, alt));
+            }
+            Some((label, alt))
         }
         // Shortcut `![alt]`: the alt is the label.
         None => {
@@ -5390,6 +5477,20 @@ fn image_user_ref(raw: &str) -> Option<(&str, &str)> {
         }
         _ => None,
     }
+}
+
+/// Flatten a raw-source reference label for user-definition lookup: resolve it as
+/// a markdown inline run and take its plain text, so an emphasis-bearing label
+/// matches the way its *definition* was keyed. A definition's label arrives as a
+/// resolved `MdShortcutLink` display and is flattened by [`inline_plain_text`]
+/// (its source delimiters are gone), while an image's label is verbatim source
+/// (`foo *bar*`) — flattening both sides through the same text walk makes
+/// `![foo *bar*]` find `[foo *bar*]: url` (cm-575). A plain label is unchanged.
+/// This matches by *flatten*, not source-exactly (cmark matches raw label text),
+/// so a mixed-delimiter pair (`*bar*` vs `_bar_`) would spuriously match — the
+/// same approximation the link machinery already makes ([`link_label_text`]).
+fn md_label_flatten(label: &str) -> String {
+    inline_plain_text(&para_to_inlines(&resolve_md_inline(label)))
 }
 
 /// The synthesized destination for a shortcut/reference image whose `label` has no
@@ -9724,6 +9825,71 @@ mod tests {
             project_to_rd(src).contains("(\\figure (VERB \"R:ref\"))"),
             "got: {}",
             project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn user_def_title_reaches_figure() {
+        // roxygen2's `mdxml_image` keeps a definition's title as `\figure`'s
+        // second argument (cm-590: `![foo]` + `[foo]: /url "title"` →
+        // `\figure{/url}{title}`); `mdxml_link` ignores it, so a *link* through
+        // the same definition renders a plain `\href{/url}{…}`.
+        let src = "#' T\n#'\n#' @md\n#' @details a ![foo] and [foo] b\n#'\n\
+                   #' [foo]: /url \"title\"\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\figure (VERB \"/url\") (VERB \"title\"))"),
+            "image keeps the def title, got: {rd}"
+        );
+        assert!(
+            rd.contains("(\\href (VERB \"/url\") (TEXT \"foo\"))"),
+            "link drops the def title, got: {rd}"
+        );
+    }
+
+    #[test]
+    fn collapsed_image_resolves_only_via_user_def() {
+        // A collapsed reference image `![alt][]` resolves by its alt-as-label —
+        // but only through a *user* definition (cm-586): the collapsed
+        // occurrence's own `[alt]` candidate is blocked by `get_md_linkrefs`'
+        // `(?=[^\[{])` lookahead, so no `R:alt` definition is synthesized and an
+        // undefined one stays literal cmark text, glued into the prose run.
+        let src = "#' T\n#'\n#' @md\n#' @details a ![pic][] and ![nope][] b\n#'\n\
+                   #' [pic]: img.png \"A picture\"\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\figure (VERB \"img.png\") (VERB \"A picture\"))"),
+            "defined collapsed image resolves with title, got: {rd}"
+        );
+        assert!(
+            rd.contains("(TEXT \"and ![nope][] b\")"),
+            "undefined collapsed image stays literal in the run, got: {rd}"
+        );
+    }
+
+    #[test]
+    fn emphasis_label_image_matches_flattened_def() {
+        // An emphasis-bearing label's definition arrives as a resolved display
+        // and is keyed by its flatten; the image's raw label must flatten the
+        // same way to find it (cm-575 shortcut, cm-578 collapsed). Undefined,
+        // the shortcut still synthesizes from the *raw* label (`R:foo%20*bar*`).
+        let src = "#' T\n#'\n#' @md\n#' @details x ![foo *bar*] and ![*baz* qux][] y\n#'\n\
+                   #' [foo *bar*]: train.jpg \"train & tracks\"\n\
+                   #' [*baz* qux]: pic.png\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\figure (VERB \"train.jpg\") (VERB \"train & tracks\"))"),
+            "shortcut image with emphasis label resolves, got: {rd}"
+        );
+        assert!(
+            rd.contains("(\\figure (VERB \"pic.png\"))"),
+            "collapsed image with emphasis label resolves, got: {rd}"
+        );
+        let undefined = "#' T\n#'\n#' @md\n#' @details x ![foo *bar*] y\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(undefined).contains("(\\figure (VERB \"R:foo%20*bar*\"))"),
+            "got: {}",
+            project_to_rd(undefined)
         );
     }
 

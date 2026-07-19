@@ -1,0 +1,60 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..173
+  ROXYGEN_BLOCK@0..167
+    ROXYGEN_SECTION@0..33
+      ROXYGEN_PARAGRAPH@0..30
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..29 "Collapsed reference i ..."
+        NEWLINE@29..30 "\n"
+      ROXYGEN_MARKER@30..32 "#'"
+      NEWLINE@32..33 "\n"
+    ROXYGEN_SECTION@33..133
+      ROXYGEN_MARKER@33..35 "#'"
+      WHITESPACE@35..36 " "
+      ROXYGEN_TAG@36..99
+        ROXYGEN_AT@36..37 "@"
+        ROXYGEN_TAG_NAME@37..44 "details"
+        WHITESPACE@44..45 " "
+        ROXYGEN_TEXT@45..47 "A "
+        ROXYGEN_MD_IMAGE@47..55 "![pic][]"
+        ROXYGEN_TEXT@55..75 " here; an undefined "
+        ROXYGEN_MD_IMAGE@75..84 "![nope][]"
+        ROXYGEN_TEXT@84..99 " stays literal."
+      NEWLINE@99..100 "\n"
+      ROXYGEN_MARKER@100..102 "#'"
+      NEWLINE@102..103 "\n"
+      ROXYGEN_PARAGRAPH@103..133
+        ROXYGEN_MARKER@103..105 "#'"
+        WHITESPACE@105..106 " "
+        ROXYGEN_MD_LINK@106..111
+          ROXYGEN_MD_DELIM@106..107 "["
+          ROXYGEN_TEXT@107..110 "pic"
+          ROXYGEN_MD_DELIM@110..111 "]"
+        ROXYGEN_TEXT@111..132 ": img.png \"A picture\""
+        NEWLINE@132..133 "\n"
+    ROXYGEN_SECTION@133..140
+      ROXYGEN_MARKER@133..135 "#'"
+      WHITESPACE@135..136 " "
+      ROXYGEN_TAG@136..139
+        ROXYGEN_AT@136..137 "@"
+        ROXYGEN_TAG_NAME@137..139 "md"
+      NEWLINE@139..140 "\n"
+    ROXYGEN_SECTION@140..167
+      ROXYGEN_MARKER@140..142 "#'"
+      WHITESPACE@142..143 " "
+      ROXYGEN_TAG@143..167
+        ROXYGEN_AT@143..144 "@"
+        ROXYGEN_TAG_NAME@144..148 "name"
+        WHITESPACE@148..149 " "
+        ROXYGEN_TEXT@149..151 "md"
+        ROXYGEN_MD_DELIM@151..152 "_"
+        ROXYGEN_TEXT@152..157 "image"
+        ROXYGEN_MD_DELIM@157..158 "_"
+        ROXYGEN_TEXT@158..167 "collapsed"
+  NEWLINE@167..168 "\n"
+  IDENT@168..172 "NULL"
+  NEWLINE@172..173 "\n"

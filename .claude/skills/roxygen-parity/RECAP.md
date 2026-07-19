@@ -365,6 +365,16 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   marker-separator space, and the **formatter** must not reflow a leaky multi-line label
   (`line_has_leaky_cross_line_link` bail + byte-verbatim `normalize_roxygen_line` arm — leading
   indent and trailing spaces are label bytes).
+- **A collapsed image `![alt][]` resolves ONLY via a user def; its skeleton exposure keeps the
+  trailing `[]` (2026-07-19).** The `[alt]` span is followed by `[`, so `get_md_linkrefs`'
+  `(?=[^\[{])` lookahead blocks its own candidate — no synthesized `R:alt`; undefined, it is
+  literal prose glued into the run (the serialize arm `push_raw`s an unresolved image, never
+  drops it). A space stand-in in the skeletons would spuriously *unblock* the candidate
+  (`image_skeleton_fragment`). Def **titles** reach `\figure` as arg 2 (`UserLinkDef`;
+  `mdxml_link` ignores them). Image lookup labels match by `md_label_flatten`, not source-exact
+  (mixed-delimiter `*x*`/`_x_` pairs spuriously match — the same approximation the link
+  machinery makes). Sources: `image_is_collapsed`/`rebuilt_inline_image`/`md_label_flatten`
+  (project_rd.rs), `scan_md_image` (lex.rs).
 - **Escaped brackets are the ONLY honored punctuation escape.** roxygen2's `double_escape_md` doubles
   every `\` but **reverts** `\\[`→`\[`, `\\]`→`\]`, so only `[`/`]` keep a CommonMark escape: `\[`
   neither opens a link nor keeps its backslash, whereas `\*`/`` \` ``/`\%`/… keep their **single**
@@ -1057,52 +1067,70 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 882 matching (all allowlisted), 93 divergent** of 975 pinned. The divergent 93 are the
-per-section backlog (harvested 18, Images 11, Link reference definitions 10, List items 10, Tabs 8,
-Lists 7, ATX 6, Setext 6, Links 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
+**Current: 895 matching (all allowlisted), 83 divergent** of 978 pinned. The divergent 83 are the
+per-section backlog (harvested 18, Link reference definitions 10, List items 10, Tabs 8,
+Lists 7, ATX 6, Setext 6, Thematic breaks 3, Images 1, Links 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (975 pinned); 93 divergent backlog.
+   Curated + harvested + whole-spec corpora (978 pinned); 83 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 169/169 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 172/172 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-15c) — autolink wins over the bracket carve: Links 88→89/90
+## Latest session (2026-07-19) — reference-image resolution parity: Images 11→21/22
 
-The ranked cm-528 (`[foo<https://…?search=](uri)>`): cmark's left-to-right inline scan reaches the
-`<` and the autolink span consumes the `]`, so the bracket never closes — expected is literal
-`[foo` + `\url{https://…?search=](uri)}`, while arity's `[`-carve (`inline_link_span`) had eagerly
-committed the `](uri)` closer. One-bucket **parser gap**, and the fix is the existing machinery's
-missing third scanner: `resolve_multiline_spans` (inline.rs) — the arena's whole-run cmark rescan
-that already repairs code-span (cm-527) and raw-HTML (cm-526) precedence over carved brackets — now
-tries `scan_md_autolink` → `scan_md_email_autolink` → `scan_md_html_inline` at a prose `<` (cmark's
-`handle_pointy_brace` order; the two autolink scanners went `pub(super)`). An autolink match becomes
-a **`ROXYGEN_MD_LINK` node** (the covered `](uri)` token moves inside; always single-line — an
-autolink body admits no whitespace/control chars, so no formatter/cross-line impact). Projector:
-one new `push_inline` arm ahead of the bracket-node arm — an MD_LINK node whose text starts `<`
-projects as the opaque autolink leaf (`Inline::MdLink`), so all downstream Inline machinery
-(skeleton stand-in, demotion, chains) is untouched.
+The Images cluster's 11 divergences shared one root: shortcut/collapsed/reference images resolving
+through a **user link-reference definition**. Three sub-fixes, one target:
 
-**Result:** projector **882 matching (all allowlisted), 93 divergent**, 0 blocked, of 975 pinned;
-0 regressions. **Links 88→89/90** (cm-528; only cm-512 left). Curated `md_autolink_bracket` (+pin),
-fixture `roxygen_md_autolink_bracket` (lossless, no diagnostics; CST = literal `[` delim + `foo`
-text + MD_LINK autolink node). Unit `autolink_wins_over_bracket_carve` (also pins the
-formatter-folded same-line tag-value shape — the pure-Rust fixed-point analog). Format baseline +1
-(tag-fold, verified Rd-identical via roxygen2 directly). Fixed-point 169/169. Full suite + clippy +
-fmt green.
+- **A (projector): the def's title reaches `\figure`.** roxygen2's `mdxml_image` keeps a
+  definition's title as `\figure`'s *second* argument (`![foo]` + `[foo]: /url "title"` →
+  `\figure{/url}{title}`), while `mdxml_link` ignores it. The refmap value is now a
+  `UserLinkDef { url, title }` (title entity-decoded in `parse_linkref_def_dest`); the
+  `apply_user_linkrefs` image arm rewrites via `rebuilt_inline_image` → `![alt](<url> "title")`
+  (angle-bracketed dest unless the URL has `>`; the title round-trips through
+  `strip_title_delims`' outer-pair strip). Closed cm-579/589/590/593.
+- **B (projector): emphasis-bearing labels match by flatten.** A def's label arrives as a resolved
+  `MdShortcutLink` display and is keyed by its `inline_plain_text` flatten (delimiters gone); an
+  image's label is verbatim source, so `![foo *bar*]` never found `[foo *bar*]: …`. New
+  `md_label_flatten` (resolve via the real `resolve_md_inline` arena + flatten) in the image
+  lookup — the same flatten-not-source-exact approximation the link machinery already makes
+  (mixed-delimiter `*bar*`/`_bar_` pairs would spuriously match; backlog note in the doc). Closed
+  cm-575/591.
+- **C (parser): the collapsed image `![alt][]` is carved.** It had decayed to literal `!` + a
+  collapsed *link*. `scan_md_image`'s reference arm now accepts an empty label. Resolution is
+  **user-def-only**: the collapsed occurrence's own `[alt]` candidate is blocked by
+  `get_md_linkrefs`' `(?=[^\[{])` lookahead (the span is followed by `[`), so no `R:alt` def is
+  synthesized — `resolve_md_image` returns `None` for it and the *serialize* arm now pushes an
+  unresolved image back into the prose run (`push_raw` — glues with adjacent text; it no longer
+  silently drops). The collection gate materializes it anyway (`image_is_collapsed`) so
+  `apply_user_linkrefs` can rewrite it; both skeletons expose `[alt][]` via
+  `image_skeleton_fragment` (a space stand-in would spuriously *unblock* the candidate). Closed
+  cm-586/588 (+ cm-578/587 with B).
 
-**Ranked next target:** **Links** cm-512 is the last one (dest + title split across a soft break —
-no cross-line dest-span machinery; likely the hardest, fine to defer). Better clusters:
-**Images** (11/22), **Link reference definitions** (17/27), **List items** (38/48, the indent
-shapes). Harvested 18 stay out-of-scope.
+**Result:** projector **882→895 matching (all allowlisted), 83 divergent**, 0 blocked, of 978
+pinned; 0 regressions. **Images 11→21/22** (only cm-595 left). Curated `md_image_def_title` +
+`md_image_collapsed` + `md_image_emph_label` (R-minted pins confirm all three behaviors, incl. the
+`\if{html}` svg wrap with title). Fixture `roxygen_md_image_collapsed` (lossless, no diagnostics).
+Units `user_def_title_reaches_figure`, `collapsed_image_resolves_only_via_user_def`,
+`emphasis_label_image_matches_flattened_def`. Format baseline +3 (the new corpus cases; additions
+only). Fixed-point 172/172. Full suite + clippy + fmt green.
+
+**Ranked next target:** **Link reference definitions** (17/27) and **List items** (38/48, the
+indent shapes) are the big clusters. Images' last is cm-595 (`\![foo]`: after `double_escape_md`
+the `\\` is literal `\` and `![foo]` IS an image, but the emitted `\`+`\figure{…}` re-pair in
+parse_Rd → literal `\figure` + two LISTs — an escape-pairing repair *across* a text/macro atom
+boundary, specialized). Links cm-512 (cross-line dest+title) stays deferred. Harvested 18
+out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-15c** — autolink wins over the bracket carve (cm-528; `resolve_multiline_spans` gains the autolink/email scanners at a prose `<` in `handle_pointy_brace` order; a match covers the carved `](uri)` and becomes an MD_LINK node, projected as the opaque autolink leaf). Curated `md_autolink_bracket`, fixture, unit, baseline +1. 880→882, Links 88→89/90.
 
 - **2026-07-15b** — refmap-aware link-chain pairing (cm-572 lexer: `cross_line_ref_closer` no longer blocks on a following `[`, arena pairs eager-left; projector stage-0 `repair_ref_link_chains` re-pairs per refmap — cm-571/573 preserved; cm-535: `apply_user_linkrefs` recurses into emphasis with `consume_defs=false`). Curated `md_link_chain`+`md_link_ref_in_emphasis`, fixture, 2 units, baseline +2. 876→880, Links 86→88/90.
 

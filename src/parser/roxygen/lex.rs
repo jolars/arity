@@ -1020,12 +1020,12 @@ fn scan_md_list_marker(bytes: &[u8], i: usize) -> Option<usize> {
     }
 }
 
-/// A markdown inline image at `bytes[i] == b'!'`: `![alt](url "title")`. Requires
-/// a `[` immediately after the `!`, a balanced `[…]` alt span, then a `(…)`
-/// destination group. Returns the index past the closing `)`, or `None` when it is
-/// not a complete inline image (so it stays literal prose — losslessness holds
-/// either way). Only the **inline** form is recognized; a reference/shortcut image
-/// (`![alt][ref]`/`![alt]`) is left to the prose path (un-handled-shape backlog).
+/// A markdown image at `bytes[i] == b'!'`: the inline form `![alt](url "title")`,
+/// the reference form `![alt][ref]`, the collapsed form `![alt][]`, or the
+/// shortcut form `![alt]`. Requires a `[` immediately after the `!` and a balanced
+/// `[…]` alt span; the arms below dispatch on what follows. Returns the index past
+/// the image, or `None` when it is not a recognized image shape (so it stays
+/// literal prose — losslessness holds either way).
 fn scan_md_image(bytes: &[u8], i: usize) -> Option<usize> {
     if bytes.get(i + 1) != Some(&b'[') {
         return None;
@@ -1039,14 +1039,18 @@ fn scan_md_image(bytes: &[u8], i: usize) -> Option<usize> {
         Some(&b'(') => inline_dest_span(bytes, after_alt)
             .or_else(|| is_shortcut_content(alt).then_some(after_alt)),
         // Reference image `![alt][ref]`: a bracket-free, non-empty `[ref]` label
-        // (the alt must also be a shortcut candidate). A collapsed `![alt][]` or a
-        // bracketed ref is not carved (roxygen2 leaves it literal).
+        // (the alt must also be a shortcut candidate). A **collapsed** `![alt][]`
+        // is carved too — cmark resolves it by the alt-as-label (a user
+        // `[alt]: url` definition; undefined it stays literal, but that is the
+        // projector's refmap decision, not a lexing one). A bracketed ref is not
+        // carved (roxygen2 leaves it literal).
         Some(&b'[') => {
             if !is_shortcut_content(alt) {
                 return None;
             }
             let ref_end = scan_balanced(bytes, after_alt, b'[', b']')?;
-            is_shortcut_content(&bytes[after_alt + 1..ref_end - 1]).then_some(ref_end)
+            let label = &bytes[after_alt + 1..ref_end - 1];
+            (label.is_empty() || is_shortcut_content(label)).then_some(ref_end)
         }
         // A shortcut `![alt]` followed by `{` is not an image (candidate blocked by
         // roxygen2's `(?=[^\[{])` lookahead), matching the link shortcut rule.
