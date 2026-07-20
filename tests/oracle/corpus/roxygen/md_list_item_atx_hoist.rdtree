@@ -1,0 +1,4 @@
+(\description (TEXT "T"))
+(\section (TEXT "Baz"))
+(\section (TEXT "Foo") (GRP (UNKNOWN "\\item") (TEXT "bar")))
+(\title (TEXT "T"))

@@ -276,6 +276,7 @@ cm-298
 cm-299
 cm-300
 cm-301
+cm-302
 cm-303
 cm-304
 cm-305
@@ -717,6 +718,9 @@ md_list_first_indented_code
 md_list_item_block_macro
 md_list_item_block_quote
 md_list_item_same_line_quote
+md_list_item_atx_hoist
+md_list_item_atx_subsection
+md_list_item_setext_subsection
 md_list_item_code_block
 md_list_item_indented_code
 md_list_item_para

@@ -225,6 +225,13 @@ fn is_same_line_quote(tokens: &[Token], i: usize) -> bool {
     is_same_line_child(tokens, i, &TokKind::RoxygenMdBlockQuote)
 }
 
+/// Whether a list item's content at `i` opens a **same-line ATX heading**
+/// (`- # Foo`, cm-302): the separator run followed by a `RoxygenMdHeading`
+/// leaf the lexer carved in `carve_md_list_markers`.
+fn is_same_line_heading(tokens: &[Token], i: usize) -> bool {
+    is_same_line_child(tokens, i, &TokKind::RoxygenMdHeading)
+}
+
 /// Whether the token at `i` is a marker→child all-whitespace separator run
 /// followed by a leaf of `kind` — the shape `carve_md_list_markers` produces for
 /// a child block starting on the item's marker line.
@@ -1133,6 +1140,16 @@ fn emit_md_list_level_inner(
             events.push(Event::Tok(i)); // separating whitespace (prose run)
             i = emit_md_block_quote_from_value(tokens, i + 1, events);
             item_has_content = true;
+        } else if is_same_line_heading(tokens, i) {
+            // An ATX heading at the item's content start on the marker line
+            // (`- # Foo`, cm-302): the lexer carved the rest of the line as a
+            // `RoxygenMdHeading` leaf past the separator run. A heading is one
+            // line, so the node holds just the leaf; the projector hoists a
+            // level-1 heading to a top-level `\section` (dropping the sliced
+            // `\itemize`) and nests a deeper one as an in-item `\subsection`.
+            events.push(Event::Tok(i)); // separating whitespace (prose run)
+            i = emit_md_heading_from_value(tokens, i + 1, events);
+            item_has_content = true;
         } else if item_first_line_opens_indented_code(tokens, i) {
             // The item's content sits five or more columns past the marker, so
             // it *starts with indented code* (cm-275/276): `content_indent`
@@ -1140,6 +1157,15 @@ fn emit_md_list_level_inner(
             // remainder — one separator column, then the code's own indent —
             // is an indented code block *inside* the item.
             i = emit_md_indented_code_mid_line(tokens, i, content_indent + 4, events);
+            item_has_content = true;
+        } else if let Some(underline) = item_setext_underline_ahead(tokens, i, content_indent) {
+            // The item's first-line prose is promoted by a **setext underline**
+            // at the item's content column (`- Bar` / `  ---`, cm-302's second
+            // item): the paragraph lines and the underline form one heading
+            // node, first line marker-less (the from-value shape). A below-
+            // column `===` stays a lazy fold and a below-column `---` a
+            // section-level thematic break, both unchanged (window-gated).
+            i = emit_md_item_setext_heading(tokens, i, underline, events);
             item_has_content = true;
         } else {
             while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
@@ -1237,6 +1263,28 @@ fn emit_md_list_level_inner(
                     events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
                 }
                 i = emit_md_block_quote(tokens, m, events);
+                continue;
+            }
+
+            // An ATX heading at the item's content column folds into this item —
+            // with or without an intervening blank line (a heading interrupts
+            // the item's paragraph). roxygen2 renders a level >= 2 heading as a
+            // `\subsection` after the item's content and hoists a level-1 one
+            // to a top-level `\section` (engine-probed; the projector's split).
+            // Four or more columns past the content column it is indented code
+            // (the lexer carves the heading leaf indent-blind, so the window
+            // here is what keeps the two apart, as with the block quote), and
+            // below the content column it is a section-level block that ends
+            // the list.
+            if item_has_content
+                && let Some(m) = next_content_line(tokens, i)
+                && (content_indent..content_indent + 4).contains(&list_line_indent(tokens, m))
+                && is_md_heading_start(tokens, m)
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
+                }
+                i = emit_md_heading(tokens, m, events);
                 continue;
             }
 
@@ -2268,6 +2316,81 @@ pub(super) fn emit_md_setext_heading(
             events.push(Event::Tok(idx));
         }
         marker = next;
+    }
+}
+
+/// Whether a list item's marker-line prose at `i` (the item's first content,
+/// past the `RoxygenMdListMarker`) is promoted by a following **setext
+/// underline at the item's content column** — returning that underline line's
+/// `RoxygenMarker` index. The paragraph run may span further prose lines, each
+/// folding at (or past) the content column; the underline itself must sit in
+/// the `[content_indent, content_indent + 4)` window (below it is outside the
+/// item — a lazy `===` fold or a list-ending `---` thematic break, both the
+/// existing arms' business; at or past `content_indent + 4` it is indented-code
+/// territory). Only a genuine `===`/`---` underline leaf promotes here; a lone
+/// dash bullet at the content column still nests an empty sublist (unlike the
+/// section-level dash-underline rule — backlog if roxygen2 disagrees). A blank
+/// line, a non-prose line, or a below-column continuation ends the look-ahead
+/// without promoting (conservative: those shapes keep their current arms).
+fn item_setext_underline_ahead(tokens: &[Token], i: usize, content_indent: usize) -> Option<usize> {
+    // The marker line must carry real paragraph content for an underline to
+    // promote (an empty item has no open paragraph).
+    let mut j = i;
+    let mut has_content = false;
+    while tokens.get(j).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        has_content |= !tokens[j].text.trim().is_empty();
+        j += 1;
+    }
+    if !has_content {
+        return None;
+    }
+    loop {
+        let m = following_line_marker(tokens, j)?;
+        let indent = list_line_indent(tokens, m);
+        let in_window = (content_indent..content_indent + 4).contains(&indent);
+        if in_window && is_md_setext_underline_line(tokens, m) {
+            return Some(m);
+        }
+        if indent >= content_indent && is_md_item_lazy_continuation(tokens, m) {
+            j = line_content_end(tokens, m);
+            continue;
+        }
+        return None;
+    }
+}
+
+/// Emit a `ROXYGEN_MD_HEADING` node for an item's **setext heading**: the item's
+/// marker-line prose (starting at `ws_start`, past the list marker — a
+/// marker-less first line, the from-value shape), any continuation prose lines,
+/// and the underline line whose `RoxygenMarker` is `underline`
+/// ([`item_setext_underline_ahead`] found it). Inter-line `#'` markers,
+/// indentation, and newlines thread in as trivia, as in
+/// [`emit_md_setext_heading`]. Returns the index just past the underline line's
+/// content.
+fn emit_md_item_setext_heading(
+    tokens: &[Token],
+    ws_start: usize,
+    underline: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HEADING));
+    let mut i = ws_start;
+    loop {
+        let was_underline_line = i > underline;
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
+        if was_underline_line {
+            events.push(Event::Finish); // ROXYGEN_MD_HEADING
+            return i;
+        }
+        let next = following_line_marker(tokens, i)
+            .expect("item setext heading run terminates in an underline");
+        for idx in i..=next {
+            events.push(Event::Tok(idx)); // `\n` + indentation + `#'` (trivia)
+        }
+        i = next + 1;
     }
 }
 

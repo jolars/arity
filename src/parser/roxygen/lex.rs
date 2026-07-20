@@ -988,7 +988,9 @@ fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
 /// own all-whitespace prose run (the block builder keys the nested container
 /// column off it). A `>` in the same one-to-four-column window opens a **block
 /// quote at the item's content start** (`- > quoted`, cm-294/295): the rest of
-/// the line carves as a `RoxygenMdBlockQuote` leaf after the separator run.
+/// the line carves as a `RoxygenMdBlockQuote` leaf after the separator run. An
+/// ATX heading in that window (`- # Foo`, cm-302) likewise carves the rest of
+/// the line as a `RoxygenMdHeading` leaf.
 /// Five or more separating columns are indented-code
 /// territory, and a remainder that is a thematic break (`- * * *`) is a
 /// different block, so both leave the remainder in the prose run. The caller
@@ -1013,6 +1015,21 @@ fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: us
             push(
                 out,
                 TokKind::RoxygenMdBlockQuote,
+                text,
+                start,
+                q,
+                text.len() - q,
+            );
+            return text.len();
+        }
+        // An ATX heading at the item's content start (`- # Foo`, cm-302): the
+        // rest of the line carves as a `RoxygenMdHeading` leaf after the
+        // separator run, exactly like the block-quote arm.
+        if is_atx_heading(bytes, q) {
+            push(out, TokKind::RoxygenText, text, start, end, q - end);
+            push(
+                out,
+                TokKind::RoxygenMdHeading,
                 text,
                 start,
                 q,

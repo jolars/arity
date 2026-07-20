@@ -672,6 +672,11 @@ fn emit_section_with_headings(
     md: bool,
     drop_on_incomplete: bool,
 ) {
+    // A level-1 heading nested *inside a list* slices roxygen2's flat Rd string
+    // mid-`\itemize{…}` — a different regime from the top-level outline below.
+    if emit_section_with_list_hoist(out, macro_name, body, md, drop_on_incomplete) {
+        return;
+    }
     // Segment the body: the leading run, then one (heading, following-run) per
     // heading marker in source order.
     let mut segments: Vec<(Option<SyntaxNode>, Vec<Inline>)> = vec![(None, Vec::new())];
@@ -761,6 +766,220 @@ fn render_heading_frame(frames: &[HeadingFrame], idx: usize, md: bool, macro_nam
         inner.push_str(&body_arg);
     }
     format!("(\\{macro_name}{})", prefix_space(&inner))
+}
+
+/// One level-1 heading found by [`emit_section_with_list_hoist`]'s scan: the cut
+/// point where roxygen2 splices its section marker into the flat Rd string.
+struct HoistCut {
+    node: SyntaxNode,
+    /// The containing (list, item-index) path — empty for a top-level heading.
+    /// List identity is an index into the scan's normalized-list arena.
+    chain: Vec<(usize, usize)>,
+    /// Index of the containing top-level inline in the body.
+    top_pos: usize,
+    /// For an in-list cut: the heading's inline index within its innermost item.
+    item_pos: usize,
+}
+
+/// Collect the level-1 headings inside a list inline (recursing into nested
+/// lists) as [`HoistCut`]s, normalizing each visited list's items into the
+/// `lists` arena so the stranded-piece renderer can slice them later.
+fn hoist_scan_list(
+    inl: &Inline,
+    chain: &[(usize, usize)],
+    top_pos: usize,
+    lists: &mut Vec<Vec<Vec<Inline>>>,
+    cuts: &mut Vec<HoistCut>,
+) {
+    let items: Vec<Vec<Inline>> = match inl {
+        Inline::MdList(node) => node
+            .children()
+            .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+            .map(|it| md_list_item_inlines(&it))
+            .collect(),
+        Inline::MdListResolved { items, .. } => items.clone(),
+        _ => return,
+    };
+    let id = lists.len();
+    lists.push(items);
+    for it_idx in 0..lists[id].len() {
+        for pos in 0..lists[id][it_idx].len() {
+            let inl2 = lists[id][it_idx][pos].clone();
+            let mut sub = chain.to_vec();
+            sub.push((id, it_idx));
+            match &inl2 {
+                Inline::MdHeading(node) if parse_md_heading(node).0 == 1 => {
+                    cuts.push(HoistCut {
+                        node: node.clone(),
+                        chain: sub,
+                        top_pos,
+                        item_pos: pos,
+                    });
+                }
+                _ => hoist_scan_list(&inl2, &sub, top_pos, lists, cuts),
+            }
+        }
+    }
+}
+
+/// Emit a `@description`/`@details` body containing a level-1 heading **inside a
+/// list** (cm-302; returns `false`, leaving the body to the ordinary outline,
+/// when no in-list level-1 heading exists). roxygen2 renders the whole field to
+/// one flat Rd string and splices a section marker at *every* level-1 heading —
+/// even mid-`\itemize{…}` — then splits at the markers and `rdComplete`-checks
+/// each piece: a piece sliced mid-list has an unmatched `{`/`}`, so it is
+/// emptied with a "mismatched braces" warning (the section *title* survives).
+/// Engine-probed: the tag piece before an in-list heading always drops (the
+/// unclosed `\itemize{`), as does any piece crossing a list boundary; the piece
+/// *between* two headings in the same list stays balanced and renders its
+/// stranded items brace-less (`\item` outside `\itemize` — parse_Rd's unknown
+/// macro, probe p4).
+fn emit_section_with_list_hoist(
+    out: &mut Vec<String>,
+    macro_name: &str,
+    body: &[Inline],
+    md: bool,
+    drop_on_incomplete: bool,
+) -> bool {
+    let mut lists: Vec<Vec<Vec<Inline>>> = Vec::new();
+    let mut cuts: Vec<HoistCut> = Vec::new();
+    for (idx, inl) in body.iter().enumerate() {
+        match inl {
+            Inline::MdHeading(node) if parse_md_heading(node).0 == 1 => {
+                cuts.push(HoistCut {
+                    node: node.clone(),
+                    chain: Vec::new(),
+                    top_pos: idx,
+                    item_pos: 0,
+                });
+            }
+            _ => hoist_scan_list(inl, &[], idx, &mut lists, &mut cuts),
+        }
+    }
+    if !cuts.iter().any(|c| !c.chain.is_empty()) {
+        return false;
+    }
+
+    // The tag's own piece: everything before the first cut. An in-list first
+    // cut leaves it mid-`\itemize{` — dropped whole. A top-level first cut
+    // leaves a balanced prefix, rendered by the ordinary path (the recursion
+    // finds no in-list cut in it).
+    if cuts[0].chain.is_empty() && cuts[0].top_pos > 0 {
+        emit_section_with_headings(
+            out,
+            macro_name,
+            &body[..cuts[0].top_pos],
+            md,
+            drop_on_incomplete,
+        );
+    }
+
+    // Each cut is one top-level `\section`; its body piece runs to the next cut
+    // (or the field's end). A piece whose list-container path differs from the
+    // next cut's is sliced across a list boundary — unmatched braces, emptied.
+    let lists_of = |c: &HoistCut| c.chain.iter().map(|&(l, _)| l).collect::<Vec<_>>();
+    for k in 0..cuts.len() {
+        let (_, title_text) = parse_md_heading(&cuts[k].node);
+        let title = resolve_macro_arg_inlines(&title_text);
+        let cur = lists_of(&cuts[k]);
+        let next = cuts.get(k + 1).map(&lists_of).unwrap_or_default();
+        if cur != next {
+            // Sliced across a list boundary: the body is emptied, the title kept.
+            let title_atoms = serialize_inlines(&group_brace_lists(&title, md), md);
+            out.push(format!(
+                "(\\section{})",
+                prefix_space(&grp_arg(&title_atoms))
+            ));
+            continue;
+        }
+        if cur.is_empty() {
+            // A top-level pair (or trailing top-level cut): the ordinary
+            // outline over the piece, rooted at this heading.
+            let end = cuts.get(k + 1).map(|c| c.top_pos).unwrap_or(body.len());
+            out.push(hoisted_section_atom(
+                title,
+                &body[cuts[k].top_pos + 1..end],
+                md,
+            ));
+            continue;
+        }
+        // An in-list pair: the stranded items between the two headings within
+        // the shared innermost list, each `\item` brace-less.
+        let &(list_id, it_k) = cuts[k].chain.last().unwrap();
+        let &(_, it_next) = cuts[k + 1].chain.last().unwrap();
+        let items = &lists[list_id];
+        let mut atoms: Vec<String> = Vec::new();
+        if it_k == it_next {
+            let piece = &items[it_k][cuts[k].item_pos + 1..cuts[k + 1].item_pos];
+            atoms.extend(serialize_inlines(piece, true));
+        } else {
+            atoms.extend(serialize_inlines(
+                &items[it_k][cuts[k].item_pos + 1..],
+                true,
+            ));
+            for (j, item) in items.iter().enumerate().take(it_next + 1).skip(it_k + 1) {
+                atoms.push(format!("(UNKNOWN {})", encode_text("\\item")));
+                let end = if j == it_next {
+                    cuts[k + 1].item_pos
+                } else {
+                    item.len()
+                };
+                atoms.extend(serialize_inlines(&item[..end], true));
+            }
+        }
+        let title_atoms = serialize_inlines(&group_brace_lists(&title, md), md);
+        let mut inner = grp_arg(&title_atoms);
+        let body_arg = grp_arg(&atoms);
+        if !body_arg.is_empty() {
+            if !inner.is_empty() {
+                inner.push(' ');
+            }
+            inner.push_str(&body_arg);
+        }
+        out.push(format!("(\\section{})", prefix_space(&inner)));
+    }
+    true
+}
+
+/// Render a hoisted top-level `\section` whose piece content is ordinary
+/// (balanced) body: the same segment/frame outline as
+/// [`emit_section_with_headings`], rooted at this section's level-1 heading
+/// (nested level >= 2 headings become `\subsection`s).
+fn hoisted_section_atom(title: Vec<Inline>, content: &[Inline], md: bool) -> String {
+    let mut segments: Vec<(Option<SyntaxNode>, Vec<Inline>)> = vec![(None, Vec::new())];
+    for inl in content {
+        if let Inline::MdHeading(node) = inl {
+            segments.push((Some(node.clone()), Vec::new()));
+        } else {
+            segments.last_mut().unwrap().1.push(inl.clone());
+        }
+    }
+    let mut frames: Vec<HeadingFrame> = vec![HeadingFrame {
+        level: 1,
+        title,
+        body: std::mem::take(&mut segments[0].1),
+        children: Vec::new(),
+    }];
+    let mut stack = vec![0usize];
+    for (node, run) in segments.into_iter().skip(1) {
+        let node = node.expect("a non-leading segment always carries a heading");
+        let (level, title_text) = parse_md_heading(&node);
+        let title = resolve_macro_arg_inlines(&title_text);
+        while *stack.last().unwrap() != 0 && frames[*stack.last().unwrap()].level >= level {
+            stack.pop();
+        }
+        let parent = *stack.last().unwrap();
+        let idx = frames.len();
+        frames.push(HeadingFrame {
+            level,
+            title,
+            body: run,
+            children: Vec::new(),
+        });
+        frames[parent].children.push(idx);
+        stack.push(idx);
+    }
+    render_heading_frame(&frames, 0, md, "section")
 }
 
 /// A markdown heading node's level (1-6) and title text (markdown source, resolved
@@ -5000,6 +5219,16 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_TABLE => {
             out.push(Inline::MdTable(n));
         }
+        // A `ROXYGEN_MD_HEADING` folded into a list item (a same-line `- # Foo`,
+        // a content-column ATX line, or a promoted setext paragraph, cm-302): a
+        // structural marker like its section-level counterpart. A level >= 2
+        // heading renders as an in-item `\subsection` over the item's following
+        // content ([`serialize_md_list`]); a level-1 heading hoists to a
+        // top-level `\section`, poisoning the sliced `\itemize` pieces
+        // ([`emit_section_with_headings`]'s in-list split).
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_HEADING => {
+            out.push(Inline::MdHeading(n));
+        }
         // A resolved emphasis/strong *node* (the inline pass's output): recurse
         // into its inner inline run, skipping the opener/closer delimiter leaves
         // (and any inter-line trivia), so nesting projects as structure.
@@ -5839,7 +6068,7 @@ fn serialize_md_list(node: &SyntaxNode) -> String {
     {
         atoms.push("(\\item)".to_string());
         // A markdown list exists only under `@md`, so its item content is markdown.
-        atoms.extend(serialize_inlines(&md_list_item_inlines(&item), true));
+        atoms.extend(md_item_atoms(&md_list_item_inlines(&item)));
     }
     if atoms.is_empty() {
         format!("({head})")
@@ -5858,13 +6087,103 @@ fn serialize_md_list_resolved(ordered: bool, items: &[Vec<Inline>]) -> String {
     let mut atoms: Vec<String> = Vec::new();
     for item in items {
         atoms.push("(\\item)".to_string());
-        atoms.extend(serialize_inlines(item, true));
+        atoms.extend(md_item_atoms(item));
     }
     if atoms.is_empty() {
         format!("({head})")
     } else {
         format!("({head} {})", atoms.join(" "))
     }
+}
+
+/// Serialize one markdown list item's inline run: its content atoms, with any
+/// level >= 2 in-item heading (a same-line `- ## Sub`, a content-column ATX
+/// line, or a promoted setext paragraph) rendered as roxygen2's `\subsection`
+/// over the item's *following* content — `- bar` / `  ## Sub` / `  baz`
+/// renders `\item bar \subsection{Sub}{baz}` (engine-probed), the subsection a
+/// sibling atom after the item's own text. Deeper headings nest by level, the
+/// same outline rule as the section-level frames. The subsection closes at the
+/// item's end; roxygen2's flat-string close instead swallows a *following
+/// sibling item* into the subsection body (`- Bar`/`  ---`/`  baz`/`- qux` puts
+/// `\item qux` inside the subsection) — a recorded divergence (backlog), never
+/// pinned. A level-1 heading here belongs to a non-sections tag (under
+/// `@description`/`@details` the in-list hoist consumes the whole list before
+/// serialization) and stays literal title text (`serialize_inlines`' fallback
+/// arm), matching `mdxml_heading`'s no-sections rendering.
+fn md_item_atoms(inlines: &[Inline]) -> Vec<String> {
+    let is_subsection =
+        |inl: &Inline| matches!(inl, Inline::MdHeading(node) if parse_md_heading(node).0 >= 2);
+    if !inlines.iter().any(is_subsection) {
+        return serialize_inlines(inlines, true);
+    }
+    // Segment the item: the pre-heading run, then one (heading, following-run)
+    // per level >= 2 heading. A level-1 heading stays inside its run (the
+    // literal-title fallback).
+    let mut segments: Vec<(Option<SyntaxNode>, Vec<Inline>)> = vec![(None, Vec::new())];
+    for inl in inlines {
+        if let Inline::MdHeading(node) = inl
+            && is_subsection(inl)
+        {
+            segments.push((Some(node.clone()), Vec::new()));
+        } else {
+            segments.last_mut().unwrap().1.push(inl.clone());
+        }
+    }
+    // The outline: frame 0 is the item itself (level 1 — every subsection
+    // heading is deeper); each heading's parent is the nearest open frame of a
+    // strictly lower level, exactly as in `emit_section_with_headings`.
+    let mut frames: Vec<HeadingFrame> = vec![HeadingFrame {
+        level: 1,
+        title: Vec::new(),
+        body: std::mem::take(&mut segments[0].1),
+        children: Vec::new(),
+    }];
+    let mut stack = vec![0usize];
+    for (node, run) in segments.into_iter().skip(1) {
+        let node = node.expect("a non-leading segment always carries a heading");
+        let (level, title_text) = parse_md_heading(&node);
+        let title = resolve_macro_arg_inlines(&title_text);
+        while *stack.last().unwrap() != 0 && frames[*stack.last().unwrap()].level >= level {
+            stack.pop();
+        }
+        let parent = *stack.last().unwrap();
+        let idx = frames.len();
+        frames.push(HeadingFrame {
+            level,
+            title,
+            body: run,
+            children: Vec::new(),
+        });
+        frames[parent].children.push(idx);
+        stack.push(idx);
+    }
+    let mut atoms = serialize_inlines(&frames[0].body, true);
+    for &c in &frames[0].children {
+        atoms.push(item_subsection_atom(&frames, c));
+    }
+    atoms
+}
+
+/// Render an in-item heading frame as `(\subsection <title> <body>)` — the item
+/// analog of [`render_heading_frame`], with the body serialized as item content
+/// (`serialize_inlines`; the whole-field link-reference pipeline never runs
+/// inside an item).
+fn item_subsection_atom(frames: &[HeadingFrame], idx: usize) -> String {
+    let f = &frames[idx];
+    let title_atoms = serialize_inlines(&group_brace_lists(&f.title, true), true);
+    let mut body_atoms = serialize_inlines(&f.body, true);
+    for &c in &f.children {
+        body_atoms.push(item_subsection_atom(frames, c));
+    }
+    let mut inner = grp_arg(&title_atoms);
+    let body_arg = grp_arg(&body_atoms);
+    if !body_arg.is_empty() {
+        if !inner.is_empty() {
+            inner.push(' ');
+        }
+        inner.push_str(&body_arg);
+    }
+    format!("(\\subsection{})", prefix_space(&inner))
 }
 
 /// Project a `ROXYGEN_MD_CODE_BLOCK` node into roxygen2's three-atom fenced-code
@@ -9592,6 +9911,69 @@ mod tests {
             project_to_rd(outer).contains("(\\details (TEXT \"Blockquotecontinued here.\"))"),
             "got: {}",
             project_to_rd(outer)
+        );
+    }
+
+    #[test]
+    fn in_list_level1_heading_hoists_and_drops() {
+        // A level-1 heading inside a list item slices roxygen2's flat Rd string
+        // mid-`\itemize{`: the tag piece and the section's own piece both fail
+        // rdComplete and empty, so only the hoisted `\section` title survives
+        // (cm-302; engine-probed for the same-line, continuation, and setext
+        // `===` forms alike).
+        for details in [
+            "#' - # Foo\n",                             // same-line ATX (cm-302's first item)
+            "#' - foo\n#'   # Foo\n",                   // content-column continuation ATX
+            "#' - Foo\n#'   ===\n#'   baz\n",           // promoted setext H1
+            "#' intro\n#'\n#' - # Foo\n#'\n#' outro\n", // surrounding prose drops too
+        ] {
+            let src = format!("#' @md\n#' @title T\n#' @details\n{details}#' @name spec\nNULL\n");
+            let out = project_to_rd(&src);
+            assert!(
+                out.contains("(\\section (TEXT \"Foo\"))") && !out.contains("\\details"),
+                "for {details:?} got: {out}"
+            );
+        }
+        // Two headings in the *same* list: the piece between them is balanced,
+        // so the first section keeps its stranded brace-less `\item`
+        // (parse_Rd's unknown macro) while the trailing piece still drops
+        // (engine-probed p4).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - # A\n#' - # B\n\
+                   #' @name spec\nNULL\n";
+        let out = project_to_rd(src);
+        assert!(
+            out.contains("(\\section (TEXT \"A\") (UNKNOWN \"\\\\item\"))")
+                && out.contains("(\\section (TEXT \"B\"))")
+                && !out.contains("\\details"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn in_item_deeper_heading_renders_subsection() {
+        // A level >= 2 heading inside a list item becomes a `\subsection` atom
+        // after the item's own text, its body the item's following content —
+        // `\item bar \subsection{Sub}{baz}` (engine-probed p10/p12); a promoted
+        // setext `---` gives the same shape with the paragraph as the title
+        // (cm-302's second item, probe p5).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - bar\n#'   ## Sub\n#'   baz\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"bar\") \
+                 (\\subsection (TEXT \"Sub\") (TEXT \"baz\"))))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+        let setext = "#' @md\n#' @title T\n#' @details\n#' - Bar\n#'   ---\n#'   baz\n\
+                      #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(setext).contains(
+                "(\\details (\\itemize (\\item) (\\subsection (TEXT \"Bar\") (TEXT \"baz\"))))"
+            ),
+            "got: {}",
+            project_to_rd(setext)
         );
     }
 
