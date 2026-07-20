@@ -354,16 +354,9 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
                 );
                 return;
             }
-            if let Some(marker_end) = scan_md_list_marker(bytes, pos) {
-                push(
-                    out,
-                    TokKind::RoxygenMdListMarker,
-                    text,
-                    start,
-                    pos,
-                    marker_end - pos,
-                );
-                lex_roxygen_prose(out, text, start, marker_end, md, false);
+            if scan_md_list_marker(bytes, pos).is_some() {
+                let content = carve_md_list_markers(out, text, start, pos);
+                lex_roxygen_prose(out, text, start, content, md, false);
                 return;
             }
         }
@@ -518,20 +511,10 @@ fn lex_roxygen_prose(
     // off as a `RoxygenMdListMarker` leaf (the trailing space stays in the prose
     // run). Whether the marker actually forms a list is a block-level decision
     // (the CommonMark interrupt rule), made later in `emit_roxygen_block`.
-    if md
-        && line_start
-        && let Some(marker_end) = scan_md_list_marker(bytes, pos)
-    {
-        push(
-            out,
-            TokKind::RoxygenMdListMarker,
-            text,
-            start,
-            pos,
-            marker_end - pos,
-        );
-        run_start = marker_end;
-        i = marker_end;
+    if md && line_start && scan_md_list_marker(bytes, pos).is_some() {
+        let content = carve_md_list_markers(out, text, start, pos);
+        run_start = content;
+        i = content;
     }
     while i < bytes.len() {
         // Under `@md`, an inline link `[text](url)`: carve the `[` opener and the
@@ -996,6 +979,40 @@ fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
 /// is left in the following prose run, so a marker that turns out not to form a
 /// list (the interrupt rule fails) reflows exactly like the plain text it stands
 /// in for. `None` when the content does not open a list item.
+/// Carve the list marker at `pos` and any **same-line consecutive markers**
+/// after it: CommonMark opens a nested list when an item's content itself
+/// begins with a list marker (`- - foo` is a bullet item holding a bullet
+/// sublist; `1. - 2. foo` nests three deep), so each following marker
+/// separated by one to four whitespace columns is carved as its own
+/// `RoxygenMdListMarker` leaf, with the separating whitespace pushed as its
+/// own all-whitespace prose run (the block builder keys the nested container
+/// column off it). Five or more separating columns are indented-code
+/// territory, and a remainder that is a thematic break (`- * * *`) is a
+/// different block, so both leave the remainder in the prose run. The caller
+/// must have checked [`scan_md_list_marker`] at `pos`. Returns the position of
+/// the content after the last carved marker.
+fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut p = pos;
+    let mut end = scan_md_list_marker(bytes, p).expect("caller checked scan_md_list_marker");
+    loop {
+        push(out, TokKind::RoxygenMdListMarker, text, start, p, end - p);
+        let mut q = end;
+        while q < bytes.len() && (bytes[q] == b' ' || bytes[q] == b'\t') {
+            q += 1;
+        }
+        if q == end || q >= bytes.len() || q - end > 4 || is_thematic_break(bytes, q) {
+            return end;
+        }
+        let Some(next_end) = scan_md_list_marker(bytes, q) else {
+            return end;
+        };
+        push(out, TokKind::RoxygenText, text, start, end, q - end);
+        p = q;
+        end = next_end;
+    }
+}
+
 fn scan_md_list_marker(bytes: &[u8], i: usize) -> Option<usize> {
     let marker_end = match bytes.get(i)? {
         b'-' | b'*' | b'+' => i + 1,
@@ -2276,6 +2293,52 @@ mod tests {
         assert_eq!(
             prose_texts("#' -3 degrees\n#' @md\n"),
             vec![(TokKind::RoxygenText, "-3 degrees".into())]
+        );
+    }
+
+    #[test]
+    fn md_consecutive_list_markers_carve_a_same_line_nested_item() {
+        // `- - foo`: an item whose content itself begins with a list marker
+        // opens a nested list (cm-300), so every same-line consecutive marker
+        // is carved, with the separating whitespace as its own prose run.
+        let src = "#' - - foo\n#' @md\n";
+        assert_eq!(
+            prose_texts(src),
+            vec![
+                (TokKind::RoxygenMdListMarker, "-".into()),
+                (TokKind::RoxygenText, " ".into()),
+                (TokKind::RoxygenMdListMarker, "-".into()),
+                (TokKind::RoxygenText, " foo".into()),
+            ]
+        );
+        assert_lossless(src);
+        // `1. - 2. foo` nests three deep (cm-301) — ordered markers carve too.
+        assert_eq!(
+            prose_texts("#' 1. - 2. foo\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenMdListMarker, "1.".into()),
+                (TokKind::RoxygenText, " ".into()),
+                (TokKind::RoxygenMdListMarker, "-".into()),
+                (TokKind::RoxygenText, " ".into()),
+                (TokKind::RoxygenMdListMarker, "2.".into()),
+                (TokKind::RoxygenText, " foo".into()),
+            ]
+        );
+        // A remainder that is a thematic break (`* * *`) is a different block,
+        // not a nested marker — no second `RoxygenMdListMarker` is carved (the
+        // `*`s fall to the neutral emphasis-delim carve, space-flanked so they
+        // never resolve; unchanged from before the consecutive-marker carve).
+        assert!(
+            !prose_texts("#' - * * *\n#' @md\n")[1..]
+                .iter()
+                .any(|(k, _)| *k == TokKind::RoxygenMdListMarker)
+        );
+        assert_eq!(
+            prose_texts("#' -     - foo\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenMdListMarker, "-".into()),
+                (TokKind::RoxygenText, "     - foo".into()),
+            ]
         );
     }
 

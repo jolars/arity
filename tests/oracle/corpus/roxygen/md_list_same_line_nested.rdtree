@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\itemize (\item) (\itemize (\item) (TEXT "foo"))) (\enumerate (\item) (\itemize (\item) (\enumerate (\item) (TEXT "bar")))))
+(\title (TEXT "T"))

@@ -211,6 +211,17 @@ fn is_md_list_continuation(tokens: &[Token], marker: usize) -> bool {
     tokens.get(content).map(|t| &t.kind) == Some(&TokKind::RoxygenMdListMarker)
 }
 
+/// Whether a list item's content at `i` opens a **same-line nested list**: an
+/// all-whitespace prose run (the marker→marker separator the lexer carved in
+/// `carve_md_list_markers`) followed by a `RoxygenMdListMarker` leaf.
+fn is_same_line_sublist(tokens: &[Token], i: usize) -> bool {
+    tokens.get(i).is_some_and(|t| {
+        is_line_body_kind(&t.kind)
+            && !t.text.is_empty()
+            && t.text.chars().all(|c| c == ' ' || c == '\t')
+    }) && tokens.get(i + 1).map(|t| &t.kind) == Some(&TokKind::RoxygenMdListMarker)
+}
+
 /// The indentation (in columns) of a list line whose `RoxygenMarker` is at
 /// `marker`: the width of the `#'`→content whitespace, which — after the `#'`
 /// sigil and one conventional space are stripped — is what CommonMark uses to
@@ -965,7 +976,7 @@ fn finish_md_table(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> u
 /// conventional `#' ` separator space counts as one column there).
 pub(super) fn emit_md_list(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
-    emit_md_list_level_inner(tokens, start, true, 1, events)
+    emit_md_list_level_inner(tokens, start, ListItemStart::Line, 1, events)
 }
 
 /// Emit a `ROXYGEN_MD_LIST` node for a list whose first item is a **tag's
@@ -983,7 +994,7 @@ pub(super) fn emit_md_list_from_value(
     ws_start: usize,
     events: &mut Vec<Event>,
 ) -> usize {
-    emit_md_list_level_inner(tokens, ws_start, false, 1, events)
+    emit_md_list_level_inner(tokens, ws_start, ListItemStart::TagValue, 1, events)
 }
 
 /// Recursion entry for nested list levels (each starts at a line's
@@ -995,7 +1006,25 @@ fn emit_md_list_level(
     container_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
-    emit_md_list_level_inner(tokens, start, true, container_indent, events)
+    emit_md_list_level_inner(tokens, start, ListItemStart::Line, container_indent, events)
+}
+
+/// How a list's **first item** starts, for [`emit_md_list_level_inner`]. Every
+/// later item is a line-start item (`Line`); the variants differ only in what
+/// precedes the first `RoxygenMdListMarker`.
+enum ListItemStart {
+    /// A line-start item: `start` is the line's `RoxygenMarker` (`#'`), followed
+    /// by `Whitespace` indentation, then the list marker.
+    Line,
+    /// A tag's same-line value (`#' @details - item`): `start` is the whitespace
+    /// between the tag head and the list marker (the enclosing tag owns the
+    /// line's `#'`).
+    TagValue,
+    /// A **same-line nested list** (`- - foo`): `start` is the nested
+    /// `RoxygenMdListMarker` itself, mid-line. There is no `#'` and no
+    /// `Whitespace` indentation to consume — the marker sits exactly at the
+    /// enclosing item's content column, so its indent *is* `container_indent`.
+    MidLine,
 }
 
 /// Emit one `ROXYGEN_MD_LIST` inside the container whose content column is
@@ -1009,29 +1038,33 @@ fn emit_md_list_level(
 fn emit_md_list_level_inner(
     tokens: &[Token],
     start: usize,
-    first_has_marker: bool,
+    first: ListItemStart,
     container_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST));
 
     let mut i = start;
-    let mut has_marker = first_has_marker;
+    let mut first = Some(first);
     loop {
-        // `i` is at a `RoxygenMarker` of a list-item line at this level (or, for
-        // a marker-less tag-value first item, directly at its leading
-        // whitespace). The marker and the marker→content whitespace are threaded
-        // as trivia.
-        if has_marker {
-            events.push(Event::Tok(i));
-            i += 1;
-        }
-        has_marker = true;
+        // `i` is at a `RoxygenMarker` of a list-item line at this level (or,
+        // for a marker-less first item, at its leading whitespace or directly
+        // at its `RoxygenMdListMarker` — see `ListItemStart`). The marker and
+        // the marker→content whitespace are threaded as trivia.
+        let this = first.take();
         let mut indent = 0;
-        while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-            indent += tokens[i].text.chars().count();
-            events.push(Event::Tok(i));
-            i += 1;
+        if matches!(this, Some(ListItemStart::MidLine)) {
+            indent = container_indent;
+        } else {
+            if !matches!(this, Some(ListItemStart::TagValue)) {
+                events.push(Event::Tok(i));
+                i += 1;
+            }
+            while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+                indent += tokens[i].text.chars().count();
+                events.push(Event::Tok(i));
+                i += 1;
+            }
         }
 
         // The item: its `RoxygenMdListMarker` leaf, then its inline content. A
@@ -1043,13 +1076,32 @@ fn emit_md_list_level_inner(
         i += 1;
         let content_indent = indent + marker_width + content_leading_spaces(tokens, i);
         let content_start = i;
-        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
-            events.push(Event::Tok(i));
-            i += 1;
+        // A same-line nested list (`- - foo`): the lexer carved the item's
+        // content-opening list marker, leaving the marker→marker separating
+        // whitespace as its own all-whitespace prose run. The rest of the line
+        // (and any continuation lines it claims) is a child list whose
+        // container floor is this item's content column — exactly the nested
+        // marker's own column in the line gauge.
+        let item_has_content;
+        if is_same_line_sublist(tokens, i) {
+            events.push(Event::Tok(i)); // separating whitespace (prose run)
+            i = emit_md_list_level_inner(
+                tokens,
+                i + 1,
+                ListItemStart::MidLine,
+                content_indent,
+                events,
+            );
+            item_has_content = true;
+        } else {
+            while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                events.push(Event::Tok(i));
+                i += 1;
+            }
+            item_has_content = tokens[content_start..i]
+                .iter()
+                .any(|t| !t.text.trim().is_empty());
         }
-        let item_has_content = tokens[content_start..i]
-            .iter()
-            .any(|t| !t.text.trim().is_empty());
 
         // The item body: paragraph continuations and nested lists, in source
         // order. Each iteration folds one continuation into the item, so a

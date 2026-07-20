@@ -1,0 +1,66 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..73
+  ROXYGEN_BLOCK@0..67
+    ROXYGEN_SECTION@0..7
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+    ROXYGEN_SECTION@7..19
+      ROXYGEN_MARKER@7..9 "#'"
+      WHITESPACE@9..10 " "
+      ROXYGEN_TAG@10..18
+        ROXYGEN_AT@10..11 "@"
+        ROXYGEN_TAG_NAME@11..16 "title"
+        WHITESPACE@16..17 " "
+        ROXYGEN_TEXT@17..18 "T"
+      NEWLINE@18..19 "\n"
+    ROXYGEN_SECTION@19..57
+      ROXYGEN_MARKER@19..21 "#'"
+      WHITESPACE@21..22 " "
+      ROXYGEN_TAG@22..30
+        ROXYGEN_AT@22..23 "@"
+        ROXYGEN_TAG_NAME@23..30 "details"
+      NEWLINE@30..31 "\n"
+      ROXYGEN_MD_LIST@31..41
+        ROXYGEN_MARKER@31..33 "#'"
+        WHITESPACE@33..34 " "
+        ROXYGEN_MD_LIST_ITEM@34..41
+          ROXYGEN_MD_LIST_MARKER@34..35 "-"
+          ROXYGEN_TEXT@35..36 " "
+          ROXYGEN_MD_LIST@36..41
+            ROXYGEN_MD_LIST_ITEM@36..41
+              ROXYGEN_MD_LIST_MARKER@36..37 "-"
+              ROXYGEN_TEXT@37..41 " foo"
+      NEWLINE@41..42 "\n"
+      ROXYGEN_MD_LIST@42..56
+        ROXYGEN_MARKER@42..44 "#'"
+        WHITESPACE@44..45 " "
+        ROXYGEN_MD_LIST_ITEM@45..56
+          ROXYGEN_MD_LIST_MARKER@45..47 "1."
+          ROXYGEN_TEXT@47..48 " "
+          ROXYGEN_MD_LIST@48..56
+            ROXYGEN_MD_LIST_ITEM@48..56
+              ROXYGEN_MD_LIST_MARKER@48..49 "-"
+              ROXYGEN_TEXT@49..50 " "
+              ROXYGEN_MD_LIST@50..56
+                ROXYGEN_MD_LIST_ITEM@50..56
+                  ROXYGEN_MD_LIST_MARKER@50..52 "2."
+                  ROXYGEN_TEXT@52..56 " bar"
+      NEWLINE@56..57 "\n"
+    ROXYGEN_SECTION@57..67
+      ROXYGEN_MARKER@57..59 "#'"
+      WHITESPACE@59..60 " "
+      ROXYGEN_TAG@60..67
+        ROXYGEN_AT@60..61 "@"
+        ROXYGEN_TAG_NAME@61..65 "name"
+        WHITESPACE@65..66 " "
+        ROXYGEN_TEXT@66..67 "x"
+  NEWLINE@67..68 "\n"
+  IDENT@68..72 "NULL"
+  NEWLINE@72..73 "\n"

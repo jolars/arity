@@ -6658,6 +6658,35 @@ mod tests {
     }
 
     #[test]
+    fn same_line_nested_list_marker_projects_a_sublist() {
+        // `- - foo`: an item whose content itself begins with a list marker
+        // holds a nested list (cm-300); a tag-value form nests the same way.
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' - - foo\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (\\itemize (\\item) (\\itemize (\\item) (TEXT \"foo\"))))\n\
+             (\\title (TEXT \"T\"))"
+        );
+        let value = "#' @md\n\
+                     #' @title T\n\
+                     #' @details - - foo\n\
+                     #' @name x\n\
+                     NULL\n";
+        assert_eq!(
+            project_to_rd(value),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (\\itemize (\\item) (\\itemize (\\item) (TEXT \"foo\"))))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
     fn two_intro_paragraphs_split_title_and_description() {
         let src = "#' Example dataset\n\
                    #'\n\
