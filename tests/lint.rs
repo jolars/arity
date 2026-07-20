@@ -2309,6 +2309,96 @@ fn seq_withholds_fix_for_dropped_comment() {
 }
 
 #[test]
+fn sort_rewrites_first_element_to_min() {
+    // Taking the first element of an ascending sort is `min(x)`; the `1L`
+    // spelling and an explicit `decreasing = FALSE` count too.
+    for src in [
+        "m <- sort(x)[1]\n",
+        "m <- sort(x)[1L]\n",
+        "m <- sort(x, decreasing = FALSE)[1]\n",
+    ] {
+        assert_eq!(
+            unsafe_fixed_output(src, "sort"),
+            "m <- min(x)\n",
+            "from {src:?}"
+        );
+    }
+    // The argument is preserved verbatim, whatever its shape.
+    assert_eq!(
+        unsafe_fixed_output("m <- sort(df$col)[1]\n", "sort"),
+        "m <- min(df$col)\n"
+    );
+}
+
+#[test]
+fn sort_rewrites_decreasing_first_element_to_max() {
+    assert_eq!(
+        unsafe_fixed_output("m <- sort(x, decreasing = TRUE)[1]\n", "sort"),
+        "m <- max(x)\n"
+    );
+}
+
+#[test]
+fn sort_fix_is_unsafe() {
+    // `sort` drops `NA`s by default while `min`/`max` propagate them, and on an
+    // empty vector `sort(x)[1]` is `NA` while `min(x)` warns and yields `Inf`,
+    // so the fix must be unsafe.
+    let d = diagnostics("m <- sort(x)[1]\n")
+        .into_iter()
+        .find(|d| d.rule == "sort")
+        .expect("expected a sort finding");
+    assert_eq!(
+        d.fix.as_ref().expect("should carry a fix").applicability,
+        Applicability::Unsafe
+    );
+}
+
+#[test]
+fn sort_ignores_other_shapes() {
+    for src in [
+        "sort(x)[2]\n",                 // not the first element
+        "sort(x)[i]\n",                 // computed subscript
+        "sort(x)[-1]\n",                // negative subscript
+        "sort(x)[1, 2]\n",              // multiple subscripts
+        "sort(x, na.last = TRUE)[1]\n", // extra argument changes semantics
+        "sort(x, TRUE)[1]\n",           // positional decreasing — unclear
+        "sort(x, decreasing = d)[1]\n", // non-literal decreasing
+        "sort(x)\n",                    // no subscript at all
+        "y[1]\n",                       // not a sort call
+        "sort(x)[[1]]\n",               // `[[` — out of scope
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"sort"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn sort_skips_shadowed_sort() {
+    // A user redefinition of `sort` means the subset is no longer a minimum at
+    // all, so the rewrite would be wrong — don't flag.
+    let src = "sort <- function(x) x\nm <- sort(x)[1]\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(
+        !rules.contains(&"sort"),
+        "{src:?} should not flag, got: {rules:?}"
+    );
+}
+
+#[test]
+fn sort_withholds_fix_for_dropped_comment() {
+    // A comment outside the preserved argument would be dropped by the rewrite,
+    // so the fix is withheld — the finding is still reported.
+    let d = diagnostics("m <- sort( # note\n  x\n)[1]\n")
+        .into_iter()
+        .find(|d| d.rule == "sort")
+        .expect("expected a sort finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
 fn is_numeric_collapses_redundant_or() {
     // `is.numeric()` is already `TRUE` for integer vectors, so `||`-ing it with
     // `is.integer()` is redundant; either operand order collapses.
@@ -2710,6 +2800,9 @@ fn fixed_output_is_parseable_and_clean() {
         "if (class(x) == \"factor\") f()\n",
         "flag <- class(x) != \"factor\"\n",
         "if (\"data.frame\" %in% class(x)) f()\n",
+        // sort (`sort(x)[1]` → `min(x)`; unsafe)
+        "m <- sort(x)[1]\n",
+        "m <- sort(x, decreasing = TRUE)[1]\n",
         // string-boundary (`grepl("^a", x)` → `startsWith`; unsafe)
         "flag <- grepl(\"^abc\", x)\n",
         "flag <- grepl(\"xyz$\", y)\n",

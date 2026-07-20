@@ -1,1 +1,1 @@
-arity v0.11.0
+arity v0.12.0

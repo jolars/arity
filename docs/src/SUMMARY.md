@@ -38,6 +38,7 @@
   - [seq](reference/rules/seq.md)
   - [class-equals](reference/rules/class-equals.md)
   - [fixed-regex](reference/rules/fixed-regex.md)
+  - [sort](reference/rules/sort.md)
   - [roxygen-unknown-tag](reference/rules/roxygen-unknown-tag.md)
   - [roxygen-title](reference/rules/roxygen-title.md)
   - [roxygen-return](reference/rules/roxygen-return.md)

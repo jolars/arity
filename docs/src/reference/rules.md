@@ -39,6 +39,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`seq`](rules/seq.md)
 - [`class-equals`](rules/class-equals.md)
 - [`fixed-regex`](rules/fixed-regex.md)
+- [`sort`](rules/sort.md)
 
 ## Documentation
 

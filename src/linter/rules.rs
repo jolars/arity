@@ -65,6 +65,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(performance::Seq),
         Box::new(performance::ClassEquals),
         Box::new(performance::FixedRegex),
+        Box::new(performance::Sort),
         Box::new(documentation::RoxygenUnknownTag),
         Box::new(documentation::RoxygenTitle),
         Box::new(documentation::RoxygenReturn),

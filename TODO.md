@@ -251,7 +251,17 @@ harden against shadowing in Phase 4.
       insertion of `, fixed = TRUE` (lossless, safe). Both withhold/skip per the
       autofix-correctness discipline (`string-boundary` withholds on a dropped
       comment; `fixed-regex` needs none—it drops nothing).
-- [ ] `sort` `sort(x)[1]` -> `min`, etc. (performance, unsafe).
+- [x] `sort` `sort(x)[1]` -> `min(x)`, `sort(x, decreasing = TRUE)[1]` ->
+      `max(x)` (performance, `ns`, unsafe; landed). Fires only on a `[1]`/`[1L]`
+      subset of a `sort` call with one positional argument and at most a literal
+      `decreasing = TRUE`/`FALSE` (any other argument—`na.last`, `method`,
+      `partial`, a positional or computed `decreasing`—skips the shape);
+      namespace-confirms `sort` resolves to base R. The fix is **unsafe**:
+      `sort` drops `NA`s under its default `na.last = NA` while `min`/`max`
+      propagate them, and on a zero-length vector `sort(x)[1]` is `NA` while
+      `min(x)` warns and yields `Inf`. The replacement is a call (a primary),
+      so no precedence guard is needed; withheld when a comment outside the
+      preserved argument would be dropped.
 - [ ] `internal-function` `pkg:::fn` via
       `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.
 

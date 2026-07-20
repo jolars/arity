@@ -8,6 +8,7 @@ mod fixed_regex;
 mod lengths;
 mod nzchar;
 mod seq;
+mod sort;
 
 pub use any_duplicated::AnyDuplicated;
 pub use any_is_na::AnyIsNa;
@@ -17,3 +18,4 @@ pub use fixed_regex::FixedRegex;
 pub use lengths::Lengths;
 pub use nzchar::Nzchar;
 pub use seq::Seq;
+pub use sort::Sort;
