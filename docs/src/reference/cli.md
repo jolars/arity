@@ -76,6 +76,9 @@ Format .R files
 `--exclude <PATTERN>`
 :   Additional gitignore-style exclude patterns (repeatable or comma-separated); augments the configured `exclude`/`extend-exclude`
 
+`--force-exclude`
+:   Apply exclude patterns to files named explicitly on the command line too (they are normally always processed); for runners like pre-commit that pass staged files as arguments
+
 ## `arity lint`
 
 Lint .R files
@@ -108,6 +111,9 @@ Reads stdin when no paths are given. Exit codes: 0 = no findings, 1 = findings (
 
 `--exclude <PATTERN>`
 :   Additional gitignore-style exclude patterns (repeatable or comma-separated); augments the configured `exclude`/`extend-exclude`
+
+`--force-exclude`
+:   Apply exclude patterns to files named explicitly on the command line too (they are normally always processed); for runners like pre-commit that pass staged files as arguments
 
 `--output <OUTPUT>`
 :   Output format

@@ -88,6 +88,14 @@ pub fn check_paths_with_style(
 
     let files = collect_r_files(paths, exclude).map_err(CheckError::from)?;
     if files.is_empty() {
+        // Under force-exclude every named file may be excluded; that is an
+        // expected clean no-op, not an error.
+        if exclude.force() {
+            return Ok(CheckResult {
+                checked_files: 0,
+                changed_files: Vec::new(),
+            });
+        }
         return Err(CheckError::NoRFiles);
     }
 

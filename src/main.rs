@@ -61,6 +61,7 @@ fn main() -> ExitCode {
             line_width,
             indent_width,
             exclude,
+            force_exclude,
         } => run_format(
             paths,
             verify,
@@ -69,7 +70,10 @@ fn main() -> ExitCode {
                 line_width,
                 indent_width,
             },
-            exclude,
+            ExcludeOptions {
+                patterns: exclude,
+                force: force_exclude,
+            },
             &config_source,
             out,
         ),
@@ -81,6 +85,7 @@ fn main() -> ExitCode {
             select,
             ignore,
             exclude,
+            force_exclude,
             output,
         } => run_lint(
             LintInvocation {
@@ -88,7 +93,10 @@ fn main() -> ExitCode {
                 stdin_filename,
                 fix: FixOptions { fix, unsafe_fixes },
                 overrides: LintOverrides { select, ignore },
-                excludes: exclude,
+                excludes: ExcludeOptions {
+                    patterns: exclude,
+                    force: force_exclude,
+                },
                 output,
             },
             &config_source,
@@ -339,6 +347,13 @@ fn load_config_with_source(
     Config::resolve(source.explicit.as_deref(), source.no_config, anchor)
 }
 
+/// The exclusion-related CLI flags: extra `--exclude` patterns and whether
+/// `--force-exclude` applies them to explicitly named files too.
+struct ExcludeOptions {
+    patterns: Vec<String>,
+    force: bool,
+}
+
 /// Build the file-discovery exclude filter from the resolved config plus any
 /// `--exclude` CLI patterns. Patterns resolve relative to the directory holding
 /// `arity.toml` (or `anchor` when there is no config file).
@@ -431,7 +446,7 @@ fn run_format(
     verify: bool,
     check: bool,
     overrides: FormatOverrides,
-    cli_excludes: Vec<String>,
+    excludes: ExcludeOptions,
     config_source: &ConfigSource,
     out: OutputOptions,
 ) -> ExitCode {
@@ -440,10 +455,11 @@ fn run_format(
         Err(code) => return code,
     };
     let (style, exclude) =
-        match resolve_format_setup(config_source, &overrides, &cli_excludes, &anchor) {
+        match resolve_format_setup(config_source, &overrides, &excludes.patterns, &anchor) {
             Ok(setup) => setup,
             Err(code) => return code,
         };
+    let exclude = exclude.with_force_exclude(excludes.force);
 
     if check {
         if verify {
@@ -581,6 +597,11 @@ fn run_format_write_paths(
         }
     };
     if files.is_empty() {
+        // Under --force-exclude every named file may be excluded; that is an
+        // expected clean no-op, not a usage error.
+        if exclude.force() {
+            return ExitCode::SUCCESS;
+        }
         eprintln!("error: no .R files found under the provided input paths");
         return ExitCode::from(2);
     }
@@ -647,7 +668,7 @@ struct LintInvocation {
     stdin_filename: Option<PathBuf>,
     fix: FixOptions,
     overrides: LintOverrides,
-    excludes: Vec<String>,
+    excludes: ExcludeOptions,
     output: LintOutput,
 }
 
@@ -661,7 +682,7 @@ fn run_lint(
         stdin_filename,
         fix: fix_opts,
         overrides,
-        excludes: cli_excludes,
+        excludes,
         output,
     } = invocation;
     let anchor = match cwd_anchor() {
@@ -690,8 +711,8 @@ fn run_lint(
     }
 
     let exclude =
-        match build_exclude_filter(&config, config_path.as_deref(), &anchor, &cli_excludes) {
-            Ok(exclude) => exclude,
+        match build_exclude_filter(&config, config_path.as_deref(), &anchor, &excludes.patterns) {
+            Ok(exclude) => exclude.with_force_exclude(excludes.force),
             Err(code) => return code,
         };
 

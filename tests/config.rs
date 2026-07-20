@@ -427,6 +427,50 @@ fn cli_format_check_exclude_flag_augments() {
 }
 
 #[test]
+fn cli_format_check_force_exclude_skips_explicit_path() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("arity.toml"), "exclude = [\"skip/\"]\n").unwrap();
+    fs::create_dir(dir.path().join("skip")).unwrap();
+    fs::write(dir.path().join("skip").join("bad.R"), MISFORMATTED).unwrap();
+
+    // Named explicitly, the excluded file is normally still checked...
+    let reported = run_cli_in_no_stdin(dir.path(), ["format", "--check", "skip/bad.R"]);
+    assert_eq!(reported.status.code(), Some(1));
+
+    // ...but --force-exclude skips it, and the resulting empty set is a
+    // clean no-op (exit 0), not a "no .R files found" usage error.
+    let excluded = run_cli_in_no_stdin(
+        dir.path(),
+        ["format", "--check", "--force-exclude", "skip/bad.R"],
+    );
+    assert_eq!(
+        excluded.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&excluded.stderr)
+    );
+}
+
+#[test]
+fn cli_lint_force_exclude_skips_explicit_path() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("arity.toml"), "exclude = [\"skip/\"]\n").unwrap();
+    fs::create_dir(dir.path().join("skip")).unwrap();
+    fs::write(dir.path().join("skip").join("bad.R"), LINT_TWO_RULES).unwrap();
+
+    let reported = run_cli_in_no_stdin(dir.path(), ["lint", "skip/bad.R"]);
+    assert_eq!(reported.status.code(), Some(1));
+
+    let excluded = run_cli_in_no_stdin(dir.path(), ["lint", "--force-exclude", "skip/bad.R"]);
+    assert_eq!(
+        excluded.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&excluded.stderr)
+    );
+}
+
+#[test]
 fn cli_completions_emits_script() {
     let output = run_cli(["completions", "bash"], "");
     assert_eq!(output.status.code(), Some(0));

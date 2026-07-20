@@ -159,6 +159,15 @@ pub fn check_paths_with_index(
 
     let files = collect_r_files(paths, exclude).map_err(LintError::from)?;
     if files.is_empty() {
+        // Under force-exclude every named file may be excluded; that is an
+        // expected clean no-op, not an error.
+        if exclude.force() {
+            return Ok(LintResult {
+                checked_files: 0,
+                total_findings: 0,
+                reports: Vec::new(),
+            });
+        }
         return Err(LintError::NoRFiles);
     }
 

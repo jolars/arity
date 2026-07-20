@@ -14,12 +14,16 @@ pub enum FileDiscoveryError {
 ///
 /// Patterns use gitignore semantics and are resolved relative to a root (the
 /// directory containing `arity.toml`, or the working directory when there is no
-/// config). The filter prunes matching directories and files from the walk; it
-/// does **not** affect paths a user names explicitly on the command line (those
-/// are always processed, matching ruff's default, non-`force-exclude` behavior).
+/// config). The filter prunes matching directories and files from the walk; by
+/// default it does **not** affect paths a user names explicitly on the command
+/// line (those are always processed, matching ruff's default behavior). With
+/// `force` set (the `--force-exclude` flag), explicitly named files that match
+/// a pattern are skipped too — for runners like pre-commit that pass staged
+/// files as arguments.
 #[derive(Debug, Clone)]
 pub struct ExcludeFilter {
     matcher: Option<Gitignore>,
+    force: bool,
 }
 
 /// A malformed exclude pattern, surfaced to the CLI so it can report and exit.
@@ -45,7 +49,10 @@ impl ExcludeFilter {
     /// A filter that excludes nothing. Used by callers that do their own scoping
     /// (the LSP, salsa-internal sibling discovery) or have no config in hand.
     pub fn none() -> Self {
-        Self { matcher: None }
+        Self {
+            matcher: None,
+            force: false,
+        }
     }
 
     /// Compile `patterns` into a matcher rooted at `root`. The built-in
@@ -72,7 +79,42 @@ impl ExcludeFilter {
         })?;
         Ok(Self {
             matcher: Some(matcher),
+            force: false,
         })
+    }
+
+    /// Also apply the patterns to explicitly named files (`--force-exclude`).
+    pub fn with_force_exclude(mut self, force: bool) -> Self {
+        self.force = force;
+        self
+    }
+
+    /// Whether explicitly named files are subject to the patterns.
+    pub fn force(&self) -> bool {
+        self.force
+    }
+
+    /// Whether `path`, named explicitly on the command line, should be skipped.
+    /// Always `false` without force mode. Unlike the walk (where pruning an
+    /// excluded directory hides everything beneath it), an explicit file must
+    /// be tested against its ancestors too, so `renv/` catches
+    /// `renv/activate.R`.
+    pub fn force_excludes(&self, path: &Path) -> bool {
+        if !self.force {
+            return false;
+        }
+        match &self.matcher {
+            Some(matcher) => {
+                // `matched_path_or_any_parents` asserts that `path` lives under
+                // the matcher root; an absolute path outside it cannot match
+                // root-relative patterns anyway.
+                if path.is_absolute() && !path.starts_with(matcher.path()) {
+                    return false;
+                }
+                matcher.matched_path_or_any_parents(path, false).is_ignore()
+            }
+            None => false,
+        }
     }
 
     fn is_excluded(&self, path: &Path, is_dir: bool) -> bool {
@@ -91,11 +133,15 @@ pub fn collect_r_files(
 
     for path in paths {
         if path.is_file() {
+            // The force check runs before the extension check so that an
+            // excluded non-R file (as a runner like pre-commit may stage) is
+            // silently skipped rather than a hard error.
+            if exclude.force_excludes(path) {
+                continue;
+            }
             if !is_r_file(path) {
                 return Err(FileDiscoveryError::NonRFilePath { path: path.clone() });
             }
-            // An explicitly named file is always processed, even if it matches an
-            // exclude pattern (no `force-exclude` mode).
             files.push(path.clone());
             continue;
         }
@@ -237,5 +283,99 @@ mod tests {
         touch(&root.join("RcppExports.R"));
         let files = collect_r_files(&[root.to_path_buf()], &ExcludeFilter::none()).unwrap();
         assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn force_exclude_skips_explicitly_named_file() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let rcpp = root.join("RcppExports.R");
+        let keep = root.join("keep.R");
+        touch(&rcpp);
+        touch(&keep);
+
+        let filter = ExcludeFilter::new(root, &defaults())
+            .unwrap()
+            .with_force_exclude(true);
+        let files = collect_r_files(&[rcpp, keep.clone()], &filter).unwrap();
+        assert_eq!(files, vec![keep]);
+    }
+
+    #[test]
+    fn force_exclude_may_leave_no_files() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let rcpp = root.join("RcppExports.R");
+        touch(&rcpp);
+
+        // Every explicit input is excluded: an empty result, not an error.
+        let filter = ExcludeFilter::new(root, &defaults())
+            .unwrap()
+            .with_force_exclude(true);
+        let files = collect_r_files(&[rcpp], &filter).unwrap();
+        assert_eq!(files, Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn force_exclude_matches_parent_directory_pattern() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let activate = root.join("renv").join("activate.R");
+        touch(&activate);
+
+        // The walk prunes `renv/` before its contents are seen; an explicit
+        // file must be tested against its ancestors to match the same pattern.
+        let filter = ExcludeFilter::new(root, &defaults())
+            .unwrap()
+            .with_force_exclude(true);
+        let files = collect_r_files(&[activate], &filter).unwrap();
+        assert_eq!(files, Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn force_exclude_skips_excluded_non_r_file() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let settings = root.join("renv").join("settings.json");
+        touch(&settings);
+
+        // The force check runs before the extension check, so an excluded
+        // non-R file (as pre-commit may stage) is skipped, not a hard error.
+        let filter = ExcludeFilter::new(root, &defaults())
+            .unwrap()
+            .with_force_exclude(true);
+        let files = collect_r_files(&[settings], &filter).unwrap();
+        assert_eq!(files, Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn force_exclude_ignores_paths_outside_matcher_root() {
+        let dir = tempdir().unwrap();
+        let other = tempdir().unwrap();
+        let outside = other.path().join("RcppExports.R");
+        touch(&outside);
+
+        // An absolute path outside the matcher root cannot match root-relative
+        // patterns; it must be processed, not skipped (and must not panic).
+        let filter = ExcludeFilter::new(dir.path(), &defaults())
+            .unwrap()
+            .with_force_exclude(true);
+        let files = collect_r_files(std::slice::from_ref(&outside), &filter).unwrap();
+        assert_eq!(files, vec![outside]);
+    }
+
+    #[test]
+    fn force_exclude_does_not_change_directory_walk() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        touch(&root.join("keep.R"));
+        touch(&root.join("RcppExports.R"));
+        touch(&root.join("renv").join("activate.R"));
+
+        let filter = ExcludeFilter::new(root, &defaults()).unwrap();
+        let walked = collect_r_files(&[root.to_path_buf()], &filter).unwrap();
+        let forced =
+            collect_r_files(&[root.to_path_buf()], &filter.with_force_exclude(true)).unwrap();
+        assert_eq!(walked, forced);
     }
 }

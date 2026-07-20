@@ -95,6 +95,12 @@ pub enum Commands {
         /// comma-separated); augments the configured `exclude`/`extend-exclude`
         #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
         exclude: Vec<String>,
+
+        /// Apply exclude patterns to files named explicitly on the command line
+        /// too (they are normally always processed); for runners like
+        /// pre-commit that pass staged files as arguments
+        #[arg(long)]
+        force_exclude: bool,
     },
     /// Lint .R files
     ///
@@ -129,6 +135,12 @@ pub enum Commands {
         /// comma-separated); augments the configured `exclude`/`extend-exclude`
         #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
         exclude: Vec<String>,
+
+        /// Apply exclude patterns to files named explicitly on the command line
+        /// too (they are normally always processed); for runners like
+        /// pre-commit that pass staged files as arguments
+        #[arg(long)]
+        force_exclude: bool,
 
         /// Output format
         #[arg(long, value_enum, default_value_t = LintOutput::Pretty)]
