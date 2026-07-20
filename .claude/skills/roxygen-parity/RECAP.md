@@ -99,6 +99,14 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   enters the builder via `ListItemStart::MidLine`: the nested marker sits exactly at the outer
   item's content column, so its indent IS the child container floor. Projector/formatter untouched
   (nested-list arm + per-line textual passthrough already cover the shape).
+- **A block quote can open ON the marker line (cm-294/295).** `carve_md_list_markers` (lex.rs)
+  carves a `>` in the same 1–4-column separator window as a nested marker into a
+  `RoxygenMdBlockQuote` leaf covering the line remainder; the builder's same-line dispatch
+  (`is_same_line_quote`, via the shared `is_same_line_child`) pushes the separator *outside* the
+  node and routes to `emit_md_block_quote_from_value` (marker-less first line — the from-value
+  shape), so `>` continuations and lazy paragraph lines gather as usual. Projector + formatter
+  untouched: `block_quote_flat_text`'s container-column strip is `take_while`-safe on the
+  marker-less first line, and the outer-quote flatten reparse then handles `> 1. > q` for free.
 - **Item content indent has two SNAP-to-marker+1 start conditions (cm-275/276/280/281).**
   `content_leading_spaces` (build.rs; projector twin `md_item_content_leading`, project_rd.rs, feeding
   `md_indented_code_extra_strip`) returns 1 — not `clamp(1,4)` — when the marker line's remainder is
@@ -1100,57 +1108,63 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 918 matching (all allowlisted), 67 divergent** of 985 pinned. The divergent 67 are the
+**Current: 921 matching (all allowlisted), 65 divergent** of 986 pinned. The divergent 65 are the
 per-section backlog (harvested 18, Tabs 8, ATX 6, Setext 6,
-Link reference definitions 5, Code spans 3, List items 3, Lists 3, Thematic breaks 3, Images 1,
-Links 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
+Link reference definitions 5, Code spans 3, Lists 3, Thematic breaks 3, Images 1, Links 1,
+List items 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (985 pinned); 67 divergent backlog.
+   Curated + harvested + whole-spec corpora (986 pinned); 65 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 179/179 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 180/180 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-20d) — item content-indent start conditions: cm-275/276/280/281, List items 41→45/48
+## Latest session (2026-07-20e) — same-line block quote in a list item: cm-294/295, List items 45→47/48
 
-CommonMark's two list-item **start conditions** snap the content indent to marker + 1: an
-item whose first-line remainder is blank (its content starts on the next line, cm-280/281),
-and an item whose content sits five or more columns past the marker (the item *starts with
-indented code*, cm-275/276). Mechanics in the content-indent-snap trap above:
+A block quote can open **on the item's marker line** (`1. > Blockquote`, then a lazy
+`continued here.`). Mechanics in the marker-line-quote trap above:
 
-- **Builder** (`build.rs`): `content_leading_spaces` returns 1 on both conditions (was a bare
-  `clamp(1, 4)`); `item_first_line_opens_indented_code` routes the ≥5-column remainder into
-  the new `emit_md_indented_code_mid_line` (a marker-less, mid-line first code line — the
-  `from_value` shape); two new empty-item arms fold the *immediately* following line
-  (indented-code arm before the prose arm) with `item_has_content` now `mut`.
-- **Projector** (`project_rd.rs`): `md_item_content_leading` mirrors the snap inside
-  `md_indented_code_extra_strip`; a marker-less first code line strips exactly 4 columns
-  (the container columns are consumed structurally, outside the node).
-- **Formatter untouched** — both new curated cases format verbatim (baseline +2, no reflow).
+- **Lexer** (`lex.rs`): `carve_md_list_markers` grew a `>` arm in its 1–4-column separator
+  window — separator pushed as its own prose run, the line remainder carved as one
+  `RoxygenMdBlockQuote` leaf (≥5 columns stays the indented-code path; the carve returns
+  line-end, safe at both call sites since `push` drops empty runs).
+- **Builder** (`build.rs`): a new same-line-quote arm in `emit_md_list_level_inner`'s item
+  dispatch (`is_same_line_quote`; `is_same_line_sublist` refactored onto the shared
+  `is_same_line_child`) pushes the separator and reuses `emit_md_block_quote_from_value` —
+  the marker-less-first-line shape — so `>` continuations and lazy folds come free.
+- **Projector + formatter untouched** — `Inline::MdBlockQuote` + both flatten paths already
+  existed (2026-07-13c), and the curated case formats verbatim (baseline +1). cm-294/295 pass
+  through the *outer* quote's flatten reparse with no projector change.
 
-**Result:** projector **912→918 matching (all allowlisted), 67 divergent**, 0 blocked, of 985
-pinned; 0 regressions. **List items 41→45/48** (cm-275/276/280/281). Curated
-`md_list_first_indented_code` + `md_list_empty_marker_content` (R-minted pins), fixtures
-`roxygen_md_list_{first_indented_code,empty_marker_content}`, 2 projector units (incl. the
-cm-282 one-blank negative), format baseline +2 (verbatim). Fixed-point 179/179. Full suite +
-clippy + fmt green.
+**Result:** projector **918→921 matching (all allowlisted), 65 divergent**, 0 blocked, of 986
+pinned; 0 regressions. **List items 45→47/48** (cm-294/295; only cm-302 left). Curated
+`md_list_item_same_line_quote` (R-minted pin), fixture `roxygen_md_list_item_same_line_quote`,
+2 projector units (`same_line_block_quote_opens_inside_item`,
+`same_line_item_quote_takes_lazy_continuation` incl. the outer-quote reparse), format baseline
++1 (verbatim). Fixed-point 180/180. Full suite + clippy + fmt green.
 
-**Ranked next target:** finish **List items** (3 left): cm-294/295 (block-quote laziness
-inside an item), cm-302 (heading/setext inside items). Then **Tabs** (3/11, 8 remaining) — the
-biggest single cluster, one root cause (tab-column expansion; `list_line_indent` and friends
-count a tab as one column). Lists' remaining 3 (cm-319/320/326) are def-in-item and
-fence-in-item singles. The linkref 5 are heterogeneous singles: cm-196 (emphasis inside a
-leaked label), cm-216 (def resolution into a heading title), cm-217/218 (setext promotion
-grabs the def line — defs strip before setext), cm-220 (def inside a block quote). Harvested
-18 out-of-scope.
+**Ranked next target:** **cm-302** (last List items case) is a session of its own — probed
+2026-07-20e: `- # Foo` makes roxygen2 hoist the in-item h1 to `\section{Foo}` with an *empty*
+body while the whole `@details` drops (two "mismatched braces" `rdComplete` failures — the
+hoist splits the `\itemize{\item …` mid-braces); a setext h2 inside an item (`- Bar` ⏎
+`  ---` ⏎ `  baz`) instead becomes a nested `(\subsection (TEXT "Bar") (TEXT "baz"))` inside
+the `\item` with **no** warning (probe p5). Needs in-item ATX/setext parsing + the
+hoist-and-drop projection. Then **Tabs** (3/11, 8 remaining) — the biggest single cluster, one
+root cause (tab-column expansion; `list_line_indent` and friends count a tab as one column).
+Lists' remaining 3 (cm-319/320/326) are def-in-item and fence-in-item singles. The linkref 5
+are heterogeneous singles: cm-196 (emphasis inside a leaked label), cm-216 (def resolution
+into a heading title), cm-217/218 (setext promotion grabs the def line — defs strip before
+setext), cm-220 (def inside a block quote). Harvested 18 out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-20d** — item content-indent start conditions (cm-275/276/280/281: `content_leading_spaces` snaps to 1 on a blank remainder or ≥5-column content; `emit_md_indented_code_mid_line`; empty-item immediate-fold arms; projector `md_item_content_leading` twin). Curated ×2, fixtures ×2, 2 units, baseline +2. 912→918, List items 41→45/48.
 
 - **2026-07-20c** — same-line nested list markers (`carve_md_list_markers` carves 1–4-column-separated same-line markers; `ListItemStart::MidLine` + `is_same_line_sublist` recurse with the marker's column as the floor; `1. - 2. foo` triple-nests). Curated `md_list_same_line_nested`, fixture, units, baseline +1. 909→912, List items 39→41/48.
 

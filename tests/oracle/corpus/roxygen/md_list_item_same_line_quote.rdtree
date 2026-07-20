@@ -1,0 +1,4 @@
+(\description (TEXT "T"))
+(\details (\itemize (\item) (TEXT "quoted here") (\item) (TEXT "b")))
+(\seealso (\enumerate (\item) (TEXT "Blockquotecontinued here.")))
+(\title (TEXT "T"))

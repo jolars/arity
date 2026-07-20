@@ -986,11 +986,15 @@ fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
 /// separated by one to four whitespace columns is carved as its own
 /// `RoxygenMdListMarker` leaf, with the separating whitespace pushed as its
 /// own all-whitespace prose run (the block builder keys the nested container
-/// column off it). Five or more separating columns are indented-code
+/// column off it). A `>` in the same one-to-four-column window opens a **block
+/// quote at the item's content start** (`- > quoted`, cm-294/295): the rest of
+/// the line carves as a `RoxygenMdBlockQuote` leaf after the separator run.
+/// Five or more separating columns are indented-code
 /// territory, and a remainder that is a thematic break (`- * * *`) is a
 /// different block, so both leave the remainder in the prose run. The caller
 /// must have checked [`scan_md_list_marker`] at `pos`. Returns the position of
-/// the content after the last carved marker.
+/// the content after the last carved marker (or the line end when the quote
+/// leaf consumed the remainder).
 fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: usize) -> usize {
     let bytes = text.as_bytes();
     let mut p = pos;
@@ -1003,6 +1007,18 @@ fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: us
         }
         if q == end || q >= bytes.len() || q - end > 4 || is_thematic_break(bytes, q) {
             return end;
+        }
+        if bytes[q] == b'>' {
+            push(out, TokKind::RoxygenText, text, start, end, q - end);
+            push(
+                out,
+                TokKind::RoxygenMdBlockQuote,
+                text,
+                start,
+                q,
+                text.len() - q,
+            );
+            return text.len();
         }
         let Some(next_end) = scan_md_list_marker(bytes, q) else {
             return end;

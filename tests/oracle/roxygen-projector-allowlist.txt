@@ -268,6 +268,8 @@ cm-290
 cm-291
 cm-292
 cm-293
+cm-294
+cm-295
 cm-296
 cm-297
 cm-298
@@ -714,6 +716,7 @@ md_list_empty_marker_content
 md_list_first_indented_code
 md_list_item_block_macro
 md_list_item_block_quote
+md_list_item_same_line_quote
 md_list_item_code_block
 md_list_item_indented_code
 md_list_item_para

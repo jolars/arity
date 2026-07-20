@@ -215,11 +215,25 @@ fn is_md_list_continuation(tokens: &[Token], marker: usize) -> bool {
 /// all-whitespace prose run (the marker→marker separator the lexer carved in
 /// `carve_md_list_markers`) followed by a `RoxygenMdListMarker` leaf.
 fn is_same_line_sublist(tokens: &[Token], i: usize) -> bool {
+    is_same_line_child(tokens, i, &TokKind::RoxygenMdListMarker)
+}
+
+/// Whether a list item's content at `i` opens a **same-line block quote**
+/// (`- > quoted`, cm-294/295): the separator run followed by a
+/// `RoxygenMdBlockQuote` leaf the lexer carved in `carve_md_list_markers`.
+fn is_same_line_quote(tokens: &[Token], i: usize) -> bool {
+    is_same_line_child(tokens, i, &TokKind::RoxygenMdBlockQuote)
+}
+
+/// Whether the token at `i` is a marker→child all-whitespace separator run
+/// followed by a leaf of `kind` — the shape `carve_md_list_markers` produces for
+/// a child block starting on the item's marker line.
+fn is_same_line_child(tokens: &[Token], i: usize, kind: &TokKind) -> bool {
     tokens.get(i).is_some_and(|t| {
         is_line_body_kind(&t.kind)
             && !t.text.is_empty()
             && t.text.chars().all(|c| c == ' ' || c == '\t')
-    }) && tokens.get(i + 1).map(|t| &t.kind) == Some(&TokKind::RoxygenMdListMarker)
+    }) && tokens.get(i + 1).map(|t| &t.kind) == Some(kind)
 }
 
 /// The indentation (in columns) of a list line whose `RoxygenMarker` is at
@@ -1108,6 +1122,16 @@ fn emit_md_list_level_inner(
                 content_indent,
                 events,
             );
+            item_has_content = true;
+        } else if is_same_line_quote(tokens, i) {
+            // A block quote opening at the item's content start on the marker
+            // line (`- > quoted`, cm-294/295): the lexer carved the rest of the
+            // line as a `RoxygenMdBlockQuote` leaf past the separator run. The
+            // quote node starts at the leaf — a marker-less first line, the
+            // from-value shape — and gathers its continuation lines (`>` lines
+            // and lazy paragraph text) exactly like a from-value quote.
+            events.push(Event::Tok(i)); // separating whitespace (prose run)
+            i = emit_md_block_quote_from_value(tokens, i + 1, events);
             item_has_content = true;
         } else if item_first_line_opens_indented_code(tokens, i) {
             // The item's content sits five or more columns past the marker, so

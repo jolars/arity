@@ -9554,6 +9554,48 @@ mod tests {
     }
 
     #[test]
+    fn same_line_block_quote_opens_inside_item() {
+        // A block quote opening on the marker line itself (`- > quoted here`)
+        // is the item's content — roxygen2 flattens it to the item text with
+        // the `>` dropped, and a following marker line is a sibling item
+        // (engine-probed; cm-294/295's inner shape).
+        let src = "#' @md\n#' @title T\n#' @details\n#' - > quoted here\n#' - b\n\
+                   #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"quoted here\") (\\item) (TEXT \"b\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn same_line_item_quote_takes_lazy_continuation() {
+        // A plain line after the same-line quote is the quote paragraph's lazy
+        // continuation, glued with no separator (`1. > Blockquote` /
+        // `continued here.` → item text `Blockquotecontinued here.`) — and the
+        // same shape one quote level deeper flattens identically via the outer
+        // quote's reparse (cm-294/295).
+        let src = "#' @md\n#' @title T\n#' @details\n#' 1. > Blockquote\n\
+                   #' continued here.\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\enumerate (\\item) (TEXT \"Blockquotecontinued here.\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+        let outer = "#' @md\n#' @title T\n#' @details\n#' > 1. > Blockquote\n\
+                     #' continued here.\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(outer).contains("(\\details (TEXT \"Blockquotecontinued here.\"))"),
+            "got: {}",
+            project_to_rd(outer)
+        );
+    }
+
+    #[test]
     fn quote_interior_structure_flattens_via_reparse() {
         // roxygen2 renders a quote as `xml_text` over cmark's *parsed* body, so
         // interior markup vanishes: nested `>` markers, a heading's `#`s, and a
