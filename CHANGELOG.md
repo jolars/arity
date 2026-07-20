@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.0](https://github.com/jolars/arity/compare/v0.12.0...v0.13.0) (2026-07-20)
+
+### Features
+- **cli:** add `--force-exclude` for explicit paths ([`0b600ca`](https://github.com/jolars/arity/commit/0b600cadfbc9913c2178937b0162f457e6f50574))
+- **parser:** link-reference definitions parse at the block level ([`86b4a9d`](https://github.com/jolars/arity/commit/86b4a9d54638a55b592bf3db442e5c21c7f13143))
+- **parser:** reference-image resolution parity ([`3504005`](https://github.com/jolars/arity/commit/3504005432de9949bcdee0b54811353e87334f97))
+- **parser:** autolink span wins over the bracket carve ([`787bcbb`](https://github.com/jolars/arity/commit/787bcbbeff79ee519b100b8261799e94ac985d69))
+- **parser:** refmap-aware reference-link chain pairing ([`bf519eb`](https://github.com/jolars/arity/commit/bf519ebff63f6d899cdcf9ff12e7350d25a4df6c))
+- **parser:** escaped open bracket is link-label content ([`7a03ad1`](https://github.com/jolars/arity/commit/7a03ad1076acafdf517d3db24588d28f64a39a7c))
+- **parser:** invalid link-ref labels never define or link ([`ebc4dd4`](https://github.com/jolars/arity/commit/ebc4dd4761f051c4795f010d70fe2fc3fb14fec9))
+- **parser:** cmark-parity link-ref label normalization ([`e0893d2`](https://github.com/jolars/arity/commit/e0893d23382288b9888b1dd4c6879d123dc899fd))
+- **parser:** cmark-parity inline link destinations ([`27f7b5e`](https://github.com/jolars/arity/commit/27f7b5eda483f0dc9fb2b6c560fb4441ddf31ad6))
+- **parser:** block quote laziness state and xml_text flatten ([`e5f03aa`](https://github.com/jolars/arity/commit/e5f03aa01018b681e492e7da645c0fa2998f4808))
+- **parser:** block quote folds into a markdown list item ([`3a37044`](https://github.com/jolars/arity/commit/3a37044ae1226d796842ac8f418759951a24ca0d))
+- **parser:** collapsed reference links under roxygen @md ([`6bc059e`](https://github.com/jolars/arity/commit/6bc059eca11ee3acbb2fda0f25ebf31c419c6aac))
+- **parser:** tilde code fences and CommonMark closer matching ([`06b0b46`](https://github.com/jolars/arity/commit/06b0b46ea0e47be1cd3502cd0f4c6f07ceea692e))
+
 ## [0.12.0](https://github.com/jolars/arity/compare/v0.11.0...v0.12.0) (2026-07-11)
 
 ### Features
