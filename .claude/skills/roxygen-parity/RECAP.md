@@ -317,20 +317,27 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `[ref]: R:ref`. Projector-only `resolve_user_linkrefs` (before `demote_undefined_links`, on the
   original body): `collect_user_linkrefs_tree` (whole-field, recursing into list items) +
   `apply_user_linkrefs`; a def run is consumed only at a **block start** (a def can't interrupt a
-  paragraph). `parse_linkref_def_dest` handles bare/`<…>` dests, same-line title, entity-decode
-  (`&amp;`→`&`), and multi-line dests (`match_linkref_def` gathers across soft breaks). `@section`'s
-  arm runs the same shared `resolve_linkrefs` pipeline. **Formatter:** the prose-reflow bail fires
-  under `@md` when a paragraph's first line (or a tag's prose value) is a link-ref def
-  (`text_is_linkref_def`/`linkref_dest_is_clean`) so consecutive def lines stay unjoined.
-  **Trailing content = not a def, physical-line-scoped.** `[foo]: url \emph{bar}` is not a definition
-  (CommonMark forbids non-whitespace after the dest/optional-title *on its line*) → `foo` stays an
-  undefined shortcut. `match_linkref_def`'s `Text` loop stops at the first non-`Text` inline, so a
-  trailing macro/link was invisible; it now rejects a non-`Text` inline that follows **on the same
-  physical line** (`parse_linkref_def_dest` returns `(url, line_closed)`; `line_closed` = a `SOFT_BREAK`
-  follows the dest/title). Load-bearing: a *stacked* def's next `[r2]` label is also a non-`Text` inline
-  but sits after a `SOFT_BREAK` (a new block) → allowed. `text` never has `\n` (loop breaks at a
-  paragraph break), so a residual line boundary is always a soft wrap. **Backlog:**
-  multi-line def *titles*, cross-list duplicate-label document order.
+  paragraph). `@section`'s arm runs the same shared `resolve_linkrefs` pipeline.
+- **Defs parse at the BLOCK level, from regathered raw source (2026-07-20).** cmark strips defs from
+  a paragraph *before* inline resolution, so `match_linkref_def` regathers the post-label tail from
+  **raw-recoverable** inlines (`linkref_raw_fragment`: `Text` verbatim, raw-HTML leaves — a next-line
+  `<my url>` dest, cm-197 — and `Macro` nodes — `\bar` carved from `/url\bar`, cm-204; resolved
+  emphasis/code/links end the gather) and `parse_linkref_def_tail` runs cmark-after-`double_escape_md`
+  over it: label/dest/title each on their own line, empty `<>` dest ok (its link renders `\url{display}`,
+  cm-202), bare dest raw-paren-balanced (unmatched `)` fails), title longest-match (closes at the first
+  un-`\`-preceded quote, else the last `\`-preceded one — same rule as `inline_dest_span`), title may
+  span soft breaks. **Consumption is whole-LINES**: an invalid/junk-followed *next-line* title falls
+  back to a dest-only def ending at the dest's line (cm-212); same-line junk fails the whole def. A
+  def ending mid-`Text` records a `Some(leftover)` trim (`collect_user_linkrefs` returns a
+  `BTreeMap<usize, Option<String>>`; `apply_user_linkrefs` replaces the inline with the leftover
+  prose). A cross-line label (`[`⏎`foo`⏎`]: /url`, cm-210) works via the shortcut node's flatten.
+  **Formatter:** the reflow bail is now `text_opens_linkref_def` — a conservative SUPERSET (any
+  `[label]:` head whatever the tail, plus a cross-line label opener `[`-no-`]` line): joining def
+  lines can both *destroy* a def (junk lands after the dest) and *create* one (a next line completes
+  an unclosed `<a` angle dest), and over-bailing is verbatim = render-preserving. This closed a
+  LATENT fixed-point bug (reflow was already breaking roxygen2's multi-line defs pre-parity).
+  **Backlog:** cross-list duplicate-label document order; def labels with escaped brackets as
+  multi-line openers (formatter bail is bracket-free-scoped).
 - **A shortcut/reference link with a non-plain display is DROPPED to empty.** roxygen2's `parse_link`:
   after unwrapping a *sole* `code` child (which links — `\code{\link{…}}`), any non-text display child
   → `warn` "markdown links must contain plain text" + `return("")` (link vanishes, prose stays
@@ -1067,68 +1074,65 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 895 matching (all allowlisted), 83 divergent** of 978 pinned. The divergent 83 are the
-per-section backlog (harvested 18, Link reference definitions 10, List items 10, Tabs 8,
-Lists 7, ATX 6, Setext 6, Thematic breaks 3, Images 1, Links 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
+**Current: 903 matching (all allowlisted), 78 divergent** of 981 pinned. The divergent 78 are the
+per-section backlog (harvested 18, List items 10, Tabs 8, Lists 7, ATX 6, Setext 6,
+Link reference definitions 5, Thematic breaks 3, Images 1, Links 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (978 pinned); 83 divergent backlog.
+   Curated + harvested + whole-spec corpora (981 pinned); 78 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 172/172 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 175/175 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-19) — reference-image resolution parity: Images 11→21/22
+## Latest session (2026-07-20) — link-ref defs parse at the block level: Linkrefs 17→22/27
 
-The Images cluster's 11 divergences shared one root: shortcut/collapsed/reference images resolving
-through a **user link-reference definition**. Three sub-fixes, one target:
+Five of the Link-reference-definitions cluster's 10 shared one root: `match_linkref_def` walked
+*resolved inlines* and accepted only plain `Text` after the label, but cmark strips defs from a
+paragraph's **raw source before inline resolution**. Projector-only (CST untouched) + one formatter
+bail; mechanics in the block-level-defs trap above:
 
-- **A (projector): the def's title reaches `\figure`.** roxygen2's `mdxml_image` keeps a
-  definition's title as `\figure`'s *second* argument (`![foo]` + `[foo]: /url "title"` →
-  `\figure{/url}{title}`), while `mdxml_link` ignores it. The refmap value is now a
-  `UserLinkDef { url, title }` (title entity-decoded in `parse_linkref_def_dest`); the
-  `apply_user_linkrefs` image arm rewrites via `rebuilt_inline_image` → `![alt](<url> "title")`
-  (angle-bracketed dest unless the URL has `>`; the title round-trips through
-  `strip_title_delims`' outer-pair strip). Closed cm-579/589/590/593.
-- **B (projector): emphasis-bearing labels match by flatten.** A def's label arrives as a resolved
-  `MdShortcutLink` display and is keyed by its `inline_plain_text` flatten (delimiters gone); an
-  image's label is verbatim source, so `![foo *bar*]` never found `[foo *bar*]: …`. New
-  `md_label_flatten` (resolve via the real `resolve_md_inline` arena + flatten) in the image
-  lookup — the same flatten-not-source-exact approximation the link machinery already makes
-  (mixed-delimiter `*bar*`/`_bar_` pairs would spuriously match; backlog note in the doc). Closed
-  cm-575/591.
-- **C (parser): the collapsed image `![alt][]` is carved.** It had decayed to literal `!` + a
-  collapsed *link*. `scan_md_image`'s reference arm now accepts an empty label. Resolution is
-  **user-def-only**: the collapsed occurrence's own `[alt]` candidate is blocked by
-  `get_md_linkrefs`' `(?=[^\[{])` lookahead (the span is followed by `[`), so no `R:alt` def is
-  synthesized — `resolve_md_image` returns `None` for it and the *serialize* arm now pushes an
-  unresolved image back into the prose run (`push_raw` — glues with adjacent text; it no longer
-  silently drops). The collection gate materializes it anyway (`image_is_collapsed`) so
-  `apply_user_linkrefs` can rewrite it; both skeletons expose `[alt][]` via
-  `image_skeleton_fragment` (a space stand-in would spuriously *unblock* the candidate). Closed
-  cm-586/588 (+ cm-578/587 with B).
+- **`match_linkref_def` regathers raw source.** `linkref_raw_fragment` re-flattens `Text` +
+  raw-HTML leaves + `Macro` nodes verbatim (cm-197's next-line `<my url>` dest had resolved as raw
+  HTML; cm-204's `/url\bar` carved an UNKNOWN macro), with per-piece offsets mapping consumed bytes
+  back to inline indices.
+- **`parse_linkref_def_tail` replaces `parse_linkref_def_dest`** — the full
+  cmark-after-`double_escape_md` grammar: multi-line label/dest/title, empty `<>` dest (cm-202 →
+  `\url{display}`), raw-paren-balanced bare dests, longest-match titles, and the
+  invalid-next-line-title → dest-only fallback (cm-212). Whole-line consumption with `Text` trims
+  (`BTreeMap<usize, Option<String>>` through `collect_user_linkrefs`/`apply_user_linkrefs`).
+- **Formatter: `text_opens_linkref_def`** (supersedes `text_is_linkref_def`/`linkref_dest_is_clean`)
+  — the reflow bail fires on any `[label]:` head or cross-line label opener. Fixes a **latent
+  fixed-point bug**: reflow joined `[`⏎`baz`⏎`]: /qux`⏎`tail prose` into one line, landing junk
+  after the dest and destroying a def roxygen2 had always honored (caught reviewing the format
+  baseline re-bless — the pure-Rust analog `project(parse(x)) == project(parse(format(x)))` diffed).
 
-**Result:** projector **882→895 matching (all allowlisted), 83 divergent**, 0 blocked, of 978
-pinned; 0 regressions. **Images 11→21/22** (only cm-595 left). Curated `md_image_def_title` +
-`md_image_collapsed` + `md_image_emph_label` (R-minted pins confirm all three behaviors, incl. the
-`\if{html}` svg wrap with title). Fixture `roxygen_md_image_collapsed` (lossless, no diagnostics).
-Units `user_def_title_reaches_figure`, `collapsed_image_resolves_only_via_user_def`,
-`emphasis_label_image_matches_flattened_def`. Format baseline +3 (the new corpus cases; additions
-only). Fixed-point 172/172. Full suite + clippy + fmt green.
+**Result:** projector **895→903 matching (all allowlisted), 78 divergent**, 0 blocked, of 981
+pinned; 0 regressions. **Link reference definitions 17→22/27** (cm-197/202/204/210/212 closed).
+Curated `md_linkref_multiline_def` + `md_linkref_def_fallback` + `md_linkref_def_dest_edge`
+(R-minted pins; R probes confirmed the unmatched-`)`/unclosed-angle/same-line-junk failures and the
+next-line-title fallback). Units `multiline_linkref_def_consumes_label_dest_and_title_lines`,
+`invalid_next_line_title_falls_back_to_dest_only_def`,
+`linkref_def_dest_parity_mirrors_cmark_after_double_escape` (projector) + the rewritten
+`linkref_def_detection` (formatter). Format baseline +3/±1 (`md_url_reference_multiline` now stays
+unjoined — verbatim, render-identical). Fixed-point 175/175. Full suite + clippy + fmt green. Also
+committed `examples/rdproj` (print `project_to_rd` of a file/stdin — the projection-dump tool every
+session was re-deriving).
 
-**Ranked next target:** **Link reference definitions** (17/27) and **List items** (38/48, the
-indent shapes) are the big clusters. Images' last is cm-595 (`\![foo]`: after `double_escape_md`
-the `\\` is literal `\` and `![foo]` IS an image, but the emitted `\`+`\figure{…}` re-pair in
-parse_Rd → literal `\figure` + two LISTs — an escape-pairing repair *across* a text/macro atom
-boundary, specialized). Links cm-512 (cross-line dest+title) stays deferred. Harvested 18
-out-of-scope.
+**Ranked next target:** **List items** (38/48, the indent shapes) and **Lists** (19/26) are the big
+clusters; **Tabs** (3/11) likely shares indent-column roots with them. The remaining linkref 5 are
+heterogeneous singles: cm-196 (emphasis inside a leaked label), cm-216 (def resolution into a
+heading title), cm-217/218 (setext promotion grabs the def line — defs strip before setext), cm-220
+(def inside a block quote). Harvested 18 out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-19** — reference-image resolution parity (def titles reach `\figure` via `UserLinkDef`; emphasis labels match by `md_label_flatten`; collapsed `![alt][]` carved, user-def-only resolution). Curated ×3, fixture, 3 units, baseline +3. 882→895, Images 11→21/22.
 
 - **2026-07-15c** — autolink wins over the bracket carve (cm-528; `resolve_multiline_spans` gains the autolink/email scanners at a prose `<` in `handle_pointy_brace` order; a match covers the carved `](uri)` and becomes an MD_LINK node, projected as the opaque autolink leaf). Curated `md_autolink_bracket`, fixture, unit, baseline +1. 880→882, Links 88→89/90.
 

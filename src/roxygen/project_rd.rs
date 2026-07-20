@@ -3935,13 +3935,21 @@ fn apply_user_linkrefs(
     let dropped = if consume_defs {
         collect_user_linkrefs(body).1
     } else {
-        std::collections::BTreeSet::new()
+        std::collections::BTreeMap::new()
     };
     let mut out = Vec::with_capacity(body.len());
     let mut changed = !dropped.is_empty();
     for (i, inl) in body.iter().enumerate() {
-        if dropped.contains(&i) {
-            continue;
+        match dropped.get(&i) {
+            // Wholly part of a consumed definition run.
+            Some(None) => continue,
+            // A `Text` whose leading lines a definition consumed: the remainder
+            // stays prose (cm-212's `"title" ok`).
+            Some(Some(leftover)) => {
+                out.push(Inline::Text(leftover.clone()));
+                continue;
+            }
+            None => {}
         }
         if let Some(label) = link_ref_label(inl)
             && let Some(def) = urls.get(&normalize_linkref_label(&label))
@@ -4046,26 +4054,32 @@ fn rebuilt_inline_image(alt: &str, def: &UserLinkDef) -> String {
 }
 
 /// Scan a field body for user link-reference definitions, returning the
-/// (normalized-label → destination) map and the set of body indices that are part
-/// of a definition (and so must be dropped from the rendered output). A definition
-/// run is consumed only at a *block start* (the body start, or right after a `Text`
-/// containing a newline — a paragraph break): a definition cannot interrupt a
-/// paragraph (CommonMark). Within a run, consecutive definitions are separated by a
-/// whitespace-only `Text` (a soft line break), which is also dropped.
+/// (normalized-label → destination) map and the per-index consumption actions: a
+/// body index mapped to `None` is wholly part of a definition (dropped from the
+/// rendered output); one mapped to `Some(leftover)` is a `Text` whose leading
+/// lines a definition consumed, leaving `leftover` as prose (a definition always
+/// consumes whole source lines, so a partially-consumed inline is always a `Text`
+/// cut at a line boundary). A definition run is consumed only at a *block start*
+/// (the body start, or right after a `Text` containing a newline — a paragraph
+/// break): a definition cannot interrupt a paragraph (CommonMark). Within a run,
+/// consecutive definitions are separated by a whitespace-only `Text` (a soft line
+/// break), which is also dropped.
 fn collect_user_linkrefs(
     body: &[Inline],
 ) -> (
     std::collections::HashMap<String, UserLinkDef>,
-    std::collections::BTreeSet<usize>,
+    std::collections::BTreeMap<usize, Option<String>>,
 ) {
     let mut urls: std::collections::HashMap<String, UserLinkDef> = std::collections::HashMap::new();
-    let mut dropped = std::collections::BTreeSet::new();
+    let mut dropped = std::collections::BTreeMap::new();
     let mut i = 0;
     let mut block_start = true;
     while i < body.len() {
         if block_start && let Some(end) = scan_linkref_run(body, i, &mut urls, &mut dropped) {
             i = end;
             // The remainder of this block (if any) is prose, not definitions.
+            // A trimmed `Text` at `end` still feeds the block-start update below
+            // (its leftover carries the original's paragraph break, if any).
             block_start = false;
             continue;
         }
@@ -4081,12 +4095,15 @@ fn collect_user_linkrefs(
 /// leading-whitespace indentation and the whitespace-only soft breaks that separate
 /// stacked definitions (both dropped). Returns the exclusive end index of the run,
 /// or `None` when no definition begins the block. Whitespace *after* the last
-/// definition is left untouched (it belongs to the following prose).
+/// definition is left untouched (it belongs to the following prose). A definition
+/// that consumes only the leading lines of a `Text` records the remainder as a
+/// `Some(leftover)` trim and ends the run — the leftover is mid-block prose, and a
+/// definition cannot interrupt a paragraph.
 fn scan_linkref_run(
     body: &[Inline],
     start: usize,
     urls: &mut std::collections::HashMap<String, UserLinkDef>,
-    dropped: &mut std::collections::BTreeSet<usize>,
+    dropped: &mut std::collections::BTreeMap<usize, Option<String>>,
 ) -> Option<usize> {
     let mut end = start;
     let mut any = false;
@@ -4100,28 +4117,40 @@ fn scan_linkref_run(
             }
             k += 1;
         }
-        let Some((label, def, def_end)) = match_linkref_def(body, k) else {
+        let Some((label, def, def_end, leftover)) = match_linkref_def(body, k) else {
             break;
         };
         urls.entry(normalize_linkref_label(&label)).or_insert(def);
         for idx in end..def_end {
-            dropped.insert(idx);
+            dropped.insert(idx, None);
         }
         any = true;
         end = def_end;
+        if let Some(left) = leftover {
+            dropped.insert(end, Some(left));
+            break;
+        }
     }
     any.then_some(end)
 }
 
 /// Match a single link-reference definition at body index `j`: a shortcut-shaped
-/// label link (`[label]`) followed by `Text` of the form `: <destination> [title]`.
-/// The destination (and optional title) may continue across soft line breaks, so
-/// the trailing `Text` run is concatenated — joining continuation lines — up to (but
-/// not including) a paragraph break (a `Text` containing `\n`) or a non-`Text`
-/// inline. Returns `(label, definition, def_end)` where `def_end` is the exclusive
-/// body index just past the consumed definition, or `None` when the shape does not
-/// hold.
-fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, UserLinkDef, usize)> {
+/// label link (`[label]`) followed by raw text of the form `: <destination>
+/// [title]`. The tail is gathered from the following *raw-recoverable* inlines —
+/// `Text` verbatim, plus leaves the inline lexer may have carved out of what is
+/// really definition text (a next-line `<my url>` destination reads as raw HTML,
+/// a `\bar` backslash-word in a destination as an unknown macro) — and parsed by
+/// [`parse_linkref_def_tail`], cmark's block-level definition parse (which runs
+/// *before* inline resolution in cmark; the raw regather is what restores that
+/// ordering here). Returns `(label, definition, def_end, leftover)`: `def_end` is
+/// the body index of the first inline not wholly consumed, and `leftover` is
+/// `Some` when that inline is a `Text` whose leading lines the definition
+/// consumed (the suffix stays prose — cm-212's `"title" ok` line). `None` when
+/// the shape does not hold.
+fn match_linkref_def(
+    body: &[Inline],
+    j: usize,
+) -> Option<(String, UserLinkDef, usize, Option<String>)> {
     let inl = body.get(j)?;
     let label = linkref_def_label(inl)?;
     // A label that cannot close (trailing backslash) or is blank defines nothing —
@@ -4130,31 +4159,64 @@ fn match_linkref_def(body: &[Inline], j: usize) -> Option<(String, UserLinkDef, 
     if link_ref_label_unusable(inl) {
         return None;
     }
+    // Gather the raw tail with each piece's end offset, so consumed bytes map back
+    // to inline indices. The gather stops at the first inline whose source is not
+    // recoverable (a resolved link node, emphasis, a code span, …).
     let mut text = String::new();
+    let mut piece_ends: Vec<usize> = Vec::new();
     let mut k = j + 1;
-    while let Some(Inline::Text(t)) = body.get(k) {
-        if t.contains('\n') {
-            break; // a paragraph break ends the definition's block
-        }
-        text.push_str(t);
+    while let Some(frag) = body.get(k).and_then(linkref_raw_fragment) {
+        text.push_str(&frag);
+        piece_ends.push(text.len());
         k += 1;
     }
-    if k == j + 1 {
-        return None; // no trailing text — not a definition
-    }
-    let (def, line_closed) = parse_linkref_def_dest(&text)?;
-    // The `Text` run stops at the first non-`Text` inline (a macro, an inline link,
-    // the next definition's label, …). When that inline sits on the *same physical
-    // line* as the destination, it is trailing content — CommonMark forbids anything
-    // but whitespace after the destination (and optional title), so this is not a
-    // definition (e.g. `[foo]: url \emph{bar}`). But when a line boundary (a
-    // `SOFT_BREAK`) already closed the destination's line, the inline begins a new
-    // block (the next stacked `[r2]: …` definition, say) and is fine. Only end-of-body
-    // or a paragraph break (a `Text` carrying `\n`) may otherwise follow.
-    if !line_closed && !matches!(body.get(k), None | Some(Inline::Text(_))) {
+    let (def, consumed) = parse_linkref_def_tail(&text)?;
+    // Everything gathered was consumed, the definition's last line is not closed
+    // by a line boundary, and another inline follows: that inline is trailing
+    // content on the definition's line — CommonMark forbids anything but
+    // whitespace after the destination (and optional title), so this is not a
+    // definition (e.g. `[foo]: url \emph{bar}`). A stacked next definition's
+    // label is fine: its line boundary was consumed.
+    if consumed == text.len() && body.get(k).is_some() && !text[..consumed].ends_with(SOFT_BREAK) {
         return None;
     }
-    Some((label, def, k))
+    // Map the consumed bytes back onto the gathered inlines.
+    let mut piece_start = 0;
+    for (offset, end) in piece_ends.iter().enumerate() {
+        let idx = j + 1 + offset;
+        if consumed >= *end {
+            piece_start = *end;
+            continue;
+        }
+        if consumed == piece_start {
+            return Some((label, def, idx, None));
+        }
+        // A definition consumes whole source lines, and line boundaries live only
+        // in `Text` pieces — so a mid-piece cut is always a `Text`.
+        let Some(Inline::Text(t)) = body.get(idx) else {
+            return None;
+        };
+        let leftover = t[consumed - piece_start..].to_string();
+        return Some((label, def, idx, Some(leftover)));
+    }
+    Some((label, def, k, None))
+}
+
+/// The verbatim source of an inline a link-reference definition's tail may span,
+/// or `None` when the source is not recoverable from the resolved form. cmark
+/// parses definitions at the *block* level, before inline resolution — so a
+/// definition's destination or title may have been carved by arity's inline pass
+/// into a raw-HTML leaf (`<my url>`, cm-197) or an unknown Rd macro (`\bar` in
+/// `/url\bar\*baz`, cm-204). Those leaves carry their source verbatim and are
+/// re-flattened here; resolved nodes that lost delimiters (emphasis, code spans,
+/// links) end the gather instead.
+fn linkref_raw_fragment(inl: &Inline) -> Option<Cow<'_, str>> {
+    match inl {
+        Inline::Text(t) => Some(Cow::Borrowed(t)),
+        Inline::MdHtml(raw) => Some(Cow::Borrowed(raw)),
+        Inline::Macro(node) => Some(Cow::Owned(node.text().to_string())),
+        _ => None,
+    }
 }
 
 /// The label of a shortcut-shaped link (`[label]`) — the form a link-reference
@@ -4175,57 +4237,184 @@ fn linkref_def_label(inl: &Inline) -> Option<String> {
     }
 }
 
-/// Parse a link-reference definition's destination from the `Text` that follows the
-/// label (`: <destination> [title]`). The destination is angle-bracketed (`<…>`,
-/// brackets stripped) or a non-whitespace run; an optional title (`"…"`, `'…'`, or
-/// `(…)`) may follow. Returns `(definition, line_closed)` — where `line_closed`
-/// reports whether a line boundary ([`SOFT_BREAK`]) follows the destination/title
-/// (so a subsequent inline begins a *new* block, not trailing content) — or `None`
-/// when the text is not a clean single-node definition (trailing non-title content
-/// makes it a paragraph, not a definition). `text` never carries `\n` (the caller's
-/// loop stops at a paragraph break), so a line boundary here is always a soft wrap.
-fn parse_linkref_def_dest(text: &str) -> Option<(UserLinkDef, bool)> {
-    let rest = text.strip_prefix(':')?.trim_start();
-    let (url, after) = if let Some(r) = rest.strip_prefix('<') {
-        let close = r.find('>')?;
-        (r[..close].to_string(), &r[close + 1..])
-    } else {
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        (rest[..end].to_string(), &rest[end..])
-    };
-    if url.is_empty() {
+/// Parse a link-reference definition's tail — the raw text after the label
+/// (`: <destination> [title]`) — mirroring cmark's block-level definition parse
+/// *after* roxygen2's `double_escape_md` (every source backslash doubles, so no
+/// source backslash ever escapes an angle bracket or a paren; a title closer
+/// *may* be escaped — the longest-match rule, exactly as `inline_dest_span`).
+/// Line boundaries: a [`SOFT_BREAK`] is a soft wrap (the definition may
+/// continue), a `\n` is a paragraph break (a hard stop). The destination may sit
+/// on the line after the `:` (cm-197), is angle-bracketed (`<…>`, possibly empty
+/// — cm-202) or a non-whitespace run with raw-balanced parens; the title may
+/// follow on the same line or the next, and may itself span soft wraps (its
+/// interior soft breaks flatten to spaces). An invalid or junk-followed title
+/// that started on its *own* line falls back to a destination-only definition
+/// ending at the destination's line (cm-212); on the destination's line it
+/// invalidates the whole definition. Returns `(definition, consumed)` where
+/// `consumed` is the byte length of `text` the definition consumed — always a
+/// line boundary: just past a `SOFT_BREAK`, at a `\n`, or the text's end.
+fn parse_linkref_def_tail(text: &str) -> Option<(UserLinkDef, usize)> {
+    const SB: u8 = 0x0C; // SOFT_BREAK as a byte
+    let bytes = text.as_bytes();
+    if bytes.first() != Some(&b':') {
         return None;
     }
+    // Whitespace before the destination: spaces/tabs and at most one soft line
+    // boundary (CommonMark allows the destination on the line after the colon; a
+    // blank line — our `\n` — means there is no destination).
+    let mut i = 1;
+    let mut broke = false;
+    loop {
+        match bytes.get(i) {
+            Some(&b' ' | &b'\t') => i += 1,
+            Some(&SB) if !broke => {
+                broke = true;
+                i += 1;
+            }
+            _ => break,
+        }
+    }
+    let (url, p) = if bytes.get(i) == Some(&b'<') {
+        // Angle-bracketed destination: to the first `>` on the same line; no raw
+        // `<` inside. May be empty (`<>`, cm-202).
+        let mut q = i + 1;
+        loop {
+            match bytes.get(q) {
+                None | Some(&(b'<' | b'\n' | SB)) => return None,
+                Some(&b'>') => break,
+                Some(_) => q += 1,
+            }
+        }
+        (&text[i + 1..q], q + 1)
+    } else {
+        // Bare destination: a nonempty run to the first ASCII whitespace, parens
+        // balanced by raw count (after doubling, `\(`/`\)` are active parens; an
+        // unmatched `)` invalidates the definition).
+        let mut q = i;
+        let mut depth = 0usize;
+        loop {
+            match bytes.get(q) {
+                None => break,
+                Some(&b) if b.is_ascii_whitespace() => break,
+                Some(&b'(') => {
+                    depth += 1;
+                    q += 1;
+                }
+                Some(&b')') if depth == 0 => return None,
+                Some(&b')') => {
+                    depth -= 1;
+                    q += 1;
+                }
+                Some(_) => q += 1,
+            }
+        }
+        if depth != 0 || q == i {
+            return None;
+        }
+        (&text[i..q], q)
+    };
     // cmark entity-decodes link destinations (`&amp;` → `&`), so a defined href
     // carries the decoded URL. (The destination is otherwise verbatim — no
     // percent re-encoding.)
-    let url = decode_html_entities(&url);
-    if after.trim_start().is_empty() {
-        let def = UserLinkDef {
-            url,
-            title: String::new(),
-        };
-        return Some((def, after.contains(SOFT_BREAK)));
+    let url = decode_html_entities(url);
+    // Trailing space on the destination's line; then either the line ends (a
+    // definition so far — a title may still follow on the next line) or a title
+    // must begin after at least one space.
+    let mut q = p;
+    while matches!(bytes.get(q), Some(&b' ' | &b'\t')) {
+        q += 1;
     }
-    // An optional title; anything else means this is not a valid definition.
-    let after = after.trim_start();
-    let close = match after.as_bytes()[0] {
-        b'"' => '"',
-        b'\'' => '\'',
-        b'(' => ')',
-        _ => return None,
+    let dest_only = |consumed: usize| {
+        Some((
+            UserLinkDef {
+                url: url.clone(),
+                title: String::new(),
+            },
+            consumed,
+        ))
     };
-    let title_rest = &after[1..];
-    let end = title_rest.find(close)?;
-    let residual = &title_rest[end + 1..];
-    residual.trim().is_empty().then(|| {
-        let def = UserLinkDef {
-            url,
-            // The title is cmark-visible text, so entities decode there too.
-            title: decode_html_entities(&title_rest[..end]),
-        };
-        (def, residual.contains(SOFT_BREAK))
-    })
+    // `Some(next)` = the destination's line is closed and `next` is its
+    // consumed-through end (the destination-only fallback); `None` = the title
+    // (if any) shares the destination's line, so a failed title fails the whole
+    // definition.
+    let dest_line_end = match bytes.get(q) {
+        None => return dest_only(bytes.len()),
+        Some(&b'\n') => return dest_only(q),
+        Some(&SB) => Some(q + 1),
+        _ if q == p => return None, // content abutting the destination
+        _ => None,
+    };
+    let fallback = || dest_line_end.and_then(dest_only);
+    let title_start = match dest_line_end {
+        Some(next) => {
+            let mut t = next;
+            while matches!(bytes.get(t), Some(&b' ' | &b'\t')) {
+                t += 1;
+            }
+            t
+        }
+        None => q,
+    };
+    let close = match bytes.get(title_start) {
+        Some(&b'"') => b'"',
+        Some(&b'\'') => b'\'',
+        Some(&b'(') => b')',
+        _ => return fallback(),
+    };
+    let nested_open = bytes[title_start];
+    // The title is scanned longest-match (cmark's re2c title pattern): after
+    // doubling, a source-backslash-preceded closer is *optionally* escaped, so
+    // the title runs to the first closer NOT preceded by a `\` — or, when every
+    // closer is `\`-preceded, to the last one. An interior `(` in a `(…)` title
+    // is likewise allowed only when `\`-preceded. A paragraph break before the
+    // closer fails the title.
+    let mut m = title_start + 1;
+    let mut escapable_close = None;
+    let title_end;
+    loop {
+        match bytes.get(m) {
+            None | Some(&b'\n') => match escapable_close {
+                Some(e) => {
+                    title_end = e;
+                    break;
+                }
+                None => return fallback(),
+            },
+            Some(&c) if c == close => {
+                if bytes[m - 1] == b'\\' {
+                    escapable_close = Some(m);
+                    m += 1;
+                } else {
+                    title_end = m;
+                    break;
+                }
+            }
+            Some(&c) if nested_open == b'(' && c == b'(' => {
+                if bytes[m - 1] == b'\\' {
+                    m += 1;
+                } else {
+                    return fallback();
+                }
+            }
+            Some(_) => m += 1,
+        }
+    }
+    // Only whitespace may follow the title on its line; junk falls back (title
+    // on its own line) or fails the definition (title on the destination's).
+    let mut r = title_end + 1;
+    while matches!(bytes.get(r), Some(&b' ' | &b'\t')) {
+        r += 1;
+    }
+    let consumed = match bytes.get(r) {
+        None => bytes.len(),
+        Some(&b'\n') => r,
+        Some(&SB) => r + 1,
+        _ => return fallback(),
+    };
+    // The title is cmark-visible text, so entities decode there too; an interior
+    // soft wrap flattens to a space (the title spanned lines, cm-197's probes).
+    let title = decode_html_entities(&text[title_start + 1..title_end]).replace(SOFT_BREAK, " ");
+    Some((UserLinkDef { url, title }, consumed))
 }
 
 /// Decode the HTML character references cmark resolves: every semicolon-terminated
@@ -9890,6 +10079,87 @@ mod tests {
             project_to_rd(undefined).contains("(\\figure (VERB \"R:foo%20*bar*\"))"),
             "got: {}",
             project_to_rd(undefined)
+        );
+    }
+
+    #[test]
+    fn multiline_linkref_def_consumes_label_dest_and_title_lines() {
+        // cmark parses a link-reference definition at the block level, before
+        // inline resolution: the label, destination, and title may each sit on
+        // their own line (cm-197 — the next-line `<my url>` destination reads as
+        // raw HTML to the inline pass and must be regathered as raw source), and
+        // the label itself may span lines (cm-210 — the def consumes through the
+        // destination's line, later prose stays).
+        let src = "#' @md\n#' @title T\n#' @details\n#' [Foo bar]:\n#' <my url>\n#' 'title'\n\
+                   #'\n#' [Foo bar]\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\details (\\href (VERB \"my url\") (TEXT \"Foo bar\")))"),
+            "multi-line def resolves the shortcut, got: {rd}"
+        );
+        let cross = "#' @md\n#' @title T\n#' @details\n#' [\n#' foo\n#' ]: /url\n#' bar\n\
+                     #' @name x\nNULL\n";
+        assert!(
+            project_to_rd(cross).contains("(\\details (TEXT \"bar\"))"),
+            "cross-line label def is consumed, prose after it stays, got: {}",
+            project_to_rd(cross)
+        );
+    }
+
+    #[test]
+    fn invalid_next_line_title_falls_back_to_dest_only_def() {
+        // A title on the line after the destination that is followed by junk (or
+        // never closes) fails the *title*, not the definition: cmark backtracks
+        // to the destination-only form ending at the destination's line, and the
+        // title line stays prose (cm-212). Junk after a title on the
+        // *destination's* line fails the whole definition (cm-209's tail rule).
+        let src = "#' @md\n#' @title T\n#' @details\n#' [foo]: /url\n#' \"title\" ok\n\
+                   #'\n#' [foo]\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(TEXT \"\\\"title\\\" ok\") (\\href (VERB \"/url\") (TEXT \"foo\"))"),
+            "dest-only fallback, title line stays prose, got: {rd}"
+        );
+        let same_line = "#' @md\n#' @title T\n#' @details\n#' [bar]: /b 'title' junk\n\
+                         #'\n#' [bar]\n#' @name x\nNULL\n";
+        assert!(
+            project_to_rd(same_line)
+                .contains("(\\link (TEXT \"bar\")) (TEXT \": /b 'title' junk\")"),
+            "same-line junk fails the whole def, got: {}",
+            project_to_rd(same_line)
+        );
+    }
+
+    #[test]
+    fn linkref_def_dest_parity_mirrors_cmark_after_double_escape() {
+        // Destination edges after `double_escape_md`: an empty angle destination
+        // `<>` is a valid definition (its empty-URL link renders roxygen2's
+        // `\url{display}`, cm-202); a backslash-bearing bare destination is
+        // verbatim — no source backslash escapes anything — and its same-line
+        // title closes longest-match at the last escapable quote (cm-204); an
+        // unmatched `)` in a bare destination fails the definition.
+        let empty = "#' @md\n#' @title T\n#' @details\n#' [foo]: <>\n#'\n#' [foo]\n\
+                     #' @name x\nNULL\n";
+        assert!(
+            project_to_rd(empty).contains("(\\details (\\url (VERB \"foo\")))"),
+            "empty angle dest defines, got: {}",
+            project_to_rd(empty)
+        );
+        let escapes = "#' @md\n#' @title T\n#' @details\n\
+                       #' [foo]: /url\\bar\\*baz \"foo\\\"bar\\baz\"\n#'\n#' [foo]\n\
+                       #' @name x\nNULL\n";
+        assert!(
+            project_to_rd(escapes)
+                .contains("(\\details (\\href (VERB \"/url\\\\bar\\\\*baz\") (TEXT \"foo\")))"),
+            "backslash dest is verbatim, longest-match title, got: {}",
+            project_to_rd(escapes)
+        );
+        let unbalanced = "#' @md\n#' @title T\n#' @details\n#' [foo]: /url)x\n#'\n#' [foo]\n\
+                          #' @name x\nNULL\n";
+        assert!(
+            project_to_rd(unbalanced).contains("(\\link (TEXT \"foo\")) (TEXT \": /url)x\")"),
+            "unmatched `)` fails the def, got: {}",
+            project_to_rd(unbalanced)
         );
     }
 

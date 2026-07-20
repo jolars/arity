@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\href (VERB "my url") (TEXT "Foo bar")) (TEXT "tail prose"))
+(\title (TEXT "T"))

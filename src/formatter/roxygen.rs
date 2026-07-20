@@ -879,9 +879,9 @@ struct TagUnit {
     chunks: Vec<String>,
     /// Source lines (tag line first), kept for the verbatim fallback.
     lines: Vec<PhysicalLine>,
-    /// Whether the tag's own prose value (the field's block start) is a
+    /// Whether the tag's own prose value (the field's block start) opens a
     /// link-reference definition, in which case reflow must not join it with the
-    /// absorbed continuations (see [`line_is_linkref_def`]).
+    /// absorbed continuations (see [`text_opens_linkref_def`]).
     first_is_linkref_def: bool,
 }
 
@@ -895,7 +895,7 @@ impl TagUnit {
             header: tag_header(tag).unwrap_or_else(|| "@".to_string()),
             chunks,
             lines: vec![line.clone()],
-            first_is_linkref_def: text_is_linkref_def(&tag_first_line_value(tag)),
+            first_is_linkref_def: text_opens_linkref_def(&tag_first_line_value(tag)),
         }
     }
 
@@ -982,7 +982,7 @@ fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> boo
     // changes the atom count (Tenet 1).
     lines.iter().any(line_has_sticky_swallow)
         || if md {
-            text_is_linkref_def(first_text)
+            text_opens_linkref_def(first_text)
                 || lines.iter().any(line_has_md_percent_swallow)
                 || lines.iter().any(line_has_cross_line_verbatim_span)
                 || lines.iter().any(line_has_leaky_cross_line_link)
@@ -1811,72 +1811,41 @@ fn line_has_sticky_swallow(line: &PhysicalLine) -> bool {
     false
 }
 
-/// Whether `text` (a line's or tag value's content) is a CommonMark
-/// link-reference definition (`[label]: destination [optional title]`) — a leaf
-/// block cmark consumes, rendering nothing while giving every referencing link a
-/// destination. Joining such a line with adjacent content during reflow turns it
-/// back into ordinary prose (the destination would absorb the following words, or
-/// a second stacked definition would land in the title slot), so a referencing
-/// link renders as an R-topic `\link` over leaked literal text instead of the
-/// intended `\href` — a change in the rendered Rd (Tenet 1). A markdown paragraph
-/// whose first line is one is therefore kept verbatim. A definition is recognized
-/// only at a block start, which is why the caller checks the paragraph's *first*
-/// line; a later definition-shaped line is a paragraph continuation (it cannot
-/// interrupt), and joining it is render-preserving. Mirrors the projector's
-/// `parse_linkref_def_dest`.
-fn text_is_linkref_def(text: &str) -> bool {
+/// Whether `text` (a paragraph's or tag value's first line) *opens* a CommonMark
+/// link-reference definition — a leaf block cmark consumes, rendering nothing
+/// while giving every referencing link a destination. A definition may span
+/// lines (the label, destination, and title can each sit on their own line), and
+/// joining its lines during reflow can both *destroy* one (following prose lands
+/// after the destination as junk, cm-210's tail) and *create* one (a next-line
+/// `b>` completes an unclosed `<a` angle destination), either way changing the
+/// rendered Rd (Tenet 1) — so a markdown paragraph whose first line opens a
+/// possible definition is kept verbatim. The check is deliberately a superset of
+/// "is a complete definition": any `[label]:` head bails, whatever follows, and
+/// so does a cross-line label opener (a `[` whose label does not close on this
+/// line, cm-210). Over-bailing only forgoes reflow — verbatim output is always
+/// render-preserving. A definition is recognized only at a block start, which is
+/// why the caller checks the paragraph's *first* line; a later definition-shaped
+/// line is a paragraph continuation (it cannot interrupt), and joining it is
+/// render-preserving. The projector's `parse_linkref_def_tail` holds the full
+/// grammar.
+fn text_opens_linkref_def(text: &str) -> bool {
     let Some(rest) = text.strip_prefix('[') else {
         return false;
     };
-    // Label: a bracket-free run up to the closing `]`, non-empty after trimming.
-    let Some(close) = rest.find(']') else {
-        return false;
-    };
-    if rest[..close].trim().is_empty() {
-        return false;
+    match rest.find(']') {
+        // Cross-line label opener: the label does not close on this line, so a
+        // multi-line definition may begin here. Mirrors the lexer's bracket-free
+        // restriction (a second `[` is not a definition label).
+        None => !rest.contains('['),
+        // A `[label]:` head (label bracket-free and non-blank, colon immediately
+        // after the `]`): a definition or a possible multi-line one — bail either
+        // way, whatever the destination/title tail holds.
+        Some(close) => {
+            !rest[..close].trim().is_empty()
+                && !rest[..close].contains('[')
+                && rest[close + 1..].starts_with(':')
+        }
     }
-    linkref_dest_is_clean(&rest[close + 1..])
-}
-
-/// Whether `text` (everything after a link label's closing `]`) is a clean
-/// `: destination [title]` with no trailing content — the test that decides
-/// whether cmark accepts the line as a link-reference definition rather than a
-/// paragraph. The destination is angle-bracketed (`<…>`) or a non-whitespace run;
-/// an optional title (`"…"`, `'…'`, or `(…)`) may follow. Mirrors the projector's
-/// `parse_linkref_def_dest`.
-fn linkref_dest_is_clean(text: &str) -> bool {
-    let Some(rest) = text.strip_prefix(':') else {
-        return false;
-    };
-    let rest = rest.trim_start();
-    let (url, after) = if let Some(r) = rest.strip_prefix('<') {
-        let Some(close) = r.find('>') else {
-            return false;
-        };
-        (&r[..close], &r[close + 1..])
-    } else {
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        (&rest[..end], &rest[end..])
-    };
-    if url.is_empty() {
-        return false;
-    }
-    let after = after.trim_start();
-    if after.is_empty() {
-        return true;
-    }
-    // An optional title; anything else means this is not a definition.
-    let close = match after.as_bytes()[0] {
-        b'"' => '"',
-        b'\'' => '\'',
-        b'(' => ')',
-        _ => return false,
-    };
-    let title_rest = &after[1..];
-    let Some(end) = title_rest.find(close) else {
-        return false;
-    };
-    title_rest[end + 1..].trim().is_empty()
 }
 
 /// The block's resolved markdown mode (a standalone `@md`/`@noMd` directive line,
@@ -1974,30 +1943,45 @@ fn normalize_roxygen_line(line: &PhysicalLine) -> String {
 mod tests {
     use super::*;
 
-    /// `text_is_linkref_def` recognizes exactly the line shapes cmark accepts as a
-    /// link-reference definition, so the reflow bail fires only when joining the
-    /// line would change the rendered Rd.
+    /// `text_opens_linkref_def` recognizes every line shape that can open a
+    /// (possibly multi-line) link-reference definition, so the reflow bail keeps
+    /// such a paragraph verbatim — joining could destroy or create a definition,
+    /// changing the rendered Rd.
     #[test]
     fn linkref_def_detection() {
-        // Clean definitions: bare, angle-bracketed, and titled.
-        assert!(text_is_linkref_def("[foo]: https://example.com"));
-        assert!(text_is_linkref_def("[foo]: <https://example.com>"));
-        assert!(text_is_linkref_def(
+        // Complete same-line definitions: bare, angle-bracketed, and titled.
+        assert!(text_opens_linkref_def("[foo]: https://example.com"));
+        assert!(text_opens_linkref_def("[foo]: <https://example.com>"));
+        assert!(text_opens_linkref_def(
             "[foo]: https://example.com \"a title\""
         ));
-        assert!(text_is_linkref_def("[foo]: https://example.com 'a title'"));
-        assert!(text_is_linkref_def("[foo]: https://example.com (a title)"));
+        assert!(text_opens_linkref_def(
+            "[foo]: https://example.com 'a title'"
+        ));
+        assert!(text_opens_linkref_def(
+            "[foo]: https://example.com (a title)"
+        ));
 
-        // Not a definition: missing colon, empty label, empty destination, or
-        // trailing non-title content (cmark treats these as a paragraph, where a
-        // join is render-preserving, so the bail must not fire).
-        assert!(!text_is_linkref_def("[foo] https://example.com"));
-        assert!(!text_is_linkref_def("[]: https://example.com"));
-        assert!(!text_is_linkref_def("[foo]:"));
-        assert!(!text_is_linkref_def(
+        // Multi-line openers: a bare `[label]:` head (destination on the next
+        // line), an unclosed angle destination (a next-line `b>` would complete
+        // it), a messy tail (junk now, but the join outcome is unknowable
+        // line-locally — conservative bail), and a cross-line label opener.
+        assert!(text_opens_linkref_def("[foo]:"));
+        assert!(text_opens_linkref_def("[foo]: <https://example"));
+        assert!(text_opens_linkref_def(
             "[foo]: https://example.com trailing junk"
         ));
-        assert!(!text_is_linkref_def("just some prose"));
-        assert!(!text_is_linkref_def("[foo] and [bar] in prose."));
+        assert!(text_opens_linkref_def("["));
+        assert!(text_opens_linkref_def("[foo"));
+
+        // Cannot open a definition: no colon after the label, a blank or
+        // bracket-bearing label, or no bracket at all (a join is
+        // render-preserving, so the bail must not fire).
+        assert!(!text_opens_linkref_def("[foo] https://example.com"));
+        assert!(!text_opens_linkref_def("[]: https://example.com"));
+        assert!(!text_opens_linkref_def("just some prose"));
+        assert!(!text_opens_linkref_def("[foo] and [bar] in prose."));
+        assert!(!text_opens_linkref_def("[a[b"));
+        assert!(!text_opens_linkref_def("[a[b]: /url"));
     }
 }
