@@ -44,7 +44,7 @@ import-standalone-*.R
 Excludes apply only to directory walks. A file named **explicitly** on the
 command line is always processed, even if it matches an exclude pattern. Pass
 `--force-exclude` (on `format` and `lint`) to apply the patterns to explicitly
-named files too—useful for runners like pre-commit that pass staged files as
+named files too---useful for runners like pre-commit that pass staged files as
 arguments. The CLI flag `--exclude <PATTERN>` (on `format` and `lint`) adds to
 the configured `exclude`/`extend-exclude` for a single run.
 
