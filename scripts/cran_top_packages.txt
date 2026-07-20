@@ -62,6 +62,7 @@ SeuratObject
 SparseM
 StanHeaders
 TH.data
+TMB
 TSP
 TTR
 V8
@@ -120,6 +121,7 @@ collapse
 colorspace
 colourpicker
 commonmark
+config
 conflicted
 corrplot
 covr
@@ -225,6 +227,7 @@ graphlayouts
 gridExtra
 gridGraphics
 gridtext
+gson
 gt
 gtable
 gtools
@@ -431,6 +434,7 @@ sandwich
 sass
 scales
 scatterplot3d
+segmented
 selectr
 seriation
 servr
