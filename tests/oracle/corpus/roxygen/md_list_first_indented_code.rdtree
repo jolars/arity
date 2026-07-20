@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\enumerate (\item) (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "indented code\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (TEXT "paragraph") (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "more code\n")) (\if (TEXT "html") (\out (VERB "</div>")))))
+(\title (TEXT "T"))

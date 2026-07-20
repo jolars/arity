@@ -239,18 +239,34 @@ fn list_line_indent(tokens: &[Token], marker: usize) -> usize {
 /// The number of leading spaces of a list item's content (the first body token
 /// after its marker), clamped to CommonMark's 1..=4: a child block must be
 /// indented to at least `marker_indent + marker_width + this` to nest.
+///
+/// Two CommonMark start conditions snap this to **one** instead: an item whose
+/// first line has no content after the marker (its content, if any, starts on
+/// the next line — cm-280/281), and an item whose content sits five or more
+/// columns past the marker (the content then *starts with indented code*, and
+/// only one column belongs to the item separator — cm-275/276).
 fn content_leading_spaces(tokens: &[Token], content: usize) -> usize {
-    tokens
-        .get(content)
-        .filter(|t| is_line_body_kind(&t.kind))
-        .map(|t| {
-            t.text
-                .chars()
-                .take_while(|c| *c == ' ' || *c == '\t')
-                .count()
-        })
-        .unwrap_or(1)
-        .clamp(1, 4)
+    let Some(first) = tokens.get(content).filter(|t| is_line_body_kind(&t.kind)) else {
+        return 1;
+    };
+    let leading = first
+        .text
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .count();
+    let mut k = content;
+    let mut has_content = false;
+    while let Some(t) = tokens.get(k).filter(|t| is_line_body_kind(&t.kind)) {
+        if !t.text.trim().is_empty() {
+            has_content = true;
+            break;
+        }
+        k += 1;
+    }
+    if !has_content || leading >= 5 {
+        return 1;
+    }
+    leading.clamp(1, 4)
 }
 
 /// From `i` (expected at a line's trailing `Newline`), the index of the next
@@ -1082,7 +1098,7 @@ fn emit_md_list_level_inner(
         // (and any continuation lines it claims) is a child list whose
         // container floor is this item's content column — exactly the nested
         // marker's own column in the line gauge.
-        let item_has_content;
+        let mut item_has_content;
         if is_same_line_sublist(tokens, i) {
             events.push(Event::Tok(i)); // separating whitespace (prose run)
             i = emit_md_list_level_inner(
@@ -1092,6 +1108,14 @@ fn emit_md_list_level_inner(
                 content_indent,
                 events,
             );
+            item_has_content = true;
+        } else if item_first_line_opens_indented_code(tokens, i) {
+            // The item's content sits five or more columns past the marker, so
+            // it *starts with indented code* (cm-275/276): `content_indent`
+            // snapped to marker + 1 (`content_leading_spaces`), and the line's
+            // remainder — one separator column, then the code's own indent —
+            // is an indented code block *inside* the item.
+            i = emit_md_indented_code_mid_line(tokens, i, content_indent + 4, events);
             item_has_content = true;
         } else {
             while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
@@ -1189,6 +1213,44 @@ fn emit_md_list_level_inner(
                     events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
                 }
                 i = emit_md_block_quote(tokens, m, events);
+                continue;
+            }
+
+            // An **empty** item's first content: CommonMark lets an item begin
+            // with its marker alone, the content starting on the *immediately*
+            // following line at (or past) the content column (`-` then `  foo`,
+            // cm-280/281). "A list item can begin with at most one blank line",
+            // and the marker line is that one blank — an actual blank line in
+            // between keeps the content out of the item (cm-282), hence
+            // `following_line_marker` (no blank crossing). Indented code first:
+            // a next line four or more columns past the content column is an
+            // indented code block inside the item (cm-280's `baz`) — checked
+            // before the prose arm, which would claim the over-indented line.
+            if !item_has_content
+                && let Some(m) = following_line_marker(tokens, i)
+                && is_indent_code_line_min(tokens, m, content_indent + 4)
+            {
+                for idx in i..m {
+                    events.push(Event::Tok(idx)); // `\n` + indentation (trivia)
+                }
+                i = emit_md_indented_code_min(tokens, m, content_indent + 4, events);
+                item_has_content = true;
+                continue;
+            }
+            if !item_has_content
+                && let Some(m) = following_line_marker(tokens, i)
+                && list_line_indent(tokens, m) >= content_indent
+                && is_md_item_lazy_continuation(tokens, m)
+            {
+                for idx in i..=m {
+                    events.push(Event::Tok(idx)); // `\n` + indentation + `#'` (trivia)
+                }
+                i = m + 1;
+                while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                    events.push(Event::Tok(i));
+                    i += 1;
+                }
+                item_has_content = true;
                 continue;
             }
 
@@ -1436,6 +1498,58 @@ pub(super) fn emit_md_indented_code(
     events: &mut Vec<Event>,
 ) -> usize {
     emit_md_indented_code_min(tokens, start, 5, events)
+}
+
+/// Whether a list item's first-line content **starts with indented code**
+/// (CommonMark's start condition, cm-275/276): the remainder after the marker
+/// leads with five or more space/tab columns *and* carries real content. The
+/// item's content indent then snaps to marker + 1 ([`content_leading_spaces`]),
+/// and the remainder — less the one separator column — is an indented code
+/// block inside the item. `content` is the token just past the
+/// `RoxygenMdListMarker`.
+fn item_first_line_opens_indented_code(tokens: &[Token], content: usize) -> bool {
+    let Some(first) = tokens.get(content).filter(|t| is_line_body_kind(&t.kind)) else {
+        return false;
+    };
+    let leading = first
+        .text
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .count();
+    if leading < 5 {
+        return false;
+    }
+    let mut k = content;
+    while let Some(t) = tokens.get(k).filter(|t| is_line_body_kind(&t.kind)) {
+        if !t.text.trim().is_empty() {
+            return true;
+        }
+        k += 1;
+    }
+    false
+}
+
+/// Emit a `ROXYGEN_MD_INDENTED_CODE` node for an indented code block opening
+/// **mid-line as a list item's first content** (`1.     code`): `start` is the
+/// token just past the item's `RoxygenMdListMarker` — the prose run whose
+/// leading whitespace holds the one separator column plus the code's own
+/// indent. The following lines gather exactly as in [`emit_md_indented_code`],
+/// gauged against `min_ws` (the item's content column plus four). Returns the
+/// token index just past the last code line.
+fn emit_md_indented_code_mid_line(
+    tokens: &[Token],
+    start: usize,
+    min_ws: usize,
+    events: &mut Vec<Event>,
+) -> usize {
+    events.push(Event::Start(SyntaxKind::ROXYGEN_MD_INDENTED_CODE));
+    // First (marker-less, mid-line) line: the rest of the item's opening line.
+    let mut i = start;
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    finish_md_indented_code(tokens, i, min_ws, events)
 }
 
 /// Like [`emit_md_indented_code`] but with a caller-supplied minimum indentation

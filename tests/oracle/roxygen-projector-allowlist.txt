@@ -249,9 +249,13 @@ cm-271
 cm-272
 cm-273
 cm-274
+cm-275
+cm-276
 cm-277
 cm-278
 cm-279
+cm-280
+cm-281
 cm-282
 cm-283
 cm-284
@@ -706,6 +710,8 @@ md_linkref_poisoning_list
 md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
 md_link_title
+md_list_empty_marker_content
+md_list_first_indented_code
 md_list_item_block_macro
 md_list_item_block_quote
 md_list_item_code_block

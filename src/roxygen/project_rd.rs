@@ -46,7 +46,7 @@ use crate::parser::roxygen::{
     split_table_row_cells, sticky_braceless_code_mode,
 };
 use crate::roxygen::entities;
-use crate::syntax::{SyntaxKind, SyntaxNode};
+use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// Project `text` to the parser-owned Rd section subtrees, one canonical
 /// S-expression per line, sorted --- byte-identical to the R driver's
@@ -5954,9 +5954,14 @@ fn md_indented_code_text(node: &SyntaxNode) -> String {
         } else {
             strip_marker(line)
         };
+        // A marker-less first line starts past its container's structure (the
+        // tag head, or a list item's marker for a mid-line block, cm-275/276) —
+        // the container columns are already consumed, so only CommonMark's own
+        // four apply there.
+        let strip = if idx == 0 && from_value { 4 } else { 4 + extra };
         let content = after_marker
             .char_indices()
-            .take(4 + extra)
+            .take(strip)
             .take_while(|&(_, c)| c == ' ')
             .count();
         code.push_str(&after_marker[content..]);
@@ -6005,18 +6010,46 @@ fn md_indented_code_extra_strip(node: &SyntaxNode) -> usize {
     }
     let marker_col = indent_before.saturating_sub(1);
     // The item's content leading spaces (the text right after the marker leaf),
-    // clamped to CommonMark's 1..=4.
-    let content_leading = marker
-        .next_token()
-        .map(|t| {
-            t.text()
-                .chars()
-                .take_while(|c| *c == ' ')
-                .count()
-                .clamp(1, 4)
-        })
-        .unwrap_or(1);
+    // clamped to CommonMark's 1..=4 — snapped to one when the marker line's
+    // remainder is blank (content on the next line, cm-280/281) or five or more
+    // columns deep (the item starts with indented code, cm-275/276), mirroring
+    // the builder's `content_leading_spaces`.
+    let content_leading = md_item_content_leading(&marker);
     marker_col + marker_width + content_leading
+}
+
+/// A list item's content-leading columns as CommonMark counts them: the spaces
+/// between the marker and the first-line content, clamped to 1..=4 — one when
+/// the first line has no content after the marker or the content sits five or
+/// more columns past it (both start conditions snap the content indent to
+/// marker + 1). The parser-side twin is `content_leading_spaces` (build.rs).
+fn md_item_content_leading(marker: &SyntaxToken) -> usize {
+    let mut leading = None;
+    let mut has_content = false;
+    let mut tok = marker.next_token();
+    while let Some(t) = tok {
+        if t.kind() == SyntaxKind::NEWLINE {
+            break;
+        }
+        if leading.is_none() {
+            leading = Some(
+                t.text()
+                    .chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .count(),
+            );
+        }
+        if !t.text().trim().is_empty() {
+            has_content = true;
+            break;
+        }
+        tok = t.next_token();
+    }
+    let leading = leading.unwrap_or(1);
+    if !has_content || leading >= 5 {
+        return 1;
+    }
+    leading.clamp(1, 4)
 }
 
 /// Project a `ROXYGEN_MD_HTML_BLOCK` node into roxygen2's `\if{html}{\out{…}}`
@@ -6682,6 +6715,63 @@ mod tests {
             project_to_rd(value),
             "(\\description (TEXT \"T\"))\n\
              (\\details (\\itemize (\\item) (\\itemize (\\item) (TEXT \"foo\"))))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn item_starting_with_indented_code_snaps_content_indent() {
+        // `1.     code`: content five or more columns past the marker starts
+        // with indented code, so the content indent snaps to marker + 1
+        // (cm-275/276) — the line's remainder is a code block inside the item,
+        // and a later line at the snapped column is item content.
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' 1.     code\n\
+                   #'\n\
+                   #'    para\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (\\enumerate (\\item) (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"code\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"</div>\"))) (TEXT \"para\")))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn empty_marker_folds_next_line_content_but_not_across_a_blank() {
+        // `-` alone: the item's content starts on the immediately following
+        // line at the content column (cm-280/281). An actual blank line in
+        // between keeps the content out — "a list item can begin with at most
+        // one blank line" (cm-282).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' -\n\
+                   #'   foo\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (\\itemize (\\item) (TEXT \"foo\")))\n\
+             (\\title (TEXT \"T\"))"
+        );
+        let blank = "#' @md\n\
+                     #' @title T\n\
+                     #' @details\n\
+                     #' -\n\
+                     #'\n\
+                     #'   foo\n\
+                     #' @name x\n\
+                     NULL\n";
+        assert_eq!(
+            project_to_rd(blank),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (\\itemize (\\item)) (TEXT \"foo\"))\n\
              (\\title (TEXT \"T\"))"
         );
     }

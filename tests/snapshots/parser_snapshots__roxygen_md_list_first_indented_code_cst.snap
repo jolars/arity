@@ -1,0 +1,52 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..101
+  ROXYGEN_BLOCK@0..95
+    ROXYGEN_SECTION@0..7
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+    ROXYGEN_SECTION@7..85
+      ROXYGEN_MARKER@7..9 "#'"
+      WHITESPACE@9..10 " "
+      ROXYGEN_TAG@10..18
+        ROXYGEN_AT@10..11 "@"
+        ROXYGEN_TAG_NAME@11..18 "details"
+      NEWLINE@18..19 "\n"
+      ROXYGEN_MD_LIST@19..84
+        ROXYGEN_MARKER@19..21 "#'"
+        WHITESPACE@21..22 " "
+        ROXYGEN_MD_LIST_ITEM@22..84
+          ROXYGEN_MD_LIST_MARKER@22..24 "1."
+          ROXYGEN_MD_INDENTED_CODE@24..42
+            ROXYGEN_TEXT@24..42 "     indented code"
+          NEWLINE@42..43 "\n"
+          ROXYGEN_MARKER@43..45 "#'"
+          NEWLINE@45..46 "\n"
+          ROXYGEN_MARKER@46..48 "#'"
+          WHITESPACE@48..52 "    "
+          ROXYGEN_TEXT@52..61 "paragraph"
+          NEWLINE@61..62 "\n"
+          ROXYGEN_MARKER@62..64 "#'"
+          NEWLINE@64..65 "\n"
+          ROXYGEN_MD_INDENTED_CODE@65..84
+            ROXYGEN_MARKER@65..67 "#'"
+            WHITESPACE@67..75 "        "
+            ROXYGEN_TEXT@75..84 "more code"
+      NEWLINE@84..85 "\n"
+    ROXYGEN_SECTION@85..95
+      ROXYGEN_MARKER@85..87 "#'"
+      WHITESPACE@87..88 " "
+      ROXYGEN_TAG@88..95
+        ROXYGEN_AT@88..89 "@"
+        ROXYGEN_TAG_NAME@89..93 "name"
+        WHITESPACE@93..94 " "
+        ROXYGEN_TEXT@94..95 "a"
+  NEWLINE@95..96 "\n"
+  IDENT@96..100 "NULL"
+  NEWLINE@100..101 "\n"

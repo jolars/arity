@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\itemize (\item) (TEXT "foo") (\item) (TEXT "bar") (\item) (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "baz\n")) (\if (TEXT "html") (\out (VERB "</div>")))))
+(\title (TEXT "T"))
