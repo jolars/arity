@@ -83,6 +83,17 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   HTML blocks misclassify; the block→inline pass is the real fix). `is_md_list_start`'s interrupt arm
   is indent-gated: a ≥4-column marker line never interrupts a paragraph (lazy text, both modes' quote
   and section level).
+- **List siblings pair by an indent WINDOW, not the list's marker column; the gauge is one-based.**
+  `emit_md_list_level_inner` (build.rs) threads `container_indent` — the enclosing container's content
+  column: `1` for a section-level list (`list_line_indent` counts the whole `#'`→content whitespace,
+  so the conventional `#' ` space is column one), or the parent item's content column for a nested
+  list (passed at the recursion site). A following marker line is a **sibling** iff its indent ∈
+  `container_indent..min(content_indent, container_indent + 4)` (cm-297/312: `- a` / ` - b` /
+  `  - c` is ONE flat list); at `>= content_indent` it nests; in `[container+4, content_indent)`
+  with **no blank** it is would-be indented code, which cannot interrupt a paragraph, so it lazily
+  folds into the item's open paragraph (cm-314's `d - e`). Projector `md_list_item_inlines` skips
+  only the **first** `MD_LIST_MARKER` leaf (the bullet); a later one is that folded lazy marker —
+  literal text via the generic fallback.
 
 **Rd macros**
 - **Name = `[A-Za-z][A-Za-z0-9]*`** (digits allowed, `\linkS4class`). One source for the name
@@ -1074,63 +1085,64 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 903 matching (all allowlisted), 78 divergent** of 981 pinned. The divergent 78 are the
-per-section backlog (harvested 18, List items 10, Tabs 8, Lists 7, ATX 6, Setext 6,
-Link reference definitions 5, Thematic breaks 3, Images 1, Links 1, …; Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
+**Current: 909 matching (all allowlisted), 73 divergent** of 982 pinned. The divergent 73 are the
+per-section backlog (harvested 18, List items 9, Tabs 8, ATX 6, Setext 6,
+Link reference definitions 5, Code spans 3, Lists 3, Thematic breaks 3, Images 1, Links 1, …;
+Block quotes COMPLETE). Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (981 pinned); 78 divergent backlog.
+   Curated + harvested + whole-spec corpora (982 pinned); 73 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 175/175 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 176/176 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-20) — link-ref defs parse at the block level: Linkrefs 17→22/27
+## Latest session (2026-07-20b) — list-sibling indent window: Lists 19→23/26, List items +1
 
-Five of the Link-reference-definitions cluster's 10 shared one root: `match_linkref_def` walked
-*resolved inlines* and accepted only plain `Text` after the label, but cmark strips defs from a
-paragraph's **raw source before inline resolution**. Projector-only (CST untouched) + one formatter
-bail; mechanics in the block-level-defs trap above:
+The "indent shapes" cluster shared one root: the sibling check required the next marker at
+*exactly* the list's own marker column, but CommonMark ties an item to a list by its marker
+falling **short of the previous item's content column** — `- a` / ` - b` / `  - c` / `   - d` is
+one flat list (cm-297/312), whatever the exact indents. Parser + one faithful projector arm;
+mechanics in the list-sibling-window trap above:
 
-- **`match_linkref_def` regathers raw source.** `linkref_raw_fragment` re-flattens `Text` +
-  raw-HTML leaves + `Macro` nodes verbatim (cm-197's next-line `<my url>` dest had resolved as raw
-  HTML; cm-204's `/url\bar` carved an UNKNOWN macro), with per-piece offsets mapping consumed bytes
-  back to inline indices.
-- **`parse_linkref_def_tail` replaces `parse_linkref_def_dest`** — the full
-  cmark-after-`double_escape_md` grammar: multi-line label/dest/title, empty `<>` dest (cm-202 →
-  `\url{display}`), raw-paren-balanced bare dests, longest-match titles, and the
-  invalid-next-line-title → dest-only fallback (cm-212). Whole-line consumption with `Text` trims
-  (`BTreeMap<usize, Option<String>>` through `collect_user_linkrefs`/`apply_user_linkrefs`).
-- **Formatter: `text_opens_linkref_def`** (supersedes `text_is_linkref_def`/`linkref_dest_is_clean`)
-  — the reflow bail fires on any `[label]:` head or cross-line label opener. Fixes a **latent
-  fixed-point bug**: reflow joined `[`⏎`baz`⏎`]: /qux`⏎`tail prose` into one line, landing junk
-  after the dest and destroying a def roxygen2 had always honored (caught reviewing the format
-  baseline re-bless — the pure-Rust analog `project(parse(x)) == project(parse(format(x)))` diffed).
+- **`emit_md_list_level_inner` threads `container_indent`** (was `list_indent`): the enclosing
+  container's content column — `1` at section level (the one-based `list_line_indent` gauge; the
+  first floor-`0` attempt mis-fired the lazy arm one column early), the parent item's content
+  column at the recursion site. Sibling window
+  `container_indent..min(content_indent, container_indent + 4)`, both the no-blank and
+  across-blanks paths (cm-313's blank-separated `1.`/`  2.`/`   3.` now one `\enumerate`).
+- **New body-loop arm:** a no-blank marker line in `[container+4, content_indent)` is would-be
+  indented code → lazy paragraph fold (cm-314's `d - e`); blank-separated it stays indented code
+  (cm-315, which passed once its `a`/`b` items joined).
+- **Projector `md_list_item_inlines` skips only the first marker leaf** — a later `MD_LIST_MARKER`
+  is the folded lazy marker, rendered literal by the generic fallback (the skip-all had eaten the
+  `-` out of `d - e`).
 
-**Result:** projector **895→903 matching (all allowlisted), 78 divergent**, 0 blocked, of 981
-pinned; 0 regressions. **Link reference definitions 17→22/27** (cm-197/202/204/210/212 closed).
-Curated `md_linkref_multiline_def` + `md_linkref_def_fallback` + `md_linkref_def_dest_edge`
-(R-minted pins; R probes confirmed the unmatched-`)`/unclosed-angle/same-line-junk failures and the
-next-line-title fallback). Units `multiline_linkref_def_consumes_label_dest_and_title_lines`,
-`invalid_next_line_title_falls_back_to_dest_only_def`,
-`linkref_def_dest_parity_mirrors_cmark_after_double_escape` (projector) + the rewritten
-`linkref_def_detection` (formatter). Format baseline +3/±1 (`md_url_reference_multiline` now stays
-unjoined — verbatim, render-identical). Fixed-point 175/175. Full suite + clippy + fmt green. Also
-committed `examples/rdproj` (print `project_to_rd` of a file/stdin — the projection-dump tool every
-session was re-deriving).
+**Result:** projector **903→909 matching (all allowlisted), 73 divergent**, 0 blocked, of 982
+pinned; 0 regressions. **Lists 19→23/26** (cm-312/313/314/315), **List items 38→39/48** (cm-297).
+Curated `md_list_sibling_indent` (R-minted pin confirms roxygen2 renders `d - e`), fixture
+`roxygen_md_list_sibling_indent` (CST: one flat list, marker leaf folded as item content). Format
+baseline +1 (verbatim). Fixed-point 176/176. Full suite + clippy + fmt green; formatter verified
+lossless + idempotent + render-preserving on all five shapes.
 
-**Ranked next target:** **List items** (38/48, the indent shapes) and **Lists** (19/26) are the big
-clusters; **Tabs** (3/11) likely shares indent-column roots with them. The remaining linkref 5 are
+**Ranked next target:** **List items** 9 remaining, in sub-clusters: cm-300/301 (a marker
+immediately followed by another marker on the same line, `- - foo` — nests, arity keeps it literal
+text), cm-275/276 (item content *starting* with indented code), cm-280/281 (empty marker with
+content on the next line), cm-294/295 (block-quote laziness inside an item), cm-302
+(heading/setext inside items). **Tabs** (3/11) is the other big cluster (tab-column expansion).
+Lists' remaining 3 (cm-319/320/326) are def-in-item and fence-in-item singles. The linkref 5 are
 heterogeneous singles: cm-196 (emphasis inside a leaked label), cm-216 (def resolution into a
 heading title), cm-217/218 (setext promotion grabs the def line — defs strip before setext), cm-220
 (def inside a block quote). Harvested 18 out-of-scope.
 
 ## Earlier sessions
+
+- **2026-07-20** — link-ref defs parse at the block level (`match_linkref_def` regathers raw source via `linkref_raw_fragment`; `parse_linkref_def_tail` = full cmark-after-double-escape def grammar, whole-line consumption + `Text` trims; formatter `text_opens_linkref_def` superset bail fixed a latent reflow fixed-point bug). Curated ×3, 4 units, baseline +3/±1; committed `examples/rdproj`. 895→903, Linkrefs 17→22/27.
 
 - **2026-07-19** — reference-image resolution parity (def titles reach `\figure` via `UserLinkDef`; emphasis labels match by `md_label_flatten`; collapsed `![alt][]` carved, user-def-only resolution). Curated ×3, fixture, 3 units, baseline +3. 882→895, Images 11→21/22.
 

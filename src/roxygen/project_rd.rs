@@ -6548,13 +6548,18 @@ fn md_list_is_ordered(node: &SyntaxNode) -> bool {
 
 /// The inline elements of a markdown list item: its content after the marker
 /// leaf, with the threaded `#'` markers dropped and inter-line newlines turned
-/// into joining spaces (the same treatment as a prose paragraph). The
-/// `ROXYGEN_MD_LIST_MARKER` leaf itself is the item bullet, not content.
+/// into joining spaces (the same treatment as a prose paragraph). Only the
+/// **first** `ROXYGEN_MD_LIST_MARKER` leaf is the item bullet; a later one is a
+/// lazily folded over-indented marker line (would-be indented code cannot
+/// interrupt the item's paragraph, cm-314), which roxygen2 renders as literal
+/// text — the generic inline fallback handles it.
 fn md_list_item_inlines(item: &SyntaxNode) -> Vec<Inline> {
     let mut out = Vec::new();
+    let mut bullet_seen = false;
     for el in item.children_with_tokens() {
         match el.kind() {
-            SyntaxKind::ROXYGEN_MD_LIST_MARKER | SyntaxKind::ROXYGEN_MARKER => {}
+            SyntaxKind::ROXYGEN_MD_LIST_MARKER if !bullet_seen => bullet_seen = true,
+            SyntaxKind::ROXYGEN_MARKER => {}
             SyntaxKind::NEWLINE => out.push(Inline::Text(SOFT_BREAK.to_string())),
             _ => push_inline(&mut out, el),
         }

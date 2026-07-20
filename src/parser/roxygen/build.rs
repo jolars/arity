@@ -955,12 +955,17 @@ fn finish_md_table(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> u
 /// beginning at `start` (a `RoxygenMarker` whose content opens a list item),
 /// modeling **nesting** by indentation (CommonMark): a following list line
 /// indented to an item's content column (or deeper) opens a nested
-/// `ROXYGEN_MD_LIST` inside that item, while a line back at the list's own
-/// marker column is a sibling. The trailing newline after the final item is left
-/// to the caller. Returns the token index just past the last consumed content.
+/// `ROXYGEN_MD_LIST` inside that item, while a shallower marker line is a
+/// sibling of the same list (CommonMark ties an item to a list by its marker
+/// falling short of the previous item's content column, not by matching the
+/// list's own marker column — `- a` / ` - b` / `  - c` is one flat list). The
+/// trailing newline after the final item is left to the caller. Returns the
+/// token index just past the last consumed content. The container floor is `1`:
+/// a section's content column in [`list_line_indent`]'s one-based gauge (the
+/// conventional `#' ` separator space counts as one column there).
 pub(super) fn emit_md_list(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
-    emit_md_list_level_inner(tokens, start, true, list_line_indent(tokens, start), events)
+    emit_md_list_level_inner(tokens, start, true, 1, events)
 }
 
 /// Emit a `ROXYGEN_MD_LIST` node for a list whose first item is a **tag's
@@ -978,28 +983,25 @@ pub(super) fn emit_md_list_from_value(
     ws_start: usize,
     events: &mut Vec<Event>,
 ) -> usize {
-    let mut indent = 0;
-    let mut k = ws_start;
-    while tokens.get(k).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-        indent += tokens[k].text.chars().count();
-        k += 1;
-    }
-    emit_md_list_level_inner(tokens, ws_start, false, indent, events)
+    emit_md_list_level_inner(tokens, ws_start, false, 1, events)
 }
 
 /// Recursion entry for nested list levels (each starts at a line's
-/// `RoxygenMarker`).
+/// `RoxygenMarker`). `container_indent` is the parent item's content column —
+/// the child list's container floor.
 fn emit_md_list_level(
     tokens: &[Token],
     start: usize,
-    list_indent: usize,
+    container_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
-    emit_md_list_level_inner(tokens, start, true, list_indent, events)
+    emit_md_list_level_inner(tokens, start, true, container_indent, events)
 }
 
-/// Emit one `ROXYGEN_MD_LIST` whose item markers sit at indentation
-/// `list_indent`. Each item is a `ROXYGEN_MD_LIST_ITEM` holding its
+/// Emit one `ROXYGEN_MD_LIST` inside the container whose content column is
+/// `container_indent` (`1` for a section-level list — [`list_line_indent`]'s
+/// one-based gauge — or the parent item's content column for a nested one).
+/// Each item is a `ROXYGEN_MD_LIST_ITEM` holding its
 /// `RoxygenMdListMarker` leaf, inline content, and any nested `ROXYGEN_MD_LIST`;
 /// the `#'` markers, marker→content whitespace, and inter-line
 /// newlines/indentation are threaded in as trivia (losslessness), the way the
@@ -1008,7 +1010,7 @@ fn emit_md_list_level_inner(
     tokens: &[Token],
     start: usize,
     first_has_marker: bool,
-    list_indent: usize,
+    container_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_LIST));
@@ -1156,6 +1158,30 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
+            // A no-blank **over-indented marker line**: a list line indented four
+            // or more columns past the container's content column — but short of
+            // this item's content column, so it neither nests nor stays a
+            // sibling — is would-be indented code, and indented code cannot
+            // interrupt a paragraph, so CommonMark folds it into the item's open
+            // paragraph as lazy text (`- d` then `    - e` renders item text
+            // `d - e`, cm-314). With a blank between, the same line *is*
+            // indented code (the blank-separated arm above claims it first).
+            if item_has_content
+                && let Some(m) = following_line_marker(tokens, i)
+                && is_md_list_continuation(tokens, m)
+                && (container_indent + 4..content_indent).contains(&list_line_indent(tokens, m))
+            {
+                for idx in i..=m {
+                    events.push(Event::Tok(idx)); // `\n` + indentation + `#'` (trivia)
+                }
+                i = m + 1;
+                while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+                    events.push(Event::Tok(i));
+                    i += 1;
+                }
+                continue;
+            }
+
             // A blank-separated indented code block: after a blank line closes
             // the item's paragraph, a line indented four or more columns past the
             // item's content column is an indented code block *inside* the item
@@ -1236,16 +1262,22 @@ fn emit_md_list_level_inner(
             for idx in i..m {
                 events.push(Event::Tok(idx)); // `\n` + blank lines + indentation (trivia)
             }
-            i = emit_md_list_level(tokens, m, list_line_indent(tokens, m), events);
+            i = emit_md_list_level(tokens, m, content_indent, events);
         }
         events.push(Event::Finish); // ROXYGEN_MD_LIST_ITEM
 
-        // Sibling: a following list line back at this level's marker column
-        // continues the list; anything shallower ends it (the caller resumes).
-        // Blank lines do not end the list either (they only make it loose): a
-        // same-type item — with or without intervening blanks — is a sibling.
+        // Sibling: a following list line whose marker falls short of this item's
+        // content column (a deeper one nests, handled above) — while staying at
+        // or past the container's content column and within four columns of it
+        // (four or more is would-be indented code, never a new item) — continues
+        // the list, whatever its exact indent (CommonMark: `- a` / ` - b` /
+        // `  - c` is one flat list, cm-297/312). Anything outside the window
+        // ends the list (the caller resumes). Blank lines do not end the list
+        // either (they only make it loose): a same-type item — with or without
+        // intervening blanks — is a sibling.
+        let sibling_window = container_indent..content_indent.min(container_indent + 4);
         let m = if let Some(m) = next_list_line(tokens, i) {
-            if list_line_indent(tokens, m) != list_indent {
+            if !sibling_window.contains(&list_line_indent(tokens, m)) {
                 break;
             }
             m
@@ -1253,7 +1285,7 @@ fn emit_md_list_level_inner(
             let Some(m) = next_list_line_across_blanks(tokens, i) else {
                 break;
             };
-            if list_line_indent(tokens, m) != list_indent {
+            if !sibling_window.contains(&list_line_indent(tokens, m)) {
                 break;
             }
             m

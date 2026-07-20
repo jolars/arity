@@ -265,6 +265,7 @@ cm-291
 cm-292
 cm-293
 cm-296
+cm-297
 cm-298
 cm-299
 cm-303
@@ -276,6 +277,10 @@ cm-308
 cm-309
 cm-310
 cm-311
+cm-312
+cm-313
+cm-314
+cm-315
 cm-316
 cm-317
 cm-318
@@ -710,6 +715,7 @@ md_list_lazy_edges
 md_list_loose
 md_list_loose_edges
 md_list_marker_split
+md_list_sibling_indent
 md_list_value
 md_macro_arg_brace_group
 md_macro_arg_emphasis
