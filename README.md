@@ -95,6 +95,20 @@ repos:
       - id: arity-format
 ```
 
+## GitHub Actions
+
+[arity-action](https://github.com/jolars/arity-action) installs arity and runs
+format and lint checks in CI:
+
+```yaml
+jobs:
+  arity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jolars/arity-action@v1
+```
+
 ## Acknowledgements
 
 The core architecture of Arity is entirely based on
