@@ -36,6 +36,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+      id-token: write # mint the OIDC token for keyless provenance signing
+      attestations: write # store the build provenance attestation
     strategy:
       fail-fast: false
       matrix:
@@ -177,6 +179,20 @@ jobs:
             arity-${{ matrix.target }}.tar.gz.sha256
             arity-${{ matrix.target }}.zip.sha256
 
+      # Sign a build provenance attestation for the archive, verifiable with
+      # `gh attestation verify`. Only on real release uploads.
+      - name: Attest build provenance (Unix)
+        if: inputs.upload == 'true' && runner.os != 'Windows'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: arity-${{ matrix.target }}.tar.gz
+
+      - name: Attest build provenance (Windows)
+        if: inputs.upload == 'true' && runner.os == 'Windows'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: arity-${{ matrix.target }}.zip
+
       - name: Upload binary to release
         if: inputs.upload == 'true'
         shell: bash
@@ -194,3 +210,31 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish a SHA256SUMS manifest covering every asset attached to the release.
+  # Runs after all per-target build jobs so all assets are already uploaded.
+  # Guards against accidental corruption and lets installers verify downloads;
+  # it is not a substitute for signing/provenance.
+  checksums:
+    name: Publish SHA256SUMS
+    needs: build-binaries
+    if: inputs.upload == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Generate and upload SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          cd "$workdir"
+          # Pull every asset already on the release, dropping any SHA256SUMS
+          # from a prior run so the manifest never checksums itself.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          rm -f SHA256SUMS
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload --repo "$GITHUB_REPOSITORY" --clobber "$TAG" SHA256SUMS
