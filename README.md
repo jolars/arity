@@ -76,6 +76,25 @@ The **Arity** extension for VS Code/Open VSX (and Positron) bundles the binary
 and starts the server automatically. For Neovim, Helix, and other editors, see
 the [editor setup guide](https://arity.cc/guide/editors.html).
 
+## Pre-commit hook
+
+[arity-pre-commit](https://github.com/jolars/arity-pre-commit) provides
+[pre-commit](https://pre-commit.com) hooks for linting and formatting. It
+installs a prebuilt binary wheel from PyPI, so no Rust toolchain or R
+installation is required:
+
+```yaml
+repos:
+  - repo: https://github.com/jolars/arity-pre-commit
+    # arity version
+    rev: v0.13.0
+    hooks:
+      # Lint .R files
+      - id: arity-lint
+      # Format the same files in place
+      - id: arity-format
+```
+
 ## Acknowledgements
 
 The core architecture of Arity is entirely based on
