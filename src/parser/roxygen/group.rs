@@ -433,10 +433,12 @@ fn emit_tag_line(tokens: &[Token], start: usize, md: bool, events: &mut Vec<Even
         return emit_md_html_block_from_value(tokens, head_end, events);
     }
     // A fenced code block from the value (`@details ```r`): the opener fence
-    // leaf, then the code lines to the closing fence.
+    // leaf, then the code lines to the closing fence. The closer lines sit at
+    // section level, so the container content column is the single
+    // conventional space.
     if folds && tokens[value_start.unwrap()].kind == TokKind::RoxygenMdFence {
         let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
-        return emit_md_code_block_from_value(tokens, head_end, events);
+        return emit_md_code_block_from_value(tokens, head_end, 1, events);
     }
     // A markdown list from the value (`@details - item`): the value position is
     // a fresh block position, so any marker opens a list (the mid-paragraph

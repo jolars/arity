@@ -1,0 +1,4 @@
+(\description (TEXT "T"))
+(\details (\itemize (\item) (TEXT "a") (\item) (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "b\n") (VERB "\n") (VERB "\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (\item) (TEXT "c")))
+(\seealso (\enumerate (\item) (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode r\">"))) (\preformatted (VERB "foo\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (TEXT "bar")))
+(\title (TEXT "T"))

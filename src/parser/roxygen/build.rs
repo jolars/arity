@@ -234,6 +234,13 @@ fn is_same_line_heading(tokens: &[Token], i: usize) -> bool {
     is_same_line_child(tokens, i, &TokKind::RoxygenMdHeading)
 }
 
+/// Whether a list item's content at `i` opens a **same-line fenced code block**
+/// (`- ```` ``` ````, cm-320/326): the separator run followed by a
+/// `RoxygenMdFence` leaf the lexer carved in `carve_md_list_markers`.
+fn is_same_line_fence(tokens: &[Token], i: usize) -> bool {
+    is_same_line_child(tokens, i, &TokKind::RoxygenMdFence)
+}
+
 /// Whether the token at `i` is a marker→child all-whitespace separator run
 /// followed by a leaf of `kind` — the shape `carve_md_list_markers` produces for
 /// a child block starting on the item's marker line.
@@ -1163,6 +1170,17 @@ fn emit_md_list_level_inner(
             events.push(Event::Tok(i)); // separating whitespace (prose run)
             i = emit_md_heading_from_value(tokens, i + 1, events);
             item_has_content = true;
+        } else if is_same_line_fence(tokens, i) {
+            // A fenced code block opening at the item's content start on the
+            // marker line (`- ```` ``` ````, cm-320/326): the lexer carved the
+            // rest of the line as a `RoxygenMdFence` leaf past the separator
+            // run. The block node starts at the leaf — a marker-less first
+            // line, the from-value shape — and gathers its code lines to the
+            // closing fence, whose indent window is keyed to this item's
+            // content column (not the section level).
+            events.push(Event::Tok(i)); // separating whitespace (prose run)
+            i = emit_md_code_block_from_value(tokens, i + 1, content_indent, events);
+            item_has_content = true;
         } else if item_first_line_opens_indented_code(tokens, i, marker_end_col) {
             // The item's content sits five or more columns past the marker, so
             // it *starts with indented code* (cm-275/276): `content_indent`
@@ -1806,15 +1824,19 @@ pub(super) fn emit_md_code_block(
 }
 
 /// Emit a `ROXYGEN_MD_CODE_BLOCK` node for a fenced code block opening as a
-/// **tag's same-line value** (`#' @details ```r`): the first line has no `#'`
-/// marker of its own (that marker belongs to the enclosing tag, already emitted
-/// and closed), so it starts at `ws_start` — the whitespace between the tag head
-/// and the opener fence leaf. The following lines gather exactly as in
-/// [`emit_md_code_block`]. Returns the token index just past the last consumed
-/// line's content.
+/// **tag's same-line value** (`#' @details ```r`) or on a **list item's marker
+/// line** (`- ```` ``` ````, cm-320/326): the first line has no `#'` marker of
+/// its own (that marker belongs to the enclosing tag or item line), so it
+/// starts at `ws_start` — the whitespace between the head and the opener fence
+/// leaf. `base_indent` is the enclosing container's content column, keying the
+/// closer's indent window: the single conventional space for a tag value, the
+/// item's content column for a mid-line item fence. The following lines gather
+/// exactly as in [`emit_md_code_block`]. Returns the token index just past the
+/// last consumed line's content.
 pub(super) fn emit_md_code_block_from_value(
     tokens: &[Token],
     ws_start: usize,
+    base_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_CODE_BLOCK));
@@ -1828,9 +1850,7 @@ pub(super) fn emit_md_code_block_from_value(
         events.push(Event::Tok(i));
         i += 1;
     }
-    // The following closer lines sit at section level (the opener was the tag's
-    // value): the container content column is the single conventional space.
-    finish_md_code_block(tokens, i, opener, 1, events)
+    finish_md_code_block(tokens, i, opener, base_indent, events)
 }
 
 /// Gather a fenced code block's lines (after its opening line) up to and

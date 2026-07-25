@@ -990,7 +990,8 @@ fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
 /// quote at the item's content start** (`- > quoted`, cm-294/295): the rest of
 /// the line carves as a `RoxygenMdBlockQuote` leaf after the separator run. An
 /// ATX heading in that window (`- # Foo`, cm-302) likewise carves the rest of
-/// the line as a `RoxygenMdHeading` leaf.
+/// the line as a `RoxygenMdHeading` leaf, and a code fence (`- ```` ``` ````,
+/// cm-320/326) a `RoxygenMdFence` leaf.
 /// Five or more separating columns are indented-code
 /// territory, and a remainder that is a thematic break (`- * * *`) is a
 /// different block, so both leave the remainder in the prose run. The caller
@@ -1035,6 +1036,14 @@ fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: us
                 q,
                 text.len() - q,
             );
+            return text.len();
+        }
+        // A code fence at the item's content start (`- ```, cm-320/326): the
+        // rest of the line carves as a `RoxygenMdFence` leaf after the
+        // separator run, exactly like the block-quote and heading arms.
+        if scan_md_fence(bytes, q).is_some() {
+            push(out, TokKind::RoxygenText, text, start, end, q - end);
+            push(out, TokKind::RoxygenMdFence, text, start, q, text.len() - q);
             return text.len();
         }
         let Some(next_end) = scan_md_list_marker(bytes, q) else {

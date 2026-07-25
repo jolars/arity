@@ -316,11 +316,13 @@ cm-315
 cm-316
 cm-317
 cm-318
+cm-320
 cm-321
 cm-322
 cm-323
 cm-324
 cm-325
+cm-326
 cm-327
 cm-328
 cm-329
@@ -757,6 +759,7 @@ md_list_lazy_edges
 md_list_loose
 md_list_loose_edges
 md_list_marker_split
+md_list_same_line_fence
 md_list_same_line_nested
 md_list_sibling_indent
 md_list_value

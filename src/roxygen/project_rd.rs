@@ -7172,6 +7172,21 @@ fn md_code_block_parts(node: &SyntaxNode) -> (String, String) {
         .trim_start_matches(fence.chars().next().unwrap_or('`'))
         .trim()
         .to_string();
+    // A fence opening mid-line on a list item's marker line (`- ```` ``` ````,
+    // cm-320/326) has a marker-less first line starting at the fence itself, so
+    // the opener carries none of the item's content-column indent and the
+    // cancellation above breaks: the container strip and the closer window key
+    // off the item's content column instead ([`md_indented_code_extra_strip`] —
+    // zero for the tag-value shape, which has no list-item parent).
+    let from_value = node
+        .first_token()
+        .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);
+    let container = if from_value {
+        md_indented_code_extra_strip(node)
+    } else {
+        0
+    };
+    let fence_indent = fence_indent + container;
     // An *unterminated* block (the builder stopped at a tag opener or the block
     // end without a matching closer) ends on a content line, not a closing
     // fence: mirror the builder's closer test (same character, run length >=
@@ -10315,6 +10330,42 @@ mod tests {
             project_to_rd(outer).contains("(\\details (TEXT \"Blockquotecontinued here.\"))"),
             "got: {}",
             project_to_rd(outer)
+        );
+    }
+
+    #[test]
+    fn same_line_fence_opens_inside_item() {
+        // A fenced code block opening on the marker line itself (`- ```` ``` ````,
+        // cm-320/326): the block is the item's content, its code lines strip the
+        // item's *content column* (the marker-less opener carries no indent for
+        // the cancellation `md_code_block_parts` normally relies on), the
+        // content-column closer closes it, and a following marker line is a
+        // sibling item.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - ```\n#'   b\n#'   ```\n\
+                   #' - c\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\preformatted (VERB \"b\\n\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+        assert!(
+            project_to_rd(src).contains("(\\item) (TEXT \"c\")"),
+            "got: {}",
+            project_to_rd(src)
+        );
+        // The ordered-marker form keeps its info string in the `<div>` class and
+        // takes a blank-separated second paragraph after the closer (cm-326).
+        let ordered = "#' @md\n#' @title T\n#' @details\n#' 1. ```r\n#'    foo\n\
+                       #'    ```\n#'\n#'    bar\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(ordered).contains("sourceCode r"),
+            "got: {}",
+            project_to_rd(ordered)
+        );
+        assert!(
+            project_to_rd(ordered).contains("(\\preformatted (VERB \"foo\\n\"))"),
+            "got: {}",
+            project_to_rd(ordered)
         );
     }
 
