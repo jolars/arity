@@ -677,6 +677,31 @@ fn emit_section_with_headings(
     if emit_section_with_list_hoist(out, macro_name, body, md, drop_on_incomplete) {
         return;
     }
+    // A **trailing** level-1 heading whose section body renders empty (cm-010:
+    // `# Foo` as the field's last block) crashes roxygen2's section splicer:
+    // `strsplit` drops the trailing empty piece, so `structure(names = titles)`
+    // errors ("'names' attribute [2] must be the same length as the vector
+    // [1]", `mdxml_children_to_rd_top`, R/markdown.R) and `markdown()` falls
+    // back to the **raw unprocessed text** — the whole tag value renders as if
+    // markdown never ran. An *interior* empty section is kept by `strsplit`
+    // and a trailing `\subsection`/prose piece is non-empty, so only this exact
+    // shape fails.
+    if let Some(pos) = body
+        .iter()
+        .rposition(|inl| matches!(inl, Inline::MdHeading(_)))
+    {
+        let Inline::MdHeading(node) = &body[pos] else {
+            unreachable!("rposition matched MdHeading");
+        };
+        let (level, _) = parse_md_heading(node);
+        if level == 1
+            && serialize_prose_with_linkrefs(&body[pos + 1..], md).is_empty()
+            && let Some(atoms) = section_raw_fallback_atoms(macro_name, node)
+        {
+            out.extend(atoms);
+            return;
+        }
+    }
     // Segment the body: the leading run, then one (heading, following-run) per
     // heading marker in source order.
     let mut segments: Vec<(Option<SyntaxNode>, Vec<Inline>)> = vec![(None, Vec::new())];
@@ -741,6 +766,64 @@ fn emit_section_with_headings(
             out.push(render_heading_frame(&frames, c, md, "section"));
         }
     }
+}
+
+/// The raw-text fallback for a `@description`/`@details` field whose markdown
+/// processing roxygen2 aborts (the trailing-empty-section splicer crash, see
+/// [`emit_section_with_headings`]): `markdown()` returns the tag's **raw**
+/// value, so the field renders through the plain Rd path as if markdown never
+/// ran. The enclosing `ROXYGEN_SECTION` is recovered from the heading node (the
+/// CST is lossless), its raw value lines are re-synthesized as a **non-`@md`**
+/// fragment, and the fragment's own projection supplies the atoms — the same
+/// reparse mould as `quote_flat_reparse`. `None` when the section's first line
+/// does not carry the `@<macro_name>` head (the intro-derived description has
+/// no tag line — backlog), which falls through to the ordinary outline.
+fn section_raw_fallback_atoms(macro_name: &str, heading: &SyntaxNode) -> Option<Vec<String>> {
+    let section = heading
+        .ancestors()
+        .find(|n| n.kind() == SyntaxKind::ROXYGEN_SECTION)?;
+    let text = section.text().to_string();
+    let mut value_lines: Vec<String> = Vec::new();
+    for (idx, line) in text.split('\n').enumerate() {
+        let content = strip_marker(line);
+        if idx == 0 {
+            // The tag-head line: drop `@<macro_name>` and the one whitespace
+            // character roxygen2's tokenizer strips after the tag; a remaining
+            // same-line value becomes the first value line.
+            let rest = content.strip_prefix('@')?.strip_prefix(macro_name)?;
+            if rest.is_empty() {
+                continue;
+            }
+            let rest = rest.strip_prefix([' ', '\t']).unwrap_or(rest);
+            value_lines.push(rest.to_string());
+        } else {
+            value_lines.push(content.to_string());
+        }
+    }
+    while value_lines.last().is_some_and(|l| l.trim().is_empty()) {
+        value_lines.pop();
+    }
+    let mut src = format!("#' @{macro_name}\n");
+    for line in &value_lines {
+        if line.is_empty() {
+            src.push_str("#'\n");
+        } else {
+            src.push_str("#' ");
+            src.push_str(line);
+            src.push('\n');
+        }
+    }
+    src.push_str("#' @name x\nNULL\n");
+    // The fragment is mode-default (markdown off — value lines cannot open a
+    // tag, so no `@md` can sneak in), so its projection is the plain Rd path;
+    // headings are not markdown there, hence no recursion back into this
+    // fallback.
+    let atoms: Vec<String> = project_to_rd(&src)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some(atoms)
 }
 
 /// Render a heading frame as `(\<macro_name> <title> <body>)` — a two-arg
@@ -10029,6 +10112,50 @@ mod tests {
             ),
             "got: {}",
             project_to_rd(setext)
+        );
+    }
+
+    #[test]
+    fn trailing_empty_heading_section_falls_back_to_raw_text() {
+        // A trailing level-1 heading whose section body renders empty crashes
+        // roxygen2's section splicer (`strsplit` drops the trailing empty
+        // piece, `structure(names = )` errors) and `markdown()` returns the
+        // **raw** value — the whole field renders unprocessed (cm-010,
+        // engine-probed): the heading stays literal `# Foo` prose and earlier
+        // markdown (emphasis) stays raw too.
+        for (details, want) in [
+            ("#' # Foo\n", "(\\details (TEXT \"# Foo\"))"),
+            (
+                "#' body *raw*\n#'\n#' # Foo\n",
+                "(\\details (TEXT \"body *raw* # Foo\"))",
+            ),
+        ] {
+            let src = format!("#' @md\n#' @title T\n#' @details\n{details}#' @name spec\nNULL\n");
+            let out = project_to_rd(&src);
+            assert!(
+                out.contains(want) && !out.contains("\\section"),
+                "for {details:?} got: {out}"
+            );
+        }
+        // A trailing `\subsection` (or any non-empty tail) rescues the split:
+        // the last piece is non-empty, so the outline renders normally. An
+        // *interior* empty level-1 section is kept by `strsplit` and survives
+        // too (engine-probed).
+        let rescued = "#' @md\n#' @title T\n#' @details\n#' # Foo\n#'\n#' ## Sub\n\
+                       #' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(rescued)
+                .contains("(\\section (TEXT \"Foo\") (\\subsection (TEXT \"Sub\")))"),
+            "got: {}",
+            project_to_rd(rescued)
+        );
+        let interior = "#' @md\n#' @title T\n#' @details\n#' # Foo\n#'\n#' # Bar\n#' body\n\
+                        #' @name spec\nNULL\n";
+        let out = project_to_rd(interior);
+        assert!(
+            out.contains("(\\section (TEXT \"Foo\"))")
+                && out.contains("(\\section (TEXT \"Bar\") (TEXT \"body\"))"),
+            "got: {out}"
         );
     }
 

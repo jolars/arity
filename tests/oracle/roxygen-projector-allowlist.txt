@@ -20,6 +20,7 @@ cm-006
 cm-007
 cm-008
 cm-009
+cm-010
 cm-011
 cm-012
 cm-013
@@ -69,15 +70,25 @@ cm-062
 cm-063
 cm-064
 cm-065
+cm-066
+cm-067
+cm-068
 cm-069
+cm-070
 cm-071
 cm-072
 cm-073
 cm-074
+cm-075
+cm-076
 cm-077
 cm-078
 cm-079
 cm-080
+cm-081
+cm-082
+cm-083
+cm-084
 cm-085
 cm-086
 cm-088
@@ -132,6 +143,7 @@ cm-137
 cm-138
 cm-139
 cm-140
+cm-141
 cm-142
 cm-144
 cm-145
@@ -211,6 +223,7 @@ cm-225
 cm-226
 cm-227
 cm-228
+cm-229
 cm-230
 cm-231
 cm-232
@@ -672,6 +685,7 @@ md_heading
 md_heading_brace_group
 md_heading_intro
 md_heading_subsection
+md_heading_trailing_empty
 md_html_block_case
 md_html_block_value
 md_html_block_value_edges

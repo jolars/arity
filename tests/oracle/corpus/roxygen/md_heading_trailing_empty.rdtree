@@ -1,0 +1,3 @@
+(\description (TEXT "Trailing empty heading section aborts roxygen2's markdown pass"))
+(\details (TEXT "body *stays raw* # Foo"))
+(\title (TEXT "Trailing empty heading section aborts roxygen2's markdown pass"))

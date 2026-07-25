@@ -1119,74 +1119,85 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 925 matching (all allowlisted), 64 divergent** of 989 pinned. The divergent 64 are the
-per-section backlog (harvested 18, Tabs 8, ATX 6, Setext 6,
-Link reference definitions 5, Code spans 3, Lists 3, Thematic breaks 3, Images 1, Links 1,
-…; Block quotes + List items COMPLETE). Tasks: `task roxygen-projector` (the gate),
+**Current: 949 matching (all allowlisted), 44 divergent** of 993 pinned. The divergent 44 are the
+per-section backlog (harvested 18, Link reference definitions 5, Code spans 3, Lists 3,
+Thematic breaks 3, Entities 2, HTML blocks 2, Setext 2, singles in Backslash escapes/Fenced/
+Hard breaks/Images/Links/Raw HTML; Block quotes + List items + Tabs + ATX headings COMPLETE).
+Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (989 pinned); 64 divergent backlog.
+   Curated + harvested + whole-spec corpora (993 pinned); 44 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 183/183 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 187/187 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-20f) — in-item ATX/setext headings + in-list H1 hoist: cm-302, List items COMPLETE
+## Latest session (2026-07-25) — tab-stop expansion (Tabs COMPLETE) + trailing-empty-heading raw fallback (ATX COMPLETE)
 
-Headings inside list items, both regimes (cm-302 + probes p2–p12, all oracle-matched):
+Two commits, two root causes:
 
-- **Lexer** (`lex.rs`): `carve_md_list_markers` grew an ATX arm in the same 1–4-column
-  separator window as the `>` arm — `- # Foo` carves the line remainder as one
-  `RoxygenMdHeading` leaf after the separator run.
-- **Builder** (`build.rs`): three arms in `emit_md_list_level_inner`. Same-line dispatch
-  `is_same_line_heading` → `emit_md_heading_from_value` (marker-less node). Body-loop
-  continuation-ATX arm windowed `[content_indent, content_indent+4)` (mirrors the quote arm;
-  the lexer carves the heading leaf indent-blind, the window keeps indented code apart).
-  Item-start setext promotion: `item_setext_underline_ahead` walks ≥-content-column prose to
-  a **window-gated** genuine `===`/`---` underline; `emit_md_item_setext_heading` emits the
-  from-value heading node. A below-column `===` keeps its lazy fold, a below-column `---` the
-  list-ending thematic break (both engine-probed earlier); a lone `-` dash bullet at content
-  column still nests an empty sublist (unlike section level — backlog if roxygen2 disagrees).
-- **Projector** (`project_rd.rs`): `push_inline` MdHeading arm (the fold-pair trap). A level
-  ≥2 in-item heading renders `(\subsection <title> <body>)` as a **sibling atom after
-  `(\item)`** via `md_item_atoms` (frames rooted at level 1; body = the item's following
-  inlines; a level-1 heading under a *non-sections* tag stays literal title text —
-  `serialize_inlines`' fallback, mdxml's no-sections rendering). A level-1 heading **inside a
-  list** under `@description`/`@details` routes `emit_section_with_headings` into
-  `emit_section_with_list_hoist`: roxygen2 splices its section marker into the flat Rd string
-  mid-`\itemize{`, splits, and `rdComplete`-drops each unbalanced piece — modeled as
-  container-path cuts (`HoistCut.chain`, list-ids compared): the tag piece before an in-list
-  cut drops whole, a piece crossing a list boundary empties (title-only `(\section (TEXT
-  "Foo"))`), a piece *between* two cuts in the same list renders its stranded items
-  brace-less (`(UNKNOWN "\\item")`, probe p4 exact).
-- **Formatter untouched** — all three curated cases format verbatim (baseline +3, additions
-  only).
+**1. Tab-stop expansion (cm-001/002/004/005/007/008/009 — `feat(parser)`).** CommonMark
+expands a tab to the next 4-column stop when counting block indentation; arity counted one
+column. One column source in `src/parser/roxygen.rs`: `advance_md_col` (tab → next 4-stop,
+**value coordinates** — column 0 is the char after `#'` plus the ONE whitespace char
+roxygen2's tokenizer strips, `consumeWhitespace(1)` in parser2.cpp, a space *or* a tab) and
+`md_ws_gauge` (one-based gauge; first ws char of the run → gauge 1 whatever it is; all-space
+run = char count, so pre-tab behavior is unchanged). Builder: `list_line_indent`,
+`is_indent_code_line_min` (now via the gauge — the all-space requirement is gone),
+`is_md_indented_code_value`, and the two marker-anchored counts `content_leading_spaces` /
+`item_first_line_opens_indented_code` (new `start_col` param = the value column just past the
+marker: `-\t\tfoo` leads 7 columns → snap, cm-007). Projector: `strip_md_columns` (column
+strip; a tab straddling the boundary surfaces leftover columns as **spaces** — cmark splits
+it, `\t\t` less 6 = `  bar`), tab-aware twins `md_marker_col` + `md_item_content_leading`,
+`md_indented_code_text` anchors a mid-line first line at the item marker's end column, and
+`strip_marker` now strips one `[' ','\t']` char (roxygen2 parity). Formatter untouched
+(passthrough is byte-verbatim); baseline +3, additions only.
 
-**Result:** projector **921→925 matching (all allowlisted), 64 divergent**, 0 blocked, of 989
-pinned; 0 regressions. **List items 47→48/48 COMPLETE** (cm-302). Curated
-`md_list_item_atx_hoist` + `md_list_item_atx_subsection` + `md_list_item_setext_subsection`
-(R-minted pins), fixtures `roxygen_md_list_item_{atx,setext}`, 2 projector units
-(`in_list_level1_heading_hoists_and_drops`, `in_item_deeper_heading_renders_subsection`).
-**Backlog recorded:** a following sibling item after an in-item subsection is swallowed into
-the subsection body by roxygen2's flat-string close (`\item qux` inside the GRP, probe p6) —
-arity keeps it a sibling; an empty item folds no next-line heading (conservative,
-`item_has_content`-gated like the quote arm). Fixed-point 183/183. Full suite + clippy + fmt
-green.
+**2. Trailing-empty-heading raw fallback (cm-010 — projector-only).** cm-010's divergence
+was never about the tab: a **trailing level-1 heading whose section body renders empty**
+crashes roxygen2's splicer — `strsplit` drops the trailing empty piece, `structure(names=)`
+errors (`'names' attribute [2] ... vector [1]`, `mdxml_children_to_rd_top`, R/markdown.R) —
+and `markdown()` returns the **raw unprocessed text**: the whole field renders as if
+markdown never ran (`*emph*` stays literal). Interior empty L1 sections survive (strsplit
+keeps interior empties); any non-empty tail (`\subsection`, prose) rescues. Modeled in
+`emit_section_with_headings`: guard fires when the body's **last** heading is level 1 and
+the inlines after it serialize empty → `section_raw_fallback_atoms` recovers the enclosing
+`ROXYGEN_SECTION`'s raw lines (lossless CST), re-synthesizes a **non-`@md`** fragment
+(`quote_flat_reparse` mould), and projects it — the plain-Rd path IS roxygen2's fallback; no
+recursion (non-md parses no headings). Safe under the list-hoist recursion (its prefix holds
+no L1s). Intro-derived description (no tag line) returns `None` → ordinary path (backlog).
 
-**Ranked next target:** **Tabs** (3/11, 8 remaining) — the biggest single cluster, one root
-cause (tab-column expansion; `list_line_indent` and friends count a tab as one column).
-Lists' remaining 3 (cm-319/320/326) are def-in-item and fence-in-item singles. The linkref 5
-are heterogeneous singles: cm-196 (emphasis inside a leaked label), cm-216 (def resolution
-into a heading title), cm-217/218 (setext promotion grabs the def line — defs strip before
-setext), cm-220 (def inside a block quote). ATX 6 + Setext 6 (emphasis-crossing titles,
-indent edges, hard-break-in-title). Harvested 18 out-of-scope.
+**Result:** projector **925→949 matching (all allowlisted), 64→44 divergent**, 0 blocked, of
+993 pinned; 0 regressions. The fallback closed **13 latent cases** beyond cm-010 (ATX
+cm-066/067/068/070/075/076, Setext cm-081/082/083/084, cm-141, cm-229). **Tabs 11/11 + ATX
+headings 18/18 COMPLETE**; Setext 25/27. Curated `md_tab_indent_{code,list,nested}` +
+`md_heading_trailing_empty` (R-minted pins, all four also live-probed), fixture
+`roxygen_md_tab_indent`, unit `trailing_empty_heading_section_falls_back_to_raw_text`.
+Fixed-point 187/187. Full suite + clippy + fmt green.
+
+**New traps:** the **indent gauge is tab-stop-aware in value coordinates** — never count ws
+chars for block structure; route through `md_ws_gauge`/`advance_md_col` (roxygen.rs), and
+remember interior anchors (item separators) need the marker's absolute column. Remaining
+char-counted sites (recorded gaps, not in any pinned case): the lexer's quote/fence/heading
+carve gates (the "4+ spaces before `>`" note in lex.rs tests), `carve_md_list_markers`' 1–4
+separator window, the fence-closer `ws_width <= base_indent + 3`, `is_md_html_block_value`'s
+`len() <= 4`.
+
+**Ranked next target:** **harvested 18** is the biggest block but out-of-scope singles;
+among spec sections, **Link reference definitions (5)** — cm-196 (emphasis inside a leaked
+label), cm-216 (def resolution into a heading title), cm-217/218 (setext promotion grabs the
+def line — defs strip before setext), cm-220 (def inside a block quote); cm-217/218 look
+like one root cause. Then Code spans 3 (cm-332/333/349), Lists 3 (cm-319/320/326,
+def-in-item + fence-in-item), Thematic breaks 3 (cm-043/049/061).
 
 ## Earlier sessions
+
+- **2026-07-20f** — in-item ATX/setext headings + in-list H1 hoist (cm-302; `carve_md_list_markers` ATX arm, `is_same_line_heading`/`emit_md_heading_from_value`, window-gated setext promotion; projector `md_item_atoms` in-item `\subsection`s + `emit_section_with_list_hoist` container-path cuts for the in-list H1 splice). Curated ×3, fixtures ×2, 2 units, baseline +3. 921→925, List items 47→48/48 COMPLETE.
 
 - **2026-07-20e** — same-line block quote in a list item (`carve_md_list_markers` `>` arm; `is_same_line_quote` dispatch onto `emit_md_block_quote_from_value`; projector/formatter untouched). Curated `md_list_item_same_line_quote`, fixture, 2 units, baseline +1. 918→921, List items 45→47/48 (cm-294/295).
 
