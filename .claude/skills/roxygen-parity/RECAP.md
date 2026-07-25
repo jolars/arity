@@ -376,7 +376,10 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `[ref]: R:ref`. Projector-only `resolve_user_linkrefs` (before `demote_undefined_links`, on the
   original body): `collect_user_linkrefs_tree` (whole-field, recursing into list items) +
   `apply_user_linkrefs`; a def run is consumed only at a **block start** (a def can't interrupt a
-  paragraph). `@section`'s arm runs the same shared `resolve_linkrefs` pipeline.
+  paragraph). A block start is a `\n`-bearing `Text` at section level, but **inside a list item a
+  blank line is two adjacent `SOFT_BREAK`-only inlines** (`md_list_item_inlines` maps each NEWLINE to
+  its own) — `collect_user_linkrefs` reads both shapes (cm-319). `@section`'s arm runs the same
+  shared `resolve_linkrefs` pipeline.
 - **Defs parse at the BLOCK level, from regathered raw source (2026-07-20).** cmark strips defs from
   a paragraph *before* inline resolution, so `match_linkref_def` regathers the post-label tail from
   **raw-recoverable** inlines (`linkref_raw_fragment`: `Text` verbatim, raw-HTML leaves — a next-line
@@ -1133,10 +1136,11 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 958 matching (all allowlisted), 39 divergent** of 997 pinned. The divergent 39 are the
+**Current: 960 matching (all allowlisted), 38 divergent** of 998 pinned. The divergent 38 are the
 per-section backlog (harvested 18, Code spans 3, Thematic breaks 3, Entities 2,
 HTML blocks 2, Link reference definitions 2, Setext 2, singles in Backslash escapes/Fenced/
-Hard breaks/Images/Links/Lists/Raw HTML; Block quotes + List items + Tabs + ATX headings COMPLETE).
+Hard breaks/Images/Links/Raw HTML; Block quotes + List items + Lists + Tabs + ATX headings
+COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1144,49 +1148,47 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (997 pinned); 39 divergent backlog.
+   Curated + harvested + whole-spec corpora (998 pinned); 38 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 191/191 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 192/192 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-25c) — same-line fence in a list item (cm-320/326)
+## Latest session (2026-07-25d) — def consumption inside a list item (cm-319)
 
-**Parser gap** (one root cause, two spec cases): a fenced code block opening ON the list
-marker line (`- ```` ``` ````) was glued into the item as prose, and the *closing* fence
-line then spuriously opened a fence that swallowed the following sibling.
+**Projector gap** (the def machinery is projector-side by design): a `[ref]: /url`
+definition as a blank-separated second block of a list item was neither consumed nor
+collected — `collect_user_linkrefs` recognized a block start only via a `\n`-bearing
+`Text`, but inside an item `md_list_item_inlines` maps every `NEWLINE` to its own
+`SOFT_BREAK`-only inline, so a blank line (= paragraph break = two of those adjacent)
+never registered. The def line stayed prose (its `[ref]` even resolved as a synthesized
+`\link{ref}` topic link), where cmark consumes it.
 
-Three small pieces along the established same-line-child pattern (quote/ATX/nested-marker):
-**Lexer** — `carve_md_list_markers` gains a fence arm: a `scan_md_fence` opener in the
-1–4-column separator window carves the line remainder as a `RoxygenMdFence` leaf (separator
-ws stays outside). **Builder** — `is_same_line_fence` (via `is_same_line_child`) dispatches
-onto `emit_md_code_block_from_value`, which gained a `base_indent` param keying the closer's
-indent window (1 for the tag-value shape at its `group.rs` call site, the item's content
-column mid-line); the node starts at the fence leaf, marker-less first line. **Projector** —
-`md_code_block_parts` normally cancels the container column because the opener line carries
-the same indent as the body lines, but the mid-line opener carries none: for a marker-less
-first line it now adds `md_indented_code_extra_strip(node)` (the item content column; zero
-for the tag-value shape) to the fence indent for both the body strip and the closer test.
-**Formatter untouched** (the list passthrough is whole-node per-line).
+One small fix in `collect_user_linkrefs` (project_rd.rs): the block-start update now also
+fires on a `SOFT_BREAK`-only `Text` whose predecessor is one too. Everything downstream
+was already in place — `apply_user_linkrefs` descends into `MdList` items with
+`consume_defs=true`, `scan_linkref_run` drops the leading-ws index, and
+`collect_user_linkrefs_tree` now picks the in-item def up for the field-wide map (so a
+`[x][ref]` elsewhere in the field renders `\href{/url}{x}`). Parser, formatter, CST all
+untouched.
 
-**Result:** projector **955→958 matching (all allowlisted), 41→39 divergent**, 0 blocked, of
-997 pinned; 0 regressions. **Lists 25/26** (cm-319 remains, separate root cause:
-def-in-item consumption). Curated `md_list_same_line_fence` (both bullet + ordered/info-string
-forms), R-minted pin byte-identical to arity's projection. Fixture
-`roxygen_md_list_same_line_fence` (lossless, no diagnostics; the `1.` after the closer
-rightly starts a new ordered list on marker-type change). Unit
-`same_line_fence_opens_inside_item`. Format baseline +1 (byte-verbatim). Fixed-point
-191/191. Full suite + clippy + fmt green.
+**Result:** projector **958→960 matching (all allowlisted), 39→38 divergent**, 0 blocked,
+of 998 pinned; 0 regressions. **Lists 26/26 COMPLETE.** Curated `md_linkref_def_in_item`
+(in-item def + a cross-list reference resolving through it), R-minted pin byte-identical
+to arity's projection. Unit `linkref_def_in_list_item_is_consumed` (consumption + field-map
+collection). Format baseline +1 (only the standard tag-value next-line normalization;
+projection verified stable under formatting). Fixed-point 192/192. Full suite + clippy +
+fmt green.
 
-**Ranked next target:** **cm-319** (last Lists case — a `[ref]: /url` def inside a list item
-is not consumed; the def machinery's block-start consumption doesn't descend into items —
-adjacent to the 2026-07-25b field-map work); then Code spans 3 (cm-332/333/349), Thematic
-breaks 3 (cm-043/049/061), Setext 2 (cm-087/090), Entities 2, HTML blocks 2, and the linkref
-stragglers cm-196 (emphasis inside a leaked label) + cm-220 (def inside a block quote).
-Harvested 18 stays the biggest block but out-of-scope singles.
+**Ranked next target:** **Code spans 3** (cm-332/333/349); then Thematic breaks 3
+(cm-043/049/061), Setext 2 (cm-087/090), Entities 2 (cm-025/034), HTML blocks 2, and the
+linkref stragglers cm-196 (emphasis inside a leaked label) + cm-220 (def inside a block
+quote). Harvested 18 stays the biggest block but out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-25c** — same-line fence in a list item (cm-320/326; `carve_md_list_markers` fence arm → `RoxygenMdFence` leaf, `is_same_line_fence` dispatch onto `emit_md_code_block_from_value` with a `base_indent` param, projector adds `md_indented_code_extra_strip` for the marker-less opener's body strip + closer test). Curated `md_list_same_line_fence`, fixture, unit, baseline +1. 955→958, Lists 25/26.
 
 - **2026-07-25b** — setext def-strip + field-wide refmap (cm-216/217/218; `setext_title_strip` SOFT_BREAK-joined leading-def consumption, all-defs title demotes the heading; document-order `LinkDefs` seeds every piece's `resolve_linkrefs` + heading titles via `_seeded` plumbing). Curated ×3, 3 units, baseline +3. 949→955, Linkrefs 25/27. Gaps: `-`-underline all-defs = thematic break (unmodeled); list-hoist regime passes an empty map; def consumption stays per-piece.
 

@@ -4558,16 +4558,20 @@ fn rebuilt_inline_image(alt: &str, def: &UserLinkDef) -> String {
 /// lines a definition consumed, leaving `leftover` as prose (a definition always
 /// consumes whole source lines, so a partially-consumed inline is always a `Text`
 /// cut at a line boundary). A definition run is consumed only at a *block start*
-/// (the body start, or right after a `Text` containing a newline — a paragraph
-/// break): a definition cannot interrupt a paragraph (CommonMark). Within a run,
-/// consecutive definitions are separated by a whitespace-only `Text` (a soft line
-/// break), which is also dropped.
+/// (the body start, or right after a paragraph break): a definition cannot
+/// interrupt a paragraph (CommonMark). A paragraph break is a `Text` containing a
+/// newline at the section level, or — inside a list item, where
+/// [`md_list_item_inlines`] maps each source `NEWLINE` to its own
+/// [`SOFT_BREAK`]-only `Text` — two of those adjacent (a blank `#'` line,
+/// cm-319). Within a run, consecutive definitions are separated by a
+/// whitespace-only `Text` (a soft line break), which is also dropped.
 fn collect_user_linkrefs(
     body: &[Inline],
 ) -> (
     std::collections::HashMap<String, UserLinkDef>,
     std::collections::BTreeMap<usize, Option<String>>,
 ) {
+    let is_soft_break = |inl: &Inline| matches!(inl, Inline::Text(t) if !t.is_empty() && t.chars().all(|c| c == SOFT_BREAK));
     let mut urls: std::collections::HashMap<String, UserLinkDef> = std::collections::HashMap::new();
     let mut dropped = std::collections::BTreeMap::new();
     let mut i = 0;
@@ -4581,7 +4585,11 @@ fn collect_user_linkrefs(
             block_start = false;
             continue;
         }
-        block_start = matches!(&body[i], Inline::Text(t) if t.contains('\n'));
+        block_start = match &body[i] {
+            Inline::Text(t) if t.contains('\n') => true,
+            inl if is_soft_break(inl) => i > 0 && is_soft_break(&body[i - 1]),
+            _ => false,
+        };
         i += 1;
     }
     (urls, dropped)
@@ -11207,6 +11215,35 @@ mod tests {
             project_to_rd(unbalanced).contains("(\\link (TEXT \"foo\")) (TEXT \": /url)x\")"),
             "unmatched `)` fails the def, got: {}",
             project_to_rd(unbalanced)
+        );
+    }
+
+    #[test]
+    fn linkref_def_in_list_item_is_consumed() {
+        // A link-reference definition as a blank-separated second block of a
+        // list item is a definition, not prose: cmark consumes it and the item
+        // keeps only its first paragraph (cm-319). Inside an item the paragraph
+        // break is a blank `#'` line — two adjacent SOFT_BREAK inlines — not a
+        // `\n`-bearing `Text`, so the block-start scan must read that shape too.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#' - b\n#'\n\
+                   #'   [ref]: /url\n#' - d\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\itemize (\\item) (TEXT \"a\") (\\item) (TEXT \"b\") \
+                 (\\item) (TEXT \"d\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+        // The definition it collects resolves a reference elsewhere in the
+        // field: `[x][ref]` renders `\href{/url}{x}`, not the synthesized
+        // `R:ref` topic link.
+        let referencing = "#' @md\n#' @title T\n#' @details [x][ref]\n#'\n#' - b\n#'\n\
+                           #'   [ref]: /url\n#' @name spec\nNULL\n";
+        assert!(
+            project_to_rd(referencing).contains("(\\href (VERB \"/url\") (TEXT \"x\"))"),
+            "got: {}",
+            project_to_rd(referencing)
         );
     }
 

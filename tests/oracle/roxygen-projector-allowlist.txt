@@ -316,6 +316,7 @@ cm-315
 cm-316
 cm-317
 cm-318
+cm-319
 cm-320
 cm-321
 cm-322
@@ -726,6 +727,7 @@ md_linkref_blank_label
 md_linkref_casefold
 md_linkref_def_dest_edge
 md_linkref_def_fallback
+md_linkref_def_in_item
 md_linkref_escaped_open_bracket
 md_linkref_heading_title
 md_link_ref_in_emphasis

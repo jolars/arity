@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\href (VERB "/url") (TEXT "x")) (\itemize (\item) (TEXT "a") (\item) (TEXT "b") (\item) (TEXT "d")))
+(\title (TEXT "T"))
