@@ -5506,6 +5506,11 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_TABLE => {
             out.push(Inline::MdTable(n));
         }
+        // A `ROXYGEN_MD_THEMATIC_BREAK` folded into a list item (a same-line
+        // `- * * *`, cm-061): roxygen2 has no thematic-break support and renders
+        // it empty, so it contributes nothing — the item stays bare, the same
+        // way `section_body_parts` drops a section-level break.
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK => {}
         // A `ROXYGEN_MD_HEADING` folded into a list item (a same-line `- # Foo`,
         // a content-column ATX line, or a promoted setext paragraph, cm-302): a
         // structural marker like its section-level counterpart. A level >= 2
@@ -8575,6 +8580,67 @@ mod tests {
         // A non-empty backquoted name is a valid R name.
         assert!(code_span_is_r("`x`"));
         assert!(code_span_is_r("` `"));
+    }
+
+    #[test]
+    fn thematic_break_line_never_opens_a_setext_title() {
+        // `***` then `---`: block structure wins over paragraph text in
+        // CommonMark, so a thematic-break line never becomes a setext title —
+        // the `---` heads nothing and all three lines are breaks, which
+        // roxygen2 renders empty (cm-043).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' ***\n\
+                   #' ---\n\
+                   #' ___\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details)\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn over_indented_thematic_break_folds_into_the_open_paragraph() {
+        // `Foo` then `    ***`: content at column five is indented-code
+        // territory, not a thematic break — and indented code cannot interrupt
+        // a paragraph, so the line lazily folds as prose (cm-049).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' Foo\n\
+                   #'     ***\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"Foo ***\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn same_line_item_thematic_break_drops_but_keeps_the_item() {
+        // `- * * *`: a thematic break at the item's content start (cm-061)
+        // renders empty in roxygen2, leaving the `\item` bare.
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' - Foo\n\
+                   #' - * * *\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (\\itemize (\\item) (TEXT \"Foo\") (\\item)))\n\
+             (\\title (TEXT \"T\"))"
+        );
     }
 
     #[test]

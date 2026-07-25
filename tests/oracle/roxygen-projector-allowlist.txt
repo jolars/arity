@@ -50,11 +50,13 @@ cm-039
 cm-040
 cm-041
 cm-042
+cm-043
 cm-044
 cm-045
 cm-046
 cm-047
 cm-048
+cm-049
 cm-050
 cm-051
 cm-052
@@ -66,6 +68,7 @@ cm-057
 cm-058
 cm-059
 cm-060
+cm-061
 cm-062
 cm-063
 cm-064
@@ -802,6 +805,7 @@ md_table_cells
 md_table_prose
 md_table_value
 md_thematic_break
+md_thematic_break_block_edges
 md_thematic_break_stars
 md_thematic_break_value
 md_thematic_break_value_edges

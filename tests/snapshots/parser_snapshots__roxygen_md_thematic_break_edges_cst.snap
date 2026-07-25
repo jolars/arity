@@ -1,0 +1,74 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..100
+  ROXYGEN_BLOCK@0..94
+    ROXYGEN_SECTION@0..7
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+    ROXYGEN_SECTION@7..84
+      ROXYGEN_MARKER@7..9 "#'"
+      WHITESPACE@9..10 " "
+      ROXYGEN_TAG@10..18
+        ROXYGEN_AT@10..11 "@"
+        ROXYGEN_TAG_NAME@11..18 "details"
+      NEWLINE@18..19 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@19..25
+        ROXYGEN_MARKER@19..21 "#'"
+        WHITESPACE@21..22 " "
+        ROXYGEN_TEXT@22..25 "***"
+      NEWLINE@25..26 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@26..32
+        ROXYGEN_MARKER@26..28 "#'"
+        WHITESPACE@28..29 " "
+        ROXYGEN_TEXT@29..32 "---"
+      NEWLINE@32..33 "\n"
+      ROXYGEN_MD_THEMATIC_BREAK@33..39
+        ROXYGEN_MARKER@33..35 "#'"
+        WHITESPACE@35..36 " "
+        ROXYGEN_TEXT@36..39 "___"
+      NEWLINE@39..40 "\n"
+      ROXYGEN_MARKER@40..42 "#'"
+      NEWLINE@42..43 "\n"
+      ROXYGEN_PARAGRAPH@43..61
+        ROXYGEN_MARKER@43..45 "#'"
+        WHITESPACE@45..46 " "
+        ROXYGEN_TEXT@46..49 "Foo"
+        NEWLINE@49..50 "\n"
+        ROXYGEN_MARKER@50..52 "#'"
+        WHITESPACE@52..57 "     "
+        ROXYGEN_TEXT@57..60 "***"
+        NEWLINE@60..61 "\n"
+      ROXYGEN_MARKER@61..63 "#'"
+      NEWLINE@63..64 "\n"
+      ROXYGEN_MD_LIST@64..83
+        ROXYGEN_MARKER@64..66 "#'"
+        WHITESPACE@66..67 " "
+        ROXYGEN_MD_LIST_ITEM@67..72
+          ROXYGEN_MD_LIST_MARKER@67..68 "-"
+          ROXYGEN_TEXT@68..72 " Foo"
+        NEWLINE@72..73 "\n"
+        ROXYGEN_MARKER@73..75 "#'"
+        WHITESPACE@75..76 " "
+        ROXYGEN_MD_LIST_ITEM@76..83
+          ROXYGEN_MD_LIST_MARKER@76..77 "-"
+          ROXYGEN_TEXT@77..78 " "
+          ROXYGEN_MD_THEMATIC_BREAK@78..83
+            ROXYGEN_TEXT@78..83 "* * *"
+      NEWLINE@83..84 "\n"
+    ROXYGEN_SECTION@84..94
+      ROXYGEN_MARKER@84..86 "#'"
+      WHITESPACE@86..87 " "
+      ROXYGEN_TAG@87..94
+        ROXYGEN_AT@87..88 "@"
+        ROXYGEN_TAG_NAME@88..92 "name"
+        WHITESPACE@92..93 " "
+        ROXYGEN_TEXT@93..94 "x"
+  NEWLINE@94..95 "\n"
+  IDENT@95..99 "NULL"
+  NEWLINE@99..100 "\n"

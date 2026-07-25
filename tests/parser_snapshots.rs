@@ -274,6 +274,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_blockquote_not",
         "roxygen_md_blockquote_value",
         "roxygen_md_thematic_break",
+        "roxygen_md_thematic_break_edges",
         "roxygen_md_thematic_break_not",
         "roxygen_md_thematic_break_value",
         "roxygen_md_indented_code",

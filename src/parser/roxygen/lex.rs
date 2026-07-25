@@ -995,11 +995,11 @@ fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
 /// quote at the item's content start** (`- > quoted`, cm-294/295): the rest of
 /// the line carves as a `RoxygenMdBlockQuote` leaf after the separator run. An
 /// ATX heading in that window (`- # Foo`, cm-302) likewise carves the rest of
-/// the line as a `RoxygenMdHeading` leaf, and a code fence (`- ```` ``` ````,
-/// cm-320/326) a `RoxygenMdFence` leaf.
+/// the line as a `RoxygenMdHeading` leaf, a code fence (`- ```` ``` ````,
+/// cm-320/326) a `RoxygenMdFence` leaf, and a thematic break (`- * * *`,
+/// cm-061) a `RoxygenMdThematicBreak` leaf.
 /// Five or more separating columns are indented-code
-/// territory, and a remainder that is a thematic break (`- * * *`) is a
-/// different block, so both leave the remainder in the prose run. The caller
+/// territory, so that remainder stays in the prose run. The caller
 /// must have checked [`scan_md_list_marker`] at `pos`. Returns the position of
 /// the content after the last carved marker (or the line end when the quote
 /// leaf consumed the remainder).
@@ -1013,8 +1013,25 @@ fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: us
         while q < bytes.len() && (bytes[q] == b' ' || bytes[q] == b'\t') {
             q += 1;
         }
-        if q == end || q >= bytes.len() || q - end > 4 || is_thematic_break(bytes, q) {
+        if q == end || q >= bytes.len() || q - end > 4 {
             return end;
+        }
+        // A thematic break at the item's content start (`- * * *`, cm-061): the
+        // rest of the line carves as a `RoxygenMdThematicBreak` leaf after the
+        // separator run, exactly like the block-quote, heading, and fence arms.
+        // Checked before the nested-marker scan — a `*`-based break would
+        // otherwise match as a bullet.
+        if is_thematic_break(bytes, q) {
+            push(out, TokKind::RoxygenText, text, start, end, q - end);
+            push(
+                out,
+                TokKind::RoxygenMdThematicBreak,
+                text,
+                start,
+                q,
+                text.len() - q,
+            );
+            return text.len();
         }
         if bytes[q] == b'>' {
             push(out, TokKind::RoxygenText, text, start, end, q - end);

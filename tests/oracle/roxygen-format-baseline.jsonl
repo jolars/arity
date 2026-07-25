@@ -151,6 +151,7 @@
 {"key":"curated/md_table_prose","formatted":"#' Table between prose\n#'\n#' @md\n#' @details\n#' Before the table.\n#' | a | b |\n#' |---|---|\n#' | 1 | 2 |\n#'\n#' After the table.\n#' @name md_table_prose\nNULL\n"}
 {"key":"curated/md_table_value","formatted":"#' GFM table from a tag's same-line value\n#'\n#' @details\n#' | a | b |\n#' | --- | :-: |\n#' | 1 | 2 |\n#' @md\nfoo <- function() {}\n"}
 {"key":"curated/md_thematic_break","formatted":"#' Thematic break\n#'\n#' @md\n#' @details\n#' Before para.\n#'\n#' ---\n#'\n#' After para.\n#' @name md_thematic_break\nNULL\n"}
+{"key":"curated/md_thematic_break_block_edges","formatted":"#' Thematic break block edges\n#'\n#' @md\n#' @details\n#' ***\n#' ---\n#' ___\n#'\n#' Foo ***\n#'\n#' - Foo\n#' - * * *\n#' @name md_thematic_break_block_edges\nNULL\n"}
 {"key":"curated/md_thematic_break_stars","formatted":"#' Thematic stars\n#'\n#' @md\n#' @details\n#' Foo\n#' ***\n#' bar\n#' ___\n#' baz\n#' @name md_thematic_break_stars\nNULL\n"}
 {"key":"curated/md_thematic_break_value","formatted":"#' Thematic break from tag value\n#'\n#' @md\n#' @details\n#' ***\n#' after break\n#' @name md_thematic_break_value\nNULL\n"}
 {"key":"curated/md_thematic_break_value_edges","formatted":"#' Spaced dash break from tag value\n#'\n#' @md\n#' @details\n#' - - -\n#' after spaced dashes\n#' @seealso\n#' ---\n#' @name md_thematic_break_value_edges\nNULL\n"}

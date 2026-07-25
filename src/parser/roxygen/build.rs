@@ -241,6 +241,13 @@ fn is_same_line_fence(tokens: &[Token], i: usize) -> bool {
     is_same_line_child(tokens, i, &TokKind::RoxygenMdFence)
 }
 
+/// A thematic break opening at a list item's content start on the marker line
+/// (`- * * *`, cm-061), carved by the lexer as a `RoxygenMdThematicBreak` leaf
+/// past the separator run.
+fn is_same_line_break(tokens: &[Token], i: usize) -> bool {
+    is_same_line_child(tokens, i, &TokKind::RoxygenMdThematicBreak)
+}
+
 /// Whether the token at `i` is a marker→child all-whitespace separator run
 /// followed by a leaf of `kind` — the shape `carve_md_list_markers` produces for
 /// a child block starting on the item's marker line.
@@ -843,7 +850,18 @@ fn finish_md_block_quote(
 /// (a promoting `---` is consumed with its paragraph before then), so a bare
 /// dash-run `---` here is always a thematic break. An `===` underline is never a
 /// thematic break (only `*`/`-`/`_` open one), so it stays literal prose.
+///
+/// The line's content must sit within CommonMark's three-space indent allowance:
+/// at column five or beyond (the one-based [`list_line_indent`] gauge, tab-stop
+/// expanded) the line is indented-code territory, so it is no break — after a
+/// paragraph it lazily folds as ordinary prose (`Foo` then `    ***` is one
+/// paragraph, cm-049; at a fresh position the indented-code arm claims it first,
+/// cm-048). The lexer carves the leaf without seeing the marker→content
+/// whitespace, so the column gate lives here at block level.
 pub(super) fn is_md_thematic_break_line(tokens: &[Token], start: usize) -> bool {
+    if list_line_indent(tokens, start) >= 5 {
+        return false;
+    }
     let content = line_content_start(tokens, start);
     match tokens.get(content).map(|t| &t.kind) {
         Some(TokKind::RoxygenMdThematicBreak) => true,
@@ -1180,6 +1198,16 @@ fn emit_md_list_level_inner(
             // content column (not the section level).
             events.push(Event::Tok(i)); // separating whitespace (prose run)
             i = emit_md_code_block_from_value(tokens, i + 1, content_indent, events);
+            item_has_content = true;
+        } else if is_same_line_break(tokens, i) {
+            // A thematic break at the item's content start on the marker line
+            // (`- * * *`, cm-061): the lexer carved the rest of the line as a
+            // `RoxygenMdThematicBreak` leaf past the separator run. The break
+            // node holds just the leaf; roxygen2 renders a thematic break
+            // empty, so the projector drops it and the item stays bare
+            // (`\item` with no text).
+            events.push(Event::Tok(i)); // separating whitespace (prose run)
+            i = emit_md_thematic_break_from_value(tokens, i + 1, events);
             item_has_content = true;
         } else if item_first_line_opens_indented_code(tokens, i, marker_end_col) {
             // The item's content sits five or more columns past the marker, so
@@ -2289,9 +2317,12 @@ pub(super) fn is_md_setext_underline_or_dash(tokens: &[Token], start: usize) -> 
 /// The whole preceding paragraph becomes the heading text; this block-level
 /// look-back is what distinguishes a setext H2 (`para` then `---`) from a thematic
 /// break (`---` after a blank). Only called at a paragraph open, so the run scanned
-/// here is exactly the paragraph the grouper would otherwise build.
+/// here is exactly the paragraph the grouper would otherwise build. A thematic-break
+/// line never opens a paragraph (block structure wins over paragraph text in
+/// CommonMark), so `***` followed by `---` is two breaks, not a `***`-titled heading
+/// (cm-043).
 pub(super) fn is_md_setext_heading_start(tokens: &[Token], start: usize) -> bool {
-    if is_md_setext_underline_or_dash(tokens, start) {
+    if is_md_setext_underline_or_dash(tokens, start) || is_md_thematic_break_line(tokens, start) {
         return false;
     }
     let mut line = start;

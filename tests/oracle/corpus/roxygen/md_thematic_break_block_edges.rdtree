@@ -1,0 +1,3 @@
+(\description (TEXT "Thematic break block edges"))
+(\details (TEXT "Foo ***") (\itemize (\item) (TEXT "Foo") (\item)))
+(\title (TEXT "Thematic break block edges"))
