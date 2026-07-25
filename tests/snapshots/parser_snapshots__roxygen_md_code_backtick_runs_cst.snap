@@ -1,0 +1,62 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..102
+  ROXYGEN_BLOCK@0..82
+    ROXYGEN_SECTION@0..20
+      ROXYGEN_PARAGRAPH@0..17
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..16 "Backtick runs"
+        NEWLINE@16..17 "\n"
+      ROXYGEN_MARKER@17..19 "#'"
+      NEWLINE@19..20 "\n"
+    ROXYGEN_SECTION@20..76
+      ROXYGEN_MARKER@20..22 "#'"
+      WHITESPACE@22..23 " "
+      ROXYGEN_TAG@23..31
+        ROXYGEN_AT@23..24 "@"
+        ROXYGEN_TAG_NAME@24..31 "details"
+      NEWLINE@31..32 "\n"
+      ROXYGEN_PARAGRAPH@32..44
+        ROXYGEN_MARKER@32..34 "#'"
+        WHITESPACE@34..35 " "
+        ROXYGEN_TEXT@35..43 "```foo``"
+        NEWLINE@43..44 "\n"
+      ROXYGEN_MARKER@44..46 "#'"
+      NEWLINE@46..47 "\n"
+      ROXYGEN_PARAGRAPH@47..59
+        ROXYGEN_MARKER@47..49 "#'"
+        WHITESPACE@49..50 " "
+        ROXYGEN_TEXT@50..58 "``a` end"
+        NEWLINE@58..59 "\n"
+      ROXYGEN_MARKER@59..61 "#'"
+      NEWLINE@61..62 "\n"
+      ROXYGEN_PARAGRAPH@62..76
+        ROXYGEN_MARKER@62..64 "#'"
+        WHITESPACE@64..65 " "
+        ROXYGEN_TEXT@65..67 "a "
+        ROXYGEN_MD_CODE@67..73 "` `` `"
+        ROXYGEN_TEXT@73..75 " b"
+        NEWLINE@75..76 "\n"
+    ROXYGEN_SECTION@76..82
+      ROXYGEN_MARKER@76..78 "#'"
+      WHITESPACE@78..79 " "
+      ROXYGEN_TAG@79..82
+        ROXYGEN_AT@79..80 "@"
+        ROXYGEN_TAG_NAME@80..82 "md"
+  NEWLINE@82..83 "\n"
+  ASSIGNMENT_EXPR@83..101
+    IDENT@83..84 "f"
+    WHITESPACE@84..85 " "
+    ASSIGN_LEFT@85..87 "<-"
+    WHITESPACE@87..88 " "
+    FUNCTION_EXPR@88..101
+      FUNCTION_KW@88..96 "function"
+      LPAREN@96..97 "("
+      IDENT@97..98 "x"
+      RPAREN@98..99 ")"
+      WHITESPACE@99..100 " "
+      IDENT@100..101 "x"
+  NEWLINE@101..102 "\n"

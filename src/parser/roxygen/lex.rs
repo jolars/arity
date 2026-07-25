@@ -785,6 +785,11 @@ fn lex_roxygen_prose(
             push(out, kind, text, start, i, end - i);
             i = end;
             run_start = i;
+        } else if bytes[i] == b'`' {
+            // An unmatched backtick opener run is literal *whole*: cmark
+            // resumes scanning past the run, so its interior backticks never
+            // open a shorter span (```` ```foo`` ```` stays literal, cm-349).
+            i += run_len(bytes, i, b'`');
         } else {
             // Not a span start: advance one whole UTF-8 char. The recognized
             // starts (`` ` ``, `\`, `[`) are all ASCII, so this only skips over
@@ -2698,6 +2703,27 @@ mod tests {
             ]
         );
         assert_lossless("#' ``a `b` c`` end\n");
+    }
+
+    #[test]
+    fn inline_code_unmatched_opener_run_is_literal_whole() {
+        // cmark scans past a *whole* failed opener run: in ```` ```foo`` ````
+        // the 3-run finds no 3-run closer, so the scan resumes after it and the
+        // trailing 2-run has no closer either — everything stays literal
+        // (cm-349). Retrying inside the run would spuriously match a
+        // 2-backtick span.
+        let src = "#' ```foo``\n#' @md\n";
+        assert_eq!(
+            prose_texts(src),
+            vec![(TokKind::RoxygenText, "```foo``".into())]
+        );
+        assert_lossless(src);
+        // Same rule without `@md` (the Rd-mode carve shares the scanner).
+        assert_eq!(
+            prose_texts("#' ``a` end\n"),
+            vec![(TokKind::RoxygenText, "``a` end".into())]
+        );
+        assert_lossless("#' ``a` end\n");
     }
 
     #[test]

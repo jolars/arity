@@ -228,9 +228,8 @@ ROOT@0..1039
         WHITESPACE@595..596 " "
         ROXYGEN_TEXT@596..598 "a "
         ROXYGEN_MD_CODE@598..612
-          ROXYGEN_TEXT@598..599 "`"
-          ROXYGEN_MD_CODE@599..603 "`x `"
-          ROXYGEN_TEXT@603..605 "y`"
+          ROXYGEN_TEXT@598..602 "``x "
+          ROXYGEN_MD_CODE@602..605 "`y`"
           NEWLINE@605..606 "\n"
           ROXYGEN_MARKER@606..608 "#'"
           WHITESPACE@608..609 " "

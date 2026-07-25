@@ -971,8 +971,14 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   column after a blank is a block *within* the item (arity ends the list — needs the item-block model); a
   block macro folding into an item (below).
 - **Code span `\code`-vs-`\verb` per arity-parseability** (roxygen2 `can_parse`). A `_`-leading code
-  span renders `\verb` (R's lexer rejects a `_`-leading name; `has_invalid_underscore_name` in
-  `code_span_is_r`, but a lone `_` stays valid as the native-pipe placeholder, gated on `|>`).
+  span renders `\verb` (R's lexer rejects a `_`-leading name; a lone `_` stays valid as the
+  native-pipe placeholder, gated on `|>`), and so does a zero-length backquoted name `` `` ``
+  (R errors at parse time; any non-empty backquote is a valid name, cm-332/333). Single screen for
+  R-rejects-but-arity-accepts names: `has_invalid_name` in `code_span_is_r` (project_rd.rs).
+- **A failed backtick opener run is literal WHOLE.** cmark resumes scanning *past* an unmatched
+  opener run, so its interior backticks never open a shorter span (```` ```foo`` ```` all literal,
+  cm-349). Both the prose lexer's `b'`'` else-arm (`lex_roxygen_prose`) and the arena rescan
+  (`resolve_multiline_spans`) advance by `run_len`, never one char — keep them in step.
 
 **Sections / projection**
 - **`norm_ws` is ASCII-`[[:space:]]`-only, never Unicode-aware.** The R driver's `norm_ws`
@@ -1136,11 +1142,11 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 960 matching (all allowlisted), 38 divergent** of 998 pinned. The divergent 38 are the
-per-section backlog (harvested 18, Code spans 3, Thematic breaks 3, Entities 2,
+**Current: 965 matching (all allowlisted), 35 divergent** of 1000 pinned. The divergent 35 are the
+per-section backlog (harvested 18, Thematic breaks 3, Entities 2,
 HTML blocks 2, Link reference definitions 2, Setext 2, singles in Backslash escapes/Fenced/
-Hard breaks/Images/Links/Raw HTML; Block quotes + List items + Lists + Tabs + ATX headings
-COMPLETE).
+Hard breaks/Images/Links/Raw HTML; Block quotes + Code spans + List items + Lists + Tabs +
+ATX headings COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1148,45 +1154,46 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (998 pinned); 38 divergent backlog.
+   Curated + harvested + whole-spec corpora (1000 pinned); 35 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 192/192 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 194/194 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-25d) — def consumption inside a list item (cm-319)
+## Latest session (2026-07-26) — code-span backtick runs + `\verb` fallback (cm-332/333/349)
 
-**Projector gap** (the def machinery is projector-side by design): a `[ref]: /url`
-definition as a blank-separated second block of a list item was neither consumed nor
-collected — `collect_user_linkrefs` recognized a block start only via a `\n`-bearing
-`Text`, but inside an item `md_list_item_inlines` maps every `NEWLINE` to its own
-`SOFT_BREAK`-only inline, so a blank line (= paragraph break = two of those adjacent)
-never registered. The def line stayed prose (its `[ref]` even resolved as a synthesized
-`\link{ref}` topic link), where cmark consumes it.
+Two independent root causes closed the Code spans section.
 
-One small fix in `collect_user_linkrefs` (project_rd.rs): the block-start update now also
-fires on a `SOFT_BREAK`-only `Text` whose predecessor is one too. Everything downstream
-was already in place — `apply_user_linkrefs` descends into `MdList` items with
-`consume_defs=true`, `scan_linkref_run` drops the leading-ws index, and
-`collect_user_linkrefs_tree` now picks the in-item def up for the field-wide map (so a
-`[x][ref]` elsewhere in the field renders `\href{/url}{x}`). Parser, formatter, CST all
-untouched.
+**Parser gap (cm-349):** on a failed backtick opener, `lex_roxygen_prose`'s else-arm
+advanced **one char**, so the scan retried *inside* the run and ```` ```foo`` ````
+spuriously matched a 2-backtick span. cmark resumes past the whole run — new else-arm
+advances `run_len` at a backtick (both modes; the arena rescan already did). The
+interior tiling of a cross-line span changed benignly (`roxygen_md_code_multiline`
+snapshot re-accepted after review; projection reads node text, unchanged).
 
-**Result:** projector **958→960 matching (all allowlisted), 39→38 divergent**, 0 blocked,
-of 998 pinned; 0 regressions. **Lists 26/26 COMPLETE.** Curated `md_linkref_def_in_item`
-(in-item def + a cross-list reference resolving through it), R-minted pin byte-identical
-to arity's projection. Unit `linkref_def_in_list_item_is_consumed` (consumption + field-map
-collection). Format baseline +1 (only the standard tag-value next-line normalization;
-projection verified stable under formatting). Fixed-point 192/192. Full suite + clippy +
-fmt green.
+**Projector gap (cm-332/333):** `code_span_is_r` accepted the zero-length backquoted
+name `` `` `` that R rejects at parse time ("attempt to use zero-length variable
+name"), so `` ` `` ` `` projected `\code` where roxygen2 emits `\verb`.
+`has_invalid_underscore_name` generalized to `has_invalid_name` (adds `text == "``"`;
+any non-empty backquote stays valid).
 
-**Ranked next target:** **Code spans 3** (cm-332/333/349); then Thematic breaks 3
-(cm-043/049/061), Setext 2 (cm-087/090), Entities 2 (cm-025/034), HTML blocks 2, and the
-linkref stragglers cm-196 (emphasis inside a leaked label) + cm-220 (def inside a block
-quote). Harvested 18 stays the biggest block but out-of-scope singles.
+**Result:** projector **960→965 matching (all allowlisted), 38→35 divergent**, 0
+blocked, of 1000 pinned; 0 regressions. **Code spans 22/22 COMPLETE.** Fixture
+`roxygen_md_code_backtick_runs`; curated `md_code_span_verb` + `md_code_backtick_runs`,
+R-minted pins byte-identical. Units `inline_code_unmatched_opener_run_is_literal_whole`
+(lexer) + `empty_backquoted_name_code_span_is_verb_not_code` (projector). Format
+baseline +2 (new cases only, no drift; projection verified stable under formatting).
+Fixed-point 194/194. Full suite + clippy + fmt green.
+
+**Ranked next target:** **Thematic breaks 3** (cm-043/049/061); then Setext 2
+(cm-087/090), Entities 2 (cm-025/034), HTML blocks 2, and the linkref stragglers cm-196
+(emphasis inside a leaked label) + cm-220 (def inside a block quote). Harvested 18 stays
+the biggest block but out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-25d** — def consumption inside a list item (cm-319; `collect_user_linkrefs` block-start fires on adjacent `SOFT_BREAK`-only inlines — an in-item blank line; in-item defs consumed + field-wide map). Curated `md_linkref_def_in_item`, unit, baseline +1. 958→960, Lists 26/26 COMPLETE.
 
 - **2026-07-25c** — same-line fence in a list item (cm-320/326; `carve_md_list_markers` fence arm → `RoxygenMdFence` leaf, `is_same_line_fence` dispatch onto `emit_md_code_block_from_value` with a `base_indent` param, projector adds `md_indented_code_extra_strip` for the marker-less opener's body strip + closer test). Curated `md_list_same_line_fence`, fixture, unit, baseline +1. 955→958, Lists 25/26.
 

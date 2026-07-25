@@ -1,0 +1,3 @@
+(\description (TEXT "Code span verb fallback"))
+(\details (TEXT "a") (\verb (VERB "``")) (TEXT "b") (\verb (VERB " `` ")) (TEXT "c") (\code (RCODE "x")) (TEXT "d"))
+(\title (TEXT "Code span verb fallback"))

@@ -329,6 +329,8 @@ cm-328
 cm-329
 cm-330
 cm-331
+cm-332
+cm-333
 cm-334
 cm-335
 cm-336
@@ -344,6 +346,7 @@ cm-345
 cm-346
 cm-347
 cm-348
+cm-349
 cm-350
 cm-351
 cm-352
@@ -673,8 +676,10 @@ md_brace_group
 md_braceless_drop
 md_braceless_item
 md_braceless_sticky
+md_code_backtick_runs
 md_code_multiline
 md_code_multiline_value
+md_code_span_verb
 md_email_autolink
 md_emphasis
 md_emphasis_multiline
