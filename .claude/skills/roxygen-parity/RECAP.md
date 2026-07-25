@@ -356,6 +356,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   fold** (CaseFolding C+F via generated `src/roxygen/casefold.rs` — NOT `to_lowercase`: `ẞ`/`SS`→`ss`
   cm-542, `µ`→`μ`, `ﬁ`→`fi`). **Full refmap = full candidate set** (so `md_ref_link_multiline`'s `a][b]` still
   links). **Open:** refmap is per-prose-body, not whole-field (a sibling-paragraph def is missed).
+- **Defs strip from a setext title BEFORE promotion; the refmap is FIELD-WIDE, seeded per piece
+  (2026-07-25b).** `setext_title_strip` (project_rd.rs, at `emit_section_with_headings`'
+  segmentation) re-resolves the title lines **`SOFT_BREAK`-joined** (a space-join makes the next
+  title line same-line junk that fails the def) and consumes the leading def run; an all-defs
+  title demotes the heading (`===` → literal `Inline::Text`, cm-218; guard on the cm-010
+  fallback). The document-order `LinkDefs` map seeds every piece's `resolve_linkrefs(body, seed)`
+  and heading titles via `apply_user_linkrefs(…, consume_defs=false)` — consumption stays
+  per-piece, only the *map* crosses headings. Gaps: `-`-underline all-defs = thematic break
+  (unmodeled, keeps heading form); the list-hoist regime passes an empty map.
 - **User link-reference definitions (`[ref]: url`) → `\href{url}{display}`, display KEPT.** A
   CommonMark def gives a destination → `\href` (not the R-topic `\link`, so the "must contain plain
   text" drop doesn't apply), and the def line is **consumed**. User def beats roxygen's synthesized
@@ -1119,9 +1128,9 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 949 matching (all allowlisted), 44 divergent** of 993 pinned. The divergent 44 are the
-per-section backlog (harvested 18, Link reference definitions 5, Code spans 3, Lists 3,
-Thematic breaks 3, Entities 2, HTML blocks 2, Setext 2, singles in Backslash escapes/Fenced/
+**Current: 955 matching (all allowlisted), 41 divergent** of 996 pinned. The divergent 41 are the
+per-section backlog (harvested 18, Code spans 3, Lists 3, Thematic breaks 3, Entities 2,
+HTML blocks 2, Link reference definitions 2, Setext 2, singles in Backslash escapes/Fenced/
 Hard breaks/Images/Links/Raw HTML; Block quotes + List items + Tabs + ATX headings COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
@@ -1130,72 +1139,70 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (993 pinned); 44 divergent backlog.
+   Curated + harvested + whole-spec corpora (996 pinned); 41 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 187/187 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 190/190 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-25) — tab-stop expansion (Tabs COMPLETE) + trailing-empty-heading raw fallback (ATX COMPLETE)
+## Latest session (2026-07-25b) — setext def-strip + field-wide link-reference map (cm-216/217/218)
 
-Two commits, two root causes:
+**Projector-only** (parser untouched — the CST's setext promotion has no def knowledge by
+design; defs are a settled projector-side concern). Two composing pieces:
 
-**1. Tab-stop expansion (cm-001/002/004/005/007/008/009 — `feat(parser)`).** CommonMark
-expands a tab to the next 4-column stop when counting block indentation; arity counted one
-column. One column source in `src/parser/roxygen.rs`: `advance_md_col` (tab → next 4-stop,
-**value coordinates** — column 0 is the char after `#'` plus the ONE whitespace char
-roxygen2's tokenizer strips, `consumeWhitespace(1)` in parser2.cpp, a space *or* a tab) and
-`md_ws_gauge` (one-based gauge; first ws char of the run → gauge 1 whatever it is; all-space
-run = char count, so pre-tab behavior is unchanged). Builder: `list_line_indent`,
-`is_indent_code_line_min` (now via the gauge — the all-space requirement is gone),
-`is_md_indented_code_value`, and the two marker-anchored counts `content_leading_spaces` /
-`item_first_line_opens_indented_code` (new `start_col` param = the value column just past the
-marker: `-\t\tfoo` leads 7 columns → snap, cm-007). Projector: `strip_md_columns` (column
-strip; a tab straddling the boundary surfaces leftover columns as **spaces** — cmark splits
-it, `\t\t` less 6 = `  bar`), tab-aware twins `md_marker_col` + `md_item_content_leading`,
-`md_indented_code_text` anchors a mid-line first line at the item marker's end column, and
-`strip_marker` now strips one `[' ','\t']` char (roxygen2 parity). Formatter untouched
-(passthrough is byte-verbatim); baseline +3, additions only.
+**1. Setext title def-strip (cm-217/218).** cmark strips a paragraph's leading
+link-reference definitions *before* deciding a setext promotion
+(`resolve_reference_link_definitions`, blocks.c), so a def line never joins the title
+(cm-217: title is just `bar`) and an all-defs paragraph is never promoted — the `===`
+underline stays ordinary paragraph text and the next line continues that paragraph (cm-218).
+`setext_title_strip` (project_rd.rs), applied at `emit_section_with_headings`' segmentation:
+the title lines re-resolve as one inline run joined with **`SOFT_BREAK`, not the space-join
+`parse_md_heading` uses** (the def grammar is line-keyed; a space-join would put the next
+title line on the def's line as junk and fail the def), then the standard block-start scan
+(`collect_user_linkrefs`) consumes the leading run — no `\n` in the joined title means only
+*leading* lines can be defs, exactly cmark's strip-from-the-start. An all-defs title pushes
+`Inline::Text(underline)` into the current flow (no segment); the cm-010 raw-fallback check
+is guarded against that demoting shape (no heading → no splicer crash).
 
-**2. Trailing-empty-heading raw fallback (cm-010 — projector-only).** cm-010's divergence
-was never about the tab: a **trailing level-1 heading whose section body renders empty**
-crashes roxygen2's splicer — `strsplit` drops the trailing empty piece, `structure(names=)`
-errors (`'names' attribute [2] ... vector [1]`, `mdxml_children_to_rd_top`, R/markdown.R) —
-and `markdown()` returns the **raw unprocessed text**: the whole field renders as if
-markdown never ran (`*emph*` stays literal). Interior empty L1 sections survive (strsplit
-keeps interior empties); any non-empty tail (`\subsection`, prose) rescues. Modeled in
-`emit_section_with_headings`: guard fires when the body's **last** heading is level 1 and
-the inlines after it serialize empty → `section_raw_fallback_atoms` recovers the enclosing
-`ROXYGEN_SECTION`'s raw lines (lossless CST), re-synthesizes a **non-`@md`** fragment
-(`quote_flat_reparse` mould), and projects it — the plain-Rd path IS roxygen2's fallback; no
-recursion (non-md parses no headings). Safe under the list-hoist recursion (its prefix holds
-no L1s). Intro-derived description (no tag line) returns `None` → ordinary path (backlog).
+**2. Field-wide def map (cm-216).** roxygen2 markdown-processes the whole field as one
+document and only then splits sections, so a def anywhere resolves a reference anywhere —
+including a heading *title* (`# [Foo]` + `[foo]: /url` in the body → `\href`, case-folded).
+`LinkDefs` (type alias) built during segmentation in document order (each run's defs close
+before the next heading's stripped defs — cmark keeps the first def of a label), then
+**seeds** each piece's `resolve_linkrefs(body, seed)`; titles resolve via
+`apply_user_linkrefs(title, seed, consume_defs=false)` in `render_heading_frame` (a title is
+inline content — a def-shaped `[ref]: url` there is prose). Plumbing via `_seeded` variants
+(`serialize_prose_seeded`, `push_section_seeded`, `section_rd_complete_seeded`); the old
+names are thin empty-map wrappers, so every other call site is byte-identical.
 
-**Result:** projector **925→949 matching (all allowlisted), 64→44 divergent**, 0 blocked, of
-993 pinned; 0 regressions. The fallback closed **13 latent cases** beyond cm-010 (ATX
-cm-066/067/068/070/075/076, Setext cm-081/082/083/084, cm-141, cm-229). **Tabs 11/11 + ATX
-headings 18/18 COMPLETE**; Setext 25/27. Curated `md_tab_indent_{code,list,nested}` +
-`md_heading_trailing_empty` (R-minted pins, all four also live-probed), fixture
-`roxygen_md_tab_indent`, unit `trailing_empty_heading_section_falls_back_to_raw_text`.
-Fixed-point 187/187. Full suite + clippy + fmt green.
+**Result:** projector **949→955 matching (all allowlisted), 44→41 divergent**, 0 blocked, of
+996 pinned; 0 regressions. **Link reference definitions 25/27** (cm-196 + cm-220 remain,
+separate root causes). Curated `md_linkref_setext_strip` (cm-217 twin) +
+`md_linkref_setext_demote` (demotion mid-flow, `before ===` coalesces — live-probed) +
+`md_linkref_heading_title` (cm-216 variant), R-minted pins, all three byte-identical to a
+live roxygen2 probe. Units `setext_title_sheds_leading_linkref_defs`,
+`all_defs_setext_title_demotes_heading`, `field_defs_resolve_heading_title_reference`.
+Format baseline +3 (additions only, all byte-verbatim). Fixed-point 190/190. Full suite +
+clippy + fmt green. No parser fixture (no CST change).
 
-**New traps:** the **indent gauge is tab-stop-aware in value coordinates** — never count ws
-chars for block structure; route through `md_ws_gauge`/`advance_md_col` (roxygen.rs), and
-remember interior anchors (item separators) need the marker's absolute column. Remaining
-char-counted sites (recorded gaps, not in any pinned case): the lexer's quote/fence/heading
-carve gates (the "4+ spaces before `>`" note in lex.rs tests), `carve_md_list_markers`' 1–4
-separator window, the fence-closer `ws_width <= base_indent + 3`, `is_md_html_block_value`'s
-`len() <= 4`.
+**New traps / recorded gaps:** a `-` underline over an all-defs paragraph is cmark's
+*thematic break*, not literal text — unmodeled; `setext_title_strip` returns `None` for
+that shape so it keeps its (wrong) heading form. The list-hoist regime
+(`hoisted_section_atom` / `emit_section_with_list_hoist`) does not thread the field map
+(passes an empty `LinkDefs`). The leak/candidate scans never see def bytes stripped from a
+setext title (they vanish from every piece's skeleton — contrived under a leak). Def
+consumption stays per-piece; only the *map* is field-wide.
 
 **Ranked next target:** **harvested 18** is the biggest block but out-of-scope singles;
-among spec sections, **Link reference definitions (5)** — cm-196 (emphasis inside a leaked
-label), cm-216 (def resolution into a heading title), cm-217/218 (setext promotion grabs the
-def line — defs strip before setext), cm-220 (def inside a block quote); cm-217/218 look
-like one root cause. Then Code spans 3 (cm-332/333/349), Lists 3 (cm-319/320/326,
-def-in-item + fence-in-item), Thematic breaks 3 (cm-043/049/061).
+among spec sections, **Lists (3)** — cm-319/320 (def-in-item) may now be adjacent to this
+session's machinery, cm-326 (fence-in-item); then Code spans 3 (cm-332/333/349), Thematic
+breaks 3 (cm-043/049/061), Setext 2 (cm-087/090), and the linkref stragglers cm-196
+(emphasis inside a leaked label) + cm-220 (def inside a block quote).
 
 ## Earlier sessions
+
+- **2026-07-25** — tab-stop expansion (`advance_md_col`/`md_ws_gauge` in value coordinates; builder + projector twins; Tabs 11/11 COMPLETE) + trailing-empty-heading raw fallback (cm-010 splicer crash → `section_raw_fallback_atoms` non-`@md` reparse; +13 latent, ATX 18/18 COMPLETE). Curated ×4, fixture, unit, baseline +3. 925→949. Trap: never count ws chars for block structure — route through the tab-stop gauge.
 
 - **2026-07-20f** — in-item ATX/setext headings + in-list H1 hoist (cm-302; `carve_md_list_markers` ATX arm, `is_same_line_heading`/`emit_md_heading_from_value`, window-gated setext promotion; projector `md_item_atoms` in-item `\subsection`s + `emit_section_with_list_hoist` container-path cuts for the in-list H1 splice). Curated ×3, fixtures ×2, 2 units, baseline +3. 921→925, List items 47→48/48 COMPLETE.
 

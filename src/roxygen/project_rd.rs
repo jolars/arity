@@ -555,7 +555,9 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
             // pipeline on the whole body, split the result, and append any leaked
             // definitions to the content — they render at the very end of the
             // field, i.e. after the `:`.
-            let transformed = md.then(|| resolve_linkrefs(body)).flatten();
+            let transformed = md
+                .then(|| resolve_linkrefs(body, &LinkDefs::new()))
+                .flatten();
             let body = transformed.as_deref().unwrap_or(body);
             let (heading, content) = split_section_title(body);
             let title = serialize_inlines(&heading, md);
@@ -629,9 +631,29 @@ fn push_section(
     md: bool,
     drop_on_incomplete: bool,
 ) {
-    let atoms = serialize_prose_with_linkrefs(body, md);
+    push_section_seeded(
+        out,
+        macro_name,
+        body,
+        md,
+        drop_on_incomplete,
+        &LinkDefs::new(),
+    );
+}
+
+/// [`push_section`] for one piece of a heading-split field, threading the
+/// field-wide definition map (see [`LinkDefs`]).
+fn push_section_seeded(
+    out: &mut Vec<String>,
+    macro_name: &str,
+    body: &[Inline],
+    md: bool,
+    drop_on_incomplete: bool,
+    seed: &LinkDefs,
+) {
+    let atoms = serialize_prose_seeded(body, md, seed);
     let check_drop = if md { drop_on_incomplete } else { true };
-    if check_drop && !section_rd_complete(body, md) {
+    if check_drop && !section_rd_complete_seeded(body, md, seed) {
         out.push(format!("(\\{macro_name})"));
         return;
     }
@@ -695,6 +717,7 @@ fn emit_section_with_headings(
         };
         let (level, _) = parse_md_heading(node);
         if level == 1
+            && !(md && setext_title_strip(node).is_some_and(|s| s.title.is_none()))
             && serialize_prose_with_linkrefs(&body[pos + 1..], md).is_empty()
             && let Some(atoms) = section_raw_fallback_atoms(macro_name, node)
         {
@@ -703,18 +726,69 @@ fn emit_section_with_headings(
         }
     }
     // Segment the body: the leading run, then one (heading, following-run) per
-    // heading marker in source order.
-    let mut segments: Vec<(Option<SyntaxNode>, Vec<Inline>)> = vec![(None, Vec::new())];
-    for inl in body {
-        if let Inline::MdHeading(node) = inl {
-            segments.push((Some(node.clone()), Vec::new()));
-        } else {
-            segments.last_mut().unwrap().1.push(inl.clone());
-        }
+    // heading marker in source order. Under `@md`, a setext heading's title first
+    // sheds any leading link-reference definitions — cmark strips them from the
+    // paragraph *before* deciding the setext promotion
+    // (`resolve_reference_link_definitions`), so the definition line never joins
+    // the title (cm-217), and a title left empty demotes the heading entirely:
+    // its underline is ordinary paragraph text in the current flow (cm-218). The
+    // stripped defs join the field-wide map, which — together with every run's
+    // own defs, in document order — seeds each piece's resolution below, so a
+    // reference resolves across headings (cm-216).
+    struct Seg {
+        head: Option<(usize, Vec<Inline>)>,
+        run: Vec<Inline>,
     }
+    let mut field_defs = LinkDefs::new();
+    let mut segments: Vec<Seg> = vec![Seg {
+        head: None,
+        run: Vec::new(),
+    }];
+    for inl in body {
+        let Inline::MdHeading(node) = inl else {
+            segments.last_mut().unwrap().run.push(inl.clone());
+            continue;
+        };
+        // Close the running piece's defs first: document order decides which
+        // definition of a duplicated label wins (cmark keeps the first).
+        collect_user_linkrefs_tree(&segments.last().unwrap().run, &mut field_defs);
+        if md && let Some(strip) = setext_title_strip(node) {
+            for (label, def) in strip.defs {
+                field_defs.entry(label).or_insert(def);
+            }
+            match strip.title {
+                Some(title) => segments.push(Seg {
+                    head: Some((strip.level, title)),
+                    run: Vec::new(),
+                }),
+                // An all-defs title: the heading never forms, and the underline
+                // is literal paragraph text (cm-218).
+                None => segments
+                    .last_mut()
+                    .unwrap()
+                    .run
+                    .push(Inline::Text(strip.underline)),
+            }
+            continue;
+        }
+        let (level, title_text) = parse_md_heading(node);
+        segments.push(Seg {
+            head: Some((level, resolve_macro_arg_inlines(&title_text))),
+            run: Vec::new(),
+        });
+    }
+    collect_user_linkrefs_tree(&segments.last().unwrap().run, &mut field_defs);
     if segments.len() == 1 {
-        // No heading — the ordinary prose section path.
-        push_section(out, macro_name, body, md, drop_on_incomplete);
+        // No heading (every candidate demoted, or none existed) — the ordinary
+        // prose section path, over the run (a demoted underline is part of it).
+        push_section_seeded(
+            out,
+            macro_name,
+            &segments[0].run,
+            md,
+            drop_on_incomplete,
+            &field_defs,
+        );
         return;
     }
 
@@ -723,14 +797,14 @@ fn emit_section_with_headings(
     let mut frames: Vec<HeadingFrame> = vec![HeadingFrame {
         level: 0,
         title: Vec::new(),
-        body: std::mem::take(&mut segments[0].1),
+        body: std::mem::take(&mut segments[0].run),
         children: Vec::new(),
     }];
     let mut stack = vec![0usize];
-    for (node, run) in segments.into_iter().skip(1) {
-        let node = node.expect("a non-leading segment always carries a heading");
-        let (level, title_text) = parse_md_heading(&node);
-        let title = resolve_macro_arg_inlines(&title_text);
+    for seg in segments.into_iter().skip(1) {
+        let (level, title) = seg
+            .head
+            .expect("a non-leading segment always carries a heading");
         while frames[*stack.last().unwrap()].level >= level {
             stack.pop();
         }
@@ -739,7 +813,7 @@ fn emit_section_with_headings(
         frames.push(HeadingFrame {
             level,
             title,
-            body: run,
+            body: seg.run,
             children: Vec::new(),
         });
         frames[parent].children.push(idx);
@@ -750,10 +824,16 @@ fn emit_section_with_headings(
     // hang directly off it (headings before the first level-1 heading), each a
     // nested `\subsection`. A level-1 child hoists out (below). Omit the enclosing
     // section entirely when it has no content.
-    let mut inner = serialize_prose_with_linkrefs(&frames[0].body, md);
+    let mut inner = serialize_prose_seeded(&frames[0].body, md, &field_defs);
     for &c in &frames[0].children {
         if frames[c].level >= 2 {
-            inner.push(render_heading_frame(&frames, c, md, "subsection"));
+            inner.push(render_heading_frame(
+                &frames,
+                c,
+                md,
+                "subsection",
+                &field_defs,
+            ));
         }
     }
     if !inner.is_empty() {
@@ -763,9 +843,82 @@ fn emit_section_with_headings(
     // Each level-1 child is a top-level `\section` sibling in the output.
     for &c in &frames[0].children {
         if frames[c].level == 1 {
-            out.push(render_heading_frame(&frames, c, md, "section"));
+            out.push(render_heading_frame(&frames, c, md, "section", &field_defs));
         }
     }
+}
+
+/// A setext heading's title after cmark's leading link-reference-definition
+/// strip: `defs` are the stripped definitions, `title` the remaining title
+/// inline run — `None` when the definitions consumed the whole title paragraph,
+/// so the heading never forms and `underline` is ordinary paragraph text
+/// (cm-218).
+struct SetextStrip {
+    level: usize,
+    defs: LinkDefs,
+    title: Option<Vec<Inline>>,
+    underline: String,
+}
+
+/// Strip the leading link-reference definitions from a **setext** heading's
+/// title, mirroring cmark's `resolve_reference_link_definitions`: when a setext
+/// underline closes a paragraph, the paragraph's leading definitions strip
+/// *before* the promotion is decided, so a definition line never joins the
+/// title (cm-217) and an all-defs paragraph is never promoted (cm-218 — the
+/// `===` stays literal text). `None` for an ATX heading, or when no definition
+/// leads the title (the caller keeps its ordinary path, byte-identical).
+///
+/// The title lines re-resolve as one inline run with [`SOFT_BREAK`] line
+/// boundaries (the definition grammar is line-keyed; the space-join
+/// [`parse_md_heading`] uses would put the next title line on the definition's
+/// line as junk), and the standard block-start scan ([`collect_user_linkrefs`])
+/// consumes the leading run — with no `\n` in the joined title, only the
+/// *leading* lines can be definitions, exactly cmark's strip-from-the-start.
+///
+/// A `-` underline over an all-defs paragraph falls through to cmark's
+/// *thematic break*, not literal text — unmodeled here, so that shape keeps its
+/// heading form (backlog).
+fn setext_title_strip(node: &SyntaxNode) -> Option<SetextStrip> {
+    let text = node.text().to_string();
+    let lines: Vec<&str> = text.split('\n').map(strip_marker).collect();
+    if lines.len() < 2 {
+        return None;
+    }
+    let underline = lines.last().unwrap().trim();
+    let level = setext_underline_level(underline)?;
+    let title_src = lines[..lines.len() - 1]
+        .iter()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join(&SOFT_BREAK.to_string());
+    let inlines = resolve_macro_arg_inlines(&title_src);
+    let (defs, dropped) = collect_user_linkrefs(&inlines);
+    if dropped.is_empty() {
+        return None;
+    }
+    let mut rest: Vec<Inline> = Vec::new();
+    for (i, inl) in inlines.iter().enumerate() {
+        match dropped.get(&i) {
+            // Wholly part of a consumed definition.
+            Some(None) => {}
+            // A definition consumed this text's leading lines; the remainder
+            // opens the title.
+            Some(Some(leftover)) => rest.push(Inline::Text(leftover.clone())),
+            None => rest.push(inl.clone()),
+        }
+    }
+    let empty = rest
+        .iter()
+        .all(|inl| matches!(inl, Inline::Text(t) if t.trim().is_empty()));
+    if empty && level == 2 {
+        return None;
+    }
+    Some(SetextStrip {
+        level,
+        defs,
+        title: (!empty).then_some(rest),
+        underline: underline.to_string(),
+    })
 }
 
 /// The raw-text fallback for a `@description`/`@details` field whose markdown
@@ -831,14 +984,29 @@ fn section_raw_fallback_atoms(macro_name: &str, heading: &SyntaxNode) -> Option<
 /// bare when a single atom, `(GRP …)`-wrapped when several, absent when empty. The
 /// frame's own prose comes first; every child heading nests one level deeper as a
 /// `\subsection`, appended in source order.
-fn render_heading_frame(frames: &[HeadingFrame], idx: usize, md: bool, macro_name: &str) -> String {
+///
+/// `seed` is the field-wide definition map: it resolves a reference in the
+/// heading *title* too (cm-216 — roxygen2 markdown-processes the whole field
+/// before splitting sections). Defs are never consumed in a title: it is inline
+/// content, so a def-shaped `[ref]: url` there is ordinary prose.
+fn render_heading_frame(
+    frames: &[HeadingFrame],
+    idx: usize,
+    md: bool,
+    macro_name: &str,
+    seed: &LinkDefs,
+) -> String {
     let f = &frames[idx];
+    let title = (md && !seed.is_empty())
+        .then(|| apply_user_linkrefs(&f.title, seed, false))
+        .flatten();
+    let title = title.as_deref().unwrap_or(&f.title);
     // A bare `{…}` in the heading title is an Rd `LIST` group, exactly as in prose
     // and macro args (`# H {a b}` → `(GRP (TEXT "H") (LIST (TEXT "a b")))`).
-    let title_atoms = serialize_inlines(&group_brace_lists(&f.title, md), md);
-    let mut body_atoms = serialize_prose_with_linkrefs(&f.body, md);
+    let title_atoms = serialize_inlines(&group_brace_lists(title, md), md);
+    let mut body_atoms = serialize_prose_seeded(&f.body, md, seed);
     for &c in &f.children {
-        body_atoms.push(render_heading_frame(frames, c, md, "subsection"));
+        body_atoms.push(render_heading_frame(frames, c, md, "subsection", seed));
     }
     let mut inner = grp_arg(&title_atoms);
     let body_arg = grp_arg(&body_atoms);
@@ -1062,7 +1230,7 @@ fn hoisted_section_atom(title: Vec<Inline>, content: &[Inline], md: bool) -> Str
         frames[parent].children.push(idx);
         stack.push(idx);
     }
-    render_heading_frame(&frames, 0, md, "section")
+    render_heading_frame(&frames, 0, md, "section", &LinkDefs::new())
 }
 
 /// A markdown heading node's level (1-6) and title text (markdown source, resolved
@@ -1156,7 +1324,15 @@ fn strip_atx_closing(s: &str) -> &str {
 /// pre-resolution raw text ([`section_raw_rd`]) instead — raw ≈ rendered for the
 /// only chars `rd_complete` weighs (`{}`, `\`, `%`), and md-off never synthesizes
 /// the cmark-derived braces that make the atoms necessary.
+#[cfg(test)]
 fn section_rd_complete(body: &[Inline], md: bool) -> bool {
+    section_rd_complete_seeded(body, md, &LinkDefs::new())
+}
+
+/// [`section_rd_complete`] for one piece of a heading-split field: the drop scan
+/// re-serializes the body, so it needs the same field-wide definition `seed` the
+/// output serialization uses.
+fn section_rd_complete_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> bool {
     if md {
         // An inline `[text](dest)` link whose cmark destination ends in a
         // trailing **odd** backslash run makes roxygen2's `\href{dest}{text}`
@@ -1176,7 +1352,7 @@ fn section_rd_complete(body: &[Inline], md: bool) -> bool {
         // can leave a dangling trailing escape that false-drops a kept section.
         let stripped = strip_scan_percent_comments(body);
         let scan_body = stripped.as_deref().unwrap_or(body);
-        section_atoms_rd_complete(&serialize_prose(scan_body, md, false), md)
+        section_atoms_rd_complete(&serialize_prose(scan_body, md, false, seed), md)
     } else {
         rd_complete(&section_raw_rd(body))
     }
@@ -1495,7 +1671,14 @@ fn rd_complete(s: &str) -> bool {
 /// definitions consistent), then [`leaked_linkref_text`] appends the leaked
 /// definitions to the trailing prose.
 fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
-    serialize_prose(body, md, true)
+    serialize_prose(body, md, true, &LinkDefs::new())
+}
+
+/// [`serialize_prose_with_linkrefs`] for one piece of a heading-split field:
+/// `seed` is the field-wide definition map, so a link reference resolves across
+/// the field's headings (cm-216/217).
+fn serialize_prose_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> Vec<String> {
+    serialize_prose(body, md, true, seed)
 }
 
 /// The shared prose serializer behind [`serialize_prose_with_linkrefs`]. `group`
@@ -1511,8 +1694,8 @@ fn serialize_prose_with_linkrefs(body: &[Inline], md: bool) -> Vec<String> {
 /// collapses early (`\\` → `\`) and a trailing `\` before the `LIST`'s brace would
 /// read as a spurious escape in the reconstruction. Scanning the ungrouped flat
 /// atoms sidesteps that — they *are* `markdown(text)`.
-fn serialize_prose(body: &[Inline], md: bool, group: bool) -> Vec<String> {
-    let transformed = md.then(|| resolve_linkrefs(body)).flatten();
+fn serialize_prose(body: &[Inline], md: bool, group: bool, seed: &LinkDefs) -> Vec<String> {
+    let transformed = md.then(|| resolve_linkrefs(body, seed)).flatten();
     let body = transformed.as_deref().unwrap_or(body);
     // The md leaked-linkref scan reconstructs the raw markdown source, so it reads
     // the *ungrouped* body — brace groups are Rd `LIST` structure, not markdown, and
@@ -1565,10 +1748,15 @@ fn serialize_prose(body: &[Inline], md: bool, group: bool) -> Vec<String> {
 /// Both demotions only turn links into literal text, so order is immaterial to
 /// correctness; the refmap (stage 2) runs after stage 1 so it sees every bracket
 /// the user defs left behind.
-fn resolve_linkrefs(body: &[Inline]) -> Option<Vec<Inline>> {
+///
+/// `seed` is the field-wide definition map ([`LinkDefs`]) for a piece of a
+/// heading-split field; it was collected in document order, so it takes
+/// precedence over this piece's own collection (first definition wins, per
+/// cmark). Empty for a body that is its own whole field.
+fn resolve_linkrefs(body: &[Inline], seed: &LinkDefs) -> Option<Vec<Inline>> {
     let repaired = repair_ref_link_chains(body, &linkref_keys(body));
     let b0 = repaired.as_deref().unwrap_or(body);
-    let mut urls: std::collections::HashMap<String, UserLinkDef> = std::collections::HashMap::new();
+    let mut urls: LinkDefs = seed.clone();
     collect_user_linkrefs_tree(b0, &mut urls);
     let resolved = (!urls.is_empty())
         .then(|| apply_user_linkrefs(b0, &urls, true))
@@ -4333,6 +4521,14 @@ struct UserLinkDef {
     url: String,
     title: String,
 }
+
+/// A user link-reference definition map, keyed by normalized label
+/// ([`normalize_linkref_label`]). The *field-wide* map (defs from every piece of
+/// a heading-split field, in document order — cmark keeps the first definition
+/// of a label) seeds each piece's [`resolve_linkrefs`], so a reference can cross
+/// a heading: roxygen2 markdown-processes the whole field as one document and
+/// only then splits it into sections.
+type LinkDefs = std::collections::HashMap<String, UserLinkDef>;
 
 /// Rebuild a reference/shortcut image whose label resolved to a user definition as
 /// an *inline* image (`![alt](<url> "title")`), so the ordinary image path
@@ -7290,6 +7486,76 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"Title\"))\n\
              (\\details (TEXT \"Lead.\") (\\subsection (TEXT \"Sub\") (TEXT \"body\")))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn setext_title_sheds_leading_linkref_defs() {
+        // cmark strips a paragraph's leading link-reference definitions *before*
+        // deciding a setext promotion (`resolve_reference_link_definitions`), so
+        // the definition line never joins the heading title — the title is only
+        // `bar` — and the def resolves the reference in the section body, across
+        // the heading split (cm-217).
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' [foo]: /url\n\
+                   #' bar\n\
+                   #' ===\n\
+                   #' [foo]\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\section (TEXT \"bar\") (\\href (VERB \"/url\") (TEXT \"foo\")))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn all_defs_setext_title_demotes_heading() {
+        // A setext paragraph consisting only of link-reference definitions is
+        // never promoted: the definitions strip, the `===` underline is ordinary
+        // paragraph text, and the following line continues that paragraph
+        // (cm-218). The stripped definition still resolves the reference.
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' [foo]: /url\n\
+                   #' ===\n\
+                   #' [foo]\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\details (TEXT \"===\") (\\href (VERB \"/url\") (TEXT \"foo\")))\n\
+             (\\title (TEXT \"Title\"))"
+        );
+    }
+
+    #[test]
+    fn field_defs_resolve_heading_title_reference() {
+        // roxygen2 markdown-processes the whole field as one document before
+        // splitting sections, so a definition in a section *body* resolves a
+        // reference in its heading *title* (cm-216; label match is case-folded).
+        let src = "#' Title\n\
+                   #'\n\
+                   #' @md\n\
+                   #' @details\n\
+                   #' # [Foo]\n\
+                   #' [foo]: /url\n\
+                   #' body\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"Title\"))\n\
+             (\\section (\\href (VERB \"/url\") (TEXT \"Foo\")) (TEXT \"body\"))\n\
              (\\title (TEXT \"Title\"))"
         );
     }

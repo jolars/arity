@@ -214,6 +214,9 @@ cm-212
 cm-213
 cm-214
 cm-215
+cm-216
+cm-217
+cm-218
 cm-219
 cm-221
 cm-222
@@ -722,6 +725,7 @@ md_linkref_casefold
 md_linkref_def_dest_edge
 md_linkref_def_fallback
 md_linkref_escaped_open_bracket
+md_linkref_heading_title
 md_link_ref_in_emphasis
 md_linkref_multiline_def
 md_linkref_nbsp
@@ -733,6 +737,8 @@ md_linkref_poisoning_inline_link
 md_linkref_poisoning_list
 md_linkref_poisoning_nested_link
 md_linkref_poisoning_section
+md_linkref_setext_demote
+md_linkref_setext_strip
 md_link_title
 md_list_empty_marker_content
 md_list_first_indented_code
