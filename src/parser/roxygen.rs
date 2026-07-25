@@ -214,6 +214,42 @@ pub(crate) fn scan_balanced(bytes: &[u8], i: usize, open: u8, close: u8) -> Opti
     None
 }
 
+/// Advance a markdown value column across one whitespace character: a tab
+/// expands to the next 4-column tab stop (CommonMark's rule — roxygen2 hands
+/// cmark the tag value with tabs intact), any other character is one column.
+/// Columns are zero-based **value** coordinates: column 0 is the first
+/// character after the `#'` sigil plus the one whitespace character roxygen2's
+/// tokenizer strips (`consumeWhitespace(1)`, parser2.cpp — a space *or* a tab).
+/// The single source of column arithmetic for the block builder's indent gauge
+/// and the projector's column stripping.
+pub(crate) fn advance_md_col(col: usize, c: char) -> usize {
+    if c == '\t' {
+        col - col % 4 + 4
+    } else {
+        col + 1
+    }
+}
+
+/// The one-based indent **gauge** of a marker→content whitespace run: the first
+/// character (space or tab alike) is the one roxygen2 strips and maps to
+/// gauge 1 (value column 0); the rest expand via [`advance_md_col`], so the
+/// gauge is the content's value column plus one. An empty run gauges 0. For an
+/// all-space run this equals the character count — the pre-tab behavior.
+pub(crate) fn md_ws_gauge<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
+    let mut col = 0usize;
+    let mut first = true;
+    for text in texts {
+        for c in text.chars() {
+            if first {
+                first = false;
+                continue;
+            }
+            col = advance_md_col(col, c);
+        }
+    }
+    if first { 0 } else { col + 1 }
+}
+
 /// The end index of an Rd macro name starting at `bytes[start]` (the byte *after*
 /// the leading `\`). An Rd command name is `[A-Za-z][A-Za-z0-9]*`: a leading
 /// letter then any letters or digits (e.g. `\linkS4class`). Returns `start` when

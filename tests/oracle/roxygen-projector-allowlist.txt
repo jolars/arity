@@ -11,8 +11,15 @@
 # roxygen2 projector-parity allowlist --- cases whose CST projection currently
 #     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
 #     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)
+cm-001
+cm-002
 cm-003
+cm-004
+cm-005
 cm-006
+cm-007
+cm-008
+cm-009
 cm-011
 cm-012
 cm-013
@@ -715,15 +722,15 @@ md_linkref_poisoning_section
 md_link_title
 md_list_empty_marker_content
 md_list_first_indented_code
-md_list_item_block_macro
-md_list_item_block_quote
-md_list_item_same_line_quote
 md_list_item_atx_hoist
 md_list_item_atx_subsection
-md_list_item_setext_subsection
+md_list_item_block_macro
+md_list_item_block_quote
 md_list_item_code_block
 md_list_item_indented_code
 md_list_item_para
+md_list_item_same_line_quote
+md_list_item_setext_subsection
 md_list_item_table
 md_list_lazy
 md_list_lazy_edges
@@ -757,6 +764,9 @@ md_shortcut_link
 md_shortcut_link_multiline
 md_shortcut_list
 md_span_abuts_macro
+md_tab_indent_code
+md_tab_indent_list
+md_tab_indent_nested
 md_table
 md_table_cells
 md_table_prose

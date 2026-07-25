@@ -1,0 +1,3 @@
+(\description (TEXT "A tab continuation line reaches an item's content column (a second paragraph), and a double tab reaches its indented-code threshold."))
+(\details (\itemize (\item) (TEXT "foo bar") (\item) (TEXT "baz") (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "  code\n")) (\if (TEXT "html") (\out (VERB "</div>")))))
+(\title (TEXT "Tabs expand to 4-column stops inside markdown list items"))

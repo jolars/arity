@@ -41,9 +41,9 @@ use rowan::NodeOrToken;
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
 use crate::parser::parse;
 use crate::parser::roxygen::{
-    MdArgPiece, is_fragile_for_md, is_known_rd_macro, is_rd_braceless_drop_macro,
-    is_two_arg_rd_macro, md_fence_run_closes, resolve_md_inline, resolve_md_inline_pieces,
-    split_table_row_cells, sticky_braceless_code_mode,
+    MdArgPiece, advance_md_col, is_fragile_for_md, is_known_rd_macro, is_rd_braceless_drop_macro,
+    is_two_arg_rd_macro, md_fence_run_closes, md_ws_gauge, resolve_md_inline,
+    resolve_md_inline_pieces, split_table_row_cells, sticky_braceless_code_mode,
 };
 use crate::roxygen::entities;
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
@@ -6248,45 +6248,89 @@ fn serialize_md_indented_code(node: &SyntaxNode) -> Vec<String> {
     ]
 }
 
+/// Strip up to `ncols` leading whitespace **columns** from `text`, whose first
+/// character sits at value column `start_col`: spaces are one column, a tab
+/// expands to the next 4-column stop ([`advance_md_col`]), and a tab straddling
+/// the strip boundary surfaces its leftover columns as spaces — cmark splits a
+/// partially consumed tab (`\t\tbar` less six columns is `  bar`, cm-005/007).
+/// Stripping stops early at the first non-whitespace character.
+fn strip_md_columns(text: &str, start_col: usize, ncols: usize) -> String {
+    let target = start_col + ncols;
+    let mut col = start_col;
+    for (idx, c) in text.char_indices() {
+        if col >= target || (c != ' ' && c != '\t') {
+            return text[idx..].to_string();
+        }
+        let next = advance_md_col(col, c);
+        if next > target {
+            // Only a tab can overshoot: split it into its leftover columns.
+            return " ".repeat(next - target) + &text[idx + c.len_utf8()..];
+        }
+        col = next;
+    }
+    String::new()
+}
+
 /// The dedented verbatim text of a `ROXYGEN_MD_INDENTED_CODE` node — commonmark's
 /// `xml_text` for the block, one trailing `\n` per line.
 fn md_indented_code_text(node: &SyntaxNode) -> String {
     let text = node.text().to_string();
     // When the block is folded into a list item, roxygen2 strips the item's
     // content column *before* CommonMark's four (the item container consumes its
-    // content indentation), so each line loses `content_col + 4` leading spaces
+    // content indentation), so each line loses `content_col + 4` leading columns
     // rather than just four. A section-level block adds nothing (`extra == 0`).
     let extra = md_indented_code_extra_strip(node);
     // A block opening as a tag's same-line value (`@details      x`) has a
     // marker-less first line (the `#'` belongs to the enclosing tag): roxygen2
     // strips only the single separator space there — `strip_marker` would trim
-    // the whole run, eating the code's semantic indent.
+    // the whole run, eating the code's semantic indent. A mid-line block inside
+    // a list item (cm-275/276) likewise starts marker-less, but its columns are
+    // absolute: the strip anchors at the item marker's end column, covering the
+    // one separator column plus CommonMark's four (a separator tab spans to its
+    // stop, cm-007).
     let from_value = node
         .first_token()
         .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);
+    let in_item_col = node
+        .parent()
+        .filter(|p| p.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
+        .and_then(|_| md_item_marker_end_col(node));
     let mut code = String::new();
     for (idx, line) in text.split('\n').enumerate() {
         // `strip_marker` removes the `#'` marker and the single conventional space;
         // the indented code block then consumes up to four further leading columns.
-        let after_marker = if idx == 0 && from_value {
-            line.strip_prefix([' ', '\t']).unwrap_or(line)
+        if idx == 0 && from_value {
+            if let Some(marker_end) = in_item_col {
+                // Mid-line in an item: one separator column plus four code
+                // columns, tab stops anchored at the marker's end column.
+                code.push_str(&strip_md_columns(line, marker_end, 5));
+            } else {
+                // A tag's same-line value: the value is its own markdown
+                // document, so drop the single separator character and strip
+                // four columns from a fresh column zero.
+                let after = line.strip_prefix([' ', '\t']).unwrap_or(line);
+                code.push_str(&strip_md_columns(after, 0, 4));
+            }
         } else {
-            strip_marker(line)
-        };
-        // A marker-less first line starts past its container's structure (the
-        // tag head, or a list item's marker for a mid-line block, cm-275/276) —
-        // the container columns are already consumed, so only CommonMark's own
-        // four apply there.
-        let strip = if idx == 0 && from_value { 4 } else { 4 + extra };
-        let content = after_marker
-            .char_indices()
-            .take(strip)
-            .take_while(|&(_, c)| c == ' ')
-            .count();
-        code.push_str(&after_marker[content..]);
+            code.push_str(&strip_md_columns(strip_marker(line), 0, 4 + extra));
+        }
         code.push('\n');
     }
     code
+}
+
+/// The value column just past a `ROXYGEN_MD_INDENTED_CODE` node's enclosing
+/// list-item marker — the tab-stop anchor for a mid-line block's first-line
+/// strip. `None` when no item marker precedes the node.
+fn md_item_marker_end_col(node: &SyntaxNode) -> Option<usize> {
+    let item = node
+        .parent()
+        .filter(|p| p.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)?;
+    let marker = item
+        .children_with_tokens()
+        .find(|el| el.kind() == SyntaxKind::ROXYGEN_MD_LIST_MARKER)
+        .and_then(|el| el.into_token())?;
+    Some(md_marker_col(&marker) + marker.text().chars().count())
 }
 
 /// The number of **extra** leading columns [`serialize_md_indented_code`] must
@@ -6316,18 +6360,7 @@ fn md_indented_code_extra_strip(node: &SyntaxNode) -> usize {
         return 0;
     };
     let marker_width = marker.text().chars().count();
-    // The marker's markdown column: the whitespace before it (the enclosing
-    // list's indentation) less the one conventional space roxygen2 strips.
-    let mut indent_before = 0;
-    let mut prev = marker.prev_token();
-    while let Some(tok) = prev {
-        if tok.kind() != SyntaxKind::WHITESPACE {
-            break;
-        }
-        indent_before += tok.text().chars().count();
-        prev = tok.prev_token();
-    }
-    let marker_col = indent_before.saturating_sub(1);
+    let marker_col = md_marker_col(&marker);
     // The item's content leading spaces (the text right after the marker leaf),
     // clamped to CommonMark's 1..=4 — snapped to one when the marker line's
     // remainder is blank (content on the next line, cm-280/281) or five or more
@@ -6337,12 +6370,33 @@ fn md_indented_code_extra_strip(node: &SyntaxNode) -> usize {
     marker_col + marker_width + content_leading
 }
 
-/// A list item's content-leading columns as CommonMark counts them: the spaces
-/// between the marker and the first-line content, clamped to 1..=4 — one when
-/// the first line has no content after the marker or the content sits five or
-/// more columns past it (both start conditions snap the content indent to
-/// marker + 1). The parser-side twin is `content_leading_spaces` (build.rs).
+/// The value column of a list-item marker token: the gauge of the whitespace
+/// run before it (the enclosing list's indentation, less the one whitespace
+/// character roxygen2 strips — [`md_ws_gauge`]) converted back to a zero-based
+/// value column. Tab stops expand (cm-009's `\t - baz` marker sits at column
+/// five).
+fn md_marker_col(marker: &SyntaxToken) -> usize {
+    let mut texts = Vec::new();
+    let mut prev = marker.prev_token();
+    while let Some(tok) = prev {
+        if tok.kind() != SyntaxKind::WHITESPACE {
+            break;
+        }
+        texts.push(tok.text().to_string());
+        prev = tok.prev_token();
+    }
+    texts.reverse();
+    md_ws_gauge(texts.iter().map(String::as_str)).saturating_sub(1)
+}
+
+/// A list item's content-leading columns as CommonMark counts them: the
+/// whitespace columns between the marker and the first-line content (tab stops
+/// anchored at the marker's end column, [`advance_md_col`]), clamped to 1..=4 —
+/// one when the first line has no content after the marker or the content sits
+/// five or more columns past it (both start conditions snap the content indent
+/// to marker + 1). The parser-side twin is `content_leading_spaces` (build.rs).
 fn md_item_content_leading(marker: &SyntaxToken) -> usize {
+    let start_col = md_marker_col(marker) + marker.text().chars().count();
     let mut leading = None;
     let mut has_content = false;
     let mut tok = marker.next_token();
@@ -6351,12 +6405,11 @@ fn md_item_content_leading(marker: &SyntaxToken) -> usize {
             break;
         }
         if leading.is_none() {
-            leading = Some(
-                t.text()
-                    .chars()
-                    .take_while(|c| *c == ' ' || *c == '\t')
-                    .count(),
-            );
+            let mut col = start_col;
+            for c in t.text().chars().take_while(|c| *c == ' ' || *c == '\t') {
+                col = advance_md_col(col, c);
+            }
+            leading = Some(col - start_col);
         }
         if !t.text().trim().is_empty() {
             has_content = true;
@@ -6878,7 +6931,9 @@ fn strip_marker(line: &str) -> &str {
     let trimmed = line.trim_start();
     let after_hashes = trimmed.trim_start_matches('#');
     let body = after_hashes.strip_prefix('\'').unwrap_or(after_hashes);
-    body.strip_prefix(' ').unwrap_or(body)
+    // roxygen2's tokenizer strips one whitespace *character* after the sigil
+    // (`consumeWhitespace(1)`, parser2.cpp) — a tab counts, not just a space.
+    body.strip_prefix([' ', '\t']).unwrap_or(body)
 }
 
 /// Whether a `ROXYGEN_MD_LIST` is ordered (`\enumerate`): its first item's

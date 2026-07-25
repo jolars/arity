@@ -7,7 +7,9 @@
 //! indentation trivia in losslessly.
 
 use super::group::{LineKind, classify_line, is_line_body_kind, line_content_start};
-use super::{is_two_arg_rd_macro, md_fence_run_closes, scan_balanced, utf8_len};
+use super::{
+    advance_md_col, is_two_arg_rd_macro, md_fence_run_closes, md_ws_gauge, scan_balanced, utf8_len,
+};
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
 use crate::syntax::SyntaxKind;
@@ -244,37 +246,42 @@ fn is_same_line_child(tokens: &[Token], i: usize, kind: &TokKind) -> bool {
 }
 
 /// The indentation (in columns) of a list line whose `RoxygenMarker` is at
-/// `marker`: the width of the `#'`→content whitespace, which — after the `#'`
-/// sigil and one conventional space are stripped — is what CommonMark uses to
-/// decide list nesting. (Tabs count as one column here; the corpus uses spaces.)
+/// `marker`: the one-based gauge of the `#'`→content whitespace — after the
+/// `#'` sigil and the one whitespace character roxygen2 strips, the rest
+/// expands with 4-column tab stops ([`md_ws_gauge`]) into what CommonMark uses
+/// to decide list nesting and indented-code thresholds (cm-001/002/008/009).
 fn list_line_indent(tokens: &[Token], marker: usize) -> usize {
     let mut k = marker + 1;
-    let mut indent = 0;
+    let mut texts = Vec::new();
     while tokens.get(k).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-        indent += tokens[k].text.chars().count();
+        texts.push(tokens[k].text.as_str());
         k += 1;
     }
-    indent
+    md_ws_gauge(texts)
 }
 
-/// The number of leading spaces of a list item's content (the first body token
-/// after its marker), clamped to CommonMark's 1..=4: a child block must be
-/// indented to at least `marker_indent + marker_width + this` to nest.
+/// The number of leading whitespace **columns** of a list item's content (the
+/// first body token after its marker), clamped to CommonMark's 1..=4: a child
+/// block must be indented to at least `marker_indent + marker_width + this` to
+/// nest. `start_col` is the value column just past the marker (the marker
+/// line's gauge minus one, plus the marker width) — the anchor tab stops are
+/// measured from ([`advance_md_col`]; a separator tab spans to the next
+/// 4-column stop, cm-007).
 ///
 /// Two CommonMark start conditions snap this to **one** instead: an item whose
 /// first line has no content after the marker (its content, if any, starts on
 /// the next line — cm-280/281), and an item whose content sits five or more
 /// columns past the marker (the content then *starts with indented code*, and
 /// only one column belongs to the item separator — cm-275/276).
-fn content_leading_spaces(tokens: &[Token], content: usize) -> usize {
+fn content_leading_spaces(tokens: &[Token], content: usize, start_col: usize) -> usize {
     let Some(first) = tokens.get(content).filter(|t| is_line_body_kind(&t.kind)) else {
         return 1;
     };
-    let leading = first
-        .text
-        .chars()
-        .take_while(|c| *c == ' ' || *c == '\t')
-        .count();
+    let mut col = start_col;
+    for c in first.text.chars().take_while(|c| *c == ' ' || *c == '\t') {
+        col = advance_md_col(col, c);
+    }
+    let leading = col - start_col;
     let mut k = content;
     let mut has_content = false;
     while let Some(t) = tokens.get(k).filter(|t| is_line_body_kind(&t.kind)) {
@@ -1089,20 +1096,21 @@ fn emit_md_list_level_inner(
         // at its `RoxygenMdListMarker` — see `ListItemStart`). The marker and
         // the marker→content whitespace are threaded as trivia.
         let this = first.take();
-        let mut indent = 0;
-        if matches!(this, Some(ListItemStart::MidLine)) {
-            indent = container_indent;
+        let indent = if matches!(this, Some(ListItemStart::MidLine)) {
+            container_indent
         } else {
             if !matches!(this, Some(ListItemStart::TagValue)) {
                 events.push(Event::Tok(i));
                 i += 1;
             }
+            let mut ws_texts = Vec::new();
             while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-                indent += tokens[i].text.chars().count();
+                ws_texts.push(tokens[i].text.as_str());
                 events.push(Event::Tok(i));
                 i += 1;
             }
-        }
+            md_ws_gauge(ws_texts)
+        };
 
         // The item: its `RoxygenMdListMarker` leaf, then its inline content. A
         // child block must reach this item's content column to nest under it.
@@ -1111,7 +1119,12 @@ fn emit_md_list_level_inner(
         let item_marker = i;
         events.push(Event::Tok(i)); // RoxygenMdListMarker
         i += 1;
-        let content_indent = indent + marker_width + content_leading_spaces(tokens, i);
+        // The value column just past the marker: the gauge is value column + 1,
+        // and a gauge-0 line (no `#'`→content whitespace at all) still puts its
+        // marker at value column 0.
+        let marker_end_col = indent.saturating_sub(1) + marker_width;
+        let content_indent =
+            indent + marker_width + content_leading_spaces(tokens, i, marker_end_col);
         let content_start = i;
         // A same-line nested list (`- - foo`): the lexer carved the item's
         // content-opening list marker, leaving the marker→marker separating
@@ -1150,7 +1163,7 @@ fn emit_md_list_level_inner(
             events.push(Event::Tok(i)); // separating whitespace (prose run)
             i = emit_md_heading_from_value(tokens, i + 1, events);
             item_has_content = true;
-        } else if item_first_line_opens_indented_code(tokens, i) {
+        } else if item_first_line_opens_indented_code(tokens, i, marker_end_col) {
             // The item's content sits five or more columns past the marker, so
             // it *starts with indented code* (cm-275/276): `content_indent`
             // snapped to marker + 1 (`content_leading_spaces`), and the line's
@@ -1504,9 +1517,10 @@ pub(super) fn is_md_code_block_start(tokens: &[Token], start: usize) -> bool {
 }
 
 /// Whether the roxygen line whose marker is at `start` is an **indented-code
-/// line**: its marker->content whitespace is five or more all-space columns (a
+/// line**: its marker->content whitespace gauges five or more columns (a
 /// CommonMark indented code block needs four columns; roxygen2 strips the marker
-/// and one following space first) *and* there is real content after it (a
+/// and one following whitespace character first, and a tab expands to the next
+/// 4-column stop — cm-001/002/008) *and* there is real content after it (a
 /// whitespace-only line is blank, not code). Mode-blind — the caller gates on `md`;
 /// the leading whitespace is ordinary `Whitespace` (no special leaf), so the
 /// block-macro machinery's whitespace handling is unaffected.
@@ -1515,20 +1529,17 @@ fn is_indent_code_line(tokens: &[Token], start: usize) -> bool {
 }
 
 /// Like [`is_indent_code_line`] but with a caller-supplied minimum indentation
-/// (in all-space columns after the `#'` marker). A **top-level** indented code
+/// (in gauge columns after the `#'` marker). A **top-level** indented code
 /// line needs five columns (roxygen2 strips the marker and one space, leaving
 /// CommonMark's four); an indented code block **folded into a list item** needs
 /// the item's content column plus four (the item container consumes the content
 /// column before CommonMark's four apply), so the caller passes
 /// `content_indent + 4`.
 fn is_indent_code_line_min(tokens: &[Token], start: usize, min_ws: usize) -> bool {
-    let Some(ws) = tokens.get(start + 1) else {
+    if tokens.get(start + 1).map(|t| &t.kind) != Some(&TokKind::Whitespace) {
         return false;
-    };
-    if ws.kind != TokKind::Whitespace
-        || ws.text.len() < min_ws
-        || !ws.text.bytes().all(|b| b == b' ')
-    {
+    }
+    if list_line_indent(tokens, start) < min_ws {
         return false;
     }
     let content = line_content_start(tokens, start);
@@ -1578,17 +1589,17 @@ pub(super) fn emit_md_indented_code(
 /// item's content indent then snaps to marker + 1 ([`content_leading_spaces`]),
 /// and the remainder — less the one separator column — is an indented code
 /// block inside the item. `content` is the token just past the
-/// `RoxygenMdListMarker`.
-fn item_first_line_opens_indented_code(tokens: &[Token], content: usize) -> bool {
+/// `RoxygenMdListMarker`; `start_col` is the value column just past the marker
+/// (the tab-stop anchor: `-\t\tfoo` leads with seven columns, cm-007).
+fn item_first_line_opens_indented_code(tokens: &[Token], content: usize, start_col: usize) -> bool {
     let Some(first) = tokens.get(content).filter(|t| is_line_body_kind(&t.kind)) else {
         return false;
     };
-    let leading = first
-        .text
-        .chars()
-        .take_while(|c| *c == ' ' || *c == '\t')
-        .count();
-    if leading < 5 {
+    let mut col = start_col;
+    for c in first.text.chars().take_while(|c| *c == ' ' || *c == '\t') {
+        col = advance_md_col(col, c);
+    }
+    if col - start_col < 5 {
         return false;
     }
     let mut k = content;
@@ -1651,17 +1662,18 @@ pub(super) fn emit_md_indented_code_min(
 /// Whether a prose tag's same-line value opens a markdown **indented code
 /// block**: the block is `@md` (threaded from the block builder — indented code
 /// has no mode-carrying leaf), and the whitespace run between the tag head and
-/// the value is five or more all-space columns (roxygen2 strips only the single
-/// separator space after the tag head, so four further columns reach CommonMark's
-/// indented-code threshold — the from-value analog of [`is_indent_code_line`]).
-/// The value position is always a fresh block position (the tag's markdown
-/// document starts there), so no paragraph gate applies.
+/// the value gauges five or more columns (roxygen2 strips only the single
+/// separator character after the tag head, so four further columns — tab stops
+/// included — reach CommonMark's indented-code threshold, the from-value analog
+/// of [`is_indent_code_line`]). The value position is always a fresh block
+/// position (the tag's markdown document starts there), so no paragraph gate
+/// applies.
 pub(super) fn is_md_indented_code_value(tokens: &[Token], value_start: usize, md: bool) -> bool {
     if !md || value_start == 0 {
         return false;
     }
     let ws = &tokens[value_start - 1];
-    ws.kind == TokKind::Whitespace && ws.text.len() >= 5 && ws.text.bytes().all(|b| b == b' ')
+    ws.kind == TokKind::Whitespace && md_ws_gauge([ws.text.as_str()]) >= 5
 }
 
 /// Emit a `ROXYGEN_MD_INDENTED_CODE` node for an indented code block opening as a

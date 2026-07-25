@@ -1,0 +1,3 @@
+(\description (TEXT "A separator tab spans to its stop: mid-line code and deep nesting"))
+(\details (\itemize (\item) (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "  qux\n")) (\if (TEXT "html") (\out (VERB "</div>")))) (TEXT "text between") (\itemize (\item) (TEXT "a") (\itemize (\item) (TEXT "b") (\itemize (\item) (TEXT "c")))))
+(\title (TEXT "A separator tab spans to its stop: mid-line code and deep nesting"))
