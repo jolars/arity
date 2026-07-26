@@ -5,8 +5,8 @@ description: >-
   differential oracle (parser work, not formatting). roxygen2 renders #' blocks to
   .Rd. Use this skill to pick the next gap from the corpus, add the grammar plus
   projector support, lock it with a fixture + pinned tree, and ratchet the
-  now-passing case into the allowlist. The projector at src/roxygen/project_rd.rs
-  walks arity's CST
+  now-passing case into the allowlist. The projector (src/roxygen/project_rd.rs,
+  a facade over the src/roxygen/project_rd/ submodules) walks arity's CST
   and emits the parser-owned Rd section subtrees; the pure-Rust gate in
   tests/roxygen_projector.rs diffs that against a pinned <stem>.rdtree (no R, plain
   cargo test), allowlist-gated. The projector is a test-only faithful diagnostic: a
@@ -193,9 +193,12 @@ failing test you're chasing).
 - `src/parser/tree_builder.rs`—`TokKind` → `SyntaxKind` (single source of
   truth).
 - `src/ast/nodes.rs`—typed wrappers (`ast_node!`).
-- `src/roxygen/project_rd.rs`—the projector (**built, Phase 1 skeleton**).
-  Faithful encoding translation; never patched to pass. The growth site for new
-  faithful arms as the parser learns structure.
+- `src/roxygen/project_rd.rs`—the projector facade (`project_to_rd` + the
+  `Inline` enum) over the `src/roxygen/project_rd/` submodules (`section`,
+  `serialize`, `sexpr`, `escapes`, `linkrefs`, `collect`, `md_links`,
+  `md_blocks`, `text`, `tests`). Faithful encoding translation; never patched
+  to pass. The growth site for new faithful arms as the parser learns
+  structure—find a function by name (grep/LSP), not by file.
 - `tests/roxygen_projector.rs`—**the primary gate** (pure Rust, no R, plain
   `cargo test`): `project_to_rd(parse(x))` vs pinned `<stem>.rdtree`, allowlist-gated;
   writes `ROXYGEN_PROJECTOR.md`.

@@ -11,6 +11,10 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
 **Discipline**
 - **Projector is faithful, never compensating.** A divergence means the CST (or the
   encoding translation) is wrong — fix the *parser*, never patch `project_rd.rs` to pass.
+- **`project_rd.rs` is a facade since 2026-07-26** over the `src/roxygen/project_rd/`
+  submodules (`section`, `serialize`, `linkrefs`, `md_blocks`, `md_links`, `escapes`,
+  `collect`, `sexpr`, `text`, `tests`). Older log entries' "(project_rd.rs)" pointers
+  mean the module — find the function by name (grep/LSP), not by file.
 - **Strict only for the *curated* corpus** (every case allowlisted or `blocked` with a
   rationale). *Harvested* (JSONL, `rx-`+sha1 slugs): un-allowlisted = backlog, never
   `blocked`, never a build failure. Ratchet via `task roxygen-{harvest,projector}-seed`.
