@@ -24,6 +24,7 @@ cm-010
 cm-011
 cm-012
 cm-013
+cm-014
 cm-015
 cm-016
 cm-017
@@ -698,6 +699,7 @@ md_emphasis_multiline
 md_empty_list_item
 md_entities
 md_entity_edge_trim
+md_escape_backslash_collision
 md_escaped_bracket
 md_escaped_close_bracket
 md_even_braced_macro

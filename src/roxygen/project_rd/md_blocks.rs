@@ -857,15 +857,22 @@ pub(super) fn verb_atoms(body: &str) -> Vec<String> {
 /// body into one VERB leaf per line, each carrying its trailing `\n`
 /// (engine-probed: `<!-- x`⏎`y -->` → `(VERB "<!-- x\n") (VERB "y -->")`).
 pub(super) fn html_inline_atom(raw: &str) -> String {
+    format!(
+        "(\\if (TEXT {}) (\\out {}))",
+        encode_text("html"),
+        html_out_verbs(raw)
+    )
+}
+
+/// The `\out` body's `(VERB …)` atoms for a raw inline-HTML span, one per line
+/// (see [`html_inline_atom`]); shared with the demoted-macro emission, where the
+/// `\out` survives inside a bare `LIST` group.
+pub(super) fn html_out_verbs(raw: &str) -> String {
     let verbs: Vec<String> = raw
         .split_inclusive('\n')
         .map(|seg| format!("(VERB {})", encode_text(seg)))
         .collect();
-    format!(
-        "(\\if (TEXT {}) (\\out {}))",
-        encode_text("html"),
-        verbs.join(" ")
-    )
+    verbs.join(" ")
 }
 
 /// Extract a fenced code block's `(info, code)` from its node. The info string is

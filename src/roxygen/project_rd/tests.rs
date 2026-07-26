@@ -1721,6 +1721,87 @@ fn collapse_md_backslash_runs_halves_a_run() {
 }
 
 #[test]
+fn odd_backslash_run_demotes_a_following_md_macro() {
+    // `\*x*` under `@md` (cm-014): `double_escape_md` doubles the `\`, so cmark
+    // sees `\\*` — a literal `\` and an *active* star. The rendered field is then
+    // `\` + `\emph{x}`, whose `\\` parse_Rd pairs left-to-right: the macro's own
+    // backslash is consumed, the name is absorbed into the TEXT, and the braced
+    // argument re-parses as a bare LIST group.
+    let emph = "#' @md\n\
+                #' @title T\n\
+                #' @details\n\
+                #' \\*not emphasized*\n\
+                #' @name x\n\
+                NULL\n";
+    assert_eq!(
+        project_to_rd(emph),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"\\\\emph\") (LIST (TEXT \"not emphasized\")))\n\
+         (\\title (TEXT \"T\"))"
+    );
+    // Same collision for a code span's `\verb` (its verbatim-ness is lost — the
+    // group re-parses as plain text) ...
+    let code = "#' @md\n\
+                #' @title T\n\
+                #' @details\n\
+                #' \\`not code`\n\
+                #' @name x\n\
+                NULL\n";
+    assert_eq!(
+        project_to_rd(code),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"\\\\verb\") (LIST (TEXT \"not code\")))\n\
+         (\\title (TEXT \"T\"))"
+    );
+    // ... and for inline HTML's `\if{html}{\out{…}}`: both args become LISTs;
+    // the `\out` inside the second still parses (parse_Rd knows it anywhere).
+    let html = "#' @md\n\
+                #' @title T\n\
+                #' @details\n\
+                #' \\<br/> not a tag\n\
+                #' @name x\n\
+                NULL\n";
+    assert_eq!(
+        project_to_rd(html),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"\\\\if\") (LIST (TEXT \"html\")) (LIST (\\out (VERB \"<br/>\"))) \
+         (TEXT \"not a tag\"))\n\
+         (\\title (TEXT \"T\"))"
+    );
+}
+
+#[test]
+fn even_backslash_run_keeps_the_following_md_macro() {
+    // An even source run pairs away entirely before the macro's backslash, so
+    // the macro survives (`x\\*y*` → text `x\` + `\emph{y}`); an odd run of 3
+    // demotes with two literal backslashes left in the text (engine-probed).
+    let even = "#' @md\n\
+                #' @title T\n\
+                #' @details\n\
+                #' x\\\\*y* z\n\
+                #' @name x\n\
+                NULL\n";
+    assert_eq!(
+        project_to_rd(even),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"x\\\\\") (\\emph (TEXT \"y\")) (TEXT \"z\"))\n\
+         (\\title (TEXT \"T\"))"
+    );
+    let triple = "#' @md\n\
+                  #' @title T\n\
+                  #' @details\n\
+                  #' x\\\\\\*y* z\n\
+                  #' @name x\n\
+                  NULL\n";
+    assert_eq!(
+        project_to_rd(triple),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"x\\\\\\\\emph\") (LIST (TEXT \"y\")) (TEXT \"z\"))\n\
+         (\\title (TEXT \"T\"))"
+    );
+}
+
+#[test]
 fn braceless_item_projects_as_unknown_node() {
     // A brace-less `\item` outside a list is parse_Rd's out-of-list recovery:
     // an `(UNKNOWN "\item")` node splitting the surrounding text (mode-

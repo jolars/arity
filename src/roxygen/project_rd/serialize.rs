@@ -315,6 +315,49 @@ pub(super) fn flush_run(run: &mut Vec<RunSeg>, md: bool) -> Option<String> {
     text_atom(&combined)
 }
 
+/// Whether the pending prose run ends with an **odd** backslash run at cmark's
+/// stage — the parity that decides parse_Rd's pairing across the text/macro
+/// boundary in the rendered field. A source run of `k` backslashes reaches the
+/// field as `k` (`double_escape_md` doubles, cmark halves), and a following
+/// md-generated macro contributes its own `\`, so parse_Rd sees `k + 1`: odd `k`
+/// pairs the macro's backslash away — the name is absorbed into the TEXT and each
+/// braced argument re-parses as a bare `LIST` group (cm-014's `\*x*` →
+/// `(TEXT "\emph") (LIST …)`) — while even `k` leaves the macro intact. The
+/// collapsed text's `ceil(k/2)` backslashes already equal parse_Rd's paired count
+/// in both parities, so only this structural demotion is parity-dependent. The
+/// run is read from the trailing `Raw` segment (contiguous raw prose coalesces
+/// into one); a `Final` segment is already parse-level, its parity unrecoverable.
+fn run_ends_odd_backslash_run(run: &[RunSeg]) -> bool {
+    let Some(RunSeg::Raw(last)) = run.last() else {
+        return false;
+    };
+    last.bytes().rev().take_while(|&b| b == b'\\').count() % 2 == 1
+}
+
+/// Emit a demoted macro (see [`run_ends_odd_backslash_run`]): the bare name glues
+/// onto the flushed TEXT atom (as a `Final` segment, so the prose pipeline never
+/// reads it as a brace-less macro misuse), and each argument follows as a
+/// `(LIST …)` atom — parse_Rd's re-parse of the now-bare brace groups.
+fn push_demoted_macro(
+    atoms: &mut Vec<String>,
+    run: &mut Vec<RunSeg>,
+    md: bool,
+    name: &str,
+    args: Vec<String>,
+) {
+    run.push(RunSeg::Final(name.to_string()));
+    if let Some(atom) = flush_run(run, md) {
+        atoms.push(atom);
+    }
+    for arg in args {
+        atoms.push(if arg.is_empty() {
+            "(LIST)".to_string()
+        } else {
+            format!("(LIST {arg})")
+        });
+    }
+}
+
 /// Partition a non-`@md` prose run's bare `{…}` brace groups into [`Inline::BraceGroup`]
 /// nodes. parse_Rd treats an unescaped brace pair in prose text as a `LIST`
 /// delimiter (a macro's own braces live inside its CST node, so only *bare* text
@@ -468,18 +511,35 @@ pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 atoms.push(serialize_macro(node, md));
             }
             Inline::MdCode(content) => {
+                if md && run_ends_odd_backslash_run(&run) {
+                    // Demoted, the span's verbatim-ness is lost: the bare brace
+                    // group re-parses as plain prose text.
+                    let name = if code_span_is_r(content) {
+                        "code"
+                    } else {
+                        "verb"
+                    };
+                    let arg = text_atom(content).unwrap_or_default();
+                    push_demoted_macro(&mut atoms, &mut run, md, name, vec![arg]);
+                    continue;
+                }
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
                 atoms.push(md_code_atom(content));
             }
             Inline::MdEmphasis { strong, children } => {
-                if let Some(atom) = flush_run(&mut run, md) {
-                    atoms.push(atom);
-                }
                 // Recurse into the inner inline run (nesting projects as structure),
                 // then wrap. The block's `@md` mode holds inside an emphasis span.
                 let inner = serialize_inlines(children, md).join(" ");
+                if md && run_ends_odd_backslash_run(&run) {
+                    let name = if *strong { "strong" } else { "emph" };
+                    push_demoted_macro(&mut atoms, &mut run, md, name, vec![inner]);
+                    continue;
+                }
+                if let Some(atom) = flush_run(&mut run, md) {
+                    atoms.push(atom);
+                }
                 let head = if *strong { "\\strong" } else { "\\emph" };
                 atoms.push(if inner.is_empty() {
                     format!("({head})")
@@ -567,6 +627,17 @@ pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 atoms.extend(serialize_md_indented_code(node));
             }
             Inline::MdHtml(raw) => {
+                if md && run_ends_odd_backslash_run(&run) {
+                    // Both of `\if{html}{\out{…}}`'s args demote to LISTs; the
+                    // `\out` inside the second still parses (parse_Rd knows it
+                    // anywhere), keeping its verbatim body.
+                    let args = vec![
+                        format!("(TEXT {})", encode_text("html")),
+                        format!("(\\out {})", html_out_verbs(raw)),
+                    ];
+                    push_demoted_macro(&mut atoms, &mut run, md, "if", args);
+                    continue;
+                }
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
