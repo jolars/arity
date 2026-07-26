@@ -94,8 +94,10 @@ cm-083
 cm-084
 cm-085
 cm-086
+cm-087
 cm-088
 cm-089
+cm-090
 cm-091
 cm-092
 cm-093
@@ -646,6 +648,7 @@ cm-645
 cm-646
 cm-647
 cm-648
+cm-649
 cm-650
 cm-651
 cm-652
@@ -698,6 +701,7 @@ md_fragile_odd_brace
 md_heading
 md_heading_brace_group
 md_heading_intro
+md_heading_piece_drop
 md_heading_subsection
 md_heading_trailing_empty
 md_html_block_case
@@ -791,6 +795,7 @@ md_ref_link_multiline
 md_setext
 md_setext_dash
 md_setext_multiline
+md_setext_overindent
 md_setext_tag_value
 md_shortcut_emphasis
 md_shortcut_link

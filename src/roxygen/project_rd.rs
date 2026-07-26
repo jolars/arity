@@ -685,8 +685,9 @@ struct HeadingFrame {
 /// span it) and only *then* splits it into sections; arity splits first and
 /// resolves each piece independently, so a link reference cannot yet cross a
 /// heading (backlog). The common case — self-contained heading sections — is exact.
-/// The per-section `rdComplete` drop is likewise not applied to the hoisted
-/// `\section`/`\subsection`s (their bodies are balanced in practice; backlog).
+/// The per-piece `rdComplete` drop is applied per level-1 piece
+/// ([`heading_piece_complete`]): an incomplete piece empties, a `\section` title
+/// surviving (cm-090).
 fn emit_section_with_headings(
     out: &mut Vec<String>,
     macro_name: &str,
@@ -824,25 +825,47 @@ fn emit_section_with_headings(
     // hang directly off it (headings before the first level-1 heading), each a
     // nested `\subsection`. A level-1 child hoists out (below). Omit the enclosing
     // section entirely when it has no content.
-    let mut inner = serialize_prose_seeded(&frames[0].body, md, &field_defs);
-    for &c in &frames[0].children {
-        if frames[c].level >= 2 {
-            inner.push(render_heading_frame(
-                &frames,
-                c,
-                md,
-                "subsection",
-                &field_defs,
-            ));
+    //
+    // roxygen2 runs `rdComplete` per level-1 piece ([`heading_piece_complete`]):
+    // an incomplete enclosing piece (a `\subsection{Foo\}` whose title's trailing
+    // backslash escapes the wrapper brace, cm-090) empties — rendered `(\<macro>)`
+    // when it is the field's only piece, omitted entirely when `\section` pieces
+    // follow (engine-probed). Only the `sections = TRUE` tags drop
+    // (`drop_on_incomplete`, all-md by construction here).
+    let has_section = frames[0].children.iter().any(|&c| frames[c].level == 1);
+    if drop_on_incomplete && !heading_piece_complete(&frames, 0, md, &field_defs) {
+        if !has_section {
+            out.push(format!("(\\{macro_name})"));
+        }
+    } else {
+        let mut inner = serialize_prose_seeded(&frames[0].body, md, &field_defs);
+        for &c in &frames[0].children {
+            if frames[c].level >= 2 {
+                inner.push(render_heading_frame(
+                    &frames,
+                    c,
+                    md,
+                    "subsection",
+                    &field_defs,
+                ));
+            }
+        }
+        if !inner.is_empty() {
+            out.push(format!("(\\{macro_name} {})", inner.join(" ")));
         }
     }
-    if !inner.is_empty() {
-        out.push(format!("(\\{macro_name} {})", inner.join(" ")));
-    }
 
-    // Each level-1 child is a top-level `\section` sibling in the output.
+    // Each level-1 child is a top-level `\section` sibling in the output. An
+    // incomplete `\section` piece keeps its title (it lives in the split marker)
+    // over an emptied body.
     for &c in &frames[0].children {
-        if frames[c].level == 1 {
+        if frames[c].level != 1 {
+            continue;
+        }
+        if drop_on_incomplete && !heading_piece_complete(&frames, c, md, &field_defs) {
+            let title = grp_arg(&frame_title_atoms(&frames[c], md, &field_defs, true));
+            out.push(format!("(\\section{})", prefix_space(&title)));
+        } else {
             out.push(render_heading_frame(&frames, c, md, "section", &field_defs));
         }
     }
@@ -997,13 +1020,7 @@ fn render_heading_frame(
     seed: &LinkDefs,
 ) -> String {
     let f = &frames[idx];
-    let title = (md && !seed.is_empty())
-        .then(|| apply_user_linkrefs(&f.title, seed, false))
-        .flatten();
-    let title = title.as_deref().unwrap_or(&f.title);
-    // A bare `{…}` in the heading title is an Rd `LIST` group, exactly as in prose
-    // and macro args (`# H {a b}` → `(GRP (TEXT "H") (LIST (TEXT "a b")))`).
-    let title_atoms = serialize_inlines(&group_brace_lists(title, md), md);
+    let title_atoms = frame_title_atoms(f, md, seed, true);
     let mut body_atoms = serialize_prose_seeded(&f.body, md, seed);
     for &c in &f.children {
         body_atoms.push(render_heading_frame(frames, c, md, "subsection", seed));
@@ -1017,6 +1034,76 @@ fn render_heading_frame(
         inner.push_str(&body_arg);
     }
     format!("(\\{macro_name}{})", prefix_space(&inner))
+}
+
+/// A heading frame's title as serialized atoms, resolving a field-wide link
+/// reference exactly as [`render_heading_frame`] does (defs never consumed in a
+/// title — it is inline content). `group` selects the output shape (a bare
+/// `{…}` becomes an Rd `LIST` group); the per-piece `rdComplete` scan passes
+/// `false` — grouping loses the backslash parity the scan weighs (see
+/// [`serialize_prose`]).
+fn frame_title_atoms(f: &HeadingFrame, md: bool, seed: &LinkDefs, group: bool) -> Vec<String> {
+    let title = (md && !seed.is_empty())
+        .then(|| apply_user_linkrefs(&f.title, seed, false))
+        .flatten();
+    let title = title.as_deref().unwrap_or(&f.title);
+    // A bare `{…}` in the heading title is an Rd `LIST` group, exactly as in prose
+    // and macro args (`# H {a b}` → `(GRP (TEXT "H") (LIST (TEXT "a b")))`).
+    let grouped = group.then(|| group_brace_lists(title, md));
+    serialize_inlines(grouped.as_deref().unwrap_or(title), md)
+}
+
+/// Whether one level-1 **piece** of a heading-split field renders brace-complete
+/// Rd. roxygen2 markdown-renders the whole field, splits it at the level-1
+/// `\section` markers, and runs `rdComplete` per piece (`mdxml_children_to_rd_top`,
+/// R/markdown.R): a failing piece is replaced by `""` — the enclosing tag's body
+/// (piece 0, its `\subsection`s included) empties, a `\section`'s body empties
+/// while its title (part of the split marker) survives. The scan text mirrors
+/// that split: the frame's prose atoms plus each nested `\subsection{title}{body}`
+/// wrapper, reconstructed like [`section_rd_complete_seeded`]'s md arm (ungrouped
+/// atoms, `%`-comment regions stripped, a dropping `\href` destination checked
+/// directly on the parsed URL). A level-1 title with its own imbalance is not
+/// modeled (it lives inside the split marker, a different failure — backlog).
+fn heading_piece_complete(frames: &[HeadingFrame], idx: usize, md: bool, seed: &LinkDefs) -> bool {
+    let mut rd = String::new();
+    heading_piece_rd(frames, idx, md, seed, &mut rd) && rd_complete(&rd)
+}
+
+/// Append the rendered-Rd scan text for the piece rooted at `frames[idx]` —
+/// skipping level-1 children (each is its own piece) — returning `false` when a
+/// body holds an inline link whose destination alone drops the piece
+/// ([`body_has_dropping_href`]).
+fn heading_piece_rd(
+    frames: &[HeadingFrame],
+    idx: usize,
+    md: bool,
+    seed: &LinkDefs,
+    rd: &mut String,
+) -> bool {
+    let f = &frames[idx];
+    if body_has_dropping_href(&f.body) {
+        return false;
+    }
+    let stripped = strip_scan_percent_comments(&f.body);
+    let body = stripped.as_deref().unwrap_or(&f.body);
+    for atom in serialize_prose(body, md, false, seed) {
+        sexpr_to_rd(&atom, md, rd);
+    }
+    for &c in &f.children {
+        if frames[c].level == 1 {
+            continue;
+        }
+        rd.push_str("\\subsection{");
+        for atom in frame_title_atoms(&frames[c], md, seed, false) {
+            sexpr_to_rd(&atom, md, rd);
+        }
+        rd.push_str("}{");
+        if !heading_piece_rd(frames, c, md, seed, rd) {
+            return false;
+        }
+        rd.push('}');
+    }
+    true
 }
 
 /// One level-1 heading found by [`emit_section_with_list_hoist`]'s scan: the cut
@@ -8620,6 +8707,74 @@ mod tests {
             project_to_rd(src),
             "(\\description (TEXT \"T\"))\n\
              (\\details (TEXT \"Foo ***\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn over_indented_setext_underline_folds_into_the_open_paragraph() {
+        // `Foo` then `    ---`: a setext underline is subject to CommonMark's
+        // three-space indent allowance — at column five it is indented-code
+        // territory, which cannot interrupt a paragraph, so the line lazily
+        // folds as prose and no heading forms (cm-087).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' Foo\n\
+                   #'     ---\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"Foo ---\"))\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn trailing_backslash_heading_title_drops_the_piece() {
+        // `Foo\` promoted by `----`: the title's trailing backslash escapes
+        // the rendered `\subsection{Foo\}` closing brace, so `rdComplete`
+        // fails and roxygen2 empties the whole enclosing piece (cm-090).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' Foo\\\n\
+                   #' ----\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details)\n\
+             (\\title (TEXT \"T\"))"
+        );
+    }
+
+    #[test]
+    fn incomplete_section_piece_keeps_its_title() {
+        // The `rdComplete` drop is per level-1 piece: the intro piece is
+        // complete and survives; the `# Good` section's piece holds the
+        // brace-incomplete `\subsection{Bad\}`, so its body empties while its
+        // title (part of roxygen2's split marker) survives (engine-probed).
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' Intro\n\
+                   #'\n\
+                   #' # Good\n\
+                   #' good body\n\
+                   #'\n\
+                   #' Bad\\\n\
+                   #' ----\n\
+                   #' @name x\n\
+                   NULL\n";
+        assert_eq!(
+            project_to_rd(src),
+            "(\\description (TEXT \"T\"))\n\
+             (\\details (TEXT \"Intro\"))\n\
+             (\\section (TEXT \"Good\"))\n\
              (\\title (TEXT \"T\"))"
         );
     }

@@ -104,7 +104,10 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   carves a `RoxygenMdThematicBreak` leaf → `is_same_line_break` → the from-value emitter; the
   projector `push_inline` arm drops it (bare `\item`). The **column gate for a break is at
   block level** (`is_md_thematic_break_line` rejects `list_line_indent >= 5`) — the lexer
-  never sees the marker→content whitespace; and a break line **never opens a setext title**
+  never sees the marker→content whitespace; a **setext underline shares the gate**
+  (`is_md_setext_underline_or_dash`; the fold predicate uses the gated
+  `is_md_promoting_setext_underline`, so a rejected underline lazily folds — cm-087; the raw
+  leaf test stays at the in-item window and quote-lazy sites); and a break line **never opens a setext title**
   (`is_md_setext_heading_start` rejects it — block structure beats paragraph text, cm-043).
   `carve_md_list_markers` (lex.rs) carves a `>` (or a `scan_md_fence` opener) in the same
   1–4-column separator window as a nested marker into a `RoxygenMdBlockQuote` (or
@@ -124,7 +127,12 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   makes roxygen2 splice its section marker mid-`\itemize{` → per-piece `rdComplete` drops:
   `emit_section_with_list_hoist` (project_rd.rs) models the pieces as container-path cuts
   (list-ids compared; differing chains = unbalanced piece = emptied, title survives; equal
-  in-list chains render stranded brace-less `(UNKNOWN "\\item")`s). A level ≥2 in-item heading
+  in-list chains render stranded brace-less `(UNKNOWN "\\item")`s). At field level the
+  rendered text splits at **level-1 `\section` markers** and `rdComplete` runs **per piece**
+  (`heading_piece_complete`, project_rd.rs — wraps nested `\subsection{title}{body}`): a failing
+  enclosing piece renders `(\details)` when it is the only piece, vanishes when `\section`s
+  follow; a failing `\section` piece keeps its title over an emptied body (cm-090/649; a
+  heading title's trailing odd `\` run is the canonical trigger). A level ≥2 in-item heading
   is instead an in-item `(\subsection …)` sibling after `(\item)` (`md_item_atoms`, frames
   rooted at level 1); under a non-sections tag a level-1 heading is literal title text
   (`serialize_inlines` fallback). A below-column `===` stays a lazy fold; a sibling item after
@@ -1148,10 +1156,10 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 969 matching (all allowlisted), 32 divergent** of 1001 pinned. The divergent 32 are the
+**Current: 974 matching (all allowlisted), 29 divergent** of 1003 pinned. The divergent 29 are the
 per-section backlog (harvested 18, Entities 2, HTML blocks 2, Link reference definitions 2,
-Setext 2, singles in Backslash escapes/Fenced/Hard breaks/Images/Links/Raw HTML; Block quotes +
-Code spans + List items + Lists + Tabs + ATX headings + Thematic breaks COMPLETE).
+singles in Backslash escapes/Fenced/Images/Links/Raw HTML; Block quotes + Code spans + List
+items + Lists + Tabs + ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1159,54 +1167,63 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1000 pinned); 35 divergent backlog.
+   Curated + harvested + whole-spec corpora (1003 pinned); 29 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 195/195 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 197/197 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26b) — thematic-break block edges (cm-043/049/061)
+## Latest session (2026-07-26c) — setext column gate + per-piece rdComplete drop (cm-087/090, cm-649 free)
 
-Three independent parser gaps closed the Thematic breaks section.
+Two independent gaps; the Setext and Hard line breaks sections both completed.
 
-**Setext precedence (cm-043):** `is_md_setext_heading_start` let a `---` underline
-promote a preceding `***` *thematic-break line* into a `\subsection`-rendering
-heading. Block structure wins over paragraph text in CommonMark — a break line never
-opens a paragraph, so the predicate's early return now also rejects a
-`is_md_thematic_break_line` start; `***`/`---`/`___` are three breaks, all dropped.
+**Setext underline column gate (cm-087, parser gap):** an over-indented `    ---`
+promoted a heading. The gate mirrors the thematic-break one (block level — the
+lexer carves the underline leaf without seeing the marker→content whitespace):
+`is_md_setext_underline_or_dash` rejects `list_line_indent >= 5` (tab-stop gauge;
+covers the dash-bullet arm too), and `is_foldable_continuation` swaps its raw
+underline exclusion for the new gated `is_md_promoting_setext_underline`, so the
+rejected line lazily folds into the open paragraph (`Foo ---`, one TEXT). Raw
+`is_md_setext_underline_line` deliberately stays at the two other call sites: the
+in-item window (`item_setext_underline_ahead`, its own column window) and the
+block-quote lazy arm (folds either way).
 
-**Column gate (cm-049):** the lexer carves the `RoxygenMdThematicBreak` leaf without
-seeing the marker→content whitespace (it is a separate token), so `#'     ***` at
-column five carved as a break and vanished. The gate lives at **block level**:
-`is_md_thematic_break_line` rejects `list_line_indent >= 5` (indented-code
-territory, tab-stop gauge), so after a paragraph the line lazily folds as prose
-(`Foo ***`; at a fresh position the indented-code arm still claims it first, cm-048).
+**Per-piece `rdComplete` drop in the heading regime (cm-090 + cm-649, projector
+gap):** a heading title ending in an odd backslash run (`Foo\` + `----` setext,
+`### foo\` ATX) renders `\subsection{Foo\}` whose `\` escapes the wrapper brace →
+rdComplete fails. Engine-probed granularity: roxygen2 splits the rendered field at
+**level-1 `\section` markers** and drops per piece — the enclosing piece empties
+(`(\details)` when it is the only piece, **omitted entirely** when `\section`s
+follow), a failing `\section` piece keeps its **title** (it lives in the split
+marker) over an emptied body, and a complete sibling piece survives untouched.
+`heading_piece_complete`/`heading_piece_rd` (project_rd.rs) rebuild each piece's
+scan text (ungrouped atoms + `\subsection{title}{body}` wrappers, `%`-comment
+strip + `body_has_dropping_href` per frame — same discipline as
+`section_rd_complete_seeded`); wired into `emit_section_with_headings`' emit tail,
+gated on `drop_on_incomplete`. `frame_title_atoms` factored out of
+`render_heading_frame` for the title-survives arm. Backlog: a level-1 *title* with
+its own imbalance (inside the split marker, a different failure mode).
 
-**Same-line item break (cm-061):** `carve_md_list_markers` left a thematic-break
-remainder (`- * * *`) in the prose run; it now carves a `RoxygenMdThematicBreak`
-leaf like the quote/ATX/fence arms, `is_same_line_break` routes it to
-`emit_md_thematic_break_from_value`, and the paired projector `push_inline` arm
-drops the node — the `\item` stays bare. (roxygen2 warns "Internal error: unknown
-xml node thematic_break" per break on stderr but proceeds, dropping the node —
-a diagnostic-parity backlog note.)
+**Result:** projector **969→974 matching (all allowlisted), 32→29 divergent**, 0
+blocked, of 1003 pinned; 0 regressions. **Setext 27/27 + Hard line breaks 15/15
+COMPLETE** (cm-649 closed free via the same drop). Fixture
+`roxygen_md_setext_overindent` (`---` and `===` both fold); curated
+`md_setext_overindent` + `md_heading_piece_drop` (R-minted pins byte-identical).
+Three projector units (`over_indented_setext_underline_folds_into_the_open_paragraph`,
+`trailing_backslash_heading_title_drops_the_piece`,
+`incomplete_section_piece_keeps_its_title`). Format baseline +2 (new cases only, no
+drift; the folded paragraph reflows to `#' Foo ---`, render-preserving).
+Fixed-point 197/197. Full suite + clippy + fmt green.
 
-**Result:** projector **965→969 matching (all allowlisted), 35→32 divergent**, 0
-blocked, of 1001 pinned; 0 regressions. **Thematic breaks 19/19 COMPLETE.** Fixture
-`roxygen_md_thematic_break_edges` (all three shapes); curated
-`md_thematic_break_block_edges`, R-minted pin byte-identical. Three projector units
-(`thematic_break_line_never_opens_a_setext_title`,
-`over_indented_thematic_break_folds_into_the_open_paragraph`,
-`same_line_item_thematic_break_drops_but_keeps_the_item`). Format baseline +1 (new
-case only, no drift; the folded paragraph reflows to `#' Foo ***`, render-preserving).
-Fixed-point 195/195. Full suite + clippy + fmt green.
-
-**Ranked next target:** **Setext 2** (cm-087/090); then Entities 2 (cm-025/034),
-HTML blocks 2 (cm-177/184), and the linkref stragglers cm-196 (emphasis inside a
-leaked label) + cm-220 (def inside a block quote). Harvested 18 stays the biggest
-block but out-of-scope singles.
+**Ranked next target:** **Entities 2** (cm-025/034); then HTML blocks 2
+(cm-177/184), and the linkref stragglers cm-196 (emphasis inside a leaked label) +
+cm-220 (def inside a block quote). Harvested 18 stays the biggest block but
+out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-26b** — thematic-break block edges (cm-043/049/061; break line never opens a setext title; `is_md_thematic_break_line` rejects `list_line_indent >= 5`; `carve_md_list_markers` break arm + `is_same_line_break`). Fixture, curated, 3 units, baseline +1. 965→969, Thematic breaks 19/19 COMPLETE.
 
 - **2026-07-26** — code-span backtick runs + `\verb` fallback (cm-332/333/349; failed-opener rescan resumes past the whole run; `has_invalid_name` adds the zero-length backquoted name). Fixture, curated ×2, 2 units, baseline +2. 960→965, Code spans 22/22 COMPLETE.
 

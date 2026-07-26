@@ -2300,13 +2300,31 @@ fn is_md_setext_dash_underline(tokens: &[Token], start: usize) -> bool {
     })
 }
 
+/// Whether the line whose marker is at `start` is a setext underline **within
+/// CommonMark's three-space indent allowance**: at column five or beyond (the
+/// one-based [`list_line_indent`] gauge, tab-stop expanded — the same gate as
+/// [`is_md_thematic_break_line`]) the line is indented-code territory, so it
+/// never promotes a heading; after a paragraph it lazily folds as ordinary
+/// prose instead (`Foo` then `    ---` is one paragraph, cm-087). The raw leaf
+/// test ([`is_md_setext_underline_line`]) stays separate for the callers with
+/// their own column window (the in-item promotion) or fold intent (the
+/// block-quote lazy arm, where an over-indented underline folds either way).
+pub(super) fn is_md_promoting_setext_underline(tokens: &[Token], start: usize) -> bool {
+    list_line_indent(tokens, start) < 5 && is_md_setext_underline_line(tokens, start)
+}
+
 /// Whether the line whose marker is at `start` can serve as a **setext H2/H1
 /// underline**: a genuine `===`/`---` underline leaf, or a lone dash bullet
-/// ([`is_md_setext_dash_underline`]). Used only by the setext-heading look-back and
-/// emit, both reached solely from a paragraph open — at a fresh block position the
-/// same dash bullet still opens an empty list (the block loop's list check runs
-/// first), so this never mis-fires on a list.
+/// ([`is_md_setext_dash_underline`]), each within the three-space indent
+/// allowance ([`is_md_promoting_setext_underline`]'s column gate). Used only by
+/// the setext-heading look-back and emit, both reached solely from a paragraph
+/// open — at a fresh block position the same dash bullet still opens an empty
+/// list (the block loop's list check runs first), so this never mis-fires on a
+/// list.
 pub(super) fn is_md_setext_underline_or_dash(tokens: &[Token], start: usize) -> bool {
+    if list_line_indent(tokens, start) >= 5 {
+        return false;
+    }
     is_md_setext_underline_line(tokens, start) || is_md_setext_dash_underline(tokens, start)
 }
 

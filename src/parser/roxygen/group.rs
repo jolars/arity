@@ -15,8 +15,8 @@ use super::build::{
     emit_md_thematic_break_from_value, is_block_macro_line, is_block_macro_opener,
     is_md_block_quote_start, is_md_code_block_start, is_md_heading_start, is_md_html_block_start,
     is_md_html_block_value, is_md_html_block7_line, is_md_indented_code_start,
-    is_md_indented_code_value, is_md_list_start, is_md_setext_heading_start,
-    is_md_setext_underline_line, is_md_setext_underline_or_dash, is_md_table_start,
+    is_md_indented_code_value, is_md_list_start, is_md_promoting_setext_underline,
+    is_md_setext_heading_start, is_md_setext_underline_or_dash, is_md_table_start,
     is_md_table_value, is_md_thematic_break_line,
 };
 use crate::parser::events::Event;
@@ -606,7 +606,9 @@ pub(super) fn is_foldable_continuation(tokens: &[Token], marker: usize) -> bool 
         && !is_block_macro_line(tokens, marker)
         && !is_md_table_start(tokens, marker)
         && !is_md_heading_start(tokens, marker)
-        && !is_md_setext_underline_line(tokens, marker)
+        // Only a within-allowance underline stops a fold; at column five or
+        // beyond it is no underline and lazily folds as prose (cm-087).
+        && !is_md_promoting_setext_underline(tokens, marker)
         && !is_md_block_quote_start(tokens, marker)
         && !is_md_thematic_break_line(tokens, marker)
 }
