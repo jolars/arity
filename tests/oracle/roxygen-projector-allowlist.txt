@@ -153,6 +153,7 @@ cm-139
 cm-140
 cm-141
 cm-142
+cm-143
 cm-144
 cm-145
 cm-146
@@ -705,6 +706,7 @@ md_escaped_close_bracket
 md_even_braced_macro
 md_fence_closer
 md_fence_info_entity
+md_fence_raw_info_drop
 md_fence_tilde
 md_fence_value
 md_fragile_odd_brace

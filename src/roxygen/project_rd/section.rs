@@ -861,8 +861,8 @@ fn heading_piece_complete(frames: &[HeadingFrame], idx: usize, md: bool, seed: &
 
 /// Append the rendered-Rd scan text for the piece rooted at `frames[idx]` —
 /// skipping level-1 children (each is its own piece) — returning `false` when a
-/// body holds an inline link whose destination alone drops the piece
-/// ([`body_has_dropping_href`]).
+/// body holds an inline whose rendering alone drops the piece
+/// ([`body_has_md_drop`]).
 fn heading_piece_rd(
     frames: &[HeadingFrame],
     idx: usize,
@@ -871,7 +871,7 @@ fn heading_piece_rd(
     rd: &mut String,
 ) -> bool {
     let f = &frames[idx];
-    if body_has_dropping_href(&f.body) {
+    if body_has_md_drop(&f.body) {
         return false;
     }
     let stripped = strip_scan_percent_comments(&f.body);
@@ -1217,8 +1217,10 @@ fn section_rd_complete_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> boo
         // section drops — `[t](foo\)bar)` (cmark's bare destination closes at the
         // raw `)`, leaving `foo\`) and `[t](<foo\>)` alike. The link node hides the
         // trailing `\` from the atom scan below; detect it directly on the parsed
-        // destination (see [`md_href_dest_drops`]).
-        if body_has_dropping_href(body) {
+        // destination (see [`md_href_dest_drops`]). A fenced code block's raw
+        // info string is likewise hidden (its atom is a neutralized `\out` VERB)
+        // and checked directly ([`md_fence_info_drops`]).
+        if body_has_md_drop(body) {
             return false;
         }
         // Scan the *ungrouped* atoms: they reconstruct `markdown(text)` faithfully,
@@ -1235,24 +1237,28 @@ fn section_rd_complete_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> boo
     }
 }
 
-/// Whether any inline `[text](dest)` link in `body` has a destination that
-/// roxygen2 renders into a brace-incomplete `\href{dest}{text}`, dropping the whole
-/// section. Recurses into every container that can hold an inline link (emphasis,
-/// bare brace groups, resolved list items, and a link's own display). Reference and
-/// shortcut links (`\link`, whose topic option is dropped) never carry the
-/// destination into a brace argument, so only the inline-link (`\href`) form is
+/// Whether `body` holds an inline whose rendering alone makes roxygen2 drop the
+/// section — a construct the atom scan cannot see because its atom neutralizes the
+/// offending characters. Two shapes: an inline `[text](dest)` link whose destination
+/// renders into a brace-incomplete `\href{dest}{text}` ([`md_href_dest_drops`]), and
+/// a fenced code block whose raw info string breaks the rendered fragment's balance
+/// ([`md_fence_info_drops`]). Recurses into every container that can hold either
+/// (emphasis, bare brace groups, resolved list items, and a link's own display).
+/// Reference and shortcut links (`\link`, whose topic option is dropped) never carry
+/// the destination into a brace argument, so only the inline-link (`\href`) form is
 /// checked.
-fn body_has_dropping_href(body: &[Inline]) -> bool {
+fn body_has_md_drop(body: &[Inline]) -> bool {
     body.iter().any(|inl| match inl {
         Inline::MdInlineLink { url, display } => {
-            md_href_dest_drops(url) || body_has_dropping_href(display)
+            md_href_dest_drops(url) || body_has_md_drop(display)
         }
         Inline::MdRefLink { display, .. } | Inline::MdShortcutLink { display } => {
-            body_has_dropping_href(display)
+            body_has_md_drop(display)
         }
-        Inline::MdEmphasis { children, .. } => body_has_dropping_href(children),
-        Inline::BraceGroup(children) => body_has_dropping_href(children),
-        Inline::MdListResolved { items, .. } => items.iter().any(|it| body_has_dropping_href(it)),
+        Inline::MdEmphasis { children, .. } => body_has_md_drop(children),
+        Inline::BraceGroup(children) => body_has_md_drop(children),
+        Inline::MdListResolved { items, .. } => items.iter().any(|it| body_has_md_drop(it)),
+        Inline::MdCodeBlock(node) => md_fence_info_drops(node),
         _ => false,
     })
 }

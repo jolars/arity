@@ -360,7 +360,8 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   **drops the whole section** (`(\details)`). Same for an angle destination: `[t](<foo\>)` → dest `foo\` → drop
   (cm-495). Since 2026-07-13e the **lexer carves cmark's boundary itself** (`inline_dest_span`), so the CST link
   node is `[t](foo\)` and `bar)` stays literal prose (still lossless — the old wider-span carve is gone).
-  `body_has_dropping_href`/`md_href_dest_drops` (project_rd.rs), gated into `section_rd_complete`'s md arm **before**
+  `body_has_md_drop`/`md_href_dest_drops` (project_rd.rs; renamed from `body_has_dropping_href` 2026-07-26i), gated
+  into `section_rd_complete`'s md arm **before**
   the atom scan, reads the *parsed* destination: the trailing backslash run survives `double_escape`→cmark→`parse_Rd`
   as `r` backslashes, so an **odd** `r` escapes the brace (r=1 drops; r=2 keeps); its depth-0 re-scan keeps an angle
   dest's interior `)` (`<b)c>`) out of the count. Recurses into emphasis/brace-group/list-item/display. Curated
@@ -370,6 +371,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   collapse); an odd-run trailing `\` inside a *reference/shortcut* label or an image dest; **per-tag drop parity**
   (probed 2026-07-13e: `@details` drops the incomplete field, but `@note` KEEPS it and parse_Rd mangles the tail —
   `@note [x](<foo\>) drops` → `(\note (\href (VERB "foo}{x} drops\n")))` — arity drops both).
+- **A fenced code block's info string is RAW in the rendered field (cm-143).** `mdxml_code_block` escapes only
+  the body (`escape_verb`: `%`/`{`/`}`; backslash runs stay even via `double_escape_md`, so the body is always
+  scan-neutral); the info string goes into the `sourceCode` div class **unescaped**, so a `%` in it comments out
+  the rest of the rendered line (`">}}\preformatted{` + the code's first line) and an unbalanced brace or
+  trailing `\` breaks balance directly → `rdComplete` fails → section drops. `md_fence_info_drops`
+  (md_blocks.rs) rebuilds roxygen2's fragment (info raw, body reduced to its newline structure — line
+  boundaries scope the comment) and is a `body_has_md_drop` arm, so both `section_rd_complete_seeded` and
+  `heading_piece_rd` see it. A **balanced** brace pair or `\`-escaped char in the info keeps the section (class
+  carries them raw). Per-tag drop parity (`@note` keeps) is the same backlog as the href drop above.
 - **Arena does CommonMark opener deactivation; nested links resolve inner-first.** `match_brackets`
   (`inline.rs`): a stack pairs each `]` to the nearest *active* `[`, a formed link deactivates every
   opener below it, a lone `]` does the `][ref]` lookahead and is a shortcut only on a bracket-free
@@ -1227,11 +1237,11 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 989 matching (all allowlisted), 22 divergent** of 1011 pinned. The divergent 22 are the
+**Current: 991 matching (all allowlisted), 21 divergent** of 1012 pinned. The divergent 21 are the
 per-section backlog (harvested 18,
-singles in Fenced/Images/Links/Raw HTML; Backslash escapes + Block quotes + Code spans +
-Entities + HTML blocks + Linkrefs + List items + Lists + Tabs + ATX + Setext + Thematic breaks +
-Hard line breaks COMPLETE).
+singles in Images/Links/Raw HTML; Backslash escapes + Block quotes + Code spans +
+Entities + Fenced code blocks + HTML blocks + Linkrefs + List items + Lists + Tabs + ATX + Setext +
+Thematic breaks + Hard line breaks COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1239,46 +1249,47 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1011 pinned); 22 divergent backlog.
+   Curated + harvested + whole-spec corpora (1012 pinned); 21 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 205/205 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 206/206 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26h) — rendered-field backslash/macro collision (cm-014; Backslash escapes COMPLETE)
+## Latest session (2026-07-26i) — raw fence info string drops the section (cm-143; Fenced code blocks COMPLETE)
 
-One target, a **projector gap** (parser + formatter untouched): cm-014's
-escape lines. Mechanism (new trap above, under Rd macros): `double_escape_md`
-defeats a markdown backslash escape (`\*x*` → cmark sees `\\*` — literal `\`,
-*active* star), so the rendered field is `\` + `\emph{x}` and parse_Rd pairs
-the two backslashes: the macro's `\` is consumed, the name absorbed into the
-TEXT, each braced arg re-parsed as a bare `(LIST …)`. Even source runs keep
-the macro (probed k=1/2/3 against the oracle). The de-dup exception was
-already modeled: `\[not a link](/foo)` reaches cmark as a real `\[` escape
-(`double_escape_md` un-doubles before brackets), so no link forms — arity
-matched that half of cm-014 all along.
+One target, a **projector gap** (parser + formatter untouched): cm-143's
+`~~~~ ruby startline=3 $%@#$` fence. Mechanism (new trap above, after the
+dropping-href trap): `mdxml_code_block` pastes the fence info string **raw**
+into the `sourceCode` div class — only the body is `escape_verb`-escaped — so
+a `%` in the info comments out the rest of the rendered line
+(`">}}\preformatted{` + the code's first line) and `rdComplete` fails → the
+whole `@details` drops to `(\details)`. Probed keep/drop shapes against the
+oracle: `a{b` drops, `a{b}c` and `a\b` keep (class carries them raw). The
+body is provably scan-neutral (`escape_verb` escapes `%`/`{`/`}`;
+`double_escape_md` keeps its backslash runs even), so only the info matters.
 
-Implementation: `run_ends_odd_backslash_run` (parity read from the pending
-run's trailing `Raw` segment — the collapsed `ceil(k/2)` TEXT value is
-parity-blind, but equals parse_Rd's paired count in both parities so only the
-structure needed work) + `push_demoted_macro` (name glued as a `Final` segment
-so the prose pipeline never sees a brace-less-misuse `\name`), wired at the
-MdEmphasis/MdCode/MdHtml arms of `serialize_inlines`; `html_out_verbs`
-factored out of `html_inline_atom` for the demoted `\if` arm.
+Implementation: `md_fence_info_drops` (md_blocks.rs) rebuilds roxygen2's
+rendered fragment — info raw, body reduced to its newline structure so line
+boundaries scope the comment — and runs `rd_complete` on it; wired as a new
+`Inline::MdCodeBlock` arm of `body_has_md_drop` (renamed from
+`body_has_dropping_href`), so both `section_rd_complete_seeded` and
+`heading_piece_rd` see it, list items included via the existing recursion.
 
-**Result:** projector **987→989 matching (all allowlisted), 23→22 divergent**,
-0 blocked, of 1011 pinned; 0 regressions. **Backslash escapes 13/13
-COMPLETE.** Curated `md_escape_backslash_collision` (R-minted pin,
-byte-identical first try; covers odd emph/code/html + even and triple runs),
-2 new units, baseline +1 (new key only). Fixed-point 205/205. Full suite +
-clippy + fmt green.
+**Result:** projector **989→991 matching (all allowlisted), 22→21 divergent**,
+0 blocked, of 1012 pinned; 0 regressions. **Fenced code blocks 29/29
+COMPLETE.** Curated `md_fence_raw_info_drop` (R-minted pin: balanced-brace
+keep in `@description`, `%` drop in `@details`), 1 new unit
+(`raw_fence_info_percent_drops_the_section`), baseline +1 (new key only).
+Fixed-point 206/206. Full suite + clippy + fmt green.
 
-**Ranked next target:** the remaining singles, nearest-first: **cm-143**
-(Fenced code blocks), **cm-512** (Links), **cm-595** (Raw HTML), **cm-623**
-(Images). Harvested 18 stays the biggest block but is out-of-scope singles.
+**Ranked next target:** the remaining singles, nearest-first: **cm-512**
+(Links), **cm-595** (Images), **cm-623** (Raw HTML). Harvested 18 stays the
+biggest block but is out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-26h** — rendered-field backslash/macro collision (cm-014; `run_ends_odd_backslash_run` parity from the trailing `Raw` segment + `push_demoted_macro` at the MdEmphasis/MdCode/MdHtml arms; `html_out_verbs` factored for the demoted `\if`). Curated `md_escape_backslash_collision`, 2 units, baseline +1. 987→989, Backslash escapes 13/13 COMPLETE.
 
 - **2026-07-26g** — leak-text block reparse (cm-184; `linkref_skeleton_push_exact` MdHtmlBlock arm + shared `md_html_block_field_text` so the leak scan sees inside HTML blocks; blank-line label third invalidity; blank-bearing leak re-parses at block level via `leak_block_atoms`). Curated `md_linkref_blank_line_label`, 3 units, baseline +1. 985→987, HTML blocks 46/46 COMPLETE.
 

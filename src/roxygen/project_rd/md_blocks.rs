@@ -157,6 +157,31 @@ pub(super) fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
     ]
 }
 
+/// Whether a fenced code block's **raw** info string makes roxygen2's rendered
+/// fragment `rdComplete`-incomplete, dropping the enclosing section (cm-143).
+/// `mdxml_code_block` pastes the info string into the `sourceCode` div class with
+/// no escaping — only the body goes through `escape_verb` — so a `%` in the info
+/// comments out the rest of the rendered line (`">}}\preformatted{` and the code's
+/// first line) and an unbalanced brace or trailing escape breaks the balance
+/// directly. The scan fragment reproduces roxygen2's rendering with the info raw
+/// and the body reduced to its newline structure: the body is always neutral
+/// (`escape_verb` escapes `%`/`{`/`}`, and `double_escape_md` keeps its backslash
+/// runs even), but its line boundaries scope any info-string comment exactly as in
+/// the real field. The trailing newline stands in for the `\n\n` that always
+/// follows the fragment in the rendered field.
+pub(super) fn md_fence_info_drops(node: &SyntaxNode) -> bool {
+    let (info, code) = md_code_block_parts(node);
+    let info = decode_html_entities(&info);
+    if info.is_empty() {
+        return false;
+    }
+    let mut frag =
+        format!("\\if{{html}}{{\\out{{<div class=\"sourceCode {info}\">}}}}\\preformatted{{");
+    frag.extend(code.chars().filter(|&c| c == '\n'));
+    frag.push_str("}\\if{html}{\\out{</div>}}\n");
+    !rd_complete(&frag)
+}
+
 /// Project a `ROXYGEN_MD_INDENTED_CODE` node into the same three-atom rendering as
 /// a fenced code block (`mdxml_code_block`), but with a bare `sourceCode` class (an
 /// indented code block has no info string) and each line's indentation stripped: a

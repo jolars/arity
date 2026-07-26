@@ -1692,6 +1692,39 @@ fn fence_info_string_decodes_entities() {
 }
 
 #[test]
+fn raw_fence_info_percent_drops_the_section() {
+    // roxygen2 pastes the fence info string RAW into the `sourceCode` div class
+    // (`mdxml_code_block` — only the body is `escape_verb`-escaped), so a `%` in
+    // the info comments out the rest of the rendered line (`">}}\preformatted{`)
+    // and `rdComplete` fails → the whole section drops. (cm-143)
+    let src = "#' @md\n\
+               #' @title T\n\
+               #' @details\n\
+               #' ~~~~    ruby startline=3 $%@#$\n\
+               #' def foo(x)\n\
+               #'   return 3\n\
+               #' end\n\
+               #' ~~~~~~~\n\
+               #' @name spec\n\
+               NULL\n";
+    assert!(
+        project_to_rd(src).contains("(\\details)"),
+        "got: {}",
+        project_to_rd(src)
+    );
+    // An unbalanced brace in the raw info drops the same way; a balanced pair
+    // and a plain info string keep the section.
+    let with_info = |info: &str| {
+        format!(
+            "#' @md\n#' @title T\n#' @details\n#' ``` {info}\n#' foo\n#' ```\n#' @name spec\nNULL\n"
+        )
+    };
+    assert!(project_to_rd(&with_info("a{b")).contains("(\\details)"));
+    assert!(project_to_rd(&with_info("a{b}c")).contains("\\preformatted"));
+    assert!(project_to_rd(&with_info("ruby")).contains("\\preformatted"));
+}
+
+#[test]
 fn unescape_md_brackets_consumes_one_backslash_before_a_bracket() {
     // `\[`/`\]` lose exactly one backslash; a deeper run keeps the rest.
     assert_eq!(unescape_md_brackets(r"\[x\]"), "[x]");
