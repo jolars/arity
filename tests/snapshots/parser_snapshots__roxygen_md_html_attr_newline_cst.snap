@@ -1,0 +1,159 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..490
+  ROXYGEN_BLOCK@0..158
+    ROXYGEN_SECTION@0..80
+      ROXYGEN_PARAGRAPH@0..77
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..76 "Newline ends an unquo ..."
+        NEWLINE@76..77 "\n"
+      ROXYGEN_MARKER@77..79 "#'"
+      NEWLINE@79..80 "\n"
+    ROXYGEN_SECTION@80..122
+      ROXYGEN_MARKER@80..82 "#'"
+      WHITESPACE@82..83 " "
+      ROXYGEN_TAG@83..91
+        ROXYGEN_AT@83..84 "@"
+        ROXYGEN_TAG_NAME@84..91 "details"
+      NEWLINE@91..92 "\n"
+      ROXYGEN_PARAGRAPH@92..122
+        ROXYGEN_MARKER@92..94 "#'"
+        WHITESPACE@94..95 " "
+        ROXYGEN_TEXT@95..107 "<foo bar=baz"
+        NEWLINE@107..108 "\n"
+        ROXYGEN_MARKER@108..110 "#'"
+        WHITESPACE@110..111 " "
+        ROXYGEN_TEXT@111..121 "bim!bop />"
+        NEWLINE@121..122 "\n"
+    ROXYGEN_SECTION@122..129
+      ROXYGEN_MARKER@122..124 "#'"
+      WHITESPACE@124..125 " "
+      ROXYGEN_TAG@125..128
+        ROXYGEN_AT@125..126 "@"
+        ROXYGEN_TAG_NAME@126..128 "md"
+      NEWLINE@128..129 "\n"
+    ROXYGEN_SECTION@129..158
+      ROXYGEN_MARKER@129..131 "#'"
+      WHITESPACE@131..132 " "
+      ROXYGEN_TAG@132..158
+        ROXYGEN_AT@132..133 "@"
+        ROXYGEN_TAG_NAME@133..137 "name"
+        WHITESPACE@137..138 " "
+        ROXYGEN_TEXT@138..142 "attr"
+        ROXYGEN_MD_DELIM@142..143 "_"
+        ROXYGEN_TEXT@143..150 "newline"
+        ROXYGEN_MD_DELIM@150..151 "_"
+        ROXYGEN_TEXT@151..158 "invalid"
+  NEWLINE@158..159 "\n"
+  IDENT@159..163 "NULL"
+  NEWLINE@163..164 "\n"
+  NEWLINE@164..165 "\n"
+  ROXYGEN_BLOCK@165..320
+    ROXYGEN_SECTION@165..244
+      ROXYGEN_PARAGRAPH@165..241
+        ROXYGEN_MARKER@165..167 "#'"
+        WHITESPACE@167..168 " "
+        ROXYGEN_TEXT@168..240 "Valid bare attribute  ..."
+        NEWLINE@240..241 "\n"
+      ROXYGEN_MARKER@241..243 "#'"
+      NEWLINE@243..244 "\n"
+    ROXYGEN_SECTION@244..286
+      ROXYGEN_MARKER@244..246 "#'"
+      WHITESPACE@246..247 " "
+      ROXYGEN_TAG@247..255
+        ROXYGEN_AT@247..248 "@"
+        ROXYGEN_TAG_NAME@248..255 "details"
+      NEWLINE@255..256 "\n"
+      ROXYGEN_PARAGRAPH@256..286
+        ROXYGEN_MARKER@256..258 "#'"
+        WHITESPACE@258..259 " "
+        ROXYGEN_TEXT@259..261 "a "
+        ROXYGEN_MD_HTML@261..283
+          ROXYGEN_TEXT@261..273 "<foo bar=baz"
+          NEWLINE@273..274 "\n"
+          ROXYGEN_MARKER@274..276 "#'"
+          WHITESPACE@276..277 " "
+          ROXYGEN_TEXT@277..283 "bim />"
+        ROXYGEN_TEXT@283..285 " b"
+        NEWLINE@285..286 "\n"
+    ROXYGEN_SECTION@286..293
+      ROXYGEN_MARKER@286..288 "#'"
+      WHITESPACE@288..289 " "
+      ROXYGEN_TAG@289..292
+        ROXYGEN_AT@289..290 "@"
+        ROXYGEN_TAG_NAME@290..292 "md"
+      NEWLINE@292..293 "\n"
+    ROXYGEN_SECTION@293..320
+      ROXYGEN_MARKER@293..295 "#'"
+      WHITESPACE@295..296 " "
+      ROXYGEN_TAG@296..320
+        ROXYGEN_AT@296..297 "@"
+        ROXYGEN_TAG_NAME@297..301 "name"
+        WHITESPACE@301..302 " "
+        ROXYGEN_TEXT@302..306 "attr"
+        ROXYGEN_MD_DELIM@306..307 "_"
+        ROXYGEN_TEXT@307..314 "newline"
+        ROXYGEN_MD_DELIM@314..315 "_"
+        ROXYGEN_TEXT@315..320 "valid"
+  NEWLINE@320..321 "\n"
+  IDENT@321..325 "NULL"
+  NEWLINE@325..326 "\n"
+  NEWLINE@326..327 "\n"
+  ROXYGEN_BLOCK@327..484
+    ROXYGEN_SECTION@327..385
+      ROXYGEN_PARAGRAPH@327..382
+        ROXYGEN_MARKER@327..329 "#'"
+        WHITESPACE@329..330 " "
+        ROXYGEN_TEXT@330..381 "cm-623 whole shape: n ..."
+        NEWLINE@381..382 "\n"
+      ROXYGEN_MARKER@382..384 "#'"
+      NEWLINE@384..385 "\n"
+    ROXYGEN_SECTION@385..451
+      ROXYGEN_MARKER@385..387 "#'"
+      WHITESPACE@387..388 " "
+      ROXYGEN_TAG@388..396
+        ROXYGEN_AT@388..389 "@"
+        ROXYGEN_TAG_NAME@389..396 "details"
+      NEWLINE@396..397 "\n"
+      ROXYGEN_PARAGRAPH@397..451
+        ROXYGEN_MARKER@397..399 "#'"
+        WHITESPACE@399..400 " "
+        ROXYGEN_TEXT@400..405 "< a><"
+        NEWLINE@405..406 "\n"
+        ROXYGEN_MARKER@406..408 "#'"
+        WHITESPACE@408..409 " "
+        ROXYGEN_TEXT@409..420 "foo><bar/ >"
+        NEWLINE@420..421 "\n"
+        ROXYGEN_MARKER@421..423 "#'"
+        WHITESPACE@423..424 " "
+        ROXYGEN_TEXT@424..436 "<foo bar=baz"
+        NEWLINE@436..437 "\n"
+        ROXYGEN_MARKER@437..439 "#'"
+        WHITESPACE@439..440 " "
+        ROXYGEN_TEXT@440..450 "bim!bop />"
+        NEWLINE@450..451 "\n"
+    ROXYGEN_SECTION@451..458
+      ROXYGEN_MARKER@451..453 "#'"
+      WHITESPACE@453..454 " "
+      ROXYGEN_TAG@454..457
+        ROXYGEN_AT@454..455 "@"
+        ROXYGEN_TAG_NAME@455..457 "md"
+      NEWLINE@457..458 "\n"
+    ROXYGEN_SECTION@458..484
+      ROXYGEN_MARKER@458..460 "#'"
+      WHITESPACE@460..461 " "
+      ROXYGEN_TAG@461..484
+        ROXYGEN_AT@461..462 "@"
+        ROXYGEN_TAG_NAME@462..466 "name"
+        WHITESPACE@466..467 " "
+        ROXYGEN_TEXT@467..471 "attr"
+        ROXYGEN_MD_DELIM@471..472 "_"
+        ROXYGEN_TEXT@472..479 "newline"
+        ROXYGEN_MD_DELIM@479..480 "_"
+        ROXYGEN_TEXT@480..484 "spec"
+  NEWLINE@484..485 "\n"
+  IDENT@485..489 "NULL"
+  NEWLINE@489..490 "\n"

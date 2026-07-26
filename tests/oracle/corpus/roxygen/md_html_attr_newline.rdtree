@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (TEXT "a <foo bar=baz bim!bop /> end b") (\if (TEXT "html") (\out (VERB "<foo bar=baz\n") (VERB "bim />"))) (TEXT "end c") (\if (TEXT "html") (\out (VERB "<foo bar=\"v\n") (VERB "w\">"))) (TEXT "end"))
+(\title (TEXT "T"))

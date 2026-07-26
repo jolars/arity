@@ -1251,11 +1251,9 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 995 matching (all allowlisted), 19 divergent** of 1014 pinned. The divergent 19 are the
-per-section backlog (harvested 18,
-one single in Raw HTML; Backslash escapes + Block quotes + Code spans +
-Entities + Fenced code blocks + HTML blocks + Images + Linkrefs + Links + List items + Lists + Tabs +
-ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
+**Current: 997 matching (all allowlisted), 18 divergent** of 1015 pinned. **The whole CommonMark
+spec (655/655) matches** — every spec section COMPLETE; the divergent 18 are all harvested
+(out-of-scope singles), the only remaining backlog.
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1263,43 +1261,46 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1014 pinned); 19 divergent backlog.
+   Curated + harvested + whole-spec corpora (1015 pinned); 18 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 208/208 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 209/209 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26k) — image after an odd backslash run (cm-595; Images COMPLETE)
+## Latest session (2026-07-26l) — newline ends an unquoted attribute value (cm-623; SPEC COMPLETE)
 
-One target, a **projector gap** (the cm-014 demotion machinery unwired at the
-image arm — the exact backlog item recorded in the cm-014 trap): `\![foo]`
-under `@md`. The doubled `\` resolves to a literal backslash, the image stays
-active, and the rendered field is `\` + `\figure{…}` — parse_Rd pairs the
-literal `\` with the md-generated macro's own backslash. New resolver
-`resolve_md_image_demoted` (md_links.rs, over the factored `image_url_title` +
-`bare_figure_atom`): a bare `\figure` demotes whole (name absorbed into the
-TEXT, verbatim args re-parse as plain-text LISTs — `(TEXT "a\\figure") (LIST
-(TEXT "u.png"))`); an `\if{html|pdf}`-wrapped image (svg/pdf destination)
-demotes only the wrapper — the inner `\figure` still parses inside the bare
-group with VERB args (engine-probed, p1). Wired at serialize's `MdImage` arm
-behind the existing `run_ends_odd_backslash_run` gate; an even run keeps the
-macro (already correct); an unresolvable image stays literal prose
-(`push_raw`, unchanged). CST + formatter untouched.
+One target, a **parser gap**, one byte: `scan_html_attribute`'s unquoted-value
+arm (lex.rs) excluded space/tab but not `\n`, so on the inline pass's joined
+paragraph text `<foo bar=baz`⏎`bim!bop />` glued `baz\nbim!bop` into one valid
+value and the tag wrongly resolved as multi-line raw HTML. cmark's unquoted
+attribute value stops at ANY whitespace including a line ending: with `\n`
+excluded the value ends at `baz`, `bim` parses as a bare attribute, and the
+following `!` invalidates the tag — the whole run stays literal prose. The
+line-scoped scanners never see a `\n`, so only the joined-text pass changes
+(same split as `skip_html_ws`'s newline arm). Controls: a *valid* bare
+attribute after the break still resolves across it; a *quoted* value still
+spans the soft break (`<foo bar="v`⏎`w">` — quotes may contain line endings).
+Projector + formatter untouched; the formatter's one-line reflow of the
+now-literal text is still not a tag (the `!` fails on one line too) —
+fixed-point-verified.
 
-**Result:** projector **993→995 matching (all allowlisted), 20→19 divergent**,
-0 blocked, of 1014 pinned; 0 regressions. **Images 22/22 COMPLETE.** Curated
-`md_image_backslash_collision` (R-minted pin: bare png+title, svg `\if` wrap,
-shortcut `R:` dest, even-run control, user-def reference image), 1 new unit
-(`odd_backslash_run_demotes_a_following_md_image`), baseline +1 (new key only
-— the formatter is identity on the case). Fixed-point 208/208. Full suite +
-clippy + fmt green. Backlog (unchanged from cm-014): autolink `\url` after an
-odd run; entity-produced backslashes.
+**Result:** projector **995→997 matching (all allowlisted), 19→18 divergent**,
+0 blocked, of 1015 pinned; 0 regressions. **Raw HTML 21/21 COMPLETE — the
+WHOLE CommonMark spec (655/655) now matches.** The divergent 18 are all
+harvested. Curated `md_html_attr_newline` (R-minted: invalid bare attr, valid
+bare-attr control, quoted-across-break control), fixture
+`roxygen_md_html_attr_newline`, unit
+`newline_ends_an_unquoted_html_attribute_value`, baseline +1 (new key only).
+Fixed-point 209/209. Full suite + clippy + fmt green.
 
-**Ranked next target:** **cm-623** (Raw HTML) — the last spec single; then the
-harvested 18 (out-of-scope singles).
+**Ranked next target:** triage the **harvested 18** (`rx-…` singles — the last
+backlog): inspect for shared root causes; genuine non-targets go to
+`roxygen-projector-blocked.txt` with a rationale.
 
 ## Earlier sessions
+
+- **2026-07-26k** — image after an odd backslash run (cm-595; `resolve_md_image_demoted` over the factored `image_url_title`/`bare_figure_atom`: a bare `\figure` demotes whole, an `\if`-wrapped image demotes only the wrapper; wired at serialize's `MdImage` arm behind `run_ends_odd_backslash_run`). Curated `md_image_backslash_collision`, unit, baseline +1. 993→995, Images 22/22 COMPLETE.
 
 - **2026-07-26j** — cross-line inline-link destination (cm-512; `classify_closer` tries `cross_line_inline_dest` first, dest tokens live inside the link node after a unique `](` closer leaf; projector rebuilds the composite closer from the tail). Curated `md_link_multiline_dest`, fixture, unit, baseline +1. 991→993, Links 90/90 COMPLETE.
 

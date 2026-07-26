@@ -1103,6 +1103,38 @@ fn autolink_wins_over_bracket_carve() {
 }
 
 #[test]
+fn newline_ends_an_unquoted_html_attribute_value() {
+    // cmark's unquoted attribute value stops at any whitespace *including a
+    // line ending*, so in `<foo bar=baz`⏎`bim!bop />` the value is `baz` and
+    // `bim` is a bare attribute -- the following `!` then invalidates the tag
+    // and the whole run stays literal prose (cm-623). A soft break inside the
+    // value must not glue `baz\nbim!bop` into one (valid) token.
+    let src = "#' @md\n\
+               #' @details\n\
+               #' <foo bar=baz\n\
+               #' bim!bop />\n\
+               #' @name x\n\
+               NULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\details (TEXT \"<foo bar=baz bim!bop />\"))"
+    );
+    // Control: with a *valid* bare attribute after the break the tag still
+    // resolves across the soft break (the newline is tag whitespace).
+    let valid = "#' @md\n\
+                 #' @details\n\
+                 #' a <foo bar=baz\n\
+                 #' bim /> b\n\
+                 #' @name x\n\
+                 NULL\n";
+    assert_eq!(
+        project_to_rd(valid),
+        "(\\details (TEXT \"a\") (\\if (TEXT \"html\") \
+         (\\out (VERB \"<foo bar=baz\\n\") (VERB \"bim />\"))) (TEXT \"b\"))"
+    );
+}
+
+#[test]
 fn multiline_itemize_projects_nested() {
     // A multi-line `\itemize` block macro: each `\item` is a name-only nested
     // macro, its trailing prose a sibling `(TEXT …)` --- the pinned shape, from

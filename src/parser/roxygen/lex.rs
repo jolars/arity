@@ -1975,10 +1975,14 @@ fn scan_html_attribute(bytes: &[u8], i: usize) -> Option<usize> {
         }
         _ => {
             // Unquoted value: one or more chars excluding whitespace and
-            // `"'=<>` `` ` ``.
+            // `"'=<>` `` ` ``. Whitespace includes a line ending (the inline
+            // pass's joined text), so a soft break ends the value (cm-623).
             let start = j;
             while bytes.get(j).is_some_and(|&b| {
-                !matches!(b, b' ' | b'\t' | b'"' | b'\'' | b'=' | b'<' | b'>' | b'`')
+                !matches!(
+                    b,
+                    b' ' | b'\t' | b'\n' | b'"' | b'\'' | b'=' | b'<' | b'>' | b'`'
+                )
             }) {
                 j += 1;
             }

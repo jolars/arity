@@ -633,6 +633,7 @@ cm-619
 cm-620
 cm-621
 cm-622
+cm-623
 cm-624
 cm-625
 cm-626
@@ -718,6 +719,7 @@ md_heading_intro
 md_heading_piece_drop
 md_heading_subsection
 md_heading_trailing_empty
+md_html_attr_newline
 md_html_block_case
 md_html_block_value
 md_html_block_value_edges
@@ -752,11 +754,11 @@ md_link_multiline
 md_link_multiline_dest
 md_linkref_backslash_label
 md_linkref_blank_label
+md_linkref_blank_line_label
 md_linkref_casefold
 md_linkref_def_dest_edge
 md_linkref_def_fallback
 md_linkref_def_in_item
-md_linkref_blank_line_label
 md_linkref_def_in_quote
 md_linkref_escaped_close_label
 md_linkref_escaped_open_bracket
