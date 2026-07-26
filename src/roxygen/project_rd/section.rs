@@ -31,6 +31,19 @@ fn block_md(block: &RoxygenBlock) -> bool {
 }
 
 pub(super) fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
+    project_block_impl(block, out, true);
+}
+
+/// Project a single block's sections into `out`. `apply_title_fallback` gates
+/// roxygen2's title-as-description fallback (`topics_add_default_description`):
+/// on for a standalone topic (the public [`project_block`]), **off** when the
+/// block is one member of a merged topic — there the fallback runs once on the
+/// *merged* title value vector (see [`project_merged_topic`]), not per block.
+pub(super) fn project_block_impl(
+    block: &RoxygenBlock,
+    out: &mut Vec<String>,
+    apply_title_fallback: bool,
+) {
     // Resolve the block's markdown mode the way the lexer's `resolve_roxygen_block`
     // does (a standalone `@md`/`@noMd` directive line, last one wins, default off).
     // Plain prose text leaves carry no mode (their kind is identical in both modes),
@@ -162,6 +175,7 @@ pub(super) fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     let description = match intro_desc {
         Some(d) => Some(d),
         None if has_explicit_desc => None, // emitted by the tag loop below
+        None if !apply_title_fallback => None, // fallback deferred to the merged topic
         None => intro_title.clone().or_else(|| explicit_title_body.clone()),
     };
     if let Some(description) = description {
@@ -193,7 +207,8 @@ pub(super) fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
     // and the title fallback re-fires. A *dropped* description (`rdComplete`)
     // still emits an empty `(\description)` atom — the section object exists —
     // so it correctly suppresses the fallback here.
-    if !out.iter().any(|s| s.starts_with("(\\description"))
+    if apply_title_fallback
+        && !out.iter().any(|s| s.starts_with("(\\description"))
         && let Some(title) = intro_title.as_ref().or(explicit_title_body.as_ref())
     {
         emit_section_with_headings(out, "description", title, md, true);
@@ -221,6 +236,183 @@ pub(super) fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
             *section = resolve_md_text_braces(section);
         }
     }
+}
+
+/// The prose section heads roxygen2 formats with `format_collapse` (its merged
+/// value vector joined by a paragraph break into a single macro). Every other
+/// prose head keeps only the first value (`\title` → `format_first`); non-prose
+/// aggregates (`\section`, `\examples`, Slots/Fields) fall to the keep-all arm.
+const COLLAPSE_HEADS: &[&str] = &[
+    "description",
+    "details",
+    "seealso",
+    "value",
+    "note",
+    "references",
+    "author",
+    "format",
+    "source",
+];
+
+/// Project a set of blocks that share one topic (`@name`/`@rdname`), merging
+/// their sections the way roxygen2's `RoxyTopic$add` does. Each block is
+/// projected on its own (with the title-as-description fallback deferred), then
+/// same-head sections are combined: `\title` keeps the first, the
+/// [`COLLAPSE_HEADS`] concatenate their bodies into one macro (`format_collapse`,
+/// with adjacent `(TEXT …)` runs coalesced as `parse_Rd` + the driver would), and
+/// any other head keeps each distinct section. Finally the fallback runs once on
+/// the *merged* title values: with no description, the topic's title(s) supply one.
+pub(super) fn project_merged_topic(blocks: &[RoxygenBlock], out: &mut Vec<String>) {
+    // Project each member block, deferring the fallback to the merged topic.
+    let per_block: Vec<Vec<String>> = blocks
+        .iter()
+        .map(|b| {
+            let mut v = Vec::new();
+            project_block_impl(b, &mut v, false);
+            v
+        })
+        .collect();
+
+    // Bucket every section by head, preserving first-seen order (irrelevant to the
+    // final sorted output, but keeps the merge deterministic).
+    let mut by_head: Vec<(String, Vec<String>)> = Vec::new();
+    for s in per_block.iter().flatten() {
+        let head = section_head(s).to_string();
+        match by_head.iter_mut().find(|(h, _)| *h == head) {
+            Some((_, v)) => v.push(s.clone()),
+            None => by_head.push((head, vec![s.clone()])),
+        }
+    }
+
+    let mut has_description = false;
+    for (head, secs) in &by_head {
+        let bare = head.strip_prefix('\\').unwrap_or(head);
+        if head == "\\title" {
+            out.push(secs[0].clone());
+        } else if COLLAPSE_HEADS.contains(&bare) {
+            has_description |= head == "\\description";
+            out.push(collapse_sections(head, secs));
+        } else {
+            // format_rd / aggregates: keep each distinct section (a repeated
+            // identical aggregate — e.g. two `\examples` placeholders — dedups).
+            for s in secs {
+                if !out.contains(s) {
+                    out.push(s.clone());
+                }
+            }
+        }
+    }
+
+    // Title-as-description fallback on the merged title value vector: with no
+    // description the topic reuses every block's title, collapsed.
+    if !has_description && let Some((_, titles)) = by_head.iter().find(|(h, _)| h == "\\title") {
+        let inner = collapse_inners(&titles.iter().map(|s| section_inner(s)).collect::<Vec<_>>());
+        out.push(if inner.is_empty() {
+            "(\\description)".to_string()
+        } else {
+            format!("(\\description {inner})")
+        });
+    }
+}
+
+/// The macro head of a projected section string, e.g. `\description` from
+/// `(\description (TEXT "x"))`.
+fn section_head(s: &str) -> &str {
+    let body = s.strip_prefix('(').unwrap_or(s);
+    let end = body.find([' ', ')']).unwrap_or(body.len());
+    &body[..end]
+}
+
+/// The inner atoms of a projected section string (`(TEXT "x") …` from
+/// `(\head (TEXT "x") …)`), or `""` for an empty `(\head)`.
+fn section_inner(s: &str) -> &str {
+    let core = &s[1..s.len().saturating_sub(1)];
+    core.split_once(' ').map(|(_, inner)| inner).unwrap_or("")
+}
+
+/// Collapse several same-head sections into one (`format_collapse`): concatenate
+/// their inner atom runs, coalescing adjacent `(TEXT …)` leaves.
+fn collapse_sections(head: &str, secs: &[String]) -> String {
+    let inner = collapse_inners(&secs.iter().map(|s| section_inner(s)).collect::<Vec<_>>());
+    if inner.is_empty() {
+        format!("({head})")
+    } else {
+        format!("({head} {inner})")
+    }
+}
+
+/// Join inner atom runs (a paragraph break between values renders as whitespace
+/// `parse_Rd` and the driver coalesce), dropping empties and merging adjacent
+/// `(TEXT …)` leaves into one space-separated leaf.
+fn collapse_inners(inners: &[&str]) -> String {
+    let joined = inners
+        .iter()
+        .filter(|i| !i.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
+    coalesce_text_atoms(&joined)
+}
+
+/// Coalesce adjacent `(TEXT "…")` leaves in a run of top-level Rd atoms, matching
+/// the driver's TEXT-run coalescing (`is_text_leaf`) after `parse_Rd`.
+fn coalesce_text_atoms(s: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for atom in split_top_level_atoms(s) {
+        if let Some(content) = text_atom_content(atom)
+            && let Some(prev) = out.last().and_then(|l| text_atom_content(l))
+        {
+            let merged = format!("(TEXT \"{prev} {content}\")");
+            *out.last_mut().unwrap() = merged;
+            continue;
+        }
+        out.push(atom.to_string());
+    }
+    out.join(" ")
+}
+
+/// The escaped string content of a `(TEXT "…")` atom, or `None` for any other atom.
+fn text_atom_content(atom: &str) -> Option<&str> {
+    atom.strip_prefix("(TEXT \"")?.strip_suffix("\")")
+}
+
+/// Split a run of space-separated top-level parenthesized atoms, respecting nested
+/// parens and `"…"` string literals (with `\`-escapes).
+fn split_top_level_atoms(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut atoms = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i] == b' ' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let start = i;
+        let mut depth = 0i32;
+        let mut in_str = false;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' if in_str => {
+                    i += 1;
+                }
+                b'"' => in_str = !in_str,
+                b'(' if !in_str => depth += 1,
+                b')' if !in_str => {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        atoms.push(&s[start..i]);
+    }
+    atoms
 }
 
 /// Project the aggregated `@slot`/`@field` tags of a topic into a single

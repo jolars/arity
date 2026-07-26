@@ -4624,6 +4624,58 @@ fn bare_token_atom_counts_as_the_last_top_level_expression() {
 }
 
 #[test]
+fn same_name_blocks_merge_into_one_topic() {
+    // Two blocks sharing `@name a` are one Rd topic. roxygen2 merges: the title
+    // keeps the first value (`format_first`), and the fallback description reuses
+    // the *merged* title value vector, collapsed (`format_collapse` → "T1 T2").
+    let src = "#' T1\n#' @name a\nNULL\n\n#' T2\n#' @name a\nNULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"T1 T2\"))\n(\\title (TEXT \"T1\"))"
+    );
+}
+
+#[test]
+fn merged_topic_title_first_prose_collapses() {
+    // Across a merge, `\title` is first-wins while every `format_collapse` prose
+    // section (`\details`, and the title-derived fallback `\description`) joins
+    // both blocks' values.
+    let src =
+        "#' T1\n#' @details D1\n#' @name a\nNULL\n\n#' T2\n#' @details D2\n#' @name a\nNULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"T1 T2\"))\n\
+         (\\details (TEXT \"D1 D2\"))\n\
+         (\\title (TEXT \"T1\"))"
+    );
+}
+
+#[test]
+fn explicit_description_suppresses_merged_title_fallback() {
+    // The fallback runs on the *merged* topic, so a `@description` in any block
+    // means the title-only sibling contributes nothing to the description.
+    let src =
+        "#' @title TT1\n#' @description D1\n#' @name a\nNULL\n\n#' T2 title\n#' @name a\nNULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"D1\"))\n(\\title (TEXT \"TT1\"))"
+    );
+}
+
+#[test]
+fn different_names_do_not_merge() {
+    // Distinct topic names stay separate topics; nothing collapses.
+    let src = "#' T1\n#' @name a\nNULL\n\n#' T2\n#' @name b\nNULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"T1\"))\n\
+         (\\description (TEXT \"T2\"))\n\
+         (\\title (TEXT \"T1\"))\n\
+         (\\title (TEXT \"T2\"))"
+    );
+}
+
+#[test]
 fn thematic_break_ends_block_quote() {
     // A `---` (three-plus dash run) is a thematic break, which *interrupts* a
     // paragraph, so it is not a lazy continuation: it ends the quote (and

@@ -1104,6 +1104,14 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   (`resolve_multiline_spans`) advance by `run_len`, never one char — keep them in step.
 
 **Sections / projection**
+- **Same-topic blocks MERGE (`@name`/`@rdname`); `project_to_rd` groups by `topic_name`, single-block
+  groups keep the untouched `project_block` path.** Multi-block groups → `project_merged_topic`
+  (section.rs): each member projected with `project_block_impl(.., apply_title_fallback=false)` (the two
+  fallback sites are flag-gated), sections bucketed by head, then `\title`→first, `COLLAPSE_HEADS`→one
+  macro (`collapse_sections`/`coalesce_text_atoms` mirror the driver's `(TEXT …)` coalescing), other
+  heads kept (dup-deduped). **The title-as-description fallback runs ONCE on the merged title vector**
+  (fires only if no `\description` survives the merge — an explicit desc in ANY block suppresses it).
+  `@rdname`-alone errors in `roc_proc_text`, so `@name` is the practical key.
 - **`norm_ws` is ASCII-`[[:space:]]`-only, never Unicode-aware.** The R driver's `norm_ws`
   (`gsub("[[:space:]]+", " ")` + `trimws`) collapses *ASCII* whitespace only; NBSP/NEL/`Zs` pass
   through. `project_rd::norm_ws` mirrors via `is_posix_space`; **do not** revert to
@@ -1265,9 +1273,11 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 1001 matching (all allowlisted), 1 divergent, 15 blocked** of 1017 pinned. **The whole
-CommonMark spec (655/655) matches** — every spec section COMPLETE; the harvested backlog is
-down to 1 static-scope single (same-`@name` topic merge).
+**Current: 1003 matching (all allowlisted), 0 divergent, 15 blocked** of 1018 pinned. **The whole
+CommonMark spec (655/655) matches** — every spec section COMPLETE; **the harvested backlog is CLOSED
+(0 divergent)** — the measured backlog is fully exhausted (all curated + harvested + whole-spec cases
+match). Next growth comes from harvesting a fresh/larger corpus or closing a documented trap-backlog
+item (no measured divergence currently drives it).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (15 dynamic-eval/
@@ -1276,43 +1286,60 @@ introspection non-targets, triaged 2026-07-26m).
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1017 pinned); 1 divergent backlog, 15 blocked.
+   Curated + harvested + whole-spec corpora (1018 pinned); 0 divergent backlog, 15 blocked.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 210/210 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 212/212 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26n) — block-to-object attachment (rx-93452c15)
+## Latest session (2026-07-27) — same-`@name` topic merge (rx-aef0e809) — HARVESTED BACKLOG CLOSED
 
-The ranked target. Probing roxygen2's tokenizer (`comments()` in tokenize.R +
-`tokenise_block` in parser2.cpp) corrected last session's triage note: the
-comment regions tile `[byte 1, end of last top-level expression]`, so an
-**in-body `#'` line is NOT dropped** — it sits inside the enclosing
-expression's region, joins that block, and renders (probed: in-body
-`@details` emits `\details`). The only rule is the scan **end**: a `#'` line
-starting past the last top-level expression's end (trailing `}; #' @seealso
-…`, or any block in a file with no expression) is never tokenized.
+The ranked target, and the last measured divergence. Blocks sharing a topic
+(`@name`/`@rdname`) are one Rd file, so roxygen2 *merges* them (`RoxyTopic$add`):
+the merge combines each section type's value vector, then the per-type `format`
+method renders — **`\title` → `format_first` (first wins)**, while
+**`\description`/`\details`/`\seealso`/`\value`/`\note`/`\references`/`\author`/
+`\format`/`\source` → `format_collapse` (values joined by a paragraph break →
+`norm_ws` space)**. Crucially the **title-as-description fallback runs ONCE on the
+*merged* topic** (`topics_add_default_description`), using the merged title value
+vector: two title-only blocks give `\description` = collapse of both titles, but a
+`@description` in *any* block suppresses it entirely (probed — `b1 explicit desc +
+b2 title-only` → `\description D1`, not `D1 T2`). `@rdname` **alone errors** in
+`roc_proc_text` (needs `@name`), so only `@name` grouping matters for the corpus.
 
-**Projector gap** (roxygen2 processing semantics, not CST shape — the CST
-stays lossless with all blocks): `roxygen_scan_end` (project_rd.rs) computes
-the end of the last top-level expression among ROOT children — nodes AND
-bare-token atoms (`NULL` is an IDENT token at top level), excluding trivia,
-comments, semicolons, and roxygen blocks — and `project_to_rd` skips any
-block starting at/past it. Blast radius checked: every corpus input ends with
-an expression, and the one internal `project_to_rd` caller
-(`section_raw_fallback_atoms`) appends `#' @name x\nNULL`.
+**Projector processing** (not a CST/parser change — the CST is already lossless
+with all blocks; this mirrors `roxygen_scan_end`): `project_to_rd` now groups
+blocks by `topic_name` (`@name`, else `@rdname`; `None` = own singleton, never
+merged), preserving first-seen order. A **single-block group takes the untouched
+`project_block` path** (byte-identical common case); a multi-block group goes
+through `project_merged_topic` (section.rs). That projects each member with
+`project_block_impl(.., apply_title_fallback=false)` (the two fallback sites in
+`project_block_impl` are now flag-gated), buckets sections by head, and merges:
+`\title` keeps the first, `COLLAPSE_HEADS` concatenate via `collapse_sections` /
+`collapse_inners` / `coalesce_text_atoms` (a tiny top-level-atom splitter +
+adjacent-`(TEXT …)` coalescer mirroring the driver's TEXT-run coalescing), any
+other head keeps each distinct section (exact-dup deduped, e.g. `\examples`).
+Finally the merged-title fallback fires if no `\description`.
 
-**Result:** projector **999→1001 matching (all allowlisted), 2→1 divergent,
-15 blocked** of 1017 pinned; 0 regressions. Curated `block_attachment`
-(R-minted pin: trailing same-line `@seealso` drops, in-body `@details`
-renders), 3 units (`block_after_…`, `file_without_…`, `bare_token_atom_…`),
-baseline +1 (new key only). Fixed-point 211/211. Full suite + clippy + fmt
-green.
+**Result:** projector **1001→1003 matching (all allowlisted), 1→0 divergent**, 15
+blocked of 1018 pinned; **harvested backlog CLOSED**. Curated `topic_merge`
+(R-minted pin: title first, `\details` collapse, fallback `\description` = merged
+titles), 4 units (`same_name_blocks_merge_into_one_topic`,
+`merged_topic_title_first_prose_collapses`,
+`explicit_description_suppresses_merged_title_fallback`,
+`different_names_do_not_merge`), baseline +1 (new key only). Fixed-point 212/212.
+Full suite + clippy + fmt green.
 
-**Ranked next target:** rx-aef0e809 — **same-`@name` topic merge** (blocks
-sharing `@name`/`@rdname` merge into one topic: title = first wins, prose
-fields concatenate). Closes the harvested backlog to zero.
+**Ranked next target:** the measured backlog is **exhausted** (0 divergent). Either
+(a) harvest a fresh/larger roxygen2 corpus to surface new gaps, or (b) close a
+documented trap-backlog item — e.g. **per-tag drop parity** (`@note` KEEPS an
+`rdComplete`-incomplete field where `@details` DROPS; noted under the href/fence
+drop traps), a concrete construct-level gap with a clear oracle probe.
+
+## Earlier sessions
+
+- **2026-07-26n** — block-to-object attachment (rx-93452c15): `roxygen_scan_end` computes the end of the last top-level expression among ROOT children (nodes + bare-token atoms like `NULL`), and `project_to_rd` skips any block starting at/past it (a trailing `}; #' @seealso …` drops; an in-body `#' @details` renders). Curated `block_attachment`, 3 units, baseline +1. 999→1001, 2→1 divergent.
 
 ## Earlier sessions
 

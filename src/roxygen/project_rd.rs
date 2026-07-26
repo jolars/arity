@@ -78,15 +78,46 @@ use self::text::*;
 /// order is not the document order, and the projector does not replicate it; the
 /// gate compares a *set* of section subtrees. Sections from every
 /// `ROXYGEN_BLOCK` in `text` are merged into one sorted set.
+///
+/// Blocks that resolve to the **same topic** (`@name`/`@rdname` value) are one
+/// Rd file in roxygen2, so their sections *merge* rather than sit side by side
+/// (`RoxyTopic$add`): the merge combines each section type's value vector, and
+/// the per-type `format` method then decides how those values render — `\title`
+/// keeps only the first (`format_first`), while `\description`/`\details`/… join
+/// with a paragraph break (`format_collapse`). See [`project_merged_topic`].
+/// Blocks with no explicit topic name form their own singleton topic (arity does
+/// not statically resolve an object's default topic, and distinct objects get
+/// distinct files anyway), so the common single-block path is untouched.
 pub fn project_to_rd(text: &str) -> String {
     let cst = parse(text).cst;
     let scan_end = roxygen_scan_end(&cst);
-    let mut sections: Vec<String> = Vec::new();
+    // Group blocks by topic name, preserving first-seen document order. A named
+    // topic accumulates every block that shares its name; an unnamed block is its
+    // own group (never merged).
+    let mut groups: Vec<Vec<RoxygenBlock>> = Vec::new();
+    let mut named: Vec<(String, usize)> = Vec::new();
     for block in cst.descendants().filter_map(RoxygenBlock::cast) {
         if block.syntax().text_range().start() >= scan_end {
             continue;
         }
-        project_block(&block, &mut sections);
+        match topic_name(&block) {
+            Some(name) => match named.iter().find(|(n, _)| *n == name) {
+                Some(&(_, idx)) => groups[idx].push(block),
+                None => {
+                    named.push((name, groups.len()));
+                    groups.push(vec![block]);
+                }
+            },
+            None => groups.push(vec![block]),
+        }
+    }
+
+    let mut sections: Vec<String> = Vec::new();
+    for group in &groups {
+        match group.as_slice() {
+            [block] => project_block(block, &mut sections),
+            blocks => project_merged_topic(blocks, &mut sections),
+        }
     }
     sections.sort();
     sections.join("\n")
@@ -116,6 +147,33 @@ fn roxygen_scan_end(root: &SyntaxNode) -> rowan::TextSize {
         .last()
         .map(|el| el.text_range().end())
         .unwrap_or_default()
+}
+
+/// The topic key a block documents: the trimmed value of its `@name` (or, absent
+/// that, `@rdname`) tag. Blocks sharing a key render into one Rd file and so merge
+/// (`project_to_rd`). Returns `None` when the block names no topic — arity does
+/// not statically derive an object's default topic, so such a block never merges.
+fn topic_name(block: &RoxygenBlock) -> Option<String> {
+    let mut rdname: Option<String> = None;
+    for section in block.sections() {
+        let Some(tag) = section.tag() else { continue };
+        match tag.name().as_deref() {
+            Some("name") => {
+                let value = tag.text().map(|t| t.text().trim().to_string());
+                if let Some(v) = value.filter(|v| !v.is_empty()) {
+                    return Some(v);
+                }
+            }
+            Some("rdname") if rdname.is_none() => {
+                rdname = tag
+                    .text()
+                    .map(|t| t.text().trim().to_string())
+                    .filter(|v| !v.is_empty());
+            }
+            _ => {}
+        }
+    }
+    rdname
 }
 
 /// One inline element of a section body: a run of prose text (coalesced and
