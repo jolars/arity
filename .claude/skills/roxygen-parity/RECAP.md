@@ -394,6 +394,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   boundaries scope the comment) and is a `body_has_md_drop` arm, so both `section_rd_complete_seeded` and
   `heading_piece_rd` see it. A **balanced** brace pair or `\`-escaped char in the info keeps the section (class
   carries them raw). Per-tag drop parity (`@note` keeps) is the same backlog as the href drop above.
+- **A `{lang}` fence is a knitr chunk — its class carries the LANGUAGE, and a pin may carry an eval
+  artifact.** roxygen2 pass 1 (`is_markdown_code_node`: `^[{][a-zA-z]+[}, ]` on the entity-decoded
+  info; the `A-z` typo range is ported as written) knits the chunk and splices the result back before
+  the render, so the raw header never reaches the class. `knitr_chunk_language` (md_blocks.rs) maps a
+  detected header to its leading letter run at BOTH info sites (`serialize_md_code_block`,
+  `md_fence_info_drops`); the static model is the *silent* chunk (echoed source). A chunk whose knit
+  adds `#>` output — and inline `` `r ...` `` code — is dynamic evaluation: blocked, never backlog. A
+  knit *failure* keeps the original text (raw `{lang}` class), so such a pin is eval-environment-
+  dependent (rx-0d100638: harvest machine lacked testthat).
 - **Arena does CommonMark opener deactivation; nested links resolve inner-first.** `match_brackets`
   (`inline.rs`): a stack pairs each `]` to the nearest *active* `[`, a formed link deactivates every
   opener below it, a lone `]` does the `][ref]` lookahead and is a shortcut only on a bracket-free
@@ -1251,54 +1260,61 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 997 matching (all allowlisted), 18 divergent** of 1015 pinned. **The whole CommonMark
-spec (655/655) matches** — every spec section COMPLETE; the divergent 18 are all harvested
-(out-of-scope singles), the only remaining backlog.
+**Current: 999 matching (all allowlisted), 2 divergent, 15 blocked** of 1016 pinned. **The whole
+CommonMark spec (655/655) matches** — every spec section COMPLETE; the harvested backlog is
+down to 2 static-scope singles (block-to-object attachment, same-`@name` topic merge).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
-`ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
+`ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (15 dynamic-eval/
+introspection non-targets, triaged 2026-07-26m).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1015 pinned); 18 divergent backlog.
+   Curated + harvested + whole-spec corpora (1016 pinned); 2 divergent backlog, 15 blocked.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 209/209 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 210/210 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26l) — newline ends an unquoted attribute value (cm-623; SPEC COMPLETE)
+## Latest session (2026-07-26m) — harvested-backlog triage + knitr chunk info class
 
-One target, a **parser gap**, one byte: `scan_html_attribute`'s unquoted-value
-arm (lex.rs) excluded space/tab but not `\n`, so on the inline pass's joined
-paragraph text `<foo bar=baz`⏎`bim!bop />` glued `baz\nbim!bop` into one valid
-value and the tag wrongly resolved as multi-line raw HTML. cmark's unquoted
-attribute value stops at ANY whitespace including a line ending: with `\n`
-excluded the value ends at `baz`, `bim` parses as a bare attribute, and the
-following `!` invalidates the tag — the whole run stays literal prose. The
-line-scoped scanners never see a `\n`, so only the joined-text pass changes
-(same split as `skip_html_ws`'s newline arm). Controls: a *valid* bare
-attribute after the break still resolves across it; a *quoted* value still
-spans the soft break (`<foo bar="v`⏎`w">` — quotes may contain line endings).
-Projector + formatter untouched; the formatter's one-line reflow of the
-now-literal text is still not a tag (the `!` fails on one line too) —
-fixed-point-verified.
+The ranked target: triage the 18 remaining harvested divergences. Diffed all
+18 actual-vs-pin (via `examples/rdproj`): **15 are genuine non-targets** →
+`roxygen-projector-blocked.txt` with rationales — roxygen2 pass 1 knits inline
+`` `r ...` `` code and `{r}` chunk output into the docs
+(`markdown_pass1`/`roxy_knit`), and the roclet introspects *evaluated* objects
+(data.frame/list `\format`, RefClass docstring Methods sections, the wholly
+roclet-synthesized re-export topic) — all dynamic, out of static scope. **Two
+are static-scope backlog** (kept divergent): rx-93452c15 (block-to-object
+attachment: a block inside a function body, or with no following top-level
+expression, is not a doc block) and rx-aef0e809 (same-`@name` blocks merge
+into one topic: title = first, prose fields concatenated).
 
-**Result:** projector **995→997 matching (all allowlisted), 19→18 divergent**,
-0 blocked, of 1015 pinned; 0 regressions. **Raw HTML 21/21 COMPLETE — the
-WHOLE CommonMark spec (655/655) now matches.** The divergent 18 are all
-harvested. Curated `md_html_attr_newline` (R-minted: invalid bare attr, valid
-bare-attr control, quoted-across-break control), fixture
-`roxygen_md_html_attr_newline`, unit
-`newline_ends_an_unquoted_html_attribute_value`, baseline +1 (new key only).
-Fixed-point 209/209. Full suite + clippy + fmt green.
+One **projector gap** closed along the way: a fence whose decoded info matches
+roxygen2's chunk detection is knitted and re-rendered with the chunk
+*language* as its whole info string, so a **silent** chunk (`{r}` assignments,
+`{r eval = FALSE}`) differed from arity only in the class (`sourceCode {r}` vs
+`sourceCode r`). `knitr_chunk_language` (md_blocks.rs) maps the header at both
+info sites (see the new trap). rx-0d100638's `{verbatim}` pin turned out to be
+a knit *failure* fallback (raw fence kept; the harvest machine lacks testthat)
+— it passed before only coincidentally; blocked as eval-environment-dependent.
 
-**Ranked next target:** triage the **harvested 18** (`rx-…` singles — the last
-backlog): inspect for shared root causes; genuine non-targets go to
-`roxygen-projector-blocked.txt` with a rationale.
+**Result:** projector **997→999 matching (all allowlisted), 18→2 divergent,
+0→15 blocked** of 1016 pinned; 0 regressions. Curated `md_fence_knitr_info`
+(R-minted: silent `{r}`, `{r eval = FALSE}`, non-chunk `{r-lib}` control),
+unit `knitr_chunk_info_renders_as_the_chunk_language`, baseline +1 (new key
+only). Fixed-point 210/210. Full suite + clippy + fmt green.
+
+**Ranked next target:** rx-93452c15 — **block-to-object attachment** (static:
+drop a `#'` block nested in a function body or one with no following
+top-level expression). Then rx-aef0e809 — **same-`@name` topic merge**. Both
+together close the harvested backlog to zero.
 
 ## Earlier sessions
+
+- **2026-07-26l** — newline ends an unquoted html attribute value (cm-623; `scan_html_attribute`'s unquoted arm excludes `\n` on the inline pass's joined text; quoted values still span the break). Curated `md_html_attr_newline`, fixture, unit, baseline +1. 995→997, Raw HTML 21/21 — **whole spec 655/655 COMPLETE**.
 
 - **2026-07-26k** — image after an odd backslash run (cm-595; `resolve_md_image_demoted` over the factored `image_url_title`/`bare_figure_atom`: a bare `\figure` demotes whole, an `\if`-wrapped image demotes only the wrapper; wired at serialize's `MdImage` arm behind `run_ends_odd_backslash_run`). Curated `md_image_backslash_collision`, unit, baseline +1. 993→995, Images 22/22 COMPLETE.
 

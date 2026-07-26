@@ -3896,6 +3896,28 @@ fn tilde_fence_opens_a_code_block() {
 }
 
 #[test]
+fn knitr_chunk_info_renders_as_the_chunk_language() {
+    // roxygen2's pass 1 knits a fence whose info matches `^[{][a-zA-z]+[}, ]`
+    // (`is_markdown_code_node`) and splices the result back before the markdown
+    // render, so the class carries the chunk language, never the raw header; a
+    // silent chunk's body is the echoed source. An info failing the detection
+    // (`{r-lib}`: the char after the letters is `-`) stays raw in the class.
+    let src = "#' @md\n#' @title T\n#' @details\n\
+               #' ```{r eval = FALSE}\n#' stop(\"never run\")\n#' ```\n\
+               #' ```{r-lib}\n#' not a chunk\n#' ```\n\
+               #' @name spec\nNULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains("<div class=\\\"sourceCode r\\\">"),
+        "got: {out}"
+    );
+    assert!(
+        out.contains("<div class=\\\"sourceCode {r-lib}\\\">"),
+        "got: {out}"
+    );
+}
+
+#[test]
 fn non_matching_fence_lines_are_content() {
     // Only a matching fence closes a block: a shorter run, a different fence
     // character, an info-string-bearing fence, or one indented four-plus

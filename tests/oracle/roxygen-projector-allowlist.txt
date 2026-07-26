@@ -709,6 +709,7 @@ md_escaped_close_bracket
 md_even_braced_macro
 md_fence_closer
 md_fence_info_entity
+md_fence_knitr_info
 md_fence_raw_info_drop
 md_fence_tilde
 md_fence_value
@@ -883,7 +884,6 @@ rx-08f2930b
 rx-0960279a
 rx-0a1710c0
 rx-0abe949f
-rx-0d100638
 rx-0e62093a
 rx-14ee096f
 rx-16f78b2f
@@ -897,7 +897,9 @@ rx-1b57cfd9
 rx-1c0f4ac0
 rx-1e42720c
 rx-22825405
+rx-24b3bfd6
 rx-24ced03e
+rx-24ef0d37
 rx-270b730c
 rx-299f50fb
 rx-29d590cf

@@ -129,6 +129,9 @@ pub(super) fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
     // backslash escape is a net no-op here: `double_escape_md` doubles every
     // `\`, and cmark resolves each pair back to a literal `\`.
     let info = decode_html_entities(&info);
+    // A knitr chunk header never reaches the class: pass 1 replaces the whole
+    // fence with its knit result, whose info is the chunk language alone.
+    let info = knitr_chunk_language(&info).unwrap_or(info);
     let class = if info.is_empty() {
         "sourceCode".to_string()
     } else {
@@ -172,6 +175,9 @@ pub(super) fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
 pub(super) fn md_fence_info_drops(node: &SyntaxNode) -> bool {
     let (info, code) = md_code_block_parts(node);
     let info = decode_html_entities(&info);
+    // A knitr chunk's raw header never reaches the rendered class (pass 1
+    // rewrites the fence first), so the drop scan sees the language instead.
+    let info = knitr_chunk_language(&info).unwrap_or(info);
     if info.is_empty() {
         return false;
     }
@@ -180,6 +186,28 @@ pub(super) fn md_fence_info_drops(node: &SyntaxNode) -> bool {
     frag.extend(code.chars().filter(|&c| c == '\n'));
     frag.push_str("}\\if{html}{\\out{</div>}}\n");
     !rd_complete(&frag)
+}
+
+/// The chunk language of a knitr-style fence info string, or `None` when the info
+/// is not a chunk header. roxygen2's pass 1 (`is_markdown_code_node`,
+/// `R/markdown.R`) treats a fence whose (entity-decoded) info matches
+/// `^[{][a-zA-z]+[}, ]` as a knitr chunk, knits it, and splices the result back
+/// into the text before the markdown render — so the re-rendered fence carries the
+/// chunk's engine as its whole info string (`sourceCode r`), never the raw header.
+/// The character class is roxygen2's literal `[a-zA-z]` (the `A-z` half also spans
+/// `[`, `\`, `]`, `^`, `_`, and a backquote), ported as written. Knitting is
+/// dynamic evaluation and out of arity's static scope: the projector models the
+/// *silent* chunk (an output-free knit echoes the source unchanged), so a chunk
+/// whose evaluation adds output lines stays a divergence (blocked, not backlog).
+fn knitr_chunk_language(info: &str) -> Option<String> {
+    let rest = info.strip_prefix('{')?;
+    let end = rest
+        .find(|c| !('A'..='z').contains(&c))
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    matches!(rest[end..].chars().next(), Some('}' | ',' | ' ')).then(|| rest[..end].to_string())
 }
 
 /// Project a `ROXYGEN_MD_INDENTED_CODE` node into the same three-atom rendering as

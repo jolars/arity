@@ -13,6 +13,26 @@
 #   - a construct out of arity's *static* scope.
 # A blocked case must not also be allowlisted (the gate asserts the two are
 # disjoint). When a blocked case starts matching, move it to the allowlist.
-#
-# (Empty for now: the freshly-adopted spec backlog is almost all reachable parser
-# work. Populate as genuine dialect divergences are identified during triage.)
+
+# Dynamic evaluation (roxygen2 pass 1 knits inline `r ...` code and `{r}` chunk
+# output into the docs; arity is static, no R evaluation):
+rx-0d100638  # pin captures a knit *failure* fallback (raw fence kept); result depends on the eval environment
+rx-21fd7c2f  # inline `r ...` code is knitr-evaluated into the rendered text
+rx-2900ecd5  # knitr chunk output (`#>` lines) comes from evaluation
+rx-55b6980b  # inline `r ...` code + knitr chunk output come from evaluation
+rx-8770c410  # inline `r ...` code is knitr-evaluated into the rendered text
+rx-a6ac1b4d  # knitr chunk output (`#>` lines) comes from evaluation
+rx-cc0ae196  # inline `r ...` code is knitr-evaluated into the rendered text
+rx-e0e631c5  # inline `r ...` code + knitr chunk output come from evaluation
+
+# Object introspection (the roclet evaluates the documented object and derives
+# sections from the live value; out of arity's static scope):
+rx-4d59d472  # `\format` reads the evaluated data.frame's class and dimensions
+rx-8f9c159b  # `\format` reads the evaluated data.frame's class and dimensions
+rx-cbcc255c  # `\format` reads the evaluated data.frame's class and dimensions
+rx-deb9d202  # `\format` reads the evaluated list's class and length
+rx-e02bf95c  # RefClass Methods section reads the evaluated generator's docstrings
+rx-f5812049  # RefClass Methods section reads the evaluated generator's docstrings
+
+# Roclet-generated topic (no parsed block prose at all):
+rx-49a38f56  # re-export topic is wholly roclet-synthesized from import directives

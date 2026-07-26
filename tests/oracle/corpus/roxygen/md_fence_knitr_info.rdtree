@@ -1,0 +1,3 @@
+(\description (TEXT "Title"))
+(\details (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode r\">"))) (\preformatted (VERB "a <- 1\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode r\">"))) (\preformatted (VERB "stop(\"never run\")\n")) (\if (TEXT "html") (\out (VERB "</div>"))) (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode {r-lib}\">"))) (\preformatted (VERB "not a chunk\n")) (\if (TEXT "html") (\out (VERB "</div>"))))
+(\title (TEXT "Title"))
