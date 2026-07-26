@@ -32,6 +32,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
 - **`\examples` bodies are reformatted R** (Tenet 1) → serializer replaces them with `...`.
 - **`roc_proc_text` needs the block on an object** (a function, or `@name` + `NULL`); a bare
   block errors. **`@md` must stand alone** — a prose value errors.
+- **Every field/piece `str_trim`s with Unicode White_Space (= Rust `char::is_whitespace`) — wider
+  than `norm_ws`'s ASCII set.** roxygen2 trims the rendered field and each level-1 split piece
+  (`mdxml_children_to_rd_top`'s `str_trim(rd)`/`str_trim(secs)`); non-md `tag_value` trims the raw
+  value the same way. Projector: `trim_field_atoms` (project_rd.rs) trims the first/last `(TEXT …)`
+  atoms (dropping emptied ones) at `push_section_seeded` + the heading regime's level-1 pieces; a
+  `\subsection` body is brace-wrapped **interior** — never trims. `@section` trims `title: content`
+  as ONE string — title gets the leading edge, content the trailing, the `:`-split edges stay
+  interior (`trim_field_atoms_{start,end}` halves). Interior NBSPs (incl. paragraph boundaries)
+  survive. Non-md all-ws value → roxygen2 drops the whole tag ("requires a value") — unmodeled.
 
 **CST shape**
 - **A prose tag's same-line value folds its plain-prose continuation into the `ROXYGEN_TAG`.**
@@ -1156,10 +1165,10 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 974 matching (all allowlisted), 29 divergent** of 1003 pinned. The divergent 29 are the
-per-section backlog (harvested 18, Entities 2, HTML blocks 2, Link reference definitions 2,
-singles in Backslash escapes/Fenced/Images/Links/Raw HTML; Block quotes + Code spans + List
-items + Lists + Tabs + ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
+**Current: 979 matching (all allowlisted), 27 divergent** of 1006 pinned. The divergent 27 are the
+per-section backlog (harvested 18, HTML blocks 2, Link reference definitions 2,
+singles in Backslash escapes/Fenced/Images/Links/Raw HTML; Block quotes + Code spans + Entities +
+List items + Lists + Tabs + ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1167,61 +1176,57 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1003 pinned); 29 divergent backlog.
+   Curated + harvested + whole-spec corpora (1006 pinned); 27 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 197/197 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 200/200 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26c) — setext column gate + per-piece rdComplete drop (cm-087/090, cm-649 free)
+## Latest session (2026-07-26d) — field-edge Unicode trim + fence-info entities (cm-025/034, Entities COMPLETE)
 
-Two independent gaps; the Setext and Hard line breaks sections both completed.
+Two projector-only gaps (no parser or formatter change, so no fixture).
 
-**Setext underline column gate (cm-087, parser gap):** an over-indented `    ---`
-promoted a heading. The gate mirrors the thematic-break one (block level — the
-lexer carves the underline leaf without seeing the marker→content whitespace):
-`is_md_setext_underline_or_dash` rejects `list_line_indent >= 5` (tab-stop gauge;
-covers the dash-bullet arm too), and `is_foldable_continuation` swaps its raw
-underline exclusion for the new gated `is_md_promoting_setext_underline`, so the
-rejected line lazily folds into the open paragraph (`Foo ---`, one TEXT). Raw
-`is_md_setext_underline_line` deliberately stays at the two other call sites: the
-in-item window (`item_setext_underline_ahead`, its own column window) and the
-block-quote lazy arm (folds either way).
+**Field-edge Unicode-whitespace trim (cm-025, projector gap):** an entity-decoded
+NBSP at a field edge survived arity but vanishes in roxygen2. Engine-probed
+semantics (see the new trap): stringr `str_trim` — the Unicode White_Space set,
+exactly Rust's `char::is_whitespace`, wider than `norm_ws`'s ASCII set — runs
+once over the rendered field and once per level-1 split piece
+(`mdxml_children_to_rd_top`), and non-md `tag_value` trims the raw value the same
+way. Interior NBSPs (even at paragraph boundaries) survive; a `\subsection` body
+is brace-wrapped interior and never trims; a level-1 heading emits only the split
+marker (no braces), so the `\section` body is a whole piece and trims both edges.
+`trim_field_atoms` (project_rd.rs) trims the first/last `(TEXT …)` atoms (via the
+existing `decode_text_atom`, dropping atoms it empties), wired at
+`push_section_seeded`, `emit_section_with_headings`' enclosing piece, and
+`render_heading_frame`'s level-1 arm. `@section` trims `title: content` as ONE
+string — title takes the leading edge, content the trailing, the `:`-split edges
+interior (`trim_field_atoms_{start,end}` halves).
 
-**Per-piece `rdComplete` drop in the heading regime (cm-090 + cm-649, projector
-gap):** a heading title ending in an odd backslash run (`Foo\` + `----` setext,
-`### foo\` ATX) renders `\subsection{Foo\}` whose `\` escapes the wrapper brace →
-rdComplete fails. Engine-probed granularity: roxygen2 splits the rendered field at
-**level-1 `\section` markers** and drops per piece — the enclosing piece empties
-(`(\details)` when it is the only piece, **omitted entirely** when `\section`s
-follow), a failing `\section` piece keeps its **title** (it lives in the split
-marker) over an emptied body, and a complete sibling piece survives untouched.
-`heading_piece_complete`/`heading_piece_rd` (project_rd.rs) rebuild each piece's
-scan text (ungrouped atoms + `\subsection{title}{body}` wrappers, `%`-comment
-strip + `body_has_dropping_href` per frame — same discipline as
-`section_rd_complete_seeded`); wired into `emit_section_with_headings`' emit tail,
-gated on `drop_on_incomplete`. `frame_title_atoms` factored out of
-`render_heading_frame` for the title-survives arm. Backlog: a level-1 *title* with
-its own imbalance (inside the split marker, a different failure mode).
+**Fence info-string entities (cm-034, projector gap):** cmark entity-decodes the
+info string during parsing (its XML `info` attribute carries decoded text), so the
+`sourceCode` div class does too — `decode_html_entities` at
+`serialize_md_code_block`'s class site. Backslash escapes are a net no-op there
+(`double_escape_md` doubles, cmark resolves the pair).
 
-**Result:** projector **969→974 matching (all allowlisted), 32→29 divergent**, 0
-blocked, of 1003 pinned; 0 regressions. **Setext 27/27 + Hard line breaks 15/15
-COMPLETE** (cm-649 closed free via the same drop). Fixture
-`roxygen_md_setext_overindent` (`---` and `===` both fold); curated
-`md_setext_overindent` + `md_heading_piece_drop` (R-minted pins byte-identical).
-Three projector units (`over_indented_setext_underline_folds_into_the_open_paragraph`,
-`trailing_backslash_heading_title_drops_the_piece`,
-`incomplete_section_piece_keeps_its_title`). Format baseline +2 (new cases only, no
-drift; the folded paragraph reflows to `#' Foo ---`, render-preserving).
-Fixed-point 197/197. Full suite + clippy + fmt green.
+**Result:** projector **974→979 matching (all allowlisted), 29→27 divergent**, 0
+blocked, of 1006 pinned; 0 regressions. **Entities 17/17 COMPLETE.** Curated
+`md_entity_edge_trim` + `md_fence_info_entity` + `md_section_edge_trim` (R-minted
+pins). Four projector units (`field_edge_unicode_whitespace_trims`,
+`section_piece_edges_trim_but_subsection_interior_survives`,
+`section_tag_value_trims_as_one_string`, `fence_info_string_decodes_entities`).
+Format baseline +3 (new keys only, no drift). Fixed-point 200/200. Full suite +
+clippy + fmt green. Backlog noted in the trap: a non-md all-whitespace value makes
+roxygen2 drop the whole tag ("requires a value") — arity would still emit the
+empty section; `@param`/two-part tag description edges un-probed.
 
-**Ranked next target:** **Entities 2** (cm-025/034); then HTML blocks 2
-(cm-177/184), and the linkref stragglers cm-196 (emphasis inside a leaked label) +
-cm-220 (def inside a block quote). Harvested 18 stays the biggest block but
-out-of-scope singles.
+**Ranked next target:** **HTML blocks 2** (cm-177/184); then the linkref
+stragglers cm-196 (emphasis inside a leaked label) + cm-220 (def inside a block
+quote). Harvested 18 stays the biggest block but out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-26c** — setext column gate + per-piece rdComplete drop (cm-087/090, cm-649 free; `is_md_setext_underline_or_dash` rejects indent ≥5, fold predicate gated; `heading_piece_complete` per level-1 piece, `\section` title survives an emptied body). Fixture, curated ×2, 3 units, baseline +2. 969→974, Setext 27/27 + Hard line breaks 15/15 COMPLETE.
 
 - **2026-07-26b** — thematic-break block edges (cm-043/049/061; break line never opens a setext title; `is_md_thematic_break_line` rejects `list_line_indent >= 5`; `carve_md_list_markers` break arm + `is_same_line_break`). Fixture, curated, 3 units, baseline +1. 965→969, Thematic breaks 19/19 COMPLETE.
 

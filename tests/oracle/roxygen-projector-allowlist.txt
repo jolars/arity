@@ -34,6 +34,7 @@ cm-021
 cm-022
 cm-023
 cm-024
+cm-025
 cm-026
 cm-027
 cm-028
@@ -42,6 +43,7 @@ cm-030
 cm-031
 cm-032
 cm-033
+cm-034
 cm-035
 cm-036
 cm-037
@@ -691,10 +693,12 @@ md_emphasis
 md_emphasis_multiline
 md_empty_list_item
 md_entities
+md_entity_edge_trim
 md_escaped_bracket
 md_escaped_close_bracket
 md_even_braced_macro
 md_fence_closer
+md_fence_info_entity
 md_fence_tilde
 md_fence_value
 md_fragile_odd_brace
@@ -792,6 +796,7 @@ md_preformatted_arg_escape
 md_ref_emphasis
 md_ref_image
 md_ref_link_multiline
+md_section_edge_trim
 md_setext
 md_setext_dash
 md_setext_multiline

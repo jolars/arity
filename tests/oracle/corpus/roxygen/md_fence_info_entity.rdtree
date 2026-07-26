@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode föö\">"))) (\preformatted (VERB "foo\n")) (\if (TEXT "html") (\out (VERB "</div>"))))
+(\title (TEXT "T"))

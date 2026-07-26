@@ -560,13 +560,19 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
                 .flatten();
             let body = transformed.as_deref().unwrap_or(body);
             let (heading, content) = split_section_title(body);
-            let title = serialize_inlines(&heading, md);
+            let mut title = serialize_inlines(&heading, md);
             let mut content_atoms = serialize_inlines(&content, md);
             if md {
                 for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
                     append_rendered_text(&mut content_atoms, &leaked);
                 }
             }
+            // The whole `title: content` value trims as one string (`str_trim`,
+            // Unicode White_Space — see `trim_field_atoms`): the title carries
+            // the field's leading edge, the content its trailing edge; the
+            // edges at the `:` split are interior and keep their whitespace.
+            trim_field_atoms_start(&mut title);
+            trim_field_atoms_end(&mut content_atoms);
             let mut inner = grp_arg(&title);
             if !content_atoms.is_empty() {
                 if !inner.is_empty() {
@@ -651,7 +657,8 @@ fn push_section_seeded(
     drop_on_incomplete: bool,
     seed: &LinkDefs,
 ) {
-    let atoms = serialize_prose_seeded(body, md, seed);
+    let mut atoms = serialize_prose_seeded(body, md, seed);
+    trim_field_atoms(&mut atoms);
     let check_drop = if md { drop_on_incomplete } else { true };
     if check_drop && !section_rd_complete_seeded(body, md, seed) {
         out.push(format!("(\\{macro_name})"));
@@ -850,6 +857,7 @@ fn emit_section_with_headings(
                 ));
             }
         }
+        trim_field_atoms(&mut inner);
         if !inner.is_empty() {
             out.push(format!("(\\{macro_name} {})", inner.join(" ")));
         }
@@ -1024,6 +1032,12 @@ fn render_heading_frame(
     let mut body_atoms = serialize_prose_seeded(&f.body, md, seed);
     for &c in &f.children {
         body_atoms.push(render_heading_frame(frames, c, md, "subsection", seed));
+    }
+    // A level-1 frame's body is a whole split piece (the heading emits only the
+    // split marker, no braces), so its edges trim; a `\subsection` body is
+    // interior to its piece and keeps its edges.
+    if f.level == 1 {
+        trim_field_atoms(&mut body_atoms);
     }
     let mut inner = grp_arg(&title_atoms);
     let body_arg = grp_arg(&body_atoms);
@@ -5381,6 +5395,59 @@ fn is_posix_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
 }
 
+/// Trim a rendered field **piece** at its edges the way roxygen2 does: stringr's
+/// `str_trim` over the whole piece string (`mdxml_children_to_rd_top`'s
+/// `str_trim(rd)`/`str_trim(secs)`, R/markdown.R; the non-md `tag_value` runs the
+/// same trim on the raw value). `str_trim` strips the Unicode **White_Space** set
+/// — exactly Rust's `char::is_whitespace` — which is wider than the ASCII set
+/// [`norm_ws`] already trims, so an edge NBSP/NEL vanishes here while an interior
+/// one survives (cm-025).
+///
+/// At the atom level the piece's leading edge is the front of its first `(TEXT …)`
+/// atoms and the trailing edge the back of its last; a non-TEXT edge atom renders
+/// as a macro (`\…{`), so the string trim — and this one — stops there. An atom
+/// the trim empties is dropped whole. A nested `\subsection` body is interior to
+/// its piece (brace-wrapped in the rendered string) and is never trimmed.
+fn trim_field_atoms(atoms: &mut Vec<String>) {
+    trim_field_atoms_start(atoms);
+    trim_field_atoms_end(atoms);
+}
+
+/// The leading half of [`trim_field_atoms`]. `@section` needs the halves
+/// separately: the whole `title: content` value trims as one string, so the
+/// *title* carries the field's leading edge and the *content* its trailing edge,
+/// while the edges at the `:` split are interior and keep their whitespace
+/// (engine-probed).
+fn trim_field_atoms_start(atoms: &mut Vec<String>) {
+    while let Some(text) = atoms.first().and_then(|a| decode_text_atom(a)) {
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            atoms.remove(0);
+        } else {
+            if trimmed.len() != text.len() {
+                atoms[0] = format!("(TEXT {})", encode_text(trimmed));
+            }
+            break;
+        }
+    }
+}
+
+/// The trailing half of [`trim_field_atoms`] (see [`trim_field_atoms_start`]).
+fn trim_field_atoms_end(atoms: &mut Vec<String>) {
+    while let Some(text) = atoms.last().and_then(|a| decode_text_atom(a)) {
+        let trimmed = text.trim_end();
+        if trimmed.is_empty() {
+            atoms.pop();
+        } else {
+            if trimmed.len() != text.len() {
+                let last = atoms.len() - 1;
+                atoms[last] = format!("(TEXT {})", encode_text(trimmed));
+            }
+            break;
+        }
+    }
+}
+
 /// A sentinel marking a **physical soft-wrap** line break inside a prose run: the
 /// point where one `#'` source line ends and the next continues the *same*
 /// roxygen2 paragraph. It is distinct from a paragraph break (`\n`) on purpose.
@@ -6575,6 +6642,11 @@ fn item_subsection_atom(frames: &[HeadingFrame], idx: usize) -> String {
 /// thus the projector) carry the raw characters.
 fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
     let (info, code) = md_code_block_parts(node);
+    // cmark entity-decodes the info string during parsing (its XML `info`
+    // attribute carries the decoded text), so the class does too (cm-034). A
+    // backslash escape is a net no-op here: `double_escape_md` doubles every
+    // `\`, and cmark resolves each pair back to a literal `\`.
+    let info = decode_html_entities(&info);
     let class = if info.is_empty() {
         "sourceCode".to_string()
     } else {
@@ -9028,6 +9100,113 @@ mod tests {
                    NULL\n";
         assert!(
             project_to_rd(src).contains("(\\details (TEXT \"*\u{a0}a\u{a0}*\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn field_edge_unicode_whitespace_trims() {
+        // roxygen2 trims the rendered field with stringr's `str_trim` (the
+        // Unicode White_Space set --- `mdxml_children_to_rd_top`, R/markdown.R),
+        // so an entity-decoded NBSP at either field edge vanishes while an
+        // interior one survives. (cm-025)
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' &nbsp; a&nbsp;b &nbsp;\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"a\u{a0}b\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+        // Non-md: `tag_value` runs the same `str_trim` on the raw value, so a
+        // literal NBSP at the field edge trims there too.
+        let src = "#' @title T\n\
+                   #' @details\n\
+                   #' \u{a0} lead\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains("(\\details (TEXT \"lead\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn section_piece_edges_trim_but_subsection_interior_survives() {
+        // A level-1 heading emits only the split marker (no braces), so the
+        // `\section` body is a whole piece and `str_trim(secs)` trims both its
+        // edges; a `\subsection` body sits inside literal `{`...`}` in the
+        // rendered string --- interior, never trimmed. (engine-probed)
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' intro &nbsp;\n\
+                   #'\n\
+                   #' # Head\n\
+                   #' &nbsp; secbody &nbsp;\n\
+                   #' @name spec\n\
+                   NULL\n";
+        let out = project_to_rd(src);
+        assert!(out.contains("(\\details (TEXT \"intro\"))"), "got: {out}");
+        assert!(
+            out.contains("(\\section (TEXT \"Head\") (TEXT \"secbody\"))"),
+            "got: {out}"
+        );
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' ## Sub\n\
+                   #' &nbsp; subbody &nbsp;\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains(
+                "(\\details (\\subsection (TEXT \"Sub\") (TEXT \"\u{a0} subbody \u{a0}\")))"
+            ),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn section_tag_value_trims_as_one_string() {
+        // `@section Title: content` markdown-processes and `str_trim`s the
+        // *whole* value before the `:` split, so the title carries the field's
+        // leading edge and the content its trailing edge; the edges at the
+        // split are interior and keep their whitespace. (engine-probed)
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @section &nbsp;Head&nbsp;:\n\
+                   #' &nbsp; content &nbsp;\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src)
+                .contains("(\\section (TEXT \"Head\u{a0}\") (TEXT \"\u{a0} content\"))"),
+            "got: {}",
+            project_to_rd(src)
+        );
+    }
+
+    #[test]
+    fn fence_info_string_decodes_entities() {
+        // cmark entity-decodes a fence's info string, so the `sourceCode` div
+        // class carries the decoded text. (cm-034)
+        let src = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' ``` f&ouml;&ouml;\n\
+                   #' foo\n\
+                   #' ```\n\
+                   #' @name spec\n\
+                   NULL\n";
+        assert!(
+            project_to_rd(src).contains("sourceCode f\u{f6}\u{f6}"),
             "got: {}",
             project_to_rd(src)
         );
