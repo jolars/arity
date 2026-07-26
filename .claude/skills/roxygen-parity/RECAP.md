@@ -444,14 +444,37 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   `[text\]` yields a def whose label never closes → that def *and every def after it* fail, so cmark
   leaks the block **from the first invalid candidate to the end** (valid candidates included), and any
   shortcut/reference link in that tail is **de-linked**. `leaked_linkref_text` (projector, `@md`-only):
-  `double_escape_md`→`md_linkref_labels`→take `[first_invalid..]`→`url_encode`→`cmark_unescape`.
+  `double_escape_md`→`md_linkref_labels`→take `[first_invalid..]`, returning **cmark-stage lines**
+  (escapes alive). **The leaked block is then PARSED AS MARKDOWN in-document (2026-07-26f, cm-196):**
+  `append_leaked_defs` (the single append path — `serialize_prose` + the `@section` arm) converts
+  stage (`escaped_md_to_source`: before a bracket k'→(k'+1)/2, else k'/2 — the de-dup inverse),
+  resolves the joined fragment (`resolve_macro_arg_inlines`: emphasis pairs inside the leak),
+  re-links a leaked candidate whose label the user defined (`apply_user_linkrefs`), demotes every
+  other shortcut/ref (`demote_undefined_links` with an empty key set), and glues the first TEXT atom
+  onto the trailing prose. **The leak scan reads the ORIGINAL body** (a stage-1-consumed def line's
+  own candidate still leaks — cm-196's first segment) via `leak_source_skeleton` — the exact-display
+  variant of `linkref_source_skeleton` (`display_source_text` re-emits emphasis delimiters, else the
+  flatten's dropped `*`s fabricate a trailing-`\` invalid candidate); `linkref_keys` **keeps the
+  flatten** (the link-side lookup flattens too — both sides must agree).
   De-linking is upstream via `demote_poisoned_links` (`first_invalid_linkref_offset` — any trailing
-  backslash = invalid, since `double_escape_md` makes a `k≥1` run odd). Whole-field: skeleton
+  backslash = invalid, since `double_escape_md` makes a `k≥1` run odd; runs on the *resolved* body,
+  where a user-def-resolved `MdInlineLink` survives). Whole-field: skeleton
   (`inline_skeleton_fragment`) + demotion walk (`demote_poisoned_walk`) descend into list items
   space-guarded per item. **Inline links/autolinks/code survive** (own destination); their candidate
   defs still **leak** (`inline_skeleton_fragment` exposes `[text] `/`[alt] `/inner `[b] ` via
   `opaque_inline_link_display`/`image_alt_text`) though the link is not demoted. **Backlog:** `@rawRd`
-  leaks; `relink_demoted_inline_links` nested-in-list.
+  leaks; `relink_demoted_inline_links` nested-in-list; a leaked candidate whose only def is in the
+  *valid synthesized prefix* would re-link as `\link` (unmodeled); `display_source_text` reconstructs
+  `_`-emphasis as `*` (label-validity-preserving approximation).
+- **Escaped BRACKETS stay ACTIVE through roxygen2's whole pipeline (2026-07-26f, cm-196).**
+  `double_escape_md` doubles every `\` then **de-dups the bracket escapes** (`\\[`→`\[`, `\\]`→`\]`,
+  "avoid [] creating a link"), so cmark sees the source escape: `\]` is **label content** and
+  `[Foo*bar\]]` is a valid def/link label closing at the second `]` (display renders `Foo*bar]`).
+  Lexer: `bracket_is_escaped` (prev-byte `\`) gates **both roles** — all four `]`-carve arms and the
+  `[` arms; `is_shortcut_content` + the arena's `interior_bracket_free` accept `\]` as content
+  (`scan_balanced` already escape-skips). The candidate regex mirror (`md_linkref_scan`) stays
+  **escape-blind** (roxygen2's regex stops at the first `]` regardless — that asymmetry is exactly
+  what makes cm-196's candidates invalid while its real def parses).
 - **An INVALID label (trailing `\` run OR blank) never defines or links, both directions (2026-07-14b).**
   `linkref_label_is_usable`/`linkref_label_is_blank` (project_rd.rs): the def is rejected in
   `match_linkref_def` (line stays prose), the link demotes in `demote_undefined_links` regardless of
@@ -1173,10 +1196,11 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 981 matching (all allowlisted), 26 divergent** of 1007 pinned. The divergent 26 are the
-per-section backlog (harvested 18, Link reference definitions 2,
+**Current: 985 matching (all allowlisted), 24 divergent** of 1009 pinned. The divergent 24 are the
+per-section backlog (harvested 18,
 singles in Backslash escapes/Fenced/HTML blocks/Images/Links/Raw HTML; Block quotes + Code spans +
-Entities + List items + Lists + Tabs + ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
+Entities + Linkrefs + List items + Lists + Tabs + ATX + Setext + Thematic breaks + Hard line breaks
+COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1184,57 +1208,66 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1007 pinned); 26 divergent backlog.
+   Curated + harvested + whole-spec corpora (1009 pinned); 24 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 201/201 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 203/203 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26e) — same-line HTML block in a list item (cm-177)
+## Latest session (2026-07-26f) — linkref stragglers: def-in-quote + escaped-close labels (Linkrefs COMPLETE)
 
-**Parser gap**, the same-line-child family. `- <div>`: cmark opens a type-6 HTML
-block at the item's content start, but arity lexed the `<div>` as an *inline*
-`RoxygenMdHtml` leaf, so the projection lost roxygen2's `\out` newline shape
-(`(VERB "\n") (VERB "<div>\n")`).
+Two targets, two commits; **Link reference definitions 27/27 COMPLETE**.
 
-The fix follows the established same-line pattern end to end (see the extended
-trap): `carve_md_list_markers` gained an HTML-block arm (`scan_md_html_block`,
-conditions 1–6; condition 7 stays inline prose), `is_same_line_html_block`
-dispatches onto `emit_md_html_block_from_value`, and that emitter +
-`finish_md_html_block` now take `container_indent` — 0 for the existing
-tag-value/line-start callers (ungated, no behavior change), the item's content
-column mid-line, ending the block at a prose line indented below it (the sibling
-`- foo` exits the container; an HTML block has no lazy continuation; blank lines
-keep their per-condition behavior). Projector: only the missing `push_inline`
-MD_HTML_BLOCK pair-arm (the pair-arm trap held) — `serialize_md_html_block` is
-shared, and its `mid_value` branch already handles the marker-less first line.
+**cm-220 (projector gap, committed first):** a def inside a block quote is
+document-global and consumed in the quote's own block context.
+`collect_user_linkrefs_tree` gained an `MdBlockQuote` arm reading the quote via
+the same synthesized-fragment reparse the flatten uses (`quote_stripped_lines` +
+`quote_synthesized_block`, factored out of `block_quote_flat_text`/
+`quote_flat_reparse`), and the flatten consumes def runs (`consume_linkref_defs`
+at `quote_flat_section`'s paragraph arm + `quote_flat_node`'s list arm).
+Engine-probed: a quote def beats a *later* section-level def (document order —
+the known level-scan-first ordering backlog now spans quotes too); a def-shaped
+line mid-quote-paragraph stays prose.
 
-**Result:** projector **979→981 matching (all allowlisted), 27→26 divergent**, 0
-blocked, of 1007 pinned; 0 regressions. **HTML blocks 45/46** (cm-184 remains).
-Fixture `roxygen_md_list_same_line_html`, curated `md_list_same_line_html`
-(R-minted pin), 1 projector unit (`same_line_html_block_opens_inside_item`),
-format baseline +1 (new key only, no drift). Fixed-point 201/201. Full suite +
-clippy + fmt green. Backlog (in the trap): an in-item HTML-block *continuation*
-line's container columns are not stripped from the projected `VERB`s (unpinned
-shape); in-item condition-7 openers stay inline.
+**cm-196 (parser + projector, second commit):** two mechanisms, both recorded as
+traps. (1) **Escaped brackets are active through the whole pipeline** —
+`double_escape_md`'s bracket de-dup means `\]` is label content, so
+`[Foo*bar\]]` is a valid def/link label; lexer `]`-arms gated on
+`bracket_is_escaped`, `is_shortcut_content` + arena `interior_bracket_free`
+accept `\]`. The def now matches, is consumed, and the shortcut renders
+`\href{my_(url)}{Foo*bar]}`. (2) **The leaked def block is markdown, parsed
+in-document** — `leaked_linkref_text` now returns cmark-stage lines and the
+single append path `append_leaked_defs` (also wired into the `@section` arm,
+which had its own stale flat-append) stage-converts (`escaped_md_to_source`),
+resolves the fragment (emphasis inside the leak → `\emph`), re-links
+user-defined leaked candidates, demotes the rest, and glues onto trailing
+prose. The leak scan moved to the **original** body (consumed def lines still
+leak) on a new `leak_source_skeleton` (exact display reconstruction —
+`display_source_text`; the flatten skeleton stays for `linkref_keys`).
 
-**cm-184 scouted (the last HTML-blocks case):** the CDATA body contains a
-bracket-free `[…\n…]` candidate whose synthesized linkref def is invalid (blank
-lines in the label), so roxygen2 leaks it after `okay` and cmark **re-parses the
-leaked text as markdown** — lazy paragraph continuation onto `okay`, literal
-braces become parse_Rd `LIST` groups, and the blank-separated `    return 0;`
-becomes an indented-code `\preformatted`. arity's leak scan doesn't surface
-candidates inside an HTML block, and `leaked_linkref_text` appends flat text, not
-a re-parsed block — this needs a leak-text block reparse (compare
-`block_quote_flat_text`'s synthesized-fragment approach). Substantial; ranked
-below the linkref stragglers.
+**Result:** projector **981→985 matching (all allowlisted), 26→24 divergent**, 0
+blocked, of 1009 pinned; 0 regressions (transient WIP breakage in
+`md_link_backslash_drop`/`md_linkref_backslash_label`/`md_linkref_poisoning_section`/
+`cm-552` all resolved by the exact skeleton + stage conversion). Curated
+`md_linkref_def_in_quote` + `md_linkref_escaped_close_label` (R-minted pins),
+fixture `roxygen_md_link_label_escaped_close`, 4 new units, 4 units updated to
+the cmark-stage `leaked_linkref_text` contract, `cmark_unescape` removed
+(superseded by the fragment pipeline). Baseline +2 (new keys only). Fixed-point
+203/203. Full suite + clippy + fmt green.
 
-**Ranked next target:** linkref stragglers **cm-196** (emphasis inside a leaked
-label) + **cm-220** (def inside a block quote); then cm-184 (leak-text reparse,
-above). Harvested 18 stays the biggest block but out-of-scope singles.
+**Ranked next target:** **cm-184** (leak-text *block* reparse — the leaked CDATA
+label contains blank lines, so the leak forms paragraphs/indented code and lazily
+continues onto `okay`; the new `append_leaked_defs` inline-fragment machinery is
+the seed, but block structure needs the `block_quote_flat_text`-style synthesized
+reparse; see the scouting note in 2026-07-26e below). Then singles: cm-014
+(Backslash escapes), cm-143 (Fenced), cm-512 (Links), cm-595 (Raw HTML), cm-623
+(Images). Harvested 18 stays the biggest block but out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-26e** — same-line HTML block in a list item (cm-177; `carve_md_list_markers` HTML-block arm, `is_same_line_html_block` dispatch onto `emit_md_html_block_from_value` with a `container_indent` gate — an under-indented prose line exits the item; projector `push_inline` MD_HTML_BLOCK pair-arm). Fixture, curated, unit, baseline +1. 979→981, HTML blocks 45/46. **cm-184 scouting:** the leaked CDATA def (blank lines in the label) is re-parsed as markdown — lazy continuation onto `okay`, literal-brace `LIST` groups, an indented-code `\preformatted`; needs a leak-text *block* reparse (compare `block_quote_flat_text`); the leak scan must also surface candidates inside an HTML block.
+
 
 - **2026-07-26d** — field-edge Unicode trim + fence-info entities (cm-025/034; `trim_field_atoms` at `push_section_seeded`/heading pieces, `@section` trims `title: content` as one string; `decode_html_entities` at the fence-info class site). Curated ×3, 4 units, baseline +3. 974→979, Entities 17/17 COMPLETE.
 

@@ -203,6 +203,7 @@ cm-192
 cm-193
 cm-194
 cm-195
+cm-196
 cm-197
 cm-198
 cm-199
@@ -747,6 +748,7 @@ md_linkref_def_dest_edge
 md_linkref_def_fallback
 md_linkref_def_in_item
 md_linkref_def_in_quote
+md_linkref_escaped_close_label
 md_linkref_escaped_open_bracket
 md_linkref_heading_title
 md_link_ref_in_emphasis

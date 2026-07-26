@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\href (VERB "my_(url)") (TEXT "Foo*bar]")) (TEXT "[Foo") (\emph (TEXT "bar]: R:Foo")) (TEXT "bar%5C [Foo") (\emph (TEXT "bar]: R:Foo")) (TEXT "bar%5C"))
+(\title (TEXT "T"))

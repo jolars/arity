@@ -638,6 +638,7 @@ fn lex_roxygen_prose(
         // it literal when unmatched).
         if md
             && bytes[i] == b']'
+            && !bracket_is_escaped(bytes, i)
             && let Some(url_end) = cross_line_link_closer(bytes, i)
         {
             push(
@@ -662,7 +663,11 @@ fn lex_roxygen_prose(
         // — folding the label in as `][ref]` — or, with no opener, leaves the `]`
         // literal and the `[ref]` a standalone shortcut, so `a][b]` stays `a]` + a
         // `[b]` shortcut, matching roxygen2.
-        if md && bytes[i] == b']' && cross_line_ref_closer(bytes, i) {
+        if md
+            && bytes[i] == b']'
+            && !bracket_is_escaped(bytes, i)
+            && cross_line_ref_closer(bytes, i)
+        {
             push(
                 out,
                 TokKind::RoxygenText,
@@ -686,6 +691,7 @@ fn lex_roxygen_prose(
         // display, so `[foo][]` links iff `foo` is defined in the refmap.
         if md
             && bytes[i] == b']'
+            && !bracket_is_escaped(bytes, i)
             && bytes.get(i + 1) == Some(&b'[')
             && bytes.get(i + 2) == Some(&b']')
         {
@@ -712,6 +718,7 @@ fn lex_roxygen_prose(
         // is unchanged.
         if md
             && bytes[i] == b']'
+            && !bracket_is_escaped(bytes, i)
             && !matches!(bytes.get(i + 1), Some(b'[' | b'{'))
             // A following `(…)` blocks the closer only when it is a *valid* inline
             // destination (a real `](url)`); an invalid `(…)` (`[t](a\ b)`) still
@@ -1373,15 +1380,16 @@ fn is_nested_bracket_opener(bytes: &[u8], i: usize) -> bool {
     })
 }
 
-/// Whether a markdown `[` at `bytes[i]` is *backslash-escaped* (CommonMark `\[`),
-/// so it cannot open a link and stays literal prose. roxygen2 honors an escaped
-/// open bracket via `double_escape_md`, which special-cases brackets — it reverts
-/// `\\[`→`\[` after doubling every other backslash, so a `[` reaches cmark escaped
-/// whenever *any* backslash run immediately precedes it. A single adjacent `\`
-/// therefore already neutralizes the opener (verified against the oracle for one to
-/// three leading backslashes: `\[`, `\\[`, `\\\[` all stay literal). Only the
-/// *opener* is guarded; an escaped closing `]` instead triggers roxygen2's
-/// link-reference machinery (a synthesized `[…]: …` linkref) and is left as backlog.
+/// Whether a markdown bracket at `bytes[i]` is *backslash-escaped* (CommonMark
+/// `\[`/`\]`), so it cannot open or close a link and stays literal prose (label
+/// content). roxygen2 honors escaped brackets via `double_escape_md`, which
+/// special-cases them — it reverts `\\[`→`\[` and `\\]`→`\]` after doubling every
+/// other backslash, so a bracket reaches cmark escaped whenever *any* backslash
+/// run immediately precedes it. A single adjacent `\` therefore already
+/// neutralizes it (verified against the oracle for one to three leading
+/// backslashes: `\[`, `\\[`, `\\\[` all stay literal). Both roles are guarded:
+/// an escaped `[` never opens, and an escaped `]` never carves as a closer —
+/// it is label content, so `[Foo*bar\]]` closes at the second `]` (cm-196).
 fn bracket_is_escaped(bytes: &[u8], i: usize) -> bool {
     i > 0 && bytes[i - 1] == b'\\'
 }
@@ -1436,20 +1444,22 @@ fn scan_md_link(bytes: &[u8], i: usize) -> Option<usize> {
 
 /// Whether `content` (the bytes inside a bare `[…]`) is a markdown shortcut-link
 /// reference or label. cmark accepts any non-empty span whose brackets are all
-/// backslash-escaped, so spaces, digits, `::`, and an escaped `\[` are all fine
-/// (`[note]`, `[see this]`, `[pkg::obj]`, `[ref\[]`); an empty span or a *bare*
-/// `[` is rejected (the latter so nested `[a[b]c]` re-scans the inner `[b]`).
-/// The escaped-`[` rule mirrors [`bracket_is_escaped`] (a single adjacent `\`
-/// suffices — `double_escape_md`'s `\\[`→`\[` revert keeps the escape live).
-/// Any `]` is still rejected, even escaped: an escaped-*close* `\]` engages
-/// roxygen2's linkref leak machinery and stays backlog. Note this is cmark's
-/// *label-content* rule, not `get_md_linkrefs`' bracket-free candidate regex —
-/// the synthesized-def mirror lives in the projector (`md_linkref_scan`).
+/// backslash-escaped, so spaces, digits, `::`, and escaped `\[`/`\]` are all fine
+/// (`[note]`, `[see this]`, `[pkg::obj]`, `[ref\[]`, `[Foo*bar\]]` — cm-196); an
+/// empty span or a *bare* `[` is rejected (the latter so nested `[a[b]c]`
+/// re-scans the inner `[b]`). A bare `]` cannot appear here — the caller's span
+/// scan ([`scan_balanced`], escape-skipping) closes at the first unescaped `]` —
+/// but the arm keeps the escaped-only rule explicit for direct byte-slice
+/// callers. The escaped-bracket rule mirrors [`bracket_is_escaped`] (a single
+/// adjacent `\` suffices — `double_escape_md`'s `\\[`→`\[`/`\\]`→`\]` reverts
+/// keep the escapes live through cmark). Note this is cmark's *label-content*
+/// rule, not `get_md_linkrefs`' bracket-free candidate regex — the
+/// synthesized-def mirror lives in the projector (`md_linkref_scan`), which
+/// stays escape-blind (roxygen2's regex stops at the first `]` regardless).
 fn is_shortcut_content(content: &[u8]) -> bool {
     !content.is_empty()
         && content.iter().enumerate().all(|(k, &b)| match b {
-            b']' => false,
-            b'[' => k > 0 && content[k - 1] == b'\\',
+            b']' | b'[' => k > 0 && content[k - 1] == b'\\',
             _ => true,
         })
 }

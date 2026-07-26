@@ -1057,14 +1057,14 @@ fn neutral_ref_label(
 /// Whether the raw interior between an opener at `run[o_pos]` and a closer at
 /// `run[closer_q]` carries no *active* `[`/`]` in any item — the cmark
 /// label-content validity test (a bare-bracket label is not a link). A
-/// backslash-escaped `\[` is content (mirrors `is_shortcut_content` in the
-/// lexer); any `]`, even escaped, still rejects (the escaped-close backlog).
+/// backslash-escaped `\[` or `\]` is content (mirrors `is_shortcut_content` in
+/// the lexer — `double_escape_md`'s bracket-escape reverts keep both live
+/// through cmark, so `[Foo*bar\]]` is a valid label, cm-196).
 fn interior_bracket_free(tokens: &[Token], run: &[RunItem], o_pos: usize, closer_q: usize) -> bool {
     run[o_pos + 1..closer_q].iter().all(|item| {
         let bytes = item_text(tokens, item).as_bytes();
         bytes.iter().enumerate().all(|(k, &b)| match b {
-            b']' => false,
-            b'[' => k > 0 && bytes[k - 1] == b'\\',
+            b']' | b'[' => k > 0 && bytes[k - 1] == b'\\',
             _ => true,
         })
     })

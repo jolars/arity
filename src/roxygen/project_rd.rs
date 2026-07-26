@@ -555,6 +555,19 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
             // pipeline on the whole body, split the result, and append any leaked
             // definitions to the content — they render at the very end of the
             // field, i.e. after the `:`.
+            let (leaked, leak_defs) = if md {
+                // Scanned on the **original** body (a consumed def line's
+                // candidate still leaks) with the field's user-def map, the
+                // same as `serialize_prose`.
+                let leaked = leaked_linkref_text(&leak_source_skeleton(body));
+                let mut defs = LinkDefs::new();
+                if !leaked.is_empty() {
+                    collect_user_linkrefs_tree(body, &mut defs);
+                }
+                (leaked, defs)
+            } else {
+                (Vec::new(), LinkDefs::new())
+            };
             let transformed = md
                 .then(|| resolve_linkrefs(body, &LinkDefs::new()))
                 .flatten();
@@ -562,10 +575,8 @@ fn project_tag_section(name: &str, body: &[Inline], out: &mut Vec<String>, md: b
             let (heading, content) = split_section_title(body);
             let mut title = serialize_inlines(&heading, md);
             let mut content_atoms = serialize_inlines(&content, md);
-            if md {
-                for leaked in leaked_linkref_text(&inline_source_skeleton(body)) {
-                    append_rendered_text(&mut content_atoms, &leaked);
-                }
+            if !leaked.is_empty() {
+                append_leaked_defs(&mut content_atoms, &leaked, &leak_defs);
             }
             // The whole `title: content` value trims as one string (`str_trim`,
             // Unicode White_Space — see `trim_field_atoms`): the title carries
@@ -1796,16 +1807,25 @@ fn serialize_prose_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> Vec<Str
 /// read as a spurious escape in the reconstruction. Scanning the ungrouped flat
 /// atoms sidesteps that — they *are* `markdown(text)`.
 fn serialize_prose(body: &[Inline], md: bool, group: bool, seed: &LinkDefs) -> Vec<String> {
+    // The md leaked-linkref scan reconstructs the raw markdown source, so it
+    // reads the **original** body — roxygen2's `get_md_linkrefs` runs before
+    // cmark consumes user definition lines, so a consumed def line's own
+    // candidate still leaks (cm-196's first leaked segment). The user-def map
+    // is collected here too: cmark parses the leaked block *in the document*,
+    // so a leaked candidate whose label the user defined re-links against it.
+    let (leaked, leak_defs) = if md {
+        let leaked = leaked_linkref_text(&leak_source_skeleton(body));
+        let mut defs = LinkDefs::new();
+        if !leaked.is_empty() {
+            defs = seed.clone();
+            collect_user_linkrefs_tree(body, &mut defs);
+        }
+        (leaked, defs)
+    } else {
+        (Vec::new(), LinkDefs::new())
+    };
     let transformed = md.then(|| resolve_linkrefs(body, seed)).flatten();
     let body = transformed.as_deref().unwrap_or(body);
-    // The md leaked-linkref scan reconstructs the raw markdown source, so it reads
-    // the *ungrouped* body — brace groups are Rd `LIST` structure, not markdown, and
-    // never affect the link-reference candidate scan. Capture it before grouping.
-    let leaked = if md {
-        leaked_linkref_text(&inline_source_skeleton(body))
-    } else {
-        Vec::new()
-    };
     // A bare `{…}` in prose is an Rd `LIST` group in both modes. The brace/comment
     // parity is shared (an odd backslash run escapes the brace, an even run opens
     // it); only the `%`-comment trigger differs by mode (`group_brace_lists` handles
@@ -1820,10 +1840,80 @@ fn serialize_prose(body: &[Inline], md: bool, group: bool, seed: &LinkDefs) -> V
     let split = group.then(|| split_braceless_items(scan)).flatten();
     let scan = split.as_deref().unwrap_or(scan);
     let mut atoms = serialize_inlines(scan, md);
-    for l in leaked {
-        append_rendered_text(&mut atoms, &l);
+    if !leaked.is_empty() {
+        append_leaked_defs(&mut atoms, &leaked, &leak_defs);
     }
     atoms
+}
+
+/// Append a leaked link-reference block (see [`leaked_linkref_text`]) to the
+/// serialized atoms. cmark parses the leaked lines as markdown **in the
+/// document**, so inline structure resolves within them: emphasis pairs
+/// (cm-196's `[Foo*bar\]: R:Foo*bar%5C` pairs its `*`s into `\emph`), a leaked
+/// candidate whose label the user defined re-links (`urls`), and any other
+/// shortcut/reference bracket demotes to literal text (its own synthesized
+/// definition is in the leaked block itself, which roxygen2 never re-scans).
+/// The lines join on soft breaks and the leading text glues onto a trailing
+/// `(TEXT …)` atom — roxygen2 renders no separator before the leak.
+fn append_leaked_defs(atoms: &mut Vec<String>, leaked: &[String], urls: &LinkDefs) {
+    // The leaked lines are cmark-stage (double-escaped) bytes; the fragment
+    // resolver and its text pipeline model source-stage bytes, so convert
+    // first ([`escaped_md_to_source`]) — a `[bad\\\]` leak renders `[bad\]`,
+    // cmark's pairing, not the source-stage lose-one rule.
+    let fragment = escaped_md_to_source(&leaked.join("\n"));
+    let inlines = resolve_macro_arg_inlines(&fragment);
+    let linked = (!urls.is_empty())
+        .then(|| apply_user_linkrefs(&inlines, urls, false))
+        .flatten();
+    let linked = linked.unwrap_or(inlines);
+    let demoted = demote_undefined_links(&linked, &std::collections::HashSet::new());
+    let resolved = demoted.unwrap_or(linked);
+    let mut leak_atoms = serialize_inlines(&resolved, true).into_iter();
+    if let Some(first) = leak_atoms.next() {
+        match decode_text_atom(&first) {
+            Some(text) => append_rendered_text(atoms, &text),
+            None => atoms.push(first),
+        }
+    }
+    atoms.extend(leak_atoms);
+}
+
+/// Convert cmark-stage (double-escaped) text back to its source-stage
+/// equivalent, inverting `double_escape_md`: a backslash run of `k` before a
+/// square bracket came from `(k + 1) / 2` source backslashes (doubling to `2k`
+/// then the `\\[`→`\[`/`\\]`→`\]` de-dup leaves `2k - 1`, always odd), and any
+/// other run came from `k / 2` (plain doubling, always even). The leaked
+/// definition lines are cmark-stage bytes ([`leaked_linkref_text`]); the
+/// fragment resolver models source-stage bytes, so they convert before
+/// resolution ([`append_leaked_defs`]).
+fn escaped_md_to_source(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'\\' {
+                i += 1;
+            }
+            out.push_str(&s[start..i]);
+            continue;
+        }
+        let mut k = 0usize;
+        while i < bytes.len() && bytes[i] == b'\\' {
+            i += 1;
+            k += 1;
+        }
+        let source_k = if matches!(bytes.get(i), Some(b'[' | b']')) {
+            k.div_ceil(2)
+        } else {
+            k / 2
+        };
+        for _ in 0..source_k {
+            out.push('\\');
+        }
+    }
+    out
 }
 
 /// Apply roxygen2's full markdown link-reference pipeline to a prose body,
@@ -3620,7 +3710,7 @@ fn inline_skeleton_fragment(inl: &Inline) -> Cow<'_, str> {
         // surface in the whole-field poisoning skeleton. Recurse into each item,
         // space-guarded per item (the raw source separates items with newlines, so
         // a `[` opening an item is never seen as preceded by the previous item's
-        // `]`) — the same shape as `linkref_skeleton_push`, and the offset walk in
+        // `]`) — the same shape as `linkref_skeleton_push_exact`, and the offset walk in
         // `demote_poisoned_walk` stays byte-aligned with this.
         Inline::MdList(node) => {
             let mut s = String::new();
@@ -3746,8 +3836,11 @@ fn image_skeleton_fragment(raw: &str) -> Option<String> {
 /// which rewrites those links to literal bracket text *before* the skeleton is
 /// built, so they reappear here as the candidates whose definitions leak.
 ///
-/// Returns the cmark-rendered leaked definition lines (already final text), in
-/// document order. `@md` only; empty when no candidate is invalid.
+/// Returns the leaked definition lines as cmark **sees** them (escapes still
+/// active — `\]` alive, backslashes as in the escaped document), in document
+/// order; [`append_leaked_defs`] resolves them as a markdown fragment, whose
+/// text pipeline performs the final unescape. `@md` only; empty when no
+/// candidate is invalid.
 fn leaked_linkref_text(source: &str) -> Vec<String> {
     // The skeleton stands in for the raw markdown source, whose soft wraps are
     // real newlines — map the sentinel back so a multi-line label URL-encodes as
@@ -3762,7 +3855,7 @@ fn leaked_linkref_text(source: &str) -> Vec<String> {
     };
     labels[first_invalid..]
         .iter()
-        .map(|label| cmark_unescape(&format!("[{label}]: R:{}", url_encode(label))))
+        .map(|label| format!("[{label}]: R:{}", url_encode(label)))
         .collect()
 }
 
@@ -4038,22 +4131,74 @@ fn linkref_keys(body: &[Inline]) -> std::collections::HashSet<String> {
 fn linkref_source_skeleton(body: &[Inline]) -> String {
     let mut s = String::new();
     for inl in body {
-        linkref_skeleton_push(inl, &mut s);
+        linkref_skeleton_push_exact(inl, &mut s, false);
     }
     s
 }
 
-fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
+/// [`linkref_source_skeleton`] with **source-exact** display reconstruction: a
+/// resolved emphasis inside a shortcut/reference display re-emits its
+/// delimiters ([`display_source_text`]) instead of flattening them away. The
+/// *leaked-definition* scan needs this — the flatten turns `[a\*b\*]` into
+/// `[a\b\]`, whose trailing backslash fabricates an invalid candidate and a
+/// spurious leak (the true label `a\*b\*` is valid, so roxygen2 leaks
+/// nothing). [`linkref_keys`] keeps the flatten form: the link-side label
+/// lookup ([`link_ref_label`]) flattens too, and the refmap only works while
+/// both sides flatten identically.
+fn leak_source_skeleton(body: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in body {
+        linkref_skeleton_push_exact(inl, &mut s, true);
+    }
+    s
+}
+
+/// A display's source text with resolved inline structure re-exposed: emphasis
+/// re-emits `*`/`**` delimiters, a code span its backticks. The delimiter
+/// *character* is not recorded on the node (`_`-emphasis reconstructs as `*`) —
+/// an approximation that preserves what the leak scan weighs (label validity
+/// and shape), noted as backlog for a leaked emphasis-bearing label's exact
+/// `R:` bytes.
+fn display_source_text(display: &[Inline]) -> String {
+    let mut s = String::new();
+    for inl in display {
+        match inl {
+            Inline::Text(t) => s.push_str(t),
+            Inline::MdEmphasis { strong, children } => {
+                let d = if *strong { "**" } else { "*" };
+                s.push_str(d);
+                s.push_str(&display_source_text(children));
+                s.push_str(d);
+            }
+            Inline::MdCode(t) => {
+                s.push('`');
+                s.push_str(t);
+                s.push('`');
+            }
+            other => s.push_str(&inline_plain_text(std::slice::from_ref(other))),
+        }
+    }
+    s
+}
+
+fn linkref_skeleton_push_exact(inl: &Inline, s: &mut String, exact: bool) {
+    let label = |display: &[Inline]| {
+        if exact {
+            display_source_text(display)
+        } else {
+            link_label_text(display)
+        }
+    };
     match inl {
         Inline::Text(t) => s.push_str(t),
         Inline::MdShortcutLink { display } => {
             s.push('[');
-            s.push_str(&link_label_text(display));
+            s.push_str(&label(display));
             s.push(']');
         }
         Inline::MdRefLink { dest, display } => {
             s.push('[');
-            s.push_str(&link_label_text(display));
+            s.push_str(&label(display));
             s.push_str("][");
             s.push_str(dest);
             s.push(']');
@@ -4074,7 +4219,7 @@ fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
         Inline::MdEmphasis { children, .. } => {
             s.push(' ');
             for child in children {
-                linkref_skeleton_push(child, s);
+                linkref_skeleton_push_exact(child, s, exact);
             }
             s.push(' ');
         }
@@ -4091,7 +4236,7 @@ fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
             {
                 s.push(' ');
                 for child in md_list_item_inlines(&item) {
-                    linkref_skeleton_push(&child, s);
+                    linkref_skeleton_push_exact(&child, s, exact);
                 }
             }
             s.push(' ');
@@ -4100,7 +4245,7 @@ fn linkref_skeleton_push(inl: &Inline, s: &mut String) {
             for item in items {
                 s.push(' ');
                 for child in item {
-                    linkref_skeleton_push(child, s);
+                    linkref_skeleton_push_exact(child, s, exact);
                 }
             }
             s.push(' ');
@@ -5281,23 +5426,6 @@ fn url_encode(s: &str) -> String {
     out
 }
 
-/// Resolve CommonMark backslash escapes in `s`: a `\` before an ASCII-punctuation
-/// char is dropped (the char stays literal); any other `\` is kept. Renders the
-/// *leaked* (invalid) link-reference definition the way cmark renders it as
-/// paragraph text (`[text\]: R:text%5C` → `[text]: R:text%5C`).
-fn cmark_unescape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' && chars.peek().is_some_and(char::is_ascii_punctuation) {
-            out.push(chars.next().expect("peeked punctuation"));
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
 /// Append already-rendered prose `extra` to a section's atom list, coalescing it
 /// into a trailing `(TEXT …)` atom (the way roxygen2's appended link-ref text
 /// coalesces with the section's prose under the canonical TEXT-run merge), or
@@ -6138,7 +6266,7 @@ fn inline_plain_text(inlines: &[Inline]) -> String {
 
 /// The text of a link's display for **link-reference purposes** — its resolution
 /// label ([`link_ref_label`]), its candidate in the refmap skeleton
-/// ([`linkref_skeleton_push`]), and the literal a demoted link rewrites to
+/// ([`linkref_skeleton_push_exact`]), and the literal a demoted link rewrites to
 /// ([`demoted_link_source`]). Identical to [`inline_plain_text`] except an
 /// `Inline::Macro` contributes its **verbatim source** (`\emph{*x*}`) rather than
 /// nothing: a pure-macro display (`[\emph{*x*}]`) would otherwise produce the empty
@@ -9533,16 +9661,6 @@ mod tests {
     }
 
     #[test]
-    fn cmark_unescape_drops_backslash_before_punctuation() {
-        assert_eq!(cmark_unescape("[text\\]: R:text%5C"), "[text]: R:text%5C");
-        // An escaped backslash collapses, then the escaped bracket (the multi-
-        // backslash leaked-definition shape).
-        assert_eq!(cmark_unescape("[text\\\\\\]"), "[text\\]");
-        // A backslash before a non-punctuation char is kept.
-        assert_eq!(cmark_unescape("a\\b"), "a\\b");
-    }
-
-    #[test]
     fn md_linkref_labels_ports_get_md_linkrefs() {
         // A bare shortcut; the second `[ref]` group wins as the label.
         assert_eq!(md_linkref_labels("see [foo] now"), vec!["foo".to_string()]);
@@ -9566,16 +9684,21 @@ mod tests {
     #[test]
     fn leaked_linkref_text_leaks_from_first_invalid_definition() {
         // An escaped-close shortcut leaks its synthesized definition; a valid
-        // shortcut before any invalid one does not (roxygen2 links it).
+        // shortcut before any invalid one does not (roxygen2 links it). Lines
+        // come back at the cmark stage (`\]` still escaped) — the final
+        // unescape happens in `append_leaked_defs`' fragment resolution.
         assert_eq!(
             leaked_linkref_text("see [text\\] here"),
-            vec!["[text]: R:text%5C".to_string()]
+            vec!["[text\\]: R:text%5C".to_string()]
         );
         assert!(leaked_linkref_text("see [foo] here").is_empty());
         // Multiple escaped-close candidates each leak (all-invalid block).
         assert_eq!(
             leaked_linkref_text("a [one\\] b [two\\] c"),
-            vec!["[one]: R:one%5C".to_string(), "[two]: R:two%5C".to_string()]
+            vec![
+                "[one\\]: R:one%5C".to_string(),
+                "[two\\]: R:two%5C".to_string()
+            ]
         );
         // An escaped-open `\[…]` is excluded by the lookbehind — no leak.
         assert!(leaked_linkref_text("an escaped \\[x\\] stays").is_empty());
@@ -9584,7 +9707,7 @@ mod tests {
         assert_eq!(
             leaked_linkref_text("a [one] b [two\\] c [three] d"),
             vec![
-                "[two]: R:two%5C".to_string(),
+                "[two\\]: R:two%5C".to_string(),
                 "[three]: R:three".to_string()
             ]
         );
@@ -9661,7 +9784,7 @@ mod tests {
         assert_eq!(
             leaked_linkref_text(&inline_source_skeleton(&body)),
             vec![
-                "[stop]: R:stop%5C".to_string(),
+                "[stop\\]: R:stop%5C".to_string(),
                 "[after]: R:after".to_string(),
             ]
         );
@@ -9689,7 +9812,10 @@ mod tests {
         let body = vec![Inline::Text("see [stop\\] then ".to_string()), image];
         assert_eq!(
             leaked_linkref_text(&inline_source_skeleton(&body)),
-            vec!["[stop]: R:stop%5C".to_string(), "[alt]: R:alt".to_string()]
+            vec![
+                "[stop\\]: R:stop%5C".to_string(),
+                "[alt]: R:alt".to_string()
+            ]
         );
     }
 
@@ -9718,7 +9844,7 @@ mod tests {
         let body = vec![Inline::Text("see [stop\\] then ".to_string()), link];
         assert_eq!(
             leaked_linkref_text(&inline_source_skeleton(&body)),
-            vec!["[stop]: R:stop%5C".to_string(), "[b]: R:b".to_string()]
+            vec!["[stop\\]: R:stop%5C".to_string(), "[b]: R:b".to_string()]
         );
     }
 
@@ -10880,6 +11006,58 @@ mod tests {
             ),
             "got: {rd}"
         );
+    }
+
+    #[test]
+    fn escaped_close_label_defines_links_and_leaks_with_emphasis() {
+        // cm-196: `\]` is link-label content (`double_escape_md`'s bracket
+        // de-dup keeps the escape live through cmark), so the def matches and
+        // the shortcut resolves to it. The regex candidate scan is
+        // escape-blind, so both lines' `[Foo*bar\]` candidates are invalid
+        // (trailing backslash) and leak — and cmark parses the leaked block
+        // as markdown, pairing each line's `*`s into `\emph`.
+        let src = "#' @md\n#' @title T\n#' @details\n\
+                   #' [Foo*bar\\]]:my_(url) 'title (with parens)'\n#'\n\
+                   #' [Foo*bar\\]]\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains(
+                "(\\details (\\href (VERB \"my_(url)\") (TEXT \"Foo*bar]\")) \
+                 (TEXT \"[Foo\") (\\emph (TEXT \"bar]: R:Foo\")) (TEXT \"bar%5C [Foo\") \
+                 (\\emph (TEXT \"bar]: R:Foo\")) (TEXT \"bar%5C\"))"
+            ),
+            "got: {rd}"
+        );
+    }
+
+    #[test]
+    fn escaped_md_to_source_inverts_double_escape() {
+        // Before a bracket the de-dup leaves `2k - 1` backslashes → `(k+1)/2`;
+        // elsewhere plain doubling → `k/2`.
+        assert_eq!(
+            escaped_md_to_source(r"[stop\]: R:stop%5C"),
+            r"[stop\]: R:stop%5C"
+        );
+        assert_eq!(escaped_md_to_source(r"[bad\\\]: x"), r"[bad\\]: x");
+        assert_eq!(escaped_md_to_source(r"a\\b"), r"a\b");
+        assert_eq!(escaped_md_to_source(r"a\\\\b"), r"a\\b");
+    }
+
+    #[test]
+    fn leak_skeleton_reconstructs_emphasis_display_source() {
+        // The flatten turns `[a\*b\*]` into `[a\b\]` (trailing backslash — a
+        // spurious invalid candidate); the leak skeleton re-emits the emphasis
+        // delimiters so the candidate stays valid and nothing leaks.
+        let display = vec![
+            Inline::Text("a\\".to_string()),
+            Inline::MdEmphasis {
+                strong: false,
+                children: vec![Inline::Text("b\\".to_string())],
+            },
+        ];
+        let body = vec![Inline::MdShortcutLink { display }];
+        assert_eq!(leak_source_skeleton(&body), "[a\\*b\\*]");
+        assert!(leaked_linkref_text(&leak_source_skeleton(&body)).is_empty());
     }
 
     #[test]
