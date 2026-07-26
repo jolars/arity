@@ -1994,6 +1994,95 @@ fn leaked_linkref_text_leaks_from_first_invalid_definition() {
 }
 
 #[test]
+fn blank_line_label_never_defines_and_leaks() {
+    // A label spanning a blank line cannot close its definition — a link
+    // reference definition is a paragraph-level construct, and the paragraph
+    // ends at the blank line — so the whole synthesized def leaks (cm-184).
+    // Line endings arrive as real `\n`s or as the skeleton's soft-break
+    // sentinel, depending on the stage; both count.
+    assert_eq!(
+        leaked_linkref_text("see [a\n\nb] here"),
+        vec!["[a\n\nb]: R:a%0A%0Ab".to_string()]
+    );
+    assert_eq!(
+        leaked_linkref_text(&format!("see [a{SOFT_BREAK}{SOFT_BREAK}b] here")),
+        vec!["[a\n\nb]: R:a%0A%0Ab".to_string()]
+    );
+    // A soft-wrapped (single line ending) label still defines — no leak.
+    assert!(leaked_linkref_text("see [a\nb] here").is_empty());
+}
+
+#[test]
+fn html_block_lines_are_field_text_to_the_candidate_scan() {
+    // roxygen2's `get_md_linkrefs` scans the whole raw field text, markup
+    // included, so a bracket-free `[…]` inside an HTML block is a candidate —
+    // the skeleton must surface the block's lines (a single space would hide
+    // them, and no leak would ever fire from inside a block).
+    let src = "#' @md\n#' @details\n#' <!-- [text\\] -->\n#' @name a\nNULL\n";
+    let cst = crate::parser::parse(src).cst;
+    let node = cst
+        .descendants()
+        .find(|n| n.kind() == SyntaxKind::ROXYGEN_MD_HTML_BLOCK)
+        .expect("html block node");
+    let body = vec![Inline::MdHtmlBlock(node)];
+    assert_eq!(
+        leaked_linkref_text(&leak_source_skeleton(&body)),
+        vec!["[text\\]: R:text%5C".to_string()]
+    );
+}
+
+#[test]
+fn blank_line_leak_reparses_as_markdown_blocks() {
+    // cm-184: the CDATA body's second bracket opens a candidate whose label
+    // spans blank lines, so its synthesized definition leaks whole — and cmark
+    // parses the leaked lines as *blocks* in the document. The leak's leading
+    // lines lazily gather into the trailing `okay` paragraph, the post-blank
+    // 4-column `return 0;` is indented code, and parse_Rd nests the rendered
+    // bare braces as `LIST` groups spanning those blocks.
+    let src = "#' @md\n\
+               #' @title T\n\
+               #' @details\n\
+               #' <![CDATA[\n\
+               #' function matchwo(a,b)\n\
+               #' {\n\
+               #'   if (a < b && a < 0) then {\n\
+               #'     return 1;\n\
+               #'\n\
+               #'   } else {\n\
+               #'\n\
+               #'     return 0;\n\
+               #'   }\n\
+               #' }\n\
+               #' ]]>\n\
+               #' okay\n\
+               #' @name spec\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    // The lazy paragraph glues onto `okay`; the brace groups nest as LISTs.
+    assert!(
+        out.contains(
+            "(TEXT \"okay [ function matchwo(a,b)\") \
+             (LIST (TEXT \"if (a < b && a < 0) then\") (LIST (TEXT \"return 1;\"))"
+        ),
+        "got: {out}"
+    );
+    // The post-blank indented code renders `\preformatted` inside its group.
+    assert!(
+        out.contains("(TEXT \"else\") (LIST (\\if (TEXT \"html\")"),
+        "got: {out}"
+    );
+    assert!(
+        out.contains("(\\preformatted (VERB \"return 0;\\n\"))"),
+        "got: {out}"
+    );
+    // The def tail's URL encodes the label's newlines and blank lines.
+    assert!(
+        out.contains("(TEXT \"]: R:%0Afunction%20matchwo(a,b)%0A"),
+        "got: {out}"
+    );
+}
+
+#[test]
 fn first_invalid_linkref_offset_finds_the_poison_bracket() {
     // The opening `[` of the first escaped-close candidate (`[two\]` at index 10).
     assert_eq!(

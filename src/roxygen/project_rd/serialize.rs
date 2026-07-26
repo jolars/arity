@@ -95,14 +95,17 @@ pub(super) fn append_leaked_defs(atoms: &mut Vec<String>, leaked: &[String], url
     // first ([`escaped_md_to_source`]) — a `[bad\\\]` leak renders `[bad\]`,
     // cmark's pairing, not the source-stage lose-one rule.
     let fragment = escaped_md_to_source(&leaked.join("\n"));
-    let inlines = resolve_macro_arg_inlines(&fragment);
-    let linked = (!urls.is_empty())
-        .then(|| apply_user_linkrefs(&inlines, urls, false))
-        .flatten();
-    let linked = linked.unwrap_or(inlines);
-    let demoted = demote_undefined_links(&linked, &std::collections::HashSet::new());
-    let resolved = demoted.unwrap_or(linked);
-    let mut leak_atoms = serialize_inlines(&resolved, true).into_iter();
+    // A leaked label spanning a blank line makes the leak a multi-**block**
+    // markdown fragment — cmark forms paragraphs and indented code across the
+    // blank lines (cm-184's CDATA-body label) — which the inline resolver cannot
+    // model. Re-parse it as a synthesized `#' @md` block instead; a blank-free
+    // leak stays on the inline path (a single paragraph either way).
+    let blocky = fragment.split('\n').any(|line| line.trim().is_empty());
+    let leak_atoms = blocky
+        .then(|| leak_block_atoms(&fragment, urls))
+        .flatten()
+        .unwrap_or_else(|| leak_inline_atoms(&fragment, urls));
+    let mut leak_atoms = leak_atoms.into_iter();
     if let Some(first) = leak_atoms.next() {
         match decode_text_atom(&first) {
             Some(text) => append_rendered_text(atoms, &text),
@@ -110,6 +113,58 @@ pub(super) fn append_leaked_defs(atoms: &mut Vec<String>, leaked: &[String], url
         }
     }
     atoms.extend(leak_atoms);
+}
+
+/// Resolve a blank-line-free leaked fragment as one markdown paragraph: emphasis
+/// pairs within it, a leaked candidate whose label the user defined re-links
+/// (`urls`), and any other shortcut/reference bracket demotes to literal text
+/// (its own synthesized definition is in the leaked block itself, which roxygen2
+/// never re-scans).
+fn leak_inline_atoms(fragment: &str, urls: &LinkDefs) -> Vec<String> {
+    let inlines = resolve_macro_arg_inlines(fragment);
+    serialize_inlines(&leak_resolve(inlines, urls), true)
+}
+
+/// Resolve a blank-line-bearing leaked fragment at the **block** level: the
+/// lines re-parse as a synthesized `#' @md` fragment through the real parser
+/// (the same mould as [`quote_synthesized_block`]), so the leak's own block
+/// structure forms — its first lines lazily gather into one paragraph, a
+/// post-blank 4-column line is indented code, and so on. The re-parsed body
+/// then runs the leak's link treatment ([`leak_resolve`]) and — because the
+/// rendered lines are field text to parse_Rd — the bare-brace `LIST` grouping
+/// ([`group_brace_lists`]), so a brace pair spanning the leak's paragraphs
+/// nests exactly as parse_Rd nests it (cm-184). `None` withholds to the inline
+/// path when the synthesized re-parse mis-sections (an `@`-opening leak line).
+fn leak_block_atoms(fragment: &str, urls: &LinkDefs) -> Option<Vec<String>> {
+    let lines: Vec<String> = fragment.split('\n').map(str::to_string).collect();
+    let block = quote_synthesized_block(&lines)?;
+    let mut body: Vec<Inline> = Vec::new();
+    for section in block.sections() {
+        for part in section_body_parts(&section) {
+            // The same part joining as `project_block`: a fresh roxygen paragraph
+            // joins on a line break (collapsed by `norm_ws`), a leading block
+            // quote glues separator-free.
+            if !body.is_empty() && !matches!(part.first(), Some(Inline::MdBlockQuote(_))) {
+                body.push(Inline::Text("\n".to_string()));
+            }
+            body.extend(part);
+        }
+    }
+    let resolved = leak_resolve(body, urls);
+    Some(serialize_inlines(&group_brace_lists(&resolved, true), true))
+}
+
+/// The leak's link treatment, shared by both resolution paths: re-link a leaked
+/// candidate whose label the user defined, demote every other shortcut or
+/// reference bracket to literal text (no definition can resolve inside the
+/// leaked block — roxygen2 never re-scans it).
+fn leak_resolve(inlines: Vec<Inline>, urls: &LinkDefs) -> Vec<Inline> {
+    let linked = (!urls.is_empty())
+        .then(|| apply_user_linkrefs(&inlines, urls, false))
+        .flatten();
+    let linked = linked.unwrap_or(inlines);
+    let demoted = demote_undefined_links(&linked, &std::collections::HashSet::new());
+    demoted.unwrap_or(linked)
 }
 
 /// Convert cmark-stage (double-escaped) text back to its source-stage

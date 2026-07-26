@@ -196,10 +196,11 @@ pub(super) fn leaked_linkref_text(source: &str) -> Vec<String> {
     // roxygen2's does (`%0A`, cm-554). Same byte width, so offsets are unmoved.
     let escaped = double_escape_md(&source.replace(SOFT_BREAK, "\n"));
     let labels = md_linkref_labels(&escaped);
-    let Some(first_invalid) = labels
-        .iter()
-        .position(|label| !linkref_label_closes(label) || linkref_label_is_blank(label))
-    else {
+    let Some(first_invalid) = labels.iter().position(|label| {
+        !linkref_label_closes(label)
+            || linkref_label_is_blank(label)
+            || linkref_label_has_blank_line(label)
+    }) else {
         return Vec::new();
     };
     labels[first_invalid..]
@@ -599,6 +600,13 @@ pub(super) fn linkref_skeleton_push_exact(inl: &Inline, s: &mut String, exact: b
             }
             s.push(' ');
         }
+        // An HTML block's raw lines are field text to the candidate scan
+        // (`get_md_linkrefs` runs on the whole raw field, markup included), so a
+        // bracket-free `[…]` inside one — e.g. a CDATA opener's second bracket —
+        // is a candidate whose synthesized definition can leak (cm-184). Lines
+        // ride the soft-break sentinel so a leaked multi-line label URL-encodes
+        // its newlines as roxygen2 does (`%0A`), blank block lines included.
+        Inline::MdHtmlBlock(node) => s.push_str(&md_html_block_field_text(node)),
         _ => s.push(' '),
     }
 }
@@ -1687,15 +1695,40 @@ fn linkref_label_is_blank(label: &str) -> bool {
     label.chars().all(|c| c.is_ascii_whitespace())
 }
 
+/// Whether a link-reference label spans a **blank line** — two line endings with
+/// only spaces/tabs between. A link reference definition is a paragraph-level
+/// construct, so cmark ends it at the blank line: the label never closes and the
+/// synthesized `[label]: R:…` definition leaks whole (cm-184's CDATA-body
+/// candidate). A line ending is a real `\n` or the [`SOFT_BREAK`] sentinel,
+/// depending on which stage's text the caller scans.
+fn linkref_label_has_blank_line(label: &str) -> bool {
+    let mut after_break = false;
+    for ch in label.chars() {
+        match ch {
+            '\n' | SOFT_BREAK => {
+                if after_break {
+                    return true;
+                }
+                after_break = true;
+            }
+            ' ' | '\t' => {}
+            _ => after_break = false,
+        }
+    }
+    false
+}
+
 /// Whether a **raw-source** link-reference label can define or resolve at all in
 /// roxygen2's pipeline. Two failures, both leaving the def line literal prose and
 /// the shortcut/reference un-linked:
 /// - a **trailing backslash run** (any length): `double_escape_md` doubles the run
 ///   and the `\\]`→`\]` revert makes it odd, so the label's closing `]` is escaped
 ///   and the label never closes (cm-552);
-/// - a **blank** label ([`linkref_label_is_blank`], cm-554).
+/// - a **blank** label ([`linkref_label_is_blank`], cm-554);
+/// - a label spanning a **blank line** ([`linkref_label_has_blank_line`], cm-184 —
+///   the definition's paragraph ends at the blank line).
 fn linkref_label_is_usable(label: &str) -> bool {
-    !label.ends_with('\\') && !linkref_label_is_blank(label)
+    !label.ends_with('\\') && !linkref_label_is_blank(label) && !linkref_label_has_blank_line(label)
 }
 
 /// R's `URLencode(x, reserved = FALSE)`: keep ASCII alphanumerics and the

@@ -1,0 +1,3 @@
+(\description (TEXT "Title"))
+(\details (\if (TEXT "html") (\out (VERB "\n") (VERB "<!-- [alpha\n") (VERB "\n") (VERB "    beta] -->\n"))) (TEXT "tail [alpha") (\if (TEXT "html") (\out (VERB "<div class=\"sourceCode\">"))) (\preformatted (VERB "beta]: R:alpha%0A%0A%20%20%20%20beta\n")) (\if (TEXT "html") (\out (VERB "</div>"))))
+(\title (TEXT "Title"))

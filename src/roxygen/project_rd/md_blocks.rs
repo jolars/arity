@@ -365,6 +365,25 @@ fn md_item_content_leading(marker: &SyntaxToken) -> usize {
 /// block lines are reconstructed from the node text with each `#'` marker and the
 /// single following space stripped (like the fenced code block).
 pub(super) fn serialize_md_html_block(node: &SyntaxNode) -> String {
+    let mut body = String::from("\n");
+    for ch in md_html_block_field_text(node).chars() {
+        body.push(if ch == SOFT_BREAK { '\n' } else { ch });
+    }
+    body.push('\n');
+    format!(
+        "(\\if (TEXT {}) (\\out {}))",
+        encode_text("html"),
+        verb_atoms(&body).join(" ")
+    )
+}
+
+/// A `ROXYGEN_MD_HTML_BLOCK`'s lines as roxygen2's *field text* sees them — each
+/// `#'` marker and its single following space stripped, lines joined on the
+/// soft-break sentinel (blank block lines survive as empty lines). This is what
+/// `get_md_linkrefs` scans (the candidate regex runs on the whole raw field,
+/// markup included), so the link-reference skeleton pushes it verbatim; the
+/// `\if{html}{\out{…}}` serialization re-joins it on real newlines.
+pub(super) fn md_html_block_field_text(node: &SyntaxNode) -> String {
     let text = node.text().to_string();
     // A block opening as a tag's same-line value has a marker-less first line
     // (the `#'` belongs to the enclosing tag): roxygen2 strips only the single
@@ -374,20 +393,18 @@ pub(super) fn serialize_md_html_block(node: &SyntaxNode) -> String {
     let mid_value = node
         .first_token()
         .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);
-    let mut body = String::from("\n");
+    let mut out = String::new();
     for (idx, line) in text.split('\n').enumerate() {
-        if idx == 0 && mid_value {
-            body.push_str(line.strip_prefix([' ', '\t']).unwrap_or(line));
-        } else {
-            body.push_str(strip_marker(line));
+        if idx > 0 {
+            out.push(SOFT_BREAK);
         }
-        body.push('\n');
+        if idx == 0 && mid_value {
+            out.push_str(line.strip_prefix([' ', '\t']).unwrap_or(line));
+        } else {
+            out.push_str(strip_marker(line));
+        }
     }
-    format!(
-        "(\\if (TEXT {}) (\\out {}))",
-        encode_text("html"),
-        verb_atoms(&body).join(" ")
-    )
+    out
 }
 
 /// The **un-normalized** flattened plain text of a `ROXYGEN_MD_BLOCK_QUOTE`.
