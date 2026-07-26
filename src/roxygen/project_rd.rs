@@ -4488,6 +4488,23 @@ fn collect_user_linkrefs_tree(
                     collect_user_linkrefs_tree(item, urls);
                 }
             }
+            // A definition inside a block quote is document-global — cmark
+            // parses it in the quote's own block context and the refmap spans
+            // the document (cm-220). Read the quote the way the flatten does:
+            // re-parse the one-level-stripped body as a synthesized `@md`
+            // fragment and collect from its section groups (the recursion
+            // covers in-quote lists and nested quotes). A withheld reparse
+            // (a non-`@md` tag section) collects nothing — the legacy
+            // per-line flatten treats that body as literal prose.
+            Inline::MdBlockQuote(node) => {
+                if let Some(block) = quote_synthesized_block(&quote_stripped_lines(node)) {
+                    for section in block.sections() {
+                        for group in section_body_parts(&section) {
+                            collect_user_linkrefs_tree(&group, urls);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -6945,6 +6962,31 @@ fn serialize_md_html_block(node: &SyntaxNode) -> String {
 /// leaf contributes nothing (`xml_text` keeps its display/alt/raw text); trailing
 /// spaces on a prose line survive (cmark strips them).
 fn block_quote_flat_text(node: &SyntaxNode) -> String {
+    let lines = quote_stripped_lines(node);
+    quote_flat_reparse(&lines).unwrap_or_else(|| {
+        // Legacy per-line flatten: each line's markdown resolves as an inline
+        // fragment; block structure stays literal.
+        let mut flat = String::new();
+        for line in &lines {
+            let inlines = resolve_macro_arg_inlines(line);
+            for ch in inline_plain_text(&inlines).chars() {
+                if ch != SOFT_BREAK {
+                    flat.push(ch);
+                }
+            }
+        }
+        flat
+    })
+}
+
+/// The one-level-stripped body lines of a `ROXYGEN_MD_BLOCK_QUOTE` node: each
+/// line drops its `#'` marker, the enclosing item's container columns
+/// ([`md_indented_code_extra_strip`]), and one quote level
+/// ([`strip_one_quote_level`]; a lazy line keeps its content, a lazy
+/// setext-underline-shaped one glues onto the previous line — see
+/// [`block_quote_flat_text`]). Shared by the flatten and the quote's
+/// link-reference-definition scan, so both read the same synthesized body.
+fn quote_stripped_lines(node: &SyntaxNode) -> Vec<String> {
     let text = node.text().to_string();
     // A quote folded into a list item carries the item's content column on every
     // line; the item container consumes it before the quote marker is read (the
@@ -6974,20 +7016,7 @@ fn block_quote_flat_text(node: &SyntaxNode) -> String {
             None => lines.push(content.to_string()),
         }
     }
-    quote_flat_reparse(&lines).unwrap_or_else(|| {
-        // Legacy per-line flatten: each line's markdown resolves as an inline
-        // fragment; block structure stays literal.
-        let mut flat = String::new();
-        for line in &lines {
-            let inlines = resolve_macro_arg_inlines(line);
-            for ch in inline_plain_text(&inlines).chars() {
-                if ch != SOFT_BREAK {
-                    flat.push(ch);
-                }
-            }
-        }
-        flat
-    })
+    lines
 }
 
 /// Strip **one** block-quote marker level from a quote line's content: up to
@@ -7035,6 +7064,22 @@ fn is_lazy_setext_shape(content: &str) -> bool {
 /// re-parse yields any tag section besides the synthesized `@md` (an `@`-opening
 /// body line — cmark reads it as literal text, so the re-parse mis-sections it).
 fn quote_flat_reparse(lines: &[String]) -> Option<String> {
+    let block = quote_synthesized_block(lines)?;
+    let mut flat = String::new();
+    for section in block.sections() {
+        quote_flat_section(&section, &mut flat);
+    }
+    Some(flat)
+}
+
+/// Parse a quote's one-level-stripped body lines as a fresh synthesized `@md`
+/// roxygen fragment, returning its `ROXYGEN_BLOCK` (the rowan node keeps the
+/// re-parsed tree alive). `None` withholds the reparse: the body yields a tag
+/// section besides the synthesized `@md` (an `@`-opening line is literal text
+/// to cmark, so the re-parse mis-sections it). Shared by the flatten
+/// ([`quote_flat_reparse`]) and the quote's link-reference-definition scan
+/// ([`collect_user_linkrefs_tree`]).
+fn quote_synthesized_block(lines: &[String]) -> Option<RoxygenBlock> {
     let mut src = String::from("#' @md\n");
     for line in lines {
         if line.is_empty() {
@@ -7050,11 +7095,7 @@ fn quote_flat_reparse(lines: &[String]) -> Option<String> {
     if block.sections().filter(|s| s.tag().is_some()).count() != 1 {
         return None;
     }
-    let mut flat = String::new();
-    for section in block.sections() {
-        quote_flat_section(&section, &mut flat);
-    }
-    Some(flat)
+    Some(block)
 }
 
 /// Flatten one re-parsed section of a quote body: every block child contributes
@@ -7070,7 +7111,9 @@ fn quote_flat_section(section: &RoxygenSection, out: &mut String) {
             SyntaxKind::ROXYGEN_TAG => {}
             SyntaxKind::ROXYGEN_PARAGRAPH => {
                 if let Some(p) = RoxygenParagraph::cast(node) {
-                    out.push_str(&quote_flat_unit(&paragraph_inlines(&p)));
+                    out.push_str(&quote_flat_unit(&consume_linkref_defs(paragraph_inlines(
+                        &p,
+                    ))));
                 }
             }
             _ => quote_flat_node(&node, out),
@@ -7086,7 +7129,9 @@ fn quote_flat_node(node: &SyntaxNode, out: &mut String) {
                 .children()
                 .filter(|n| n.kind() == SyntaxKind::ROXYGEN_MD_LIST_ITEM)
             {
-                out.push_str(&quote_flat_unit(&md_list_item_inlines(&item)));
+                out.push_str(&quote_flat_unit(&consume_linkref_defs(
+                    md_list_item_inlines(&item),
+                )));
             }
         }
         SyntaxKind::ROXYGEN_MD_HEADING => {
@@ -7157,6 +7202,26 @@ fn quote_flat_unit(inlines: &[Inline]) -> String {
         }
     }
     out.trim_matches([' ', '\t', '\n']).to_string()
+}
+
+/// Drop the link-reference-definition runs from a re-parsed quote unit before
+/// flattening: cmark consumes a definition inside the quote's own block context,
+/// so it contributes nothing to the quote's `xml_text` (cm-220). A `Text` whose
+/// leading lines a definition consumed keeps its remainder as prose.
+fn consume_linkref_defs(inlines: Vec<Inline>) -> Vec<Inline> {
+    let (_, dropped) = collect_user_linkrefs(&inlines);
+    if dropped.is_empty() {
+        return inlines;
+    }
+    inlines
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, inl)| match dropped.get(&i) {
+            Some(None) => None,
+            Some(Some(leftover)) => Some(Inline::Text(leftover.clone())),
+            None => Some(inl),
+        })
+        .collect()
 }
 
 /// Flatten a resolved inline run to its `xml_text`: text and code spans
@@ -10812,6 +10877,35 @@ mod tests {
             rd.contains(
                 "(\\itemize (\\item) (\\if (TEXT \"html\") \
                  (\\out (VERB \"\\n\") (VERB \"<div>\\n\"))) (\\item) (TEXT \"foo\"))"
+            ),
+            "got: {rd}"
+        );
+    }
+
+    #[test]
+    fn linkref_def_inside_block_quote_defines_and_consumes() {
+        // A definition inside a block quote is document-global and consumed in
+        // the quote's own block context (cm-220): the outer shortcut resolves
+        // to the user `\href` (beating the synthesized `R:` def), and the
+        // quote flattens to only its remaining prose (engine-probed).
+        let src = "#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n\
+                   #' > [foo]: /url\n#' > rest\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains("(\\details (\\href (VERB \"/url\") (TEXT \"foo\")) (TEXT \"rest\"))"),
+            "got: {rd}"
+        );
+        // A def-shaped line that does NOT open a quote block stays paragraph
+        // prose — a definition cannot interrupt a paragraph (engine-probed:
+        // the quote flattens with the def text kept, links resolve to the
+        // synthesized `R:` defs).
+        let mid = "#' @md\n#' @title T\n#' @details\n#' [foo] and [bar]\n#'\n\
+                   #' > pre [bar]: /b\n#' > [foo]: /url\n#' > post\n#' @name x\nNULL\n";
+        let rd = project_to_rd(mid);
+        assert!(
+            rd.contains(
+                "(\\details (\\link (TEXT \"foo\")) (TEXT \"and\") (\\link (TEXT \"bar\")) \
+                 (TEXT \"pre bar: /bfoo: /urlpost\"))"
             ),
             "got: {rd}"
         );

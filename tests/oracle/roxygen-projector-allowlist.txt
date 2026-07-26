@@ -226,6 +226,7 @@ cm-216
 cm-217
 cm-218
 cm-219
+cm-220
 cm-221
 cm-222
 cm-223
@@ -745,6 +746,7 @@ md_linkref_casefold
 md_linkref_def_dest_edge
 md_linkref_def_fallback
 md_linkref_def_in_item
+md_linkref_def_in_quote
 md_linkref_escaped_open_bracket
 md_linkref_heading_title
 md_link_ref_in_emphasis

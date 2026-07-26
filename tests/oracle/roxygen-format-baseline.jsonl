@@ -87,6 +87,7 @@
 {"key":"curated/md_linkref_def_dest_edge","formatted":"#' @md\n#' @title T\n#' @details\n#' [empty]: <>\n#'\n#' [empty]\n#'\n#' [esc]: /url\\bar\\*baz \"foo\\\"bar\\baz\"\n#'\n#' [esc]\n#' @name x\nNULL\n"}
 {"key":"curated/md_linkref_def_fallback","formatted":"#' @md\n#' @title T\n#' @details\n#' [foo]: /url\n#' \"title\" ok\n#'\n#' [foo]\n#'\n#' [bar]: /b 'title' junk\n#'\n#' [bar]\n#' @name x\nNULL\n"}
 {"key":"curated/md_linkref_def_in_item","formatted":"#' @md\n#' @title T\n#' @details\n#' [x][ref]\n#'\n#' - a\n#' - b\n#'\n#'   [ref]: /url\n#' - d\n#' @name definitem\nNULL\n"}
+{"key":"curated/md_linkref_def_in_quote","formatted":"#' @md\n#' @title T\n#' @details\n#' [foo]\n#'\n#' > [foo]: /url\n#' > rest\n#' @name x\nNULL\n"}
 {"key":"curated/md_linkref_escaped_open_bracket","formatted":"#' Escaped open brackets are link-label content\n#'\n#' @details\n#' [foo][ref\\[] links via the user def.\n#'\n#' [ref\\[]: /uri\n#'\n#' A defined shortcut [ref\\[] links; an undefined [other\\[] stays literal.\n#' @md\n#' @name md_linkref_escaped_open_bracket\nNULL\n"}
 {"key":"curated/md_linkref_heading_title","formatted":"#' @md\n#' @title T\n#' @details\n#' # See [foo] here\n#' [foo]: /url\n#' body text\n#' @name x\nNULL\n"}
 {"key":"curated/md_linkref_multiline_def","formatted":"#' @md\n#' @title T\n#' @details\n#' [Foo bar]:\n#' <my url>\n#' 'title'\n#'\n#' [Foo bar]\n#'\n#' [\n#' baz\n#' ]: /qux\n#' tail prose\n#' @name x\nNULL\n"}
