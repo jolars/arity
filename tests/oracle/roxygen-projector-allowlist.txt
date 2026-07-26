@@ -11,6 +11,7 @@
 # roxygen2 projector-parity allowlist --- cases whose CST projection currently
 #     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
 #     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)
+block_attachment
 cm-001
 cm-002
 cm-003
@@ -958,6 +959,7 @@ rx-8d53bbdb
 rx-8f26e3d9
 rx-91c234d1
 rx-91e67e79
+rx-93452c15
 rx-959fc227
 rx-95dd50a4
 rx-9a1e30f6

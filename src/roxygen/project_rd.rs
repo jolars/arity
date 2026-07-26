@@ -80,12 +80,42 @@ use self::text::*;
 /// `ROXYGEN_BLOCK` in `text` are merged into one sorted set.
 pub fn project_to_rd(text: &str) -> String {
     let cst = parse(text).cst;
+    let scan_end = roxygen_scan_end(&cst);
     let mut sections: Vec<String> = Vec::new();
     for block in cst.descendants().filter_map(RoxygenBlock::cast) {
+        if block.syntax().text_range().start() >= scan_end {
+            continue;
+        }
         project_block(&block, &mut sections);
     }
     sections.sort();
     sections.join("\n")
+}
+
+/// End of roxygen2's comment-scan range. The regions `comments()` (tokenize.R)
+/// builds tile `[byte 1, end of last top-level expression]` contiguously, so a
+/// `#'` line starting past that end — after the last expression, or anywhere in
+/// a file with no expression at all — is never tokenized. A block *inside* an
+/// expression (a `#'` line in a function body) starts within the enclosing
+/// expression's region, joins that region's block, and still renders. Bare
+/// atoms (`NULL`, a lone literal) are tokens at top level, so both nodes and
+/// non-structural tokens count; trivia, comments, semicolons, and the roxygen
+/// blocks themselves do not.
+fn roxygen_scan_end(root: &SyntaxNode) -> rowan::TextSize {
+    root.children_with_tokens()
+        .filter(|el| {
+            !matches!(
+                el.kind(),
+                SyntaxKind::WHITESPACE
+                    | SyntaxKind::NEWLINE
+                    | SyntaxKind::COMMENT
+                    | SyntaxKind::SEMICOLON
+                    | SyntaxKind::ROXYGEN_BLOCK
+            )
+        })
+        .last()
+        .map(|el| el.text_range().end())
+        .unwrap_or_default()
 }
 
 /// One inline element of a section body: a run of prose text (coalesced and

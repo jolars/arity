@@ -36,6 +36,11 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
 - **`\examples` bodies are reformatted R** (Tenet 1) → serializer replaces them with `...`.
 - **`roc_proc_text` needs the block on an object** (a function, or `@name` + `NULL`); a bare
   block errors. **`@md` must stand alone** — a prose value errors.
+- **Comment-scan regions tile `[byte 1, end of last top-level expression]`** (`comments()`,
+  tokenize.R): a `#'` line past that end — trailing, or in a file with no expression — is never
+  tokenized, but an **in-body `#'` line JOINS the enclosing expression's region-block and still
+  renders** (probed: in-body `@details` emits `\details`). `roxygen_scan_end` (project_rd.rs)
+  gates `project_to_rd`; the synthesized-fragment reparses are safe (they append `NULL`).
 - **Every field/piece `str_trim`s with Unicode White_Space (= Rust `char::is_whitespace`) — wider
   than `norm_ws`'s ASCII set.** roxygen2 trims the rendered field and each level-1 split piece
   (`mdxml_children_to_rd_top`'s `str_trim(rd)`/`str_trim(secs)`); non-md `tag_value` trims the raw
@@ -1260,9 +1265,9 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 999 matching (all allowlisted), 2 divergent, 15 blocked** of 1016 pinned. **The whole
+**Current: 1001 matching (all allowlisted), 1 divergent, 15 blocked** of 1017 pinned. **The whole
 CommonMark spec (655/655) matches** — every spec section COMPLETE; the harvested backlog is
-down to 2 static-scope singles (block-to-object attachment, same-`@name` topic merge).
+down to 1 static-scope single (same-`@name` topic merge).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (15 dynamic-eval/
@@ -1271,48 +1276,47 @@ introspection non-targets, triaged 2026-07-26m).
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1016 pinned); 2 divergent backlog, 15 blocked.
+   Curated + harvested + whole-spec corpora (1017 pinned); 1 divergent backlog, 15 blocked.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
    strict semantic preservation of the formatter; 210/210 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26m) — harvested-backlog triage + knitr chunk info class
+## Latest session (2026-07-26n) — block-to-object attachment (rx-93452c15)
 
-The ranked target: triage the 18 remaining harvested divergences. Diffed all
-18 actual-vs-pin (via `examples/rdproj`): **15 are genuine non-targets** →
-`roxygen-projector-blocked.txt` with rationales — roxygen2 pass 1 knits inline
-`` `r ...` `` code and `{r}` chunk output into the docs
-(`markdown_pass1`/`roxy_knit`), and the roclet introspects *evaluated* objects
-(data.frame/list `\format`, RefClass docstring Methods sections, the wholly
-roclet-synthesized re-export topic) — all dynamic, out of static scope. **Two
-are static-scope backlog** (kept divergent): rx-93452c15 (block-to-object
-attachment: a block inside a function body, or with no following top-level
-expression, is not a doc block) and rx-aef0e809 (same-`@name` blocks merge
-into one topic: title = first, prose fields concatenated).
+The ranked target. Probing roxygen2's tokenizer (`comments()` in tokenize.R +
+`tokenise_block` in parser2.cpp) corrected last session's triage note: the
+comment regions tile `[byte 1, end of last top-level expression]`, so an
+**in-body `#'` line is NOT dropped** — it sits inside the enclosing
+expression's region, joins that block, and renders (probed: in-body
+`@details` emits `\details`). The only rule is the scan **end**: a `#'` line
+starting past the last top-level expression's end (trailing `}; #' @seealso
+…`, or any block in a file with no expression) is never tokenized.
 
-One **projector gap** closed along the way: a fence whose decoded info matches
-roxygen2's chunk detection is knitted and re-rendered with the chunk
-*language* as its whole info string, so a **silent** chunk (`{r}` assignments,
-`{r eval = FALSE}`) differed from arity only in the class (`sourceCode {r}` vs
-`sourceCode r`). `knitr_chunk_language` (md_blocks.rs) maps the header at both
-info sites (see the new trap). rx-0d100638's `{verbatim}` pin turned out to be
-a knit *failure* fallback (raw fence kept; the harvest machine lacks testthat)
-— it passed before only coincidentally; blocked as eval-environment-dependent.
+**Projector gap** (roxygen2 processing semantics, not CST shape — the CST
+stays lossless with all blocks): `roxygen_scan_end` (project_rd.rs) computes
+the end of the last top-level expression among ROOT children — nodes AND
+bare-token atoms (`NULL` is an IDENT token at top level), excluding trivia,
+comments, semicolons, and roxygen blocks — and `project_to_rd` skips any
+block starting at/past it. Blast radius checked: every corpus input ends with
+an expression, and the one internal `project_to_rd` caller
+(`section_raw_fallback_atoms`) appends `#' @name x\nNULL`.
 
-**Result:** projector **997→999 matching (all allowlisted), 18→2 divergent,
-0→15 blocked** of 1016 pinned; 0 regressions. Curated `md_fence_knitr_info`
-(R-minted: silent `{r}`, `{r eval = FALSE}`, non-chunk `{r-lib}` control),
-unit `knitr_chunk_info_renders_as_the_chunk_language`, baseline +1 (new key
-only). Fixed-point 210/210. Full suite + clippy + fmt green.
+**Result:** projector **999→1001 matching (all allowlisted), 2→1 divergent,
+15 blocked** of 1017 pinned; 0 regressions. Curated `block_attachment`
+(R-minted pin: trailing same-line `@seealso` drops, in-body `@details`
+renders), 3 units (`block_after_…`, `file_without_…`, `bare_token_atom_…`),
+baseline +1 (new key only). Fixed-point 211/211. Full suite + clippy + fmt
+green.
 
-**Ranked next target:** rx-93452c15 — **block-to-object attachment** (static:
-drop a `#'` block nested in a function body or one with no following
-top-level expression). Then rx-aef0e809 — **same-`@name` topic merge**. Both
-together close the harvested backlog to zero.
+**Ranked next target:** rx-aef0e809 — **same-`@name` topic merge** (blocks
+sharing `@name`/`@rdname` merge into one topic: title = first wins, prose
+fields concatenate). Closes the harvested backlog to zero.
 
 ## Earlier sessions
+
+- **2026-07-26m** — harvested-backlog triage (18→2: 15 blocked as dynamic-eval/introspection non-targets) + knitr chunk info class (`knitr_chunk_language` at both info sites; rx-0d100638 blocked as eval-environment-dependent). Curated `md_fence_knitr_info`, unit, baseline +1. 997→999.
 
 - **2026-07-26l** — newline ends an unquoted html attribute value (cm-623; `scan_html_attribute`'s unquoted arm excludes `\n` on the inline pass's joined text; quoted values still span the break). Curated `md_html_attr_newline`, fixture, unit, baseline +1. 995→997, Raw HTML 21/21 — **whole spec 655/655 COMPLETE**.
 

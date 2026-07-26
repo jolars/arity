@@ -4587,6 +4587,43 @@ fn linkref_def_in_list_item_is_consumed() {
 }
 
 #[test]
+fn block_after_the_last_top_level_expression_never_projects() {
+    // roxygen2's comment regions tile [byte 1, end of last top-level
+    // expression] (`comments()` in tokenize.R), so a `#'` line starting past
+    // that end is never tokenized. An in-body `#'` line sits *inside* the
+    // enclosing expression's region, joins that block, and still renders.
+    let src = "#' Description\n\
+               a <- function(x) {\n\
+               \x20 #' @details Inside body\n\
+               \x20 stopifnot(is.integer(x))\n\
+               }; #' @seealso somewhere\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"Description\"))\n\
+         (\\details (TEXT \"Inside body\"))\n\
+         (\\title (TEXT \"Description\"))"
+    );
+}
+
+#[test]
+fn file_without_a_top_level_expression_projects_nothing() {
+    // No expressions => no comment regions at all (`comments()` returns an
+    // empty list), so no block is ever tokenized.
+    assert_eq!(project_to_rd("#' @seealso somewhere\n"), "");
+}
+
+#[test]
+fn bare_token_atom_counts_as_the_last_top_level_expression() {
+    // `NULL` at top level is a bare IDENT token in the CST, not a node; it
+    // still ends the scan region after it, and carries the block before it.
+    let src = "#' T\n#' @name x\nNULL\n#' @seealso dropped\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"T\"))\n(\\title (TEXT \"T\"))"
+    );
+}
+
+#[test]
 fn thematic_break_ends_block_quote() {
     // A `---` (three-plus dash run) is a thematic break, which *interrupts* a
     // paragraph, so it is not a lazy continuation: it ends the quote (and
