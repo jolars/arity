@@ -1218,7 +1218,7 @@ fn inline_link_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
 /// a bare destination with an interior ASCII space then non-title text
 /// (`[t](a\ b)`) is **not** a link: cmark leaves the `[t]` a shortcut reference
 /// and the `(a\ b)` literal prose.
-fn inline_dest_span(bytes: &[u8], i: usize) -> Option<usize> {
+pub(super) fn inline_dest_span(bytes: &[u8], i: usize) -> Option<usize> {
     debug_assert_eq!(bytes.get(i), Some(&b'('));
     let mut j = i + 1;
     while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {

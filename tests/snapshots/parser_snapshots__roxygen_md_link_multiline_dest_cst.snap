@@ -1,0 +1,68 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..112
+  ROXYGEN_BLOCK@0..106
+    ROXYGEN_SECTION@0..8
+      ROXYGEN_PARAGRAPH@0..5
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..4 "T"
+        NEWLINE@4..5 "\n"
+      ROXYGEN_MARKER@5..7 "#'"
+      NEWLINE@7..8 "\n"
+    ROXYGEN_SECTION@8..15
+      ROXYGEN_MARKER@8..10 "#'"
+      WHITESPACE@10..11 " "
+      ROXYGEN_TAG@11..14
+        ROXYGEN_AT@11..12 "@"
+        ROXYGEN_TAG_NAME@12..14 "md"
+      NEWLINE@14..15 "\n"
+    ROXYGEN_SECTION@15..96
+      ROXYGEN_MARKER@15..17 "#'"
+      WHITESPACE@17..18 " "
+      ROXYGEN_TAG@18..26
+        ROXYGEN_AT@18..19 "@"
+        ROXYGEN_TAG_NAME@19..26 "details"
+      NEWLINE@26..27 "\n"
+      ROXYGEN_PARAGRAPH@27..61
+        ROXYGEN_MARKER@27..29 "#'"
+        WHITESPACE@29..30 " "
+        ROXYGEN_MD_LINK@30..60
+          ROXYGEN_MD_DELIM@30..31 "["
+          ROXYGEN_TEXT@31..35 "link"
+          ROXYGEN_MD_DELIM@35..37 "]("
+          ROXYGEN_TEXT@37..44 "   /uri"
+          NEWLINE@44..45 "\n"
+          ROXYGEN_MARKER@45..47 "#'"
+          WHITESPACE@47..50 "   "
+          ROXYGEN_TEXT@50..60 "\"title\"  )"
+        NEWLINE@60..61 "\n"
+      ROXYGEN_MARKER@61..63 "#'"
+      NEWLINE@63..64 "\n"
+      ROXYGEN_PARAGRAPH@64..96
+        ROXYGEN_MARKER@64..66 "#'"
+        WHITESPACE@66..67 " "
+        ROXYGEN_MD_LINK@67..85
+          ROXYGEN_MD_DELIM@67..68 "["
+          ROXYGEN_TEXT@68..69 "a"
+          ROXYGEN_MD_DELIM@69..71 "]("
+          ROXYGEN_TEXT@71..77 "/u \"t1"
+          NEWLINE@77..78 "\n"
+          ROXYGEN_MARKER@78..80 "#'"
+          WHITESPACE@80..81 " "
+          ROXYGEN_TEXT@81..85 "t2\")"
+        ROXYGEN_TEXT@85..95 " tail text"
+        NEWLINE@95..96 "\n"
+    ROXYGEN_SECTION@96..106
+      ROXYGEN_MARKER@96..98 "#'"
+      WHITESPACE@98..99 " "
+      ROXYGEN_TAG@99..106
+        ROXYGEN_AT@99..100 "@"
+        ROXYGEN_TAG_NAME@100..104 "name"
+        WHITESPACE@104..105 " "
+        ROXYGEN_TEXT@105..106 "x"
+  NEWLINE@106..107 "\n"
+  IDENT@107..111 "NULL"
+  NEWLINE@111..112 "\n"

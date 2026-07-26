@@ -250,8 +250,33 @@ pub(super) fn push_inline(
         }
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_LINK => {
             let kids: Vec<_> = n.children_with_tokens().collect();
-            let closer = kids.last().map(|c| c.to_string()).unwrap_or_default();
-            let interior = kids.len().saturating_sub(1);
+            // A *cross-line* inline destination (cm-512): the closer is the
+            // unique `](` delimiter leaf and the consumed destination tokens
+            // follow it inside the node. Rebuild the composite closer from
+            // their cmark-visible text — content verbatim, a soft break as
+            // `\n`, the `#'` markers and continuation indentation stripped
+            // (cmark strips a paragraph continuation line's leading
+            // whitespace, so none of it reaches the destination gaps).
+            let cross_dest = kids
+                .iter()
+                .position(|c| c.kind() == SyntaxKind::ROXYGEN_MD_DELIM && c.to_string() == "](");
+            let (interior, closer) = match cross_dest {
+                Some(idx) => {
+                    let mut close = String::from("](");
+                    for c in &kids[idx + 1..] {
+                        match c.kind() {
+                            SyntaxKind::ROXYGEN_MARKER | SyntaxKind::WHITESPACE => {}
+                            SyntaxKind::NEWLINE => close.push('\n'),
+                            _ => close.push_str(&c.to_string()),
+                        }
+                    }
+                    (idx, close)
+                }
+                None => (
+                    kids.len().saturating_sub(1),
+                    kids.last().map(|c| c.to_string()).unwrap_or_default(),
+                ),
+            };
             let mut display = Vec::new();
             let mut after_marker = false;
             for child in kids.into_iter().take(interior).skip(1) {

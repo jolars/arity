@@ -456,6 +456,9 @@ enum NodeData {
         open: String,
         close: String,
         body: Vec<Event>,
+        /// A cross-line inline link's consumed destination events, emitted
+        /// inside the node after the `](` closer leaf (empty otherwise).
+        tail: Vec<Event>,
     },
     /// A synthetic literal-text piece of a split token ([`RunItem::Text`]),
     /// emitted as a `ROXYGEN_TEXT` leaf. Inert to emphasis (never a delimiter).
@@ -545,6 +548,8 @@ impl Arena {
                     closer,
                     after,
                     close_text,
+                    tail,
+                    leftover,
                 } => {
                     let open = item_text(tokens, &run[p]).to_string();
                     let close = close_text.clone();
@@ -557,7 +562,18 @@ impl Arena {
                         Some(']'),
                         &mut body,
                     );
-                    arena.push_node(NodeData::Link { open, close, body });
+                    let tail = tail.clone();
+                    arena.push_node(NodeData::Link {
+                        open,
+                        close,
+                        body,
+                        tail,
+                    });
+                    // The unconsumed remainder of a token the destination ends
+                    // inside re-emits as literal text after the link node.
+                    if let Some(rest) = leftover {
+                        arena.push_node(NodeData::Text(rest.clone()));
+                    }
                     p = after_p;
                     continue;
                 }
@@ -886,14 +902,22 @@ impl Arena {
                 out.push(Event::Leaf(SyntaxKind::ROXYGEN_MD_DELIM, close.clone()));
                 out.push(Event::Finish);
             }
-            NodeData::Link { open, close, body } => {
+            NodeData::Link {
+                open,
+                close,
+                body,
+                tail,
+            } => {
                 // A `ROXYGEN_MD_LINK` node: the brackets are opener/closer
                 // `ROXYGEN_MD_DELIM` leaves around the already-resolved link-text
                 // events (so the projector skips first/last child, as for emphasis).
+                // A cross-line inline link's consumed destination follows its `](`
+                // closer leaf inside the node (trivia tokens kept verbatim).
                 out.push(Event::Start(SyntaxKind::ROXYGEN_MD_LINK));
                 out.push(Event::Leaf(SyntaxKind::ROXYGEN_MD_DELIM, open.clone()));
                 out.extend(body.iter().cloned());
                 out.push(Event::Leaf(SyntaxKind::ROXYGEN_MD_DELIM, close.clone()));
+                out.extend(tail.iter().cloned());
                 out.push(Event::Finish);
             }
             NodeData::Text(s) => {
@@ -920,6 +944,15 @@ enum BracketRole {
         closer: usize,
         after: usize,
         close_text: String,
+        /// The consumed destination events of a *cross-line* inline link (a
+        /// `](` closer): whole tokens re-emitted verbatim (trivia included) and
+        /// a split token's covered head as a synthetic text leaf, re-emitted
+        /// inside the link node after the closer leaf. Empty for the same-line
+        /// closer forms.
+        tail: Vec<Event>,
+        /// The unconsumed remainder of the token the destination ends inside,
+        /// re-emitted as literal text after the link node.
+        leftover: Option<String>,
     },
     LiteralBracket,
     Consumed,
@@ -966,11 +999,13 @@ fn match_brackets(tokens: &[Token], run: &[RunItem]) -> Vec<BracketRole> {
             continue;
         }
         match classify_closer(tokens, run, o_pos, q) {
-            Some((close_text, after)) => {
+            Some((close_text, after, tail, leftover)) => {
                 roles[o_pos] = BracketRole::MatchedOpener {
                     closer: q,
                     after,
                     close_text,
+                    tail,
+                    leftover,
                 };
                 // Consume the closer and any folded-in `[ref]` label tokens
                 // (`q + 1 .. after`); for an inline/shortcut closer the range is just
@@ -994,10 +1029,14 @@ fn match_brackets(tokens: &[Token], run: &[RunItem]) -> Vec<BracketRole> {
 }
 
 /// Classify the closer at `run[closer_q]` for an active opener at `run[o_pos]`,
-/// returning `(close_text, after)` for a valid link or `None` for none, where
-/// `after` is the run index just past the closer and any folded-in `[ref]` label.
-/// An inline `](url)` composite closer is always a valid link. A lone `]` is a
-/// *reference* link when immediately followed by a `[ref]` label — neutral `[`/`]`
+/// returning `(close_text, after, tail, leftover)` for a valid link or `None` for
+/// none, where `after` is the run index just past the closer and any folded-in
+/// `[ref]` label or consumed destination.
+/// An inline `](url)` composite closer is always a valid link. A lone `]` tries
+/// the forms in cmark's `handle_close_bracket` order: first a following inline
+/// `(…)` destination — possibly across soft line breaks
+/// ([`cross_line_inline_dest`], cm-512); then a *reference* link when immediately
+/// followed by a `[ref]` label — neutral `[`/`]`
 /// bracket tokens on the lookahead, folded in as `][ref]` (or, for a `\`-bearing
 /// label, the legacy opaque `scan_md_link` leaf). Otherwise it is a *shortcut* link
 /// iff the opener's raw interior is bracket-free (roxygen synthesizes a reference
@@ -1007,23 +1046,115 @@ fn classify_closer(
     run: &[RunItem],
     o_pos: usize,
     closer_q: usize,
-) -> Option<(String, usize)> {
+) -> Option<(String, usize, Vec<Event>, Option<String>)> {
     let close_tok = item_token(tokens, &run[closer_q])?;
     if close_tok.text != "]" {
-        return Some((close_tok.text.clone(), closer_q + 1));
+        return Some((close_tok.text.clone(), closer_q + 1, Vec::new(), None));
+    }
+    // A cross-line inline `(…)` destination on the lookahead (the same-line form
+    // was carved as a composite `](url)` closer token by the lexer).
+    if let Some((after, tail, leftover)) = cross_line_inline_dest(tokens, run, closer_q + 1) {
+        return Some(("](".to_string(), after, tail, leftover));
     }
     // A reference label `[ref]` on the lookahead, as neutral bracket tokens.
     if let Some((label, after)) = neutral_ref_label(tokens, run, closer_q + 1) {
-        return Some((format!("][{label}]"), after));
+        return Some((format!("][{label}]"), after, Vec::new(), None));
     }
     // Legacy: a `\`-bearing label still carved as one opaque `scan_md_link` leaf.
     if let Some(next) = run.get(closer_q + 1)
         && let Some(tok) = item_token(tokens, next)
         && tok.kind == TokKind::RoxygenMdLink
     {
-        return Some((format!("]{}", tok.text), closer_q + 2));
+        return Some((format!("]{}", tok.text), closer_q + 2, Vec::new(), None));
     }
-    interior_bracket_free(tokens, run, o_pos, closer_q).then(|| ("]".to_string(), closer_q + 1))
+    interior_bracket_free(tokens, run, o_pos, closer_q)
+        .then(|| ("]".to_string(), closer_q + 1, Vec::new(), None))
+}
+
+/// A lone `]` closer's cross-line inline-destination lookahead: when the run
+/// text after the closer forms a valid CommonMark `( destination [title] )` —
+/// [`super::lex::inline_dest_span`] over the run's logical text, where a soft
+/// break is `\n` and the `#'` marker and continuation indentation strip (what
+/// cmark sees; each component gap admits up to one line ending, and a blank
+/// line would end the paragraph run, so the per-gap limit holds by
+/// construction) — the `]` closes an inline link whose destination spans the
+/// break (cm-512). Returns the run index past the consumed items, the consumed
+/// destination events (whole tokens re-emitted verbatim — trivia included —
+/// and a partially covered token's head as a synthetic text leaf; the opening
+/// `(` byte is consumed into the `](` closer leaf instead), and the leftover
+/// tail of a token the destination ends inside (re-emitted as literal text
+/// after the link node). `None` when the text is not a valid destination — the
+/// closer falls through to the reference/shortcut forms. The lookahead stops
+/// at a resolved multi-line span or an inline Rd macro (a destination
+/// swallowing either is unmodeled backlog; the conservative `None` keeps the
+/// shortcut fallback).
+fn cross_line_inline_dest(
+    tokens: &[Token],
+    run: &[RunItem],
+    start: usize,
+) -> Option<(usize, Vec<Event>, Option<String>)> {
+    // The logical text after the closer and each item's byte range within it.
+    let mut logical = String::new();
+    let mut ranges = Vec::new();
+    for item in &run[start..] {
+        let s = logical.len();
+        match item {
+            RunItem::Tok(i) => match tokens[*i].kind {
+                TokKind::Newline => logical.push('\n'),
+                TokKind::RoxygenMarker | TokKind::Whitespace => {}
+                TokKind::RoxygenRdMacro => break,
+                _ => logical.push_str(&tokens[*i].text),
+            },
+            RunItem::Text(t) => logical.push_str(t),
+            RunItem::Span { .. } => break,
+        }
+        ranges.push(s..logical.len());
+    }
+    if !logical.starts_with('(') {
+        return None;
+    }
+    let end = super::lex::inline_dest_span(logical.as_bytes(), 0)?;
+    // Map the logical end back onto the run, consuming items into the tail.
+    let mut tail = Vec::new();
+    let mut leftover = None;
+    let mut after = start;
+    for (k, (item, r)) in run[start..].iter().zip(&ranges).enumerate() {
+        // At or past the destination's end: outside (a zero-width trivia token
+        // at the boundary stays outside the link node too).
+        if r.start >= end {
+            break;
+        }
+        if r.start == r.end {
+            // A zero-width trivia token (marker / stripped whitespace) strictly
+            // inside the destination.
+            if let RunItem::Tok(i) = item {
+                tail.push(Event::Tok(*i));
+            }
+            after = start + k + 1;
+            continue;
+        }
+        let text = item_text(tokens, item);
+        let cut = end.min(r.end) - r.start;
+        if let (RunItem::Tok(i), true, true) = (item, r.end <= end, r.start != 0) {
+            // A whole original token fully inside: re-emit verbatim.
+            tail.push(Event::Tok(*i));
+        } else {
+            // The `(`-bearing first item (its paren moves into the closer leaf)
+            // or a split token's covered head: a synthetic text piece.
+            let piece = &text[usize::from(r.start == 0)..cut];
+            if !piece.is_empty() {
+                tail.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, piece.to_string()));
+            }
+        }
+        if r.end > end {
+            leftover = Some(text[cut..].to_string());
+        }
+        after = start + k + 1;
+        if r.end >= end {
+            break;
+        }
+    }
+    Some((after, tail, leftover))
 }
 
 /// If `run[label_open]` is a neutral `[` bracket opening a bracket-free reference

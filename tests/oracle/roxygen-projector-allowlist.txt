@@ -522,6 +522,7 @@ cm-508
 cm-509
 cm-510
 cm-511
+cm-512
 cm-513
 cm-514
 cm-515
@@ -746,6 +747,7 @@ md_link_invalid_dest
 md_link_macro_arg_drop
 md_link_macro_pure
 md_link_multiline
+md_link_multiline_dest
 md_linkref_backslash_label
 md_linkref_blank_label
 md_linkref_casefold

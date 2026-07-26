@@ -354,6 +354,17 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   + `md_link_dest_parity`, fixtures `roxygen_md_link_{invalid_dest,dest_parity}`, units
   `invalid_inline_dest_falls_back_to_shortcut` + `inline_dest_parity_mirrors_cmark_after_double_escape`.
   **Reference images** (`![x](a\ b)` → `\figure{R:x}` via the synthesized linkref) still backlog.
+- **An inline link's `(…)` may CROSS a soft break (cm-512).** cmark allows "spaces, tabs, and up to
+  one line ending" per component gap (a blank line ends the paragraph run, so the per-gap limit holds
+  by construction); titles may span breaks. The line-scoped lexer can't see it — the `]` carves lone —
+  so `classify_closer` (inline.rs) tries `cross_line_inline_dest` FIRST (cmark's `handle_close_bracket`
+  order): `inline_dest_span` over the post-closer run items' logical text (soft break = `\n`, marker +
+  continuation indent stripped). The link node keeps the consumed dest tokens **inside, after a unique
+  `](` closer leaf** (trivia stays real tokens — lossless; a split token's covered head is a synthetic
+  TEXT leaf, its remainder literal text after the node). Projector: the MD_LINK collect arm keys on the
+  `](` delim and rebuilds the composite closer from the tail's cmark-visible text (`inline_link_dest`
+  unchanged). Backlog: the lookahead stops at a resolved multi-line span or an inline Rd macro (a dest
+  swallowing either keeps the conservative shortcut fallback).
 - **A trailing-backslash inline-link destination DROPS the section (2026-07-10c; boundary now in the lexer,
   2026-07-13e).** `[t](foo\)bar)`: after `double_escape_md`, cmark's bare destination closes at the **raw** `)` →
   dest `foo\` — a trailing backslash that escapes the `\href{…}` brace → `rdComplete`-incomplete → roxygen2
@@ -1237,11 +1248,11 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 991 matching (all allowlisted), 21 divergent** of 1012 pinned. The divergent 21 are the
+**Current: 993 matching (all allowlisted), 20 divergent** of 1013 pinned. The divergent 20 are the
 per-section backlog (harvested 18,
-singles in Images/Links/Raw HTML; Backslash escapes + Block quotes + Code spans +
-Entities + Fenced code blocks + HTML blocks + Linkrefs + List items + Lists + Tabs + ATX + Setext +
-Thematic breaks + Hard line breaks COMPLETE).
+singles in Images/Raw HTML; Backslash escapes + Block quotes + Code spans +
+Entities + Fenced code blocks + HTML blocks + Linkrefs + Links + List items + Lists + Tabs + ATX +
+Setext + Thematic breaks + Hard line breaks COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1249,45 +1260,52 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1012 pinned); 21 divergent backlog.
+   Curated + harvested + whole-spec corpora (1013 pinned); 20 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 206/206 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 207/207 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26i) — raw fence info string drops the section (cm-143; Fenced code blocks COMPLETE)
+## Latest session (2026-07-26j) — cross-line inline-link destination (cm-512; Links COMPLETE)
 
-One target, a **projector gap** (parser + formatter untouched): cm-143's
-`~~~~ ruby startline=3 $%@#$` fence. Mechanism (new trap above, after the
-dropping-href trap): `mdxml_code_block` pastes the fence info string **raw**
-into the `sourceCode` div class — only the body is `escape_verb`-escaped — so
-a `%` in the info comments out the rest of the rendered line
-(`">}}\preformatted{` + the code's first line) and `rdComplete` fails → the
-whole `@details` drops to `(\details)`. Probed keep/drop shapes against the
-oracle: `a{b` drops, `a{b}c` and `a\b` keep (class carries them raw). The
-body is provably scan-neutral (`escape_verb` escapes `%`/`{`/`}`;
-`double_escape_md` keeps its backslash runs even), so only the info matters.
+One target, a **parser gap** (arena + a faithful projector arm): cm-512's
+`[link](   /uri` ⏎ `  "title"  )`. cmark allows each inline-link component gap
+"spaces, tabs, and up to one line ending", so the `(…)` spans a soft break; the
+line-scoped lexer can't see that, the `]` carved lone, and the bracket fell
+back to a shortcut + literal prose. New trap above (after the inline-dest
+trap): `classify_closer` (inline.rs) now tries `cross_line_inline_dest` first
+(cmark's `handle_close_bracket` order) — `inline_dest_span` over the
+post-closer run items' logical text (soft break = `\n`, marker + continuation
+indent stripped; the per-gap one-line-ending limit holds by construction since
+a blank line ends the paragraph run). The link node consumes the destination
+tokens **inside, after a unique `](` closer leaf** (trivia stays real tokens —
+lossless and formatter-safe; a split token's covered head is a synthetic TEXT
+leaf, its remainder literal text after the node via the new
+`MatchedOpener.tail`/`leftover` + `NodeData::Link.tail`). Projector: the
+MD_LINK collect arm keys on the `](` delim and rebuilds the composite closer
+from the tail's cmark-visible text; `inline_link_dest` unchanged. Probed:
+leftover after the `)` stays prose; a title spans the break; non-title junk
+keeps the shortcut fallback; dest may sit entirely on the continuation line.
 
-Implementation: `md_fence_info_drops` (md_blocks.rs) rebuilds roxygen2's
-rendered fragment — info raw, body reduced to its newline structure so line
-boundaries scope the comment — and runs `rd_complete` on it; wired as a new
-`Inline::MdCodeBlock` arm of `body_has_md_drop` (renamed from
-`body_has_dropping_href`), so both `section_rd_complete_seeded` and
-`heading_piece_rd` see it, list items included via the existing recursion.
+**Result:** projector **991→993 matching (all allowlisted), 21→20 divergent**,
+0 blocked, of 1013 pinned; 0 regressions. **Links 90/90 COMPLETE.** Curated
+`md_link_multiline_dest` (R-minted pin: keep, leftover, cross-line title,
+dest-on-line-two, and invalid-junk shapes), fixture
+`roxygen_md_link_multiline_dest`, 1 new unit
+(`cross_line_inline_destination_links`, 5 probed shapes), baseline +1 (new key
+only — the formatter reflows the link onto one line, projection-preserving and
+idempotent). Fixed-point 207/207. Full suite + clippy + fmt green. Backlog:
+the dest lookahead stops at a resolved multi-line span or an inline Rd macro
+(conservative shortcut fallback).
 
-**Result:** projector **989→991 matching (all allowlisted), 22→21 divergent**,
-0 blocked, of 1012 pinned; 0 regressions. **Fenced code blocks 29/29
-COMPLETE.** Curated `md_fence_raw_info_drop` (R-minted pin: balanced-brace
-keep in `@description`, `%` drop in `@details`), 1 new unit
-(`raw_fence_info_percent_drops_the_section`), baseline +1 (new key only).
-Fixed-point 206/206. Full suite + clippy + fmt green.
-
-**Ranked next target:** the remaining singles, nearest-first: **cm-512**
-(Links), **cm-595** (Images), **cm-623** (Raw HTML). Harvested 18 stays the
-biggest block but is out-of-scope singles.
+**Ranked next target:** the remaining singles, nearest-first: **cm-595**
+(Images), **cm-623** (Raw HTML). Harvested 18 stays the biggest block but is
+out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-26i** — raw fence info string drops the section (cm-143; `md_fence_info_drops` rebuilds roxygen2's rendered fragment — info raw, body reduced to newline structure — as an `Inline::MdCodeBlock` arm of `body_has_md_drop`, renamed from `body_has_dropping_href`). Curated `md_fence_raw_info_drop`, unit, baseline +1. 989→991, Fenced code blocks 29/29 COMPLETE.
 
 - **2026-07-26h** — rendered-field backslash/macro collision (cm-014; `run_ends_odd_backslash_run` parity from the trailing `Raw` segment + `push_demoted_macro` at the MdEmphasis/MdCode/MdHtml arms; `html_out_verbs` factored for the demoted `\if`). Curated `md_escape_backslash_collision`, 2 units, baseline +1. 987→989, Backslash escapes 13/13 COMPLETE.
 

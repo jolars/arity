@@ -4164,6 +4164,49 @@ fn inline_dest_parity_mirrors_cmark_after_double_escape() {
 }
 
 #[test]
+fn cross_line_inline_destination_links() {
+    // A CommonMark inline link's `(…)` may span a soft line break: each gap
+    // between the destination, the title, and the closing `)` admits "spaces,
+    // tabs, and up to one line ending" (spec example 512), and a title itself
+    // may contain line endings. roxygen2 renders the usual `\href` (title
+    // dropped); anything after the closing `)` stays literal prose. All
+    // engine-probed.
+    let cases = [
+        // cm-512: destination on the opening line, title on the next.
+        (
+            "#' [link](   /uri\n#'   \"title\"  )",
+            "(\\details (\\href (VERB \"/uri\") (TEXT \"link\")))",
+        ),
+        // Leftover text after the cross-line closer stays literal prose.
+        (
+            "#' [link](   /uri\n#'   \"title\"  ) tail text",
+            "(\\details (\\href (VERB \"/uri\") (TEXT \"link\")) (TEXT \"tail text\"))",
+        ),
+        // A title may span the soft break.
+        (
+            "#' [a](/u \"t1\n#' t2\") z",
+            "(\\details (\\href (VERB \"/u\") (TEXT \"a\")) (TEXT \"z\"))",
+        ),
+        // The whole `(…)` on the continuation gap: destination on line two.
+        (
+            "#' [link](\n#' /uri)",
+            "(\\details (\\href (VERB \"/uri\") (TEXT \"link\")))",
+        ),
+        // Non-title junk after the destination invalidates the link: the
+        // bracket falls back to a shortcut and the `(…)` stays literal.
+        (
+            "#' [link](   /uri\n#' junk more)",
+            "(\\details (\\link (TEXT \"link\")) (TEXT \"( /uri junk more)\"))",
+        ),
+    ];
+    for (body, want) in cases {
+        let src = format!("#' T\n#'\n#' @md\n#' @details\n{body}\n#' @name x\nNULL\n");
+        let rd = project_to_rd(&src);
+        assert!(rd.contains(want), "body {body:?}: want {want}, got: {rd}");
+    }
+}
+
+#[test]
 fn collapsed_ref_link_resolves_label_from_display() {
     // A collapsed reference `[text][]` (CommonMark) takes its label from the
     // display. A user definition resolves it to `\href` with the display kept
