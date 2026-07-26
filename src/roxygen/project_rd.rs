@@ -5660,6 +5660,12 @@ fn push_inline(out: &mut Vec<Inline>, el: NodeOrToken<SyntaxNode, crate::syntax:
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_TABLE => {
             out.push(Inline::MdTable(n));
         }
+        // A `ROXYGEN_MD_HTML_BLOCK` folded into a list item (an HTML block
+        // opening at the item's content start, `- <div>`, cm-177) projects to
+        // roxygen2's `\if{html}{\out{…}}`, the same as a section-level block.
+        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_MD_HTML_BLOCK => {
+            out.push(Inline::MdHtmlBlock(n));
+        }
         // A `ROXYGEN_MD_THEMATIC_BREAK` folded into a list item (a same-line
         // `- * * *`, cm-061): roxygen2 has no thematic-break support and renders
         // it empty, so it contributes nothing — the item stays bare, the same
@@ -10789,6 +10795,25 @@ mod tests {
             project_to_rd(ordered).contains("(\\preformatted (VERB \"foo\\n\"))"),
             "got: {}",
             project_to_rd(ordered)
+        );
+    }
+
+    #[test]
+    fn same_line_html_block_opens_inside_item() {
+        // An HTML block (condition 6) opening on the marker line itself
+        // (`- <div>`, cm-177): the block is the item's content and renders
+        // roxygen2's `\if{html}{\out{…}}` — a leading `(VERB "\n")` and the
+        // line with its trailing newline, the same as a section-level block —
+        // and a following under-indented marker line is a sibling item, not a
+        // blank-terminated continuation.
+        let src = "#' @md\n#' @title T\n#' @details\n#' - <div>\n#' - foo\n#' @name x\nNULL\n";
+        let rd = project_to_rd(src);
+        assert!(
+            rd.contains(
+                "(\\itemize (\\item) (\\if (TEXT \"html\") \
+                 (\\out (VERB \"\\n\") (VERB \"<div>\\n\"))) (\\item) (TEXT \"foo\"))"
+            ),
+            "got: {rd}"
         );
     }
 

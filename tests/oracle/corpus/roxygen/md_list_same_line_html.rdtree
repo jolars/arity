@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (\itemize (\item) (\if (TEXT "html") (\out (VERB "\n") (VERB "<div>\n"))) (\item) (TEXT "foo")))
+(\title (TEXT "T"))

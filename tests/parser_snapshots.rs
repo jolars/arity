@@ -247,6 +247,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_list_item_block_quote",
         "roxygen_md_list_item_same_line_quote",
         "roxygen_md_list_same_line_fence",
+        "roxygen_md_list_same_line_html",
         "roxygen_md_list_item_atx",
         "roxygen_md_list_item_setext",
         "roxygen_md_empty_list_item",

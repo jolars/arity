@@ -1068,6 +1068,23 @@ fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: us
             push(out, TokKind::RoxygenMdFence, text, start, q, text.len() - q);
             return text.len();
         }
+        // An HTML block at the item's content start (`- <div>`, cm-177): the
+        // rest of the line carves as a `RoxygenMdHtmlBlock` opener leaf after
+        // the separator run, exactly like the fence arm. Conditions 1–6 only;
+        // condition 7 (a complete non-block tag alone) stays inline prose, as
+        // at line start.
+        if scan_md_html_block(bytes, q).is_some() {
+            push(out, TokKind::RoxygenText, text, start, end, q - end);
+            push(
+                out,
+                TokKind::RoxygenMdHtmlBlock,
+                text,
+                start,
+                q,
+                text.len() - q,
+            );
+            return text.len();
+        }
         let Some(next_end) = scan_md_list_marker(bytes, q) else {
             return end;
         };

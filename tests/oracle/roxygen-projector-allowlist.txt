@@ -185,6 +185,7 @@ cm-173
 cm-174
 cm-175
 cm-176
+cm-177
 cm-178
 cm-179
 cm-180
@@ -778,6 +779,7 @@ md_list_loose
 md_list_loose_edges
 md_list_marker_split
 md_list_same_line_fence
+md_list_same_line_html
 md_list_same_line_nested
 md_list_sibling_indent
 md_list_value

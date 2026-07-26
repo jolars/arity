@@ -430,7 +430,7 @@ fn emit_tag_line(tokens: &[Token], start: usize, md: bool, events: &mut Vec<Even
     // so the can't-interrupt rule never blocks it).
     if folds && is_md_html_block_value(tokens, value_start.unwrap()) {
         let head_end = close_tag_at_value(tokens, i, value_start.unwrap(), events);
-        return emit_md_html_block_from_value(tokens, head_end, events);
+        return emit_md_html_block_from_value(tokens, head_end, 0, events);
     }
     // A fenced code block from the value (`@details ```r`): the opener fence
     // leaf, then the code lines to the closing fence. The closer lines sit at

@@ -248,6 +248,12 @@ fn is_same_line_break(tokens: &[Token], i: usize) -> bool {
     is_same_line_child(tokens, i, &TokKind::RoxygenMdThematicBreak)
 }
 
+/// Whether the item content at `i` opens with a **same-line HTML block**: a
+/// `RoxygenMdHtmlBlock` opener leaf the lexer carved in `carve_md_list_markers`.
+fn is_same_line_html_block(tokens: &[Token], i: usize) -> bool {
+    is_same_line_child(tokens, i, &TokKind::RoxygenMdHtmlBlock)
+}
+
 /// Whether the token at `i` is a marker→child all-whitespace separator run
 /// followed by a leaf of `kind` — the shape `carve_md_list_markers` produces for
 /// a child block starting on the item's marker line.
@@ -1199,6 +1205,18 @@ fn emit_md_list_level_inner(
             events.push(Event::Tok(i)); // separating whitespace (prose run)
             i = emit_md_code_block_from_value(tokens, i + 1, content_indent, events);
             item_has_content = true;
+        } else if is_same_line_html_block(tokens, i) {
+            // An HTML block opening at the item's content start on the marker
+            // line (`- <div>`, cm-177): the lexer carved the rest of the line
+            // as a `RoxygenMdHtmlBlock` opener leaf past the separator run.
+            // The block node starts at the leaf — a marker-less first line,
+            // the from-value shape — and gathers continuation lines per its
+            // start condition, but only while they reach this item's content
+            // column (an under-indented line ends the item, and an HTML block
+            // has no lazy continuation).
+            events.push(Event::Tok(i)); // separating whitespace (prose run)
+            i = emit_md_html_block_from_value(tokens, i + 1, content_indent, events);
+            item_has_content = true;
         } else if is_same_line_break(tokens, i) {
             // A thematic break at the item's content start on the marker line
             // (`- * * *`, cm-061): the lexer carved the rest of the line as a
@@ -2114,7 +2132,7 @@ pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Ve
         i += 1;
     }
 
-    finish_md_html_block(tokens, i, &opener, events)
+    finish_md_html_block(tokens, i, &opener, 0, events)
 }
 
 /// Emit a `ROXYGEN_MD_HTML_BLOCK` node for an HTML block opening as a **tag's
@@ -2124,11 +2142,16 @@ pub(super) fn emit_md_html_block(tokens: &[Token], start: usize, events: &mut Ve
 /// and the value. roxygen2 strips only the single separator space after the tag
 /// head, so any further indent is part of the block's first rendered line and
 /// stays inside the node. The following lines gather per the opener's start
-/// condition exactly as in [`emit_md_html_block`]. Returns the token index just
-/// past the last consumed line's content.
+/// condition exactly as in [`emit_md_html_block`], additionally gated by
+/// `container_indent` — the enclosing container's content column (`0` for a tag
+/// value, disabling the gate; the item's content column for a mid-line item
+/// block, cm-177): a prose line indented below it exits the container, so it
+/// never folds. Returns the token index just past the last consumed line's
+/// content.
 pub(super) fn emit_md_html_block_from_value(
     tokens: &[Token],
     ws_start: usize,
+    container_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
     events.push(Event::Start(SyntaxKind::ROXYGEN_MD_HTML_BLOCK));
@@ -2144,18 +2167,22 @@ pub(super) fn emit_md_html_block_from_value(
         events.push(Event::Tok(i));
         i += 1;
     }
-    finish_md_html_block(tokens, i, &opener, events)
+    finish_md_html_block(tokens, i, &opener, container_indent, events)
 }
 
 /// Gather an HTML block's continuation lines (after its opening line, whose
 /// content is `opener`) per the opener's start condition, then finish the
 /// `ROXYGEN_MD_HTML_BLOCK` node. `i` is at the opening line's trailing
-/// `Newline`. Shared by the line-start ([`emit_md_html_block`]) and tag-value
+/// `Newline`. A non-zero `container_indent` (the enclosing item's content
+/// column) additionally ends the block at a prose line indented below it — the
+/// line exits the container, and an HTML block has no lazy continuation.
+/// Shared by the line-start ([`emit_md_html_block`]) and tag-value/mid-line
 /// ([`emit_md_html_block_from_value`]) forms.
 fn finish_md_html_block(
     tokens: &[Token],
     mut i: usize,
     opener: &str,
+    container_indent: usize,
     events: &mut Vec<Event>,
 ) -> usize {
     if let Some(closers) = html_block_closers(opener) {
@@ -2175,6 +2202,12 @@ fn finish_md_html_block(
                 }
                 if matches!(classify_line(tokens, m), LineKind::Tag) {
                     break; // a new tag (section boundary) ends the block
+                }
+                if container_indent > 0
+                    && matches!(classify_line(tokens, m), LineKind::Prose)
+                    && list_line_indent(tokens, m) < container_indent
+                {
+                    break; // an under-indented prose line exits the container
                 }
                 // Thread `\n` + indentation + `#'`, then the line's body.
                 let line = line_raw_content(tokens, m);
@@ -2211,6 +2244,9 @@ fn finish_md_html_block(
         }
         if !matches!(classify_line(tokens, m), LineKind::Prose) {
             break; // a blank line or tag ends the HTML block
+        }
+        if container_indent > 0 && list_line_indent(tokens, m) < container_indent {
+            break; // an under-indented prose line exits the container
         }
         // `\n` + indentation + `#'` threaded as trivia, then the line's body.
         for idx in i..=m {

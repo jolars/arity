@@ -108,8 +108,8 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   enters the builder via `ListItemStart::MidLine`: the nested marker sits exactly at the outer
   item's content column, so its indent IS the child container floor. Projector/formatter untouched
   (nested-list arm + per-line textual passthrough already cover the shape).
-- **A block quote — or a code fence, ATX heading, or thematic break — can open ON the marker
-  line (cm-294/295, cm-320/326, cm-302, cm-061).** A thematic-break remainder (`- * * *`)
+- **A block quote — or a code fence, ATX heading, thematic break, or HTML block — can open ON
+  the marker line (cm-294/295, cm-320/326, cm-302, cm-061, cm-177).** A thematic-break remainder (`- * * *`)
   carves a `RoxygenMdThematicBreak` leaf → `is_same_line_break` → the from-value emitter; the
   projector `push_inline` arm drops it (bare `\item`). The **column gate for a break is at
   block level** (`is_md_thematic_break_line` rejects `list_line_indent >= 5`) — the lexer
@@ -129,7 +129,15 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   indent, so `md_code_block_parts`' indent-cancellation breaks — it adds
   `md_indented_code_extra_strip` to the fence indent for the body strip + closer test (zero for
   the tag-value shape). Quote projector + formatter untouched (`block_quote_flat_text` is
-  `take_while`-safe; the list formatter is whole-node per-line passthrough).
+  `take_while`-safe; the list formatter is whole-node per-line passthrough). The HTML-block arm
+  (cm-177) carves conditions 1–6 (`scan_md_html_block`; condition 7 stays inline prose) into a
+  `RoxygenMdHtmlBlock` leaf; `emit_md_html_block_from_value`/`finish_md_html_block` take
+  `container_indent` (0 = ungated tag-value/line-start; the item's content column mid-line) and
+  end the block at a **prose line indented below it** — the line exits the container, and an
+  HTML block has no lazy continuation (blank lines keep their per-condition behavior). The
+  `push_inline` MD_HTML_BLOCK pair-arm routes to the shared `serialize_md_html_block`.
+  Backlog: an in-item continuation line's container columns are NOT stripped from the projected
+  `VERB`s (the `md_indented_code_extra_strip` treatment is unwired there — unpinned shape).
 - **In-item headings: level splits the regime (cm-302).** A level-1 heading inside a list
   (same-line `- # Foo` — `carve_md_list_markers` ATX arm; a content-column ATX line; a
   window-gated setext promotion `item_setext_underline_ahead`/`emit_md_item_setext_heading`)
@@ -1165,10 +1173,10 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 979 matching (all allowlisted), 27 divergent** of 1006 pinned. The divergent 27 are the
-per-section backlog (harvested 18, HTML blocks 2, Link reference definitions 2,
-singles in Backslash escapes/Fenced/Images/Links/Raw HTML; Block quotes + Code spans + Entities +
-List items + Lists + Tabs + ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
+**Current: 981 matching (all allowlisted), 26 divergent** of 1007 pinned. The divergent 26 are the
+per-section backlog (harvested 18, Link reference definitions 2,
+singles in Backslash escapes/Fenced/HTML blocks/Images/Links/Raw HTML; Block quotes + Code spans +
+Entities + List items + Lists + Tabs + ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1176,55 +1184,59 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1006 pinned); 27 divergent backlog.
+   Curated + harvested + whole-spec corpora (1007 pinned); 26 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 200/200 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 201/201 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26d) — field-edge Unicode trim + fence-info entities (cm-025/034, Entities COMPLETE)
+## Latest session (2026-07-26e) — same-line HTML block in a list item (cm-177)
 
-Two projector-only gaps (no parser or formatter change, so no fixture).
+**Parser gap**, the same-line-child family. `- <div>`: cmark opens a type-6 HTML
+block at the item's content start, but arity lexed the `<div>` as an *inline*
+`RoxygenMdHtml` leaf, so the projection lost roxygen2's `\out` newline shape
+(`(VERB "\n") (VERB "<div>\n")`).
 
-**Field-edge Unicode-whitespace trim (cm-025, projector gap):** an entity-decoded
-NBSP at a field edge survived arity but vanishes in roxygen2. Engine-probed
-semantics (see the new trap): stringr `str_trim` — the Unicode White_Space set,
-exactly Rust's `char::is_whitespace`, wider than `norm_ws`'s ASCII set — runs
-once over the rendered field and once per level-1 split piece
-(`mdxml_children_to_rd_top`), and non-md `tag_value` trims the raw value the same
-way. Interior NBSPs (even at paragraph boundaries) survive; a `\subsection` body
-is brace-wrapped interior and never trims; a level-1 heading emits only the split
-marker (no braces), so the `\section` body is a whole piece and trims both edges.
-`trim_field_atoms` (project_rd.rs) trims the first/last `(TEXT …)` atoms (via the
-existing `decode_text_atom`, dropping atoms it empties), wired at
-`push_section_seeded`, `emit_section_with_headings`' enclosing piece, and
-`render_heading_frame`'s level-1 arm. `@section` trims `title: content` as ONE
-string — title takes the leading edge, content the trailing, the `:`-split edges
-interior (`trim_field_atoms_{start,end}` halves).
+The fix follows the established same-line pattern end to end (see the extended
+trap): `carve_md_list_markers` gained an HTML-block arm (`scan_md_html_block`,
+conditions 1–6; condition 7 stays inline prose), `is_same_line_html_block`
+dispatches onto `emit_md_html_block_from_value`, and that emitter +
+`finish_md_html_block` now take `container_indent` — 0 for the existing
+tag-value/line-start callers (ungated, no behavior change), the item's content
+column mid-line, ending the block at a prose line indented below it (the sibling
+`- foo` exits the container; an HTML block has no lazy continuation; blank lines
+keep their per-condition behavior). Projector: only the missing `push_inline`
+MD_HTML_BLOCK pair-arm (the pair-arm trap held) — `serialize_md_html_block` is
+shared, and its `mid_value` branch already handles the marker-less first line.
 
-**Fence info-string entities (cm-034, projector gap):** cmark entity-decodes the
-info string during parsing (its XML `info` attribute carries decoded text), so the
-`sourceCode` div class does too — `decode_html_entities` at
-`serialize_md_code_block`'s class site. Backslash escapes are a net no-op there
-(`double_escape_md` doubles, cmark resolves the pair).
+**Result:** projector **979→981 matching (all allowlisted), 27→26 divergent**, 0
+blocked, of 1007 pinned; 0 regressions. **HTML blocks 45/46** (cm-184 remains).
+Fixture `roxygen_md_list_same_line_html`, curated `md_list_same_line_html`
+(R-minted pin), 1 projector unit (`same_line_html_block_opens_inside_item`),
+format baseline +1 (new key only, no drift). Fixed-point 201/201. Full suite +
+clippy + fmt green. Backlog (in the trap): an in-item HTML-block *continuation*
+line's container columns are not stripped from the projected `VERB`s (unpinned
+shape); in-item condition-7 openers stay inline.
 
-**Result:** projector **974→979 matching (all allowlisted), 29→27 divergent**, 0
-blocked, of 1006 pinned; 0 regressions. **Entities 17/17 COMPLETE.** Curated
-`md_entity_edge_trim` + `md_fence_info_entity` + `md_section_edge_trim` (R-minted
-pins). Four projector units (`field_edge_unicode_whitespace_trims`,
-`section_piece_edges_trim_but_subsection_interior_survives`,
-`section_tag_value_trims_as_one_string`, `fence_info_string_decodes_entities`).
-Format baseline +3 (new keys only, no drift). Fixed-point 200/200. Full suite +
-clippy + fmt green. Backlog noted in the trap: a non-md all-whitespace value makes
-roxygen2 drop the whole tag ("requires a value") — arity would still emit the
-empty section; `@param`/two-part tag description edges un-probed.
+**cm-184 scouted (the last HTML-blocks case):** the CDATA body contains a
+bracket-free `[…\n…]` candidate whose synthesized linkref def is invalid (blank
+lines in the label), so roxygen2 leaks it after `okay` and cmark **re-parses the
+leaked text as markdown** — lazy paragraph continuation onto `okay`, literal
+braces become parse_Rd `LIST` groups, and the blank-separated `    return 0;`
+becomes an indented-code `\preformatted`. arity's leak scan doesn't surface
+candidates inside an HTML block, and `leaked_linkref_text` appends flat text, not
+a re-parsed block — this needs a leak-text block reparse (compare
+`block_quote_flat_text`'s synthesized-fragment approach). Substantial; ranked
+below the linkref stragglers.
 
-**Ranked next target:** **HTML blocks 2** (cm-177/184); then the linkref
-stragglers cm-196 (emphasis inside a leaked label) + cm-220 (def inside a block
-quote). Harvested 18 stays the biggest block but out-of-scope singles.
+**Ranked next target:** linkref stragglers **cm-196** (emphasis inside a leaked
+label) + **cm-220** (def inside a block quote); then cm-184 (leak-text reparse,
+above). Harvested 18 stays the biggest block but out-of-scope singles.
 
 ## Earlier sessions
+
+- **2026-07-26d** — field-edge Unicode trim + fence-info entities (cm-025/034; `trim_field_atoms` at `push_section_seeded`/heading pieces, `@section` trims `title: content` as one string; `decode_html_entities` at the fence-info class site). Curated ×3, 4 units, baseline +3. 974→979, Entities 17/17 COMPLETE.
 
 - **2026-07-26c** — setext column gate + per-piece rdComplete drop (cm-087/090, cm-649 free; `is_md_setext_underline_or_dash` rejects indent ≥5, fold predicate gated; `heading_piece_complete` per level-1 piece, `\section` title survives an emptied body). Fixture, curated ×2, 3 units, baseline +2. 969→974, Setext 27/27 + Hard line breaks 15/15 COMPLETE.
 
