@@ -420,6 +420,45 @@ pub(super) fn shortcut_link_atom(dest: &str) -> String {
 /// `(\if (TEXT "pdf") …)` per the extension-keyed `get_image_format` rule. Returns
 /// `None` for an unrecognized shape (the leaf then stays literal prose).
 pub(super) fn resolve_md_image(raw: &str) -> Option<String> {
+    let (url, title) = image_url_title(raw)?;
+    Some(figure_atom(&url, &title))
+}
+
+/// The demoted form of a resolved image after an odd trailing backslash run in
+/// the preceding prose (see `run_ends_odd_backslash_run`): parse_Rd pairs the
+/// literal `\` with the md-generated macro's own backslash, absorbing the name
+/// into the TEXT and re-parsing each braced argument as a bare LIST. A bare
+/// `\figure` demotes whole — its verbatim args re-parse as plain text — while a
+/// format-keyed `\if` wrapper demotes only itself: the inner `\figure` still
+/// parses inside the bare group (parse_Rd knows it anywhere), keeping its
+/// verbatim args. Returns the demoted macro name and its argument atoms;
+/// `None` mirrors [`resolve_md_image`] (the leaf stays literal prose).
+pub(super) fn resolve_md_image_demoted(raw: &str) -> Option<(&'static str, Vec<String>)> {
+    let (url, title) = image_url_title(raw)?;
+    let cond = match image_format(&url) {
+        ImageFormat::Html => "html",
+        ImageFormat::Pdf => "pdf",
+        ImageFormat::All => {
+            let mut args = vec![text_atom(&url).unwrap_or_default()];
+            if !title.is_empty() {
+                args.push(text_atom(&title).unwrap_or_default());
+            }
+            return Some(("figure", args));
+        }
+    };
+    Some((
+        "if",
+        vec![
+            format!("(TEXT {})", encode_text(cond)),
+            bare_figure_atom(&url, &title),
+        ],
+    ))
+}
+
+/// The destination and title a `ROXYGEN_MD_IMAGE` leaf resolves to — the shared
+/// front half of [`resolve_md_image`]/[`resolve_md_image_demoted`]. `None` for
+/// an unrecognized shape.
+fn image_url_title(raw: &str) -> Option<(String, String)> {
     let bytes = raw.as_bytes();
     // The leaf always begins `![`; the alt span is `[…]` starting at index 1.
     let alt_end = scan_delimited(bytes, 1, b'[', b']')?;
@@ -431,7 +470,7 @@ pub(super) fn resolve_md_image(raw: &str) -> Option<String> {
                 return None;
             }
             let (url, title) = split_image_dest(&raw[alt_end + 1..dest_end - 1]);
-            Some(figure_atom(url, title))
+            Some((url.to_string(), title.to_string()))
         }
         // Reference image `![alt][ref]`: roxygen2's `add_linkrefs_to_md` synthesizes
         // a `[ref]: R:URLencode(ref)` definition for the bracket-free `ref`
@@ -451,14 +490,11 @@ pub(super) fn resolve_md_image(raw: &str) -> Option<String> {
             if label.is_empty() {
                 return None;
             }
-            Some(figure_atom(&synthesized_image_dest(label), ""))
+            Some((synthesized_image_dest(label), String::new()))
         }
         // Shortcut image `![alt]`: the label is the alt, resolved against the
         // synthesized `[alt]: R:URLencode(alt)` definition.
-        None => Some(figure_atom(
-            &synthesized_image_dest(&raw[2..alt_end - 1]),
-            "",
-        )),
+        None => Some((synthesized_image_dest(&raw[2..alt_end - 1]), String::new())),
         _ => None,
     }
 }
@@ -573,16 +609,22 @@ pub(super) fn strip_title_delims(s: &str) -> &str {
 /// (raster: `jpg`/`jpeg`/`gif`/`png`) or neither stays a bare `\figure`. The title
 /// is verbatim and omitted when empty.
 fn figure_atom(url: &str, title: &str) -> String {
-    let mut args = vec![format!("(VERB {})", encode_text(url))];
-    if !title.is_empty() {
-        args.push(format!("(VERB {})", encode_text(title)));
-    }
-    let figure = format!("(\\figure {})", args.join(" "));
+    let figure = bare_figure_atom(url, title);
     match image_format(url) {
         ImageFormat::Html => format!("(\\if (TEXT {}) {figure})", encode_text("html")),
         ImageFormat::Pdf => format!("(\\if (TEXT {}) {figure})", encode_text("pdf")),
         ImageFormat::All => figure,
     }
+}
+
+/// The `\figure` atom without its format conditional — the demoted-`\if` path
+/// keeps the inner macro intact while the wrapper's own braces re-parse bare.
+fn bare_figure_atom(url: &str, title: &str) -> String {
+    let mut args = vec![format!("(VERB {})", encode_text(url))];
+    if !title.is_empty() {
+        args.push(format!("(VERB {})", encode_text(title)));
+    }
+    format!("(\\figure {})", args.join(" "))
 }
 
 /// The conditional an image destination renders under, per roxygen2's

@@ -605,6 +605,7 @@ cm-591
 cm-592
 cm-593
 cm-594
+cm-595
 cm-596
 cm-597
 cm-598
@@ -729,6 +730,7 @@ md_html_inline_multiline_edges
 md_html_inline_multiline_value
 md_html_verbatim
 md_html_verbatim_oneline
+md_image_backslash_collision
 md_image_collapsed
 md_image_def_title
 md_image_emph_label

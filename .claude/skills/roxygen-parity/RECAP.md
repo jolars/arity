@@ -210,10 +210,13 @@ each is a rule + a source-of-truth pointer (usually a function name; go read it)
   arg as a bare `(LIST …)` (a demoted `\verb`/`\code` arg is plain text — verbatim-ness lost;
   `\if{html}{\out{…}}` demotes both args but the inner `\out` still parses). An even run keeps the
   macro. `run_ends_odd_backslash_run` + `push_demoted_macro` (serialize.rs), wired at the
-  MdEmphasis/MdCode/MdHtml arms; the collapsed `ceil(k/2)` TEXT run already equals parse_Rd's paired
-  count in both parities — only the structure is parity-keyed, and the parity is read from the raw
-  trailing `Raw` segment (a `Final` quote-glue segment's parity is unrecoverable). Backlog: autolink
-  `\url` (`\<http://x>`) and image `\figure` (`\![x](u)`) after an odd run; entity-produced
+  MdEmphasis/MdCode/MdHtml/MdImage arms; the collapsed `ceil(k/2)` TEXT run already equals parse_Rd's
+  paired count in both parities — only the structure is parity-keyed, and the parity is read from the
+  raw trailing `Raw` segment (a `Final` quote-glue segment's parity is unrecoverable). An image
+  demotes via `resolve_md_image_demoted` (md_links.rs, over the factored `image_url_title`): a bare
+  `\figure` whole (verbatim args re-parse as plain-text LISTs), a format-keyed `\if` wrapper only —
+  its inner `\figure` stays intact with VERB args (cm-595). Backlog: autolink `\url` (`\<http://x>`)
+  after an odd run; entity-produced
   backslashes (`&#92;`) are invisible to the raw-run scan; a demoted verbatim arg with a bare `%`.
 - **Under `@md`, a non-fragile macro's ARG is markdown.** roxygen2's `escaped_for_md`
   (`markdown-escaping.R`) is the *fragile* protected set (`\code`/`\link`/`\verb`/`\url`/
@@ -1248,11 +1251,11 @@ pure Rust, **no R**, allowlist-gated (`tests/oracle/roxygen-projector-allowlist.
 sources:** curated dir corpus (`<stem>.rdtree`); the harvested corpus's projector-eligible subset
 (`roxygen-sections.jsonl`, 151/217 single-topic self-contained blocks); the **whole CommonMark spec**
 (`commonmark-spec*.jsonl`, all 655 `cm-NNN` examples, per-section burndown in `ROXYGEN_PROJECTOR.md`).
-**Current: 993 matching (all allowlisted), 20 divergent** of 1013 pinned. The divergent 20 are the
+**Current: 995 matching (all allowlisted), 19 divergent** of 1014 pinned. The divergent 19 are the
 per-section backlog (harvested 18,
-singles in Images/Raw HTML; Backslash escapes + Block quotes + Code spans +
-Entities + Fenced code blocks + HTML blocks + Linkrefs + Links + List items + Lists + Tabs + ATX +
-Setext + Thematic breaks + Hard line breaks COMPLETE).
+one single in Raw HTML; Backslash escapes + Block quotes + Code spans +
+Entities + Fenced code blocks + HTML blocks + Images + Linkrefs + Links + List items + Lists + Tabs +
+ATX + Setext + Thematic breaks + Hard line breaks COMPLETE).
 Tasks: `task roxygen-projector` (the gate),
 `roxygen-projector-refresh`/`-pins`/`-seed`, `roxygen-spec-corpus`/`-pins`. Report:
 `ROXYGEN_PROJECTOR.md`. Blocked bucket: `roxygen-projector-blocked.txt` (empty for now).
@@ -1260,50 +1263,45 @@ Tasks: `task roxygen-projector` (the gate),
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust) — the **primary parser-growth
    driver**. Compares Rd *structure*; sees block-structure gaps the fixed-point check is blind to.
-   Curated + harvested + whole-spec corpora (1013 pinned); 20 divergent backlog.
+   Curated + harvested + whole-spec corpora (1014 pinned); 19 divergent backlog.
 2. **Curated fixed-point** (`tests/roxygen_oracle.rs::roxygen_oracle_report`, needs R, `#[ignore]`d) —
-   strict semantic preservation of the formatter; 207/207 preserving, 0 blocked. *Meaning, not layout.*
+   strict semantic preservation of the formatter; 208/208 preserving, 0 blocked. *Meaning, not layout.*
 3. **Harvested fixed-point** (`tests/oracle/corpus/roxygen.jsonl`, 217 cases, needs R, `#[ignore]`d) —
    broad opt-in backlog gated by `roxygen-allowlist.txt` (216 preserving, 1 skipped). A coverage net,
    not the parser driver. Reports: `task roxygen-oracle`/`roxygen-harvest`.
 
-## Latest session (2026-07-26j) — cross-line inline-link destination (cm-512; Links COMPLETE)
+## Latest session (2026-07-26k) — image after an odd backslash run (cm-595; Images COMPLETE)
 
-One target, a **parser gap** (arena + a faithful projector arm): cm-512's
-`[link](   /uri` ⏎ `  "title"  )`. cmark allows each inline-link component gap
-"spaces, tabs, and up to one line ending", so the `(…)` spans a soft break; the
-line-scoped lexer can't see that, the `]` carved lone, and the bracket fell
-back to a shortcut + literal prose. New trap above (after the inline-dest
-trap): `classify_closer` (inline.rs) now tries `cross_line_inline_dest` first
-(cmark's `handle_close_bracket` order) — `inline_dest_span` over the
-post-closer run items' logical text (soft break = `\n`, marker + continuation
-indent stripped; the per-gap one-line-ending limit holds by construction since
-a blank line ends the paragraph run). The link node consumes the destination
-tokens **inside, after a unique `](` closer leaf** (trivia stays real tokens —
-lossless and formatter-safe; a split token's covered head is a synthetic TEXT
-leaf, its remainder literal text after the node via the new
-`MatchedOpener.tail`/`leftover` + `NodeData::Link.tail`). Projector: the
-MD_LINK collect arm keys on the `](` delim and rebuilds the composite closer
-from the tail's cmark-visible text; `inline_link_dest` unchanged. Probed:
-leftover after the `)` stays prose; a title spans the break; non-title junk
-keeps the shortcut fallback; dest may sit entirely on the continuation line.
+One target, a **projector gap** (the cm-014 demotion machinery unwired at the
+image arm — the exact backlog item recorded in the cm-014 trap): `\![foo]`
+under `@md`. The doubled `\` resolves to a literal backslash, the image stays
+active, and the rendered field is `\` + `\figure{…}` — parse_Rd pairs the
+literal `\` with the md-generated macro's own backslash. New resolver
+`resolve_md_image_demoted` (md_links.rs, over the factored `image_url_title` +
+`bare_figure_atom`): a bare `\figure` demotes whole (name absorbed into the
+TEXT, verbatim args re-parse as plain-text LISTs — `(TEXT "a\\figure") (LIST
+(TEXT "u.png"))`); an `\if{html|pdf}`-wrapped image (svg/pdf destination)
+demotes only the wrapper — the inner `\figure` still parses inside the bare
+group with VERB args (engine-probed, p1). Wired at serialize's `MdImage` arm
+behind the existing `run_ends_odd_backslash_run` gate; an even run keeps the
+macro (already correct); an unresolvable image stays literal prose
+(`push_raw`, unchanged). CST + formatter untouched.
 
-**Result:** projector **991→993 matching (all allowlisted), 21→20 divergent**,
-0 blocked, of 1013 pinned; 0 regressions. **Links 90/90 COMPLETE.** Curated
-`md_link_multiline_dest` (R-minted pin: keep, leftover, cross-line title,
-dest-on-line-two, and invalid-junk shapes), fixture
-`roxygen_md_link_multiline_dest`, 1 new unit
-(`cross_line_inline_destination_links`, 5 probed shapes), baseline +1 (new key
-only — the formatter reflows the link onto one line, projection-preserving and
-idempotent). Fixed-point 207/207. Full suite + clippy + fmt green. Backlog:
-the dest lookahead stops at a resolved multi-line span or an inline Rd macro
-(conservative shortcut fallback).
+**Result:** projector **993→995 matching (all allowlisted), 20→19 divergent**,
+0 blocked, of 1014 pinned; 0 regressions. **Images 22/22 COMPLETE.** Curated
+`md_image_backslash_collision` (R-minted pin: bare png+title, svg `\if` wrap,
+shortcut `R:` dest, even-run control, user-def reference image), 1 new unit
+(`odd_backslash_run_demotes_a_following_md_image`), baseline +1 (new key only
+— the formatter is identity on the case). Fixed-point 208/208. Full suite +
+clippy + fmt green. Backlog (unchanged from cm-014): autolink `\url` after an
+odd run; entity-produced backslashes.
 
-**Ranked next target:** the remaining singles, nearest-first: **cm-595**
-(Images), **cm-623** (Raw HTML). Harvested 18 stays the biggest block but is
-out-of-scope singles.
+**Ranked next target:** **cm-623** (Raw HTML) — the last spec single; then the
+harvested 18 (out-of-scope singles).
 
 ## Earlier sessions
+
+- **2026-07-26j** — cross-line inline-link destination (cm-512; `classify_closer` tries `cross_line_inline_dest` first, dest tokens live inside the link node after a unique `](` closer leaf; projector rebuilds the composite closer from the tail). Curated `md_link_multiline_dest`, fixture, unit, baseline +1. 991→993, Links 90/90 COMPLETE.
 
 - **2026-07-26i** — raw fence info string drops the section (cm-143; `md_fence_info_drops` rebuilds roxygen2's rendered fragment — info raw, body reduced to newline structure — as an `Inline::MdCodeBlock` arm of `body_has_md_drop`, renamed from `body_has_dropping_href`). Curated `md_fence_raw_info_drop`, unit, baseline +1. 989→991, Fenced code blocks 29/29 COMPLETE.
 

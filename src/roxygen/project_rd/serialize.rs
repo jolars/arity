@@ -603,6 +603,16 @@ pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
             }
             Inline::MdImage(raw) => match resolve_md_image(raw) {
                 Some(atom) => {
+                    if md && run_ends_odd_backslash_run(&run) {
+                        // A bare `\figure` demotes whole (verbatim args re-parse
+                        // as plain text); a format-keyed `\if` demotes only
+                        // itself, its inner `\figure` still parsing inside the
+                        // bare group.
+                        if let Some((name, args)) = resolve_md_image_demoted(raw) {
+                            push_demoted_macro(&mut atoms, &mut run, md, name, args);
+                            continue;
+                        }
+                    }
                     if let Some(flushed) = flush_run(&mut run, md) {
                         atoms.push(flushed);
                     }

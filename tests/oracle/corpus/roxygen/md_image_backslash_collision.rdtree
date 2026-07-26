@@ -1,0 +1,3 @@
+(\description (TEXT "T"))
+(\details (TEXT "a\\figure") (LIST (TEXT "u.png")) (LIST (TEXT "t")) (TEXT "end b\\if") (LIST (TEXT "html")) (LIST (\figure (VERB "a.svg") (VERB "s"))) (TEXT "end c\\figure") (LIST (TEXT "R:foo")) (TEXT "end d\\") (\figure (VERB "R:bar")) (TEXT "even end e\\figure") (LIST (TEXT "/url")) (LIST (TEXT "title")) (TEXT "def end"))
+(\title (TEXT "T"))

@@ -1804,6 +1804,58 @@ fn odd_backslash_run_demotes_a_following_md_macro() {
 }
 
 #[test]
+fn odd_backslash_run_demotes_a_following_md_image() {
+    // `\![x](u.png)` under `@md` (cm-595's family): the doubled `\` resolves to
+    // a literal backslash and the image stays active, so the rendered field is
+    // `\` + `\figure{u.png}` — parse_Rd pairs the backslashes, absorbs the name
+    // into the TEXT, and re-parses each braced arg as a bare LIST (the verbatim
+    // args demote to plain text).
+    let bare = "#' @md\n\
+                #' @title T\n\
+                #' @details\n\
+                #' a\\![x](u.png \"t\") end\n\
+                #' @name x\n\
+                NULL\n";
+    assert_eq!(
+        project_to_rd(bare),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"a\\\\figure\") (LIST (TEXT \"u.png\")) (LIST (TEXT \"t\")) \
+         (TEXT \"end\"))\n\
+         (\\title (TEXT \"T\"))"
+    );
+    // An HTML-only destination renders `\if{html}{\figure{…}}`: only the `\if`
+    // demotes; the inner `\figure` still parses inside the bare group (parse_Rd
+    // knows it anywhere), keeping its verbatim args.
+    let wrapped = "#' @md\n\
+                   #' @title T\n\
+                   #' @details\n\
+                   #' a\\![x](a.svg \"t\") end\n\
+                   #' @name x\n\
+                   NULL\n";
+    assert_eq!(
+        project_to_rd(wrapped),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"a\\\\if\") (LIST (TEXT \"html\")) \
+         (LIST (\\figure (VERB \"a.svg\") (VERB \"t\"))) (TEXT \"end\"))\n\
+         (\\title (TEXT \"T\"))"
+    );
+    // A shortcut image resolves against its synthesized `R:alt` destination
+    // before demoting (engine-probed).
+    let shortcut = "#' @md\n\
+                    #' @title T\n\
+                    #' @details\n\
+                    #' a\\![foo] end\n\
+                    #' @name x\n\
+                    NULL\n";
+    assert_eq!(
+        project_to_rd(shortcut),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"a\\\\figure\") (LIST (TEXT \"R:foo\")) (TEXT \"end\"))\n\
+         (\\title (TEXT \"T\"))"
+    );
+}
+
+#[test]
 fn even_backslash_run_keeps_the_following_md_macro() {
     // An even source run pairs away entirely before the macro's backslash, so
     // the macro survives (`x\\*y*` → text `x\` + `\emph{y}`); an odd run of 3
