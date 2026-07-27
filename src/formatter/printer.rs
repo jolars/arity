@@ -126,6 +126,10 @@ impl Printer {
                 Ir::Nil => {}
                 Ir::Text(s) => w.write_text(s),
                 Ir::Verbatim { text, .. } => w.write_verbatim(text),
+                // A trailing comment sits exactly where it appears (an adjacent
+                // HardLine ends the line right after it), so it renders inline
+                // like text; only fit measurement treats it as zero width.
+                Ir::LineSuffix(text) => w.write_text(text),
                 Ir::Concat(items) => {
                     for item in items.iter().rev() {
                         stack.push((indent, mode, item));
@@ -273,7 +277,8 @@ impl Printer {
         let mut stack: Vec<&Ir> = vec![node];
         while let Some(node) = stack.pop() {
             match node {
-                Ir::Nil | Ir::SoftLine => {}
+                // A line suffix (trailing comment) is zero width for fit.
+                Ir::Nil | Ir::SoftLine | Ir::LineSuffix(_) => {}
                 Ir::Text(s) => {
                     let w = s.chars().count();
                     if w > remaining {
@@ -358,7 +363,8 @@ impl Printer {
         let mut stack: Vec<&Ir> = vec![inner];
         while let Some(node) = stack.pop() {
             match node {
-                Ir::Nil | Ir::SoftLine => {}
+                // A line suffix (trailing comment) is zero width for fit.
+                Ir::Nil | Ir::SoftLine | Ir::LineSuffix(_) => {}
                 Ir::Text(s) => {
                     col += s.chars().count();
                     if col > self.line_width {
@@ -421,6 +427,9 @@ impl Printer {
             match node {
                 Ir::Nil | Ir::SoftLine if mode == Mode::Flat => {}
                 Ir::Nil => {}
+                // A line suffix (trailing comment) is zero width for fit; the
+                // break that follows it is measured on its own.
+                Ir::LineSuffix(_) => {}
                 Ir::SoftLine => return true,
                 Ir::Text(s) => {
                     col += s.chars().count();
@@ -501,7 +510,8 @@ impl Printer {
         let mut stack: Vec<(Mode, &Ir)> = vec![(Mode::Flat, node)];
         while let Some((mode, node)) = stack.pop() {
             match node {
-                Ir::Nil => {}
+                // A line suffix (trailing comment) is zero width for fit.
+                Ir::Nil | Ir::LineSuffix(_) => {}
                 Ir::Text(s) => {
                     col += s.chars().count();
                     if col > self.line_width {
@@ -607,6 +617,30 @@ mod tests {
     fn hug_group_keeps_prefix_flat_when_it_fits() {
         let printer = Printer::new(FormatStyle::default());
         assert_eq!(printer.print(&hug_call()), "f(a, {\n  body\n})");
+    }
+
+    #[test]
+    fn line_suffix_is_zero_width_and_keeps_a_group_flat() {
+        // A group whose flat form fits at 80 only because the trailing comment is
+        // not counted: `aaaa || bbbb` (12 cols) fits, the comment does not.
+        let style = FormatStyle {
+            line_width: 14,
+            indent_width: 2,
+            line_ending: LineEnding::Lf,
+        };
+        let printer = Printer::new(style);
+        let group = Ir::group(Ir::concat([
+            Ir::text("aaaa"),
+            Ir::if_break(
+                Ir::text(" || "),
+                Ir::concat([Ir::text(" ||"), Ir::hard_line()]),
+            ),
+            Ir::text("bbbb"),
+        ]));
+        // With the comment counted (18 cols) the group would break; as a zero-width
+        // line suffix it stays flat and the comment rides the end of the line.
+        let ir = Ir::concat([group, Ir::line_suffix(" # note")]);
+        assert_eq!(printer.print(&ir), "aaaa || bbbb # note");
     }
 
     #[test]

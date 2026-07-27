@@ -364,11 +364,15 @@ fn ir_binary_rhs(
 
 /// A leading ` ` plus the comments joined by spaces, or nothing when there are
 /// none. Emitted on the operator's line, always followed by a forced break.
+/// A trailing comment is a zero-width [line suffix](Ir::LineSuffix): it never
+/// counts toward the line's width, so it cannot force an otherwise-fitting
+/// operand group to break (matching air). The forced break after it is supplied
+/// by the adjacent `hard_line` on the caller's segment.
 fn comment_suffix(comments: &[String]) -> Ir {
     if comments.is_empty() {
         Ir::nil()
     } else {
-        Ir::text(format!(" {}", comments.join(" ")))
+        Ir::line_suffix(format!(" {}", comments.join(" ")))
     }
 }
 

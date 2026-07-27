@@ -81,6 +81,16 @@ pub(crate) enum Ir {
     /// stay flat (used for comments and for multi-line bridged renderings);
     /// otherwise it behaves as opaque inline text of its own width.
     Verbatim { text: Rc<str>, force_break: bool },
+    /// A trailing comment that runs to end of line, rendered inline where it sits
+    /// but counted as **zero width** by every fit measurement. This is the
+    /// Wadler/Prettier "line suffix" concept, scoped to same-line trailing
+    /// comments: air treats such a comment as a zero-width suffix, so a long
+    /// comment never forces an otherwise-fitting group to break. The break that
+    /// must follow a trailing comment (no code can share its line) is supplied
+    /// separately by a following hard break (an adjacent [`Ir::HardLine`], or the
+    /// statement separator between lines), so this node itself does not force a
+    /// break. The text must not contain a newline.
+    LineSuffix(Rc<str>),
     /// An ordered list of candidate layouts. The printer picks the first
     /// candidate whose *first line* fits at the current column under a
     /// break-aware measurement (nested groups decide their own break, success
@@ -230,6 +240,12 @@ impl Ir {
         }
     }
 
+    /// A trailing comment rendered inline but measured as zero width; see
+    /// [`Ir::LineSuffix`].
+    pub(crate) fn line_suffix(s: impl Into<Rc<str>>) -> Ir {
+        Ir::LineSuffix(s.into())
+    }
+
     pub(crate) fn line() -> Ir {
         Ir::Line
     }
@@ -250,6 +266,7 @@ impl Ir {
             Ir::IfBreak { flat, broken } => flat.contains_group() || broken.contains_group(),
             Ir::Text(_)
             | Ir::Verbatim { .. }
+            | Ir::LineSuffix(_)
             | Ir::HardLine
             | Ir::EmptyLine
             | Ir::Line
@@ -288,7 +305,12 @@ impl Ir {
             Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
                 cands.first().is_some_and(Ir::contains_forced_break)
             }
-            Ir::Text(_) | Ir::Line | Ir::SoftLine | Ir::IfBreak { .. } | Ir::Nil => false,
+            Ir::Text(_)
+            | Ir::LineSuffix(_)
+            | Ir::Line
+            | Ir::SoftLine
+            | Ir::IfBreak { .. }
+            | Ir::Nil => false,
         }
     }
 }

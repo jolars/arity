@@ -414,7 +414,10 @@ pub(super) fn ir_line(
             NodeOrToken::Token(token) => token.text().to_string(),
             NodeOrToken::Node(_) => unreachable!(),
         };
-        return Ok(Ir::concat([expr, Ir::text(" "), Ir::text(comment)]));
+        // The trailing comment is a zero-width line suffix so it never forces the
+        // expression's own groups to break (matching air); the statement
+        // separator supplies the newline that ends its line.
+        return Ok(Ir::concat([expr, Ir::line_suffix(format!(" {comment}"))]));
     }
 
     ir_expr_segment(&significant, "line expression", indent, ctx)
@@ -546,7 +549,11 @@ pub(super) fn ir_expr_with_optional_comment(
             NodeOrToken::Token(token) => token.text().to_string(),
             NodeOrToken::Node(_) => unreachable!(),
         };
-        return Ok(Ir::concat([expr, Ir::text(" "), Ir::text(comment)]));
+        // Zero-width line suffix: the trailing comment must not force the
+        // expression to break (matching air). A break always follows it in
+        // context (statement separator, or the enclosing list that a comment
+        // forces open).
+        return Ok(Ir::concat([expr, Ir::line_suffix(format!(" {comment}"))]));
     }
 
     ir_expr_segment(elements, context, indent, ctx)
