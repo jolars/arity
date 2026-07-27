@@ -346,6 +346,7 @@ patchwork
 pbapply
 pbivnorm
 pbkrtest
+pcreg
 pdftools
 performance
 permute
@@ -378,6 +379,7 @@ proxy
 ps
 psych
 purrr
+qpdf
 quadprog
 quantmod
 quantreg
@@ -433,6 +435,7 @@ s2
 sandwich
 sass
 scales
+scatterpie
 scatterplot3d
 segmented
 selectr
@@ -450,6 +453,7 @@ shinystan
 shinythemes
 showtext
 showtextdb
+sitmo
 slam
 slider
 snakecase
