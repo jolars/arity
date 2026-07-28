@@ -525,7 +525,7 @@ impl IncrementalDatabase {
         let id = self
             .source_map
             .lock()
-            .expect("file source map mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .alloc_id();
         SourceFile::new(self, id, None, text.into())
     }
@@ -704,7 +704,7 @@ impl IncrementalDatabase {
         let existing = self
             .source_map
             .lock()
-            .expect("file source map mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .by_path
             .get(&key)
             .copied();
@@ -722,7 +722,7 @@ impl IncrementalDatabase {
                 let id = self
                     .source_map
                     .lock()
-                    .expect("file source map mutex poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .alloc_id();
                 // Store the first-seen spelling as the file's path; the index is
                 // keyed by the normalized form, so later equivalent spellings
@@ -730,7 +730,7 @@ impl IncrementalDatabase {
                 let file = SourceFile::new(self, id, Some(path.to_path_buf()), text);
                 self.source_map
                     .lock()
-                    .expect("file source map mutex poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .by_path
                     .insert(key, file);
                 file
@@ -745,7 +745,7 @@ impl IncrementalDatabase {
     pub fn lookup_file(&self, path: &Path) -> Option<SourceFile> {
         self.source_map
             .lock()
-            .expect("file source map mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .by_path
             .get(&normalize_path(path))
             .copied()
@@ -779,14 +779,14 @@ impl IncrementalDatabase {
     pub fn clear_query_log(&self) {
         self.query_log
             .lock()
-            .expect("query log mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
     }
 
     pub fn query_log(&self) -> Vec<QueryLogEntry> {
         self.query_log
             .lock()
-            .expect("query log mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
@@ -1448,14 +1448,14 @@ impl IncrementalDb for IncrementalDatabase {
     fn record_query(&self, entry: QueryLogEntry) {
         self.query_log
             .lock()
-            .expect("query log mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(entry);
     }
 
     fn reparse_prev(&self, file: SourceFile) -> Option<Arc<PrevParse>> {
         self.reparse_cache
             .lock()
-            .expect("reparse cache mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&file)
             .cloned()
     }
@@ -1466,7 +1466,34 @@ impl IncrementalDb for IncrementalDatabase {
         }
         self.reparse_cache
             .lock()
-            .expect("reparse cache mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(file, Arc::new(prev));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn db_recovers_from_a_poisoned_mutex() {
+        // The lint thread catches panics to stay alive (see `lsp::lint_thread`).
+        // If a panic unwinds while one of the db's internal mutexes is held, the
+        // mutex is poisoned; the *next* request must not re-panic on lock, or one
+        // bad request would brick every later one. Poison the source-map mutex,
+        // then assert normal db operations still work.
+        let mut db = IncrementalDatabase::default();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = db.source_map.lock().expect("first lock is clean");
+            panic!("poison the guard while it is held");
+        }));
+        assert!(unwound.is_err(), "the panic must have unwound");
+        assert!(db.source_map.is_poisoned(), "mutex is now poisoned");
+
+        // Despite the poison, upsert/lookup must still work (no re-panic).
+        let path = Path::new("poison.R");
+        let file = db.upsert_file(path, "x <- 1\n".to_string());
+        assert_eq!(db.file_text(file), "x <- 1\n");
+        assert!(db.lookup_file(path) == Some(file), "lookup after poison");
     }
 }

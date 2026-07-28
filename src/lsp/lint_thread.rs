@@ -114,6 +114,29 @@ pub(crate) fn decide(inflight: Option<(&Uri, i32)>, pending: &HashMap<Uri, i32>)
     }
 }
 
+/// Run `f` on the lint thread, catching any panic so a single malformed request
+/// can't take down the sole salsa-db writer and, with it, the whole server. This
+/// mirrors the read pool's per-job `catch_unwind` (see [`task_pool`]); the lint
+/// thread and main loop were the two places a panic still meant process death.
+/// Returns `true` if `f` ran to completion, `false` if it panicked (logged). The
+/// db's internal mutexes recover from poisoning (see `IncrementalDatabase`), so a
+/// panic mid-write leaves the db usable for the next request rather than bricked.
+/// Also used by the main loop (`server::main_loop`) to isolate request handlers.
+pub(crate) fn guard(label: &str, f: impl FnOnce()) -> bool {
+    match std::panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(()) => true,
+        Err(panic) => {
+            let msg = panic
+                .downcast_ref::<&'static str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("<non-string panic payload>");
+            log::error!("lint thread caught panic in {label}: {msg}");
+            false
+        }
+    }
+}
+
 pub(crate) struct LintWorker {
     db: IncrementalDatabase,
     /// Workspace anchors whose index cache has already been loaded into the salsa
@@ -177,21 +200,26 @@ impl LintWorker {
                     // Coalesce: keep only the latest version per URI, so a fast
                     // typist's stale edits are dropped before they're ever linted.
                     // A `SeedWorkspace` is applied inline (it's the db writer).
-                    self.handle_lint_msg(msg);
-                    while let Ok(m) = lint_rx.try_recv() {
-                        self.handle_lint_msg(m);
-                    }
-                    self.try_dispatch();
+                    // Guarded: a panic in one request must not kill the thread.
+                    guard("lint message", || {
+                        self.handle_lint_msg(msg);
+                        while let Ok(m) = lint_rx.try_recv() {
+                            self.handle_lint_msg(m);
+                        }
+                        self.try_dispatch();
+                    });
                 }
                 recv(done_rx) -> done => {
                     let Ok(done) = done else { continue };
-                    // Free the slot only if this `done` is for the *current*
-                    // in-flight analyze — a late `done` from a superseded one
-                    // (different version) must not clear the new analyze.
-                    if matches!(&self.inflight, Some(f) if f.uri == done.uri && f.version == done.version) {
-                        self.inflight = None;
-                    }
-                    self.try_dispatch();
+                    guard("analyze done", || {
+                        // Free the slot only if this `done` is for the *current*
+                        // in-flight analyze — a late `done` from a superseded one
+                        // (different version) must not clear the new analyze.
+                        if matches!(&self.inflight, Some(f) if f.uri == done.uri && f.version == done.version) {
+                            self.inflight = None;
+                        }
+                        self.try_dispatch();
+                    });
                 }
                 recv(read_rx) -> job => {
                     let Ok(job) = job else { continue };
@@ -199,28 +227,34 @@ impl LintWorker {
                     // lint thread. The clone is dropped inside `run_read`, so the
                     // next write isn't blocked once the read finishes (or a racing
                     // write trips `salsa::Cancelled`, handled by the fallback).
-                    let snapshot = self.db.snapshot();
-                    self.read_spawner.spawn(move || run_read(snapshot, job));
+                    guard("read job dispatch", || {
+                        let snapshot = self.db.snapshot();
+                        self.read_spawner.spawn(move || run_read(snapshot, job));
+                    });
                 }
                 recv(build_rx) -> built => {
                     let Ok(indexed) = built else { continue };
-                    // Sole writer installs the freshly-harvested index at HIGH
-                    // durability, then re-lints every open document against it.
-                    self.db.set_library_index(indexed);
-                    let _ = self.out_tx.send(Outbound::RelintAll);
+                    guard("index install", || {
+                        // Sole writer installs the freshly-harvested index at HIGH
+                        // durability, then re-lints every open document against it.
+                        self.db.set_library_index(indexed);
+                        let _ = self.out_tx.send(Outbound::RelintAll);
+                    });
                 }
                 recv(remote_rx) -> fetched => {
                     let Ok(fetched) = fetched else { continue };
-                    // Merge the freshly-fetched names into the live sidecar and
-                    // reinstall it (HIGH durability), then re-lint every document.
-                    let mut merged = self
-                        .db
-                        .remote_exports()
-                        .map(|a| (*a).clone())
-                        .unwrap_or_default();
-                    merged.merge_from(fetched);
-                    self.db.set_remote_exports(merged);
-                    let _ = self.out_tx.send(Outbound::RelintAll);
+                    guard("sidecar install", || {
+                        // Merge the freshly-fetched names into the live sidecar and
+                        // reinstall it (HIGH durability), then re-lint every document.
+                        let mut merged = self
+                            .db
+                            .remote_exports()
+                            .map(|a| (*a).clone())
+                            .unwrap_or_default();
+                        merged.merge_from(fetched);
+                        self.db.set_remote_exports(merged);
+                        let _ = self.out_tx.send(Outbound::RelintAll);
+                    });
                 }
             }
         }
@@ -642,6 +676,17 @@ pub(crate) fn now_unix_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guard_contains_a_panic_and_reports_completion() {
+        // A panicking closure is caught (returns false) so the lint thread's
+        // `select!` loop keeps running instead of taking the whole server down;
+        // a normal closure runs to completion (returns true).
+        assert!(!guard("test", || panic!("boom")));
+        let mut ran = false;
+        assert!(guard("test", || ran = true));
+        assert!(ran);
+    }
 
     #[test]
     fn decide_idle_starts_a_pending_uri() {

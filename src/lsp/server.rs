@@ -198,15 +198,21 @@ pub(crate) fn main_loop(
                         if connection.handle_shutdown(&req)? {
                             break;
                         }
-                        state.on_request(req);
+                        // Guarded so a panic in one handler can't take down the
+                        // main loop (and with it the server); mirrors the lint
+                        // thread and read pool. State mutations here are simple
+                        // bookkeeping, so surviving a panic beats dying.
+                        guard("request", || state.on_request(req));
                     }
-                    Message::Notification(not) => state.on_notification(not),
+                    Message::Notification(not) => {
+                        guard("notification", || state.on_notification(not));
+                    }
                     Message::Response(_) => {}
                 }
             }
             recv(out_rx) -> ob => {
                 let Ok(ob) = ob else { break };
-                state.on_outbound(ob);
+                guard("outbound", || state.on_outbound(ob));
             }
         }
     }

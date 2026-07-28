@@ -521,13 +521,18 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   but is edit-scoped on the lint thread only (`src/lsp/lint_thread.rs:305`), not
   wired to request ids. Depends on the test harness below to land safely.
 
-- [ ] **P1 — Lint-thread/main-loop panic resilience.** `catch_unwind` guards
-  only read-pool jobs (`src/lsp/task_pool.rs:52`). A panic in `handle_lint_msg`
-  or the analyze write-phase on the sole db-writer thread, or in the main
-  `select!` loop (`src/lsp/server.rs:192`), takes down the whole server. Wrap
-  per-message handling on the lint thread in `catch_unwind` (log + drop the
-  offending request, keep the db and thread alive), mirroring the read-pool
-  discipline; ra isolates panics per request.
+- [x] **P1 — Lint-thread/main-loop panic resilience** (landed). Previously
+  `catch_unwind` guarded only read-pool jobs (`src/lsp/task_pool.rs:52`), so a
+  panic in `handle_lint_msg` / the analyze write-phase on the sole db-writer
+  thread, or in the main `select!` loop, took down the whole server. Now a shared
+  `guard()` (`src/lsp/lint_thread.rs`) wraps every lint-thread `select!` arm and
+  every main-loop dispatch (`on_request`/`on_notification`/`on_outbound` in
+  `src/lsp/server.rs`): a panic is logged and the offending request dropped, the
+  thread and db stay alive. The db's internal mutexes now recover from poisoning
+  (`.lock()` -> `unwrap_or_else(PoisonError::into_inner)` in `src/incremental.rs`)
+  so a panic mid-write leaves the db usable rather than bricked. Covered by
+  `guard_contains_a_panic_and_reports_completion` (lint_thread) and
+  `db_recovers_from_a_poisoned_mutex` (incremental).
 
 - [ ] **P2 — `workspace/didChangeWatchedFiles` + dynamic file-watch
   registration.** No on-disk change detection at all: `arity.toml`,
