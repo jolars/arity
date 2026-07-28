@@ -43,6 +43,14 @@ jobs:
         r-lib/vctrs
         r-lib/withr
         r-lib/scales
+        wch/r-source
+        Rdatatable/data.table
+        rcppcore/rcpp
+        futureverse/future
+        cran/MASS
+        deepayan/lattice
+        dmurdoch/rgl
+        r-spatial/sf
     steps:
       - uses: actions/checkout@v7
 
