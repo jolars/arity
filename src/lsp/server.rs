@@ -177,7 +177,7 @@ pub(crate) fn main_loop(
     // read-phase, code actions). Its `_workers` must outlive both `state` and the
     // lint thread; the drop order at the end of this function guarantees that.
     let read_pool = TaskPool::new("arity-lsp-read", read_pool_size());
-    let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx, read_pool.spawner());
+    let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx.clone(), read_pool.spawner());
     // `done_tx`/`done_rx` are created inside the lint thread (see
     // `spawn_lint_thread`) so the main loop never holds the read end.
 
@@ -192,6 +192,7 @@ pub(crate) fn main_loop(
 
     let mut state = GlobalState::new(
         connection.sender.clone(),
+        out_tx,
         lint_tx,
         read_tx,
         read_pool.spawner(),

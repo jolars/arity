@@ -66,8 +66,8 @@ use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeConfiguration, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
-    DidRenameFiles, Notification as NotificationTrait, PublishDiagnostics,
+    Cancel, DidChangeConfiguration, DidChangeTextDocument, DidCloseTextDocument,
+    DidOpenTextDocument, DidRenameFiles, Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
@@ -82,7 +82,7 @@ use lsp_types::request::{
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
     CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
-    CallHierarchyServerCapability, CodeAction, CodeActionKind, CodeActionOrCommand,
+    CallHierarchyServerCapability, CancelParams, CodeAction, CodeActionKind, CodeActionOrCommand,
     CodeActionParams, CodeActionProviderCapability, CodeActionResponse, Color, ColorInformation,
     ColorPresentation, ColorPresentationParams, ColorProviderCapability, CompletionItem,
     CompletionItemKind, CompletionList, CompletionOptions, CompletionParams, CompletionResponse,

@@ -1,16 +1,18 @@
 use super::*;
 
 /// A read-only request the lint thread services by cloning its salsa db and
-/// running the work off-thread on the read pool. Each variant carries the live buffer
-/// `text` and the client `sender` so the worker can reply directly; the lint
-/// thread only adds the db snapshot. See [`run_read`].
+/// running the work off-thread on the read pool. Each variant carries the live
+/// buffer `text` and the main loop's `out` channel, so the worker replies with an
+/// [`Outbound::ReadReply`] that the loop gates (cancellation, stale version)
+/// before it reaches the client; the lint thread only adds the db snapshot. See
+/// [`run_read`].
 pub(crate) enum ReadJob {
     Format {
         id: RequestId,
         path: PathBuf,
         text: String,
         style: FormatStyle,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     FormatRange {
         id: RequestId,
@@ -18,34 +20,34 @@ pub(crate) enum ReadJob {
         text: String,
         range: Range,
         style: FormatStyle,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     Hover {
         id: RequestId,
         path: PathBuf,
         text: String,
         position: Position,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     Completion {
         id: RequestId,
         path: PathBuf,
         text: String,
         position: Position,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     SignatureHelp {
         id: RequestId,
         path: PathBuf,
         text: String,
         position: Position,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     ResolveCompletion {
         id: RequestId,
         // Boxed: `CompletionItem` is large and would bloat every `ReadJob`.
         item: Box<CompletionItem>,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     Definition {
         id: RequestId,
@@ -55,7 +57,7 @@ pub(crate) enum ReadJob {
         uri: Uri,
         text: String,
         position: Position,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     References {
         id: RequestId,
@@ -66,7 +68,7 @@ pub(crate) enum ReadJob {
         text: String,
         position: Position,
         include_declaration: bool,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     Rename {
         id: RequestId,
@@ -79,19 +81,19 @@ pub(crate) enum ReadJob {
         /// anchor state never crosses the thread boundary.
         offset: usize,
         new_name: String,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     WillRenameFiles {
         id: RequestId,
         /// `(old, new)` filesystem path pairs for the files being renamed.
         renames: Vec<(PathBuf, PathBuf)>,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     WorkspaceSymbol {
         id: RequestId,
         /// The fuzzy name filter; an empty string requests every symbol.
         query: String,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     PrepareCallHierarchy {
         id: RequestId,
@@ -101,19 +103,19 @@ pub(crate) enum ReadJob {
         uri: Uri,
         text: String,
         position: Position,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     IncomingCalls {
         id: RequestId,
         /// The prepared item, round-tripped from the client; the target function
         /// is recovered from its `uri` + `name`.
         item: Box<CallHierarchyItem>,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     OutgoingCalls {
         id: RequestId,
         item: Box<CallHierarchyItem>,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     PrepareTypeHierarchy {
         id: RequestId,
@@ -123,19 +125,19 @@ pub(crate) enum ReadJob {
         uri: Uri,
         text: String,
         position: Position,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     Supertypes {
         id: RequestId,
         /// The prepared item, round-tripped from the client; the target class is
         /// recovered from its `name`.
         item: Box<TypeHierarchyItem>,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
     Subtypes {
         id: RequestId,
         item: Box<TypeHierarchyItem>,
-        sender: Sender<Message>,
+        out: Sender<Outbound>,
     },
 }
 
@@ -149,10 +151,10 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             path,
             text,
             style,
-            sender,
+            out,
         } => {
             let result = format_edits_via_db(&snapshot, &path, &text, style);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::FormatRange {
             id,
@@ -160,44 +162,44 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             text,
             range,
             style,
-            sender,
+            out,
         } => {
             let result = format_range_edits_via_db(&snapshot, &path, &text, range, style);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Hover {
             id,
             path,
             text,
             position,
-            sender,
+            out,
         } => {
             let result = hover_via_db(&snapshot, &path, &text, position);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Completion {
             id,
             path,
             text,
             position,
-            sender,
+            out,
         } => {
             let result = completion_via_db(&snapshot, &path, &text, position);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::SignatureHelp {
             id,
             path,
             text,
             position,
-            sender,
+            out,
         } => {
             let result = signature_help_via_db(&snapshot, &path, &text, position);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
-        ReadJob::ResolveCompletion { id, item, sender } => {
+        ReadJob::ResolveCompletion { id, item, out } => {
             let result = resolve_completion(*item, &snapshot.library_data().unwrap_or_default());
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Definition {
             id,
@@ -205,10 +207,10 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             uri,
             text,
             position,
-            sender,
+            out,
         } => {
             let result = definition_via_db(&snapshot, &path, &uri, &text, position);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::References {
             id,
@@ -217,11 +219,11 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             text,
             position,
             include_declaration,
-            sender,
+            out,
         } => {
             let result =
                 references_via_db(&snapshot, &path, &uri, &text, position, include_declaration);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Rename {
             id,
@@ -230,23 +232,19 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             text,
             offset,
             new_name,
-            sender,
+            out,
         } => {
             let result = rename_via_db(&snapshot, &path, &uri, &text, offset, &new_name);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
-        ReadJob::WillRenameFiles {
-            id,
-            renames,
-            sender,
-        } => {
+        ReadJob::WillRenameFiles { id, renames, out } => {
             let result = will_rename_via_db(&snapshot, &renames);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
-        ReadJob::WorkspaceSymbol { id, query, sender } => {
+        ReadJob::WorkspaceSymbol { id, query, out } => {
             let symbols = workspace_symbols_via_db(&snapshot, &query);
             let response = WorkspaceSymbolResponse::Nested(symbols);
-            let _ = sender.send(Message::Response(Response::new_ok(id, response)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
         }
         ReadJob::PrepareCallHierarchy {
             id,
@@ -254,18 +252,18 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             uri,
             text,
             position,
-            sender,
+            out,
         } => {
             let result = prepare_call_hierarchy_via_db(&snapshot, &path, &uri, &text, position);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
-        ReadJob::IncomingCalls { id, item, sender } => {
+        ReadJob::IncomingCalls { id, item, out } => {
             let result = incoming_calls_via_db(&snapshot, &item);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
-        ReadJob::OutgoingCalls { id, item, sender } => {
+        ReadJob::OutgoingCalls { id, item, out } => {
             let result = outgoing_calls_via_db(&snapshot, &item);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::PrepareTypeHierarchy {
             id,
@@ -273,18 +271,18 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             uri,
             text,
             position,
-            sender,
+            out,
         } => {
             let result = prepare_type_hierarchy_via_db(&snapshot, &path, &uri, &text, position);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
-        ReadJob::Supertypes { id, item, sender } => {
+        ReadJob::Supertypes { id, item, out } => {
             let result = supertypes_via_db(&snapshot, &item);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
-        ReadJob::Subtypes { id, item, sender } => {
+        ReadJob::Subtypes { id, item, out } => {
             let result = subtypes_via_db(&snapshot, &item);
-            let _ = sender.send(Message::Response(Response::new_ok(id, result)));
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
     }
 }

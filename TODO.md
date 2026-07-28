@@ -509,17 +509,23 @@ The load-bearing pieces already match ra and are intentionally omitted here
 split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
 **P2** conformance/UX, **P3** polish.
 
-- [ ] **P1 — Request cancellation + stale-read protocol.** `on_request`
-  (`src/lsp/state.rs:135`) dispatches reads fire-and-forget onto the read pool
-  with no request-id tracking; `$/cancelRequest` has no handler (silently
-  dropped), and a read computes against the buffer text captured at dispatch and
-  replies even if a newer edit landed meanwhile—a possibly-stale result rather
-  than ra's `ContentModified` (-32801). Track live request ids in `GlobalState`,
-  short-circuit canceled ids with `RequestCancelled` (-32800), and gate read
-  responses on the current document version (reply `ContentModified` when
-  superseded so the client re-requests). Note: salsa cancellation already exists
-  but is edit-scoped on the lint thread only (`src/lsp/lint_thread.rs:305`), not
-  wired to request ids. Depends on the test harness below to land safely.
+- [x] **P1 — Request cancellation + stale-read protocol** (landed). Read
+  handlers now register the in-flight request in `GlobalState::live_reads` before
+  dispatch and route their replies back through the main loop as
+  `Outbound::ReadReply` (`src/lsp/state.rs`, `src/lsp/read_jobs.rs`), so the
+  single-threaded loop is the sole choke point that decides the final response.
+  `$/cancelRequest` removes the entry and answers `RequestCancelled` (-32800); a
+  reply whose document version advanced since dispatch is replaced with
+  `ContentModified` (-32801) so the client re-requests. The registry is removed
+  exactly once (cancel vs. reply race resolved by the loop's serialization), so a
+  request is answered exactly once. Covered by the `cancellation_gate` unit tests
+  (`src/lsp/state.rs`, deterministic) and `cancel_request_returns_request_cancelled`
+  / `stale_read_returns_content_modified` (`tests/lsp_protocol.rs`, wire path).
+  Follow-ups: pull-diagnostic (`pending_pull`) requests are not yet cancelable;
+  cancellation is protocol-level only (a canceled read still runs to completion
+  and its result is discarded) rather than interrupting the CPU work—salsa's
+  edit-scoped cancellation (`src/lsp/lint_thread.rs:305`) is unrelated and
+  unchanged.
 
 - [x] **P1 — Lint-thread/main-loop panic resilience** (landed). Previously
   `catch_unwind` guarded only read-pool jobs (`src/lsp/task_pool.rs:52`), so a

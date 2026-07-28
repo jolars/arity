@@ -331,11 +331,15 @@ fn shutdown_exit_joins_cleanly() {
 }
 
 #[test]
-fn cancel_request_is_currently_a_noop() {
-    // BASELINE (pre-cancellation): `$/cancelRequest` has no handler yet, so a
-    // canceled request still completes normally. When the "request cancellation
-    // + stale-read protocol" work lands, flip this to expect a RequestCancelled
-    // (-32800) error response instead.
+fn cancel_request_returns_request_cancelled() {
+    // A `$/cancelRequest` for an in-flight read short-circuits with the spec's
+    // `RequestCancelled` (-32800). Ordering is practically deterministic: the
+    // cancel notification is already queued on the client->server channel when
+    // the main loop finishes dispatching the read, whereas the read's reply must
+    // still traverse the lint thread + read pool before it lands on `out_rx`. So
+    // the loop processes the cancel first, drops the request from its live set,
+    // and the later reply is discarded. (The ironclad, timing-free guarantee
+    // lives in the `state.rs` unit tests.)
     let mut h = Harness::start_push();
     let uri = doc_uri();
     h.did_open(uri, "x<-1\n", 1);
@@ -347,13 +351,42 @@ fn cancel_request_is_currently_a_noop() {
             "options": { "tabSize": 2, "insertSpaces": true }
         }),
     );
-    // Cancel immediately; today this is dropped as an unhandled notification.
     h.notify("$/cancelRequest", json!({ "id": h.next_id - 1 }));
 
     let resp = h.recv_response(&id);
-    assert!(
-        resp.response_result.is_ok(),
-        "cancel is a no-op today; request should still succeed, got: {resp:?}"
+    let err = resp
+        .response_result
+        .expect_err("canceled request should error, got a result");
+    assert_eq!(err.code, -32800, "RequestCancelled: {err:?}");
+    h.shutdown();
+}
+
+#[test]
+fn stale_read_returns_content_modified() {
+    // A read computed against v1 that is superseded by a v2 edit before it
+    // replies must not deliver a stale result: the main loop returns
+    // `ContentModified` (-32801) so the client re-requests. Same ordering
+    // argument as the cancel test: the `didChange` (which bumps the tracked
+    // version to 2) is already queued when the read is dispatched, so the loop
+    // sees v2 by the time the v1 reply arrives.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "x<-1\n", 1);
+
+    let id = h.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": 2, "insertSpaces": true }
+        }),
     );
+    // Supersede the buffer the read was dispatched against.
+    h.did_change(uri, "y<-2\n", 2);
+
+    let resp = h.recv_response(&id);
+    let err = resp
+        .response_result
+        .expect_err("superseded read should error, got a result");
+    assert_eq!(err.code, -32801, "ContentModified: {err:?}");
     h.shutdown();
 }
