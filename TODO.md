@@ -500,6 +500,81 @@ roxygen2 7.3.3.
   call sites (matching positional args to index formals). Speculative. Not
   loved by all users, possibly opt-in or omit altogether.
 
+### Audit vs rust-analyzer (2026-07-28)
+
+Curated gaps vs rust-analyzer surfaced by the 2026-07-28 architecture audit.
+The load-bearing pieces already match ra and are intentionally omitted here
+(3-tier incremental reparse in `src/parser/reparse.rs`; the salsa single-writer
++ firewall/durability model in `src/incremental.rs`; the GlobalState/snapshot
+split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
+**P2** conformance/UX, **P3** polish.
+
+- [ ] **P1 — Request cancellation + stale-read protocol.** `on_request`
+  (`src/lsp/state.rs:135`) dispatches reads fire-and-forget onto the read pool
+  with no request-id tracking; `$/cancelRequest` has no handler (silently
+  dropped), and a read computes against the buffer text captured at dispatch and
+  replies even if a newer edit landed meanwhile—a possibly-stale result rather
+  than ra's `ContentModified` (-32801). Track live request ids in `GlobalState`,
+  short-circuit canceled ids with `RequestCancelled` (-32800), and gate read
+  responses on the current document version (reply `ContentModified` when
+  superseded so the client re-requests). Note: salsa cancellation already exists
+  but is edit-scoped on the lint thread only (`src/lsp/lint_thread.rs:305`), not
+  wired to request ids. Depends on the test harness below to land safely.
+
+- [ ] **P1 — Lint-thread/main-loop panic resilience.** `catch_unwind` guards
+  only read-pool jobs (`src/lsp/task_pool.rs:52`). A panic in `handle_lint_msg`
+  or the analyze write-phase on the sole db-writer thread, or in the main
+  `select!` loop (`src/lsp/server.rs:192`), takes down the whole server. Wrap
+  per-message handling on the lint thread in `catch_unwind` (log + drop the
+  offending request, keep the db and thread alive), mirroring the read-pool
+  discipline; ra isolates panics per request.
+
+- [ ] **P2 — `workspace/didChangeWatchedFiles` + dynamic file-watch
+  registration.** No on-disk change detection at all: `arity.toml`,
+  `DESCRIPTION`, `NAMESPACE`, and sibling `.R` files changed outside the editor
+  (git switch, external tooling, newly created files) stay invisible until a
+  buffer edit. Register watchers via dynamic `client/registerCapability` for
+  `**/*.{R,r}`, `arity.toml`, `DESCRIPTION`, `NAMESPACE`; on change reload
+  config, reindex, or reseed the workspace member set. Subsumes the
+  already-logged `didChangeWorkspaceFolders` gap under "Minor
+  capability-conformance gaps" (same dynamic-registration plumbing).
+
+- [ ] **P2 — Work-done progress for background jobs.** `build_index` and the
+  sidecar fetch run on the single-thread index pool with no `$/progress`
+  reporting (`window/workDoneProgress` is not advertised). Long package harvests
+  are invisible to the user. Advertise the capability and emit begin/report/end
+  around `build_index`/`Sidecar::fetch` (`src/lsp/lint_thread.rs`), like ra's
+  "Indexing" progress.
+
+- [ ] **P2 — LSP integration/protocol test harness.** Tests exercise handlers as
+  pure functions (`tests/lsp.rs`); nothing drives the real server loop, so
+  dispatch, coalescing, supersession, and lifecycle are unguarded. Add an
+  in-memory harness via `lsp_server::Connection::memory()` covering initialize ->
+  didOpen -> request -> didChange (coalesce/supersede) -> shutdown, plus a
+  cancellation case. This is the regression net that makes the P1 cancellation
+  work landable.
+
+- [ ] **P3 — `positionEncoding` negotiation (UTF-8).** `LineIndex` is
+  UTF-16-only (`src/text/line_index.rs:52`) and capabilities never advertise
+  `positionEncoding` (`src/lsp/server.rs:73`), so UTF-8-capable clients pay
+  needless re-encoding and the server can't honor a UTF-8 request. Negotiate
+  `general.positionEncodings` and thread the chosen encoding through `LineIndex`.
+  While there, consider caching `LineIndex` as a salsa query (today it is rebuilt
+  per conversion) with a wide-char table for O(log n) lookups, like ra's
+  `line_index`.
+
+- [ ] **P3 — Per-URI content-derived pull `resultId`.** `result_seq` is one
+  global counter bumped every lint generation (`src/lsp/state.rs:1055`), so a
+  cross-file change bumps every file's `resultId` and unrelated files re-pull
+  `Full` instead of `Unchanged`. Derive the id from a hash of the file's findings
+  so `Unchanged` actually fires. Minor bandwidth win, correctness unaffected.
+
+- Cross-ref (already logged, reinforced by this audit): switching
+  `TextDocumentSyncKind::FULL` -> `INCREMENTAL` (Parser section, incremental
+  reparse follow-up) would feed precise per-change edit ranges to the existing
+  token/block/toplevel reparse, shrinking the `diff_edit` coalescing that
+  currently widens invalidation.
+
 ### Cross-cutting prerequisite
 
 - [x] Downloadable CRAN sidecar—names-only client (escalation of the bundled
