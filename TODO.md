@@ -551,13 +551,19 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   around `build_index`/`Sidecar::fetch` (`src/lsp/lint_thread.rs`), like ra's
   "Indexing" progress.
 
-- [ ] **P2 — LSP integration/protocol test harness.** Tests exercise handlers as
-  pure functions (`tests/lsp.rs`); nothing drives the real server loop, so
-  dispatch, coalescing, supersession, and lifecycle are unguarded. Add an
-  in-memory harness via `lsp_server::Connection::memory()` covering initialize ->
-  didOpen -> request -> didChange (coalesce/supersede) -> shutdown, plus a
-  cancellation case. This is the regression net that makes the P1 cancellation
-  work landable.
+- [x] **P2 — LSP integration/protocol test harness** (landed). The handler-level
+  tests (`tests/lsp.rs`) are now backed by an in-memory harness
+  (`tests/lsp_protocol.rs`) that drives the real server loop over
+  `lsp_server::Connection::memory()`. `run` was split so the initialize handshake
+  + `main_loop` live in a reusable `pub fn serve(connection)`
+  (`src/lsp/server.rs`); the harness spawns `serve` on a thread and drives the
+  client end. Coverage: initialize/capabilities, didOpen -> formatting response,
+  didOpen -> published diagnostics, rapid didChange (coalesce/supersede, asserting
+  only the final version's publish survives the `on_outbound` version gate), and
+  shutdown/exit clean join. The cancellation case is present as a baseline
+  (`cancel_request_is_currently_a_noop`): `$/cancelRequest` is unhandled today, so
+  it documents the pre-P1 behavior and flips to expect `RequestCancelled` when the
+  P1 work lands.
 
 - [ ] **P3 — `positionEncoding` negotiation (UTF-8).** `LineIndex` is
   UTF-16-only (`src/text/line_index.rs:52`) and capabilities never advertise

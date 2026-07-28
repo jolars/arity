@@ -5,7 +5,18 @@ pub(crate) type DynError = Box<dyn std::error::Error + Sync + Send>;
 /// Run the language server on stdio until the client disconnects.
 pub fn run() -> Result<(), DynError> {
     let (connection, io_threads) = Connection::stdio();
+    serve(connection)?;
+    io_threads.join()?;
+    Ok(())
+}
 
+/// Run the LSP protocol over an already-established connection: perform the
+/// initialize handshake, then run the main loop until the client disconnects.
+/// Shared by [`run`] (stdio) and the in-memory integration harness
+/// ([`Connection::memory`]). The public error type is spelled out rather than
+/// [`DynError`] (which is `pub(crate)`) so this stays reachable from
+/// integration tests.
+pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (id, params) = connection.initialize_start()?;
     let editor_settings = params
         .get("initializationOptions")
@@ -31,7 +42,6 @@ pub fn run() -> Result<(), DynError> {
     connection.initialize_finish(id, init_value)?;
 
     main_loop(connection, editor_settings, workspace_roots, pull_mode)?;
-    io_threads.join()?;
     Ok(())
 }
 

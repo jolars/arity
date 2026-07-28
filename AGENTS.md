@@ -68,7 +68,7 @@ cargo build                       # dev build
 cargo build --release
 cargo test                        # all tests (CI: cargo test --verbose)
 cargo test <substring>            # run tests matching a name
-cargo test --test parser_snapshots   # one integration test file (also: formatter, lint, ast_wrappers, salsa_incremental, line_endings, air_parser_harness)
+cargo test --test parser_snapshots   # one integration test file (also: formatter, lint, ast_wrappers, salsa_incremental, line_endings, air_parser_harness, lsp_protocol)
 cargo clippy --all-targets --all-features -- -D warnings   # lint; warnings are errors
 cargo fmt -- --check              # rustfmt check (keep changes rustfmt-clean)
 ```

@@ -195,7 +195,7 @@ pub use navigation::{
 };
 pub use selection_range::compute_selection_ranges;
 pub use semantic_tokens::compute_semantic_tokens;
-pub use server::run;
+pub use server::{run, serve};
 pub use signature::compute_signature_help;
 pub use symbols::compute_document_symbols;
 
