@@ -29,6 +29,18 @@ pub(crate) fn skip_ws_newlines_comments(tokens: &[Token], mut i: usize) -> usize
     i
 }
 
+/// Whether a statement separator — a newline or `;` — occurs in
+/// `tokens[from..to]`. R requires one between consecutive statements, so a
+/// statement list that reaches the next expression without crossing one has
+/// juxtaposed expressions (`12 14`), which R rejects outright.
+pub(crate) fn has_statement_separator(tokens: &[Token], from: usize, to: usize) -> bool {
+    let end = to.min(tokens.len());
+    let start = from.min(end);
+    tokens[start..end]
+        .iter()
+        .any(|t| matches!(t.kind, TokKind::Newline | TokKind::Semicolon))
+}
+
 pub(crate) fn consume_to_line_end(tokens: &[Token], mut i: usize) -> usize {
     while i < tokens.len() && !matches!(tokens[i].kind, TokKind::Newline) {
         i += 1;

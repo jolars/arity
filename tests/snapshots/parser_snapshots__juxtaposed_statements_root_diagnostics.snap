@@ -1,0 +1,21 @@
+---
+source: tests/parser_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "expected a newline or ';' between statements",
+        start: 155,
+        end: 157,
+    },
+    ParseDiagnostic {
+        message: "expected a newline or ';' between statements",
+        start: 158,
+        end: 160,
+    },
+    ParseDiagnostic {
+        message: "expected a newline or ';' between statements",
+        start: 254,
+        end: 255,
+    },
+]

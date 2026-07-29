@@ -7,6 +7,12 @@ pub struct ParseDiagnostic {
     pub end: usize,
 }
 
+/// Reported when two expressions sit side by side in a statement list with no
+/// newline or `;` between them. R calls this "unexpected <constant>"; the
+/// wording here names the missing separator instead, matching the parser's
+/// other "expected ..." messages.
+pub(crate) const MISSING_STATEMENT_SEPARATOR: &str = "expected a newline or ';' between statements";
+
 pub(crate) fn push_diagnostic(
     diagnostics: &mut Vec<ParseDiagnostic>,
     message: &str,
