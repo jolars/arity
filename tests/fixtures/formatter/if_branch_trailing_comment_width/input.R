@@ -1,0 +1,4 @@
+if (is.data.frame(tmp))
+    ans$right <- tmp[subset, ] ## doesn't do the drop=TRUE thing for factors/shingles
+else
+    ans$right <- other

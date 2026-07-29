@@ -86,6 +86,7 @@ fn fixture_names() -> &'static [&'static str] {
         "if_else_if_empty_branch",
         "if_nested_consequence",
         "if_nested_in_call_argument",
+        "if_branch_trailing_comment_width",
         "if_statement_position_simple",
         "if_value_position_stays_flat",
         "if_value_position_nested_braces",

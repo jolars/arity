@@ -415,7 +415,11 @@ fn ir_if_expr_impl(
 /// relocated `prefixed_comments`) and a sole block render via the native block
 /// builder; a bare expression renders as native IR (re-indenting structurally
 /// inside a wrapping [`synthetic_block`]), wrapped in a block when it carries
-/// comments. A same-line trailing comment rides the body's line.
+/// comments. A same-line trailing comment rides the body's line as a zero-width
+/// [line suffix](Ir::line_suffix), so it never counts toward the body's width:
+/// breaking the body cannot move the comment off its line, and letting it force
+/// a break would diverge from the block-statement path (making a braced branch
+/// non-idempotent).
 fn ir_if_branch(
     elements: &[SyntaxElement<RLanguage>],
     indent: usize,
@@ -488,13 +492,13 @@ fn ir_if_branch(
     if combined.is_empty() {
         let mut expr_ir = ir_expr_with_optional_comment(core, "if branch", indent, ctx)?;
         if let Some(comment) = trailing {
-            expr_ir = Ir::concat([expr_ir, Ir::text(" "), Ir::text(comment)]);
+            expr_ir = Ir::concat([expr_ir, Ir::line_suffix(format!(" {comment}"))]);
         }
         return Ok((expr_ir, false));
     }
     let mut expr_ir = ir_expr_with_optional_comment(core, "if branch", indent + 1, ctx)?;
     if let Some(comment) = trailing {
-        expr_ir = Ir::concat([expr_ir, Ir::text(" "), Ir::text(comment)]);
+        expr_ir = Ir::concat([expr_ir, Ir::line_suffix(format!(" {comment}"))]);
     }
     Ok((
         synthetic_block_with_comments(vec![expr_ir], &combined),
