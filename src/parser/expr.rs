@@ -1,4 +1,6 @@
-use crate::parser::context::{ParserCtx, push_token_diagnostic_ctx as push_token_diagnostic};
+use crate::parser::context::{
+    ParserCtx, StatementTracker, push_token_diagnostic_ctx as push_token_diagnostic,
+};
 use crate::parser::diagnostics::ParseDiagnostic;
 use crate::parser::events::{Event, ExprParse};
 use crate::parser::lexer::{TokKind, Token};
@@ -479,6 +481,7 @@ fn parse_block_expr(
     let tokens = ctx.tokens();
     let mut i = start + 1;
     let mut events = vec![Event::Start(SyntaxKind::BLOCK_EXPR), Event::Tok(start)];
+    let mut statements = StatementTracker::default();
 
     loop {
         let next = ctx.skip_ws(i);
@@ -526,7 +529,13 @@ fn parse_block_expr(
             continue;
         }
 
+        let before = diagnostics.len();
         if let Some(expr) = parse_expr(tokens, i, 0, diagnostics) {
+            // As at the root: a comment is an atom, not a statement.
+            if !tokens[expr.start].kind.is_comment_like() {
+                let recovered = diagnostics.len() > before;
+                statements.record(tokens, expr.start, expr.end, recovered, diagnostics);
+            }
             for idx in i..expr.start {
                 events.push(Event::Tok(idx));
             }
@@ -535,6 +544,7 @@ fn parse_block_expr(
         } else {
             events.push(Event::Tok(i));
             i += 1;
+            statements.record_recovery(i);
         }
     }
 }

@@ -28,6 +28,20 @@
 
 - [ ] Tribbles
 
+- [ ] Corpus gaps newly exposed by the statement-separator fix (issue #68).
+  Making `..2dge`/`1.` lex correctly moved ~37 corpus files out of the
+  "unparseable, skipped" bucket and into the checked set, where they hit
+  pre-existing formatter gaps. None are regressions; each needs its own
+  fixture:
+
+  - [ ] `ambiguous construct (assignment rhs)` — an assignment whose RHS is a
+    comment followed by a `function`/`if` on the next line
+    (`Matrix/R/models.R`, `Matrix/inst/test-tools-Matrix.R`).
+  - [ ] `ambiguous construct (block body)` — a statement trailed by a `#'`
+    roxygen marker mid-line, which splits the line into two elements
+    (`survival/R/survfit.coxph.R`, `survival/R/survfit.coxphms.R`).
+  - [ ] Idempotence: `survival/R/survcheck.R`.
+
 ## Linter
 
 Adapt jarl's catalog (https://jarl.etiennebacher.com/rules) to arity's

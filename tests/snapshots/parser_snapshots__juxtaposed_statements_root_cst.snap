@@ -1,0 +1,59 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..259
+  COMMENT@0..65 "# Two expressions on  ..."
+  NEWLINE@65..66 "\n"
+  COMMENT@66..139 "# This shape shows up ..."
+  NEWLINE@139..140 "\n"
+  ASSIGNMENT_EXPR@140..151
+    IDENT@140..141 "Y"
+    WHITESPACE@141..142 " "
+    ASSIGN_LEFT@142..144 "<-"
+    WHITESPACE@144..145 " "
+    CALL_EXPR@145..151
+      IDENT@145..149 "scan"
+      LPAREN@149..150 "("
+      ARG_LIST@150..150
+      RPAREN@150..151 ")"
+  NEWLINE@151..152 "\n"
+  INT@152..154 "12"
+  WHITESPACE@154..155 " "
+  INT@155..157 "14"
+  WHITESPACE@157..158 " "
+  INT@158..160 "33"
+  NEWLINE@160..161 "\n"
+  NEWLINE@161..162 "\n"
+  COMMENT@162..197 "# A separator makes i ..."
+  NEWLINE@197..198 "\n"
+  INT@198..199 "1"
+  SEMICOLON@199..200 ";"
+  WHITESPACE@200..201 " "
+  INT@201..202 "2"
+  NEWLINE@202..203 "\n"
+  ASSIGNMENT_EXPR@203..209
+    IDENT@203..204 "x"
+    WHITESPACE@204..205 " "
+    ASSIGN_LEFT@205..207 "<-"
+    WHITESPACE@207..208 " "
+    INT@208..209 "1"
+  WHITESPACE@209..210 " "
+  COMMENT@210..248 "# trailing comments a ..."
+  NEWLINE@248..249 "\n"
+  CALL_EXPR@249..253
+    IDENT@249..250 "f"
+    LPAREN@250..251 "("
+    ARG_LIST@251..252
+      ARG@251..252
+        INT@251..252 "1"
+    RPAREN@252..253 ")"
+  WHITESPACE@253..254 " "
+  CALL_EXPR@254..258
+    IDENT@254..255 "g"
+    LPAREN@255..256 "("
+    ARG_LIST@256..257
+      ARG@256..257
+        INT@256..257 "2"
+    RPAREN@257..258 ")"
+  NEWLINE@258..259 "\n"

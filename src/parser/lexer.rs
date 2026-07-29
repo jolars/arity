@@ -655,9 +655,21 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                         && (bytes[i + 1] as char) == '.'
                         && (bytes[i + 2] as char).is_ascii_digit()
                     {
+                        // `..1` is the dot-dot-i special, but as with `...` above
+                        // it can equally be the start of a longer symbol
+                        // (`..2dge` in Matrix). Consume the digit run and then any
+                        // trailing name characters so the whole symbol is one
+                        // identifier; with none, the text is just `..<digits>`.
                         let start = i;
                         i += 3;
                         while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                            i += 1;
+                        }
+                        while i < bytes.len() {
+                            let ch = bytes[i] as char;
+                            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
+                                break;
+                            }
                             i += 1;
                         }
                         out.push(Token {
@@ -1073,12 +1085,12 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                             i += 1;
                         }
 
+                        // R's decimal grammar is `[0-9]+ '.' [0-9]*` — the
+                        // fractional digits are optional, so a trailing dot is
+                        // part of the literal (`1.` is a double, `1.e3` is
+                        // scientific), not a following `.` symbol.
                         let mut is_float = false;
-                        if i < bytes.len()
-                            && (bytes[i] as char) == '.'
-                            && i + 1 < bytes.len()
-                            && (bytes[i + 1] as char).is_ascii_digit()
-                        {
+                        if i < bytes.len() && (bytes[i] as char) == '.' {
                             is_float = true;
                             i += 1;
                             while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
@@ -1342,6 +1354,45 @@ mod tests {
         assert_eq!(sig[1].text, "..1");
         assert_eq!(sig[2].kind, TokKind::Ident);
         assert_eq!(sig[2].text, "..123");
+    }
+
+    /// `..2` is the dot-dot-i special only when the *whole* name is dots plus
+    /// digits. `..2dge` is an ordinary R symbol (Matrix has one), so the digit
+    /// run must not cut the identifier short.
+    #[test]
+    fn lexes_dots_digits_symbols_with_trailing_name_chars_as_one_ident() {
+        for (input, expected) in [
+            ("..2dge", "..2dge"),
+            ("..1foo", "..1foo"),
+            ("..2.bar", "..2.bar"),
+            ("..10_x", "..10_x"),
+            ("..2", "..2"),
+        ] {
+            let tokens = lex(input);
+            assert_eq!(tokens.len(), 1, "{input:?} should lex as one token");
+            assert_eq!(tokens[0].kind, TokKind::Ident);
+            assert_eq!(tokens[0].text, expected);
+        }
+    }
+
+    /// R's numeric grammar is `[0-9]+ '.' [0-9]*` — the fractional digits are
+    /// optional, so a trailing dot belongs to the literal (`1.` is a double,
+    /// not `1` followed by the symbol `.`).
+    #[test]
+    fn lexes_trailing_dot_numerics_as_single_float_tokens() {
+        for (input, expected) in [("1.", "1."), ("10.", "10."), ("1.e3", "1.e3")] {
+            let tokens = lex(input);
+            assert_eq!(tokens.len(), 1, "{input:?} should lex as one token");
+            assert_eq!(tokens[0].kind, TokKind::Float, "{input:?}");
+            assert_eq!(tokens[0].text, expected);
+        }
+
+        // The integer suffix still applies, and `1.` before `;` stops at the `;`.
+        let tokens = lex("1.;");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokKind::Float);
+        assert_eq!(tokens[0].text, "1.");
+        assert_eq!(tokens[1].kind, TokKind::Semicolon);
     }
 
     #[test]

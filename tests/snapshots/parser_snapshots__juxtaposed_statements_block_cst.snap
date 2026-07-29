@@ -1,0 +1,44 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..48
+  BLOCK_EXPR@0..11
+    LBRACE@0..1 "{"
+    NEWLINE@1..2 "\n"
+    WHITESPACE@2..4 "  "
+    INT@4..6 "12"
+    WHITESPACE@6..7 " "
+    INT@7..9 "14"
+    NEWLINE@9..10 "\n"
+    RBRACE@10..11 "}"
+  NEWLINE@11..12 "\n"
+  BLOCK_EXPR@12..26
+    LBRACE@12..13 "{"
+    NEWLINE@13..14 "\n"
+    WHITESPACE@14..16 "  "
+    INT@16..17 "1"
+    SEMICOLON@17..18 ";"
+    WHITESPACE@18..19 " "
+    INT@19..20 "2"
+    NEWLINE@20..21 "\n"
+    WHITESPACE@21..23 "  "
+    INT@23..24 "3"
+    NEWLINE@24..25 "\n"
+    RBRACE@25..26 "}"
+  NEWLINE@26..27 "\n"
+  FUNCTION_EXPR@27..47
+    FUNCTION_KW@27..35 "function"
+    LPAREN@35..36 "("
+    RPAREN@36..37 ")"
+    WHITESPACE@37..38 " "
+    BLOCK_EXPR@38..47
+      LBRACE@38..39 "{"
+      NEWLINE@39..40 "\n"
+      WHITESPACE@40..42 "  "
+      IDENT@42..43 "a"
+      WHITESPACE@43..44 " "
+      IDENT@44..45 "b"
+      NEWLINE@45..46 "\n"
+      RBRACE@46..47 "}"
+  NEWLINE@47..48 "\n"

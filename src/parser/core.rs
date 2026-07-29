@@ -1,4 +1,5 @@
 use crate::parser::bracket_balancer::rebalance_brackets;
+use crate::parser::context::StatementTracker;
 use crate::parser::events::Event;
 use crate::parser::expr::parse_expr;
 use crate::parser::lexer::{TokKind, lex};
@@ -19,6 +20,7 @@ pub fn parse(text: &str) -> ParseOutput {
     let mut root_events = Vec::new();
 
     let mut i = 0usize;
+    let mut statements = StatementTracker::default();
     while i < tokens.len() {
         if matches!(
             tokens[i].kind,
@@ -34,7 +36,15 @@ pub fn parse(text: &str) -> ParseOutput {
             continue;
         }
 
+        let before = diagnostics.len();
         if let Some(expr) = parse_expr(&tokens, i, 0, &mut diagnostics) {
+            // A comment is parsed as an atom but is not a statement: it needs no
+            // separator from the code it trails, and it must not become the
+            // "previous statement" for the next one's check.
+            if !tokens[expr.start].kind.is_comment_like() {
+                let recovered = diagnostics.len() > before;
+                statements.record(&tokens, expr.start, expr.end, recovered, &mut diagnostics);
+            }
             root_events.extend(expr.events);
             i = expr.end;
         } else {
@@ -49,6 +59,7 @@ pub fn parse(text: &str) -> ParseOutput {
             );
             root_events.push(Event::Tok(i));
             i += 1;
+            statements.record_recovery(i);
         }
     }
 

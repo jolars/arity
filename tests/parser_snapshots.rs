@@ -31,6 +31,61 @@ fn parser_fixtures_snapshots_and_losslessness() {
     }
 }
 
+/// R requires a newline or `;` between statements; two expressions juxtaposed
+/// on one line is a syntax error ("unexpected numeric constant"). Flag it
+/// rather than accepting it silently — a silently-accepted juxtaposition
+/// leaves the formatter with a line it cannot lay out (issue #68).
+#[test]
+fn juxtaposed_statements_are_diagnosed() {
+    for src in [
+        "12 14 33\n",
+        "a b\n",
+        "1 + 2 3\n",
+        "f(1) g(2)\n",
+        "x <- 1 y <- 2\n",
+        "if (a) b c\n",
+        "{\n  12 14\n}\n",
+        "function() {\n  a b\n}\n",
+    ] {
+        let output = parse(src);
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("between statements")),
+            "expected a missing-separator diagnostic for {src:?}, got {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            reconstruct(src),
+            src,
+            "lossless round-trip failed for {src:?}"
+        );
+    }
+}
+
+/// The flip side: legal separators (and same-line trivia) must stay clean.
+#[test]
+fn separated_statements_are_not_diagnosed() {
+    for src in [
+        "12\n14\n",
+        "1; 2\n",
+        "x <- 1 # trailing comment\ny <- 2\n",
+        "#' @param x a roxygen block\nf <- function(x) x\n",
+        "f(\n  a,\n  b\n)\n",
+        "x <- c(1,\n  2)\n",
+        "if (a) {\n  b\n} else {\n  c\n}\n",
+        "repeat {\n  break\n}\n",
+    ] {
+        let output = parse(src);
+        assert!(
+            output.diagnostics.is_empty(),
+            "expected no diagnostics for {src:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
 fn fixture_input(name: &str) -> String {
     let path = Path::new("tests")
         .join("fixtures")
@@ -299,6 +354,8 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_braceless_sticky",
         "roxygen_tag_sameline_emph",
         "roxygen_md_entities",
+        "juxtaposed_statements_root",
+        "juxtaposed_statements_block",
     ]
 }
 
