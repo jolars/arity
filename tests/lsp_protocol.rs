@@ -34,6 +34,19 @@ fn doc_uri() -> &'static str {
     }
 }
 
+/// A file URI whose *parent directory does not exist* on disk. Config
+/// discovery anchors on that directory, so this is the shape that used to make
+/// `textDocument/formatting` answer `null` (an editor buffer in a directory
+/// that was never created, or was deleted while open). On the Windows CI
+/// runners `C:\tmp` is itself missing, which is how this first surfaced.
+fn missing_dir_uri() -> &'static str {
+    if cfg!(windows) {
+        "file:///C:/arity-no-such-dir-9f3a/lsp_protocol_test.R"
+    } else {
+        "file:///arity-no-such-dir-9f3a/lsp_protocol_test.R"
+    }
+}
+
 /// Drives the client end of an in-memory connection against a real `serve`
 /// loop running on a background thread.
 struct Harness {
@@ -280,6 +293,38 @@ fn did_open_then_formatting_request_responds() {
         edits[0].get("newText").and_then(Value::as_str),
         Some("x <- 1\n"),
         "reformatted text"
+    );
+    h.shutdown();
+}
+
+#[test]
+fn formatting_works_when_the_documents_directory_is_missing() {
+    // Regression: config discovery canonicalized its anchor directory, so a
+    // buffer whose parent directory doesn't exist made `resolve_settings` fail
+    // and `textDocument/formatting` silently answer `null`. Discovery must
+    // degrade to "no config file found" (default settings) instead.
+    let mut h = Harness::start_push();
+    let uri = missing_dir_uri();
+    h.did_open(uri, "x<-1\n", 1);
+
+    let id = h.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": 2, "insertSpaces": true }
+        }),
+    );
+    let resp = h.recv_response(&id);
+    let result = resp
+        .response_result
+        .expect("formatting succeeded with a result");
+    let edits = result
+        .as_array()
+        .expect("formatting returns an array of edits, not null");
+    assert_eq!(
+        edits[0].get("newText").and_then(Value::as_str),
+        Some("x <- 1\n"),
+        "reformatted text: {edits:#?}"
     );
     h.shutdown();
 }
