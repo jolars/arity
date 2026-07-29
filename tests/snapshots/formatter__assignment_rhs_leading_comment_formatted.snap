@@ -1,0 +1,6 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+class.lim <- ## retain non-NA limitlists only
+  lapply(limitlist[!all.na], class)

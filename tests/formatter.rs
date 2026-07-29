@@ -72,6 +72,7 @@ fn fixture_names() -> &'static [&'static str] {
         "binary_chain_break",
         "binary_paren_operand_indent",
         "dotdotdot_length_call",
+        "assignment_rhs_leading_comment",
         "assignment_rhs_breaks_before_lhs_subset",
         "assignment_rhs_breaks_before_lhs_subset_bare_body",
         "assignment_rhs_breaks_before_lhs_subset_in_function",

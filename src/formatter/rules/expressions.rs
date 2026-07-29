@@ -81,8 +81,22 @@ pub(crate) fn ir_assignment_expr(
         NodeOrToken::Node(_) => unreachable!(),
     };
     let lhs = ir_expr_segment(&elements[..op_idx], "assignment lhs", indent, ctx)?;
-    let rhs = ir_expr_segment(&elements[op_idx + 1..], "assignment rhs", indent, ctx)?;
-    Ok(Ir::concat([lhs, Ir::text(format!(" {op} ")), rhs]))
+    // A comment can sit between the operator and the RHS operand (`x <- # note`
+    // then the value on the next line). A comment runs to end of line, so the
+    // operand cannot share its line: emit the comment as a suffix on the
+    // operator's line and break before the RHS, indenting it one level (matching
+    // the binary-operator paths, and air).
+    let (rhs_comments, rhs) =
+        ir_binary_rhs(&elements[op_idx + 1..], "assignment rhs", indent, ctx)?;
+    if rhs_comments.is_empty() {
+        return Ok(Ir::concat([lhs, Ir::text(format!(" {op} ")), rhs]));
+    }
+    Ok(Ir::concat([
+        lhs,
+        Ir::text(format!(" {op}")),
+        comment_suffix(&rhs_comments),
+        Ir::indent(Ir::concat([Ir::hard_line(), rhs])),
+    ]))
 }
 
 /// IR builder for binary expressions. Mirrors [`format_binary_expr`]:
