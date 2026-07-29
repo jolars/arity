@@ -304,11 +304,12 @@ impl Config {
     /// first match or at a directory that contains a `.git` entry (repo root),
     /// whichever comes first. Returns `None` if neither is found before the
     /// filesystem root.
+    ///
+    /// `start` need not exist on disk — see [`deepest_existing_ancestor`].
     pub fn discover(start: &Path) -> Result<Option<(PathBuf, Self)>, ConfigError> {
-        let canonical = start.canonicalize().map_err(|source| ConfigError::Io {
-            path: start.to_path_buf(),
-            source,
-        })?;
+        let Some(canonical) = deepest_existing_ancestor(start) else {
+            return Ok(None);
+        };
         for dir in canonical.ancestors() {
             let candidate = dir.join(CONFIG_FILE_NAME);
             if candidate.is_file() {
@@ -361,6 +362,21 @@ impl Config {
         patterns.extend(extra.iter().cloned());
         ExcludeFilter::new(root, &patterns)
     }
+}
+
+/// The deepest ancestor of `start` (itself included) that exists on disk, in
+/// canonical form, or `None` when none is reachable.
+///
+/// Discovery must tolerate an anchor that isn't on disk: the LSP anchors on the
+/// parent directory of the buffer being edited, which may never have been
+/// created (an unsaved buffer, a directory removed while a file in it is open,
+/// or a path like `C:\tmp` that simply isn't there on Windows). Skipping the
+/// missing tail loses nothing, because discovery only ever reads *from*
+/// directories and a directory that doesn't exist can hold neither an
+/// `arity.toml` nor a `.git`. An unreachable tree is likewise not an error —
+/// there is no config to read, which is exactly what `None` reports.
+fn deepest_existing_ancestor(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find_map(|dir| dir.canonicalize().ok())
 }
 
 fn validate_width(field: &'static str, value: u32, path: Option<&Path>) -> Result<(), ConfigError> {
@@ -761,6 +777,48 @@ mod tests {
         let (path, config) = Config::discover(&nested).expect("discover").expect("found");
         assert_eq!(path, repo.canonicalize().unwrap().join(CONFIG_FILE_NAME));
         assert_eq!(config.format.line_width, 70);
+    }
+
+    /// A missing anchor is not an error: the LSP anchors discovery on the
+    /// directory of the buffer being edited, which need not exist on disk (an
+    /// unsaved buffer, a directory deleted while open, or simply `C:\tmp`).
+    /// Discovery still walks the ancestors that *do* exist.
+    #[test]
+    fn discover_tolerates_a_missing_anchor_directory() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join(CONFIG_FILE_NAME),
+            "[format]\nline-width = 70\n",
+        )
+        .unwrap();
+        let missing = dir.path().join("no").join("such").join("dir");
+        assert!(!missing.exists(), "fixture directory must not exist");
+
+        let (path, config) = Config::discover(&missing)
+            .expect("discovery must not fail on a missing anchor")
+            .expect("an existing ancestor still supplies the config");
+        assert_eq!(
+            path,
+            dir.path().canonicalize().unwrap().join(CONFIG_FILE_NAME)
+        );
+        assert_eq!(config.format.line_width, 70);
+    }
+
+    /// The same, with nothing to find: a missing anchor under no config at all
+    /// reports "no config" rather than an IO error.
+    #[test]
+    fn discover_on_a_missing_anchor_without_config_returns_none() {
+        let dir = tempdir().unwrap();
+        // A `.git` at the temp root bounds the walk so an arity.toml in a real
+        // ancestor of the temp dir can't leak into the assertion.
+        fs::create_dir_all(dir.path().join(".git")).unwrap();
+        let missing = dir.path().join("no").join("such").join("dir");
+
+        assert!(
+            Config::discover(&missing)
+                .expect("discovery must not fail on a missing anchor")
+                .is_none()
+        );
     }
 
     #[test]
