@@ -92,6 +92,7 @@ fn fixture_names() -> &'static [&'static str] {
         "if_block_position_boundary",
         "if_else_interstitial_comment_block",
         "if_else_interstitial_comment_bare",
+        "if_else_comment_forces_both_braces",
         "if_else_trailing_comment_after_block",
         "if_else_trailing_comment_after_bare",
         "if_condition_trailing_comment",

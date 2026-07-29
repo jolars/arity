@@ -6,7 +6,7 @@ This is a **soft gauge, not a quality gate**, and is subordinate to Tenet 1 (det
 
 - **Corpus:** formatter fixtures (`tests/fixtures/formatter/*/expected.R`)
 - **Line similarity:** 99.7%  _(Dice coefficient over lines)_
-- **File compatibility:** 97.3%  (179/184 files unchanged by air)
+- **File compatibility:** 97.3%  (180/185 files unchanged by air)
 - **Intentional deviations:** 2  ·  **Unexplained divergences:** 3
 
 ## Unexplained divergences (triage queue)

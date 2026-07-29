@@ -59,6 +59,34 @@ fn else_branch_requires_braces(elements: &[SyntaxElement<RLanguage>]) -> bool {
     }
 }
 
+/// Whether the else branch will render as a `{ }` block on its own — because it
+/// starts with a block or `else if` (structural, via [`else_branch_requires_braces`]),
+/// or because a comment must be held in a block: comments relocated from the
+/// then branch (`relocated_comments`), or the branch's own leading own-line
+/// comment. Mirrors the block decision in [`ir_if_branch`] so the chain-wide
+/// brace rule sees a comment-braced branch exactly as it sees a structurally
+/// braced one. This is what keeps a single pass idempotent: if only the else
+/// branch braces (to hold a comment), the then branch must brace too, or a
+/// second pass — which now sees a real `{ }` else — would brace it and diverge.
+fn else_branch_will_brace(
+    elements: &[SyntaxElement<RLanguage>],
+    relocated_comments: &[String],
+) -> bool {
+    if else_branch_requires_braces(elements) {
+        return true;
+    }
+    if !relocated_comments.is_empty() {
+        return true;
+    }
+    // An empty branch renders as `{}`; one led by an own-line comment is wrapped
+    // in a block to hold that comment. A branch led by a real node stays bare.
+    match significant_elements(elements).first() {
+        None => true,
+        Some(NodeOrToken::Token(tok)) => tok.kind() == SyntaxKind::COMMENT,
+        Some(NodeOrToken::Node(_)) => false,
+    }
+}
+
 /// Whether an `if` node has a braced branch anywhere in its own chain.
 fn if_node_requires_braces(node: &SyntaxNode) -> bool {
     let Some(if_expr) = IfExpr::cast(node.clone()) else {
@@ -327,8 +355,17 @@ fn ir_if_expr_impl(
         }
     };
 
+    // Interstitial comments not bound to the then block attach to the `else`
+    // branch (the IR port of `prepend_comments_to_branch`).
+    let else_comments: &[String] = if attach_to_then {
+        &[]
+    } else {
+        interstitial.as_slice()
+    };
+
     // Braces are all-or-nothing across a chain (tidyverse): forced by statement
-    // position, a braced branch anywhere, or a nested-if / `else if` arm.
+    // position, a braced branch anywhere, a nested-if / `else if` arm, or a
+    // branch a comment pushes into a block (see `else_branch_will_brace`).
     let consequence_is_if = branch_starts_with_if(&then_elements);
     let alternative_is_if = else_elements
         .as_deref()
@@ -339,19 +376,11 @@ fn ir_if_expr_impl(
         || alternative_is_if
         || else_elements
             .as_deref()
-            .is_some_and(else_branch_requires_braces);
+            .is_some_and(|els| else_branch_will_brace(els, else_comments));
 
     if needs_braces && !then_is_block {
         then_ir = synthetic_block(vec![then_ir]);
     }
-
-    // Interstitial comments not bound to the then block attach to the `else`
-    // branch (the IR port of `prepend_comments_to_branch`).
-    let else_comments: &[String] = if attach_to_then {
-        &[]
-    } else {
-        interstitial.as_slice()
-    };
 
     let mut parts = vec![header, Ir::text(" "), then_ir];
     if let Some(else_elements) = else_elements {
