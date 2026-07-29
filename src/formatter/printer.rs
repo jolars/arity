@@ -44,6 +44,21 @@ impl Writer {
         }
     }
 
+    /// The column the next visible character will land on. Indentation is
+    /// deferred until something is actually written (so blank lines carry no
+    /// trailing whitespace), which leaves `col` at 0 between a `newline` and
+    /// the next `write_text`. Every break decision must measure against the
+    /// column the content will *really* start at, not that transient 0 —
+    /// otherwise a group or conditional-group that begins a line is measured
+    /// as if it sat at the left margin and is wrongly kept flat.
+    fn fit_col(&self) -> usize {
+        if self.needs_indent {
+            self.col + self.pending_indent
+        } else {
+            self.col
+        }
+    }
+
     /// Write text that contains no newline.
     fn write_text(&mut self, s: &str) {
         if s.is_empty() {
@@ -168,12 +183,12 @@ impl Printer {
                         // A trailing-block hug measures only its own prefix up to
                         // the block's opening brace; what follows sits on the
                         // block's closing line, not this one.
-                        if self.fits(w.col, inner, true, *hug_excuse_overflow) {
+                        if self.fits(w.fit_col(), inner, true, *hug_excuse_overflow) {
                             Mode::Flat
                         } else {
                             Mode::Break
                         }
-                    } else if self.group_fits(w.col, inner, &stack) {
+                    } else if self.group_fits(w.fit_col(), inner, &stack) {
                         Mode::Flat
                     } else {
                         Mode::Break
@@ -181,11 +196,11 @@ impl Printer {
                     stack.push((indent, m, inner));
                 }
                 Ir::ConditionalGroup(cands) => {
-                    let (m, chosen) = self.pick_candidate(w.col, cands);
+                    let (m, chosen) = self.pick_candidate(w.fit_col(), cands);
                     stack.push((indent, m, chosen));
                 }
                 Ir::ConditionalGroupAllLines(cands) => {
-                    let (m, chosen) = self.pick_candidate_all_lines(w.col, indent, cands);
+                    let (m, chosen) = self.pick_candidate_all_lines(w.fit_col(), indent, cands);
                     stack.push((indent, m, chosen));
                 }
             }
@@ -485,8 +500,24 @@ impl Printer {
                     work.push((if *expand { Mode::Break } else { mode }, inner));
                 }
                 Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
-                    if let Some(first) = cands.first() {
-                        work.push((mode, first));
+                    // The same rule as `Ir::Group` above, applied to a candidate
+                    // list: in `Break` mode this group is still free to pick a
+                    // broken candidate, so measure the *last* one (the broken
+                    // fallback) — its first break ends the line and accommodates
+                    // the overflow. Measuring the flat-most candidate instead
+                    // would treat the whole conditional group as unbreakable and
+                    // force the group to its left to break in its place (an
+                    // assignment whose subset LHS explodes because its `if`/`else`
+                    // RHS was measured flat rather than braced). In `Flat` mode
+                    // the enclosing group is flat, so the flat-most candidate is
+                    // the right measurement.
+                    let candidate = if mode == Mode::Break {
+                        cands.last()
+                    } else {
+                        cands.first()
+                    };
+                    if let Some(candidate) = candidate {
+                        work.push((mode, candidate));
                     }
                 }
             }

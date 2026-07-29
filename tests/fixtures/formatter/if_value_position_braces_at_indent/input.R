@@ -1,0 +1,4 @@
+outer <- function() {
+  ff <- function(x, table) if (is.character(x) && is.character(tables)) x %chin% table else x %in% table
+  if (zz) if (is.character(x) && is.character(tabless)) x %chin% table else x %in% table
+}
