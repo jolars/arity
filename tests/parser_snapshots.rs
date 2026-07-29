@@ -110,6 +110,7 @@ fn fixture_names() -> &'static [&'static str] {
         "assignment_right",
         "assignment_right2",
         "comment_only",
+        "call_arg_comment_before_unary",
         "user_operator_tokens",
         "double_brackets_tokens",
         "assignment_missing_rhs",

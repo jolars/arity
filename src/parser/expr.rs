@@ -132,6 +132,16 @@ fn parse_expr_with_mode(
         inside_brackets,
     )?;
 
+    // A bare comment parses as an atom (so a comment-only argument such as
+    // `c(1, # note\n)` has something to hang on), but it can never be the
+    // operand of an operator. Do not let the infix loop bind a following
+    // operator to it: inside brackets `next_operator` peeks across newlines,
+    // so in `c(-1, # a\n -2)` the `-` that starts the next argument would
+    // otherwise be misread as a binary minus on the comment.
+    if lhs.end == lhs.start + 1 && tokens[lhs.start].kind.is_comment_like() {
+        return Some(lhs);
+    }
+
     loop {
         lhs = parse_postfix_chain(&ctx, lhs, diagnostics);
 
