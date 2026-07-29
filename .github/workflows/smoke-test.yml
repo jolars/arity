@@ -51,6 +51,24 @@ jobs:
         deepayan/lattice
         dmurdoch/rgl
         r-spatial/sf
+      # Known non-actionable failures to suppress from the report. Each entry is
+      # `repo|path|category`; the path is repo-relative, as the corpus report
+      # keys it. Only the *named* category is suppressed -- if the same file
+      # starts failing a different way (losslessness, a panic), that failure is
+      # still recorded, so the allowlist can never mask a new regression. Drop
+      # an entry the moment arity handles the file: it then simply passes and
+      # records nothing, and a stale entry is the one way this list *can* hide a
+      # real bug.
+      #
+      # The bar is *not valid R*, not merely *unfixed*: R itself rejects the
+      # file (check with `R --vanilla -q -e 'parse("<file>")'`), or it is not R
+      # at all (a template carrying placeholder syntax, generated output
+      # committed by mistake). A real modeling gap we have not fixed yet does
+      # **not** belong here -- allowlisting it buries the work; leave it failing
+      # and record it in TODO.md instead. Group entries under a comment naming
+      # the root cause and the issue.
+      ALLOWLIST: |
+        # (empty)
     steps:
       - uses: actions/checkout@v7
 
@@ -90,8 +108,25 @@ jobs:
 
           # Run the smoke test in CI mode: it writes a failure report and exits 0
           # even on regressions, so this step stays green and the issue job runs.
+          # Keep the run log (totals, including how many files were skipped as
+          # unparseable) in the artifact -- a shift in the skipped count is what
+          # tells triage that files moved between buckets.
           ARITY_CORPUS="$CORPUS_DIR" ARITY_CORPUS_REPORT="$RAW" \
-            cargo test --release --test corpus -- --ignored --nocapture
+            cargo test --release --test corpus -- --ignored --nocapture \
+            2>&1 | tee "$RESULTS_DIR/corpus.log"
+
+          # Normalize the allowlist into exact `repo|path|category` lines
+          # (dropping blank and `#` comment lines). A failure whose key matches
+          # one of these is suppressed from the report; see `ALLOWLIST` above.
+          ALLOWLIST_ENTRIES="$(printf '%s\n' "${ALLOWLIST:-}" \
+            | sed 's/[[:space:]]*$//' | grep -Ev '^[[:space:]]*(#|$)' || true)"
+          SUPPRESSED_COUNT=0
+
+          is_allowlisted() {
+            # args: repo file category
+            [ -n "$ALLOWLIST_ENTRIES" ] || return 1
+            grep -Fxq "$1|$2|$3" <<< "$ALLOWLIST_ENTRIES"
+          }
 
           # Enrich the raw report (relative-key \t category \t message) with the
           # repo/sha each file came from, for issue creation.
@@ -108,8 +143,14 @@ jobs:
               [ -z "$key" ] && continue
               dir_name="${key%%/*}"
               rel="${key#*/}"
+              repo_name="${REPO_OF[$dir_name]:-$dir_name}"
+              if is_allowlisted "$repo_name" "$rel" "$ftype"; then
+                echo "notice: allowlisted $ftype for $repo_name:$rel (record-only)"
+                SUPPRESSED_COUNT=$((SUPPRESSED_COUNT + 1))
+                continue
+              fi
               printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-                "${REPO_OF[$dir_name]:-$dir_name}" \
+                "$repo_name" \
                 "$ftype" \
                 "$rel" \
                 "$detail" \
@@ -120,26 +161,39 @@ jobs:
             done < "$RAW"
           fi
 
+          # Hand the suppressed tally to the summarize step (separate shells
+          # share only the results dir, which is also the uploaded artifact).
+          echo "$SUPPRESSED_COUNT" > "$RESULTS_DIR/suppressed_count"
+
       - name: Summarize scan results
         id: summarize
         shell: bash
         run: |
           set -euo pipefail
-          FAILURES_TSV="$RUNNER_TEMP/arity-corpus-scan/failures.tsv"
+          RESULTS_DIR="$RUNNER_TEMP/arity-corpus-scan"
+          FAILURES_TSV="$RESULTS_DIR/failures.tsv"
           failure_count="$(($(wc -l < "$FAILURES_TSV") - 1))"
           [ "$failure_count" -lt 0 ] && failure_count=0
+          suppressed_count=0
+          [ -f "$RESULTS_DIR/suppressed_count" ] && \
+            suppressed_count="$(cat "$RESULTS_DIR/suppressed_count")"
 
           echo "failure_count=$failure_count" >> "$GITHUB_OUTPUT"
           {
             echo "### Arity corpus smoke test"
             echo ""
             echo "- Failure records: $failure_count"
+            echo "- Suppressed (allowlisted, record-only): $suppressed_count"
+            if [ -f "$RESULTS_DIR/corpus.log" ]; then
+              totals="$(grep -E '^corpus: [0-9]+ files' "$RESULTS_DIR/corpus.log" | tail -n 1 || true)"
+              [ -n "$totals" ] && echo "- Totals: ${totals#corpus: }"
+            fi
             if [ "$failure_count" -gt 0 ]; then
               echo ""
-              echo "| repo | category | file |"
-              echo "| --- | --- | --- |"
+              echo "| repo | category | file | detail |"
+              echo "| --- | --- | --- | --- |"
               tail -n +2 "$FAILURES_TSV" \
-                | awk -F '\t' '{printf "| %s | %s | `%s` |\n", $1, $2, $3}'
+                | awk -F '\t' '{printf "| %s | %s | `%s` | %s |\n", $1, $2, $3, ($4 == "" ? "" : "`" $4 "`")}'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -195,6 +249,13 @@ jobs:
             title="CI: corpus regression in ${repo} (${failure_type})"
             count="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {c++} END{print c+0}' "$FAILURES_TSV")"
             samples="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {printf "- `%s`\n", $3; c++; if (c==10) exit}' "$FAILURES_TSV")"
+            sample_file="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {print $3; exit}' "$FAILURES_TSV")"
+            # Distinct error messages with counts: for format-error and panic
+            # this is the actual classifier, and the fastest route to a root
+            # cause without cloning anything.
+            details="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t && $4!="" {print $4}' "$FAILURES_TSV" \
+              | sort | uniq -c | sort -rn | head -n 10 \
+              | awk '{c=$1; $1=""; sub(/^ /, ""); printf "- %s× `%s`\n", c, $0}')"
             repo_sha="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {print $5; exit}' "$FAILURES_TSV")"
             arity_sha="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {print $6; exit}' "$FAILURES_TSV")"
             arity_version="$(awk -F '\t' -v r="$repo" -v t="$failure_type" '$1==r && $2==t {print $7; exit}' "$FAILURES_TSV")"
@@ -214,17 +275,32 @@ jobs:
               echo ""
               echo "Sample files:"
               echo "$samples"
+              if [ -n "$details" ]; then
+                echo ""
+                echo "Most common details:"
+                echo "$details"
+              fi
               echo ""
-              echo "Reproduce locally:"
+              echo "Reproduce locally (run from an arity checkout):"
               echo ""
               echo '```bash'
-              echo "git clone https://github.com/$repo.git"
-              echo "cd $(basename "$repo") && git checkout ${repo_sha:-HEAD}"
-              echo "# losslessness: arity parse --verify <FILE>"
-              echo "# idempotence:  arity format --verify <FILE>"
+              echo "git clone https://github.com/$repo.git /tmp/target"
+              echo "git -C /tmp/target checkout ${repo_sha:-HEAD}"
+              echo ""
+              echo "# this file"
+              case "$failure_type" in
+                losslessness) echo "cargo run --release -- parse --verify --quiet \"/tmp/target/$sample_file\"" ;;
+                idempotence) echo "cargo run --release -- format --verify \"/tmp/target/$sample_file\"" ;;
+                *) echo "cargo run --release -- format < \"/tmp/target/$sample_file\" > /dev/null" ;;
+              esac
+              echo ""
+              echo "# the whole bucket (the actual triage unit)"
+              echo "ARITY_CORPUS=/tmp/target ARITY_CORPUS_REPORT=/tmp/failures.tsv \\"
+              echo "  cargo test --release --test corpus -- --ignored --nocapture"
               echo '```'
               echo ""
-              echo "See the \`corpus-scan-results\` artifact for the full failure list."
+              echo "See the \`corpus-scan-results\` artifact for the full failure list"
+              echo "and the run log. Triage with the \`smoke-test-triage\` skill."
             } > "$body_file"
 
             export ISSUE_TITLE="$title"
@@ -239,6 +315,7 @@ jobs:
               case "$failure_type" in
                 idempotence) color="B60205" ;;
                 losslessness) color="D93F0B" ;;
+                format-error) color="FBCA04" ;;
                 panic) color="E11D21" ;;
                 *) color="6E7781" ;;
               esac

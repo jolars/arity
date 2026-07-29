@@ -219,9 +219,18 @@ it pass. For a bug, always start by adding a failing test that reproduces it
   (snapshot the CST + diagnostics, assert losslessness); formatter fixtures hold
   `input.R` + `expected.R`.
 - `insta` snapshots live in `tests/snapshots/`.
+- Both fixture suites are **hand-registered**: a new case only runs once its
+  name is added to `fixture_names()` in `tests/parser_snapshots.rs` /
+  `tests/formatter.rs`.
 - `tests/air_parser_harness.rs` compares against the `air_r_parser` crate (a git
   dev-dependency from posit-dev/air)—AIR snapshot cases are ported into the
   parser fixtures as hardening input.
+- `tests/corpus.rs` is the Tier 0 corpus smoke test (`#[ignore]`d; run with
+  `ARITY_CORPUS=<dir> task corpus`): losslessness + idempotence over a large
+  body of real R sources, with unparseable files skipped rather than failed.
+  `.github/workflows/smoke-test.yml` runs it weekly over cloned R package repos
+  and files one deduped issue per (repo, failure category); triage those with
+  the `smoke-test-triage` skill.
 
 ## Reference-only directories (not part of the build, untracked)
 
