@@ -63,6 +63,18 @@ pub struct SemanticModel {
     /// file's worth of idents). Fully derived from [`bindings`](Self::bindings),
     /// maintained by the builder alongside it.
     bindings_by_name: HashMap<(ScopeId, SmolStr), Vec<BindingId>>,
+    /// Reverse def-use edges: parallel to [`bindings`](Self::bindings), each
+    /// entry holds the indices into [`idents`](Self::idents) of the reads bound
+    /// to that binding. The reverse of the map the builder's `resolve_reads`
+    /// pass computes (`reads_reached`), materialized in that same pass — so it
+    /// is frame-aware/flow-insensitive, exactly matching how the `read` flag is
+    /// set. Read via [`read_sites`](Self::read_sites).
+    binding_reads: Vec<Vec<u32>>,
+    /// Forward def-use edges: parallel to [`idents`](Self::idents), each entry
+    /// holds the binding(s) that read resolves to. A read can reach several
+    /// (a conservative reassignment; see `reads_reached`), and a free/undefined
+    /// read reaches none. Read via [`ident_bindings`](Self::ident_bindings).
+    ident_bindings: Vec<Vec<BindingId>>,
 }
 
 impl SemanticModel {
@@ -97,6 +109,23 @@ impl SemanticModel {
 
     pub fn idents(&self) -> &[IdentRef] {
         &self.idents
+    }
+
+    /// The identifier read sites bound to `id`, in [`idents`](Self::idents)
+    /// order. Empty when the binding is never read. The reverse def-use edge —
+    /// the concrete read set behind the `read` flag.
+    pub fn read_sites(&self, id: BindingId) -> impl Iterator<Item = &IdentRef> + '_ {
+        self.binding_reads[id.0 as usize]
+            .iter()
+            .map(move |&i| &self.idents[i as usize])
+    }
+
+    /// The binding(s) the read at `ident_index` (an index into
+    /// [`idents`](Self::idents), as yielded in order) resolves to. Several on a
+    /// conservative reassignment; empty for a free/undefined read. The forward
+    /// def-use edge.
+    pub fn ident_bindings(&self, ident_index: usize) -> &[BindingId] {
+        &self.ident_bindings[ident_index]
     }
 
     pub fn loaded_packages(&self) -> &[LoadedPackage] {
@@ -191,7 +220,7 @@ impl SemanticModel {
             .filter(move |id| {
                 let binding = self.binding(*id);
                 matches!(binding.kind, BindingKind::Local)
-                    && !binding.read
+                    && self.read_sites(*id).next().is_none()
                     && !binding.name.starts_with('.')
             })
     }
@@ -376,6 +405,113 @@ mod tests {
         let m = model_of("x <- 1\nprint(x)");
         let x_binding = m.bindings.iter().find(|b| b.name == "x").unwrap();
         assert!(x_binding.read);
+    }
+
+    fn binding_id_named(model: &SemanticModel, name: &str) -> BindingId {
+        model
+            .bindings
+            .iter()
+            .position(|b| b.name == name)
+            .map(BindingId::from_index)
+            .unwrap_or_else(|| panic!("no binding named `{name}`"))
+    }
+
+    fn ident_index(model: &SemanticModel, name: &str) -> usize {
+        model
+            .idents
+            .iter()
+            .position(|i| i.name == name)
+            .unwrap_or_else(|| panic!("no ident read of `{name}`"))
+    }
+
+    #[test]
+    fn read_sites_lists_a_bindings_reads() {
+        // Both reads of `x` (in `print(x)` and `y <- x`) are its read sites.
+        let m = model_of("x <- 1\nprint(x)\ny <- x\n");
+        let x = binding_id_named(&m, "x");
+        let ranges: Vec<TextRange> = m.read_sites(x).map(|i| i.range).collect();
+        let expected: Vec<TextRange> = m
+            .idents
+            .iter()
+            .filter(|i| i.name == "x")
+            .map(|i| i.range)
+            .collect();
+        assert_eq!(expected.len(), 2, "sanity: two reads of x");
+        assert_eq!(ranges, expected);
+    }
+
+    #[test]
+    fn read_sites_empty_for_unread_binding() {
+        // `x` is never read; `y` is. `read_sites` must agree with the `read` flag.
+        let m = model_of("x <- 1\ny <- 2\nprint(y)\n");
+        let x = binding_id_named(&m, "x");
+        let y = binding_id_named(&m, "y");
+        assert!(m.read_sites(x).next().is_none());
+        assert!(!m.binding(x).read);
+        assert!(m.read_sites(y).next().is_some());
+        assert!(m.binding(y).read);
+    }
+
+    #[test]
+    fn ident_bindings_resolves_a_read_to_its_binding() {
+        let m = model_of("x <- 1\ny <- x\n");
+        let x = binding_id_named(&m, "x");
+        let idx = ident_index(&m, "x");
+        assert_eq!(m.ident_bindings(idx), &[x]);
+    }
+
+    #[test]
+    fn ident_bindings_empty_for_free_read() {
+        let m = model_of("f(zz)\n");
+        let idx = ident_index(&m, "zz");
+        assert!(m.ident_bindings(idx).is_empty());
+    }
+
+    #[test]
+    fn reassignment_read_binds_conservatively() {
+        // Mirrors the `reads_reached` doc example: within the frame a read marks
+        // *every* preceding same-name binding. The second `f(x)` reaches both
+        // `x` bindings; both bindings' read sets include it.
+        let m = model_of("x <- 1\nf(x)\nx <- 2\nf(x)\n");
+        let x_defs: Vec<BindingId> = m
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.name == "x")
+            .map(|(i, _)| BindingId::from_index(i))
+            .collect();
+        assert_eq!(x_defs.len(), 2, "sanity: two defs of x");
+        let x_reads: Vec<usize> = m
+            .idents
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.name == "x")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(x_reads.len(), 2, "sanity: two reads of x");
+        let (first_read, second_read) = (x_reads[0], x_reads[1]);
+        // First read sees only the first def; second read sees both.
+        assert_eq!(m.ident_bindings(first_read), &[x_defs[0]]);
+        assert_eq!(m.ident_bindings(second_read), &[x_defs[0], x_defs[1]]);
+        // Reverse edges: the second read appears in both bindings' read sets.
+        for def in &x_defs {
+            let reads: Vec<usize> = m
+                .read_sites(*def)
+                .map(|site| ident_index_of(&m, site.range))
+                .collect();
+            assert!(
+                reads.contains(&second_read),
+                "the second read binds to both x defs"
+            );
+        }
+    }
+
+    fn ident_index_of(model: &SemanticModel, range: TextRange) -> usize {
+        model
+            .idents
+            .iter()
+            .position(|i| i.range == range)
+            .expect("ident with range")
     }
 
     #[test]

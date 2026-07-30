@@ -652,11 +652,18 @@ fn push_binding(
 /// Walk every recorded identifier read and mark the binding(s) it reaches as
 /// `read`. Used by `unused-binding`.
 fn resolve_reads(model: &mut SemanticModel) {
+    model.binding_reads = vec![Vec::new(); model.bindings.len()];
+    model.ident_bindings = Vec::with_capacity(model.idents.len());
     for ident_idx in 0..model.idents.len() {
         let ident = model.idents[ident_idx].clone();
-        for id in reads_reached(model, &ident) {
+        // Compute the reached bindings first (immutable borrow of `model` via
+        // `reads_reached`), then record both edge directions.
+        let reached = reads_reached(model, &ident);
+        for id in &reached {
             model.bindings[id.0 as usize].read = true;
+            model.binding_reads[id.0 as usize].push(ident_idx as u32);
         }
+        model.ident_bindings.push(reached);
     }
 }
 
