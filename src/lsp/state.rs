@@ -1161,6 +1161,20 @@ impl GlobalState {
                     }
                 }
             }
+            DidChangeWatchedFiles::METHOD => {
+                if let Ok(params) =
+                    not.extract::<DidChangeWatchedFilesParams>(DidChangeWatchedFiles::METHOD)
+                {
+                    self.on_watched_files_changed(params);
+                }
+            }
+            DidChangeWorkspaceFolders::METHOD => {
+                if let Ok(params) = not
+                    .extract::<DidChangeWorkspaceFoldersParams>(DidChangeWorkspaceFolders::METHOD)
+                {
+                    self.on_workspace_folders_changed(params);
+                }
+            }
             Cancel::METHOD => {
                 if let Ok(params) = not.extract::<CancelParams>(Cancel::METHOD) {
                     let id = match params.id {
@@ -1228,25 +1242,95 @@ impl GlobalState {
                 }
             }
             Outbound::ReadReply(response) => self.on_read_reply(response),
-            Outbound::RelintAll => {
-                if self.pull_mode {
-                    // Diagnostics may have changed without any document edit (a new
-                    // index/sibling). Invalidate caches so a re-pull recomputes,
-                    // then ask pull clients to re-request.
-                    let uris: Vec<Uri> = self.documents.keys().cloned().collect();
-                    for uri in &uris {
-                        self.findings.remove(uri);
-                        self.report_ids.remove(uri);
-                    }
-                    self.send_workspace_refresh();
-                } else {
-                    let uris: Vec<Uri> = self.documents.keys().cloned().collect();
-                    for uri in uris {
-                        self.send_lint(uri);
-                    }
-                }
+            Outbound::RelintAll => self.request_relint_all(),
+        }
+    }
+
+    /// Re-lint every open document because cross-file context changed without a
+    /// document edit (a fresh index, a sibling, a config or metadata change on
+    /// disk). Pull clients are asked to re-request (after invalidating their cached
+    /// reports); push clients get a fresh lint per buffer.
+    fn request_relint_all(&mut self) {
+        let uris: Vec<Uri> = self.documents.keys().cloned().collect();
+        if self.pull_mode {
+            for uri in &uris {
+                self.findings.remove(uri);
+                self.report_ids.remove(uri);
+            }
+            self.send_workspace_refresh();
+        } else {
+            for uri in uris {
+                self.send_lint(uri);
             }
         }
+    }
+
+    /// Handle `workspace/didChangeWatchedFiles`: an on-disk change to a config,
+    /// package-metadata, or `.R` file outside the editor. An `arity.toml` edit is
+    /// resolved here (drop the config cache, re-lint); the rest is db work, routed
+    /// to the lint thread (the sole writer). See [`classify_watched_files`].
+    fn on_watched_files_changed(&mut self, params: DidChangeWatchedFilesParams) {
+        let WatchedClassification {
+            batch,
+            config_changed,
+        } = classify_watched_files(&params, |uri| self.documents.contains_key(uri));
+        if config_changed {
+            // A committed `arity.toml` moved; drop cached resolutions so the next
+            // lint/format re-reads it, then re-lint every open document.
+            self.config_cache.clear();
+            self.request_relint_all();
+        }
+        if !batch.is_empty() {
+            let _ = self.lint_tx.send(LintMsg::WatchedFiles { batch });
+        }
+    }
+
+    /// Handle `workspace/didChangeWorkspaceFolders`: seed newly-added folders as
+    /// workspace members (the seed unions with the existing set). Removed folders
+    /// are left in place for now — dropping their members is a follow-up.
+    fn on_workspace_folders_changed(&mut self, params: DidChangeWorkspaceFoldersParams) {
+        let added: Vec<PathBuf> = params
+            .event
+            .added
+            .iter()
+            .filter_map(|folder| uri::to_path(&folder.uri))
+            .collect();
+        if !added.is_empty() {
+            let _ = self.lint_tx.send(LintMsg::SeedWorkspace { roots: added });
+        }
+    }
+
+    /// Register on-disk file watchers with the client via dynamic
+    /// `client/registerCapability`. Called once at startup when the client supports
+    /// dynamic registration for `workspace/didChangeWatchedFiles`; the client's
+    /// response is ignored by the main loop. Watches R sources (which drive
+    /// membership) plus the config and package-metadata files that shape cross-file
+    /// analysis (see [`WATCHED_GLOBS`]).
+    pub(crate) fn register_file_watchers(&mut self) {
+        let watchers = WATCHED_GLOBS
+            .iter()
+            .map(|glob| FileSystemWatcher {
+                glob_pattern: GlobPattern::String((*glob).to_string()),
+                kind: None, // default: create | change | delete
+            })
+            .collect();
+        let registration = Registration {
+            id: "arity-watched-files".to_string(),
+            method: DidChangeWatchedFiles::METHOD.to_string(),
+            register_options: serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                watchers,
+            })
+            .ok(),
+        };
+        self.next_req_id += 1;
+        let req = Request::new(
+            RequestId::from(self.next_req_id),
+            RegisterCapability::METHOD.to_string(),
+            RegistrationParams {
+                registrations: vec![registration],
+            },
+        );
+        let _ = self.sender.send(Message::Request(req));
     }
 
     /// Send a lint request for `uri`'s current buffer to the lint thread.

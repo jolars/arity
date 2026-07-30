@@ -25,6 +25,14 @@ pub(crate) enum LintMsg {
     RenameFiles {
         renames: Vec<(PathBuf, PathBuf)>,
     },
+    /// On-disk files changed outside the editor (`workspace/didChangeWatchedFiles`):
+    /// `.R` create/delete/change and `DESCRIPTION`/`NAMESPACE` edits. Refreshes db
+    /// membership and package metadata so cross-file analysis tracks the new state.
+    /// Handled on the lint thread, the sole db writer. (`arity.toml` changes are
+    /// handled on the main loop, which owns the config cache.)
+    WatchedFiles {
+        batch: WatchedFilesBatch,
+    },
 }
 
 /// Spawn the dedicated lint thread that owns the persistent salsa database.
@@ -267,6 +275,7 @@ impl LintWorker {
             LintMsg::Request(req) => self.enqueue(*req),
             LintMsg::SeedWorkspace { roots } => self.seed_workspace(roots),
             LintMsg::RenameFiles { renames } => self.rename_files(renames),
+            LintMsg::WatchedFiles { batch } => self.on_watched_files(batch),
         }
     }
 
@@ -299,6 +308,43 @@ impl LintWorker {
     /// The db mutation is [`apply_file_renames`].
     fn rename_files(&mut self, renames: Vec<(PathBuf, PathBuf)>) {
         if apply_file_renames(&mut self.db, &renames) {
+            let _ = self.out_tx.send(Outbound::RelintAll);
+        }
+    }
+
+    /// Apply a `workspace/didChangeWatchedFiles` batch to the db, then re-lint if
+    /// anything changed. `.R` content changes to tracked-but-unopened files refresh
+    /// their text; `.R` create/delete adjusts membership (which cascades a package
+    /// graph refresh); a bare `DESCRIPTION`/`NAMESPACE` edit refreshes the graph on
+    /// its own. See [`WatchedFilesBatch`].
+    fn on_watched_files(&mut self, batch: WatchedFilesBatch) {
+        let mut relint = false;
+
+        // Content changed on disk for a member that isn't open in the editor (open
+        // buffers are authoritative and were filtered out by the classifier).
+        for path in &batch.r_changed {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                self.db.upsert_file(path, text);
+                relint = true;
+            }
+        }
+
+        // Create/delete reshapes membership; that already refreshes the package
+        // graph (see `set_workspace_members`), so a bare metadata edit only needs a
+        // standalone refresh when membership didn't move.
+        let member_changed = if batch.r_created.is_empty() && batch.r_deleted.is_empty() {
+            false
+        } else {
+            apply_r_membership(&mut self.db, &batch.r_created, &batch.r_deleted)
+        };
+        relint |= member_changed;
+
+        if batch.package_meta_changed && !member_changed {
+            self.db.refresh_package_graph();
+            relint = true;
+        }
+
+        if relint {
             let _ = self.out_tx.send(Outbound::RelintAll);
         }
     }

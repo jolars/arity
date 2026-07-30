@@ -175,8 +175,11 @@ cases).
 transport)—offers formatting (document and range), pushed and pull diagnostics,
 quick-fix code actions, hover, completion, signature help, go-to-definition and
 references, rename, document and workspace symbols, semantic tokens, folding and
-selection ranges, document links, and call and type hierarchy, backed by the
-introspection index and a per-file semantic model. The main loop owns
+selection ranges, document links, and call and type hierarchy, plus on-disk
+change detection via dynamically-registered `workspace/didChangeWatchedFiles`
+watchers (`arity.toml`, `DESCRIPTION`, `NAMESPACE`, `.R`; see
+`src/lsp/watched_files.rs`) and `workspace/didChangeWorkspaceFolders`, backed by
+the introspection index and a per-file semantic model. The main loop owns
 no salsa database: read-only requests run on a purpose-built read `TaskPool` (not
 rayon's global pool), and linting is serialized
 on a **dedicated thread** that owns the persistent `IncrementalDatabase`. This is

@@ -517,10 +517,10 @@ roxygen2 7.3.3.
 - [ ] **Minor capability-conformance gaps vs. the R languageserver** (2026-07-02
   survey). (a) arity's completion trigger set is `:` only; the languageserver
   also triggers on `.` (ubiquitous in R names)—fold into the existing completion
-  trigger follow-ups. (b) arity advertises `workspace_folders: None` and seeds the
-  workspace once from `initialize`; the languageserver advertises
-  `workspaceFolders.changeNotifications`, so arity does not react to
-  `workspace/didChangeWorkspaceFolders` (folders added or removed mid-session).
+  trigger follow-ups. (b) *(resolved)* arity now advertises
+  `workspaceFolders.changeNotifications` and reacts to
+  `workspace/didChangeWorkspaceFolders` by seeding added folders (removal-drop is
+  a tracked follow-up); see the `didChangeWatchedFiles` entry above.
   (c) `textDocumentSync` is FULL-only with no `willSave`/`save` registration
   (benign). Note: the languageserver's `codeLens`, `executeCommand`,
   `linkedEditingRange`, `moniker`, and type/implementation-definition providers are
@@ -570,15 +570,21 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   `guard_contains_a_panic_and_reports_completion` (lint_thread) and
   `db_recovers_from_a_poisoned_mutex` (incremental).
 
-- [ ] **P2 — `workspace/didChangeWatchedFiles` + dynamic file-watch
-  registration.** No on-disk change detection at all: `arity.toml`,
-  `DESCRIPTION`, `NAMESPACE`, and sibling `.R` files changed outside the editor
-  (git switch, external tooling, newly created files) stay invisible until a
-  buffer edit. Register watchers via dynamic `client/registerCapability` for
-  `**/*.{R,r}`, `arity.toml`, `DESCRIPTION`, `NAMESPACE`; on change reload
-  config, reindex, or reseed the workspace member set. Subsumes the
-  already-logged `didChangeWorkspaceFolders` gap under "Minor
-  capability-conformance gaps" (same dynamic-registration plumbing).
+- [x] **P2 — `workspace/didChangeWatchedFiles` + dynamic file-watch
+  registration** (landed). On-disk changes made outside the editor now reach
+  cross-file analysis. When the client supports dynamic registration, the server
+  registers watchers via `client/registerCapability` for `**/*.{R,r}`,
+  `arity.toml`, `DESCRIPTION`, `NAMESPACE` (`GlobalState::register_file_watchers`).
+  `didChangeWatchedFiles` is classified in `src/lsp/watched_files.rs`
+  (`classify_watched_files`): an `arity.toml` edit drops the config cache and
+  re-lints (main loop); `.R` create/delete reseeds the member set
+  (`apply_r_membership`, excludes honored) and `DESCRIPTION`/`NAMESPACE` edits
+  refresh the package graph (both on the lint thread, the sole db writer);
+  content changes to tracked-but-unopened `.R` files re-`upsert` from disk while
+  open buffers stay authoritative. Also advertises `workspaceFolders` and seeds
+  **added** folders on `didChangeWorkspaceFolders`
+  (`on_workspace_folders_changed`). **Follow-up:** dropping members under a
+  *removed* workspace folder (left in place for now).
 
 - [ ] **P2 — Work-done progress for background jobs.** `build_index` and the
   sidecar fetch run on the single-thread index pool with no `$/progress`

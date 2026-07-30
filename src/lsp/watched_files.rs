@@ -1,0 +1,311 @@
+use super::*;
+
+/// The glob patterns registered with the client for `didChangeWatchedFiles`. R
+/// sources drive workspace membership; `arity.toml` reshapes config; `DESCRIPTION`
+/// and `NAMESPACE` reshape package metadata — all of which affect cross-file
+/// analysis when they change on disk.
+pub(crate) const WATCHED_GLOBS: [&str; 4] = [
+    "**/*.{R,r}",
+    "**/arity.toml",
+    "**/DESCRIPTION",
+    "**/NAMESPACE",
+];
+
+/// A batch of on-disk changes from `workspace/didChangeWatchedFiles`, already
+/// converted to filesystem paths and split by what each one forces the lint
+/// thread (the sole db writer) to redo. `arity.toml` changes are handled on the
+/// main loop — it owns the config cache — so they never reach here (see
+/// [`WatchedClassification::config_changed`]).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct WatchedFilesBatch {
+    /// `.R`/`.r` files created on disk — add to the workspace member set.
+    pub(crate) r_created: Vec<PathBuf>,
+    /// `.R`/`.r` files deleted on disk — drop from the member set.
+    pub(crate) r_deleted: Vec<PathBuf>,
+    /// `.R`/`.r` files whose content changed on disk and are **not** open in the
+    /// editor — re-`upsert_file` from disk. Open buffers are authoritative, so the
+    /// classifier filters them out here (see [`classify_watched_files`]).
+    pub(crate) r_changed: Vec<PathBuf>,
+    /// A `DESCRIPTION`/`NAMESPACE` was created, changed, or deleted — refresh the
+    /// package graph (re-reads that metadata from disk).
+    pub(crate) package_meta_changed: bool,
+}
+
+impl WatchedFilesBatch {
+    /// Nothing for the lint thread to do.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.r_created.is_empty()
+            && self.r_deleted.is_empty()
+            && self.r_changed.is_empty()
+            && !self.package_meta_changed
+    }
+}
+
+/// The result of classifying a `didChangeWatchedFiles` batch: the lint-thread
+/// work ([`batch`](Self::batch)), plus whether an `arity.toml` changed (handled
+/// on the main loop, which owns the config cache).
+pub(crate) struct WatchedClassification {
+    pub(crate) batch: WatchedFilesBatch,
+    /// An `arity.toml` was created, changed, or deleted; the main loop clears its
+    /// config cache and re-lints open documents so the new settings take effect.
+    pub(crate) config_changed: bool,
+}
+
+/// What a watched path is, by name/extension.
+enum WatchedKind {
+    /// An R source (`.R`/`.r`).
+    RSource,
+    /// `DESCRIPTION` or `NAMESPACE` (package metadata).
+    PackageMeta,
+    /// `arity.toml` (configuration).
+    Config,
+    /// Anything else (ignored — a watcher glob may over-match).
+    Other,
+}
+
+fn classify_path(path: &Path) -> WatchedKind {
+    // `arity.toml`/`DESCRIPTION`/`NAMESPACE` match by exact file name; R sources
+    // by extension. Name wins (a file literally named `NAMESPACE` has no ext).
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some("arity.toml") => return WatchedKind::Config,
+        Some("DESCRIPTION") | Some("NAMESPACE") => return WatchedKind::PackageMeta,
+        _ => {}
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("R") | Some("r") => WatchedKind::RSource,
+        _ => WatchedKind::Other,
+    }
+}
+
+/// Classify a `didChangeWatchedFiles` batch. `is_open` reports whether a URI is
+/// an open editor buffer; a disk *change* to an open file is dropped, because the
+/// buffer (kept current by `didChange`) is authoritative for that file. Non-`file`
+/// URIs and unrecognized paths are ignored.
+pub(crate) fn classify_watched_files(
+    params: &DidChangeWatchedFilesParams,
+    is_open: impl Fn(&Uri) -> bool,
+) -> WatchedClassification {
+    let mut batch = WatchedFilesBatch::default();
+    let mut config_changed = false;
+    for ev in &params.changes {
+        let Some(path) = uri::to_path(&ev.uri) else {
+            continue;
+        };
+        match classify_path(&path) {
+            WatchedKind::RSource => {
+                let t = ev.typ;
+                if t == FileChangeType::CREATED {
+                    batch.r_created.push(path);
+                } else if t == FileChangeType::DELETED {
+                    batch.r_deleted.push(path);
+                } else if t == FileChangeType::CHANGED && !is_open(&ev.uri) {
+                    batch.r_changed.push(path);
+                }
+            }
+            // A create/change/delete of package metadata all reduce to the same
+            // refresh; the graph re-reads whatever is (or is not) on disk now.
+            WatchedKind::PackageMeta => batch.package_meta_changed = true,
+            WatchedKind::Config => config_changed = true,
+            WatchedKind::Other => {}
+        }
+    }
+    WatchedClassification {
+        batch,
+        config_changed,
+    }
+}
+
+/// Add created `.R` files to, and drop deleted ones from, the db's workspace
+/// member set, then reinstall it (which refreshes the package graph via
+/// [`set_workspace_members`](IncrementalDatabase::set_workspace_members)). A
+/// created file is only added if the workspace scope (excludes applied) would
+/// include it, so a generated/vendored source (`renv/`, …) doesn't leak in.
+/// Deleted files are dropped from the set but their [`SourceFile`] input lingers,
+/// the same posture as [`apply_file_renames`]. Returns whether membership
+/// actually changed. No-op when no workspace is seeded.
+pub(crate) fn apply_r_membership(
+    db: &mut IncrementalDatabase,
+    created: &[PathBuf],
+    deleted: &[PathBuf],
+) -> bool {
+    let Some(ws) = db.workspace() else {
+        return false;
+    };
+    let mut members: Vec<SourceFile> = ws.members(db).to_vec();
+    let roots = ws.roots(db).to_vec();
+
+    let mut changed = false;
+    for path in deleted {
+        if let Some(old) = db.lookup_file(path) {
+            let before = members.len();
+            members.retain(|&m| m != old);
+            changed |= members.len() != before;
+        }
+    }
+    for path in created {
+        if !in_workspace_scope(&roots, path) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let file = db.upsert_file(path, text);
+        if !members.contains(&file) {
+            members.push(file);
+            changed = true;
+        }
+    }
+
+    if changed {
+        db.set_workspace_members(members, roots);
+    }
+    changed
+}
+
+/// Whether a newly-created `path` belongs in the workspace member set: it must
+/// sit under a tracked root and survive that root's exclude config. Reuses the
+/// same walk the initial seed does
+/// ([`scope_members`](crate::linter::check::scope_members)), so the include rules
+/// can't drift. The deepest matching root wins (a nested package root is more
+/// specific than its parent workspace root).
+fn in_workspace_scope(roots: &[PathBuf], path: &Path) -> bool {
+    let Some(root) = roots
+        .iter()
+        .filter(|r| path.starts_with(r))
+        .max_by_key(|r| r.components().count())
+    else {
+        return false;
+    };
+    let exclude = crate::linter::check::resolve_exclude_at(root);
+    crate::linter::check::scope_members(std::slice::from_ref(root), &exclude)
+        .iter()
+        .any(|p| p == path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lsp_types::FileEvent;
+
+    fn ws_uri(path: &str) -> Uri {
+        let p = if cfg!(windows) {
+            PathBuf::from(format!(r"C:\ws\{path}"))
+        } else {
+            PathBuf::from(format!("/ws/{path}"))
+        };
+        uri::from_path(&p).expect("file uri")
+    }
+
+    fn event(path: &str, typ: FileChangeType) -> FileEvent {
+        FileEvent::new(ws_uri(path), typ)
+    }
+
+    fn classify(changes: Vec<FileEvent>, open: &[&str]) -> WatchedClassification {
+        let open_uris: HashSet<Uri> = open.iter().map(|n| ws_uri(n)).collect();
+        classify_watched_files(&DidChangeWatchedFilesParams { changes }, |uri| {
+            open_uris.contains(uri)
+        })
+    }
+
+    #[test]
+    fn splits_r_sources_by_change_type() {
+        let c = classify(
+            vec![
+                event("R/new.R", FileChangeType::CREATED),
+                event("R/gone.R", FileChangeType::DELETED),
+                event("R/edited.R", FileChangeType::CHANGED),
+            ],
+            &[],
+        );
+        assert_eq!(c.batch.r_created.len(), 1);
+        assert_eq!(c.batch.r_deleted.len(), 1);
+        assert_eq!(c.batch.r_changed.len(), 1);
+        assert!(!c.batch.package_meta_changed);
+        assert!(!c.config_changed);
+    }
+
+    #[test]
+    fn a_disk_change_to_an_open_file_is_dropped() {
+        // `edited.R` is open in the editor, so its disk change is ignored (the
+        // buffer wins).
+        let c = classify(
+            vec![event("edited.R", FileChangeType::CHANGED)],
+            &["edited.R"],
+        );
+        assert!(
+            c.batch.is_empty(),
+            "open-file change dropped: {:?}",
+            c.batch
+        );
+    }
+
+    #[test]
+    fn description_and_namespace_set_package_meta() {
+        for name in ["DESCRIPTION", "NAMESPACE"] {
+            let c = classify(vec![event(name, FileChangeType::CHANGED)], &[]);
+            assert!(c.batch.package_meta_changed, "{name} sets package meta");
+            assert!(!c.config_changed);
+        }
+    }
+
+    #[test]
+    fn arity_toml_sets_config_changed_only() {
+        let c = classify(vec![event("arity.toml", FileChangeType::CHANGED)], &[]);
+        assert!(c.config_changed);
+        assert!(c.batch.is_empty(), "config change is not lint-thread work");
+    }
+
+    #[test]
+    fn unrelated_files_are_ignored() {
+        let c = classify(vec![event("README.md", FileChangeType::CHANGED)], &[]);
+        assert!(c.batch.is_empty());
+        assert!(!c.config_changed);
+    }
+
+    /// A real on-disk package (`DESCRIPTION` + `R/a.R`) seeded as one member.
+    fn seeded_package() -> (tempfile::TempDir, IncrementalDatabase, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: testpkg\n").expect("DESCRIPTION");
+        let r_dir = root.join("R");
+        std::fs::create_dir(&r_dir).expect("R/");
+        let a = r_dir.join("a.R");
+        std::fs::write(&a, "foo <- function() 1\n").expect("a.R");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&a, "foo <- function() 1\n".to_string());
+        db.set_workspace_members(vec![file], vec![root.to_path_buf()]);
+        (dir, db, a)
+    }
+
+    #[test]
+    fn apply_r_membership_adds_created_and_drops_deleted() {
+        let (dir, mut db, a) = seeded_package();
+        let b = dir.path().join("R").join("b.R");
+        std::fs::write(&b, "bar <- function() 2\n").expect("b.R");
+
+        // A newly-created sibling under R/ joins the member set.
+        assert!(apply_r_membership(&mut db, std::slice::from_ref(&b), &[]));
+        let b_file = db.lookup_file(&b).expect("b.R tracked");
+        assert!(db.workspace().unwrap().members(&db).contains(&b_file));
+
+        // Deleting the original member drops it from the set.
+        let a_file = db.lookup_file(&a).expect("a.R tracked");
+        assert!(apply_r_membership(&mut db, &[], std::slice::from_ref(&a)));
+        assert!(!db.workspace().unwrap().members(&db).contains(&a_file));
+    }
+
+    #[test]
+    fn apply_r_membership_ignores_a_create_outside_any_root() {
+        let (_dir, mut db, _a) = seeded_package();
+        let stray = if cfg!(windows) {
+            PathBuf::from(r"C:\elsewhere\stray.R")
+        } else {
+            PathBuf::from("/elsewhere/stray.R")
+        };
+        assert!(
+            !apply_r_membership(&mut db, std::slice::from_ref(&stray), &[]),
+            "a file outside every tracked root is not added"
+        );
+        assert!(db.lookup_file(&stray).is_none());
+    }
+}

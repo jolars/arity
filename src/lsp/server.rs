@@ -26,6 +26,9 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
     // If the client supports the pull model, suppress push for this session and
     // serve diagnostics on demand instead (avoids duplicate diagnostics).
     let pull_mode = client_supports_pull(&params);
+    // Watched-file notifications are only available via dynamic registration; skip
+    // it for clients that don't support it (they fall back to buffer-edit refresh).
+    let register_watchers = client_supports_dynamic_watch(&params);
     let init_result = InitializeResult {
         capabilities: server_capabilities(),
         server_info: Some(ServerInfo {
@@ -41,7 +44,13 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
     init_value["capabilities"]["typeHierarchyProvider"] = serde_json::json!(true);
     connection.initialize_finish(id, init_value)?;
 
-    main_loop(connection, editor_settings, workspace_roots, pull_mode)?;
+    main_loop(
+        connection,
+        editor_settings,
+        workspace_roots,
+        pull_mode,
+        register_watchers,
+    )?;
     Ok(())
 }
 
@@ -78,6 +87,21 @@ pub(crate) fn client_supports_pull(params: &serde_json::Value) -> bool {
         .and_then(|c| c.get("textDocument"))
         .and_then(|t| t.get("diagnostic"))
         .is_some_and(|d| d.is_object())
+}
+
+/// Whether the client declared support for *dynamic* registration of
+/// `workspace/didChangeWatchedFiles`
+/// (`capabilities.workspace.didChangeWatchedFiles.dynamicRegistration`). There is
+/// no static server capability for watched files, so without this we cannot
+/// register watchers and the feature is unavailable for that client.
+pub(crate) fn client_supports_dynamic_watch(params: &serde_json::Value) -> bool {
+    params
+        .get("capabilities")
+        .and_then(|c| c.get("workspace"))
+        .and_then(|w| w.get("didChangeWatchedFiles"))
+        .and_then(|d| d.get("dynamicRegistration"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }
 
 pub(crate) fn server_capabilities() -> ServerCapabilities {
@@ -134,7 +158,13 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             work_done_progress_options: Default::default(),
         })),
         workspace: Some(WorkspaceServerCapabilities {
-            workspace_folders: None,
+            // Accept workspace folders and ask to be notified when the set changes,
+            // so a newly-added folder is seeded into cross-file analysis (see
+            // `GlobalState::on_workspace_folders_changed`).
+            workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                supported: Some(true),
+                change_notifications: Some(OneOf::Left(true)),
+            }),
             file_operations: Some(WorkspaceFileOperationsServerCapabilities {
                 will_rename: Some(r_file_rename_registration()),
                 did_rename: Some(r_file_rename_registration()),
@@ -168,6 +198,7 @@ pub(crate) fn main_loop(
     editor_settings: EditorSettings,
     workspace_roots: Vec<PathBuf>,
     pull_mode: bool,
+    register_watchers: bool,
 ) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
@@ -199,6 +230,13 @@ pub(crate) fn main_loop(
         editor_settings,
         pull_mode,
     );
+
+    // Ask the client to watch on-disk config, package-metadata, and `.R` files so
+    // changes made outside the editor reach cross-file analysis. Requires dynamic
+    // registration support (there is no static capability for watched files).
+    if register_watchers {
+        state.register_file_watchers();
+    }
 
     loop {
         select! {
@@ -267,6 +305,35 @@ mod tests {
         assert_eq!(opts.identifier.as_deref(), Some("arity"));
         assert!(opts.inter_file_dependencies);
         assert!(!opts.workspace_diagnostics);
+    }
+
+    #[test]
+    fn advertises_workspace_folders_support() {
+        let ws = server_capabilities()
+            .workspace
+            .expect("workspace capabilities advertised");
+        let folders = ws.workspace_folders.expect("workspace folders advertised");
+        assert_eq!(folders.supported, Some(true));
+        assert_eq!(folders.change_notifications, Some(OneOf::Left(true)));
+    }
+
+    #[test]
+    fn detects_client_dynamic_watch_support() {
+        let with = serde_json::json!({
+            "capabilities": {
+                "workspace": { "didChangeWatchedFiles": { "dynamicRegistration": true } }
+            }
+        });
+        assert!(client_supports_dynamic_watch(&with));
+
+        // Explicitly false, or absent, means no watcher registration.
+        let off = serde_json::json!({
+            "capabilities": {
+                "workspace": { "didChangeWatchedFiles": { "dynamicRegistration": false } }
+            }
+        });
+        assert!(!client_supports_dynamic_watch(&off));
+        assert!(!client_supports_dynamic_watch(&serde_json::json!({})));
     }
 
     #[test]

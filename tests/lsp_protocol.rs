@@ -34,6 +34,16 @@ fn doc_uri() -> &'static str {
     }
 }
 
+/// A file URI for an `arity.toml` in the same directory as [`doc_uri`], for
+/// exercising the `didChangeWatchedFiles` config-change path.
+fn arity_toml_uri() -> &'static str {
+    if cfg!(windows) {
+        "file:///C:/tmp/arity.toml"
+    } else {
+        "file:///tmp/arity.toml"
+    }
+}
+
 /// A file URI whose *parent directory does not exist* on disk. Config
 /// discovery anchors on that directory, so this is the shape that used to make
 /// `textDocument/formatting` answer `null` (an editor buffer in a directory
@@ -66,6 +76,12 @@ impl Harness {
     /// `workspaceFolders`/`rootUri` are sent, so the server skips its workspace
     /// seed walk (hermetic, fast).
     fn start_push() -> Self {
+        Self::start_with_capabilities(json!({ "textDocument": { "hover": {} } }))
+    }
+
+    /// Like [`start_push`] but with caller-chosen client `capabilities`, so a test
+    /// can opt into features gated on them (e.g. dynamic watched-file registration).
+    fn start_with_capabilities(capabilities: Value) -> Self {
         let (server_conn, client_conn) = Connection::memory();
         let server = std::thread::spawn(move || {
             let _ = arity::lsp::serve(server_conn);
@@ -83,7 +99,7 @@ impl Harness {
             json!({
                 "processId": null,
                 "clientInfo": { "name": "arity-protocol-test" },
-                "capabilities": { "textDocument": { "hover": {} } },
+                "capabilities": capabilities,
             }),
         );
         let resp = harness.recv_response(&init_id);
@@ -433,5 +449,76 @@ fn stale_read_returns_content_modified() {
         .response_result
         .expect_err("superseded read should error, got a result");
     assert_eq!(err.code, -32801, "ContentModified: {err:?}");
+    h.shutdown();
+}
+
+#[test]
+fn registers_file_watchers_when_client_supports_dynamic_registration() {
+    // A client that supports dynamic registration for watched files gets a
+    // `client/registerCapability` at startup covering R sources, config, and
+    // package metadata (there is no static server capability for this).
+    let mut h = Harness::start_with_capabilities(json!({
+        "textDocument": { "hover": {} },
+        "workspace": { "didChangeWatchedFiles": { "dynamicRegistration": true } },
+    }));
+
+    let msg = h.recv_until(
+        "client/registerCapability",
+        |m| matches!(m, Message::Request(r) if r.method == "client/registerCapability"),
+    );
+    let Message::Request(req) = msg else {
+        unreachable!()
+    };
+    let reg = req
+        .params
+        .get("registrations")
+        .and_then(Value::as_array)
+        .expect("registrations array")
+        .iter()
+        .find(|r| {
+            r.get("method").and_then(Value::as_str) == Some("workspace/didChangeWatchedFiles")
+        })
+        .expect("a watched-files registration");
+    let globs: Vec<&str> = reg
+        .pointer("/registerOptions/watchers")
+        .and_then(Value::as_array)
+        .expect("watchers array")
+        .iter()
+        .filter_map(|w| w.get("globPattern").and_then(Value::as_str))
+        .collect();
+    for want in [
+        "**/*.{R,r}",
+        "**/arity.toml",
+        "**/DESCRIPTION",
+        "**/NAMESPACE",
+    ] {
+        assert!(globs.contains(&want), "watches {want}: {globs:?}");
+    }
+    h.shutdown();
+}
+
+#[test]
+fn watched_arity_toml_change_relints_open_documents() {
+    // An `arity.toml` change reaches the server as `didChangeWatchedFiles` and
+    // re-lints open buffers without any edit — the config cache is dropped and the
+    // finding is republished at the same document version.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, BUGGY, 1);
+    let first = h.recv_publish_for(uri, 1);
+    assert!(!first.is_empty(), "buggy doc has a finding");
+
+    h.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({ "changes": [ { "uri": arity_toml_uri(), "type": 2 } ] }),
+    );
+
+    // The re-lint republishes for the same (unchanged) version.
+    let again = h.recv_publish_for(uri, 1);
+    assert_eq!(
+        again.len(),
+        first.len(),
+        "re-lint republishes the finding after the config change"
+    );
     h.shutdown();
 }
