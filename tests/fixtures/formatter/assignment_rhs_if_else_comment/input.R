@@ -1,0 +1,7 @@
+writeMulti = function(x, rc, endian, EWKB) {
+	unMulti = if (inherits(x, "MULTILINESTRING"))
+		st_linestring
+	else # MULTIPOLYGON, POLYHEDRALSURFACE, TIN:
+		st_polygon
+	unMulti
+}
