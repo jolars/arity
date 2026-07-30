@@ -401,6 +401,73 @@ roxygen2 7.3.3.
 - **Too noisy without opt-in:** `undesirable-function`, `unused-function`,
   `unexplained-suppression`—all **default-off**.
 
+## Static analysis (dataflow foundation)
+
+Cross-cutting: a def-use index and a control-flow graph feeding **both** the
+linter and the LSP. Motivated by an audit of flowR
+(https://github.com/flowr-analysis/flowr), a mature static dataflow analyzer for
+R (normalized AST -> hierarchical dataflow graph with typed multi-edges -> CFG ->
+reaching-definitions fixpoint -> composable query API -> dataflow linter +
+program slicing). arity's gap vs flowR is exactly here: today the semantic model
+has a scope tree + bindings + name resolution but only a boolean `read` flag—no
+def-use reverse index, no CFG, no reaching definitions, no DFG.
+
+Everything below stays within arity's tenets: **static** (no R evaluation, no
+type inference), **incremental-first** (each analysis is a `salsa` query in
+`src/incremental.rs`, memoized like `semantic_model()`), consumed by both the
+linter (`RuleContext`) and the LSP. TDD (fixtures first). Recommended ceiling is
+**Phase B (CFG)**; Phase C is an optional later stretch.
+
+### Phase A—Def-use reverse index (cheapest; do first)
+
+- [ ] Extend `SemanticModel` so a `Binding` exposes its read sites and each
+      `IdentRef` resolves to its `BindingId`. Build it **during the existing
+      single walk** in `src/semantic/builder.rs` (`reads_reached`)—no extra
+      traversal; it's the reverse of the map the walk already computes. Types in
+      `src/semantic/binding.rs`/`src/semantic.rs`. Still flow-insensitive.
+- [ ] Consume it in the linter: strengthen `unused-binding`
+      (`src/linter/rules/correctness/unused_binding.rs`) to reason over the
+      concrete read set rather than the boolean flag.
+- [ ] Consume it in the LSP: sharpen intra-file `references`/`rename`
+      (`src/lsp/navigation.rs`) off the def-use edges.
+
+### Phase B—CFG per function body (recommended ceiling)
+
+- [ ] New `src/semantic/cfg.rs`: per-function basic blocks + edges for
+      `if`/`else`, `for`/`while`/`repeat`, `break`/`next`,
+      `return()`/`stop()`, and sequential statements, built from the CST/AST
+      wrappers and exposed as a salsa query. Deterministic and local, so it stays
+      keystroke-fast and incremental.
+- [ ] Unblock the Phase 3 lint rules that need reachability:
+  - [ ] `unreachable-code` both-branches-return case (the documented CFG gap in
+        `src/linter/rules/correctness/unreachable_code.rs`).
+  - [ ] `if-always-true` (literal `if (TRUE/FALSE)` reachability).
+  - [ ] `coalesce` (`if (is.null(x)) y else x`—both-branches pattern).
+  - [ ] `unnecessary-nesting` (collapsible nested `if`/single-stmt block).
+
+### Phase C—Reaching definitions (optional stretch, not committed)
+
+- [ ] Only if a concrete rule (dead-store, redundant reassignment) justifies it:
+      a flow-sensitive fixpoint over the Phase B CFG, lattice over bindings. This
+      is the first analysis that is real work to keep incremental—revisit after
+      B ships and a rule demands it.
+
+#### Out of scope (recorded so they aren't silently dropped)
+
+Borrow/reject verdicts from the flowR audit—rejected because even flowR only
+does these partially/conservatively, and they collide with arity's static tenet:
+
+- **Full hierarchical DFG** (flowR's 5-vertex/9-edge graph). rowan CST +
+  `SyntaxNodePtr` + the Phase A def-use index already give the AST<->flow
+  linkage; add only the edges a rule needs, not a whole graph.
+- **Program slicing** as a core feature—a possible future LSP command ("what
+  affects this variable"), not lint/LSP-quality-critical now.
+- **NSE / environment / `assign`/`get` simulation** and **lazy-eval/promise
+  modeling**—keep the existing conservative data-masking + `resolution_incomplete`
+  gates instead.
+- **Type / signature-based inference**—an explicit arity non-goal; the
+  introspection index stays names+formals+help only.
+
 ## Language Server
 
 ### Navigation
