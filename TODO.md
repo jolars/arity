@@ -420,12 +420,12 @@ linter (`RuleContext`) and the LSP. TDD (fixtures first). Recommended ceiling is
 
 ### Phase A—Def-use reverse index (cheapest; do first)
 
-- [ ] Extend `SemanticModel` so a `Binding` exposes its read sites and each
+- [x] Extend `SemanticModel` so a `Binding` exposes its read sites and each
       `IdentRef` resolves to its `BindingId`. Build it **during the existing
       single walk** in `src/semantic/builder.rs` (`reads_reached`)—no extra
       traversal; it's the reverse of the map the walk already computes. Types in
       `src/semantic/binding.rs`/`src/semantic.rs`. Still flow-insensitive.
-- [ ] Consume it in the linter: strengthen `unused-binding`
+- [x] Consume it in the linter: strengthen `unused-binding`
       (`src/linter/rules/correctness/unused_binding.rs`) to reason over the
       concrete read set rather than the boolean flag.
 - [ ] Consume it in the LSP: sharpen intra-file `references`/`rename`
