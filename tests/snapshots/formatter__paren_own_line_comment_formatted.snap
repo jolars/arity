@@ -1,0 +1,12 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+x <- (
+  a
+  # own line
+)
+y <- (
+  f(b)
+  ## tail note
+)
