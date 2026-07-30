@@ -1,6 +1,6 @@
 {
   "name": "arity-cli",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "A language server, formatter, and linter for R",
   "keywords": [
     "r",
@@ -28,13 +28,13 @@
     "node": ">=20"
   },
   "optionalDependencies": {
-    "@arity-cli/linux-x64-gnu": "0.13.0",
-    "@arity-cli/linux-arm64-gnu": "0.13.0",
-    "@arity-cli/linux-x64-musl": "0.13.0",
-    "@arity-cli/linux-arm64-musl": "0.13.0",
-    "@arity-cli/darwin-x64": "0.13.0",
-    "@arity-cli/darwin-arm64": "0.13.0",
-    "@arity-cli/win32-x64": "0.13.0",
-    "@arity-cli/win32-arm64": "0.13.0"
+    "@arity-cli/linux-x64-gnu": "0.14.0",
+    "@arity-cli/linux-arm64-gnu": "0.14.0",
+    "@arity-cli/linux-x64-musl": "0.14.0",
+    "@arity-cli/linux-arm64-musl": "0.14.0",
+    "@arity-cli/darwin-x64": "0.14.0",
+    "@arity-cli/darwin-arm64": "0.14.0",
+    "@arity-cli/win32-x64": "0.14.0",
+    "@arity-cli/win32-arm64": "0.14.0"
   }
 }

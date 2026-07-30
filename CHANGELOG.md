@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.14.0](https://github.com/jolars/arity/compare/v0.13.0...v0.14.0) (2026-07-30)
+
+### Features
+- **semantic:** add def-use reverse index ([`89c8ab4`](https://github.com/jolars/arity/commit/89c8ab48846394722da018d2a53253fda91a38df))
+- **lsp:** react to on-disk changes via didChangeWatchedFiles ([`3fa343b`](https://github.com/jolars/arity/commit/3fa343b5f42f7bdd48fe685cd853ae4ec419799d))
+- **ci:** add smoke-test-triage skill, sharpen corpus scan (#80) ([`bb8906e`](https://github.com/jolars/arity/commit/bb8906e7459621857c606b5cdd1bd2ee5b2bfdad))
+- **lsp:** add request cancellation and stale-read gating ([`9f0d51a`](https://github.com/jolars/arity/commit/9f0d51a28782d9e3d6f28f8fa4b91131c322d474))
+- **lsp:** guard threads against handler panics ([`1b0e329`](https://github.com/jolars/arity/commit/1b0e3292ffe5fcb36160e7f71b4acee0085d6c3c))
+- **formatter:** treat trailing comments as zero-width ([`cd38a47`](https://github.com/jolars/arity/commit/cd38a473d0a1bf9284a6c9733c1c5be11720866d))
+- **roxygen:** merge same-`@name` blocks into one topic ([`31df16a`](https://github.com/jolars/arity/commit/31df16ac9b45940bc39c5eed53e1038d7b04c378))
+- **roxygen:** drop blocks past the last top-level expr ([`a7a264b`](https://github.com/jolars/arity/commit/a7a264bc9593d6fb30dc41b2345213b042cee8ed))
+- **roxygen:** knitr chunk fence class carries the language ([`85fbb37`](https://github.com/jolars/arity/commit/85fbb37102e5897b6bc4cb218c70384fd398e574))
+- **roxygen:** newline ends unquoted html attribute value ([`af07249`](https://github.com/jolars/arity/commit/af07249ad3e2e3ef80eb64e9291b6f066d1c0c81))
+- **roxygen:** demote md image after odd backslash run ([`579414b`](https://github.com/jolars/arity/commit/579414b7918a7a95a52056f56b70c370e80f355f))
+- **roxygen:** inline-link destination crosses soft breaks ([`78b7f79`](https://github.com/jolars/arity/commit/78b7f793828316e59d346ef9bac7d9e177710024))
+- **roxygen:** raw fence info string can drop the section ([`ef21a51`](https://github.com/jolars/arity/commit/ef21a51006212fa1c76f5bef788cb66ce1fa77cd))
+- **roxygen:** demote md macro after odd backslash run ([`85cc88d`](https://github.com/jolars/arity/commit/85cc88d086680952cf21b4e759ef1a55b8204ea0))
+- **roxygen:** block-level reparse of leaked linkref defs ([`ab90044`](https://github.com/jolars/arity/commit/ab9004470b613826ebe40fb9fdd885d97da3e9f5))
+- **roxygen:** escaped-close link labels and markdown leak parsing ([`41df574`](https://github.com/jolars/arity/commit/41df574b3f49b8e074eb016893cbee82a6b1aa6d))
+- **roxygen:** link-ref defs inside block quotes ([`27dbbe3`](https://github.com/jolars/arity/commit/27dbbe3f35400a1612eb11a2f45da0fb18f270fb))
+- **roxygen:** same-line HTML block in a list item ([`122b450`](https://github.com/jolars/arity/commit/122b4504c7c6ed2acafbffbd163d7f5d1b679765))
+- **roxygen:** field-edge Unicode trim and fence-info entities ([`2fdc85c`](https://github.com/jolars/arity/commit/2fdc85cbf745842c9db29d258498fdcc7fe98062))
+- **roxygen:** setext column gate and per-piece rdComplete drop ([`8e095f5`](https://github.com/jolars/arity/commit/8e095f52d3b5f2d6ab153bde33659969d5c5adf6))
+- **roxygen:** thematic-break block edges ([`c6c011d`](https://github.com/jolars/arity/commit/c6c011d36c018690a76c502650e9ddb1debfb708))
+- **roxygen:** code-span backtick runs and `\verb` fallback ([`965049e`](https://github.com/jolars/arity/commit/965049e2fa016dd546e95fd58fe384138ec5d28b))
+- **roxygen:** consume link-ref defs inside list items ([`25400f6`](https://github.com/jolars/arity/commit/25400f6d86b905dd28ba16e641f5716a1bfbe70e))
+- **parser:** same-line code fence in a list item ([`e51a6c9`](https://github.com/jolars/arity/commit/e51a6c9bf4b9f376cfdafb2ed45e692d169f951b))
+- **roxygen:** strip setext-title link defs, field-wide refmap ([`3f197dd`](https://github.com/jolars/arity/commit/3f197ddec820495d9324d9c5eac5ca53a21ad758))
+- **roxygen:** model roxygen2's trailing-empty-heading raw fallback ([`4e2bb91`](https://github.com/jolars/arity/commit/4e2bb91095d518e716ee593dc309ec9e79e9088b))
+- **parser:** expand tabs to 4-column stops in roxygen markdown ([`df95b3a`](https://github.com/jolars/arity/commit/df95b3a51410210d985d3506c89e5252ff93af1c))
+- **parser:** headings inside list items with in-list H1 hoist ([`82e8c32`](https://github.com/jolars/arity/commit/82e8c32fda265b3eed94285d64b949a5b5b72fc6))
+- **parser:** block quote opening on a list-marker line ([`6fb3838`](https://github.com/jolars/arity/commit/6fb3838c77090e7109ee576a3eae7c26fba348b7))
+- **parser:** list-item content-indent start conditions ([`56c1aec`](https://github.com/jolars/arity/commit/56c1aeca51cd8234f6bccc9c4a0555b6cf1177f4))
+- **parser:** nest same-line consecutive list markers ([`531664b`](https://github.com/jolars/arity/commit/531664bf3b7cdcfca4a40cd774317372cfd024f8))
+- **parser:** list siblings pair by CommonMark indent window ([`aa8f33f`](https://github.com/jolars/arity/commit/aa8f33fc7361847673c08c98dec2f6cd334bf083))
+- **lint:** add `sort` rule ([`de7de18`](https://github.com/jolars/arity/commit/de7de18b518b69571fd34795ae39f3cf688de042))
+
+### Bug Fixes
+- **formatter:** don't let a paren's trailing comment eat the ')' ([`5df242d`](https://github.com/jolars/arity/commit/5df242dd3c864062c23808da14a8315bdbbc669d))
+- **formatter:** don't let an if-branch trailing comment force a break ([`86846c4`](https://github.com/jolars/arity/commit/86846c45cbd09a96706ef76d853d8e470cb5419b)), closes [#70](https://github.com/jolars/arity/issues/70)
+- **parser:** don't bind an operator to a comment atom ([`4856f9d`](https://github.com/jolars/arity/commit/4856f9d830a591ff6c729c548fb1c22c6d4a05b2)), closes [#71](https://github.com/jolars/arity/issues/71)
+- **formatter:** brace both if branches when a comment braces one ([`d65d573`](https://github.com/jolars/arity/commit/d65d573c763560dac850c52d1db41ea83db9b4ac)), closes [#73](https://github.com/jolars/arity/issues/73)
+- **formatter:** lay out a comment before an assignment RHS ([`0f722b3`](https://github.com/jolars/arity/commit/0f722b3658f7bff5761393af67145b37b0660afb))
+- **formatter:** measure breaks at the real column (#82) ([`82e83fe`](https://github.com/jolars/arity/commit/82e83fe8b15618cd10acbe5de968fc9c8808320d)), closes [#67](https://github.com/jolars/arity/issues/67)
+- **config:** tolerate a missing anchor in discovery (#81) ([`c627e2f`](https://github.com/jolars/arity/commit/c627e2f3cbc4ab0331241efcea42f9bb5433a4ec))
+- **parser:** reject juxtaposed statements, fix two lexer gaps (#79) ([`e98b877`](https://github.com/jolars/arity/commit/e98b8770a9e5189157a5813c767f1b64417cf1fb)), closes [#68](https://github.com/jolars/arity/issues/68)
+- guard force-exclude paths by `has_root` ([`0a87100`](https://github.com/jolars/arity/commit/0a871002604c1b70e277ad6c397eddfd36109978))
+
 ## [0.13.0](https://github.com/jolars/arity/compare/v0.12.0...v0.13.0) (2026-07-20)
 
 ### Features
