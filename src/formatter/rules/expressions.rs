@@ -468,11 +468,12 @@ fn try_format_curly_curly(
     ])))
 }
 
-/// IR builder for parenthesized expressions: a single inner expression
-/// (optionally with a trailing comment) is wrapped inline in `( )` and lets the
-/// inner expression handle its own wrapping; the rarer multi-statement form is
-/// laid out like a block body --- one statement per line, indented one level,
-/// with the closing `)` back at the base indent.
+/// IR builder for parenthesized expressions: a single inner expression is
+/// wrapped inline in `( )` and lets the inner expression handle its own
+/// wrapping; the multi-statement form --- and any inner expression whose tail
+/// is a trailing comment, which would otherwise swallow the closing `)` --- is
+/// laid out like a block body: one statement per line, indented one level, with
+/// the closing `)` back at the base indent.
 pub(crate) fn ir_paren_expr(
     node: &SyntaxNode,
     indent: usize,
@@ -505,7 +506,13 @@ pub(crate) fn ir_paren_expr(
     if let Ok(inner) =
         ir_expr_with_optional_comment(inner_elements, "parenthesized expression", indent, ctx)
     {
-        return Ok(Ir::concat([Ir::text("("), inner, Ir::text(")")]));
+        // The inline form appends `)` right after the inner expression, so it
+        // is only available when nothing at the inner expression's tail runs to
+        // end of line. A trailing comment there would swallow the `)` --- the
+        // block form below puts it on its own line instead.
+        if !inner.ends_with_line_suffix() {
+            return Ok(Ir::concat([Ir::text("("), inner, Ir::text(")")]));
+        }
     }
 
     // Multi-statement / empty parens: lay out like a block body.

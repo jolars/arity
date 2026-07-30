@@ -152,6 +152,8 @@ fn fixture_names() -> &'static [&'static str] {
         "subset_user_requested_line_break_leading_holes",
         "subset_comments_after_holes",
         "parenthesized_expression_basic",
+        "paren_trailing_comment",
+        "paren_own_line_comment",
         "braced_empty_and_basics",
         "braced_empty_function_definitions",
         "braced_empty_loops",

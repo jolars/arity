@@ -30,3 +30,12 @@
 # See TODO.md and the `air_test_that` fixture.
 air_call = "unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands"
 call_trailing_braced_expression = "unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands"
+
+# Comments stay inside their parentheses. `(` … `)` is treated like any other
+# delimited group: an own-line comment in the body keeps the group broken, with
+# the comment where the author put it. Air instead hoists such a comment out of
+# the parens (`x <- (\n  a\n  # note\n)` becomes `x <- (a)` plus a following
+# top-level comment), which relocates it past the end of the statement --- and
+# air does not do this for the identical shape in a call argument list, which it
+# keeps inside. Arity applies the one rule to both.
+paren_own_line_comment = "own-line comment stays inside the parens; air hoists it out of the statement"

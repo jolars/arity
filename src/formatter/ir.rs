@@ -313,4 +313,37 @@ impl Ir {
             | Ir::Nil => false,
         }
     }
+
+    /// Whether the document ends on a trailing comment that runs to end of
+    /// line: an [`Ir::LineSuffix`], or a `Verbatim` splice whose last line is a
+    /// comment. Anything a caller appends after such a document lands *inside*
+    /// the comment and is swallowed, so a caller that still owes a closing
+    /// delimiter must emit a break first (or choose a broken layout).
+    ///
+    /// Conservative on the branching nodes: any candidate/branch that could be
+    /// selected counts, since the layout choice is the printer's to make.
+    pub(crate) fn ends_with_line_suffix(&self) -> bool {
+        match self {
+            Ir::LineSuffix(_) => true,
+            Ir::Verbatim { text, .. } => text
+                .rsplit('\n')
+                .next()
+                .is_some_and(|last| last.trim_start().starts_with('#')),
+            Ir::Concat(items) => items
+                .iter()
+                .rev()
+                .find(|item| !matches!(item, Ir::Nil))
+                .is_some_and(Ir::ends_with_line_suffix),
+            Ir::Indent(inner) | Ir::BreakBody(inner) | Ir::Group { inner, .. } => {
+                inner.ends_with_line_suffix()
+            }
+            Ir::IfBreak { flat, broken } => {
+                flat.ends_with_line_suffix() || broken.ends_with_line_suffix()
+            }
+            Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
+                cands.iter().any(Ir::ends_with_line_suffix)
+            }
+            Ir::Text(_) | Ir::HardLine | Ir::EmptyLine | Ir::Line | Ir::SoftLine | Ir::Nil => false,
+        }
+    }
 }
