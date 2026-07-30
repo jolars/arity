@@ -8,6 +8,22 @@
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
 
+- [ ] A roxygen `#'` comment inside an argument list fails to parse: each line
+  of the block is taken as its own argument, so the parser emits a cascade of
+  `expected ',' between arguments`. A plain `#` comment in the same position
+  parses fine, and R accepts the file. Found while triaging issue #72
+  (`dmurdoch/rgl`, `R/buffer.R`, the repo's only remaining
+  unparseable-and-skipped file):
+
+  ```r
+  x <- list(
+    a = 1,
+
+    #' roxy
+    b = 2
+  )
+  ```
+
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`)
 

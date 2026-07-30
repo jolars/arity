@@ -78,6 +78,7 @@ fn fixture_names() -> &'static [&'static str] {
         "assignment_rhs_breaks_before_lhs_subset_in_function",
         "assignment_subset_lhs_with_if_rhs",
         "if_value_position_braces_at_indent",
+        "if_call_argument_braces_at_indent",
         "if_else_block",
         "if_else_if_chain",
         "if_else_if_chain_long",
