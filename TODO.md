@@ -628,6 +628,73 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   token/block/toplevel reparse, shrinking the `diff_edit` coalescing that
   currently widens invalidation.
 
+### Audit vs Ark (2026-07-30)
+
+Gaps surfaced by auditing Posit's **Ark** (`posit-dev/ark`)—the R kernel that
+also embeds the language server behind Positron—against arity. **Net finding:
+arity is broadly ahead of Ark on standard editor LSP surface.** Ark advertises
+*no* semantic tokens, call hierarchy, type hierarchy, document color, document
+links, document highlight, or even document/range formatting (it delegates
+formatting to `air`). Ark's edge is that it is *kernel-embedded*: its extra
+surface is console-integration custom requests tied to a live R session. So the
+genuine deltas are narrow and **mostly reinforce items already logged above**;
+only the first item below is new actionable content. (Non-gap: Ark advertises
+`implementationProvider` but its handler is a `// TODO` stub returning `Ok(None)`
+in `main_loop.rs`, so go-to-implementation is *not* something Ark actually
+ships—the existing low-priority note under "Navigation" stands, unelevated.)
+
+- [ ] **Positron console-integration custom requests** (new, speculative).
+  Ark serves `positron/textDocument/statementRange` (given a cursor, return the
+  range of the complete top-level statement to send to the REPL;
+  `statement_range.rs`) and `inputBoundaries` (split pasted console input into
+  executable units; `input_boundaries.rs`). Both are **CST-only** computations
+  arity could produce from its existing statement/selection-range machinery
+  (`src/lsp/selection_range.rs` + the CST), and are useful to any editor with a
+  "send code to console/terminal" runner—not just Positron. But they are a
+  Positron-**proprietary** protocol extension and arity isn't console-embedded,
+  so gate on a client that would actually consume them. Ark's sibling custom
+  requests (`helpTopic`, virtual documents) are genuinely out of scope—they
+  need a live R session.
+
+- [ ] **Completion trigger characters + label details** (reinforce). Ark
+  triggers completion on `$`, `@`, `:`; arity on `:` only. Ark also advertises
+  `completionItem.labelDetailsSupport`. The `$`/`@` member-completion and `.`
+  trigger are already tracked under "Completion & signatures" above; fold
+  `labelDetailsSupport` in there as an additional small item.
+
+- [ ] **Signature-help retrigger on `=`** (reinforce). Ark's signature-help
+  trigger set is `(`, `,`, `=`; arity triggers on `(`, `,` only. Typing `=` for
+  a named argument should re-trigger to refresh the active parameter. Small
+  addition to the signature-help follow-ups above.
+
+- **Package/CRAN index backend—confirmed orthogonal, no gap.** Ark has *no*
+  CRAN symbol database in arity's sense. Being a kernel with a **live R
+  session**, it resolves library symbols by calling into R via FFI
+  (`harp::exec::RFunction`): `base::.packages()` for the search path
+  (`completions/sources/composite/search_path.rs`), `getNamespace(pkg)` +
+  `R_lsInternal(exports)` for `pkg::` (`.../unique/namespace.rs`), R's help DB
+  for hover. It ships **no bundled/static export lists**. Its only CRAN-repo
+  code (`repos.rs`) is just `options(repos=)` config for `install.packages`
+  (P3M/PPM default)—not a symbol source. Its workspace `.R` indexer
+  (`indexer.rs`, salsa) is the one piece analogous to arity's `DefIndex`. So the
+  models are deliberately opposite: Ark = live-session (version/install-exact,
+  free, but needs a running R and only sees installed packages); arity =
+  static/offline by tenet (the whole `src/rindex/` bundled+sidecar+harvest tier
+  exists to avoid that dependency). Nothing to adopt wholesale. Two reinforcements,
+  both already logged under "Cross-cutting prerequisite" above: Ark's P3M/PPM
+  default backs the sidecar-hosting plan, and the version-exactness Ark gets for
+  free is what the **pin-aware versions** follow-up chases statically.
+
+- Cross-ref (already logged, reinforced by this audit):
+  - **On-type formatting.** Ark advertises it with first-trigger `\n` and a
+    tree-sitter reindent (`indent.rs`)—the reference model for the on-type
+    formatting item above (still gated on the CRLF `format_range` bug).
+  - **`INCREMENTAL` text sync.** Ark uses INCREMENTAL; arity is FULL—see the
+    Parser incremental-reparse follow-up and the rust-analyzer audit cross-ref.
+  - **`positionEncoding` UTF-8.** Ark hardcodes UTF-16 today but threads a
+    `PositionEncoding` type throughout (ready to negotiate UTF-8)—the same shape
+    as the P3 `positionEncoding` item above.
+
 ### Cross-cutting prerequisite
 
 - [x] Downloadable CRAN sidecar—names-only client (escalation of the bundled
