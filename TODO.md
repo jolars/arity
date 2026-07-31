@@ -670,12 +670,17 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   (`on_workspace_folders_changed`). **Follow-up:** dropping members under a
   *removed* workspace folder (left in place for now).
 
-- [ ] **P2 — Work-done progress for background jobs.** `build_index` and the
-  sidecar fetch run on the single-thread index pool with no `$/progress`
-  reporting (`window/workDoneProgress` is not advertised). Long package harvests
-  are invisible to the user. Advertise the capability and emit begin/report/end
-  around `build_index`/`Sidecar::fetch` (`src/lsp/lint_thread.rs`), like ra's
-  "Indexing" progress.
+- [x] **P2 — Work-done progress for background jobs** (landed). The index pool's
+  two background jobs now emit `$/progress` begin/report/end via a
+  [`ProgressReporter`](src/lsp/progress.rs): the harvest (`build_index`,
+  `maybe_build`) reports indeterminately (it fans across rayon underneath, so
+  it's opaque to per-package percentages), and the sidecar fetch
+  (`maybe_fetch_remote`) reports a determinate percentage per package. Routed
+  through `Outbound::Progress` → the main loop's `on_progress`, which fires
+  `window/workDoneProgress/create` then `$/progress`, gated on the client's
+  `window.workDoneProgress` capability (there is no *server* capability to
+  advertise for server-initiated progress). **Follow-up:** a per-package progress
+  callback on `build_index` would let the harvest report a real percentage too.
 
 - [x] **P2 — LSP integration/protocol test harness** (landed). The handler-level
   tests (`tests/lsp.rs`) are now backed by an in-memory harness

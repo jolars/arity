@@ -68,7 +68,7 @@ use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestI
 use lsp_types::notification::{
     Cancel, DidChangeConfiguration, DidChangeTextDocument, DidChangeWatchedFiles,
     DidChangeWorkspaceFolders, DidCloseTextDocument, DidOpenTextDocument, DidRenameFiles,
-    Notification as NotificationTrait, PublishDiagnostics,
+    Notification as NotificationTrait, Progress, PublishDiagnostics,
 };
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
@@ -78,7 +78,8 @@ use lsp_types::request::{
     PrepareRenameRequest, RangeFormatting, References, RegisterCapability, Rename,
     Request as RequestTrait, ResolveCompletionItem, SelectionRangeRequest,
     SemanticTokensFullRequest, SignatureHelpRequest, TypeHierarchyPrepare, TypeHierarchySubtypes,
-    TypeHierarchySupertypes, WillRenameFiles, WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
+    TypeHierarchySupertypes, WillRenameFiles, WorkDoneProgressCreate, WorkspaceDiagnosticRefresh,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
@@ -102,17 +103,19 @@ use lsp_types::{
     FullDocumentDiagnosticReport, GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverContents, HoverParams, HoverProviderCapability, InitializeResult, Location, MarkupContent,
     MarkupKind, NumberOrString, OneOf, ParameterInformation, ParameterLabel, Position,
-    PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceParams, Registration,
-    RegistrationParams, RelatedFullDocumentDiagnosticReport,
-    RelatedUnchangedDocumentDiagnosticReport, RenameFilesParams, RenameOptions, RenameParams,
-    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
-    SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
-    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    TypeHierarchyItem, TypeHierarchyPrepareParams, TypeHierarchySubtypesParams,
-    TypeHierarchySupertypesParams, UnchangedDocumentDiagnosticReport, Uri, WorkspaceEdit,
+    PrepareRenameResponse, ProgressParams, ProgressParamsValue, ProgressToken,
+    PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
+    RenameFilesParams, RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    SignatureInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, TypeHierarchyItem,
+    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
+    UnchangedDocumentDiagnosticReport, Uri, WorkDoneProgress, WorkDoneProgressBegin,
+    WorkDoneProgressCreateParams, WorkDoneProgressEnd, WorkDoneProgressReport, WorkspaceEdit,
     WorkspaceFileOperationsServerCapabilities, WorkspaceFoldersServerCapabilities,
     WorkspaceServerCapabilities, WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
@@ -156,6 +159,7 @@ mod format;
 mod hover;
 mod lint_thread;
 mod navigation;
+mod progress;
 mod read_jobs;
 mod roxygen_action;
 mod selection_range;
@@ -178,6 +182,7 @@ pub(crate) use format::*;
 pub(crate) use hover::*;
 pub(crate) use lint_thread::*;
 pub(crate) use navigation::*;
+pub(crate) use progress::*;
 pub(crate) use read_jobs::*;
 pub(crate) use roxygen_action::*;
 pub(crate) use semantic_tokens::*;

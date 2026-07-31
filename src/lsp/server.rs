@@ -29,6 +29,10 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
     // Watched-file notifications are only available via dynamic registration; skip
     // it for clients that don't support it (they fall back to buffer-edit refresh).
     let register_watchers = client_supports_dynamic_watch(&params);
+    // Server-initiated work-done progress is gated purely on the client
+    // capability (there is no server capability to advertise for it); without it
+    // the background index/sidecar jobs stay silent.
+    let work_done_progress = client_supports_work_done_progress(&params);
     let init_result = InitializeResult {
         capabilities: server_capabilities(),
         server_info: Some(ServerInfo {
@@ -50,6 +54,7 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
         workspace_roots,
         pull_mode,
         register_watchers,
+        work_done_progress,
     )?;
     Ok(())
 }
@@ -100,6 +105,19 @@ pub(crate) fn client_supports_dynamic_watch(params: &serde_json::Value) -> bool 
         .and_then(|c| c.get("workspace"))
         .and_then(|w| w.get("didChangeWatchedFiles"))
         .and_then(|d| d.get("dynamicRegistration"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Whether the client declared support for server-initiated work-done progress
+/// (`capabilities.window.workDoneProgress`). LSP has no *server* capability for
+/// this—the server may only call `window/workDoneProgress/create` and emit
+/// `$/progress` when the client advertised it here.
+pub(crate) fn client_supports_work_done_progress(params: &serde_json::Value) -> bool {
+    params
+        .get("capabilities")
+        .and_then(|c| c.get("window"))
+        .and_then(|w| w.get("workDoneProgress"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
@@ -209,6 +227,7 @@ pub(crate) fn main_loop(
     workspace_roots: Vec<PathBuf>,
     pull_mode: bool,
     register_watchers: bool,
+    work_done_progress: bool,
 ) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
@@ -239,6 +258,7 @@ pub(crate) fn main_loop(
         read_pool.spawner(),
         editor_settings,
         pull_mode,
+        work_done_progress,
     );
 
     // Ask the client to watch on-disk config, package-metadata, and `.R` files so
@@ -357,5 +377,20 @@ mod tests {
         let without = serde_json::json!({ "capabilities": { "textDocument": { "hover": {} } } });
         assert!(!client_supports_pull(&without));
         assert!(!client_supports_pull(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn detects_client_work_done_progress_support() {
+        let with = serde_json::json!({
+            "capabilities": { "window": { "workDoneProgress": true } }
+        });
+        assert!(client_supports_work_done_progress(&with));
+
+        // Explicitly false, or absent, means no server-initiated progress.
+        let off = serde_json::json!({
+            "capabilities": { "window": { "workDoneProgress": false } }
+        });
+        assert!(!client_supports_work_done_progress(&off));
+        assert!(!client_supports_work_done_progress(&serde_json::json!({})));
     }
 }

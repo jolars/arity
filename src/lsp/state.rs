@@ -55,6 +55,15 @@ pub(crate) enum Outbound {
     },
     /// A background index build completed; re-lint every open document.
     RelintAll,
+    /// A work-done progress update from a background job (`build_index` or the
+    /// sidecar fetch). The main loop forwards it to the client as `$/progress`
+    /// (creating the token via `window/workDoneProgress/create` on the first
+    /// `Begin`), gated on the client's `window.workDoneProgress` capability. See
+    /// [`GlobalState::on_progress`] and [`ProgressReporter`].
+    Progress {
+        token: String,
+        work: WorkDoneProgress,
+    },
     /// A finished read-pool reply, routed back through the main loop so it can
     /// be gated on cancellation and document version before reaching the client.
     /// The read pool cannot see either (the live-request set and current buffer
@@ -100,6 +109,10 @@ pub(crate) struct GlobalState {
     /// True when the client supports the pull diagnostic model: we suppress push
     /// (no `publishDiagnostics`) and answer `textDocument/diagnostic` instead.
     pull_mode: bool,
+    /// True when the client advertised `window.workDoneProgress`. Gates all
+    /// server-initiated progress: without it we emit no `window/workDoneProgress/
+    /// create` and no `$/progress` (see [`on_progress`](Self::on_progress)).
+    work_done_progress: bool,
     /// Pull requests parked while the lint thread computes fresh findings, keyed
     /// by URI. Drained on the next `Outbound::Diagnostics` for that URI (or on
     /// close, with an empty report, so a request never hangs).
@@ -146,6 +159,7 @@ pub(crate) struct GlobalState {
 }
 
 impl GlobalState {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         sender: Sender<Message>,
         out_tx: Sender<Outbound>,
@@ -154,12 +168,14 @@ impl GlobalState {
         read_spawner: Spawner,
         editor_settings: EditorSettings,
         pull_mode: bool,
+        work_done_progress: bool,
     ) -> Self {
         Self {
             documents: HashMap::new(),
             findings: HashMap::new(),
             rename_anchors: HashMap::new(),
             pull_mode,
+            work_done_progress,
             pending_pull: HashMap::new(),
             report_ids: HashMap::new(),
             result_seq: 0,
@@ -1243,7 +1259,38 @@ impl GlobalState {
             }
             Outbound::ReadReply(response) => self.on_read_reply(response),
             Outbound::RelintAll => self.request_relint_all(),
+            Outbound::Progress { token, work } => self.on_progress(token, work),
         }
+    }
+
+    /// Forward a background job's work-done progress to the client as `$/progress`,
+    /// gated on the client capability. On the first update (`Begin`) the token is
+    /// created via a fire-and-forget `window/workDoneProgress/create` request
+    /// (like [`send_workspace_refresh`](Self::send_workspace_refresh); the client's
+    /// response is ignored by the main loop). Mirrors [`publish`](Self::publish)
+    /// for the notification itself. A no-op when the client didn't advertise
+    /// `window.workDoneProgress`.
+    fn on_progress(&mut self, token: String, work: WorkDoneProgress) {
+        if !self.work_done_progress {
+            return;
+        }
+        if matches!(work, WorkDoneProgress::Begin(_)) {
+            self.next_req_id += 1;
+            let req = Request::new(
+                RequestId::from(self.next_req_id),
+                WorkDoneProgressCreate::METHOD.to_string(),
+                WorkDoneProgressCreateParams {
+                    token: ProgressToken::String(token.clone()),
+                },
+            );
+            let _ = self.sender.send(Message::Request(req));
+        }
+        let params = ProgressParams {
+            token: ProgressToken::String(token),
+            value: ProgressParamsValue::WorkDone(work),
+        };
+        let not = Notification::new(Progress::METHOD.to_string(), params);
+        let _ = self.sender.send(Message::Notification(not));
     }
 
     /// Re-lint every open document because cross-file context changed without a
@@ -1535,15 +1582,25 @@ mod cancellation_gate {
         /// The next message the server sent to the client, or `None` if it sent
         /// nothing (a short poll — the loop is synchronous in these tests).
         fn try_response(&self) -> Option<Response> {
-            match self.client_rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(Message::Response(r)) => Some(r),
-                Ok(other) => panic!("expected a response, got {other:?}"),
-                Err(_) => None,
+            match self.try_message() {
+                Some(Message::Response(r)) => Some(r),
+                Some(other) => panic!("expected a response, got {other:?}"),
+                None => None,
             }
+        }
+
+        /// The next raw message the server sent to the client, or `None` on a
+        /// short poll (the loop is synchronous in these tests).
+        fn try_message(&self) -> Option<Message> {
+            self.client_rx.recv_timeout(Duration::from_millis(200)).ok()
         }
     }
 
     fn test_state() -> (GlobalState, Rig) {
+        test_state_with(false)
+    }
+
+    fn test_state_with(work_done_progress: bool) -> (GlobalState, Rig) {
         let (sender, client_rx) = crossbeam_channel::unbounded::<Message>();
         let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
         let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
@@ -1557,6 +1614,7 @@ mod cancellation_gate {
             pool.spawner(),
             EditorSettings::default(),
             false,
+            work_done_progress,
         );
         let rig = Rig {
             client_rx,
@@ -1566,6 +1624,15 @@ mod cancellation_gate {
             _pool: pool,
         };
         (state, rig)
+    }
+
+    fn progress_begin() -> WorkDoneProgress {
+        WorkDoneProgress::Begin(WorkDoneProgressBegin {
+            title: "Indexing R packages".to_string(),
+            cancellable: Some(false),
+            message: None,
+            percentage: None,
+        })
     }
 
     fn cancel(id: i32) -> Notification {
@@ -1690,6 +1757,59 @@ mod cancellation_gate {
         assert!(
             rig.try_response().is_none(),
             "the late reply must not double-respond"
+        );
+    }
+
+    #[test]
+    fn progress_begin_creates_token_then_notifies() {
+        let (mut state, rig) = test_state_with(true);
+        state.on_outbound(Outbound::Progress {
+            token: "arity/progress/0".to_string(),
+            work: progress_begin(),
+        });
+        // First the server→client create request, then the `$/progress` begin.
+        let Some(Message::Request(req)) = rig.try_message() else {
+            panic!("expected a workDoneProgress/create request first");
+        };
+        assert_eq!(req.method, WorkDoneProgressCreate::METHOD);
+        let Some(Message::Notification(not)) = rig.try_message() else {
+            panic!("expected a $/progress notification after create");
+        };
+        assert_eq!(not.method, Progress::METHOD);
+        assert!(rig.try_message().is_none());
+    }
+
+    #[test]
+    fn progress_report_notifies_without_create() {
+        let (mut state, rig) = test_state_with(true);
+        state.on_outbound(Outbound::Progress {
+            token: "arity/progress/0".to_string(),
+            work: WorkDoneProgress::Report(WorkDoneProgressReport {
+                cancellable: Some(false),
+                message: Some("magrittr".to_string()),
+                percentage: Some(50),
+            }),
+        });
+        // A non-Begin update is a bare notification — no create request.
+        let Some(Message::Notification(not)) = rig.try_message() else {
+            panic!("expected a $/progress notification");
+        };
+        assert_eq!(not.method, Progress::METHOD);
+        assert!(rig.try_message().is_none());
+    }
+
+    #[test]
+    fn progress_suppressed_without_client_capability() {
+        // The client never advertised `window.workDoneProgress`, so no create
+        // request and no `$/progress` may be sent.
+        let (mut state, rig) = test_state_with(false);
+        state.on_outbound(Outbound::Progress {
+            token: "arity/progress/0".to_string(),
+            work: progress_begin(),
+        });
+        assert!(
+            rig.try_message().is_none(),
+            "progress must be silent without the client capability"
         );
     }
 }

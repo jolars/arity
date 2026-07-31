@@ -593,7 +593,15 @@ impl LintWorker {
         let cfg = cfg.clone();
         let anchor = anchor.to_path_buf();
         let build_tx = self.build_tx.clone();
+        let out_tx = self.out_tx.clone();
         self.index_pool.spawn(move || {
+            // `build_index` harvests packages in parallel (`rayon`), so it's opaque
+            // to per-package progress; report it indeterminately (begin/end only).
+            let reporter = ProgressReporter::begin(
+                out_tx,
+                "Indexing R packages",
+                Some(package_count(to_build.len())),
+            );
             let now = now_unix_secs();
             let cache = Cache::new(cache_root);
             let search = LibrarySearch::discover(Some(&anchor), &cfg.library_paths);
@@ -607,9 +615,11 @@ impl LintWorker {
                 },
                 now,
             );
-            if report.newly_indexed().next().is_some() {
+            let newly = report.newly_indexed().count();
+            if newly > 0 {
                 let _ = build_tx.send(IndexedProvider::from_cache(&cache));
             }
+            reporter.end(Some(format!("Indexed {}", package_count(newly))));
         });
     }
 
@@ -658,11 +668,22 @@ impl LintWorker {
         let url = url.to_string();
         let _ = anchor;
         let remote_tx = self.remote_tx.clone();
+        let out_tx = self.out_tx.clone();
         self.index_pool.spawn(move || {
+            // The fetch loop is our own code, so report determinate per-package
+            // progress (a percentage across `to_fetch`).
+            let total = to_fetch.len();
+            let reporter = ProgressReporter::begin(
+                out_tx,
+                "Fetching R package exports",
+                Some(package_count(total)),
+            );
             let mut sidecar = Sidecar::http(url, &cache_root);
             let mut fetched = RemoteExports::new();
             let mut any = false;
-            for pkg in to_fetch {
+            for (i, pkg) in to_fetch.into_iter().enumerate() {
+                let percentage = (((i + 1) * 100) / total.max(1)) as u32;
+                reporter.report(pkg.to_string(), Some(percentage));
                 if let Some(names) = sidecar.package_names(&pkg) {
                     fetched.insert_package(pkg, names);
                     any = true;
@@ -671,6 +692,7 @@ impl LintWorker {
             if any {
                 let _ = remote_tx.send(fetched);
             }
+            reporter.end(None);
         });
     }
 }
@@ -710,6 +732,12 @@ pub(crate) fn packages_to_build(
         .into_iter()
         .filter(|pkg| !indexed.has_package(pkg) && attempts.insert(pkg.clone()))
         .collect()
+}
+
+/// Format a package count for a progress message, pluralizing the noun
+/// ("1 package", "3 packages").
+fn package_count(n: usize) -> String {
+    format!("{n} package{}", if n == 1 { "" } else { "s" })
 }
 
 pub(crate) fn now_unix_secs() -> u64 {
