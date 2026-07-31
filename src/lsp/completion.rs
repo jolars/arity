@@ -11,6 +11,7 @@
 //! sees rich data.
 
 use super::*;
+use crate::syntax::SyntaxElement;
 
 /// Identity carried on a completion item (serialized into `CompletionItem.data`)
 /// so `completionItem/resolve` can attach docs without the original document.
@@ -23,6 +24,9 @@ enum CompletionData {
     Bare { name: SmolStr },
     /// A scope local; nothing to attach.
     Local,
+    /// A `$`/`@` field harvested statically from usage or construction; nothing
+    /// to attach (arity does not evaluate, so a field carries no signature/docs).
+    Field,
 }
 
 /// What the cursor is positioned to complete.
@@ -31,6 +35,14 @@ enum CompletionContext {
     Member {
         package: SmolStr,
         internal: bool,
+        prefix: String,
+    },
+    /// After `receiver$` / `receiver@`, optionally with a partial field name.
+    /// `receiver` is the whitespace-normalized source text of the left operand;
+    /// `at` is `true` for `@` (S4 slot) versus `$` (list/`$` access).
+    Field {
+        receiver: String,
+        at: bool,
         prefix: String,
     },
     /// A bare identifier with a (possibly empty) typed prefix.
@@ -46,6 +58,10 @@ struct Candidate {
     kind: CompletionItemKind,
     sort_group: u8,
     data: CompletionData,
+    /// Origin shown as the dimmed label description (`dplyr`, `base`, `local`).
+    /// Cheap to set at gather time; the signature `detail` is computed later,
+    /// only for the prefix-filtered survivors.
+    origin: Option<SmolStr>,
 }
 
 /// Resolve completion off the snapshot's cached parse when the db's tracked
@@ -107,7 +123,7 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
             .map(|entry| (package.clone(), entry)),
         CompletionData::Bare { name } => base_package_of(name)
             .and_then(|pkg| indexed.lookup(pkg, name).map(|entry| (pkg.clone(), entry))),
-        CompletionData::Local => None,
+        CompletionData::Local | CompletionData::Field => None,
     };
     if let Some((package, entry)) = resolved {
         item.documentation = Some(Documentation::MarkupContent(MarkupContent {
@@ -136,11 +152,23 @@ pub(crate) fn completions_from_node(
             member_candidates(indexed, remote, &package, internal),
             &prefix,
             true,
+            indexed,
+        )),
+        CompletionContext::Field {
+            receiver,
+            at,
+            prefix,
+        } => Some(build_response(
+            field_candidates(root, &receiver, at),
+            &prefix,
+            true,
+            indexed,
         )),
         CompletionContext::Bare { prefix, offset } => Some(build_response(
             bare_candidates(root, offset, indexed, remote),
             &prefix,
             false,
+            indexed,
         )),
     }
 }
@@ -154,6 +182,13 @@ fn classify_context(root: &SyntaxNode, offset: TextSize) -> CompletionContext {
         return CompletionContext::Member {
             package,
             internal,
+            prefix,
+        };
+    }
+    if let Some((receiver, at, prefix)) = field_context(root, offset) {
+        return CompletionContext::Field {
+            receiver,
+            at,
             prefix,
         };
     }
@@ -214,6 +249,73 @@ fn recover_namespace_at(root: &SyntaxNode, offset: TextSize) -> Option<(SmolStr,
     Some((token_text_unquoted(&pkg), internal))
 }
 
+/// Detect a `receiver$`/`receiver@` field-completion context: either a partial
+/// RHS field name, or a just-typed operator with nothing after it. Mirrors
+/// [`member_context`]. Returns the normalized receiver text, whether the
+/// operator is `@` (S4 slot) versus `$`, and the typed prefix.
+fn field_context(root: &SyntaxNode, offset: TextSize) -> Option<(String, bool, String)> {
+    // Partial name: the cursor is on the RHS field of a `receiver$field` access.
+    if let Some(token) = pick_name_token(root, offset) {
+        for ancestor in token.parent_ancestors() {
+            let Some(binary) = BinaryExpr::cast(ancestor) else {
+                continue;
+            };
+            let Some(at) = field_op(binary.op_kind()) else {
+                continue;
+            };
+            if matches!(binary.rhs(), Some(SyntaxElement::Token(rhs)) if rhs == token)
+                && let Some(lhs) = binary.lhs()
+            {
+                return Some((
+                    normalize_receiver(&lhs),
+                    at,
+                    prefix_in_token(&token, offset),
+                ));
+            }
+        }
+    }
+    // Just-typed `receiver$` with no RHS yet: recover via a token-level left-scan.
+    recover_field_at(root, offset).map(|(recv, at)| (recv, at, String::new()))
+}
+
+/// `Some(true)` for `@`, `Some(false)` for `$`, `None` otherwise.
+fn field_op(kind: Option<SyntaxKind>) -> Option<bool> {
+    match kind {
+        Some(SyntaxKind::DOLLAR) => Some(false),
+        Some(SyntaxKind::AT) => Some(true),
+        _ => None,
+    }
+}
+
+/// Recover the receiver + operator kind when the cursor follows a `$`/`@` that
+/// has no right-hand side yet (so no clean `BINARY_EXPR` formed — it lands in an
+/// `ERROR` node). The receiver is the immediately preceding name token, so a
+/// chained `a$b$` recovers as `b`, not `a$b` (a documented v1 limitation).
+fn recover_field_at(root: &SyntaxNode, offset: TextSize) -> Option<(String, bool)> {
+    let left = match root.token_at_offset(offset) {
+        TokenAtOffset::Single(t) => Some(t),
+        TokenAtOffset::Between(l, _) => Some(l),
+        TokenAtOffset::None => None,
+    }?;
+    let op = skip_trivia_left(left)?;
+    let at = field_op(Some(op.kind()))?;
+    let recv = prev_non_trivia(&op)?;
+    if !matches!(recv.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) {
+        return None;
+    }
+    Some((token_text_unquoted(&recv).to_string(), at))
+}
+
+/// Whitespace-normalized source text of a receiver operand, used as the key that
+/// ties a completion request to the `$`/`@` accesses that share it.
+fn normalize_receiver(el: &SyntaxElement) -> String {
+    let text = match el {
+        SyntaxElement::Node(n) => n.text().to_string(),
+        SyntaxElement::Token(t) => t.text().to_string(),
+    };
+    text.split_whitespace().collect()
+}
+
 /// Bare-name context, unless the cursor is on the package operand of a
 /// `pkg::name` access (we never complete package names).
 fn bare_context(root: &SyntaxNode, offset: TextSize) -> CompletionContext {
@@ -262,6 +364,7 @@ fn member_candidates(
                     package: SmolStr::new(package),
                     name: s.name.clone(),
                 },
+                origin: Some(SmolStr::new(package)),
             })
             .collect();
     }
@@ -280,9 +383,88 @@ fn member_candidates(
                     package: SmolStr::new(package),
                     name: n.clone(),
                 },
+                origin: Some(SmolStr::new(package)),
             })
             .collect(),
         None => Vec::new(),
+    }
+}
+
+/// `$`/`@` field candidates for `receiver`, gathered statically (arity does not
+/// evaluate). Harvests field names used with the same operator on the same
+/// receiver anywhere in the file, and — for `$` only — infers the named fields
+/// of a local `list()`/`data.frame()`-family construction bound to `receiver`.
+fn field_candidates(root: &SyntaxNode, receiver: &str, at: bool) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::new();
+
+    // 1. Harvest field names used on the same receiver elsewhere in the file.
+    for node in root.descendants() {
+        let Some(binary) = BinaryExpr::cast(node) else {
+            continue;
+        };
+        if field_op(binary.op_kind()) != Some(at) {
+            continue;
+        }
+        let Some(lhs) = binary.lhs() else { continue };
+        if normalize_receiver(&lhs) != receiver {
+            continue;
+        }
+        if let Some(SyntaxElement::Token(name)) = binary.rhs()
+            && matches!(name.kind(), SyntaxKind::IDENT | SyntaxKind::STRING)
+        {
+            out.push(field_candidate(token_text_unquoted(&name)));
+        }
+    }
+
+    // 2. Infer fields from a local record construction bound to the receiver.
+    //    S4 slot inference (`new()`/`setClass`) is a follow-up, so `@` harvests only.
+    if !at {
+        out.extend(constructed_fields(root, receiver));
+    }
+
+    out
+}
+
+/// The named arguments of a `list()`/`data.frame()`/`tibble()`/`data.table()`
+/// call assigned to `receiver` (`receiver <- data.frame(x = …, y = …)`).
+fn constructed_fields(root: &SyntaxNode, receiver: &str) -> Vec<Candidate> {
+    const CONSTRUCTORS: [&str; 4] = ["list", "data.frame", "tibble", "data.table"];
+    let mut out = Vec::new();
+    for node in root.descendants() {
+        let Some(assign) = AssignmentExpr::cast(node) else {
+            continue;
+        };
+        if assign.target_name().as_deref() != Some(receiver) {
+            continue;
+        }
+        let Some(SyntaxElement::Node(value)) = assign.value_element() else {
+            continue;
+        };
+        let Some(call) = CallExpr::cast(value) else {
+            continue;
+        };
+        if !CONSTRUCTORS.contains(&call.callee_name().as_deref().unwrap_or_default()) {
+            continue;
+        }
+        if let Some(arg_list) = call.arg_list() {
+            out.extend(
+                arg_list
+                    .args()
+                    .filter_map(|a| a.name())
+                    .map(field_candidate),
+            );
+        }
+    }
+    out
+}
+
+fn field_candidate(name: SmolStr) -> Candidate {
+    Candidate {
+        label: name.to_string(),
+        kind: CompletionItemKind::FIELD,
+        sort_group: 0,
+        data: CompletionData::Field,
+        origin: None,
     }
 }
 
@@ -304,6 +486,7 @@ fn bare_candidates(
             kind: CompletionItemKind::VARIABLE,
             sort_group: 0,
             data: CompletionData::Local,
+            origin: Some(SmolStr::new_static("local")),
         });
     }
 
@@ -322,6 +505,7 @@ fn bare_candidates(
                             package: pkg.name.clone(),
                             name: s.name.clone(),
                         },
+                        origin: Some(pkg.name.clone()),
                     }),
             );
         } else if let Some(names) = remote
@@ -337,6 +521,7 @@ fn bare_candidates(
                     package: pkg.name.clone(),
                     name: n.clone(),
                 },
+                origin: Some(pkg.name.clone()),
             }));
         }
     }
@@ -347,6 +532,7 @@ fn bare_candidates(
         kind: CompletionItemKind::FUNCTION,
         sort_group: 2,
         data: CompletionData::Bare { name: name.clone() },
+        origin: base_package_of(name).cloned(),
     }));
 
     out
@@ -354,8 +540,15 @@ fn bare_candidates(
 
 /// Prefix-filter, dedup (lowest `sort_group` wins per label), and assemble the
 /// response. Bare lists are marked incomplete (filtered from a large universe)
-/// so the client re-queries as typing continues.
-fn build_response(mut cands: Vec<Candidate>, prefix: &str, member: bool) -> CompletionResponse {
+/// so the client re-queries as typing continues. Label details (origin +
+/// signature) are attached here, after filtering, so the signature lookups touch
+/// only the surviving set — never the full base-R universe.
+fn build_response(
+    mut cands: Vec<Candidate>,
+    prefix: &str,
+    member: bool,
+    indexed: &IndexedProvider,
+) -> CompletionResponse {
     if !prefix.is_empty() {
         cands.retain(|c| c.label.starts_with(prefix));
     }
@@ -365,19 +558,45 @@ fn build_response(mut cands: Vec<Candidate>, prefix: &str, member: bool) -> Comp
     cands.dedup_by(|a, b| a.label == b.label);
     let items = cands
         .into_iter()
-        .map(|c| CompletionItem {
-            sort_text: Some(format!("{}{}", c.sort_group, c.label)),
-            filter_text: Some(c.label.clone()),
-            kind: Some(c.kind),
-            data: serde_json::to_value(c.data).ok(),
-            label: c.label,
-            ..Default::default()
+        .map(|c| {
+            let detail = signature_detail(&c.data, indexed);
+            let description = c.origin.as_deref().map(str::to_string);
+            let label_details =
+                (detail.is_some() || description.is_some()).then_some(CompletionItemLabelDetails {
+                    detail,
+                    description,
+                });
+            CompletionItem {
+                sort_text: Some(format!("{}{}", c.sort_group, c.label)),
+                filter_text: Some(c.label.clone()),
+                kind: Some(c.kind),
+                data: serde_json::to_value(c.data).ok(),
+                label_details,
+                label: c.label,
+                ..Default::default()
+            }
         })
         .collect();
     CompletionResponse::List(CompletionList {
         is_incomplete: !member,
         items,
     })
+}
+
+/// The parenthesized parameter list (`(.cols, .fns)`) for a completion that
+/// resolves to an indexed function entry, shown inline after the label. `None`
+/// for a local, a `$`/`@` field, or a symbol with no harvested formals.
+fn signature_detail(data: &CompletionData, indexed: &IndexedProvider) -> Option<String> {
+    let entry = match data {
+        CompletionData::Member { package, name } => indexed.lookup(package, name)?,
+        CompletionData::Bare { name } => indexed.lookup(base_package_of(name)?, name)?,
+        CompletionData::Local | CompletionData::Field => return None,
+    };
+    // `signature_of` yields `name(args)`; keep just `(args)` so it does not
+    // duplicate the label.
+    let sig = signature_of(entry)?;
+    let paren = sig.find('(')?;
+    Some(sig[paren..].to_string())
 }
 
 fn kind_of(kind: SymbolKind) -> CompletionItemKind {
@@ -652,5 +871,125 @@ mod tests {
         let resolved = resolve_completion(item, &documented_dplyr());
         assert!(resolved.documentation.is_none());
         assert!(resolved.detail.is_none());
+    }
+
+    // --- `$`/`@` member (field) completion --------------------------------
+
+    fn dollar_labels(src: &str) -> Vec<String> {
+        // Cursor sits right after the last `$`/`@` occurrence's operator.
+        let off = src.rfind(['$', '@']).expect("dollar/at present") + 1;
+        labels(compute_completions(src, off, &IndexedProvider::empty()).unwrap())
+    }
+
+    #[test]
+    fn no_bare_leak_after_dollar() {
+        // After `df$`, only fields are completed — never locals, base, or pkg names.
+        let src = "mean_val <- 1\ndf$\n";
+        let got = dollar_labels(src);
+        assert!(
+            !got.contains(&"mean_val".to_string()),
+            "no local leak: {got:?}"
+        );
+        assert!(
+            !got.contains(&"vector".to_string()),
+            "no base leak: {got:?}"
+        );
+    }
+
+    #[test]
+    fn field_harvests_dollar_usage() {
+        let src = "df$foo <- 1\ndf$bar <- 2\ndf$\n";
+        let got = dollar_labels(src);
+        assert!(got.contains(&"foo".to_string()), "{got:?}");
+        assert!(got.contains(&"bar".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn field_infers_from_data_frame() {
+        let src = "df <- data.frame(x = 1, y = 2)\ndf$\n";
+        let got = dollar_labels(src);
+        assert!(got.contains(&"x".to_string()), "{got:?}");
+        assert!(got.contains(&"y".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn field_infers_from_list_construction() {
+        let src = "cfg <- list(alpha = 1, beta = 2)\ncfg$\n";
+        let got = dollar_labels(src);
+        assert!(got.contains(&"alpha".to_string()), "{got:?}");
+        assert!(got.contains(&"beta".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn field_respects_receiver() {
+        // A different receiver's fields must not leak into `df$` completion.
+        let src = "df$foo <- 1\nother$zzz <- 2\ndf$\n";
+        let got = dollar_labels(src);
+        assert!(got.contains(&"foo".to_string()), "{got:?}");
+        assert!(
+            !got.contains(&"zzz".to_string()),
+            "no cross-receiver: {got:?}"
+        );
+    }
+
+    #[test]
+    fn field_at_slot_harvest() {
+        let src = "obj@alpha <- 1\nobj@\n";
+        let got = dollar_labels(src);
+        assert!(got.contains(&"alpha".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn field_partial_prefix_filters() {
+        let src = "df$foo <- 1\ndf$bar <- 2\ndf$f\n";
+        let off = at_end(src, "df$f");
+        let got = labels(compute_completions(src, off, &IndexedProvider::empty()).unwrap());
+        assert!(got.contains(&"foo".to_string()), "{got:?}");
+        assert!(
+            !got.contains(&"bar".to_string()),
+            "prefix filters bar: {got:?}"
+        );
+    }
+
+    // --- label details ----------------------------------------------------
+
+    fn label_details(item: &CompletionItem) -> (Option<&str>, Option<&str>) {
+        let d = item.label_details.as_ref().expect("label details present");
+        (d.detail.as_deref(), d.description.as_deref())
+    }
+
+    #[test]
+    fn member_label_details_show_package_and_signature() {
+        let src = "dplyr::acr\n";
+        let its = items(compute_completions(src, at_end(src, "acr"), &documented_dplyr()).unwrap());
+        let across = its.iter().find(|i| i.label == "across").expect("across");
+        assert_eq!(
+            label_details(across),
+            (Some("(.cols, .fns)"), Some("dplyr"))
+        );
+    }
+
+    #[test]
+    fn bare_base_label_details_show_base_origin() {
+        let src = "vec\n";
+        let its =
+            items(compute_completions(src, at_end(src, "vec"), &IndexedProvider::empty()).unwrap());
+        let v = its
+            .iter()
+            .find(|i| i.label == "vector")
+            .expect("base vector");
+        assert_eq!(label_details(v).1, Some("base"));
+    }
+
+    #[test]
+    fn local_label_details_show_local_origin() {
+        let src = "value <- 1\nv\n";
+        let its =
+            items(compute_completions(src, at_end(src, "\nv"), &IndexedProvider::empty()).unwrap());
+        let value = its
+            .iter()
+            .find(|i| i.label == "value")
+            .expect("local value");
+        assert_eq!(label_details(value).1, Some("local"));
     }
 }

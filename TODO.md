@@ -533,9 +533,25 @@ does these partially/conservatively, and they collide with arity's static tenet:
 
 - Completion (`textDocument/completion` + `completionItem/resolve`).
   - [ ] Snippet/paren insertion
-  - [ ] `$`/`@` member completion
+  - [x] **`$`/`@` member completion** (static, no eval). New `Field` context in
+    `src/lsp/completion.rs` mirrors the `pkg::` path: it harvests field names used
+    with the same operator on the same receiver anywhere in the file, and—for `$`
+    only—infers the named fields of a local
+    `list()`/`data.frame()`/`tibble()`/`data.table()` construction bound to the
+    receiver. Also stops the prior bare-name leak after `$`/`@`. Triggers on `$`
+    and `@` are advertised (`src/lsp/server.rs`).
+    - **v1 limits:** the receiver is keyed by whitespace-normalized source text,
+      so a chained `a$b$` recover-path key is the immediate token (`b`), not
+      `a$b`; `@` harvests only (S4 `new()`/`setClass` slot inference deferred);
+      fields carry no docs or signature.
   - [ ] Fuzzy/case-insensitive prefix matching
   - [ ] Function-vs-variable kind for locals
+  - [x] **Label details** (`completionItem.labelDetailsSupport`). Advertised in
+    `server_capabilities`; items carry a dimmed origin description (`dplyr`,
+    `base`, `local`) plus a parenthesized signature `detail` for indexed
+    functions, computed after prefix-filtering (over the survivors only, never the
+    full base-R universe). Local-function signatures (from the in-file
+    `FUNCTION_EXPR`) are a follow-up.
 
 - Signature help (`textDocument/signatureHelp`). 
   - [ ] Clamp the active parameter into a `...` formal under R's variadic semantics.
@@ -582,9 +598,10 @@ does these partially/conservatively, and they collide with arity's static tenet:
   languageserver survey.)
 
 - [ ] **Minor capability-conformance gaps vs. the R languageserver** (2026-07-02
-  survey). (a) arity's completion trigger set is `:` only; the languageserver
-  also triggers on `.` (ubiquitous in R names)—fold into the existing completion
-  trigger follow-ups. (b) *(resolved)* arity now advertises
+  survey). (a) *(resolved)* arity's completion trigger set now includes `.`, `$`,
+  and `@` alongside `:` (`src/lsp/server.rs`; see the `$`/`@` member-completion
+  and label-details items under "Completion & signatures"). (b) *(resolved)*
+  arity now advertises
   `workspaceFolders.changeNotifications` and reacts to
   `workspace/didChangeWorkspaceFolders` by seeding added folders (removal-drop is
   a tracked follow-up); see the `didChangeWatchedFiles` entry above.
@@ -723,11 +740,13 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   requests (`helpTopic`, virtual documents) are genuinely out of scope—they
   need a live R session.
 
-- [ ] **Completion trigger characters + label details** (reinforce). Ark
-  triggers completion on `$`, `@`, `:`; arity on `:` only. Ark also advertises
-  `completionItem.labelDetailsSupport`. The `$`/`@` member-completion and `.`
-  trigger are already tracked under "Completion & signatures" above; fold
-  `labelDetailsSupport` in there as an additional small item.
+- [x] **Completion trigger characters + label details** (done). arity now
+  triggers completion on `$`, `@`, and `.` alongside `:`, and advertises
+  `completionItem.labelDetailsSupport` with origin + signature label details.
+  Unlike Ark (which resolves `$`/`@` members from a live R session), arity's
+  member completion is static—harvested from usage and local construction. See
+  the `$`/`@` member-completion and label-details items under "Completion &
+  signatures".
 
 - [ ] **Signature-help retrigger on `=`** (reinforce). Ark's signature-help
   trigger set is `(`, `,`, `=`; arity triggers on `(`, `,` only. Typing `=` for

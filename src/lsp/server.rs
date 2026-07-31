@@ -111,9 +111,19 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         document_range_formatting_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
-            // `:` fires after the second colon of `::` for member completion.
-            trigger_characters: Some(vec![":".to_string()]),
+            // `:` fires after the second colon of `::` for member completion; `$`
+            // and `@` fire member completion on list/S4 receivers; `.` is
+            // ubiquitous in R names, so re-query as it is typed.
+            trigger_characters: Some(vec![
+                ":".to_string(),
+                "$".to_string(),
+                "@".to_string(),
+                ".".to_string(),
+            ]),
             resolve_provider: Some(true),
+            completion_item: Some(CompletionOptionsCompletionItem {
+                label_details_support: Some(true),
+            }),
             ..Default::default()
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
