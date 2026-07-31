@@ -734,23 +734,36 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   a named argument should re-trigger to refresh the active parameter. Small
   addition to the signature-help follow-ups above.
 
-- **Package/CRAN index backend—confirmed orthogonal, no gap.** Ark has *no*
-  CRAN symbol database in arity's sense. Being a kernel with a **live R
-  session**, it resolves library symbols by calling into R via FFI
-  (`harp::exec::RFunction`): `base::.packages()` for the search path
-  (`completions/sources/composite/search_path.rs`), `getNamespace(pkg)` +
+- **Package/CRAN index backend—still no *symbol* DB, but a static *source*
+  tier now exists.** Ark has *no* CRAN symbol database in arity's sense. Being a
+  kernel with a **live R session**, it resolves library *symbols* by calling
+  into R via FFI (`harp::exec::RFunction`): `base::.packages()` for the search
+  path (`completions/sources/composite/search_path.rs`), `getNamespace(pkg)` +
   `R_lsInternal(exports)` for `pkg::` (`.../unique/namespace.rs`), R's help DB
-  for hover. It ships **no bundled/static export lists**. Its only CRAN-repo
+  for hover. It ships **no bundled/static export lists**, and its only CRAN-repo
   code (`repos.rs`) is just `options(repos=)` config for `install.packages`
   (P3M/PPM default)—not a symbol source. Its workspace `.R` indexer
-  (`indexer.rs`, salsa) is the one piece analogous to arity's `DefIndex`. So the
-  models are deliberately opposite: Ark = live-session (version/install-exact,
-  free, but needs a running R and only sees installed packages); arity =
-  static/offline by tenet (the whole `src/rindex/` bundled+sidecar+harvest tier
-  exists to avoid that dependency). Nothing to adopt wholesale. Two reinforcements,
-  both already logged under "Cross-cutting prerequisite" above: Ark's P3M/PPM
-  default backs the sidecar-hosting plan, and the version-exactness Ark gets for
-  free is what the **pin-aware versions** follow-up chases statically.
+  (`indexer.rs`, salsa) is the one piece analogous to arity's `DefIndex`. **But**
+  for go-to-definition/source display it now fetches R *source text* from a
+  static, curated tier (`oak_source`, feeding `lsp/sources.rs`'s
+  `SourceHandler`): base-package sources for R 4.2.0 up to a pinned latest are
+  packed into a compressed `r-source.tar.zst`, hosted as a GitHub release at
+  `posit-dev/oak-r-sources`, downloaded once and cached (posit-dev/ark#1328; the
+  PR body's `include_bytes!`-into-the-binary boast is aspirational—the merged
+  code downloads+caches, not embeds), and CRAN package sources come from
+  downloaded package tarballs. This decouples *source navigation* from the
+  installed R (base versions are clamped to the latest present, not required to
+  be installed). So the models stay opposite for *symbols*—Ark = live-session
+  (version/install-exact, free, but needs a running R and only sees installed
+  packages); arity = static/offline by tenet (the whole `src/rindex/`
+  bundled+sidecar+harvest tier exists to avoid that dependency)—but the
+  "installed packages only" framing no longer holds for *source*, where ark's
+  curated `oak-r-sources` archive is a closer analogue to arity's bundled
+  `src/rindex/` (different payload: source text vs. symbol/export index).
+  Nothing to adopt wholesale for the symbol index. Two reinforcements, both
+  already logged under "Cross-cutting prerequisite" above: Ark's P3M/PPM default
+  backs the sidecar-hosting plan, and the version-exactness Ark gets for free is
+  what the **pin-aware versions** follow-up chases statically.
 
 - Cross-ref (already logged, reinforced by this audit):
   - **On-type formatting.** Ark advertises it with first-trigger `\n` and a
