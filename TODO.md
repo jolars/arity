@@ -708,11 +708,14 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   LSP-position conversion. Live-buffer conversions still build a fresh `LineIndex`
   (the db copy can lag mid-edit).
 
-- [ ] **P3 — Per-URI content-derived pull `resultId`.** `result_seq` is one
-  global counter bumped every lint generation (`src/lsp/state.rs:1055`), so a
-  cross-file change bumps every file's `resultId` and unrelated files re-pull
-  `Full` instead of `Unchanged`. Derive the id from a hash of the file's findings
-  so `Unchanged` actually fires. Minor bandwidth win, correctness unaffected.
+- [x] **P3 — Per-URI content-derived pull `resultId`.** The global `result_seq`
+  counter (and `bump_result_id`) is gone; the `resultId` is now a content hash of
+  the file's findings (`content_result_id` in `src/lsp/state.rs`), so an unrelated
+  file re-linted by a cross-file `RelintAll` keeps its id. The cold path was the
+  real blocker—a parked pull was always answered `Full`—so `PendingPull` now
+  carries the client's `previous_result_id` and `on_outbound` decides `Full` vs
+  `Unchanged` per parked pull via the existing `report_kind`. `Unchanged` now
+  actually fires. Minor bandwidth win, correctness unaffected.
 
 - Cross-ref (already logged, reinforced by this audit): switching
   `TextDocumentSyncKind::FULL` -> `INCREMENTAL` (Parser section, incremental

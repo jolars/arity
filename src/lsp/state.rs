@@ -9,9 +9,13 @@ pub(crate) struct Document {
 /// A `textDocument/diagnostic` request awaiting fresh findings: the buffer had no
 /// current cached findings when the pull arrived, so the request is parked here
 /// (keyed by URI) until the lint thread reports back. See
-/// [`GlobalState::on_document_diagnostic`].
+/// [`GlobalState::on_document_diagnostic`]. `previous_result_id` is the client's
+/// last-seen id, kept so the cold path can still answer `Unchanged` when the
+/// fresh findings hash to the same id (e.g. an unrelated file re-linted by a
+/// cross-file `RelintAll`).
 pub(crate) struct PendingPull {
     id: RequestId,
+    previous_result_id: Option<String>,
 }
 
 /// An internal, already-decided document diagnostic report ready to serialize.
@@ -40,6 +44,22 @@ pub(crate) fn report_kind(
         (Some(prev), Some(cur)) if prev == cur => DiagnosticReportKind::Unchanged,
         _ => DiagnosticReportKind::Full,
     }
+}
+
+/// Content-derived `resultId`: identical findings hash to an identical id, so a
+/// re-lint that changes nothing (e.g. a cross-file [`Outbound::RelintAll`]) lets
+/// `Unchanged` fire instead of re-sending a full report. Findings fully determine
+/// the delivered report at a fixed buffer version, so hashing them is equivalent
+/// to hashing the rendered items but far cheaper. Only session-scoped stability
+/// is required (the client compares ids within a live session), so a plain
+/// [`DefaultHasher`](std::collections::hash_map::DefaultHasher) over the already
+/// `Serialize`d findings is enough and pulls in no new dependency.
+pub(crate) fn content_result_id(findings: &[Diagnostic]) -> String {
+    use std::hash::{Hash, Hasher};
+    let json = serde_json::to_vec(findings).unwrap_or_default();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    json.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 /// Messages from the lint thread back to the main loop.
@@ -122,14 +142,12 @@ pub(crate) struct GlobalState {
     /// by URI. Drained on the next `Outbound::Diagnostics` for that URI (or on
     /// close, with an empty report, so a request never hangs).
     pending_pull: HashMap<Uri, Vec<PendingPull>>,
-    /// The opaque `resultId` of the report most recently delivered per URI. Bumped
-    /// every time findings are cached (a *lint generation*, not the document
-    /// version), so a cross-file change that leaves the version untouched still
-    /// yields a fresh id — `unchanged` is only returned when this matches the
-    /// client's `previousResultId`.
+    /// The opaque `resultId` of the report most recently delivered per URI. It is
+    /// a content hash of that lint's findings ([`content_result_id`]), so an
+    /// unrelated file re-linted by a cross-file change keeps its id and a re-pull
+    /// gets `unchanged` — which is only returned when this matches the client's
+    /// `previousResultId`.
     report_ids: HashMap<Uri, String>,
-    /// Monotonic source for [`report_ids`](Self::report_ids).
-    result_seq: u64,
     /// Monotonic id source for server→client requests (`workspace/diagnostic/
     /// refresh`); the client's responses are ignored by the main loop.
     next_req_id: i32,
@@ -185,7 +203,6 @@ impl GlobalState {
             position_encoding,
             pending_pull: HashMap::new(),
             report_ids: HashMap::new(),
-            result_seq: 0,
             next_req_id: 0,
             config_cache: HashMap::new(),
             editor_settings,
@@ -401,11 +418,16 @@ impl GlobalState {
         }
 
         // Cold path: no current findings yet (a pull before the lint caught up).
-        // Park the request and lint; `on_outbound` answers it with fresh results.
+        // Park the request and lint; `on_outbound` answers it with fresh results,
+        // comparing this `previous_result_id` so an unchanged file still resolves
+        // to `Unchanged`.
         self.pending_pull
             .entry(uri.clone())
             .or_default()
-            .push(PendingPull { id });
+            .push(PendingPull {
+                id,
+                previous_result_id: params.previous_result_id,
+            });
         self.send_lint(uri);
     }
 
@@ -1183,7 +1205,8 @@ impl GlobalState {
                     self.rename_anchors.remove(&uri);
                     // Resolve any parked pulls with an empty report so they don't
                     // hang now that the buffer is gone.
-                    for PendingPull { id } in self.pending_pull.remove(&uri).unwrap_or_default() {
+                    for PendingPull { id, .. } in self.pending_pull.remove(&uri).unwrap_or_default()
+                    {
                         self.respond_diagnostic(id, DiagnosticReport::Full(Vec::new(), None));
                     }
                     if !self.pull_mode {
@@ -1261,20 +1284,32 @@ impl GlobalState {
                 if !matches!(self.documents.get(&uri), Some(d) if d.version == version) {
                     return;
                 }
-                // Cache findings (code actions still need them) and mint a fresh
-                // report id for this lint generation.
+                // Cache findings (code actions still need them) and derive the
+                // report id from their content, so an unchanged file keeps its id.
+                let result_id = content_result_id(&findings);
                 self.findings.insert(uri.clone(), (version, findings));
-                let result_id = self.bump_result_id();
                 self.report_ids.insert(uri.clone(), result_id.clone());
 
                 // Answer any parked pulls for this URI; otherwise deliver via the
-                // active channel (pull clients re-pull on their own cadence).
+                // active channel (pull clients re-pull on their own cadence). A
+                // parked pull whose `previous_result_id` still matches gets
+                // `Unchanged` (the cross-file re-lint case).
                 let pending = self.pending_pull.remove(&uri).unwrap_or_default();
-                for PendingPull { id } in pending {
-                    self.respond_diagnostic(
-                        id,
-                        DiagnosticReport::Full(diags.clone(), Some(result_id.clone())),
-                    );
+                for PendingPull {
+                    id,
+                    previous_result_id,
+                } in pending
+                {
+                    let report = match report_kind(previous_result_id.as_deref(), Some(&result_id))
+                    {
+                        DiagnosticReportKind::Unchanged => {
+                            DiagnosticReport::Unchanged(result_id.clone())
+                        }
+                        DiagnosticReportKind::Full => {
+                            DiagnosticReport::Full(diags.clone(), Some(result_id.clone()))
+                        }
+                    };
+                    self.respond_diagnostic(id, report);
                 }
                 if !self.pull_mode {
                     self.publish(uri, diags, Some(version));
@@ -1465,12 +1500,6 @@ impl GlobalState {
         let _ = self.sender.send(Message::Notification(not));
     }
 
-    /// Next opaque `resultId` for a pull report (a monotonic lint generation).
-    fn bump_result_id(&mut self) -> String {
-        self.result_seq += 1;
-        self.result_seq.to_string()
-    }
-
     /// Respond to a `textDocument/diagnostic` request with a decided report.
     fn respond_diagnostic(&self, id: RequestId, report: DiagnosticReport) {
         let result: DocumentDiagnosticReportResult = match report {
@@ -1557,9 +1586,41 @@ impl GlobalState {
     }
 }
 
+/// A minimal [`Diagnostic`] for tests in this module.
+#[cfg(test)]
+fn sample_diagnostic(rule: &'static str, start: u32, end: u32) -> Diagnostic {
+    Diagnostic {
+        rule,
+        severity: Severity::Warning,
+        path: std::path::PathBuf::from("f.R"),
+        range: TextRange::new(TextSize::from(start), TextSize::from(end)),
+        message: crate::linter::ViolationData::new(rule, "body"),
+        fix: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_result_id_stable_and_distinct() {
+        let a = vec![sample_diagnostic("rule-a", 0, 4)];
+        let a_again = vec![sample_diagnostic("rule-a", 0, 4)];
+        // Identical findings hash to an identical id (so `Unchanged` can fire).
+        assert_eq!(content_result_id(&a), content_result_id(&a_again));
+
+        // A different rule, range, or count changes the id.
+        assert_ne!(
+            content_result_id(&a),
+            content_result_id(&[sample_diagnostic("rule-b", 0, 4)])
+        );
+        assert_ne!(
+            content_result_id(&a),
+            content_result_id(&[sample_diagnostic("rule-a", 1, 4)])
+        );
+        assert_ne!(content_result_id(&a), content_result_id(&[]));
+    }
 
     #[test]
     fn report_kind_unchanged_only_when_ids_match() {
@@ -1620,10 +1681,18 @@ mod cancellation_gate {
     }
 
     fn test_state() -> (GlobalState, Rig) {
-        test_state_with(false)
+        test_state_full(false, false)
     }
 
     fn test_state_with(work_done_progress: bool) -> (GlobalState, Rig) {
+        test_state_full(false, work_done_progress)
+    }
+
+    fn test_state_pull() -> (GlobalState, Rig) {
+        test_state_full(true, false)
+    }
+
+    fn test_state_full(pull_mode: bool, work_done_progress: bool) -> (GlobalState, Rig) {
         let (sender, client_rx) = crossbeam_channel::unbounded::<Message>();
         let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
         let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
@@ -1636,7 +1705,7 @@ mod cancellation_gate {
             read_tx,
             pool.spawner(),
             EditorSettings::default(),
-            false,
+            pull_mode,
             work_done_progress,
             PositionEncoding::Utf16,
         );
@@ -1835,5 +1904,80 @@ mod cancellation_gate {
             rig.try_message().is_none(),
             "progress must be silent without the client capability"
         );
+    }
+
+    /// Drive a parked pull through `on_outbound` with the given findings and the
+    /// client's `previous_result_id`, returning the report `Value` sent back.
+    fn drive_parked_pull(
+        pull_mode: bool,
+        previous_result_id: Option<String>,
+        findings: Vec<Diagnostic>,
+    ) -> (serde_json::Value, String) {
+        let (mut state, rig) = if pull_mode {
+            test_state_pull()
+        } else {
+            test_state()
+        };
+        let uri = doc_uri();
+        let version = 1;
+        state.documents.insert(
+            uri.clone(),
+            Document {
+                text: "x <- 1\n".to_string(),
+                version,
+            },
+        );
+        let findings = Arc::new(findings);
+        let result_id = content_result_id(&findings);
+        let req_id = RequestId::from(42);
+        state
+            .pending_pull
+            .entry(uri.clone())
+            .or_default()
+            .push(PendingPull {
+                id: req_id.clone(),
+                previous_result_id,
+            });
+
+        state.on_outbound(Outbound::Diagnostics {
+            uri,
+            version,
+            diags: Vec::new(),
+            findings,
+        });
+
+        let resp = rig.try_response().expect("parked pull is answered");
+        assert_eq!(resp.id, req_id);
+        (resp.response_result.expect("ok report"), result_id)
+    }
+
+    #[test]
+    fn cold_path_returns_unchanged_when_findings_hash_matches() {
+        // The client already holds the id for these exact findings (e.g. an
+        // unrelated file re-linted by a cross-file `RelintAll`): answer Unchanged.
+        let findings = vec![sample_diagnostic("rule-a", 0, 1)];
+        let id = content_result_id(&findings);
+        let (report, result_id) = drive_parked_pull(true, Some(id.clone()), findings);
+        assert_eq!(report["kind"], "unchanged");
+        assert_eq!(report["resultId"], result_id);
+        assert_eq!(result_id, id);
+    }
+
+    #[test]
+    fn cold_path_returns_full_when_previous_id_differs() {
+        // The client's cached id is stale (findings actually changed): send Full.
+        let findings = vec![sample_diagnostic("rule-a", 0, 1)];
+        let (report, result_id) = drive_parked_pull(true, Some("stale".to_string()), findings);
+        assert_eq!(report["kind"], "full");
+        assert_eq!(report["resultId"], result_id);
+        assert!(report["items"].is_array());
+    }
+
+    #[test]
+    fn cold_path_returns_full_on_first_pull() {
+        // No `previous_result_id` at all (a first pull): always Full.
+        let findings = vec![sample_diagnostic("rule-a", 0, 1)];
+        let (report, _) = drive_parked_pull(true, None, findings);
+        assert_eq!(report["kind"], "full");
     }
 }
