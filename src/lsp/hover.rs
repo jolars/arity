@@ -7,9 +7,12 @@ pub(crate) fn hover_via_db(
     path: &Path,
     text: &str,
     position: Position,
+    encoding: PositionEncoding,
 ) -> Option<Hover> {
     let line_index = LineIndex::new(text);
-    let offset = line_index.position_to_byte(position).min(text.len());
+    let offset = line_index
+        .position_to_byte(position, encoding)
+        .min(text.len());
     // Read the harvested index from the same snapshot, so hover sees exactly the
     // index the lint thread last installed. An empty index (none installed yet)
     // still resolves base-R + bundled names via the static layers.
@@ -20,13 +23,19 @@ pub(crate) fn hover_via_db(
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(hover_from_node(&root, &line_index, offset, &index))
+        Some(hover_from_node(
+            &root,
+            &line_index,
+            offset,
+            &index,
+            encoding,
+        ))
     }));
     match cached {
         Ok(Some(hover)) => hover,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            hover_from_node(&root, &line_index, offset, &index)
+            hover_from_node(&root, &line_index, offset, &index, encoding)
         }
     }
 }
@@ -48,10 +57,21 @@ pub(crate) enum SymbolQuery {
 
 /// Build hover contents for the symbol at byte `offset`, if it resolves to an
 /// indexed package export. Pure (parses `text` itself) so it is unit-testable.
-pub fn compute_hover(text: &str, offset: usize, indexed: &IndexedProvider) -> Option<Hover> {
+pub fn compute_hover(
+    text: &str,
+    offset: usize,
+    indexed: &IndexedProvider,
+    encoding: PositionEncoding,
+) -> Option<Hover> {
     let root = parse(text).cst;
     let line_index = LineIndex::new(text);
-    hover_from_node(&root, &line_index, offset.min(text.len()), indexed)
+    hover_from_node(
+        &root,
+        &line_index,
+        offset.min(text.len()),
+        indexed,
+        encoding,
+    )
 }
 
 /// Build hover contents off an already-parsed CST (and a matching line index),
@@ -62,14 +82,15 @@ pub(crate) fn hover_from_node(
     line_index: &LineIndex,
     offset: usize,
     indexed: &IndexedProvider,
+    encoding: PositionEncoding,
 ) -> Option<Hover> {
     let offset = TextSize::new(offset as u32);
     let query = symbol_query_at(root, offset)?;
     let (package, entry, range) = resolve_query(query, root, indexed)?;
 
     let lsp_range = Range {
-        start: line_index.byte_to_position(u32::from(range.start()) as usize),
-        end: line_index.byte_to_position(u32::from(range.end()) as usize),
+        start: line_index.byte_to_position(u32::from(range.start()) as usize, encoding),
+        end: line_index.byte_to_position(u32::from(range.end()) as usize, encoding),
     };
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -279,10 +300,18 @@ mod tests {
     fn hover_none_for_unknown_and_non_name() {
         let provider = documented_dplyr();
         // `bogus` is not indexed by any attached package.
-        assert!(compute_hover("bogus()\n", 1, &provider).is_none());
+        assert!(compute_hover("bogus()\n", 1, &provider, PositionEncoding::Utf16).is_none());
         // Cursor on whitespace yields nothing.
         let src = "across (a)\n";
-        assert!(compute_hover(src, offset_of(src, " (a"), &provider).is_none());
+        assert!(
+            compute_hover(
+                src,
+                offset_of(src, " (a"),
+                &provider,
+                PositionEncoding::Utf16
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -297,8 +326,8 @@ mod tests {
         let mut db = IncrementalDatabase::default();
         db.set_library_index(documented_dplyr());
         db.upsert_file(path, src.to_string());
-        let hover =
-            hover_via_db(&db.snapshot(), path, src, position).expect("hover for across via db");
+        let hover = hover_via_db(&db.snapshot(), path, src, position, PositionEncoding::Utf16)
+            .expect("hover for across via db");
         let md = match hover.contents {
             HoverContents::Markup(m) => m.value,
             other => panic!("expected markup, got {other:?}"),
@@ -309,7 +338,14 @@ mod tests {
         let mut empty = IncrementalDatabase::default();
         empty.set_library_index(documented_dplyr());
         assert!(
-            hover_via_db(&empty.snapshot(), path, src, position).is_some(),
+            hover_via_db(
+                &empty.snapshot(),
+                path,
+                src,
+                position,
+                PositionEncoding::Utf16
+            )
+            .is_some(),
             "fallback hover should resolve too"
         );
     }

@@ -103,21 +103,22 @@ use lsp_types::{
     FullDocumentDiagnosticReport, GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverContents, HoverParams, HoverProviderCapability, InitializeResult, Location, MarkupContent,
     MarkupKind, NumberOrString, OneOf, ParameterInformation, ParameterLabel, Position,
-    PrepareRenameResponse, ProgressParams, ProgressParamsValue, ProgressToken,
-    PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
-    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    RenameFilesParams, RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
-    SelectionRangeProviderCapability, SemanticToken, SemanticTokenModifier, SemanticTokenType,
-    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
-    SignatureInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, TypeHierarchyItem,
-    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
-    UnchangedDocumentDiagnosticReport, Uri, WorkDoneProgress, WorkDoneProgressBegin,
-    WorkDoneProgressCreateParams, WorkDoneProgressEnd, WorkDoneProgressReport, WorkspaceEdit,
-    WorkspaceFileOperationsServerCapabilities, WorkspaceFoldersServerCapabilities,
-    WorkspaceServerCapabilities, WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    PositionEncodingKind, PrepareRenameResponse, ProgressParams, ProgressParamsValue,
+    ProgressToken, PublishDiagnosticsParams, Range, ReferenceParams, Registration,
+    RegistrationParams, RelatedFullDocumentDiagnosticReport,
+    RelatedUnchangedDocumentDiagnosticReport, RenameFilesParams, RenameOptions, RenameParams,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeHierarchyItem, TypeHierarchyPrepareParams, TypeHierarchySubtypesParams,
+    TypeHierarchySupertypesParams, UnchangedDocumentDiagnosticReport, Uri, WorkDoneProgress,
+    WorkDoneProgressBegin, WorkDoneProgressCreateParams, WorkDoneProgressEnd,
+    WorkDoneProgressReport, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
+    WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities, WorkspaceSymbol,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -144,7 +145,7 @@ use crate::rindex::remote::{RemoteExports, Sidecar};
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
 use crate::semantic::{BindingId, BindingKind, PackageOrigin, SemanticModel};
 use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
-use crate::text::LineIndex;
+use crate::text::{LineIndex, PositionEncoding};
 use task_pool::{Spawner, TaskPool, read_pool_size};
 
 mod call_hierarchy;

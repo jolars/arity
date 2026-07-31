@@ -69,7 +69,7 @@ pub(crate) fn semantic_tokens_legend() -> SemanticTokensLegend {
 /// order and classifies it. Definition sites win first (by range), then
 /// structural shapes the model doesn't record as reads (callees, `::`/`$`
 /// operands, arg names), then plain reads via scope resolution.
-pub fn compute_semantic_tokens(text: &str) -> SemanticTokens {
+pub fn compute_semantic_tokens(text: &str, encoding: PositionEncoding) -> SemanticTokens {
     let parsed = parse(text);
     let root = &parsed.cst;
     let model = SemanticModel::build(root);
@@ -139,7 +139,7 @@ pub fn compute_semantic_tokens(text: &str) -> SemanticTokens {
         }
     }
 
-    encode(&line_index, &raw)
+    encode(&line_index, &raw, encoding)
 }
 
 /// Whether `name` is a dot-dot identifier (`...`, `..1`) — lexed as IDENT but
@@ -242,13 +242,17 @@ fn def_is_function(root: &SyntaxNode, def_range: TextRange) -> bool {
 
 /// Delta-encode classified tokens (already in source order) into the LSP wire
 /// format. Multi-line or zero-width tokens are dropped (identifiers are neither).
-fn encode(line_index: &LineIndex, raw: &[(TextRange, TokKind, u32)]) -> SemanticTokens {
+fn encode(
+    line_index: &LineIndex,
+    raw: &[(TextRange, TokKind, u32)],
+    encoding: PositionEncoding,
+) -> SemanticTokens {
     let mut data = Vec::with_capacity(raw.len());
     let mut prev_line = 0u32;
     let mut prev_start = 0u32;
     for (range, kind, mods) in raw {
-        let start = line_index.byte_to_position(u32::from(range.start()) as usize);
-        let end = line_index.byte_to_position(u32::from(range.end()) as usize);
+        let start = line_index.byte_to_position(u32::from(range.start()) as usize, encoding);
+        let end = line_index.byte_to_position(u32::from(range.end()) as usize, encoding);
         if end.line != start.line {
             continue;
         }
@@ -321,7 +325,10 @@ mod tests {
     fn function_def_params_and_calls() {
         // `f` function+definition, `x` parameter+definition, `g` function call,
         // `x` (read) parameter.
-        let toks = decode(&compute_semantic_tokens("f <- function(x) g(x)"));
+        let toks = decode(&compute_semantic_tokens(
+            "f <- function(x) g(x)",
+            PositionEncoding::Utf16,
+        ));
         assert_eq!(
             toks,
             vec![
@@ -336,7 +343,10 @@ mod tests {
     #[test]
     fn namespace_access_call() {
         // `pkg` namespace, `h` function (callee), `y` variable.
-        let toks = decode(&compute_semantic_tokens("pkg::h(y)"));
+        let toks = decode(&compute_semantic_tokens(
+            "pkg::h(y)",
+            PositionEncoding::Utf16,
+        ));
         assert_eq!(
             toks,
             vec![
@@ -350,14 +360,20 @@ mod tests {
     #[test]
     fn member_access() {
         // `obj` variable, `field` property.
-        let toks = decode(&compute_semantic_tokens("obj$field"));
+        let toks = decode(&compute_semantic_tokens(
+            "obj$field",
+            PositionEncoding::Utf16,
+        ));
         assert_eq!(toks, vec![(0, 0, 3, VARIABLE, 0), (0, 4, 5, PROPERTY, 0)]);
     }
 
     #[test]
     fn named_argument_name() {
         // `plot` function, `data` parameter (arg name), `d` variable.
-        let toks = decode(&compute_semantic_tokens("plot(data = d)"));
+        let toks = decode(&compute_semantic_tokens(
+            "plot(data = d)",
+            PositionEncoding::Utf16,
+        ));
         assert_eq!(
             toks,
             vec![
@@ -371,7 +387,10 @@ mod tests {
     #[test]
     fn for_loop_variable() {
         // `i` variable+definition, `xs` variable, `i` (read) variable.
-        let toks = decode(&compute_semantic_tokens("for (i in xs) i"));
+        let toks = decode(&compute_semantic_tokens(
+            "for (i in xs) i",
+            PositionEncoding::Utf16,
+        ));
         assert_eq!(
             toks,
             vec![
@@ -385,14 +404,20 @@ mod tests {
     #[test]
     fn reserved_constants_emit_no_token() {
         // Only `f` is emitted; `TRUE`/`NULL` are reserved literals.
-        let toks = decode(&compute_semantic_tokens("f(TRUE, NULL)"));
+        let toks = decode(&compute_semantic_tokens(
+            "f(TRUE, NULL)",
+            PositionEncoding::Utf16,
+        ));
         assert_eq!(toks, vec![(0, 0, 1, FUNCTION, 0)]);
     }
 
     #[test]
     fn library_package_is_namespace() {
         // `library` function, `dplyr` namespace (not a read).
-        let toks = decode(&compute_semantic_tokens("library(dplyr)"));
+        let toks = decode(&compute_semantic_tokens(
+            "library(dplyr)",
+            PositionEncoding::Utf16,
+        ));
         assert_eq!(toks, vec![(0, 0, 7, FUNCTION, 0), (0, 8, 5, NAMESPACE, 0)]);
     }
 }

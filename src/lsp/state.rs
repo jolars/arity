@@ -113,6 +113,11 @@ pub(crate) struct GlobalState {
     /// server-initiated progress: without it we emit no `window/workDoneProgress/
     /// create` and no `$/progress` (see [`on_progress`](Self::on_progress)).
     work_done_progress: bool,
+    /// The position encoding negotiated at `initialize` (see
+    /// [`negotiate_position_encoding`](super::server::negotiate_position_encoding)).
+    /// Threaded into every byte-offset ↔ LSP-position conversion; a session
+    /// constant.
+    position_encoding: PositionEncoding,
     /// Pull requests parked while the lint thread computes fresh findings, keyed
     /// by URI. Drained on the next `Outbound::Diagnostics` for that URI (or on
     /// close, with an empty report, so a request never hangs).
@@ -169,6 +174,7 @@ impl GlobalState {
         editor_settings: EditorSettings,
         pull_mode: bool,
         work_done_progress: bool,
+        position_encoding: PositionEncoding,
     ) -> Self {
         Self {
             documents: HashMap::new(),
@@ -176,6 +182,7 @@ impl GlobalState {
             rename_anchors: HashMap::new(),
             pull_mode,
             work_done_progress,
+            position_encoding,
             pending_pull: HashMap::new(),
             report_ids: HashMap::new(),
             result_seq: 0,
@@ -319,6 +326,7 @@ impl GlobalState {
         };
         let range = params.range;
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.register_read(id.clone(), Some((uri.clone(), version)));
 
         // Fast path: the last lint's findings are still current, so serving quick
@@ -329,7 +337,7 @@ impl GlobalState {
         {
             let findings = Arc::clone(findings);
             self.read_spawner.spawn(move || {
-                let actions = code_actions_from_findings(&findings, &text, &uri, range);
+                let actions = code_actions_from_findings(&findings, &text, &uri, range, encoding);
                 let _ = out.send(Outbound::ReadReply(Response::new_ok(id, actions)));
             });
             return;
@@ -343,7 +351,7 @@ impl GlobalState {
             .map(|s| s.lint)
             .unwrap_or_default();
         self.read_spawner.spawn(move || {
-            let actions = compute_code_actions(&text, &path, &lint, &uri, range);
+            let actions = compute_code_actions(&text, &path, &lint, &uri, range, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, actions)));
         });
     }
@@ -384,7 +392,7 @@ impl GlobalState {
                     ),
                     DiagnosticReportKind::Full => {
                         let (_, findings) = self.findings.get(&uri).expect("present above");
-                        let items = findings_to_items(findings, &text);
+                        let items = findings_to_items(findings, &text, self.position_encoding);
                         DiagnosticReport::Full(items, result_id)
                     }
                 };
@@ -598,14 +606,17 @@ impl GlobalState {
         };
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
             let line_index = LineIndex::new(&text);
-            let offset = line_index.position_to_byte(position).min(text.len());
+            let offset = line_index
+                .position_to_byte(position, encoding)
+                .min(text.len());
             let result = compute_document_highlights(&text, offset).map(|highlights| {
                 highlights
                     .into_iter()
                     .map(|(range, kind)| DocumentHighlight {
-                        range: text_range_to_lsp_range(&line_index, range),
+                        range: text_range_to_lsp_range(&line_index, range, encoding),
                         kind: Some(kind),
                     })
                     .collect::<Vec<_>>()
@@ -636,8 +647,9 @@ impl GlobalState {
         };
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let symbols = compute_document_symbols(&text);
+            let symbols = compute_document_symbols(&text, encoding);
             let response = DocumentSymbolResponse::Nested(symbols);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
         });
@@ -693,8 +705,9 @@ impl GlobalState {
         let positions = params.positions;
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let ranges = compute_selection_ranges(&text, &positions);
+            let ranges = compute_selection_ranges(&text, &positions, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, ranges)));
         });
     }
@@ -723,8 +736,9 @@ impl GlobalState {
         let size_limit = self.editor_settings.link_file_size_limit();
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let links = compute_document_links(&text, base_dir.as_deref(), size_limit);
+            let links = compute_document_links(&text, base_dir.as_deref(), size_limit, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, links)));
         });
     }
@@ -750,8 +764,9 @@ impl GlobalState {
         };
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let colors = compute_document_colors(&text);
+            let colors = compute_document_colors(&text, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, colors)));
         });
     }
@@ -775,8 +790,9 @@ impl GlobalState {
         let (color, range) = (params.color, params.range);
         self.register_read(id.clone(), None);
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let presentations = compute_color_presentations(&text, &color, range);
+            let presentations = compute_color_presentations(&text, &color, range, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, presentations)));
         });
     }
@@ -804,8 +820,9 @@ impl GlobalState {
         };
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let tokens = compute_semantic_tokens(&text);
+            let tokens = compute_semantic_tokens(&text, encoding);
             let result = SemanticTokensResult::Tokens(tokens);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         });
@@ -829,9 +846,12 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
+        let encoding = self.position_encoding;
         let line_index = LineIndex::new(&text);
-        let offset = line_index.position_to_byte(params.position).min(text.len());
-        match compute_prepare_rename(&text, offset) {
+        let offset = line_index
+            .position_to_byte(params.position, encoding)
+            .min(text.len());
+        match compute_prepare_rename(&text, offset, encoding) {
             Some(prepared) => {
                 self.rename_anchors.insert(uri, prepared.anchor);
                 let response = PrepareRenameResponse::RangeWithPlaceholder {
@@ -872,13 +892,16 @@ impl GlobalState {
             return;
         };
 
+        let encoding = self.position_encoding;
         let offset = self
             .rename_anchors
             .get(&uri)
             .and_then(|anchor| rename_cursor_offset(&text, anchor))
             .unwrap_or_else(|| {
                 let line_index = LineIndex::new(&text);
-                line_index.position_to_byte(position).min(text.len())
+                line_index
+                    .position_to_byte(position, encoding)
+                    .min(text.len())
             });
         // A rename consumes its anchor; a fresh prepare precedes any next rename.
         self.rename_anchors.remove(&uri);
@@ -1615,6 +1638,7 @@ mod cancellation_gate {
             EditorSettings::default(),
             false,
             work_done_progress,
+            PositionEncoding::Utf16,
         );
         let rig = Rig {
             client_rx,

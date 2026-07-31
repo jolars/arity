@@ -9,15 +9,22 @@ use crate::syntax::SyntaxToken;
 /// The response is index-aligned with `positions`: one [`SelectionRange`] chain
 /// per position, its innermost range at the top level and each `parent` pointing
 /// one step further out.
-pub fn compute_selection_ranges(text: &str, positions: &[Position]) -> Vec<SelectionRange> {
+pub fn compute_selection_ranges(
+    text: &str,
+    positions: &[Position],
+    encoding: PositionEncoding,
+) -> Vec<SelectionRange> {
     let root = parse(text).cst;
     let line_index = LineIndex::new(text);
     positions
         .iter()
         .map(|&position| {
-            let offset =
-                TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
-            selection_range_at(&root, &line_index, offset)
+            let offset = TextSize::new(
+                line_index
+                    .position_to_byte(position, encoding)
+                    .min(text.len()) as u32,
+            );
+            selection_range_at(&root, &line_index, offset, encoding)
         })
         .collect()
 }
@@ -29,6 +36,7 @@ fn selection_range_at(
     root: &SyntaxNode,
     line_index: &LineIndex,
     offset: TextSize,
+    encoding: PositionEncoding,
 ) -> SelectionRange {
     let mut ranges: Vec<TextRange> = Vec::new();
 
@@ -57,7 +65,7 @@ fn selection_range_at(
     let mut selection: Option<SelectionRange> = None;
     for range in ranges.iter().rev() {
         selection = Some(SelectionRange {
-            range: text_range_to_lsp_range(line_index, *range),
+            range: text_range_to_lsp_range(line_index, *range, encoding),
             parent: selection.map(Box::new),
         });
     }

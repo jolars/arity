@@ -72,15 +72,20 @@ fn function_defs(root: &SyntaxNode, model: &SemanticModel) -> Vec<(FnDef, Functi
 }
 
 /// Build a [`CallHierarchyItem`] for `def`, mapping its spans through `line_index`.
-fn fn_def_to_item(def: &FnDef, uri: &Uri, line_index: &LineIndex) -> CallHierarchyItem {
+fn fn_def_to_item(
+    def: &FnDef,
+    uri: &Uri,
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> CallHierarchyItem {
     CallHierarchyItem {
         name: def.name.to_string(),
         kind: LspSymbolKind::FUNCTION,
         tags: None,
         detail: None,
         uri: uri.clone(),
-        range: text_range_to_lsp_range(line_index, def.full),
-        selection_range: text_range_to_lsp_range(line_index, def.selection),
+        range: text_range_to_lsp_range(line_index, def.full, encoding),
+        selection_range: text_range_to_lsp_range(line_index, def.selection, encoding),
         data: None,
     }
 }
@@ -88,7 +93,12 @@ fn fn_def_to_item(def: &FnDef, uri: &Uri, line_index: &LineIndex) -> CallHierarc
 /// The call-hierarchy item for the top-level function `name` defined in the
 /// workspace file at `path`, off the db snapshot. `None` when the file isn't
 /// tracked, has no URI, or has no file-scope function of that name.
-fn function_item(snapshot: &Analysis, path: &Path, name: &str) -> Option<CallHierarchyItem> {
+fn function_item(
+    snapshot: &Analysis,
+    path: &Path,
+    name: &str,
+    encoding: PositionEncoding,
+) -> Option<CallHierarchyItem> {
     let file = snapshot.lookup_file(path)?;
     let uri = uri::from_path(path)?;
     let root = snapshot.parsed_tree(file);
@@ -96,8 +106,8 @@ fn function_item(snapshot: &Analysis, path: &Path, name: &str) -> Option<CallHie
     let (def, _) = function_defs(&root, model)
         .into_iter()
         .find(|(d, _)| d.name.as_str() == name)?;
-    let line_index = LineIndex::new(snapshot.file_text(file));
-    Some(fn_def_to_item(&def, &uri, &line_index))
+    let line_index = snapshot.line_index(file);
+    Some(fn_def_to_item(&def, &uri, line_index, encoding))
 }
 
 /// `textDocument/prepareCallHierarchy`: resolve the cursor to the top-level
@@ -111,13 +121,18 @@ pub(crate) fn prepare_call_hierarchy_via_db(
     uri: &Uri,
     text: &str,
     position: Position,
+    encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyItem>> {
     let line_index = LineIndex::new(text);
-    let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
+    let offset = TextSize::new(
+        line_index
+            .position_to_byte(position, encoding)
+            .min(text.len()) as u32,
+    );
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
 
-    if let Some(items) = prepare_local(&root, &model, offset, uri, &line_index) {
+    if let Some(items) = prepare_local(&root, &model, offset, uri, &line_index, encoding) {
         return Some(items);
     }
 
@@ -140,7 +155,7 @@ pub(crate) fn prepare_call_hierarchy_via_db(
             // The current file is handled intra-file above; skip it so a stale
             // tracked copy never shadows the live buffer.
             .filter(|(def_path, _)| def_path != path)
-            .filter_map(|(def_path, _)| function_item(snapshot, &def_path, &name))
+            .filter_map(|(def_path, _)| function_item(snapshot, &def_path, &name, encoding))
             .collect::<Vec<_>>()
     }))
     .unwrap_or_default();
@@ -158,6 +173,7 @@ fn prepare_local(
     offset: TextSize,
     uri: &Uri,
     line_index: &LineIndex,
+    encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyItem>> {
     let token = pick_name_token(root, offset)?;
     if token.kind() != SyntaxKind::IDENT {
@@ -168,7 +184,7 @@ fn prepare_local(
 
     // Cursor on a function definition's own name.
     if let Some((def, _)) = defs.iter().find(|(d, _)| d.selection == range) {
-        return Some(vec![fn_def_to_item(def, uri, line_index)]);
+        return Some(vec![fn_def_to_item(def, uri, line_index, encoding)]);
     }
 
     // Cursor on a read that resolves to a local file-scope binding.
@@ -182,7 +198,7 @@ fn prepare_local(
     Some(
         defs.iter()
             .find(|(d, _)| d.selection == def_range)
-            .map(|(d, _)| vec![fn_def_to_item(d, uri, line_index)])
+            .map(|(d, _)| vec![fn_def_to_item(d, uri, line_index, encoding)])
             .unwrap_or_default(),
     )
 }
@@ -193,18 +209,22 @@ fn prepare_local(
 pub(crate) fn incoming_calls_via_db(
     snapshot: &Analysis,
     item: &CallHierarchyItem,
+    encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyIncomingCall>> {
     let path = uri::to_path(&item.uri)?;
     let name = item.name.clone();
-    salsa::Cancelled::catch(AssertUnwindSafe(|| incoming_calls(snapshot, &path, &name)))
-        .ok()
-        .flatten()
+    salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        incoming_calls(snapshot, &path, &name, encoding)
+    }))
+    .ok()
+    .flatten()
 }
 
 fn incoming_calls(
     snapshot: &Analysis,
     def_path: &Path,
     name: &str,
+    encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyIncomingCall>> {
     let binding = snapshot.cross_file_binding(def_path, name);
     // Per caller, keyed by (uri, selection span): the built `from` item and its
@@ -214,10 +234,10 @@ fn incoming_calls(
     // through a free read. This is the same split [`cross_file_reference_locations`]
     // uses, narrowed to callee positions.
     for member in &binding.cohort {
-        collect_incoming(snapshot, member, name, false, &mut groups);
+        collect_incoming(snapshot, member, name, false, &mut groups, encoding);
     }
     for reader in &binding.readers {
-        collect_incoming(snapshot, reader, name, true, &mut groups);
+        collect_incoming(snapshot, reader, name, true, &mut groups, encoding);
     }
     Some(
         groups
@@ -247,6 +267,7 @@ fn collect_incoming(
     name: &str,
     reader: bool,
     groups: &mut Vec<IncomingGroup>,
+    encoding: PositionEncoding,
 ) {
     let Some(file) = snapshot.lookup_file(file_path) else {
         return;
@@ -256,7 +277,7 @@ fn collect_incoming(
     };
     let root = snapshot.parsed_tree(file);
     let model = snapshot.semantic_model(file);
-    let line_index = LineIndex::new(snapshot.file_text(file));
+    let line_index = snapshot.line_index(file);
     let defs = function_defs(&root, model);
 
     let ref_ranges: Vec<TextRange> = if reader {
@@ -274,7 +295,7 @@ fn collect_incoming(
         let Some(caller) = enclosing_top_level_function(&root, &defs, range) else {
             continue; // script-level call site: dropped (v1).
         };
-        let from_range = text_range_to_lsp_range(&line_index, range);
+        let from_range = text_range_to_lsp_range(line_index, range, encoding);
         match groups
             .iter_mut()
             .find(|g| g.uri == uri && g.selection == caller.selection)
@@ -283,7 +304,7 @@ fn collect_incoming(
             None => groups.push(IncomingGroup {
                 uri: uri.clone(),
                 selection: caller.selection,
-                from: fn_def_to_item(&caller, &uri, &line_index),
+                from: fn_def_to_item(&caller, &uri, line_index, encoding),
                 from_ranges: vec![from_range],
             }),
         }
@@ -296,12 +317,15 @@ fn collect_incoming(
 pub(crate) fn outgoing_calls_via_db(
     snapshot: &Analysis,
     item: &CallHierarchyItem,
+    encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyOutgoingCall>> {
     let path = uri::to_path(&item.uri)?;
     let name = item.name.clone();
-    salsa::Cancelled::catch(AssertUnwindSafe(|| outgoing_calls(snapshot, &path, &name)))
-        .ok()
-        .flatten()
+    salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        outgoing_calls(snapshot, &path, &name, encoding)
+    }))
+    .ok()
+    .flatten()
 }
 
 struct OutgoingGroup {
@@ -314,11 +338,12 @@ fn outgoing_calls(
     snapshot: &Analysis,
     path: &Path,
     name: &str,
+    encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyOutgoingCall>> {
     let file = snapshot.lookup_file(path)?;
     let root = snapshot.parsed_tree(file);
     let model = snapshot.semantic_model(file);
-    let line_index = LineIndex::new(snapshot.file_text(file));
+    let line_index = snapshot.line_index(file);
 
     let defs = function_defs(&root, model);
     let func = defs
@@ -355,7 +380,8 @@ fn outgoing_calls(
             continue;
         }
         let callee_name = SmolStr::new(callee.text());
-        let Some(target) = resolve_callee(snapshot, path, &local_fn_names, &callee_name) else {
+        let Some(target) = resolve_callee(snapshot, path, &local_fn_names, &callee_name, encoding)
+        else {
             continue;
         };
         let range = callee.text_range();
@@ -376,13 +402,13 @@ fn outgoing_calls(
         groups
             .into_iter()
             .filter_map(|g| {
-                let to = function_item(snapshot, &g.path, &g.name)?;
+                let to = function_item(snapshot, &g.path, &g.name, encoding)?;
                 Some(CallHierarchyOutgoingCall {
                     to,
                     from_ranges: g
                         .from_ranges
                         .iter()
-                        .map(|r| text_range_to_lsp_range(&line_index, *r))
+                        .map(|r| text_range_to_lsp_range(line_index, *r, encoding))
                         .collect(),
                 })
             })
@@ -399,6 +425,7 @@ fn resolve_callee(
     from_path: &Path,
     local_fn_names: &HashSet<&str>,
     callee_name: &str,
+    encoding: PositionEncoding,
 ) -> Option<PathBuf> {
     if local_fn_names.contains(callee_name) {
         return Some(from_path.to_path_buf());
@@ -406,7 +433,7 @@ fn resolve_callee(
     snapshot
         .visible_def_files(from_path, callee_name)
         .into_iter()
-        .find(|p| function_item(snapshot, p, callee_name).is_some())
+        .find(|p| function_item(snapshot, p, callee_name, encoding).is_some())
 }
 
 /// The `CALL_EXPR` node `range` is the callee of, when `range` is exactly that
@@ -472,12 +499,19 @@ mod tests {
         offset: usize,
     ) -> Vec<CallHierarchyItem> {
         let uri = uri::from_path(path).unwrap();
-        prepare_call_hierarchy_via_db(snapshot, path, &uri, text, pos_at(text, offset))
-            .unwrap_or_default()
+        prepare_call_hierarchy_via_db(
+            snapshot,
+            path,
+            &uri,
+            text,
+            pos_at(text, offset),
+            PositionEncoding::Utf16,
+        )
+        .unwrap_or_default()
     }
 
     fn item_named(snapshot: &Analysis, path: &Path, name: &str) -> CallHierarchyItem {
-        function_item(snapshot, path, name).expect("function item")
+        function_item(snapshot, path, name, PositionEncoding::Utf16).expect("function item")
     }
 
     // --- prepare ------------------------------------------------------------
@@ -533,9 +567,12 @@ mod tests {
     fn outgoing_collects_intra_file_calls() {
         let src = "helper <- function() 1\nmain <- function() {\n  helper()\n  helper()\n}\n";
         let snapshot = rename_workspace(src, "");
-        let calls =
-            outgoing_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "main"))
-                .expect("outgoing");
+        let calls = outgoing_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "main"),
+            PositionEncoding::Utf16,
+        )
+        .expect("outgoing");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].to.name, "helper");
         assert_eq!(calls[0].from_ranges.len(), 2, "both call sites reported");
@@ -545,9 +582,12 @@ mod tests {
     fn outgoing_skips_namespaced_and_unresolved_calls() {
         let src = "main <- function() {\n  dplyr::filter(x)\n  undefined_fn()\n}\n";
         let snapshot = rename_workspace(src, "");
-        let calls =
-            outgoing_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "main"))
-                .expect("outgoing");
+        let calls = outgoing_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "main"),
+            PositionEncoding::Utf16,
+        )
+        .expect("outgoing");
         assert!(calls.is_empty(), "no top-level function callee resolves");
     }
 
@@ -556,9 +596,12 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
         let snapshot = rename_workspace(a_src, b_src);
-        let calls =
-            outgoing_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("b.R"), "bar"))
-                .expect("outgoing");
+        let calls = outgoing_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("b.R"), "bar"),
+            PositionEncoding::Utf16,
+        )
+        .expect("outgoing");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].to.name, "foo");
         assert_eq!(calls[0].to.uri, uri::from_path(&ws_path("a.R")).unwrap());
@@ -571,9 +614,12 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
         let snapshot = rename_workspace(a_src, b_src);
-        let calls =
-            incoming_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "foo"))
-                .expect("incoming");
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].from.name, "bar");
         assert_eq!(calls[0].from.uri, uri::from_path(&ws_path("b.R")).unwrap());
@@ -585,9 +631,12 @@ mod tests {
         // The call to foo is at script top level, inside no function.
         let src = "foo <- function() 1\nfoo()\n";
         let snapshot = rename_workspace(src, "");
-        let calls =
-            incoming_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "foo"))
-                .expect("incoming");
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
         assert!(calls.is_empty(), "script-level call site is dropped in v1");
     }
 
@@ -595,9 +644,12 @@ mod tests {
     fn incoming_attributes_a_nested_call_to_the_top_level_function() {
         let src = "foo <- function() 1\nouter <- function() {\n  inner <- function() foo()\n  inner()\n}\n";
         let snapshot = rename_workspace(src, "");
-        let calls =
-            incoming_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "foo"))
-                .expect("incoming");
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].from.name, "outer");
     }
@@ -607,9 +659,12 @@ mod tests {
         // foo passed as a value, not called: not an incoming call edge.
         let src = "foo <- function() 1\nbar <- function() lapply(xs, foo)\n";
         let snapshot = rename_workspace(src, "");
-        let calls =
-            incoming_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "foo"))
-                .expect("incoming");
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
         assert!(calls.is_empty(), "a value use is not a call");
     }
 
@@ -620,9 +675,12 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let b_src = "foo <- function() 2\nbar <- function() foo()\n";
         let snapshot = rename_workspace(a_src, b_src);
-        let calls =
-            incoming_calls_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "foo"))
-                .expect("incoming");
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
         assert!(
             calls.is_empty(),
             "b.R's foo is a disjoint binding; a.R's foo has no callers"

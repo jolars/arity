@@ -105,7 +105,13 @@ pub(crate) fn offset_of(src: &str, needle: &str) -> usize {
 }
 
 pub(crate) fn hover_markdown(src: &str, needle: &str, indexed: &IndexedProvider) -> Option<String> {
-    compute_hover(src, offset_of(src, needle), indexed).map(|h| match h.contents {
+    compute_hover(
+        src,
+        offset_of(src, needle),
+        indexed,
+        PositionEncoding::Utf16,
+    )
+    .map(|h| match h.contents {
         HoverContents::Markup(m) => m.value,
         other => panic!("expected markup, got {other:?}"),
     })
@@ -230,13 +236,22 @@ pub(crate) fn package_multidef_rename_offered(
     let uri_a = uri::from_path(&a_path).unwrap();
     let a_src = files[0].1;
     let offset = a_src.find("foo").unwrap();
-    rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed").is_some()
+    rename_via_db(
+        &snapshot,
+        &a_path,
+        &uri_a,
+        a_src,
+        offset,
+        "renamed",
+        PositionEncoding::Utf16,
+    )
+    .is_some()
 }
 
 // --- scope-aware cross-file references (references_via_db) -------------
 
 pub(crate) fn pos_at(text: &str, offset: usize) -> Position {
-    LineIndex::new(text).byte_to_position(offset)
+    LineIndex::new(text).byte_to_position(offset, PositionEncoding::Utf16)
 }
 
 /// The set of distinct URIs touched by a reference result.

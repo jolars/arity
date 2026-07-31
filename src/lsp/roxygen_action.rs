@@ -25,9 +25,10 @@ pub(crate) fn roxygen_code_action(
     text: &str,
     uri: &Uri,
     range: Range,
+    encoding: PositionEncoding,
 ) -> Option<CodeActionOrCommand> {
     let line_index = LineIndex::new(text);
-    let offset = line_index.position_to_byte(range.start);
+    let offset = line_index.position_to_byte(range.start, encoding);
     let root = parse(text).cst;
     let token = token_at(&root, TextSize::new(offset as u32))?;
 
@@ -63,7 +64,7 @@ pub(crate) fn roxygen_code_action(
         }
     };
 
-    let pos = line_index.byte_to_position(edit_start);
+    let pos = line_index.byte_to_position(edit_start, encoding);
     let edit = TextEdit {
         range: Range {
             start: pos,
@@ -240,7 +241,7 @@ mod tests {
             start: pos(line, 0),
             ..range
         };
-        match roxygen_code_action(src, &test_uri(), range)? {
+        match roxygen_code_action(src, &test_uri(), range, PositionEncoding::Utf16)? {
             CodeActionOrCommand::CodeAction(a) => Some(a),
             _ => None,
         }
@@ -250,8 +251,8 @@ mod tests {
     fn applied(src: &str, action: &CodeAction) -> (String, String) {
         let (range, new_text) = sole_edit(action.edit.as_ref().unwrap(), &test_uri());
         let li = LineIndex::new(src);
-        let start = li.position_to_byte(range.start);
-        let end = li.position_to_byte(range.end);
+        let start = li.position_to_byte(range.start, PositionEncoding::Utf16);
+        let end = li.position_to_byte(range.end, PositionEncoding::Utf16);
         let mut out = src.to_string();
         out.replace_range(start..end, &new_text);
         (new_text, out)

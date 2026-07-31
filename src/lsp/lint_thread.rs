@@ -41,6 +41,7 @@ pub(crate) fn spawn_lint_thread(
     read_rx: Receiver<ReadJob>,
     out_tx: Sender<Outbound>,
     read_spawner: Spawner,
+    position_encoding: PositionEncoding,
 ) -> JoinHandle<()> {
     let (build_tx, build_rx) = crossbeam_channel::unbounded::<IndexedProvider>();
     let (remote_tx, remote_rx) = crossbeam_channel::unbounded::<RemoteExports>();
@@ -67,6 +68,7 @@ pub(crate) fn spawn_lint_thread(
                 read_spawner,
                 index_pool: TaskPool::new("arity-index", 1),
                 resolved_rules: None,
+                position_encoding,
             };
             worker.run(&lint_rx, &read_rx, &build_rx, &remote_rx, &done_rx);
         })
@@ -190,6 +192,9 @@ pub(crate) struct LintWorker {
     /// as an `Arc`. `None` until the first lint; the tuple's first element is the
     /// config it was resolved for.
     resolved_rules: Option<(LintConfig, Arc<ResolvedRules>)>,
+    /// The session's negotiated position encoding, used when rendering
+    /// diagnostics and passed to each read job so its LSP positions match.
+    position_encoding: PositionEncoding,
 }
 
 impl LintWorker {
@@ -237,7 +242,9 @@ impl LintWorker {
                     // write trips `salsa::Cancelled`, handled by the fallback).
                     guard("read job dispatch", || {
                         let snapshot = self.db.snapshot();
-                        self.read_spawner.spawn(move || run_read(snapshot, job));
+                        let encoding = self.position_encoding;
+                        self.read_spawner
+                            .spawn(move || run_read(snapshot, encoding, job));
                     });
                 }
                 recv(build_rx) -> built => {
@@ -501,6 +508,7 @@ impl LintWorker {
         // resolves undefined symbols through it; this provider is only the
         // fallback for rules that read static base-R facts (`is_base`).
         let fallback = CompositeProvider::base_only();
+        let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
             let result = salsa::Cancelled::catch(AssertUnwindSafe(|| {
                 crate::linter::check::analyze_prepared(&snapshot, &prepared, &fallback)
@@ -509,7 +517,7 @@ impl LintWorker {
                 let line_index = LineIndex::new(&text);
                 let diags: Vec<LspDiagnostic> = diagnostics
                     .iter()
-                    .map(|d| to_lsp_diagnostic(d, &line_index))
+                    .map(|d| to_lsp_diagnostic(d, &line_index, encoding))
                     .collect();
                 let _ = out_tx.send(Outbound::Diagnostics {
                     uri: uri.clone(),
@@ -538,7 +546,7 @@ impl LintWorker {
         let line_index = LineIndex::new(&req.text);
         let diags: Vec<LspDiagnostic> = findings
             .iter()
-            .map(|d| to_lsp_diagnostic(d, &line_index))
+            .map(|d| to_lsp_diagnostic(d, &line_index, self.position_encoding))
             .collect();
         let _ = self.out_tx.send(Outbound::Diagnostics {
             uri: req.uri.clone(),

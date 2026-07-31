@@ -10,12 +10,13 @@ use super::*;
 pub(crate) fn will_rename_via_db(
     snapshot: &Analysis,
     renames: &[(PathBuf, PathBuf)],
+    encoding: PositionEncoding,
 ) -> Option<WorkspaceEdit> {
     let edits =
         salsa::Cancelled::catch(AssertUnwindSafe(|| snapshot.source_rename_edits(renames))).ok()?;
     let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
     for (sourcer, range, new_text) in edits {
-        if let Some((uri, edit)) = text_edit_in(snapshot, &sourcer, range, &new_text) {
+        if let Some((uri, edit)) = text_edit_in(snapshot, &sourcer, range, &new_text, encoding) {
             changes.entry(uri).or_default().push(edit);
         }
     }
@@ -91,8 +92,12 @@ mod tests {
         let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
 
-        let edit = will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a_renamed.R"))])
-            .expect("the dependent literal is rewritten");
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[(ws_path("a.R"), ws_path("a_renamed.R"))],
+            PositionEncoding::Utf16,
+        )
+        .expect("the dependent literal is rewritten");
         let (_, new_text) = sole_edit(&edit, &uri_b);
         assert_eq!(new_text, "\"a_renamed.R\"");
         assert!(
@@ -107,8 +112,12 @@ mod tests {
         let snapshot = rename_workspace("foo <- function() 1\n", b_src);
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
 
-        let edit =
-            will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a2.R"))]).expect("rewritten");
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[(ws_path("a.R"), ws_path("a2.R"))],
+            PositionEncoding::Utf16,
+        )
+        .expect("rewritten");
         assert_eq!(sole_edit(&edit, &uri_b).1, "'a2.R'");
     }
 
@@ -122,7 +131,8 @@ mod tests {
         let uri_b = uri::from_path(&b_path).unwrap();
         let new_a = a_path.parent().unwrap().join("sub").join("a.R");
 
-        let edit = will_rename_via_db(&snapshot, &[(a_path, new_a)]).expect("rewritten");
+        let edit = will_rename_via_db(&snapshot, &[(a_path, new_a)], PositionEncoding::Utf16)
+            .expect("rewritten");
         assert_eq!(sole_edit(&edit, &uri_b).1, "\"sub/a.R\"");
     }
 
@@ -147,6 +157,7 @@ mod tests {
                 (ws_path("a.R"), ws_path("a2.R")),
                 (ws_path("c.R"), ws_path("c2.R")),
             ],
+            PositionEncoding::Utf16,
         )
         .expect("both literals rewritten");
         let edits = edit.changes.unwrap().remove(&uri_b).expect("b.R edited");
@@ -160,7 +171,12 @@ mod tests {
         // edge and is never rewritten.
         let snapshot = rename_workspace("foo <- function() 1\n", "source(paste0(d, \"a.R\"))\n");
         assert!(
-            will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a2.R"))]).is_none(),
+            will_rename_via_db(
+                &snapshot,
+                &[(ws_path("a.R"), ws_path("a2.R"))],
+                PositionEncoding::Utf16
+            )
+            .is_none(),
             "a dynamic source() is not rewritten"
         );
     }
@@ -169,7 +185,12 @@ mod tests {
     fn will_rename_ignores_a_noop_rename() {
         let snapshot = rename_workspace("foo <- function() 1\n", "source(\"a.R\")\n");
         assert!(
-            will_rename_via_db(&snapshot, &[(ws_path("a.R"), ws_path("a.R"))]).is_none(),
+            will_rename_via_db(
+                &snapshot,
+                &[(ws_path("a.R"), ws_path("a.R"))],
+                PositionEncoding::Utf16
+            )
+            .is_none(),
             "renaming a file to itself produces no edits"
         );
     }

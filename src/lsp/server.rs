@@ -33,8 +33,11 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
     // capability (there is no server capability to advertise for it); without it
     // the background index/sidecar jobs stay silent.
     let work_done_progress = client_supports_work_done_progress(&params);
+    // Pick the position encoding: prefer UTF-8 (arity stores text as UTF-8, so no
+    // re-encoding) when the client offers it, else the UTF-16 default.
+    let position_encoding = negotiate_position_encoding(&params);
     let init_result = InitializeResult {
-        capabilities: server_capabilities(),
+        capabilities: server_capabilities(position_encoding),
         server_info: Some(ServerInfo {
             name: "arity".to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -55,8 +58,33 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
         pull_mode,
         register_watchers,
         work_done_progress,
+        position_encoding,
     )?;
     Ok(())
+}
+
+/// Pick the LSP position encoding from the client's
+/// `capabilities.general.positionEncodings` list. Prefer [`PositionEncoding::Utf8`]
+/// when offered — arity stores text as UTF-8, so it needs no re-encoding — else
+/// fall back to [`PositionEncoding::Utf16`], which is what the spec mandates when
+/// the client offers no list (or only UTF-16).
+pub(crate) fn negotiate_position_encoding(params: &serde_json::Value) -> PositionEncoding {
+    let offers_utf8 = params
+        .get("capabilities")
+        .and_then(|c| c.get("general"))
+        .and_then(|g| g.get("positionEncodings"))
+        .and_then(|e| e.as_array())
+        .is_some_and(|kinds| {
+            kinds
+                .iter()
+                .filter_map(|k| k.as_str())
+                .any(|k| k == PositionEncodingKind::UTF8.as_str())
+        });
+    if offers_utf8 {
+        PositionEncoding::Utf8
+    } else {
+        PositionEncoding::Utf16
+    }
 }
 
 /// Extract the workspace roots from the `initialize` params: the
@@ -122,8 +150,9 @@ pub(crate) fn client_supports_work_done_progress(params: &serde_json::Value) -> 
         .unwrap_or(false)
 }
 
-pub(crate) fn server_capabilities() -> ServerCapabilities {
+pub(crate) fn server_capabilities(position_encoding: PositionEncoding) -> ServerCapabilities {
     ServerCapabilities {
+        position_encoding: Some(position_encoding.to_kind()),
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
@@ -228,6 +257,7 @@ pub(crate) fn main_loop(
     pull_mode: bool,
     register_watchers: bool,
     work_done_progress: bool,
+    position_encoding: PositionEncoding,
 ) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
@@ -237,7 +267,13 @@ pub(crate) fn main_loop(
     // read-phase, code actions). Its `_workers` must outlive both `state` and the
     // lint thread; the drop order at the end of this function guarantees that.
     let read_pool = TaskPool::new("arity-lsp-read", read_pool_size());
-    let lint_handle = spawn_lint_thread(lint_rx, read_rx, out_tx.clone(), read_pool.spawner());
+    let lint_handle = spawn_lint_thread(
+        lint_rx,
+        read_rx,
+        out_tx.clone(),
+        read_pool.spawner(),
+        position_encoding,
+    );
     // `done_tx`/`done_rx` are created inside the lint thread (see
     // `spawn_lint_thread`) so the main loop never holds the read end.
 
@@ -259,6 +295,7 @@ pub(crate) fn main_loop(
         editor_settings,
         pull_mode,
         work_done_progress,
+        position_encoding,
     );
 
     // Ask the client to watch on-disk config, package-metadata, and `.R` files so
@@ -326,9 +363,10 @@ mod tests {
 
     #[test]
     fn advertises_pull_diagnostic_provider() {
-        let DiagnosticServerCapabilities::Options(opts) = server_capabilities()
-            .diagnostic_provider
-            .expect("diagnostic provider advertised")
+        let DiagnosticServerCapabilities::Options(opts) =
+            server_capabilities(PositionEncoding::Utf16)
+                .diagnostic_provider
+                .expect("diagnostic provider advertised")
         else {
             panic!("expected plain DiagnosticOptions");
         };
@@ -339,7 +377,7 @@ mod tests {
 
     #[test]
     fn advertises_workspace_folders_support() {
-        let ws = server_capabilities()
+        let ws = server_capabilities(PositionEncoding::Utf16)
             .workspace
             .expect("workspace capabilities advertised");
         let folders = ws.workspace_folders.expect("workspace folders advertised");
@@ -392,5 +430,38 @@ mod tests {
         });
         assert!(!client_supports_work_done_progress(&off));
         assert!(!client_supports_work_done_progress(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn negotiates_utf8_only_when_client_offers_it() {
+        // Client advertises UTF-8 → we prefer it (arity's native encoding).
+        let utf8 = serde_json::json!({
+            "capabilities": { "general": { "positionEncodings": ["utf-8", "utf-16"] } }
+        });
+        assert_eq!(negotiate_position_encoding(&utf8), PositionEncoding::Utf8);
+
+        // Client offers only UTF-16 → UTF-16.
+        let utf16 = serde_json::json!({
+            "capabilities": { "general": { "positionEncodings": ["utf-16"] } }
+        });
+        assert_eq!(negotiate_position_encoding(&utf16), PositionEncoding::Utf16);
+
+        // No `general.positionEncodings` at all → UTF-16, the mandated default.
+        assert_eq!(
+            negotiate_position_encoding(&serde_json::json!({})),
+            PositionEncoding::Utf16
+        );
+    }
+
+    #[test]
+    fn advertises_negotiated_position_encoding() {
+        assert_eq!(
+            server_capabilities(PositionEncoding::Utf8).position_encoding,
+            Some(PositionEncodingKind::UTF8)
+        );
+        assert_eq!(
+            server_capabilities(PositionEncoding::Utf16).position_encoding,
+            Some(PositionEncodingKind::UTF16)
+        );
     }
 }

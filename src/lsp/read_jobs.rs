@@ -144,7 +144,7 @@ pub(crate) enum ReadJob {
 /// Service a read-only job against a db `snapshot`, replying to the client.
 /// Runs on a read-pool worker; the `snapshot` is dropped on return so it never
 /// blocks the lint thread's next write longer than the job itself.
-pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
+pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: ReadJob) {
     match job {
         ReadJob::Format {
             id,
@@ -153,7 +153,7 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             style,
             out,
         } => {
-            let result = format_edits_via_db(&snapshot, &path, &text, style);
+            let result = format_edits_via_db(&snapshot, &path, &text, style, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::FormatRange {
@@ -164,7 +164,7 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             style,
             out,
         } => {
-            let result = format_range_edits_via_db(&snapshot, &path, &text, range, style);
+            let result = format_range_edits_via_db(&snapshot, &path, &text, range, style, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Hover {
@@ -174,7 +174,7 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             position,
             out,
         } => {
-            let result = hover_via_db(&snapshot, &path, &text, position);
+            let result = hover_via_db(&snapshot, &path, &text, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Completion {
@@ -184,7 +184,7 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             position,
             out,
         } => {
-            let result = completion_via_db(&snapshot, &path, &text, position);
+            let result = completion_via_db(&snapshot, &path, &text, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::SignatureHelp {
@@ -194,7 +194,7 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             position,
             out,
         } => {
-            let result = signature_help_via_db(&snapshot, &path, &text, position);
+            let result = signature_help_via_db(&snapshot, &path, &text, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::ResolveCompletion { id, item, out } => {
@@ -209,7 +209,7 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             position,
             out,
         } => {
-            let result = definition_via_db(&snapshot, &path, &uri, &text, position);
+            let result = definition_via_db(&snapshot, &path, &uri, &text, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::References {
@@ -221,8 +221,15 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             include_declaration,
             out,
         } => {
-            let result =
-                references_via_db(&snapshot, &path, &uri, &text, position, include_declaration);
+            let result = references_via_db(
+                &snapshot,
+                &path,
+                &uri,
+                &text,
+                position,
+                include_declaration,
+                encoding,
+            );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Rename {
@@ -234,15 +241,15 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             new_name,
             out,
         } => {
-            let result = rename_via_db(&snapshot, &path, &uri, &text, offset, &new_name);
+            let result = rename_via_db(&snapshot, &path, &uri, &text, offset, &new_name, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::WillRenameFiles { id, renames, out } => {
-            let result = will_rename_via_db(&snapshot, &renames);
+            let result = will_rename_via_db(&snapshot, &renames, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::WorkspaceSymbol { id, query, out } => {
-            let symbols = workspace_symbols_via_db(&snapshot, &query);
+            let symbols = workspace_symbols_via_db(&snapshot, &query, encoding);
             let response = WorkspaceSymbolResponse::Nested(symbols);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
         }
@@ -254,15 +261,16 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             position,
             out,
         } => {
-            let result = prepare_call_hierarchy_via_db(&snapshot, &path, &uri, &text, position);
+            let result =
+                prepare_call_hierarchy_via_db(&snapshot, &path, &uri, &text, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::IncomingCalls { id, item, out } => {
-            let result = incoming_calls_via_db(&snapshot, &item);
+            let result = incoming_calls_via_db(&snapshot, &item, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::OutgoingCalls { id, item, out } => {
-            let result = outgoing_calls_via_db(&snapshot, &item);
+            let result = outgoing_calls_via_db(&snapshot, &item, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::PrepareTypeHierarchy {
@@ -273,15 +281,16 @@ pub(crate) fn run_read(snapshot: Analysis, job: ReadJob) {
             position,
             out,
         } => {
-            let result = prepare_type_hierarchy_via_db(&snapshot, &path, &uri, &text, position);
+            let result =
+                prepare_type_hierarchy_via_db(&snapshot, &path, &uri, &text, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Supertypes { id, item, out } => {
-            let result = supertypes_via_db(&snapshot, &item);
+            let result = supertypes_via_db(&snapshot, &item, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Subtypes { id, item, out } => {
-            let result = subtypes_via_db(&snapshot, &item);
+            let result = subtypes_via_db(&snapshot, &item, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
     }
@@ -308,13 +317,18 @@ pub(crate) fn pos_key(position: Position) -> (u32, u32) {
 /// A `Location` for `range` in the workspace file at `path`, mapping the byte
 /// span through that file's *current* text. `None` if the file isn't tracked or
 /// its path has no URI.
-pub(crate) fn location_in(snapshot: &Analysis, path: &Path, range: TextRange) -> Option<Location> {
+pub(crate) fn location_in(
+    snapshot: &Analysis,
+    path: &Path,
+    range: TextRange,
+    encoding: PositionEncoding,
+) -> Option<Location> {
     let file = snapshot.lookup_file(path)?;
     let target_uri = uri::from_path(path)?;
-    let target_index = LineIndex::new(snapshot.file_text(file));
+    let target_index = snapshot.line_index(file);
     Some(Location {
         uri: target_uri,
-        range: text_range_to_lsp_range(&target_index, range),
+        range: text_range_to_lsp_range(target_index, range, encoding),
     })
 }
 
@@ -327,14 +341,15 @@ pub(crate) fn text_edit_in(
     path: &Path,
     range: TextRange,
     new_name: &str,
+    encoding: PositionEncoding,
 ) -> Option<(Uri, TextEdit)> {
     let file = snapshot.lookup_file(path)?;
     let target_uri = uri::from_path(path)?;
-    let target_index = LineIndex::new(snapshot.file_text(file));
+    let target_index = snapshot.line_index(file);
     Some((
         target_uri,
         TextEdit {
-            range: text_range_to_lsp_range(&target_index, range),
+            range: text_range_to_lsp_range(target_index, range, encoding),
             new_text: new_name.to_string(),
         },
     ))

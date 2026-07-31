@@ -8,9 +8,12 @@ pub(crate) fn signature_help_via_db(
     path: &Path,
     text: &str,
     position: Position,
+    encoding: PositionEncoding,
 ) -> Option<SignatureHelp> {
     let line_index = LineIndex::new(text);
-    let offset = line_index.position_to_byte(position).min(text.len());
+    let offset = line_index
+        .position_to_byte(position, encoding)
+        .min(text.len());
     let index = snapshot.library_data().unwrap_or_default();
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
@@ -321,14 +324,22 @@ mod tests {
         db.set_library_index(documented_dplyr());
         db.upsert_file(path, src.to_string());
         let help =
-            signature_help_via_db(&db.snapshot(), path, src, position).expect("signature via db");
+            signature_help_via_db(&db.snapshot(), path, src, position, PositionEncoding::Utf16)
+                .expect("signature via db");
         assert_eq!(help.signatures.len(), 1);
 
         // Untracked path still resolves, via the fresh-parse fallback.
         let mut empty = IncrementalDatabase::default();
         empty.set_library_index(documented_dplyr());
         assert!(
-            signature_help_via_db(&empty.snapshot(), path, src, position).is_some(),
+            signature_help_via_db(
+                &empty.snapshot(),
+                path,
+                src,
+                position,
+                PositionEncoding::Utf16
+            )
+            .is_some(),
             "fallback signature help should resolve too"
         );
     }

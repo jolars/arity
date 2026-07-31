@@ -97,14 +97,14 @@ fn color_of_content(content: &str) -> Option<Rgba> {
 /// The color swatches in `text`: every single-line string literal whose content
 /// is a recognized hex or named color. A pure CST walk — no semantic model, no
 /// workspace snapshot — so it runs straight on the read pool.
-pub fn compute_document_colors(text: &str) -> Vec<ColorInformation> {
+pub fn compute_document_colors(text: &str, encoding: PositionEncoding) -> Vec<ColorInformation> {
     let root = parse(text).cst;
     let line_index = LineIndex::new(text);
     collect_string_literals(&root)
         .into_iter()
         .filter_map(|literal| {
             let rgba = color_of_content(&literal.spelling)?;
-            let range = text_range_to_lsp_range(&line_index, literal.literal_range);
+            let range = text_range_to_lsp_range(&line_index, literal.literal_range, encoding);
             // Editors draw the swatch on a single line; skip any literal that
             // straddles a newline (e.g. a multi-line raw string).
             (range.start.line == range.end.line).then(|| ColorInformation {
@@ -128,9 +128,10 @@ pub fn compute_color_presentations(
     text: &str,
     color: &Color,
     range: Range,
+    encoding: PositionEncoding,
 ) -> Vec<ColorPresentation> {
     let line_index = LineIndex::new(text);
-    let start = line_index.position_to_byte(range.start);
+    let start = line_index.position_to_byte(range.start, encoding);
     let quote = if text.as_bytes().get(start) == Some(&b'\'') {
         '\''
     } else {

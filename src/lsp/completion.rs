@@ -72,9 +72,14 @@ pub(crate) fn completion_via_db(
     path: &Path,
     text: &str,
     position: Position,
+    encoding: PositionEncoding,
 ) -> Option<CompletionResponse> {
     let line_index = LineIndex::new(text);
-    let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
+    let offset = TextSize::new(
+        line_index
+            .position_to_byte(position, encoding)
+            .min(text.len()) as u32,
+    );
     let index = snapshot.library_data().unwrap_or_default();
     let remote = snapshot.remote_exports().unwrap_or_default();
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {

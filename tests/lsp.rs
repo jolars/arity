@@ -7,6 +7,7 @@ use arity::lsp::{
     compute_selection_ranges,
 };
 use arity::rindex::provider::IndexedProvider;
+use arity::text::PositionEncoding;
 use lsp_types::{
     Color, DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Position, Range,
     SelectionRange, SymbolKind, TextEdit,
@@ -34,7 +35,8 @@ fn reformats_unformatted_input_with_full_document_edit() {
     let expected = format_with_style(input, style).expect("formats");
     assert_ne!(expected, input, "fixture must require reformatting");
 
-    let edits = compute_format_edits(input, style).expect("formatter accepts input");
+    let edits = compute_format_edits(input, style, PositionEncoding::Utf16)
+        .expect("formatter accepts input");
     assert_eq!(edits.len(), 1, "expected a single whole-document edit");
 
     let edit = &edits[0];
@@ -50,7 +52,8 @@ fn no_edits_when_input_already_formatted() {
     let style = FormatStyle::default();
     let formatted = format_with_style("x <- 1\n", style).expect("formats");
 
-    let edits = compute_format_edits(&formatted, style).expect("idempotent input");
+    let edits =
+        compute_format_edits(&formatted, style, PositionEncoding::Utf16).expect("idempotent input");
     assert!(
         edits.is_empty(),
         "formatted input should produce no edits, got: {edits:?}"
@@ -61,14 +64,15 @@ fn no_edits_when_input_already_formatted() {
 fn returns_none_when_input_has_parse_errors() {
     let style = FormatStyle::default();
     // Unclosed parenthesis is a parser diagnostic; the formatter refuses.
-    let result = compute_format_edits("function(x\n", style);
+    let result = compute_format_edits("function(x\n", style, PositionEncoding::Utf16);
     assert!(result.is_none(), "expected None, got {result:?}");
 }
 
 #[test]
 fn empty_document_produces_no_edits() {
     let style = FormatStyle::default();
-    let edits = compute_format_edits("", style).expect("formatter accepts empty input");
+    let edits = compute_format_edits("", style, PositionEncoding::Utf16)
+        .expect("formatter accepts empty input");
     assert!(edits.is_empty(), "empty document should produce no edits");
 }
 
@@ -84,7 +88,7 @@ fn end_position_handles_input_without_trailing_newline() {
         // becomes uninteresting; fail loudly so we re-pick a fixture.
         panic!("fixture must require reformatting");
     }
-    let edits = compute_format_edits(input, style).expect("formats");
+    let edits = compute_format_edits(input, style, PositionEncoding::Utf16).expect("formats");
     let edit = edits.first().expect("one edit");
     assert_eq!(edit.range.start.line, 0);
     assert_eq!(edit.range.end.line, 0);
@@ -104,7 +108,8 @@ fn range_edit_is_scoped_to_the_selected_statement() {
     // Select the middle line `2+2`; only it should be reformatted.
     let input = "1+1\n2+2\n3+3\n";
     let range = line_range(1, 0, 1, 3);
-    let edits = compute_format_range_edits(input, range, style).expect("formats");
+    let edits =
+        compute_format_range_edits(input, range, style, PositionEncoding::Utf16).expect("formats");
     assert_eq!(edits.len(), 1, "expected a single scoped edit");
     let edit = &edits[0];
     assert_eq!(edit.new_text, "2 + 2");
@@ -118,7 +123,8 @@ fn range_edit_preserves_first_line_indentation() {
     let input = "f <- function() {\n  1+1\n}\n";
     // Select the indented `1+1` (characters 2..5 of line 1).
     let range = line_range(1, 2, 1, 5);
-    let edits = compute_format_range_edits(input, range, style).expect("formats");
+    let edits =
+        compute_format_range_edits(input, range, style, PositionEncoding::Utf16).expect("formats");
     let edit = &edits[0];
     assert_eq!(edit.new_text, "1 + 1");
     // The edit starts after the existing indentation, which is left untouched.
@@ -130,7 +136,8 @@ fn range_edit_is_empty_when_already_formatted() {
     let style = FormatStyle::default();
     let input = "1 + 1\n2 + 2\n";
     let range = line_range(0, 0, 0, 5);
-    let edits = compute_format_range_edits(input, range, style).expect("accepts input");
+    let edits = compute_format_range_edits(input, range, style, PositionEncoding::Utf16)
+        .expect("accepts input");
     assert!(edits.is_empty(), "formatted region should produce no edits");
 }
 
@@ -138,7 +145,7 @@ fn range_edit_is_empty_when_already_formatted() {
 fn range_edit_returns_none_on_parse_errors() {
     let style = FormatStyle::default();
     let range = line_range(0, 0, 1, 0);
-    let result = compute_format_range_edits("function(x\n", range, style);
+    let result = compute_format_range_edits("function(x\n", range, style, PositionEncoding::Utf16);
     assert!(result.is_none(), "parse errors must block range formatting");
 }
 
@@ -154,7 +161,8 @@ fn edit_at(line: u32, start: u32, end: u32, new_text: &str) -> TextEdit {
 #[test]
 fn prepare_rename_offers_a_local_identifier() {
     // Cursor on the definition of `value`.
-    let prepared = compute_prepare_rename("value <- 1\nprint(value)\n", 0).expect("offers rename");
+    let prepared = compute_prepare_rename("value <- 1\nprint(value)\n", 0, PositionEncoding::Utf16)
+        .expect("offers rename");
     assert_eq!(prepared.placeholder, "value");
     assert_eq!(prepared.range, line_range(0, 0, 0, 5));
 }
@@ -162,18 +170,24 @@ fn prepare_rename_offers_a_local_identifier() {
 #[test]
 fn prepare_rename_declines_a_keyword() {
     // Cursor on `if`: not an identifier, so no rename is offered.
-    assert!(compute_prepare_rename("if (x) y\n", 0).is_none());
+    assert!(compute_prepare_rename("if (x) y\n", 0, PositionEncoding::Utf16).is_none());
 }
 
 #[test]
 fn prepare_rename_declines_a_nonlocal_name() {
     // `print` resolves to no local binding.
-    assert!(compute_prepare_rename("print(1)\n", 0).is_none());
+    assert!(compute_prepare_rename("print(1)\n", 0, PositionEncoding::Utf16).is_none());
 }
 
 #[test]
 fn rename_rewrites_definition_and_reads() {
-    let edits = compute_rename("value <- 1\nprint(value)\n", 0, "v2").expect("renames");
+    let edits = compute_rename(
+        "value <- 1\nprint(value)\n",
+        0,
+        "v2",
+        PositionEncoding::Utf16,
+    )
+    .expect("renames");
     assert_eq!(
         edits,
         vec![
@@ -188,20 +202,20 @@ fn rename_from_a_read_site_finds_the_binding() {
     // Cursor on the read inside `print(value)` (byte offset 17).
     let text = "value <- 1\nprint(value)\n";
     let offset = text.find("value)").expect("read site");
-    let edits = compute_rename(text, offset, "v2").expect("renames");
+    let edits = compute_rename(text, offset, "v2", PositionEncoding::Utf16).expect("renames");
     assert_eq!(edits, vec![edit_at(0, 0, 5, "v2"), edit_at(1, 6, 11, "v2")]);
 }
 
 #[test]
 fn rename_rejects_an_invalid_identifier() {
-    assert!(compute_rename("value <- 1\n", 0, "1bad").is_none());
-    assert!(compute_rename("value <- 1\n", 0, "if").is_none());
-    assert!(compute_rename("value <- 1\n", 0, "has space").is_none());
+    assert!(compute_rename("value <- 1\n", 0, "1bad", PositionEncoding::Utf16).is_none());
+    assert!(compute_rename("value <- 1\n", 0, "if", PositionEncoding::Utf16).is_none());
+    assert!(compute_rename("value <- 1\n", 0, "has space", PositionEncoding::Utf16).is_none());
 }
 
 #[test]
 fn rename_declines_a_nonlocal_name() {
-    assert!(compute_rename("print(1)\n", 0, "p2").is_none());
+    assert!(compute_rename("print(1)\n", 0, "p2", PositionEncoding::Utf16).is_none());
 }
 
 #[test]
@@ -210,10 +224,12 @@ fn rename_via_anchor_survives_an_edit_since_prepare() {
     // comment line above. The stored anchor must still drive the rename at the
     // shifted positions in text B.
     let text_a = "value <- 1\nprint(value)\n";
-    let prepared = compute_prepare_rename(text_a, 0).expect("offers rename");
+    let prepared =
+        compute_prepare_rename(text_a, 0, PositionEncoding::Utf16).expect("offers rename");
 
     let text_b = "# note\nvalue <- 1\nprint(value)\n";
-    let edits = compute_rename_with_anchor(text_b, &prepared.anchor, "v2").expect("renames");
+    let edits = compute_rename_with_anchor(text_b, &prepared.anchor, "v2", PositionEncoding::Utf16)
+        .expect("renames");
     assert_eq!(
         edits,
         vec![
@@ -386,7 +402,7 @@ fn symbol_names(symbols: &[DocumentSymbol]) -> Vec<(&str, SymbolKind)> {
 #[test]
 fn document_symbols_list_top_level_functions_and_variables() {
     let text = "f <- function(x) x + 1\ny <- 42\n";
-    let symbols = compute_document_symbols(text);
+    let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
     assert_eq!(
         symbol_names(&symbols),
         vec![("f", SymbolKind::FUNCTION), ("y", SymbolKind::VARIABLE)]
@@ -396,7 +412,7 @@ fn document_symbols_list_top_level_functions_and_variables() {
 #[test]
 fn document_symbols_nest_bindings_inside_a_function_body() {
     let text = "f <- function() {\n  g <- function() 1\n  h <- 2\n}\n";
-    let symbols = compute_document_symbols(text);
+    let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
     assert_eq!(symbol_names(&symbols), vec![("f", SymbolKind::FUNCTION)]);
     let children = symbols[0].children.as_ref().expect("f has nested symbols");
     assert_eq!(
@@ -409,7 +425,7 @@ fn document_symbols_nest_bindings_inside_a_function_body() {
 
 #[test]
 fn document_symbols_are_empty_for_a_bare_call() {
-    assert!(compute_document_symbols("print(1)\n").is_empty());
+    assert!(compute_document_symbols("print(1)\n", PositionEncoding::Utf16).is_empty());
 }
 
 #[test]
@@ -417,21 +433,21 @@ fn document_symbols_surface_a_binding_inside_a_control_flow_block() {
     // An `if` block introduces no scope, so `x` is a file-level binding: it must
     // still surface (here flattened to the top level), never be lost.
     let text = "if (cond) {\n  x <- 1\n}\n";
-    let symbols = compute_document_symbols(text);
+    let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
     assert_eq!(symbol_names(&symbols), vec![("x", SymbolKind::VARIABLE)]);
 }
 
 #[test]
 fn document_symbols_handle_right_assignment() {
     let text = "42 -> z\n";
-    let symbols = compute_document_symbols(text);
+    let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
     assert_eq!(symbol_names(&symbols), vec![("z", SymbolKind::VARIABLE)]);
 }
 
 #[test]
 fn document_symbol_ranges_target_the_name_and_enclose_the_statement() {
     let text = "value <- 1\n";
-    let symbols = compute_document_symbols(text);
+    let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
     let sym = &symbols[0];
     // The selection range is the identifier `value` (columns 0..5).
     assert_eq!(sym.selection_range.start, Position::new(0, 0));
@@ -501,7 +517,7 @@ fn document_links_link_existing_relative_files() {
     std::fs::write(dir.path().join("helpers.R"), "f <- function() 1\n").unwrap();
     // A source() arg and a bare literal both name the existing file.
     let text = "source(\"helpers.R\")\nx <- \"helpers.R\"\n";
-    let links = compute_document_links(text, Some(dir.path()), NO_LIMIT);
+    let links = compute_document_links(text, Some(dir.path()), NO_LIMIT, PositionEncoding::Utf16);
     assert_eq!(links.len(), 2, "both literals resolve to the file");
     // Each link targets a file:// URI naming the resolved file.
     for link in &links {
@@ -526,7 +542,12 @@ fn document_links_link_existing_relative_files() {
 #[test]
 fn document_links_skip_nonexistent_paths() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let links = compute_document_links("x <- \"missing.R\"\n", Some(dir.path()), NO_LIMIT);
+    let links = compute_document_links(
+        "x <- \"missing.R\"\n",
+        Some(dir.path()),
+        NO_LIMIT,
+        PositionEncoding::Utf16,
+    );
     assert!(links.is_empty(), "a path with no file is not linked");
 }
 
@@ -534,7 +555,12 @@ fn document_links_skip_nonexistent_paths() {
 fn document_links_skip_directories() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir(dir.path().join("subdir")).unwrap();
-    let links = compute_document_links("x <- \"subdir\"\n", Some(dir.path()), NO_LIMIT);
+    let links = compute_document_links(
+        "x <- \"subdir\"\n",
+        Some(dir.path()),
+        NO_LIMIT,
+        PositionEncoding::Utf16,
+    );
     assert!(links.is_empty(), "a directory is not a linkable file");
 }
 
@@ -545,7 +571,9 @@ fn document_links_respect_size_limit() {
     let text = "x <- \"helpers.R\"\n";
     // A limit below the document size skips scanning entirely.
     let limit = (text.len() - 1) as u64;
-    assert!(compute_document_links(text, Some(dir.path()), limit).is_empty());
+    assert!(
+        compute_document_links(text, Some(dir.path()), limit, PositionEncoding::Utf16).is_empty()
+    );
 }
 
 fn pos(line: u32, character: u32) -> Position {
@@ -583,7 +611,7 @@ fn contains_strictly(outer: Range, inner: Range) -> bool {
 fn selection_range_expands_from_identifier_outward() {
     let text = "f <- function() g(x + 1)\n";
     let x = text.find('x').unwrap() as u32;
-    let ranges = compute_selection_ranges(text, &[pos(0, x)]);
+    let ranges = compute_selection_ranges(text, &[pos(0, x)], PositionEncoding::Utf16);
     assert_eq!(ranges.len(), 1);
     let chain = chain(&ranges[0]);
 
@@ -608,7 +636,7 @@ fn selection_range_expands_from_identifier_outward() {
 fn selection_range_on_whitespace_expands_from_enclosing_node() {
     // Cursor on the indentation before `x`, not on any real token.
     let text = "foo(\n  x\n)\n";
-    let ranges = compute_selection_ranges(text, &[pos(1, 1)]);
+    let ranges = compute_selection_ranges(text, &[pos(1, 1)], PositionEncoding::Utf16);
     assert_eq!(ranges.len(), 1);
     let chain = chain(&ranges[0]);
     // The innermost range is a real (non-empty) enclosing node, never zero-width.
@@ -621,7 +649,7 @@ fn selection_range_on_whitespace_expands_from_enclosing_node() {
 #[test]
 fn selection_range_returns_one_chain_per_position() {
     let text = "a <- 1\nb <- 2\n";
-    let ranges = compute_selection_ranges(text, &[pos(0, 0), pos(1, 0)]);
+    let ranges = compute_selection_ranges(text, &[pos(0, 0), pos(1, 0)], PositionEncoding::Utf16);
     assert_eq!(ranges.len(), 2);
     assert_eq!(ranges[0].range, rng(0, 0, 0, 1));
     assert_eq!(ranges[1].range, rng(1, 0, 1, 1));
@@ -630,7 +658,7 @@ fn selection_range_returns_one_chain_per_position() {
 #[test]
 fn selection_range_bare_identifier_expands_to_file() {
     let text = "x\n";
-    let ranges = compute_selection_ranges(text, &[pos(0, 0)]);
+    let ranges = compute_selection_ranges(text, &[pos(0, 0)], PositionEncoding::Utf16);
     let chain = chain(&ranges[0]);
     assert_eq!(chain[0], rng(0, 0, 0, 1));
     assert_eq!(chain.last().unwrap().start, pos(0, 0));
@@ -638,7 +666,7 @@ fn selection_range_bare_identifier_expands_to_file() {
 
 #[test]
 fn selection_range_empty_input_does_not_panic() {
-    let ranges = compute_selection_ranges("", &[pos(0, 0)]);
+    let ranges = compute_selection_ranges("", &[pos(0, 0)], PositionEncoding::Utf16);
     assert_eq!(ranges.len(), 1);
     // A whole-file (empty) range, and no parent.
     assert_eq!(ranges[0].range, rng(0, 0, 0, 0));
@@ -659,7 +687,7 @@ fn color(r: f32, g: f32, b: f32, a: f32) -> Color {
 #[test]
 fn document_color_recognizes_six_digit_hex() {
     let text = "x <- \"#ff0000\"\n";
-    let colors = compute_document_colors(text);
+    let colors = compute_document_colors(text, PositionEncoding::Utf16);
     assert_eq!(colors.len(), 1);
     assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
     // The swatch range slices the whole quoted token and stays on one line.
@@ -668,36 +696,36 @@ fn document_color_recognizes_six_digit_hex() {
 
 #[test]
 fn document_color_recognizes_eight_digit_hex_alpha() {
-    let colors = compute_document_colors("x <- \"#ff000080\"\n");
+    let colors = compute_document_colors("x <- \"#ff000080\"\n", PositionEncoding::Utf16);
     assert_eq!(colors.len(), 1);
     assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 128.0 / 255.0));
 }
 
 #[test]
 fn document_color_hex_is_case_insensitive() {
-    let upper = compute_document_colors("x <- \"#FF0000\"\n");
-    let lower = compute_document_colors("x <- \"#ff0000\"\n");
+    let upper = compute_document_colors("x <- \"#FF0000\"\n", PositionEncoding::Utf16);
+    let lower = compute_document_colors("x <- \"#ff0000\"\n", PositionEncoding::Utf16);
     assert_eq!(upper[0].color, lower[0].color);
 }
 
 #[test]
 fn document_color_recognizes_named_colors() {
-    let colors = compute_document_colors("x <- \"red\"\n");
+    let colors = compute_document_colors("x <- \"red\"\n", PositionEncoding::Utf16);
     assert_eq!(colors.len(), 1);
     assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
 }
 
 #[test]
 fn document_color_named_lookup_is_case_insensitive() {
-    let colors = compute_document_colors("x <- \"Red\"\n");
+    let colors = compute_document_colors("x <- \"Red\"\n", PositionEncoding::Utf16);
     assert_eq!(colors.len(), 1);
     assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
 }
 
 #[test]
 fn document_color_grey_and_gray_agree() {
-    let grey = compute_document_colors("x <- \"grey40\"\n");
-    let gray = compute_document_colors("x <- \"gray40\"\n");
+    let grey = compute_document_colors("x <- \"grey40\"\n", PositionEncoding::Utf16);
+    let gray = compute_document_colors("x <- \"gray40\"\n", PositionEncoding::Utf16);
     assert_eq!(grey[0].color, gray[0].color);
 }
 
@@ -712,7 +740,7 @@ fn document_color_skips_non_colors() {
         "x <- \"\"\n",
     ] {
         assert!(
-            compute_document_colors(src).is_empty(),
+            compute_document_colors(src, PositionEncoding::Utf16).is_empty(),
             "expected no color for {src:?}"
         );
     }
@@ -720,14 +748,15 @@ fn document_color_skips_non_colors() {
 
 #[test]
 fn document_color_recognizes_single_line_raw_string() {
-    let colors = compute_document_colors("x <- r\"(#ff0000)\"\n");
+    let colors = compute_document_colors("x <- r\"(#ff0000)\"\n", PositionEncoding::Utf16);
     assert_eq!(colors.len(), 1);
     assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
 }
 
 #[test]
 fn document_color_reports_each_literal() {
-    let colors = compute_document_colors("a <- \"red\"\nb <- \"#0000ff\"\n");
+    let colors =
+        compute_document_colors("a <- \"red\"\nb <- \"#0000ff\"\n", PositionEncoding::Utf16);
     assert_eq!(colors.len(), 2);
     assert_eq!(colors[0].color, color(1.0, 0.0, 0.0, 1.0));
     assert_eq!(colors[0].range, rng(0, 5, 0, 10));
@@ -741,7 +770,12 @@ fn document_color_reports_each_literal() {
 fn color_presentation_round_trips_and_preserves_double_quote() {
     let text = "x <- \"#ff0000\"\n";
     let range = rng(0, 5, 0, 14); // the token range, quotes included
-    let out = compute_color_presentations(text, &color(0.0, 1.0, 0.0, 1.0), range);
+    let out = compute_color_presentations(
+        text,
+        &color(0.0, 1.0, 0.0, 1.0),
+        range,
+        PositionEncoding::Utf16,
+    );
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].label, "#00ff00");
     let edit = out[0].text_edit.as_ref().expect("text edit");
@@ -753,7 +787,12 @@ fn color_presentation_round_trips_and_preserves_double_quote() {
 fn color_presentation_preserves_single_quote() {
     let text = "x <- '#ff0000'\n";
     let range = rng(0, 5, 0, 14);
-    let out = compute_color_presentations(text, &color(0.0, 1.0, 0.0, 1.0), range);
+    let out = compute_color_presentations(
+        text,
+        &color(0.0, 1.0, 0.0, 1.0),
+        range,
+        PositionEncoding::Utf16,
+    );
     assert_eq!(out[0].text_edit.as_ref().unwrap().new_text, "'#00ff00'");
 }
 
@@ -761,7 +800,12 @@ fn color_presentation_preserves_single_quote() {
 fn color_presentation_emits_eight_digits_for_alpha() {
     let text = "x <- \"#ff0000\"\n";
     let range = rng(0, 5, 0, 14);
-    let out = compute_color_presentations(text, &color(1.0, 0.0, 0.0, 0.5), range);
+    let out = compute_color_presentations(
+        text,
+        &color(1.0, 0.0, 0.0, 0.5),
+        range,
+        PositionEncoding::Utf16,
+    );
     // 0.5 rounds to 0x80; alpha < 1 keeps the RRGGBBAA form.
     assert_eq!(out[0].label, "#ff000080");
     assert_eq!(out[0].text_edit.as_ref().unwrap().new_text, "\"#ff000080\"");
@@ -772,6 +816,11 @@ fn color_presentation_defaults_to_double_quote_for_raw_string() {
     let text = "x <- r\"(#ff0000)\"\n";
     // The token starts at the `r`; the peek isn't a quote, so we default to `"`.
     let range = rng(0, 5, 0, 17);
-    let out = compute_color_presentations(text, &color(0.0, 1.0, 0.0, 1.0), range);
+    let out = compute_color_presentations(
+        text,
+        &color(0.0, 1.0, 0.0, 1.0),
+        range,
+        PositionEncoding::Utf16,
+    );
     assert_eq!(out[0].text_edit.as_ref().unwrap().new_text, "\"#00ff00\"");
 }

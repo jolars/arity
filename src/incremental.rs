@@ -27,6 +27,7 @@ use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
+use crate::text::LineIndex;
 
 /// An opaque, process-local file identity. Decouples a tracked file from any
 /// path: it is allocated once when a file is first seen and never reused, so it
@@ -179,6 +180,7 @@ pub struct PackageGraph {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryKind {
     ParsedDocument,
+    LineIndex,
     SemanticModel,
     FileExports,
     FileFreeReads,
@@ -313,6 +315,22 @@ pub fn parse_diagnostics(db: &dyn IncrementalDb, file: SourceFile) -> &[ParseDia
 /// Materialize the cached parse for `file` as a fresh `SyntaxNode` cursor.
 pub fn parsed_tree_root(db: &dyn IncrementalDb, file: SourceFile) -> SyntaxNode {
     SyntaxNode::new_root(parsed_document(db, file).green.clone())
+}
+
+/// The cached [`LineIndex`] for `file`: the newline + wide-char tables the LSP
+/// uses to convert between byte offsets and encoded LSP positions. A pure
+/// function of the file text (encoding-independent — the encoding is supplied at
+/// each conversion), so an edit that leaves the line structure unchanged
+/// backdates it (`LineIndex: Eq`), and cross-file consumers (go-to-definition
+/// targets, call/type hierarchy) avoid rescanning a sibling file's whole text
+/// per request.
+#[salsa::tracked(returns(ref))]
+pub fn line_index(db: &dyn IncrementalDb, file: SourceFile) -> LineIndex {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::LineIndex,
+        file: Some(file),
+    });
+    LineIndex::new(file.text(db))
 }
 
 /// The per-file semantic model, built on the cached parse tree. Returned by
@@ -771,6 +789,11 @@ impl IncrementalDatabase {
         parsed_tree_root(self, file)
     }
 
+    /// The cached [`LineIndex`] for `file`.
+    pub fn line_index(&self, file: SourceFile) -> &LineIndex {
+        line_index(self, file)
+    }
+
     /// The cached per-file semantic model.
     pub fn semantic_model(&self, file: SourceFile) -> &SemanticModel {
         semantic_model(self, file)
@@ -876,6 +899,11 @@ impl Analysis {
     /// A fresh `SyntaxNode` over the cached parse tree.
     pub fn parsed_tree(&self, file: SourceFile) -> SyntaxNode {
         self.0.parsed_tree(file)
+    }
+
+    /// The cached [`LineIndex`] for `file` (newline + wide-char tables).
+    pub fn line_index(&self, file: SourceFile) -> &LineIndex {
+        self.0.line_index(file)
     }
 
     /// The cached per-file semantic model.

@@ -11,7 +11,11 @@ use super::*;
 /// [`project_defs`](crate::project::project_defs) index holds and the right
 /// granularity for a project-wide search, unlike `textDocument/documentSymbol`
 /// (see [`compute_document_symbols`]) which also surfaces nested locals.
-pub(crate) fn workspace_symbols_via_db(snapshot: &Analysis, query: &str) -> Vec<WorkspaceSymbol> {
+pub(crate) fn workspace_symbols_via_db(
+    snapshot: &Analysis,
+    query: &str,
+    encoding: PositionEncoding,
+) -> Vec<WorkspaceSymbol> {
     let needle = query.to_lowercase();
     let hits = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         snapshot.workspace_symbols(|name| fuzzy_subsequence(&needle, name))
@@ -19,7 +23,7 @@ pub(crate) fn workspace_symbols_via_db(snapshot: &Analysis, query: &str) -> Vec<
     .unwrap_or_default();
     hits.into_iter()
         .filter_map(|(name, kind, path, range)| {
-            let location = location_in(snapshot, &path, range)?;
+            let location = location_in(snapshot, &path, range, encoding)?;
             Some(WorkspaceSymbol {
                 name,
                 kind: match kind {
@@ -100,7 +104,7 @@ mod tests {
     #[test]
     fn exact_hit_across_files() {
         let snapshot = workspace("foo <- function() 1\n", "bar <- 2\n");
-        let symbols = workspace_symbols_via_db(&snapshot, "foo");
+        let symbols = workspace_symbols_via_db(&snapshot, "foo", PositionEncoding::Utf16);
         assert_eq!(names(&symbols), ["foo"]);
         assert_eq!(symbols[0].kind, LspSymbolKind::FUNCTION);
         let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
@@ -110,7 +114,7 @@ mod tests {
     #[test]
     fn fuzzy_subsequence_query_hits_a_value() {
         let snapshot = workspace("foo <- function() 1\n", "bar <- 2\n");
-        let symbols = workspace_symbols_via_db(&snapshot, "br");
+        let symbols = workspace_symbols_via_db(&snapshot, "br", PositionEncoding::Utf16);
         assert_eq!(names(&symbols), ["bar"]);
         assert_eq!(symbols[0].kind, LspSymbolKind::VARIABLE);
     }
@@ -118,7 +122,7 @@ mod tests {
     #[test]
     fn empty_query_returns_all_top_level_defs() {
         let snapshot = workspace("foo <- function() 1\n", "bar <- 2\n");
-        let symbols = workspace_symbols_via_db(&snapshot, "");
+        let symbols = workspace_symbols_via_db(&snapshot, "", PositionEncoding::Utf16);
         let mut got = names(&symbols);
         got.sort_unstable();
         assert_eq!(got, ["bar", "foo"]);
@@ -130,14 +134,14 @@ mod tests {
         let mut db = IncrementalDatabase::default();
         db.upsert_file(&ws_path("a.R"), "foo <- function() 1\n".to_string());
         let snapshot = db.snapshot();
-        assert!(workspace_symbols_via_db(&snapshot, "foo").is_empty());
+        assert!(workspace_symbols_via_db(&snapshot, "foo", PositionEncoding::Utf16).is_empty());
     }
 
     #[test]
     fn location_indexes_the_defining_identifier() {
         let a_src = "x <- 1\nfoo <- function() 1\n";
         let snapshot = workspace(a_src, "bar <- 2\n");
-        let symbols = workspace_symbols_via_db(&snapshot, "foo");
+        let symbols = workspace_symbols_via_db(&snapshot, "foo", PositionEncoding::Utf16);
         let location = location_of(&symbols, "foo");
         // `foo` is defined on the second line, starting at column 0.
         assert_eq!(location.range.start.line, 1);
@@ -153,7 +157,7 @@ mod tests {
             "outer <- function() {\n  inner <- 1\n  inner\n}\n",
             "z <- 2\n",
         );
-        let symbols = workspace_symbols_via_db(&snapshot, "inner");
+        let symbols = workspace_symbols_via_db(&snapshot, "inner", PositionEncoding::Utf16);
         let got = names(&symbols);
         assert!(
             got.is_empty(),

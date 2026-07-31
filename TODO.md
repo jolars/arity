@@ -696,14 +696,17 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   it documents the pre-P1 behavior and flips to expect `RequestCancelled` when the
   P1 work lands.
 
-- [ ] **P3 — `positionEncoding` negotiation (UTF-8).** `LineIndex` is
-  UTF-16-only (`src/text/line_index.rs:52`) and capabilities never advertise
-  `positionEncoding` (`src/lsp/server.rs:73`), so UTF-8-capable clients pay
-  needless re-encoding and the server can't honor a UTF-8 request. Negotiate
-  `general.positionEncodings` and thread the chosen encoding through `LineIndex`.
-  While there, consider caching `LineIndex` as a salsa query (today it is rebuilt
-  per conversion) with a wide-char table for O(log n) lookups, like ra's
-  `line_index`.
+- [x] **P3 — `positionEncoding` negotiation (UTF-8).** The server now negotiates
+  `general.positionEncodings` (preferring UTF-8, arity's native encoding, else the
+  UTF-16 default) and advertises the choice via `ServerCapabilities.position_encoding`.
+  `LineIndex` was rebuilt as an owned, self-contained structure (a newline table
+  plus a per-line wide-char table, à la ra's `line_index`) whose conversions take a
+  `PositionEncoding`; it is cached as a `salsa` query (`incremental::line_index`)
+  and used for the cross-file/target-file conversions, so those no longer rescan a
+  sibling's whole text per request. The session encoding is threaded from
+  `initialize` through `GlobalState`/the lint worker to every byte-offset ↔
+  LSP-position conversion. Live-buffer conversions still build a fresh `LineIndex`
+  (the db copy can lag mid-edit).
 
 - [ ] **P3 — Per-URI content-derived pull `resultId`.** `result_seq` is one
   global counter bumped every lint generation (`src/lsp/state.rs:1055`), so a

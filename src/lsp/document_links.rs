@@ -16,6 +16,7 @@ pub fn compute_document_links(
     text: &str,
     base_dir: Option<&Path>,
     file_size_limit: u64,
+    encoding: PositionEncoding,
 ) -> Vec<DocumentLink> {
     if text.len() as u64 > file_size_limit {
         return Vec::new();
@@ -37,7 +38,7 @@ pub fn compute_document_links(
             }
             let target = uri::from_path(&target_path)?;
             Some(DocumentLink {
-                range: text_range_to_lsp_range(&line_index, literal.literal_range),
+                range: text_range_to_lsp_range(&line_index, literal.literal_range, encoding),
                 target: Some(target),
                 tooltip: None,
                 data: None,

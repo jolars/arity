@@ -8,9 +8,10 @@ pub fn compute_code_actions(
     lint: &LintConfig,
     uri: &Uri,
     range: Range,
+    encoding: PositionEncoding,
 ) -> CodeActionResponse {
     let diagnostics = crate::linter::check_document(path, text, lint).unwrap_or_default();
-    code_actions_from_findings(&diagnostics, text, uri, range)
+    code_actions_from_findings(&diagnostics, text, uri, range, encoding)
 }
 
 /// Build quick-fix code actions from already-computed lint findings, for the
@@ -22,6 +23,7 @@ pub(crate) fn code_actions_from_findings(
     text: &str,
     uri: &Uri,
     range: Range,
+    encoding: PositionEncoding,
 ) -> CodeActionResponse {
     let line_index = LineIndex::new(text);
 
@@ -30,16 +32,16 @@ pub(crate) fn code_actions_from_findings(
         .filter_map(|d| {
             let fix = d.fix.as_ref()?;
             let diag_range = Range {
-                start: line_index.byte_to_position(u32::from(d.range.start()) as usize),
-                end: line_index.byte_to_position(u32::from(d.range.end()) as usize),
+                start: line_index.byte_to_position(u32::from(d.range.start()) as usize, encoding),
+                end: line_index.byte_to_position(u32::from(d.range.end()) as usize, encoding),
             };
             if !ranges_overlap(diag_range, range) {
                 return None;
             }
             let edit = TextEdit {
                 range: Range {
-                    start: line_index.byte_to_position(fix.start),
-                    end: line_index.byte_to_position(fix.end),
+                    start: line_index.byte_to_position(fix.start, encoding),
+                    end: line_index.byte_to_position(fix.end, encoding),
                 },
                 new_text: fix.content.clone(),
             };
@@ -48,7 +50,7 @@ pub(crate) fn code_actions_from_findings(
             Some(CodeActionOrCommand::CodeAction(CodeAction {
                 title: fix.description.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: Some(vec![to_lsp_diagnostic(d, &line_index)]),
+                diagnostics: Some(vec![to_lsp_diagnostic(d, &line_index, encoding)]),
                 edit: Some(WorkspaceEdit {
                     changes: Some(changes),
                     ..Default::default()
@@ -59,7 +61,7 @@ pub(crate) fn code_actions_from_findings(
         .collect();
 
     // Cursor-context roxygen skeleton action (not diagnostic-backed).
-    if let Some(action) = roxygen_code_action(text, uri, range) {
+    if let Some(action) = roxygen_code_action(text, uri, range, encoding) {
         actions.push(action);
     }
 
@@ -89,6 +91,7 @@ mod tests {
             &LintConfig::default(),
             &test_uri(),
             full_line_0(),
+            PositionEncoding::Utf16,
         );
 
         let CodeActionOrCommand::CodeAction(action) = actions
@@ -118,8 +121,14 @@ mod tests {
             start: pos(5, 0),
             end: pos(5, 0),
         };
-        let actions =
-            compute_code_actions(src, test_path(), &LintConfig::default(), &test_uri(), far);
+        let actions = compute_code_actions(
+            src,
+            test_path(),
+            &LintConfig::default(),
+            &test_uri(),
+            far,
+            PositionEncoding::Utf16,
+        );
         assert!(actions.is_empty(), "expected no actions, got {actions:?}");
     }
 }

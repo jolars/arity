@@ -8,6 +8,7 @@ pub(crate) fn format_edits_via_db(
     path: &Path,
     text: &str,
     style: FormatStyle,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TextEdit>> {
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
@@ -21,12 +22,12 @@ pub(crate) fn format_edits_via_db(
         }
         let root = snapshot.parsed_tree(file);
         let formatted = format_node(&root, style, text).ok();
-        Some(formatted.map(|formatted| edits_for_formatted(text, formatted)))
+        Some(formatted.map(|formatted| edits_for_formatted(text, formatted, encoding)))
     }));
     match cached {
         Ok(Some(edits)) => edits,
         // Cache miss (`Ok(None)`) or a racing write (`Err`): re-parse from text.
-        Ok(None) | Err(_) => compute_format_edits(text, style),
+        Ok(None) | Err(_) => compute_format_edits(text, style, encoding),
     }
 }
 
@@ -39,6 +40,7 @@ pub(crate) fn format_range_edits_via_db(
     text: &str,
     range: Range,
     style: FormatStyle,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TextEdit>> {
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
@@ -52,9 +54,9 @@ pub(crate) fn format_range_edits_via_db(
         }
         let root = snapshot.parsed_tree(file);
         let line_index = LineIndex::new(text);
-        let text_range = lsp_range_to_text_range(&line_index, range);
+        let text_range = lsp_range_to_text_range(&line_index, range, encoding);
         let edits = match format_range(&root, text_range, style, text) {
-            Ok(Some(formatted)) => Some(range_edits(&line_index, text, formatted)),
+            Ok(Some(formatted)) => Some(range_edits(&line_index, text, formatted, encoding)),
             Ok(None) => Some(Vec::new()),
             Err(_) => None,
         };
@@ -63,7 +65,7 @@ pub(crate) fn format_range_edits_via_db(
     match cached {
         Ok(Some(edits)) => edits,
         // Cache miss (`Ok(None)`) or a racing write (`Err`): re-parse from text.
-        Ok(None) | Err(_) => compute_format_range_edits(text, range, style),
+        Ok(None) | Err(_) => compute_format_range_edits(text, range, style, encoding),
     }
 }
 
@@ -71,9 +73,13 @@ pub(crate) fn format_range_edits_via_db(
 ///
 /// Returns `None` when the formatter rejects the input (e.g. parse error).
 /// An empty `Vec` means the document is already formatted.
-pub fn compute_format_edits(text: &str, style: FormatStyle) -> Option<Vec<TextEdit>> {
+pub fn compute_format_edits(
+    text: &str,
+    style: FormatStyle,
+    encoding: PositionEncoding,
+) -> Option<Vec<TextEdit>> {
     let formatted = format_with_style(text, style).ok()?;
-    Some(edits_for_formatted(text, formatted))
+    Some(edits_for_formatted(text, formatted, encoding))
 }
 
 /// Compute the LSP `TextEdit`s to format the selection `range` of `text`,
@@ -86,33 +92,42 @@ pub fn compute_format_range_edits(
     text: &str,
     range: Range,
     style: FormatStyle,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TextEdit>> {
     let parsed = parse(text);
     if !parsed.diagnostics.is_empty() {
         return None;
     }
     let line_index = LineIndex::new(text);
-    let text_range = lsp_range_to_text_range(&line_index, range);
+    let text_range = lsp_range_to_text_range(&line_index, range, encoding);
     match format_range(&parsed.cst, text_range, style, text).ok()? {
-        Some(formatted) => Some(range_edits(&line_index, text, formatted)),
+        Some(formatted) => Some(range_edits(&line_index, text, formatted, encoding)),
         None => Some(Vec::new()),
     }
 }
 
 /// Convert a byte `TextRange` to an LSP `Range` via `line_index` (built over the
 /// text the range indexes).
-pub(crate) fn text_range_to_lsp_range(line_index: &LineIndex, range: TextRange) -> Range {
+pub(crate) fn text_range_to_lsp_range(
+    line_index: &LineIndex,
+    range: TextRange,
+    encoding: PositionEncoding,
+) -> Range {
     Range {
-        start: line_index.byte_to_position(u32::from(range.start()) as usize),
-        end: line_index.byte_to_position(u32::from(range.end()) as usize),
+        start: line_index.byte_to_position(u32::from(range.start()) as usize, encoding),
+        end: line_index.byte_to_position(u32::from(range.end()) as usize, encoding),
     }
 }
 
 /// Convert an LSP `Range` to a byte `TextRange`. `position_to_byte` already
 /// clamps to the text length; we only ensure `start <= end`.
-pub(crate) fn lsp_range_to_text_range(line_index: &LineIndex, range: Range) -> TextRange {
-    let start = line_index.position_to_byte(range.start);
-    let end = line_index.position_to_byte(range.end);
+pub(crate) fn lsp_range_to_text_range(
+    line_index: &LineIndex,
+    range: Range,
+    encoding: PositionEncoding,
+) -> TextRange {
+    let start = line_index.position_to_byte(range.start, encoding);
+    let end = line_index.position_to_byte(range.end, encoding);
     TextRange::new(
         TextSize::new(start as u32),
         TextSize::new(start.max(end) as u32),
@@ -125,6 +140,7 @@ pub(crate) fn range_edits(
     line_index: &LineIndex,
     text: &str,
     formatted: crate::formatter::RangeFormatted,
+    encoding: PositionEncoding,
 ) -> Vec<TextEdit> {
     let start = usize::from(formatted.range.start());
     let end = usize::from(formatted.range.end());
@@ -133,8 +149,8 @@ pub(crate) fn range_edits(
     }
     vec![TextEdit {
         range: Range {
-            start: line_index.byte_to_position(start),
-            end: line_index.byte_to_position(end),
+            start: line_index.byte_to_position(start, encoding),
+            end: line_index.byte_to_position(end, encoding),
         },
         new_text: formatted.text,
     }]
@@ -143,12 +159,16 @@ pub(crate) fn range_edits(
 /// The whole-document edit replacing `text` with its formatted form (empty when
 /// already formatted). The single source of the edit geometry shared by the
 /// re-parse path ([`compute_format_edits`]) and the cached-tree path.
-pub(crate) fn edits_for_formatted(text: &str, formatted: String) -> Vec<TextEdit> {
+pub(crate) fn edits_for_formatted(
+    text: &str,
+    formatted: String,
+    encoding: PositionEncoding,
+) -> Vec<TextEdit> {
     if formatted == text {
         return Vec::new();
     }
     let line_index = LineIndex::new(text);
-    let end = line_index.byte_to_position(text.len());
+    let end = line_index.byte_to_position(text.len(), encoding);
     vec![TextEdit {
         range: Range {
             start: Position::new(0, 0),
@@ -158,9 +178,13 @@ pub(crate) fn edits_for_formatted(text: &str, formatted: String) -> Vec<TextEdit
     }]
 }
 
-pub(crate) fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnostic {
-    let start = idx.byte_to_position(u32::from(d.range.start()) as usize);
-    let end = idx.byte_to_position(u32::from(d.range.end()) as usize);
+pub(crate) fn to_lsp_diagnostic(
+    d: &Diagnostic,
+    idx: &LineIndex,
+    encoding: PositionEncoding,
+) -> LspDiagnostic {
+    let start = idx.byte_to_position(u32::from(d.range.start()) as usize, encoding);
+    let end = idx.byte_to_position(u32::from(d.range.end()) as usize, encoding);
     let severity = match d.severity {
         Severity::Error => DiagnosticSeverity::ERROR,
         Severity::Warning => DiagnosticSeverity::WARNING,
@@ -180,11 +204,15 @@ pub(crate) fn to_lsp_diagnostic(d: &Diagnostic, idx: &LineIndex) -> LspDiagnosti
 /// Convert a lint's findings into LSP diagnostics against `text` (the source the
 /// findings' byte ranges index). Used by the pull-diagnostic path; the push path
 /// maps the same way inline in the lint thread.
-pub(crate) fn findings_to_items(findings: &[Diagnostic], text: &str) -> Vec<LspDiagnostic> {
+pub(crate) fn findings_to_items(
+    findings: &[Diagnostic],
+    text: &str,
+    encoding: PositionEncoding,
+) -> Vec<LspDiagnostic> {
     let idx = LineIndex::new(text);
     findings
         .iter()
-        .map(|d| to_lsp_diagnostic(d, &idx))
+        .map(|d| to_lsp_diagnostic(d, &idx, encoding))
         .collect()
 }
 
@@ -205,7 +233,7 @@ mod tests {
             message: ViolationData::new("demo-rule", "a demo finding"),
             fix: None,
         }];
-        let items = findings_to_items(&findings, text);
+        let items = findings_to_items(&findings, text, PositionEncoding::Utf16);
         assert_eq!(items.len(), 1);
         let item = &items[0];
         assert_eq!(item.range.start, Position::new(1, 0));
@@ -227,7 +255,8 @@ mod tests {
         let style = FormatStyle::default();
         let path = test_path();
         let buffer = "x<-f(1 )\n";
-        let expected = compute_format_edits(buffer, style);
+        let encoding = PositionEncoding::Utf16;
+        let expected = compute_format_edits(buffer, style, encoding);
         assert!(
             matches!(&expected, Some(edits) if !edits.is_empty()),
             "fixture must require reformatting"
@@ -238,7 +267,7 @@ mod tests {
         db.upsert_file(path, buffer.to_string());
         let snapshot = db.snapshot();
         assert_eq!(
-            format_edits_via_db(&snapshot, path, buffer, style),
+            format_edits_via_db(&snapshot, path, buffer, style, encoding),
             expected,
             "cached-tree format must match the re-parse path"
         );
@@ -247,7 +276,7 @@ mod tests {
         let mut stale = IncrementalDatabase::default();
         stale.upsert_file(path, "y <- 1\n".to_string());
         assert_eq!(
-            format_edits_via_db(&stale.snapshot(), path, buffer, style),
+            format_edits_via_db(&stale.snapshot(), path, buffer, style, encoding),
             expected,
             "version skew must fall back to the buffer text"
         );
@@ -255,7 +284,7 @@ mod tests {
         // Untracked path → fall back as well.
         let empty = IncrementalDatabase::default();
         assert_eq!(
-            format_edits_via_db(&empty.snapshot(), path, buffer, style),
+            format_edits_via_db(&empty.snapshot(), path, buffer, style, encoding),
             expected,
             "untracked path must fall back to the buffer text"
         );

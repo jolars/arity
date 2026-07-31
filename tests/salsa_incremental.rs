@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use arity::incremental::{
-    IncrementalDatabase, QueryKind, SourceFile, file_def_sites, top_level_events,
+    IncrementalDatabase, QueryKind, SourceFile, file_def_sites, line_index, top_level_events,
 };
 use arity::project::{
     DefKind, Project, ProjectMember, external_resolution, project_classes, project_defs,
@@ -52,6 +52,40 @@ fn file_def_sites_backdates_across_body_edit() {
     assert_eq!(
         before, after,
         "a body edit must not change the def-site map"
+    );
+}
+
+#[test]
+fn line_index_is_reused_when_input_unchanged() {
+    let db = IncrementalDatabase::default();
+    let file = db.add_file("x <- 1\ny <- 2\n");
+
+    let _ = line_index(&db, file);
+    db.clear_query_log();
+    let _ = line_index(&db, file);
+
+    assert!(
+        db.query_log().is_empty(),
+        "unchanged input must not re-run line_index"
+    );
+}
+
+#[test]
+fn line_index_backdates_across_within_line_edit() {
+    // An edit that changes content but leaves every newline (and wide-char)
+    // position untouched yields an equal `LineIndex`, so salsa backdates it and
+    // consumers that only depend on line geometry are spared.
+    let mut db = IncrementalDatabase::default();
+    let file = db.add_file("x <- 1\ny <- 2\n");
+    let before = line_index(&db, file).clone();
+
+    // Same byte length, same newline offsets — only a digit changed.
+    db.set_file_text(file, "x <- 9\ny <- 2\n");
+    let after = line_index(&db, file).clone();
+
+    assert_eq!(
+        before, after,
+        "a within-line edit must not change the line index"
     );
 }
 

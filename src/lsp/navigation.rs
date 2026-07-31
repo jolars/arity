@@ -14,9 +14,14 @@ pub(crate) fn definition_via_db(
     uri: &Uri,
     text: &str,
     position: Position,
+    encoding: PositionEncoding,
 ) -> Option<GotoDefinitionResponse> {
     let line_index = LineIndex::new(text);
-    let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
+    let offset = TextSize::new(
+        line_index
+            .position_to_byte(position, encoding)
+            .min(text.len()) as u32,
+    );
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
 
@@ -24,7 +29,7 @@ pub(crate) fn definition_via_db(
     if let Some(def_range) = definition_local_range(&root, &model, offset) {
         let location = Location {
             uri: uri.clone(),
-            range: text_range_to_lsp_range(&line_index, def_range),
+            range: text_range_to_lsp_range(&line_index, def_range, encoding),
         };
         return Some(GotoDefinitionResponse::Scalar(location));
     }
@@ -51,10 +56,10 @@ pub(crate) fn definition_via_db(
             .filter_map(|(def_path, range)| {
                 let file = snapshot.lookup_file(&def_path)?;
                 let target_uri = uri::from_path(&def_path)?;
-                let target_index = LineIndex::new(snapshot.file_text(file));
+                let target_index = snapshot.line_index(file);
                 Some(Location {
                     uri: target_uri,
-                    range: text_range_to_lsp_range(&target_index, range),
+                    range: text_range_to_lsp_range(target_index, range, encoding),
                 })
             })
             .collect::<Vec<_>>()
@@ -94,9 +99,14 @@ pub(crate) fn references_via_db(
     text: &str,
     position: Position,
     include_declaration: bool,
+    encoding: PositionEncoding,
 ) -> Option<Vec<Location>> {
     let line_index = LineIndex::new(text);
-    let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
+    let offset = TextSize::new(
+        line_index
+            .position_to_byte(position, encoding)
+            .min(text.len()) as u32,
+    );
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
 
@@ -107,13 +117,13 @@ pub(crate) fn references_via_db(
             .iter()
             .map(|range| Location {
                 uri: uri.clone(),
-                range: text_range_to_lsp_range(&line_index, *range),
+                range: text_range_to_lsp_range(&line_index, *range, encoding),
             })
             .collect();
         if include_declaration {
             locations.push(Location {
                 uri: uri.clone(),
-                range: text_range_to_lsp_range(&line_index, occ.def),
+                range: text_range_to_lsp_range(&line_index, occ.def, encoding),
             });
         }
         // Cross-file: a top-level binding can be read from files that can see
@@ -126,6 +136,7 @@ pub(crate) fn references_via_db(
                 target.name.as_str(),
                 include_declaration,
                 Some(path),
+                encoding,
             ));
         }
         return (!locations.is_empty()).then_some(locations);
@@ -162,6 +173,7 @@ pub(crate) fn references_via_db(
                 name.as_str(),
                 include_declaration,
                 None,
+                encoding,
             )
         })
         .collect();
@@ -197,6 +209,7 @@ pub(crate) fn rename_via_db(
     text: &str,
     offset: usize,
     new_name: &str,
+    encoding: PositionEncoding,
 ) -> Option<WorkspaceEdit> {
     if !is_syntactic_r_name(new_name) {
         return None;
@@ -210,7 +223,7 @@ pub(crate) fn rename_via_db(
 
     // Intra-file: the cursor names a local binding (or sits on its definition).
     if let Some(target) = resolve_local_target(&root, &model, off) {
-        let intra = rename_edits(&model, &target, new_name, &line_index);
+        let intra = rename_edits(&model, &target, new_name, &line_index, encoding);
         // Cross-file: a top-level binding can be free-read from files that can
         // see this one. Scope to that component; refuse if it isn't safe. Nested
         // locals are file-private, so they stay intra-file.
@@ -222,6 +235,7 @@ pub(crate) fn rename_via_db(
                 target.name.as_str(),
                 new_name,
                 Some(path),
+                encoding,
             )?;
             changes.insert(uri.clone(), intra);
             for (edit_uri, edit) in cross {
@@ -255,7 +269,8 @@ pub(crate) fn rename_via_db(
         return None;
     };
     // Rename the whole component, the current file's read included (skip = None).
-    let cross = cross_file_rename_edits(snapshot, def_file, name.as_str(), new_name, None)?;
+    let cross =
+        cross_file_rename_edits(snapshot, def_file, name.as_str(), new_name, None, encoding)?;
     for (edit_uri, edit) in cross {
         changes.entry(edit_uri).or_default().push(edit);
     }
@@ -287,6 +302,7 @@ pub(crate) fn cross_file_rename_edits(
     name: &str,
     new_name: &str,
     skip: Option<&Path>,
+    encoding: PositionEncoding,
 ) -> Option<Vec<(Uri, TextEdit)>> {
     let binding = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         snapshot.cross_file_binding(def_file, name)
@@ -310,7 +326,7 @@ pub(crate) fn cross_file_rename_edits(
             continue;
         };
         for range in std::iter::once(def).chain(reads) {
-            if let Some(edit) = text_edit_in(snapshot, member, range, new_name) {
+            if let Some(edit) = text_edit_in(snapshot, member, range, new_name, encoding) {
                 edits.push(edit);
             }
         }
@@ -324,7 +340,7 @@ pub(crate) fn cross_file_rename_edits(
             continue;
         }
         for range in snapshot.reader_rename_ranges(reader, name, &binding.cohort)? {
-            if let Some(edit) = text_edit_in(snapshot, reader, range, new_name) {
+            if let Some(edit) = text_edit_in(snapshot, reader, range, new_name, encoding) {
                 edits.push(edit);
             }
         }
@@ -348,6 +364,7 @@ pub(crate) fn cross_file_reference_locations(
     name: &str,
     include_declaration: bool,
     skip: Option<&Path>,
+    encoding: PositionEncoding,
 ) -> Vec<Location> {
     let Ok(binding) = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         snapshot.cross_file_binding(def_file, name)
@@ -367,7 +384,7 @@ pub(crate) fn cross_file_reference_locations(
             continue;
         };
         for range in reads.into_iter().chain(include_declaration.then_some(def)) {
-            if let Some(loc) = location_in(snapshot, member, range) {
+            if let Some(loc) = location_in(snapshot, member, range, encoding) {
                 locations.push(loc);
             }
         }
@@ -380,7 +397,7 @@ pub(crate) fn cross_file_reference_locations(
             continue;
         };
         for range in snapshot.read_ranges_in(file, name) {
-            if let Some(loc) = location_in(snapshot, reader, range) {
+            if let Some(loc) = location_in(snapshot, reader, range, encoding) {
                 locations.push(loc);
             }
         }
@@ -482,7 +499,11 @@ pub(crate) fn resolve_local_target(
 /// return its range + placeholder, plus the cross-edit [`RenameAnchor`]. Pure
 /// (parses `text` itself) so it is unit-testable. Refuses on parse errors so a
 /// prepared rename never resolves against a malformed tree.
-pub fn compute_prepare_rename(text: &str, offset: usize) -> Option<PreparedRename> {
+pub fn compute_prepare_rename(
+    text: &str,
+    offset: usize,
+    encoding: PositionEncoding,
+) -> Option<PreparedRename> {
     let parsed = parse(text);
     if !parsed.diagnostics.is_empty() {
         return None;
@@ -497,8 +518,8 @@ pub fn compute_prepare_rename(text: &str, offset: usize) -> Option<PreparedRenam
     let line_index = LineIndex::new(text);
     Some(PreparedRename {
         range: Range {
-            start: line_index.byte_to_position(usize::from(target.range.start())),
-            end: line_index.byte_to_position(usize::from(target.range.end())),
+            start: line_index.byte_to_position(usize::from(target.range.start()), encoding),
+            end: line_index.byte_to_position(usize::from(target.range.end()), encoding),
         },
         placeholder: target.name.to_string(),
         anchor: RenameAnchor {
@@ -513,7 +534,12 @@ pub fn compute_prepare_rename(text: &str, offset: usize) -> Option<PreparedRenam
 /// binding under the cursor and all its in-file reads to `new_name`. Pure and
 /// unit-testable. Returns `None` when `new_name` isn't a syntactic R identifier,
 /// the file has parse errors, or the cursor names no renameable local.
-pub fn compute_rename(text: &str, offset: usize, new_name: &str) -> Option<Vec<TextEdit>> {
+pub fn compute_rename(
+    text: &str,
+    offset: usize,
+    new_name: &str,
+    encoding: PositionEncoding,
+) -> Option<Vec<TextEdit>> {
     if !is_syntactic_r_name(new_name) {
         return None;
     }
@@ -526,7 +552,7 @@ pub fn compute_rename(text: &str, offset: usize, new_name: &str) -> Option<Vec<T
     let off = TextSize::new(offset.min(text.len()) as u32);
     let target = resolve_local_target(&root, &model, off)?;
     let line_index = LineIndex::new(text);
-    let edits = rename_edits(&model, &target, new_name, &line_index);
+    let edits = rename_edits(&model, &target, new_name, &line_index, encoding);
     (!edits.is_empty()).then_some(edits)
 }
 
@@ -646,9 +672,10 @@ pub fn compute_rename_with_anchor(
     current_text: &str,
     anchor: &RenameAnchor,
     new_name: &str,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TextEdit>> {
     let offset = rename_cursor_offset(current_text, anchor)?;
-    compute_rename(current_text, offset, new_name)
+    compute_rename(current_text, offset, new_name, encoding)
 }
 
 /// Re-derive the cursor's byte offset in `current_text` from a [`RenameAnchor`]:
@@ -672,6 +699,7 @@ pub(crate) fn rename_edits(
     target: &LocalTarget,
     new_name: &str,
     line_index: &LineIndex,
+    encoding: PositionEncoding,
 ) -> Vec<TextEdit> {
     let mut ranges: Vec<TextRange> = vec![model.binding(target.binding).def_range];
     for ident in model.idents() {
@@ -685,8 +713,8 @@ pub(crate) fn rename_edits(
         .into_iter()
         .map(|range| TextEdit {
             range: Range {
-                start: line_index.byte_to_position(usize::from(range.start())),
-                end: line_index.byte_to_position(usize::from(range.end())),
+                start: line_index.byte_to_position(usize::from(range.start()), encoding),
+                end: line_index.byte_to_position(usize::from(range.end()), encoding),
             },
             new_text: new_name.to_string(),
         })
@@ -755,8 +783,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("rename is available on a file-scope definition");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("rename is available on a file-scope definition");
         let changes = edit.changes.expect("changes present");
 
         let a_edits = changes
@@ -783,8 +819,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = b_src.find("foo()").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("b.R"), &uri_b, b_src, offset, "renamed")
-            .expect("rename is available on a workspace free read");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("b.R"),
+            &uri_b,
+            b_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("rename is available on a workspace free read");
         let changes = edit.changes.expect("changes present");
 
         assert!(
@@ -805,8 +849,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("renaming a local file-scope def is fine");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("renaming a local file-scope def is fine");
         let changes = edit.changes.expect("changes present");
 
         assert!(changes.contains_key(&uri_a), "a.R's own foo is renamed");
@@ -827,8 +879,16 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed")
-            .expect("rename available on a package-scope definition");
+        let edit = rename_via_db(
+            &snapshot,
+            &a_path,
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("rename available on a package-scope definition");
         let changes = edit.changes.expect("changes present");
 
         assert!(changes.contains_key(&uri_a), "a.R's definition is renamed");
@@ -850,8 +910,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("a.R's foo is the only def in a.R's component");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("a.R's foo is the only def in a.R's component");
         let changes = edit.changes.expect("changes present");
 
         assert!(changes.contains_key(&uri_a), "a.R's definition is renamed");
@@ -873,8 +941,16 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &a_path, &uri_a, a_src, offset, "renamed")
-            .expect("complete package: multi-def rename is a sound rename-all");
+        let edit = rename_via_db(
+            &snapshot,
+            &a_path,
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("complete package: multi-def rename is a sound rename-all");
         let changes = edit.changes.expect("changes present");
         assert!(
             changes.contains_key(&uri_a),
@@ -951,7 +1027,16 @@ mod tests {
         let offset = a_src.find("foo").unwrap();
 
         assert!(
-            rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
+            rename_via_db(
+                &snapshot,
+                &ws_path("a.R"),
+                &uri_a,
+                a_src,
+                offset,
+                "renamed",
+                PositionEncoding::Utf16
+            )
+            .is_none(),
             "a dynamic sourcer that reads the name could hide a reader of it: refuse"
         );
     }
@@ -970,7 +1055,16 @@ mod tests {
         let offset = a_src.find("foo").unwrap();
 
         assert!(
-            rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
+            rename_via_db(
+                &snapshot,
+                &ws_path("a.R"),
+                &uri_a,
+                a_src,
+                offset,
+                "renamed",
+                PositionEncoding::Utf16
+            )
+            .is_none(),
             "a name-reader that can reach a dynamic sourcer could hide a read: refuse"
         );
     }
@@ -989,8 +1083,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("an unrelated dynamic source must not block the rename");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("an unrelated dynamic source must not block the rename");
         let changes = edit.changes.expect("changes present");
         assert_eq!(changes.get(&uri_a).expect("a.R definition edited").len(), 1);
         assert_eq!(changes.get(&uri_b).expect("b.R read edited").len(), 1);
@@ -1009,8 +1111,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("the pre-source read is skipped, not refused");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("the pre-source read is skipped, not refused");
         let changes = edit.changes.expect("changes present");
         assert_eq!(changes.get(&uri_a).expect("a.R definition edited").len(), 1);
         assert!(
@@ -1031,8 +1141,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("the post-source read is renamable even though a pre-source one isn't");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("the post-source read is renamable even though a pre-source one isn't");
         let changes = edit.changes.expect("changes present");
         assert_eq!(changes.get(&uri_a).expect("a.R definition edited").len(), 1);
         let b_edits = changes.get(&uri_b).expect("b.R post-source read edited");
@@ -1055,8 +1173,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("the body read binds to the final scope and renames");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("the body read binds to the final scope and renames");
         let changes = edit.changes.expect("changes present");
         let b_edits = changes.get(&uri_b).expect("b.R body read edited");
         assert_eq!(b_edits.len(), 1, "only the body read is renamed");
@@ -1078,8 +1204,16 @@ mod tests {
         let uri_z = uri::from_path(&ws_path("z.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("a.R's foo is the only def in its cohort");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("a.R's foo is the only def in its cohort");
         let changes = edit.changes.expect("changes present");
         assert!(changes.contains_key(&uri_a), "a.R's definition is renamed");
         assert!(
@@ -1108,7 +1242,16 @@ mod tests {
         let offset = a_src.find("foo").unwrap();
 
         assert!(
-            rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed").is_none(),
+            rename_via_db(
+                &snapshot,
+                &ws_path("a.R"),
+                &uri_a,
+                a_src,
+                offset,
+                "renamed",
+                PositionEncoding::Utf16
+            )
+            .is_none(),
             "an ambiguous (two-definer) closure read makes the rename refuse"
         );
     }
@@ -1125,8 +1268,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = b_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("b.R"), &uri_b, b_src, offset, "renamed")
-            .expect("clicking a pre-source read still offers the rename for real references");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("b.R"),
+            &uri_b,
+            b_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("clicking a pre-source read still offers the rename for real references");
         let changes = edit.changes.expect("changes present");
         // a.R's definition and its own post-def read are renamed.
         assert_eq!(changes.get(&uri_a).expect("a.R edited").len(), 2);
@@ -1148,8 +1299,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("foo").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "renamed")
-            .expect("a post-source top-level read binds cleanly: rename is offered");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("a post-source top-level read binds cleanly: rename is offered");
         let changes = edit.changes.expect("changes present");
         assert!(changes.contains_key(&uri_a), "the definition is renamed");
         assert!(
@@ -1169,9 +1328,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let position = pos_at(a_src, a_src.find("foo").unwrap());
 
-        let locations =
-            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
-                .expect("references present");
+        let locations = references_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            position,
+            true,
+            PositionEncoding::Utf16,
+        )
+        .expect("references present");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a));
         assert!(
@@ -1201,8 +1367,16 @@ mod tests {
         let c_src = "source(\"a.R\")\nbaz <- function() foo()\n";
         let offset = c_src.find("foo()").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("c.R"), &uri_c, c_src, offset, "renamed")
-            .expect("the bare read resolves to a.R's foo");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("c.R"),
+            &uri_c,
+            c_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("the bare read resolves to a.R's foo");
         let changes = edit.changes.expect("changes present");
 
         assert!(changes.contains_key(&uri_a), "a.R's def is renamed");
@@ -1224,7 +1398,16 @@ mod tests {
         let offset = b_src.find("foo").unwrap();
 
         assert!(
-            rename_via_db(&snapshot, &ws_path("b.R"), &uri_b, b_src, offset, "renamed").is_none(),
+            rename_via_db(
+                &snapshot,
+                &ws_path("b.R"),
+                &uri_b,
+                b_src,
+                offset,
+                "renamed",
+                PositionEncoding::Utf16
+            )
+            .is_none(),
             "a bare read with no visible definition can't be renamed"
         );
     }
@@ -1240,8 +1423,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let offset = a_src.find("x").unwrap();
 
-        let edit = rename_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, offset, "y")
-            .expect("rename is available on the local");
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "y",
+            PositionEncoding::Utf16,
+        )
+        .expect("rename is available on the local");
         let changes = edit.changes.expect("changes present");
 
         assert_eq!(changes.len(), 1, "only a.R is touched");
@@ -1268,7 +1459,8 @@ mod tests {
                 &uri_a,
                 a_src,
                 offset,
-                "new name"
+                "new name",
+                PositionEncoding::Utf16,
             )
             .is_none(),
             "a non-syntactic new name is withheld (backtick-quoting is out of scope)"
@@ -1286,9 +1478,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let position = pos_at(a_src, a_src.find("foo").unwrap());
 
-        let locations =
-            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
-                .expect("the definition has at least itself");
+        let locations = references_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            position,
+            true,
+            PositionEncoding::Utf16,
+        )
+        .expect("the definition has at least itself");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a));
         assert!(!uris.contains(&uri_b), "b.R's foo is unrelated");
@@ -1303,9 +1502,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let position = pos_at(a_src, a_src.find("foo").unwrap());
 
-        let locations =
-            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
-                .expect("references present");
+        let locations = references_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            position,
+            true,
+            PositionEncoding::Utf16,
+        )
+        .expect("references present");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a));
         assert!(uris.contains(&uri_b), "the source-connected read is found");
@@ -1320,8 +1526,16 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let position = pos_at(a_src, a_src.find("foo").unwrap());
 
-        let locations = references_via_db(&snapshot, &a_path, &uri_a, a_src, position, true)
-            .expect("references present");
+        let locations = references_via_db(
+            &snapshot,
+            &a_path,
+            &uri_a,
+            a_src,
+            position,
+            true,
+            PositionEncoding::Utf16,
+        )
+        .expect("references present");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a));
         assert!(uris.contains(&uri_b), "the package sibling's read is found");
@@ -1338,9 +1552,16 @@ mod tests {
         let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
         let position = pos_at(a_src, a_src.find("foo").unwrap());
 
-        let locations =
-            references_via_db(&snapshot, &ws_path("a.R"), &uri_a, a_src, position, true)
-                .expect("references present");
+        let locations = references_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            position,
+            true,
+            PositionEncoding::Utf16,
+        )
+        .expect("references present");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a));
         assert!(
@@ -1360,8 +1581,16 @@ mod tests {
         let a_src = "foo <- function() 1\n";
         let position = pos_at(a_src, a_src.find("foo").unwrap());
 
-        let locations = references_via_db(&snapshot, &a_path, &uri_a, a_src, position, true)
-            .expect("references present");
+        let locations = references_via_db(
+            &snapshot,
+            &a_path,
+            &uri_a,
+            a_src,
+            position,
+            true,
+            PositionEncoding::Utf16,
+        )
+        .expect("references present");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a));
         assert!(
@@ -1390,9 +1619,16 @@ mod tests {
         let c_src = "source(\"a.R\")\nbaz <- function() foo()\n";
         let position = pos_at(c_src, c_src.find("foo()").unwrap());
 
-        let locations =
-            references_via_db(&snapshot, &ws_path("c.R"), &uri_c, c_src, position, true)
-                .expect("the bare read resolves to a.R");
+        let locations = references_via_db(
+            &snapshot,
+            &ws_path("c.R"),
+            &uri_c,
+            c_src,
+            position,
+            true,
+            PositionEncoding::Utf16,
+        )
+        .expect("the bare read resolves to a.R");
         let uris = ref_uris(&locations);
         assert!(uris.contains(&uri_a), "a.R's def is reported");
         assert!(uris.contains(&uri_c), "c.R's read is reported");

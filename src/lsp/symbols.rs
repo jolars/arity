@@ -10,7 +10,7 @@ use super::*;
 /// deliberately excluded. The CST then supplies the tree shape and each symbol's
 /// spans. Best-effort, with no clean-parse gate (an outline of partial input is
 /// still useful).
-pub fn compute_document_symbols(text: &str) -> Vec<DocumentSymbol> {
+pub fn compute_document_symbols(text: &str, encoding: PositionEncoding) -> Vec<DocumentSymbol> {
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
     // Name keyed by the defining identifier's span: an assignment is a symbol iff
@@ -24,7 +24,7 @@ pub fn compute_document_symbols(text: &str) -> Vec<DocumentSymbol> {
         .collect();
     let line_index = LineIndex::new(text);
     let mut symbols = Vec::new();
-    collect_document_symbols(&root, &bindings, &line_index, &mut symbols);
+    collect_document_symbols(&root, &bindings, &line_index, &mut symbols, encoding);
     symbols
 }
 
@@ -38,11 +38,12 @@ pub(crate) fn collect_document_symbols(
     bindings: &HashMap<TextRange, SmolStr>,
     line_index: &LineIndex,
     out: &mut Vec<DocumentSymbol>,
+    encoding: PositionEncoding,
 ) {
     for child in node.children() {
-        match document_symbol_for(&child, bindings, line_index) {
+        match document_symbol_for(&child, bindings, line_index, encoding) {
             Some(symbol) => out.push(symbol),
-            None => collect_document_symbols(&child, bindings, line_index, out),
+            None => collect_document_symbols(&child, bindings, line_index, out, encoding),
         }
     }
 }
@@ -57,6 +58,7 @@ pub(crate) fn document_symbol_for(
     node: &SyntaxNode,
     bindings: &HashMap<TextRange, SmolStr>,
     line_index: &LineIndex,
+    encoding: PositionEncoding,
 ) -> Option<DocumentSymbol> {
     let assign = AssignmentExpr::cast(node.clone())?;
     let name_token = assign.target_name_token()?;
@@ -69,7 +71,7 @@ pub(crate) fn document_symbol_for(
     // that itself contains assignments). The target side binds no further names.
     let mut children = Vec::new();
     if let Some(NodeOrToken::Node(value_node)) = &value {
-        collect_document_symbols(value_node, bindings, line_index, &mut children);
+        collect_document_symbols(value_node, bindings, line_index, &mut children, encoding);
     }
 
     Some(DocumentSymbol {
@@ -82,8 +84,8 @@ pub(crate) fn document_symbol_for(
         },
         tags: None,
         deprecated: None,
-        range: text_range_to_lsp_range(line_index, node.text_range()),
-        selection_range: text_range_to_lsp_range(line_index, name_token.text_range()),
+        range: text_range_to_lsp_range(line_index, node.text_range(), encoding),
+        selection_range: text_range_to_lsp_range(line_index, name_token.text_range(), encoding),
         children: (!children.is_empty()).then_some(children),
     })
 }

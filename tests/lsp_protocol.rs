@@ -522,3 +522,67 @@ fn watched_arity_toml_change_relints_open_documents() {
     );
     h.shutdown();
 }
+
+/// Format `text` and return the whole-document edit's end position `character`.
+/// The edit range spans the *original* text, so with a multibyte char on the
+/// last line the end column exposes the negotiated encoding: UTF-8 byte offsets
+/// vs. UTF-16 code units.
+fn format_end_character(h: &mut Harness, uri: &str, text: &str) -> i64 {
+    h.did_open(uri, text, 1);
+    let id = h.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": 2, "insertSpaces": true }
+        }),
+    );
+    let resp = h.recv_response(&id);
+    let edits = resp
+        .response_result
+        .expect("formatting result")
+        .as_array()
+        .expect("array of edits")
+        .clone();
+    assert_eq!(edits.len(), 1, "one whole-document edit: {edits:#?}");
+    edits[0]
+        .pointer("/range/end/character")
+        .and_then(Value::as_i64)
+        .expect("edit end character")
+}
+
+#[test]
+fn negotiates_utf8_and_reports_byte_offsets() {
+    // Client advertises UTF-8 → the server echoes it and reports byte offsets.
+    let mut h = Harness::start_with_capabilities(json!({
+        "textDocument": {},
+        "general": { "positionEncodings": ["utf-8", "utf-16"] },
+    }));
+    assert_eq!(
+        h.capabilities
+            .pointer("/positionEncoding")
+            .and_then(Value::as_str),
+        Some("utf-8"),
+        "server echoes the negotiated UTF-8 encoding"
+    );
+    // `x<-"é"` is 7 bytes (é is 2), 6 UTF-16 units. The whole-document format edit
+    // ends past the last char, so its column is 7 under UTF-8.
+    assert_eq!(format_end_character(&mut h, doc_uri(), "x<-\"é\""), 7);
+    h.shutdown();
+}
+
+#[test]
+fn defaults_to_utf16_and_reports_code_units() {
+    // No `general.positionEncodings` → the server uses UTF-16, the LSP default.
+    let mut h = Harness::start_push();
+    assert_eq!(
+        h.capabilities
+            .pointer("/positionEncoding")
+            .and_then(Value::as_str),
+        Some("utf-16"),
+        "server defaults to UTF-16 when the client offers no encodings"
+    );
+    // Same buffer, now measured in UTF-16 units: é is one unit, so the end
+    // column is 6 rather than 7.
+    assert_eq!(format_end_character(&mut h, doc_uri(), "x<-\"é\""), 6);
+    h.shutdown();
+}

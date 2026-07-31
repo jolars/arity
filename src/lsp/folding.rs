@@ -12,7 +12,7 @@ use super::*;
 pub fn compute_folding_ranges(text: &str) -> Vec<FoldingRange> {
     let root = parse(text).cst;
     let line_index = LineIndex::new(text);
-    let line_of = |offset: TextSize| line_index.byte_to_position(u32::from(offset) as usize).line;
+    let line_of = |offset: TextSize| line_index.byte_to_line(u32::from(offset) as usize);
     let mut ranges = Vec::new();
 
     // Bracketed constructs: for each node carrying a delimiter pair, fold from the

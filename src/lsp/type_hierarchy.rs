@@ -26,6 +26,7 @@ fn location_to_item(
     loc: &ClassLocation,
     uri: &Uri,
     line_index: &LineIndex,
+    encoding: PositionEncoding,
 ) -> TypeHierarchyItem {
     TypeHierarchyItem {
         name: name.to_string(),
@@ -33,8 +34,8 @@ fn location_to_item(
         tags: None,
         detail: Some(loc.system.label().to_string()),
         uri: uri.clone(),
-        range: text_range_to_lsp_range(line_index, loc.full_range),
-        selection_range: text_range_to_lsp_range(line_index, loc.name_range),
+        range: text_range_to_lsp_range(line_index, loc.full_range, encoding),
+        selection_range: text_range_to_lsp_range(line_index, loc.name_range, encoding),
         data: None,
     }
 }
@@ -42,13 +43,18 @@ fn location_to_item(
 /// The type-hierarchy item for the class `name` defined in the workspace file at
 /// `path`, off the db snapshot. `None` when the file isn't tracked, has no URI,
 /// or defines no class of that name.
-fn class_item(snapshot: &Analysis, path: &Path, name: &str) -> Option<TypeHierarchyItem> {
+fn class_item(
+    snapshot: &Analysis,
+    path: &Path,
+    name: &str,
+    encoding: PositionEncoding,
+) -> Option<TypeHierarchyItem> {
     let file = snapshot.lookup_file(path)?;
     let uri = uri::from_path(path)?;
     let root = snapshot.parsed_tree(file);
     let loc = locate_class_def(&root, name)?;
-    let line_index = LineIndex::new(snapshot.file_text(file));
-    Some(location_to_item(name, &loc, &uri, &line_index))
+    let line_index = snapshot.line_index(file);
+    Some(location_to_item(name, &loc, &uri, line_index, encoding))
 }
 
 /// `textDocument/prepareTypeHierarchy`: resolve the cursor to the class it names
@@ -63,16 +69,21 @@ pub(crate) fn prepare_type_hierarchy_via_db(
     uri: &Uri,
     text: &str,
     position: Position,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
     let line_index = LineIndex::new(text);
-    let offset = TextSize::new(line_index.position_to_byte(position).min(text.len()) as u32);
+    let offset = TextSize::new(
+        line_index
+            .position_to_byte(position, encoding)
+            .min(text.len()) as u32,
+    );
     let root = parse(text).cst;
     let name = class_name_at_offset(&root, offset)?;
 
     let mut items: Vec<TypeHierarchyItem> = Vec::new();
     // Local: the live buffer's own definition (freshest — never a stale copy).
     if let Some(loc) = locate_class_def(&root, &name) {
-        items.push(location_to_item(&name, &loc, uri, &line_index));
+        items.push(location_to_item(&name, &loc, uri, &line_index, encoding));
     }
     // Cross-file: sibling workspace files that define the same class name.
     let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
@@ -80,7 +91,7 @@ pub(crate) fn prepare_type_hierarchy_via_db(
             .class_def_sites(&name)
             .into_iter()
             .filter(|(def_path, _)| def_path != path)
-            .filter_map(|(def_path, _)| class_item(snapshot, &def_path, &name))
+            .filter_map(|(def_path, _)| class_item(snapshot, &def_path, &name, encoding))
             .collect::<Vec<_>>()
     }))
     .unwrap_or_default();
@@ -93,8 +104,9 @@ pub(crate) fn prepare_type_hierarchy_via_db(
 pub(crate) fn supertypes_via_db(
     snapshot: &Analysis,
     item: &TypeHierarchyItem,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
-    class_relatives(snapshot, item, Edge::Super)
+    class_relatives(snapshot, item, Edge::Super, encoding)
 }
 
 /// `typeHierarchy/subtypes`: the classes that declare the item's class a
@@ -102,8 +114,9 @@ pub(crate) fn supertypes_via_db(
 pub(crate) fn subtypes_via_db(
     snapshot: &Analysis,
     item: &TypeHierarchyItem,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
-    class_relatives(snapshot, item, Edge::Sub)
+    class_relatives(snapshot, item, Edge::Sub, encoding)
 }
 
 #[derive(Clone, Copy)]
@@ -119,6 +132,7 @@ fn class_relatives(
     snapshot: &Analysis,
     item: &TypeHierarchyItem,
     edge: Edge,
+    encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
     let name = item.name.clone();
     salsa::Cancelled::catch(AssertUnwindSafe(|| {
@@ -132,7 +146,7 @@ fn class_relatives(
                 snapshot
                     .class_def_sites(&rel)
                     .into_iter()
-                    .find_map(|(path, _)| class_item(snapshot, &path, &rel))
+                    .find_map(|(path, _)| class_item(snapshot, &path, &rel, encoding))
             })
             .collect::<Vec<_>>()
     }))
@@ -150,12 +164,19 @@ mod tests {
         offset: usize,
     ) -> Vec<TypeHierarchyItem> {
         let uri = uri::from_path(path).unwrap();
-        prepare_type_hierarchy_via_db(snapshot, path, &uri, text, pos_at(text, offset))
-            .unwrap_or_default()
+        prepare_type_hierarchy_via_db(
+            snapshot,
+            path,
+            &uri,
+            text,
+            pos_at(text, offset),
+            PositionEncoding::Utf16,
+        )
+        .unwrap_or_default()
     }
 
     fn item_named(snapshot: &Analysis, path: &Path, name: &str) -> TypeHierarchyItem {
-        class_item(snapshot, path, name).expect("class item")
+        class_item(snapshot, path, name, PositionEncoding::Utf16).expect("class item")
     }
 
     // --- prepare ------------------------------------------------------------
@@ -195,8 +216,12 @@ mod tests {
     fn supertypes_reports_s4_contains_parents() {
         let src = "setClass(\"Animal\")\nsetClass(\"Dog\", contains = c(\"Animal\", \"Pet\"))\nsetClass(\"Pet\")\n";
         let snapshot = rename_workspace(src, "");
-        let supers = supertypes_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "Dog"))
-            .expect("supertypes");
+        let supers = supertypes_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "Dog"),
+            PositionEncoding::Utf16,
+        )
+        .expect("supertypes");
         let mut names: Vec<&str> = supers.iter().map(|i| i.name.as_str()).collect();
         names.sort();
         assert_eq!(names, ["Animal", "Pet"]);
@@ -206,8 +231,12 @@ mod tests {
     fn supertypes_reports_r6_inherit_parent() {
         let src = "Animal <- R6Class(\"Animal\")\nDog <- R6Class(\"Dog\", inherit = Animal)\n";
         let snapshot = rename_workspace(src, "");
-        let supers = supertypes_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "Dog"))
-            .expect("supertypes");
+        let supers = supertypes_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "Dog"),
+            PositionEncoding::Utf16,
+        )
+        .expect("supertypes");
         assert_eq!(supers.len(), 1);
         assert_eq!(supers[0].name, "Animal");
         assert_eq!(supers[0].detail.as_deref(), Some("R6 class"));
@@ -218,8 +247,12 @@ mod tests {
         // `Base` is referenced but never defined in the workspace.
         let src = "setClass(\"Dog\", contains = \"Base\")\n";
         let snapshot = rename_workspace(src, "");
-        let supers = supertypes_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "Dog"))
-            .expect("supertypes");
+        let supers = supertypes_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "Dog"),
+            PositionEncoding::Utf16,
+        )
+        .expect("supertypes");
         assert!(supers.is_empty(), "undefined parent has no item");
     }
 
@@ -229,8 +262,12 @@ mod tests {
     fn subtypes_reports_direct_children() {
         let src = "setClass(\"Animal\")\nsetClass(\"Dog\", contains = \"Animal\")\n";
         let snapshot = rename_workspace(src, "");
-        let subs = subtypes_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "Animal"))
-            .expect("subtypes");
+        let subs = subtypes_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "Animal"),
+            PositionEncoding::Utf16,
+        )
+        .expect("subtypes");
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].name, "Dog");
     }
@@ -241,8 +278,12 @@ mod tests {
         let a_src = "setClass(\"Animal\")\n";
         let b_src = "setClass(\"Dog\", contains = \"Animal\")\n";
         let snapshot = rename_workspace(a_src, b_src);
-        let subs = subtypes_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "Animal"))
-            .expect("subtypes");
+        let subs = subtypes_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "Animal"),
+            PositionEncoding::Utf16,
+        )
+        .expect("subtypes");
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].name, "Dog");
         assert_eq!(subs[0].uri, uri::from_path(&ws_path("b.R")).unwrap());
@@ -252,8 +293,12 @@ mod tests {
     fn leaf_class_has_no_subtypes() {
         let src = "setClass(\"Animal\")\nsetClass(\"Dog\", contains = \"Animal\")\n";
         let snapshot = rename_workspace(src, "");
-        let subs = subtypes_via_db(&snapshot, &item_named(&snapshot, &ws_path("a.R"), "Dog"))
-            .expect("subtypes");
+        let subs = subtypes_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "Dog"),
+            PositionEncoding::Utf16,
+        )
+        .expect("subtypes");
         assert!(subs.is_empty());
     }
 }
