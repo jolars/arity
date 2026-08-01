@@ -1,0 +1,29 @@
+name: Formatting request
+description: Report output you'd like formatted differently
+labels: [enhancement]
+body:
+  - type: textarea
+    id: input
+    attributes:
+      label: Input `.R`
+      render: r
+  - type: textarea
+    id: settings
+    attributes:
+      label: "`arity.toml` settings (if any)"
+      render: toml
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      render: r
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      render: r
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: Version (`arity --version`), rationale, references, etc.
