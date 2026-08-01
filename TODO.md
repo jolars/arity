@@ -8,23 +8,6 @@
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
 
-- [x] Extract/namespace-vs-postfix precedence (`a$b[c]` etc.). `$`, `@`, `::`,
-  `:::` tie with the postfix operators (`[`, `[[`, `(`) for the highest
-  precedence and are left-associative, so `a$b[c]` is `(a$b)[c]`, `a$b(c)` is
-  `(a$b)(c)`, and `pkg::fn(x)` is `(pkg::fn)(x)` (confirmed against R:
-  `quote(a$b[c])[[1]]` is `` `[` ``). Arity parsed these right-leaning
-  (`a$(b[c])`, `pkg::(fn(x))`), which mis-shaped the CST and dropped the
-  subscript index as a read (a `unused-binding` false positive: `k` in
-  `obj$lambda[k]`). Fixed in the Pratt loop (`src/parser/expr.rs`): the extract
-  operators parse their RHS as a bare member (prefix only), so a trailing
-  postfix binds to the whole extract expression via `parse_postfix_chain`.
-  Downstream: `CallExpr::callee_token` (`src/ast/nodes.rs`) now recovers the
-  member name from a `pkg::fn` binary callee so qualified calls resolve like
-  `fn(…)` for every consumer; `is_namespace_qualified` (`src/linter/rules.rs`)
-  and semantic-token classification (`src/lsp/semantic_tokens.rs`) updated for
-  the new shape. Cleared 4 `unused-binding` FPs on cran/MASS with zero new
-  findings.
-
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`)
 
