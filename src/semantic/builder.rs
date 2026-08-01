@@ -2,9 +2,11 @@
 //!
 //! The builder walks the CST once, maintaining a stack of open scopes. At each
 //! node it decides whether to:
-//! - Push a new scope (`FUNCTION_EXPR`, `FOR_EXPR`).
+//! - Push a new scope (`FUNCTION_EXPR` only — R introduces a variable scope at a
+//!   `function` and the file top; `for`/`while`/`repeat` bodies share the
+//!   enclosing frame, so they push no scope).
 //! - Record a binding (`ASSIGNMENT_EXPR` target, `FUNCTION_EXPR` params,
-//!   `FOR_EXPR` loop var).
+//!   `FOR_EXPR` loop var — the last two in the enclosing frame).
 //! - Record an identifier read site for any `IDENT` token in a read position.
 //! - Detect a `library()`/`require()`/`requireNamespace()` call at the *file*
 //!   level (not nested inside a function), and record it as a `LoadedPackage`.
@@ -37,6 +39,7 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
         function_depth: 0,
         suppress_read: None,
         mask_depth: 0,
+        loop_range: None,
     };
     walk_generic(&mut ctx, root, file_scope);
     resolve_reads(&mut model);
@@ -59,12 +62,19 @@ struct BuildCtx<'a> {
     /// mask is the evaluation environment for the entire expression), the
     /// conservative direction for a false-positive-only rule.
     mask_depth: usize,
+    /// Range of the innermost enclosing `for`/`while`/`repeat`, if any. Stamped
+    /// onto every binding recorded while walking a loop body so `reads_reached`
+    /// can treat a loop-carried read (one textually before its assignment) as a
+    /// use. Reset across a `function` boundary, since a closure defined in a loop
+    /// does not re-run per iteration.
+    loop_range: Option<TextRange>,
 }
 
 fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     match node.kind() {
         SyntaxKind::FUNCTION_EXPR => handle_function(ctx, node, scope),
         SyntaxKind::FOR_EXPR => handle_for(ctx, node, scope),
+        SyntaxKind::WHILE_EXPR | SyntaxKind::REPEAT_EXPR => handle_loop(ctx, node, scope),
         SyntaxKind::ASSIGNMENT_EXPR => handle_assignment(ctx, node, scope),
         SyntaxKind::CALL_EXPR => handle_call(ctx, node, scope),
         SyntaxKind::BINARY_EXPR => handle_binary(ctx, node, scope),
@@ -158,8 +168,13 @@ fn handle_function(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
             param.name.clone(),
             BindingKind::Param,
             range,
+            None,
         );
     }
+    // A closure defined inside a loop does not re-run per iteration, so the
+    // loop-carried relaxation stops at the function boundary: clear the enclosing
+    // loop range while walking params defaults and body, then restore it.
+    let prev_loop = ctx.loop_range.take();
     // Walk the body subtree, plus any param-default expressions. Param-default
     // values live as raw tokens between `=` and the next `,` / `)`, so we walk
     // the entire token range between LPAREN and RPAREN looking for nested
@@ -170,6 +185,7 @@ fn handle_function(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
         walk_element(ctx, &body, fn_scope);
         ctx.function_depth -= 1;
     }
+    ctx.loop_range = prev_loop;
 }
 
 fn walk_function_param_defaults(ctx: &mut BuildCtx<'_>, fn_expr: &FunctionExpr, scope: ScopeId) {
@@ -208,14 +224,20 @@ fn walk_function_param_defaults(ctx: &mut BuildCtx<'_>, fn_expr: &FunctionExpr, 
     }
 }
 
-fn handle_for(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
-    let for_scope = push_scope(ctx.model, ScopeKind::For, Some(parent), node.text_range());
+fn handle_for(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    // R has no loop scope: the loop variable and any body assignments live in the
+    // enclosing frame (`scope`) and leak past the loop. Recording them there is
+    // what lets a read after the loop resolve to a body binding.
     let elements: Vec<_> = node.children_with_tokens().collect();
 
     // Locate `(`, loop-var IDENT, `in`, `)` via a token-level scan.
     let lparen_idx = elements.iter().position(|e| e.kind() == SyntaxKind::LPAREN);
     let in_idx = elements.iter().position(|e| e.kind() == SyntaxKind::IN_KW);
     let rparen_idx = elements.iter().position(|e| e.kind() == SyntaxKind::RPAREN);
+
+    // The body re-executes, so bindings recorded inside it are loop-carried:
+    // stamp them with this loop's range (innermost wins on nesting).
+    let outer_loop = ctx.loop_range.replace(node.text_range());
 
     if let Some(lp) = lparen_idx {
         for el in &elements[lp + 1..in_idx.unwrap_or(elements.len())] {
@@ -224,10 +246,11 @@ fn handle_for(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
             {
                 push_binding(
                     ctx.model,
-                    for_scope,
+                    scope,
                     SmolStr::new(tok.text()),
                     BindingKind::ForVar,
                     tok.text_range(),
+                    ctx.loop_range,
                 );
                 break;
             }
@@ -237,16 +260,27 @@ fn handle_for(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
     // Walk the *sequence* expression (between `in` and `)`).
     if let (Some(in_pos), Some(rp)) = (in_idx, rparen_idx) {
         for el in &elements[in_pos + 1..rp] {
-            walk_element(ctx, el, for_scope);
+            walk_element(ctx, el, scope);
         }
     }
 
     // Walk the body (everything after `)`).
     if let Some(rp) = rparen_idx {
         for el in &elements[rp + 1..] {
-            walk_element(ctx, el, for_scope);
+            walk_element(ctx, el, scope);
         }
     }
+
+    ctx.loop_range = outer_loop;
+}
+
+/// `while (cond) body` / `repeat body`. Like `for`, these introduce no scope but
+/// do re-execute: stamp bindings in the whole subtree with the loop range so a
+/// loop-carried read (textually before its assignment) still counts as a use.
+fn handle_loop(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    let outer_loop = ctx.loop_range.replace(node.text_range());
+    walk_generic(ctx, node, scope);
+    ctx.loop_range = outer_loop;
 }
 
 fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -279,7 +313,7 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
             BindingKind::Implicit => enclosing_function_or_file(ctx.model, scope),
             _ => scope,
         };
-        push_binding(ctx.model, target_scope, name, kind, range);
+        push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
     } else if let Some(NodeOrToken::Node(target_node)) = target {
         // Complex LHS (e.g. `dim(x) <- ...`): treat contents as reads.
         walk_node(ctx, &target_node, scope);
@@ -679,6 +713,7 @@ fn push_binding(
     name: SmolStr,
     kind: BindingKind,
     def_range: TextRange,
+    loop_range: Option<TextRange>,
 ) -> BindingId {
     let id = BindingId::from_index(model.bindings.len());
     model
@@ -691,6 +726,7 @@ fn push_binding(
         kind,
         scope,
         def_range,
+        loop_range,
         read: false,
     });
     model.scopes[scope.0 as usize].bindings.push(id);
@@ -751,8 +787,17 @@ fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
         };
 
         if in_frame {
+            // A same-frame read reaches a binding assigned *before* it in source
+            // order — or, when the binding sits in a loop body that also contains
+            // the read, one assigned *after* it too: the loop re-executes, so on a
+            // later iteration the assignment precedes the read (loop-carried use).
             let preceding: Vec<BindingId> = matches()
-                .filter(|id| model.bindings[id.0 as usize].def_range.start() < ident.range.start())
+                .filter(|id| {
+                    let b = &model.bindings[id.0 as usize];
+                    b.def_range.start() < ident.range.start()
+                        || b.loop_range
+                            .is_some_and(|lr| lr.contains_range(ident.range))
+                })
                 .collect();
             if !preceding.is_empty() {
                 return preceding;

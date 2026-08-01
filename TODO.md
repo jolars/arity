@@ -105,11 +105,12 @@ verified correct throughout; these are resolution gaps, not span bugs.
   - (Non-rule note: ~90% of the corpus's 6169 hits are an artifact — base R ships
     `DESCRIPTION.in`, not `DESCRIPTION`, so `package_root` never activates
     cross-file resolution. Consider a `DESCRIPTION.in` fallback marker.)
-- [ ] `unused-binding` — a `for`-body binding read from the enclosing frame is
-  wrongly flagged (`for (i in xs) last <- i; print(last)`; `while` is fine).
-  Root cause: `for` gets its own scope but `reads_reached`
-  (`src/semantic/builder.rs`) only walks outward. Also misses loop-carried
-  reassignment read on the next iteration.
+- [x] `unused-binding` — a `for`-body binding read from the enclosing frame was
+  wrongly flagged (`for (i in xs) last <- i; print(last)`). Fixed: `for` no
+  longer gets its own scope (R has no loop scope), so its loop var and body
+  assignments live in the enclosing frame; `reads_reached` now also treats a
+  loop-carried read (textually before its assignment, but inside the same
+  `for`/`while`/`repeat`) as a use via a per-binding `loop_range`.
 
 Cost model driving the order: a rule is **cheap** (`syn`) when it only needs the
 CST + AST + literal inspection; **medium** (`ns`) when it must confirm a callee

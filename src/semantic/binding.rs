@@ -32,6 +32,11 @@ pub struct Binding {
     pub scope: ScopeId,
     /// Range of the *defining* identifier (or `for`-var, or param name).
     pub def_range: TextRange,
+    /// Range of the innermost `for`/`while`/`repeat` whose body contains this
+    /// binding, if any. Because a loop body re-executes, a read anywhere in that
+    /// range (even textually *before* the assignment) refers to the value carried
+    /// from a previous iteration, so resolution treats such a read as a use.
+    pub loop_range: Option<TextRange>,
     /// Whether any read of this binding has been observed during resolution.
     pub read: bool,
 }

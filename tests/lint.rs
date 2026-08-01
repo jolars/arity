@@ -122,6 +122,23 @@ fn reassigned_binding_read_after_each_assignment_is_not_unused() {
 }
 
 #[test]
+fn for_body_binding_read_after_loop_is_not_unused() {
+    // A `for`-body assignment read after the loop leaks into the enclosing
+    // frame (R has no loop scope), so it must not be flagged unused.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("forbody.R");
+    std::fs::write(&path, "xs <- 1:3\nfor (i in xs) last <- i\nprint(last)\n")
+        .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "forbody.R").contains(&"unused-binding"),
+        "forbody.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
 fn s3method_registration_is_not_unused() {
     // S3 methods registered via `S3method(generic, class)` are public API; the
     // bound `generic.class` function must not be flagged unused even though

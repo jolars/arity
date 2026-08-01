@@ -444,6 +444,27 @@ mod tests {
         assert!(x_binding.read);
     }
 
+    #[test]
+    fn for_body_binding_read_after_loop_is_used() {
+        // A `for`-body assignment leaks into the enclosing frame (R has no
+        // loop scope), so a read after the loop marks it used.
+        let m = model_of("for (i in xs) last <- i\nprint(last)\n");
+        let last = m.bindings.iter().find(|b| b.name == "last").unwrap();
+        assert!(last.read, "`last` assigned in the loop is read afterward");
+        // And the trailing read resolves to a binding, not a free/undefined read.
+        let idx = ident_index(&m, "last");
+        assert!(!m.ident_bindings(idx).is_empty());
+    }
+
+    #[test]
+    fn loop_carried_read_before_reassignment_is_used() {
+        // `prev` is read before it is (re)assigned in the same loop body: on the
+        // next iteration the assignment precedes the read, so it is used.
+        let m = model_of("for (i in xs) {\n  print(prev)\n  prev <- i\n}\n");
+        let prev = m.bindings.iter().find(|b| b.name == "prev").unwrap();
+        assert!(prev.read, "loop-carried read marks the reassignment used");
+    }
+
     fn binding_id_named(model: &SemanticModel, name: &str) -> BindingId {
         model
             .bindings
