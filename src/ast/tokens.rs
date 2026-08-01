@@ -143,6 +143,14 @@ impl Ident {
         matches!(self.text(), "T" | "F")
     }
 
+    /// An implicit method-dispatch variable (`.Generic`, `.Method`, `.Class`),
+    /// bound automatically by R inside an S3/S4 (group-)generic method body. It
+    /// is always defined there, so the semantic model treats it as never a
+    /// resolvable read rather than an undefined symbol.
+    pub fn is_implicit_method_var(&self) -> bool {
+        matches!(self.text(), ".Generic" | ".Method" | ".Class")
+    }
+
     /// A dot-dot placeholder (`...`, `..1`), lexed as `IDENT` but not
     /// scope-resolvable.
     pub fn is_dots(&self) -> bool {

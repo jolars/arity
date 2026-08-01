@@ -1139,6 +1139,83 @@ fn undefined_symbol_still_flags_outside_data_mask() {
     assert!(msgs[0].contains("bogus"));
 }
 
+#[test]
+fn undefined_symbol_skips_formula_operands() {
+    // A formula (`y ~ x`) captures its operands symbolically — they name model
+    // terms (data-frame columns), not in-scope bindings — so neither side is an
+    // undefined symbol. Covers the two-sided infix `~`, its nested terms, and a
+    // one-sided (prefix) formula.
+    let p = CompositeProvider::base_only();
+    assert!(
+        undefined_with("y ~ x\n", &p).is_empty(),
+        "two-sided formula operands must not be flagged"
+    );
+    assert!(
+        undefined_with("Sepal.Length ~ Species + Petal.Width\n", &p).is_empty(),
+        "nested formula terms must not be flagged"
+    );
+    assert!(
+        undefined_with("~ x\n", &p).is_empty(),
+        "one-sided formula operand must not be flagged"
+    );
+    // A real `lm()` call: the formula operands are masked, and `mm` is bound.
+    assert!(
+        undefined_with("mm <- data.frame()\nlm(Speed ~ Run, data = mm)\n", &p).is_empty(),
+        "formula in a call must not flag its operands"
+    );
+}
+
+#[test]
+fn undefined_symbol_still_flags_outside_formula() {
+    // Masking is confined to the formula: a genuine typo elsewhere is flagged.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("bogus()\ny ~ x\n", &p);
+    assert_eq!(msgs.len(), 1, "only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_skips_quoting_bodies() {
+    // `quote`/`bquote`/`substitute`/`expression` do not evaluate their argument
+    // bodies, so bare names inside are not reads to resolve.
+    let p = CompositeProvider::base_only();
+    for src in [
+        "quote(xyz)\n",
+        "bquote(foo + bar)\n",
+        "substitute(a + b)\n",
+        "expression(zzz)\n",
+    ] {
+        assert!(
+            undefined_with(src, &p).is_empty(),
+            "quoting body must not be flagged, got findings for {src:?}"
+        );
+    }
+}
+
+#[test]
+fn undefined_symbol_still_flags_outside_quoting() {
+    // Masking is confined to the quoting call's arguments.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("bogus()\nquote(xyz)\n", &p);
+    assert_eq!(msgs.len(), 1, "only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_skips_implicit_method_variables() {
+    // S3/S4 group generics bind `.Generic`/`.Method`/`.Class` implicitly in the
+    // method body; they are always defined there, never undefined.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with(
+        "f <- function(e1, e2) paste(.Generic, .Method, .Class)\nf(1, 2)\n",
+        &p,
+    );
+    assert!(
+        msgs.is_empty(),
+        "implicit method vars must not be flagged, got {msgs:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Autofix
 // ---------------------------------------------------------------------------

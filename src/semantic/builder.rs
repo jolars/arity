@@ -68,6 +68,7 @@ fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         SyntaxKind::ASSIGNMENT_EXPR => handle_assignment(ctx, node, scope),
         SyntaxKind::CALL_EXPR => handle_call(ctx, node, scope),
         SyntaxKind::BINARY_EXPR => handle_binary(ctx, node, scope),
+        SyntaxKind::UNARY_EXPR => handle_unary(ctx, node, scope),
         SyntaxKind::ARG => handle_arg(ctx, node, scope),
         _ => walk_generic(ctx, node, scope),
     }
@@ -104,8 +105,9 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
     // reserved literal constants (`TRUE`, `NA`, `NULL`, `Inf`, …) lex as IDENT
     // but are values, not symbol references. (`T`/`F` are *not* excluded: they
     // are rebindable base bindings.)
+    // `.Generic`/`.Method`/`.Class` are bound implicitly inside method bodies.
     if let Some(ident) = Ident::cast(tok.clone())
-        && (ident.is_dots() || ident.is_reserved_constant())
+        && (ident.is_dots() || ident.is_reserved_constant() || ident.is_implicit_method_var())
     {
         return;
     }
@@ -306,10 +308,12 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     }
 
     // A data-masking verb (e.g. `mutate`) evaluates its arguments in the data
-    // mask, where a bare name may be a column. Walk the callee unmasked (a
-    // typo'd verb name is still a genuine undefined read) but mask the argument
-    // list so its bare reads aren't flagged.
-    if call_is_data_masking(node) {
+    // mask, where a bare name may be a column; a quoting callee (`quote`,
+    // `substitute`, …) doesn't evaluate its argument body at all. Either way a
+    // bare name in the argument list isn't a resolvable read. Walk the callee
+    // unmasked (a typo'd verb name is still a genuine undefined read) but mask
+    // the argument list so its bare reads aren't flagged.
+    if call_masks_arguments(node) {
         for el in node.children_with_tokens() {
             // Mask the argument list (bare names there may be data columns);
             // walk everything else (the callee) unmasked.
@@ -329,14 +333,27 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     walk_generic(ctx, node, scope);
 }
 
-/// Whether the `CALL_EXPR` `node`'s callee names a data-masking function. The
+/// Whether the `CALL_EXPR` `node`'s bare reads in its argument list should be
+/// masked (not recorded as resolvable reads): either the callee data-masks its
+/// arguments (`mutate`) or it quotes them without evaluating (`quote`). The
 /// callee is the first non-trivia IDENT token directly under the call — which,
 /// given how `pkg::fn(args)` parses (the `CALL_EXPR` nests *under* the `::`),
 /// is the bare function name for both `mutate(...)` and `dplyr::mutate(...)`.
-fn call_is_data_masking(node: &SyntaxNode) -> bool {
+fn call_masks_arguments(node: &SyntaxNode) -> bool {
     CallExpr::cast(node.clone())
         .and_then(|call| call_callee_ident(&call))
-        .is_some_and(|name| crate::semantic::is_data_masking_callee(&name))
+        .is_some_and(|name| {
+            crate::semantic::is_data_masking_callee(&name) || is_quoting_callee(&name)
+        })
+}
+
+/// Whether a call to `name` quotes its argument body rather than evaluating it:
+/// `quote`/`bquote`/`substitute`/`expression` capture their arguments as
+/// unevaluated language objects, so a bare name inside is not a resolvable read.
+/// Name-only (independent of package), matching `is_data_masking_callee`;
+/// over-matching only ever suppresses a finding, the conservative direction.
+fn is_quoting_callee(name: &str) -> bool {
+    matches!(name, "quote" | "bquote" | "substitute" | "expression")
 }
 
 fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -345,7 +362,11 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     for el in node.children_with_tokens() {
         if let NodeOrToken::Token(t) = el {
             match t.kind() {
-                SyntaxKind::COLON2 | SyntaxKind::COLON3 | SyntaxKind::DOLLAR | SyntaxKind::AT => {
+                SyntaxKind::COLON2
+                | SyntaxKind::COLON3
+                | SyntaxKind::DOLLAR
+                | SyntaxKind::AT
+                | SyntaxKind::TILDE => {
                     operator_kind = Some(t.kind());
                     break;
                 }
@@ -388,8 +409,9 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                         NodeOrToken::Node(child) if child.kind() == SyntaxKind::CALL_EXPR => {
                             // Skip the first IDENT (callee); recurse into everything else.
                             // Mask the arguments when the qualified callee is a
-                            // data-masking verb (`dplyr::mutate(...)`).
-                            let masked = call_is_data_masking(child);
+                            // data-masking verb (`dplyr::mutate(...)`) or a
+                            // quoting callee (`base::quote(...)`).
+                            let masked = call_masks_arguments(child);
                             let mut skipped_callee = false;
                             for cel in child.children_with_tokens() {
                                 match cel {
@@ -439,6 +461,15 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                 }
             }
         }
+        Some(SyntaxKind::TILDE) => {
+            // A formula (`y ~ x`) captures its operands symbolically: the names
+            // are model terms (typically data-frame columns), never in-scope
+            // reads. Mask the whole subtree so `undefined-symbol` leaves them
+            // alone — the same suppress-only direction as data masking.
+            ctx.mask_depth += 1;
+            walk_generic(ctx, node, scope);
+            ctx.mask_depth -= 1;
+        }
         Some(SyntaxKind::USER_OP) => {
             // Opaque custom operator: walk operands with the data mask bumped so
             // their bare names are recorded as reads (an enclosing binding used
@@ -455,6 +486,23 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             ctx.mask_depth -= 1;
         }
         _ => walk_generic(ctx, node, scope),
+    }
+}
+
+/// A prefix operator (`!x`, `-x`, `~x`). Only the one-sided formula `~x` needs
+/// special handling: like a two-sided formula, its operand is a symbolic model
+/// term, so mask the subtree. Every other unary operator evaluates its operand
+/// normally and falls through to the default walk.
+fn handle_unary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    let is_formula = node
+        .children_with_tokens()
+        .any(|el| el.kind() == SyntaxKind::TILDE);
+    if is_formula {
+        ctx.mask_depth += 1;
+        walk_generic(ctx, node, scope);
+        ctx.mask_depth -= 1;
+    } else {
+        walk_generic(ctx, node, scope);
     }
 }
 

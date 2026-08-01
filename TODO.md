@@ -91,14 +91,17 @@ rules ship today: `undefined-symbol`, `unused-binding`, `duplicate-formal`,
 **Known false positives (surfaced triaging `wch/r-source`, 2026-08-01).** Spans
 verified correct throughout; these are resolution gaps, not span bugs.
 
-- [ ] `undefined-symbol` — three semantic-model gaps (`src/semantic/`):
-  - [ ] Formula `~` operands are not data-masked, so `lm(Speed ~ Run, data = mm)`
+- [x] `undefined-symbol` — three semantic-model gaps (`src/semantic/`):
+  - [x] Formula `~` operands are not data-masked, so `lm(Speed ~ Run, data = mm)`
     flags `Speed`/`Run`. Treat `~` as a masking boundary, mirroring
-    `is_data_masking_callee`.
-  - [ ] Quoting bodies aren't suppressed: `quote`/`bquote`/`substitute`/
+    `is_data_masking_callee`. (Both infix `BINARY_EXPR` and prefix `UNARY_EXPR`
+    formulas now mask their operand subtree.)
+  - [x] Quoting bodies aren't suppressed: `quote`/`bquote`/`substitute`/
     `expression` argument bodies are unevaluated but every bare name is flagged.
-  - [ ] Implicit method variables `.Generic`/`.Method`/`.Class` (S3/S4 group
+    (`is_quoting_callee` masks their arg lists via `call_masks_arguments`.)
+  - [x] Implicit method variables `.Generic`/`.Method`/`.Class` (S3/S4 group
     generics) are flagged; add them to the known-implicit-binding set.
+    (`Ident::is_implicit_method_var`, skipped in `record_ident_read`.)
   - (Non-rule note: ~90% of the corpus's 6169 hits are an artifact — base R ships
     `DESCRIPTION.in`, not `DESCRIPTION`, so `package_root` never activates
     cross-file resolution. Consider a `DESCRIPTION.in` fallback marker.)
