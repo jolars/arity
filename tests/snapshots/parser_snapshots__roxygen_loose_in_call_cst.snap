@@ -14,11 +14,13 @@ ROOT@0..42
       ARG_LIST@7..40
         NEWLINE@7..8 "\n"
         WHITESPACE@8..10 "  "
-        ARG@10..12
-          ROXYGEN_MARKER@10..12 "#'"
-        WHITESPACE@12..13 " "
-        ARG@13..35
-          ROXYGEN_TEXT@13..35 "weird mid-call roxygen"
+        ARG@10..35
+          ROXYGEN_BLOCK@10..35
+            ROXYGEN_SECTION@10..35
+              ROXYGEN_PARAGRAPH@10..35
+                ROXYGEN_MARKER@10..12 "#'"
+                WHITESPACE@12..13 " "
+                ROXYGEN_TEXT@13..35 "weird mid-call roxygen"
         NEWLINE@35..36 "\n"
         WHITESPACE@36..38 "  "
         ARG@38..39

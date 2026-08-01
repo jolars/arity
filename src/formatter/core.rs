@@ -489,6 +489,12 @@ fn ir_expr_node(node: &SyntaxNode, indent: usize, ctx: FormatContext) -> Result<
     if let Some(expr) = FunctionExpr::cast(node.clone()) {
         return ir_function_expr(expr.syntax(), indent, ctx);
     }
+    // A `#'` line inside an argument list parses as a comment-only `ROXYGEN_BLOCK`
+    // (roxygen2 does not treat it as documentation there, but the CST shape
+    // matches the block/root parsers). Lay it out like any other roxygen block.
+    if node.kind() == SyntaxKind::ROXYGEN_BLOCK {
+        return Ok(super::roxygen::ir_roxygen_block(node, indent, ctx));
+    }
 
     Err(FormatError::UnsupportedConstruct {
         kind: node.kind(),

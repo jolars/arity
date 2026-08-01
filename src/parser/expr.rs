@@ -749,7 +749,15 @@ fn parse_call_expr(
         events.push(Event::Start(SyntaxKind::ARG));
         last_arg_was_comment_only = false;
 
-        if is_named_arg(ctx, i) {
+        if matches!(tokens.get(i).map(|t| &t.kind), Some(TokKind::RoxygenMarker)) {
+            // A `#'` line inside an argument list is a comment, not
+            // documentation, but the lexer classifies it as roxygen regardless
+            // of context. Group the whole roxygen block into this ARG (as the
+            // block/root parsers do) so its sub-tokens are one comment-only
+            // argument rather than a cascade of stray operands.
+            i = crate::parser::roxygen::emit_roxygen_block(tokens, i, &mut events);
+            last_arg_was_comment_only = true;
+        } else if is_named_arg(ctx, i) {
             // Named argument: ident = expr
             events.push(Event::Tok(i)); // ident
             let mut eq_idx = i + 1;
@@ -942,7 +950,12 @@ fn parse_bracket_expr(
         events.push(Event::Start(SyntaxKind::ARG));
         last_arg_was_comment_only = false;
 
-        if is_named_arg(ctx, i) {
+        if matches!(tokens.get(i).map(|t| &t.kind), Some(TokKind::RoxygenMarker)) {
+            // See `parse_call_expr`: a `#'` line inside `[`/`[[` is a comment,
+            // grouped into a single comment-only ARG.
+            i = crate::parser::roxygen::emit_roxygen_block(tokens, i, &mut events);
+            last_arg_was_comment_only = true;
+        } else if is_named_arg(ctx, i) {
             // Named subscript argument: `ident = expr` (e.g. `drop = FALSE`).
             // `=` inside `[`/`[[` is named-argument syntax, never an assignment,
             // so this parses flat (like a call argument), not as an

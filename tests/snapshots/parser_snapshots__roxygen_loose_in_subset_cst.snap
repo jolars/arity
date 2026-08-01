@@ -1,0 +1,25 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..39
+  SUBSET_EXPR@0..38
+    IDENT@0..1 "x"
+    LBRACK@1..2 "["
+    ARG_LIST@2..37
+      NEWLINE@2..3 "\n"
+      WHITESPACE@3..5 "  "
+      ARG@5..32
+        ROXYGEN_BLOCK@5..32
+          ROXYGEN_SECTION@5..32
+            ROXYGEN_PARAGRAPH@5..32
+              ROXYGEN_MARKER@5..7 "#'"
+              WHITESPACE@7..8 " "
+              ROXYGEN_TEXT@8..32 "weird mid-subset roxygen"
+      NEWLINE@32..33 "\n"
+      WHITESPACE@33..35 "  "
+      ARG@35..36
+        INT@35..36 "1"
+      NEWLINE@36..37 "\n"
+    RBRACK@37..38 "]"
+  NEWLINE@38..39 "\n"

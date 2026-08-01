@@ -130,6 +130,9 @@ fn arg_list_needs_comment_layout(arg_list: &SyntaxNode) -> bool {
         .any(|arg| {
             arg.children_with_tokens()
                 .any(|el| el.kind() == SyntaxKind::COMMENT)
+                || arg
+                    .children()
+                    .any(|n| n.kind() == SyntaxKind::ROXYGEN_BLOCK)
                 || arg_value_is_commented_curly_curly(&arg)
         })
 }

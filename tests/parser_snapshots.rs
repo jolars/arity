@@ -229,6 +229,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_shebang",
         "roxygen_mixed_run",
         "roxygen_loose_in_call",
+        "roxygen_loose_in_subset",
         "roxygen_crlf",
         "roxygen_eof_no_newline",
         "roxygen_inline_code",

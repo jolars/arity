@@ -1,0 +1,8 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+x[
+  #' note
+  1
+]

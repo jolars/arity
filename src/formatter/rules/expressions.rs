@@ -566,8 +566,10 @@ fn bracket_close_text(kind: SyntaxKind) -> &'static str {
 pub(crate) enum ArgSlot {
     /// An empty hole, e.g. the gaps in `x[, 2]` / `f(, a)`.
     Empty,
-    /// A comment-only slot (no expression), e.g. `x[\n  # note\n]`.
-    Comment(String),
+    /// A comment-only slot (no expression), e.g. `x[\n  # note\n]`. Carries the
+    /// already-built IR so a stray roxygen block (`#'` inside `[ ]`) can render
+    /// through the same slot as a plain comment.
+    Comment(Ir),
     /// A formatted argument expression.
     Expr {
         ir: Ir,
@@ -599,7 +601,7 @@ impl ArgSlot {
     pub(crate) fn content(&self) -> Ir {
         match self {
             ArgSlot::Empty => Ir::nil(),
-            ArgSlot::Comment(text) => Ir::verbatim_forced(text.clone()),
+            ArgSlot::Comment(ir) => ir.clone(),
             ArgSlot::Expr { ir, .. } => ir.clone(),
         }
     }
@@ -673,7 +675,10 @@ fn collect_subset_ir_slots(
     ctx: FormatContext,
 ) -> Result<ArgSlots, FormatError> {
     let mut slots: Vec<ArgSlot> = Vec::new();
-    let mut comments: Vec<String> = Vec::new();
+    // Each entry is a comment-only leader's already-built IR (a plain `# note`
+    // renders as `verbatim_forced`; a stray `#'` block renders via
+    // `ir_roxygen_block`).
+    let mut comments: Vec<Ir> = Vec::new();
     let mut expr: Option<(Ir, Option<SyntaxNode>, bool)> = None;
     let mut has_comment_only = false;
     let mut has_comment_prefixed = false;
@@ -682,7 +687,7 @@ fn collect_subset_ir_slots(
     // `ARG` directly followed by an expression `ARG`); fold them together,
     // emitting one slot per comma.
     fn finalize(
-        comments: &mut Vec<String>,
+        comments: &mut Vec<Ir>,
         expr: &mut Option<(Ir, Option<SyntaxNode>, bool)>,
         has_comment_prefixed: &mut bool,
     ) -> ArgSlot {
@@ -696,8 +701,8 @@ fn collect_subset_ir_slots(
                     ir
                 } else {
                     let mut parts: Vec<Ir> = Vec::new();
-                    for comment in &lead {
-                        parts.push(Ir::verbatim_forced(comment.clone()));
+                    for comment in lead {
+                        parts.push(comment);
                         parts.push(Ir::hard_line());
                     }
                     parts.push(ir);
@@ -710,7 +715,7 @@ fn collect_subset_ir_slots(
                 }
             }
             None if lead.is_empty() => ArgSlot::Empty,
-            None => ArgSlot::Comment(lead.join("\n")),
+            None => ArgSlot::Comment(Ir::join(Ir::hard_line(), lead)),
         }
     }
 
@@ -721,24 +726,36 @@ fn collect_subset_ir_slots(
                 if arg_elements.is_empty() {
                     continue;
                 }
+                // A stray `#'` block inside `[ ]` is a comment, not
+                // documentation (see the parser's arg-list handling); render it
+                // through the same comment-only slot machinery.
+                let roxygen = arg_elements.iter().find_map(|el| match el {
+                    NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_BLOCK => {
+                        Some(n.clone())
+                    }
+                    _ => None,
+                });
                 let has_comment = arg_elements.iter().any(
                     |el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT),
                 );
                 let has_non_comment = arg_elements.iter().any(|el| match el {
-                    NodeOrToken::Node(_) => true,
+                    NodeOrToken::Node(n) => n.kind() != SyntaxKind::ROXYGEN_BLOCK,
                     NodeOrToken::Token(tok) => !matches!(
                         tok.kind(),
                         SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
                     ),
                 });
-                if has_comment && !has_non_comment {
+                if let Some(block) = roxygen.filter(|_| !has_non_comment) {
+                    comments.push(super::super::roxygen::ir_roxygen_block(&block, indent, ctx));
+                    has_comment_only = true;
+                } else if has_comment && !has_non_comment {
                     if let Some(text) = arg_elements.iter().find_map(|el| match el {
                         NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT => {
                             Some(tok.text().to_string())
                         }
                         _ => None,
                     }) {
-                        comments.push(text);
+                        comments.push(Ir::verbatim_forced(text));
                     }
                     has_comment_only = true;
                 } else {
