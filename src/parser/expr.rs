@@ -196,14 +196,27 @@ fn parse_expr_with_mode(
         // operands — skip past them to the operand (the skipped tokens remain
         // in the tree as trivia between the operator and the operand).
         let rhs_operand = ctx.skip_ws_newlines_comments(rhs_start);
-        let Some(rhs) = parse_expr_with_mode(
-            tokens,
-            rhs_operand,
-            r_bp,
-            diagnostics,
-            true,
-            inside_brackets,
-        ) else {
+        // The extract/namespace operators (`$`, `@`, `::`, `:::`) share the
+        // highest precedence tier with the postfix operators (`[`, `[[`, `(`)
+        // and are all left-associative, so `a$b[c]` is `(a$b)[c]` and
+        // `pkg::fn(x)` is `(pkg::fn)(x)` (R's grammar). Their RHS is a bare
+        // member name, not a full expression: parse only the prefix operand so
+        // any trailing postfix binds to the *whole* extract expression via the
+        // outer loop's `parse_postfix_chain`, rather than being swallowed into
+        // the RHS.
+        let rhs = if is_extract_operator(&op.kind) {
+            parse_prefix(&ctx, rhs_operand, diagnostics, true, inside_brackets)
+        } else {
+            parse_expr_with_mode(
+                tokens,
+                rhs_operand,
+                r_bp,
+                diagnostics,
+                true,
+                inside_brackets,
+            )
+        };
+        let Some(rhs) = rhs else {
             push_token_diagnostic(
                 diagnostics,
                 "expected right-hand side for binary operator",
@@ -1105,6 +1118,17 @@ fn previous_non_trivia_kind(tokens: &[Token], mut idx: usize) -> Option<TokKind>
         }
         idx -= 1;
     }
+}
+
+/// The extract/namespace operators (`$`, `@`, `::`, `:::`). They tie with the
+/// postfix operators (`[`, `[[`, `(`) for the highest precedence and are
+/// left-associative, so their RHS is parsed as a bare member (see the infix
+/// loop) to keep `a$b[c]` == `(a$b)[c]`.
+fn is_extract_operator(kind: &TokKind) -> bool {
+    matches!(
+        kind,
+        TokKind::Dollar | TokKind::At | TokKind::Colon2 | TokKind::Colon3
+    )
 }
 
 fn infix_binding_power(kind: &TokKind) -> Option<(u8, u8)> {

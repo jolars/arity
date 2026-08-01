@@ -614,7 +614,36 @@ fn call_callee_ident(call: &CallExpr) -> Option<SmolStr> {
             NodeOrToken::Token(t) if t.kind() == SyntaxKind::IDENT => {
                 return Some(SmolStr::new(t.text()));
             }
+            // `pkg::fn(args)` parses as a `CALL_EXPR` whose callee is the
+            // `pkg::fn` `BINARY_EXPR`; the bare function name is that binary's
+            // RHS member. Recover it so data-masking detection (`dplyr::mutate`)
+            // and `library()`-shape checks see the same name as an unqualified
+            // call.
+            NodeOrToken::Node(n) if n.kind() == SyntaxKind::BINARY_EXPR => {
+                return namespace_member_name(&n);
+            }
             _ => return None,
+        }
+    }
+    None
+}
+
+/// The RHS member name of a `pkg::name` / `pkg:::name` `BINARY_EXPR`, if that is
+/// its shape (a `::`/`:::` operator with a trailing `IDENT`). `None` for any
+/// other binary expression.
+fn namespace_member_name(node: &SyntaxNode) -> Option<SmolStr> {
+    let mut seen_ns_op = false;
+    for el in node.children_with_tokens() {
+        match el {
+            NodeOrToken::Token(t)
+                if matches!(t.kind(), SyntaxKind::COLON2 | SyntaxKind::COLON3) =>
+            {
+                seen_ns_op = true;
+            }
+            NodeOrToken::Token(t) if seen_ns_op && t.kind() == SyntaxKind::IDENT => {
+                return Some(SmolStr::new(t.text()));
+            }
+            _ => {}
         }
     }
     None

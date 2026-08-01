@@ -1,0 +1,89 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..89
+  SUBSET_EXPR@0..12
+    BINARY_EXPR@0..9
+      IDENT@0..3 "obj"
+      DOLLAR@3..4 "$"
+      IDENT@4..9 "field"
+    LBRACK@9..10 "["
+    ARG_LIST@10..11
+      ARG@10..11
+        IDENT@10..11 "k"
+    RBRACK@11..12 "]"
+  NEWLINE@12..13 "\n"
+  SUBSET2_EXPR@13..27
+    BINARY_EXPR@13..22
+      IDENT@13..16 "obj"
+      DOLLAR@16..17 "$"
+      IDENT@17..22 "field"
+    LBRACK2@22..24 "[["
+    ARG_LIST@24..25
+      ARG@24..25
+        IDENT@24..25 "k"
+    RBRACK2@25..27 "]]"
+  NEWLINE@27..28 "\n"
+  CALL_EXPR@28..44
+    BINARY_EXPR@28..38
+      IDENT@28..31 "obj"
+      DOLLAR@31..32 "$"
+      IDENT@32..38 "method"
+    LPAREN@38..39 "("
+    ARG_LIST@39..43
+      ARG@39..40
+        IDENT@39..40 "a"
+      COMMA@40..41 ","
+      WHITESPACE@41..42 " "
+      ARG@42..43
+        IDENT@42..43 "b"
+    RPAREN@43..44 ")"
+  NEWLINE@44..45 "\n"
+  SUBSET_EXPR@45..56
+    BINARY_EXPR@45..53
+      IDENT@45..48 "obj"
+      AT@48..49 "@"
+      IDENT@49..53 "slot"
+    LBRACK@53..54 "["
+    ARG_LIST@54..55
+      ARG@54..55
+        IDENT@54..55 "k"
+    RBRACK@55..56 "]"
+  NEWLINE@56..57 "\n"
+  CALL_EXPR@57..67
+    BINARY_EXPR@57..64
+      IDENT@57..60 "pkg"
+      COLON2@60..62 "::"
+      IDENT@62..64 "fn"
+    LPAREN@64..65 "("
+    ARG_LIST@65..66
+      ARG@65..66
+        IDENT@65..66 "x"
+    RPAREN@66..67 ")"
+  NEWLINE@67..68 "\n"
+  CALL_EXPR@68..79
+    BINARY_EXPR@68..76
+      IDENT@68..71 "pkg"
+      COLON3@71..74 ":::"
+      IDENT@74..76 "fn"
+    LPAREN@76..77 "("
+    ARG_LIST@77..78
+      ARG@77..78
+        IDENT@77..78 "x"
+    RPAREN@78..79 ")"
+  NEWLINE@79..80 "\n"
+  BINARY_EXPR@80..88
+    SUBSET_EXPR@80..86
+      BINARY_EXPR@80..83
+        IDENT@80..81 "a"
+        DOLLAR@81..82 "$"
+        IDENT@82..83 "b"
+      LBRACK@83..84 "["
+      ARG_LIST@84..85
+        ARG@84..85
+          IDENT@84..85 "c"
+      RBRACK@85..86 "]"
+    DOLLAR@86..87 "$"
+    IDENT@87..88 "d"
+  NEWLINE@88..89 "\n"

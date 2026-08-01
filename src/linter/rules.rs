@@ -229,7 +229,10 @@ fn is_namespace_qualified(call: &CallExpr) -> bool {
     let Some(callee) = call.callee_token() else {
         return false;
     };
-    call.syntax()
+    // `pkg::fn(...)` parses with the call wrapping a `pkg::fn` `BINARY_EXPR`
+    // callee, so the callee token (`callee_token` unwraps it to the bare `fn`)
+    // sits under that namespace-access binary.
+    callee
         .parent()
         .and_then(BinaryExpr::cast)
         .and_then(|bin| bin.namespace_access())

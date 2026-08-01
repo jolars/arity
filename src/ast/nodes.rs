@@ -393,6 +393,27 @@ fn element_kind(element: &SyntaxElement<RLanguage>) -> Option<SyntaxKind> {
     Some(element.kind())
 }
 
+/// The RHS member `IDENT` of a `pkg::name` / `pkg:::name` `BINARY_EXPR`, if that
+/// is its shape. `None` for any other binary expression (a different operator,
+/// or a non-`IDENT` member).
+fn namespace_member_token(node: &SyntaxNode) -> Option<SyntaxToken<RLanguage>> {
+    let mut seen_ns_op = false;
+    for element in node.children_with_tokens() {
+        match element {
+            SyntaxElement::Token(t)
+                if matches!(t.kind(), SyntaxKind::COLON2 | SyntaxKind::COLON3) =>
+            {
+                seen_ns_op = true;
+            }
+            SyntaxElement::Token(t) if seen_ns_op && t.kind() == SyntaxKind::IDENT => {
+                return Some(t);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 impl CallExpr {
     pub fn arg_list(&self) -> Option<ArgList> {
         support::child(self.syntax())
@@ -400,8 +421,9 @@ impl CallExpr {
 
     /// The callee name token — the `IDENT`/`STRING` immediately preceding the
     /// argument list, when the function being called is a simple name (`foo(…)`,
-    /// `` `+`(…) ``). Returns `None` for a computed callee (`(g())(…)`,
-    /// `x$f(…)`).
+    /// `` `+`(…) ``) or a namespace-qualified name (`pkg::fn(…)`, where the token
+    /// is the `fn` member). Returns `None` for a genuinely computed callee
+    /// (`(g())(…)`, `x$f(…)`).
     pub fn callee_token(&self) -> Option<SyntaxToken<RLanguage>> {
         for element in self.syntax().children_with_tokens() {
             match element {
@@ -414,6 +436,15 @@ impl CallExpr {
                     if matches!(token.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) =>
                 {
                     return Some(token);
+                }
+                // `pkg::fn(…)` / `pkg:::fn(…)` parses with the whole call wrapping
+                // a `pkg::fn` `BINARY_EXPR` callee. The callee *name* is that
+                // binary's RHS member, so the qualified form resolves like the
+                // bare `fn(…)` for every consumer (linter matchers, signature
+                // help, call hierarchy). Other binary callees (`obj$m(…)`) stay
+                // computed.
+                SyntaxElement::Node(node) if node.kind() == SyntaxKind::BINARY_EXPR => {
+                    return namespace_member_token(&node);
                 }
                 _ => return None,
             }

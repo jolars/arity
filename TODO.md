@@ -8,6 +8,23 @@
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
 
+- [x] Extract/namespace-vs-postfix precedence (`a$b[c]` etc.). `$`, `@`, `::`,
+  `:::` tie with the postfix operators (`[`, `[[`, `(`) for the highest
+  precedence and are left-associative, so `a$b[c]` is `(a$b)[c]`, `a$b(c)` is
+  `(a$b)(c)`, and `pkg::fn(x)` is `(pkg::fn)(x)` (confirmed against R:
+  `quote(a$b[c])[[1]]` is `` `[` ``). Arity parsed these right-leaning
+  (`a$(b[c])`, `pkg::(fn(x))`), which mis-shaped the CST and dropped the
+  subscript index as a read (a `unused-binding` false positive: `k` in
+  `obj$lambda[k]`). Fixed in the Pratt loop (`src/parser/expr.rs`): the extract
+  operators parse their RHS as a bare member (prefix only), so a trailing
+  postfix binds to the whole extract expression via `parse_postfix_chain`.
+  Downstream: `CallExpr::callee_token` (`src/ast/nodes.rs`) now recovers the
+  member name from a `pkg::fn` binary callee so qualified calls resolve like
+  `fn(…)` for every consumer; `is_namespace_qualified` (`src/linter/rules.rs`)
+  and semantic-token classification (`src/lsp/semantic_tokens.rs`) updated for
+  the new shape. Cleared 4 `unused-binding` FPs on cran/MASS with zero new
+  findings.
+
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`)
 
@@ -676,6 +693,57 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     `SourceRoot`-scoped durability—when multi-root workspaces
     actually need it. Lower leverage for a single-crate tool (the wart
     is already gone).
+
+- [ ] `undefined-symbol` FP frontier from the cran/MASS investigation
+  (2026-08-01). Four unmodeled binding mechanisms drive ~91% of MASS's
+  `undefined-symbol` findings (75/82), each a distinct suppress-only fix:
+  - **`useDynLib(..., .registration = TRUE)` native routines** (14 findings, the
+    only category hitting real `R/` source). NAMESPACE registers each C/Fortran
+    entry point (`VR_sammon`, `mve_fitlots`, …) as a namespace object usable
+    bare in `.C`/`.Call`/`.Fortran`/`.External`. Arity doesn't read `useDynLib`,
+    so it flags them. Cheap, correct-by-construction fix independent of NAMESPACE:
+    a bare `IDENT` in the *head* (first-argument) position of `.C`/`.Call`/
+    `.Fortran`/`.External` names a native routine, not a scope read—suppress it.
+    Repro: `f <- function(x) .C(VR_sammon, as.double(x))`.
+  - **`attach(df)` scope-introducer** (49 findings, the biggest bucket). Puts a
+    data frame's columns on the search path; every later bare column ref
+    (`School`, `Age`, …) is flagged. Hard to model precisely (dynamic search
+    path); recognizing `attach(x)` and suppressing subsequent bare-name flags is
+    the high-value move. Repro: `attach(painters); table(School)`.
+  - **`data(name)` NSE loader** (12). The argument is NSE and the call binds
+    `name` in the caller's env; arity flags both the `data(sole)` argument and
+    every later `sole$…`. Treat the arg as NSE (don't flag) and introduce a
+    binding. Repro: `data(sole); sole$off <- log(sole$a.1)`.
+  - **`load("*.rda")` binding-introducer + model-frame columns** (2). `load()`
+    opaquely introduces bindings (`BankWages`); and non-`data` model-fitting args
+    evaluated in the data frame (`polr(size ~ carrier, data = tonsils, weights =
+    count)`—`count` is a `tonsils` column) are the known `with`/`subset`
+    data-variable frontier extended to `weights`/`subset`/`offset` on
+    `lm`/`glm`/`polr`. (All confirmed valid via `Rscript`; the remaining 7 MASS
+    findings—`A5`/`pr3`/`labs`/`module`—are genuine dangling refs in incomplete
+    book-excerpt scripts, correctly flagged.)
+
+- [ ] `unused-binding` FP frontier from the cran/MASS investigation
+  (2026-08-01). The `$`/`@`-subscript index-drop FP is fixed (see the Parser
+  extract-precedence entry); these scope-asymmetry cases remain (all confirmed
+  against `Rscript`, ~85% of the residual `R/`-source findings):
+  - **Default-argument expressions not scanned as reads** (root cause, ~9
+    findings). A default value is a promise evaluated in the function's own
+    frame, so it can read a body-local binding, but the scope walk doesn't count
+    it. Repro: `f <- function(x, upper = hmax) { hmax <- sqrt(x); upper }` flags
+    `hmax`. Also `panel = panel.lda` where `panel.lda` is a body-local closure.
+  - **`on.exit` read-before-assign** (1). `on.exit(par(oldpar))` reads `oldpar`
+    assigned on the next line (lazily evaluated at exit); the walk requires the
+    read to follow the assignment textually. Repro:
+    `f <- function() { on.exit(par(oldpar)); oldpar <- par(pty = "s"); plot(1) }`.
+  - **`NextMethod()` reads the reassigned formal from the frame** (2). A
+    reassigned formal (`x <- M`) flows into the next method via the frame, so it
+    is used. Repro: `print.foo <- function(x, ...) { M <- cbind(x); x <- M;
+    NextMethod("print") }`.
+  - **Bindings inside `expression({ ... })`** (4). Quoted code later `eval`'d in
+    another frame; assignments inside are "used" only through the downstream
+    eval. Arguably optional. Repro: `f <- function() { e <- expression({ n <-
+    rep(1, nobs) }); e }`.
 
 ## Misc
 

@@ -36,48 +36,48 @@ ROOT@0..183
     STRING@39..42 "\"b\""
   NEWLINE@42..43 "\n"
   NEWLINE@43..44 "\n"
-  BINARY_EXPR@44..50
-    IDENT@44..45 "a"
-    COLON2@45..47 "::"
-    CALL_EXPR@47..50
+  CALL_EXPR@44..50
+    BINARY_EXPR@44..48
+      IDENT@44..45 "a"
+      COLON2@45..47 "::"
       IDENT@47..48 "b"
-      LPAREN@48..49 "("
-      ARG_LIST@49..49
-      RPAREN@49..50 ")"
+    LPAREN@48..49 "("
+    ARG_LIST@49..49
+    RPAREN@49..50 ")"
   NEWLINE@50..51 "\n"
-  BINARY_EXPR@51..58
-    IDENT@51..52 "a"
-    COLON3@52..55 ":::"
-    CALL_EXPR@55..58
+  CALL_EXPR@51..58
+    BINARY_EXPR@51..56
+      IDENT@51..52 "a"
+      COLON3@52..55 ":::"
       IDENT@55..56 "b"
-      LPAREN@56..57 "("
-      ARG_LIST@57..57
-      RPAREN@57..58 ")"
+    LPAREN@56..57 "("
+    ARG_LIST@57..57
+    RPAREN@57..58 ")"
   NEWLINE@58..59 "\n"
   NEWLINE@59..60 "\n"
-  BINARY_EXPR@60..68
-    BINARY_EXPR@60..64
-      IDENT@60..61 "a"
-      COLON2@61..63 "::"
-      IDENT@63..64 "b"
-    DOLLAR@64..65 "$"
-    CALL_EXPR@65..68
+  CALL_EXPR@60..68
+    BINARY_EXPR@60..66
+      BINARY_EXPR@60..64
+        IDENT@60..61 "a"
+        COLON2@61..63 "::"
+        IDENT@63..64 "b"
+      DOLLAR@64..65 "$"
       IDENT@65..66 "c"
-      LPAREN@66..67 "("
-      ARG_LIST@67..67
-      RPAREN@67..68 ")"
+    LPAREN@66..67 "("
+    ARG_LIST@67..67
+    RPAREN@67..68 ")"
   NEWLINE@68..69 "\n"
-  BINARY_EXPR@69..78
-    BINARY_EXPR@69..74
-      IDENT@69..70 "a"
-      COLON3@70..73 ":::"
-      IDENT@73..74 "b"
-    AT@74..75 "@"
-    CALL_EXPR@75..78
+  CALL_EXPR@69..78
+    BINARY_EXPR@69..76
+      BINARY_EXPR@69..74
+        IDENT@69..70 "a"
+        COLON3@70..73 ":::"
+        IDENT@73..74 "b"
+      AT@74..75 "@"
       IDENT@75..76 "c"
-      LPAREN@76..77 "("
-      ARG_LIST@77..77
-      RPAREN@77..78 ")"
+    LPAREN@76..77 "("
+    ARG_LIST@77..77
+    RPAREN@77..78 ")"
   NEWLINE@78..79 "\n"
   NEWLINE@79..80 "\n"
   BINARY_EXPR@80..86

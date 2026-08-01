@@ -130,6 +130,7 @@ fn fixture_names() -> &'static [&'static str] {
         "expr_help_operator",
         "expr_walrus",
         "expr_extract_namespace",
+        "extract_postfix_precedence",
         "expr_newline_binary_break",
         "expr_paren_comment_continuation",
         "expr_bracket_split_callee_paren",

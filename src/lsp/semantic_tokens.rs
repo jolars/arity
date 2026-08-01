@@ -164,7 +164,8 @@ fn classify_structural(tok: &SyntaxToken<RLanguage>) -> Option<(TokKind, u32)> {
             // Only the access operators mark a structural position; other binary
             // operators leave both operands as ordinary reads. Access operators
             // bind tightest, so `BinaryExpr::op` is the access token when present.
-            let op = BinaryExpr::cast(parent)?.op()?;
+            let binary = parent;
+            let op = BinaryExpr::cast(binary.clone())?.op()?;
             if !matches!(
                 op.kind(),
                 SyntaxKind::COLON2 | SyntaxKind::COLON3 | SyntaxKind::DOLLAR | SyntaxKind::AT
@@ -173,10 +174,14 @@ fn classify_structural(tok: &SyntaxToken<RLanguage>) -> Option<(TokKind, u32)> {
             }
             let before_op = range.start() < op.text_range().start();
             match op.kind() {
-                // `pkg::name`: the package (LHS) is a namespace; the bare name
-                // (RHS, no call) is a value we can't classify further.
+                // `pkg::name`: the package (LHS) is a namespace. The member (RHS)
+                // is a function when the whole `pkg::name` is the callee of an
+                // enclosing call (`pkg::fn(…)`), otherwise a value we can't
+                // classify further.
                 SyntaxKind::COLON2 | SyntaxKind::COLON3 => Some(if before_op {
                     (TokKind::Namespace, 0)
+                } else if is_enclosing_call_callee(&binary, range) {
+                    (TokKind::Function, 0)
                 } else {
                     (TokKind::Variable, 0)
                 }),
@@ -190,6 +195,18 @@ fn classify_structural(tok: &SyntaxToken<RLanguage>) -> Option<(TokKind, u32)> {
         SyntaxKind::ARG => is_arg_name(&parent, range).then_some((TokKind::Parameter, 0)),
         _ => None,
     }
+}
+
+/// Whether `binary` (a `pkg::name` access) is the callee of an enclosing
+/// `CALL_EXPR` and `range` is that callee's resolved name token — i.e. the token
+/// names the function in `pkg::fn(…)`.
+fn is_enclosing_call_callee(binary: &SyntaxNode, range: TextRange) -> bool {
+    binary
+        .parent()
+        .filter(|p| p.kind() == SyntaxKind::CALL_EXPR)
+        .and_then(CallExpr::cast)
+        .and_then(|call| call.callee_token())
+        .is_some_and(|tok| tok.text_range() == range)
 }
 
 /// Whether the identifier at `range` is the *name* of a named argument
