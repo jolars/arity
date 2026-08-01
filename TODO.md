@@ -24,6 +24,24 @@
   )
   ```
 
+- [ ] Newline-continuation inside brackets: inside `(`/`[`/`[[` (and call arg
+  lists) a newline is not a terminator, so an expression may continue on the
+  next line, but arity still breaks in three shapes (all valid R, confirmed
+  against `Rscript`; surfaced triaging `wch/r-source`). The comment-before-
+  operator variant is fixed (`expr_paren_comment_continuation`); these remain:
+
+  - [ ] Split callee/`(`: `structure(list\n(h = 1))` — a call whose callee and
+    `(` are on separate lines inside an enclosing bracket. `parse_postfix_chain`
+    uses `skip_ws` (correct at top level, where `f\n(x)` is two statements) but
+    must skip newlines when `inside_brackets`. (`datasets/data/{Loblolly,Orange,
+    Theoph}.R`, `stats/logLik.R`.)
+  - [ ] Split subscript: `f(x\n[i])` — `x` and `[i]` on separate lines inside a
+    bracket. Same `parse_postfix_chain` fix. (`stats/proj.R`.)
+  - [ ] Function-body operator continuation: `vapply(p, function(x) x == 1\n
+    || g(x), NA)` — a `function`/`\(` body continued by a binary operator on the
+    next line inside a call. `parse_function_expr` stops the body at the newline.
+    (`utils/sessionInfo.R`, 30 diagnostics.)
+
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`)
 
@@ -66,6 +84,26 @@ blocked on missing infrastructure is sequenced right after that infra. Five
 rules ship today: `undefined-symbol`, `unused-binding`, `duplicate-formal`,
 `duplicated-arguments`, `equals-na` (`correctness/`), `assignment-in-condition`,
 `shadowed-builtin`, `redundant-equals`, `redundant-ifelse` (`suspicious/`).
+
+**Known false positives (surfaced triaging `wch/r-source`, 2026-08-01).** Spans
+verified correct throughout; these are resolution gaps, not span bugs.
+
+- [ ] `undefined-symbol` — three semantic-model gaps (`src/semantic/`):
+  - [ ] Formula `~` operands are not data-masked, so `lm(Speed ~ Run, data = mm)`
+    flags `Speed`/`Run`. Treat `~` as a masking boundary, mirroring
+    `is_data_masking_callee`.
+  - [ ] Quoting bodies aren't suppressed: `quote`/`bquote`/`substitute`/
+    `expression` argument bodies are unevaluated but every bare name is flagged.
+  - [ ] Implicit method variables `.Generic`/`.Method`/`.Class` (S3/S4 group
+    generics) are flagged; add them to the known-implicit-binding set.
+  - (Non-rule note: ~90% of the corpus's 6169 hits are an artifact — base R ships
+    `DESCRIPTION.in`, not `DESCRIPTION`, so `package_root` never activates
+    cross-file resolution. Consider a `DESCRIPTION.in` fallback marker.)
+- [ ] `unused-binding` — a `for`-body binding read from the enclosing frame is
+  wrongly flagged (`for (i in xs) last <- i; print(last)`; `while` is fine).
+  Root cause: `for` gets its own scope but `reads_reached`
+  (`src/semantic/builder.rs`) only walks outward. Also misses loop-carried
+  reassignment read on the next iteration.
 
 Cost model driving the order: a rule is **cheap** (`syn`) when it only needs the
 CST + AST + literal inspection; **medium** (`ns`) when it must confirm a callee
@@ -910,6 +948,12 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     is already gone).
 
 ## Misc
+
+- [ ] Non-UTF-8 file aborts the whole lint run. `arity lint <dir>` bails on the
+  first file that isn't valid UTF-8 (`error: failed to read ...: stream did not
+  contain valid UTF-8`) instead of skipping it and continuing — one ISO-8859
+  file (`r-source/tests/utf8-regex.R`) killed the entire run. Skip-and-warn like
+  the corpus harness does for unparseable files.
 
 - [ ] `arity-ignore-unused` meta-diagnostic: emit a finding for suppression
   comments that didn't actually suppress anything (rule ID is reserved but
