@@ -121,10 +121,10 @@ pub(crate) fn references_via_db(
             })
             .collect();
         if include_declaration {
-            locations.push(Location {
+            locations.extend(occ.defs.iter().map(|range| Location {
                 uri: uri.clone(),
-                range: text_range_to_lsp_range(&line_index, occ.def, encoding),
-            });
+                range: text_range_to_lsp_range(&line_index, *range, encoding),
+            }));
         }
         // Cross-file: a top-level binding can be read from files that can see
         // this one. Scope to that component; this file's own occurrences were
@@ -322,10 +322,10 @@ pub(crate) fn cross_file_rename_edits(
             continue;
         };
         let member_model = snapshot.semantic_model(file);
-        let Some((def, reads)) = file_scope_occurrences_in(member_model, name) else {
+        let Some((defs, reads)) = file_scope_occurrences_in(member_model, name) else {
             continue;
         };
-        for range in std::iter::once(def).chain(reads) {
+        for range in defs.into_iter().chain(reads) {
             if let Some(edit) = text_edit_in(snapshot, member, range, new_name, encoding) {
                 edits.push(edit);
             }
@@ -379,11 +379,12 @@ pub(crate) fn cross_file_reference_locations(
         let Some(file) = snapshot.lookup_file(member) else {
             continue;
         };
-        let Some((def, reads)) = file_scope_occurrences_in(snapshot.semantic_model(file), name)
+        let Some((defs, reads)) = file_scope_occurrences_in(snapshot.semantic_model(file), name)
         else {
             continue;
         };
-        for range in reads.into_iter().chain(include_declaration.then_some(def)) {
+        let decl_defs = include_declaration.then_some(defs).into_iter().flatten();
+        for range in reads.into_iter().chain(decl_defs) {
             if let Some(loc) = location_in(snapshot, member, range, encoding) {
                 locations.push(loc);
             }
@@ -405,32 +406,23 @@ pub(crate) fn cross_file_reference_locations(
     locations
 }
 
-/// The definition range and the ranges of the reads bound to it for the
-/// file-scope binding named `name` in `model` (reads sorted and deduped). `None`
+/// The definition ranges and the ranges of the reads bound to them for the
+/// file-scope variable named `name` in `model` (each sorted and deduped). `None`
 /// when there is no such top-level binding. The sibling-file analogue of
-/// [`local_occurrences`]: used to rewrite/report a cohort member's own definition
-/// and the reads that resolve to it — which are *not* free reads, so
-/// [`Analysis::read_ranges_in`] would miss them.
+/// [`local_occurrences`]: used to rewrite/report a cohort member's own
+/// definitions (a file-scope name can be reassigned) and the reads that resolve
+/// to them — which are *not* free reads, so [`Analysis::read_ranges_in`] would
+/// miss them.
 pub(crate) fn file_scope_occurrences_in(
     model: &SemanticModel,
     name: &str,
-) -> Option<(TextRange, Vec<TextRange>)> {
+) -> Option<(Vec<TextRange>, Vec<TextRange>)> {
     let (idx, _) = model.bindings().iter().enumerate().find(|(i, b)| {
         matches!(b.kind, BindingKind::Local | BindingKind::Implicit)
             && b.name.as_str() == name
             && model.binding_is_file_scope(BindingId::from_index(*i))
     })?;
-    let binding = BindingId::from_index(idx);
-    let def = model.bindings()[idx].def_range;
-    let mut reads: Vec<TextRange> = model
-        .idents()
-        .iter()
-        .filter(|ident| ident.name.as_str() == name && model.resolve_local(ident) == Some(binding))
-        .map(|ident| ident.range)
-        .collect();
-    reads.sort_by_key(|range| range.start());
-    reads.dedup();
-    Some((def, reads))
+    Some(variable_occurrences(model, BindingId::from_index(idx)))
 }
 
 /// A cross-edit-stable anchor for an in-flight rename: a [`NodePtr`] to the
@@ -587,7 +579,7 @@ pub fn compute_references(
     let (_, occ) = local_occurrences(&root, &model, off)?;
     let mut ranges = occ.reads;
     if include_declaration {
-        ranges.push(occ.def);
+        ranges.extend(occ.defs);
     }
     ranges.sort_by_key(|range| range.start());
     ranges.dedup();
@@ -608,8 +600,12 @@ pub fn compute_document_highlights(
     let off = TextSize::new(offset.min(text.len()) as u32);
     let (_, occ) = local_occurrences(&root, &model, off)?;
     let mut highlights: Vec<(TextRange, DocumentHighlightKind)> =
-        Vec::with_capacity(occ.reads.len() + 1);
-    highlights.push((occ.def, DocumentHighlightKind::WRITE));
+        Vec::with_capacity(occ.reads.len() + occ.defs.len());
+    highlights.extend(
+        occ.defs
+            .into_iter()
+            .map(|range| (range, DocumentHighlightKind::WRITE)),
+    );
     highlights.extend(
         occ.reads
             .into_iter()
@@ -631,13 +627,17 @@ pub(crate) fn definition_local_range(
     Some(model.binding(target.binding).def_range)
 }
 
-/// The definition span and every in-file read span of the local binding under the
-/// cursor, sorted and deduped. The shared intra-file core of find-references and
-/// document highlight: [`resolve_local_target`] picks the binding, then the
-/// `idents()` reads resolving to it are collected (the read-gathering half of
-/// [`rename_edits`]). `None` when the cursor names no local binding.
+/// The definition spans and every in-file read span of the *variable* under the
+/// cursor, each sorted and deduped. The shared intra-file core of find-references
+/// and document highlight: [`resolve_local_target`] picks the binding, then its
+/// frame cohort (all same-name reassignments, [`SemanticModel::variable_cohort`])
+/// contributes every definition, and the def-use reverse index
+/// ([`SemanticModel::read_sites`]) contributes every read bound to the cohort.
+/// A reassignment is one variable, so all its writes and reads are gathered
+/// together (the read-gathering half of [`rename_edits`]). `None` when the cursor
+/// names no local binding.
 pub(crate) struct LocalOccurrences {
-    def: TextRange,
+    defs: Vec<TextRange>,
     reads: Vec<TextRange>,
 }
 
@@ -647,18 +647,33 @@ pub(crate) fn local_occurrences(
     offset: TextSize,
 ) -> Option<(LocalTarget, LocalOccurrences)> {
     let target = resolve_local_target(root, model, offset)?;
-    let mut reads: Vec<TextRange> = model
-        .idents()
+    let (defs, reads) = variable_occurrences(model, target.binding);
+    Some((target, LocalOccurrences { defs, reads }))
+}
+
+/// The sorted, deduped definition and read spans of the whole variable that
+/// `binding` belongs to: the frame cohort's [`Binding::def_range`]s and the union
+/// of each cohort member's [`SemanticModel::read_sites`]. Cohort members share
+/// conservatively-resolved reads, so the read set is deduped. The shared gather
+/// behind [`local_occurrences`], [`rename_edits`], and [`file_scope_occurrences_in`].
+fn variable_occurrences(
+    model: &SemanticModel,
+    binding: BindingId,
+) -> (Vec<TextRange>, Vec<TextRange>) {
+    let cohort = model.variable_cohort(binding);
+    let mut defs: Vec<TextRange> = cohort
         .iter()
-        .filter(|ident| {
-            ident.name == target.name && model.resolve_local(ident) == Some(target.binding)
-        })
-        .map(|ident| ident.range)
+        .map(|id| model.binding(*id).def_range)
+        .collect();
+    defs.sort_by_key(|range| range.start());
+    defs.dedup();
+    let mut reads: Vec<TextRange> = cohort
+        .iter()
+        .flat_map(|id| model.read_sites(*id).map(|ident| ident.range))
         .collect();
     reads.sort_by_key(|range| range.start());
     reads.dedup();
-    let def = model.binding(target.binding).def_range;
-    Some((target, LocalOccurrences { def, reads }))
+    (defs, reads)
 }
 
 /// `textDocument/rename` driven by a [`RenameAnchor`] instead of a fresh
@@ -693,7 +708,8 @@ pub(crate) fn rename_cursor_offset(current_text: &str, anchor: &RenameAnchor) ->
     Some(usize::from(node.text_range().start()) + anchor.offset_in_node as usize)
 }
 
-/// The text edits renaming `target`'s definition and every in-file read of it.
+/// The text edits renaming every definition and in-file read of the variable
+/// `target` names — its whole frame cohort, not just one binding record.
 pub(crate) fn rename_edits(
     model: &SemanticModel,
     target: &LocalTarget,
@@ -701,12 +717,9 @@ pub(crate) fn rename_edits(
     line_index: &LineIndex,
     encoding: PositionEncoding,
 ) -> Vec<TextEdit> {
-    let mut ranges: Vec<TextRange> = vec![model.binding(target.binding).def_range];
-    for ident in model.idents() {
-        if ident.name == target.name && model.resolve_local(ident) == Some(target.binding) {
-            ranges.push(ident.range);
-        }
-    }
+    let (defs, reads) = variable_occurrences(model, target.binding);
+    let mut ranges: Vec<TextRange> = defs;
+    ranges.extend(reads);
     ranges.sort_by_key(|range| range.start());
     ranges.dedup();
     ranges
@@ -806,6 +819,40 @@ mod tests {
             .expect("the cross-file read in b.R is edited");
         assert_eq!(b_edits.len(), 1);
         assert_eq!(b_edits[0].new_text, "renamed");
+    }
+
+    #[test]
+    fn rename_via_db_rewrites_a_reassigned_file_scope_def_across_files() {
+        // a.R defines `foo` then reassigns it; b.R sources a.R and reads foo.
+        // The reassignment is one variable, so renaming rewrites *both* defs in
+        // a.R (via the frame cohort) plus the cross-file read in b.R.
+        let a_src = "foo <- function() 1\nfoo <- function() 2\n";
+        let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+        let uri_b = uri::from_path(&ws_path("b.R")).unwrap();
+        let offset = a_src.find("foo").unwrap();
+
+        let edit = rename_via_db(
+            &snapshot,
+            &ws_path("a.R"),
+            &uri_a,
+            a_src,
+            offset,
+            "renamed",
+            PositionEncoding::Utf16,
+        )
+        .expect("rename is available on a file-scope definition");
+        let changes = edit.changes.expect("changes present");
+
+        let a_edits = changes.get(&uri_a).expect("a.R is edited");
+        assert_eq!(
+            a_edits.len(),
+            2,
+            "both reassignment defs of foo in a.R are rewritten"
+        );
+        let b_edits = changes.get(&uri_b).expect("b.R read is edited");
+        assert_eq!(b_edits.len(), 1);
     }
 
     #[test]

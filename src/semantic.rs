@@ -206,6 +206,41 @@ impl SemanticModel {
         None
     }
 
+    /// The frame a scope belongs to: the nearest enclosing `Function`/`File`
+    /// scope, collapsing `For`/`Block` scopes (which share their function's
+    /// execution frame) into it. Returns `scope` itself when it is already a
+    /// frame root. Distinct from the builder's `enclosing_function_or_file`,
+    /// which steps *past* a function (for `<<-` semantics).
+    fn frame_scope(&self, scope: ScopeId) -> ScopeId {
+        let mut current = scope;
+        loop {
+            match self.scope(current).kind {
+                ScopeKind::File | ScopeKind::Function => return current,
+                _ => match self.scope(current).parent {
+                    Some(parent) => current = parent,
+                    None => return current,
+                },
+            }
+        }
+    }
+
+    /// Every binding naming the same variable as `id`: same name, same enclosing
+    /// function/file frame (`for`/block scopes collapse into their frame). In R a
+    /// name is one mutable variable per frame, so these are its reassignments;
+    /// rename/references treat them as a unit. Includes `id`. Returned in
+    /// [`bindings`](Self::bindings) order.
+    pub fn variable_cohort(&self, id: BindingId) -> Vec<BindingId> {
+        let binding = self.binding(id);
+        let frame = self.frame_scope(binding.scope);
+        (0..self.bindings.len())
+            .map(BindingId::from_index)
+            .filter(|other| {
+                let b = self.binding(*other);
+                b.name == binding.name && self.frame_scope(b.scope) == frame
+            })
+            .collect()
+    }
+
     /// Bindings that were defined but never read in the same file.
     /// Excludes parameters and `for`-loop variables (those have semantic
     /// meaning even when unused) and names starting with `.` (R convention).
@@ -512,6 +547,74 @@ mod tests {
             .iter()
             .position(|i| i.range == range)
             .expect("ident with range")
+    }
+
+    /// The cohort of `id` as a set of `bindings()` indices, for order-independent
+    /// comparison.
+    fn cohort_indices(model: &SemanticModel, id: BindingId) -> std::collections::BTreeSet<usize> {
+        model
+            .variable_cohort(id)
+            .into_iter()
+            .map(|b| b.0 as usize)
+            .collect()
+    }
+
+    #[test]
+    fn variable_cohort_groups_frame_reassignments() {
+        // Two file-scope defs of `x` are one variable; from either member the
+        // cohort is both. `y` is its own cohort.
+        let m = model_of("x <- 1\nf(x)\nx <- 2\ng(x)\ny <- 3\n");
+        let x_defs: Vec<usize> = m
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.name == "x")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(x_defs.len(), 2, "sanity: two defs of x");
+        let both: std::collections::BTreeSet<usize> = x_defs.iter().copied().collect();
+        assert_eq!(cohort_indices(&m, BindingId::from_index(x_defs[0])), both);
+        assert_eq!(cohort_indices(&m, BindingId::from_index(x_defs[1])), both);
+        let y = binding_id_named(&m, "y");
+        assert_eq!(m.variable_cohort(y), vec![y]);
+    }
+
+    #[test]
+    fn variable_cohort_excludes_a_shadowing_inner_param() {
+        // The file-scope `x` and a nested function's parameter `x` are distinct
+        // variables (different frames), so neither cohort includes the other.
+        let m = model_of("x <- 1\nf <- function(x) x + 1\n");
+        let file_x = m
+            .bindings
+            .iter()
+            .position(|b| b.name == "x" && m.scope(b.scope).kind == ScopeKind::File)
+            .map(BindingId::from_index)
+            .expect("file-scope x");
+        let param_x = m
+            .bindings
+            .iter()
+            .position(|b| b.name == "x" && b.kind == BindingKind::Param)
+            .map(BindingId::from_index)
+            .expect("param x");
+        assert_eq!(m.variable_cohort(file_x), vec![file_x]);
+        assert_eq!(m.variable_cohort(param_x), vec![param_x]);
+    }
+
+    #[test]
+    fn variable_cohort_groups_a_for_var_with_the_frame() {
+        // A `for` loop variable shares its enclosing frame, so a same-name
+        // reassignment outside the loop is the same variable.
+        let m = model_of("for (i in 1:3) print(i)\ni <- 0\n");
+        let i_defs: Vec<usize> = m
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.name == "i")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(i_defs.len(), 2, "sanity: for-var plus reassignment");
+        let both: std::collections::BTreeSet<usize> = i_defs.iter().copied().collect();
+        assert_eq!(cohort_indices(&m, BindingId::from_index(i_defs[0])), both);
     }
 
     #[test]

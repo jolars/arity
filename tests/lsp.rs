@@ -207,6 +207,27 @@ fn rename_from_a_read_site_finds_the_binding() {
 }
 
 #[test]
+fn rename_rewrites_all_reassignments() {
+    // `x` is one variable reassigned once: renaming from any occurrence rewrites
+    // both defs and both reads (not just the ones tied to one binding record).
+    let text = "x <- 1\nf(x)\nx <- 2\ng(x)\n";
+    let def1 = text.find("x <- 1").expect("first def");
+    let read1 = text.find("f(x)").expect("first read") + 2;
+    let def2 = text.find("x <- 2").expect("second def");
+    let read2 = text.find("g(x)").expect("second read") + 2;
+    let expected = vec![
+        edit_at(0, 0, 1, "y"), // first def
+        edit_at(1, 2, 3, "y"), // read in f(x)
+        edit_at(2, 0, 1, "y"), // second def
+        edit_at(3, 2, 3, "y"), // read in g(x)
+    ];
+    for cursor in [def1, read1, def2, read2] {
+        let edits = compute_rename(text, cursor, "y", PositionEncoding::Utf16).expect("renames");
+        assert_eq!(edits, expected, "cursor at byte {cursor}");
+    }
+}
+
+#[test]
 fn rename_rejects_an_invalid_identifier() {
     assert!(compute_rename("value <- 1\n", 0, "1bad", PositionEncoding::Utf16).is_none());
     assert!(compute_rename("value <- 1\n", 0, "if", PositionEncoding::Utf16).is_none());
@@ -347,6 +368,30 @@ fn references_of_a_parameter_are_collected_in_file() {
 }
 
 #[test]
+fn references_group_reassignments_of_one_variable() {
+    // Both defs and both reads of the reassigned `x` are references to one
+    // variable, from a cursor on any occurrence.
+    let text = "x <- 1\nf(x)\nx <- 2\ng(x)\n";
+    let def1 = text.find("x <- 1").expect("first def");
+    let read1 = text.find("f(x)").expect("first read") + 2;
+    let def2 = text.find("x <- 2").expect("second def");
+    let read2 = text.find("g(x)").expect("second read") + 2;
+    let expected = vec![
+        (def1, "x".to_string()),
+        (read1, "x".to_string()),
+        (def2, "x".to_string()),
+        (read2, "x".to_string()),
+    ];
+    for cursor in [def1, read1, def2, read2] {
+        assert_eq!(
+            refs_at(text, cursor, true),
+            expected,
+            "cursor at byte {cursor}"
+        );
+    }
+}
+
+#[test]
 fn references_decline_a_nonlocal_name() {
     assert!(compute_references("print(1)\n", 0, true).is_none());
 }
@@ -382,6 +427,25 @@ fn document_highlight_marks_definition_write_and_reads_read() {
         vec![
             (0, "value".to_string(), DocumentHighlightKind::WRITE),
             (read, "value".to_string(), DocumentHighlightKind::READ),
+        ]
+    );
+}
+
+#[test]
+fn document_highlight_marks_each_reassignment_as_write() {
+    // Every reassignment of `x` is a WRITE; every read is a READ.
+    let text = "x <- 1\nf(x)\nx <- 2\ng(x)\n";
+    let def1 = text.find("x <- 1").expect("first def");
+    let read1 = text.find("f(x)").expect("first read") + 2;
+    let def2 = text.find("x <- 2").expect("second def");
+    let read2 = text.find("g(x)").expect("second read") + 2;
+    assert_eq!(
+        highlights_at(text, def1),
+        vec![
+            (def1, "x".to_string(), DocumentHighlightKind::WRITE),
+            (read1, "x".to_string(), DocumentHighlightKind::READ),
+            (def2, "x".to_string(), DocumentHighlightKind::WRITE),
+            (read2, "x".to_string(), DocumentHighlightKind::READ),
         ]
     );
 }

@@ -428,7 +428,7 @@ linter (`RuleContext`) and the LSP. TDD (fixtures first). Recommended ceiling is
 - [x] Consume it in the linter: strengthen `unused-binding`
       (`src/linter/rules/correctness/unused_binding.rs`) to reason over the
       concrete read set rather than the boolean flag.
-- [ ] Consume it in the LSP: sharpen intra-file `references`/`rename`
+- [x] Consume it in the LSP: sharpen intra-file `references`/`rename`
       (`src/lsp/navigation.rs`) off the def-use edges.
 
 ### Phase B—CFG per function body (recommended ceiling)
