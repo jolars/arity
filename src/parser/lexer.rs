@@ -1144,32 +1144,44 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     continue;
                 }
 
-                // R raw strings: r"delimiter(content)delimiter"
-                if c == 'r' && i + 1 < bytes.len() && (bytes[i + 1] as char) == '"' {
+                // R raw strings: `[rR]"[-]*(content)[-]*"` where the opening
+                // bracket is one of `(`, `[`, `{` (closed by the matching
+                // `)`, `]`, `}`), the quote is `"` or `'`, and the run of dashes
+                // on the closing side matches the opening run. E.g. `r"(x)"`,
+                // `R"[x]"`, `r"---{x}---"`, `r'(x)'`.
+                if (c == 'r' || c == 'R')
+                    && i + 1 < bytes.len()
+                    && matches!(bytes[i + 1] as char, '"' | '\'')
+                {
                     let start = i;
+                    let quote = bytes[i + 1] as char;
                     let mut j = i + 2;
-                    let delim_start = j;
-                    let mut matched_raw = false;
-                    while j < bytes.len() && (bytes[j] as char) != '(' {
-                        let ch = bytes[j] as char;
-                        if ch == '"' || ch == '\n' || ch == '\r' {
-                            break;
-                        }
+                    // Opening dash run.
+                    let dash_start = j;
+                    while j < bytes.len() && (bytes[j] as char) == '-' {
                         j += 1;
                     }
+                    let dash_len = j - dash_start;
+                    let mut matched_raw = false;
 
-                    if j < bytes.len() && (bytes[j] as char) == '(' {
-                        let delimiter = &input[delim_start..j];
+                    let close = match bytes.get(j).map(|b| *b as char) {
+                        Some('(') => Some(')'),
+                        Some('[') => Some(']'),
+                        Some('{') => Some('}'),
+                        _ => None,
+                    };
+
+                    if let Some(close_ch) = close {
                         let mut k = j + 1;
                         while k < bytes.len() {
-                            if (bytes[k] as char) == ')' {
+                            if (bytes[k] as char) == close_ch {
                                 let after_close = k + 1;
-                                let delim_end = after_close + delimiter.len();
-                                if delim_end < bytes.len()
-                                    && &input[after_close..delim_end] == delimiter
-                                    && (bytes[delim_end] as char) == '"'
+                                let dash_end = after_close + dash_len;
+                                if dash_end < bytes.len()
+                                    && bytes[after_close..dash_end].iter().all(|b| *b == b'-')
+                                    && (bytes[dash_end] as char) == quote
                                 {
-                                    let end = delim_end + 1;
+                                    let end = dash_end + 1;
                                     out.push(Token {
                                         kind: TokKind::String,
                                         text: input[start..end].to_string(),
@@ -1338,6 +1350,26 @@ mod tests {
         assert_eq!(string_tokens[0].text, "r\"(hi)\"");
         assert_eq!(string_tokens[1].text, "r\"-(a)-\"");
         assert_eq!(string_tokens[2].text, "r\"(multi\nline)\"");
+    }
+
+    /// R raw strings allow the `R` prefix, `'` quotes, and `[`/`{` bracket
+    /// delimiters (each with an optional matching dash run), not just `r"(...)"`.
+    #[test]
+    fn lexes_all_raw_string_delimiter_forms() {
+        for src in [
+            "r\"{a}\"",
+            "r\"[a]\"",
+            "R\"(a)\"",
+            "r'(a)'",
+            "r\"---{a}---\"",
+            "r\"--[a]--\"",
+            "r\"{.*\\s*X\\s*}\"",
+        ] {
+            let tokens = lex(src);
+            assert_eq!(tokens.len(), 1, "{src:?} should lex as one token");
+            assert_eq!(tokens[0].kind, TokKind::String, "{src:?} kind");
+            assert_eq!(tokens[0].text, src, "{src:?} text");
+        }
     }
 
     #[test]
