@@ -1,0 +1,12 @@
+---
+source: tests/cfg.rs
+expression: "cfg_dump(\"if (c) {\\n  if (d) a() else b()\\n} else {\\n  e()\\n}\\n\")"
+---
+region: <toplevel>
+  bb0: [if (c) { if (d) a() else b() } else { e(…] -> then bb1, else bb5
+  bb1: [if (d) a() else b()] -> then bb2, else bb3
+  bb2: [a()] -> bb4
+  bb3: [b()] -> bb4
+  bb4: [] -> bb6
+  bb5: [e()] -> bb6
+  bb6: [] -> return

@@ -433,14 +433,18 @@ linter (`RuleContext`) and the LSP. TDD (fixtures first). Recommended ceiling is
 
 ### Phase B—CFG per function body (recommended ceiling)
 
-- [ ] New `src/semantic/cfg.rs`: per-function basic blocks + edges for
+- [x] New `src/semantic/cfg.rs`: per-function basic blocks + edges for
       `if`/`else`, `for`/`while`/`repeat`, `break`/`next`,
       `return()`/`stop()`, and sequential statements, built from the CST/AST
-      wrappers and exposed as a salsa query. Deterministic and local, so it stays
-      keystroke-fast and incremental.
+      wrappers and exposed as a salsa query (`control_flow`). Deterministic and
+      local, so it stays keystroke-fast and incremental. Reachability falls out
+      of the construction (`FileControlFlow::is_unreachable`); `always_diverges`
+      is the shared divergence predicate.
 - [ ] Unblock the Phase 3 lint rules that need reachability:
-  - [ ] `unreachable-code` both-branches-return case (the documented CFG gap in
-        `src/linter/rules/correctness/unreachable_code.rs`).
+  - [x] `unreachable-code` both-branches-return case (was the documented CFG gap
+        in `src/linter/rules/correctness/unreachable_code.rs`); now driven by the
+        CFG's `is_unreachable` verdict, namespace-gated on the responsible
+        `return`/`stop` leaves.
   - [ ] `if-always-true` (literal `if (TRUE/FALSE)` reachability).
   - [ ] `coalesce` (`if (is.null(x)) y else x`—both-branches pattern).
   - [ ] `unnecessary-nesting` (collapsible nested `if`/single-stmt block).

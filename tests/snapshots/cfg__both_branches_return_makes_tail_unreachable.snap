@@ -1,0 +1,11 @@
+---
+source: tests/cfg.rs
+expression: "cfg_dump(\"f <- function() {\\n  if (c) return(1) else return(2)\\n  3\\n}\\n\")"
+---
+region: <toplevel>
+  bb0: [f <- function() { if (c) return(1) else …] -> return
+region: function() { if (c) return(1) else retur…
+  bb0: [if (c) return(1) else return(2)] -> then bb1, else bb2
+  bb1: [return(1)] -> diverge
+  bb2: [return(2)] -> diverge
+  bb3: [3] (unreachable)

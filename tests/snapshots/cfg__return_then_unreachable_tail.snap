@@ -1,0 +1,9 @@
+---
+source: tests/cfg.rs
+expression: "cfg_dump(\"f <- function() {\\n  return(1)\\n  2\\n}\\n\")"
+---
+region: <toplevel>
+  bb0: [f <- function() { return(1) 2 }] -> return
+region: function() { return(1) 2 }
+  bb0: [return(1)] -> diverge
+  bb1: [2] (unreachable)

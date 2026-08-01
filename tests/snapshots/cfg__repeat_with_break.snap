@@ -1,0 +1,11 @@
+---
+source: tests/cfg.rs
+expression: "cfg_dump(\"repeat {\\n  if (done) break\\n  work()\\n}\\nafter()\\n\")"
+---
+region: <toplevel>
+  bb0: [repeat { if (done) break work() }] -> bb1
+  bb1: [] -> bb3
+  bb2: [after()] -> return
+  bb3: [if (done) break] -> then bb4, else bb5
+  bb4: [break] -> bb2
+  bb5: [work()] -> bb1

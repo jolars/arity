@@ -24,7 +24,7 @@ use rowan::ast::AstNode as _;
 use crate::ast::{BinaryExpr, CallExpr};
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
-use crate::semantic::{PackageOrigin, SemanticModel, SymbolProvider};
+use crate::semantic::{FileControlFlow, PackageOrigin, SemanticModel, SymbolProvider};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 use super::diagnostic::{Diagnostic, Severity};
@@ -142,6 +142,9 @@ pub struct RuleContext<'a> {
     pub path: &'a Path,
     pub root: &'a SyntaxNode,
     pub model: &'a SemanticModel,
+    /// The per-file control-flow graph (one region per function body plus the
+    /// file top-level). Feeds reachability-sensitive rules (`unreachable-code`).
+    pub cfg: &'a FileControlFlow,
     pub symbols: &'a dyn SymbolProvider,
     /// Cross-file visibility for this file, when linting a multi-file project.
     /// `None` for single-file runs (the LSP per-document path, one-shot checks).
@@ -333,11 +336,13 @@ impl ResolvedRules {
 /// The dispatch table (`resolved.by_kind`) and severity map are precomputed on
 /// `resolved`, so this is on the hot path only for the per-file traversal and
 /// the rules' own work, not for rebuilding the rule-set-derived state.
+#[allow(clippy::too_many_arguments)]
 pub fn run_rules(
     resolved: &ResolvedRules,
     path: &Path,
     root: &SyntaxNode,
     model: &SemanticModel,
+    cfg: &FileControlFlow,
     symbols: &dyn SymbolProvider,
     project: Option<&FileScope<'_>>,
     resolution: Option<&ExternalResolution>,
@@ -346,6 +351,7 @@ pub fn run_rules(
         path,
         root,
         model,
+        cfg,
         symbols,
         project,
         resolution,
@@ -436,6 +442,7 @@ mod tests {
     fn run_rules_stamps_default_severity() {
         let root = crate::parser::parse("f(1)").cst;
         let model = SemanticModel::build(&root);
+        let cfg = FileControlFlow::build(&root);
         let symbols = crate::semantic::StaticBaseR::new();
         let resolved = ResolvedRules::from_rules(vec![Box::new(FakeError)]);
         let diags = run_rules(
@@ -443,6 +450,7 @@ mod tests {
             Path::new("test.R"),
             &root,
             &model,
+            &cfg,
             &symbols,
             None,
             None,
@@ -457,11 +465,13 @@ mod tests {
     fn resolves(src: &str) -> bool {
         let root = crate::parser::parse(src).cst;
         let model = SemanticModel::build(&root);
+        let cfg = FileControlFlow::build(&root);
         let symbols = crate::semantic::StaticBaseR::new();
         let ctx = RuleContext {
             path: Path::new("test.R"),
             root: &root,
             model: &model,
+            cfg: &cfg,
             symbols: &symbols,
             project: None,
             resolution: None,

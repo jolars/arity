@@ -2616,6 +2616,58 @@ fn unreachable_code_covers_all_trailing_statements() {
 }
 
 #[test]
+fn unreachable_code_flags_both_branches_return() {
+    // An `if`/`else` that exits in both branches leaves the tail unreachable (a
+    // CFG verdict); the finding spans it and the unsafe fix deletes it.
+    let src = "f <- function() {\n  if (x) return(1) else return(2)\n  3\n}\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "unreachable-code")
+        .expect("expected an unreachable-code finding");
+    assert!(
+        d.message.body.contains("both branches"),
+        "{:?}",
+        d.message.body
+    );
+    let fix = d.fix.as_ref().expect("should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Unsafe);
+    assert_eq!(
+        apply_fixes(src, std::slice::from_ref(fix), true).output,
+        "f <- function() {\n  if (x) return(1) else return(2)\n}\n"
+    );
+
+    // Braced arms and mixed `return`/`stop` also count.
+    let src =
+        "f <- function() {\n  if (x) {\n    stop(\"a\")\n  } else {\n    return(2)\n  }\n  3\n}\n";
+    assert!(
+        diagnostics(src)
+            .iter()
+            .any(|d| d.rule == "unreachable-code"),
+        "braced both-branches exit should flag"
+    );
+}
+
+#[test]
+fn unreachable_code_both_branches_negatives() {
+    for src in [
+        // only one arm diverges — the tail is reachable
+        "f <- function() {\n  if (x) return(1) else 2\n  3\n}\n",
+        // no `else` — the false path falls through
+        "f <- function() {\n  if (x) return(1)\n  3\n}\n",
+        // both arms exit, but `return` is locally redefined — no longer terminates
+        "f <- function() {\n  return <- identity\n  if (x) return(1) else return(2)\n  3\n}\n",
+        // both arms `return` but outside any function — not the shape (needs `stop`)
+        "if (x) return(1) else return(2)\n3\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"unreachable-code"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
 fn unreachable_code_ignores_reachable_shapes() {
     for src in [
         // terminator is the last statement — nothing after it

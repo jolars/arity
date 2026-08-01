@@ -1,0 +1,10 @@
+---
+source: tests/cfg.rs
+expression: "cfg_dump(\"repeat {\\n  work()\\n}\\nunreached()\\n\")"
+---
+region: <toplevel>
+  bb0: [repeat { work() }] -> bb1
+  bb1: [] -> bb3
+  bb2: [] (unreachable)
+  bb3: [work()] -> bb1
+  bb4: [unreached()] (unreachable)

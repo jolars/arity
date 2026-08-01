@@ -1,0 +1,9 @@
+---
+source: tests/cfg.rs
+expression: "cfg_dump(\"while (cond) {\\n  step()\\n}\\nafter()\\n\")"
+---
+region: <toplevel>
+  bb0: [while (cond) { step() }] -> bb1
+  bb1: [] -> then bb3, else bb2
+  bb2: [after()] -> return
+  bb3: [step()] -> bb1

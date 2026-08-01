@@ -7,6 +7,7 @@
 
 pub mod binding;
 pub mod builder;
+pub mod cfg;
 pub mod scope;
 pub mod symbols;
 
@@ -16,6 +17,7 @@ use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
 
 pub use binding::{Binding, BindingId, BindingKind};
+pub use cfg::{BasicBlock, BlockId, ControlFlowGraph, FileControlFlow, Terminator};
 pub use scope::{Scope, ScopeId, ScopeKind};
 pub use symbols::{
     LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, implicit_attached_packages,

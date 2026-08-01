@@ -108,6 +108,40 @@ fn semantic_model_is_reused_when_input_unchanged() {
 }
 
 #[test]
+fn control_flow_reused_when_input_unchanged() {
+    let db = IncrementalDatabase::default();
+    let file = db.add_file("f <- function() {\n  if (c) return(1) else return(2)\n  3\n}\n");
+
+    let _ = db.control_flow(file);
+    db.clear_query_log();
+    let _ = db.control_flow(file);
+
+    assert!(
+        db.query_log().is_empty(),
+        "unchanged input must not re-run control_flow"
+    );
+}
+
+#[test]
+fn control_flow_backdates_across_equivalent_edit() {
+    // A same-length rename leaves every statement range (and the function's
+    // NodePtr key) untouched, so the CFG value is unchanged — `FileControlFlow:
+    // Eq` lets salsa backdate it and spare CFG-dependent consumers. Assert the
+    // load-bearing half: the value is stable across the edit.
+    let mut db = IncrementalDatabase::default();
+    let file = db.add_file("f <- function() {\n  if (aaa) return(1) else return(2)\n}\n");
+    let before = db.control_flow(file).clone();
+
+    db.set_file_text(
+        file,
+        "f <- function() {\n  if (bbb) return(1) else return(2)\n}\n",
+    );
+    let after = db.control_flow(file).clone();
+
+    assert_eq!(before, after, "an equivalent edit must not change the CFG");
+}
+
+#[test]
 fn editing_one_file_invalidates_only_that_file_queries() {
     let mut db = IncrementalDatabase::default();
     let file_a = db.add_file("x <- 1 + 2\n");

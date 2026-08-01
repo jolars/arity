@@ -13,9 +13,9 @@ use rowan::{TextRange, TextSize};
 use crate::config::LintConfig;
 use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
 use crate::incremental::{
-    Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, file_exports,
-    file_free_reads, file_qualified_reads, parsed_tree_root, semantic_model, source_edges,
-    top_level_events,
+    Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, control_flow,
+    file_exports, file_free_reads, file_qualified_reads, parsed_tree_root, semantic_model,
+    source_edges, top_level_events,
 };
 use crate::project::{
     ExternalResolution, FileScope, PackageCollation, Project, ProjectMember, expected_r_sources,
@@ -375,8 +375,9 @@ fn lint_parsed_file(
 ) -> Vec<Diagnostic> {
     let root_node = parsed_tree_root(db, file);
     let model = semantic_model(db, file);
+    let cfg = control_flow(db, file);
     let mut diagnostics = run_rules(
-        rules, path, &root_node, model, provider, project, resolution,
+        rules, path, &root_node, model, cfg, provider, project, resolution,
     );
     let suppress = SuppressionMap::build(&root_node);
     diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));

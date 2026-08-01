@@ -25,7 +25,7 @@ use crate::project::{
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
-use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
+use crate::semantic::{BindingKind, FileControlFlow, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
 use crate::text::LineIndex;
 
@@ -182,6 +182,7 @@ pub enum QueryKind {
     ParsedDocument,
     LineIndex,
     SemanticModel,
+    ControlFlow,
     FileExports,
     FileFreeReads,
     FileQualifiedReads,
@@ -343,6 +344,20 @@ pub fn semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> SemanticModel
         file: Some(file),
     });
     SemanticModel::build(&parsed_tree_root(db, file))
+}
+
+/// The per-file control-flow graph (one region per function body plus the file
+/// top-level), built on the cached parse tree. Returned by reference; salsa
+/// backdates downstream consumers when an edit leaves the graph unchanged
+/// (`FileControlFlow: Eq`), so an edit inside one function body does not
+/// invalidate another's CFG-dependent work.
+#[salsa::tracked(returns(ref))]
+pub fn control_flow(db: &dyn IncrementalDb, file: SourceFile) -> FileControlFlow {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ControlFlow,
+        file: Some(file),
+    });
+    FileControlFlow::build(&parsed_tree_root(db, file))
 }
 
 /// The file's top-level exports (a [`crate::project::file_exports`] projection),
@@ -799,6 +814,11 @@ impl IncrementalDatabase {
         semantic_model(self, file)
     }
 
+    /// The cached per-file control-flow graph.
+    pub fn control_flow(&self, file: SourceFile) -> &FileControlFlow {
+        control_flow(self, file)
+    }
+
     pub fn clear_query_log(&self) {
         self.query_log
             .lock()
@@ -909,6 +929,11 @@ impl Analysis {
     /// The cached per-file semantic model.
     pub fn semantic_model(&self, file: SourceFile) -> &SemanticModel {
         self.0.semantic_model(file)
+    }
+
+    /// The cached per-file control-flow graph.
+    pub fn control_flow(&self, file: SourceFile) -> &FileControlFlow {
+        self.0.control_flow(file)
     }
 
     /// The definition span of the top-level binding named `name` in `file`, read
