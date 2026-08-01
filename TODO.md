@@ -24,23 +24,24 @@
   )
   ```
 
-- [ ] Newline-continuation inside brackets: inside `(`/`[`/`[[` (and call arg
+- [x] Newline-continuation inside brackets: inside `(`/`[`/`[[` (and call arg
   lists) a newline is not a terminator, so an expression may continue on the
-  next line, but arity still breaks in three shapes (all valid R, confirmed
-  against `Rscript`; surfaced triaging `wch/r-source`). The comment-before-
-  operator variant is fixed (`expr_paren_comment_continuation`); these remain:
+  next line. The `inside_brackets` flag is now threaded into `parse_postfix_chain`
+  and `parse_function_expr`, closing the three remaining shapes (fixtures
+  `expr_bracket_split_callee_paren`, `expr_bracket_split_subscript`,
+  `expr_bracket_function_body_continuation`):
 
-  - [ ] Split callee/`(`: `structure(list\n(h = 1))` — a call whose callee and
-    `(` are on separate lines inside an enclosing bracket. `parse_postfix_chain`
-    uses `skip_ws` (correct at top level, where `f\n(x)` is two statements) but
-    must skip newlines when `inside_brackets`. (`datasets/data/{Loblolly,Orange,
-    Theoph}.R`, `stats/logLik.R`.)
-  - [ ] Split subscript: `f(x\n[i])` — `x` and `[i]` on separate lines inside a
-    bracket. Same `parse_postfix_chain` fix. (`stats/proj.R`.)
-  - [ ] Function-body operator continuation: `vapply(p, function(x) x == 1\n
-    || g(x), NA)` — a `function`/`\(` body continued by a binary operator on the
-    next line inside a call. `parse_function_expr` stops the body at the newline.
-    (`utils/sessionInfo.R`, 30 diagnostics.)
+  - [x] Split callee/`(`: `structure(list\n(h = 1))`.
+  - [x] Split subscript: `f(x\n[i])`.
+  - [x] Function-body operator continuation:
+    `vapply(p, function(x) x == 1\n || g(x), NA)`.
+
+  - [ ] Follow-ups (out of scope above): a comment *between* callee and bracket
+    (`list # c\n(x)`) is not yet joined (would need `skip_ws_newlines_comments`
+    in `parse_postfix_chain`); and the structural bodies
+    (`parse_if_expr`/`parse_while_expr`/`parse_for_expr`/`parse_repeat_expr`)
+    share the same non-threaded pattern and would benefit from the same
+    `inside_brackets` propagation.
 
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`)

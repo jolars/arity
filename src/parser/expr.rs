@@ -120,13 +120,13 @@ fn parse_expr_with_mode(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::FunctionKw)
     ) {
-        return parse_function_expr(tokens, start_non_ws, diagnostics);
+        return parse_function_expr(tokens, start_non_ws, inside_brackets, diagnostics);
     }
     if matches!(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::LambdaFn)
     ) {
-        return parse_function_expr(tokens, start_non_ws, diagnostics);
+        return parse_function_expr(tokens, start_non_ws, inside_brackets, diagnostics);
     }
 
     let mut lhs = parse_prefix(
@@ -148,7 +148,7 @@ fn parse_expr_with_mode(
     }
 
     loop {
-        lhs = parse_postfix_chain(&ctx, lhs, diagnostics);
+        lhs = parse_postfix_chain(&ctx, lhs, inside_brackets, diagnostics);
 
         let Some((op_idx, op)) = next_operator(&ctx, lhs.end, inside_brackets) else {
             break;
@@ -567,12 +567,20 @@ fn parse_block_expr(
 fn parse_postfix_chain(
     ctx: &ParserCtx<'_>,
     mut lhs: ExprParse,
+    inside_brackets: bool,
     diagnostics: &mut Vec<ParseDiagnostic>,
 ) -> ExprParse {
     let tokens = ctx.tokens();
     loop {
-        // No newline is allowed between the callee and `(` — `f\n(x)` is two statements in R.
-        let after_lhs = ctx.skip_ws(lhs.end);
+        // At top level no newline is allowed between the callee and `(` — `f\n(x)`
+        // is two statements in R. Inside brackets the newline is insignificant, so
+        // `structure(list\n(h = 1))` is `structure(list(h = 1))` and `f(x\n[i])`
+        // is `f(x[i])`; skip across it to find the postfix operator.
+        let after_lhs = if inside_brackets {
+            ctx.skip_ws_and_newlines(lhs.end)
+        } else {
+            ctx.skip_ws(lhs.end)
+        };
         if matches!(
             tokens.get(after_lhs).map(|t| &t.kind),
             Some(TokKind::LParen)

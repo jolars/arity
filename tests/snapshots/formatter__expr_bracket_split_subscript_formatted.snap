@@ -1,0 +1,5 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+f(x[i])

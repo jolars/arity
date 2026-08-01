@@ -1,0 +1,44 @@
+---
+source: tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..43
+  CALL_EXPR@0..42
+    IDENT@0..6 "vapply"
+    LPAREN@6..7 "("
+    ARG_LIST@7..41
+      ARG@7..8
+        IDENT@7..8 "p"
+      COMMA@8..9 ","
+      WHITESPACE@9..10 " "
+      ARG@10..37
+        FUNCTION_EXPR@10..37
+          FUNCTION_KW@10..18 "function"
+          LPAREN@18..19 "("
+          IDENT@19..20 "x"
+          RPAREN@20..21 ")"
+          WHITESPACE@21..22 " "
+          BINARY_EXPR@22..37
+            BINARY_EXPR@22..28
+              IDENT@22..23 "x"
+              WHITESPACE@23..24 " "
+              EQUAL2@24..26 "=="
+              WHITESPACE@26..27 " "
+              INT@27..28 "1"
+            NEWLINE@28..29 "\n"
+            WHITESPACE@29..30 " "
+            OR2@30..32 "||"
+            WHITESPACE@32..33 " "
+            CALL_EXPR@33..37
+              IDENT@33..34 "g"
+              LPAREN@34..35 "("
+              ARG_LIST@35..36
+                ARG@35..36
+                  IDENT@35..36 "x"
+              RPAREN@36..37 ")"
+      COMMA@37..38 ","
+      WHITESPACE@38..39 " "
+      ARG@39..41
+        IDENT@39..41 "NA"
+    RPAREN@41..42 ")"
+  NEWLINE@42..43 "\n"

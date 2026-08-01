@@ -367,6 +367,7 @@ pub(crate) fn parse_for_expr(
 pub(crate) fn parse_function_expr(
     tokens: &[Token],
     start: usize,
+    inside_brackets: bool,
     diagnostics: &mut Vec<ParseDiagnostic>,
 ) -> Option<ExprParse> {
     let ctx = ParserCtx::new(tokens);
@@ -490,7 +491,16 @@ pub(crate) fn parse_function_expr(
         body_start += 1;
         body_start = ctx.skip_ws_and_newlines(body_start);
     }
-    if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics) {
+    // Inside brackets a newline does not terminate the body, so a body continued
+    // by a binary operator on the next line (`vapply(p, function(x) x == 1\n ||
+    // g(x), NA)`) keeps going. At top level the newline ends it, so `function(x)
+    // x` followed by `+1` on the next line stays two statements.
+    let body = if inside_brackets {
+        parse_expr_in_brackets(tokens, body_start, 0, diagnostics)
+    } else {
+        parse_expr(tokens, body_start, 0, diagnostics)
+    };
+    if let Some(body_expr) = body {
         push_range(&mut events, cursor, body_expr.start);
         events.extend(body_expr.events);
         cursor = body_expr.end;
