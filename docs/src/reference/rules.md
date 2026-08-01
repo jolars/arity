@@ -18,6 +18,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 ## Suspicious
 
 - [`assignment-in-condition`](rules/assignment-in-condition.md)
+- [`browser`](rules/browser.md)
 - [`shadowed-builtin`](rules/shadowed-builtin.md)
 - [`redundant-equals`](rules/redundant-equals.md)
 - [`redundant-ifelse`](rules/redundant-ifelse.md)

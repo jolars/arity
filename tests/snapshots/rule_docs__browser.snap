@@ -1,0 +1,35 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+# `browser`
+
+Flag a leftover `browser()` call. `browser()` opens R's interactive debugger and is meant to be removed before code is committed; in a non-interactive session it silently does nothing, so it lingers unnoticed.
+
+Only a call that resolves to base R's `browser` is flagged—a same-named user function is left alone. The safe-delete fix is offered only for a `browser()` that is a direct statement (of a block or the file top level); in any other position it is withheld so the edit can't break syntax.
+
+A `browser()` call left in after debugging:
+
+```r
+f <- function(x) {
+  browser()
+  x + 1
+}
+```
+
+```text
+warning: browser
+ --> example.R:2:3
+  |
+2 |   browser()
+  |   ^^^^^^^^^ leftover `browser()` debugging call
+  = help: Remove the `browser()` call.
+```
+
+After applying the fix:
+
+```r
+f <- function(x) {
+  x + 1
+}
+```

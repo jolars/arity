@@ -50,7 +50,10 @@
       `return`/`stop`), so the call count is tiny and it is not currently hot—not
       worth an offset->ident index yet. If it ever becomes hot, resolve via the
       covering element at the callee offset instead of scanning.
-- [ ] `browser` (suspicious, safe-delete)—leftover debug call.
+- [x] `browser` (suspicious, ns, safe-delete)—leftover debug call. Flags a
+      `browser()` that resolves to base R; the safe-delete fix fires only at
+      statement position (block/top level), withheld elsewhere so the edit can't
+      break syntax.
 - [ ] `empty-assignment` (correctness, none).
 - [ ] `implicit-assignment` (suspicious, none)—scope to avoid overlap with
       existing `assignment-in-condition`.

@@ -23,6 +23,7 @@
   - [is-numeric](reference/rules/is-numeric.md)
   - [if-always-true](reference/rules/if-always-true.md)
   - [assignment-in-condition](reference/rules/assignment-in-condition.md)
+  - [browser](reference/rules/browser.md)
   - [shadowed-builtin](reference/rules/shadowed-builtin.md)
   - [redundant-equals](reference/rules/redundant-equals.md)
   - [redundant-ifelse](reference/rules/redundant-ifelse.md)

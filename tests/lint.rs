@@ -1654,6 +1654,54 @@ fn repeat_withholds_fix_for_commented_condition() {
 }
 
 #[test]
+fn browser_deletes_leftover_debug_call() {
+    // A `browser()` statement in a block is deleted whole, leaving no orphaned
+    // blank line.
+    assert_eq!(
+        fixed_output("f <- function() {\n  browser()\n  g()\n}\n", "browser"),
+        "f <- function() {\n  g()\n}\n"
+    );
+    // Top-level statement.
+    assert_eq!(fixed_output("g()\nbrowser()\n", "browser"), "g()\n");
+}
+
+#[test]
+fn browser_flags_call_with_arguments() {
+    // `browser()` accepts `condition`/`expr`/… arguments; it is still a debug
+    // call and still flagged (and safe to delete).
+    assert_eq!(
+        fixed_output("browser(expr = TRUE)\ng()\n", "browser"),
+        "g()\n"
+    );
+}
+
+#[test]
+fn browser_ignores_non_browser_and_redefinitions() {
+    // A same-named user function is not base R's `browser`, so it is left alone.
+    let src = "browser <- function() 1\nbrowser()\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"browser"), "got: {rules:?}");
+
+    // Unrelated call.
+    let rules: Vec<&str> = diagnostics("print(1)\n").iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"browser"), "got: {rules:?}");
+}
+
+#[test]
+fn browser_withholds_fix_at_expression_position() {
+    // In a non-statement position, deleting the call whole would break syntax,
+    // so the fix is withheld — but the finding is still reported.
+    let d = diagnostics("if (x) browser()\n")
+        .into_iter()
+        .find(|d| d.rule == "browser")
+        .expect("expected a browser finding");
+    assert!(
+        d.fix.is_none(),
+        "a non-statement browser() should withhold the fix"
+    );
+}
+
+#[test]
 fn vector_logic_rewrites_scalar_operators() {
     assert_eq!(
         fixed_output("if (a & b) f()\n", "vector-logic"),
@@ -3011,6 +3059,10 @@ fn fixed_output_is_parseable_and_clean() {
         // unreachable-code deletion (after `return()`/`stop()`)
         "f <- function() {\n  g()\n  return(1)\n  2\n}\nf()\n",
         "{\n  stop()\n  f()\n}\n",
+        // browser (safe-delete of a leftover debug call)
+        "browser()\ng()\n",
+        "f <- function() {\n  browser()\n  g()\n}\n",
+        "g()\nbrowser(expr = TRUE)\n",
         // if-always-true (splice the taken branch; `if (FALSE) a` → `NULL`)
         "if (TRUE) f() else g()\n",
         "if (FALSE) f() else g()\n",

@@ -50,6 +50,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::IsNumeric),
         Box::new(correctness::IfAlwaysTrue),
         Box::new(suspicious::AssignmentInCondition),
+        Box::new(suspicious::Browser),
         Box::new(suspicious::ShadowedBuiltin),
         Box::new(suspicious::RedundantEquals),
         Box::new(suspicious::RedundantIfelse),
