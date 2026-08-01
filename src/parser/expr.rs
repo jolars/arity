@@ -33,16 +33,21 @@ fn next_operator<'a>(
 ) -> Option<(usize, &'a Token)> {
     let op_idx = ctx.skip_ws(start);
     let op = ctx.token(op_idx)?;
-    if op.kind == TokKind::Newline {
+    if matches!(op.kind, TokKind::Newline | TokKind::Comment) {
         // Outside brackets, a newline after a complete operand terminates the
         // expression — R only continues across the newline if the prior line is
         // incomplete (i.e. ended in an operator). Inside `(`, `[`, `[[` (and
         // the conditions/sequences of `if`/`while`/`for`), newlines are not
         // statement separators, so peek past them for a continuation operator.
+        //
+        // A trailing comment before the (possible) newline behaves the same way:
+        // it is trivia, not a terminator, so `(a # note\n || b)` continues just
+        // like `(a\n || b)`. `skip_ws` above stops at the comment, so peek past
+        // comments too (not just newlines) when looking for the operator.
         if !inside_brackets {
             return None;
         }
-        let next_idx = ctx.skip_ws_and_newlines(start);
+        let next_idx = ctx.skip_ws_newlines_comments(start);
         let next = ctx.token(next_idx)?;
         if is_assignment_operator(&next.kind) || is_infix_operator(&next.kind) {
             return Some((next_idx, next));

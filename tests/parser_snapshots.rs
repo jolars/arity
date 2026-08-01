@@ -131,6 +131,7 @@ fn fixture_names() -> &'static [&'static str] {
         "expr_walrus",
         "expr_extract_namespace",
         "expr_newline_binary_break",
+        "expr_paren_comment_continuation",
         "expr_separators_tokens",
         "expr_unary",
         "expr_not_precedence",
