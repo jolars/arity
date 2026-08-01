@@ -48,6 +48,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::VectorLogic),
         Box::new(correctness::UnreachableCode),
         Box::new(correctness::IsNumeric),
+        Box::new(correctness::IfAlwaysTrue),
         Box::new(suspicious::AssignmentInCondition),
         Box::new(suspicious::ShadowedBuiltin),
         Box::new(suspicious::RedundantEquals),

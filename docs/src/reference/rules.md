@@ -13,6 +13,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`vector-logic`](rules/vector-logic.md)
 - [`unreachable-code`](rules/unreachable-code.md)
 - [`is-numeric`](rules/is-numeric.md)
+- [`if-always-true`](rules/if-always-true.md)
 
 ## Suspicious
 

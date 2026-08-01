@@ -63,8 +63,9 @@
       per-rule struct in `src/config.rs`, threaded into rules via a
       `config`/`&RuleConfig` field on `RuleContext`. **Blocks**
       `undesirable-function`, `download-file`.
-- [ ] `if-always-true` literal `if (TRUE/FALSE)` only—no const-folding
-      (correctness, unsafe).
+- [x] `if-always-true` literal `if (TRUE/FALSE)` only—no const-folding
+      (correctness, unsafe). Splices the taken branch (`if (FALSE) a` → `NULL`);
+      withholds the fix when a comment outside the branch would be dropped.
 - [ ] `unused-function` (suspicious, sem, none)—reuse
       `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
 - [ ] `duplicated-function-definition` (suspicious, sem, none).

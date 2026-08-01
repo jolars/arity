@@ -3,6 +3,7 @@
 mod duplicate_formal;
 mod duplicated_arguments;
 mod equals_na;
+mod if_always_true;
 mod is_numeric;
 mod undefined_symbol;
 mod unreachable_code;
@@ -12,6 +13,7 @@ mod vector_logic;
 pub use duplicate_formal::DuplicateFormal;
 pub use duplicated_arguments::DuplicatedArguments;
 pub use equals_na::EqualsNa;
+pub use if_always_true::IfAlwaysTrue;
 pub use is_numeric::IsNumeric;
 pub use undefined_symbol::UndefinedSymbol;
 pub use unreachable_code::UnreachableCode;

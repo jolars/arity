@@ -21,6 +21,7 @@
   - [vector-logic](reference/rules/vector-logic.md)
   - [unreachable-code](reference/rules/unreachable-code.md)
   - [is-numeric](reference/rules/is-numeric.md)
+  - [if-always-true](reference/rules/if-always-true.md)
   - [assignment-in-condition](reference/rules/assignment-in-condition.md)
   - [shadowed-builtin](reference/rules/shadowed-builtin.md)
   - [redundant-equals](reference/rules/redundant-equals.md)

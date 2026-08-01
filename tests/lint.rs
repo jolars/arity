@@ -1491,6 +1491,59 @@ fn redundant_ifelse_ignores_non_constant_branches() {
     assert!(!rules.contains(&"redundant-ifelse"), "got: {rules:?}");
 }
 
+#[test]
+fn if_always_true_keeps_taken_branch() {
+    // `TRUE` keeps the `then` branch; `FALSE` keeps the `else` branch.
+    assert_eq!(
+        unsafe_fixed_output("if (TRUE) f() else g()\n", "if-always-true"),
+        "f()\n"
+    );
+    assert_eq!(
+        unsafe_fixed_output("if (FALSE) f() else g()\n", "if-always-true"),
+        "g()\n"
+    );
+    // In an operand position the branch is spliced in place.
+    assert_eq!(
+        unsafe_fixed_output("x <- if (TRUE) 1 else 2\n", "if-always-true"),
+        "x <- 1\n"
+    );
+}
+
+#[test]
+fn if_always_false_without_else_becomes_null() {
+    // The body never runs and there is no `else`, so the `if` is worth `NULL`;
+    // deleting outright would break an operand position, so we splice `NULL`.
+    assert_eq!(
+        unsafe_fixed_output("if (FALSE) f()\n", "if-always-true"),
+        "NULL\n"
+    );
+}
+
+#[test]
+fn if_always_true_ignores_non_literal_conditions() {
+    // A variable, a folded constant (no const-folding), and the rebindable
+    // symbols `T`/`F` are all left alone.
+    for src in ["if (x) f()\n", "if (1 == 1) f()\n", "if (T) f()\n"] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"if-always-true"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn if_always_true_withholds_fix_on_dropped_comment() {
+    // The discarded `then` branch carries a comment; splicing only the `else`
+    // branch would drop it, so the fix is withheld (the finding still stands).
+    let src = "if (FALSE) {\n  # keep me\n  f()\n} else g()\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "if-always-true")
+        .expect("expected an if-always-true finding");
+    assert!(d.fix.is_none(), "fix should be withheld: {:?}", d.fix);
+}
+
 /// Apply every `rule` fix in `src` (safe-only) in one pass.
 fn fixed_output_all(src: &str, rule: &str) -> String {
     let diags = diagnostics(src);
@@ -2958,6 +3011,11 @@ fn fixed_output_is_parseable_and_clean() {
         // unreachable-code deletion (after `return()`/`stop()`)
         "f <- function() {\n  g()\n  return(1)\n  2\n}\nf()\n",
         "{\n  stop()\n  f()\n}\n",
+        // if-always-true (splice the taken branch; `if (FALSE) a` → `NULL`)
+        "if (TRUE) f() else g()\n",
+        "if (FALSE) f() else g()\n",
+        "if (FALSE) f()\n",
+        "x <- if (TRUE) 1 else 2\n",
     ];
     for case in cases {
         assert_fixed_output_is_clean(case);
