@@ -20,13 +20,14 @@ On the command line:
 
 ## Top-level keys
 
-These govern file discovery for **both** `format` and `lint`, which share one
-file walk.
+These apply to **both** `format` and `lint` (the first two govern the shared
+file walk).
 
   | Key              | Type             | Default      | Description                                                                                                                                                                           |
   | ---------------- | ---------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
   | `exclude`        | array of strings | built-in set | [gitignore-style](https://git-scm.com/docs/gitignore) patterns to skip, resolved relative to the directory containing `arity.toml`. Setting it **replaces** the built-in set (below). |
   | `extend-exclude` | array of strings | `[]`         | Like `exclude`, but **added to** `exclude` rather than replacing it. Use this to skip extra paths while keeping the built-in defaults.                                                |
+  | `cache`          | boolean          | `true`       | Enable the persistent result cache (currently the `format --check` already-formatted cache; the cache directory follows `[index] cache-dir`/`$ARITY_CACHE_DIR`). The `--no-cache` CLI flag overrides it per run. |
 
 The built-in default exclude set (the default value of `exclude`; generated or
 vendored files that should not be reformatted or linted) is:

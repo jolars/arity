@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FormatStyle {
     pub line_width: usize,
     pub indent_width: usize,
@@ -20,7 +20,7 @@ impl Default for FormatStyle {
 /// The layout engine always builds output with `\n` line breaks (the formatter
 /// is the sole authority on *where* breaks go, Tenet 1); this only selects the
 /// byte sequence those breaks render as in the final string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LineEnding {
     /// Detect the newline style per file from the first line ending in the
     /// source, defaulting to `\n` when the source has none. The default.

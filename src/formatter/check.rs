@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use super::{FormatError, FormatStyle, format_with_style};
 use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
+use crate::formatter::cache::FormatCache;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
@@ -82,6 +83,20 @@ pub fn check_paths_with_style(
     style: FormatStyle,
     exclude: &ExcludeFilter,
 ) -> Result<CheckResult, CheckError> {
+    check_paths_with_style_cached(paths, style, exclude, None)
+}
+
+/// Like [`check_paths_with_style`], but consults an optional persistent
+/// [`FormatCache`]. A file whose content is a known fixed point (already
+/// formatted under this style and arity version) is counted as checked and
+/// skipped without parsing; newly-confirmed clean files are recorded. The cache
+/// is persisted once, best-effort, before returning.
+pub fn check_paths_with_style_cached(
+    paths: &[PathBuf],
+    style: FormatStyle,
+    exclude: &ExcludeFilter,
+    mut cache: Option<&mut FormatCache>,
+) -> Result<CheckResult, CheckError> {
     if paths.is_empty() {
         return Err(CheckError::MissingPaths);
     }
@@ -108,6 +123,11 @@ pub fn check_paths_with_style(
             source: err.to_string(),
         })?;
 
+        // Cache hit: already-formatted, skip parse+format.
+        if cache.as_deref().is_some_and(|c| c.is_fixed_point(&content)) {
+            continue;
+        }
+
         let formatted =
             format_with_style(&content, style).map_err(|err| CheckError::FormatError {
                 path: path.clone(),
@@ -119,7 +139,16 @@ pub fn check_paths_with_style(
                 original: content,
                 formatted,
             });
+        } else if let Some(c) = cache.as_deref_mut() {
+            c.record_fixed_point(&content);
         }
+    }
+
+    // Persist best-effort: a cache-write failure must never fail the run.
+    if let Some(c) = cache.as_deref()
+        && let Err(err) = c.store()
+    {
+        log::warn!("failed to write format cache: {err}");
     }
 
     Ok(CheckResult {

@@ -211,7 +211,7 @@ impl Cache {
 }
 
 /// Write atomically: write to a sibling temp file, then rename into place.
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().ok_or(CacheError::NoCacheDir)?;
     let mut tmp =
         tempfile::NamedTempFile::new_in(dir).map_err(|e| CacheError::Io(e.to_string()))?;

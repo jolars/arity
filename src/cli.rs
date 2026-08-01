@@ -101,6 +101,11 @@ pub enum Commands {
         /// pre-commit that pass staged files as arguments
         #[arg(long)]
         force_exclude: bool,
+
+        /// Disable the persistent already-formatted cache (read and write) for
+        /// this run; only affects `--check`
+        #[arg(long)]
+        no_cache: bool,
     },
     /// Lint .R files
     ///

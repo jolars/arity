@@ -47,6 +47,11 @@ pub struct Config {
     pub lint: LintConfig,
     #[serde(default)]
     pub index: IndexConfig,
+    /// Enable the persistent result cache (currently the `format --check`
+    /// already-formatted cache). A top-level key because it will govern the
+    /// lint cache too. The `--no-cache` CLI flag overrides this to `false`.
+    #[serde(default = "default_true")]
+    pub cache: bool,
 }
 
 impl Default for Config {
@@ -57,6 +62,7 @@ impl Default for Config {
             format: FormatConfig::default(),
             lint: LintConfig::default(),
             index: IndexConfig::default(),
+            cache: true,
         }
     }
 }
@@ -468,6 +474,12 @@ mod tests {
         let config = Config::default();
         let style = FormatStyle::from(&config.format);
         assert_eq!(style, FormatStyle::default());
+    }
+
+    #[test]
+    fn cache_defaults_true_and_parses_false() {
+        assert!(parse("").expect("parse").cache);
+        assert!(!parse("cache = false\n").expect("parse").cache);
     }
 
     #[test]

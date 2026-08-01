@@ -79,6 +79,9 @@ Format .R files
 `--force-exclude`
 :   Apply exclude patterns to files named explicitly on the command line too (they are normally always processed); for runners like pre-commit that pass staged files as arguments
 
+`--no-cache`
+:   Disable the persistent already-formatted cache (read and write) for this run; only affects `--check`
+
 ## `arity lint`
 
 Lint .R files

@@ -6,7 +6,9 @@ use std::process::ExitCode;
 use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
 use arity::file_discovery::{ExcludeFilter, collect_r_files};
-use arity::formatter::{ChangedFile, FormatStyle, check_paths_with_style, format_with_style};
+use arity::formatter::{
+    ChangedFile, FormatCache, FormatStyle, check_paths_with_style_cached, format_with_style,
+};
 use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
 use arity::parser::{parse, reconstruct};
 use arity::rindex::build::{BuildOptions, PackageOutcome, build_index};
@@ -62,10 +64,14 @@ fn main() -> ExitCode {
             indent_width,
             exclude,
             force_exclude,
+            no_cache,
         } => run_format(
             paths,
-            verify,
-            check,
+            FormatModes {
+                verify,
+                check,
+                no_cache,
+            },
             FormatOverrides {
                 line_width,
                 indent_width,
@@ -332,6 +338,15 @@ struct FormatOverrides {
     indent_width: Option<u32>,
 }
 
+/// The boolean mode flags of the `format` command, bundled to keep
+/// [`run_format`]'s arity in check.
+#[derive(Debug, Clone, Copy)]
+struct FormatModes {
+    verify: bool,
+    check: bool,
+    no_cache: bool,
+}
+
 struct LintOverrides {
     select: Vec<String>,
     ignore: Vec<String>,
@@ -388,14 +403,23 @@ fn format_style_with_overrides(
     Ok(FormatStyle::from(&format))
 }
 
-/// Resolve both the formatter style and the exclude filter for the `format`
-/// command from a single config load. Prints and returns an exit code on error.
+/// The persistent-cache settings resolved from config for the `format` command.
+/// `enabled` reflects the config `cache` key (before the `--no-cache` override);
+/// `dir` is the optional `[index] cache-dir` override.
+struct FormatCacheSetup {
+    enabled: bool,
+    dir: Option<PathBuf>,
+}
+
+/// Resolve the formatter style, exclude filter, and cache settings for the
+/// `format` command from a single config load. Prints and returns an exit code
+/// on error.
 fn resolve_format_setup(
     source: &ConfigSource,
     overrides: &FormatOverrides,
     cli_excludes: &[String],
     anchor: &Path,
-) -> Result<(FormatStyle, ExcludeFilter), ExitCode> {
+) -> Result<(FormatStyle, ExcludeFilter, FormatCacheSetup), ExitCode> {
     let (config, config_path) = load_config_with_source(source, anchor).map_err(|err| {
         eprintln!("error: {err}");
         ExitCode::from(2)
@@ -405,7 +429,11 @@ fn resolve_format_setup(
         ExitCode::from(2)
     })?;
     let exclude = build_exclude_filter(&config, config_path.as_deref(), anchor, cli_excludes)?;
-    Ok((style, exclude))
+    let cache = FormatCacheSetup {
+        enabled: config.cache,
+        dir: config.index.cache_dir.clone(),
+    };
+    Ok((style, exclude, cache))
 }
 
 fn run_parse(file: Option<PathBuf>, quiet: bool, verify: bool) -> ExitCode {
@@ -441,10 +469,19 @@ fn run_parse(file: Option<PathBuf>, quiet: bool, verify: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Whether the persistent format cache is compiled in. It is disabled in debug
+/// builds: the on-disk cache key is the crate version, which is frozen across a
+/// whole dev cycle, so a stale fixed-point hit would mask formatter behavior
+/// changes while iterating. Release users get the cache, where formatting is
+/// stable within a published version. `--no-cache`/`cache = false` still apply.
+#[cfg(debug_assertions)]
+const CACHE_SUPPORTED: bool = false;
+#[cfg(not(debug_assertions))]
+const CACHE_SUPPORTED: bool = true;
+
 fn run_format(
     paths: Vec<PathBuf>,
-    verify: bool,
-    check: bool,
+    modes: FormatModes,
     overrides: FormatOverrides,
     excludes: ExcludeOptions,
     config_source: &ConfigSource,
@@ -454,19 +491,20 @@ fn run_format(
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let (style, exclude) =
+    let (style, exclude, cache_setup) =
         match resolve_format_setup(config_source, &overrides, &excludes.patterns, &anchor) {
             Ok(setup) => setup,
             Err(code) => return code,
         };
     let exclude = exclude.with_force_exclude(excludes.force);
 
-    if check {
-        if verify {
+    if modes.check {
+        if modes.verify {
             eprintln!("error: --verify cannot be combined with --check");
             return ExitCode::from(2);
         }
-        return run_format_check(&paths, style, &exclude, out);
+        let cache_enabled = cache_setup.enabled && !modes.no_cache && CACHE_SUPPORTED;
+        return run_format_check(&paths, style, &exclude, cache_enabled, cache_setup.dir, out);
     }
 
     if paths.is_empty() {
@@ -486,7 +524,7 @@ fn run_format(
             }
         };
 
-        if verify {
+        if modes.verify {
             let reformatted = match format_with_style(&formatted, style) {
                 Ok(reformatted) => reformatted,
                 Err(err) => {
@@ -504,16 +542,25 @@ fn run_format(
         return ExitCode::SUCCESS;
     }
 
-    run_format_write_paths(&paths, verify, style, &exclude, out)
+    run_format_write_paths(&paths, modes.verify, style, &exclude, out)
 }
 
 fn run_format_check(
     paths: &[PathBuf],
     style: FormatStyle,
     exclude: &ExcludeFilter,
+    cache_enabled: bool,
+    cache_dir: Option<PathBuf>,
     out: OutputOptions,
 ) -> ExitCode {
-    match check_paths_with_style(paths, style, exclude) {
+    // Load the persistent already-formatted cache when enabled and a cache root
+    // is resolvable; an unresolvable root just skips caching (never an error).
+    let mut cache = cache_enabled
+        .then(|| resolve_cache_root(None, cache_dir.as_deref()).ok())
+        .flatten()
+        .map(|root| FormatCache::load(&root, &style));
+
+    match check_paths_with_style_cached(paths, style, exclude, cache.as_mut()) {
         Ok(result) => {
             if result.changed_files.is_empty() {
                 if out.verbose {
