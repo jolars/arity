@@ -38,10 +38,8 @@ pub(super) fn split_lines(
         break_count = 0;
 
         if !current.is_empty() {
-            if matches!(element, NodeOrToken::Token(ref tok) if tok.kind() == SyntaxKind::COMMENT)
-                && !current.iter().any(
-                    |el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT),
-                )
+            if is_inline_trailing_comment(&element)
+                && !current.iter().any(is_inline_trailing_comment)
             {
                 current.push(element);
                 continue;
@@ -63,6 +61,36 @@ pub(super) fn split_lines(
 
 pub(super) fn is_trivia(kind: SyntaxKind) -> bool {
     matches!(kind, SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE)
+}
+
+/// An element that, when it trails a statement on the same line, is a trailing
+/// comment: a `#` comment token, or a single-line `#'` `ROXYGEN_BLOCK` node.
+///
+/// A mid-line `#'` is only a roxygen marker to the lexer; roxygen2 treats `#'`
+/// as documentation solely at line start, so trailing a statement it is a plain
+/// comment (e.g. `object <- formula #'formula' because ...` in `survival`). The
+/// block is attached to the statement's line here and rendered as a trailing
+/// comment by [`super::core::ir_line`]. Multi-line roxygen blocks are excluded
+/// so the single-line line-suffix rendering stays valid.
+pub(super) fn is_inline_trailing_comment(element: &SyntaxElement<RLanguage>) -> bool {
+    inline_trailing_comment_text(element).is_some()
+}
+
+/// The verbatim comment text of an [`is_inline_trailing_comment`] element, for
+/// rendering as a trailing line suffix. `None` when the element is not a
+/// trailing comment. A `#'` block is emitted as its own source text (not
+/// reflowed): mid-line it is a comment, so it is preserved like any `#` comment.
+pub(super) fn inline_trailing_comment_text(element: &SyntaxElement<RLanguage>) -> Option<String> {
+    match element {
+        NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT => {
+            Some(tok.text().to_string())
+        }
+        NodeOrToken::Node(node) if node.kind() == SyntaxKind::ROXYGEN_BLOCK => {
+            let text = node.text().to_string();
+            (!text.contains('\n')).then_some(text)
+        }
+        _ => None,
+    }
 }
 
 fn is_comment_only_line(line: &[SyntaxElement<RLanguage>]) -> bool {

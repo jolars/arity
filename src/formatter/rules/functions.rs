@@ -1597,9 +1597,13 @@ fn try_flatten_function_block(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Option<Ir>, FormatError> {
+    // A comment in the body keeps the braces (bare `function(p) stmt # c` would
+    // dangle the comment). A mid-line `#'` parses as a `ROXYGEN_BLOCK` rather
+    // than a `COMMENT` token but is a comment all the same, so it keeps the
+    // braces too, matching the plain-comment case.
     if block
         .descendants_with_tokens()
-        .any(|el| el.kind() == SyntaxKind::COMMENT)
+        .any(|el| el.kind() == SyntaxKind::COMMENT || el.kind() == SyntaxKind::ROXYGEN_BLOCK)
     {
         return Ok(None);
     }

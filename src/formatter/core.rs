@@ -404,16 +404,9 @@ pub(super) fn ir_line(
     }
 
     if significant.len() == 2
-        && matches!(
-            significant.last(),
-            Some(NodeOrToken::Token(token)) if token.kind() == SyntaxKind::COMMENT
-        )
+        && let Some(comment) = super::trivia::inline_trailing_comment_text(&significant[1])
     {
         let expr = ir_expr_element(&significant[0], indent, ctx)?;
-        let comment = match &significant[1] {
-            NodeOrToken::Token(token) => token.text().to_string(),
-            NodeOrToken::Node(_) => unreachable!(),
-        };
         // The trailing comment is a zero-width line suffix so it never forces the
         // expression's own groups to break (matching air); the statement
         // separator supplies the newline that ends its line.
@@ -545,16 +538,9 @@ pub(super) fn ir_expr_with_optional_comment(
         .collect();
 
     if significant.len() == 2
-        && matches!(
-            significant.last(),
-            Some(NodeOrToken::Token(token)) if token.kind() == SyntaxKind::COMMENT
-        )
+        && let Some(comment) = super::trivia::inline_trailing_comment_text(&significant[1])
     {
         let expr = ir_expr_element(&significant[0], indent, ctx)?;
-        let comment = match &significant[1] {
-            NodeOrToken::Token(token) => token.text().to_string(),
-            NodeOrToken::Node(_) => unreachable!(),
-        };
         // Zero-width line suffix: the trailing comment must not force the
         // expression to break (matching air). A break always follows it in
         // context (statement separator, or the enclosing list that a comment

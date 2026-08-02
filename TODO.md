@@ -40,9 +40,16 @@
     `wch/r-source` `methods/R/MethodsList.R`, issue #89). The operator-leading
     comment path now recognizes bare roxygen leaves and stacks multiple
     comments on their own lines instead of merging them.
-  - [ ] `ambiguous construct (block body)` — a statement trailed by a `#'`
+  - [x] `ambiguous construct (block body)` — a statement trailed by a `#'`
     roxygen marker mid-line, which splits the line into two elements
-    (`survival/R/survfit.coxph.R`, `survival/R/survfit.coxphms.R`).
+    (`survival/R/survfit.coxph.R`, `survival/R/survfit.coxphms.R`). A mid-line
+    `#'` is only a roxygen marker to the lexer; roxygen2 treats it as a plain
+    comment there. `split_lines` now attaches a trailing single-line
+    `ROXYGEN_BLOCK` to the statement's line (like a `COMMENT` token) and
+    `ir_line` renders it as a trailing line-suffix comment;
+    `try_flatten_function_block` bails on a `ROXYGEN_BLOCK` too, so a
+    single-statement body keeps its braces exactly as with a `#` comment
+    (fixture `block_body_trailing_roxygen`).
   - [ ] Idempotence: `survival/R/survcheck.R`.
 
 ## Linter
