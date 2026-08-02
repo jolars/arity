@@ -19,8 +19,8 @@ and IDEs.
 
 - **Formatter**: deterministic, rule-based formatting toward the tidyverse style
   guide, with idempotent output and roxygen support.
-- **Linter**: a growing set of correctness, readability, and performance rules,
-  many with safe autofixes.
+- **Linter**: correctness, readability, and performance rules, many with safe
+  autofixes.
 - **Language server**: formatting, diagnostics with quick fixes, hover,
   completion, signature help, go-to-definition and references, rename, document
   and workspace symbols, semantic tokens, folding, and call hierarchy.
