@@ -133,11 +133,19 @@ pub(crate) fn ir_binary_expr(
             | SyntaxKind::DOLLAR
             | SyntaxKind::AT
     ) {
-        let lhs = ir_binary_side(&elements[..op_idx], "binary lhs", indent, ctx)?;
+        // A comment trailing the LHS operand cannot sit before a sticky operator
+        // (the operator never wraps), so relocate it to trail the whole
+        // expression as a zero-width line suffix (matching air: `a$b # note`).
+        let (lhs, lhs_comments) = ir_binary_lhs(&elements[..op_idx], "binary lhs", indent, ctx)?;
         let (rhs_comments, rhs) =
             ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
         if rhs_comments.is_empty() {
-            return Ok(Ir::concat([lhs, Ir::text(op_text), rhs]));
+            return Ok(Ir::concat([
+                lhs,
+                Ir::text(op_text),
+                rhs,
+                comment_suffix(&lhs_comments),
+            ]));
         }
         return Ok(Ir::concat([
             lhs,
@@ -145,6 +153,7 @@ pub(crate) fn ir_binary_expr(
             comment_suffix(&rhs_comments),
             Ir::indent(Ir::hard_line()),
             rhs,
+            comment_suffix(&lhs_comments),
         ]));
     }
 
@@ -155,13 +164,17 @@ pub(crate) fn ir_binary_expr(
     // indent. The chain is left-associative, so only the final stage's RHS is a
     // leaf call here; deeper stages sit in the LHS and keep their own indent.
     if op_kind == SyntaxKind::PIPE || (op_kind == SyntaxKind::USER_OP && op_text == "%>%") {
-        let lhs = ir_binary_side(&elements[..op_idx], "binary lhs", indent, ctx)?;
+        // A comment trailing the LHS is relocated onto the operator's line ahead
+        // of any operator-trailing comment (matching air: `x |> # note`), since
+        // the pipe always breaks after the operator anyway.
+        let (lhs, lhs_comments) = ir_binary_lhs(&elements[..op_idx], "binary lhs", indent, ctx)?;
         let (rhs_comments, rhs) =
             ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
+        let comments: Vec<String> = lhs_comments.into_iter().chain(rhs_comments).collect();
         return Ok(Ir::concat([
             lhs,
             Ir::text(format!(" {op_text}")),
-            comment_suffix(&rhs_comments),
+            comment_suffix(&comments),
             Ir::indent(Ir::concat([Ir::hard_line(), rhs])),
         ]));
     }
@@ -277,14 +290,23 @@ fn collect_binary_chain(
     };
     let (rhs_comments, rhs) = ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
 
+    // A comment trailing the LHS operand is relocated onto this operator's line
+    // (matching air: `a && # note` then the RHS on the next line). It only
+    // arises on the non-descending branch: a comment on the LHS boundary makes
+    // `same_level_binary_lhs` return `None`, so a flattened chain never carries
+    // one across a segment.
     let lhs_elements = &elements[..op_idx];
-    let (first, mut segments) = match same_level_binary_lhs(lhs_elements, level) {
-        Some(inner) => collect_binary_chain(&inner, level, indent, ctx)?,
-        None => (
-            ir_binary_side(lhs_elements, "binary lhs", indent, ctx)?,
-            Vec::new(),
-        ),
+    let (first, mut segments, lhs_comments) = match same_level_binary_lhs(lhs_elements, level) {
+        Some(inner) => {
+            let (first, segments) = collect_binary_chain(&inner, level, indent, ctx)?;
+            (first, segments, Vec::new())
+        }
+        None => {
+            let (operand, comments) = ir_binary_lhs(lhs_elements, "binary lhs", indent, ctx)?;
+            (operand, Vec::new(), comments)
+        }
     };
+    let rhs_comments: Vec<String> = lhs_comments.into_iter().chain(rhs_comments).collect();
 
     // When broken, the operator stays on the prior line so the continuation is
     // R-valid (a leading operator on the next line would parse as a separate
@@ -374,6 +396,39 @@ fn ir_binary_rhs(
         .collect();
     let operand = ir_binary_side(&elements[first_significant..], context, indent, ctx)?;
     Ok((comments, operand))
+}
+
+/// Builds a binary operand, splitting off any comments that appear *after* the
+/// operand (a trailing comment on the operand's line, before the operator, e.g.
+/// `a # note` then `&& b` on the next line). A comment runs to end of line, so
+/// the operator cannot share the operand's line; the caller relocates these
+/// comments onto the operator's line (matching air). Returns the operand IR
+/// (built through the last significant element so the normal segment path still
+/// sees a single operand) plus the trailing comment texts in order.
+fn ir_binary_lhs(
+    elements: &[SyntaxElement<RLanguage>],
+    context: &'static str,
+    indent: usize,
+    ctx: FormatContext,
+) -> Result<(Ir, Vec<String>), FormatError> {
+    let Some(last_significant) = elements
+        .iter()
+        .rposition(|el| !is_trivia(el.kind()) && el.kind() != SyntaxKind::COMMENT)
+    else {
+        // No operand: let the normal path raise the error.
+        return Ok((ir_binary_side(elements, context, indent, ctx)?, Vec::new()));
+    };
+    let comments: Vec<String> = elements[last_significant + 1..]
+        .iter()
+        .filter_map(|el| match el {
+            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT => {
+                Some(tok.text().to_string())
+            }
+            _ => None,
+        })
+        .collect();
+    let operand = ir_binary_side(&elements[..=last_significant], context, indent, ctx)?;
+    Ok((operand, comments))
 }
 
 /// A leading ` ` plus the comments joined by spaces, or nothing when there are
