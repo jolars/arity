@@ -34,6 +34,7 @@ pub mod documentation;
 pub mod matchers;
 pub mod performance;
 pub mod readability;
+pub mod regex;
 pub mod roxygen;
 pub mod suspicious;
 

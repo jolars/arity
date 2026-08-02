@@ -163,30 +163,6 @@ pub fn string_literal(token: &SyntaxToken) -> Option<(char, &str)> {
     Some((quote as char, &text[1..text.len() - 1]))
 }
 
-/// Whether `s` contains no regex metacharacter (and no backslash escape), so it
-/// matches literally and identically under both regex and `fixed = TRUE`
-/// semantics. All metacharacters are ASCII, so a byte scan is sufficient.
-pub fn is_plain_regex_literal(s: &str) -> bool {
-    !s.bytes().any(|b| {
-        matches!(
-            b,
-            b'.' | b'\\'
-                | b'|'
-                | b'('
-                | b')'
-                | b'['
-                | b']'
-                | b'{'
-                | b'}'
-                | b'^'
-                | b'$'
-                | b'*'
-                | b'+'
-                | b'?'
-        )
-    })
-}
-
 // --- splice contexts -------------------------------------------------------
 
 /// Whether an expression that binds as loosely as `!` (a negation, or the
@@ -384,16 +360,6 @@ mod tests {
         let call = first_call("grepl('a.b', x)");
         let tok = nth_arg(&call, 0).unwrap().into_token().unwrap();
         assert_eq!(string_literal(&tok), Some(('\'', "a.b")));
-    }
-
-    #[test]
-    fn plain_regex_literal_rejects_metacharacters() {
-        assert!(is_plain_regex_literal("abc"));
-        assert!(is_plain_regex_literal("hello world"));
-        assert!(!is_plain_regex_literal("a.b"));
-        assert!(!is_plain_regex_literal("a\\.b"));
-        assert!(!is_plain_regex_literal("^abc"));
-        assert!(!is_plain_regex_literal("a+b"));
     }
 
     #[test]

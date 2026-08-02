@@ -29,8 +29,7 @@
 use rowan::ast::AstNode as _;
 
 use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
-use crate::linter::rules::matchers;
-use crate::linter::rules::{Example, Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext, matchers, regex};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxToken};
 
 pub struct StringBoundary;
@@ -139,20 +138,10 @@ impl Rule for StringBoundary {
 /// and the anchor-stripped literal, rebuilt with the original quote character.
 fn classify(token: &SyntaxToken) -> Option<(&'static str, String)> {
     let (quote, inner) = matchers::string_literal(token)?;
-    let (func, rest) = if let Some(rest) = inner.strip_prefix('^') {
-        // `^abc$` is a both-ends anchor (an exact match), not a boundary test.
-        if rest.ends_with('$') {
-            return None;
-        }
-        ("startsWith", rest)
-    } else {
-        // Reached only when `inner` does not start with `^`, so this is a lone
-        // trailing anchor.
-        let rest = inner.strip_suffix('$')?;
-        ("endsWith", rest)
+    let (anchor, rest) = regex::single_anchor(inner)?;
+    let func = match anchor {
+        regex::Anchor::Start => "startsWith",
+        regex::Anchor::End => "endsWith",
     };
-    if rest.is_empty() || !matchers::is_plain_regex_literal(rest) {
-        return None;
-    }
     Some((func, format!("{quote}{rest}{quote}")))
 }

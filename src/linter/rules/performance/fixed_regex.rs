@@ -25,8 +25,7 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::CallExpr;
 use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
-use crate::linter::rules::matchers;
-use crate::linter::rules::{Example, Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext, matchers, regex};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct FixedRegex;
@@ -99,7 +98,7 @@ impl Rule for FixedRegex {
         let Some((_, inner)) = matchers::string_literal(tok) else {
             return;
         };
-        if inner.is_empty() || !matchers::is_plain_regex_literal(inner) {
+        if !regex::is_fixed_string(inner) {
             return;
         }
 

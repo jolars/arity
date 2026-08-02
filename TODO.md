@@ -60,9 +60,13 @@
 - [ ] `empty-assignment` (correctness, none).
 - [ ] `implicit-assignment` (suspicious, none)—scope to avoid overlap with
       existing `assignment-in-condition`.
-- [ ] **§I2 regex/string-literal helper** first: read a `STRING` token's
-      unquoted contents; classify regex metachars/single anchor (`^`/`$`).
-      Blocks `string-boundary`, `fixed-regex`.
+- [x] **§I2 regex/string-literal helper**: read a `STRING` token's unquoted
+      contents; classify regex metachars/single anchor (`^`/`$`). Originally
+      framed as a blocker for `string-boundary`/`fixed-regex`, but those rules
+      shipped first with the logic inline; §I2 landed as the consolidation—the
+      classification now lives in `src/linter/rules/regex.rs`
+      (`is_plain_literal`/`is_fixed_string`/`single_anchor`), which both rules
+      call. Raw-string (`r"(...)"`) coverage is still deferred.
 - [ ] `internal-function` `pkg:::fn` via
       `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.
 - [ ] **§I4 per-rule config**: add a `[lint.rules.<id>]` TOML table + typed
