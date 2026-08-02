@@ -77,6 +77,12 @@ pub struct SemanticModel {
     /// (a conservative reassignment; see `reads_reached`), and a free/undefined
     /// read reaches none. Read via [`ident_bindings`](Self::ident_bindings).
     ident_bindings: Vec<Vec<BindingId>>,
+    /// Whether the file calls `attach()` or `load()` — scope introducers whose
+    /// bindings arity can't enumerate statically (`attach`'s data-frame columns
+    /// go on the search path; `load` restores arbitrary names from an `.rda`).
+    /// `undefined-symbol` gates the whole file when set, since any otherwise-
+    /// unresolved bare name might be one of those opaquely-introduced bindings.
+    attaches_opaque_env: bool,
 }
 
 impl SemanticModel {
@@ -132,6 +138,13 @@ impl SemanticModel {
 
     pub fn loaded_packages(&self) -> &[LoadedPackage] {
         &self.loaded_packages
+    }
+
+    /// Whether the file calls `attach()` or `load()`, opaquely introducing
+    /// bindings arity can't enumerate. `undefined-symbol` gates the whole file
+    /// when this is set (see the field doc).
+    pub fn attaches_opaque_env(&self) -> bool {
+        self.attaches_opaque_env
     }
 
     /// Packages referenced via `pkg::name` / `pkg:::name`, in source order
@@ -829,5 +842,90 @@ mod tests {
         assert_eq!(x_binding.kind, BindingKind::Implicit);
         let scope = m.scope(x_binding.scope);
         assert_eq!(scope.kind, ScopeKind::File);
+    }
+
+    #[test]
+    fn native_routine_head_arg_is_not_a_read() {
+        // A bare IDENT in the head (first-argument) position of `.C`/`.Call`/
+        // `.Fortran`/`.External` names a native routine registered by the
+        // NAMESPACE, not a scope read, so it must not be recorded as an ident.
+        for callee in [".C", ".Call", ".Fortran", ".External"] {
+            let src = format!("f <- function(x) {callee}(VR_sammon, as.double(x))");
+            let m = model_of(&src);
+            assert!(
+                !m.idents().iter().any(|i| i.name == "VR_sammon"),
+                "{callee}: native routine head must be suppressed, got {:?}",
+                m.idents()
+            );
+            // The remaining arguments stay ordinary reads.
+            assert!(
+                m.idents().iter().any(|i| i.name == "x"),
+                "{callee}: later args stay reads"
+            );
+        }
+    }
+
+    #[test]
+    fn native_routine_only_head_suppressed() {
+        // Only the first argument is a routine name; a bare name elsewhere is a
+        // normal read (a string head has no IDENT to suppress).
+        let m = model_of(".Call(\"routine\", bogus)");
+        assert!(
+            m.idents().iter().any(|i| i.name == "bogus"),
+            "non-head arg must stay a read, got {:?}",
+            m.idents()
+        );
+    }
+
+    #[test]
+    fn data_loader_introduces_binding() {
+        // `data(sole)` binds `sole` in the caller's frame, so a later `sole`
+        // read resolves rather than dangling.
+        let m = model_of("data(sole)\nsole$off <- 1\n");
+        let sole = m
+            .bindings
+            .iter()
+            .find(|b| b.name == "sole")
+            .expect("data() should introduce a `sole` binding");
+        assert_eq!(sole.kind, BindingKind::Implicit);
+        // The later member-access read of `sole` resolves to that binding.
+        let read = m
+            .idents()
+            .iter()
+            .find(|i| i.name == "sole")
+            .expect("a `sole` read");
+        assert!(m.resolve_local(read).is_some(), "`sole` read must resolve");
+    }
+
+    #[test]
+    fn data_loader_binds_each_bare_name() {
+        // Multiple positional bare names each become a binding; a `package=`
+        // string introduces nothing.
+        let m = model_of("data(painters, sole, package = \"MASS\")\n");
+        for name in ["painters", "sole"] {
+            assert!(
+                m.bindings.iter().any(|b| b.name == name),
+                "expected a binding for `{name}`, got {:?}",
+                m.bindings
+                    .iter()
+                    .map(|b| b.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn attach_sets_opaque_env_flag() {
+        assert!(model_of("attach(painters)").attaches_opaque_env());
+    }
+
+    #[test]
+    fn load_sets_opaque_env_flag() {
+        assert!(model_of("load(\"x.rda\")").attaches_opaque_env());
+    }
+
+    #[test]
+    fn plain_file_leaves_opaque_env_flag_unset() {
+        assert!(!model_of("x <- 1\nprint(x)\n").attaches_opaque_env());
     }
 }

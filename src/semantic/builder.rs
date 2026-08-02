@@ -341,6 +341,44 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         return;
     }
 
+    // A handful of base callees introduce or reference names in ways the plain
+    // scope walk can't see. Match by name (independent of package, like the
+    // data-masking set): over-matching only ever *suppresses* an
+    // `undefined-symbol` finding, the conservative direction.
+    if let Some(call) = CallExpr::cast(node.clone())
+        && let Some(callee) = call_callee_ident(&call)
+    {
+        match callee.as_str() {
+            // `attach(df)` puts a data frame's columns on the search path and
+            // `load("*.rda")` restores arbitrary names — both introduce bindings
+            // arity can't enumerate statically. Flag the file so
+            // `undefined-symbol` gates it, then fall through to a normal walk
+            // (the call's own arguments are ordinary reads).
+            "attach" | "load" => {
+                ctx.model.attaches_opaque_env = true;
+            }
+            // `.C`/`.Call`/`.Fortran`/`.External`: a bare IDENT in the head
+            // (first-argument) position names a native routine registered via
+            // `useDynLib`, not a scope read. Suppress just that read; the
+            // remaining arguments stay ordinary reads. A string head has no
+            // IDENT (a no-op), and a compound/`::`-qualified head yields no
+            // bare token here, so it walks normally.
+            ".C" | ".Call" | ".Fortran" | ".External" => {
+                if let Some((_, head_range)) = first_string_or_ident_arg(&call) {
+                    let prev = ctx.suppress_read.replace(head_range);
+                    walk_generic(ctx, node, scope);
+                    ctx.suppress_read = prev;
+                    return;
+                }
+            }
+            // `data(name, …)` lazy-loads each named dataset and binds it in the
+            // caller's frame, so a later `name$col` read resolves. Introduce a
+            // binding for each bare-name argument, then walk normally.
+            "data" => introduce_data_bindings(ctx, &call, scope),
+            _ => {}
+        }
+    }
+
     // A data-masking verb (e.g. `mutate`) evaluates its arguments in the data
     // mask, where a bare name may be a column; a quoting callee (`quote`,
     // `substitute`, …) doesn't evaluate its argument body at all. Either way a
@@ -365,6 +403,43 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     }
 
     walk_generic(ctx, node, scope);
+}
+
+/// Introduce a binding for each bare-name positional argument of a `data()`
+/// call. `data(sole)` lazy-loads the `sole` dataset and binds it in the calling
+/// frame, so later reads (`sole$off`) resolve. Bound `Implicit` (like `<<-`
+/// targets): opaquely introduced, and thus excluded from `unused-binding`.
+/// String / named (`package = "…"`, `list = …`) arguments introduce nothing.
+fn introduce_data_bindings(ctx: &mut BuildCtx<'_>, call: &CallExpr, scope: ScopeId) {
+    let Some(arg_list) = call.arg_list() else {
+        return;
+    };
+    for arg in arg_list.args() {
+        if arg.is_named() {
+            continue;
+        }
+        let Some(NodeOrToken::Token(tok)) = arg.value() else {
+            continue;
+        };
+        if tok.kind() != SyntaxKind::IDENT {
+            continue;
+        }
+        // Skip `...`/`..1` and reserved constants (`data(NULL)` etc.): not names
+        // to bind. Mirrors `record_ident_read`'s exclusions.
+        if let Some(ident) = Ident::cast(tok.clone())
+            && (ident.is_dots() || ident.is_reserved_constant())
+        {
+            continue;
+        }
+        push_binding(
+            ctx.model,
+            scope,
+            SmolStr::new(tok.text()),
+            BindingKind::Implicit,
+            tok.text_range(),
+            ctx.loop_range,
+        );
+    }
 }
 
 /// Whether the `CALL_EXPR` `node`'s bare reads in its argument list should be

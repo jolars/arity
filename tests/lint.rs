@@ -1233,6 +1233,62 @@ fn undefined_symbol_skips_implicit_method_variables() {
     );
 }
 
+#[test]
+fn undefined_symbol_skips_native_routine_head() {
+    // A bare name in the head position of `.C`/`.Call`/`.Fortran`/`.External`
+    // names a native routine registered via `useDynLib`, not a scope read.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("f <- function(x) .C(VR_sammon, as.double(x))\n", &p);
+    assert!(
+        msgs.is_empty(),
+        "native routine head must not be flagged, got {msgs:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_still_flags_non_head_native_arg() {
+    // Only the head is suppressed: a genuine typo in a later argument (with a
+    // string routine name) is still flagged.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with(".Call(\"routine\", bogus)\n", &p);
+    assert_eq!(msgs.len(), 1, "only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_skips_data_loader_bindings() {
+    // `data(sole)` binds `sole`, so the loader argument and later `sole$…`
+    // reads resolve instead of being flagged undefined.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("data(sole)\nsole$off <- log(sole$a.1)\n", &p);
+    assert!(
+        msgs.is_empty(),
+        "data()-introduced `sole` must not be flagged, got {msgs:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_gated_by_attach() {
+    // `attach(df)` puts a data frame's columns on the search path; their names
+    // are statically unknowable, so the rule stays silent for the whole file.
+    // (This deliberately also silences genuine typos in such files — the
+    // accepted, conservative trade-off for a false-positive-only rule.)
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("attach(painters)\ntable(School)\n", &p);
+    assert!(
+        msgs.is_empty(),
+        "attach() should gate the file, got {msgs:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_gated_by_load() {
+    // `load("*.rda")` opaquely introduces bindings, so the file is gated.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("load(\"wages.rda\")\nprint(BankWages)\n", &p);
+    assert!(msgs.is_empty(), "load() should gate the file, got {msgs:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Autofix
 // ---------------------------------------------------------------------------

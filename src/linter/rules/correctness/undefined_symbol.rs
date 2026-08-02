@@ -47,6 +47,14 @@ impl Rule for UndefinedSymbol {
     }
 
     fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+        // Conservative gate: `attach()`/`load()` introduce bindings arity can't
+        // enumerate (a data frame's columns on the search path; arbitrary names
+        // from an `.rda`), so any otherwise-unresolved bare name in the file
+        // might be one of them. Stay silent for the whole file. Applies to both
+        // resolution paths below.
+        if ctx.model.attaches_opaque_env() {
+            return;
+        }
         match ctx.resolution {
             // Cross-file path: the salsa `external_resolution` query already
             // applied the conservative gates and the project + package masking,

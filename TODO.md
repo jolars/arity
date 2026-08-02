@@ -698,34 +698,35 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     actually need it. Lower leverage for a single-crate tool (the wart
     is already gone).
 
-- [ ] `undefined-symbol` FP frontier from the cran/MASS investigation
-  (2026-08-01). Four unmodeled binding mechanisms drive ~91% of MASS's
-  `undefined-symbol` findings (75/82), each a distinct suppress-only fix:
-  - **`useDynLib(..., .registration = TRUE)` native routines** (14 findings, the
-    only category hitting real `R/` source). NAMESPACE registers each C/Fortran
-    entry point (`VR_sammon`, `mve_fitlots`, …) as a namespace object usable
-    bare in `.C`/`.Call`/`.Fortran`/`.External`. Arity doesn't read `useDynLib`,
-    so it flags them. Cheap, correct-by-construction fix independent of NAMESPACE:
-    a bare `IDENT` in the *head* (first-argument) position of `.C`/`.Call`/
-    `.Fortran`/`.External` names a native routine, not a scope read—suppress it.
-    Repro: `f <- function(x) .C(VR_sammon, as.double(x))`.
-  - **`attach(df)` scope-introducer** (49 findings, the biggest bucket). Puts a
-    data frame's columns on the search path; every later bare column ref
-    (`School`, `Age`, …) is flagged. Hard to model precisely (dynamic search
-    path); recognizing `attach(x)` and suppressing subsequent bare-name flags is
-    the high-value move. Repro: `attach(painters); table(School)`.
-  - **`data(name)` NSE loader** (12). The argument is NSE and the call binds
-    `name` in the caller's env; arity flags both the `data(sole)` argument and
-    every later `sole$…`. Treat the arg as NSE (don't flag) and introduce a
-    binding. Repro: `data(sole); sole$off <- log(sole$a.1)`.
-  - **`load("*.rda")` binding-introducer + model-frame columns** (2). `load()`
-    opaquely introduces bindings (`BankWages`); and non-`data` model-fitting args
-    evaluated in the data frame (`polr(size ~ carrier, data = tonsils, weights =
-    count)`—`count` is a `tonsils` column) are the known `with`/`subset`
-    data-variable frontier extended to `weights`/`subset`/`offset` on
-    `lm`/`glm`/`polr`. (All confirmed valid via `Rscript`; the remaining 7 MASS
-    findings—`A5`/`pr3`/`labs`/`module`—are genuine dangling refs in incomplete
-    book-excerpt scripts, correctly flagged.)
+- `undefined-symbol` FP frontier from the cran/MASS investigation
+  (2026-08-01). Four unmodeled binding mechanisms drove ~91% of MASS's
+  `undefined-symbol` findings (75/82), each a distinct suppress-only fix. Three
+  are now handled in the semantic-model builder (`src/semantic/builder.rs`
+  `handle_call`), with the model-frame tail deferred:
+  - [x] **`useDynLib(..., .registration = TRUE)` native routines** (14 findings,
+    the only category hitting real `R/` source). NAMESPACE registers each
+    C/Fortran entry point (`VR_sammon`, `mve_fitlots`, …) as a namespace object
+    usable bare in `.C`/`.Call`/`.Fortran`/`.External`. A bare `IDENT` in the
+    *head* (first-argument) position of those calls now has its read suppressed
+    (reusing the `library()` `suppress_read` slot). Repro:
+    `f <- function(x) .C(VR_sammon, as.double(x))`.
+  - [x] **`attach(df)` scope-introducer** (49 findings, the biggest bucket) and
+    **`load("*.rda")` binding-introducer**. Both introduce statically-unknowable
+    bindings, so a file calling either sets `SemanticModel::attaches_opaque_env`
+    and `undefined-symbol` gates the whole file (mirrors the
+    `resolution_incomplete` gate). Repro: `attach(painters); table(School)`.
+  - [x] **`data(name)` NSE loader** (12). `data(sole)` now introduces an
+    `Implicit` binding `sole` in the calling frame, so the loader argument and
+    every later `sole$…` read resolve. Repro:
+    `data(sole); sole$off <- log(sole$a.1)`.
+  - [ ] **Model-frame columns** (~1-2 findings, deferred). Non-`data`
+    model-fitting args evaluated in the data frame (`polr(size ~ carrier, data =
+    tonsils, weights = count)`—`count` is a `tonsils` column) extend the known
+    `with`/`subset` data-variable frontier to `weights`/`subset`/`offset` on
+    `lm`/`glm`/`polr`. Needs a new per-named-argument masking table (the existing
+    masking masks a call's *whole* arg-list), so it is the remaining frontier
+    item. (The 7 other residual MASS findings—`A5`/`pr3`/`labs`/`module`—are
+    genuine dangling refs in incomplete book-excerpt scripts, correctly flagged.)
 
 - [ ] `unused-binding` FP frontier from the cran/MASS investigation
   (2026-08-01). The `$`/`@`-subscript index-drop FP is fixed (see the Parser
