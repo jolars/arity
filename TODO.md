@@ -752,11 +752,13 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 
 ## Misc
 
-- [ ] Non-UTF-8 file aborts the whole lint run. `arity lint <dir>` bails on the
+- [x] Non-UTF-8 file aborts the whole lint run. `arity lint <dir>` bails on the
   first file that isn't valid UTF-8 (`error: failed to read ...: stream did not
   contain valid UTF-8`) instead of skipping it and continuing — one ISO-8859
   file (`r-source/tests/utf8-regex.R`) killed the entire run. Skip-and-warn like
-  the corpus harness does for unparseable files.
+  the corpus harness does for unparseable files. Fixed: `check_paths` now
+  collects undecodable files into `LintResult::skipped` and continues; the CLI
+  warns per skipped file (both `lint` and `--fix`). Other IO errors still abort.
 
 - [ ] `arity-ignore-unused` meta-diagnostic: emit a finding for suppression
   comments that didn't actually suppress anything (rule ID is reserved but

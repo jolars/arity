@@ -33,6 +33,26 @@ fn lint_reports_clean_status_for_parseable_files() {
 }
 
 #[test]
+fn lint_skips_non_utf8_file_and_continues() {
+    // A single ISO-8859 source in a directory must not abort the whole run:
+    // skip-and-record it, and still lint the valid sibling.
+    let dir = tempdir().expect("failed to create temp dir");
+    let good = dir.path().join("good.R");
+    std::fs::write(&good, "x <- 1\nprint(x)\n").expect("failed to write file");
+    let bad = dir.path().join("bad.R");
+    // 0xFF is not valid UTF-8; wrap it in otherwise-R-looking bytes.
+    std::fs::write(&bad, b"x <- \"\xff\"\n").expect("failed to write file");
+
+    let result =
+        check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed");
+
+    assert_eq!(result.checked_files, 1);
+    assert_eq!(result.reports.len(), 1);
+    assert_eq!(result.reports[0].status, LintStatus::Clean);
+    assert_eq!(result.skipped, vec![bad]);
+}
+
+#[test]
 fn lint_flags_duplicate_formal() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("dup.R");

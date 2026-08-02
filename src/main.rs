@@ -775,6 +775,17 @@ fn run_lint(
     let index = lint_index(&config);
     match arity::linter::check_paths_with_index(&paths, &config.lint, &exclude, index) {
         Ok(result) => {
+            // Files that couldn't be decoded as UTF-8 are skipped rather than
+            // aborting the run; warn about each so they aren't silently ignored.
+            if !out.quiet {
+                for path in &result.skipped {
+                    eprintln!(
+                        "warning: skipped {}: stream did not contain valid UTF-8",
+                        path.display()
+                    );
+                }
+            }
+
             // Both lint findings and parse-error diagnostics render the same way;
             // parse errors block the rules but are reported as `syntax-error`
             // findings rather than swallowed behind a bare count.
@@ -832,6 +843,16 @@ fn apply_fixes_to_paths(
             Ok(n) => {
                 if !out.quiet {
                     eprintln!("{}: {n} fix{} applied", path.display(), plural(n));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::InvalidData => {
+                // Non-UTF-8 source: skip-and-warn, matching the lint pass, rather
+                // than aborting the whole fix run on one undecodable file.
+                if !out.quiet {
+                    eprintln!(
+                        "warning: skipped {}: stream did not contain valid UTF-8",
+                        path.display()
+                    );
                 }
             }
             Err(err) => {

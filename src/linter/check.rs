@@ -4,6 +4,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -73,6 +74,10 @@ pub struct LintResult {
     pub checked_files: usize,
     pub total_findings: usize,
     pub reports: Vec<LintFileReport>,
+    /// Files discovered but skipped because they could not be decoded as UTF-8.
+    /// A non-UTF-8 source is skipped-and-warned (like the corpus harness does
+    /// for unparseable files) rather than aborting the whole run.
+    pub skipped: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +171,7 @@ pub fn check_paths_with_index(
                 checked_files: 0,
                 total_findings: 0,
                 reports: Vec::new(),
+                skipped: Vec::new(),
             });
         }
         return Err(LintError::NoRFiles);
@@ -174,18 +180,36 @@ pub fn check_paths_with_index(
     let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
 
-    // Pass 1: track every file. Parsing is deferred to the parallel warm-up
-    // below, so this loop is disk reads and salsa input writes only. Membership
-    // is derived from the workspace file-set below; files with parse diagnostics
-    // are tracked but `workspace_project` drops them from the scope.
-    for path in &files {
-        let content = fs::read_to_string(path).map_err(|err| LintError::ReadError {
-            path: path.clone(),
-            source: err.to_string(),
-        })?;
-        let file = db.upsert_file(path, content);
+    // Pass 1: track every readable file. Parsing is deferred to the parallel
+    // warm-up below, so this loop is disk reads and salsa input writes only.
+    // Membership is derived from the workspace file-set below; files with parse
+    // diagnostics are tracked but `workspace_project` drops them from the scope.
+    //
+    // A file that isn't valid UTF-8 is skipped-and-recorded rather than aborting
+    // the whole run — one ISO-8859 source shouldn't kill linting of every other
+    // file (mirrors the corpus harness skipping unparseable files). Other IO
+    // errors (permission, vanished mid-walk) remain hard failures.
+    let mut skipped: Vec<PathBuf> = Vec::new();
+    let mut readable: Vec<PathBuf> = Vec::with_capacity(files.len());
+    for path in files {
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) if err.kind() == io::ErrorKind::InvalidData => {
+                skipped.push(path);
+                continue;
+            }
+            Err(err) => {
+                return Err(LintError::ReadError {
+                    path,
+                    source: err.to_string(),
+                });
+            }
+        };
+        let file = db.upsert_file(&path, content);
         tracked.insert(path.clone(), file);
+        readable.push(path);
     }
+    let files = readable;
 
     // Scope-only members: a package's generated R sources (`cpp11.R`,
     // `RcppExports.R`, `extendr-wrappers.R`, `import-standalone-*.R`) are in the
@@ -321,6 +345,7 @@ pub fn check_paths_with_index(
         checked_files: tracked.len(),
         total_findings,
         reports,
+        skipped,
     })
 }
 
