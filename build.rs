@@ -31,10 +31,11 @@ fn generate_completions(outdir: &std::ffi::OsString) -> Result<()> {
 
     let outdir_path = PathBuf::from(outdir);
 
-    // Copy bash, fish, and zsh completions for packaging
+    // Copy bash, fish, zsh, and PowerShell completions for packaging
     let bash_src = outdir_path.join("arity.bash");
     let fish_src = outdir_path.join("arity.fish");
     let zsh_src = outdir_path.join("_arity");
+    let powershell_src = outdir_path.join("_arity.ps1");
 
     if bash_src.exists() {
         fs::copy(&bash_src, completions_dir.join("arity.bash"))?;
@@ -44,6 +45,9 @@ fn generate_completions(outdir: &std::ffi::OsString) -> Result<()> {
     }
     if zsh_src.exists() {
         fs::copy(&zsh_src, completions_dir.join("_arity"))?;
+    }
+    if powershell_src.exists() {
+        fs::copy(&powershell_src, completions_dir.join("_arity.ps1"))?;
     }
 
     Ok(())
