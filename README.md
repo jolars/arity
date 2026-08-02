@@ -25,8 +25,6 @@ and IDEs.
   completion, signature help, go-to-definition and references, rename, document
   and workspace symbols, semantic tokens, folding, and call hierarchy.
 
-Runs on Linux, macOS, and Windows (x86_64 and arm64).
-
 ## Installation
 
 Arity is available from several sources:
