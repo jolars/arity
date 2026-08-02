@@ -2766,6 +2766,85 @@ fn class_equals_withholds_fix_for_dropped_comment() {
 }
 
 #[test]
+fn coalesce_rewrites_is_null_if_else() {
+    // The canonical null-coalescing shape collapses to `x %||% y`.
+    assert_eq!(
+        unsafe_fixed_output("z <- if (is.null(x)) y else x\n", "coalesce"),
+        "z <- x %||% y\n"
+    );
+}
+
+#[test]
+fn coalesce_rewrites_negated_is_null_if_else() {
+    // The mirror `if (!is.null(x)) x else y` is the same `x %||% y`.
+    assert_eq!(
+        unsafe_fixed_output("z <- if (!is.null(x)) x else y\n", "coalesce"),
+        "z <- x %||% y\n"
+    );
+}
+
+#[test]
+fn coalesce_fix_is_unsafe() {
+    // `%||%` needs R >= 4.4 (or rlang), and the transform can drop a repeated
+    // side-effecting evaluation of `x`, so the fix is unsafe.
+    let d = diagnostics("z <- if (is.null(x)) y else x\n")
+        .into_iter()
+        .find(|d| d.rule == "coalesce")
+        .expect("expected a coalesce finding");
+    assert_eq!(
+        d.fix.as_ref().expect("should carry a fix").applicability,
+        Applicability::Unsafe
+    );
+}
+
+#[test]
+fn coalesce_ignores_non_coalescing_shapes() {
+    // `else` branch differs from the tested value, no `else`, or a non-`is.null`
+    // condition: none are null-coalescing.
+    for src in [
+        "z <- if (is.null(x)) y else w\n",
+        "z <- if (is.null(x)) y\n",
+        "z <- if (is.na(x)) y else x\n",
+        "z <- if (!is.null(x)) w else y\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"coalesce"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn coalesce_skips_shadowed_is_null() {
+    // A local `is.null` redefinition means the `if` is not a null check.
+    let src = "is.null <- function(v) FALSE\nz <- if (is.null(x)) y else x\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"coalesce"), "got: {rules:?}");
+}
+
+#[test]
+fn coalesce_withholds_fix_for_non_atom_operand() {
+    // A non-atom fallback (`a + b`) would misbind under `%||%`, so the fix is
+    // withheld while the finding still reports.
+    let d = diagnostics("z <- if (is.null(x)) a + b else x\n")
+        .into_iter()
+        .find(|d| d.rule == "coalesce")
+        .expect("expected a coalesce finding");
+    assert!(d.fix.is_none(), "non-atom operand should withhold the fix");
+}
+
+#[test]
+fn coalesce_withholds_fix_for_dropped_comment() {
+    // A comment inside the `if` would be dropped by the rewrite.
+    let d = diagnostics("z <- if (is.null(x)) y else # note\n  x\n")
+        .into_iter()
+        .find(|d| d.rule == "coalesce")
+        .expect("expected a coalesce finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
+}
+
+#[test]
 fn unreachable_code_flags_after_return_and_stop() {
     // A statement after an unconditional `return()` in a function body can never
     // run; the finding spans it and the (unsafe) fix deletes it.
@@ -3068,6 +3147,9 @@ fn fixed_output_is_parseable_and_clean() {
         "if (FALSE) f() else g()\n",
         "if (FALSE) f()\n",
         "x <- if (TRUE) 1 else 2\n",
+        // coalesce (`if (is.null(x)) y else x` → `x %||% y`; unsafe)
+        "z <- if (is.null(x)) y else x\n",
+        "z <- if (!is.null(x)) x else y\n",
     ];
     for case in cases {
         assert_fixed_output_is_clean(case);

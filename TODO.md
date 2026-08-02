@@ -82,8 +82,12 @@
 - [ ] `for-loop-index`/`for-loop-dup-index` (suspicious, sem, none).
 - [ ] `unnecessary-nesting` collapsible nested `if`/single-stmt block
       (readability, sem, unsafe).
-- [ ] `coalesce` `if (is.null(x)) y else x` (performance, sem, unsafe)—may
-      want §I5 multi-edit fix.
+- [x] `coalesce` `if (is.null(x)) y else x` (and the mirror
+      `if (!is.null(x)) x else y`) is `x %||% y` (performance, ns, unsafe).
+      Landed at `ns` (not `sem`): `resolves_to_base` confirms `is.null`; branch
+      equality is textual. Fix is atom-guarded on both operands, gated on a
+      splice-safe outer position (`is_safe_splice_context`), and withheld on any
+      interior comment. Single-edit—§I5 multi-edit not needed.
 - [ ] `undesirable-function` (suspicious, ns + config, none)—needs §I4;
       **default-off**. `download-file` (correctness, ns, none)—low priority.
 

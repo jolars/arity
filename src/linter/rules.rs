@@ -62,6 +62,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(readability::StringBoundary),
         Box::new(performance::AnyIsNa),
         Box::new(performance::AnyDuplicated),
+        Box::new(performance::Coalesce),
         Box::new(performance::Crossprod),
         Box::new(performance::Lengths),
         Box::new(performance::Nzchar),

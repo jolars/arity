@@ -34,6 +34,7 @@
   - [string-boundary](reference/rules/string-boundary.md)
   - [any-is-na](reference/rules/any-is-na.md)
   - [any-duplicated](reference/rules/any-duplicated.md)
+  - [coalesce](reference/rules/coalesce.md)
   - [crossprod](reference/rules/crossprod.md)
   - [lengths](reference/rules/lengths.md)
   - [nzchar](reference/rules/nzchar.md)
