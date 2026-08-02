@@ -45,15 +45,6 @@
     (`survival/R/survfit.coxph.R`, `survival/R/survfit.coxphms.R`).
   - [ ] Idempotence: `survival/R/survcheck.R`.
 
-- [ ] Corpus idempotence: binary chains with a comment trailing the operator
-  (`a && # note` then the next operand) are laid out flat on pass 1 because the
-  relocated comment is a zero-width line suffix that does not count toward the
-  line width, then break on pass 2 once the chain overflows. Six `wch/r-source`
-  files hit this (`tools/R/QC.R`, `tools/R/xgettext.R`, `utils/R/databrowser.R`,
-  `utils/R/menu.R`, `utils/R/str.R`, `tests/reg-tests-1e.R`). Surfaced by the
-  binary-lhs comment fix (`6953947`), not by the roxygen fix; a separate,
-  pre-existing gap in line-suffix width accounting.
-
 ## Linter
 
 - [ ] *Speculative micro-opt (deferred):* `resolves_to_base` does a linear

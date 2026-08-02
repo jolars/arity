@@ -286,15 +286,18 @@ fn collect_binary_chain(
     let (rhs_comments, rhs) = ir_binary_rhs(&elements[op_idx + 1..], "binary rhs", indent, ctx)?;
 
     // A comment trailing the LHS operand is relocated onto this operator's line
-    // (matching air: `a && # note` then the RHS on the next line). It only
-    // arises on the non-descending branch: a comment on the LHS boundary makes
-    // `same_level_binary_lhs` return `None`, so a flattened chain never carries
-    // one across a segment.
+    // (matching air: `a && # note` then the RHS on the next line), whether the
+    // LHS is a leaf (the `None`/operand path) or a same-level binary we descend
+    // into. Relocating it identically in both cases is what makes the chain a
+    // fixed point: a comment sitting *before* an operator (trailing the prior
+    // operand) and one sitting *after* it (leading the next operand) format the
+    // same way, so re-formatting our own output cannot flip a partial break into
+    // a full one.
     let lhs_elements = &elements[..op_idx];
     let (first, mut segments, lhs_comments) = match same_level_binary_lhs(lhs_elements, level) {
-        Some(inner) => {
+        Some((inner, comments)) => {
             let (first, segments) = collect_binary_chain(&inner, level, indent, ctx)?;
-            (first, segments, Vec::new())
+            (first, segments, comments)
         }
         None => {
             let (operand, comments) = ir_binary_lhs(lhs_elements, "binary lhs", indent, ctx)?;
@@ -331,23 +334,43 @@ fn collect_binary_chain(
 }
 
 /// If `elements` is a single `BINARY_EXPR` whose operator is at precedence
-/// `level`, returns that node so the chain builder can descend into it. Returns
-/// `None` for anything else (a leaf, a parenthesized expression, or a
-/// different-level binary), which the caller then renders as a self-contained
-/// operand. Comments on the boundary make the side non-single and fall back to
-/// the operand path, preserving the pre-flattening layout for that shape.
-fn same_level_binary_lhs(elements: &[SyntaxElement<RLanguage>], level: u8) -> Option<SyntaxNode> {
-    let significant: Vec<_> = elements.iter().filter(|el| !is_trivia(el.kind())).collect();
-    let [NodeOrToken::Node(inner)] = significant.as_slice() else {
+/// `level`, returns that node (so the chain builder can descend into it) plus any
+/// comments trailing it, which the caller relocates onto the enclosing operator's
+/// line. Returns `None` for anything else (a leaf, a parenthesized expression, or
+/// a different-level binary), which the caller then renders as a self-contained
+/// operand. A trailing comment is *not* a reason to bail: it relocates just like
+/// a comment leading the RHS would, keeping the flattened chain a fixed point. A
+/// *leading* comment (or any other significant element before the node) still
+/// falls back to the operand path, so leading comments stay with the operand
+/// rather than migrating onto an operator.
+fn same_level_binary_lhs(
+    elements: &[SyntaxElement<RLanguage>],
+    level: u8,
+) -> Option<(SyntaxNode, Vec<String>)> {
+    // The last significant element must be the inner binary node; only comments
+    // and layout trivia may trail it.
+    let last_sig = elements
+        .iter()
+        .rposition(|el| !is_relocatable_comment_or_trivia(el.kind()))?;
+    let NodeOrToken::Node(inner) = &elements[last_sig] else {
         return None;
     };
+    // Nothing but layout trivia may precede the node. `is_trivia` excludes
+    // `COMMENT`, so a leading comment lands here and bails to the operand path.
+    if elements[..last_sig].iter().any(|el| !is_trivia(el.kind())) {
+        return None;
+    }
     if inner.kind() != SyntaxKind::BINARY_EXPR {
         return None;
     }
     let inner_elements: Vec<_> = inner.children_with_tokens().collect();
     let op_idx = find_binary_op(&inner_elements)?;
     let tok = inner_elements[op_idx].as_token()?;
-    (binary_level(tok.kind(), tok.text()) == Some(level)).then(|| inner.clone())
+    if binary_level(tok.kind(), tok.text()) != Some(level) {
+        return None;
+    }
+    let comments = relocated_comment_texts(&elements[last_sig + 1..]);
+    Some((inner.clone(), comments))
 }
 
 fn ir_binary_side(

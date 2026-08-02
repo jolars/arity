@@ -1,0 +1,7 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+x <- (aa &&
+  bb && # note
+  cc)

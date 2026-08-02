@@ -69,6 +69,7 @@ fn fixture_names() -> &'static [&'static str] {
         "assignment_walrus",
         "binary_comment_after_operator",
         "binary_comment_before_operator",
+        "binary_chain_comment_before_operator",
         "binary_trailing_comment_stays_inline",
         "binary_chain_break",
         "binary_paren_operand_indent",
