@@ -13,5 +13,6 @@ extend-exclude = [
   "docs/src/version.md",
   # mdBook's SUMMARY.md is structural (one chapter per line); prose reflow breaks it.
   "docs/src/SUMMARY.md",
-  ".claude/**/*"
+  ".claude/**/*",
+  ".github/**/*",
 ]
