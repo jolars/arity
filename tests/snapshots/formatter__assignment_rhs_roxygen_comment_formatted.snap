@@ -1,0 +1,11 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+f <-
+  ## plain comment
+  #' @param x foo
+  function(x) {
+    x
+    x
+  }

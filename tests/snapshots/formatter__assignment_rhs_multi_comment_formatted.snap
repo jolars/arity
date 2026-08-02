@@ -1,0 +1,8 @@
+---
+source: tests/formatter.rs
+expression: formatted
+---
+g <-
+  ## one
+  ## two
+  h(x)

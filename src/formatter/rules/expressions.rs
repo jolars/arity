@@ -81,22 +81,17 @@ pub(crate) fn ir_assignment_expr(
         NodeOrToken::Node(_) => unreachable!(),
     };
     let lhs = ir_expr_segment(&elements[..op_idx], "assignment lhs", indent, ctx)?;
-    // A comment can sit between the operator and the RHS operand (`x <- # note`
+    // Comments can sit between the operator and the RHS operand (`x <- # note`
     // then the value on the next line). A comment runs to end of line, so the
-    // operand cannot share its line: emit the comment as a suffix on the
-    // operator's line and break before the RHS, indenting it one level (matching
-    // the binary-operator paths, and air).
+    // operand always breaks below them; see [`ir_operator_leading_comments`] for
+    // how one-vs-many comments are laid out.
     let (rhs_comments, rhs) =
         ir_binary_rhs(&elements[op_idx + 1..], "assignment rhs", indent, ctx)?;
     if rhs_comments.is_empty() {
         return Ok(Ir::concat([lhs, Ir::text(format!(" {op} ")), rhs]));
     }
-    Ok(Ir::concat([
-        lhs,
-        Ir::text(format!(" {op}")),
-        comment_suffix(&rhs_comments),
-        Ir::indent(Ir::concat([Ir::hard_line(), rhs])),
-    ]))
+    let op_line = Ir::concat([lhs, Ir::text(format!(" {op}"))]);
+    Ok(ir_operator_leading_comments(op_line, &rhs_comments, rhs))
 }
 
 /// IR builder for binary expressions. Mirrors [`format_binary_expr`]:
@@ -380,20 +375,12 @@ fn ir_binary_rhs(
 ) -> Result<(Vec<String>, Ir), FormatError> {
     let Some(first_significant) = elements
         .iter()
-        .position(|el| !is_trivia(el.kind()) && el.kind() != SyntaxKind::COMMENT)
+        .position(|el| !is_relocatable_comment_or_trivia(el.kind()))
     else {
         // No operand: let the normal path raise the error.
         return Ok((Vec::new(), ir_binary_side(elements, context, indent, ctx)?));
     };
-    let comments: Vec<String> = elements[..first_significant]
-        .iter()
-        .filter_map(|el| match el {
-            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT => {
-                Some(tok.text().to_string())
-            }
-            _ => None,
-        })
-        .collect();
+    let comments = relocated_comment_texts(&elements[..first_significant]);
     let operand = ir_binary_side(&elements[first_significant..], context, indent, ctx)?;
     Ok((comments, operand))
 }
@@ -413,22 +400,88 @@ fn ir_binary_lhs(
 ) -> Result<(Ir, Vec<String>), FormatError> {
     let Some(last_significant) = elements
         .iter()
-        .rposition(|el| !is_trivia(el.kind()) && el.kind() != SyntaxKind::COMMENT)
+        .rposition(|el| !is_relocatable_comment_or_trivia(el.kind()))
     else {
         // No operand: let the normal path raise the error.
         return Ok((ir_binary_side(elements, context, indent, ctx)?, Vec::new()));
     };
-    let comments: Vec<String> = elements[last_significant + 1..]
-        .iter()
-        .filter_map(|el| match el {
-            NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMENT => {
-                Some(tok.text().to_string())
-            }
-            _ => None,
-        })
-        .collect();
+    let comments = relocated_comment_texts(&elements[last_significant + 1..]);
     let operand = ir_binary_side(&elements[..=last_significant], context, indent, ctx)?;
     Ok((operand, comments))
+}
+
+/// A bare roxygen leaf token. When a `#'` comment sits between an operator and
+/// its operand, the parser leaves the roxygen line unwrapped (rather than
+/// building the `ROXYGEN_BLOCK` it emits in statement/argument position), so its
+/// tokens land directly among the operand's siblings. For layout they are just
+/// comment text to relocate, exactly like a `#` [`COMMENT`](SyntaxKind::COMMENT).
+fn is_roxygen_leaf(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::ROXYGEN_MARKER
+            | SyntaxKind::ROXYGEN_AT
+            | SyntaxKind::ROXYGEN_TAG_NAME
+            | SyntaxKind::ROXYGEN_TAG_ARG
+            | SyntaxKind::ROXYGEN_TEXT
+            | SyntaxKind::ROXYGEN_CODE
+            | SyntaxKind::ROXYGEN_RD_MACRO
+            | SyntaxKind::ROXYGEN_MD_LINK
+    )
+}
+
+/// True for anything that is not an operand: layout trivia, a `#` comment, or a
+/// bare roxygen `#'` leaf. Used to find the operand among a binary side's
+/// elements, skipping any comments to be relocated onto the operator's line.
+fn is_relocatable_comment_or_trivia(kind: SyntaxKind) -> bool {
+    is_trivia(kind) || kind == SyntaxKind::COMMENT || is_roxygen_leaf(kind)
+}
+
+/// Reconstruct the comment strings in a run of comments and trivia (the elements
+/// between a binary operator and its operand, or between an operand and the
+/// operator). Each `#` comment yields one string; each bare roxygen `#'` line is
+/// stitched back into one `#'...` string from its leaves (marker, tag tokens,
+/// text) and the whitespace between them. The caller relocates these off the
+/// operand's line (onto the operator's line, or stacked above the operand via
+/// [`ir_operator_leading_comments`]), treating roxygen exactly like a `#`
+/// comment.
+fn relocated_comment_texts(elements: &[SyntaxElement<RLanguage>]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut roxygen_line: Option<String> = None;
+    for el in elements {
+        let NodeOrToken::Token(tok) = el else {
+            continue;
+        };
+        match tok.kind() {
+            SyntaxKind::COMMENT => {
+                if let Some(line) = roxygen_line.take() {
+                    out.push(line.trim_end().to_string());
+                }
+                out.push(tok.text().to_string());
+            }
+            SyntaxKind::NEWLINE => {
+                if let Some(line) = roxygen_line.take() {
+                    out.push(line.trim_end().to_string());
+                }
+            }
+            SyntaxKind::WHITESPACE => {
+                // Whitespace between roxygen leaves is part of the line; leading
+                // indentation (before any marker) is dropped, as for `#` comments.
+                if let Some(line) = roxygen_line.as_mut() {
+                    line.push_str(tok.text());
+                }
+            }
+            kind if is_roxygen_leaf(kind) => {
+                roxygen_line
+                    .get_or_insert_with(String::new)
+                    .push_str(tok.text());
+            }
+            _ => {}
+        }
+    }
+    if let Some(line) = roxygen_line.take() {
+        out.push(line.trim_end().to_string());
+    }
+    out
 }
 
 /// A leading ` ` plus the comments joined by spaces, or nothing when there are
@@ -442,6 +495,39 @@ fn comment_suffix(comments: &[String]) -> Ir {
         Ir::nil()
     } else {
         Ir::line_suffix(format!(" {}", comments.join(" ")))
+    }
+}
+
+/// Lay out the comment(s) that sit between an operator and its operand, given the
+/// already-built `op_line` (the operator and everything before it) and the
+/// `operand`. Comments run to end of line, so the operand always breaks below
+/// them and comments are **never merged onto one line** (which would swallow all
+/// but the first as text of the first, destroying `#'` tags in particular):
+///
+/// - a single comment trails the operator's line as a zero-width suffix (so it
+///   cannot force an otherwise-fitting operand to break), the operand indented
+///   one level below---arity's established rule, matching air for the common
+///   comment-on-the-operator-line input;
+/// - multiple comments each take their own line, indented to the operand, with
+///   the operator left bare (matching air), then the operand.
+fn ir_operator_leading_comments(op_line: Ir, comments: &[String], operand: Ir) -> Ir {
+    match comments {
+        [] => Ir::concat([op_line, Ir::text(" "), operand]),
+        [single] => Ir::concat([
+            op_line,
+            comment_suffix(std::slice::from_ref(single)),
+            Ir::indent(Ir::concat([Ir::hard_line(), operand])),
+        ]),
+        many => {
+            let mut stacked = Vec::with_capacity(many.len() * 2 + 1);
+            for comment in many {
+                stacked.push(Ir::hard_line());
+                stacked.push(Ir::verbatim_forced(comment.clone()));
+            }
+            stacked.push(Ir::hard_line());
+            stacked.push(operand);
+            Ir::concat([op_line, Ir::indent(Ir::concat(stacked))])
+        }
     }
 }
 

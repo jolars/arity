@@ -34,13 +34,25 @@
   pre-existing formatter gaps. None are regressions; each needs its own
   fixture:
 
-  - [ ] `ambiguous construct (assignment rhs)` — an assignment whose RHS is a
-    comment followed by a `function`/`if` on the next line
-    (`Matrix/R/models.R`, `Matrix/inst/test-tools-Matrix.R`).
+  - [x] `ambiguous construct (assignment rhs)` — an assignment whose RHS is a
+    comment (plain or a bare `#'` roxygen line) followed by a `function`/`if`
+    on the next line (`Matrix/R/models.R`, `Matrix/inst/test-tools-Matrix.R`,
+    `wch/r-source` `methods/R/MethodsList.R`, issue #89). The operator-leading
+    comment path now recognizes bare roxygen leaves and stacks multiple
+    comments on their own lines instead of merging them.
   - [ ] `ambiguous construct (block body)` — a statement trailed by a `#'`
     roxygen marker mid-line, which splits the line into two elements
     (`survival/R/survfit.coxph.R`, `survival/R/survfit.coxphms.R`).
   - [ ] Idempotence: `survival/R/survcheck.R`.
+
+- [ ] Corpus idempotence: binary chains with a comment trailing the operator
+  (`a && # note` then the next operand) are laid out flat on pass 1 because the
+  relocated comment is a zero-width line suffix that does not count toward the
+  line width, then break on pass 2 once the chain overflows. Six `wch/r-source`
+  files hit this (`tools/R/QC.R`, `tools/R/xgettext.R`, `utils/R/databrowser.R`,
+  `utils/R/menu.R`, `utils/R/str.R`, `tests/reg-tests-1e.R`). Surfaced by the
+  binary-lhs comment fix (`6953947`), not by the roxygen fix; a separate,
+  pre-existing gap in line-suffix width accounting.
 
 ## Linter
 
