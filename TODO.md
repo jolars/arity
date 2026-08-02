@@ -690,8 +690,7 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   leaks into salsa keys. `file_path` is now `Option<&Path>`; `source_edges`
   reads the optional path as before. The `uuid` dependency is gone. Scoping
   is unchanged—multi-root layouts (package + scripts) are governed by
-  `package_root`/`ProjectScope`, not the file key. See
-  `ARCHITECTURE_AUDIT.md` §3.3.
+  `package_root`/`ProjectScope`, not the file key.
 
   - [ ] Follow-up: full `vfs`/`SourceRoot` model—opaque-`FileId`-at-the-URI
     boundary in `src/lsp.rs` and
