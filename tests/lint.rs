@@ -1531,6 +1531,25 @@ fn cli_fix_withholds_unsafe_deletion_that_would_empty_a_block() {
 }
 
 #[test]
+fn unused_binding_withholds_fix_for_chained_assignment() {
+    // `a <- b <- f()`: the outer target `a` is unused, but deleting the whole
+    // statement would also drop the live inner `b <- f()` (read on the next
+    // line), leaving `b` undefined — a semantic change. Withhold the fix; the
+    // finding is still reported. (Reduced from MASS/R/corresp.R:141,
+    // `vlab.real <- vlab <- paste("Var", 1L:p)`.)
+    let src = "a <- b <- f()\nuse(b)\n";
+    let unused: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "unused-binding")
+        .collect();
+    assert_eq!(unused.len(), 1, "only the outer target `a` is unused");
+    assert!(
+        unused[0].fix.is_none(),
+        "chained-assignment deletion is unsafe: it drops the live inner binding"
+    );
+}
+
+#[test]
 fn cli_fix_fixpoint_clears_multiple_unused_bindings() {
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("fix.R");

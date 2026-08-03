@@ -91,6 +91,18 @@ fn deletion_fix(root: &SyntaxNode, src: &str, name: &str, def_range: TextRange) 
         return None;
     }
 
+    // A chained assignment (`a <- b <- expr`) parses as `a <- (b <- expr)`, so
+    // this statement's value side is itself an ASSIGNMENT_EXPR. Deleting the whole
+    // statement to drop the unused outer target `a` would also drop the inner
+    // `b <- expr` binding, which may be live (read elsewhere) — a semantic change.
+    // Withhold; the finding is still reported.
+    if assign
+        .children()
+        .any(|child| child.kind() == SyntaxKind::ASSIGNMENT_EXPR)
+    {
+        return None;
+    }
+
     // Autofix correctness: never produce output the formatter would rewrite.
     // Inside a block, a pure deletion is unsafe when it would leave the block empty
     // (`{\n}` → `{}`) or shrink a function body to a single statement (which

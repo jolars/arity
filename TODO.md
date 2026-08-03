@@ -752,6 +752,14 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     (`quote`/`bquote`/`substitute`/`expression`) is captured unevaluated and
     records no binding. Repro: `f <- function() { e <- expression({ n <- rep(1,
     nobs) }); e }`.
+  - [x] **Unsafe autofix on a chained assignment** (found re-verifying the above
+    against cran/MASS, `corresp.R:141`). The one genuine residual finding,
+    `vlab.real <- vlab <- paste("Var", 1L:p)`, is a true positive (`vlab.real` is
+    dead), but the deletion fix removed the *whole* statement, dropping the live
+    inner `vlab <- ...` (read on the next line) and leaving `vlab` undefined
+    (confirmed against `Rscript`). `deletion_fix` now withholds when the
+    statement's value side is itself an `ASSIGNMENT_EXPR` (a chained assignment);
+    the finding is still reported.
 
 ## Misc
 
