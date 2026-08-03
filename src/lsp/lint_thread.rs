@@ -5,6 +5,12 @@ pub(crate) struct LintRequest {
     pub(crate) uri: Uri,
     pub(crate) path: PathBuf,
     pub(crate) text: String,
+    /// Precise per-change edits transforming the *previously sent* buffer into
+    /// `text` (Stage B), in application order. Threaded to `parsed_document` for
+    /// a precise multi-edit reparse; empty means "no hint, use `diff_edit`". The
+    /// coalescing in [`LintWorker::enqueue`] concatenates these across superseded
+    /// requests so none are lost.
+    pub(crate) edits: Vec<Edit>,
     pub(crate) version: i32,
     pub(crate) lint_config: LintConfig,
     pub(crate) index_config: IndexConfig,
@@ -357,11 +363,23 @@ impl LintWorker {
     }
 
     /// Add `req` to the pending queue, keeping the highest version per URI (guards
-    /// against an out-of-order lower version clobbering a newer one).
-    fn enqueue(&mut self, req: LintRequest) {
-        match self.pending.get(&req.uri) {
-            Some(existing) if existing.version >= req.version => {}
-            _ => {
+    /// against an out-of-order lower version clobbering a newer one). Superseding
+    /// a pending request **prepends** its still-unconsumed edits to `req`'s, so
+    /// the precise Stage-B edit sequence spanning the last-parsed buffer to `req`
+    /// stays intact across coalescing (an incomplete sequence merely fails the
+    /// `reparse_edits` guard and falls back to `diff_edit`, never miscomputes).
+    fn enqueue(&mut self, mut req: LintRequest) {
+        match self.pending.remove(&req.uri) {
+            Some(existing) if existing.version >= req.version => {
+                // Out-of-order stale request: keep the newer pending one as-is.
+                self.pending.insert(req.uri.clone(), existing);
+            }
+            Some(mut existing) => {
+                existing.edits.append(&mut req.edits);
+                req.edits = existing.edits;
+                self.pending.insert(req.uri.clone(), req);
+            }
+            None => {
                 self.pending.insert(req.uri.clone(), req);
             }
         }
@@ -431,7 +449,7 @@ impl LintWorker {
     ///
     /// Returns `true` if a worker was spawned (the in-flight slot is now busy),
     /// `false` if the buffer couldn't be linted (no worker, slot still free).
-    fn start(&mut self, req: LintRequest) -> bool {
+    fn start(&mut self, mut req: LintRequest) -> bool {
         let anchor = req
             .path
             .parent()
@@ -444,6 +462,12 @@ impl LintWorker {
         // Write-phase: push the live buffer + sibling files into the persistent
         // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
         let active = self.db.upsert_file(&req.path, req.text.clone());
+        // Stage the precise per-change edits (Stage B) for the parse this upsert
+        // will force below (via `prepare_document_in_project`). Overwrites any
+        // unconsumed sequence; `parsed_document` verifies they reconstruct the
+        // buffer before use, so a stale/empty sequence simply falls back to
+        // `diff_edit`.
+        self.db.stage_edits(active, std::mem::take(&mut req.edits));
         // Ensure the active file's project is in the workspace file-set. Lazy:
         // only walks disk when the file isn't already a member (the initialize
         // seed covers the common case), so discovery leaves the keystroke path.

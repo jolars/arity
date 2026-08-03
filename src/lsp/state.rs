@@ -428,7 +428,7 @@ impl GlobalState {
                 id,
                 previous_result_id: params.previous_result_id,
             });
-        self.send_lint(uri);
+        self.send_lint(uri, Vec::new());
     }
 
     fn on_hover(&mut self, req: Request) {
@@ -1175,7 +1175,7 @@ impl GlobalState {
                             version: params.text_document.version,
                         },
                     );
-                    self.send_lint(uri);
+                    self.send_lint(uri, Vec::new());
                 }
             }
             DidChangeTextDocument::METHOD => {
@@ -1189,7 +1189,16 @@ impl GlobalState {
                     // advertise `TextDocumentSyncKind::INCREMENTAL`; apply them to
                     // the stored buffer in order. A `range: None` change is a
                     // full-document replacement (still valid) and reseeds the text.
+                    //
+                    // Alongside the splice, record each ranged change as a byte
+                    // `Edit` (Stage B): the precise sequence transforming the prior
+                    // buffer into the new one, threaded to `parsed_document` for a
+                    // multi-edit reparse. A full replacement can't be expressed as a
+                    // tight edit against the last-parsed base, so it clears the
+                    // sequence — `edits` empty means "fall back to `diff_edit`".
                     let mut applied = false;
+                    let mut edits: Vec<Edit> = Vec::new();
+                    let mut precise = true;
                     for change in params.content_changes {
                         match change.range {
                             None => {
@@ -1201,6 +1210,8 @@ impl GlobalState {
                                     },
                                 );
                                 applied = true;
+                                precise = false;
+                                edits.clear();
                             }
                             Some(range) => {
                                 // A ranged change needs an existing buffer to
@@ -1213,8 +1224,15 @@ impl GlobalState {
                                     let line_index = LineIndex::new(&doc.text);
                                     let start = line_index.position_to_byte(range.start, encoding);
                                     let end = line_index.position_to_byte(range.end, encoding);
-                                    doc.text.replace_range(start..end, &change.text);
+                                    let insert = change.text;
+                                    doc.text.replace_range(start..end, &insert);
                                     applied = true;
+                                    if precise {
+                                        edits.push(Edit {
+                                            range: start..end,
+                                            insert,
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -1223,7 +1241,7 @@ impl GlobalState {
                         doc.version = version;
                     }
                     if applied {
-                        self.send_lint(uri);
+                        self.send_lint(uri, edits);
                     }
                 }
             }
@@ -1398,7 +1416,7 @@ impl GlobalState {
             self.send_workspace_refresh();
         } else {
             for uri in uris {
-                self.send_lint(uri);
+                self.send_lint(uri, Vec::new());
             }
         }
     }
@@ -1471,8 +1489,12 @@ impl GlobalState {
         let _ = self.sender.send(Message::Request(req));
     }
 
-    /// Send a lint request for `uri`'s current buffer to the lint thread.
-    fn send_lint(&mut self, uri: Uri) {
+    /// Send a lint request for `uri`'s current buffer to the lint thread. `edits`
+    /// are the precise per-change edits transforming the previously sent buffer
+    /// into the current one (Stage B); pass an empty vec when no precise sequence
+    /// is available (a first send, a full replacement, or a non-edit trigger),
+    /// which makes `parsed_document` fall back to the whole-text `diff_edit`.
+    fn send_lint(&mut self, uri: Uri, edits: Vec<Edit>) {
         let Some(doc) = self.documents.get(&uri) else {
             return;
         };
@@ -1487,6 +1509,7 @@ impl GlobalState {
             uri,
             path,
             text,
+            edits,
             version,
             lint_config,
             index_config,

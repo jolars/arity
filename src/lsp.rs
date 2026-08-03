@@ -131,7 +131,7 @@ use crate::formatter::{FormatStyle, format_node, format_range, format_with_style
 use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
 use crate::linter::rules::ResolvedRules;
 use crate::linter::{Diagnostic, LintError, Severity};
-use crate::parser::{diff_edit, map_range_through_edit, parse};
+use crate::parser::{Edit, diff_edit, map_range_through_edit, parse};
 use crate::project::DefKind;
 use crate::rindex::build::{BuildOptions, build_index};
 use crate::rindex::cache::{Cache, resolve_cache_root};

@@ -21,17 +21,29 @@
     (`incremental_did_change_applies_ranged_edit`,
     `incremental_did_change_applies_ordered_changes`, capability assertion).
 
-  - [ ] Stage B — thread the precise edit ranges into the reparse. Stage A stops
-    at the protocol boundary: `LintRequest` still ships full text, so
-    `parsed_document` still recovers the edit via a whole-text `diff_edit` and
-    disjoint edits coalesce into one wide span. Feeding the exact per-change
-    edits through would require accumulating a `Vec<Edit>` per URI (across the
-    lint thread's version coalescing), carrying it in `LintRequest`, exposing it
-    to `parsed_document` via a salsa side-channel (like `reparse_prev`/`reparse_store`),
-    and a multi-edit `reparse(&[Edit])` (`map_range_through_edits` already maps a
-    slice). Correctness-sensitive (Tenet 4 oracle); mainly benefits multi-cursor
-    and find-replace on large files (single-caret typing already gets a tight
-    `diff_edit` span).
+  - [x] Stage B — thread the precise edit ranges into the reparse. `didChange`
+    now records each ranged change as a byte `Edit` (`src/lsp/state.rs`), carried
+    on `LintRequest.edits` and concatenated across the lint thread's version
+    coalescing (`enqueue`) so no superseded request's edits are lost. `start`
+    stages them into a `pending_edits` salsa side-channel (mirroring
+    `reparse_prev`/`reparse_store`); `parsed_document` takes them and prefers
+    `reparse_edits(&[Edit])`—a chained fold of the single-edit `reparse`—over the
+    whole-text `diff_edit`. Correct by construction: a `== target` guard (Tenet 4)
+    rejects any misaligned/stale sequence and falls back to `diff_edit`, so the
+    threaded edits can never produce a wrong tree, only decline the optimization.
+    Benefits multi-cursor and find-replace (single-caret typing already got a
+    tight `diff_edit` span). Covered by `tests/incremental_reparse.rs` (multi-edit
+    oracle), `tests/salsa_incremental.rs` (`staged_edits_use_precise_multi_reparse`,
+    `stale_staged_edits_fall_back_to_diff_edit`), and `tests/lsp_protocol.rs`
+    (`incremental_multi_cursor_change_reparses_and_diagnoses`). A precise-hit
+    counter (`IncrementalDatabase::precise_reparse_hits`) surfaces the path for
+    tests/metrics.
+
+    - [ ] Follow-up (deferred): the single-edit span-mapping consumers
+      `resolve_ptr` (`src/incremental.rs`) and `src/lsp/navigation.rs` still use a
+      whole-text `diff_edit` + `map_range_through_edit`. They could adopt the
+      threaded slice via `map_range_through_edits` for more precise node-ptr
+      re-resolution across multi-edit changes. Separate from the tree reparse.
 
 ## AST wrappers
 

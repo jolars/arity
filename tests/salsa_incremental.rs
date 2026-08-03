@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use arity::incremental::{
     IncrementalDatabase, QueryKind, SourceFile, file_def_sites, line_index, top_level_events,
 };
+use arity::parser::Edit;
 use arity::project::{
     DefKind, Project, ProjectMember, external_resolution, project_classes, project_defs,
     project_reads, reverse_source_edges, visible_symbols, workspace_project,
@@ -288,6 +289,97 @@ fn toplevel_edit_uses_incremental_reparse_and_stays_correct() {
     );
 
     // The spliced tree is byte-identical to a from-scratch parse.
+    let fresh = arity::parser::parse(edited);
+    assert_eq!(
+        db.parsed_tree(file).text().to_string(),
+        fresh.cst.text().to_string()
+    );
+    assert!(db.parse_diagnostics(file).is_empty());
+}
+
+#[test]
+fn staged_edits_use_precise_multi_reparse() {
+    // Two disjoint edits (a multi-cursor add-argument in each of two separate
+    // top-level statements). A single spanning `diff_edit` would cross the
+    // statement boundary and force a full reparse; the precise Stage-B path
+    // reparses each statement, so it is both a reparse hit *and* a precise hit.
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let base = "x <- foo(a)\ny <- bar(b)\n";
+    let file = db.upsert_file(path, base.to_string());
+
+    let _ = db.parsed_tree(file);
+    assert_eq!(db.reparse_hits(), 0);
+    assert_eq!(db.precise_reparse_hits(), 0);
+
+    let foo_paren = base.find("foo(a)").unwrap() + "foo(a".len();
+    let bar_paren = base.find("bar(b)").unwrap() + "bar(b".len();
+    // Right-to-left so `base` coordinates stay valid across application.
+    let edits = vec![
+        Edit {
+            range: bar_paren..bar_paren,
+            insert: ", z".to_string(),
+        },
+        Edit {
+            range: foo_paren..foo_paren,
+            insert: ", w".to_string(),
+        },
+    ];
+    let edited = "x <- foo(a, w)\ny <- bar(b, z)\n";
+    db.stage_edits(file, edits);
+    db.upsert_file(path, edited.to_string());
+
+    let spliced = db.parsed_tree(file).text().to_string();
+    assert_eq!(spliced, edited);
+    assert_eq!(db.reparse_hits(), 1);
+    assert_eq!(
+        db.precise_reparse_hits(),
+        1,
+        "two-cursor edit should be served by the precise multi-edit path"
+    );
+
+    // Byte-identical to a from-scratch parse (Tenet 4).
+    let fresh = arity::parser::parse(edited);
+    assert_eq!(
+        db.parsed_tree(file).text().to_string(),
+        fresh.cst.text().to_string()
+    );
+    assert!(db.parse_diagnostics(file).is_empty());
+}
+
+#[test]
+fn stale_staged_edits_fall_back_to_diff_edit() {
+    // Staged edits that do not reconstruct the new buffer (a coalescing gap or a
+    // stale sequence) must be rejected by the `reparse_edits` guard: the parse
+    // falls back to the whole-text `diff_edit` and stays correct.
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let base = "x <- foo(a)\ny <- bar(b)\n";
+    let file = db.upsert_file(path, base.to_string());
+    let _ = db.parsed_tree(file);
+
+    // A bogus edit that does not describe the transform actually applied.
+    db.stage_edits(
+        file,
+        vec![Edit {
+            range: 0..0,
+            insert: "WRONG".to_string(),
+        }],
+    );
+    let edited = "x <- foo(a, w)\ny <- bar(b)\n";
+    db.upsert_file(path, edited.to_string());
+
+    let spliced = db.parsed_tree(file).text().to_string();
+    assert_eq!(
+        spliced, edited,
+        "buffer still correct via diff_edit fallback"
+    );
+    assert_eq!(
+        db.precise_reparse_hits(),
+        0,
+        "mismatched staged edits must not drive the tree"
+    );
+
     let fresh = arity::parser::parse(edited);
     assert_eq!(
         db.parsed_tree(file).text().to_string(),

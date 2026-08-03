@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use arity::parser::{Edit, ParseDiagnostic, ReparseKind, parse, reparse};
+use arity::parser::{Edit, ParseDiagnostic, ReparseKind, parse, reparse, reparse_edits};
 use arity::syntax::SyntaxNode;
 
 /// A complete structural fingerprint of a tree: every node/token with its kind,
@@ -74,6 +74,71 @@ fn edits_for(src: &str) -> Vec<Edit> {
     edits
 }
 
+/// Apply an edit sequence left-to-right (the [`reparse_edits`] contract).
+fn apply_all(edits: &[Edit], src: &str) -> String {
+    edits.iter().fold(src.to_string(), |acc, e| e.apply(&acc))
+}
+
+/// Disjoint multi-edit sequences over `src`. Sampled insertion points are grouped
+/// into windows and ordered **right-to-left** so each edit's `src`-relative
+/// coordinates stay valid as its predecessors apply (a predecessor always sits to
+/// its right, leaving leftward offsets untouched).
+fn multi_edit_seqs(src: &str) -> Vec<Vec<Edit>> {
+    let stride = (src.len() / 60).max(1);
+    let inserts = ["z", " ", "\n", "x1"];
+    let offsets: Vec<usize> = (0..=src.len())
+        .filter(|&i| src.is_char_boundary(i))
+        .enumerate()
+        .filter(|(n, _)| n % stride == 0)
+        .map(|(_, o)| o)
+        .collect();
+
+    let mut seqs = Vec::new();
+    for win in [2usize, 3] {
+        for start in (0..offsets.len().saturating_sub(win - 1)).step_by(win) {
+            let group = &offsets[start..start + win];
+            // Order right-to-left; pick a deterministic insert per offset.
+            let seq: Vec<Edit> = group
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(k, &o)| Edit {
+                    range: o..o,
+                    insert: inserts[k % inserts.len()].to_string(),
+                })
+                .collect();
+            seqs.push(seq);
+        }
+    }
+    seqs
+}
+
+fn check_multi(src: &str) {
+    let old = parse(src);
+    let old_root = old.cst.clone();
+    for edits in multi_edit_seqs(src) {
+        let target = apply_all(&edits, src);
+        let full = parse(&target);
+        let Some(reparsed) = reparse_edits(&old_root, src, &old.diagnostics, &edits, &target)
+        else {
+            continue; // any step fell back — the caller does a full parse
+        };
+        assert_eq!(reparsed.kind, ReparseKind::Multi);
+
+        let got = fingerprint(&SyntaxNode::new_root(reparsed.green.clone()));
+        let want = fingerprint(&full.cst);
+        assert_eq!(
+            got, want,
+            "reparse_edits tree mismatch for edits {edits:?} on:\n{src}",
+        );
+        assert_eq!(
+            sorted_diags(reparsed.diagnostics),
+            sorted_diags(full.diagnostics),
+            "reparse_edits diagnostics mismatch for edits {edits:?} on:\n{src}",
+        );
+    }
+}
+
 fn check_source(src: &str) {
     let old = parse(src);
     let old_root = old.cst.clone();
@@ -130,6 +195,64 @@ fn reparse_matches_full_parse_on_snippets() {
     for src in SOURCES {
         check_source(src);
     }
+}
+
+#[test]
+fn reparse_edits_matches_full_parse_on_snippets() {
+    for src in SOURCES {
+        check_multi(src);
+    }
+}
+
+#[test]
+fn reparse_edits_two_disjoint_edits_match_full_parse() {
+    // Two independent identifier edits (multi-cursor rename) far apart: the
+    // single-edit `diff_edit` would span from the first to the second, but the
+    // precise path reparses each region.
+    let src = "alpha <- 1\nbeta <- alpha + 2\ngamma <- beta\n";
+    let a = src.find("alpha <- 1").unwrap();
+    let b = src.rfind("beta").unwrap();
+    // Right-to-left order so `src` coordinates stay valid across application.
+    let edits = vec![
+        Edit {
+            range: b..b,
+            insert: "X".to_string(),
+        },
+        Edit {
+            range: a..a,
+            insert: "Y".to_string(),
+        },
+    ];
+    let target = apply_all(&edits, src);
+    let old = parse(src);
+    let full = parse(&target);
+    let r = reparse_edits(&old.cst, src, &old.diagnostics, &edits, &target).expect("multi reparse");
+    assert_eq!(r.kind, ReparseKind::Multi);
+    assert_eq!(
+        fingerprint(&SyntaxNode::new_root(r.green.clone())),
+        fingerprint(&full.cst),
+    );
+}
+
+#[test]
+fn reparse_edits_rejects_mismatched_target() {
+    // The verify-guard: correct edits but a `target` that is *not* what they
+    // produce must yield `None` (caller falls back to `diff_edit`).
+    let src = "x <- 1\ny <- 2\n";
+    let at = src.find('1').unwrap();
+    let edits = vec![Edit {
+        range: at..at + 1,
+        insert: "9".to_string(),
+    }];
+    let old = parse(src);
+    assert!(reparse_edits(&old.cst, src, &old.diagnostics, &edits, "totally different").is_none());
+}
+
+#[test]
+fn reparse_edits_empty_slice_is_none() {
+    let src = "x <- 1\n";
+    let old = parse(src);
+    assert!(reparse_edits(&old.cst, src, &old.diagnostics, &[], src).is_none());
 }
 
 #[test]

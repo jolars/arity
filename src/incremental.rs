@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex};
 use rowan::TextRange;
 use salsa::{Durability, Setter};
 
-use crate::parser::{ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse};
+use crate::parser::{
+    Edit, ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse, reparse_edits,
+};
 use crate::project::{
     ClassSystem, DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
     collect_source_literal_edges, collect_top_level_events, collect_top_level_events_spanned,
@@ -252,8 +254,18 @@ pub trait IncrementalDb: salsa::Database {
     fn reparse_prev(&self, file: SourceFile) -> Option<Arc<PrevParse>>;
 
     /// Store `prev` as the reparse base for `file`. `incremental` records
-    /// whether this parse reused the previous tree (for tests/metrics).
-    fn reparse_store(&self, file: SourceFile, prev: PrevParse, incremental: bool);
+    /// whether this parse reused the previous tree, and `precise` whether it was
+    /// the precise multi-edit path (for tests/metrics).
+    fn reparse_store(&self, file: SourceFile, prev: PrevParse, incremental: bool, precise: bool);
+
+    /// Stage the precise per-change `edits` for `file`'s next parse (Stage B),
+    /// replacing any previously staged (unconsumed) sequence. Empty `edits`
+    /// clears the slot.
+    fn stage_edits(&self, file: SourceFile, edits: Vec<Edit>);
+
+    /// Take and clear the edits staged for `file`, if any. Called once per parse
+    /// by [`parsed_document`]; always clears so a stale sequence never lingers.
+    fn take_pending_edits(&self, file: SourceFile) -> Option<Vec<Edit>>;
 }
 
 #[salsa::tracked(returns(ref), no_eq, unsafe(non_salsa_values))]
@@ -265,21 +277,37 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
 
     let text = file.text(db);
 
-    // Try an incremental reparse off the previous parse of this file. A miss
-    // (first parse, or an edit no strategy handles) falls back to a full parse;
-    // either way the result is identical to `parse(text)`.
+    // Take any precise per-change edits staged for this parse (Stage B), always
+    // clearing them so a stale sequence never lingers past its target revision
+    // (first parse, unchanged text, or a reparse miss).
+    let pending = db.take_pending_edits(file);
+
+    // Try an incremental reparse off the previous parse of this file. Prefer the
+    // precise multi-edit path when staged edits reconstruct `text` exactly;
+    // otherwise recover a single spanning `diff_edit`. A miss (first parse, or an
+    // edit no strategy handles) falls back to a full parse. Every path yields a
+    // result identical to `parse(text)`.
     let reparsed = db
         .reparse_prev(file)
         .filter(|prev| prev.text != *text)
         .and_then(|prev| {
-            let edit = diff_edit(&prev.text, text);
             let old_root = SyntaxNode::new_root(prev.green.clone());
-            reparse(&old_root, &prev.text, &prev.diagnostics, &edit)
+            let precise = pending.as_deref().and_then(|edits| {
+                reparse_edits(&old_root, &prev.text, &prev.diagnostics, edits, text)
+            });
+            let is_precise = precise.is_some();
+            precise
+                .or_else(|| {
+                    let edit = diff_edit(&prev.text, text);
+                    reparse(&old_root, &prev.text, &prev.diagnostics, &edit)
+                })
+                .map(|r| (r, is_precise))
         });
 
     let incremental = reparsed.is_some();
+    let precise = reparsed.as_ref().is_some_and(|(_, p)| *p);
     let (green, diagnostics): (rowan::GreenNode, Vec<ParseDiagnostic>) = match reparsed {
-        Some(r) => (r.green, r.diagnostics),
+        Some((r, _)) => (r.green, r.diagnostics),
         None => {
             let parsed = parse(text.as_str());
             (parsed.cst.green().into_owned(), parsed.diagnostics)
@@ -294,6 +322,7 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
             diagnostics: diagnostics.clone(),
         },
         incremental,
+        precise,
     );
 
     let diagnostics = diagnostics
@@ -504,9 +533,21 @@ pub struct IncrementalDatabase {
     /// [`parsed_document`]. Outside salsa: a pure performance hint that never
     /// changes query *outputs* (see [`PrevParse`]). Shared across clones.
     reparse_cache: Arc<Mutex<HashMap<SourceFile, Arc<PrevParse>>>>,
+    /// Precise per-change edits staged for a file's *next* parse, threaded from
+    /// the LSP `didChange` (Stage B). Consumed and cleared by [`parsed_document`],
+    /// which prefers them over the whole-text [`diff_edit`]. Outside salsa, a pure
+    /// perf hint like [`reparse_cache`](Self::reparse_cache): a
+    /// [`reparse_edits`] result is byte-identical to a full parse (the
+    /// `== target` guard rejects any stale/misaligned sequence), so this never
+    /// changes query outputs. Shared across clones.
+    pending_edits: Arc<Mutex<HashMap<SourceFile, Vec<Edit>>>>,
     /// Count of parses that reused the previous tree (incremental reparse hits),
     /// for tests and metrics. Shared across clones.
     reparse_hits: Arc<AtomicU64>,
+    /// Subset of `reparse_hits` served by the precise multi-edit path
+    /// ([`reparse_edits`]) rather than the whole-text [`diff_edit`]. For tests and
+    /// metrics. Shared across clones.
+    precise_reparse_hits: Arc<AtomicU64>,
 }
 
 impl Default for IncrementalDatabase {
@@ -516,7 +557,9 @@ impl Default for IncrementalDatabase {
             query_log: Arc::new(Mutex::new(Vec::new())),
             source_map: Arc::new(Mutex::new(FileSourceMap::default())),
             reparse_cache: Arc::new(Mutex::new(HashMap::new())),
+            pending_edits: Arc::new(Mutex::new(HashMap::new())),
             reparse_hits: Arc::new(AtomicU64::new(0)),
+            precise_reparse_hits: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -536,7 +579,9 @@ impl Clone for IncrementalDatabase {
             query_log: Arc::clone(&self.query_log),
             source_map: Arc::clone(&self.source_map),
             reparse_cache: Arc::clone(&self.reparse_cache),
+            pending_edits: Arc::clone(&self.pending_edits),
             reparse_hits: Arc::clone(&self.reparse_hits),
+            precise_reparse_hits: Arc::clone(&self.precise_reparse_hits),
         }
     }
 }
@@ -837,6 +882,20 @@ impl IncrementalDatabase {
     /// tree) since construction. For tests and metrics.
     pub fn reparse_hits(&self) -> u64 {
         self.reparse_hits.load(Ordering::Relaxed)
+    }
+
+    /// Subset of [`reparse_hits`](Self::reparse_hits) served by the precise
+    /// multi-edit path (threaded LSP edits) rather than the whole-text
+    /// [`diff_edit`]. For tests and metrics.
+    pub fn precise_reparse_hits(&self) -> u64 {
+        self.precise_reparse_hits.load(Ordering::Relaxed)
+    }
+
+    /// Stage the precise per-change `edits` for `file`'s next parse (Stage B).
+    /// The lint thread calls this after a text-changing `upsert_file`, just
+    /// before the parse those edits describe is forced.
+    pub fn stage_edits(&self, file: SourceFile, edits: Vec<Edit>) {
+        IncrementalDb::stage_edits(self, file, edits);
     }
 
     /// Mint a read-only [`Analysis`] snapshot: a short-lived db clone wrapped so
@@ -1513,14 +1572,36 @@ impl IncrementalDb for IncrementalDatabase {
             .cloned()
     }
 
-    fn reparse_store(&self, file: SourceFile, prev: PrevParse, incremental: bool) {
+    fn reparse_store(&self, file: SourceFile, prev: PrevParse, incremental: bool, precise: bool) {
         if incremental {
             self.reparse_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        if precise {
+            self.precise_reparse_hits.fetch_add(1, Ordering::Relaxed);
         }
         self.reparse_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(file, Arc::new(prev));
+    }
+
+    fn stage_edits(&self, file: SourceFile, edits: Vec<Edit>) {
+        let mut pending = self
+            .pending_edits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if edits.is_empty() {
+            pending.remove(&file);
+        } else {
+            pending.insert(file, edits);
+        }
+    }
+
+    fn take_pending_edits(&self, file: SourceFile) -> Option<Vec<Edit>> {
+        self.pending_edits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&file)
     }
 }
 

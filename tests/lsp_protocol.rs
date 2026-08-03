@@ -476,6 +476,51 @@ fn incremental_did_change_applies_ordered_changes() {
 }
 
 #[test]
+fn incremental_multi_cursor_change_reparses_and_diagnoses() {
+    // A multi-cursor edit: two disjoint ranged changes in *separate* top-level
+    // statements land in one `didChange`. The server records them as a precise
+    // edit sequence (Stage B) and threads it to the reparse. A whole-text
+    // `diff_edit` would collapse them into one span crossing the statement
+    // boundary; the point here is that the end-to-end result is still correct.
+    // Both edits stop `a`/`b` from being read, so the reparsed tree must yield
+    // two `unused` diagnostics.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    let base = "a <- 1\nb <- 2\nprint(a)\nprint(b)\n";
+    h.did_open(uri, base, 1);
+    // v1 is clean (both bindings are read).
+    let clean = h.recv_publish_for(uri, 1);
+    assert!(clean.is_empty(), "base buffer is clean, got: {clean:#?}");
+
+    // Replace the `a` in `print(a)` (line 2) and the `b` in `print(b)` (line 3),
+    // each an equal-length splice so neither shifts the other's line offsets.
+    h.did_change_raw(
+        uri,
+        2,
+        json!([
+            { "range": { "start": { "line": 2, "character": 6 },
+                         "end": { "line": 2, "character": 7 } },
+              "text": "9" },
+            { "range": { "start": { "line": 3, "character": 6 },
+                         "end": { "line": 3, "character": 7 } },
+              "text": "9" }
+        ]),
+    );
+
+    // Both `a` and `b` are now unused: the reparse must surface both findings.
+    // (Receive the publish before any request — `recv_until` drains skipped
+    // messages, so a formatting round-trip would swallow this notification.)
+    // Two findings prove the reparsed tree reads `print(9)` in both statements
+    // (not the original `print(a)`/`print(b)`), i.e. both edits landed correctly.
+    let diags = h.recv_publish_for(uri, 2);
+    assert!(
+        diags.len() >= 2,
+        "both unused bindings should be diagnosed after the multi-cursor edit, got: {diags:#?}"
+    );
+    h.shutdown();
+}
+
+#[test]
 fn shutdown_exit_joins_cleanly() {
     let mut h = Harness::start_push();
     h.did_open(doc_uri(), CLEAN, 1);

@@ -116,6 +116,10 @@ pub enum ReparseKind {
     Token,
     Block,
     TopLevel,
+    /// A chained multi-edit reparse ([`reparse_edits`]): several single-edit
+    /// strategies applied in sequence. The final tree is still byte-identical to
+    /// a full parse.
+    Multi,
 }
 
 /// The result of a successful incremental reparse: the new whole-file green tree
@@ -185,6 +189,47 @@ pub fn reparse(
         );
     }
     result
+}
+
+/// Chain the single-edit [`reparse`] over a sequence of `edits` (each expressed
+/// against the text its predecessors produced, in the order [`Edit::apply`]
+/// would run them). Each step reparses off the previous step's whole-file tree,
+/// so N disjoint edits each reparse their own tight region instead of collapsing
+/// into one wide [`diff_edit`] span (the whole point of feeding precise LSP
+/// edits through — multi-cursor and find-replace).
+///
+/// Returns `None` unless *every* step is incrementally reparseable **and** the
+/// fully-applied text equals `target`. The `== target` check is the Tenet-4
+/// safety net: an edit sequence that does not actually transform `old_text` into
+/// the current buffer (a coalescing gap, an interleaved disk write, a
+/// full-document replacement) is rejected here so the caller falls back to the
+/// always-correct [`diff_edit`] path. A successful result is therefore
+/// byte-identical to a full [`parse`](crate::parser::parse) of `target` — the
+/// composition of correct single-edit reparses over the true edit sequence.
+pub fn reparse_edits(
+    old_root: &SyntaxNode,
+    old_text: &str,
+    old_diags: &[ParseDiagnostic],
+    edits: &[Edit],
+    target: &str,
+) -> Option<Reparsed> {
+    let (first, rest) = edits.split_first()?;
+
+    // Step 0 off the caller's tree; each later step off the prior step's tree.
+    let mut reparsed = reparse(old_root, old_text, old_diags, first)?;
+    let mut text = first.apply(old_text);
+    for edit in rest {
+        let root = SyntaxNode::new_root(reparsed.green.clone());
+        reparsed = reparse(&root, &text, &reparsed.diagnostics, edit)?;
+        text = edit.apply(&text);
+    }
+
+    // Tenet-4 guard: the edits must reconstruct the current buffer exactly.
+    if text != target {
+        return None;
+    }
+    reparsed.kind = ReparseKind::Multi;
+    Some(reparsed)
 }
 
 const TOKEN_REPARSE_KINDS: &[SyntaxKind] = &[
