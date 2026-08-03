@@ -165,6 +165,43 @@ impl Harness {
         );
     }
 
+    /// Send a `didChange` carrying raw `contentChanges` (ranged incremental
+    /// edits and/or full-document replacements), applied by the server in order.
+    fn did_change_raw(&self, uri: &str, version: i32, content_changes: Value) {
+        self.notify(
+            "textDocument/didChange",
+            json!({
+                "textDocument": { "uri": uri, "version": version },
+                "contentChanges": content_changes,
+            }),
+        );
+    }
+
+    /// Format the current buffer and return the single whole-document edit's
+    /// `newText` — a proxy for the server's stored buffer contents.
+    fn formatted_buffer(&mut self, uri: &str) -> String {
+        let id = self.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": uri },
+                "options": { "tabSize": 2, "insertSpaces": true }
+            }),
+        );
+        let resp = self.recv_response(&id);
+        let edits = resp
+            .response_result
+            .expect("formatting result")
+            .as_array()
+            .expect("array of edits")
+            .clone();
+        assert_eq!(edits.len(), 1, "one whole-document edit: {edits:#?}");
+        edits[0]
+            .get("newText")
+            .and_then(Value::as_str)
+            .expect("edit newText")
+            .to_string()
+    }
+
     /// Receive messages until `pred` matches, draining (ignoring) the rest. On
     /// timeout, panic with everything drained so far.
     fn recv_until(&self, what: &str, mut pred: impl FnMut(&Message) -> bool) -> Message {
@@ -271,6 +308,12 @@ fn initialize_advertises_core_capabilities() {
         "formatting advertised: {caps:#?}"
     );
     assert!(caps.get("hoverProvider").is_some(), "hover advertised");
+    // `TextDocumentSyncKind::INCREMENTAL` serializes as the integer `2`.
+    assert_eq!(
+        caps.get("textDocumentSync"),
+        Some(&json!(2)),
+        "incremental text sync advertised: {caps:#?}"
+    );
     assert!(
         caps.get("diagnosticProvider").is_some(),
         "diagnostic provider advertised"
@@ -379,6 +422,56 @@ fn rapid_did_change_coalesces_and_supersedes() {
         diags.is_empty(),
         "final (clean) version should publish no diagnostics, got: {diags:#?}"
     );
+    h.shutdown();
+}
+
+#[test]
+fn incremental_did_change_applies_ranged_edit() {
+    // A single ranged edit replaces `1` with `42` in `x<-1\n`. The server must
+    // convert the LSP range to byte offsets and splice its buffer; formatting the
+    // result proves the stored buffer became `x<-42\n`.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "x<-1\n", 1);
+    // `x<-1`: x(0) '<'(1) '-'(2) '1'(3). Replace char 3..4 with `42`.
+    h.did_change_raw(
+        uri,
+        2,
+        json!([{
+            "range": { "start": { "line": 0, "character": 3 },
+                       "end": { "line": 0, "character": 4 } },
+            "text": "42"
+        }]),
+    );
+    assert_eq!(h.formatted_buffer(uri), "x <- 42\n");
+    h.shutdown();
+}
+
+#[test]
+fn incremental_did_change_applies_ordered_changes() {
+    // Two ranged edits in one notification, where the second targets a line that
+    // only exists after the first applied — so the server must re-index between
+    // changes (positions are against the buffer left by the prior change).
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "foo\nbar\n", 1);
+    h.did_change_raw(
+        uri,
+        2,
+        json!([
+            // Insert a new first line: buffer becomes `x<-1\nfoo\nbar\n`.
+            { "range": { "start": { "line": 0, "character": 0 },
+                         "end": { "line": 0, "character": 0 } },
+              "text": "x<-1\n" },
+            // `bar` is now on line 2 (it only moved there because of the change
+            // above); replace it with `y<-2`.
+            { "range": { "start": { "line": 2, "character": 0 },
+                         "end": { "line": 2, "character": 3 } },
+              "text": "y<-2" }
+        ]),
+    );
+    // Formatting the spliced buffer proves both edits landed in order.
+    assert_eq!(h.formatted_buffer(uri), "x <- 1\nfoo\ny <- 2\n");
     h.shutdown();
 }
 

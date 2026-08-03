@@ -1179,19 +1179,52 @@ impl GlobalState {
                 }
             }
             DidChangeTextDocument::METHOD => {
-                if let Ok(mut params) =
+                if let Ok(params) =
                     not.extract::<DidChangeTextDocumentParams>(DidChangeTextDocument::METHOD)
-                    && let Some(change) = params.content_changes.pop()
                 {
                     let uri = params.text_document.uri;
-                    self.documents.insert(
-                        uri.clone(),
-                        Document {
-                            text: change.text,
-                            version: params.text_document.version,
-                        },
-                    );
-                    self.send_lint(uri);
+                    let version = params.text_document.version;
+                    let encoding = self.position_encoding;
+                    // The client sends incremental (ranged) changes now that we
+                    // advertise `TextDocumentSyncKind::INCREMENTAL`; apply them to
+                    // the stored buffer in order. A `range: None` change is a
+                    // full-document replacement (still valid) and reseeds the text.
+                    let mut applied = false;
+                    for change in params.content_changes {
+                        match change.range {
+                            None => {
+                                self.documents.insert(
+                                    uri.clone(),
+                                    Document {
+                                        text: change.text,
+                                        version,
+                                    },
+                                );
+                                applied = true;
+                            }
+                            Some(range) => {
+                                // A ranged change needs an existing buffer to
+                                // splice into; without one (a change before open)
+                                // there is nothing to edit, so skip it.
+                                if let Some(doc) = self.documents.get_mut(&uri) {
+                                    // Re-index per change: an earlier change in the
+                                    // batch can shift line offsets, and each range
+                                    // is against the text its predecessors left.
+                                    let line_index = LineIndex::new(&doc.text);
+                                    let start = line_index.position_to_byte(range.start, encoding);
+                                    let end = line_index.position_to_byte(range.end, encoding);
+                                    doc.text.replace_range(start..end, &change.text);
+                                    applied = true;
+                                }
+                            }
+                        }
+                    }
+                    if applied && let Some(doc) = self.documents.get_mut(&uri) {
+                        doc.version = version;
+                    }
+                    if applied {
+                        self.send_lint(uri);
+                    }
                 }
             }
             DidCloseTextDocument::METHOD => {

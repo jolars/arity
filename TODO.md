@@ -11,11 +11,27 @@
 - [x] Incremental reparse (token/block) beneath `parsed_document`
   (`src/incremental.rs`)
 
-  - [ ] Follow-up: use the LSP's precise edit ranges instead of the
-    prefix/suffix text diff. The LSP declares `TextDocumentSyncKind::FULL`, so
-    `parsed_document` recovers the edit via a whole-text `diff_edit`; threading
-    the client's exact change ranges (switching to INCREMENTAL sync) would keep
-    disjoint edits from coalescing into one wide span.
+  - [x] Stage A — switch the LSP sync to `TextDocumentSyncKind::INCREMENTAL`.
+    The server now applies the client's ranged changes to its stored buffer
+    (`didChange` in `src/lsp/state.rs`, via `LineIndex::position_to_byte`),
+    handling both ranged edits and `range: None` full replacements and
+    re-indexing per change so batched edits apply in order. Cuts per-keystroke
+    bandwidth (no more whole-file payloads) and is the prerequisite for Stage B.
+    Covered by `tests/lsp_protocol.rs`
+    (`incremental_did_change_applies_ranged_edit`,
+    `incremental_did_change_applies_ordered_changes`, capability assertion).
+
+  - [ ] Stage B — thread the precise edit ranges into the reparse. Stage A stops
+    at the protocol boundary: `LintRequest` still ships full text, so
+    `parsed_document` still recovers the edit via a whole-text `diff_edit` and
+    disjoint edits coalesce into one wide span. Feeding the exact per-change
+    edits through would require accumulating a `Vec<Edit>` per URI (across the
+    lint thread's version coalescing), carrying it in `LintRequest`, exposing it
+    to `parsed_document` via a salsa side-channel (like `reparse_prev`/`reparse_store`),
+    and a multi-edit `reparse(&[Edit])` (`map_range_through_edits` already maps a
+    slice). Correctness-sensitive (Tenet 4 oracle); mainly benefits multi-cursor
+    and find-replace on large files (single-caret typing already gets a tight
+    `diff_edit` span).
 
 ## AST wrappers
 
@@ -511,11 +527,10 @@ split and `TaskPool` in `src/lsp/`). Priorities: **P1** correctness/robustness,
   `Unchanged` per parked pull via the existing `report_kind`. `Unchanged` now
   actually fires. Minor bandwidth win, correctness unaffected.
 
-- Cross-ref (already logged, reinforced by this audit): switching
-  `TextDocumentSyncKind::FULL` -> `INCREMENTAL` (Parser section, incremental
-  reparse follow-up) would feed precise per-change edit ranges to the existing
-  token/block/toplevel reparse, shrinking the `diff_edit` coalescing that
-  currently widens invalidation.
+- Cross-ref (Parser section, incremental reparse follow-up): the sync is now
+  `INCREMENTAL` (Stage A). Feeding the precise per-change edit ranges through to
+  the token/block/toplevel reparse to shrink the `diff_edit` coalescing is the
+  remaining Stage B there.
 
 ### Audit vs Ark (2026-07-30)
 
@@ -593,8 +608,9 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   - **On-type formatting.** Ark advertises it with first-trigger `\n` and a
     tree-sitter reindent (`indent.rs`)—the reference model for the on-type
     formatting item above (still gated on the CRLF `format_range` bug).
-  - **`INCREMENTAL` text sync.** Ark uses INCREMENTAL; arity is FULL—see the
-    Parser incremental-reparse follow-up and the rust-analyzer audit cross-ref.
+  - **`INCREMENTAL` text sync.** Both Ark and arity now advertise INCREMENTAL
+    (Stage A done); threading the precise ranges into the reparse is the Parser
+    incremental-reparse Stage B.
   - **`positionEncoding` UTF-8.** Ark hardcodes UTF-16 today but threads a
     `PositionEncoding` type throughout (ready to negotiate UTF-8)—the same shape
     as the P3 `positionEncoding` item above.
