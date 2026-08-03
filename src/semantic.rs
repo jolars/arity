@@ -38,6 +38,14 @@ pub struct IdentRef {
     /// still recorded so it can mark an enclosing binding used (see
     /// [`is_data_masking_callee`]).
     pub data_masked: bool,
+    /// The read is evaluated lazily (an R promise), so intra-frame textual
+    /// ordering does not constrain which binding it resolves to. Set for reads in
+    /// a parameter default (`function(x, u = hmax)`), an `on.exit(...)` handler,
+    /// and the synthesized formal reads of a `NextMethod()` call — each of which
+    /// runs after body statements may have assigned a same-name local. Resolution
+    /// treats such a read like a closure read: a same-frame binding assigned
+    /// *after* it still counts (see the builder's `reads_reached`).
+    pub deferred: bool,
 }
 
 /// Per-file semantic information derived from the CST.
@@ -668,6 +676,96 @@ mod tests {
         let m = model_of(".x <- 1");
         let unused: Vec<_> = m.unused_local_bindings().collect();
         assert!(unused.is_empty());
+    }
+
+    /// The names `unused_local_bindings()` reports, as a set.
+    fn unused_names(model: &SemanticModel) -> std::collections::BTreeSet<String> {
+        model
+            .unused_local_bindings()
+            .map(|id| model.binding(id).name.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn default_arg_read_marks_body_local_used() {
+        // A parameter default is a promise evaluated in the function's own frame,
+        // so `upper = hmax` reads the body-local `hmax` assigned *after* it. The
+        // read is order-free within the frame; `hmax` is not unused.
+        let m = model_of("f <- function(x, upper = hmax) { hmax <- sqrt(x); upper }\n");
+        assert!(
+            !unused_names(&m).contains("hmax"),
+            "default-arg read marks `hmax` used: {:?}",
+            unused_names(&m)
+        );
+    }
+
+    #[test]
+    fn default_arg_read_marks_body_local_closure_used() {
+        // `panel = panel.lda` reads a body-local closure defined later.
+        let m = model_of(
+            "f <- function(panel = panel.lda) {\n  panel.lda <- function() 1\n  panel()\n}\n",
+        );
+        assert!(
+            !unused_names(&m).contains("panel.lda"),
+            "default-arg read marks the body-local closure used: {:?}",
+            unused_names(&m)
+        );
+    }
+
+    #[test]
+    fn on_exit_read_marks_later_local_used() {
+        // `on.exit(par(oldpar))` is a promise evaluated at function exit, so it
+        // reads `oldpar` assigned on the next line. `oldpar` is not unused.
+        let m = model_of(
+            "f <- function() {\n  on.exit(par(oldpar))\n  oldpar <- par(pty = \"s\")\n  plot(1)\n}\n",
+        );
+        assert!(
+            !unused_names(&m).contains("oldpar"),
+            "on.exit read marks `oldpar` used: {:?}",
+            unused_names(&m)
+        );
+    }
+
+    #[test]
+    fn next_method_marks_reassigned_formal_used() {
+        // `NextMethod()` passes the current frame values of the formals to the
+        // next method, so the reassigned formal `x <- M` is used. Neither `x`
+        // nor `M` is unused.
+        let m = model_of(
+            "print.foo <- function(x, ...) {\n  M <- cbind(x)\n  x <- M\n  NextMethod(\"print\")\n}\n",
+        );
+        let unused = unused_names(&m);
+        assert!(
+            !unused.contains("x") && !unused.contains("M"),
+            "NextMethod marks the reassigned formal used: {unused:?}"
+        );
+    }
+
+    #[test]
+    fn expression_body_assignment_is_not_a_binding() {
+        // Assignments inside `expression({ ... })` are captured unevaluated, so
+        // the inner `n <-` is not an analyzable local binding at all.
+        let m = model_of("f <- function() {\n  e <- expression({ n <- rep(1, nobs) })\n  e\n}\n");
+        assert!(
+            !unused_names(&m).contains("n"),
+            "quoted assignment is not a local binding: {:?}",
+            unused_names(&m)
+        );
+    }
+
+    #[test]
+    fn genuine_unused_still_flagged_beside_a_deferred_read() {
+        // The deferral/quote suppression is scoped, not global: a genuinely
+        // unused local in a function that *also* has a param default is still
+        // flagged.
+        let m = model_of(
+            "f <- function(x, upper = hmax) {\n  hmax <- sqrt(x)\n  dead <- 1\n  upper\n}\n",
+        );
+        assert!(
+            unused_names(&m).contains("dead"),
+            "a genuinely unused local is still flagged: {:?}",
+            unused_names(&m)
+        );
     }
 
     #[test]

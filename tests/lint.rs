@@ -159,6 +159,106 @@ fn for_body_binding_read_after_loop_is_not_unused() {
 }
 
 #[test]
+fn default_arg_reads_body_local_binding() {
+    // A parameter default is a promise evaluated in the function's own frame, so
+    // `upper = hmax` reads the body-local `hmax` assigned later. `hmax` is used.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("default.R");
+    std::fs::write(
+        &path,
+        "f <- function(x, upper = hmax) {\n  hmax <- sqrt(x)\n  upper\n}\nf(4)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "default.R").contains(&"unused-binding"),
+        "default.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn on_exit_reads_later_assigned_local() {
+    // `on.exit(par(oldpar))` runs at function exit and reads `oldpar` assigned on
+    // the next line, so `oldpar` is used.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("onexit.R");
+    std::fs::write(
+        &path,
+        "f <- function() {\n  on.exit(par(oldpar))\n  oldpar <- par(pty = \"s\")\n  plot(1)\n}\nf()\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "onexit.R").contains(&"unused-binding"),
+        "onexit.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn next_method_uses_reassigned_formal() {
+    // `NextMethod()` dispatches to the next method with the current frame values
+    // of the formals, so the reassigned formal `x <- M` (and `M`) are used.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("nextmethod.R");
+    std::fs::write(
+        &path,
+        "print.foo <- function(x, ...) {\n  M <- cbind(x)\n  x <- M\n  NextMethod(\"print\")\n}\nregisterS3method(\"print\", \"foo\", print.foo)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "nextmethod.R").contains(&"unused-binding"),
+        "nextmethod.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn expression_body_binding_not_unused() {
+    // An assignment inside `expression({ ... })` is captured unevaluated, so the
+    // inner `n <-` is not a local binding and must not be flagged unused.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("expr.R");
+    std::fs::write(
+        &path,
+        "f <- function() {\n  e <- expression({ n <- rep(1, nobs) })\n  e\n}\nf()\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "expr.R").contains(&"unused-binding"),
+        "expr.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn genuine_unused_local_still_flagged_beside_default_arg() {
+    // The promise relaxation is scoped, not global: a genuinely dead local in a
+    // function that also has a param default is still flagged.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("mixed.R");
+    std::fs::write(
+        &path,
+        "f <- function(x, upper = hmax) {\n  hmax <- sqrt(x)\n  dead <- 1\n  upper\n}\nf(4)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        rules_for(&result, "mixed.R").contains(&"unused-binding"),
+        "mixed.R should still flag `dead`: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
 fn s3method_registration_is_not_unused() {
     // S3 methods registered via `S3method(generic, class)` are public API; the
     // bound `generic.class` function must not be flagged unused even though

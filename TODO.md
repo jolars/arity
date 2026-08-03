@@ -728,27 +728,30 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     item. (The 7 other residual MASS findings—`A5`/`pr3`/`labs`/`module`—are
     genuine dangling refs in incomplete book-excerpt scripts, correctly flagged.)
 
-- [ ] `unused-binding` FP frontier from the cran/MASS investigation
-  (2026-08-01). The `$`/`@`-subscript index-drop FP is fixed (see the Parser
-  extract-precedence entry); these scope-asymmetry cases remain (all confirmed
-  against `Rscript`, ~85% of the residual `R/`-source findings):
-  - **Default-argument expressions not scanned as reads** (root cause, ~9
-    findings). A default value is a promise evaluated in the function's own
-    frame, so it can read a body-local binding, but the scope walk doesn't count
-    it. Repro: `f <- function(x, upper = hmax) { hmax <- sqrt(x); upper }` flags
-    `hmax`. Also `panel = panel.lda` where `panel.lda` is a body-local closure.
-  - **`on.exit` read-before-assign** (1). `on.exit(par(oldpar))` reads `oldpar`
-    assigned on the next line (lazily evaluated at exit); the walk requires the
-    read to follow the assignment textually. Repro:
+- [x] `unused-binding` FP frontier from the cran/MASS investigation
+  (2026-08-01). The `$`/`@`-subscript index-drop FP was fixed earlier (see the
+  Parser extract-precedence entry); the four remaining scope-asymmetry cases
+  (all confirmed against `Rscript`, ~85% of the residual `R/`-source findings)
+  are now fixed in the semantic-model builder via a **"deferred read"** primitive
+  (`IdentRef::deferred`): a promise-evaluated read carries no intra-frame textual
+  ordering, so `reads_reached` lets it reach a same-frame binding assigned
+  *after* it (analogous to the existing `loop_range` relaxation). The fourth
+  bucket is a separate quoted-binding suppression (`BuildCtx::quote_depth`).
+  - **Default-argument expressions** (root cause, ~9 findings). A default is a
+    promise in the function's own frame, so its reads are walked `deferred`.
+    Repro: `f <- function(x, upper = hmax) { hmax <- sqrt(x); upper }` (also
+    `panel = panel.lda` where `panel.lda` is a body-local closure).
+  - **`on.exit` read-before-assign** (1). `on.exit(...)` runs at exit; its
+    arguments are walked `deferred`. Repro:
     `f <- function() { on.exit(par(oldpar)); oldpar <- par(pty = "s"); plot(1) }`.
   - **`NextMethod()` reads the reassigned formal from the frame** (2). A
-    reassigned formal (`x <- M`) flows into the next method via the frame, so it
-    is used. Repro: `print.foo <- function(x, ...) { M <- cbind(x); x <- M;
-    NextMethod("print") }`.
-  - **Bindings inside `expression({ ... })`** (4). Quoted code later `eval`'d in
-    another frame; assignments inside are "used" only through the downstream
-    eval. Arguably optional. Repro: `f <- function() { e <- expression({ n <-
-    rep(1, nobs) }); e }`.
+    `NextMethod()` call synthesizes a deferred read of each enclosing formal, so
+    a reassigned formal (`x <- M`) is used. Repro: `print.foo <- function(x, ...)
+    { M <- cbind(x); x <- M; NextMethod("print") }`.
+  - **Bindings inside `expression({ ... })`** (4). A `<-` inside a quoting callee
+    (`quote`/`bquote`/`substitute`/`expression`) is captured unevaluated and
+    records no binding. Repro: `f <- function() { e <- expression({ n <- rep(1,
+    nobs) }); e }`.
 
 ## Misc
 

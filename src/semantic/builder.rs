@@ -40,6 +40,8 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
         suppress_read: None,
         mask_depth: 0,
         loop_range: None,
+        deferred: false,
+        quote_depth: 0,
     };
     walk_generic(&mut ctx, root, file_scope);
     resolve_reads(&mut model);
@@ -68,6 +70,17 @@ struct BuildCtx<'a> {
     /// use. Reset across a `function` boundary, since a closure defined in a loop
     /// does not re-run per iteration.
     loop_range: Option<TextRange>,
+    /// Whether reads recorded right now are lazily evaluated (an R promise), so
+    /// they carry no intra-frame textual-ordering constraint. Set while walking a
+    /// parameter default or an `on.exit(...)` handler; stamped onto each recorded
+    /// [`IdentRef::deferred`]. Reset across a `function` boundary (an inner
+    /// closure's own body evaluates eagerly in its own frame).
+    deferred: bool,
+    /// How many quoting-callee argument lists deep we are
+    /// (`quote`/`expression`/…). While `> 0`, an inner `<-` target is captured
+    /// unevaluated, not a real local binding, so `handle_assignment` records no
+    /// binding for it.
+    quote_depth: usize,
 }
 
 fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -126,6 +139,7 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
         range: tok.text_range(),
         scope,
         data_masked: ctx.mask_depth > 0,
+        deferred: ctx.deferred,
     });
 }
 
@@ -143,6 +157,7 @@ fn record_user_op_read(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId
                 range: t.text_range(),
                 scope,
                 data_masked: ctx.mask_depth > 0,
+                deferred: ctx.deferred,
             });
             return;
         }
@@ -173,19 +188,26 @@ fn handle_function(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
     }
     // A closure defined inside a loop does not re-run per iteration, so the
     // loop-carried relaxation stops at the function boundary: clear the enclosing
-    // loop range while walking params defaults and body, then restore it.
+    // loop range while walking params defaults and body, then restore it. The
+    // promise (`deferred`) relaxation likewise stops here — this function's own
+    // body evaluates eagerly even when the function is itself a param default.
     let prev_loop = ctx.loop_range.take();
+    let prev_deferred = std::mem::replace(&mut ctx.deferred, false);
     // Walk the body subtree, plus any param-default expressions. Param-default
     // values live as raw tokens between `=` and the next `,` / `)`, so we walk
     // the entire token range between LPAREN and RPAREN looking for nested
-    // expression nodes whose IDENTs are reads.
+    // expression nodes whose IDENTs are reads. A default is a promise evaluated
+    // in this frame, so its reads are `deferred` (order-free within the frame).
+    ctx.deferred = true;
     walk_function_param_defaults(ctx, &fn_expr, fn_scope);
+    ctx.deferred = false;
     if let Some(body) = fn_expr.body() {
         ctx.function_depth += 1;
         walk_element(ctx, &body, fn_scope);
         ctx.function_depth -= 1;
     }
     ctx.loop_range = prev_loop;
+    ctx.deferred = prev_deferred;
 }
 
 fn walk_function_param_defaults(ctx: &mut BuildCtx<'_>, fn_expr: &FunctionExpr, scope: ScopeId) {
@@ -297,7 +319,13 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
         walk_element(ctx, value, scope);
     }
 
-    // 2. Record the binding.
+    // 2. Record the binding — unless we're inside quoted code (`quote`,
+    //    `expression`, …), where an assignment is captured unevaluated and binds
+    //    nothing analyzable. The RHS was still walked above (its reads are masked,
+    //    hence harmless), matching how the rest of the quoted body is handled.
+    if ctx.quote_depth > 0 {
+        return;
+    }
     if let Some(name) = assign.target_name() {
         let range = assign
             .target_name_token()
@@ -375,6 +403,21 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             // caller's frame, so a later `name$col` read resolves. Introduce a
             // binding for each bare-name argument, then walk normally.
             "data" => introduce_data_bindings(ctx, &call, scope),
+            // `on.exit(expr)` registers `expr` as a promise run at function exit,
+            // so it may read a local assigned *after* the call. Walk it deferred
+            // (order-free within the frame), like a param default.
+            "on.exit" => {
+                let prev = std::mem::replace(&mut ctx.deferred, true);
+                walk_generic(ctx, node, scope);
+                ctx.deferred = prev;
+                return;
+            }
+            // `NextMethod()` dispatches to the next method with the *current*
+            // frame values of the enclosing function's formals, so each formal
+            // (including a reassigned one, `x <- M`) is used. Synthesize a
+            // deferred read of each formal name at the call site, then walk the
+            // call's own arguments normally.
+            "NextMethod" => synthesize_formal_reads(ctx, node, scope),
             _ => {}
         }
     }
@@ -386,6 +429,12 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     // unmasked (a typo'd verb name is still a genuine undefined read) but mask
     // the argument list so its bare reads aren't flagged.
     if call_masks_arguments(node) {
+        // A quoting callee additionally captures its argument body unevaluated, so
+        // an inner `<-` there is not a real local binding: track quote depth so
+        // `handle_assignment` records no binding for it.
+        let quoting = CallExpr::cast(node.clone())
+            .and_then(|call| call_callee_ident(&call))
+            .is_some_and(|name| is_quoting_callee(&name));
         for el in node.children_with_tokens() {
             // Mask the argument list (bare names there may be data columns);
             // walk everything else (the callee) unmasked.
@@ -393,7 +442,9 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                 && child.kind() == SyntaxKind::ARG_LIST
             {
                 ctx.mask_depth += 1;
+                ctx.quote_depth += usize::from(quoting);
                 walk_node(ctx, child, scope);
+                ctx.quote_depth -= usize::from(quoting);
                 ctx.mask_depth -= 1;
             } else {
                 walk_element(ctx, &el, scope);
@@ -439,6 +490,34 @@ fn introduce_data_bindings(ctx: &mut BuildCtx<'_>, call: &CallExpr, scope: Scope
             tok.text_range(),
             ctx.loop_range,
         );
+    }
+}
+
+/// Record a deferred read of every formal (parameter) of the enclosing function
+/// at a `NextMethod()` call. `NextMethod` re-dispatches with the current frame
+/// values of the formals, so each one — including a formal reassigned in the body
+/// (`x <- M`, a `Local` shadowing the `Param`) — is used. The formals are the
+/// `Param` bindings already recorded in `scope` (params are pushed before the
+/// body walk, and `{}`/`for` introduce no scope, so a call in the body sees the
+/// function scope directly). A no-op at file scope, where there are no formals.
+fn synthesize_formal_reads(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    let range = node.text_range();
+    let formals: Vec<SmolStr> = ctx.model.scopes[scope.0 as usize]
+        .bindings
+        .iter()
+        .filter_map(|id| {
+            let b = &ctx.model.bindings[id.0 as usize];
+            (b.kind == BindingKind::Param).then(|| b.name.clone())
+        })
+        .collect();
+    for name in formals {
+        ctx.model.idents.push(IdentRef {
+            name,
+            range,
+            scope,
+            data_masked: false,
+            deferred: true,
+        });
     }
 }
 
@@ -901,6 +980,11 @@ fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
                     b.def_range.start() < ident.range.start()
                         || b.loop_range
                             .is_some_and(|lr| lr.contains_range(ident.range))
+                        // A deferred (promise) read carries no textual ordering
+                        // within its frame: the default / `on.exit` / `NextMethod`
+                        // expression runs after body statements may have assigned a
+                        // same-name local, so an assignment *after* the read counts.
+                        || ident.deferred
                 })
                 .collect();
             if !preceding.is_empty() {
