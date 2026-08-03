@@ -408,6 +408,7 @@ renv
 repr
 reprex
 repurrrsive
+reshape
 reshape2
 restfulr
 reticulate
