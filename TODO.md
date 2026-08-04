@@ -8,48 +8,6 @@
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
 
-- [x] Incremental reparse (token/block) beneath `parsed_document`
-  (`src/incremental.rs`)
-
-  - [x] Stage A — switch the LSP sync to `TextDocumentSyncKind::INCREMENTAL`.
-    The server now applies the client's ranged changes to its stored buffer
-    (`didChange` in `src/lsp/state.rs`, via `LineIndex::position_to_byte`),
-    handling both ranged edits and `range: None` full replacements and
-    re-indexing per change so batched edits apply in order. Cuts per-keystroke
-    bandwidth (no more whole-file payloads) and is the prerequisite for Stage B.
-    Covered by `tests/lsp_protocol.rs`
-    (`incremental_did_change_applies_ranged_edit`,
-    `incremental_did_change_applies_ordered_changes`, capability assertion).
-
-  - [x] Stage B — thread the precise edit ranges into the reparse. `didChange`
-    now records each ranged change as a byte `Edit` (`src/lsp/state.rs`), carried
-    on `LintRequest.edits` and concatenated across the lint thread's version
-    coalescing (`enqueue`) so no superseded request's edits are lost. `start`
-    stages them into a `pending_edits` salsa side-channel (mirroring
-    `reparse_prev`/`reparse_store`); `parsed_document` takes them and prefers
-    `reparse_edits(&[Edit])`—a chained fold of the single-edit `reparse`—over the
-    whole-text `diff_edit`. Correct by construction: a `== target` guard (Tenet 4)
-    rejects any misaligned/stale sequence and falls back to `diff_edit`, so the
-    threaded edits can never produce a wrong tree, only decline the optimization.
-    Benefits multi-cursor and find-replace (single-caret typing already got a
-    tight `diff_edit` span). Covered by `tests/incremental_reparse.rs` (multi-edit
-    oracle), `tests/salsa_incremental.rs` (`staged_edits_use_precise_multi_reparse`,
-    `stale_staged_edits_fall_back_to_diff_edit`), and `tests/lsp_protocol.rs`
-    (`incremental_multi_cursor_change_reparses_and_diagnoses`). A precise-hit
-    counter (`IncrementalDatabase::precise_reparse_hits`) surfaces the path for
-    tests/metrics.
-
-    - [x] Follow-up: the single-edit span-mapping consumers `resolve_ptr`
-      (`src/incremental.rs`) and `rename_cursor_offset` (`src/lsp/navigation.rs`)
-      now prefer the threaded precise edit slice via `map_range_through_edits`,
-      falling back to the whole-text `diff_edit` + `map_range_through_edit`. An
-      apply-and-verify guard (`apply_edits`) confirms the slice reconstructs the
-      current text before folding a range through it, so a stale slice degrades
-      to exactly the old behavior. `resolve_ptr` takes an `Option<&[Edit]>`;
-      `RenameAnchor` accumulates the per-`didChange` edits between prepare and
-      rename (`record_edits`, fed from the `didChange` handler in
-      `src/lsp/state.rs`). Separate from the tree reparse.
-
 ## AST wrappers
 
 - [ ] *Optional polish:* migrate the remaining individual lint rules to call the
@@ -61,30 +19,6 @@
 
 - [ ] Tribbles
 
-- [ ] Corpus gaps newly exposed by the statement-separator fix (issue #68).
-  Making `..2dge`/`1.` lex correctly moved ~37 corpus files out of the
-  "unparseable, skipped" bucket and into the checked set, where they hit
-  pre-existing formatter gaps. None are regressions; each needs its own
-  fixture:
-
-  - [x] `ambiguous construct (assignment rhs)` — an assignment whose RHS is a
-    comment (plain or a bare `#'` roxygen line) followed by a `function`/`if`
-    on the next line (`Matrix/R/models.R`, `Matrix/inst/test-tools-Matrix.R`,
-    `wch/r-source` `methods/R/MethodsList.R`, issue #89). The operator-leading
-    comment path now recognizes bare roxygen leaves and stacks multiple
-    comments on their own lines instead of merging them.
-  - [x] `ambiguous construct (block body)` — a statement trailed by a `#'`
-    roxygen marker mid-line, which splits the line into two elements
-    (`survival/R/survfit.coxph.R`, `survival/R/survfit.coxphms.R`). A mid-line
-    `#'` is only a roxygen marker to the lexer; roxygen2 treats it as a plain
-    comment there. `split_lines` now attaches a trailing single-line
-    `ROXYGEN_BLOCK` to the statement's line (like a `COMMENT` token) and
-    `ir_line` renders it as a trailing line-suffix comment;
-    `try_flatten_function_block` bails on a `ROXYGEN_BLOCK` too, so a
-    single-statement body keeps its braces exactly as with a `#` comment
-    (fixture `block_body_trailing_roxygen`).
-  - [ ] Idempotence: `survival/R/survcheck.R`.
-
 ## Linter
 
 - [ ] *Speculative micro-opt (deferred):* `resolves_to_base` does a linear
@@ -93,51 +27,18 @@
       `return`/`stop`), so the call count is tiny and it is not currently hot—not
       worth an offset->ident index yet. If it ever becomes hot, resolve via the
       covering element at the callee offset instead of scanning.
-- [x] `browser` (suspicious, ns, safe-delete)—leftover debug call. Flags a
-      `browser()` that resolves to base R; the safe-delete fix fires only at
-      statement position (block/top level), withheld elsewhere so the edit can't
-      break syntax.
-- [x] `empty-assignment` (correctness, syn, none)—flags an assignment whose
-      value is an empty block (`x <- {}`), which evaluates to `NULL`. Matches on
-      the assignment's direct value side, so an empty function body/`if` branch
-      is untouched; a comment-only block still counts (lintr parity). No fix
-      (rewriting to `NULL` is a semantic judgment).
-- [x] `implicit-assignment` (suspicious, syn, none)—flags an assignment
-      (`<-`/`=`/`<<-`/`->`/`->>`) whose parent is an `ARG` (a call or subscript
-      argument, `mean(x <- 1:10)`). Scoped to argument position so it never
-      overlaps `assignment-in-condition` (the `if`/`while` condition case) and
-      leaves statement bodies and chained assignment alone; the `:=` walrus
-      (data.table/rlang) is excluded. **Default-off** (opt-in): idiomatic in
-      `system.time`/`suppressWarnings`/`invisible` wrappers, so noisy on by
-      default. No fix (lifting the binding out is a semantic restructuring).
-- [x] **§I2 regex/string-literal helper**: read a `STRING` token's unquoted
-      contents; classify regex metachars/single anchor (`^`/`$`). Originally
-      framed as a blocker for `string-boundary`/`fixed-regex`, but those rules
-      shipped first with the logic inline; §I2 landed as the consolidation—the
-      classification now lives in `src/linter/rules/regex.rs`
-      (`is_plain_literal`/`is_fixed_string`/`single_anchor`), which both rules
-      call. Raw-string (`r"(...)"`) coverage is still deferred.
 - [ ] `internal-function` `pkg:::fn` via
       `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.
 - [ ] **§I4 per-rule config**: add a `[lint.rules.<id>]` TOML table + typed
       per-rule struct in `src/config.rs`, threaded into rules via a
       `config`/`&RuleConfig` field on `RuleContext`. **Blocks**
       `undesirable-function`, `download-file`.
-- [x] `if-always-true` literal `if (TRUE/FALSE)` only—no const-folding
-      (correctness, unsafe). Splices the taken branch (`if (FALSE) a` → `NULL`);
-      withholds the fix when a comment outside the branch would be dropped.
 - [ ] `unused-function` (suspicious, sem, none)—reuse
       `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
 - [ ] `duplicated-function-definition` (suspicious, sem, none).
 - [ ] `for-loop-index`/`for-loop-dup-index` (suspicious, sem, none).
 - [ ] `unnecessary-nesting` collapsible nested `if`/single-stmt block
       (readability, sem, unsafe).
-- [x] `coalesce` `if (is.null(x)) y else x` (and the mirror
-      `if (!is.null(x)) x else y`) is `x %||% y` (performance, ns, unsafe).
-      Landed at `ns` (not `sem`): `resolves_to_base` confirms `is.null`; branch
-      equality is textual. Fix is atom-guarded on both operands, gated on a
-      splice-safe outer position (`is_safe_splice_context`), and withheld on any
-      interior comment. Single-edit—§I5 multi-edit not needed.
 - [ ] `undesirable-function` (suspicious, ns + config, none)—needs §I4;
       **default-off**. `download-file` (correctness, ns, none)—low priority.
 
@@ -185,22 +86,6 @@ roxygen2's own signals per comparable event class, allowlist-ratcheted
 excluded from the diff by construction. `KNOWN_TAGS` validated against
 roxygen2 7.3.3.
 
-- [x] `roxygen-unknown-tag`—tag roxygen2 doesn't understand (mirrors "is not
-      a known tag").
-- [x] `roxygen-title`—documented function with no title/intro (mirrors
-      "Skipping; no name and/or title"); also fires on `@export` with no docs
-      at all (roxygen2 silent; `R CMD check` flags the undocumented export).
-- [x] `roxygen-return`—`@export` without `@return`/`@returns` (arity-extra:
-      roxygen2 never warns; CRAN requires `\value`). Skips `@noRd` and
-      inherited/merged topics.
-- [x] `roxygen-param`—missing/nonexistent/duplicate `@param` (arity-extra)
-      plus name-and-description two-part check (mirrors "requires two parts").
-      Coverage skipped under `@inheritParams`/`@rdname`/…; duplicates always
-      checked.
-- [x] `roxygen-examples`—`@examples` body or `@examplesIf` condition that
-      does not reparse as R (condition mirrors roxygen2's "condition failed to
-      parse"; body is arity-extra). Rd wrappers (`\dontrun{}` etc.) neutralized
-      name-only so offsets survive.
 - [ ] Follow-ups (deferred): run the full rule set over extracted example code
       (needs package-context symbol handling to avoid FPs); unsafe-delete fixes
       for duplicate/nonexistent `@param`; a missing-description variant of
@@ -208,31 +93,6 @@ roxygen2 7.3.3.
       it never warns—decide against CRAN's stance first); mine the oracle's
       "uncovered signals" table (mismatched braces/quotes, markdown-link
       plain-text restriction) for new rules.
-- [x] Parser note surfaced by this work: roxygen2 never markdown-processes
-      `tag_code` bodies, but arity tokenized markdown inside `@examples` under
-      `@md` (harmless for the lint—extraction is token-concat—but a CST-fidelity
-      gap). The lexer and inline builder now suppress markdown for the code tags
-      (`is_code_tag`/`tag_body_skips_markdown`), mirroring `@rawRd`; fixture
-      `roxygen_md_examples_code_body`. (The Rd inline spans these bodies still
-      tokenize—`ROXYGEN_CODE` for a backtick span—remain a separate,
-      pre-existing gap.)
-- [x] Parser leniency surfaced by this work: a stray closing delimiter at top
-      level (`f(1))`) was recovered losslessly *without* a parse diagnostic,
-      though R itself errors, so `roxygen-examples` and plain-file linting both
-      inherited the leniency. The top-level loop now emits an `unexpected '<tok>'`
-      diagnostic (still lossless); fixture `stray_close_paren_toplevel`.
-
-#### Out of scope (recorded so they aren't silently dropped)
-
-- **Formatter's domain (Tenet 1):** `quotes`, `numeric_leading_zero`, spacing,
-  indentation, semicolons, trailing whitespace—excluded from the linter.
-- **Needs R evaluation/type inference (arity is static):** `all_equal`,
-  `length_levels`, `length_test`, `matrix_apply`, `list2df`, `which_grepl`,
-  `grepv`, `sample_int`, `system_file`, `sprintf` arg-checking, full `coalesce`,
-  const-folded `if_always_true`. Implement only an exact-AST-shape subset where
-  one exists, else defer.
-- **Too noisy without opt-in:** `undesirable-function`, `unused-function`,
-  `unexplained-suppression`—all **default-off**.
 
 ## Static analysis (dataflow foundation)
 
