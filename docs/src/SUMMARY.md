@@ -22,6 +22,7 @@
   - [unreachable-code](reference/rules/unreachable-code.md)
   - [is-numeric](reference/rules/is-numeric.md)
   - [if-always-true](reference/rules/if-always-true.md)
+  - [empty-assignment](reference/rules/empty-assignment.md)
   - [assignment-in-condition](reference/rules/assignment-in-condition.md)
   - [browser](reference/rules/browser.md)
   - [shadowed-builtin](reference/rules/shadowed-builtin.md)

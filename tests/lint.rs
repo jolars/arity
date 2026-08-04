@@ -1739,6 +1739,46 @@ fn if_always_true_withholds_fix_on_dropped_comment() {
     assert!(d.fix.is_none(), "fix should be withheld: {:?}", d.fix);
 }
 
+#[test]
+fn empty_assignment_flags_empty_block_value() {
+    // Assigning `{}` is the same as assigning `NULL`; the empty block is dead.
+    for src in ["x <- {}\n", "x = {}\n", "x <<- {}\n", "{} -> x\n"] {
+        let d = diagnostics(src)
+            .into_iter()
+            .find(|d| d.rule == "empty-assignment")
+            .unwrap_or_else(|| panic!("expected an empty-assignment finding for {src:?}"));
+        // Span is the empty block, not the whole statement, and there is no fix.
+        assert_eq!(&src[d.range], "{}");
+        assert!(d.fix.is_none(), "empty-assignment ships no fix");
+    }
+    // A comment-only block is still statement-empty (mirrors lintr).
+    let src = "x <- {\n  # nothing\n}\n";
+    assert!(
+        diagnostics(src)
+            .iter()
+            .any(|d| d.rule == "empty-assignment"),
+        "a comment-only block should still flag"
+    );
+}
+
+#[test]
+fn empty_assignment_ignores_non_empty_and_non_assignment_blocks() {
+    // Non-empty block value, empty function body, empty `if` branch, and a
+    // bare empty block (no assignment) are all left alone.
+    for src in [
+        "x <- {\n  f()\n}\n",
+        "f <- function() {}\n",
+        "x <- if (a) {} else b\n",
+        "{}\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"empty-assignment"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
 /// Apply every `rule` fix in `src` (safe-only) in one pass.
 fn fixed_output_all(src: &str, rule: &str) -> String {
     let diags = diagnostics(src);
@@ -3267,6 +3307,8 @@ fn fixed_output_is_parseable_and_clean() {
         "print(x == TRUE)\n",
         "print(x == FALSE)\n",
         "print(TRUE == f(x))\n",
+        // empty-assignment (no fix — must not perturb the input)
+        "x <- {}\n",
         // equals-na (`== NA` → is.na)
         "print(x == NA)\n",
         "print(NA == g(y))\n",

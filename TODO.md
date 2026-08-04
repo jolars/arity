@@ -97,7 +97,11 @@
       `browser()` that resolves to base R; the safe-delete fix fires only at
       statement position (block/top level), withheld elsewhere so the edit can't
       break syntax.
-- [ ] `empty-assignment` (correctness, none).
+- [x] `empty-assignment` (correctness, syn, none)—flags an assignment whose
+      value is an empty block (`x <- {}`), which evaluates to `NULL`. Matches on
+      the assignment's direct value side, so an empty function body/`if` branch
+      is untouched; a comment-only block still counts (lintr parity). No fix
+      (rewriting to `NULL` is a semantic judgment).
 - [ ] `implicit-assignment` (suspicious, none)—scope to avoid overlap with
       existing `assignment-in-condition`.
 - [x] **§I2 regex/string-literal helper**: read a `STRING` token's unquoted
