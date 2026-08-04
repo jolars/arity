@@ -30,6 +30,7 @@ and IDEs.
 Arity is available from several sources:
 
 - **crates.io**: `cargo install arity`
+- **Homebrew**: `brew install jolars/tap/arity`
 - **npm**: `npm install -g arity-cli` (bundles a prebuilt binary)
 - **PyPI**: `uv tool install arity`/`pipx install arity`
 - **Prebuilt binaries**: from the [releases
