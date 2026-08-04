@@ -39,11 +39,16 @@
     counter (`IncrementalDatabase::precise_reparse_hits`) surfaces the path for
     tests/metrics.
 
-    - [ ] Follow-up (deferred): the single-edit span-mapping consumers
-      `resolve_ptr` (`src/incremental.rs`) and `src/lsp/navigation.rs` still use a
-      whole-text `diff_edit` + `map_range_through_edit`. They could adopt the
-      threaded slice via `map_range_through_edits` for more precise node-ptr
-      re-resolution across multi-edit changes. Separate from the tree reparse.
+    - [x] Follow-up: the single-edit span-mapping consumers `resolve_ptr`
+      (`src/incremental.rs`) and `rename_cursor_offset` (`src/lsp/navigation.rs`)
+      now prefer the threaded precise edit slice via `map_range_through_edits`,
+      falling back to the whole-text `diff_edit` + `map_range_through_edit`. An
+      apply-and-verify guard (`apply_edits`) confirms the slice reconstructs the
+      current text before folding a range through it, so a stale slice degrades
+      to exactly the old behavior. `resolve_ptr` takes an `Option<&[Edit]>`;
+      `RenameAnchor` accumulates the per-`didChange` edits between prepare and
+      rename (`record_edits`, fed from the `didChange` handler in
+      `src/lsp/state.rs`). Separate from the tree reparse.
 
 ## AST wrappers
 

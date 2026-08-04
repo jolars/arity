@@ -1449,7 +1449,7 @@ fn resolve_ptr_resolves_against_unchanged_text() {
 
     let snapshot = db.snapshot();
     let node = snapshot
-        .resolve_ptr(file, ptr, &text)
+        .resolve_ptr(file, ptr, &text, None)
         .expect("resolves on the same revision");
     assert_eq!(node.kind(), SyntaxKind::CALL_EXPR);
     assert_eq!(node.text(), "bar(2)");
@@ -1468,7 +1468,7 @@ fn resolve_ptr_survives_edit_before_the_node() {
 
     let snapshot = db.snapshot();
     let node = snapshot
-        .resolve_ptr(file, ptr, &old)
+        .resolve_ptr(file, ptr, &old, None)
         .expect("resolves after an edit before the node");
     assert_eq!(node.kind(), SyntaxKind::CALL_EXPR);
     assert_eq!(node.text(), "bar(2)");
@@ -1486,7 +1486,80 @@ fn resolve_ptr_invalidates_when_the_node_is_edited() {
     db.set_file_text(file, "foo <- bazzz(2)\n");
 
     let snapshot = db.snapshot();
-    assert!(snapshot.resolve_ptr(file, ptr, &old).is_none());
+    assert!(snapshot.resolve_ptr(file, ptr, &old, None).is_none());
+}
+
+#[test]
+fn resolve_ptr_precise_slice_survives_disjoint_edits_around_the_node() {
+    // Two disjoint edits straddle the middle call: prepend a comment line and
+    // append a trailing statement. A coalesced `diff_edit` spans from the first
+    // change to the last — its replaced range swallows the call's interior and
+    // the whole-text path invalidates the handle. The precise per-edit slice
+    // keeps them disjoint, so the call survives.
+    let mut db = IncrementalDatabase::default();
+    let old = "foo <- bar(2)\n";
+    let file = db.add_file(old);
+    let ptr = first_call_ptr(&db, file);
+    let old = old.to_string();
+
+    db.set_file_text(file, "# header\nfoo <- bar(2)\nq <- 9\n");
+
+    // Edits in application order, each against the text its predecessor left:
+    // insert the header at the top, then append the statement at the new tail.
+    let edits = [
+        Edit {
+            range: 0..0,
+            insert: "# header\n".to_string(),
+        },
+        Edit {
+            range: 23..23,
+            insert: "q <- 9\n".to_string(),
+        },
+    ];
+
+    let snapshot = db.snapshot();
+    // The coalesced whole-text path cannot re-resolve this.
+    assert!(
+        snapshot.resolve_ptr(file, ptr, &old, None).is_none(),
+        "a single spanning diff_edit straddles the node interior"
+    );
+    // The precise slice keeps the edits disjoint and re-anchors the call.
+    let node = snapshot
+        .resolve_ptr(file, ptr, &old, Some(&edits))
+        .expect("precise slice re-anchors the call between the two edits");
+    assert_eq!(node.kind(), SyntaxKind::CALL_EXPR);
+    assert_eq!(node.text(), "bar(2)");
+}
+
+#[test]
+fn resolve_ptr_stale_slice_falls_back_to_diff_edit() {
+    // A slice that does not reconstruct the current text (here it omits the
+    // trailing append) must be rejected by the apply-and-verify guard and the
+    // resolver degrades to the whole-text `diff_edit` path — same result as
+    // passing `None`, never a wrong node or a panic.
+    let mut db = IncrementalDatabase::default();
+    let old = "foo <- bar(2)\n";
+    let file = db.add_file(old);
+    let ptr = first_call_ptr(&db, file);
+    let old = old.to_string();
+
+    db.set_file_text(file, "# header\nfoo <- bar(2)\nq <- 9\n");
+
+    // Only the prepend; the append is missing, so applying this to `old` does
+    // not yield the current buffer.
+    let stale = [Edit {
+        range: 0..0,
+        insert: "# header\n".to_string(),
+    }];
+
+    let snapshot = db.snapshot();
+    assert_eq!(
+        snapshot
+            .resolve_ptr(file, ptr, &old, Some(&stale))
+            .is_none(),
+        snapshot.resolve_ptr(file, ptr, &old, None).is_none(),
+        "a stale slice must behave exactly like the diff_edit fallback"
+    );
 }
 
 #[test]
@@ -1501,7 +1574,7 @@ fn resolve_ptr_reuses_the_cached_parse() {
 
     let snapshot = db.snapshot();
     let node = snapshot
-        .resolve_ptr(file, ptr, &text)
+        .resolve_ptr(file, ptr, &text, None)
         .expect("resolves on the warm tree");
     assert_eq!(node.text(), "bar(2)");
     drop(snapshot);

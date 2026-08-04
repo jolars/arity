@@ -521,6 +521,94 @@ fn incremental_multi_cursor_change_reparses_and_diagnoses() {
 }
 
 #[test]
+fn rename_anchor_reanchors_across_disjoint_edits_via_precise_slice() {
+    // prepareRename stashes an anchor on the function-local `value` (kept local so
+    // the rename stays intra-file — a file-scope binding would need a seeded
+    // workspace this hermetic harness has none of). Two *disjoint* ranged edits
+    // then straddle its assignment: a comment line above and a statement below.
+    // The server threads each batch into the anchor (Stage B), so `rename` folds
+    // them precisely and re-anchors `value` where a coalesced whole-text
+    // `diff_edit` would straddle the node interior and give up.
+    //
+    // To prove the *anchor* (not the request position) drove it, the rename
+    // request keeps the original prepare position (line 1, char 2). The prepend
+    // shifted `value` down a line, so that position now lands on the function
+    // signature — a non-renameable spot, so the position fallback alone would
+    // answer null. A non-null result means the accumulated slice re-anchored.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(
+        uri,
+        "f <- function() {\n  value <- 1\n  print(value)\n}\n",
+        1,
+    );
+    let _ = h.recv_publish_for(uri, 1);
+
+    let prep_id = h.request(
+        "textDocument/prepareRename",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 2 }
+        }),
+    );
+    assert!(
+        h.recv_response(&prep_id).response_result.is_ok(),
+        "prepareRename offers a rename on `value`"
+    );
+
+    // Edit 1: prepend a comment line above the function.
+    h.did_change_raw(
+        uri,
+        2,
+        json!([
+            { "range": { "start": { "line": 0, "character": 0 },
+                         "end": { "line": 0, "character": 0 } },
+              "text": "# note\n" }
+        ]),
+    );
+    // Edit 2: append a statement at the new tail (line 5, char 0).
+    h.did_change_raw(
+        uri,
+        3,
+        json!([
+            { "range": { "start": { "line": 5, "character": 0 },
+                         "end": { "line": 5, "character": 0 } },
+              "text": "z <- 2\n" }
+        ]),
+    );
+
+    let ren_id = h.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 2 },
+            "newName": "v2"
+        }),
+    );
+    let result = h
+        .recv_response(&ren_id)
+        .response_result
+        .expect("rename responds");
+    let changes = result
+        .get("changes")
+        .and_then(|c| c.get(uri))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!("precise anchor should re-resolve `value` and rename it, got: {result:#?}")
+        });
+    assert_eq!(
+        changes.len(),
+        2,
+        "definition + its read renamed: {changes:#?}"
+    );
+    for e in &changes {
+        assert_eq!(e.get("newText").and_then(Value::as_str), Some("v2"));
+    }
+    h.shutdown();
+}
+
+#[test]
 fn shutdown_exit_joins_cleanly() {
     let mut h = Harness::start_push();
     h.did_open(doc_uri(), CLEAN, 1);

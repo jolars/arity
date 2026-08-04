@@ -66,6 +66,18 @@ impl Edit {
     }
 }
 
+/// Apply `edits` to `old` left-to-right, each expressed against the text its
+/// predecessors produced — the inverse operation to [`map_range_through_edits`].
+///
+/// Used as an apply-and-verify guard by span-mapping consumers: reconstructing
+/// the current text from an old snapshot plus an accumulated edit slice proves
+/// the slice is the exact transform between them before a range is folded
+/// through it, so a stale or misaligned slice can be rejected in favor of the
+/// whole-text [`diff_edit`] fallback.
+pub fn apply_edits(old: &str, edits: &[Edit]) -> String {
+    edits.iter().fold(old.to_string(), |t, e| e.apply(&t))
+}
+
 /// Map a `TextRange` taken against the text *before* `edit` to its position in
 /// the text *after* `edit`.
 ///
@@ -683,5 +695,19 @@ mod map_range_tests {
         // After the first edit the node is at [12, 17); the second lands inside.
         let edits = [edit(0, 0, "ab"), edit(13, 13, "z")];
         assert_eq!(map_range_through_edits(node, &edits), None);
+    }
+
+    #[test]
+    fn apply_edits_folds_each_against_prior_text() {
+        // Two disjoint edits, each expressed against the text its predecessor
+        // produced: prepend "ab", then insert "Z" before "ef" in the now-longer
+        // text (index 4, not 2 — the prepend shifted it).
+        let edits = [edit(0, 0, "ab"), edit(4, 4, "Z")];
+        assert_eq!(apply_edits("cdef", &edits), "abcdZef");
+    }
+
+    #[test]
+    fn apply_edits_empty_is_identity() {
+        assert_eq!(apply_edits("xyz", &[]), "xyz");
     }
 }

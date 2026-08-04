@@ -17,7 +17,8 @@ use rowan::TextRange;
 use salsa::{Durability, Setter};
 
 use crate::parser::{
-    Edit, ParseDiagnostic, diff_edit, map_range_through_edit, parse, reparse, reparse_edits,
+    Edit, ParseDiagnostic, apply_edits, diff_edit, map_range_through_edit, map_range_through_edits,
+    parse, reparse, reparse_edits,
 };
 use crate::project::{
     ClassSystem, DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
@@ -1495,26 +1496,45 @@ impl Analysis {
     /// `file`'s *current* parse tree.
     ///
     /// When the snapshot's text still equals `taken_at_text` the handle resolves
-    /// directly. Otherwise the stored range is first mapped through the single
-    /// edit separating the two texts ([`diff_edit`] + [`map_range_through_edit`])
-    /// before resolving against the new tree — the same `file_text != text`
-    /// staleness signal hover uses, here turned into an offset fix-up rather than
-    /// a bail-out. Returns `None` (caller falls back to position/name
-    /// re-resolution) when the node was edited or the mapped range no longer names
-    /// a node of that kind. A pure read: the caller wraps it in
-    /// [`salsa::Cancelled::catch`], as hover wraps `hover_from_node`.
+    /// directly. Otherwise the stored range is mapped forward before resolving
+    /// against the new tree — the same `file_text != text` staleness signal hover
+    /// uses, here turned into an offset fix-up rather than a bail-out. Two ways to
+    /// map it:
+    ///
+    /// - **Precise.** When `edits` carries the per-change sequence transforming
+    ///   `taken_at_text` into the current text (in application order), and an
+    ///   apply-and-verify check confirms it reconstructs that text exactly, the
+    ///   range folds through it with [`map_range_through_edits`]. Disjoint edits
+    ///   stay disjoint, so a node sitting *between* two of them survives.
+    /// - **Fallback.** Otherwise a single spanning [`diff_edit`] is recovered
+    ///   from the two whole texts and applied with [`map_range_through_edit`]. A
+    ///   stale, empty, or misaligned `edits` slice degrades to exactly this.
+    ///
+    /// Returns `None` (caller falls back to position/name re-resolution) when the
+    /// node was edited or the mapped range no longer names a node of that kind. A
+    /// pure read: the caller wraps it in [`salsa::Cancelled::catch`], as hover
+    /// wraps `hover_from_node`.
     pub fn resolve_ptr(
         &self,
         file: SourceFile,
         ptr: NodePtr,
         taken_at_text: &str,
+        edits: Option<&[Edit]>,
     ) -> Option<SyntaxNode> {
         let root = self.parsed_tree(file);
-        if self.file_text(file) == taken_at_text {
+        let current = self.file_text(file);
+        if current == taken_at_text {
             return ptr.try_to_node(&root);
         }
-        let edit = diff_edit(taken_at_text, self.file_text(file));
-        let mapped = map_range_through_edit(ptr.text_range(), &edit)?;
+        let mapped = match edits {
+            Some(edits) if !edits.is_empty() && apply_edits(taken_at_text, edits) == current => {
+                map_range_through_edits(ptr.text_range(), edits)?
+            }
+            _ => {
+                let edit = diff_edit(taken_at_text, current);
+                map_range_through_edit(ptr.text_range(), &edit)?
+            }
+        };
         ptr.with_range(mapped).try_to_node(&root)
     }
 

@@ -1241,6 +1241,13 @@ impl GlobalState {
                         doc.version = version;
                     }
                     if applied {
+                        // Thread this batch into any in-flight rename anchor so a
+                        // later `rename` re-anchors precisely across these edits
+                        // (see `rename_cursor_offset`). `precise` is false for a
+                        // full-document replacement, which invalidates the slice.
+                        if let Some(anchor) = self.rename_anchors.get_mut(&uri) {
+                            anchor.record_edits(&edits, precise);
+                        }
                         self.send_lint(uri, edits);
                     }
                 }

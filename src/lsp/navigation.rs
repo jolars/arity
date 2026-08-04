@@ -435,6 +435,26 @@ pub struct RenameAnchor {
     node_ptr: NodePtr,
     offset_in_node: u32,
     text: String,
+    /// The precise per-change edits transforming `text` into the current buffer,
+    /// accumulated across every `didChange` since prepare (in application order).
+    /// `Some` is a candidate for the precise [`map_range_through_edits`] path;
+    /// `None` means the sequence was invalidated (a full-document replacement, or
+    /// a change before the buffer existed) and re-anchoring must fall back to the
+    /// whole-text [`diff_edit`]. Fed by [`RenameAnchor::record_edits`].
+    edits: Option<Vec<Edit>>,
+}
+
+impl RenameAnchor {
+    /// Fold one `didChange` batch into the anchor's accumulator. `precise` is the
+    /// server's per-batch signal (false when the batch was a full-document
+    /// replacement that no tight edit sequence can express): a non-precise batch,
+    /// or an already-invalidated accumulator, latches the sequence to `None`.
+    pub(crate) fn record_edits(&mut self, batch: &[Edit], precise: bool) {
+        match &mut self.edits {
+            Some(acc) if precise => acc.extend_from_slice(batch),
+            _ => self.edits = None,
+        }
+    }
 }
 
 /// The result of [`compute_prepare_rename`]: the editable range + placeholder the
@@ -518,6 +538,7 @@ pub fn compute_prepare_rename(
             node_ptr: NodePtr::from_node(&node),
             offset_in_node,
             text: text.to_string(),
+            edits: Some(Vec::new()),
         },
     })
 }
@@ -695,14 +716,30 @@ pub fn compute_rename_with_anchor(
 
 /// Re-derive the cursor's byte offset in `current_text` from a [`RenameAnchor`]:
 /// resolve the anchor's node (directly when the text is unchanged, else by
-/// mapping its range through the edit) and add the stored intra-node offset.
+/// mapping its range forward) and add the stored intra-node offset.
+///
+/// When the anchor accumulated the precise per-change edits since prepare and
+/// they reconstruct `current_text` exactly (apply-and-verify), the node range
+/// folds through them with [`map_range_through_edits`] — disjoint edits stay
+/// disjoint, so a node between two of them survives where a single coalesced
+/// [`diff_edit`] would straddle it. A missing, empty, or misaligned sequence
+/// falls back to that whole-text `diff_edit`.
 pub(crate) fn rename_cursor_offset(current_text: &str, anchor: &RenameAnchor) -> Option<usize> {
     let root = parse(current_text).cst;
     let node = if current_text == anchor.text {
         anchor.node_ptr.try_to_node(&root)?
     } else {
-        let edit = diff_edit(&anchor.text, current_text);
-        let mapped = map_range_through_edit(anchor.node_ptr.text_range(), &edit)?;
+        let mapped = match &anchor.edits {
+            Some(edits)
+                if !edits.is_empty() && apply_edits(&anchor.text, edits) == current_text =>
+            {
+                map_range_through_edits(anchor.node_ptr.text_range(), edits)?
+            }
+            _ => {
+                let edit = diff_edit(&anchor.text, current_text);
+                map_range_through_edit(anchor.node_ptr.text_range(), &edit)?
+            }
+        };
         anchor.node_ptr.with_range(mapped).try_to_node(&root)?
     };
     Some(usize::from(node.text_range().start()) + anchor.offset_in_node as usize)
@@ -784,6 +821,72 @@ pub(crate) fn is_reserved_word(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_cursor_offset_precise_slice_survives_disjoint_edits() {
+        // Prepare a rename of `value`, then two disjoint edits straddle its
+        // `value <- 1` assignment: a comment above and a statement below.
+        // Coalesced into one `diff_edit` they span the node interior and
+        // invalidate the handle; kept disjoint via the accumulated slice, the
+        // node survives and the cursor re-anchors at the shifted `value`.
+        let text_a = "value <- 1\nprint(value)\n";
+        let mut anchor = compute_prepare_rename(text_a, 0, PositionEncoding::Utf16)
+            .expect("offers rename")
+            .anchor;
+
+        let text_b = "# note\nvalue <- 1\nprint(value)\nz <- 2\n";
+        anchor.record_edits(
+            &[
+                Edit {
+                    range: 0..0,
+                    insert: "# note\n".to_string(),
+                },
+                Edit {
+                    range: 31..31,
+                    insert: "z <- 2\n".to_string(),
+                },
+            ],
+            true,
+        );
+
+        // Precise path: `value` sits at offset 7 in text_b (shifted by "# note\n").
+        assert_eq!(rename_cursor_offset(text_b, &anchor), Some(7));
+    }
+
+    #[test]
+    fn rename_cursor_offset_without_slice_falls_back_and_invalidates() {
+        // Same disjoint edits, but no slice was recorded (the empty accumulator a
+        // fresh anchor carries). The whole-text `diff_edit` fallback spans the
+        // node interior, so re-anchoring fails — `on_rename` then falls back to
+        // the request position.
+        let text_a = "value <- 1\nprint(value)\n";
+        let anchor = compute_prepare_rename(text_a, 0, PositionEncoding::Utf16)
+            .expect("offers rename")
+            .anchor;
+        let text_b = "# note\nvalue <- 1\nprint(value)\nz <- 2\n";
+        assert_eq!(rename_cursor_offset(text_b, &anchor), None);
+    }
+
+    #[test]
+    fn record_edits_latches_to_none_on_a_non_precise_batch() {
+        // A full-document replacement (precise=false) can't be expressed as a
+        // tight sequence, so it invalidates the accumulator and a later precise
+        // batch cannot revive it.
+        let anchor = compute_prepare_rename("x <- 1\n", 0, PositionEncoding::Utf16)
+            .expect("offers rename")
+            .anchor;
+        let mut anchor = anchor;
+        anchor.record_edits(&[], false);
+        assert!(anchor.edits.is_none());
+        anchor.record_edits(
+            &[Edit {
+                range: 0..0,
+                insert: "y".to_string(),
+            }],
+            true,
+        );
+        assert!(anchor.edits.is_none(), "a latched accumulator stays None");
+    }
 
     #[test]
     fn rename_via_db_rewrites_a_definition_and_its_cross_file_reads() {
