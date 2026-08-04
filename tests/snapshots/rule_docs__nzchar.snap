@@ -8,6 +8,8 @@ Flag comparisons of `nchar(x)` against zero—`nchar(x) > 0`, `nchar(x) >= 1`, `
 
 The rule fires only on the clean single-argument shape and only when `nchar` resolves to base R; a local redefinition is left alone. The fix is **unsafe**: on `NA_character_` input `nzchar` yields `TRUE` where the `nchar` comparison yields `NA` (exact equivalence would need `nzchar(x, keepNA = TRUE)`).
 
+This rule is **enabled by default**.
+
 Testing for non-empty strings:
 
 ```r

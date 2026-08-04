@@ -4,6 +4,8 @@ Flag `t(x) %*% y` and `x %*% t(y)`, which are the purpose-built `crossprod(x, y)
 
 The rule fires only when one operand is a single-argument `t()` call and that `t` resolves to base R; a local redefinition is left alone. When both operands are the same symbol the single-argument form (`crossprod(x)`) is used.
 
+This rule is **enabled by default**.
+
 Transposed matrix products:
 
 ```r

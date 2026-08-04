@@ -2,6 +2,8 @@
 
 Flag an assignment whose value is an empty block (`x <- {}`). An empty block evaluates to `NULL`, so this is a roundabout `x <- NULL`—usually a leftover from deleting the block's body. An empty function body or `if` branch is not flagged.
 
+This rule is **enabled by default**.
+
 Assigning an empty block is the same as assigning `NULL`:
 
 ```r

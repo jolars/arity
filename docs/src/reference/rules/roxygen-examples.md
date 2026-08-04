@@ -4,6 +4,8 @@ Flag `@examples` code that does not parse.
 
 `R CMD check` runs example code, so a syntax error in an `@examples` section (or an `@examplesIf` condition) fails the package at check time. The embedded code is reparsed with arity's own parser and the first syntax error of each snippet is reported at its exact location in the comment. Rd wrappers like `\dontrun{}` are understood and their contents still checked.
 
+This rule is **enabled by default**.
+
 An unclosed call in the example:
 
 ```r

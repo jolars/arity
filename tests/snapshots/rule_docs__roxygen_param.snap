@@ -8,6 +8,8 @@ Flag `@param` documentation that does not match the documented function.
 
 Four shapes are reported: a formal argument with no `@param`, a `@param` naming a nonexistent formal (often a rename that never reached the docs), a name documented twice, and a `@param` missing its name or description. Blocks that inherit or merge documentation (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt from the coverage checks; duplicates are always reported.
 
+This rule is **enabled by default**.
+
 `y` is undocumented and `@param z` matches nothing:
 
 ```r

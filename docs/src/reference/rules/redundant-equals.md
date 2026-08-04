@@ -2,6 +2,8 @@
 
 Flag comparison to a logical literal: `x == TRUE` is just `x`, and `x == FALSE` is `!x`.
 
+This rule is **enabled by default**.
+
 Comparing to `TRUE`:
 
 ```r

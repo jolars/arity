@@ -2,6 +2,8 @@
 
 Flag an assignment (`<-`, `=`, `<<-`, `:=`) used as the direct condition of an `if`/`while`. The bare `=` form (often a `==` typo) is autofixed to `==`; the others are reported without a fix.
 
+This rule is **enabled by default**.
+
 `=` where `==` was meant:
 
 ```r

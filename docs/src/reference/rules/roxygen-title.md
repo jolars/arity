@@ -4,6 +4,8 @@ Flag a documented function whose roxygen block has no title.
 
 The first untagged paragraph (or an explicit `@title`) becomes the topic title; without one, roxygen2 warns and `R CMD check` rejects the generated `.Rd`. An `@export` with no documentation at all is flagged too—`R CMD check` reports it as an undocumented export. Blocks that merge into or inherit another topic (`@rdname`, `@describeIn`, `@inherit*`, `@template`) and `@noRd` blocks are skipped.
 
+This rule is **enabled by default**.
+
 A documented, exported function with no title paragraph:
 
 ```r

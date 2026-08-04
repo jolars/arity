@@ -2,6 +2,8 @@
 
 Flag a function defined with two parameters of the same name. R raises a runtime error (`repeated formal argument`); this catches it statically.
 
+This rule is **enabled by default**.
+
 Two parameters named `x`:
 
 ```r

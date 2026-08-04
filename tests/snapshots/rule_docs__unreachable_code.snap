@@ -8,6 +8,8 @@ Flag statements that follow an unconditional `return()` or `stop()` in a blockâ€
 
 The rule fires only when the terminator is a direct statement of the block (a lone `return()`/`stop()` guarded by an `if` leaves the tail reachable) and only when the callee resolves to base R; a local redefinition is left alone. `return` is additionally required to sit inside a function. The deletion fix is unsafe, and withheld when it would drop a comment.
 
+This rule is **enabled by default**.
+
 A statement after `return()` can never run:
 
 ```r

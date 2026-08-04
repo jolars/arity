@@ -8,6 +8,8 @@ Flag a base-R regex call (`grepl`, `grep`, `sub`, `gsub`, `regexpr`, `gregexpr`,
 
 The rule fires only when the callee resolves to base R and no `fixed`/`ignore.case`/`perl` argument is already present. Because a metacharacter-free pattern matches identically either way, the fix (inserting `, fixed = TRUE`) is safe.
 
+This rule is **enabled by default**.
+
 A literal pattern matched as a regex:
 
 ```r

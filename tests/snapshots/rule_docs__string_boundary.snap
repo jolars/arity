@@ -8,6 +8,8 @@ Flag `grepl("^abc", x)` and `grepl("abc$", x)`, single-anchored fixed-string mat
 
 The rule fires only on the clean shape (two positional arguments, a one-end-anchored plain-literal pattern) and only when `grepl` resolves to base R. The fix is **unsafe**: on `NA` or non-character input `startsWith`/`endsWith` diverge from `grepl` (`NA` vs `FALSE`, an error vs coercion).
 
+This rule is **enabled by default**.
+
 Anchored fixed-string matches:
 
 ```r

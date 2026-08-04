@@ -8,6 +8,8 @@ Flag roxygen tags that roxygen2 does not understand.
 
 roxygen2 warns on an unknown tag and drops it from the generated `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses documentation—or worse, an intended `@export` never reaches the `NAMESPACE`. Custom tags from extension roclets can be suppressed with `# arity-ignore roxygen-unknown-tag`.
 
+This rule is **enabled by default**.
+
 A misspelled `@export`:
 
 ```r

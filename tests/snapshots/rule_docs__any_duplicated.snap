@@ -8,6 +8,8 @@ Flag `any(duplicated(x))`, which is the purpose-built `anyDuplicated(x) > 0`—f
 
 The rule fires only on the clean single-argument shape and only when both `any` and `duplicated` resolve to base R; a local redefinition of either is left alone. Because the replacement is a comparison, the fix is withheld in a context that binds tighter than a comparison, where the bare rewrite would need parentheses.
 
+This rule is **enabled by default**.
+
 Testing for any duplicate value:
 
 ```r

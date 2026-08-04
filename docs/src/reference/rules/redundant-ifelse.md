@@ -2,6 +2,8 @@
 
 Flag `ifelse(c, TRUE, FALSE)` (which is just `c`) and `ifelse(c, FALSE, TRUE)` (which is `!c`).
 
+This rule is **enabled by default**.
+
 An `ifelse` that returns its own condition:
 
 ```r

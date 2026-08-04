@@ -4,6 +4,8 @@ Flag `any(!x)`/`all(!x)`, which by De Morgan's law read more clearly with the ne
 
 The rule fires only when *every* positional argument is negated (a `na.rm` argument is allowed and preserved). The fix is withheld when the call sits in a context that binds tighter than `!`, where the rewrite would need parentheses.
 
+This rule is **enabled by default**.
+
 Negating every element of an aggregation:
 
 ```r

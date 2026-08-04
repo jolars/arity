@@ -4,6 +4,8 @@ Flag `any(is.na(x))`, which is the purpose-built `anyNA(x)`—faster (it short-c
 
 The rule fires only on the clean single-argument shape and only when both `any` and `is.na` resolve to base R; a local redefinition of either is left alone.
 
+This rule is **enabled by default**.
+
 Testing for any missing value:
 
 ```r

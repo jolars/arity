@@ -2,6 +2,8 @@
 
 Flag `x == NA`, which is always `NA` rather than `TRUE`/`FALSE`—almost always a mistake for `is.na(x)`, which is the autofix.
 
+This rule is **enabled by default**.
+
 Comparing to `NA` with `==`:
 
 ```r

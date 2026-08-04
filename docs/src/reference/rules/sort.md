@@ -4,6 +4,8 @@ Flag `sort(x)[1]`, which sorts the whole vector just to read one extreme — the
 
 The rule fires only on the clean shape — a `[1]` subset of a `sort` call with one positional argument and at most a literal `decreasing` flag — and only when `sort` resolves to base R; a local redefinition is left alone. The fix is **unsafe**: `sort` drops `NA`s by default while `min`/`max` propagate them (exact equivalence would need `na.rm = TRUE`), and on an empty vector `sort(x)[1]` is `NA` while `min(x)` warns and yields `Inf`.
 
+This rule is **enabled by default**.
+
 Reading one extreme off a full sort:
 
 ```r

@@ -4,6 +4,8 @@ Flag an `@export`ed function documented without `@return`.
 
 CRAN requires every exported function's documentation to describe its return value (the `.Rd` `\value` section); roxygen2 itself stays silent, so the omission otherwise surfaces only at submission time. `@returns` is accepted as an alias. `@noRd` blocks and merged or inherited topics (`@rdname`, `@inherit`, …) are skipped.
 
+This rule is **enabled by default**.
+
 An exported function with no `@return`:
 
 ```r

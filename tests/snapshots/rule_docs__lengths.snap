@@ -8,6 +8,8 @@ Flag `sapply(x, length)`, which is the purpose-built `lengths(x)`—faster (a si
 
 The rule fires only on the clean two-positional-argument shape and only when `sapply` resolves to base R and `length` is not locally rebound; a redefinition of either is left alone.
 
+This rule is **enabled by default**.
+
 Per-element lengths of a list:
 
 ```r

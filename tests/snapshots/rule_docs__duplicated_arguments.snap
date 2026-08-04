@@ -6,6 +6,8 @@ expression: render_rule_doc(rule.as_ref())
 
 Flag a call that supplies the same argument name more than once (`f(a = 1, a = 2)`). The call-side sibling of `duplicate-formal`; reported as a warning with no autofix, since it isn't always a runtime error.
 
+This rule is **enabled by default**.
+
 The argument `a` is supplied twice:
 
 ```r

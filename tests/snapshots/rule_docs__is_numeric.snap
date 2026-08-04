@@ -8,6 +8,8 @@ Flag `is.numeric(x) || is.integer(x)` (and the vectorized `|` spelling), which i
 
 The rule fires only when both operands are single-argument calls on the same argument and both callees resolve to base R; a local redefinition of either is left alone.
 
+This rule is **enabled by default**.
+
 Testing for a numeric vector:
 
 ```r

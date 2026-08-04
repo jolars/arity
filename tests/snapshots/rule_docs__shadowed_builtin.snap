@@ -6,6 +6,8 @@ expression: render_rule_doc(rule.as_ref())
 
 Flag a local binding to a function whose name is exported by a default R package when that name is later called in the same scope (`c <- function(...) ...; c(2, 3)`). A value binding (`names <- names(x)`) is exempt: R's call-position lookup skips non-function locals, so it is not a hazard.
 
+This rule is **enabled by default**.
+
 Binding a function over base `c()` and then calling it:
 
 ```r

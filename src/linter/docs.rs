@@ -37,6 +37,14 @@ pub fn render_rule_doc(rule: &dyn Rule) -> String {
         let _ = writeln!(out, "{description}");
     }
 
+    let _ = writeln!(out);
+    let status = if rule.default_enabled() {
+        "This rule is **enabled by default**."
+    } else {
+        "This rule is **disabled by default**; enable it with `select`."
+    };
+    let _ = writeln!(out, "{status}");
+
     // Restrict to this rule so an example can't trip a different one.
     let config = LintConfig {
         select: Some(vec![id.to_string()]),

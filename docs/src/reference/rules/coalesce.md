@@ -4,6 +4,8 @@ Flag `if (is.null(x)) y else x` (and its mirror `if (!is.null(x)) x else y`), wh
 
 The rule fires only when `is.null` resolves to base R; a local redefinition is left alone. The fix is unsafe: `%||%` needs R >= 4.4 (or rlang), and collapsing the two evaluations of `x` changes behavior when `x` has side effects.
 
+This rule is **enabled by default**.
+
 Falling back to a default when a value is `NULL`:
 
 ```r

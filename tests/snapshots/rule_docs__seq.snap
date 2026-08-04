@@ -8,6 +8,8 @@ Flag colon ranges from `1` up to a length—`1:length(x)`, `1:nrow(x)`, or `1:n`
 
 The `length`/`nrow`/`ncol`/`NROW`/`NCOL` forms fire only when the callee resolves to base R; a redefinition is left alone. Literal ranges (`1:10`) and computed bounds (`1:(n - 1)`) are not flagged.
 
+This rule is **enabled by default**.
+
 Ranges over a vector's indices and up to a count:
 
 ```r

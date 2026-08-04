@@ -8,6 +8,8 @@ Flag comparisons of `class(x)` against a string literal—`class(x) == "cls"`, `
 
 The rule fires only on the clean single-argument shape and only when `class` resolves to base R; a local redefinition is left alone. The fix is **unsafe**: on a multi-class object the comparison yields an elementwise vector where `inherits()` yields a scalar, and for S4 objects `inherits()` follows the formal inheritance chain.
 
+This rule is **enabled by default**.
+
 Testing an object's class:
 
 ```r
