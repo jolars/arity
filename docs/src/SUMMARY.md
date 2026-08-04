@@ -34,6 +34,7 @@
   - [comparison-negation](reference/rules/comparison-negation.md)
   - [outer-negation](reference/rules/outer-negation.md)
   - [string-boundary](reference/rules/string-boundary.md)
+  - [unnecessary-nesting](reference/rules/unnecessary-nesting.md)
   - [any-is-na](reference/rules/any-is-na.md)
   - [any-duplicated](reference/rules/any-duplicated.md)
   - [coalesce](reference/rules/coalesce.md)

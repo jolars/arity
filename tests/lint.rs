@@ -1806,6 +1806,81 @@ fn if_always_true_withholds_fix_on_dropped_comment() {
 }
 
 #[test]
+fn unnecessary_nesting_combines_conditions_with_and() {
+    // A block-wrapped nested `if` and a braceless one both collapse to a single
+    // `if` with the two conditions joined by `&&`.
+    assert_eq!(
+        unsafe_fixed_output("if (a) {\n  if (b) f()\n}\n", "unnecessary-nesting"),
+        "if (a && b) f()\n"
+    );
+    assert_eq!(
+        unsafe_fixed_output("if (a) if (b) f()\n", "unnecessary-nesting"),
+        "if (a && b) f()\n"
+    );
+}
+
+#[test]
+fn unnecessary_nesting_parenthesizes_binary_conditions() {
+    // Each non-primary condition is parenthesized so the combined `&&` keeps the
+    // original grouping — `a || c` binds looser than `&&`, so it must not inline
+    // bare.
+    assert_eq!(
+        unsafe_fixed_output("if (a || c) {\n  if (b) f()\n}\n", "unnecessary-nesting"),
+        "if ((a || c) && b) f()\n"
+    );
+    assert_eq!(
+        unsafe_fixed_output("if (a) {\n  if (b || c) f()\n}\n", "unnecessary-nesting"),
+        "if (a && (b || c)) f()\n"
+    );
+}
+
+#[test]
+fn unnecessary_nesting_ignores_non_collapsible() {
+    for src in [
+        "if (a) f()\n",                         // body is not an `if`
+        "if (a) {\n  if (b) f()\n} else g()\n", // outer has an `else`
+        "if (a) {\n  if (b) f() else g()\n}\n", // inner has an `else`
+        "if (a) {\n  f()\n  if (b) g()\n}\n",   // block holds more than the `if`
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(
+            !rules.contains(&"unnecessary-nesting"),
+            "{src:?} should not flag, got: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn unnecessary_nesting_withholds_fix_on_dropped_comment() {
+    // A comment lives in the outer block, outside the retained condition/body,
+    // so collapsing would drop it: withhold the fix, still report.
+    let src = "if (a) {\n  # note\n  if (b) f()\n}\n";
+    let d = diagnostics(src)
+        .into_iter()
+        .find(|d| d.rule == "unnecessary-nesting")
+        .expect("expected an unnecessary-nesting finding");
+    assert!(d.fix.is_none(), "fix should be withheld: {:?}", d.fix);
+}
+
+#[test]
+fn unnecessary_nesting_fixed_output_parses() {
+    // The collapse fix dedents the body, so its output is not necessarily
+    // format-clean (that is the formatter's job, fix-then-format) — but it must
+    // always still parse. Block and binary-condition shapes included.
+    for src in [
+        "if (a) {\n  if (b) {\n    f()\n  }\n}\n",
+        "if (x > 0) {\n  if (y > 0) {\n    f()\n  }\n}\n",
+        "if (a || c) {\n  if (b && d) f()\n}\n",
+    ] {
+        let out = unsafe_fixed_output(src, "unnecessary-nesting");
+        assert!(
+            arity::parser::parse(&out).diagnostics.is_empty(),
+            "fixed output must parse:\n{out:?}"
+        );
+    }
+}
+
+#[test]
 fn empty_assignment_flags_empty_block_value() {
     // Assigning `{}` is the same as assigning `NULL`; the empty block is dead.
     for src in ["x <- {}\n", "x = {}\n", "x <<- {}\n", "{} -> x\n"] {

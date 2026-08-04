@@ -37,8 +37,14 @@
       `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
 - [ ] `duplicated-function-definition` (suspicious, sem, none).
 - [ ] `for-loop-index`/`for-loop-dup-index` (suspicious, sem, none).
-- [ ] `unnecessary-nesting` collapsible nested `if`/single-stmt block
-      (readability, sem, unsafe).
+- [x] `unnecessary-nesting` collapsible nested `if` (readability, `syn`,
+      unsafe). Landed as the purely-syntactic collapsible-`if` variant: an `if`
+      with no `else` whose sole body is another `if` with no `else` collapses to
+      `if (a && b) body`. Fix joins the conditions with `&&` (each non-primary
+      condition parenthesized so grouping survives), unsafe (dedents the body →
+      fix-then-format) and withheld on a dropped comment. The guard-clause /
+      early-return (`sem`/CFG) variant was scoped out of v1 — see the deferred
+      follow-up under Phase B.
 - [ ] `undesirable-function` (suspicious, ns + config, none)—needs §I4;
       **default-off**. `download-file` (correctness, ns, none)—low priority.
 
@@ -138,9 +144,16 @@ linter (`RuleContext`) and the LSP. TDD (fixtures first). Recommended ceiling is
         in `src/linter/rules/correctness/unreachable_code.rs`); now driven by the
         CFG's `is_unreachable` verdict, namespace-gated on the responsible
         `return`/`stop` leaves.
-  - [ ] `if-always-true` (literal `if (TRUE/FALSE)` reachability).
-  - [ ] `coalesce` (`if (is.null(x)) y else x`—both-branches pattern).
-  - [ ] `unnecessary-nesting` (collapsible nested `if`/single-stmt block).
+  - [x] `if-always-true` (literal `if (TRUE/FALSE)` reachability). Flags only
+        the bare literals `TRUE`/`FALSE` (never folded constants or the
+        rebindable `T`/`F`); purely syntactic (`syn`), no CFG needed. Unsafe fix
+        splices in the statically-taken branch (`NULL` for a bare `if (FALSE)`),
+        correct by construction and withheld when it would drop a comment.
+  - [x] `unnecessary-nesting` collapsible nested `if` shipped as a purely
+        syntactic rule (no CFG needed for this variant); see the Linter section
+        entry. Deferred follow-up: the guard-clause / early-return de-nesting
+        variant (`if (c) { body } else stop()` → early-exit guard) is the piece
+        that actually needs CFG reachability (`always_diverges`).
 
 ### Phase C—Reaching definitions (optional stretch, not committed)
 

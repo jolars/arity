@@ -32,6 +32,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`comparison-negation`](rules/comparison-negation.md)
 - [`outer-negation`](rules/outer-negation.md)
 - [`string-boundary`](rules/string-boundary.md)
+- [`unnecessary-nesting`](rules/unnecessary-nesting.md)
 
 ## Performance
 
