@@ -24,6 +24,7 @@
   - [if-always-true](reference/rules/if-always-true.md)
   - [empty-assignment](reference/rules/empty-assignment.md)
   - [assignment-in-condition](reference/rules/assignment-in-condition.md)
+  - [implicit-assignment](reference/rules/implicit-assignment.md)
   - [browser](reference/rules/browser.md)
   - [shadowed-builtin](reference/rules/shadowed-builtin.md)
   - [redundant-equals](reference/rules/redundant-equals.md)

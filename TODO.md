@@ -102,8 +102,14 @@
       the assignment's direct value side, so an empty function body/`if` branch
       is untouched; a comment-only block still counts (lintr parity). No fix
       (rewriting to `NULL` is a semantic judgment).
-- [ ] `implicit-assignment` (suspicious, none)—scope to avoid overlap with
-      existing `assignment-in-condition`.
+- [x] `implicit-assignment` (suspicious, syn, none)—flags an assignment
+      (`<-`/`=`/`<<-`/`->`/`->>`) whose parent is an `ARG` (a call or subscript
+      argument, `mean(x <- 1:10)`). Scoped to argument position so it never
+      overlaps `assignment-in-condition` (the `if`/`while` condition case) and
+      leaves statement bodies and chained assignment alone; the `:=` walrus
+      (data.table/rlang) is excluded. **Default-off** (opt-in): idiomatic in
+      `system.time`/`suppressWarnings`/`invisible` wrappers, so noisy on by
+      default. No fix (lifting the binding out is a semantic restructuring).
 - [x] **§I2 regex/string-literal helper**: read a `STRING` token's unquoted
       contents; classify regex metachars/single anchor (`^`/`$`). Originally
       framed as a blocker for `string-boundary`/`fixed-regex`, but those rules

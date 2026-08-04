@@ -1455,6 +1455,72 @@ fn unused_binding_emits_unsafe_deletion_fix() {
     );
 }
 
+/// `implicit-assignment` is default-off (opt-in), so exercise it through an
+/// explicit `select` rather than the default rule set.
+fn implicit_assignment_diags(src: &str) -> Vec<arity::linter::Diagnostic> {
+    let config = LintConfig {
+        select: Some(vec!["implicit-assignment".to_string()]),
+        ..LintConfig::default()
+    };
+    check_document(Path::new("t.R"), src, &config).expect("lint should succeed")
+}
+
+#[test]
+fn implicit_assignment_is_default_off() {
+    // Idiomatic wrappers make it noisy on by default; it must stay opt-in.
+    assert!(
+        !diagnostics("mean(x <- 1:10)\n")
+            .iter()
+            .any(|d| d.rule == "implicit-assignment"),
+        "implicit-assignment should not fire under the default rule set"
+    );
+}
+
+#[test]
+fn implicit_assignment_flags_assignment_in_call_arg() {
+    // An assignment buried in a call argument is easy to miss; flag it.
+    let d = implicit_assignment_diags("mean(x <- 1:10)\n")
+        .into_iter()
+        .find(|d| d.rule == "implicit-assignment")
+        .expect("expected an implicit-assignment finding");
+    // No autofix — extracting the assignment is a semantic restructuring.
+    assert!(d.fix.is_none());
+}
+
+#[test]
+fn implicit_assignment_flags_subscript_and_right_assign() {
+    for src in ["x[y <- 2]\n", "foo(1:10 -> x)\n", "foo(a = b <- 1)\n"] {
+        assert!(
+            implicit_assignment_diags(src)
+                .iter()
+                .any(|d| d.rule == "implicit-assignment"),
+            "expected implicit-assignment for {src:?}"
+        );
+    }
+}
+
+#[test]
+fn implicit_assignment_ignores_statements_conditions_and_walrus() {
+    // Top-level and block statements are not implicit; the `if`/`while`
+    // condition case belongs to `assignment-in-condition`; the data.table /
+    // rlang walrus (`:=`) and named args / default args are left alone.
+    for src in [
+        "x <- 1\n",
+        "if (a) z <- 1\n",
+        "if (x = 1) print(x)\n",
+        "dt[, x := 1]\n",
+        "foo(x = 1)\n",
+        "function(x = 1) x\n",
+    ] {
+        assert!(
+            !implicit_assignment_diags(src)
+                .iter()
+                .any(|d| d.rule == "implicit-assignment"),
+            "did not expect implicit-assignment for {src:?}"
+        );
+    }
+}
+
 #[test]
 fn fix_output_parses_and_is_format_idempotent() {
     use arity::formatter::{FormatStyle, format_with_style};
