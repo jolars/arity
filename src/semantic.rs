@@ -21,7 +21,8 @@ pub use cfg::{BasicBlock, BlockId, ControlFlowGraph, FileControlFlow, Terminator
 pub use scope::{Scope, ScopeId, ScopeKind};
 pub use symbols::{
     LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, implicit_attached_packages,
-    is_data_masking_callee, is_model_frame_arg, is_model_frame_callee, meta_package_members,
+    is_data_masking_callee, is_model_frame_arg, is_model_frame_arg_prefix, is_model_frame_callee,
+    match_args_to_formals, meta_package_members, model_frame_formals,
 };
 
 use crate::syntax::SyntaxNode;
@@ -866,6 +867,73 @@ mod tests {
             !tonsils.data_masked,
             "`data` value should stay a resolvable read"
         );
+    }
+
+    #[test]
+    fn model_frame_args_masked_with_positional_data() {
+        // `data` supplied positionally: `lm`'s second formal is `data`, so the
+        // gate opens without a named `data =`.
+        let m = model_of("lm(y ~ x, d, weights = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(
+            w.data_masked,
+            "`weights` with positional `data` should mask"
+        );
+        let d = m.idents().iter().find(|i| i.name == "d").unwrap();
+        assert!(!d.data_masked, "positional `data` stays a resolvable read");
+        // `glm`'s `data` is its *third* formal, after `family`.
+        let m = model_of("glm(y ~ x, poisson, d, weights = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(w.data_masked, "`glm`'s third positional arg is `data`");
+        // A positional third argument to `lm` lands on `subset` and is
+        // model-frame-evaluated too.
+        let m = model_of("lm(y ~ x, d, s > 1)");
+        let s = m.idents().iter().find(|i| i.name == "s").unwrap();
+        assert!(s.data_masked, "positional `subset` should mask");
+    }
+
+    #[test]
+    fn model_frame_gate_needs_data_slot_filled() {
+        // `glm`'s second formal is `family`, not `data`: two positional args
+        // leave `data` unsupplied, so `weights` stays a plain read.
+        let m = model_of("glm(y ~ x, d, weights = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(!w.data_masked, "`glm`'s second positional arg is `family`");
+        // An argument hole consumes `data`'s position but supplies nothing.
+        let m = model_of("lm(y ~ x, , weights = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(!w.data_masked, "a hole in the `data` slot supplies no data");
+    }
+
+    #[test]
+    fn model_frame_args_partial_names() {
+        // R's partial argument matching: `weight =` is a unique prefix of
+        // `weights`, and `dat =` of `data`.
+        let m = model_of("lm(y ~ x, data = d, weight = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(w.data_masked, "`weight =` partial-matches `weights`");
+        let m = model_of("lm(y ~ x, dat = d, weights = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(w.data_masked, "`dat =` partial-matches `data`");
+    }
+
+    #[test]
+    fn model_frame_args_forwarded_through_dots() {
+        // `aov` has no `weights` formal of its own; the named argument passes
+        // through `...` to `lm`, which evaluates it in the model frame.
+        let m = model_of("aov(y ~ x, data = d, weights = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(w.data_masked, "dots-forwarded `weights` should mask");
+    }
+
+    #[test]
+    fn model_frame_post_dots_formal_matched_by_exact_name() {
+        // `polr` declares `...` right after `start`, so `subset` sits behind
+        // the dots and is only reachable by its exact name — which still masks,
+        // here with `data` supplied positionally as well.
+        let m = model_of("polr(size ~ carrier, tonsils, subset = s > 1)");
+        let s = m.idents().iter().find(|i| i.name == "s").unwrap();
+        assert!(s.data_masked, "post-dots `subset` should mask");
     }
 
     #[test]

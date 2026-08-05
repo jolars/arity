@@ -558,12 +558,18 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     findings—`A5`/`pr3`/`labs`/`module`—are genuine dangling refs in incomplete
     book-excerpt scripts, correctly flagged.)
 
-    - [ ] Follow-up: two residual FPs the gate doesn't cover, both cheap to hit
-      but needing a per-callee formals table. **Positional `data`**
-      (`lm(y ~ x, mtcars, weights = cyl)`) isn't detected—`data`'s position
-      differs per callee (`lm` 2nd, `glm` 3rd). **Partial argument matching**
-      isn't modeled—R accepts `weight = cyl` as a unique prefix of `weights`,
-      arity matches exact names only. Neither is a new FP.
+    - [x] Follow-up: two residual FPs the gate didn't cover, both fixed by the
+      per-callee formals table (`model_frame_formals` in
+      `src/semantic/symbols.rs`) plus a simulation of R's three-pass argument
+      matching (`match_args_to_formals`: exact names, unique-prefix partial
+      matches before `...`, positional fill). **Positional `data`**
+      (`lm(y ~ x, mtcars, weights = cyl)`; `data` is `lm`'s 2nd formal,
+      `glm`'s 3rd) and **partial argument matching** (`weight = cyl`,
+      `dat = mtcars`) now both open the gate and mask. Positionally-supplied
+      model-frame args (`lm(y ~ x, d, s > 1)` binds `subset`) mask too, and a
+      named arg falling into `...` masks when its name prefixes a model-frame
+      name (`aov` forwards `weights` to `lm`). `manova` shares `aov`'s table;
+      generics use their formula method's formals.
 
 - [x] `unused-binding` FP frontier from the cran/MASS investigation
   (2026-08-01). The `$`/`@`-subscript index-drop FP was fixed earlier (see the

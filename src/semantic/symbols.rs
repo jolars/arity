@@ -139,21 +139,247 @@ pub fn is_data_masking_callee(name: &str) -> bool {
 /// hand-curated (stats + MASS core). Over-matching only ever suppresses a
 /// finding, the conservative direction.
 pub fn is_model_frame_callee(name: &str) -> bool {
-    matches!(
-        name,
-        // stats
-        "lm" | "glm" | "aov" | "manova" | "loess" | "nls" | "xtabs"
-        | "model.frame" | "model.matrix"
-        // MASS / nnet
-        | "polr" | "rlm" | "lda" | "qda" | "glm.nb" | "multinom"
-    )
+    model_frame_formals(name).is_some()
 }
 
-/// Whether the named argument `name` of a [`is_model_frame_callee`] call is
+/// The formals of each [`is_model_frame_callee`] function, in declaration
+/// order with `"..."` where it appears, for simulating R's argument matching
+/// via [`match_args_to_formals`]: `data` may be supplied positionally (`lm`'s
+/// second formal, `glm`'s third) or by unique prefix (`dat = d`), and the
+/// model-frame arguments themselves partial-match too (`weight = w`).
+/// Generics (`model.frame`, `rlm`, `lda`, …) use the formals of the method a
+/// formula call dispatches to.
+pub fn model_frame_formals(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
+        // stats
+        "lm" => &[
+            "formula",
+            "data",
+            "subset",
+            "weights",
+            "na.action",
+            "method",
+            "model",
+            "x",
+            "y",
+            "qr",
+            "singular.ok",
+            "contrasts",
+            "offset",
+            "...",
+        ],
+        "glm" => &[
+            "formula",
+            "family",
+            "data",
+            "weights",
+            "subset",
+            "na.action",
+            "start",
+            "etastart",
+            "mustart",
+            "offset",
+            "control",
+            "model",
+            "method",
+            "x",
+            "y",
+            "singular.ok",
+            "contrasts",
+            "...",
+        ],
+        // `manova(...)` forwards everything to `aov`, so it shares aov's table.
+        "aov" | "manova" => &["formula", "data", "projections", "qr", "contrasts", "..."],
+        "loess" => &[
+            "formula",
+            "data",
+            "weights",
+            "subset",
+            "na.action",
+            "model",
+            "span",
+            "enp.target",
+            "degree",
+            "parametric",
+            "drop.square",
+            "normalize",
+            "family",
+            "method",
+            "control",
+            "...",
+        ],
+        "nls" => &[
+            "formula",
+            "data",
+            "start",
+            "control",
+            "algorithm",
+            "trace",
+            "subset",
+            "weights",
+            "na.action",
+            "model",
+            "lower",
+            "upper",
+            "...",
+        ],
+        "xtabs" => &[
+            "formula",
+            "data",
+            "subset",
+            "sparse",
+            "na.action",
+            "addNA",
+            "exclude",
+            "drop.unused.levels",
+        ],
+        "model.frame" => &[
+            "formula",
+            "data",
+            "subset",
+            "na.action",
+            "drop.unused.levels",
+            "xlev",
+            "...",
+        ],
+        "model.matrix" => &["object", "data", "contrasts.arg", "xlev", "..."],
+        // MASS / nnet
+        "polr" => &[
+            "formula",
+            "data",
+            "weights",
+            "start",
+            "...",
+            "subset",
+            "na.action",
+            "contrasts",
+            "Hess",
+            "model",
+            "method",
+        ],
+        "rlm" => &[
+            "formula",
+            "data",
+            "weights",
+            "...",
+            "subset",
+            "na.action",
+            "method",
+            "wt.method",
+            "model",
+            "x.ret",
+            "y.ret",
+            "contrasts",
+        ],
+        "lda" | "qda" => &["formula", "data", "...", "subset", "na.action"],
+        "glm.nb" => &[
+            "formula",
+            "data",
+            "weights",
+            "subset",
+            "na.action",
+            "start",
+            "etastart",
+            "mustart",
+            "control",
+            "method",
+            "model",
+            "x",
+            "y",
+            "contrasts",
+            "...",
+            "init.theta",
+            "link",
+        ],
+        "multinom" => &[
+            "formula",
+            "data",
+            "weights",
+            "subset",
+            "na.action",
+            "contrasts",
+            "Hess",
+            "summ",
+            "censored",
+            "model",
+            "...",
+        ],
+        _ => return None,
+    })
+}
+
+/// Simulate R's argument matching. `names` holds each supplied argument's name
+/// in call order (`None` for a positional argument); `formals` is the callee's
+/// table from [`model_frame_formals`]. Returns, per argument, the formal it
+/// binds (`None` when it lands in `...` or matches nothing). Matching follows
+/// R's three passes: exact names first (the only way to reach formals declared
+/// after `...`), then unique-prefix partial matches against the formals before
+/// `...`, then positional fill of what remains before `...`.
+pub fn match_args_to_formals(
+    names: &[Option<SmolStr>],
+    formals: &'static [&'static str],
+) -> Vec<Option<&'static str>> {
+    let dots = formals
+        .iter()
+        .position(|f| *f == "...")
+        .unwrap_or(formals.len());
+    let mut consumed = vec![false; formals.len()];
+    let mut matched: Vec<Option<&'static str>> = vec![None; names.len()];
+    for (arg, slot) in names.iter().zip(matched.iter_mut()) {
+        let Some(name) = arg else { continue };
+        if let Some(j) =
+            (0..formals.len()).find(|&j| !consumed[j] && j != dots && formals[j] == name.as_str())
+        {
+            consumed[j] = true;
+            *slot = Some(formals[j]);
+        }
+    }
+    for (arg, slot) in names.iter().zip(matched.iter_mut()) {
+        let Some(name) = arg else { continue };
+        if slot.is_some() {
+            continue;
+        }
+        let mut candidates =
+            (0..dots).filter(|&j| !consumed[j] && formals[j].starts_with(name.as_str()));
+        if let (Some(j), None) = (candidates.next(), candidates.next()) {
+            consumed[j] = true;
+            *slot = Some(formals[j]);
+        }
+    }
+    let mut next = 0;
+    for (arg, slot) in names.iter().zip(matched.iter_mut()) {
+        if arg.is_some() {
+            continue;
+        }
+        while next < dots && consumed[next] {
+            next += 1;
+        }
+        if next == dots {
+            break;
+        }
+        consumed[next] = true;
+        *slot = Some(formals[next]);
+    }
+    matched
+}
+
+/// Whether the argument bound to formal `name` of a model-fitting call is
 /// evaluated in the model frame. `data` itself is *not* one of these: it names
 /// the data frame and must resolve to a real binding.
 pub fn is_model_frame_arg(name: &str) -> bool {
     matches!(name, "subset" | "weights" | "offset")
+}
+
+/// Whether `name` is a (prefix of a) model-frame argument name — the masking
+/// test for a named argument that fell into `...`. Dots-forwarded arguments
+/// are re-matched at the inner fitting call, partial matching included, so
+/// `aov(y ~ x, data = d, weights = w)` forwards `weights` to `lm`'s model
+/// frame even though `aov` has no such formal itself.
+pub fn is_model_frame_arg_prefix(name: &str) -> bool {
+    !name.is_empty()
+        && ["subset", "weights", "offset"]
+            .iter()
+            .any(|f| f.starts_with(name))
 }
 
 /// Where a bare function/identifier name resolves to within the attached

@@ -1327,6 +1327,50 @@ fn undefined_symbol_skips_model_frame_columns() {
 }
 
 #[test]
+fn undefined_symbol_skips_model_frame_columns_positional_data() {
+    // `data` may be supplied positionally: it is `lm`'s second formal and
+    // `glm`'s third (after `family`). Simulated R argument matching finds it.
+    let p = CompositeProvider::base_only();
+    assert!(
+        undefined_with("d <- data.frame()\nlm(y ~ x, d, weights = cyl)\n", &p).is_empty(),
+        "positional `data` must open the model-frame gate"
+    );
+    assert!(
+        undefined_with(
+            "d <- data.frame()\nglm(y ~ x, poisson, d, weights = cyl)\n",
+            &p,
+        )
+        .is_empty(),
+        "`glm`'s third positional argument is `data`"
+    );
+}
+
+#[test]
+fn undefined_symbol_skips_model_frame_columns_partial_names() {
+    // R accepts a unique prefix of a formal name: `weight = cyl` matches
+    // `weights`, and `dat = d` matches `data`.
+    let p = CompositeProvider::base_only();
+    assert!(
+        undefined_with("d <- data.frame()\nlm(y ~ x, data = d, weight = cyl)\n", &p).is_empty(),
+        "`weight =` must partial-match `weights`"
+    );
+    assert!(
+        undefined_with("d <- data.frame()\nlm(y ~ x, dat = d, weights = cyl)\n", &p).is_empty(),
+        "`dat =` must partial-match `data`"
+    );
+}
+
+#[test]
+fn undefined_symbol_still_flags_when_positional_arg_is_not_data() {
+    // `glm`'s second formal is `family`: with only two positional args no
+    // data frame is supplied, so `weights` is an ordinary read.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("d <- data.frame()\nglm(y ~ x, d, weights = bogus)\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
 fn undefined_symbol_still_flags_model_frame_args_without_data() {
     // Without `data`, R evaluates `weights` in the calling environment, so an
     // unresolved bare name there is genuinely undefined.
