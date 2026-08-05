@@ -53,6 +53,14 @@ pub struct LoadedPackage {
 /// tidyverse) would resolve to nothing. Returns an empty slice for ordinary
 /// packages. The members must themselves be resolvable (default / harvested /
 /// remote / bundled) for their exports to actually resolve.
+///
+/// This static curated table is the *fallback*: when a meta-package is
+/// installed and its attach set was captured at harvest time
+/// ([`PackageIndex::attaches`](crate::rindex::schema::PackageIndex)), the
+/// harvested, version-exact set wins (see
+/// [`SymbolProvider::attached_packages`] and `rindex::provider`'s
+/// `attach_members`). The table answers for uninstalled meta-packages and the
+/// names-only remote/bundled tiers, which cannot carry an attach set.
 pub fn meta_package_members(name: &str) -> &'static [&'static str] {
     // tidyverse 2.0 core set (attached by `library(tidyverse)`).
     const TIDYVERSE: &[&str] = &[
@@ -414,6 +422,15 @@ pub trait SymbolProvider: Send + Sync {
     fn package_indexed(&self, pkg: &str) -> bool {
         let _ = pkg;
         false
+    }
+
+    /// Packages `pkg` attaches beyond itself when `library()`d — a
+    /// meta-package's core set. Empty for ordinary packages. Default: the
+    /// static curated table ([`meta_package_members`]); providers with a
+    /// harvested index override this to prefer the version-exact attach set
+    /// captured at harvest time.
+    fn attached_packages(&self, pkg: &str) -> Vec<SmolStr> {
+        meta_package_members(pkg).iter().map(SmolStr::new).collect()
     }
 }
 

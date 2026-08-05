@@ -71,7 +71,7 @@ pub fn resolve_origin(
         consider(&pkg.name);
         // A meta-package (e.g. tidyverse) also attaches its core members, whose
         // exports must resolve even though they aren't the meta-package's own.
-        for member in meta_package_members(&pkg.name) {
+        for member in attach_members(indexed, &pkg.name) {
             consider(member);
         }
     }
@@ -79,6 +79,39 @@ pub fn resolve_origin(
         0 => PackageOrigin::Unknown,
         1 => PackageOrigin::Resolved(candidates.into_iter().next().unwrap()),
         _ => PackageOrigin::Ambiguous(candidates),
+    }
+}
+
+/// The packages `pkg` attaches beyond itself when `library(pkg)` runs — a
+/// meta-package's core set. Prefers the version-exact attach set captured at
+/// harvest time when `pkg` is indexed with a non-empty one; otherwise the
+/// static curated table ([`meta_package_members`]). An installed meta-package
+/// whose capture found nothing therefore keeps the known-correct table.
+pub fn attach_members<'a>(
+    indexed: &'a IndexedProvider,
+    pkg: &str,
+) -> impl Iterator<Item = &'a str> {
+    match indexed.attaches(pkg) {
+        Some(harvested) => AttachMembers::Harvested(harvested.iter()),
+        None => AttachMembers::Static(meta_package_members(pkg).iter()),
+    }
+}
+
+/// Two-variant iterator so [`attach_members`] allocates nothing on
+/// `resolve_origin`'s per-name path.
+enum AttachMembers<'a> {
+    Harvested(std::slice::Iter<'a, SmolStr>),
+    Static(std::slice::Iter<'static, &'static str>),
+}
+
+impl<'a> Iterator for AttachMembers<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        match self {
+            AttachMembers::Harvested(it) => it.next().map(SmolStr::as_str),
+            AttachMembers::Static(it) => it.next().copied(),
+        }
     }
 }
 
@@ -125,6 +158,11 @@ pub struct IndexedProvider {
     pkg_exports: HashMap<SmolStr, HashSet<SmolStr>>,
     /// package → full harvested index (for `lookup`).
     indices: HashMap<SmolStr, PackageIndex>,
+    /// package → harvested attach set; only non-empty sets are recorded. Kept
+    /// separate from `indices` because the lean exports-only load
+    /// ([`from_cache_exports`](Self::from_cache_exports)) never populates
+    /// `indices` but still needs resolution to see attach sets.
+    attaches: HashMap<SmolStr, Vec<SmolStr>>,
 }
 
 impl IndexedProvider {
@@ -136,6 +174,7 @@ impl IndexedProvider {
     pub fn from_indices(indices: impl IntoIterator<Item = PackageIndex>) -> Self {
         let mut pkg_exports: HashMap<SmolStr, HashSet<SmolStr>> = HashMap::new();
         let mut map: HashMap<SmolStr, PackageIndex> = HashMap::new();
+        let mut attaches: HashMap<SmolStr, Vec<SmolStr>> = HashMap::new();
         for idx in indices {
             let names: HashSet<SmolStr> = idx
                 .symbols
@@ -144,11 +183,15 @@ impl IndexedProvider {
                 .map(|s| s.name.clone())
                 .collect();
             pkg_exports.insert(idx.package.clone(), names);
+            if !idx.attaches.is_empty() {
+                attaches.insert(idx.package.clone(), idx.attaches.clone());
+            }
             map.insert(idx.package.clone(), idx);
         }
         IndexedProvider {
             pkg_exports,
             indices: map,
+            attaches,
         }
     }
 
@@ -166,22 +209,24 @@ impl IndexedProvider {
     /// harvested cache cheap. Consumers of the rich data (LSP hover and
     /// completion) must use [`from_cache`].
     pub fn from_cache_exports(cache: &Cache) -> Self {
-        let pkg_exports = cache
-            .load_all_exports()
-            .into_iter()
-            .map(|exp| {
-                let names: HashSet<SmolStr> = exp
-                    .symbols
-                    .into_iter()
-                    .filter(|s| s.exported)
-                    .map(|s| s.name)
-                    .collect();
-                (exp.package, names)
-            })
-            .collect();
+        let mut pkg_exports: HashMap<SmolStr, HashSet<SmolStr>> = HashMap::new();
+        let mut attaches: HashMap<SmolStr, Vec<SmolStr>> = HashMap::new();
+        for exp in cache.load_all_exports() {
+            let names: HashSet<SmolStr> = exp
+                .symbols
+                .into_iter()
+                .filter(|s| s.exported)
+                .map(|s| s.name)
+                .collect();
+            if !exp.attaches.is_empty() {
+                attaches.insert(exp.package.clone(), exp.attaches);
+            }
+            pkg_exports.insert(exp.package, names);
+        }
         IndexedProvider {
             pkg_exports,
             indices: HashMap::new(),
+            attaches,
         }
     }
 
@@ -202,6 +247,13 @@ impl IndexedProvider {
     /// The full harvested index for a package, if present.
     pub fn package(&self, package: &str) -> Option<&PackageIndex> {
         self.indices.get(package)
+    }
+
+    /// The harvested attach set for `package`, if one was captured. `None`
+    /// when the package isn't indexed *or* its capture found nothing — both
+    /// mean "fall back to the static table" (see [`attach_members`]).
+    pub fn attaches(&self, package: &str) -> Option<&[SmolStr]> {
+        self.attaches.get(package).map(Vec::as_slice)
     }
 
     fn exports(&self, package: &str, name: &str) -> bool {
@@ -264,6 +316,12 @@ impl SymbolProvider for CompositeProvider {
 
     fn package_indexed(&self, pkg: &str) -> bool {
         package_indexed(&self.indexed, &self.remote, pkg)
+    }
+
+    fn attached_packages(&self, pkg: &str) -> Vec<SmolStr> {
+        attach_members(&self.indexed, pkg)
+            .map(SmolStr::new)
+            .collect()
     }
 }
 
@@ -478,6 +536,74 @@ mod tests {
         );
     }
 
+    fn meta_pkg(name: &str, exports: &[&str], attaches: &[&str]) -> PackageIndex {
+        let mut idx = pkg(name, exports);
+        idx.attaches = attaches.iter().map(|m| SmolStr::new(*m)).collect();
+        idx
+    }
+
+    #[test]
+    fn harvested_attach_set_resolves_member_exports() {
+        // "metaverse" is not in the static curated table; only its harvested
+        // attach set makes the member's exports resolve.
+        let p = CompositeProvider::with_index(IndexedProvider::from_indices([
+            meta_pkg("metaverse", &[], &["dplyr"]),
+            pkg("dplyr", &["across"]),
+        ]));
+        assert_eq!(
+            p.origin("across", &[loaded("metaverse")]),
+            PackageOrigin::Resolved(SmolStr::new("dplyr"))
+        );
+    }
+
+    #[test]
+    fn harvested_attach_set_overrides_static_table() {
+        // A harvested tidyverse whose attach set omits dplyr: the
+        // version-exact capture is authoritative, so dplyr's exports no
+        // longer resolve through the curated table.
+        let p = CompositeProvider::with_index(IndexedProvider::from_indices([meta_pkg(
+            "tidyverse",
+            &[],
+            &["stringr"],
+        )]));
+        assert_eq!(
+            p.origin("across", &[loaded("tidyverse")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    #[test]
+    fn empty_harvested_attach_set_falls_back_to_static_table() {
+        // An installed tidyverse whose capture found nothing must keep the
+        // known-correct curated members.
+        let p = CompositeProvider::with_index(IndexedProvider::from_indices([meta_pkg(
+            "tidyverse",
+            &[],
+            &[],
+        )]));
+        assert_eq!(
+            p.origin("across", &[loaded("tidyverse")]),
+            PackageOrigin::Resolved(SmolStr::new("dplyr"))
+        );
+    }
+
+    #[test]
+    fn attached_packages_prefers_harvested_over_static() {
+        let p = CompositeProvider::with_index(IndexedProvider::from_indices([meta_pkg(
+            "tidyverse",
+            &[],
+            &["stringr"],
+        )]));
+        assert_eq!(
+            p.attached_packages("tidyverse"),
+            vec![SmolStr::new("stringr")]
+        );
+        // Without a harvested set the curated table answers.
+        let p = CompositeProvider::base_only();
+        assert_eq!(p.attached_packages("tidyverse").len(), 9);
+        assert!(p.attached_packages("dplyr").is_empty());
+    }
+
     #[test]
     fn exports_only_load_matches_full_load_membership() {
         use crate::rindex::cache::Cache;
@@ -503,6 +629,9 @@ mod tests {
             help: None,
         });
         cache.write_package(&idx).unwrap();
+        cache
+            .write_package(&meta_pkg("tidyverse", &[], &["dplyr"]))
+            .unwrap();
 
         let full = IndexedProvider::from_cache(&cache);
         let lean = IndexedProvider::from_cache_exports(&cache);
@@ -516,6 +645,19 @@ mod tests {
                 "membership diverged for {name}"
             );
         }
+        // ...and so are the harvested attach sets (the lint CLI's lean load
+        // must not silently fall back to the static table).
+        for pkg in ["tidyverse", "dplyr"] {
+            assert_eq!(
+                lean.attaches(pkg),
+                full.attaches(pkg),
+                "attaches diverged for {pkg}"
+            );
+        }
+        assert_eq!(
+            full.attaches("tidyverse"),
+            Some(&[SmolStr::new("dplyr")][..])
+        );
         // ...but the rich per-symbol data is deliberately not loaded.
         assert!(lean.lookup("dplyr", "filter").is_none());
         assert!(lean.package("dplyr").is_none());
