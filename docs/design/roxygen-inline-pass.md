@@ -118,7 +118,7 @@ per-line streaming is the line-scoping. The new shape:
   next `#'` marker + leading whitespace) recorded at their positions. A soft
   line break is a single whitespace for flanking purposes (faithful: roxygen2
   joins lines, and with `hardbreaks = TRUE` a *hard* break is a trailing
-  ``  ``/`\\`, handled separately and already modeled as a distinct node).
+  `  `/`\\`, handled separately and already modeled as a distinct node).
 - At paragraph close, **run the inline pass** over that stream and **emit
   events**: text leaves, raw-delimiter leaves (unmatched), and `ROXYGEN_MD_EMPH`
   or `ROXYGEN_MD_STRONG` **nodes** wrapping their resolved children. Interleaved
