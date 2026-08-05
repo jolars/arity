@@ -10,8 +10,12 @@ known issues and follow-ups.
 
 ## Getting started
 
-Arity is a single-crate Cargo package (edition 2024) whose MSRV is declared as
-`rust-version` in [`Cargo.toml`](Cargo.toml).
+Arity is a Cargo workspace (edition 2024): the root `arity` package is the CLI,
+language server, and linter, and it builds on two independently published member
+crates, [`crates/arity-parser`](crates/arity-parser) (lossless CST parser, AST
+wrappers, incremental reparser) and
+[`crates/arity-formatter`](crates/arity-formatter) (the formatting engine). The
+MSRV is declared as `rust-version` in [`Cargo.toml`](Cargo.toml).
 [`rust-toolchain.toml`](rust-toolchain.toml) selects the `stable` channel, so
 `rustup` picks up a suitable toolchain automatically.
 
@@ -52,12 +56,14 @@ target path (`--config` forces one, `--no-config` ignores it). The repo's own
 
 ## Repository layout
 
-The Rust crate lives in `src/` (see [`AGENTS.md`](AGENTS.md) for the module
-tour) with integration tests in `tests/`. The repo also carries the distribution
-and documentation surfaces: `editors/code` (VS Code extension), `npm/` and
-`pyproject.toml` (npm and PyPI wrappers around the binary), `docs/` (the mdBook
-site), `benches/` plus `scripts/bench.sh`, and `scripts/` (the R helpers that
-regenerate the bundled base-R and CRAN symbol lists).
+The root crate lives in `src/` with its integration tests in `tests/`; the
+parser and formatter live in `crates/arity-parser` and `crates/arity-formatter`
+with their own `tests/` (see [`AGENTS.md`](AGENTS.md) for the module tour). The
+repo also carries the distribution and documentation surfaces: `editors/code`
+(VS Code extension), `npm/` and `pyproject.toml` (npm and PyPI wrappers around
+the binary), `docs/` (the mdBook site), `benches/` plus `scripts/bench.sh`, and
+`scripts/` (the R helpers that regenerate the bundled base-R and CRAN symbol
+lists).
 
 ## Quality gates
 
@@ -65,9 +71,9 @@ Treat CI (`.github/workflows/`) as the source of truth. Before opening a pull
 request, make sure the following all pass locally:
 
 ```sh
-cargo test                                                 # all tests
-cargo clippy --all-targets --all-features -- -D warnings   # warnings are errors
-cargo fmt -- --check                                       # keep changes rustfmt-clean
+cargo test --workspace                       # all tests (bare `cargo test` skips the member crates!)
+cargo clippy --workspace --all-targets --all-features -- -D warnings   # warnings are errors
+cargo fmt --all -- --check                   # keep changes rustfmt-clean
 ```
 
 Markdown prose is formatted by [`panache`](https://github.com/jolars/panache),
@@ -90,19 +96,24 @@ Dependency changes must stay compatible with `cargo-audit` and `cargo-deny` (see
 adding a failing test that reproduces it (a new fixture case or snapshot) before
 touching the fix.
 
-- Integration tests live in `tests/*.rs`; fixtures in
-  `tests/fixtures/{parser,formatter,rindex}/<case>/`. Parser fixtures hold
-  `input.R` (the CST and diagnostics are snapshotted, losslessness asserted);
-  formatter fixtures hold `input.R` plus `expected.R`.
+- Integration tests live in each crate's `tests/*.rs`: parser suites in
+  `crates/arity-parser/tests/` (fixtures in
+  `crates/arity-parser/tests/fixtures/parser/<case>/`, holding `input.R`; the
+  CST and diagnostics are snapshotted, losslessness asserted), formatter suites
+  in `crates/arity-formatter/tests/` (fixtures in
+  `crates/arity-formatter/tests/fixtures/formatter/<case>/`, holding `input.R`
+  plus `expected.R`), and everything else (linter, LSP, salsa, roxygen oracles,
+  rindex) in the root `tests/`.
 - **Both fixture suites are hand-registered.** A new case does not run until its
-  directory name is added to `fixture_names()` in `tests/parser_snapshots.rs` or
-  `tests/formatter.rs`. This is the most common way a new test silently does
-  nothing.
+  directory name is added to `fixture_names()` in
+  `crates/arity-parser/tests/parser_snapshots.rs` or
+  `crates/arity-formatter/tests/formatter.rs`. This is the most common way a new
+  test silently does nothing.
 - Snapshot tests use [`insta`](https://insta.rs). Review and accept snapshots
   with `cargo insta review` or `cargo insta accept`.
 - Logging is currently inert: `env_logger` is a dependency but nothing
-  initializes it, so `RUST_LOG` (and `task test-debug`/`test-trace`) has no
-  effect. Reach for `dbg!` or a test-local print for now.
+  initializes it, so `RUST_LOG` (and `task test-debug`) has no effect. Reach for
+  `dbg!` or a test-local print for now.
 
 ## Your first change
 
@@ -111,32 +122,35 @@ The loop differs a little per subsystem. Pick the one your change lands in.
 **A formatter bug** (output is wrong, ugly, or unstable):
 
 ```sh
+cd crates/arity-formatter
 mkdir tests/fixtures/formatter/my_case
 $EDITOR tests/fixtures/formatter/my_case/input.R      # the offending code
 $EDITOR tests/fixtures/formatter/my_case/expected.R   # what it should become
 $EDITOR tests/formatter.rs                            # add "my_case" to fixture_names()
-cargo test --test formatter                           # watch it fail, then fix
+cargo test -p arity-formatter --test formatter        # watch it fail, then fix
 ```
 
-The fix belongs in `src/formatter/rules/` (the IR built per construct) or
-`src/formatter/printer.rs` (how the layout engine breaks lines) --- never a
-special case for one construct, and never a parser workaround (Tenets 1 and 3).
-The suite also asserts idempotence and losslessness, so a fix that formats your
-case correctly but destabilizes another will fail loudly.
+The fix belongs in `crates/arity-formatter/src/formatter/rules/` (the IR built
+per construct) or `crates/arity-formatter/src/formatter/printer.rs` (how the
+layout engine breaks lines) --- never a special case for one construct, and
+never a parser workaround (Tenets 1 and 3). The suite also asserts idempotence
+and losslessness, so a fix that formats your case correctly but destabilizes
+another will fail loudly.
 
 **A parser bug** (wrong tree shape, a lost byte, a bad diagnostic):
 
 ```sh
+cd crates/arity-parser
 mkdir tests/fixtures/parser/my_case
 $EDITOR tests/fixtures/parser/my_case/input.R
 $EDITOR tests/parser_snapshots.rs                     # add "my_case" to fixture_names()
-cargo test --test parser_snapshots                    # the snapshot starts out missing
+cargo test -p arity-parser --test parser_snapshots    # the snapshot starts out missing
 cargo insta review                                    # inspect the CST, accept if right
 ```
 
 The CST is snapshotted and losslessness asserted automatically. If the tree
-shape is wrong, fix `src/parser/` and re-review the snapshot --- do not accept a
-snapshot you have not read.
+shape is wrong, fix `crates/arity-parser/src/parser/` and re-review the snapshot ---
+do not accept a snapshot you have not read.
 
 **A lint rule** (new rule, false positive, bad autofix): rules live in
 `src/linter/rules/<category>/<id>.rs`, tests are plain `#[test]` functions in
@@ -200,7 +214,7 @@ statements.
 We also track a *soft, one-directional* compatibility target with the `air`
 formatter as a differential oracle. It is never a quality gate and is strictly
 subordinate to Tenet 1. Deliberate divergences are recorded in
-`tests/air_compat_allowlist.toml` with a rationale.
+`crates/arity-formatter/tests/air_compat_allowlist.toml` with a rationale.
 
 ## Reference checkouts
 
@@ -225,8 +239,8 @@ git clone --branch "v$(cat tests/oracle/.roxygen2-source)" \
 ```
 
 `scripts/harvest-roxygen-corpus.R` reads `roxygen2-ref/`; the air comparison in
-`tests/air_compat.rs` needs the `air` **binary** on PATH (devenv provides it),
-not the checkout.
+`crates/arity-formatter/tests/air_compat.rs` needs the `air` **binary** on PATH
+(devenv provides it), not the checkout.
 
 ## Adding a lint rule
 
@@ -273,7 +287,8 @@ Speed is a feature here, and it is measured rather than asserted.
   moves performance and want the docs to reflect it, re-run `task bench` and
   commit the artifact.
 - `task bench-parse` is a criterion microbenchmark of parse and incremental
-  reparse (`benches/parse.rs`) --- the right tool for a parser-level change.
+  reparse (`crates/arity-parser/benches/parse.rs`) --- the right tool for a
+  parser-level change.
 - For profiling, devenv provides `perf`, `cargo-flamegraph`, `hyperfine`, and
   `cargo-llvm-cov`.
 
@@ -330,11 +345,16 @@ green, [`versionary`](https://github.com/jolars/versionary) (configured in
 [`versionary.jsonc`](versionary.jsonc)) opens or updates a release PR that bumps
 the version, regenerates [`CHANGELOG.md`](CHANGELOG.md), and propagates the
 version into `npm/arity-cli/package.json` (both its own version and every
-`optionalDependencies` entry). The VS Code extension is a second versioned
-package that follows the crate. Merging that PR tags the release, which then
-fans out: release binaries for all eight targets (with keyless provenance
-attestation), the VS Code and Open VSX extensions, and the crates.io, npm, and
-PyPI publishes.
+`optionalDependencies` entry). The member crates `arity-parser` and
+`arity-formatter` are versioned **independently**, routed by path: a commit
+touching `crates/arity-parser` bumps only that crate, and its releases are
+tagged `arity-parser-v<version>` (likewise `arity-formatter-v<version>`), while
+the CLI keeps the bare `v<version>` stream. The VS Code extension is another
+versioned package that follows the CLI. Merging the release PR tags the release,
+which then fans out: release binaries for all eight targets (with keyless
+provenance attestation), the VS Code and Open VSX extensions, and the crates.io
+(all workspace crates, in dependency order), npm, and PyPI publishes. Only the
+CLI's `v*` stream carries GitHub release assets.
 
 Practical consequences:
 
@@ -343,8 +363,10 @@ Practical consequences:
 - `feat:` bumps the minor version, `fix:` the patch; a `!` or a
   `BREAKING CHANGE:` footer bumps the major. The project is pre-1.0 with
   `bump-minor-pre-major`, so breaking changes currently land as minor bumps.
-- A commit that only touches `editors/` is excluded from the crate's version
-  calculation.
+- A commit that only touches `editors/`, `crates/arity-parser`, or
+  `crates/arity-formatter` is excluded from the CLI's version calculation, so
+  keep commits atomic per area --- a commit that mixes parser and CLI changes
+  bumps both.
 
 ## Reporting issues
 

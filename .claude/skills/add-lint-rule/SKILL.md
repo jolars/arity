@@ -20,7 +20,8 @@ check the item off when done.
   does not belong here.
 - **Tenet 3—parsing is the parser's job.** Do not paper over parser mistakes
   in a rule. If the CST does not expose what you need, add a typed wrapper in
-  `src/ast/nodes.rs` (re-exported from `src/ast.rs`) rather than re-lexing or
+  `crates/arity-parser/src/ast/nodes.rs` (re-exported from the parser crate's
+  `ast` module, reachable as `crate::ast`) rather than re-lexing or
   re-parsing inside the rule.
 - **Autofix correctness (Tenet 1 corollary)—a fix is a textual edit, never a
   formatter.** The bar is *correctness*, not formatting: applying the fix must
@@ -63,8 +64,10 @@ the rule's correctness actually requires.
 - `src/linter/diagnostic.rs`—`Diagnostic`, `Fix`
   (`Fix::safe`/`Fix::unsafe_`), `Applicability`, `Severity`,
   `ViolationData::new(..).with_suggestion(..)`.
-- `src/ast/nodes.rs` (`src/ast.rs`)—typed AST wrappers (`CallExpr`,
-  `IfExpr`, `WhileExpr`, `BinaryExpr`, ...). `src/syntax.rs`—`SyntaxKind`/`SyntaxElement`.
+- `crates/arity-parser/src/ast/nodes.rs`—typed AST wrappers (`CallExpr`,
+  `IfExpr`, `WhileExpr`, `BinaryExpr`, ...);
+  `crates/arity-parser/src/syntax.rs`—`SyntaxKind`/`SyntaxElement` (both
+  re-exported at `crate::ast`/`crate::syntax` in the root crate).
 - `src/semantic.rs`—`SemanticModel` (`idents()`, `resolve_local`,
   `loaded_packages`) for `sem`-tier rules.
 - `tests/lint.rs`—integration tests + helpers: `diagnostics(src)`,

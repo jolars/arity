@@ -115,7 +115,8 @@ than re-triaging.
      construct that re-parses differently once the line breaks moved—**the bug
      is parser-side no matter which pass shows the symptom** (Tenet 3).
      Idempotence drift is usually the downstream symptom of upstream shape
-     divergence. `tests/air_parser_harness.rs` and `task air-compat` are useful
+     divergence. `crates/arity-parser/tests/air_parser_harness.rs` and
+     `task air-compat` are useful
      structural references for a suspicious parse.
    - **Anti-pattern: fixing in the formatter because the symptom lives there.**
      If you find yourself reaching for a formatter special case to make
@@ -159,14 +160,16 @@ than re-triaging.
    Both fixture suites are **hand-registered**; a directory alone does nothing.
 
    - Parser bugs (losslessness, mis-parse, panic-in-parse):
-     `tests/fixtures/parser/<case>/input.R`, then add `"<case>"` to
-     `fixture_names()` in `tests/parser_snapshots.rs`. The harness snapshots the
+     `crates/arity-parser/tests/fixtures/parser/<case>/input.R`, then add
+     `"<case>"` to `fixture_names()` in
+     `crates/arity-parser/tests/parser_snapshots.rs`. The harness snapshots the
      CST and the diagnostics and asserts the lossless round-trip (only
      `air_error_*` cases are exempt, and those must produce diagnostics).
      Accept snapshots with `cargo insta review`—never hand-write a `.snap`.
    - Formatter bugs (idempotence, `format-error`):
-     `tests/fixtures/formatter/<case>/{input.R,expected.R}`, then add `"<case>"`
-     to `fixture_names()` in `tests/formatter.rs`. That harness asserts the
+     `crates/arity-formatter/tests/fixtures/formatter/<case>/{input.R,expected.R}`,
+     then add `"<case>"` to `fixture_names()` in
+     `crates/arity-formatter/tests/formatter.rs`. That harness asserts the
      expected output, and separately that the input parses clean, the output
      parses clean, the output round-trips losslessly, and formatting is
      idempotent—so an idempotence bug is pinned by the fixture alone.
@@ -207,7 +210,8 @@ than re-triaging.
      report.
    - For formatter rule changes, run `task air-compat` and triage any new
      divergence per `AGENTS.md` (adopt, or record in
-     `tests/air_compat_allowlist.toml` with a rationale). It is a gauge, never
+     `crates/arity-formatter/tests/air_compat_allowlist.toml` with a
+     rationale). It is a gauge, never
      a gate.
    - Drop any `ALLOWLIST` entry the fix makes stale—the file now simply passes
      and records nothing. A stale entry is the one way the allowlist *can* mask

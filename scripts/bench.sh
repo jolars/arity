@@ -203,8 +203,8 @@ while IFS= read -r f; do
     cat "$f" >>"$BASE"
     printf '\n\n' >>"$BASE"
     found=1
-done < <(find tests/fixtures/formatter -name expected.R | sort)
-[ "$found" -eq 1 ] || { echo "error: no tests/fixtures/formatter/*/expected.R files found" >&2; exit 1; }
+done < <(find crates/arity-formatter/tests/fixtures/formatter -name expected.R | sort)
+[ "$found" -eq 1 ] || { echo "error: no crates/arity-formatter/tests/fixtures/formatter/*/expected.R files found" >&2; exit 1; }
 
 # NOTE: tiers repeat the same base block, so content is cache-friendly and not
 # fully representative of real code. They exist to amortize process startup and

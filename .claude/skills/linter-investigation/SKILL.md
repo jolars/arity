@@ -125,10 +125,11 @@ anything, classify each suspicious finding into exactly one of:
    the formatter; losslessness is sacred):
 
    - Add a failing fixture first and **watch it fail** (parser: a case under
-     `tests/fixtures/parser/<case>/` registered in `fixture_names()`; linter: a
+     `crates/arity-parser/tests/fixtures/parser/<case>/` registered in
+     `fixture_names()`; linter: a
      case under `tests/fixtures/lint/`). Reduce from the corpus.
    - Fix at the root cause; re-verify against `Rscript`.
-   - Run the relevant suites plus gates: `cargo test`, `cargo clippy
+   - Run the relevant suites plus gates: `cargo test --workspace`, `cargo clippy
      --all-targets --all-features -- -D warnings`, `cargo fmt -- --check`;
      `cargo insta accept` for new snapshots after reviewing them.
 

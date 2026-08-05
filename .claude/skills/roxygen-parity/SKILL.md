@@ -144,7 +144,8 @@ duplicated here, so this skill stays timeless).
 5. **Classify** into a bucket, apply the **smallest** parser fix. Inspect the
    CST via `cargo run -q -- parse <file>` and (once it exists) the projection.
 
-6. **TDD fixture**—add `tests/fixtures/parser/roxygen_<name>/input.R`,
+6. **TDD fixture**—add
+   `crates/arity-parser/tests/fixtures/parser/roxygen_<name>/input.R`,
    assert losslessness (`cat file | cargo run -q -- parse --verify --quiet`),
    review + accept the snapshot (`cargo insta review`). **Read the CST before
    accepting.**

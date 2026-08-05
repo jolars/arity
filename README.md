@@ -134,6 +134,15 @@ jobs:
       - uses: jolars/arity-action@v1
 ```
 
+## Crates
+
+The parsing and formatting engines are published as standalone crates for use in
+other tools: [`arity-parser`](https://crates.io/crates/arity-parser) (lossless
+CST parser, typed AST wrappers, incremental reparser) and
+[`arity-formatter`](https://crates.io/crates/arity-formatter) (the formatter,
+with optional serde/schemars support for embedders). Both are versioned
+independently of the CLI.
+
 ## Acknowledgements
 
 The core architecture of Arity is entirely based on

@@ -63,11 +63,12 @@ such different work, this is a rough scale comparison, not a like-for-like one.
 
 ## Corpus
 
-**Single files** are synthetic: every `tests/fixtures/formatter/*/expected.R` is
-concatenated (sorted, blank-line separated) into a base block, which is repeated
-to two size tiers. The content repeats, so it is cache-friendly and not fully
-representative of real code; it exists to amortize process startup and show
-rough scaling, not to model a real workload.
+**Single files** are synthetic: every formatter fixture's `expected.R`
+(`crates/arity-formatter/tests/fixtures/formatter/*/expected.R`) is concatenated
+(sorted, blank-line separated) into a base block, which is repeated to two size
+tiers. The content repeats, so it is cache-friendly and not fully representative
+of real code; it exists to amortize process startup and show rough scaling, not
+to model a real workload.
 
 **Projects** use a real R package (the [`tidyr`](https://tidyr.tidyverse.org/)
 source tree by default), cloned once at a pinned tag into a local cache. Point

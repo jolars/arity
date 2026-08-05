@@ -6,8 +6,25 @@ repository.
 ## Project
 
 Arity is a Rust CLI providing a language server, formatter, and linter for the R
-language. Single-crate Cargo package (published to crates.io as `arity`, edition
-2024; the binary and library crate are both named `arity`), not a workspace.
+language. It is a Cargo workspace (edition 2024) with a root package: the root
+crate `arity` (both the binary and a library, published to crates.io) hosts the
+CLI, LSP, linter, semantic model, project graph, and introspection index, and
+builds on two independently published member crates:
+
+- `crates/arity-parser` — `syntax` (SyntaxKind, node pointers), `ast` (typed
+  wrappers), and `parser` (lossless CST parser + incremental reparse). Depends
+  only on `rowan`, `serde`, `smol_str`.
+- `crates/arity-formatter` — the formatting engine, for embedders such as a
+  dprint plugin. Depends on `arity-parser`; optional `serde`/`schema` features
+  derive serde and schemars on `FormatStyle`.
+
+The root crate re-exports the parser crate's modules
+(`pub use arity_parser::{ast, parser, syntax}` in `src/lib.rs`), and
+`src/formatter.rs` is a bridge that re-exports the engine while hosting the
+CLI-side batch `check` API and the persistent format `cache`—so `arity::parser`,
+`arity::formatter`, etc. remain the paths everything uses. The member crates'
+few low-level cross-crate helpers (`parser::expr`, `parser::roxygen`) are `pub`
+but documented as semver-loose.
 
 **Strategy (see `TODO.md`):** the parser + formatter foundation was brought to
 near-completion *first*; the linter and LSP were then built out on top of it and
@@ -55,16 +72,16 @@ subordinate to Tenet 1** and is **never a quality gate**. We do not match air;
 we measure how often air would leave arity's output unchanged, and treat air's
 maturity as a free differential oracle for finding our own inconsistencies.
 
-- The gauge lives in `tests/air_compat.rs` (`#[ignore]`d, so it never runs in
-  `cargo test` and cannot fail CI). Run it with `task air-compat`; it
-  regenerates `AIR_COMPAT.md`.
+- The gauge lives in `crates/arity-formatter/tests/air_compat.rs`
+  (`#[ignore]`d, so it never runs in `cargo test` and cannot fail CI). Run it
+  with `task air-compat`; it regenerates `AIR_COMPAT.md` at the repo root.
 - It measures the *fixed point* `air(arity(x)) == arity(x)`, not a head-to-head
   diff—this cancels out the persistent-line-break difference (which is the
   whole point of arity) by construction, leaving only genuine rule divergences.
 - Divergences are triaged into two buckets. **Adopt** when air's output is
   simply more idiomatic and arity is being inconsistent (fix the rule).
   **Record** when the divergence is a deliberate arity choice—add it to
-  `tests/air_compat_allowlist.toml` with a rationale.
+  `crates/arity-formatter/tests/air_compat_allowlist.toml` with a rationale.
 - Diverging from air is allowed, but should **raise tension**: it is a
   conscious, documented decision (an allowlist entry), not a silent one. An
   unexplained divergence in `AIR_COMPAT.md` is an open question, never an excuse
@@ -75,11 +92,12 @@ maturity as a free differential oracle for finding our own inconsistencies.
 ```sh
 cargo build                       # dev build
 cargo build --release
-cargo test                        # all tests (CI: cargo test --verbose)
-cargo test <substring>            # run tests matching a name
-cargo test --test parser_snapshots   # one integration test file (see `ls tests/*.rs`)
-cargo clippy --all-targets --all-features -- -D warnings   # lint; warnings are errors
-cargo fmt -- --check              # rustfmt check (keep changes rustfmt-clean)
+cargo test --workspace            # all tests (bare `cargo test` runs only the root crate!)
+cargo test --workspace <substring>              # run tests matching a name
+cargo test -p arity-parser --test parser_snapshots   # one member-crate test file
+cargo test --test lint            # one root-crate test file (see `ls tests/*.rs`)
+cargo clippy --workspace --all-targets --all-features -- -D warnings   # lint; warnings are errors
+cargo fmt --all -- --check        # rustfmt check (keep changes rustfmt-clean)
 ```
 
 CLI usage:
@@ -115,19 +133,24 @@ rule docs are pinned by `tests/rule_docs.rs` and the benchmark partials by
 
 Snapshot tests use `insta`: review/accept with `cargo insta review` or
 `cargo insta accept`. **Logging is currently inert**: `env_logger` is a
-dependency but is never initialized, and the only log sites in the crate are
-three `log::error!`/`log::warn!` calls (LSP task pool, lint thread, format
-cache). So `RUST_LOG` has no effect today, and `task test-debug`/`test-trace`
-emit nothing—wiring up a logger is an open task, not a working facility.
-`task <name>` (Taskfile.yml)
+dependency but is never initialized, and the only log sites in the workspace
+are three `log::error!`/`log::warn!` calls (LSP task pool, lint thread, format
+cache)—all in the root crate. So `RUST_LOG` has no effect today, and
+`task test-debug` emits nothing—wiring up a logger is an open task, not a
+working facility. `task <name>` (Taskfile.yml)
 wraps the above: `lint`, `format`, `test`, `test-debug`, `audit`, `deny`,
 `docs-gen`, `docs-build`, `docs-preview`, `air-compat`, `corpus`, `bench`, and
 the `roxygen-*` oracle/projector tasks. `task --list` shows them all.
 
 ## Architecture
 
-**Parse pipeline** (`src/parser/`, public API `parse`/`reconstruct` re-exported
-from `src/parser.rs`): lossless `rowan` CST built via an event-based pipeline.
+Paths below are relative to the owning crate: `syntax`, `ast`, and `parser`
+live in `crates/arity-parser/src/`, the formatter in
+`crates/arity-formatter/src/`, and everything else in the root crate's `src/`.
+
+**Parse pipeline** (`parser/`, public API `parse`/`reconstruct` re-exported
+from `parser.rs`, in `crates/arity-parser`): lossless `rowan` CST built via an
+event-based pipeline.
 
 ```
 lex (lexer.rs) → Vec<Token>
@@ -137,13 +160,14 @@ build_tree (tree_builder.rs) → rowan SyntaxNode (CST)
 
 - `core::parse` drives the loop; `events.rs` defines `Event` (start node, token,
   and finish node); `cursor.rs`, `context.rs`, `recovery.rs`, `diagnostics.rs`
-  support the parser. `src/syntax.rs` defines `SyntaxKind` (rowan-style
+  support the parser. `syntax.rs` defines `SyntaxKind` (rowan-style
   `SCREAMING_SNAKE_CASE`).
 - **Losslessness is the core invariant:** all whitespace, newlines, comments,
   and `%...%`/`[[`/`]]` tokens are preserved; `reconstruct(text)` must equal
   `text`. Parser work prioritizes stable, recoverable CST shape over early
   semantic precision. Semantics stay **static**—no R evaluation.
-- The **AST-wrapper layer** (`src/ast/`) is a zero-cost typed *navigation* view
+- The **AST-wrapper layer** (`ast/`, also in `crates/arity-parser`) is a
+  zero-cost typed *navigation* view
   over the CST, in rust-analyzer's mould: `AstNode` wrappers (`nodes.rs`) type
   each node kind (`AssignmentExpr`, `IfExpr`, `FunctionExpr`, …) and `AstToken`
   wrappers (`tokens.rs`, arity's own trait—rowan ships no `AstToken`) type each
@@ -160,18 +184,19 @@ build_tree (tree_builder.rs) → rowan SyntaxNode (CST)
   wrappers rather than re-walking raw CST. The **formatter deliberately stays on
   raw CST** (byte-level layout precision, Tenet 1) and is not migrated. This is a
   read-only layer—it changes no parser or formatter output, so losslessness and
-  idempotence are unaffected; `tests/ast_wrappers.rs` is its integration-test
-  home.
-- **Roxygen is parsed, not treated as opaque comments.** `src/parser/roxygen/`
+  idempotence are unaffected; `crates/arity-parser/tests/ast_wrappers.rs` is
+  its integration-test home.
+- **Roxygen is parsed, not treated as opaque comments.** `parser/roxygen/`
   sub-tokenizes any `^#+'` line so its structure (marker, tags, arguments,
   prose, Rd macros, markdown blocks) lives in the CST: `lex.rs` (sub-lexing),
   `group.rs` (block grouping + section/paragraph skeleton), `build.rs`
   (block-level Rd/markdown constructs), `inline.rs`. The sub-tokens' texts tile
   the line's bytes exactly, so losslessness still holds.
-- `src/parser/reparse.rs` implements the incremental reparse strategies
-  (token → block → top-level statement → full reparse), and
-  `src/incremental.rs` models file text → CST → semantic model as `salsa`
-  queries. `src/syntax/ptr.rs` holds position-independent node pointers.
+- `parser/reparse.rs` implements the incremental reparse strategies
+  (token → block → top-level statement → full reparse); `syntax/ptr.rs` holds
+  position-independent node pointers. The salsa layer sits **above** the parser
+  crate: the root crate's `src/incremental.rs` models file text → CST →
+  semantic model as `salsa` queries (the parser crate itself is salsa-free).
 
 **Semantic model** (`src/semantic/`, facade `src/semantic.rs`): strictly
 *single-file* analysis — scope tree, bindings, identifier resolution, in-file
@@ -229,18 +254,22 @@ network egress is a per-user consent decision, not a committed project setting.
 Per-rule config (`[lint.rules.<id>]`) does not exist yet and blocks two planned
 rules; see `TODO.md` §I4.
 
-**Formatter** (`src/formatter/`, public API in `src/formatter.rs`): consumes the
-CST and uses a Wadler/Prettier-style document IR (`ir.rs`) printed by a single
-best-fit layout engine (`printer.rs`) that makes all line-break decisions.
-`rules/` builds the IR per construct; `core.rs` exposes `format` and
-`format_with_style`; `check.rs` exposes `check_paths`; `style.rs` is
-`FormatStyle`; `trivia.rs`/`context.rs`/`render.rs` are support. `roxygen.rs`
+**Formatter** (`crates/arity-formatter`, engine in `src/formatter/` there):
+consumes the CST and uses a Wadler/Prettier-style document IR (`ir.rs`) printed
+by a single best-fit layout engine (`printer.rs`) that makes all line-break
+decisions. `rules/` builds the IR per construct; `core.rs` exposes `format` and
+`format_with_style`; `style.rs` is `FormatStyle` (with the optional
+`serde`/`schema` derive features); `trivia.rs`/`context.rs`/`render.rs` are
+support. `roxygen.rs`
 formats `ROXYGEN_BLOCK`s — reflowed one `#'` line at a time, with layout chosen
 by a tag's `TagClass` and **never** by its written form (a body written inline
 after `@details` and one written on the next line canonicalize to the same
-output; Tenet 1). `cache.rs` is a persistent fixed-point cache for
-`format --check` — a disposable optimization that must never be a source of
-errors. Target style is the tidyverse R style guide. The native-IR migration is
+output; Tenet 1). Two CLI-side concerns stay in the **root crate's**
+`src/formatter/` behind the `src/formatter.rs` bridge: `check.rs` (the batch
+`check_paths*` API, which needs `file_discovery`) and `cache.rs` (the
+persistent fixed-point cache for `format --check` — a disposable optimization
+that must never be a source of errors; its cache key stays the CLI's version).
+Target style is the tidyverse R style guide. The native-IR migration is
 complete (subset/call/function arg-lists, curly-curly, parens, if/else including
 comment-bearing chains, and external-body control flow all build native IR, with
 comment relocation handled structurally). `Ir::verbatim`/`verbatim_forced` no
@@ -335,7 +364,8 @@ neither CI nor `cargo test` runs it, and it is never a quality gate.
   Moving performance and wanting the docs to show it means re-running
   `task bench` and committing the artifact.
 - `task bench-parse` is the criterion microbenchmark of parse + incremental
-  reparse (`benches/parse.rs`)—the right tool for parser-level work.
+  reparse (`crates/arity-parser/benches/parse.rs`)—the right tool for
+  parser-level work.
 - It measures wall-clock speed only, never output equivalence (that is
   `task air-compat`). Report **ratios**, not milliseconds: the tools do
   different work behind different startup floors (`styler` is an R process).
@@ -349,13 +379,23 @@ version. On a push to `main`, once test + `cargo-audit` + `cargo-deny` pass,
 `versionary` (`versionary.jsonc`) opens/updates a release PR that bumps the
 version, regenerates `CHANGELOG.md`, and propagates the version into
 `npm/arity-cli/package.json` (its own version *and* every
-`optionalDependencies` entry). `editors/code` is a second versioned package
-(`arity-code`) that `follows` the crate; paths under `editors/` are excluded
-from the crate's version calculation. Merging the release PR tags it and fans
+`optionalDependencies` entry). The workspace has four versionary packages,
+routed by path: the root CLI (bare `v*` tags), `crates/arity-parser` and
+`crates/arity-formatter` (independently versioned, tagged
+`arity-parser-v*`/`arity-formatter-v*`, each with its own `CHANGELOG.md`), and
+`editors/code` (`arity-code`, which `follows` the CLI). Paths under `editors/`
+and `crates/` are excluded from the CLI's version calculation—keep commits
+atomic per area so path routing produces clean per-crate changelogs. Merging
+the release PR tags it and fans
 out to `packages.yml` (eight targets—Linux gnu/musl, macOS, Windows, each
 x86_64 + aarch64—cross-built with `cargo-zigbuild`, glibc-floor checked, with
 keyless provenance attestation), then the VS Code/Open VSX, crates.io, npm, and
-PyPI publishes.
+PyPI publishes. The crates.io publish (`publish-cargo.yml`, on `v*` tags) runs
+`cargo workspaces publish --from-git --skip-published`, which uploads every
+workspace crate not yet on crates.io in dependency order—member-crate bumps
+therefore publish on the next CLI tag. Because member tags are prefixed, the
+`v*` tag filters in the workflows match only the CLI stream, and **only the CLI
+stream carries GitHub release assets**.
 
 **Never hand-edit `CHANGELOG.md` or any version field**—they are generated and
 your edit is overwritten. The pre-1.0 config sets `bump-minor-pre-major`, so
@@ -388,31 +428,46 @@ The distribution surfaces themselves:
 it pass. For a bug, always start by adding a failing test that reproduces it
 (typically a new fixture case or snapshot) before touching the fix.
 
-- Integration tests in `tests/*.rs`; fixtures in
-  `tests/fixtures/{parser,formatter,rindex}/<case>/`. Parser fixtures hold
-  `input.R` (snapshot the CST + diagnostics, assert losslessness); formatter
-  fixtures hold `input.R` + `expected.R`.
-- `insta` snapshots live in `tests/snapshots/`. Never accept a snapshot you have
-  not read.
-- Which suite to reach for: formatter bug → a `tests/fixtures/formatter/` case
-  (`input.R` + `expected.R`), fixed in `src/formatter/rules/` or `printer.rs`;
-  parser bug → a `tests/fixtures/parser/` case + `cargo insta review`; lint rule
+- Integration tests live with their crate: parser suites
+  (`parser_snapshots.rs`, `incremental_reparse.rs`, `line_endings.rs`,
+  `ast_wrappers.rs`, `node_ptr.rs`, `air_parser_harness.rs`) in
+  `crates/arity-parser/tests/` with fixtures in
+  `crates/arity-parser/tests/fixtures/parser/<case>/`; formatter suites
+  (`formatter.rs`, `range_format.rs`, `air_compat.rs`) in
+  `crates/arity-formatter/tests/` with fixtures in
+  `crates/arity-formatter/tests/fixtures/formatter/<case>/`; everything else
+  (linter, LSP, salsa, roxygen oracles + projector, rindex, config, CLI-level
+  format tests in `format_cli.rs`, corpus) in the root `tests/*.rs` with
+  fixtures in `tests/fixtures/rindex/<case>/`. Parser fixtures hold `input.R`
+  (snapshot the CST + diagnostics, assert losslessness); formatter fixtures
+  hold `input.R` + `expected.R`. **Run `cargo test --workspace`**—a bare
+  `cargo test` covers only the root crate.
+- `insta` snapshots live in each crate's `tests/snapshots/`. Never accept a
+  snapshot you have not read.
+- Which suite to reach for: formatter bug → a
+  `crates/arity-formatter/tests/fixtures/formatter/` case
+  (`input.R` + `expected.R`), fixed in the formatter crate's
+  `src/formatter/rules/` or `printer.rs`;
+  parser bug → a `crates/arity-parser/tests/fixtures/parser/` case +
+  `cargo insta review`; lint rule
   → a `#[test]` in `tests/lint.rs` (lint has no fixture dir) plus the rule's own
   `examples()`, which generate its docs page; cross-file/LSP work →
   `tests/lsp.rs`, `tests/lsp_protocol.rs`, `tests/salsa_incremental.rs` (guards
   that a body edit does *not* invalidate the project graph), and
-  `tests/incremental_reparse.rs`.
+  `crates/arity-parser/tests/incremental_reparse.rs`.
 - Both fixture suites are **hand-registered**: a new case only runs once its
-  name is added to `fixture_names()` in `tests/parser_snapshots.rs` /
-  `tests/formatter.rs`.
+  name is added to `fixture_names()` in
+  `crates/arity-parser/tests/parser_snapshots.rs` /
+  `crates/arity-formatter/tests/formatter.rs`.
 - The roxygen oracles live under `tests/oracle/` and are allowlist-gated.
   `tests/roxygen_projector.rs` is the pure-Rust, CI-safe conformance gate (no R:
   it diffs the projector against pinned `.rdtree` files); the `#[ignore]`d
   `tests/roxygen_oracle.rs` and `tests/roxygen_lint_oracle.rs` need R +
   `roxygen2`. See the `roxygen-parity` skill.
-- `tests/air_parser_harness.rs` compares against the `air_r_parser` crate (a git
-  dev-dependency from posit-dev/air)—AIR snapshot cases are ported into the
-  parser fixtures as hardening input.
+- `crates/arity-parser/tests/air_parser_harness.rs` compares against the
+  `air_r_parser` crate (a git dev-dependency of `arity-parser` from
+  posit-dev/air)—AIR snapshot cases are ported into the parser fixtures as
+  hardening input.
 - `tests/corpus.rs` is the Tier 0 corpus smoke test (`#[ignore]`d; run with
   `ARITY_CORPUS=<dir> task corpus`): losslessness + idempotence over a large
   body of real R sources, with unparseable files skipped rather than failed.
