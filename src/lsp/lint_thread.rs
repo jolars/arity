@@ -762,7 +762,25 @@ pub(crate) fn packages_to_build(
     indexed: &IndexedProvider,
     source: &str,
 ) -> Vec<SmolStr> {
-    with_default_packages(referenced_in_source(source))
+    // A referenced meta-package also attaches its members (harvested attach
+    // set, static table fallback), and the undefined-symbol gates require each
+    // member to be indexed — so queue them for harvest too. A member learned
+    // only from a harvested attach set arrives one pass late by construction:
+    // pass 1 harvests the meta, the installed index triggers a re-lint, and
+    // pass 2 sees the meta's attaches (its members weren't marked attempted).
+    let mut candidates: Vec<SmolStr> = Vec::new();
+    for pkg in with_default_packages(referenced_in_source(source)) {
+        for member in attach_members(indexed, &pkg) {
+            let member = SmolStr::new(member);
+            if !candidates.contains(&member) {
+                candidates.push(member);
+            }
+        }
+        if !candidates.contains(&pkg) {
+            candidates.push(pkg);
+        }
+    }
+    candidates
         .into_iter()
         .filter(|pkg| !indexed.has_package(pkg) && attempts.insert(pkg.clone()))
         .collect()
@@ -897,6 +915,49 @@ mod tests {
         // A second pass returns nothing — every package was already attempted.
         let second = packages_to_build(&mut attempts, &indexed, src);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
+    }
+
+    #[test]
+    fn packages_to_build_expands_meta_package_members() {
+        use crate::rindex::schema::{PackageIndex, SCHEMA_VERSION};
+        // A harvested meta-package whose attach set names an un-harvested
+        // member: the member must be queued for build too, or the
+        // undefined-symbol gates would suppress files indefinitely.
+        let meta = PackageIndex {
+            schema_version: SCHEMA_VERSION,
+            package: "metaverse".into(),
+            version: "1.0".into(),
+            lib_path: "/lib".into(),
+            r_version: None,
+            harvested_at: 0,
+            attaches: vec!["helperpkg".into()],
+            symbols: Vec::new(),
+        };
+        let indexed = IndexedProvider::from_indices([meta]);
+        let mut attempts = HashSet::new();
+        let got = packages_to_build(&mut attempts, &indexed, "library(metaverse)\n");
+        assert!(
+            got.contains(&SmolStr::new("helperpkg")),
+            "harvested attach member should be queued, got {got:?}"
+        );
+        assert!(
+            !got.contains(&SmolStr::new("metaverse")),
+            "the meta itself is already harvested"
+        );
+
+        // Static fallback: an un-harvested tidyverse queues the curated
+        // members alongside itself.
+        let mut attempts = HashSet::new();
+        let got = packages_to_build(
+            &mut attempts,
+            &IndexedProvider::empty(),
+            "library(tidyverse)\n",
+        );
+        assert!(got.contains(&SmolStr::new("tidyverse")));
+        assert!(
+            got.contains(&SmolStr::new("dplyr")),
+            "static members should be queued, got {got:?}"
+        );
     }
 
     #[test]

@@ -140,8 +140,8 @@ use crate::rindex::cache::{Cache, resolve_cache_root};
 use crate::rindex::discover::{referenced_in_source, with_default_packages};
 use crate::rindex::libpaths::LibrarySearch;
 use crate::rindex::provider::{
-    CompositeProvider, IndexedProvider, base_names, base_package_of, bundled_exports,
-    package_indexed, resolve_origin,
+    CompositeProvider, IndexedProvider, attach_members, base_names, base_package_of,
+    bundled_exports, package_indexed, resolve_origin,
 };
 use crate::rindex::remote::{RemoteExports, Sidecar};
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
