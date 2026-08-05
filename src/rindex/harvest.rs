@@ -213,19 +213,35 @@ fn detect_attaches(db: Option<&LazyLoadDb>, package: &str, search: &LibrarySearc
 
 /// Validate a candidate attach-set object, all-or-nothing: `Some` only when
 /// `obj` is a plain character vector of syntactically valid, *installed*
-/// package names (self and duplicates dropped). Any NA, malformed name, or
-/// uninstalled member rejects the whole set — a partial set would override the
-/// static fallback table while being wrong, and an unverifiable member would
-/// permanently trip the conservative undefined-symbol gates.
+/// package names (self and duplicates dropped). Any NA rejects the whole set
+/// (see [`validate_attach_names`] for the rest of the rules).
 fn validate_attach_set(
     obj: &Robj,
     package: &str,
     installed: &dyn Fn(&str) -> bool,
 ) -> Option<Vec<SmolStr>> {
     let strs = obj.as_str_vec()?;
+    let names: Vec<&str> = strs
+        .iter()
+        .map(|s| s.as_deref())
+        .collect::<Option<Vec<_>>>()?;
+    validate_attach_names(&names, package, installed)
+}
+
+/// Validate candidate attach-set member `names`, all-or-nothing: `Some` only
+/// when every name is a syntactically valid, *installed* package name (self
+/// and duplicates dropped). One malformed or uninstalled member rejects the
+/// whole set — a partial set would override the static fallback table while
+/// being wrong, and an unverifiable member would permanently trip the
+/// conservative undefined-symbol gates. Shared with the opt-in
+/// [`attach_probe`](crate::rindex::attach_probe).
+pub(crate) fn validate_attach_names(
+    names: &[&str],
+    package: &str,
+    installed: &dyn Fn(&str) -> bool,
+) -> Option<Vec<SmolStr>> {
     let mut members: Vec<SmolStr> = Vec::new();
-    for s in strs {
-        let name = s.as_deref()?;
+    for &name in names {
         if name == package {
             continue;
         }
@@ -244,7 +260,7 @@ fn validate_attach_set(
 
 /// R's package-name rules: at least two characters of ASCII letters, digits,
 /// and dots, starting with a letter and not ending with a dot.
-fn is_valid_package_name(name: &str) -> bool {
+pub(crate) fn is_valid_package_name(name: &str) -> bool {
     name.len() >= 2
         && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')

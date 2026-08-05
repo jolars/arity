@@ -148,6 +148,9 @@ Build or refresh the installed-package introspection index
 `--no-help`
 :   Skip harvesting help (names only; faster)
 
+`--attach-probe`
+:   Probe what each meta-package attaches by running `library()` in a fresh R session (spawns R and executes package attach hooks; also enabled by setting `ARITY_ATTACH_PROBE`)
+
 `--cache-dir <DIR>`
 :   Override the cache directory
 

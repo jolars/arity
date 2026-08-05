@@ -13,6 +13,7 @@
 //!
 //! - [`schema`] — the on-disk cache shape.
 
+pub mod attach_probe;
 pub mod build;
 pub mod cache;
 pub mod deparse;

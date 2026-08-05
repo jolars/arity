@@ -113,6 +113,74 @@ fn attach_capture_requires_installed_members() {
     assert!(idx.attaches.is_empty());
 }
 
+/// End-to-end probe test: needs `R` on `PATH` (devenv provides it), so it is
+/// `#[ignore]`d like the roxygen oracles. Run with
+/// `cargo test --test rindex -- --ignored attach_probe`.
+#[test]
+#[ignore = "requires R on PATH"]
+fn attach_probe_captures_search_diff() {
+    use arity::rindex::build::{BuildOptions, build_index};
+    use arity::rindex::cache::Cache;
+
+    // A toy package whose `.onAttach` exists but that follows no attach-set
+    // convention — only the probe can see what `library()` attaches (here its
+    // `Depends: tools`, attached by R itself; `tools` is installed wherever R
+    // is but not attached by default, so the diff is exactly `tools`).
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("probetoy");
+    std::fs::create_dir_all(src.join("R")).unwrap();
+    std::fs::write(
+        src.join("DESCRIPTION"),
+        "Package: probetoy\nVersion: 1.0.0\nTitle: Probe Fixture\n\
+         Description: Throwaway fixture for the attach probe.\n\
+         License: MIT + file LICENSE\nDepends: tools\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("NAMESPACE"), "export(probetoy_hello)\n").unwrap();
+    std::fs::write(
+        src.join("R/probetoy.R"),
+        ".onAttach <- function(libname, pkgname) {\n\
+         \x20 packageStartupMessage(\"probetoy attached\")\n\
+         }\n\
+         probetoy_hello <- function() \"hello\"\n",
+    )
+    .unwrap();
+
+    let lib = tmp.path().join("lib");
+    std::fs::create_dir_all(&lib).unwrap();
+    let status = std::process::Command::new("R")
+        .args(["CMD", "INSTALL", "--no-docs", "-l"])
+        .arg(&lib)
+        .arg(&src)
+        .status()
+        .expect("R must be on PATH for this test");
+    assert!(status.success(), "R CMD INSTALL failed");
+
+    let cache = Cache::new(tmp.path().join("cache"));
+    let search = LibrarySearch::discover(None, &[lib]);
+    let pkgs = [smol_str::SmolStr::new("probetoy")];
+
+    // Probe off (the default): the heuristic finds nothing.
+    build_index(&pkgs, &cache, &search, BuildOptions::default(), 0);
+    let idx = cache.read_package("probetoy", "1.0.0").expect("indexed");
+    assert!(idx.attaches.is_empty(), "heuristic should find nothing");
+
+    // Probe on, no force: the up-to-date entry is probed and merged in place.
+    build_index(
+        &pkgs,
+        &cache,
+        &search,
+        BuildOptions {
+            attach_probe: true,
+            ..Default::default()
+        },
+        0,
+    );
+    let idx = cache.read_package("probetoy", "1.0.0").expect("indexed");
+    let attaches: Vec<&str> = idx.attaches.iter().map(|s| s.as_str()).collect();
+    assert_eq!(attaches, ["tools"]);
+}
+
 #[test]
 fn harvests_export_pattern_package() {
     let idx =

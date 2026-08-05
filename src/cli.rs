@@ -165,6 +165,12 @@ pub enum Commands {
         #[arg(long)]
         no_help: bool,
 
+        /// Probe what each meta-package attaches by running `library()` in a
+        /// fresh R session (spawns R and executes package attach hooks; also
+        /// enabled by setting `ARITY_ATTACH_PROBE`)
+        #[arg(long)]
+        attach_probe: bool,
+
         /// Override the cache directory
         #[arg(long, value_name = "DIR")]
         cache_dir: Option<PathBuf>,

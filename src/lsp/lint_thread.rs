@@ -644,6 +644,8 @@ impl LintWorker {
                 BuildOptions {
                     help: cfg.help,
                     force: false,
+                    // Background builds honor only the per-user env consent.
+                    attach_probe: crate::rindex::attach_probe::enabled_by_env(),
                 },
                 now,
             );

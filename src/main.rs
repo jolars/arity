@@ -112,6 +112,7 @@ fn main() -> ExitCode {
             paths,
             force,
             no_help,
+            attach_probe,
             cache_dir,
             quiet,
         } => run_index(
@@ -119,6 +120,7 @@ fn main() -> ExitCode {
             IndexCliOptions {
                 force,
                 no_help,
+                attach_probe,
                 cache_dir,
                 quiet,
             },
@@ -151,6 +153,7 @@ fn color_enabled(choice: ColorChoice, is_terminal: bool) -> bool {
 struct IndexCliOptions {
     force: bool,
     no_help: bool,
+    attach_probe: bool,
     cache_dir: Option<PathBuf>,
     quiet: bool,
 }
@@ -209,6 +212,8 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
         BuildOptions {
             help: config.index.help && !opts.no_help,
             force: opts.force,
+            // Consent is the flag or the env var, never a committed setting.
+            attach_probe: opts.attach_probe || arity::rindex::attach_probe::enabled_by_env(),
         },
         now_unix_secs(),
     );

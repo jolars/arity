@@ -5,8 +5,10 @@
 use rayon::prelude::*;
 use smol_str::SmolStr;
 
+use crate::rindex::attach_probe;
 use crate::rindex::cache::Cache;
 use crate::rindex::harvest::{HarvestOptions, harvest_package_in};
+use crate::rindex::lazyload;
 use crate::rindex::libpaths::LibrarySearch;
 
 #[derive(Debug, Clone, Copy)]
@@ -14,6 +16,11 @@ pub struct BuildOptions {
     pub help: bool,
     /// Re-harvest and rewrite even when the installed version is already indexed.
     pub force: bool,
+    /// Run the opt-in `search()`-diff attach probe (spawns R, executes package
+    /// attach hooks) for meta-packages the harvest heuristic missed. Callers
+    /// resolve the `--attach-probe` flag or [`attach_probe::ENV_VAR`] — this
+    /// function never reads the environment itself.
+    pub attach_probe: bool,
 }
 
 impl Default for BuildOptions {
@@ -21,6 +28,7 @@ impl Default for BuildOptions {
         BuildOptions {
             help: true,
             force: false,
+            attach_probe: false,
         }
     }
 }
@@ -98,6 +106,45 @@ pub fn build_index(
             (pkg.clone(), outcome)
         })
         .collect();
+
+    // Phase 1.5 (sequential, opt-in): the `search()`-diff attach probe, for
+    // indexed packages whose heuristic capture found nothing but that do have
+    // an `.onAttach` hook. Deliberately *after* the parallel phase — spawning
+    // R (and executing package attach hooks) stays confined here, keeping
+    // phase 1's no-subprocess property intact. Probe failures are no-ops.
+    if opts.attach_probe {
+        for (pkg, outcome) in &report {
+            let version = match outcome {
+                PackageOutcome::Indexed { version, .. } | PackageOutcome::UpToDate { version } => {
+                    version
+                }
+                _ => continue,
+            };
+            let Some(mut index) = cache.read_package(pkg, version) else {
+                continue;
+            };
+            if !index.attaches.is_empty() {
+                continue;
+            }
+            // Cheap precondition, no `.rdb` decode: a package without an
+            // `.onAttach` hook cannot attach anything beyond its `Depends`.
+            let Some(pkg_dir) = search.find_package(pkg) else {
+                continue;
+            };
+            let rdx = pkg_dir.join("R").join(format!("{pkg}.rdx"));
+            let Ok(names) = lazyload::read_index_names(&rdx) else {
+                continue;
+            };
+            if !names.iter().any(|n| n == ".onAttach") {
+                continue;
+            }
+            let Some(members) = attach_probe::probe_attaches(pkg, search) else {
+                continue;
+            };
+            index.attaches = members;
+            let _ = cache.write_package_file(&index);
+        }
+    }
 
     // Phase 2 (sequential, once): fold every newly-indexed version into
     // `meta.json` in a single read-modify-write.
