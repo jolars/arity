@@ -10,25 +10,27 @@ known issues and follow-ups.
 
 ## Getting started
 
-Arity is a single-crate Cargo package (edition 2024, `rust-version` pinned in
-[`Cargo.toml`](Cargo.toml)). You need a matching Rust toolchain; the exact
-version is pinned in [`rust-toolchain.toml`](rust-toolchain.toml), so `rustup`
-will pick it up automatically.
+Arity is a single-crate Cargo package (edition 2024) whose MSRV is declared as
+`rust-version` in [`Cargo.toml`](Cargo.toml).
+[`rust-toolchain.toml`](rust-toolchain.toml) selects the `stable` channel, so
+`rustup` picks up a suitable toolchain automatically.
 
 The recommended setup uses [`devenv`](https://devenv.sh)/Nix, which provisions
-the toolchain, `R`, and every auxiliary tool (`go-task`, `mdbook`,
-`cargo-insta`, `cargo-audit`, `cargo-deny`, `air-formatter`, and more):
+the toolchain, `R` (with `roxygen2`, `commonmark`, `styler`), and every
+auxiliary tool (`go-task`, `mdbook`, `cargo-insta`, `cargo-audit`, `cargo-deny`,
+`air-formatter`, `jarl`, `hyperfine`, and more):
 
 ```sh
 devenv shell
-
-# Or auto-enable it
-devenv allow
 ```
 
+It also installs git hooks that run `clippy`, `rustfmt`, `eslint`, and
+`panache-format` on commit.
+
 If you'd rather not use Nix, install a recent stable Rust toolchain and, for the
-R-dependent tasks (roxygen oracles, corpus checks), a working `R` with
-`roxygen2`. The core build, tests, and lint gates need only Rust.
+R-dependent tasks (the roxygen oracles that regenerate pins, corpus checks), a
+working `R` with `roxygen2` and `commonmark`. The core build, tests, and lint
+gates need only Rust.
 
 ## Building and running
 
@@ -38,9 +40,24 @@ cargo build --release
 
 cargo run -- format <file.R>   # format to stdout (stdin if omitted)
 cargo run -- lint <path>       # lint; exits 1 on findings
+cargo run -- lint --fix <path> # apply safe autofixes in place
 cargo run -- parse <file.R>    # print the CST
+cargo run -- index             # build the installed-package introspection index
 cargo run -- lsp               # start the stdio language server
 ```
+
+Every command reads an [`arity.toml`](arity.toml) found by walking up from the
+target path (`--config` forces one, `--no-config` ignores it). The repo's own
+`arity.toml` documents the defaults.
+
+## Repository layout
+
+The Rust crate lives in `src/` (see [`AGENTS.md`](AGENTS.md) for the module
+tour) with integration tests in `tests/`. The repo also carries the distribution
+and documentation surfaces: `editors/code` (VS Code extension), `npm/` and
+`pyproject.toml` (npm and PyPI wrappers around the binary), `docs/` (the mdBook
+site), `benches/` plus `scripts/bench.sh`, and `scripts/` (the R helpers that
+regenerate the bundled base-R and CRAN symbol lists).
 
 ## Quality gates
 
@@ -53,9 +70,16 @@ cargo clippy --all-targets --all-features -- -D warnings   # warnings are errors
 cargo fmt -- --check                                       # keep changes rustfmt-clean
 ```
 
+Markdown prose is formatted by [`panache`](https://github.com/jolars/panache),
+which CI checks too; [`panache.toml`](panache.toml) excludes the generated and
+non-prose files. The devenv git hooks run it (and `eslint`, for
+[`editors/code`](editors/code)) on commit.
+
 The [`Taskfile.yml`](Taskfile.yml) wraps these and more: `task test`,
 `task lint`, `task format`, `task audit`, `task deny`. Run `task --list` to see
-everything.
+everything, including the heavier `#[ignore]`d suites: `task air-compat`,
+`task corpus` (needs `ARITY_CORPUS=<dir>`), `task bench`, and the `roxygen-*`
+oracle tasks.
 
 Dependency changes must stay compatible with `cargo-audit` and `cargo-deny` (see
 [`deny.toml`](deny.toml)).
@@ -67,12 +91,92 @@ adding a failing test that reproduces it (a new fixture case or snapshot) before
 touching the fix.
 
 - Integration tests live in `tests/*.rs`; fixtures in
-  `tests/fixtures/{parser,formatter}/<case>/`. Parser fixtures hold `input.R`
-  (the CST and diagnostics are snapshotted, losslessness asserted); formatter
-  fixtures hold `input.R` plus `expected.R`.
+  `tests/fixtures/{parser,formatter,rindex}/<case>/`. Parser fixtures hold
+  `input.R` (the CST and diagnostics are snapshotted, losslessness asserted);
+  formatter fixtures hold `input.R` plus `expected.R`.
+- **Both fixture suites are hand-registered.** A new case does not run until its
+  directory name is added to `fixture_names()` in `tests/parser_snapshots.rs` or
+  `tests/formatter.rs`. This is the most common way a new test silently does
+  nothing.
 - Snapshot tests use [`insta`](https://insta.rs). Review and accept snapshots
   with `cargo insta review` or `cargo insta accept`.
 - Logging honors `RUST_LOG` (e.g. `RUST_LOG=debug cargo test`).
+
+## Your first change
+
+The loop differs a little per subsystem. Pick the one your change lands in.
+
+**A formatter bug** (output is wrong, ugly, or unstable):
+
+```sh
+mkdir tests/fixtures/formatter/my_case
+$EDITOR tests/fixtures/formatter/my_case/input.R      # the offending code
+$EDITOR tests/fixtures/formatter/my_case/expected.R   # what it should become
+$EDITOR tests/formatter.rs                            # add "my_case" to fixture_names()
+cargo test --test formatter                           # watch it fail, then fix
+```
+
+The fix belongs in `src/formatter/rules/` (the IR built per construct) or
+`src/formatter/printer.rs` (how the layout engine breaks lines) --- never a
+special case for one construct, and never a parser workaround (Tenets 1 and 3).
+The suite also asserts idempotence and losslessness, so a fix that formats your
+case correctly but destabilizes another will fail loudly.
+
+**A parser bug** (wrong tree shape, a lost byte, a bad diagnostic):
+
+```sh
+mkdir tests/fixtures/parser/my_case
+$EDITOR tests/fixtures/parser/my_case/input.R
+$EDITOR tests/parser_snapshots.rs                     # add "my_case" to fixture_names()
+cargo test --test parser_snapshots                    # the snapshot starts out missing
+cargo insta review                                    # inspect the CST, accept if right
+```
+
+The CST is snapshotted and losslessness asserted automatically. If the tree
+shape is wrong, fix `src/parser/` and re-review the snapshot --- do not accept a
+snapshot you have not read.
+
+**A lint rule** (new rule, false positive, bad autofix): rules live in
+`src/linter/rules/<category>/<id>.rs`, tests are plain `#[test]` functions in
+`tests/lint.rs`, and the per-rule documentation page is generated from the
+rule's own `examples()`. See [Adding a lint rule](#adding-a-lint-rule) below.
+
+**Anything cross-file** (LSP, incremental, project graph): `tests/lsp.rs` and
+`tests/lsp_protocol.rs` cover the server, `tests/salsa_incremental.rs` guards
+that a function-body edit does *not* invalidate the project graph, and
+`tests/incremental_reparse.rs` covers the reparse strategies. These invariants
+are easy to break by accident: if you touch what a per-file salsa query returns,
+run `cargo test --test salsa_incremental`.
+
+## Configuration
+
+Arity reads an [`arity.toml`](arity.toml), discovered by walking up from the
+target path. `arity init` writes a starter file, and the repo's own `arity.toml`
+dogfoods discovery while documenting the defaults. The schema lives in
+[`src/config.rs`](src/config.rs) and is rendered at
+[arity.cc](https://arity.cc/reference/configuration.html):
+
+- `exclude` --- gitignore-style patterns; setting it **replaces** the built-in
+  default set. `extend-exclude` adds to the defaults instead, which is usually
+  what you want.
+- `cache` --- enable the persistent already-formatted cache (`--no-cache`
+  overrides it for one run).
+- `[format]` --- `line-width`, `indent-width`, `line-ending`
+  (`auto`/`lf`/`crlf`/`native`).
+- `[lint]` --- `select` (an allowlist; when set, only those rules run) and
+  `ignore` (subtracted from whichever set is active).
+- `[index]` --- `library-paths`, `cache-dir`, `auto-build`, `help`.
+
+Two conventions worth knowing when extending the schema. The structs are
+`#[serde(deny_unknown_fields, rename_all = "kebab-case")]`, so a typo in a
+user's config is an error rather than a silent no-op, and TOML keys are
+kebab-case even though the Rust fields are snake_case. And not everything
+belongs in the file: `index.remote_url` is deliberately `#[serde(skip)]` and
+read from the `ARITY_REMOTE_URL` environment variable instead, because enabling
+network egress is a per-user consent decision, not a committed project setting.
+
+Per-rule configuration (`[lint.rules.<id>]`) does not exist yet; it is a known
+gap tracked in [`TODO.md`](TODO.md) and blocks a couple of planned rules.
 
 ## Design tenets to keep in mind
 
@@ -96,13 +200,44 @@ formatter as a differential oracle. It is never a quality gate and is strictly
 subordinate to Tenet 1. Deliberate divergences are recorded in
 `tests/air_compat_allowlist.toml` with a rationale.
 
+## Reference checkouts
+
+A few directories are referred to by tooling and documentation but are
+deliberately **untracked**, so a fresh clone does not have them. Nothing in
+`cargo build` or `cargo test` needs them; you only need a given one if you are
+running the corresponding oracle or reading the reference. Clone them into the
+repo root:
+
+```sh
+# posit-dev/air: the R formatter arity is measured against. Read-only
+# reference; it has its own conventions in air/CLAUDE.md that do NOT apply here.
+git clone https://github.com/posit-dev/air
+
+# The tidyverse style guide: the formatter's target style.
+git clone https://github.com/tidyverse/style
+
+# r-lib/roxygen2: the reference implementation behind the roxygen oracles.
+# Pin the version recorded in tests/oracle/.roxygen2-source.
+git clone --branch "v$(cat tests/oracle/.roxygen2-source)" \
+  https://github.com/r-lib/roxygen2 roxygen2-ref
+```
+
+`scripts/harvest-roxygen-corpus.R` reads `roxygen2-ref/`; the air comparison in
+`tests/air_compat.rs` needs the `air` **binary** on PATH (devenv provides it),
+not the checkout.
+
 ## Adding a lint rule
 
-The linter ships a growing set of rules with generated per-rule docs. Adding one
-touches the dispatch, the registry (`src/linter/rules.rs`), TDD fixtures, an
-autofix-correctness (parse-clean) case, and the snapshot-pinned generated docs.
-If you use Claude Code, the `add-lint-rule` skill walks through the whole
-sequence.
+The linter ships 37 rules across five categories (correctness, suspicious,
+readability, performance, documentation) with generated per-rule docs. A rule is
+a module under `src/linter/rules/<category>/<id>.rs` implementing the `Rule`
+trait --- it either subscribes to `SyntaxKind`s via `interests` and gets called
+during the one shared CST walk, or leaves `interests` empty and overrides
+`check_file` for a whole-file pass. Adding one touches the registry (`all_rules`
+in [`src/linter/rules.rs`](src/linter/rules.rs), the single source of truth),
+TDD fixtures, an autofix-correctness (parse-clean) case, and the snapshot-pinned
+generated docs. If you use Claude Code, the `add-lint-rule` skill walks through
+the whole sequence.
 
 Note the autofix-correctness bar: a fix is a textual edit that must leave code
 that still parses and stays lossless; it does **not** owe line-width (the
@@ -114,10 +249,60 @@ broken output.
 
 The docs site (`docs/`) is an [mdBook](https://rust-lang.github.io/mdBook/).
 Some reference pages are generated: `build.rs` writes the CLI reference from the
-clap definitions, and `cargo run --example docgen` renders the per-rule pages by
-running the real linter on each rule's examples. Regenerate with `task docs-gen`
-and preview with `task docs-preview`. The rendered rule docs are pinned by
-`tests/rule_docs.rs`, so they can't drift from behavior.
+clap definitions, and `cargo run --example docgen` renders the per-rule pages
+(by running the real linter on each rule's examples), the version stamp, and the
+benchmark partials. Regenerate with `task docs-gen` and preview with
+`task docs-preview`. Don't hand-edit generated pages --- the rendered rule docs
+are pinned by `tests/rule_docs.rs` and the benchmark partials by
+`tests/benchmarks_docs.rs`, so they can't drift from behavior.
+
+## Performance
+
+Speed is a feature here, and it is measured rather than asserted.
+
+- `task bench` runs [`scripts/bench.sh`](scripts/bench.sh): the formatter
+  against `air` (and, opt-in, `styler`) and the linter against `jarl`, each at
+  two scopes --- synthetic single-file tiers built from the formatter fixtures,
+  and a real R package (`tidyr`, cloned once into a cache). It rewrites the
+  tracked artifact `benches/benchmark_results.json`.
+- That artifact is the *only* source of the published benchmark page.
+  `task   docs-gen` renders it into the generated partials; the numbers are
+  never re-measured at site-build time or in CI. So if you change something that
+  moves performance and want the docs to reflect it, re-run `task bench` and
+  commit the artifact.
+- `task bench-parse` is a criterion microbenchmark of parse and incremental
+  reparse (`benches/parse.rs`) --- the right tool for a parser-level change.
+- For profiling, devenv provides `perf`, `cargo-flamegraph`, `hyperfine`, and
+  `cargo-llvm-cov`.
+
+The benchmark is a **visibility tool, not a quality gate**. It measures
+wall-clock speed only, never output equivalence (that is what `task air-compat`
+is for), and the tools do genuinely different work behind different startup
+floors --- read the ratios, not the milliseconds. A PR is never blocked on it.
+
+## Editor extension and packaging
+
+Beyond the crate, the repo builds several distribution artifacts. You only need
+these if your change touches them.
+
+- **VS Code extension** ([`editors/code`](editors/code)) --- TypeScript, bundled
+  with esbuild. `npm run compile` (type-check plus bundle), `npm run watch`
+  while developing, `npm run package` for a VSIX. It is linted by `eslint` (a
+  git hook and a CI-adjacent gate), and versioned separately from the crate
+  (`arity-code`, following the crate's releases). At publish time a
+  platform-specific `arity` binary is downloaded from the GitHub release into
+  `editors/code/server/` and packaged into a per-target VSIX; at runtime the
+  extension resolves the server via `arity.executableStrategy`
+  (`bundled`/`environment`/`path`), falling back to `arity` on PATH --- which is
+  also what it does on NixOS, where a downloaded binary would not run.
+- **npm** ([`npm/`](npm)) --- `arity-cli` is a thin launcher whose
+  `optionalDependencies` pull in one `@arity-cli/<platform>` package per target;
+  `npm/platform-template` is the template those are generated from. The versions
+  are bumped automatically (see below), so do not hand-edit them.
+- **PyPI** --- built by maturin from [`pyproject.toml`](pyproject.toml).
+- **Release binaries** --- eight targets (Linux gnu/musl, macOS, and Windows,
+  each x86_64 and aarch64), cross-built with `cargo-zigbuild` where needed and
+  checked against a glibc floor.
 
 ## Commits and pull requests
 
@@ -132,6 +317,32 @@ and preview with `task docs-preview`. The rendered rule docs are pinned by
 Prefer atomic commits. Small fixes can go straight to `main`; branch first for
 anything substantial. Please make sure the quality gates above pass before you
 open the PR.
+
+## How a release happens
+
+Releases are automated, which is why commit messages matter: your Conventional
+Commit type is what decides the next version number.
+
+On every push to `main`, once the test, `cargo-audit`, and `cargo-deny` jobs go
+green, [`versionary`](https://github.com/jolars/versionary) (configured in
+[`versionary.jsonc`](versionary.jsonc)) opens or updates a release PR that bumps
+the version, regenerates [`CHANGELOG.md`](CHANGELOG.md), and propagates the
+version into `npm/arity-cli/package.json` (both its own version and every
+`optionalDependencies` entry). The VS Code extension is a second versioned
+package that follows the crate. Merging that PR tags the release, which then
+fans out: release binaries for all eight targets (with keyless provenance
+attestation), the VS Code and Open VSX extensions, and the crates.io, npm, and
+PyPI publishes.
+
+Practical consequences:
+
+- **Never hand-edit `CHANGELOG.md` or any of the version fields.** They are
+  generated, and your edit will be overwritten.
+- `feat:` bumps the minor version, `fix:` the patch; a `!` or a
+  `BREAKING CHANGE:` footer bumps the major. The project is pre-1.0 with
+  `bump-minor-pre-major`, so breaking changes currently land as minor bumps.
+- A commit that only touches `editors/` is excluded from the crate's version
+  calculation.
 
 ## Reporting issues
 
