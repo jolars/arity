@@ -33,6 +33,7 @@ Arity is available from several sources:
 - **Homebrew**: `brew install jolars/tap/arity`
 - **npm**: `npm install -g arity-cli` (bundles a prebuilt binary)
 - **PyPI**: `uv tool install arity`/`pipx install arity`
+- **Aqua**: `aqua install jolars/arity`
 - **Prebuilt binaries**: from the [releases
   page](https://github.com/jolars/arity/releases)
 - **VS Code/Open VSX**: the **Arity** extension (also works in Positron)
