@@ -1,4 +1,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, rename_all = "kebab-case")
+)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FormatStyle {
     pub line_width: usize,
     pub indent_width: usize,
@@ -21,6 +27,12 @@ impl Default for FormatStyle {
 /// is the sole authority on *where* breaks go, Tenet 1); this only selects the
 /// byte sequence those breaks render as in the final string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "lowercase")
+)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum LineEnding {
     /// Detect the newline style per file from the first line ending in the
     /// source, defaulting to `\n` when the source has none. The default.
