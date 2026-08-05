@@ -43,25 +43,27 @@ Arity is available from several sources:
 
 ### Install script
 
-The install scripts download the Arity release asset for your platform,
-installing to a user-local directory by default. If you prefer, download and
-inspect the script before running it.
+The install scripts are fetched from the latest release and download the Arity
+release asset for your platform, verifying its checksum and installing to a
+user-local directory by default. If you prefer, download and inspect the script
+before running it.
 
 For macOS and Linux:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
-    https://raw.githubusercontent.com/jolars/arity/refs/heads/main/scripts/arity-installer.sh | sh
+    https://github.com/jolars/arity/releases/latest/download/arity-installer.sh | sh
 ```
 
 For Windows PowerShell:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/jolars/arity/refs/heads/main/scripts/arity-installer.ps1 | iex"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://github.com/jolars/arity/releases/latest/download/arity-installer.ps1 | iex"
 ```
 
 Set `ARITY_INSTALL_DIR` to change the destination, `ARITY_TAG` to pin a version,
-and `ARITY_LIBC` (`gnu` or `musl`) to override the detected libc on Linux.
+`ARITY_LIBC` (`gnu` or `musl`) to override the detected libc on Linux, and
+`ARITY_VERIFY_CHECKSUM=false` to skip checksum verification.
 
 ## Formatter
 
