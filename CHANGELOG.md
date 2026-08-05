@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.15.0](https://github.com/jolars/arity/compare/v0.14.0...v0.15.0) (2026-08-05)
+
+### Features
+- **build:** add installation scripts ([`b620c58`](https://github.com/jolars/arity/commit/b620c58bab56738f2ce7101be711e04629fe543d))
+- **linter:** mask model-frame args in `undefined-symbol` ([`1fef3ea`](https://github.com/jolars/arity/commit/1fef3ea9bfa649f49e0c241b14b43ddc963e28b5))
+- **lsp:** make nested functions call-hierarchy items ([`5e3eb7f`](https://github.com/jolars/arity/commit/5e3eb7f9c447accbf64f82fe7a8db7aa5d2afc32))
+- **lsp:** trigger signature help on `=` ([`1021a4b`](https://github.com/jolars/arity/commit/1021a4b39733fa99e3cd84cbe19c398e5491f094))
+- **linter:** add `unnecessary-nesting` rule ([`501f451`](https://github.com/jolars/arity/commit/501f4510056c42ca353e0a72519394ee222e9137))
+- **lint:** add implicit-assignment rule ([`64a3f5e`](https://github.com/jolars/arity/commit/64a3f5e2928ede3f736e501a9101fda29935ddb5))
+- **lint:** add empty-assignment rule ([`77efa97`](https://github.com/jolars/arity/commit/77efa97b898b8310aa81b280dad2a5f6ab9d228c))
+- **lsp:** thread precise edits into span mapping ([`09101b9`](https://github.com/jolars/arity/commit/09101b9788a2d5c72379d007ffc2bb98efa6db96))
+- **lsp:** thread precise edits into incremental reparse ([`78ce7d1`](https://github.com/jolars/arity/commit/78ce7d17cdf00fb385012cd639f907e1a78e64f7))
+- **lsp:** use incremental text document sync ([`0e4b9ce`](https://github.com/jolars/arity/commit/0e4b9ce828c138b08177c3083a967658b462190d))
+- **linter:** cut undefined-symbol FPs from opaque binders ([`e1e5264`](https://github.com/jolars/arity/commit/e1e5264454ac757a5798f2241f307475534cd578))
+- **linter:** add `coalesce` rule ([`b7ac1d9`](https://github.com/jolars/arity/commit/b7ac1d93ba3a7cdcbd24142ed7153d0b2a9824e3))
+- **linter:** add browser rule ([`fe7a5ba`](https://github.com/jolars/arity/commit/fe7a5ba78216d62c053d97cd5e64db2d26a2cb0b))
+- **linter:** add if-always-true rule ([`96c136a`](https://github.com/jolars/arity/commit/96c136a30881ac8545c42d545b89975fd9ae5bb6))
+- **semantic:** add per-region control-flow graph ([`a912b3c`](https://github.com/jolars/arity/commit/a912b3cf2eaae0713cd96f969961a140d205b12b))
+- **lsp:** sharpen references/rename off def-use edges ([`6204c54`](https://github.com/jolars/arity/commit/6204c54493f808feade25380b0b48e8405df246b))
+- **format:** cache already-formatted files for --check ([`acc46fc`](https://github.com/jolars/arity/commit/acc46fcdb1bf1d075b98692f9c33708859db1b9f))
+- **lsp:** content-derived pull resultId ([`f7ecb99`](https://github.com/jolars/arity/commit/f7ecb992790e8167b8fd128df38c819f3f84a1ec))
+- **lsp:** negotiate positionEncoding (UTF-8) ([`7a9af95`](https://github.com/jolars/arity/commit/7a9af95f7441ce2f3baebc4aa5362a40e6bc84e3))
+- **lsp:** work-done progress for background jobs ([`12fa210`](https://github.com/jolars/arity/commit/12fa2106000b8c0d85894e941f8286b3fcf997c4))
+- **lsp:** static `$`/`@` completion + label details ([`a5b72b8`](https://github.com/jolars/arity/commit/a5b72b8839c63beb926719eefdc857d4c4445627))
+
+### Bug Fixes
+- **npm:** fall back to musl when glibc build fails ([`f45beb7`](https://github.com/jolars/arity/commit/f45beb75e17ef2ecedfcd2fc23e533d0f45a13ea))
+- **linter:** withhold unused-binding fix on chain ([`b3d42f6`](https://github.com/jolars/arity/commit/b3d42f6a29decafac8280d0360b3a539eedfa9c9))
+- **linter:** cut unused-binding FPs from lazy reads ([`17dbaf8`](https://github.com/jolars/arity/commit/17dbaf88a881436e6f540bf97b7dacbf877991d1))
+- **linter:** skip non-UTF-8 files instead of aborting ([`89bacc4`](https://github.com/jolars/arity/commit/89bacc42f77629cd929c254ae75b642b148bdc32))
+- **formatter:** handle mid-line roxygen as trailing comment ([`41140fa`](https://github.com/jolars/arity/commit/41140fa8556a4e44eff427473aa1312cb6f8899a))
+- **formatter:** flatten binary chains with lhs-trailing comment ([`ab99d52`](https://github.com/jolars/arity/commit/ab99d52994826ede43e953718ae41d4299fae9f1))
+- **formatter:** handle roxygen comment on assignment rhs ([`0e29c0e`](https://github.com/jolars/arity/commit/0e29c0e610fedbf7329d373db408cb6b6a0ae30e)), closes [#89](https://github.com/jolars/arity/issues/89)
+- **formatter:** handle comment trailing binary lhs ([`6953947`](https://github.com/jolars/arity/commit/6953947140e65ef60dcc219a604ff72aab5be31d))
+- **parser:** left-associate extract ops with postfix ([`29c7416`](https://github.com/jolars/arity/commit/29c74166e019bc1e33eeb7a50715823be7419796))
+- **linter:** resolve for-body reads in enclosing frame ([`023cc57`](https://github.com/jolars/arity/commit/023cc5703282e6050db7d4055094ad0864fe9c0c))
+- **linter:** close three undefined-symbol gaps ([`9b4634d`](https://github.com/jolars/arity/commit/9b4634d483f190385ce5a3537010a5b77aa3577f))
+- **parser:** group loose roxygen in arg lists ([`f22b0e6`](https://github.com/jolars/arity/commit/f22b0e6234d816d905dda122e57f68dc1548373f))
+- **parser:** continue exprs across newlines in brackets ([`c603475`](https://github.com/jolars/arity/commit/c603475ddd48fa52d08048f8b9cb18ffbd45323b))
+- **lexer:** accept all raw string delimiter forms ([`178dca1`](https://github.com/jolars/arity/commit/178dca184b6878cb70db29979b793c652efade76))
+- **parser:** continue expr across trailing comment in brackets ([`31b23ea`](https://github.com/jolars/arity/commit/31b23eaeeac938aac3f37ec9f5c85d4618d479ce))
+
 ## [0.14.0](https://github.com/jolars/arity/compare/v0.13.0...v0.14.0) (2026-07-30)
 
 ### Features
