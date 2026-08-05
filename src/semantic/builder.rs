@@ -23,7 +23,7 @@ use rowan::ast::AstNode as _;
 use rowan::{NodeOrToken, SyntaxToken, TextRange};
 use smol_str::SmolStr;
 
-use crate::ast::{AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ident};
+use crate::ast::{Arg, AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ident};
 use crate::semantic::binding::{Binding, BindingId, BindingKind};
 use crate::semantic::scope::{Scope, ScopeId, ScopeKind};
 use crate::semantic::symbols::LoadedPackage;
@@ -453,7 +453,61 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         return;
     }
 
+    // A model-fitting call with `data =` evaluates a few of its *named*
+    // arguments (`weights`/`subset`/`offset`) in the model frame built from that
+    // data frame, where a bare name is a column. Unlike a data-masking verb this
+    // is per-argument: everything else in the arg-list (`data` included) is an
+    // ordinary read.
+    if call_masks_model_frame_args(node) {
+        for el in node.children_with_tokens() {
+            if let NodeOrToken::Node(child) = &el
+                && child.kind() == SyntaxKind::ARG_LIST
+            {
+                walk_model_frame_arg_list(ctx, child, scope);
+            } else {
+                walk_element(ctx, &el, scope);
+            }
+        }
+        return;
+    }
+
     walk_generic(ctx, node, scope);
+}
+
+/// Whether `node` is a model-fitting call (`lm`, `glm`, `polr`, …) carrying a
+/// named `data =` argument, so its model-frame arguments should be masked.
+///
+/// The `data` requirement is what makes this faithful rather than merely
+/// suppressive: with no data frame, R evaluates `weights`/`subset`/`offset` in
+/// the calling environment, where an unresolved bare name is genuinely
+/// undefined. A positionally-supplied `data` is not detected (its position
+/// differs per callee), which only leaves the pre-existing false positive.
+fn call_masks_model_frame_args(node: &SyntaxNode) -> bool {
+    let Some(call) = CallExpr::cast(node.clone()) else {
+        return false;
+    };
+    if !call_callee_ident(&call).is_some_and(|name| crate::semantic::is_model_frame_callee(&name)) {
+        return false;
+    }
+    call.arg_list()
+        .is_some_and(|args| args.args().any(|arg| arg.name().as_deref() == Some("data")))
+}
+
+/// Walk an `ARG_LIST` of a model-fitting call, masking only the values of the
+/// arguments evaluated in the model frame. Masking the whole `ARG` is fine: its
+/// name token and `=` are skipped by [`handle_arg`] regardless.
+fn walk_model_frame_arg_list(ctx: &mut BuildCtx<'_>, arg_list: &SyntaxNode, scope: ScopeId) {
+    for el in arg_list.children_with_tokens() {
+        let masked = match &el {
+            NodeOrToken::Node(arg) if arg.kind() == SyntaxKind::ARG => Arg::cast(arg.clone())
+                .and_then(|a| a.name())
+                .is_some_and(|name| crate::semantic::is_model_frame_arg(&name)),
+            _ => false,
+        };
+        ctx.mask_depth += usize::from(masked);
+        walk_element(ctx, &el, scope);
+        ctx.mask_depth -= usize::from(masked);
+    }
 }
 
 /// Introduce a binding for each bare-name positional argument of a `data()`
@@ -598,8 +652,11 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                             // Skip the first IDENT (callee); recurse into everything else.
                             // Mask the arguments when the qualified callee is a
                             // data-masking verb (`dplyr::mutate(...)`) or a
-                            // quoting callee (`base::quote(...)`).
+                            // quoting callee (`base::quote(...)`); mask just the
+                            // model-frame arguments for a qualified model fit
+                            // (`MASS::polr(..., data = d, weights = w)`).
                             let masked = call_masks_arguments(child);
+                            let model_frame = !masked && call_masks_model_frame_args(child);
                             let mut skipped_callee = false;
                             for cel in child.children_with_tokens() {
                                 match cel {
@@ -610,6 +667,12 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                                         // accessed name — a cross-file use.
                                         ctx.model.qualified_reads.push(t.text().into());
                                         skipped_callee = true;
+                                    }
+                                    NodeOrToken::Node(grandchild)
+                                        if model_frame
+                                            && grandchild.kind() == SyntaxKind::ARG_LIST =>
+                                    {
+                                        walk_model_frame_arg_list(ctx, &grandchild, scope);
                                     }
                                     NodeOrToken::Node(grandchild) => {
                                         if masked {

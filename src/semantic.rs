@@ -21,7 +21,7 @@ pub use cfg::{BasicBlock, BlockId, ControlFlowGraph, FileControlFlow, Terminator
 pub use scope::{Scope, ScopeId, ScopeKind};
 pub use symbols::{
     LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, implicit_attached_packages,
-    is_data_masking_callee, meta_package_members,
+    is_data_masking_callee, is_model_frame_arg, is_model_frame_callee, meta_package_members,
 };
 
 use crate::syntax::SyntaxNode;
@@ -823,6 +823,58 @@ mod tests {
     fn non_masking_call_args_not_masked() {
         let m = model_of("paste(a, b)");
         assert!(m.idents().iter().all(|i| !i.data_masked));
+    }
+
+    #[test]
+    fn model_frame_args_marked_masked() {
+        // A model-fitting call with `data =` evaluates `weights`/`subset`/
+        // `offset` in the model frame, so bare names there may be columns of
+        // the data frame. Only those arguments are masked — the `data` value
+        // itself and the callee stay resolvable reads.
+        let m = model_of("lm(y ~ x, data = d, weights = w, subset = s > 1, offset = o)");
+        for name in ["w", "s", "o"] {
+            let i = m.idents().iter().find(|i| i.name == name).unwrap();
+            assert!(i.data_masked, "model-frame arg `{name}` should be masked");
+        }
+        let d = m.idents().iter().find(|i| i.name == "d").unwrap();
+        assert!(!d.data_masked, "`data` value should stay a resolvable read");
+        let lm = m.idents().iter().find(|i| i.name == "lm").unwrap();
+        assert!(!lm.data_masked, "callee should not be data-masked");
+    }
+
+    #[test]
+    fn model_frame_args_unmasked_without_data() {
+        // Without `data`, R evaluates `weights` in the calling environment, so
+        // a bare name there is a genuine read and must stay flaggable.
+        let m = model_of("lm(y ~ x, weights = w)");
+        let w = m.idents().iter().find(|i| i.name == "w").unwrap();
+        assert!(
+            !w.data_masked,
+            "`weights` without `data` should not be masked"
+        );
+    }
+
+    #[test]
+    fn model_frame_masking_propagates_to_qualified_call() {
+        // `MASS::polr(...)` masks its model-frame arguments just like the bare
+        // form (the `CALL_EXPR` nests under the `::`, a separate walk path).
+        let m = model_of("MASS::polr(size ~ carrier, data = tonsils, weights = count)");
+        let count = m.idents().iter().find(|i| i.name == "count").unwrap();
+        assert!(count.data_masked, "`weights` column read should be masked");
+        let tonsils = m.idents().iter().find(|i| i.name == "tonsils").unwrap();
+        assert!(
+            !tonsils.data_masked,
+            "`data` value should stay a resolvable read"
+        );
+    }
+
+    #[test]
+    fn non_model_frame_args_not_masked() {
+        // Masking is confined to the model-frame argument names: every other
+        // argument of the same call is walked normally.
+        let m = model_of("lm(y ~ x, data = d, method = qq)");
+        let qq = m.idents().iter().find(|i| i.name == "qq").unwrap();
+        assert!(!qq.data_masked, "`method` is not a model-frame argument");
     }
 
     #[test]

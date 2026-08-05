@@ -542,14 +542,28 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     `Implicit` binding `sole` in the calling frame, so the loader argument and
     every later `sole$…` read resolve. Repro:
     `data(sole); sole$off <- log(sole$a.1)`.
-  - [ ] **Model-frame columns** (~1-2 findings, deferred). Non-`data`
-    model-fitting args evaluated in the data frame (`polr(size ~ carrier, data =
-    tonsils, weights = count)`—`count` is a `tonsils` column) extend the known
-    `with`/`subset` data-variable frontier to `weights`/`subset`/`offset` on
-    `lm`/`glm`/`polr`. Needs a new per-named-argument masking table (the existing
-    masking masks a call's *whole* arg-list), so it is the remaining frontier
-    item. (The 7 other residual MASS findings—`A5`/`pr3`/`labs`/`module`—are
-    genuine dangling refs in incomplete book-excerpt scripts, correctly flagged.)
+  - [x] **Model-frame columns** (~1-2 findings). Non-`data` model-fitting args
+    are evaluated in the data frame (`polr(size ~ carrier, data = tonsils,
+    weights = count)`—`count` is a `tonsils` column), which extended the known
+    `with`/`subset` data-variable frontier to `weights`/`subset`/`offset`. This
+    needed the first **per-named-argument** masking (the pre-existing masking
+    masks a call's *whole* arg-list): two tables in `src/semantic/symbols.rs`
+    (`is_model_frame_callee`, stats + MASS core; `is_model_frame_arg`) plus
+    `call_masks_model_frame_args` / `walk_model_frame_arg_list` in
+    `src/semantic/builder.rs`, wired into both `handle_call` and the
+    `COLON2`/`COLON3` arm of `handle_binary` (`MASS::polr(...)`). Masking is
+    gated on a named `data =` argument being present: without a data frame R
+    evaluates these args in the calling environment, so an unresolved bare name
+    there is genuinely undefined and stays flagged. (The 7 other residual MASS
+    findings—`A5`/`pr3`/`labs`/`module`—are genuine dangling refs in incomplete
+    book-excerpt scripts, correctly flagged.)
+
+    - [ ] Follow-up: two residual FPs the gate doesn't cover, both cheap to hit
+      but needing a per-callee formals table. **Positional `data`**
+      (`lm(y ~ x, mtcars, weights = cyl)`) isn't detected—`data`'s position
+      differs per callee (`lm` 2nd, `glm` 3rd). **Partial argument matching**
+      isn't modeled—R accepts `weight = cyl` as a unique prefix of `weights`,
+      arity matches exact names only. Neither is a new FP.
 
 - [x] `unused-binding` FP frontier from the cran/MASS investigation
   (2026-08-01). The `$`/`@`-subscript index-drop FP was fixed earlier (see the

@@ -1303,6 +1303,53 @@ fn undefined_symbol_skips_formula_operands() {
 }
 
 #[test]
+fn undefined_symbol_skips_model_frame_columns() {
+    // A model-fitting call with `data =` evaluates `weights`/`subset`/`offset`
+    // in the model frame, where a bare name is a column of the data frame, not
+    // an in-scope binding. Covers both the bare and `pkg::`-qualified callee.
+    let p = CompositeProvider::base_only();
+    assert!(
+        undefined_with(
+            "tonsils <- data.frame()\nMASS::polr(size ~ carrier, data = tonsils, weights = count)\n",
+            &p,
+        )
+        .is_empty(),
+        "model-frame column `count` must not be flagged"
+    );
+    assert!(
+        undefined_with(
+            "d <- data.frame()\nlm(y ~ x, data = d, subset = grp > 1, offset = adj)\n",
+            &p,
+        )
+        .is_empty(),
+        "`subset` / `offset` columns must not be flagged"
+    );
+}
+
+#[test]
+fn undefined_symbol_still_flags_model_frame_args_without_data() {
+    // Without `data`, R evaluates `weights` in the calling environment, so an
+    // unresolved bare name there is genuinely undefined.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("lm(y ~ x, weights = bogus)\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_still_flags_outside_model_frame() {
+    // Masking is confined to the model-frame arguments: a genuine typo
+    // elsewhere in the file is still flagged.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with(
+        "d <- data.frame()\nbogus()\nlm(y ~ x, data = d, weights = w)\n",
+        &p,
+    );
+    assert_eq!(msgs.len(), 1, "only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
 fn undefined_symbol_still_flags_outside_formula() {
     // Masking is confined to the formula: a genuine typo elsewhere is flagged.
     let p = CompositeProvider::base_only();

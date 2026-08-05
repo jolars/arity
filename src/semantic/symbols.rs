@@ -130,6 +130,32 @@ pub fn is_data_masking_callee(name: &str) -> bool {
     )
 }
 
+/// Whether `name` is a model-fitting function that builds a *model frame* from
+/// its `data` argument. Such a call evaluates the arguments named by
+/// [`is_model_frame_arg`] inside that frame, where a bare name is a column of
+/// the data frame rather than an in-scope binding.
+///
+/// Name-only and package-agnostic, matching [`is_data_masking_callee`];
+/// hand-curated (stats + MASS core). Over-matching only ever suppresses a
+/// finding, the conservative direction.
+pub fn is_model_frame_callee(name: &str) -> bool {
+    matches!(
+        name,
+        // stats
+        "lm" | "glm" | "aov" | "manova" | "loess" | "nls" | "xtabs"
+        | "model.frame" | "model.matrix"
+        // MASS / nnet
+        | "polr" | "rlm" | "lda" | "qda" | "glm.nb" | "multinom"
+    )
+}
+
+/// Whether the named argument `name` of a [`is_model_frame_callee`] call is
+/// evaluated in the model frame. `data` itself is *not* one of these: it names
+/// the data frame and must resolve to a real binding.
+pub fn is_model_frame_arg(name: &str) -> bool {
+    matches!(name, "subset" | "weights" | "offset")
+}
+
 /// Where a bare function/identifier name resolves to within the attached
 /// packages. Mirrors jarl's enum of the same name.
 #[derive(Debug, Clone, PartialEq, Eq)]
