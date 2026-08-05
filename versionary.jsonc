@@ -7,7 +7,11 @@
   "release-reference-comments": "best-effort",
   "packages": {
     ".": {
-      "exclude-paths": ["editors"],
+      "exclude-paths": [
+        "editors",
+        "crates/arity-parser",
+        "crates/arity-formatter"
+      ],
       "extra-files": [
         {
           "type": "json",
@@ -21,6 +25,8 @@
         }
       ]
     },
+    "crates/arity-parser": {},
+    "crates/arity-formatter": {},
     "editors/code": {
       "release-type": "node",
       "package-name": "arity-code",

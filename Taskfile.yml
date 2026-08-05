@@ -4,12 +4,12 @@ tasks:
   lint:
     desc: Run linter
     cmds:
-      - cargo clippy --all-targets --all-features -- -D warnings
+      - cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   format:
     desc: Check code formatting
     cmds:
-      - cargo fmt --
+      - cargo fmt --all --
 
   build-release:
     desc: Build release version
@@ -19,27 +19,22 @@ tasks:
   test:
     desc: Run tests
     cmds:
-      - cargo test
+      - cargo test --workspace
 
   test-debug:
     desc: Run tests with debug logging
     cmds:
-      - RUST_LOG=debug cargo test
-
-  test-trace:
-    desc: Run tests with trace logging for parser
-    cmds:
-      - RUST_LOG=arity::parser=trace cargo test
+      - RUST_LOG=debug cargo test --workspace
 
   test-quiet:
     desc: Run tests quietly (no debug output)
     cmds:
-      - RUST_LOG=off cargo test
+      - RUST_LOG=off cargo test --workspace
 
   air-compat:
     desc: Measure soft air-formatter compatibility (writes AIR_COMPAT.md)
     cmds:
-      - cargo test --test air_compat -- --ignored --nocapture
+      - cargo test -p arity-formatter --test air_compat -- --ignored --nocapture
 
   corpus:
     desc: Tier 0 corpus smoke test (losslessness + idempotence; set ARITY_CORPUS)
@@ -141,7 +136,7 @@ tasks:
   bench-parse:
     desc: Benchmark parse + incremental-reparse speed (criterion)
     cmds:
-      - cargo bench --bench parse
+      - cargo bench -p arity-parser --bench parse
 
   docs-gen:
     desc: Regenerate generated mdBook pages (CLI reference + rule docs)
