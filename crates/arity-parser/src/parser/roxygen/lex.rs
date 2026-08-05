@@ -820,7 +820,7 @@ fn lex_roxygen_prose(
 /// fence character, a run at least as long as the opener's, and nothing but
 /// whitespace after the run — a closing fence has no info string (CommonMark
 /// 4.5). A non-matching fence line is *content*.
-pub(crate) fn md_fence_run_closes(opener: &str, closer: &str) -> bool {
+pub fn md_fence_run_closes(opener: &str, closer: &str) -> bool {
     let (ob, cb) = (opener.as_bytes(), closer.as_bytes());
     let ch = match ob.first() {
         Some(&c @ (b'`' | b'~')) => c,
@@ -1688,7 +1688,7 @@ fn scan_md_html_inline_pi(bytes: &[u8], i: usize) -> Option<usize> {
 /// text onto a line start — an *inline* comment/PI/CDATA/declaration/block-tag
 /// (or literal prose that merely looks like an opener, e.g. an unterminated
 /// `<!--`) would reparse as a block and change the rendered Rd.
-pub(crate) fn starts_md_html_block(text: &str) -> bool {
+pub fn starts_md_html_block(text: &str) -> bool {
     scan_md_html_block(text.as_bytes(), 0).is_some()
 }
 
@@ -1698,7 +1698,7 @@ pub(crate) fn starts_md_html_block(text: &str) -> bool {
 /// line opens an HTML block (CommonMark start condition 7, blank-terminated).
 /// Condition 7 cannot *interrupt* a paragraph, so mid-paragraph line starts are
 /// safe — the formatter guards only a paragraph's **first** line with this.
-pub(crate) fn is_md_standalone_html_tag(text: &str) -> bool {
+pub fn is_md_standalone_html_tag(text: &str) -> bool {
     let bytes = text.as_bytes();
     scan_md_html_inline_tag(bytes, 0)
         .is_some_and(|end| bytes[end..].iter().all(|&b| b == b' ' || b == b'\t'))

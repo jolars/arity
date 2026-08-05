@@ -148,6 +148,7 @@ version = "0.15.0"
 dependencies = [
  "air_r_parser",
  "annotate-snippets",
+ "arity-parser",
  "clap",
  "clap_complete",
  "clap_mangen",
@@ -175,6 +176,15 @@ dependencies = [
  "tempfile",
  "toml",
  "ureq",
+]
+
+[[package]]
+name = "arity-parser"
+version = "0.1.0"
+dependencies = [
+ "rowan",
+ "serde",
+ "smol_str",
 ]
 
 [[package]]

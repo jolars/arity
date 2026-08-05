@@ -12,8 +12,8 @@
 //! the *same text* it was taken against. To survive an edit, first map its range
 //! through that edit
 //! ([`map_range_through_edit`](crate::parser::reparse::map_range_through_edit)),
-//! then resolve against the new tree — the path
-//! [`Analysis::resolve_ptr`](crate::incremental::Analysis::resolve_ptr) takes.
+//! then resolve against the new tree — the path the `arity` crate's
+//! `incremental::Analysis::resolve_ptr` takes.
 
 use rowan::{NodeOrToken, TextRange, TextSize};
 

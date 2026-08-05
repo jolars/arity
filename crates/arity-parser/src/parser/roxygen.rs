@@ -25,10 +25,10 @@ mod inline;
 mod lex;
 
 pub(crate) use group::emit_roxygen_block;
+pub use lex::{is_md_standalone_html_tag, md_fence_run_closes, starts_md_html_block};
 pub(crate) use lex::{
-    is_md_standalone_html_tag, is_roxygen_comment, lex_roxygen_line, md_fence_run_closes,
-    rd_backslash_is_escaped, resolve_roxygen_block, roxygen_line_tag, scan_rd_macro,
-    starts_md_html_block, tag_body_skips_markdown, tag_folds_prose_continuation,
+    is_roxygen_comment, lex_roxygen_line, rd_backslash_is_escaped, resolve_roxygen_block,
+    roxygen_line_tag, scan_rd_macro, tag_body_skips_markdown, tag_folds_prose_continuation,
 };
 
 /// Inline Rd macros whose `{…}` content is **verbatim** (`VERB` in
@@ -77,7 +77,7 @@ const TWO_ARG_RD_MACROS: &[&str] = &["item", "tabular", "href", "figure"];
 /// argument groups. Drives the lexer (consume the second group into one token),
 /// the tree builder (emit both groups as children), and the projector (each
 /// group is a list argument --- a multi-atom one becomes a `(GRP …)`).
-pub(crate) fn is_two_arg_rd_macro(name: &str) -> bool {
+pub fn is_two_arg_rd_macro(name: &str) -> bool {
     TWO_ARG_RD_MACROS.contains(&name)
 }
 
@@ -92,7 +92,7 @@ pub(crate) fn is_two_arg_rd_macro(name: &str) -> bool {
 /// splits a cell — so this deliberately does not track backticks. That is what
 /// makes `| ` + "`a|b`" + ` | y |` fail the header/delimiter cell-count match and
 /// stay prose (verified against roxygen2).
-pub(crate) fn split_table_row_cells(line: &str) -> Vec<&str> {
+pub fn split_table_row_cells(line: &str) -> Vec<&str> {
     let trimmed = line.trim();
     let bytes = trimmed.as_bytes();
     let start = usize::from(bytes.first() == Some(&b'|'));
@@ -135,7 +135,7 @@ pub(crate) fn count_table_cells(line: &str) -> usize {
 /// single-column table) and every cell (trimmed) is `:?-+:?` (optional leading
 /// colon, one or more hyphens, optional trailing colon). The pipe requirement
 /// mirrors cmark-gfm, which treats a pipeless dash run as a setext heading.
-pub(crate) fn is_table_delim_row(line: &str) -> bool {
+pub fn is_table_delim_row(line: &str) -> bool {
     let trimmed = line.trim();
     if !line_has_unescaped_pipe(trimmed) {
         return false;
@@ -222,7 +222,7 @@ pub(crate) fn scan_balanced(bytes: &[u8], i: usize, open: u8, close: u8) -> Opti
 /// tokenizer strips (`consumeWhitespace(1)`, parser2.cpp — a space *or* a tab).
 /// The single source of column arithmetic for the block builder's indent gauge
 /// and the projector's column stripping.
-pub(crate) fn advance_md_col(col: usize, c: char) -> usize {
+pub fn advance_md_col(col: usize, c: char) -> usize {
     if c == '\t' {
         col - col % 4 + 4
     } else {
@@ -235,7 +235,7 @@ pub(crate) fn advance_md_col(col: usize, c: char) -> usize {
 /// gauge 1 (value column 0); the rest expand via [`advance_md_col`], so the
 /// gauge is the content's value column plus one. An empty run gauges 0. For an
 /// all-space run this equals the character count — the pre-tab behavior.
-pub(crate) fn md_ws_gauge<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
+pub fn md_ws_gauge<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
     let mut col = 0usize;
     let mut first = true;
     for text in texts {
@@ -255,7 +255,7 @@ pub(crate) fn md_ws_gauge<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize
 /// letter then any letters or digits (e.g. `\linkS4class`). Returns `start` when
 /// no valid name begins there (`\\`, `\{`, `\4`, end of input). The single source
 /// of truth for where a `\name` ends, shared by the lexer and the tree builder.
-pub(crate) fn rd_macro_name_end(bytes: &[u8], start: usize) -> usize {
+pub fn rd_macro_name_end(bytes: &[u8], start: usize) -> usize {
     let mut k = start;
     if bytes.get(k).is_some_and(u8::is_ascii_alphabetic) {
         k += 1;
@@ -363,7 +363,7 @@ const KNOWN_RD_MACROS: &[&str] = &[
 /// recognizes. The single source of truth for the known/unknown split, shared by
 /// the lexer (gate brace-less recognition) and the projector (name-only → `(\name)`
 /// vs `(UNKNOWN …)`). See [`KNOWN_RD_MACROS`].
-pub(crate) fn is_known_rd_macro(name: &str) -> bool {
+pub fn is_known_rd_macro(name: &str) -> bool {
     KNOWN_RD_MACROS.contains(&name)
 }
 
@@ -426,7 +426,7 @@ const STICKY_BRACELESS_RD_MACROS: &[&str] = &[
 /// left literal (backlog). Mode-independent: the `@md` pipeline is a net no-op on a
 /// backslash run before a letter, so parse_Rd sees the same brace-less macro either
 /// way.
-pub(crate) fn is_rd_braceless_drop_macro(name: &str) -> bool {
+pub fn is_rd_braceless_drop_macro(name: &str) -> bool {
     is_known_rd_macro(name)
         && !is_zero_arg_rd_macro(name)
         && !STICKY_BRACELESS_RD_MACROS.contains(&name)
@@ -441,7 +441,7 @@ pub(crate) fn is_rd_braceless_drop_macro(name: &str) -> bool {
 /// `(UNKNOWN "\item")` node (handled by the projector's `split_braceless_items`).
 /// The two sets are exactly [`STICKY_BRACELESS_RD_MACROS`] minus `item`, probed
 /// against R 4.5 (see that list's doc).
-pub(crate) fn sticky_braceless_code_mode(name: &str) -> Option<bool> {
+pub fn sticky_braceless_code_mode(name: &str) -> Option<bool> {
     match name {
         "code" | "donttest" | "dontshow" | "testonly" => Some(true),
         "verb" | "url" | "samp" | "env" | "kbd" | "option" | "out" | "eqn" | "deqn" | "href"
@@ -512,7 +512,7 @@ const FRAGILE_FOR_MD_RD_MACROS: &[&str] = &[
 /// **protected** from markdown under `@md` (roxygen2's `escaped_for_md`). A fragile
 /// macro keeps its argument literal; a non-fragile one has it markdown-processed.
 /// See [`FRAGILE_FOR_MD_RD_MACROS`].
-pub(crate) fn is_fragile_for_md(name: &str) -> bool {
+pub fn is_fragile_for_md(name: &str) -> bool {
     FRAGILE_FOR_MD_RD_MACROS.contains(&name)
 }
 
@@ -526,7 +526,7 @@ pub(crate) fn is_fragile_for_md(name: &str) -> bool {
 /// links, and code spans resolve exactly as in ordinary `@md` prose. A nested
 /// fragile macro stays an opaque `ROXYGEN_RD_MACRO` token here; the projector keeps
 /// its argument literal by recursing with the same fragility check.
-pub(crate) fn resolve_md_inline(content: &str) -> crate::syntax::SyntaxNode {
+pub fn resolve_md_inline(content: &str) -> crate::syntax::SyntaxNode {
     let mut tokens = Vec::new();
     lex::lex_roxygen_prose_fragment(&mut tokens, content, true);
     resolve_md_inline_tokens(tokens)
@@ -535,7 +535,7 @@ pub(crate) fn resolve_md_inline(content: &str) -> crate::syntax::SyntaxNode {
 /// One piece of a **structural** Rd-macro argument fed to
 /// [`resolve_md_inline_pieces`]: either raw prose `Text` (markdown-lexed) or a
 /// pre-parsed nested `Macro` (its raw `\name{…}`/`\name` source, kept opaque).
-pub(crate) enum MdArgPiece {
+pub enum MdArgPiece {
     /// Raw prose text, lexed as a markdown inline fragment.
     Text(String),
     /// A nested Rd macro's raw source (`\strong{y}`, `\tab`, `\cr`, …), emitted as
@@ -558,7 +558,7 @@ pub(crate) enum MdArgPiece {
 /// re-expands into a faithful node (a brace-less `\tab` → a name-only `\tab` node).
 /// The prose pieces between them lex as ordinary markdown fragments, so the
 /// delimiter-stack arena spans emphasis across the macros exactly as cmark does.
-pub(crate) fn resolve_md_inline_pieces(pieces: &[MdArgPiece]) -> crate::syntax::SyntaxNode {
+pub fn resolve_md_inline_pieces(pieces: &[MdArgPiece]) -> crate::syntax::SyntaxNode {
     use crate::parser::lexer::{TokKind, Token};
 
     let mut tokens = Vec::new();

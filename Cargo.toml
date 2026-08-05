@@ -1,15 +1,25 @@
+[workspace]
+members = ["crates/arity-parser"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/jolars/arity"
+authors = ["Johan Larsson <johan@jolars.co>"]
+
 [package]
 name = "arity"
 version = "0.15.0"
-edition = "2024"
-rust-version = "1.88"
+edition.workspace = true
+rust-version.workspace = true
 readme = "README.md"
 description = "A language server, formatter, and linter for R"
-license = "MIT"
-repository = "https://github.com/jolars/arity"
+license.workspace = true
+repository.workspace = true
 homepage = "https://arity.cc"
 documentation = "https://arity.cc"
-authors = ["Johan Larsson <johan@jolars.co>"]
+authors.workspace = true
 include = ["/src/**/*", "/build.rs", "/README.md", "/LICENSE"]
 keywords = ["r", "language-server", "formatter", "linter"]
 categories = [
@@ -28,6 +38,7 @@ path = "src/main.rs"
 
 [dependencies]
 annotate-snippets = "0.12.16"
+arity-parser = { path = "crates/arity-parser", version = "0.1.0" }
 clap = { version = "4.6.1", features = ["derive"] }
 clap_complete = "4.6.5"
 crossbeam-channel = "0.5"

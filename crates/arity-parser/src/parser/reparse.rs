@@ -90,7 +90,7 @@ pub fn apply_edits(old: &str, edits: &[Edit]) -> String {
 /// inside the node returns `None`. A zero-length node sitting at an insertion
 /// point is treated as preceding the insertion (unchanged).
 ///
-/// Note: [`parsed_document`](crate::incremental::parsed_document) recovers a
+/// Note: the `arity` crate's `incremental::parsed_document` recovers a
 /// single spanning [`diff_edit`], so several disjoint keystrokes coalesce into
 /// one wide edit. That only widens the overlap and yields `None` more often
 /// (more position-based re-resolution by the caller) — it never produces a wrong
