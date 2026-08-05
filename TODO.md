@@ -283,24 +283,33 @@ does these partially/conservatively, and they collide with arity's static tenet:
 - [x] **Call hierarchy** (`textDocument/prepareCallHierarchy` + incoming/
   outgoing). Caller/callee graph; rides the same cross-file reference index
   as workspace symbols and references. Done in `src/lsp/call_hierarchy.rs`:
-  `prepare` parses the live buffer and resolves the cursor to the top-level
-  function it names (intra-file binding else `workspace_def_sites`), filtered to
-  function defs; `incoming`/`outgoing` work off the db snapshot, recovering the
-  target from the round-tripped item's `uri` + `name` (no `data` payload).
-  Incoming walks the visibility component (`cross_file_binding`) for
-  callee-position reference sites and groups them by enclosing top-level
-  function; outgoing walks the function body's `CALL_EXPR`s, resolving each
-  callee intra-file then via `visible_def_files`.
-  - **v1 scope:** items are **top-level (file-scope) functions only**—the
-    names the cross-file index keys on; a call inside a nested function is
-    attributed to its enclosing top-level function. Edges are strict
-    *callee-position* uses `F(...)`, never value uses (`lapply(xs, F)`).
-  - **Known limitations/follow-ups:** nested/local functions are not items
-    (so calls *to* a nested function don't appear as outgoing edges, and a
-    nested function never appears as a caller/callee item); call sites at script
-    top-level (inside no function) are dropped from incoming; ambiguous
-    cross-file callees (a name visibly defined in >1 sibling) resolve to the
-    first sorted def; string/backtick callees (`` `+`(…) ``) are skipped.
+  `prepare` parses the live buffer and resolves the cursor to the function it
+  names (intra-file binding else `workspace_def_sites`), filtered to function
+  defs; `incoming`/`outgoing` work off the db snapshot, recovering the target
+  from the round-tripped item's `uri` + `data` name chain. Incoming walks the
+  visibility component (`cross_file_binding`) for callee-position reference sites
+  and groups them by enclosing function; outgoing walks the `FUNCTION_EXPR`'s
+  `CALL_EXPR`s, resolving each callee through the scope tree then via
+  `visible_def_files`.
+  - **Scope:** items are **named function definitions at any scope**—file-scope
+    functions (the names the cross-file index keys on) and nested/local ones. An
+    item's identity is its enclosing-function name chain, round-tripped in
+    `CallHierarchyItem::data`; a range would go stale, since `prepare` reads the
+    live buffer while incoming/outgoing read the db snapshot the lint thread only
+    catches up to asynchronously. Edges are strict *callee-position* uses
+    `F(...)`, never value uses (`lapply(xs, F)`).
+  - [x] **Nested/local functions are items.** A call is attributed to the
+    innermost enclosing *named* function (anonymous bodies fall through to their
+    nearest named ancestor); outgoing reports only an item's own calls, so a
+    nested function's calls are its own edges; and callees resolve through the
+    scope tree, so a nested `helper` no longer misresolves to a sibling file's
+    top-level `helper`. Nested names are file-private, so their incoming edges
+    are intra-file by construction.
+  - [ ] Call sites at script top-level (inside no function) are dropped from
+    incoming.
+  - [ ] Ambiguous cross-file callees (a name visibly defined in >1 sibling)
+    resolve to the first sorted def.
+  - [ ] String/backtick callees (`` `+`(…) ``) are skipped.
 
 - [ ] **On-type formatting** (`textDocument/onTypeFormatting`). The R
   languageserver advertises it with first-trigger `\n` and more-triggers `)`,

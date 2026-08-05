@@ -676,8 +676,10 @@ pub(crate) fn local_occurrences(
 /// `binding` belongs to: the frame cohort's [`Binding::def_range`]s and the union
 /// of each cohort member's [`SemanticModel::read_sites`]. Cohort members share
 /// conservatively-resolved reads, so the read set is deduped. The shared gather
-/// behind [`local_occurrences`], [`rename_edits`], and [`file_scope_occurrences_in`].
-fn variable_occurrences(
+/// behind [`local_occurrences`], [`rename_edits`], [`file_scope_occurrences_in`],
+/// and call hierarchy's nested-item incoming edges
+/// ([`crate::lsp::call_hierarchy`]).
+pub(crate) fn variable_occurrences(
     model: &SemanticModel,
     binding: BindingId,
 ) -> (Vec<TextRange>, Vec<TextRange>) {
