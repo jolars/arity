@@ -114,8 +114,12 @@ rule docs are pinned by `tests/rule_docs.rs` and the benchmark partials by
 `tests/benchmarks_docs.rs`, so neither can drift from behavior.
 
 Snapshot tests use `insta`: review/accept with `cargo insta review` or
-`cargo insta accept`. Logging honors `RUST_LOG` (e.g.
-`RUST_LOG=debug cargo test`) via `env_logger`. `task <name>` (Taskfile.yml)
+`cargo insta accept`. **Logging is currently inert**: `env_logger` is a
+dependency but is never initialized, and the only log sites in the crate are
+three `log::error!`/`log::warn!` calls (LSP task pool, lint thread, format
+cache). So `RUST_LOG` has no effect today, and `task test-debug`/`test-trace`
+emit nothing—wiring up a logger is an open task, not a working facility.
+`task <name>` (Taskfile.yml)
 wraps the above: `lint`, `format`, `test`, `test-debug`, `audit`, `deny`,
 `docs-gen`, `docs-build`, `docs-preview`, `air-compat`, `corpus`, `bench`, and
 the `roxygen-*` oracle/projector tasks. `task --list` shows them all.

@@ -29,7 +29,7 @@ tasks:
   test-trace:
     desc: Run tests with trace logging for parser
     cmds:
-      - RUST_LOG=panache::parser=trace cargo test
+      - RUST_LOG=arity::parser=trace cargo test
 
   test-quiet:
     desc: Run tests quietly (no debug output)

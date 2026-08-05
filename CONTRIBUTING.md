@@ -100,7 +100,9 @@ touching the fix.
   nothing.
 - Snapshot tests use [`insta`](https://insta.rs). Review and accept snapshots
   with `cargo insta review` or `cargo insta accept`.
-- Logging honors `RUST_LOG` (e.g. `RUST_LOG=debug cargo test`).
+- Logging is currently inert: `env_logger` is a dependency but nothing
+  initializes it, so `RUST_LOG` (and `task test-debug`/`test-trace`) has no
+  effect. Reach for `dbg!` or a test-local print for now.
 
 ## Your first change
 
