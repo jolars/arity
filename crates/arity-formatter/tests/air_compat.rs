@@ -31,7 +31,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use arity::formatter::format;
+use arity_formatter::formatter::format;
 
 /// One corpus file's outcome.
 enum Outcome {
@@ -132,7 +132,7 @@ fn air_compat_report() {
     );
     print!("{report}");
 
-    let out_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("AIR_COMPAT.md");
+    let out_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../AIR_COMPAT.md");
     fs::write(&out_path, &report).expect("write AIR_COMPAT.md");
     eprintln!("air-compat: wrote {}", out_path.display());
 }

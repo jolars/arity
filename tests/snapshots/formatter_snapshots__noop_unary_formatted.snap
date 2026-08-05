@@ -1,7 +1,0 @@
----
-source: tests/formatter_snapshots.rs
-expression: formatted
----
-x <- -1
-y <- +(1 + 2)
-z <- !flag

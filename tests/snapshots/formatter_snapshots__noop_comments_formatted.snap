@@ -1,6 +1,0 @@
----
-source: tests/formatter_snapshots.rs
-expression: formatted
----
-x <- 1
-# untouched

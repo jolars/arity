@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 
-use arity::parser::{Edit, ParseDiagnostic, ReparseKind, parse, reparse, reparse_edits};
-use arity::syntax::SyntaxNode;
+use arity_parser::parser::{Edit, ParseDiagnostic, ReparseKind, parse, reparse, reparse_edits};
+use arity_parser::syntax::SyntaxNode;
 
 /// A complete structural fingerprint of a tree: every node/token with its kind,
 /// range, and (for tokens) text. Two trees with equal fingerprints are
@@ -258,7 +258,7 @@ fn reparse_edits_empty_slice_is_none() {
 #[test]
 fn reparse_matches_full_parse_on_large_fixture() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/formatter/air_call/expected.R");
+        .join("../arity-formatter/tests/fixtures/formatter/air_call/expected.R");
     let Ok(src) = std::fs::read_to_string(&path) else {
         return; // fixture optional
     };

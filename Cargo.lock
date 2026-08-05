@@ -146,7 +146,6 @@ dependencies = [
 name = "arity"
 version = "0.15.0"
 dependencies = [
- "air_r_parser",
  "annotate-snippets",
  "arity-formatter",
  "arity-parser",
@@ -154,7 +153,6 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "clapdown",
- "criterion",
  "crossbeam-channel",
  "env_logger",
  "flate2",
@@ -184,17 +182,23 @@ name = "arity-formatter"
 version = "0.1.0"
 dependencies = [
  "arity-parser",
+ "insta",
  "rowan",
  "schemars",
  "serde",
+ "tempfile",
 ]
 
 [[package]]
 name = "arity-parser"
 version = "0.1.0"
 dependencies = [
+ "air_r_parser",
+ "criterion",
+ "insta",
  "rowan",
  "serde",
+ "serde_json",
  "smol_str",
 ]
 

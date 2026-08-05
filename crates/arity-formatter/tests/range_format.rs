@@ -2,8 +2,8 @@
 //! `<<` / `>>`; the markers are stripped to recover the byte offsets, the region
 //! is formatted via [`format_range`], and the resulting edit is spliced back.
 
-use arity::formatter::{FormatStyle, format_range, format_with_style};
-use arity::parser::parse;
+use arity_formatter::formatter::{FormatStyle, format_range, format_with_style};
+use arity_formatter::parser::parse;
 use rowan::{TextRange, TextSize};
 
 /// Strip the `<<`/`>>` selection markers, returning the clean text and the

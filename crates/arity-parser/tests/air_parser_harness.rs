@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use air_r_parser::{RParserOptions, parse as air_parse};
-use arity::parser::parse;
+use arity_parser::parser::parse;
 
 #[test]
 fn air_parser_accepts_arity_parseable_fixtures() {

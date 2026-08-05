@@ -3,6 +3,7 @@
 
 # R fixtures should use LF by default for consistent snapshots
 tests/fixtures/**/*.R eol=lf
+crates/*/tests/fixtures/**/*.R eol=lf
 
 # Oracle corpus + baselines must use LF so format/projector baselines (which
 # are blessed on LF) stay byte-identical on every platform, Windows included.
@@ -10,11 +11,12 @@ tests/oracle/** eol=lf
 
 # Snapshot files should always use LF
 tests/**/snapshots/**/* eol=lf
+crates/*/tests/snapshots/**/* eol=lf
 
 # Preserve line ending fixtures as-is (CRLF/LF)
-tests/fixtures/parser/crlf_*/* -text
-tests/fixtures/parser/lf_*/* -text
-tests/fixtures/parser/*_crlf_*/* -text
-tests/fixtures/parser/*_lf_*/* -text
-tests/fixtures/parser/*_crlf/* -text
-tests/fixtures/parser/*_lf/* -text
+crates/arity-parser/tests/fixtures/parser/crlf_*/* -text
+crates/arity-parser/tests/fixtures/parser/lf_*/* -text
+crates/arity-parser/tests/fixtures/parser/*_crlf_*/* -text
+crates/arity-parser/tests/fixtures/parser/*_lf_*/* -text
+crates/arity-parser/tests/fixtures/parser/*_crlf/* -text
+crates/arity-parser/tests/fixtures/parser/*_lf/* -text

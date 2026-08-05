@@ -1,12 +1,12 @@
-use arity::ast::{
+use arity_parser::ast::{
     Arg, ArgList, AssignmentExpr, AstNode, AstToken, BinaryExpr, BlockExpr, CallExpr, Comment,
     Expr, FloatLit, ForExpr, FunctionExpr, HasArgList, Ident, IfExpr, IntLit, ParenExpr, RConstant,
     RepeatExpr, RoxygenBlock, StringLit, Subset2Expr, SubsetExpr, UnaryExpr,
 };
-use arity::parser::parse;
-use arity::syntax::{SyntaxElement, SyntaxKind};
+use arity_parser::parser::parse;
+use arity_parser::syntax::{SyntaxElement, SyntaxKind};
 
-fn first_node<N: AstNode<Language = arity::syntax::RLanguage>>(src: &str) -> N {
+fn first_node<N: AstNode<Language = arity_parser::syntax::RLanguage>>(src: &str) -> N {
     let parsed = parse(src);
     assert!(
         parsed.diagnostics.is_empty(),

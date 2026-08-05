@@ -9,7 +9,7 @@
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
-use arity::parser::{Edit, parse, reparse};
+use arity_parser::parser::{Edit, parse, reparse};
 
 /// One self-contained R unit: a function with nested blocks, a loop, calls, and
 /// subset/extract expressions — a fair mix of constructs to lex and parse.
@@ -64,15 +64,15 @@ fn incremental(c: &mut Criterion) {
     // Sanity: these must actually exercise the intended strategies.
     assert_eq!(
         reparse(&old_root, &src, &diags, &token_edit).map(|r| r.kind),
-        Some(arity::parser::ReparseKind::Token),
+        Some(arity_parser::parser::ReparseKind::Token),
     );
     assert_eq!(
         reparse(&old_root, &src, &diags, &block_edit).map(|r| r.kind),
-        Some(arity::parser::ReparseKind::Block),
+        Some(arity_parser::parser::ReparseKind::Block),
     );
     assert_eq!(
         reparse(&flat_root, &flat_src, &flat_diags, &toplevel_edit).map(|r| r.kind),
-        Some(arity::parser::ReparseKind::TopLevel),
+        Some(arity_parser::parser::ReparseKind::TopLevel),
     );
 
     let mut group = c.benchmark_group("incremental");
