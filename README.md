@@ -40,6 +40,7 @@ Arity is available from several sources:
 - **Arch Linux**: `pacman -S arity-bin` (or `arity`) (from the AUR:
   [`arity-bin`](https://aur.archlinux.org/packages/arity-bin/),
   [`arity`](https://aur.archlinux.org/packages/arity/))
+- **NixOS**: the `arity` package is available in the Nixpkgs repository
 
 ### Install script
 
