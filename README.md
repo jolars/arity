@@ -41,6 +41,28 @@ Arity is available from several sources:
   [`arity-bin`](https://aur.archlinux.org/packages/arity-bin/),
   [`arity`](https://aur.archlinux.org/packages/arity/))
 
+### Install script
+
+The install scripts download the Arity release asset for your platform,
+installing to a user-local directory by default. If you prefer, download and
+inspect the script before running it.
+
+For macOS and Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+    https://raw.githubusercontent.com/jolars/arity/refs/heads/main/scripts/arity-installer.sh | sh
+```
+
+For Windows PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/jolars/arity/refs/heads/main/scripts/arity-installer.ps1 | iex"
+```
+
+Set `ARITY_INSTALL_DIR` to change the destination, `ARITY_TAG` to pin a version,
+and `ARITY_LIBC` (`gnu` or `musl`) to override the detected libc on Linux.
+
 ## Formatter
 
 To format your code, you can use:
