@@ -17,7 +17,7 @@ use smol_str::SmolStr;
 
 /// Bump when the on-disk shape changes incompatibly. Files (and the enclosing
 /// `v{N}/` directory) carrying a different version are ignored and rebuilt.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Everything harvested for a single installed package at a single version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +36,12 @@ pub struct PackageIndex {
     pub r_version: Option<SmolStr>,
     /// Unix epoch seconds when harvested. Informational + GC.
     pub harvested_at: u64,
+    /// Packages this package attaches beyond itself when `library()`d — a
+    /// meta-package's core set (e.g. tidyverse → dplyr, ggplot2, …), captured
+    /// at harvest time. Empty for ordinary packages, and when capture found
+    /// nothing (resolution then falls back to the static curated table).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attaches: Vec<SmolStr>,
     pub symbols: Vec<SymbolEntry>,
 }
 
@@ -90,6 +96,10 @@ pub struct PackageExports {
     pub schema_version: u32,
     pub package: SmolStr,
     pub version: SmolStr,
+    /// See [`PackageIndex::attaches`]. Resolution needs this even in the
+    /// membership-only load, so the projection carries it too.
+    #[serde(default)]
+    pub attaches: Vec<SmolStr>,
     pub symbols: Vec<ExportEntry>,
 }
 
@@ -155,6 +165,7 @@ mod tests {
             lib_path: "/lib".to_string(),
             r_version: Some(SmolStr::new("4.5.3")),
             harvested_at: 0,
+            attaches: Vec::new(),
             symbols: vec![
                 SymbolEntry {
                     name: SmolStr::new("%>%"),
@@ -203,6 +214,34 @@ mod tests {
         assert!(!json.contains("\"arguments\""));
         // r_version present here, so it should appear.
         assert!(json.contains("r_version"));
+    }
+
+    #[test]
+    fn attaches_round_trips_and_is_omitted_when_empty() {
+        let mut idx = sample();
+        // Empty attach set: the key must not be serialized at all.
+        let json = serde_json::to_string(&idx).unwrap();
+        assert!(!json.contains("\"attaches\""));
+
+        idx.attaches = vec![SmolStr::new("dplyr"), SmolStr::new("ggplot2")];
+        let json = serde_json::to_string(&idx).unwrap();
+        let back: PackageIndex = serde_json::from_str(&json).unwrap();
+        assert_eq!(idx, back);
+    }
+
+    #[test]
+    fn exports_view_carries_attaches() {
+        let mut idx = sample();
+        idx.attaches = vec![SmolStr::new("dplyr")];
+        let json = serde_json::to_string(&idx).unwrap();
+        let exports: PackageExports = serde_json::from_str(&json).unwrap();
+        assert_eq!(exports.attaches, vec![SmolStr::new("dplyr")]);
+
+        // A v1-era file without the key still deserializes (serde default).
+        let idx = sample();
+        let json = serde_json::to_string(&idx).unwrap();
+        let exports: PackageExports = serde_json::from_str(&json).unwrap();
+        assert!(exports.attaches.is_empty());
     }
 
     #[test]

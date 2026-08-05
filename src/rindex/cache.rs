@@ -236,6 +236,7 @@ mod tests {
             lib_path: "/lib".into(),
             r_version: None,
             harvested_at: 0,
+            attaches: Vec::new(),
             symbols: vec![SymbolEntry {
                 name: SmolStr::new("foo"),
                 kind: SymbolKind::Function,

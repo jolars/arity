@@ -152,6 +152,7 @@ pub fn harvest_package(
             .unwrap_or_default(),
         r_version,
         harvested_at,
+        attaches: Vec::new(),
         symbols,
     })
 }

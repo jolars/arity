@@ -1199,6 +1199,7 @@ fn index_pkg(name: &str, exports: &[&str]) -> PackageIndex {
         lib_path: "/lib".into(),
         r_version: None,
         harvested_at: 0,
+        attaches: Vec::new(),
         symbols: exports
             .iter()
             .map(|n| SymbolEntry {

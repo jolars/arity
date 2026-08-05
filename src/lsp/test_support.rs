@@ -48,6 +48,7 @@ pub(crate) fn indexed_dplyr() -> IndexedProvider {
         lib_path: "/lib".into(),
         r_version: None,
         harvested_at: 0,
+        attaches: Vec::new(),
         symbols: vec![SymbolEntry {
             name: "across".into(),
             kind: SymbolKind::Function,
@@ -71,6 +72,7 @@ pub(crate) fn documented_dplyr() -> IndexedProvider {
         lib_path: "/lib".into(),
         r_version: None,
         harvested_at: 0,
+        attaches: Vec::new(),
         symbols: vec![SymbolEntry {
             name: "across".into(),
             kind: SymbolKind::Function,
