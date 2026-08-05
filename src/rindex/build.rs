@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use smol_str::SmolStr;
 
 use crate::rindex::cache::Cache;
-use crate::rindex::harvest::{HarvestOptions, harvest_package};
+use crate::rindex::harvest::{HarvestOptions, harvest_package_in};
 use crate::rindex::libpaths::LibrarySearch;
 
 #[derive(Debug, Clone, Copy)]
@@ -70,7 +70,7 @@ pub fn build_index(
             let harvest_opts = HarvestOptions { help: opts.help };
             let outcome = match search.find_package(pkg) {
                 None => PackageOutcome::NotInstalled,
-                Some(pkg_dir) => match harvest_package(&pkg_dir, harvest_opts, now) {
+                Some(pkg_dir) => match harvest_package_in(&pkg_dir, harvest_opts, now, search) {
                     Err(e) => PackageOutcome::Failed {
                         reason: e.to_string(),
                     },

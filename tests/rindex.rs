@@ -4,8 +4,9 @@
 
 use std::path::PathBuf;
 
-use arity::rindex::harvest::{HarvestOptions, harvest_package};
+use arity::rindex::harvest::{HarvestOptions, harvest_package, harvest_package_in};
 use arity::rindex::lazyload::LazyLoadDb;
+use arity::rindex::libpaths::LibrarySearch;
 use arity::rindex::rds::{self, Rkind};
 use arity::rindex::schema::{SymbolEntry, SymbolKind};
 
@@ -13,6 +14,13 @@ fn fixture(pkg: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/rindex")
         .join(pkg)
+}
+
+/// The checked-in fixture tree as a (hermetic) library search path.
+fn fixture_lib() -> LibrarySearch {
+    LibrarySearch::from_dirs(vec![
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex"),
+    ])
 }
 
 fn find<'a>(symbols: &'a [SymbolEntry], name: &str) -> Option<&'a SymbolEntry> {
@@ -61,6 +69,48 @@ fn harvests_explicit_exports_with_titles() {
     let mut sorted = idx.symbols.clone();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(idx.symbols, sorted);
+}
+
+#[test]
+fn harvests_attach_set_from_core_variable() {
+    // metatoy follows the tidyverse convention: a `core` character vector in
+    // the namespace names what `.onAttach` attaches. Both members are fixture
+    // packages, so the installed-member validation passes.
+    let idx = harvest_package_in(
+        &fixture("metatoy"),
+        HarvestOptions::default(),
+        0,
+        &fixture_lib(),
+    )
+    .expect("harvest metatoy");
+    assert_eq!(idx.package, "metatoy");
+    let attaches: Vec<&str> = idx.attaches.iter().map(|s| s.as_str()).collect();
+    assert_eq!(attaches, ["R.oo", "magrittr"]);
+    // The ordinary harvest is unaffected.
+    assert!(find(&idx.symbols, "metatoy_hello").is_some());
+}
+
+#[test]
+fn ordinary_packages_harvest_empty_attach_sets() {
+    for pkg in ["magrittr", "R.oo"] {
+        let idx = harvest_package_in(&fixture(pkg), HarvestOptions::default(), 0, &fixture_lib())
+            .expect("harvest");
+        assert!(
+            idx.attaches.is_empty(),
+            "{pkg} should not capture an attach set"
+        );
+    }
+}
+
+#[test]
+fn attach_capture_requires_installed_members() {
+    // The plain `harvest_package` wrapper has no library search path, so the
+    // members cannot be validated as installed and nothing is recorded — a
+    // partial or unverifiable set must never be preferred over the static
+    // fallback table.
+    let idx = harvest_package(&fixture("metatoy"), HarvestOptions::default(), 0)
+        .expect("harvest metatoy");
+    assert!(idx.attaches.is_empty());
 }
 
 #[test]

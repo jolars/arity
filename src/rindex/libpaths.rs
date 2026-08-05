@@ -46,6 +46,13 @@ impl LibrarySearch {
         Self::assemble(project_root, configured, &probed, &env, home_dir())
     }
 
+    /// A search over exactly `dirs`, in order — no environment lookups and no
+    /// R probing. The hermetic constructor for tests, and the "no search"
+    /// value (`from_dirs(Vec::new())`) for callers without library knowledge.
+    pub fn from_dirs(dirs: Vec<PathBuf>) -> Self {
+        LibrarySearch { dirs }
+    }
+
     /// All candidate directories, in priority order, deduplicated.
     pub fn dirs(&self) -> &[PathBuf] {
         &self.dirs

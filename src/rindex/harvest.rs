@@ -20,6 +20,7 @@ use smol_str::SmolStr;
 
 use crate::rindex::deparse;
 use crate::rindex::lazyload::{self, LazyLoadDb};
+use crate::rindex::libpaths::LibrarySearch;
 use crate::rindex::rd;
 use crate::rindex::rds::{self, Rkind, Robj};
 use crate::rindex::schema::{
@@ -64,10 +65,32 @@ impl Default for HarvestOptions {
 /// Harvest the package installed at `pkg_dir` (the directory named after the
 /// package inside a library). `harvested_at` is supplied by the caller so this
 /// stays a pure function of its inputs (callers stamp the wall clock).
+///
+/// Attach-set capture is disabled here: it needs a [`LibrarySearch`] to
+/// validate members as installed, so this wrapper always records an empty
+/// `attaches`. Use [`harvest_package_in`] when a search path is available.
 pub fn harvest_package(
     pkg_dir: &Path,
     opts: HarvestOptions,
     harvested_at: u64,
+) -> Result<PackageIndex> {
+    harvest_package_in(
+        pkg_dir,
+        opts,
+        harvested_at,
+        &LibrarySearch::from_dirs(Vec::new()),
+    )
+}
+
+/// [`harvest_package`], plus attach-set capture against `search`: when the
+/// package looks like a meta-package (it has an `.onAttach` hook and a
+/// well-known attach-set variable such as tidyverse's `core`), the validated
+/// member list is recorded in [`PackageIndex::attaches`].
+pub fn harvest_package_in(
+    pkg_dir: &Path,
+    opts: HarvestOptions,
+    harvested_at: u64,
+    search: &LibrarySearch,
 ) -> Result<PackageIndex> {
     let desc_path = pkg_dir.join("DESCRIPTION");
     if !desc_path.is_file() {
@@ -152,9 +175,80 @@ pub fn harvest_package(
             .unwrap_or_default(),
         r_version,
         harvested_at,
-        attaches: Vec::new(),
+        attaches: detect_attaches(db.as_ref(), &package, search),
         symbols,
     })
+}
+
+/// Well-known namespace variables that hold a meta-package's attach set — the
+/// convention tidyverse established (`core`) and tidymodels follows. Grown as
+/// evidence for other conventions appears.
+const ATTACH_SET_VARS: &[&str] = &["core"];
+
+/// Capture what `package` attaches at `library()` time, without running R.
+///
+/// `.onAttach` bodies are byte-compiled, so the hook itself cannot be read;
+/// instead the well-known attach-set variables ([`ATTACH_SET_VARS`]) are
+/// fetched from the namespace lazy-load DB and validated. Empty means "found
+/// nothing"; resolution then falls back to the static curated table.
+fn detect_attaches(db: Option<&LazyLoadDb>, package: &str, search: &LibrarySearch) -> Vec<SmolStr> {
+    let Some(db) = db else {
+        return Vec::new();
+    };
+    // A package without an `.onAttach` hook cannot attach anything, whatever
+    // its internal variables happen to be named.
+    if !db.contains(".onAttach") {
+        return Vec::new();
+    }
+    let installed = |member: &str| search.find_package(member).is_some();
+    for var in ATTACH_SET_VARS {
+        if let Ok(obj) = db.fetch(var)
+            && let Some(members) = validate_attach_set(&obj, package, &installed)
+        {
+            return members;
+        }
+    }
+    Vec::new()
+}
+
+/// Validate a candidate attach-set object, all-or-nothing: `Some` only when
+/// `obj` is a plain character vector of syntactically valid, *installed*
+/// package names (self and duplicates dropped). Any NA, malformed name, or
+/// uninstalled member rejects the whole set — a partial set would override the
+/// static fallback table while being wrong, and an unverifiable member would
+/// permanently trip the conservative undefined-symbol gates.
+fn validate_attach_set(
+    obj: &Robj,
+    package: &str,
+    installed: &dyn Fn(&str) -> bool,
+) -> Option<Vec<SmolStr>> {
+    let strs = obj.as_str_vec()?;
+    let mut members: Vec<SmolStr> = Vec::new();
+    for s in strs {
+        let name = s.as_deref()?;
+        if name == package {
+            continue;
+        }
+        if !is_valid_package_name(name) {
+            return None;
+        }
+        if !members.iter().any(|m| m == name) {
+            members.push(SmolStr::new(name));
+        }
+    }
+    if members.is_empty() || !members.iter().all(|m| installed(m)) {
+        return None;
+    }
+    Some(members)
+}
+
+/// R's package-name rules: at least two characters of ASCII letters, digits,
+/// and dots, starting with a letter and not ending with a dot.
+fn is_valid_package_name(name: &str) -> bool {
+    name.len() >= 2
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
+        && !name.ends_with('.')
 }
 
 /// The exported names of the package at `pkg_dir`. A package with a `NAMESPACE`
@@ -680,6 +774,68 @@ fn build_help(index: &AliasHelp, db: Option<&LazyLoadDb>, name: &str) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn str_vec(names: &[Option<&str>]) -> Robj {
+        Robj {
+            kind: Rkind::Str(names.iter().map(|n| n.map(String::from)).collect()),
+            attr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn attach_set_accepts_installed_package_names() {
+        let obj = str_vec(&[Some("dplyr"), Some("ggplot2")]);
+        let members = validate_attach_set(&obj, "tidyverse", &|_| true).unwrap();
+        assert_eq!(members, [SmolStr::new("dplyr"), SmolStr::new("ggplot2")]);
+    }
+
+    #[test]
+    fn attach_set_rejects_non_character_objects() {
+        let obj = Robj {
+            kind: Rkind::Opaque,
+            attr: Vec::new(),
+        };
+        assert!(validate_attach_set(&obj, "tidyverse", &|_| true).is_none());
+    }
+
+    #[test]
+    fn attach_set_rejects_na_and_invalid_names() {
+        // An NA element poisons the whole set.
+        let obj = str_vec(&[Some("dplyr"), None]);
+        assert!(validate_attach_set(&obj, "tidyverse", &|_| true).is_none());
+        // Not a syntactically valid package name (a path, a sentence, …).
+        for bad in ["with space", "path/pkg", "x", "1pkg", "pkg.", ""] {
+            let obj = str_vec(&[Some(bad)]);
+            assert!(
+                validate_attach_set(&obj, "tidyverse", &|_| true).is_none(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn attach_set_rejects_any_uninstalled_member() {
+        // All-or-nothing: one unverifiable member kills the whole set — a
+        // partial set would beat the static fallback while being wrong.
+        let obj = str_vec(&[Some("dplyr"), Some("notinstalled")]);
+        let installed = |m: &str| m == "dplyr";
+        assert!(validate_attach_set(&obj, "tidyverse", &installed).is_none());
+    }
+
+    #[test]
+    fn attach_set_strips_self_and_duplicates() {
+        let obj = str_vec(&[Some("tidyverse"), Some("dplyr"), Some("dplyr")]);
+        let members = validate_attach_set(&obj, "tidyverse", &|_| true).unwrap();
+        assert_eq!(members, [SmolStr::new("dplyr")]);
+    }
+
+    #[test]
+    fn attach_set_rejects_empty_and_self_only_sets() {
+        let obj = str_vec(&[]);
+        assert!(validate_attach_set(&obj, "tidyverse", &|_| true).is_none());
+        let obj = str_vec(&[Some("tidyverse")]);
+        assert!(validate_attach_set(&obj, "tidyverse", &|_| true).is_none());
+    }
 
     #[test]
     fn parse_dcf_folds_continuation_lines() {
