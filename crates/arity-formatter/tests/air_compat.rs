@@ -142,7 +142,10 @@ fn air_compat_report() {
 fn corpus_label() -> String {
     match std::env::var("AIR_COMPAT_CORPUS") {
         Ok(dir) => format!("custom (`AIR_COMPAT_CORPUS={dir}`)"),
-        Err(_) => "formatter fixtures (`tests/fixtures/formatter/*/expected.R`)".to_string(),
+        Err(_) => {
+            "formatter fixtures (`crates/arity-formatter/tests/fixtures/formatter/*/expected.R`)"
+                .to_string()
+        }
     }
 }
 
