@@ -13,9 +13,7 @@ use smol_str::SmolStr;
 
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext};
-use crate::semantic::{
-    LoadedPackage, PackageOrigin, implicit_attached_packages, meta_package_members,
-};
+use crate::semantic::{LoadedPackage, PackageOrigin, implicit_attached_packages};
 
 pub struct UndefinedSymbol;
 
@@ -107,11 +105,14 @@ impl UndefinedSymbol {
         };
         // Conservative gate: bail out entirely if any attached package's exports
         // are unknown, since such a package could define the unresolved names. A
-        // meta-package (e.g. tidyverse) also attaches its core members, so each
-        // of those must be indexed too.
+        // meta-package (e.g. tidyverse) also attaches its core members (the
+        // provider prefers the harvested attach set, falling back to the static
+        // table), so each of those must be indexed too.
         if loaded.iter().any(|p| {
             !ctx.symbols.package_indexed(&p.name)
-                || meta_package_members(&p.name)
+                || ctx
+                    .symbols
+                    .attached_packages(&p.name)
                     .iter()
                     .any(|m| !ctx.symbols.package_indexed(m))
         }) {

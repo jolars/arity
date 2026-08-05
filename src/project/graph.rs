@@ -32,8 +32,8 @@ use crate::project::exports::DefKind;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::harvest::parse_dcf;
-use crate::rindex::provider::{package_indexed, resolve_origin};
-use crate::semantic::symbols::{LoadedPackage, PackageOrigin, meta_package_members};
+use crate::rindex::provider::{attach_members, package_indexed, resolve_origin};
+use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
 
 /// One member of a project: its tracked input, on-disk path, and enclosing
 /// package root (if any). Disk-derived — assembled in the lint write-phase and
@@ -585,13 +585,12 @@ pub fn external_resolution<'db>(
 
     // Gate: an attached package whose exports we don't fully know could define
     // any of the unresolved names — suppress the whole file. A meta-package
-    // (e.g. tidyverse) also attaches its core members, so each of those must be
-    // indexed too, or one of them could be the otherwise-unresolved name's home.
+    // (e.g. tidyverse) also attaches its core members (harvested attach set,
+    // static table as fallback), so each of those must be indexed too, or one
+    // of them could be the otherwise-unresolved name's home.
     if loaded.iter().any(|pkg| {
         !package_indexed(index, remote, pkg)
-            || meta_package_members(pkg)
-                .iter()
-                .any(|m| !package_indexed(index, remote, m))
+            || attach_members(index, pkg).any(|m| !package_indexed(index, remote, m))
     }) {
         return ExternalResolution::default();
     }

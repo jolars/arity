@@ -1339,6 +1339,54 @@ fn unindexed_attached_package_suppresses_resolution() {
     );
 }
 
+#[test]
+fn harvested_attach_sets_gate_and_resolve_external_resolution() {
+    // A harvested meta-package (not in the static curated table) carries its
+    // attach set in the library index; resolution and the conservative gate
+    // must both honor it.
+    let mut db = IncrementalDatabase::default();
+    let path = "/proj/a.R";
+    let file = db.upsert_file(
+        Path::new(path),
+        "library(metaverse)\nfoo <- function() {\n  helper_fn()\n  bogus()\n}\n".to_string(),
+    );
+
+    // Attached member indexed: its exports resolve, a genuine typo does not.
+    let mut meta = index_pkg("metaverse", &[]);
+    meta.attaches = vec!["helperpkg".into()];
+    let manifest = db.set_library_index(IndexedProvider::from_indices([
+        meta,
+        index_pkg("helperpkg", &["helper_fn"]),
+    ]));
+    {
+        let project = project_one(&db, file, path);
+        let res = external_resolution(&db, manifest, project, file);
+        assert!(
+            !res.unresolved.contains("helper_fn"),
+            "helper_fn resolves via the harvested attach set: {:?}",
+            res.unresolved
+        );
+        assert!(
+            res.unresolved.contains("bogus"),
+            "bogus is genuinely undefined: {:?}",
+            res.unresolved
+        );
+    }
+
+    // Attach set naming an unknown member: that member could define any
+    // unresolved name, so the whole file is suppressed.
+    let mut meta = index_pkg("metaverse", &[]);
+    meta.attaches = vec!["ghost_pkg_xyz".into()];
+    let manifest = db.set_library_index(IndexedProvider::from_indices([meta]));
+    let project = project_one(&db, file, path);
+    let res = external_resolution(&db, manifest, project, file);
+    assert!(
+        res.unresolved.is_empty(),
+        "an un-indexed harvested attach member suppresses resolution: {:?}",
+        res.unresolved
+    );
+}
+
 fn remote_exports(pkgs: &[(&str, &[&str])]) -> RemoteExports {
     let mut r = RemoteExports::new();
     for (pkg, names) in pkgs {

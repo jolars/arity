@@ -1163,6 +1163,12 @@ fn indexed_pkg(name: &str, exports: &[&str]) -> PackageIndex {
     }
 }
 
+fn indexed_meta_pkg(name: &str, exports: &[&str], attaches: &[&str]) -> PackageIndex {
+    let mut idx = indexed_pkg(name, exports);
+    idx.attaches = attaches.iter().map(|m| (*m).into()).collect();
+    idx
+}
+
 fn undefined_with(src: &str, provider: &CompositeProvider) -> Vec<String> {
     check_document_with_provider(Path::new("t.R"), src, &LintConfig::default(), provider)
         .expect("lint should succeed")
@@ -1221,6 +1227,62 @@ fn undefined_symbol_still_gated_for_unbundled_package() {
     let p = CompositeProvider::base_only();
     let msgs = undefined_with("library(some_obscure_pkg_xyz)\nbogus()\n", &p);
     assert!(msgs.is_empty(), "gate should suppress, got {msgs:?}");
+}
+
+#[test]
+fn undefined_symbol_resolves_harvested_attach_members() {
+    // A harvested meta-package (not in the static curated table) attaches an
+    // indexed member: the member's exports resolve, the gate passes, and a
+    // genuine typo is still flagged.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([
+        indexed_meta_pkg("metaverse", &[], &["helperpkg"]),
+        indexed_pkg("helperpkg", &["helper_fn"]),
+    ]));
+    let msgs = undefined_with("library(metaverse)\nhelper_fn()\nbogus()\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_gated_when_harvested_attach_member_unindexed() {
+    // A harvested meta-package attaches a member we know nothing about: that
+    // member could export any unresolved name, so the whole file is suppressed.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_meta_pkg(
+        "metaverse",
+        &[],
+        &["ghost_pkg_xyz"],
+    )]));
+    let msgs = undefined_with("library(metaverse)\nbogus()\n", &p);
+    assert!(msgs.is_empty(), "gate should suppress, got {msgs:?}");
+}
+
+#[test]
+fn undefined_symbol_harvested_attaches_override_static_gate() {
+    // A harvested tidyverse whose attach set names an un-indexed package: the
+    // version-exact capture overrides the static table (whose nine members are
+    // all bundled and would have let the gate pass), so the file is suppressed.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_meta_pkg(
+        "tidyverse",
+        &[],
+        &["ghost_pkg_xyz"],
+    )]));
+    let msgs = undefined_with("library(tidyverse)\nbogus()\n", &p);
+    assert!(msgs.is_empty(), "gate should suppress, got {msgs:?}");
+}
+
+#[test]
+fn undefined_symbol_empty_harvested_attaches_keep_static_members() {
+    // An installed tidyverse whose capture found nothing falls back to the
+    // curated members: `across` resolves via bundled dplyr and the typo is
+    // still flagged.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_meta_pkg(
+        "tidyverse",
+        &[],
+        &[],
+    )]));
+    let msgs = undefined_with("library(tidyverse)\nacross()\nbogus()\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
 }
 
 #[test]
