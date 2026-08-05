@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/arity-parser"]
+members = ["crates/arity-parser", "crates/arity-formatter"]
 
 [workspace.package]
 edition = "2024"
@@ -38,6 +38,7 @@ path = "src/main.rs"
 
 [dependencies]
 annotate-snippets = "0.12.16"
+arity-formatter = { path = "crates/arity-formatter", version = "0.1.0" }
 arity-parser = { path = "crates/arity-parser", version = "0.1.0" }
 clap = { version = "4.6.1", features = ["derive"] }
 clap_complete = "4.6.5"

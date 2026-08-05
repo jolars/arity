@@ -1776,8 +1776,8 @@ fn line_has_md_percent_swallow(line: &PhysicalLine) -> bool {
 /// Whether `line`'s content carries a brace-less sticky code/verbatim Rd-macro
 /// trigger (`\code z`/`\verb z`/…). Out of an argument context such a macro drops
 /// parse_Rd into R-code/verbatim mode, so every *physical source line* from there
-/// to section end becomes its own `RCODE`/`VERB` atom (the projector's
-/// [`split_sticky_braceless_swallow`](crate::roxygen::project_rd)). Reflowing —
+/// to section end becomes its own `RCODE`/`VERB` atom (the `arity` crate
+/// projector's `roxygen::project_rd::split_sticky_braceless_swallow`). Reflowing —
 /// joining a soft-wrapped continuation, or splitting an overlong line — changes the
 /// atom count and thus the rendered Rd (Tenet 1), so a paragraph or tag unit
 /// containing one is kept verbatim, both markdown modes (the swallow is
