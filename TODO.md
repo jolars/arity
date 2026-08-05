@@ -485,14 +485,31 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   packages are already bundled). The set is `.onAttach`-driven, *not* `Depends`,
   so it genuinely needs the curated table.
 
-  - [ ] Follow-up (Option B—harvest-time attach capture). The static table is
-    correct but hand-maintained and offline-only. When a package is actually
-    installed/harvested, detect what it attaches (diff `search()` across a clean
-    `library()` call) and record `attaches: Vec<SmolStr>` in `PackageIndex`
-    (`src/rindex/schema.rs`, bump `SCHEMA_VERSION`); `resolve_origin` would
-    prefer the harvested attach set over the static table for installed
-    meta-packages, leaving the table as the offline fallback. Generalizes beyond
-    tidyverse (tidymodels, fastverse, …) without growing the curated list.
+  - [x] Follow-up (Option B—harvest-time attach capture, landed). Harvest
+    records `attaches: Vec<SmolStr>` in `PackageIndex` (schema v2), captured
+    two ways: a default pure-Rust heuristic (`detect_attaches` in
+    `src/rindex/harvest.rs` fetches well-known attach-set variables—the
+    tidyverse/tidymodels `core` convention—from the namespace lazy-load DB,
+    gated on `.onAttach` existing and validated all-or-nothing against
+    installed packages), and an opt-in `search()`-diff probe
+    (`src/rindex/attach_probe.rs`, `arity index --attach-probe` or
+    `ARITY_ATTACH_PROBE`—it executes attach hooks, so consent is per-user/per
+    -run like `ARITY_REMOTE_URL`, and it runs as a sequential post-harvest
+    phase so the parallel harvest stays subprocess-free). `attach_members`
+    (`src/rindex/provider.rs`) prefers a non-empty harvested set; the static
+    table remains the fallback (uninstalled metas, names-only remote/bundled
+    tiers, failed capture). Both undefined-symbol gates and the LSP's
+    `packages_to_build` expand through the shared lookup.
+
+    Remaining follow-ups:
+
+    - [ ] Transitive attaches: a meta-package attaching another meta-package
+      expands one level only (matches the old static behavior; no known case).
+    - [ ] Attach sets do not flow through the remote sidecar or bundled tiers
+      (names-only formats); a sidecar v2 could carry them.
+    - [ ] Grow `ATTACH_SET_VARS` beyond `core` as evidence of other
+      conventions appears; `Depends`-driven attachment could also be captured
+      statically from `DESCRIPTION` without any probe.
 
 - [ ] Follow-up: prune packages that vanish from CRAN out of the bundled set.
   The refresh is now **additive**—`scripts/rank_cran_downloads.sh` unions

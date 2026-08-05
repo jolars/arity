@@ -112,6 +112,14 @@ namespace-aware lint rules) to resolve names.
 > Enabling network access is a per-user decision set via the `ARITY_REMOTE_URL`
 > environment variable, never committed in a shared `arity.toml`.
 
+> **Note:** the same applies to the attach probe (`arity index --attach-probe`),
+> which observes what a meta-package attaches by running `library()` in a fresh
+> R session. Because that executes package attach hooks, it is enabled per run
+> by the flag or per user via the `ARITY_ATTACH_PROBE` environment variable,
+> never from `arity.toml`. Without it, attach sets are still captured for
+> packages following the tidyverse `core` convention, with a built-in table as
+> the offline fallback.
+
 ## Reserved for future use
 
 The following are **not yet implemented** but are reserved so the schema can
