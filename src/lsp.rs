@@ -125,7 +125,7 @@ use salsa::Database as _;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-use crate::ast::{ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
+use crate::ast::{Arg, ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
 use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};

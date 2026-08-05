@@ -264,7 +264,12 @@ does these partially/conservatively, and they collide with arity's static tenet:
     `FUNCTION_EXPR`) are a follow-up.
 
 - Signature help (`textDocument/signatureHelp`). 
-  - [ ] Clamp the active parameter into a `...` formal under R's variadic semantics.
+  - [x] Clamp the active parameter into a `...` formal under R's variadic
+    semantics (done). `active_parameter` in `src/lsp/signature.rs` now follows
+    R's matching order: exact tag, then unique prefix among the formals before
+    `...`, then `...` for an unmatched name; positional slots skip formals
+    already bound by name and stop at `...`. An ambiguous prefix highlights
+    nothing rather than guessing.
 
 ### Diagnostics & misc protocol surface
 
@@ -360,10 +365,11 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   the `$`/`@` member-completion and label-details items under "Completion &
   signatures".
 
-- [ ] **Signature-help retrigger on `=`** (reinforce). Ark's signature-help
-  trigger set is `(`, `,`, `=`; arity triggers on `(`, `,` only. Typing `=` for
-  a named argument should re-trigger to refresh the active parameter. Small
-  addition to the signature-help follow-ups above.
+- [x] **Signature-help retrigger on `=`** (done). arity now advertises `=` as
+  both a trigger and a retrigger character alongside `(`, `,` (and `)`), so
+  typing `=` refreshes the active parameter. It came with the R-faithful
+  argument matching noted under "Completion & signatures" above, which is what
+  makes the refreshed highlight land on the right formal.
 
 - **Package/CRAN index backend—still no *symbol* DB, but a static *source*
   tier now exists.** Ark has *no* CRAN symbol database in arity's sense. Being a

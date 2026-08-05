@@ -324,6 +324,21 @@ fn initialize_advertises_core_capabilities() {
         Some(&json!(true)),
         "type hierarchy advertised"
     );
+    // `=` starts a named argument, so it both triggers and re-triggers
+    // signature help to refresh the active parameter.
+    let signature = caps
+        .get("signatureHelpProvider")
+        .expect("signature help advertised");
+    assert_eq!(
+        signature.get("triggerCharacters"),
+        Some(&json!(["(", ",", "="])),
+        "signature help trigger characters: {signature:#?}"
+    );
+    assert_eq!(
+        signature.get("retriggerCharacters"),
+        Some(&json!([")", "="])),
+        "signature help retrigger characters: {signature:#?}"
+    );
     h.shutdown();
 }
 

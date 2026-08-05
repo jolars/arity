@@ -131,9 +131,12 @@ fn build_signature(entry: &SymbolEntry) -> Option<(String, Vec<ParameterInformat
     }
 }
 
-/// The index of the parameter the cursor is positioned at: the formal named by
-/// the enclosing `name = ` argument when present, else the count of top-level
-/// commas before the cursor (clamped to the last parameter).
+/// The index of the parameter the cursor is positioned at, following R's
+/// argument matching (R Language Definition 4.3.2): a `name = ` argument binds
+/// by exact tag, then by unique prefix among the formals *before* `...`; an
+/// unmatched name falls into `...` when the function is variadic. A positional
+/// argument takes the n-th formal not already bound by name, where n counts the
+/// positional arguments before the cursor.
 fn active_parameter(
     arg_list: Option<&ArgList>,
     offset: TextSize,
@@ -143,50 +146,96 @@ fn active_parameter(
     if param_count == 0 {
         return None;
     }
+    let formals = entry.formals.as_ref()?;
     let Some(arg_list) = arg_list else {
         return Some(0);
     };
-    // A named argument binds to its formal regardless of position.
-    if let Some(name) = active_named_arg(arg_list, offset)
-        && let Some(idx) = entry
-            .formals
-            .as_ref()
-            .and_then(|formals| formals.iter().position(|f| f.name == name))
-    {
-        return Some(idx as u32);
-    }
-    // Positional: top-level commas before the cursor. Commas of nested calls
-    // live under their own `ARG_LIST`, so this count never leaks across nesting.
-    let positional = arg_list
-        .syntax()
-        .children_with_tokens()
-        .filter(|el| el.kind() == SyntaxKind::COMMA && el.text_range().end() <= offset)
-        .count();
-    Some(positional.min(param_count - 1) as u32)
-}
-
-/// The name of the enclosing `name = value` argument at `offset`, if any.
-fn active_named_arg(arg_list: &ArgList, offset: TextSize) -> Option<SmolStr> {
-    let arg = arg_list
+    let active = arg_list
         .args()
-        .find(|a| a.syntax().text_range().contains_inclusive(offset))?;
-    let mut significant = arg
-        .syntax()
-        .children_with_tokens()
-        .filter(|el| !is_trivia_or_comment(el.kind()));
-    let name = significant.next()?.into_token()?;
-    if name.kind() != SyntaxKind::IDENT {
-        return None;
+        .find(|a| a.syntax().text_range().contains_inclusive(offset));
+    let dots = formals.iter().position(|f| f.name == DOTS);
+
+    // A named argument binds to its formal regardless of position.
+    if let Some(name) = active.as_ref().and_then(Arg::name) {
+        return match match_formal(&name, formals) {
+            FormalMatch::Matched(idx) => Some(idx as u32),
+            // Ambiguous is an error in R: highlight nothing rather than guess.
+            FormalMatch::Ambiguous => None,
+            FormalMatch::NoMatch => dots.map(|idx| idx as u32),
+        };
     }
-    let eq = significant.next()?;
-    (eq.kind() == SyntaxKind::ASSIGN_EQ).then(|| SmolStr::new(name.text()))
+
+    // Positional. Arguments of nested calls live under their own `ARG_LIST`, so
+    // walking this one's never leaks across nesting. Empty slots (`f(a, , b)`)
+    // are zero-width `ARG` nodes and count, as they do in R.
+    let mut bound = Vec::new();
+    let mut preceding = 0usize;
+    for arg in arg_list.args() {
+        if active.as_ref().is_some_and(|a| a.syntax() == arg.syntax()) {
+            continue;
+        }
+        match arg.name() {
+            Some(name) => {
+                if let FormalMatch::Matched(idx) = match_formal(&name, formals) {
+                    bound.push(idx);
+                }
+            }
+            None if arg.syntax().text_range().end() <= offset => preceding += 1,
+            None => {}
+        }
+    }
+    let mut remaining = preceding;
+    let mut last = None;
+    for (idx, formal) in formals.iter().enumerate() {
+        // Positional matching stops at `...`: it and everything after it can
+        // only be reached by name, and surplus positionals all land in `...`.
+        if formal.name == DOTS {
+            return Some(idx as u32);
+        }
+        if bound.contains(&idx) {
+            continue;
+        }
+        if remaining == 0 {
+            return Some(idx as u32);
+        }
+        remaining -= 1;
+        last = Some(idx as u32);
+    }
+    // More positional arguments than formals: invalid R, so just stay on the
+    // last formal rather than dropping the highlight mid-call.
+    last
 }
 
-fn is_trivia_or_comment(kind: SyntaxKind) -> bool {
-    matches!(
-        kind,
-        SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
-    )
+/// The variadic formal's name.
+const DOTS: &str = "...";
+
+/// How an argument tag binds to a formal.
+enum FormalMatch {
+    Matched(usize),
+    /// A prefix of more than one formal: an error in R.
+    Ambiguous,
+    NoMatch,
+}
+
+/// Match an argument tag against `formals` the way R does: exact tag first,
+/// then a unique prefix among the formals before `...` (formals from `...`
+/// onward match only exactly).
+fn match_formal(name: &str, formals: &[Formal]) -> FormalMatch {
+    if let Some(idx) = formals.iter().position(|f| f.name == name) {
+        return FormalMatch::Matched(idx);
+    }
+    let partial: Vec<usize> = formals
+        .iter()
+        .take_while(|f| f.name != DOTS)
+        .enumerate()
+        .filter(|(_, f)| f.name.starts_with(name))
+        .map(|(idx, _)| idx)
+        .collect();
+    match partial.as_slice() {
+        [idx] => FormalMatch::Matched(*idx),
+        [] => FormalMatch::NoMatch,
+        _ => FormalMatch::Ambiguous,
+    }
 }
 
 /// Per-parameter documentation drawn from the indexed `\arguments` block.
@@ -251,6 +300,38 @@ mod tests {
     }
 
     #[test]
+    fn named_arg_active_right_after_equals() {
+        // The `=` retrigger scenario: the cursor sits immediately after `=`,
+        // closed call and unclosed call alike.
+        let help = help_at("library(dplyr)\nacross(.fns =@)\n").expect("signature");
+        assert_eq!(help.active_parameter, Some(1));
+        let help = help_at("library(dplyr)\nacross(.fns =@").expect("signature");
+        assert_eq!(help.active_parameter, Some(1));
+    }
+
+    #[test]
+    fn partial_name_matches_like_r() {
+        // `.f` is a unique prefix of `.fns`, so R binds it there.
+        let help = help_at("library(dplyr)\nacross(.f = @)\n").expect("signature");
+        assert_eq!(help.active_parameter, Some(1));
+    }
+
+    #[test]
+    fn unknown_name_has_no_active_parameter() {
+        // `across` is not variadic in the fixture, so `zzz` binds nothing:
+        // better no highlight than a wrong one.
+        let help = help_at("library(dplyr)\nacross(zzz = @)\n").expect("signature");
+        assert_eq!(help.active_parameter, None);
+    }
+
+    #[test]
+    fn positional_skips_name_bound_formal() {
+        // `.fns` is taken by name, so the positional slot is `.cols`.
+        let help = help_at("library(dplyr)\nacross(.fns = 1, @)\n").expect("signature");
+        assert_eq!(help.active_parameter, Some(0));
+    }
+
+    #[test]
     fn nested_call_commas_do_not_leak() {
         let help = help_at("library(dplyr)\nacross(foo(a, b), @)\n").expect("signature");
         assert_eq!(help.active_parameter, Some(1));
@@ -310,6 +391,73 @@ mod tests {
         assert_eq!(help.signatures[0].label, "as.matrix(x, ...)");
         assert!(help.signatures[0].parameters.is_none());
         assert_eq!(help.active_parameter, None);
+    }
+
+    /// A variadic, prefix-ambiguous fixture:
+    /// `summarise(x, na.rm = FALSE, nan.rm = FALSE, ..., .keep = "all")`.
+    fn variadic_provider() -> IndexedProvider {
+        use crate::rindex::schema::{Formal, PackageIndex, SCHEMA_VERSION};
+        let formal = |name: &str, default: Option<&str>| Formal {
+            name: name.into(),
+            default: default.map(str::to_string),
+        };
+        let idx = PackageIndex {
+            schema_version: SCHEMA_VERSION,
+            package: "dplyr".into(),
+            version: "1.0".into(),
+            lib_path: "/lib".into(),
+            r_version: None,
+            harvested_at: 0,
+            symbols: vec![SymbolEntry {
+                name: "summarise".into(),
+                kind: SymbolKind::Function,
+                exported: true,
+                formals: Some(vec![
+                    formal("x", None),
+                    formal("na.rm", Some("FALSE")),
+                    formal("nan.rm", Some("FALSE")),
+                    formal("...", None),
+                    formal(".keep", Some("\"all\"")),
+                ]),
+                help: None,
+            }],
+        };
+        IndexedProvider::from_indices([idx])
+    }
+
+    /// Like [`help_at`], but against [`variadic_provider`].
+    fn variadic_help_at(src: &str) -> Option<SignatureHelp> {
+        let offset = src.find('@').expect("cursor marker");
+        compute_signature_help(&src.replace('@', ""), offset, &variadic_provider())
+    }
+
+    #[test]
+    fn extra_positional_lands_in_dots() {
+        // `x`, `na.rm`, `nan.rm` are taken; everything after falls into `...`.
+        let help = variadic_help_at("dplyr::summarise(a, b, c, @)\n").expect("signature");
+        assert_eq!(help.active_parameter, Some(3));
+    }
+
+    #[test]
+    fn unknown_name_lands_in_dots_when_variadic() {
+        let help = variadic_help_at("dplyr::summarise(zzz = @)\n").expect("signature");
+        assert_eq!(help.active_parameter, Some(3));
+    }
+
+    #[test]
+    fn ambiguous_prefix_has_no_active_parameter() {
+        // `n` prefixes both `na.rm` and `nan.rm`; R errors, so highlight nothing.
+        let help = variadic_help_at("dplyr::summarise(n = @)\n").expect("signature");
+        assert_eq!(help.active_parameter, None);
+    }
+
+    #[test]
+    fn formal_after_dots_needs_an_exact_name() {
+        // Partial matching stops at `...`, so `.k` goes to `...`, not `.keep`.
+        let help = variadic_help_at("dplyr::summarise(.k = @)\n").expect("signature");
+        assert_eq!(help.active_parameter, Some(3));
+        let help = variadic_help_at("dplyr::summarise(.keep = @)\n").expect("signature");
+        assert_eq!(help.active_parameter, Some(4));
     }
 
     #[test]

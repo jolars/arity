@@ -177,8 +177,11 @@ pub(crate) fn server_capabilities(position_encoding: PositionEncoding) -> Server
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         signature_help_provider: Some(SignatureHelpOptions {
-            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
-            retrigger_characters: Some(vec![")".to_string()]),
+            // `=` starts a named argument, so it moves the active parameter to
+            // the named formal; it is a retrigger character too, since help is
+            // usually already showing (from `(` or `,`) by the time it is typed.
+            trigger_characters: Some(vec!["(".to_string(), ",".to_string(), "=".to_string()]),
+            retrigger_characters: Some(vec![")".to_string(), "=".to_string()]),
             work_done_progress_options: Default::default(),
         }),
         definition_provider: Some(OneOf::Left(true)),
