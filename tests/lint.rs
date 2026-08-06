@@ -4995,3 +4995,135 @@ fn lint_honors_package_markdown_default() {
         "batch lint honors the package default"
     );
 }
+
+// --- meta: suppression rules ------------------------------------------------
+
+/// Lint `src` with a rule set chosen explicitly — the entry point for the
+/// default-off rules and for isolating a meta rule from the rest.
+fn diagnostics_selecting(src: &str, rules: &[&str]) -> Vec<arity::linter::Diagnostic> {
+    let config = LintConfig {
+        select: Some(rules.iter().map(|r| r.to_string()).collect()),
+        ..LintConfig::default()
+    };
+    check_document(Path::new("t.R"), src, &config).expect("lint should succeed")
+}
+
+fn meta_rules(src: &str, rule: &str) -> Vec<arity::linter::Diagnostic> {
+    diagnostics_selecting(src, &[rule])
+}
+
+#[test]
+fn misnamed_suppression_flags_an_unknown_rule_id() {
+    let d = meta_rules(
+        "# arity-ignore not-a-rule: r\nx <- 1\n",
+        "misnamed-suppression",
+    );
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert!(
+        d[0].message.body.contains("not-a-rule"),
+        "{:?}",
+        d[0].message
+    );
+}
+
+#[test]
+fn misnamed_suppression_spans_only_the_rule_id() {
+    let src = "# arity-ignore not-a-rule: r\nx <- 1\n";
+    let d = meta_rules(src, "misnamed-suppression");
+    assert_eq!(&src[d[0].range], "not-a-rule");
+}
+
+#[test]
+fn misnamed_suppression_accepts_a_shipped_rule_id() {
+    for src in [
+        "# arity-ignore unused-binding: r\nx <- 1\n",
+        "# arity-ignore-file unused-binding: r\nx <- 1\n",
+    ] {
+        assert!(meta_rules(src, "misnamed-suppression").is_empty(), "{src}");
+    }
+}
+
+#[test]
+fn misnamed_suppression_covers_the_file_form() {
+    let d = meta_rules(
+        "# arity-ignore-file unusd-binding: r\nx <- 1\n",
+        "misnamed-suppression",
+    );
+    assert_eq!(d.len(), 1, "got {d:?}");
+}
+
+#[test]
+fn misnamed_suppression_ignores_directive_less_comments() {
+    let src = "# a plain comment\n#' @param x roxygen\n# arity-ignore-file: blanket\nx <- 1\n";
+    assert!(meta_rules(src, "misnamed-suppression").is_empty());
+}
+
+#[test]
+fn misnamed_suppression_fixes_a_unique_close_match() {
+    assert_eq!(
+        fixed_output_selecting(
+            "# arity-ignore unusd-binding: r\nx <- 1\n",
+            "misnamed-suppression",
+        ),
+        "# arity-ignore unused-binding: r\nx <- 1\n",
+    );
+}
+
+#[test]
+fn misnamed_suppression_fix_leaves_the_reason_untouched() {
+    assert_eq!(
+        fixed_output_selecting(
+            "# arity-ignore-file browsr: see issue #123\nx <- 1\n",
+            "misnamed-suppression",
+        ),
+        "# arity-ignore-file browser: see issue #123\nx <- 1\n",
+    );
+}
+
+#[test]
+fn misnamed_suppression_withholds_the_fix_with_no_close_match() {
+    let d = meta_rules(
+        "# arity-ignore zzzzzzzzzz: r\nx <- 1\n",
+        "misnamed-suppression",
+    );
+    assert_eq!(d.len(), 1);
+    assert!(
+        d[0].fix.is_none(),
+        "no candidate is close enough: {:?}",
+        d[0].fix
+    );
+}
+
+#[test]
+fn misnamed_suppression_makes_a_comma_list_audible() {
+    // `# arity-ignore a, b` parses the rule ID as `browser,` and silently
+    // suppresses nothing. The rule is what makes that failure visible.
+    let d = meta_rules(
+        "# arity-ignore browser, repeat: r\nx <- 1\n",
+        "misnamed-suppression",
+    );
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert!(d[0].message.body.contains("browser,"), "{:?}", d[0].message);
+    // `browser,` is one edit from `browser`, but taking that fix would silently
+    // drop ` repeat`. Explain instead of guessing.
+    assert!(d[0].fix.is_none(), "a list must not be auto-repaired");
+    assert!(
+        d[0].message
+            .suggestion
+            .as_deref()
+            .is_some_and(|s| s.contains("separate")),
+        "{:?}",
+        d[0].message
+    );
+}
+
+/// `fixed_output`, but with the rule set restricted to `rule`.
+fn fixed_output_selecting(src: &str, rule: &str) -> String {
+    let d = meta_rules(src, rule)
+        .into_iter()
+        .find(|d| d.rule == rule)
+        .unwrap_or_else(|| panic!("expected a {rule} finding"));
+    let fix = d.fix.as_ref().expect("finding should carry a fix");
+    assert_eq!(fix.applicability, Applicability::Safe);
+    apply_fixes(src, std::slice::from_ref(fix), false).output
+}

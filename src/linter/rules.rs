@@ -16,7 +16,7 @@
 //!    valid rule IDs ([`all_rule_ids`]) is derived from it, so there is no
 //!    second list to keep in sync.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -35,6 +35,7 @@ use super::suppression::{DirectiveUsage, SuppressionMap};
 pub mod correctness;
 pub mod documentation;
 pub mod matchers;
+pub mod meta;
 pub mod performance;
 pub mod readability;
 pub mod regex;
@@ -88,6 +89,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(documentation::RoxygenReturn),
         Box::new(documentation::RoxygenParam),
         Box::new(documentation::RoxygenExamples),
+        Box::new(meta::MisnamedSuppression),
     ]
 }
 
@@ -95,6 +97,14 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
 /// Used to validate `LintConfig::select` / `ignore`.
 pub fn all_rule_ids() -> Vec<&'static str> {
     all_rules().iter().map(|r| r.id()).collect()
+}
+
+/// Whether `id` is a rule arity ships. The `O(1)` membership oracle over
+/// [`all_rule_ids`], which instantiates the whole registry on every call.
+pub fn is_known_rule(id: &str) -> bool {
+    static IDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    IDS.get_or_init(|| all_rule_ids().into_iter().collect())
+        .contains(id)
 }
 
 /// A documented example for a rule: a snippet of R that triggers the rule.

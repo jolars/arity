@@ -61,3 +61,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`roxygen-return`](rules/roxygen-return.md)
 - [`roxygen-param`](rules/roxygen-param.md)
 - [`roxygen-examples`](rules/roxygen-examples.md)
+
+## Meta
+
+- [`misnamed-suppression`](rules/misnamed-suppression.md)
