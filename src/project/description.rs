@@ -47,6 +47,40 @@ pub fn roxygen_markdown_default_for_file(path: &Path) -> bool {
     package_root(path).is_some_and(|root| roxygen_markdown_default(&root))
 }
 
+/// [`roxygen_markdown_default_for_file`] anchored at a directory instead of a
+/// file — for stdin input, where the only location is the working directory.
+/// The walk starts at `dir` itself (a `package_root` walk starts at the
+/// argument's parent). Touches disk.
+pub fn roxygen_markdown_default_for_dir(dir: &Path) -> bool {
+    roxygen_markdown_default_for_file(&dir.join("_stdin_.R"))
+}
+
+/// A per-directory-memoized [`roxygen_markdown_default_for_file`], for batch
+/// walks (format/lint over a package) where every file in `R/` would otherwise
+/// re-walk to the root and re-read `DESCRIPTION`. Two files sharing a parent
+/// directory always share a package root, so the memo key is the parent.
+#[derive(Debug, Default)]
+pub struct MarkdownDefaultResolver {
+    by_dir: std::collections::HashMap<std::path::PathBuf, bool>,
+}
+
+impl MarkdownDefaultResolver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The markdown default for `file`, resolved once per parent directory.
+    pub fn resolve(&mut self, file: &Path) -> bool {
+        match file.parent() {
+            Some(dir) => *self
+                .by_dir
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| roxygen_markdown_default_for_file(file)),
+            None => false,
+        }
+    }
+}
+
 /// The `Roxygen` field's value from DESCRIPTION text (continuation lines
 /// joined), if present.
 fn roxygen_field(description: &str) -> Option<String> {

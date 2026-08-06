@@ -2,9 +2,11 @@ use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 
-use super::{FormatError, FormatStyle, format_with_style};
+use super::{FormatError, FormatStyle, format_with_options};
 use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
 use crate::formatter::cache::FormatCache;
+use crate::parser::ParseOptions;
+use crate::project::description::MarkdownDefaultResolver;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
@@ -116,23 +118,33 @@ pub fn check_paths_with_style_cached(
 
     let checked_files = files.len();
     let mut changed_files = Vec::new();
+    // The package-wide roxygen markdown default, per file (memoized per
+    // directory): a markdown-first package's doc comments parse — and so
+    // format — in markdown mode without any per-block `@md`.
+    let mut markdown = MarkdownDefaultResolver::new();
 
     for path in files {
         let content = fs::read_to_string(&path).map_err(|err| CheckError::ReadError {
             path: path.clone(),
             source: err.to_string(),
         })?;
+        let md = markdown.resolve(&path);
 
         // Cache hit: already-formatted, skip parse+format.
-        if cache.as_deref().is_some_and(|c| c.is_fixed_point(&content)) {
+        if cache
+            .as_deref()
+            .is_some_and(|c| c.is_fixed_point(&content, md))
+        {
             continue;
         }
 
-        let formatted =
-            format_with_style(&content, style).map_err(|err| CheckError::FormatError {
+        let options = ParseOptions::default().with_roxygen_markdown_default(md);
+        let formatted = format_with_options(&content, style, &options).map_err(|err| {
+            CheckError::FormatError {
                 path: path.clone(),
                 source: err,
-            })?;
+            }
+        })?;
         if formatted != content {
             changed_files.push(ChangedFile {
                 path,
@@ -140,7 +152,7 @@ pub fn check_paths_with_style_cached(
                 formatted,
             });
         } else if let Some(c) = cache.as_deref_mut() {
-            c.record_fixed_point(&content);
+            c.record_fixed_point(&content, md);
         }
     }
 

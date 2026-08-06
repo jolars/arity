@@ -19,7 +19,7 @@ use crate::ast::{
     AssignmentExpr, AstNode, BinaryExpr, BlockExpr, CallExpr, ForExpr, FunctionExpr, IfExpr,
     ParenExpr, UnaryExpr, WhileExpr,
 };
-use crate::parser::{ParseOptions, parse, parse_with_options};
+use crate::parser::{ParseOptions, parse_with_options};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -602,6 +602,7 @@ pub(super) fn is_trivia(kind: SyntaxKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::parse;
 
     /// Formatting an already-parsed CST must match formatting the same text,
     /// so the LSP read path (which formats off the cached parse tree) stays

@@ -7,9 +7,10 @@ use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
 use arity::file_discovery::{ExcludeFilter, collect_r_files};
 use arity::formatter::{
-    ChangedFile, FormatCache, FormatStyle, check_paths_with_style_cached, format_with_style,
+    ChangedFile, FormatCache, FormatStyle, check_paths_with_style_cached, format_with_options,
 };
 use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
+use arity::parser::ParseOptions;
 use arity::parser::{parse, reconstruct};
 use arity::rindex::build::{BuildOptions, PackageOutcome, build_index};
 use arity::rindex::cache::{Cache, resolve_cache_root};
@@ -521,7 +522,13 @@ fn run_format(
             }
         };
 
-        let formatted = match format_with_style(&input, style) {
+        // Stdin carries no path; resolve the package-wide roxygen markdown
+        // default from the working directory, the same anchor config
+        // discovery uses.
+        let options = ParseOptions::default().with_roxygen_markdown_default(
+            arity::project::description::roxygen_markdown_default_for_dir(&anchor),
+        );
+        let formatted = match format_with_options(&input, style, &options) {
             Ok(formatted) => formatted,
             Err(err) => {
                 eprintln!("error: {err}");
@@ -530,7 +537,7 @@ fn run_format(
         };
 
         if modes.verify {
-            let reformatted = match format_with_style(&formatted, style) {
+            let reformatted = match format_with_options(&formatted, style, &options) {
                 Ok(reformatted) => reformatted,
                 Err(err) => {
                     eprintln!("error: formatted output failed verification: {err}");
@@ -660,6 +667,7 @@ fn run_format_write_paths(
 
     let total = files.len();
     let mut reformatted_count = 0usize;
+    let mut markdown = arity::project::description::MarkdownDefaultResolver::new();
     for path in files {
         let input = match fs::read_to_string(&path) {
             Ok(input) => input,
@@ -668,7 +676,9 @@ fn run_format_write_paths(
                 return ExitCode::from(2);
             }
         };
-        let formatted = match format_with_style(&input, style) {
+        let options =
+            ParseOptions::default().with_roxygen_markdown_default(markdown.resolve(&path));
+        let formatted = match format_with_options(&input, style, &options) {
             Ok(formatted) => formatted,
             Err(err) => {
                 eprintln!("error: failed to format {}: {err}", path.display());
@@ -676,7 +686,7 @@ fn run_format_write_paths(
             }
         };
         if verify {
-            let reformatted = match format_with_style(&formatted, style) {
+            let reformatted = match format_with_options(&formatted, style, &options) {
                 Ok(reformatted) => reformatted,
                 Err(err) => {
                     eprintln!(

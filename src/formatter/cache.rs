@@ -72,15 +72,23 @@ impl FormatCache {
         }
     }
 
-    /// Whether `content` is a known fixed point (already formatted).
-    pub fn is_fixed_point(&self, content: &str) -> bool {
-        self.fixed_points.contains(&hash_content(content))
+    /// Whether `content` is a known fixed point (already formatted) under
+    /// `roxygen_markdown` — the file's resolved package-wide markdown default,
+    /// which changes formatting and so must key the hash: the same bytes can be
+    /// a fixed point in a markdown-first package and not in an Rd-first one.
+    pub fn is_fixed_point(&self, content: &str, roxygen_markdown: bool) -> bool {
+        self.fixed_points
+            .contains(&hash_content(content, roxygen_markdown))
     }
 
-    /// Record `content` as a fixed point. Marks the cache dirty only when the
-    /// hash was not already present, so an all-hit run writes nothing.
-    pub fn record_fixed_point(&mut self, content: &str) {
-        if self.fixed_points.insert(hash_content(content)) {
+    /// Record `content` as a fixed point under `roxygen_markdown`. Marks the
+    /// cache dirty only when the hash was not already present, so an all-hit
+    /// run writes nothing.
+    pub fn record_fixed_point(&mut self, content: &str, roxygen_markdown: bool) {
+        if self
+            .fixed_points
+            .insert(hash_content(content, roxygen_markdown))
+        {
             self.dirty = true;
         }
     }
@@ -112,9 +120,10 @@ fn cache_path(root: &Path, style: &FormatStyle) -> PathBuf {
         .join(format!("{:016x}.postcard", style_hash(style)))
 }
 
-fn hash_content(content: &str) -> u64 {
+fn hash_content(content: &str, roxygen_markdown: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
+    roxygen_markdown.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -155,21 +164,32 @@ mod tests {
         let style = FormatStyle::default();
 
         let mut cache = FormatCache::load(tmp.path(), &style);
-        assert!(!cache.is_fixed_point("x <- 1\n"));
-        cache.record_fixed_point("x <- 1\n");
+        assert!(!cache.is_fixed_point("x <- 1\n", false));
+        cache.record_fixed_point("x <- 1\n", false);
         cache.store().unwrap();
 
         // A fresh load sees the persisted hash.
         let reloaded = FormatCache::load(tmp.path(), &style);
-        assert!(reloaded.is_fixed_point("x <- 1\n"));
-        assert!(!reloaded.is_fixed_point("y <- 2\n"));
+        assert!(reloaded.is_fixed_point("x <- 1\n", false));
+        assert!(!reloaded.is_fixed_point("y <- 2\n", false));
+    }
+
+    #[test]
+    fn markdown_flag_keys_the_fixed_point() {
+        // The same bytes can be a fixed point in a markdown-first package and
+        // not in an Rd-first one — the flag must disambiguate.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = FormatCache::load(tmp.path(), &FormatStyle::default());
+        cache.record_fixed_point("#' doc\nNULL\n", true);
+        assert!(cache.is_fixed_point("#' doc\nNULL\n", true));
+        assert!(!cache.is_fixed_point("#' doc\nNULL\n", false));
     }
 
     #[test]
     fn missing_file_loads_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = FormatCache::load(tmp.path(), &FormatStyle::default());
-        assert!(!cache.is_fixed_point("anything\n"));
+        assert!(!cache.is_fixed_point("anything\n", false));
     }
 
     #[test]
@@ -187,12 +207,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let style = FormatStyle::default();
         let mut cache = FormatCache::load(tmp.path(), &style);
-        cache.record_fixed_point("x <- 1\n");
+        cache.record_fixed_point("x <- 1\n", false);
         cache.store().unwrap();
 
         // Reload and re-record the same content: no new hash, so store is a no-op.
         let mut reloaded = FormatCache::load(tmp.path(), &style);
-        reloaded.record_fixed_point("x <- 1\n");
+        reloaded.record_fixed_point("x <- 1\n", false);
         assert!(!reloaded.dirty);
     }
 
@@ -204,12 +224,12 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let stale = CacheFile {
             schema_version: SCHEMA_VERSION + 1,
-            fixed_points: HashSet::from([hash_content("x <- 1\n")]),
+            fixed_points: HashSet::from([hash_content("x <- 1\n", false)]),
         };
         std::fs::write(&path, postcard::to_allocvec(&stale).unwrap()).unwrap();
 
         let cache = FormatCache::load(tmp.path(), &style);
-        assert!(!cache.is_fixed_point("x <- 1\n"));
+        assert!(!cache.is_fixed_point("x <- 1\n", false));
     }
 
     #[test]
@@ -221,7 +241,7 @@ mod tests {
         std::fs::write(&path, b"not postcard at all").unwrap();
 
         let cache = FormatCache::load(tmp.path(), &style);
-        assert!(!cache.is_fixed_point("x <- 1\n"));
+        assert!(!cache.is_fixed_point("x <- 1\n", false));
     }
 
     #[test]
@@ -244,7 +264,7 @@ mod tests {
         std::fs::create_dir_all(&stale_dir).unwrap();
 
         let mut cache = FormatCache::load(tmp.path(), &style);
-        cache.record_fixed_point("x <- 1\n");
+        cache.record_fixed_point("x <- 1\n", false);
         cache.store().unwrap();
 
         assert!(!stale_dir.exists());

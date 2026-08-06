@@ -34,12 +34,12 @@ fn already_formatted_file_is_recorded_and_persists() {
     // A clean file: no diff, and recorded as a fixed point.
     assert!(result.changed_files.is_empty());
     assert_eq!(result.checked_files, 1);
-    assert!(cache.is_fixed_point(clean));
+    assert!(cache.is_fixed_point(clean, false));
 
     // The record was persisted: a fresh load off disk still sees it, and a
     // second run serves it from cache (still clean).
     let mut reloaded = FormatCache::load(cache_root.path(), &style);
-    assert!(reloaded.is_fixed_point(clean));
+    assert!(reloaded.is_fixed_point(clean, false));
     let second = check_paths_with_style_cached(
         std::slice::from_ref(&file),
         style,
@@ -70,10 +70,10 @@ fn unformatted_file_is_never_recorded() {
 
     assert_eq!(result.changed_files.len(), 1);
     // The unformatted content must not be cached as a fixed point.
-    assert!(!cache.is_fixed_point(dirty));
+    assert!(!cache.is_fixed_point(dirty, false));
     // A fresh load confirms nothing about it was persisted.
     let reloaded = FormatCache::load(cache_root.path(), &style);
-    assert!(!reloaded.is_fixed_point(dirty));
+    assert!(!reloaded.is_fixed_point(dirty, false));
 }
 
 #[test]

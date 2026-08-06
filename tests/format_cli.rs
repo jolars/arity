@@ -157,3 +157,80 @@ fn cli_format_check_disallows_verify() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--verify cannot be combined with --check"));
 }
+
+/// A roxygen block already in markdown-canonical form: an indented code block
+/// that Rd-first formatting would reflow (stripping the indent) but markdown
+/// mode preserves.
+const MD_CANONICAL: &str = "#' Title\n#'\n#' @details\n#' Some prose before the code.\n#'\n#'     code_looking <- \"indented\"\n#' @param x an argument\nNULL\n";
+
+/// Write a minimal R package at `root` whose DESCRIPTION carries `extra`
+/// after the Package field, with `MD_CANONICAL` as `R/doc.R`.
+fn write_package(root: &std::path::Path, description_extra: &str) -> std::path::PathBuf {
+    std::fs::create_dir(root.join("R")).expect("R/");
+    std::fs::write(
+        root.join("DESCRIPTION"),
+        format!("Package: p\n{description_extra}"),
+    )
+    .expect("DESCRIPTION");
+    let file = root.join("R/doc.R");
+    std::fs::write(&file, MD_CANONICAL).expect("doc.R");
+    file
+}
+
+#[test]
+fn cli_format_honors_package_markdown_default() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let file = write_package(dir.path(), "Roxygen: list(markdown = TRUE)\n");
+
+    let output = run_cli_no_stdin(["format", file.to_str().expect("utf-8 path")]);
+    assert!(output.status.success());
+    let after = std::fs::read_to_string(&file).expect("read back");
+    assert_eq!(after, MD_CANONICAL, "markdown-first package is untouched");
+}
+
+#[test]
+fn cli_format_without_markdown_default_reflows() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let file = write_package(dir.path(), "");
+
+    let output = run_cli_no_stdin(["format", file.to_str().expect("utf-8 path")]);
+    assert!(output.status.success());
+    let after = std::fs::read_to_string(&file).expect("read back");
+    assert!(
+        after.contains("#' code_looking"),
+        "Rd-first package reflows the indent:\n{after}"
+    );
+}
+
+#[test]
+fn cli_format_check_honors_package_markdown_default() {
+    let dir = tempdir().expect("failed to create temp dir");
+    write_package(dir.path(), "Roxygen: list(markdown = TRUE)\n");
+
+    let output = run_cli_no_stdin([
+        "format",
+        "--check",
+        dir.path().to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        output.status.success(),
+        "markdown-first package is check-clean: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn cli_format_check_without_markdown_default_flags_reflow() {
+    let dir = tempdir().expect("failed to create temp dir");
+    write_package(dir.path(), "");
+
+    let output = run_cli_no_stdin([
+        "format",
+        "--check",
+        dir.path().to_str().expect("utf-8 path"),
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("-#'     code_looking"));
+    assert!(stdout.contains("+#' code_looking"));
+}
