@@ -35,9 +35,10 @@ use std::ops::Range;
 use rowan::{GreenNode, GreenToken, TextRange, TextSize};
 
 use crate::parser::bracket_balancer::rebalance_brackets;
+use crate::parser::core::ParseOptions;
 use crate::parser::diagnostics::ParseDiagnostic;
 use crate::parser::expr::parse_expr;
-use crate::parser::lexer::lex;
+use crate::parser::lexer::lex_with_md;
 use crate::parser::tree_builder::{build_tree, syntax_kind_for};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -186,9 +187,31 @@ pub fn reparse(
     old_diags: &[ParseDiagnostic],
     edit: &Edit,
 ) -> Option<Reparsed> {
-    let result = reparse_token(old_root, old_text, old_diags, edit)
-        .or_else(|| reparse_block(old_root, old_text, old_diags, edit))
-        .or_else(|| reparse_toplevel(old_root, old_text, old_diags, edit));
+    reparse_with_options(
+        old_root,
+        old_text,
+        old_diags,
+        edit,
+        &ParseOptions::default(),
+    )
+}
+
+/// [`reparse`] with the [`ParseOptions`] the old tree was parsed under. A tree
+/// parsed via [`parse_with_options`](crate::parser::core::parse_with_options)
+/// must be reparsed with the **same** options, or the correctness invariant
+/// (reparse output ≡ full parse of the edited text) breaks for roxygen blocks
+/// resolving their markdown mode from the default.
+pub fn reparse_with_options(
+    old_root: &SyntaxNode,
+    old_text: &str,
+    old_diags: &[ParseDiagnostic],
+    edit: &Edit,
+    options: &ParseOptions,
+) -> Option<Reparsed> {
+    let md = options.roxygen_markdown_default;
+    let result = reparse_token(old_root, old_text, old_diags, edit, md)
+        .or_else(|| reparse_block(old_root, old_text, old_diags, edit, md))
+        .or_else(|| reparse_toplevel(old_root, old_text, old_diags, edit, md));
 
     if let Some(reparsed) = &result {
         debug_assert_eq!(
@@ -225,14 +248,34 @@ pub fn reparse_edits(
     edits: &[Edit],
     target: &str,
 ) -> Option<Reparsed> {
+    reparse_edits_with_options(
+        old_root,
+        old_text,
+        old_diags,
+        edits,
+        target,
+        &ParseOptions::default(),
+    )
+}
+
+/// [`reparse_edits`] with the [`ParseOptions`] the old tree was parsed under
+/// (see [`reparse_with_options`]).
+pub fn reparse_edits_with_options(
+    old_root: &SyntaxNode,
+    old_text: &str,
+    old_diags: &[ParseDiagnostic],
+    edits: &[Edit],
+    target: &str,
+    options: &ParseOptions,
+) -> Option<Reparsed> {
     let (first, rest) = edits.split_first()?;
 
     // Step 0 off the caller's tree; each later step off the prior step's tree.
-    let mut reparsed = reparse(old_root, old_text, old_diags, first)?;
+    let mut reparsed = reparse_with_options(old_root, old_text, old_diags, first, options)?;
     let mut text = first.apply(old_text);
     for edit in rest {
         let root = SyntaxNode::new_root(reparsed.green.clone());
-        reparsed = reparse(&root, &text, &reparsed.diagnostics, edit)?;
+        reparsed = reparse_with_options(&root, &text, &reparsed.diagnostics, edit, options)?;
         text = edit.apply(&text);
     }
 
@@ -261,6 +304,7 @@ fn reparse_token(
     old_text: &str,
     old_diags: &[ParseDiagnostic],
     edit: &Edit,
+    md_default: bool,
 ) -> Option<Reparsed> {
     let (s, e) = (edit.range.start, edit.range.end);
     let elem = old_root.covering_element(text_range(s, e));
@@ -284,7 +328,7 @@ fn reparse_token(
     new_text.replace_range((s - t0)..(e - t0), &edit.insert);
 
     // Re-lex in isolation: it must still be exactly one token of the same kind.
-    let relexed = lex(&new_text);
+    let relexed = lex_with_md(&new_text, md_default);
     let [only] = relexed.as_slice() else {
         return None;
     };
@@ -299,7 +343,7 @@ fn reparse_token(
     if let Some(next_char) = old_text[t1..].chars().next() {
         let mut probe = new_text.clone();
         probe.push(next_char);
-        let probe_toks = lex(&probe);
+        let probe_toks = lex_with_md(&probe, md_default);
         let first = probe_toks.first()?;
         if first.end != new_text.len() || syntax_kind_for(&first.kind) != token.kind() {
             return None;
@@ -337,6 +381,7 @@ fn reparse_block(
     old_text: &str,
     old_diags: &[ParseDiagnostic],
     edit: &Edit,
+    md_default: bool,
 ) -> Option<Reparsed> {
     let (s, e) = (edit.range.start, edit.range.end);
     let elem = old_root.covering_element(text_range(s, e));
@@ -365,7 +410,7 @@ fn reparse_block(
     let mut block_text = old_text[bstart..bend].to_string();
     block_text.replace_range((s - bstart)..(e - bstart), &edit.insert);
 
-    let (block_green, block_diags) = parse_block_in_isolation(&block_text)?;
+    let (block_green, block_diags) = parse_block_in_isolation(&block_text, md_default)?;
 
     let delta = edit.delta();
     let mut diagnostics: Vec<ParseDiagnostic> =
@@ -402,6 +447,7 @@ fn reparse_toplevel(
     old_text: &str,
     old_diags: &[ParseDiagnostic],
     edit: &Edit,
+    md_default: bool,
 ) -> Option<Reparsed> {
     let (s, e) = (edit.range.start, edit.range.end);
     let elem = old_root.covering_element(text_range(s, e));
@@ -439,7 +485,7 @@ fn reparse_toplevel(
     // Isolation parse: one expression consuming every token, of the same node
     // kind. Consume-all rejects the *shrink* case (the edit split the statement,
     // e.g. removing a trailing operator, so some tokens leak past the boundary).
-    let (stmt_green, stmt_diags) = parse_stmt_in_isolation(&stmt_text, stmt.kind())?;
+    let (stmt_green, stmt_diags) = parse_stmt_in_isolation(&stmt_text, stmt.kind(), md_default)?;
 
     // Forward-merge guard: reparsing the statement with the next sibling's text
     // appended must still end exactly at the statement's length. Rejects the
@@ -452,7 +498,7 @@ fn reparse_toplevel(
         Some(next) => usize::from(next.text_range().end()),
         None => old_text.len(),
     };
-    if !toplevel_boundary_stable(&stmt_text, &old_text[se..forward_end]) {
+    if !toplevel_boundary_stable(&stmt_text, &old_text[se..forward_end], md_default) {
         return None;
     }
 
@@ -491,10 +537,11 @@ fn reparse_toplevel(
 fn parse_stmt_in_isolation(
     stmt_text: &str,
     expected_kind: SyntaxKind,
+    md_default: bool,
 ) -> Option<(GreenNode, Vec<ParseDiagnostic>)> {
-    let tokens = rebalance_brackets(lex(stmt_text));
+    let tokens = rebalance_brackets(lex_with_md(stmt_text, md_default));
     let mut diagnostics = Vec::new();
-    let expr = parse_expr(&tokens, 0, 0, &mut diagnostics)?;
+    let expr = parse_expr(&tokens, 0, 0, &mut diagnostics, md_default)?;
     if expr.start != 0 || expr.end != tokens.len() {
         return None;
     }
@@ -513,7 +560,7 @@ fn parse_stmt_in_isolation(
 /// over the concatenation must consume a first expression that ends exactly at
 /// `stmt_text.len()`; anything else means the edit made the statement merge
 /// forward. Empty context (statement at end of file) is trivially stable.
-fn toplevel_boundary_stable(stmt_text: &str, forward_ctx: &str) -> bool {
+fn toplevel_boundary_stable(stmt_text: &str, forward_ctx: &str, md_default: bool) -> bool {
     if forward_ctx.is_empty() {
         return true;
     }
@@ -521,9 +568,9 @@ fn toplevel_boundary_stable(stmt_text: &str, forward_ctx: &str) -> bool {
     combined.push_str(stmt_text);
     combined.push_str(forward_ctx);
 
-    let tokens = rebalance_brackets(lex(&combined));
+    let tokens = rebalance_brackets(lex_with_md(&combined, md_default));
     let mut diagnostics = Vec::new();
-    let Some(expr) = parse_expr(&tokens, 0, 0, &mut diagnostics) else {
+    let Some(expr) = parse_expr(&tokens, 0, 0, &mut diagnostics, md_default) else {
         return false;
     };
     // Byte offset one past the last token the first expression consumed. A stable
@@ -538,10 +585,13 @@ fn toplevel_boundary_stable(stmt_text: &str, forward_ctx: &str) -> bool {
 /// `BLOCK_EXPR` it produces, with block-relative diagnostics. Returns `None` if
 /// the text does not parse to exactly one block consuming all tokens (e.g. the
 /// edit transiently unbalanced the braces) — the caller falls back.
-fn parse_block_in_isolation(block_text: &str) -> Option<(GreenNode, Vec<ParseDiagnostic>)> {
-    let tokens = rebalance_brackets(lex(block_text));
+fn parse_block_in_isolation(
+    block_text: &str,
+    md_default: bool,
+) -> Option<(GreenNode, Vec<ParseDiagnostic>)> {
+    let tokens = rebalance_brackets(lex_with_md(block_text, md_default));
     let mut diagnostics = Vec::new();
-    let expr = parse_expr(&tokens, 0, 0, &mut diagnostics)?;
+    let expr = parse_expr(&tokens, 0, 0, &mut diagnostics, md_default)?;
     if expr.start != 0 || expr.end != tokens.len() {
         return None;
     }

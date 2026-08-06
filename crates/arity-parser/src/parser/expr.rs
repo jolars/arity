@@ -65,8 +65,9 @@ pub(crate) fn parse_expr(
     start: usize,
     min_bp: u8,
     diagnostics: &mut Vec<ParseDiagnostic>,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    parse_expr_with_mode(tokens, start, min_bp, diagnostics, false, false)
+    parse_expr_with_mode(tokens, start, min_bp, diagnostics, false, false, md_default)
 }
 
 pub(crate) fn parse_expr_in_brackets(
@@ -74,8 +75,9 @@ pub(crate) fn parse_expr_in_brackets(
     start: usize,
     min_bp: u8,
     diagnostics: &mut Vec<ParseDiagnostic>,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    parse_expr_with_mode(tokens, start, min_bp, diagnostics, true, true)
+    parse_expr_with_mode(tokens, start, min_bp, diagnostics, true, true, md_default)
 }
 
 fn parse_expr_with_mode(
@@ -85,8 +87,9 @@ fn parse_expr_with_mode(
     diagnostics: &mut Vec<ParseDiagnostic>,
     allow_newline_prefix: bool,
     inside_brackets: bool,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    let ctx = ParserCtx::new(tokens);
+    let ctx = ParserCtx::new(tokens, md_default);
     let start_non_ws = if allow_newline_prefix {
         ctx.skip_ws_and_newlines(start)
     } else {
@@ -96,37 +99,49 @@ fn parse_expr_with_mode(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::IfKw)
     ) {
-        return parse_if_expr(tokens, start_non_ws, diagnostics);
+        return parse_if_expr(tokens, start_non_ws, diagnostics, md_default);
     }
     if matches!(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::ForKw)
     ) {
-        return parse_for_expr(tokens, start_non_ws, diagnostics);
+        return parse_for_expr(tokens, start_non_ws, diagnostics, md_default);
     }
     if matches!(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::WhileKw)
     ) {
-        return parse_while_expr(tokens, start_non_ws, diagnostics);
+        return parse_while_expr(tokens, start_non_ws, diagnostics, md_default);
     }
     if matches!(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::RepeatKw)
     ) {
-        return parse_repeat_expr(tokens, start_non_ws, diagnostics);
+        return parse_repeat_expr(tokens, start_non_ws, diagnostics, md_default);
     }
     if matches!(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::FunctionKw)
     ) {
-        return parse_function_expr(tokens, start_non_ws, inside_brackets, diagnostics);
+        return parse_function_expr(
+            tokens,
+            start_non_ws,
+            inside_brackets,
+            diagnostics,
+            md_default,
+        );
     }
     if matches!(
         tokens.get(start_non_ws).map(|t| &t.kind),
         Some(TokKind::LambdaFn)
     ) {
-        return parse_function_expr(tokens, start_non_ws, inside_brackets, diagnostics);
+        return parse_function_expr(
+            tokens,
+            start_non_ws,
+            inside_brackets,
+            diagnostics,
+            md_default,
+        );
     }
 
     let mut lhs = parse_prefix(
@@ -174,6 +189,7 @@ fn parse_expr_with_mode(
                 diagnostics,
                 true,
                 inside_brackets,
+                ctx.md_default(),
             ) else {
                 push_token_diagnostic(diagnostics, "expected assignment right-hand side", op);
                 return Some(error_expr_to_line_end(tokens, lhs.start, rhs_start));
@@ -214,6 +230,7 @@ fn parse_expr_with_mode(
                 diagnostics,
                 true,
                 inside_brackets,
+                ctx.md_default(),
             )
         };
         let Some(rhs) = rhs else {
@@ -337,6 +354,7 @@ fn parse_prefix(
                 diagnostics,
                 true,
                 inside_brackets,
+                ctx.md_default(),
             ) else {
                 push_token_diagnostic(diagnostics, "expected operand for unary operator", tok);
                 return Some(error_expr_to_line_end(tokens, i, operand_start));
@@ -375,8 +393,15 @@ fn parse_prefix(
             ) {
                 expr_start += 1;
             }
-            let Some(inner) = parse_expr_with_mode(tokens, expr_start, 0, diagnostics, true, true)
-            else {
+            let Some(inner) = parse_expr_with_mode(
+                tokens,
+                expr_start,
+                0,
+                diagnostics,
+                true,
+                true,
+                ctx.md_default(),
+            ) else {
                 push_token_diagnostic(diagnostics, "expected expression after '('", tok);
                 return Some(error_expr_to_line_end(tokens, i, inner_start));
             };
@@ -553,12 +578,17 @@ fn parse_block_expr(
             for idx in i..next {
                 events.push(Event::Tok(idx));
             }
-            i = crate::parser::roxygen::emit_roxygen_block(tokens, next, &mut events);
+            i = crate::parser::roxygen::emit_roxygen_block(
+                tokens,
+                next,
+                &mut events,
+                ctx.md_default(),
+            );
             continue;
         }
 
         let before = diagnostics.len();
-        if let Some(expr) = parse_expr(tokens, i, 0, diagnostics) {
+        if let Some(expr) = parse_expr(tokens, i, 0, diagnostics, ctx.md_default()) {
             // As at the root: a comment is an atom, not a statement.
             if !tokens[expr.start].kind.is_comment_like() {
                 let recovered = diagnostics.len() > before;
@@ -768,7 +798,12 @@ fn parse_call_expr(
             // of context. Group the whole roxygen block into this ARG (as the
             // block/root parsers do) so its sub-tokens are one comment-only
             // argument rather than a cascade of stray operands.
-            i = crate::parser::roxygen::emit_roxygen_block(tokens, i, &mut events);
+            i = crate::parser::roxygen::emit_roxygen_block(
+                tokens,
+                i,
+                &mut events,
+                ctx.md_default(),
+            );
             last_arg_was_comment_only = true;
         } else if is_named_arg(ctx, i) {
             // Named argument: ident = expr
@@ -806,7 +841,9 @@ fn parse_call_expr(
                     events.push(Event::Tok(idx));
                 }
                 i = value_idx;
-            } else if let Some(val) = parse_expr_in_brackets(tokens, value_idx, 0, diagnostics) {
+            } else if let Some(val) =
+                parse_expr_in_brackets(tokens, value_idx, 0, diagnostics, ctx.md_default())
+            {
                 for idx in val_start..val.start {
                     events.push(Event::Tok(idx));
                 }
@@ -817,7 +854,7 @@ fn parse_call_expr(
             }
         } else {
             // Positional argument.
-            if let Some(arg) = parse_expr_in_brackets(tokens, i, 0, diagnostics) {
+            if let Some(arg) = parse_expr_in_brackets(tokens, i, 0, diagnostics, ctx.md_default()) {
                 last_arg_was_comment_only = arg.end == arg.start + 1
                     && matches!(
                         tokens.get(arg.start).map(|t| &t.kind),
@@ -966,7 +1003,12 @@ fn parse_bracket_expr(
         if matches!(tokens.get(i).map(|t| &t.kind), Some(TokKind::RoxygenMarker)) {
             // See `parse_call_expr`: a `#'` line inside `[`/`[[` is a comment,
             // grouped into a single comment-only ARG.
-            i = crate::parser::roxygen::emit_roxygen_block(tokens, i, &mut events);
+            i = crate::parser::roxygen::emit_roxygen_block(
+                tokens,
+                i,
+                &mut events,
+                ctx.md_default(),
+            );
             last_arg_was_comment_only = true;
         } else if is_named_arg(ctx, i) {
             // Named subscript argument: `ident = expr` (e.g. `drop = FALSE`).
@@ -1004,7 +1046,9 @@ fn parse_bracket_expr(
                     events.push(Event::Tok(idx));
                 }
                 i = value_idx;
-            } else if let Some(val) = parse_expr_in_brackets(tokens, value_idx, 0, diagnostics) {
+            } else if let Some(val) =
+                parse_expr_in_brackets(tokens, value_idx, 0, diagnostics, ctx.md_default())
+            {
                 for idx in val_start..val.start {
                     events.push(Event::Tok(idx));
                 }
@@ -1013,7 +1057,9 @@ fn parse_bracket_expr(
             } else {
                 i = val_start;
             }
-        } else if let Some(arg) = parse_expr_in_brackets(tokens, i, 0, diagnostics) {
+        } else if let Some(arg) =
+            parse_expr_in_brackets(tokens, i, 0, diagnostics, ctx.md_default())
+        {
             last_arg_was_comment_only = arg.end == arg.start + 1
                 && matches!(
                     tokens.get(arg.start).map(|t| &t.kind),

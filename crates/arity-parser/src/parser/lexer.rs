@@ -257,7 +257,15 @@ fn three_bytes(bytes: &[u8], i: usize, pat: &[u8; 3]) -> bool {
         && bytes.get(i + 2) == Some(&pat[2])
 }
 
+#[cfg(test)]
 pub(crate) fn lex(input: &str) -> Vec<Token> {
+    lex_with_md(input, false)
+}
+
+/// Lex `input` with `md_default` as the markdown mode of roxygen blocks
+/// carrying no `@md`/`@noMd` directive (see
+/// [`ParseOptions`](crate::parser::core::ParseOptions)).
+pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
     let mut out = Vec::new();
     let mut i = 0usize;
     let bytes = input.as_bytes();
@@ -321,7 +329,7 @@ pub(crate) fn lex(input: &str) -> Vec<Token> {
                     // scan the whole block for an `@md`/`@noMd` directive.
                     if start >= rox_block_end {
                         (rox_md, rox_block_end) =
-                            crate::parser::roxygen::resolve_roxygen_block(input, start);
+                            crate::parser::roxygen::resolve_roxygen_block(input, start, md_default);
                         rox_no_md = false;
                     }
                     // Leave a trailing `\r` (and the `\n`) to the main loop so

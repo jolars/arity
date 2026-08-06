@@ -44,20 +44,21 @@ pub(crate) fn is_roxygen_comment(text: &str) -> bool {
 /// `input[start]` (the `#` of a roxygen comment), and report the byte offset of
 /// that block's final line's terminating newline (or `input.len()` at EOF).
 ///
-/// The mode is **off by default** (Rd-first); an `@md` directive line in the
-/// block turns it on and an `@noMd` line turns it off (the last one in the block
-/// wins, matching roxygen2's block-level toggle). The loose-file global default
-/// is intentionally *not* honored yet — only an explicit per-block `@md` enables
-/// markdown — so no existing block changes meaning.
+/// The mode starts at `md_default` — the caller-supplied global default
+/// ([`ParseOptions`](crate::parser::core::ParseOptions)'s
+/// `roxygen_markdown_default`; `false` is Rd-first, roxygen2's loose-file
+/// default). An `@md` directive line in the block turns it on and an `@noMd`
+/// line turns it off (the last one in the block wins, matching roxygen2's
+/// block-level toggle).
 ///
 /// A block is a maximal run of roxygen-comment lines; a continuation line may
 /// carry leading indentation before its `#'` (mirroring the parser's block
 /// grouping). The returned end offset lets the caller cache one resolution per
 /// block: every line of the block starts before it, and the next block's first
 /// line starts at or after it.
-pub(crate) fn resolve_roxygen_block(input: &str, start: usize) -> (bool, usize) {
+pub(crate) fn resolve_roxygen_block(input: &str, start: usize, md_default: bool) -> (bool, usize) {
     let bytes = input.as_bytes();
-    let mut md = false;
+    let mut md = md_default;
     let mut pos = start;
     loop {
         let line_end = line_run_end(bytes, pos);

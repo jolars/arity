@@ -37,7 +37,12 @@ use crate::syntax::SyntaxKind;
 /// `Whitespace`) between two roxygen lines is emitted *inside* the block at the
 /// currently open level; the trailing `Newline` after the final line is left for
 /// the caller, so blank-line and statement separation are unaffected.
-pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+pub(crate) fn emit_roxygen_block(
+    tokens: &[Token],
+    start: usize,
+    events: &mut Vec<Event>,
+    md_default: bool,
+) -> usize {
     // Build the block's events into a local buffer, run the `@md` inline pass over
     // it (resolving emphasis/strong delimiter runs and multi-line raw-HTML spans
     // into nodes), then splice the result into the caller's stream. The pass is a
@@ -47,8 +52,8 @@ pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Ve
     // has no mode-carrying leaf (the same re-derivation the indented-code
     // recognition uses).
     let mut block = Vec::new();
-    let end = emit_roxygen_block_events(tokens, start, &mut block);
-    super::inline::resolve_emphasis(tokens, &mut block, block_md(tokens, start));
+    let end = emit_roxygen_block_events(tokens, start, &mut block, md_default);
+    super::inline::resolve_emphasis(tokens, &mut block, block_md(tokens, start, md_default));
     events.append(&mut block);
     end
 }
@@ -60,9 +65,11 @@ pub(crate) fn emit_roxygen_block(tokens: &[Token], start: usize, events: &mut Ve
 /// decide whether a >= 5-column indent is a code block or literal Rd prose. This
 /// mirrors the projector's own per-block `block_md`; it reuses the lexer's directive
 /// matcher [`super::lex::roxygen_md_directive`] so what counts as `@md`/`@noMd`
-/// stays a single source of truth. Default off, last directive in the block wins.
-fn block_md(tokens: &[Token], start: usize) -> bool {
-    let mut md = false;
+/// stays a single source of truth. The mode starts at `md_default` (the
+/// caller-supplied global default, matching the lexer's resolution), last
+/// directive in the block wins.
+fn block_md(tokens: &[Token], start: usize, md_default: bool) -> bool {
+    let mut md = md_default;
     let mut i = start;
     loop {
         // Reconstruct the line text (marker + body tokens) and check for a directive.
@@ -92,8 +99,13 @@ fn block_md(tokens: &[Token], start: usize) -> bool {
     md
 }
 
-fn emit_roxygen_block_events(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
-    let md = block_md(tokens, start);
+fn emit_roxygen_block_events(
+    tokens: &[Token],
+    start: usize,
+    events: &mut Vec<Event>,
+    md_default: bool,
+) -> usize {
+    let md = block_md(tokens, start, md_default);
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_BLOCK));
 

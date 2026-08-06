@@ -5,11 +5,18 @@ use crate::parser::lexer::Token;
 
 pub(crate) struct ParserCtx<'a> {
     tokens: &'a [Token],
+    /// The markdown mode of a roxygen block with no `@md`/`@noMd` directive
+    /// (see `ParseOptions`), threaded to the nested `emit_roxygen_block` sites.
+    md_default: bool,
 }
 
 impl<'a> ParserCtx<'a> {
-    pub(crate) fn new(tokens: &'a [Token]) -> Self {
-        Self { tokens }
+    pub(crate) fn new(tokens: &'a [Token], md_default: bool) -> Self {
+        Self { tokens, md_default }
+    }
+
+    pub(crate) fn md_default(&self) -> bool {
+        self.md_default
     }
 
     pub(crate) fn token(&self, i: usize) -> Option<&'a Token> {

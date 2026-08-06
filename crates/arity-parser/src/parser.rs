@@ -16,8 +16,11 @@ pub mod roxygen;
 pub(crate) mod structural;
 pub(crate) mod tree_builder;
 
-pub use core::{ParseDiagnostic, ParseOutput, parse, reconstruct};
+pub use core::{
+    ParseDiagnostic, ParseOptions, ParseOutput, parse, parse_with_options, reconstruct,
+};
 pub use reparse::{
     Edit, ReparseKind, Reparsed, apply_edits, diff_edit, map_range_through_edit,
-    map_range_through_edits, reparse, reparse_edits,
+    map_range_through_edits, reparse, reparse_edits, reparse_edits_with_options,
+    reparse_with_options,
 };

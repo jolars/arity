@@ -8,8 +8,7 @@ use crate::parser::recovery::push_empty_error_node;
 use crate::syntax::SyntaxKind;
 
 fn skip_clause_trivia(tokens: &[Token], mut i: usize) -> usize {
-    let ctx = ParserCtx::new(tokens);
-    while ctx.token(i).is_some_and(|t| {
+    while tokens.get(i).is_some_and(|t| {
         matches!(t.kind, TokKind::Whitespace | TokKind::Newline) || t.kind.is_comment_like()
     }) {
         i += 1;
@@ -21,8 +20,9 @@ pub(crate) fn parse_if_expr(
     tokens: &[Token],
     start: usize,
     diagnostics: &mut Vec<ParseDiagnostic>,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    let ctx = ParserCtx::new(tokens);
+    let ctx = ParserCtx::new(tokens, md_default);
     let if_tok = tokens.get(start)?;
     let mut events = vec![Event::Start(SyntaxKind::IF_EXPR), Event::Tok(start)];
     let mut cursor = start + 1;
@@ -45,9 +45,9 @@ pub(crate) fn parse_if_expr(
     }
 
     let cond_parse = if saw_lparen {
-        parse_expr_in_brackets(tokens, cond_start, 0, diagnostics)
+        parse_expr_in_brackets(tokens, cond_start, 0, diagnostics, md_default)
     } else {
-        parse_expr(tokens, cond_start, 0, diagnostics)
+        parse_expr(tokens, cond_start, 0, diagnostics, md_default)
     };
     if let Some(cond) = cond_parse {
         push_range(&mut events, cursor, cond.start);
@@ -78,7 +78,7 @@ pub(crate) fn parse_if_expr(
     }
 
     let then_start = skip_clause_trivia(tokens, cursor);
-    if let Some(then_expr) = parse_expr(tokens, then_start, 0, diagnostics) {
+    if let Some(then_expr) = parse_expr(tokens, then_start, 0, diagnostics, md_default) {
         push_range(&mut events, cursor, then_expr.start);
         events.extend(then_expr.events);
         cursor = then_expr.end;
@@ -101,7 +101,7 @@ pub(crate) fn parse_if_expr(
         cursor = else_idx + 1;
         let else_start = skip_clause_trivia(tokens, cursor);
 
-        if let Some(parsed_else) = parse_expr(tokens, else_start, 0, diagnostics) {
+        if let Some(parsed_else) = parse_expr(tokens, else_start, 0, diagnostics, md_default) {
             push_range(&mut events, cursor, parsed_else.start);
             events.extend(parsed_else.events);
             cursor = parsed_else.end;
@@ -136,8 +136,9 @@ pub(crate) fn parse_while_expr(
     tokens: &[Token],
     start: usize,
     diagnostics: &mut Vec<ParseDiagnostic>,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    let ctx = ParserCtx::new(tokens);
+    let ctx = ParserCtx::new(tokens, md_default);
     let while_tok = tokens.get(start)?;
     let mut events = vec![Event::Start(SyntaxKind::WHILE_EXPR), Event::Tok(start)];
     let mut cursor = start + 1;
@@ -160,9 +161,9 @@ pub(crate) fn parse_while_expr(
     }
 
     let cond_parse = if saw_lparen {
-        parse_expr_in_brackets(tokens, cond_start, 0, diagnostics)
+        parse_expr_in_brackets(tokens, cond_start, 0, diagnostics, md_default)
     } else {
-        parse_expr(tokens, cond_start, 0, diagnostics)
+        parse_expr(tokens, cond_start, 0, diagnostics, md_default)
     };
     if let Some(cond) = cond_parse {
         push_range(&mut events, cursor, cond.start);
@@ -194,7 +195,7 @@ pub(crate) fn parse_while_expr(
     }
 
     let body_start = ctx.skip_ws_and_newlines(cursor);
-    if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics) {
+    if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics, md_default) {
         push_range(&mut events, cursor, body_expr.start);
         events.extend(body_expr.events);
         cursor = body_expr.end;
@@ -222,14 +223,15 @@ pub(crate) fn parse_repeat_expr(
     tokens: &[Token],
     start: usize,
     diagnostics: &mut Vec<ParseDiagnostic>,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    let ctx = ParserCtx::new(tokens);
+    let ctx = ParserCtx::new(tokens, md_default);
     let repeat_tok = tokens.get(start)?;
     let mut events = vec![Event::Start(SyntaxKind::REPEAT_EXPR), Event::Tok(start)];
     let mut cursor = start + 1;
 
     let body_start = ctx.skip_ws_and_newlines(cursor);
-    if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics) {
+    if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics, md_default) {
         push_range(&mut events, cursor, body_expr.start);
         events.extend(body_expr.events);
         cursor = body_expr.end;
@@ -257,8 +259,9 @@ pub(crate) fn parse_for_expr(
     tokens: &[Token],
     start: usize,
     diagnostics: &mut Vec<ParseDiagnostic>,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    let ctx = ParserCtx::new(tokens);
+    let ctx = ParserCtx::new(tokens, md_default);
     let for_tok = tokens.get(start)?;
     let mut events = vec![Event::Start(SyntaxKind::FOR_EXPR), Event::Tok(start)];
     let mut cursor = start + 1;
@@ -309,9 +312,9 @@ pub(crate) fn parse_for_expr(
 
     let seq_start = skip_clause_trivia(tokens, cursor);
     let seq_parse = if saw_lparen {
-        parse_expr_in_brackets(tokens, seq_start, 0, diagnostics)
+        parse_expr_in_brackets(tokens, seq_start, 0, diagnostics, md_default)
     } else {
-        parse_expr(tokens, seq_start, 0, diagnostics)
+        parse_expr(tokens, seq_start, 0, diagnostics, md_default)
     };
     if let Some(seq_expr) = seq_parse {
         push_range(&mut events, cursor, seq_expr.start);
@@ -344,7 +347,7 @@ pub(crate) fn parse_for_expr(
     }
 
     let body_start = ctx.skip_ws_and_newlines(cursor);
-    if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics) {
+    if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics, md_default) {
         push_range(&mut events, cursor, body_expr.start);
         events.extend(body_expr.events);
         cursor = body_expr.end;
@@ -369,8 +372,9 @@ pub(crate) fn parse_function_expr(
     start: usize,
     inside_brackets: bool,
     diagnostics: &mut Vec<ParseDiagnostic>,
+    md_default: bool,
 ) -> Option<ExprParse> {
-    let ctx = ParserCtx::new(tokens);
+    let ctx = ParserCtx::new(tokens, md_default);
     let function_tok = tokens.get(start)?;
     let mut events = vec![Event::Start(SyntaxKind::FUNCTION_EXPR), Event::Tok(start)];
     let mut cursor = start + 1;
@@ -441,7 +445,7 @@ pub(crate) fn parse_function_expr(
                         }
                         i = value_idx;
                     } else if let Some(val) =
-                        parse_expr_in_brackets(tokens, value_idx, 0, diagnostics)
+                        parse_expr_in_brackets(tokens, value_idx, 0, diagnostics, md_default)
                     {
                         for idx in val_start..val.start {
                             events.push(Event::Tok(idx));
@@ -496,9 +500,9 @@ pub(crate) fn parse_function_expr(
     // g(x), NA)`) keeps going. At top level the newline ends it, so `function(x)
     // x` followed by `+1` on the next line stays two statements.
     let body = if inside_brackets {
-        parse_expr_in_brackets(tokens, body_start, 0, diagnostics)
+        parse_expr_in_brackets(tokens, body_start, 0, diagnostics, md_default)
     } else {
-        parse_expr(tokens, body_start, 0, diagnostics)
+        parse_expr(tokens, body_start, 0, diagnostics, md_default)
     };
     if let Some(body_expr) = body {
         push_range(&mut events, cursor, body_expr.start);
