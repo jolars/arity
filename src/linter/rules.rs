@@ -90,6 +90,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(documentation::RoxygenParam),
         Box::new(documentation::RoxygenExamples),
         Box::new(meta::MisnamedSuppression),
+        Box::new(meta::BlanketSuppression),
     ]
 }
 

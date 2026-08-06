@@ -65,3 +65,4 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 ## Meta
 
 - [`misnamed-suppression`](rules/misnamed-suppression.md)
+- [`blanket-suppression`](rules/blanket-suppression.md)

@@ -5127,3 +5127,46 @@ fn fixed_output_selecting(src: &str, rule: &str) -> String {
     assert_eq!(fix.applicability, Applicability::Safe);
     apply_fixes(src, std::slice::from_ref(fix), false).output
 }
+
+#[test]
+fn blanket_suppression_flags_the_unscoped_file_directive() {
+    let src = "# arity-ignore-file: generated, do not lint\nx <- 1\n";
+    let d = meta_rules(src, "blanket-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(
+        &src[d[0].range],
+        "# arity-ignore-file: generated, do not lint"
+    );
+    assert!(d[0].fix.is_none(), "report-only");
+}
+
+#[test]
+fn blanket_suppression_flags_a_directive_naming_no_rule() {
+    // `# arity-ignore` with no rule ID parses to nothing and suppresses
+    // nothing — silently, before this rule existed.
+    let d = meta_rules("# arity-ignore\nx <- 1\n", "blanket-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+}
+
+#[test]
+fn blanket_suppression_ignores_a_rule_scoped_file_directive() {
+    // Broad in *range*, but scoped to one rule — the legitimate idiom for a
+    // generated file.
+    let src = "# arity-ignore-file unused-binding: generated\nx <- 1\n";
+    assert!(meta_rules(src, "blanket-suppression").is_empty());
+}
+
+#[test]
+fn blanket_suppression_ignores_an_ordinary_node_directive() {
+    let src = "# arity-ignore unused-binding: temp\nx <- 1\n";
+    assert!(meta_rules(src, "blanket-suppression").is_empty());
+}
+
+#[test]
+fn blanket_file_directive_does_not_suppress_its_own_finding() {
+    // The directive suppresses every rule, including this one. If it silenced
+    // the finding about itself the rule could never fire at all.
+    let src = "# arity-ignore-file: shush\nx <- 1\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(rules.contains(&"blanket-suppression"), "got {rules:?}");
+}

@@ -13,6 +13,8 @@
 //! `# arity-ignore` on the line above it; use the file-wide form
 //! (`# arity-ignore-file <meta-rule>: …`) or `[lint] ignore`.
 
+mod blanket_suppression;
 mod misnamed_suppression;
 
+pub use blanket_suppression::BlanketSuppression;
 pub use misnamed_suppression::MisnamedSuppression;

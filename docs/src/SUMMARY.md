@@ -59,3 +59,4 @@
   - [roxygen-param](reference/rules/roxygen-param.md)
   - [roxygen-examples](reference/rules/roxygen-examples.md)
   - [misnamed-suppression](reference/rules/misnamed-suppression.md)
+  - [blanket-suppression](reference/rules/blanket-suppression.md)
