@@ -92,6 +92,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(meta::MisnamedSuppression),
         Box::new(meta::BlanketSuppression),
         Box::new(meta::UnexplainedSuppression),
+        Box::new(meta::OutdatedSuppression),
     ]
 }
 

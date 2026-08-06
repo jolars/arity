@@ -1,0 +1,34 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+# `outdated-suppression`
+
+Flags a `# arity-ignore` directive that suppressed nothing on this run — the code it was written for has changed, but the directive stayed. A stale suppression is misleading (it asserts arity is wrong at a spot where arity says nothing) and it is a trap: it will silence a real finding if the shape ever comes back. The fix deletes the directive.
+
+To avoid reporting a directive that is merely *dormant*, the rule only fires when the rule the directive names actually ran — a rule excluded by `select`/`ignore`, or one that is off by default, leaves its directives alone — or when the directive is dangling, with no code after it to attach to. Directives naming no rule are left to `blanket-suppression`, and unknown rule IDs to `misnamed-suppression`.
+
+This rule is **enabled by default**.
+
+`x` is read, so `unused-binding` finds nothing and the directive is dead:
+
+```r
+# arity-ignore unused-binding: no longer needed
+x <- 1
+print(x)
+```
+
+```text
+warning: outdated-suppression
+ --> example.R:1:1
+  |
+1 | # arity-ignore unused-binding: no longer needed
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `unused-binding` reports nothing here; this suppression is no longer needed
+```
+
+After applying the fix:
+
+```r
+x <- 1
+print(x)
+```

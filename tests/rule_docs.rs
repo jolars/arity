@@ -5,9 +5,8 @@
 
 use std::path::Path;
 
-use arity::config::LintConfig;
 use arity::linter::check_document;
-use arity::linter::docs::render_rule_doc;
+use arity::linter::docs::{example_lint_config, render_rule_doc};
 use arity::linter::rules::all_rules;
 
 /// Pin the rendered reference page for every documented rule. Any change to a
@@ -47,10 +46,7 @@ fn every_rule_is_documented() {
 fn documented_examples_actually_trigger() {
     for rule in all_rules() {
         for example in rule.examples() {
-            let config = LintConfig {
-                select: Some(vec![rule.id().to_string()]),
-                ..Default::default()
-            };
+            let config = example_lint_config(rule.as_ref());
             let diagnostics = check_document(Path::new("example.R"), example.source, &config)
                 .expect("linting a documented example should not error");
             assert!(

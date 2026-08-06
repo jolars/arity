@@ -320,6 +320,40 @@ pub fn deletion_span(src: &str, range: rowan::TextRange) -> (usize, usize) {
     (start, end)
 }
 
+/// The byte span to delete in order to remove a comment.
+///
+/// Deliberately *not* [`deletion_span`]: that widens over following blank lines,
+/// which would swallow a separator the author put there and — worse — make the
+/// spans of two comments on consecutive lines overlap, so `apply_fixes` would
+/// drop one of them.
+///
+/// Two shapes, distinguished by what precedes the comment on its line:
+///
+/// - **own line** (only indentation before it): the line goes, terminator and
+///   all, leaving the next line's indentation untouched.
+/// - **trailing** (code before it): from the end of that code to the end of the
+///   comment, so the separating whitespace goes too but the newline stays.
+///
+/// Both leave parseable R by construction — a comment is trivia, and neither
+/// shape removes any non-comment text.
+pub fn comment_deletion_span(src: &str, comment: rowan::TextRange) -> (usize, usize) {
+    let bytes = src.as_bytes();
+
+    // Walk back over this line's horizontal whitespace.
+    let mut start = usize::from(comment.start());
+    while start > 0 && matches!(bytes[start - 1], b' ' | b'\t') {
+        start -= 1;
+    }
+
+    let own_line = start == 0 || matches!(bytes[start - 1], b'\n' | b'\r');
+    if own_line {
+        (start, consume_newline(bytes, usize::from(comment.end())))
+    } else {
+        // Code precedes it: keep the newline, drop the separating whitespace.
+        (start, usize::from(comment.end()))
+    }
+}
+
 /// Advance past a single `\n` or `\r\n` at `i`, else return `i` unchanged.
 fn consume_newline(bytes: &[u8], i: usize) -> usize {
     match bytes.get(i) {

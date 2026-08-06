@@ -25,6 +25,24 @@ fn example_path() -> PathBuf {
     PathBuf::from("example.R")
 }
 
+/// The rule set an example snippet is linted under: the rule itself, plus
+/// whatever it declares via [`Rule::doc_select`].
+///
+/// Restricting `select` keeps an example from tripping an unrelated rule. Some
+/// rules need company all the same — `outdated-suppression` can only tell a
+/// stale directive from a dormant one if the suppressed rule actually ran.
+///
+/// Shared with `tests/rule_docs.rs`, so the pinned pages and the "every example
+/// triggers its rule" check agree on what is enabled.
+pub fn example_lint_config(rule: &dyn Rule) -> LintConfig {
+    let mut select = vec![rule.id().to_string()];
+    select.extend(rule.doc_select().iter().map(|id| id.to_string()));
+    LintConfig {
+        select: Some(select),
+        ..Default::default()
+    }
+}
+
 /// Render the markdown reference page for a single rule.
 pub fn render_rule_doc(rule: &dyn Rule) -> String {
     let mut out = String::new();
@@ -45,11 +63,7 @@ pub fn render_rule_doc(rule: &dyn Rule) -> String {
     };
     let _ = writeln!(out, "{status}");
 
-    // Restrict to this rule so an example can't trip a different one.
-    let config = LintConfig {
-        select: Some(vec![id.to_string()]),
-        ..Default::default()
-    };
+    let config = example_lint_config(rule);
 
     for example in rule.examples() {
         let _ = writeln!(out);

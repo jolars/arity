@@ -4497,6 +4497,15 @@ fn assert_fixed_output_is_clean(input: &str) {
 #[test]
 fn fixed_output_is_parseable_and_clean() {
     let cases = [
+        // meta/suppression rules (misnamed rename, outdated delete)
+        "# arity-ignore unusd-binding: typo\nx <- 1\nprint(x)\n",
+        "# arity-ignore browser: stale\nx <- 1\nprint(x)\n",
+        "f <- function() {\n  # arity-ignore browser: stale\n  x <- 1\n  print(x)\n}\n",
+        "x <- 1  # arity-ignore browser: stale\nprint(x)\n",
+        "# arity-ignore browser: a\n# arity-ignore repeat: b\nx <- 1\nprint(x)\n",
+        "# arity-ignore-file: blanket\nx <- 1\nprint(x)\n",
+        "# arity-ignore\nx <- 1\nprint(x)\n",
+        "x <- 1\nprint(x)\n# arity-ignore browser: dangling\n",
         // assignment-in-condition (`=` → `==`)
         "if (x = 1) print(x)\n",
         "while (y = f()) g()\n",
@@ -5216,4 +5225,134 @@ fn unexplained_suppression_spans_the_whole_directive() {
     let src = "# arity-ignore unused-binding\nx <- 1\n";
     let d = meta_rules(src, "unexplained-suppression");
     assert_eq!(&src[d[0].range], "# arity-ignore unused-binding");
+}
+
+#[test]
+fn outdated_suppression_flags_a_directive_that_matched_nothing() {
+    // `unused-binding` runs and finds nothing (`x` is read), so the directive
+    // is stale.
+    let src = "# arity-ignore unused-binding: no longer needed\nx <- 1\nprint(x)\n";
+    let d = diagnostics_selecting(src, &["outdated-suppression", "unused-binding"]);
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(d[0].rule, "outdated-suppression");
+    assert_eq!(
+        &src[d[0].range],
+        "# arity-ignore unused-binding: no longer needed"
+    );
+}
+
+#[test]
+fn outdated_suppression_ignores_a_directive_that_did_its_job() {
+    let src = "# arity-ignore unused-binding: intentional\nx <- 1\n";
+    let d = diagnostics_selecting(src, &["outdated-suppression", "unused-binding"]);
+    assert!(d.is_empty(), "got {d:?}");
+}
+
+#[test]
+fn outdated_suppression_ignores_a_directive_for_a_rule_that_did_not_run() {
+    // Without `unused-binding` in the rule set the directive is dormant, not
+    // stale — reporting it would depend on the run's configuration.
+    let src = "# arity-ignore unused-binding: intentional\nx <- 1\nprint(x)\n";
+    assert!(meta_rules(src, "outdated-suppression").is_empty());
+}
+
+#[test]
+fn outdated_suppression_ignores_an_unknown_rule_id() {
+    // `misnamed-suppression` owns that shape; the two must never both fire on
+    // one comment.
+    let src = "# arity-ignore not-a-rule: r\nx <- 1\nprint(x)\n";
+    let d = diagnostics_selecting(src, &["outdated-suppression", "misnamed-suppression"]);
+    let rules: Vec<&str> = d.iter().map(|d| d.rule).collect();
+    assert_eq!(rules, vec!["misnamed-suppression"], "got {d:?}");
+}
+
+#[test]
+fn outdated_suppression_ignores_a_blanket_directive() {
+    // Whether "every rule" found nothing is not answerable under a partial
+    // `select`; `blanket-suppression` flags that shape with a better message.
+    let src = "# arity-ignore-file: shush\nx <- 1\nprint(x)\n";
+    assert!(meta_rules(src, "outdated-suppression").is_empty());
+}
+
+#[test]
+fn outdated_suppression_flags_a_dangling_directive() {
+    // Nothing follows it, so it can never match — stale regardless of which
+    // rules ran, hence reportable even with only this rule selected.
+    let src = "x <- 1\nprint(x)\n# arity-ignore unused-binding: dangling\n";
+    let d = meta_rules(src, "outdated-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+}
+
+#[test]
+fn outdated_suppression_flags_an_unused_file_directive() {
+    let src = "# arity-ignore-file unused-binding: stale\nx <- 1\nprint(x)\n";
+    let d = diagnostics_selecting(src, &["outdated-suppression", "unused-binding"]);
+    assert_eq!(d.len(), 1, "got {d:?}");
+}
+
+#[test]
+fn outdated_suppression_fix_deletes_the_whole_line() {
+    let src = "# arity-ignore unused-binding: stale\nx <- 1\nprint(x)\n";
+    assert_eq!(
+        fixed_output_selecting_all(src, &["outdated-suppression", "unused-binding"]),
+        "x <- 1\nprint(x)\n",
+    );
+}
+
+#[test]
+fn outdated_suppression_fix_keeps_indentation_off_the_next_line() {
+    let src = "f <- function() {\n  # arity-ignore browser: stale\n  x <- 1\n  print(x)\n}\n";
+    assert_eq!(
+        fixed_output_selecting_all(src, &["outdated-suppression", "browser"]),
+        "f <- function() {\n  x <- 1\n  print(x)\n}\n",
+    );
+}
+
+#[test]
+fn outdated_suppression_fix_trims_a_trailing_directive_to_the_code() {
+    let src = "x <- 1  # arity-ignore browser: stale\nprint(x)\n";
+    assert_eq!(
+        fixed_output_selecting_all(src, &["outdated-suppression", "browser"]),
+        "x <- 1\nprint(x)\n",
+    );
+}
+
+#[test]
+fn outdated_suppression_fix_handles_crlf() {
+    let src = "# arity-ignore browser: stale\r\nx <- 1\r\nprint(x)\r\n";
+    assert_eq!(
+        fixed_output_selecting_all(src, &["outdated-suppression", "browser"]),
+        "x <- 1\r\nprint(x)\r\n",
+    );
+}
+
+#[test]
+fn outdated_suppression_removes_two_adjacent_stale_directives() {
+    // Adjacent (not overlapping) deletion spans, so `apply_fixes` keeps both.
+    let src = "# arity-ignore browser: a\n# arity-ignore repeat: b\nx <- 1\nprint(x)\n";
+    assert_eq!(
+        fixed_output_selecting_all(src, &["outdated-suppression", "browser", "repeat"]),
+        "x <- 1\nprint(x)\n",
+    );
+}
+
+#[test]
+fn meta_finding_is_suppressible_file_wide() {
+    let src =
+        "# arity-ignore-file misnamed-suppression: known\n# arity-ignore not-a-rule: r\nx <- 1\n";
+    assert!(meta_rules(src, "misnamed-suppression").is_empty());
+}
+
+/// `fixed_output_all`, but with the rule set restricted to `rules`.
+fn fixed_output_selecting_all(src: &str, rules: &[&str]) -> String {
+    let diags = diagnostics_selecting(src, rules);
+    let fixes: Vec<_> = diags.iter().filter_map(|d| d.fix.clone()).collect();
+    assert!(
+        !fixes.is_empty(),
+        "expected at least one fix, got {diags:?}"
+    );
+    for fix in &fixes {
+        assert_eq!(fix.applicability, Applicability::Safe);
+    }
+    apply_fixes(src, &fixes, false).output
 }

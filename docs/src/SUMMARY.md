@@ -61,3 +61,4 @@
   - [misnamed-suppression](reference/rules/misnamed-suppression.md)
   - [blanket-suppression](reference/rules/blanket-suppression.md)
   - [unexplained-suppression](reference/rules/unexplained-suppression.md)
+  - [outdated-suppression](reference/rules/outdated-suppression.md)
