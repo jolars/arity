@@ -17,6 +17,14 @@ pub mod ast;
 pub mod parser;
 pub mod syntax;
 
+/// The `rowan` version this crate's CST types are built on.
+///
+/// [`format_range`] takes a `rowan::TextRange`, so an embedder has to be able
+/// to name it. Re-exporting the dependency keeps that caller version-matched
+/// with us instead of making them guess a compatible `rowan` in their own
+/// `Cargo.toml`.
+pub use rowan;
+
 pub use formatter::{
     FormatError, FormatStyle, LineEnding, RangeFormatted, format, format_node, format_range,
     format_with_options, format_with_style,
