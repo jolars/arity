@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `any-duplicated`
+### `any-duplicated`
 
 Flag `any(duplicated(x))`, which is the purpose-built `anyDuplicated(x) > 0`—faster (it short-circuits and builds no intermediate logical vector) and clearer.
 

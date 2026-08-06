@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `unexplained-suppression`
+### `unexplained-suppression`
 
 Flags a `# arity-ignore` directive that carries no reason — the text after the `:`. A suppression is a standing claim that the linter is wrong at this spot, and without a reason the next reader cannot tell a considered exception from noise someone silenced under deadline, so it becomes permanent by default. Disabled by default, since requiring reasons is a house style rather than a defect; enable it with `select`. Report-only: writing the reason is the fix, and inventing one would fabricate a justification.
 

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `implicit-assignment`
+### `implicit-assignment`
 
 Flag an assignment (`<-`, `=`, `<<-`, `->`, `->>`) nested inside a call or subscript argument, e.g. `mean(x <- 1:10)`. The binding runs as a side effect of the argument and is easy to miss; assign on its own line instead. The `if`/`while` condition case is covered by `assignment-in-condition`, and the data.table / rlang walrus (`:=`) is left alone.
 

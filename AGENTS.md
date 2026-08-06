@@ -122,8 +122,10 @@ All commands honor an `arity.toml` discovered by an ancestor walk
 
 The documentation site (`docs/`) is an mdBook. Its reference pages are
 generated: `build.rs` writes `docs/src/reference/cli.md` from the clap CLI, and
-`cargo run --example docgen` renders the per-rule pages (by running the real
-linter on each rule's examples), `version.md`, and the benchmark partials
+`cargo run --example docgen` renders the whole rule reference
+(`docs/src/reference/rules.md`—one `###` section per rule keyed by its ID, plus
+the index over them, by running the real linter on each rule's examples),
+`version.md`, and the benchmark partials
 (`benchmarks_meta.md`/`benchmarks_results.md`, rendered by `src/bench_docs.rs`
 from the committed `benches/benchmark_results.json`). `mdbook build docs` then
 builds the site; `examples/canonical.rs` and `examples/sitemap.rs` post-process
@@ -289,15 +291,16 @@ rendered-flat `conditional_group` candidates.
 `LintStatus` (`Clean`/`Findings`/`ParseDiagnostics`); parse diagnostics
 block linting a file. The linter is **purely semantic**: anything the
 formatter's `--check` mode can catch belongs to the formatter, not here. Ships
-47 rules across six categories (12 correctness, 11 suspicious, 5 readability,
+48 rules across six categories (12 correctness, 12 suspicious, 5 readability,
 10 performance, 5 documentation, 4 meta) with autofixes, `# arity-ignore`
-suppression, and generated per-rule docs. The `meta` rules are the odd ones out:
+suppression, and a generated rule reference. The `meta` rules are the odd ones out:
 they lint arity's own suppression directives rather than R code, reading the
 parsed directive list off `RuleContext::suppressions`. `outdated-suppression`
 runs on the `Rule::check_suppressions` post-pass, because "did this directive
 match anything" is a fact about the driver's filtering step and does not exist
 until every rule has emitted. `src/linter/rules.rs` is the **single source of
-truth** registry (`all_rules`, from which `all_rule_ids` is derived) and owns
+truth** registry (`rules_by_category`, from which `all_rules`, `all_rule_ids`,
+and the reference page's category sections are all derived) and owns
 the dispatch: rules declare the `SyntaxKind`s they care about via
 `Rule::interests` and one shared CST walk calls `Rule::check`; whole-file rules
 leave `interests` empty and override `Rule::check_file`. `run_rules` also owns

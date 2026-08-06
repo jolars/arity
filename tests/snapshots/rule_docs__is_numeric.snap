@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `is-numeric`
+### `is-numeric`
 
 Flag `is.numeric(x) || is.integer(x)` (and the vectorized `|` spelling), which is just `is.numeric(x)`: `is.numeric()` already returns `TRUE` for integer vectors, so the disjunction adds nothing and suggests a misreading of what `is.numeric()` tests.
 

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `undesirable-function`
+### `undesirable-function`
 
 Flag a call to a function the project has banned, with the configured alternative as the suggestion.
 

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `redundant-ifelse`
+### `redundant-ifelse`
 
 Flag `ifelse(c, TRUE, FALSE)` (which is just `c`) and `ifelse(c, FALSE, TRUE)` (which is `!c`).
 

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `roxygen-unknown-tag`
+### `roxygen-unknown-tag`
 
 Flag roxygen tags that roxygen2 does not understand.
 

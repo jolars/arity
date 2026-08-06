@@ -3,10 +3,10 @@ extend-exclude = [
   "AGENTS.md",
   "CHANGELOG.md",
   "AIR_COMPAT.md",
-  # Generated mdBook pages (clap reference + per-rule docs + benchmark partials);
-  # not hand-written prose.
+  # Generated mdBook pages (clap reference + rule reference + benchmark
+  # partials); not hand-written prose.
   "docs/src/reference/cli.md",
-  "docs/src/reference/rules/**",
+  "docs/src/reference/rules.md",
   "docs/src/reference/benchmarks_meta.md",
   "docs/src/reference/benchmarks_results.md",
   "docs/src/version.md",

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `lengths`
+### `lengths`
 
 Flag `sapply(x, length)`, which is the purpose-built `lengths(x)`—faster (a single C pass instead of an R call per element) and clearer. Both return an integer vector and keep `x`'s names by default.
 

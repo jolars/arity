@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `blanket-suppression`
+### `blanket-suppression`
 
 Flags a `# arity-ignore` directive that names no rule. `# arity-ignore-file: <reason>` disables every rule for the file — including every rule arity ships in the future — so the file quietly stops being checked as the rule set grows. A bare `# arity-ignore` is the opposite failure: it names nothing, so it suppresses nothing. Both are fixed by naming the rule. The rule-scoped `# arity-ignore-file <rule>: <reason>` is not flagged; it is broad in range but narrow in effect. Report-only — choosing the rules for the author would guess at intent in either direction.
 

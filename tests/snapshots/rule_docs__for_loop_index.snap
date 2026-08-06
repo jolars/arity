@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `for-loop-index`
+### `for-loop-index`
 
 Flag a `for` loop whose index symbol is also read in its own sequence expression, as in `for (x in x)` or `for (x in seq_along(x))`. R evaluates the sequence once and then binds the index over it, so the original value is destroyed by the first iteration and is not what a reader would expect after the loop.
 

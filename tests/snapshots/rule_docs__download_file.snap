@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `download-file`
+### `download-file`
 
 Flag a `download.file()` call whose `mode` is not portable.
 

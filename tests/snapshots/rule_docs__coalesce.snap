@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `coalesce`
+### `coalesce`
 
 Flag `if (is.null(x)) y else x` (and its mirror `if (!is.null(x)) x else y`), which is the null-coalescing `x %||% y`—shorter, and it evaluates `x` once instead of twice.
 

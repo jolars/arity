@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `empty-assignment`
+### `empty-assignment`
 
 Flag an assignment whose value is an empty block (`x <- {}`). An empty block evaluates to `NULL`, so this is a roundabout `x <- NULL`—usually a leftover from deleting the block's body. An empty function body or `if` branch is not flagged.
 

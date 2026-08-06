@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `class-equals`
+### `class-equals`
 
 Flag comparisons of `class(x)` against a string literal—`class(x) == "cls"`, `class(x) != "cls"`, and the `%in%` membership spellings—which are `inherits(x, "cls")` (or its negation): `class()` returns the whole class vector, so the comparison is elementwise (an error in an `if ()` condition on a multi-class object) and misses subclasses, while `inherits()` asks the intended question directly without materializing the vector.
 

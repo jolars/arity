@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `duplicate-formal`
+### `duplicate-formal`
 
 Flag a function defined with two parameters of the same name. R raises a runtime error (`repeated formal argument`); this catches it statically.
 

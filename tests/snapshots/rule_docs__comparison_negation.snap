@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `comparison-negation`
+### `comparison-negation`
 
 Flag a negated comparison—`!(a == b)`, `!x < y`—which reads more clearly as the opposite comparison (`a != b`, `x >= y`).
 

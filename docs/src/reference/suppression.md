@@ -37,7 +37,7 @@ or vendored file where a particular rule does not apply:
 
 Suppresses **every** rule in the file, including every rule arity ships in the
 future. It is rarely what you want; prefer the rule-scoped form above. The
-[`blanket-suppression`](rules/blanket-suppression.md) rule flags it.
+[`blanket-suppression`](rules.md#blanket-suppression) rule flags it.
 
 ## Reasons
 
@@ -45,7 +45,7 @@ The text after the `:` is free-form and arity never interprets it --- but a
 suppression is a standing claim that the linter is wrong here, and that claim
 outlives whoever wrote it. Recording why keeps the next reader from having to
 guess whether it was considered or expedient.
-[`unexplained-suppression`](rules/unexplained-suppression.md) enforces the
+[`unexplained-suppression`](rules.md#unexplained-suppression) enforces the
 convention; it is off by default, so enable it with `select` if you want it.
 
 ## Suppression is linted too
@@ -56,10 +56,10 @@ is that nothing is reported, which is exactly what success looks like. Four
 
   | Rule                                                          | Flags                                        |
   | ------------------------------------------------------------- | -------------------------------------------- |
-  | [`misnamed-suppression`](rules/misnamed-suppression.md)       | a rule ID that does not exist                |
-  | [`blanket-suppression`](rules/blanket-suppression.md)         | a directive that names no rule               |
-  | [`unexplained-suppression`](rules/unexplained-suppression.md) | a directive with no reason (off by default)  |
-  | [`outdated-suppression`](rules/outdated-suppression.md)       | a directive that no longer silences anything |
+  | [`misnamed-suppression`](rules.md#misnamed-suppression)       | a rule ID that does not exist                |
+  | [`blanket-suppression`](rules.md#blanket-suppression)         | a directive that names no rule               |
+  | [`unexplained-suppression`](rules.md#unexplained-suppression) | a directive with no reason (off by default)  |
+  | [`outdated-suppression`](rules.md#outdated-suppression)       | a directive that no longer silences anything |
 
 ## Limits
 

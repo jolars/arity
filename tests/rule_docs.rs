@@ -1,17 +1,18 @@
-//! Living-documentation tests: rule reference pages are rendered from the rule
+//! Living-documentation tests: the rule reference is rendered from the rule
 //! metadata by running the real linter, and pinned by snapshot so the docs
-//! cannot drift from behavior. The generator (`examples/docgen.rs`) writes the
-//! same `render_rule_doc` output to the mdBook source tree.
+//! cannot drift from behavior. The generator (`examples/docgen.rs`) assembles
+//! the same `render_rule_doc` sections into the single `reference/rules.md`
+//! page in the mdBook source tree.
 
 use std::path::Path;
 
 use arity::linter::check_document;
-use arity::linter::docs::{example_lint_config, render_rule_doc};
-use arity::linter::rules::all_rules;
+use arity::linter::docs::{example_lint_config, render_rule_doc, render_rules_page};
+use arity::linter::rules::{all_rules, rules_by_category};
 
-/// Pin the rendered reference page for every documented rule. Any change to a
-/// rule's diagnostic or fix that alters its page fails here before the docs go
-/// stale.
+/// Pin the rendered reference section for every documented rule. Any change to
+/// a rule's diagnostic or fix that alters its section fails here before the
+/// docs go stale.
 #[test]
 fn rule_docs_render() {
     for rule in all_rules() {
@@ -19,6 +20,54 @@ fn rule_docs_render() {
             continue;
         }
         insta::assert_snapshot!(rule.id().replace('-', "_"), render_rule_doc(rule.as_ref()));
+    }
+}
+
+/// The assembled page carries every rule: a linked index entry and the rule's
+/// own section, under its category heading. Guards the generator against a rule
+/// that is registered but silently missing from the reference.
+#[test]
+fn rules_page_covers_every_rule() {
+    let page = render_rules_page();
+
+    for (category, rules) in rules_by_category() {
+        assert!(
+            page.contains(&format!("\n## {}\n", category.title())),
+            "rule reference has no `{}` section",
+            category.title(),
+        );
+        for rule in rules {
+            let id = rule.id();
+            assert!(
+                page.contains(&format!("\n### `{id}`\n")),
+                "rule reference has no section for `{id}`",
+            );
+            assert!(
+                page.contains(&format!("- [`{id}`](#{id})")),
+                "rule reference index has no entry for `{id}`",
+            );
+        }
+    }
+}
+
+/// The page's sections appear in registry order, so the index reads top to
+/// bottom like the body it links into.
+#[test]
+fn rules_page_sections_follow_registry_order() {
+    let page = render_rules_page();
+    let mut previous = 0;
+
+    for rule in all_rules() {
+        let heading = format!("\n### `{}`\n", rule.id());
+        let at = page
+            .find(&heading)
+            .unwrap_or_else(|| panic!("rule reference has no section for `{}`", rule.id()));
+        assert!(
+            at > previous,
+            "rule `{}` is out of registry order in the reference",
+            rule.id(),
+        );
+        previous = at;
     }
 }
 

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `outdated-suppression`
+### `outdated-suppression`
 
 Flags a `# arity-ignore` directive that suppressed nothing on this run — the code it was written for has changed, but the directive stayed. A stale suppression is misleading (it asserts arity is wrong at a spot where arity says nothing) and it is a trap: it will silence a real finding if the shape ever comes back. The fix deletes the directive.
 

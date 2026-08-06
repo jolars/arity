@@ -12,9 +12,10 @@
 //! 1. Create a module under `src/linter/rules/<category>/<id>.rs`.
 //! 2. Define a unit `pub struct` that implements [`Rule`] — subscribe to node
 //!    kinds via `interests` + `check`, or do a whole-file pass via `check_file`.
-//! 3. Add it to [`all_rules`] below — the single source of truth. The set of
-//!    valid rule IDs ([`all_rule_ids`]) is derived from it, so there is no
-//!    second list to keep in sync.
+//! 3. Add it to its category's list in [`rules_by_category`] below — the single
+//!    source of truth. Both the registry ([`all_rules`], and from it the set of
+//!    valid rule IDs, [`all_rule_ids`]) and the generated rule reference are
+//!    derived from it, so there is no second list to keep in sync.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -42,8 +43,60 @@ pub mod regex;
 pub mod roxygen;
 pub mod suspicious;
 
-/// All rules currently shipped.
+/// The catalogue grouping a rule is listed under in the generated rule
+/// reference (`docs/src/reference/rules.md`).
+///
+/// The grouping lives on the registry rather than on [`Rule`]: it is a property
+/// of the catalogue, not of the check, and keeping it here means a rule's
+/// category is stated exactly once, next to the rule itself in
+/// [`rules_by_category`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleCategory {
+    Correctness,
+    Suspicious,
+    Readability,
+    Performance,
+    Documentation,
+    Meta,
+}
+
+impl RuleCategory {
+    /// The section heading this category is rendered under.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Correctness => "Correctness",
+            Self::Suspicious => "Suspicious",
+            Self::Readability => "Readability",
+            Self::Performance => "Performance",
+            Self::Documentation => "Documentation",
+            Self::Meta => "Meta",
+        }
+    }
+}
+
+/// All rules currently shipped, grouped into the categories the reference page
+/// is organized by — the single source of truth. [`all_rules`] flattens this,
+/// so the registry order and the catalogue order are one list.
+pub fn rules_by_category() -> Vec<(RuleCategory, Vec<Box<dyn Rule>>)> {
+    vec![
+        (RuleCategory::Correctness, correctness_rules()),
+        (RuleCategory::Suspicious, suspicious_rules()),
+        (RuleCategory::Readability, readability_rules()),
+        (RuleCategory::Performance, performance_rules()),
+        (RuleCategory::Documentation, documentation_rules()),
+        (RuleCategory::Meta, meta_rules()),
+    ]
+}
+
+/// All rules currently shipped, in registry order.
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
+    rules_by_category()
+        .into_iter()
+        .flat_map(|(_, rules)| rules)
+        .collect()
+}
+
+fn correctness_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(correctness::UndefinedSymbol),
         Box::new(correctness::UnusedBinding),
@@ -57,6 +110,11 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::EmptyAssignment),
         Box::new(correctness::DownloadFile),
         Box::new(correctness::InternalFunction),
+    ]
+}
+
+fn suspicious_rules() -> Vec<Box<dyn Rule>> {
+    vec![
         Box::new(suspicious::AssignmentInCondition),
         Box::new(suspicious::ImplicitAssignment),
         Box::new(suspicious::Browser),
@@ -69,11 +127,21 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::ForLoopDupIndex),
         Box::new(suspicious::UnusedFunction),
         Box::new(suspicious::DuplicatedFunctionDefinition),
+    ]
+}
+
+fn readability_rules() -> Vec<Box<dyn Rule>> {
+    vec![
         Box::new(readability::TrueFalseSymbol),
         Box::new(readability::ComparisonNegation),
         Box::new(readability::OuterNegation),
         Box::new(readability::StringBoundary),
         Box::new(readability::UnnecessaryNesting),
+    ]
+}
+
+fn performance_rules() -> Vec<Box<dyn Rule>> {
+    vec![
         Box::new(performance::AnyIsNa),
         Box::new(performance::AnyDuplicated),
         Box::new(performance::Coalesce),
@@ -84,11 +152,21 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(performance::ClassEquals),
         Box::new(performance::FixedRegex),
         Box::new(performance::Sort),
+    ]
+}
+
+fn documentation_rules() -> Vec<Box<dyn Rule>> {
+    vec![
         Box::new(documentation::RoxygenUnknownTag),
         Box::new(documentation::RoxygenTitle),
         Box::new(documentation::RoxygenReturn),
         Box::new(documentation::RoxygenParam),
         Box::new(documentation::RoxygenExamples),
+    ]
+}
+
+fn meta_rules() -> Vec<Box<dyn Rule>> {
+    vec![
         Box::new(meta::MisnamedSuppression),
         Box::new(meta::BlanketSuppression),
         Box::new(meta::UnexplainedSuppression),

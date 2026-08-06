@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `browser`
+### `browser`
 
 Flag a leftover `browser()` call. `browser()` opens R's interactive debugger and is meant to be removed before code is committed; in a non-interactive session it silently does nothing, so it lingers unnoticed.
 

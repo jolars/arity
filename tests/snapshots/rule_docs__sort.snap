@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `sort`
+### `sort`
 
 Flag `sort(x)[1]`, which sorts the whole vector just to read one extreme — the purpose-built `min(x)` (or `max(x)` for `decreasing = TRUE`) finds it in a single pass and states the intent directly.
 

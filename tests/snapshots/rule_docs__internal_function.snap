@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `internal-function`
+### `internal-function`
 
 Flag `pkg:::name`, which reaches past a package's namespace to an object it never exported.
 

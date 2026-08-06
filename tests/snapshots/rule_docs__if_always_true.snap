@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `if-always-true`
+### `if-always-true`
 
 Flag an `if` whose condition is the literal `TRUE` or `FALSE`. The branch is decided statically, so the `if` is dead control flow. Only the bare literals are flagged—not folded constants (`if (1 == 1)`) or the rebindable symbols `T`/`F`.
 

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `roxygen-return`
+### `roxygen-return`
 
 Flag an `@export`ed function documented without `@return`.
 

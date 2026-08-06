@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `roxygen-param`
+### `roxygen-param`
 
 Flag `@param` documentation that does not match the documented function.
 

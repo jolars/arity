@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `nzchar`
+### `nzchar`
 
 Flag comparisons of `nchar(x)` against zero—`nchar(x) > 0`, `nchar(x) >= 1`, `nchar(x) != 0`, and their mirrored and negated spellings—which are the purpose-built `nzchar(x)` (or `!nzchar(x)` for the empty test): faster, and it states the intent directly.
 

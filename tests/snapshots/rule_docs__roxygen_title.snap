@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `roxygen-title`
+### `roxygen-title`
 
 Flag a documented function whose roxygen block has no title.
 

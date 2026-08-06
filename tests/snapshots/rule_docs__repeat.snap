@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `repeat`
+### `repeat`
 
 Flag `while (TRUE)`, an unconditional loop better written as `repeat`.
 

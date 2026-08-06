@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `redundant-equals`
+### `redundant-equals`
 
 Flag comparison to a logical literal: `x == TRUE` is just `x`, and `x == FALSE` is `!x`.
 

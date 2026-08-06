@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `undefined-symbol`
+### `undefined-symbol`
 
 Flag an identifier read that resolves to no in-scope binding and no known package export.
 

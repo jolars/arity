@@ -46,9 +46,10 @@ the rule's correctness actually requires.
 ## Key files
 
 - `src/linter/rules.rs`—the `Rule` trait, `RuleContext`, and
-  **`all_rules()`, the single source of truth**. `all_rule_ids()` derives from
-  it, so there is no second list to sync. Every new rule is added here exactly
-  once.
+  **`rules_by_category()`, the single source of truth**. `all_rules()` flattens
+  it, `all_rule_ids()` derives from that, and the generated rule reference takes
+  its category sections from the same grouping—so there is no second list to
+  sync. Every new rule is added here exactly once.
 - `src/linter/rules/<category>.rs`—the category module
   (`correctness`/`suspicious`/`readability`; add `performance`/`meta`/`pkg/...`
   per the roadmap when first needed). Holds `mod <id>;` +
@@ -75,18 +76,18 @@ the rule's correctness actually requires.
   `fixed_output_all(src,   rule)` (all of a rule's fixes), and the
   autofix-correctness harness `assert_fixed_output_is_clean` and
   `fixed_output_is_parseable_and_clean`.
-- `examples/docgen.rs`—generates `docs/src/reference/rules/<id>.md` from
-  `render_rule_doc` (and stamps `version.md`). Run with
-  `cargo run --example   docgen`. It only writes per-rule pages; it does **not**
-  touch the indexes.
-- `tests/rule_docs.rs`—pins each rule's rendered page via an **`insta`
-  snapshot** (`rule_docs_render`), and asserts every rule has a non-empty
+- `examples/docgen.rs`—generates the whole rule reference
+  `docs/src/reference/rules.md` from `render_rules_page` (and stamps
+  `version.md`). Run with `cargo run --example   docgen`. The page is generated
+  end to end—index included—so there is no index to hand-edit.
+- `tests/rule_docs.rs`—pins each rule's rendered section via an **`insta`
+  snapshot** (`rule_docs_render`), checks the assembled page covers every rule
+  in registry order, and asserts every rule has a non-empty
   `description()` + at least one `examples()` entry, **and that each example
   actually triggers its own rule**. Accept new snapshots with
   `cargo insta   accept`.
-- `docs/src/reference/rules.md` and `docs/src/SUMMARY.md`—**hand-maintained**
-  rule indexes. `docgen` does NOT regenerate these; add the
-  new rule's line to both, in the right category, matching `all_rules()` order.
+- `docs/src/reference/rules.md`—**generated**; never hand-edit it, and never
+  add a `SUMMARY.md` entry for a rule (the reference is one page).
 - `TODO.md`—the live roadmap. Check off the rule's item (with a one-line
   note on scope/safety, mirroring the other landed entries).
 
@@ -160,17 +161,17 @@ the rule's correctness actually requires.
 
 5. **Register it** in the single source of truth:
    - `mod <id>;` + `pub use <id>::<Name>;` in `src/linter/rules/<category>.rs`.
-   - One `Box::new(<category>::<Name>)` line in `all_rules()`
-     (`src/linter/rules.rs`), in roadmap/category order. Nothing else—selection
-     and `--select`/`--ignore` validation derive from this list.
+   - One `Box::new(<category>::<Name>)` line in its category's list in
+     `rules_by_category()` (`src/linter/rules.rs`), in roadmap order. Nothing
+     else—`all_rules()`, `--select`/`--ignore` validation, and the reference
+     page's category sections all derive from that list.
 
 6. **Generate and pin the docs:**
-   - `cargo run --example docgen` → writes `docs/src/reference/rules/<id>.md`.
+   - `cargo run --example docgen` → rewrites `docs/src/reference/rules.md`
+     with the new rule's section and index entry in place.
    - `cargo test --test rule_docs` will fail on the new snapshot; eyeball the
      `.snap.new` (the example must show the finding and, if fixable, the
      after-fix block), then `cargo insta accept`.
-   - **Manually** add the rule to `docs/src/reference/rules.md` (under its
-     category heading) **and** `docs/src/SUMMARY.md`—`docgen` does not.
 
 7. **Update `TODO.md`**—check off the item and add a one-line scope/safety
    note matching the other landed entries.
@@ -190,16 +191,16 @@ the rule's correctness actually requires.
   withhold.
 - **Do** make `examples()` snippets that genuinely trigger the rule—the docs
   tests reject a plausible-but-inert example.
-- **Don't** add a second registration list or an `if`-guard; `all_rules()` is
-  the only list.
+- **Don't** add a second registration list or an `if`-guard;
+  `rules_by_category()` is the only list.
 - **Don't** implement a formatting/layout preference as a lint rule (Tenet 1).
 - **Don't** work around a parser/CST gap inside the rule (Tenet 3)—fix or
   extend the parser/AST instead.
 - **Don't** run the formatter inside a fix (Tenet 1: the formatter is the sole
   layout authority), or ship a fix that produces broken or lossy code (autofix
   correctness). A fix needn't satisfy line-width—that's the formatter's job.
-- **Don't** hand-edit `docs/src/reference/rules/<id>.md`—regenerate via
-  `docgen`. (But the two indexes *are* hand-edited.)
+- **Don't** hand-edit `docs/src/reference/rules.md`—it is generated whole by
+  `docgen`; edit `description()`/`examples()` and regenerate.
 
 ## Report-back format
 
@@ -209,7 +210,7 @@ When done, report:
    none).
 2. Cost tier (`syn`/`ns`/`sem`) and `default_enabled`.
 3. New files (rule module) and updated files (`<category>.rs`, `rules.rs`
-   `all_rules()`, `tests/lint.rs`, the generated `rules/<id>.md` + accepted
-   snapshot, `rules.md`, `SUMMARY.md`, `TODO.md`).
+   `rules_by_category()`, `tests/lint.rs`, the regenerated `rules.md` +
+   accepted snapshot, `TODO.md`).
 4. Targeted test names plus the autofix-correctness case added.
 5. Full-gate results: `cargo test`, clippy `-D warnings`, `cargo fmt --check`.

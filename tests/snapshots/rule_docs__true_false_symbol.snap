@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `true-false-symbol`
+### `true-false-symbol`
 
 Prefer the reserved literals `TRUE`/`FALSE` over the rebindable base symbols `T`/`F`.
 

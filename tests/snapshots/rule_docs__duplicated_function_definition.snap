@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `duplicated-function-definition`
+### `duplicated-function-definition`
 
 Flag a function name defined twice among the same run of statements, where the earlier definition is replaced before it is ever used. R evaluates both assignments, so every call reaches the second one and the first body is dead code — nearly always a copy-paste or merge artifact.
 

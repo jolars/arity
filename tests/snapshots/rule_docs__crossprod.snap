@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `crossprod`
+### `crossprod`
 
 Flag `t(x) %*% y` and `x %*% t(y)`, which are the purpose-built `crossprod(x, y)` and `tcrossprod(x, y)`—faster (they go straight to BLAS and never materialize the transpose that `t()` builds) and clearer.
 

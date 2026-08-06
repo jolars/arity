@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `unnecessary-nesting`
+### `unnecessary-nesting`
 
 Flag an `if` whose entire body is a second `if`—the two could be a single `if` with the conditions joined by `&&`, dropping a needless level of nesting. It fires only when neither `if` has an `else` (an `else` on either side changes what runs) and the inner `if` is the sole statement of the outer one.
 

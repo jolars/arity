@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `any-is-na`
+### `any-is-na`
 
 Flag `any(is.na(x))`, which is the purpose-built `anyNA(x)`—faster (it short-circuits and builds no intermediate logical vector) and clearer.
 

@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `misnamed-suppression`
+### `misnamed-suppression`
 
 Flags a `# arity-ignore` directive whose rule ID is not a rule arity ships. Such a directive suppresses nothing, and does so silently — the failure mode of a suppression is that no output appears, which is also what success looks like. When exactly one shipped rule ID is an unambiguous near-match, the fix rewrites the ID and leaves the reason text alone; otherwise the finding is report-only. Note that `syntax-error` is not a lint rule: parse errors are reported before any rule runs and cannot be suppressed.
 

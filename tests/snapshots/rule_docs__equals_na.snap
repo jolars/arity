@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `equals-na`
+### `equals-na`
 
 Flag `x == NA`, which is always `NA` rather than `TRUE`/`FALSE`—almost always a mistake for `is.na(x)`, which is the autofix.
 

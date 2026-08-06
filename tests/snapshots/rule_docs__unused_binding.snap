@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `unused-binding`
+### `unused-binding`
 
 Flag a local binding that is never read in the same file. Function parameters, `for`-loop variables, and names beginning with `.` are exempt, since those are meaningful even when unused.
 

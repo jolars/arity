@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `seq`
+### `seq`
 
 Flag colon ranges from `1` up to a length—`1:length(x)`, `1:nrow(x)`, or `1:n`—which silently count *down* when that length is zero (`1:0` is `c(1L, 0L)`, not an empty sequence), a classic off-by-one bug for loops over possibly-empty input. `seq_along(x)` and `seq_len(n)` return a zero-length sequence instead, and agree with the colon form everywhere else.
 

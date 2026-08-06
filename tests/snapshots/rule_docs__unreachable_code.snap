@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `unreachable-code`
+### `unreachable-code`
 
 Flag statements that follow an unconditional `return()` or `stop()` in a block—once either runs, nothing after it in the same block can be reached, so the trailing code is dead. A direct-statement `if`/`else` that exits in both branches likewise leaves its tail unreachable (a control-flow-graph verdict).
 

@@ -108,7 +108,7 @@ the config is *parsed*, alongside any other unknown key.
 #### `[lint.rules.undesirable-function]`
 
 The function-name policy for
-[`undesirable-function`](rules/undesirable-function.md).
+[`undesirable-function`](rules.md#undesirable-function).
 
   | Key                | Type                 | Default      | Description                                                      |
   | ------------------ | -------------------- | ------------ | ---------------------------------------------------------------- |
@@ -125,7 +125,7 @@ The built-in set covers base-R functions that mutate global state (`attach`,
 `detach`, `.libPaths`, `install.packages`, `setwd`, `sink`, `source`, `options`,
 `par`, `Sys.setenv`, `Sys.setlocale`) and the debugging entry points (`debug`,
 `debugonce`, `undebug`, `trace`, `untrace`). `browser()` is deliberately absent:
-it has its own [`browser`](rules/browser.md) rule.
+it has its own [`browser`](rules.md#browser) rule.
 
 ```toml
 [lint]

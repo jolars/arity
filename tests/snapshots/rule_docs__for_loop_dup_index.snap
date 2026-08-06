@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `for-loop-dup-index`
+### `for-loop-dup-index`
 
 Flag a nested `for` loop that reuses the index variable of an enclosing `for` loop. R loops introduce no scope, so the inner loop overwrites the outer index rather than shadowing it: the outer loop resumes with a corrupted counter and any later read of the name sees the inner loop's last value.
 

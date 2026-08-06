@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `string-boundary`
+### `string-boundary`
 
 Flag `grepl("^abc", x)` and `grepl("abc$", x)`, single-anchored fixed-string matches that are the clearer `startsWith(x, "abc")` and `endsWith(x, "abc")`—they state the prefix/suffix test directly and skip regex compilation.
 

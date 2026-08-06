@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `outer-negation`
+### `outer-negation`
 
 Flag `any(!x)`/`all(!x)`, which by De Morgan's law read more clearly with the negation pulled outside: `!all(x)` and `!any(x)`.
 

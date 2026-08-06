@@ -2,7 +2,7 @@
 source: tests/rule_docs.rs
 expression: render_rule_doc(rule.as_ref())
 ---
-# `unused-function`
+### `unused-function`
 
 Flag an exported function that nothing in the project calls. The complement of `unused-binding`, which stays quiet on public API: a function is reported here only when it is declared exported (a roxygen `@export`, or a NAMESPACE `export()`) *and* no file that can see it reads it. S3 methods are exempt — dispatch reaches them without a direct call, so having no caller says nothing about them. Disabled by default, since a library's exported functions are meant to be called from outside the project.
 
