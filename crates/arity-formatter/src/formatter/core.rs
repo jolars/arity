@@ -19,7 +19,7 @@ use crate::ast::{
     AssignmentExpr, AstNode, BinaryExpr, BlockExpr, CallExpr, ForExpr, FunctionExpr, IfExpr,
     ParenExpr, UnaryExpr, WhileExpr,
 };
-use crate::parser::parse;
+use crate::parser::{ParseOptions, parse, parse_with_options};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +67,24 @@ pub fn format(input: &str) -> Result<String, FormatError> {
 }
 
 pub fn format_with_style(input: &str, style: FormatStyle) -> Result<String, FormatError> {
-    let parse_output = parse(input);
+    format_with_options(input, style, &ParseOptions::default())
+}
+
+/// [`format_with_style`] with caller-supplied [`ParseOptions`] for the parse.
+/// The one option that matters to the formatter is the roxygen markdown
+/// default: a package that enables markdown package-wide
+/// (`Roxygen: list(markdown = TRUE)` in `DESCRIPTION`) writes no per-block
+/// `@md`, and its doc comments only format correctly — markdown lists, code
+/// blocks, and tables preserved as atomic units instead of reflowed as prose —
+/// when the parse resolves them in markdown mode. The mode lives entirely in
+/// the parsed tree; the formatting rules themselves key off node kinds and
+/// need no flag.
+pub fn format_with_options(
+    input: &str,
+    style: FormatStyle,
+    options: &ParseOptions,
+) -> Result<String, FormatError> {
+    let parse_output = parse_with_options(input, options);
     if !parse_output.diagnostics.is_empty() {
         return Err(FormatError::ParseErrors {
             count: parse_output.diagnostics.len(),

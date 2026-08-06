@@ -8,5 +8,8 @@ pub(crate) mod rules;
 pub mod style;
 pub(crate) mod trivia;
 
-pub use core::{FormatError, RangeFormatted, format, format_node, format_range, format_with_style};
+pub use core::{
+    FormatError, RangeFormatted, format, format_node, format_range, format_with_options,
+    format_with_style,
+};
 pub use style::{FormatStyle, LineEnding};

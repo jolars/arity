@@ -19,5 +19,5 @@ pub mod syntax;
 
 pub use formatter::{
     FormatError, FormatStyle, LineEnding, RangeFormatted, format, format_node, format_range,
-    format_with_style,
+    format_with_options, format_with_style,
 };
