@@ -1,5 +1,6 @@
 //! Correctness rules — likely bugs.
 
+mod download_file;
 mod duplicate_formal;
 mod duplicated_arguments;
 mod empty_assignment;
@@ -11,6 +12,7 @@ mod unreachable_code;
 mod unused_binding;
 mod vector_logic;
 
+pub use download_file::DownloadFile;
 pub use duplicate_formal::DuplicateFormal;
 pub use duplicated_arguments::DuplicatedArguments;
 pub use empty_assignment::EmptyAssignment;

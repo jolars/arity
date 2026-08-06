@@ -52,6 +52,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::IsNumeric),
         Box::new(correctness::IfAlwaysTrue),
         Box::new(correctness::EmptyAssignment),
+        Box::new(correctness::DownloadFile),
         Box::new(suspicious::AssignmentInCondition),
         Box::new(suspicious::ImplicitAssignment),
         Box::new(suspicious::Browser),

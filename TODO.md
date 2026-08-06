@@ -66,7 +66,18 @@
       (else user config would silently no-op). Bare-name calls only. Follow-up:
       lintr's `symbol_is_undesirable` (flag a bare symbol *read*, not just a
       call) was scoped out of v1.
-- [ ] `download-file` (correctness, ns, none)—low priority.
+- [x] `download-file` (correctness, ns, none). Reports the three lintr
+      `download_file_linter` shapes: an omitted `mode` (the text-mode default
+      corrupts binary downloads on Windows), an explicit `mode = "w"`/`"a"`, and
+      a `mode` supplied next to `method = "curl"`/`"wget"` (which shell out and
+      ignore it). Arguments resolve through R's real matching rules by reusing
+      `match_args_to_formals` over `download.file`'s formals, so a positional
+      `method` and a unique-prefix `mod =` both land right. Report-only: the
+      shapes need an argument inserted or deleted, not rewritten. Conservative
+      on anything unknowable (non-literal `mode`/`method`, a value-less `ARG`
+      that would shift positional fill). Follow-up: a safe `mode = "w"` ->
+      `"wb"` fix would cover one shape of three; left out so the rule stays
+      uniformly report-only.
 
 ### Phase 4—Meta (suppression) rules + hardening
 

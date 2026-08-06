@@ -3375,6 +3375,142 @@ fn is_numeric_withholds_fix_for_dropped_comment() {
     assert!(d.fix.is_none(), "dropped comment should withhold the fix");
 }
 
+// ---------------------------------------------------------------------------
+// download-file
+// ---------------------------------------------------------------------------
+
+/// Only the `download-file` findings for `src`.
+fn download_file_diags(src: &str) -> Vec<arity::linter::Diagnostic> {
+    diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "download-file")
+        .collect()
+}
+
+/// The one `download-file` finding for `src`, plus the source text it spans.
+fn download_file_finding(src: &str) -> (arity::linter::Diagnostic, String) {
+    let mut found = download_file_diags(src);
+    assert_eq!(
+        found.len(),
+        1,
+        "expected one finding for {src:?}: {found:?}"
+    );
+    let d = found.remove(0);
+    let span = src[usize::from(d.range.start())..usize::from(d.range.end())].to_string();
+    (d, span)
+}
+
+#[test]
+fn download_file_flags_implicit_mode() {
+    // The default `mode = "w"` is text mode, which corrupts binary downloads on
+    // Windows. Span is the callee — there is no argument to point at.
+    let (d, span) = download_file_finding("download.file(u, dest)\n");
+    assert_eq!(span, "download.file");
+    assert!(d.message.body.contains("default"), "{:?}", d.message);
+    assert!(
+        d.message
+            .suggestion
+            .as_deref()
+            .is_some_and(|s| s.contains("\"wb\"")),
+        "{:?}",
+        d.message
+    );
+    // Report-only: adding an argument is not a textual edit the linter makes.
+    assert!(d.fix.is_none(), "download-file ships no fix");
+}
+
+#[test]
+fn download_file_flags_explicit_text_mode() {
+    // `mode = "w"` / `"a"` are the text-mode spellings; the span is the argument.
+    let (d, span) = download_file_finding("download.file(u, dest, mode = \"w\")\n");
+    assert_eq!(span, "mode = \"w\"");
+    assert!(
+        d.message
+            .suggestion
+            .as_deref()
+            .is_some_and(|s| s.contains("\"wb\"")),
+        "{:?}",
+        d.message
+    );
+
+    let (_, span) = download_file_finding("download.file(u, dest, mode = \"a\")\n");
+    assert_eq!(span, "mode = \"a\"");
+}
+
+#[test]
+fn download_file_flags_mode_ignored_by_method() {
+    // `method = "curl"` / `"wget"` shell out, so `mode` is silently ignored.
+    let (d, span) =
+        download_file_finding("download.file(u, dest, method = \"curl\", mode = \"wb\")\n");
+    assert_eq!(span, "mode = \"wb\"");
+    assert!(d.message.body.contains("ignored"), "{:?}", d.message);
+
+    let (_, span) =
+        download_file_finding("download.file(u, dest, method = \"wget\", mode = \"w\")\n");
+    assert_eq!(span, "mode = \"w\"");
+}
+
+#[test]
+fn download_file_accepts_binary_and_ignoring_methods() {
+    for src in [
+        "download.file(u, dest, mode = \"wb\")\n",
+        "download.file(u, dest, mode = \"ab\")\n",
+        // `mode` is ignored by curl/wget, so omitting it is exactly right.
+        "download.file(u, dest, method = \"curl\")\n",
+        "download.file(u, dest, method = \"wget\")\n",
+        // Partial matching: `mod` uniquely prefixes `mode`.
+        "download.file(u, dest, mod = \"wb\")\n",
+    ] {
+        assert!(
+            download_file_diags(src).is_empty(),
+            "{src:?} should not flag"
+        );
+    }
+}
+
+#[test]
+fn download_file_matches_method_positionally() {
+    // `method` is `download.file`'s third formal, so this is `method = "curl"`
+    // and the missing `mode` is not a finding.
+    assert!(
+        download_file_diags("download.file(u, dest, \"curl\")\n").is_empty(),
+        "positional `method` should be matched"
+    );
+    // The fifth formal is `mode`, so this is the text-mode default spelled out.
+    let (_, span) = download_file_finding("download.file(u, dest, \"libcurl\", FALSE, \"w\")\n");
+    assert_eq!(span, "\"w\"");
+}
+
+#[test]
+fn download_file_skips_unknowable_arguments() {
+    // A non-literal `mode`/`method` can be anything, so no verdict is possible.
+    for src in [
+        "download.file(u, dest, mode = m)\n",
+        "download.file(u, dest, method = m)\n",
+        "download.file(u, dest, mode = if (bin) \"wb\" else \"w\")\n",
+    ] {
+        assert!(
+            download_file_diags(src).is_empty(),
+            "{src:?} should not flag"
+        );
+    }
+}
+
+#[test]
+fn download_file_skips_shadowed_and_qualified_callees() {
+    for src in [
+        // A user redefinition is not `utils::download.file`.
+        "download.file <- function(...) NULL\ndownload.file(u, dest)\n",
+        // Namespace-qualified callees are out of scope, as everywhere in arity.
+        "utils::download.file(u, dest)\n",
+    ] {
+        assert!(
+            download_file_diags(src).is_empty(),
+            "{src:?} should not flag"
+        );
+    }
+}
+
 #[test]
 fn class_equals_rewrites_to_inherits() {
     // `class()` returns a vector, so `==` compares elementwise; `inherits()`
@@ -3790,6 +3926,10 @@ fn fixed_output_is_parseable_and_clean() {
         "print(TRUE == f(x))\n",
         // empty-assignment (no fix — must not perturb the input)
         "x <- {}\n",
+        // download-file (no fix — must not perturb the input)
+        "download.file(u, dest)\n",
+        "download.file(u, dest, mode = \"w\")\n",
+        "download.file(u, dest, method = \"curl\", mode = \"wb\")\n",
         // equals-na (`== NA` → is.na)
         "print(x == NA)\n",
         "print(NA == g(y))\n",
