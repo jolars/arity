@@ -1,0 +1,30 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+# `internal-function`
+
+Flag `pkg:::name`, which reaches past a package's namespace to an object it never exported.
+
+An unexported object is not part of the package's interface: it carries no compatibility promise, no documentation, and no deprecation cycle, so it can be renamed, reshaped, or removed in any patch release—and the breakage surfaces only at run time. CRAN's policy bars a package from using `:::` on a package in its own `Depends`/`Imports`/`Suggests` for the same reason.
+
+The exported form `pkg::name` is never flagged, and neither is a package reaching into its *own* internals: `mypkg:::helper` inside `mypkg` is a redundant qualifier in `R/` and the idiomatic way to unit-test an unexported function in `tests/`, so the rule reads the enclosing package's name from `DESCRIPTION` and skips a self-reference.
+
+There is no autofix: the repair is to find an exported equivalent, vendor the implementation, or ask upstream to export it—rewriting `:::` to `::` would only turn a working call into a load-time error.
+
+This rule is **enabled by default**.
+
+Calling an unexported function through `:::`:
+
+```r
+utils:::.getHelpFile(path)
+```
+
+```text
+warning: internal-function
+ --> example.R:1:1
+  |
+1 | utils:::.getHelpFile(path)
+  | ^^^^^^^^^^^^^^^^^^^^ `utils:::.getHelpFile` uses an unexported object, which may change or disappear without notice
+  = help: Use an exported function from `utils`, or ask upstream to export `.getHelpFile`.
+```

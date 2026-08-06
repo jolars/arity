@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use rowan::ast::AstNode as _;
 
@@ -53,6 +54,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::IfAlwaysTrue),
         Box::new(correctness::EmptyAssignment),
         Box::new(correctness::DownloadFile),
+        Box::new(correctness::InternalFunction),
         Box::new(suspicious::AssignmentInCondition),
         Box::new(suspicious::ImplicitAssignment),
         Box::new(suspicious::Browser),
@@ -170,9 +172,31 @@ pub struct RuleContext<'a> {
     /// Per-rule option tables from `[lint.rules.<id>]`, resolved once per run and
     /// carried on [`ResolvedRules`]. Rules that take no options ignore this.
     pub config: &'a RulesConfig,
+    /// Lazily-resolved enclosing package name — see [`RuleContext::own_package`].
+    /// Private and empty at construction: resolving it touches disk, so the cost
+    /// is paid only by the rules that ask, on the files where they match.
+    own_package: OnceLock<Option<String>>,
 }
 
 impl RuleContext<'_> {
+    /// The name of the R package this file belongs to, from the `Package` field
+    /// of the DESCRIPTION at the enclosing package root. `None` for a loose
+    /// script, a directory that is not a package, or an unreadable DESCRIPTION.
+    ///
+    /// Resolved lazily and memoized for the file: the walk plus the read touch
+    /// disk, and the only consumer (`internal-function`) needs it solely on the
+    /// rare files that actually contain a `:::`, so the default path — every
+    /// other file, every keystroke in the LSP — pays nothing.
+    ///
+    /// This is the seam for "is this the package's *own* internals?", which is
+    /// a different question from cross-file visibility ([`RuleContext::project`]
+    /// answers that, and is `None` on the single-file paths).
+    pub fn own_package(&self) -> Option<&str> {
+        self.own_package
+            .get_or_init(|| crate::project::description::package_name_for_file(self.path))
+            .as_deref()
+    }
+
     /// Whether `call`'s callee is confirmed to invoke a base-R function: a
     /// simple name that is (a) exported by one of R's default packages, (b) not
     /// shadowed by a local binding, and (c) not masked by an attached
@@ -393,6 +417,7 @@ pub fn run_rules(
         project,
         resolution,
         config: &resolved.rules_config,
+        own_package: OnceLock::new(),
     };
     let rules = &resolved.rules;
     let mut all = Vec::new();
@@ -515,6 +540,7 @@ mod tests {
             project: None,
             resolution: None,
             config: &RulesConfig::default(),
+            own_package: OnceLock::new(),
         };
         let call = root
             .descendants()

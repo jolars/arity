@@ -81,6 +81,29 @@ impl MarkdownDefaultResolver {
     }
 }
 
+/// The name declared by the `Package` field of the DESCRIPTION at `root`
+/// (a directory holding one). `None` when there is no readable DESCRIPTION or
+/// it declares no `Package`. Touches disk.
+pub fn package_name(root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(root.join("DESCRIPTION")).ok()?;
+    parse_dcf(&text)
+        .into_iter()
+        .find(|(key, _)| key == "Package")
+        .map(|(_, value)| value)
+        .filter(|name| !name.is_empty())
+}
+
+/// [`package_name`] resolved for a single file: walk up to the enclosing
+/// package root (`DESCRIPTION` + `R/`) and read its `Package` field. `None` for
+/// a loose file outside any package. Touches disk.
+///
+/// Note the walk anchors on [`package_root`], which requires an `R/` directory,
+/// so a file under `tests/testthat/` of a package resolves to that package —
+/// which is exactly the case that matters for `internal-function`.
+pub fn package_name_for_file(path: &Path) -> Option<String> {
+    package_root(path).and_then(|root| package_name(&root))
+}
+
 /// The `Roxygen` field's value from DESCRIPTION text (continuation lines
 /// joined), if present.
 fn roxygen_field(description: &str) -> Option<String> {
@@ -156,6 +179,32 @@ mod tests {
         let meta_dir = dir.path().join("man/roxygen");
         std::fs::create_dir_all(&meta_dir).expect("man/roxygen/");
         std::fs::write(meta_dir.join("meta.R"), source).expect("meta.R");
+    }
+
+    #[test]
+    fn package_name_from_description() {
+        let dir = package("Package: mypkg\nVersion: 1.0\n");
+        assert_eq!(package_name(dir.path()).as_deref(), Some("mypkg"));
+        // Walks up from a file, including one nested well below the root.
+        assert_eq!(
+            package_name_for_file(&dir.path().join("R/a.R")).as_deref(),
+            Some("mypkg")
+        );
+        assert_eq!(
+            package_name_for_file(&dir.path().join("tests/testthat/test-a.R")).as_deref(),
+            Some("mypkg")
+        );
+    }
+
+    #[test]
+    fn package_name_is_none_without_a_package() {
+        // No DESCRIPTION at all.
+        let loose = tempfile::tempdir().expect("tempdir");
+        assert_eq!(package_name(loose.path()), None);
+        assert_eq!(package_name_for_file(&loose.path().join("a.R")), None);
+        // A DESCRIPTION that declares no `Package`.
+        let dir = package("Version: 1.0\n");
+        assert_eq!(package_name(dir.path()), None);
     }
 
     #[test]

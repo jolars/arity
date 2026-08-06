@@ -37,8 +37,22 @@
       `return`/`stop`), so the call count is tiny and it is not currently hot—not
       worth an offset->ident index yet. If it ever becomes hot, resolve via the
       covering element at the callee offset instead of scanning.
-- [ ] `internal-function` `pkg:::fn` via
-      `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.
+- [x] `internal-function` `pkg:::fn` via
+      `BinaryExpr::namespace_access().internal` (correctness, none).
+      Report-only: the repair is a judgement call (find an exported equivalent,
+      vendor the code, ask upstream to export), and `:::`->`::` would turn a
+      working call into a load-time error. Dispatches on `BINARY_EXPR`, so the
+      call form (`CALL_EXPR > BINARY_EXPR`) reports once, spanning `pkg:::fn`
+      rather than the whole call. `::` is never flagged. Landed one tier above
+      the planned `syn`: a package's *own* internals are exempt
+      (`mypkg:::helper` inside `mypkg` is a redundant qualifier in `R/` and the
+      idiomatic internals test in `tests/testthat/`), which needed the enclosing
+      package's name. That arrived as
+      `project::description::package_name{,_for_file}` plus
+      `RuleContext::own_package`, a `OnceLock` resolved lazily per file—so only
+      a file containing a `:::` pays the `DESCRIPTION` read, and the LSP
+      keystroke path is untouched. A loose script has no own-package name, so
+      nothing is exempt there.
 - [x] **§I4 per-rule config**: `[lint.rules.<id>]` TOML tables, typed one struct
       per configurable rule in `src/config.rs` (so a mistyped rule ID is a parse
       error, unlike `select`/`ignore`). Threaded via a `config: &RulesConfig`

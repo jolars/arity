@@ -3612,6 +3612,132 @@ fn download_file_skips_shadowed_and_qualified_callees() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// internal-function
+// ---------------------------------------------------------------------------
+
+/// Only the `internal-function` findings for `src`.
+fn internal_function_diags(src: &str) -> Vec<arity::linter::Diagnostic> {
+    diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "internal-function")
+        .collect()
+}
+
+/// The one `internal-function` finding for `src`, plus the text it spans.
+fn internal_function_finding(src: &str) -> (arity::linter::Diagnostic, String) {
+    let mut found = internal_function_diags(src);
+    assert_eq!(
+        found.len(),
+        1,
+        "expected one finding for {src:?}: {found:?}"
+    );
+    let d = found.remove(0);
+    let span = src[usize::from(d.range.start())..usize::from(d.range.end())].to_string();
+    (d, span)
+}
+
+#[test]
+fn internal_function_flags_triple_colon_access() {
+    // A bare `:::` read: the span covers the whole access, not the statement.
+    let (d, span) = internal_function_finding("x <- stats:::C_cor\n");
+    assert_eq!(span, "stats:::C_cor");
+    assert!(d.message.body.contains("stats:::C_cor"), "{:?}", d.message);
+    assert!(d.fix.is_none(), "internal-function ships no fix");
+}
+
+#[test]
+fn internal_function_flags_call_form_once() {
+    // `pkg:::f(args)` parses as a call wrapping the `:::` binary, so the rule
+    // must report the access once, spanning only `pkg:::f`.
+    let (_, span) = internal_function_finding("utils:::.getHelpFile(path)\n");
+    assert_eq!(span, "utils:::.getHelpFile");
+}
+
+#[test]
+fn internal_function_flags_quoted_names() {
+    // Either side may be written backticked or quoted; the span still covers
+    // the access exactly, and the name is reported as `namespace_access`
+    // resolves it (a quoted `STRING` unquoted, a backticked `IDENT` verbatim).
+    let (d, span) = internal_function_finding("`my pkg`:::\"weird name\"\n");
+    assert_eq!(span, "`my pkg`:::\"weird name\"");
+    assert!(
+        d.message.body.contains("`my pkg`:::weird name"),
+        "{:?}",
+        d.message
+    );
+}
+
+/// The `internal-function` findings for `src` written at `rel` inside a package
+/// named `pkg` (a real `DESCRIPTION` + `R/` on disk, which is what
+/// `RuleContext::own_package` walks to).
+fn internal_function_diags_in_package(pkg: &str, rel: &str, src: &str) -> Vec<String> {
+    let dir = tempdir().expect("failed to create temp dir");
+    let root = dir.path();
+    std::fs::write(
+        root.join("DESCRIPTION"),
+        format!("Package: {pkg}\nVersion: 1.0\n"),
+    )
+    .expect("failed to write DESCRIPTION");
+    std::fs::create_dir_all(root.join("R")).expect("failed to create R/");
+    let path = root.join(rel);
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("failed to create dir");
+    std::fs::write(&path, src).expect("failed to write file");
+
+    check_document(&path, src, &LintConfig::default())
+        .expect("lint should succeed")
+        .into_iter()
+        .filter(|d| d.rule == "internal-function")
+        .map(|d| d.message.body.clone())
+        .collect()
+}
+
+#[test]
+fn internal_function_exempts_the_files_own_package() {
+    // `mypkg:::helper` inside `mypkg` reaches nothing external: in `R/` it is a
+    // redundant qualifier on a name already in scope, and in `tests/testthat/`
+    // it is the idiomatic way to exercise an unexported function.
+    for rel in ["R/util.R", "tests/testthat/test-util.R"] {
+        assert!(
+            internal_function_diags_in_package("mypkg", rel, "mypkg:::helper(x)\n").is_empty(),
+            "{rel}: a self-reference should not flag"
+        );
+    }
+}
+
+#[test]
+fn internal_function_still_flags_other_packages_inside_a_package() {
+    // The exemption is keyed on the *name*, not on "we are in some package":
+    // reaching into a third party's internals is the hazard the rule is about.
+    let found = internal_function_diags_in_package("mypkg", "R/util.R", "otherpkg:::helper(x)\n");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("otherpkg:::helper"), "{found:?}");
+}
+
+#[test]
+fn internal_function_flags_self_reference_outside_a_package() {
+    // A loose script has no own-package name, so nothing is exempt — the
+    // conservative direction for a report-only rule.
+    let (_, span) = internal_function_finding("mypkg:::helper(x)\n");
+    assert_eq!(span, "mypkg:::helper");
+}
+
+#[test]
+fn internal_function_ignores_exported_access() {
+    // `::` is the supported, exported interface — never flagged.
+    for src in [
+        "stats::median(x)\n",
+        "x <- stats::median\n",
+        "a:b\n",
+        "x <- 1\nprint(x)\n",
+    ] {
+        assert!(
+            internal_function_diags(src).is_empty(),
+            "{src:?} should not flag"
+        );
+    }
+}
+
 #[test]
 fn class_equals_rewrites_to_inherits() {
     // `class()` returns a vector, so `==` compares elementwise; `inherits()`
@@ -4035,6 +4161,9 @@ fn fixed_output_is_parseable_and_clean() {
         "download.file(u, dest)\n",
         "download.file(u, dest, mode = \"w\")\n",
         "download.file(u, dest, method = \"curl\", mode = \"wb\")\n",
+        // internal-function (no fix — must not perturb the input)
+        "x <- stats:::C_cor\n",
+        "utils:::.getHelpFile(path)\n",
         // equals-na (`== NA` → is.na)
         "print(x == NA)\n",
         "print(NA == g(y))\n",

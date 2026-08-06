@@ -25,6 +25,7 @@
   - [if-always-true](reference/rules/if-always-true.md)
   - [empty-assignment](reference/rules/empty-assignment.md)
   - [download-file](reference/rules/download-file.md)
+  - [internal-function](reference/rules/internal-function.md)
   - [assignment-in-condition](reference/rules/assignment-in-condition.md)
   - [implicit-assignment](reference/rules/implicit-assignment.md)
   - [browser](reference/rules/browser.md)
