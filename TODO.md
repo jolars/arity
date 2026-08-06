@@ -93,7 +93,33 @@
       name—under-reporting a dead `my.util`, which the NAMESPACE path still
       catches. On tidyr's `R/` the rule reports 27 findings, all verified to have
       no internal caller, and no S3 method among them.
-- [ ] `duplicated-function-definition` (suspicious, sem, none).
+- [x] `duplicated-function-definition` (suspicious, sem, none). Report-only:
+      which of the two definitions the author meant to keep is a judgement
+      call, so there is nothing mechanical to apply. Two `sem` halves, both
+      needed to keep it FP-free. *Same variable* comes from the model's
+      bindings, so a nested `helper` never pairs with a top-level one; *first
+      one unused* comes from the Phase A def-use index — a redefinition after a
+      genuine read is a deliberate rewrite, not a duplicate, so the pair fires
+      only when the earlier binding has no read site before the later
+      definition. Reads inside the earlier definition's own statement are
+      discounted: a recursive self-call resolves at call time, to the surviving
+      definition, so it is no evidence the earlier body ran. Pairing is confined
+      to definitions that are **siblings in one statement list** (both direct
+      children of the same `BLOCK_EXPR` or of `ROOT`), which is what makes "the
+      second overwrites the first" true rather than merely possible —
+      definition-by-condition (`if (x) f <- ... else f <- ...`) lands in two
+      different lists and only one branch runs. Reports the *redefinition* (the
+      later name token), naming the shadowed definition's line. Deliberately
+      **not** coordinated with `unused-binding` the way `unused-function` is:
+      the two make different claims ("never read at all" vs "replaced before it
+      was used"), and on the shape this rule targets `unused-binding` is silent
+      by construction, since a call to the survivor marks the whole same-name
+      cohort read. Corpus check: 0 findings on tidyr, MASS, and survival; 17
+      across all of r-source, of which the 4 in real library sources
+      (`base/R/parse.R`, `grid/R/typeset.R`, `stats/R/models.R`,
+      `utils/R/hashtab.R`) are all true positives — R core keeps a superseded
+      definition sitting above the live one, commented `## or rather` /
+      `## Future version`.
 - [x] `for-loop-index`/`for-loop-dup-index` (suspicious, none). Both report-only
       (the repair is to rename an index, which means inventing a name), spanned
       on the `i in seq` clause via the shared `matchers::for_clause`.

@@ -37,6 +37,7 @@
   - [for-loop-index](reference/rules/for-loop-index.md)
   - [for-loop-dup-index](reference/rules/for-loop-dup-index.md)
   - [unused-function](reference/rules/unused-function.md)
+  - [duplicated-function-definition](reference/rules/duplicated-function-definition.md)
   - [true-false-symbol](reference/rules/true-false-symbol.md)
   - [comparison-negation](reference/rules/comparison-negation.md)
   - [outer-negation](reference/rules/outer-negation.md)

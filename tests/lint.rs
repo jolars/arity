@@ -2224,6 +2224,108 @@ fn for_loop_dup_index_stops_at_a_function_boundary() {
     assert!(rule_diags(src, "for-loop-dup-index").is_empty());
 }
 
+/// The `(start, end)` byte offsets of the substring `needle` in `src`, for
+/// asserting a finding's span.
+fn span_of(src: &str, needle: &str, from: usize) -> (u32, u32) {
+    let start = src[from..].find(needle).expect("needle in source") + from;
+    (start as u32, (start + needle.len()) as u32)
+}
+
+#[test]
+fn duplicated_function_definition_flags_the_redefinition() {
+    let src = "f <- function(x) x\nf <- function(x) x + 1\nf(1)\n";
+    let diags = rule_diags(src, "duplicated-function-definition");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    // The span is the *second* definition's name token, and the message points
+    // back at the shadowed one.
+    let (start, end) = span_of(src, "f", 19);
+    assert_eq!(
+        (
+            u32::from(diags[0].range.start()),
+            u32::from(diags[0].range.end())
+        ),
+        (start, end)
+    );
+    assert!(
+        diags[0].message.body.contains("line 1"),
+        "message should name the shadowed definition's line: {}",
+        diags[0].message.body
+    );
+}
+
+#[test]
+fn duplicated_function_definition_reports_each_extra_definition() {
+    let src = "f <- function() 1\nf <- function() 2\nf <- function() 3\nf()\n";
+    let diags = rule_diags(src, "duplicated-function-definition");
+    assert_eq!(diags.len(), 2, "{diags:?}");
+}
+
+#[test]
+fn duplicated_function_definition_ignores_a_use_between_definitions() {
+    // Redefinition after a genuine use is a deliberate (if unusual) rewrite,
+    // not a duplicated definition: the first one did run.
+    let src = "f <- function(x) x\nprint(f(1))\nf <- function(x) x + 1\nf(2)\n";
+    assert!(rule_diags(src, "duplicated-function-definition").is_empty());
+}
+
+#[test]
+fn duplicated_function_definition_flags_despite_a_recursive_self_reference() {
+    // A recursive call inside the *first* definition's own body resolves at
+    // call time — to the surviving second definition — so it is no evidence
+    // that the first one was ever used.
+    let src =
+        "fact <- function(n) if (n <= 1) 1 else n * fact(n - 1)\nfact <- function(n) 2\nfact(3)\n";
+    let diags = rule_diags(src, "duplicated-function-definition");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+}
+
+#[test]
+fn duplicated_function_definition_ignores_conditional_definitions() {
+    // Only one branch runs, so this is a legitimate definition-by-condition.
+    let src = "if (cond) {\n  f <- function() 1\n} else {\n  f <- function() 2\n}\nf()\n";
+    assert!(rule_diags(src, "duplicated-function-definition").is_empty());
+}
+
+#[test]
+fn duplicated_function_definition_ignores_distinct_frames() {
+    // A nested `f` is a different variable from the top-level `f`.
+    let src = "f <- function() 1\ng <- function() {\n  f <- function() 2\n  f()\n}\nf()\ng()\n";
+    assert!(rule_diags(src, "duplicated-function-definition").is_empty());
+}
+
+#[test]
+fn duplicated_function_definition_flags_inside_a_function_body() {
+    let src = "outer <- function() {\n  helper <- function() 1\n  helper <- function() 2\n  helper()\n}\nouter()\n";
+    let diags = rule_diags(src, "duplicated-function-definition");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+}
+
+#[test]
+fn duplicated_function_definition_ignores_non_function_values() {
+    // Reassigning a function name to a value is not a duplicated *definition*;
+    // neither is a name bound twice to non-function values.
+    for src in [
+        "f <- function() 1\nf <- 2\nprint(f)\n",
+        "f <- 1\nf <- function() 2\nf()\n",
+        "x <- 1\nx <- 2\nprint(x)\n",
+    ] {
+        assert!(
+            rule_diags(src, "duplicated-function-definition").is_empty(),
+            "should not flag: {src:?}"
+        );
+    }
+}
+
+#[test]
+fn duplicated_function_definition_reports_without_a_fix() {
+    // Report-only: which of the two definitions the author meant to keep is a
+    // judgement call, so there is nothing mechanical to apply.
+    let src = "f <- function() 1\nf <- function() 2\nf()\n";
+    let diags = rule_diags(src, "duplicated-function-definition");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert!(diags[0].fix.is_none());
+}
+
 #[test]
 fn fix_output_parses_and_is_format_idempotent() {
     use arity::formatter::{FormatStyle, format_with_style};
@@ -4423,6 +4525,9 @@ fn fixed_output_is_parseable_and_clean() {
         "download.file(u, dest)\n",
         "download.file(u, dest, mode = \"w\")\n",
         "download.file(u, dest, method = \"curl\", mode = \"wb\")\n",
+        // duplicated-function-definition (no fix — must not perturb the input)
+        "f <- function() 1\nf <- function() 2\nf()\n",
+        "g <- function() {\n  h <- function() 1\n  h <- function() 2\n  h()\n}\n",
         // internal-function (no fix — must not perturb the input)
         "x <- stats:::C_cor\n",
         "utils:::.getHelpFile(path)\n",

@@ -31,6 +31,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`for-loop-index`](rules/for-loop-index.md)
 - [`for-loop-dup-index`](rules/for-loop-dup-index.md)
 - [`unused-function`](rules/unused-function.md)
+- [`duplicated-function-definition`](rules/duplicated-function-definition.md)
 
 ## Readability
 

@@ -1,0 +1,53 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+# `duplicated-function-definition`
+
+Flag a function name defined twice among the same run of statements, where the earlier definition is replaced before it is ever used. R evaluates both assignments, so every call reaches the second one and the first body is dead code — nearly always a copy-paste or merge artifact.
+
+Only definitions that are siblings in one statement list are paired, so definition-by-condition (`if (x) f <- function() 1 else f <- function() 2`) is not flagged: only one branch runs. A redefinition that follows a genuine use of the earlier definition is not flagged either — that is a deliberate rewrite, not a duplicate. No fix is offered: which definition to keep is a judgement call.
+
+This rule is **enabled by default**.
+
+The first `calc` is replaced before it is ever called:
+
+```r
+calc <- function(x) {
+  x + 1
+}
+
+calc <- function(x) {
+  x * 2
+}
+
+calc(3)
+```
+
+```text
+warning: duplicated-function-definition
+ --> example.R:5:1
+  |
+5 | calc <- function(x) {
+  | ^^^^ function `calc` is redefined here; the definition on line 1 is never used
+  = help: Remove the definition that is overwritten, or give one of them a different name.
+```
+
+The same mistake inside a function body:
+
+```r
+process <- function(data) {
+  clean <- function(x) x[!is.na(x)]
+  clean <- function(x) x[x > 0]
+  clean(data)
+}
+```
+
+```text
+warning: duplicated-function-definition
+ --> example.R:3:3
+  |
+3 |   clean <- function(x) x[x > 0]
+  |   ^^^^^ function `clean` is redefined here; the definition on line 2 is never used
+  = help: Remove the definition that is overwritten, or give one of them a different name.
+```

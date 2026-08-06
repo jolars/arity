@@ -3,6 +3,7 @@
 
 mod assignment_in_condition;
 mod browser;
+mod duplicated_function_definition;
 mod for_loop_dup_index;
 mod for_loop_index;
 mod implicit_assignment;
@@ -15,6 +16,7 @@ mod unused_function;
 
 pub use assignment_in_condition::AssignmentInCondition;
 pub use browser::Browser;
+pub use duplicated_function_definition::DuplicatedFunctionDefinition;
 pub use for_loop_dup_index::ForLoopDupIndex;
 pub use for_loop_index::ForLoopIndex;
 pub use implicit_assignment::ImplicitAssignment;
