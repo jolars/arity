@@ -248,11 +248,11 @@ git clone --branch "v$(cat tests/oracle/.roxygen2-source)" \
 
 ## Adding a lint rule
 
-The linter ships 37 rules across five categories (correctness, suspicious,
-readability, performance, documentation) with generated per-rule docs. A rule is
-a module under `src/linter/rules/<category>/<id>.rs` implementing the `Rule`
-trait --- it either subscribes to `SyntaxKind`s via `interests` and gets called
-during the one shared CST walk, or leaves `interests` empty and overrides
+The linter ships 47 rules across six categories (correctness, suspicious,
+readability, performance, documentation, meta) with generated per-rule docs. A
+rule is a module under `src/linter/rules/<category>/<id>.rs` implementing the
+`Rule` trait --- it either subscribes to `SyntaxKind`s via `interests` and gets
+called during the one shared CST walk, or leaves `interests` empty and overrides
 `check_file` for a whole-file pass. Adding one touches the registry (`all_rules`
 in [`src/linter/rules.rs`](src/linter/rules.rs), the single source of truth),
 TDD fixtures, an autofix-correctness (parse-clean) case, and the snapshot-pinned

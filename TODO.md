@@ -164,15 +164,38 @@
 
 ### Phase 4—Meta (suppression) rules + hardening
 
-- [ ] **§I6 suppression refactor**: have `SuppressionMap` expose the parsed
-      directive list (rule, range, has-reason, raw) and surface it on
-      `RuleContext` (`suppressions`). `outdated-suppression` also needs the
-      driver (`check.rs`/`run_rules`) to record which suppressions actually
-      matched a diagnostic—a post-pass, not a per-rule concern.
-- [ ] `misnamed-suppression` (vs `ALL_RULE_IDS`, safe), `blanket-suppression`
-      (none), `unexplained-suppression` (none, **default-off**),
-      `outdated-suppression` (safe-delete). These subsume the reserved
-      `arity-ignore-unused` follow-up below.
+- [x] **§I6 suppression refactor**: `SuppressionMap` now records every
+      recognized directive (`kind`, `RuleRef { id, range }`, `reason`, comment
+      span, `target`, `raw`), *including* the shapes it used to drop silently—an
+      unknown rule ID, a directive with no following sibling, one naming no rule.
+      It reaches rules as `RuleContext::suppressions`. Filtering moved from
+      `check.rs` into `run_rules`, the only place holding both the map and the
+      findings; `SuppressionMap::filter` returns a `DirectiveUsage` and
+      `Rule::check_suppressions` is the post-pass seam that consumes it.
+      `RuleContext::enabled_rules` distinguishes a *dormant* directive (its rule
+      never ran) from a stale one. A directive no longer suppresses a finding
+      spanned inside its own comment—without that, `blanket-suppression` could
+      never report the shape it exists for; inert for every other rule.
+- [x] `misnamed-suppression` (meta, `syn`, safe), `blanket-suppression` (none),
+      `unexplained-suppression` (none, **default-off**), `outdated-suppression`
+      (safe-delete). These subsume the reserved `arity-ignore-unused` follow-up
+      below. New `meta` category (`src/linter/rules/meta/`).
+      `misnamed-suppression`'s rename is safe but withheld unless unambiguous:
+      exactly one shipped ID within a bounded edit distance and strictly closer
+      than every other, and never on a comma list (`# arity-ignore a, b` parses
+      as rule `a,`; repairing to `a` would silently drop `b`).
+      `outdated-suppression` fires only when the named rule actually ran, or
+      when the directive is dangling—so the verdict is about the code, not the
+      invocation—and hands rule-less directives to `blanket-suppression` and
+      unknown IDs to `misnamed-suppression`, so no two meta rules fire on one
+      comment. Its delete uses the new `matchers::comment_deletion_span`, not
+      `deletion_span`, whose blank-line absorption would overlap the spans of
+      two adjacent directives and make `apply_fixes` drop one.
+      Follow-ups deferred: node-level suppression of a `meta` finding cannot
+      work (`next_meaningful_sibling` skips comments, so the directive attaches
+      past the one it would silence)—use the `-file` form; comma-separated rule
+      lists are still unsupported (now audible rather than silent); a bare
+      `# arity-ignore` stays inert rather than gaining node-blanket semantics.
 - [ ] **Hardening sub-pass**: upgrade Phase 1/2 fixes from bare-name to
       `resolves_to_base`-confirmed + shadow-checked, graduating the call-rewrite
       rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
@@ -745,9 +768,9 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   collects undecodable files into `LintResult::skipped` and continues; the CLI
   warns per skipped file (both `lint` and `--fix`). Other IO errors still abort.
 
-- [ ] `arity-ignore-unused` meta-diagnostic: emit a finding for suppression
-  comments that didn't actually suppress anything (rule ID is reserved but
-  the rule is not yet wired in).
+- [x] `arity-ignore-unused` meta-diagnostic: emit a finding for suppression
+  comments that didn't actually suppress anything. Shipped as
+  `outdated-suppression` (Phase 4 above), not under the reserved name.
 
 - [x] **Harvest lazy-data symbols.** The index now covers R's default packages
   (so hover/signatures work for base-R functions), but `harvest_package`

@@ -13,6 +13,7 @@
 - [Configuration](reference/configuration.md)
 - [CLI Reference](reference/cli.md)
 - [Benchmarks](reference/benchmarks.md)
+- [Suppressing Findings](reference/suppression.md)
 - [Lint Rules](reference/rules.md)
   - [undefined-symbol](reference/rules/undefined-symbol.md)
   - [unused-binding](reference/rules/unused-binding.md)

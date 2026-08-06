@@ -289,13 +289,20 @@ rendered-flat `conditional_group` candidates.
 `LintStatus` (`Clean`/`Findings`/`ParseDiagnostics`); parse diagnostics
 block linting a file. The linter is **purely semantic**: anything the
 formatter's `--check` mode can catch belongs to the formatter, not here. Ships
-43 rules across five categories (12 correctness, 11 suspicious, 5 readability,
-10 performance, 5 documentation) with autofixes, `# arity-ignore` suppression,
-and generated per-rule docs. `src/linter/rules.rs` is the **single source of
+47 rules across six categories (12 correctness, 11 suspicious, 5 readability,
+10 performance, 5 documentation, 4 meta) with autofixes, `# arity-ignore`
+suppression, and generated per-rule docs. The `meta` rules are the odd ones out:
+they lint arity's own suppression directives rather than R code, reading the
+parsed directive list off `RuleContext::suppressions`. `outdated-suppression`
+runs on the `Rule::check_suppressions` post-pass, because "did this directive
+match anything" is a fact about the driver's filtering step and does not exist
+until every rule has emitted. `src/linter/rules.rs` is the **single source of
 truth** registry (`all_rules`, from which `all_rule_ids` is derived) and owns
 the dispatch: rules declare the `SyntaxKind`s they care about via
 `Rule::interests` and one shared CST walk calls `Rule::check`; whole-file rules
-leave `interests` empty and override `Rule::check_file`. The `add-lint-rule`
+leave `interests` empty and override `Rule::check_file`. `run_rules` also owns
+suppression filtering (it is the only place holding both the directive map and
+the findings) and the post-suppression pass. The `add-lint-rule`
 skill walks the full sequence; the `linter-investigation` skill triages the
 linter against a real-world R codebase.
 
