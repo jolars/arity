@@ -32,17 +32,17 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// Render the benchmark partials included by `reference/benchmarks.md` from the
+/// Render the benchmark partials included by `guide/performance.md` from the
 /// committed artifact `benches/benchmark_results.json`. The JSON is read but
 /// never regenerated here, so the benchmark is only ever run manually (via
 /// `task bench`), not at doc-gen time. A missing artifact degrades to an
 /// "unavailable" note so a fresh checkout still builds.
 fn generate_benchmarks() -> io::Result<()> {
-    let ref_dir = Path::new("docs/src/reference");
+    let guide_dir = Path::new("docs/src/guide");
     let json = fs::read_to_string("benches/benchmark_results.json").ok();
     let (meta, results) = render_partials(json.as_deref());
-    write_if_changed(&ref_dir.join("benchmarks_meta.md"), &meta)?;
-    write_if_changed(&ref_dir.join("benchmarks_results.md"), &results)?;
+    write_if_changed(&guide_dir.join("benchmarks_meta.md"), &meta)?;
+    write_if_changed(&guide_dir.join("benchmarks_results.md"), &results)?;
     Ok(())
 }
 

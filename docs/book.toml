@@ -21,3 +21,8 @@ additional-js = [
 
 [output.html.search]
 enable = true
+
+# The benchmark page moved into the guide and was renamed; keep the published
+# URL working.
+[output.html.redirect]
+"/reference/benchmarks.html" = "../guide/performance.html"

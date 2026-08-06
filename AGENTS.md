@@ -125,11 +125,14 @@ generated: `build.rs` writes `docs/src/reference/cli.md` from the clap CLI, and
 `cargo run --example docgen` renders the whole rule reference
 (`docs/src/reference/rules.md`—one `###` section per rule keyed by its ID, plus
 the index over them, by running the real linter on each rule's examples),
-`version.md`, and the benchmark partials
-(`benchmarks_meta.md`/`benchmarks_results.md`, rendered by `src/bench_docs.rs`
-from the committed `benches/benchmark_results.json`). `mdbook build docs` then
+`version.md`, and the benchmark partials included by the guide's
+`performance.md` (`guide/benchmarks_meta.md`/`guide/benchmarks_results.md`,
+rendered by `src/bench_docs.rs` from the committed
+`benches/benchmark_results.json`). `mdbook build docs` then
 builds the site; `examples/canonical.rs` and `examples/sitemap.rs` post-process
-it, and `.github/workflows/docs.yml` deploys it to GitHub Pages. The rendered
+it (skipping mdBook's `[output.html.redirect]` stubs, which already carry their
+own canonical and want no sitemap entry), and `.github/workflows/docs.yml`
+deploys it to GitHub Pages. The rendered
 rule docs are pinned by `tests/rule_docs.rs` and the benchmark partials by
 `tests/benchmarks_docs.rs`, so neither can drift from behavior.
 
@@ -378,7 +381,7 @@ neither CI nor `cargo test` runs it, and it is never a quality gate.
   `ARITY_BENCH_PROJECT`). Timing prefers `hyperfine` + `jq`, falling back to a
   shell loop. Tools missing from PATH are skipped silently.
 - It rewrites the **tracked** artifact `benches/benchmark_results.json`, the
-  sole source of the published benchmark page: `docgen` renders it into the
+  sole source of the published performance page (`docs/src/guide/performance.md`): `docgen` renders it into the
   generated partials, and the numbers are never re-measured at site-build time.
   Moving performance and wanting the docs to show it means re-running
   `task bench` and committing the artifact.

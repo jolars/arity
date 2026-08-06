@@ -1,4 +1,4 @@
-# Benchmarks
+# Performance
 
 Wall-clock speed of `arity` against other R tooling, measured with [hyperfine].
 Two operations are covered:
