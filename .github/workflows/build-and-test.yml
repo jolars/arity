@@ -49,6 +49,32 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --verbose
 
+  wasm:
+    if: github.event_name != 'schedule'
+    name: Wasm Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+
+      # `arity-formatter` is embedded by the dprint Wasm plugin
+      # (github.com/jolars/dprint-plugin-arity), which builds only for
+      # wasm32-unknown-unknown. Nothing else in the workspace targets wasm, so
+      # this job is the only thing keeping the member crates free of
+      # filesystem/thread/time dependencies.
+      - name: Build arity-formatter for wasm
+        run: >
+          cargo build -p arity-formatter --release
+          --target wasm32-unknown-unknown --features schema
+
   cargo-audit:
     name: Cargo Audit
     runs-on: ubuntu-latest
@@ -73,7 +99,7 @@ jobs:
 
   versionary:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, cargo-audit, cargo-deny]
+    needs: [test, wasm, cargo-audit, cargo-deny]
     runs-on: ubuntu-latest
     permissions:
       contents: write

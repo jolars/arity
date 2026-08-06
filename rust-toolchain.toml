@@ -1,2 +1,5 @@
 [toolchain]
 channel = "stable"
+# `arity-formatter` is embedded by the dprint Wasm plugin
+# (github.com/jolars/dprint-plugin-arity), so the wasm target has to build.
+targets = ["wasm32-unknown-unknown"]
