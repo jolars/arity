@@ -15,6 +15,8 @@
 
 mod blanket_suppression;
 mod misnamed_suppression;
+mod unexplained_suppression;
 
 pub use blanket_suppression::BlanketSuppression;
 pub use misnamed_suppression::MisnamedSuppression;
+pub use unexplained_suppression::UnexplainedSuppression;

@@ -66,3 +66,4 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 
 - [`misnamed-suppression`](rules/misnamed-suppression.md)
 - [`blanket-suppression`](rules/blanket-suppression.md)
+- [`unexplained-suppression`](rules/unexplained-suppression.md)

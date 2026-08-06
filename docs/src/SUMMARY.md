@@ -60,3 +60,4 @@
   - [roxygen-examples](reference/rules/roxygen-examples.md)
   - [misnamed-suppression](reference/rules/misnamed-suppression.md)
   - [blanket-suppression](reference/rules/blanket-suppression.md)
+  - [unexplained-suppression](reference/rules/unexplained-suppression.md)

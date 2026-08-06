@@ -5170,3 +5170,50 @@ fn blanket_file_directive_does_not_suppress_its_own_finding() {
     let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
     assert!(rules.contains(&"blanket-suppression"), "got {rules:?}");
 }
+
+#[test]
+fn unexplained_suppression_is_disabled_by_default() {
+    let src = "# arity-ignore unused-binding\nx <- 1\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"unexplained-suppression"), "got {rules:?}");
+}
+
+#[test]
+fn unexplained_suppression_flags_a_reasonless_directive() {
+    for src in [
+        "# arity-ignore unused-binding\nx <- 1\n",
+        "# arity-ignore-file unused-binding\nx <- 1\n",
+        "# arity-ignore-file:\nx <- 1\n",
+    ] {
+        let d = meta_rules(src, "unexplained-suppression");
+        assert_eq!(d.len(), 1, "{src:?} -> {d:?}");
+        assert!(d[0].fix.is_none(), "report-only");
+    }
+}
+
+#[test]
+fn unexplained_suppression_flags_an_empty_reason() {
+    let src = "# arity-ignore unused-binding:   \nx <- 1\n";
+    assert_eq!(meta_rules(src, "unexplained-suppression").len(), 1);
+}
+
+#[test]
+fn unexplained_suppression_accepts_a_written_reason() {
+    for src in [
+        "# arity-ignore unused-binding: kept for the API\nx <- 1\n",
+        "# arity-ignore-file unused-binding: generated\nx <- 1\n",
+        "# arity-ignore-file: vendored\nx <- 1\n",
+    ] {
+        assert!(
+            meta_rules(src, "unexplained-suppression").is_empty(),
+            "{src:?}"
+        );
+    }
+}
+
+#[test]
+fn unexplained_suppression_spans_the_whole_directive() {
+    let src = "# arity-ignore unused-binding\nx <- 1\n";
+    let d = meta_rules(src, "unexplained-suppression");
+    assert_eq!(&src[d[0].range], "# arity-ignore unused-binding");
+}
