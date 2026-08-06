@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.16.0](https://github.com/jolars/arity/compare/v0.15.0...v0.16.0) (2026-08-06)
+
+### Features
+- **lsp:** thread roxygen markdown default through salsa and lint ([`6bd4801`](https://github.com/jolars/arity/commit/6bd4801a2804e8c01f59f25689589142edf8d2ab))
+- **format:** honor package roxygen markdown default ([`5606f61`](https://github.com/jolars/arity/commit/5606f61ec5326469643902c7ae793050d8d4442a))
+- **project:** discover roxygen markdown default statically ([`be86db1`](https://github.com/jolars/arity/commit/be86db1af2fb8d20f9af016acd1c15b0f192d5df))
+- **rindex:** opt-in `search()`-diff attach probe ([`deecf3e`](https://github.com/jolars/arity/commit/deecf3e74496dea03788bb904cf88e7e00862791))
+- **rindex:** capture attach sets at harvest ([`4c6e7d8`](https://github.com/jolars/arity/commit/4c6e7d89ee9362930e027a1f8fe033dcf70b2238))
+- **lint:** gate undefined-symbol on harvested attach sets ([`ed92f87`](https://github.com/jolars/arity/commit/ed92f8769a3f435394a0215ef88be32d899a2d1d))
+- **rindex:** resolve members from harvested attach sets ([`492cfd0`](https://github.com/jolars/arity/commit/492cfd05db1798d13758735e7e68d902f0f04e04))
+- **rindex:** add `attaches` to the index schema ([`731c4db`](https://github.com/jolars/arity/commit/731c4db8fcf62770b5cf28435f89c0a1871ac141))
+- **formatter:** re-export `rowan` for embedders ([`81a8d02`](https://github.com/jolars/arity/commit/81a8d028ef7522dd3c7cc1ccc710b584bd9f3bb7))
+- **formatter:** options-taking `format_with_options` entry ([`76ab583`](https://github.com/jolars/arity/commit/76ab583c1f07efb504995a8e2578f9791513c9ea))
+- **formatter:** add serde and schema features ([`341e173`](https://github.com/jolars/arity/commit/341e173a76dbef8d5aa998b716d8f2262b4ed603))
+- **parser:** caller-set roxygen markdown default ([`6367b0b`](https://github.com/jolars/arity/commit/6367b0bc291504fe6073edba31da486ea95a0c47)), closes [#94](https://github.com/jolars/arity/issues/94)
+
+### Bug Fixes
+- **lsp:** expand meta-package members in `packages_to_build` ([`a5b7466`](https://github.com/jolars/arity/commit/a5b7466d015dee11d6830b7f87369e26db5896f7))
+- **linter:** simulate R argument matching for model-frame calls ([`7eb78e0`](https://github.com/jolars/arity/commit/7eb78e096d9c53d187666e410c4a3a2f93f2a563))
+
+### Dependencies
+- updated crates/arity-formatter to v0.2.0
+- updated crates/arity-parser to v0.2.0
+
 ## [0.15.0](https://github.com/jolars/arity/compare/v0.14.0...v0.15.0) (2026-08-05)
 
 ### Features
