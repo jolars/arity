@@ -34,6 +34,51 @@
     return out;
   }
 
+  // Tick values for the log ratio axis, in decreasing order of preference:
+  // exact powers of ten, then a 1-2-5 ladder. The first ladder placing at least
+  // three ticks inside the data's range wins; a wide chart therefore reads
+  // 1, 10, 100 and a narrow one 1, 2, 5 rather than either extreme.
+  //
+  // Candidates are clipped to the data range, not to a decade boundary, so
+  // every tick returned is guaranteed to fall inside whatever domain the scale
+  // ends up with. Returns undefined when even the finer ladder is too sparse
+  // (all tools within a hair of arity); the scale then picks its own ticks,
+  // which "~f" still renders as plain decimals.
+  function logTicks(points) {
+    var ratios = points
+      .map(function (p) {
+        return p.ratio;
+      })
+      .filter(function (r) {
+        return r > 0;
+      });
+    if (!ratios.length) {
+      return undefined;
+    }
+    var lo = Math.min.apply(null, ratios);
+    var hi = Math.max.apply(null, ratios);
+    var ladders = [[1], [1, 2, 5]];
+    for (var i = 0; i < ladders.length; i++) {
+      var ticks = [];
+      for (
+        var e = Math.floor(Math.log10(lo));
+        e <= Math.ceil(Math.log10(hi));
+        e++
+      ) {
+        for (var m = 0; m < ladders[i].length; m++) {
+          var v = ladders[i][m] * Math.pow(10, e);
+          if (v >= lo && v <= hi) {
+            ticks.push(v);
+          }
+        }
+      }
+      if (ticks.length >= 3) {
+        return ticks;
+      }
+    }
+    return undefined;
+  }
+
   function spec(points) {
     var dark = isDark();
     var fg = dark ? "#c8c9db" : "#333333";
@@ -76,7 +121,14 @@
               type: "quantitative",
               title: "Time relative to arity",
               scale: { type: "log" },
-              axis: { format: "~s" },
+              axis: {
+                // Plain-decimal tick labels (100, 10, 1, 0.5, …); "~f" trims
+                // trailing zeros. The default "~s" formatting turns sub-1
+                // ratios into SI-prefixed labels ("500m", "200m") and large
+                // ones into "1k", which read as units rather than ratios.
+                values: logTicks(points),
+                format: "~f",
+              },
             },
             color: {
               field: "document",
