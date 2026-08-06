@@ -7,13 +7,14 @@
 #
 # Two operations, each measured at two scopes:
 #
-#   * formatter (vs air; styler opt-in)   single files + a real R package
-#   * linter    (vs jarl)                 single files + a real R package
+#   * formatter (vs air, styler)          single files + real R packages
+#   * linter    (vs jarl, lintr)          single files + real R packages
 #
-# "Single files" are synthetic corpus tiers built from the formatter fixtures;
-# "projects" is the R/ source tree of a real package (tidyr by default), cloned
-# once into a cache. arity is the baseline in every chart; every other tool's
-# time is reported relative to it.
+# "Single files" mixes two synthetic corpus tiers built from the formatter
+# fixtures with the largest real source file of each benchmarked package;
+# "projects" is the R/ source tree of each package, cloned once into a cache.
+# arity is the baseline in every chart; every other tool's time is reported
+# relative to it.
 #
 # The JSON artifact feeds the docs benchmark page (docs/src/reference/benchmarks.md):
 # `cargo run --example docgen` renders it into the generated partials at doc-gen
@@ -23,24 +24,23 @@
 # This is a *visibility* tool, not a quality gate and not a parity target. It
 # measures wall-clock speed only, never output equivalence (that is what
 # `task air-compat` covers). Tools do different work and pay different startup
-# floors (styler is an R process), so treat the *ratios*, not the absolute
-# milliseconds, as the takeaway.
+# floors (styler and lintr are R processes), so treat the *ratios*, not
+# the absolute milliseconds, as the takeaway.
 #
 # Usage:
 #   ./scripts/bench.sh                     # all charts (formatter + linter)
 #   ./scripts/bench.sh --out PATH          # write the JSON artifact elsewhere
-#   ARITY_BENCH_STYLER=1 ./scripts/bench.sh
-#                                          # also measure styler on formatter
-#                                          # single files (opt-in; slow)
+#   ARITY_BENCH_NO_R=1 ./scripts/bench.sh
+#                                          # skip the R-backed tools (styler,
+#                                          # lintr) for a fast run
 #   ARITY_BENCH_PROJECT=/path/to/pkg ./scripts/bench.sh
-#                                          # use a local package checkout instead
-#                                          # of cloning tidyr
+#                                          # use a single local package checkout
+#                                          # instead of the pinned clones
 #
-# styler is an R package and pays an interpreter startup floor plus a steep
-# per-line cost, so it is *not* run by default and only ever on the formatter
-# single-file tiers (never on projects, where style_dir would mutate the
-# checkout): set `ARITY_BENCH_STYLER=1` to opt in. Even then it is skipped on
-# tiers larger than STYLER_MAX_LINES to keep a run tractable.
+# styler and lintr are R packages that pay an interpreter startup floor plus a
+# steep per-line cost, so they are skipped on documents above R_SLOW_MAX_LINES
+# to keep a run tractable; styler additionally never runs on projects, where
+# style_dir would mutate the checkout.
 #
 # Timing backend: prefers `hyperfine` (warmup + stddev/min/max) with `jq` to
 # read its JSON; falls back to a plain shell timing loop (mean only) when either
@@ -59,21 +59,24 @@ HYPERFINE_MIN_RUNS=3
 SMALL_REPS=2
 LARGE_REPS=24
 
-# styler is opt-in and, even then, skipped on tiers above this line count (it is
-# an R process, orders of magnitude slower than the native tools).
-STYLER_MAX_LINES=20000
+# The slow R-backed tools (styler, lintr) are skipped on documents above this
+# line count; they are orders of magnitude slower than the native tools.
+R_SLOW_MAX_LINES=20000
 
-# The real package benchmarked for the "projects" charts. Cloned once (shallow,
-# pinned tag) into a cache unless ARITY_BENCH_PROJECT points at a local checkout.
-PROJECT_NAME="tidyr"
-PROJECT_REPO="https://github.com/tidyverse/tidyr"
-PROJECT_TAG="v1.3.2"
+# The real packages benchmarked for the "projects" charts, and the source of the
+# real single-file documents. Cloned once (shallow, pinned tag) into a cache
+# unless ARITY_BENCH_PROJECT points at a local checkout, which replaces the list.
+# Format: NAME|REPO|TAG
+PROJECT_SPECS=(
+    "tidyr|https://github.com/tidyverse/tidyr|v1.3.2"
+    "MASS|https://github.com/cran/MASS|7.3-66"
+)
 BENCH_CACHE="${ARITY_BENCH_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/arity-bench}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out) JSON_OUT="$2"; shift 2 ;;
-        -h|--help) sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -89,14 +92,18 @@ HAVE_JARL=$(have jarl && echo yes || echo no)
 HAVE_HYPERFINE=$(have hyperfine && echo yes || echo no)
 HAVE_JQ=$(have jq && echo yes || echo no)
 
-# styler is an R package: present only when Rscript can load it. Detect once,
-# but only enable it when the caller opts in (it is slow; see the header).
-HAVE_STYLER=no
-STYLER_VER=""
-if [ "${ARITY_BENCH_STYLER:-0}" != "0" ] && have Rscript; then
-    STYLER_VER=$(Rscript -e 'cat(as.character(packageVersion("styler")))' 2>/dev/null || true)
-    [ -n "$STYLER_VER" ] && HAVE_STYLER=yes
-fi
+# Version of an installed R package, or empty when Rscript cannot load it. The
+# whole R-backed set can be turned off with ARITY_BENCH_NO_R=1.
+r_pkg_version() {
+    [ "${ARITY_BENCH_NO_R:-0}" = "0" ] || return 0
+    have Rscript || return 0
+    Rscript -e "cat(as.character(packageVersion('$1')))" 2>/dev/null || true
+}
+
+STYLER_VER=$(r_pkg_version styler)
+LINTR_VER=$(r_pkg_version lintr)
+HAVE_STYLER=$([ -n "$STYLER_VER" ] && echo yes || echo no)
+HAVE_LINTR=$([ -n "$LINTR_VER" ] && echo yes || echo no)
 
 BACKEND="shell-loop"
 if [ "$HAVE_HYPERFINE" = "yes" ] && [ "$HAVE_JQ" = "yes" ]; then
@@ -114,6 +121,14 @@ AIR_VER=""
 JARL_VER=""
 [ "$HAVE_JARL" = "yes" ] && JARL_VER=$(jarl --version 2>/dev/null | awk '{print $2}')
 
+# Every tool that will appear in the artifact's meta.tools map, arity first.
+declare -a TOOL_NAMES=("arity") TOOL_VERS=("$ARITY_VER")
+add_tool() { [ -n "$2" ] && { TOOL_NAMES+=("$1"); TOOL_VERS+=("$2"); }; return 0; }
+add_tool air "$AIR_VER"
+add_tool jarl "$JARL_VER"
+add_tool styler "$STYLER_VER"
+add_tool lintr "$LINTR_VER"
+
 HOST_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 HOST_ARCH=$(uname -m)
 HOST_CPU=""
@@ -123,7 +138,8 @@ log "Tools:"
 log "  arity: $ARITY_VER (baseline)"
 if [ "$HAVE_AIR" = "yes" ]; then log "  air: $AIR_VER (formatter)"; else log "  air: (not on PATH -- skipped)"; fi
 if [ "$HAVE_JARL" = "yes" ]; then log "  jarl: $JARL_VER (linter)"; else log "  jarl: (not on PATH -- skipped)"; fi
-if [ "$HAVE_STYLER" = "yes" ]; then log "  styler: $STYLER_VER (formatter, opt-in)"; else log "  styler: (off -- set ARITY_BENCH_STYLER=1 to enable)"; fi
+if [ "$HAVE_STYLER" = "yes" ]; then log "  styler: $STYLER_VER (formatter, R)"; else log "  styler: (unavailable -- skipped)"; fi
+if [ "$HAVE_LINTR" = "yes" ]; then log "  lintr: $LINTR_VER (linter, R)"; else log "  lintr: (unavailable -- skipped)"; fi
 log "  backend: $BACKEND"
 [ "$BACKEND" = "shell-loop" ] && log "  (hint: install hyperfine + jq for stddev/min/max stats)"
 log
@@ -139,20 +155,29 @@ fmt_cmd() {
         arity:path)   echo "$ARITY format --check '$3' > /dev/null 2>&1" ;;
         air:stdin)    echo "air format --stdin-file-path bench.R < '$3' > /dev/null 2>&1" ;;
         air:path)     echo "air format --check '$3' > /dev/null 2>&1" ;;
-        styler:stdin) echo "Rscript -e 'invisible(styler::style_text(readLines(file(\"stdin\"))))' < '$3' > /dev/null 2>&1" ;;
+        # styler keeps a persistent on-disk cache of already-styled expressions,
+        # which would make its timings depend on what earlier runs happened to
+        # style. Deactivate it (session-scoped) so every run does the full work,
+        # like every other tool here.
+        styler:stdin) echo "Rscript -e 'styler::cache_deactivate(); invisible(styler::style_text(readLines(file(\"stdin\"))))' < '$3' > /dev/null 2>&1" ;;
     esac
 }
 
 # Linter command for TOOL over PATH in MODE. jarl has no stdin mode, so the
 # linter charts always pass a file or directory path (arity matched for a
-# like-for-like comparison).
+# like-for-like comparison). lintr takes one path either way and picks its
+# file/directory entry point from it.
 lint_cmd() {
     case "$1:$2" in
         arity:stdin) echo "$ARITY lint < '$3' > /dev/null 2>&1" ;;
         arity:path)  echo "$ARITY lint '$3' > /dev/null 2>&1" ;;
         jarl:path)   echo "jarl check '$3' > /dev/null 2>&1" ;;
+        lintr:path)  echo "Rscript -e 'p <- \"$3\"; invisible(if (dir.exists(p)) lintr::lint_dir(p) else lintr::lint(p))' > /dev/null 2>&1" ;;
     esac
 }
+
+# The R-backed tools that are too slow to run on the large documents.
+is_slow_tool() { [ "$1" = "styler" ] || [ "$1" = "lintr" ]; }
 
 # --- JSON helpers ------------------------------------------------------------
 
@@ -161,12 +186,12 @@ json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 # Run one command; echo "mean stddev min max runs" in milliseconds. For the
 # shell-loop backend stddev/min/max are the literal "null".
 run_one() {
-    local iterations="$1" cmd="$2"
+    local iterations="$1" cmd="$2" warmup="$3"
     if [ "$BACKEND" = "hyperfine" ]; then
         local tmp; tmp=$(mktemp)
         # -i: tools that find issues exit non-zero (linters, format --check);
         # we time the work regardless of the verdict.
-        hyperfine --warmup 2 --min-runs "$HYPERFINE_MIN_RUNS" -i \
+        hyperfine --warmup "$warmup" --min-runs "$HYPERFINE_MIN_RUNS" -i \
             --export-json "$tmp" --style=none "$cmd" >/dev/null 2>&1
         local mean stddev min max runs
         mean=$(jq -r '.results[0].mean' "$tmp")
@@ -208,33 +233,62 @@ done < <(find crates/arity-formatter/tests/fixtures/formatter -name expected.R |
 
 # NOTE: tiers repeat the same base block, so content is cache-friendly and not
 # fully representative of real code. They exist to amortize process startup and
-# show rough scaling, not to model a real workload.
+# show rough scaling; the real package files below cover representativeness.
 CORPUS_SMALL="$TMP/corpus_small.R"; : >"$CORPUS_SMALL"
 CORPUS_LARGE="$TMP/corpus_large.R"; : >"$CORPUS_LARGE"
 for ((i = 0; i < SMALL_REPS; i++)); do cat "$BASE" >>"$CORPUS_SMALL"; done
 for ((i = 0; i < LARGE_REPS; i++)); do cat "$BASE" >>"$CORPUS_LARGE"; done
 
-# The project: a real package's R/ source tree. Cloned once (shallow, pinned) or
-# taken from a local checkout via ARITY_BENCH_PROJECT. Best-effort: if the clone
-# fails (e.g. offline) the project charts are simply omitted.
-PROJECT_TARGET=""
-PKG_DIR=""
+# The projects: each package's R/ source tree. Cloned once (shallow, pinned) or
+# taken from a single local checkout via ARITY_BENCH_PROJECT. Best-effort: a
+# project whose clone fails (e.g. offline) is simply dropped.
+declare -a PROJ_NAMES=() PROJ_TARGETS=()
+
+add_project() {
+    local name="$1" dir="$2"
+    [ -d "$dir" ] || return 0
+    if [ -d "$dir/R" ]; then PROJ_NAMES+=("$name"); PROJ_TARGETS+=("$dir/R")
+    else PROJ_NAMES+=("$name"); PROJ_TARGETS+=("$dir"); fi
+}
+
 if [ -n "${ARITY_BENCH_PROJECT:-}" ]; then
-    PKG_DIR="$ARITY_BENCH_PROJECT"
+    add_project "$(basename "${ARITY_BENCH_PROJECT%/}")" "$ARITY_BENCH_PROJECT"
 else
-    PKG_DIR="$BENCH_CACHE/$PROJECT_NAME"
-    if [ ! -d "$PKG_DIR/.git" ] && [ ! -d "$PKG_DIR/R" ]; then
-        log ">> Cloning $PROJECT_NAME ($PROJECT_TAG) into $PKG_DIR..."
-        mkdir -p "$BENCH_CACHE"
-        if ! git clone --depth 1 --branch "$PROJECT_TAG" "$PROJECT_REPO" "$PKG_DIR" >/dev/null 2>&1; then
-            log "!! clone failed -- project charts will be omitted (set ARITY_BENCH_PROJECT to a local checkout)"
-            rm -rf "$PKG_DIR"
-            PKG_DIR=""
+    for spec in "${PROJECT_SPECS[@]}"; do
+        IFS='|' read -r p_name p_repo p_tag <<<"$spec"
+        p_dir="$BENCH_CACHE/$p_name"
+        if [ ! -d "$p_dir/.git" ] && [ ! -d "$p_dir/R" ]; then
+            log ">> Cloning $p_name ($p_tag) into $p_dir..."
+            mkdir -p "$BENCH_CACHE"
+            if ! git clone --depth 1 --branch "$p_tag" "$p_repo" "$p_dir" >/dev/null 2>&1; then
+                log "!! clone failed -- $p_name will be omitted (set ARITY_BENCH_PROJECT to a local checkout)"
+                rm -rf "$p_dir"
+                continue
+            fi
         fi
-    fi
+        add_project "$p_name" "$p_dir"
+    done
 fi
-if [ -n "$PKG_DIR" ] && [ -d "$PKG_DIR" ]; then
-    if [ -d "$PKG_DIR/R" ]; then PROJECT_TARGET="$PKG_DIR/R"; else PROJECT_TARGET="$PKG_DIR"; fi
+[ "${#PROJ_NAMES[@]}" -gt 0 ] || log "!! no project inputs -- omitting the project charts and the real single-file documents"
+
+# The real single-file documents: the largest .R file of each project, so the
+# file charts are not purely synthetic. Ordered by size so the charts read
+# small-to-large across real files and then tiers.
+declare -a FILE_IDS=() FILE_NAMES=() FILE_PATHS=()
+if [ "${#PROJ_NAMES[@]}" -gt 0 ]; then
+    biggest_list="$TMP/biggest"; : >"$biggest_list"
+    for i in "${!PROJ_NAMES[@]}"; do
+        biggest=$(find "${PROJ_TARGETS[$i]}" -type f \( -name '*.R' -o -name '*.r' \) -printf '%s\t%p\n' \
+            | sort -t$'\t' -k1,1nr -k2,2 | head -1 | cut -f2)
+        [ -n "$biggest" ] || continue
+        printf '%s\t%s\t%s\n' "$(wc -c <"$biggest")" "${PROJ_NAMES[$i]}" "$biggest" >>"$biggest_list"
+    done
+    while IFS=$'\t' read -r _size p_name p_path; do
+        [ -n "$p_path" ] || continue
+        FILE_IDS+=("$p_name-file")
+        FILE_NAMES+=("$p_name/$(basename "$p_path")")
+        FILE_PATHS+=("$p_path")
+    done < <(sort -t$'\t' -k1,1n -k2,2 "$biggest_list")
 fi
 
 # --- Result accumulation -----------------------------------------------------
@@ -270,17 +324,22 @@ bench_doc() {
     DOC_SIZE+=("$size"); DOC_LINES+=("$lines")
 
     log "== [$chart] $name ($size bytes, $lines lines) =="
-    local tool cmd mean stddev min max runs
+    local tool cmd mean stddev min max runs warmup
     for tool in "${tools[@]}"; do
         if [ "$op" = format ]; then cmd="$(fmt_cmd "$tool" "$mode" "$path")"; else cmd="$(lint_cmd "$tool" "$mode" "$path")"; fi
         [ -z "$cmd" ] && continue
-        # styler is orders of magnitude slower; skip it on oversized tiers.
-        if [ "$tool" = "styler" ] && [ "$lines" -gt "$STYLER_MAX_LINES" ]; then
-            log "  styler... (skipped: $lines > $STYLER_MAX_LINES lines)"
-            continue
+        warmup=2
+        # styler and lintr are orders of magnitude slower; skip them on oversized
+        # documents, and do not pay for a second warmup run on the rest.
+        if is_slow_tool "$tool"; then
+            warmup=1
+            if [ "$lines" -gt "$R_SLOW_MAX_LINES" ]; then
+                log "  $tool... (skipped: $lines > $R_SLOW_MAX_LINES lines)"
+                continue
+            fi
         fi
         log "  $tool..."
-        read -r mean stddev min max runs < <(run_one "$iters" "$cmd")
+        read -r mean stddev min max runs < <(run_one "$iters" "$cmd" "$warmup")
         RES_CHART+=("$chart"); RES_DOC+=("$doc_id"); RES_TOOL+=("$tool"); RES_MEAN+=("$mean")
         RES_STDDEV+=("$stddev"); RES_MIN+=("$min"); RES_MAX+=("$max")
     done
@@ -293,31 +352,48 @@ declare -a FMT_FILE_TOOLS=("arity")
 [ "$HAVE_AIR" = "yes" ]    && FMT_FILE_TOOLS+=("air")
 [ "$HAVE_STYLER" = "yes" ] && FMT_FILE_TOOLS+=("styler")
 
+# styler is absent from the project charts on purpose: style_dir would rewrite
+# the checkout, and it has no check-only directory mode.
 declare -a FMT_PROJ_TOOLS=("arity")
 [ "$HAVE_AIR" = "yes" ] && FMT_PROJ_TOOLS+=("air")
 
 declare -a LINT_TOOLS=("arity")
-[ "$HAVE_JARL" = "yes" ] && LINT_TOOLS+=("jarl")
+[ "$HAVE_JARL" = "yes" ]  && LINT_TOOLS+=("jarl")
+[ "$HAVE_LINTR" = "yes" ] && LINT_TOOLS+=("lintr")
 
 # --- Run the charts ----------------------------------------------------------
 
-# Formatter, single files (stdin -> stdout).
+# Formatter, single files (stdin -> stdout): real package files, then the tiers.
+for i in "${!FILE_IDS[@]}"; do
+    bench_doc formatter-files format stdin "${FILE_IDS[$i]}" "${FILE_NAMES[$i]}" "${FILE_PATHS[$i]}" 20 "${FMT_FILE_TOOLS[@]}"
+done
 bench_doc formatter-files format stdin small small "$CORPUS_SMALL" 50 "${FMT_FILE_TOOLS[@]}"
 bench_doc formatter-files format stdin large large "$CORPUS_LARGE" 5  "${FMT_FILE_TOOLS[@]}"
 
 # Linter, single files (path input; jarl has no stdin mode).
+for i in "${!FILE_IDS[@]}"; do
+    bench_doc linter-files lint path "${FILE_IDS[$i]}" "${FILE_NAMES[$i]}" "${FILE_PATHS[$i]}" 20 "${LINT_TOOLS[@]}"
+done
 bench_doc linter-files lint path small small "$CORPUS_SMALL" 50 "${LINT_TOOLS[@]}"
 bench_doc linter-files lint path large large "$CORPUS_LARGE" 5  "${LINT_TOOLS[@]}"
 
-# Projects (a real package's R/ tree), if available.
-if [ -n "$PROJECT_TARGET" ]; then
-    bench_doc formatter-projects format path "$PROJECT_NAME" "$PROJECT_NAME" "$PROJECT_TARGET" 10 "${FMT_PROJ_TOOLS[@]}"
-    bench_doc linter-projects    lint   path "$PROJECT_NAME" "$PROJECT_NAME" "$PROJECT_TARGET" 10 "${LINT_TOOLS[@]}"
-else
-    log "!! no project input -- omitting the project charts"
-fi
+# Projects (each package's R/ tree), if available.
+for i in "${!PROJ_NAMES[@]}"; do
+    bench_doc formatter-projects format path "${PROJ_NAMES[$i]}" "${PROJ_NAMES[$i]}" "${PROJ_TARGETS[$i]}" 10 "${FMT_PROJ_TOOLS[@]}"
+done
+for i in "${!PROJ_NAMES[@]}"; do
+    bench_doc linter-projects lint path "${PROJ_NAMES[$i]}" "${PROJ_NAMES[$i]}" "${PROJ_TARGETS[$i]}" 10 "${LINT_TOOLS[@]}"
+done
 
 [ "${#DOC_ID[@]}" -gt 0 ] || { echo "error: no documents benchmarked" >&2; exit 1; }
+
+# A human list of the benchmarked packages for the project captions.
+PROJECT_LIST=""
+for i in "${!PROJ_NAMES[@]}"; do
+    if [ -z "$PROJECT_LIST" ]; then PROJECT_LIST="${PROJ_NAMES[$i]}"
+    elif [ "$i" -eq $((${#PROJ_NAMES[@]} - 1)) ]; then PROJECT_LIST="$PROJECT_LIST and ${PROJ_NAMES[$i]}"
+    else PROJECT_LIST="$PROJECT_LIST, ${PROJ_NAMES[$i]}"; fi
+done
 
 # --- Render JSON -------------------------------------------------------------
 
@@ -380,10 +456,11 @@ mkdir -p "$(dirname "$JSON_OUT")"
     printf '    "backend": "%s",\n' "$BACKEND"
     printf '    "min_runs": %d,\n' "$HYPERFINE_MIN_RUNS"
     printf '    "tools": {\n'
-    printf '      "arity": {"version": "%s"}' "$(json_escape "$ARITY_VER")"
-    [ "$HAVE_AIR" = "yes" ]    && printf ',\n      "air": {"version": "%s"}' "$(json_escape "$AIR_VER")"
-    [ "$HAVE_JARL" = "yes" ]   && printf ',\n      "jarl": {"version": "%s"}' "$(json_escape "$JARL_VER")"
-    [ "$HAVE_STYLER" = "yes" ] && printf ',\n      "styler": {"version": "%s"}' "$(json_escape "$STYLER_VER")"
+    for i in "${!TOOL_NAMES[@]}"; do
+        [ "$i" -eq 0 ] || printf ',\n'
+        printf '      "%s": {"version": "%s"}' \
+            "${TOOL_NAMES[$i]}" "$(json_escape "${TOOL_VERS[$i]}")"
+    done
     printf '\n    }\n'
     printf '  },\n'
 
@@ -395,10 +472,10 @@ mkdir -p "$(dirname "$JSON_OUT")"
     # comma between them from what actually ran.
     if chart_has_rows formatter-projects; then f_files_trail=","; else f_files_trail=""; fi
     emit_chart formatter-files "Single files" \
-        "Formatting speed on single files relative to arity, one dot per synthetic corpus tier. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures." \
+        "Formatting speed on single files relative to arity, one dot per document: the largest source file of each benchmarked package, then two synthetic corpus tiers. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures." \
         "$f_files_trail"
     emit_chart formatter-projects "Projects" \
-        "Formatting speed on a real R package (the $PROJECT_NAME source tree) relative to arity, on the same log-ratio axis." \
+        "Formatting speed on real R packages (the $PROJECT_LIST source trees) relative to arity, on the same log-ratio axis." \
         ""
     printf '      ]\n    },\n'
 
@@ -406,10 +483,10 @@ mkdir -p "$(dirname "$JSON_OUT")"
     printf '    {\n      "id":"linter",\n      "title":"Linter",\n      "charts":[\n'
     if chart_has_rows linter-projects; then l_files_trail=","; else l_files_trail=""; fi
     emit_chart linter-files "Single files" \
-        "Linting speed on single files relative to arity, one dot per synthetic corpus tier, on the same log-ratio axis as the formatter charts." \
+        "Linting speed on single files relative to arity, one dot per document, on the same log-ratio axis as the formatter charts." \
         "$l_files_trail"
     emit_chart linter-projects "Projects" \
-        "Linting speed on a real R package (the $PROJECT_NAME source tree) relative to arity, on the same log-ratio axis." \
+        "Linting speed on real R packages (the $PROJECT_LIST source trees) relative to arity, on the same log-ratio axis." \
         ""
     printf '      ]\n    }\n'
 

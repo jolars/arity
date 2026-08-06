@@ -1,14 +1,16 @@
 {
   "schema_version": 2,
   "meta": {
-    "generated_at": "2026-08-06T13:53:43Z",
+    "generated_at": "2026-08-06T14:52:58Z",
     "host": {"os": "linux", "arch": "x86_64", "cpu": "AMD Ryzen 9 7900 12-Core Processor"},
     "backend": "hyperfine",
     "min_runs": 3,
     "tools": {
       "arity": {"version": "0.16.0"},
       "air": {"version": "0.11.0"},
-      "jarl": {"version": "0.5.0"}
+      "jarl": {"version": "0.5.0"},
+      "styler": {"version": "1.11.0"},
+      "lintr": {"version": "3.3.0.1"}
     }
   },
   "sections": [
@@ -19,28 +21,40 @@
         {
           "id":"formatter-files",
           "title":"Single files",
-          "caption":"Formatting speed on single files relative to arity, one dot per synthetic corpus tier. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.",
+          "caption":"Formatting speed on single files relative to arity, one dot per document: the largest source file of each benchmarked package, then two synthetic corpus tiers. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.",
           "documents":[
+            {"id":"MASS-file","name":"MASS/polr.R","size_bytes":19787,"lines":534},
+            {"id":"tidyr-file","name":"tidyr/pivot-wide.R","size_bytes":23349,"lines":807},
             {"id":"small","name":"small","size_bytes":128902,"lines":8892},
             {"id":"large","name":"large","size_bytes":1546824,"lines":106704}
           ],
           "results":[
-            {"document":"small","tool":"arity","mean_ms":15.3797,"stddev_ms":1.2356,"min_ms":13.7109,"max_ms":20.5640},
-            {"document":"small","tool":"air","mean_ms":25.1502,"stddev_ms":1.3509,"min_ms":22.3817,"max_ms":28.9280},
-            {"document":"large","tool":"arity","mean_ms":411.2087,"stddev_ms":6.5952,"min_ms":400.6302,"max_ms":419.6508},
-            {"document":"large","tool":"air","mean_ms":294.1640,"stddev_ms":3.5827,"min_ms":289.7039,"max_ms":300.5863}
+            {"document":"MASS-file","tool":"arity","mean_ms":5.8455,"stddev_ms":0.4767,"min_ms":4.9571,"max_ms":7.9215},
+            {"document":"MASS-file","tool":"air","mean_ms":7.9158,"stddev_ms":0.4918,"min_ms":7.0364,"max_ms":9.4193},
+            {"document":"MASS-file","tool":"styler","mean_ms":3005.2278,"stddev_ms":16.7858,"min_ms":2991.9473,"max_ms":3024.0944},
+            {"document":"tidyr-file","tool":"arity","mean_ms":4.6600,"stddev_ms":0.4174,"min_ms":3.9505,"max_ms":6.9153},
+            {"document":"tidyr-file","tool":"air","mean_ms":5.2126,"stddev_ms":0.4361,"min_ms":4.5100,"max_ms":8.4923},
+            {"document":"tidyr-file","tool":"styler","mean_ms":1657.7481,"stddev_ms":20.3054,"min_ms":1637.9878,"max_ms":1678.5579},
+            {"document":"small","tool":"arity","mean_ms":18.8899,"stddev_ms":1.2909,"min_ms":16.4381,"max_ms":24.1338},
+            {"document":"small","tool":"air","mean_ms":24.7004,"stddev_ms":1.2469,"min_ms":22.6597,"max_ms":28.3625},
+            {"document":"small","tool":"styler","mean_ms":11257.2645,"stddev_ms":27.5045,"min_ms":11235.0162,"max_ms":11288.0166},
+            {"document":"large","tool":"arity","mean_ms":472.6370,"stddev_ms":11.2247,"min_ms":460.7096,"max_ms":493.4121},
+            {"document":"large","tool":"air","mean_ms":311.0487,"stddev_ms":9.7044,"min_ms":297.7228,"max_ms":329.7785}
           ]
         },
         {
           "id":"formatter-projects",
           "title":"Projects",
-          "caption":"Formatting speed on a real R package (the tidyr source tree) relative to arity, on the same log-ratio axis.",
+          "caption":"Formatting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
           "documents":[
-            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
+            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774},
+            {"id":"MASS","name":"MASS","size_bytes":214820,"lines":5951}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":25.4120,"stddev_ms":0.8605,"min_ms":23.1833,"max_ms":27.9444},
-            {"document":"tidyr","tool":"air","mean_ms":35.9934,"stddev_ms":0.8720,"min_ms":34.1089,"max_ms":38.3501}
+            {"document":"tidyr","tool":"arity","mean_ms":25.4796,"stddev_ms":0.9609,"min_ms":23.6112,"max_ms":28.0976},
+            {"document":"tidyr","tool":"air","mean_ms":35.4748,"stddev_ms":0.9484,"min_ms":33.9106,"max_ms":38.0428},
+            {"document":"MASS","tool":"arity","mean_ms":50.8426,"stddev_ms":1.2419,"min_ms":48.8145,"max_ms":53.4183},
+            {"document":"MASS","tool":"air","mean_ms":61.4861,"stddev_ms":1.3215,"min_ms":59.4653,"max_ms":65.0481}
           ]
         }
       ]
@@ -52,28 +66,42 @@
         {
           "id":"linter-files",
           "title":"Single files",
-          "caption":"Linting speed on single files relative to arity, one dot per synthetic corpus tier, on the same log-ratio axis as the formatter charts.",
+          "caption":"Linting speed on single files relative to arity, one dot per document, on the same log-ratio axis as the formatter charts.",
           "documents":[
+            {"id":"MASS-file","name":"MASS/polr.R","size_bytes":19787,"lines":534},
+            {"id":"tidyr-file","name":"tidyr/pivot-wide.R","size_bytes":23349,"lines":807},
             {"id":"small","name":"small","size_bytes":128902,"lines":8892},
             {"id":"large","name":"large","size_bytes":1546824,"lines":106704}
           ],
           "results":[
-            {"document":"small","tool":"arity","mean_ms":27.9656,"stddev_ms":0.8948,"min_ms":26.3740,"max_ms":29.8739},
-            {"document":"small","tool":"jarl","mean_ms":27.7062,"stddev_ms":1.2810,"min_ms":25.8649,"max_ms":32.2611},
-            {"document":"large","tool":"arity","mean_ms":298.2168,"stddev_ms":5.7707,"min_ms":291.3206,"max_ms":309.1549},
-            {"document":"large","tool":"jarl","mean_ms":400.5323,"stddev_ms":6.6367,"min_ms":393.7606,"max_ms":408.8765}
+            {"document":"MASS-file","tool":"arity","mean_ms":26.2369,"stddev_ms":1.5585,"min_ms":23.8034,"max_ms":31.0467},
+            {"document":"MASS-file","tool":"jarl","mean_ms":12.8946,"stddev_ms":0.5434,"min_ms":11.9362,"max_ms":15.0183},
+            {"document":"MASS-file","tool":"lintr","mean_ms":1106.3045,"stddev_ms":17.2817,"min_ms":1088.3735,"max_ms":1122.8541},
+            {"document":"tidyr-file","tool":"arity","mean_ms":20.9963,"stddev_ms":0.9218,"min_ms":18.8055,"max_ms":23.3214},
+            {"document":"tidyr-file","tool":"jarl","mean_ms":10.9198,"stddev_ms":0.5780,"min_ms":9.4974,"max_ms":12.8576},
+            {"document":"tidyr-file","tool":"lintr","mean_ms":995.9262,"stddev_ms":15.6979,"min_ms":986.5383,"max_ms":1014.0487},
+            {"document":"small","tool":"arity","mean_ms":32.5569,"stddev_ms":1.4612,"min_ms":29.8406,"max_ms":36.1271},
+            {"document":"small","tool":"jarl","mean_ms":28.3228,"stddev_ms":1.2537,"min_ms":26.0793,"max_ms":33.7890},
+            {"document":"small","tool":"lintr","mean_ms":9949.3436,"stddev_ms":94.5368,"min_ms":9893.0505,"max_ms":10058.4872},
+            {"document":"large","tool":"arity","mean_ms":343.8745,"stddev_ms":8.7147,"min_ms":335.9537,"max_ms":363.0020},
+            {"document":"large","tool":"jarl","mean_ms":393.3544,"stddev_ms":8.1381,"min_ms":385.9586,"max_ms":410.6601}
           ]
         },
         {
           "id":"linter-projects",
           "title":"Projects",
-          "caption":"Linting speed on a real R package (the tidyr source tree) relative to arity, on the same log-ratio axis.",
+          "caption":"Linting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
           "documents":[
-            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
+            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774},
+            {"id":"MASS","name":"MASS","size_bytes":214820,"lines":5951}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":31.7475,"stddev_ms":1.1256,"min_ms":29.1063,"max_ms":34.4358},
-            {"document":"tidyr","tool":"jarl","mean_ms":13.5520,"stddev_ms":0.7891,"min_ms":12.2014,"max_ms":16.7206}
+            {"document":"tidyr","tool":"arity","mean_ms":23.4758,"stddev_ms":0.9418,"min_ms":21.8269,"max_ms":27.5558},
+            {"document":"tidyr","tool":"jarl","mean_ms":13.0743,"stddev_ms":0.6655,"min_ms":11.9100,"max_ms":15.6657},
+            {"document":"tidyr","tool":"lintr","mean_ms":8417.3967,"stddev_ms":36.6360,"min_ms":8391.5407,"max_ms":8459.3213},
+            {"document":"MASS","tool":"arity","mean_ms":27.6244,"stddev_ms":1.0801,"min_ms":25.7413,"max_ms":30.8305},
+            {"document":"MASS","tool":"jarl","mean_ms":17.8624,"stddev_ms":0.9985,"min_ms":16.1620,"max_ms":22.1038},
+            {"document":"MASS","tool":"lintr","mean_ms":8694.5697,"stddev_ms":38.7733,"min_ms":8652.4471,"max_ms":8728.7700}
           ]
         }
       ]
