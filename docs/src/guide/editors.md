@@ -17,6 +17,33 @@ VSX](https://open-vsx.org/). It bundles the `arity` binary (falling back to a
 download) and starts the language server automatically for R files. Editors that
 support VS Code extensions, such as Positron, work the same way.
 
+### Using only some features
+
+The formatter, linter, and language features share one server but can be turned
+off independently, so you can adopt just the parts you want:
+
+- `arity.formatting.enable` — use arity as a formatter.
+- `arity.diagnostics.enable` — show arity diagnostics (the linter).
+- `arity.languageFeatures.enable` — hover, completion, navigation, symbols,
+  rename, code actions, semantic tokens, and the rest.
+
+All three default to `true`. They are client-side gates, so the server keeps
+running and the toggles take effect without a restart or reinstall. For a
+formatter-only setup, turn off the other two:
+
+```json
+{
+  "arity.diagnostics.enable": false,
+  "arity.languageFeatures.enable": false
+}
+```
+
+Turning off `arity.diagnostics.enable` this way suppresses **every** diagnostic,
+including the syntax/parse errors that an `arity.toml` `[lint]` selection
+[cannot silence](../reference/configuration.md#lint). The `arity.toml` route
+stays the right tool when you want to keep parse errors but mute specific lint
+rules across every editor and the CLI.
+
 ## Neovim
 
 With [`nvim-lspconfig`](https://github.com/neovim/nvim-lspconfig) installed,
