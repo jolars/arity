@@ -50,6 +50,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  biome:
+    name: Biome
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: biomejs/setup-biome@v2
+        with:
+          # Keep in step with the biome `devenv.nix` pins for the git hook.
+          version: 2.5.5
+      - run: biome ci
+
   panache:
     name: Panache
     runs-on: ubuntu-latest

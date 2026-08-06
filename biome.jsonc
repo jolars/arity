@@ -1,0 +1,31 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
+  // Biome lints and formats the repo's first-party JavaScript/TypeScript: the
+  // VS Code extension and the npm launcher shim. Everything else is out of
+  // scope on purpose — prettier still owns `docs/theme/`'s CSS and `.hbs`
+  // template (biome does not format Handlebars), JSON is left to whatever
+  // wrote it, and `docs/theme/bench-charts.js` is a browser script that has
+  // never been linted; bringing it in is a follow-up, not a silent exclusion.
+  "files": {
+    "includes": ["editors/code/src/**/*.ts", "npm/**/*.js", "!**/node_modules"]
+  },
+  // Match the style the sources are already written in, so adopting biome is
+  // not a repo-wide reformat.
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 80
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended"
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  }
+}

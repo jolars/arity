@@ -1,6 +1,7 @@
 {
   "name": "arity-cli",
   "version": "0.16.0",
+  "type": "commonjs",
   "description": "A language server, formatter, and linter for R",
   "keywords": [
     "r",

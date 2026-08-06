@@ -36,7 +36,7 @@ The dev environment is provided via `devenv`/Nix (`devenv.nix`, `devenv.yaml`,
 `languageserver`) plus the auxiliary tooling (`go-task`, `mdbook`,
 `cargo-insta`, `cargo-audit`, `cargo-deny`, `air-formatter`, `jarl`,
 `hyperfine`, `vsce`, …). `devenv.nix` also declares the git hooks that run on
-commit: `clippy`, `rustfmt`, `eslint`, and `panache-format`.
+commit: `clippy`, `rustfmt`, and `biome`.
 
 Beyond the Rust crate, the repo ships the distribution surfaces: a VS Code
 extension (`editors/code`), npm packages (`npm/`), a PyPI package (via
@@ -358,10 +358,12 @@ a runner like pre-commit staging a non-R file is skipped, not an error).
 
 - Treat CI as the source of truth for quality gates (`.github/workflows/`):
   cross-platform build/test (`build-and-test.yml`), `cargo-audit` +
-  `cargo-deny`, and `lint.yml`'s clippy `-D warnings`, rustfmt check, and
+  `cargo-deny`, and `lint.yml`'s clippy `-D warnings`, rustfmt check,
   **panache** prose-formatting check (Markdown; `panache.toml` lists the
-  excluded generated and non-prose files). `devenv.nix` runs clippy, rustfmt,
-  eslint, and panache-format as git hooks locally.
+  excluded generated and non-prose files), and **biome** check
+  (JavaScript/TypeScript; `biome.jsonc` scopes it to `editors/code/src` and
+  `npm`, and documents what is left out). `devenv.nix` runs clippy, rustfmt,
+  and biome as git hooks locally.
 - Formatter output must be **idempotent** (`format(format(x)) == format(x)`);
   the formatter and parser test suites guard losslessness +
   idempotence—byte-identical output is the bar for "behavior-preserving"
@@ -426,7 +428,8 @@ breaking changes land as minor bumps.
 The distribution surfaces themselves:
 
 - `editors/code`—TypeScript VS Code extension, esbuild-bundled
-  (`npm run compile`/`watch`/`package`), eslint-gated via the devenv git hook.
+  (`npm run compile`/`watch`/`package`), biome-gated via the devenv git hook
+  and `lint.yml`.
   At publish time a platform binary is downloaded from the GitHub release into
   `editors/code/server/` and packaged per-target; at runtime the client resolves
   the server via the `arity.executableStrategy` setting

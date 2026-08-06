@@ -17,6 +17,7 @@
     pkgs.jarl
     pkgs.mdbook
     pkgs.llvmPackages.bintools
+    pkgs.biome
     pkgs.prettier
     pkgs.air-formatter
     pkgs.ruff
@@ -97,8 +98,12 @@
         enable = true;
       };
 
-      eslint = {
+      biome = {
         enable = true;
+        # The hook feeds biome every staged js/ts/json file, but `biome.jsonc`
+        # scopes it to a few paths. Without this, a commit whose only matching
+        # file is out of scope (any JSON, say) fails with "no files processed".
+        settings.flags = "--no-errors-on-unmatched";
       };
 
       # panache-format = {

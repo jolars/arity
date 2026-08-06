@@ -28,8 +28,7 @@ auxiliary tool (`go-task`, `mdbook`, `cargo-insta`, `cargo-audit`, `cargo-deny`,
 devenv shell
 ```
 
-It also installs git hooks that run `clippy`, `rustfmt`, `eslint`, and
-`panache-format` on commit.
+It also installs git hooks that run `clippy`, `rustfmt`, and `biome` on commit.
 
 If you'd rather not use Nix, install a recent stable Rust toolchain and, for the
 R-dependent tasks (the roxygen oracles that regenerate pins, corpus checks), a
@@ -77,9 +76,14 @@ cargo fmt --all -- --check                   # keep changes rustfmt-clean
 ```
 
 Markdown prose is formatted by [`panache`](https://github.com/jolars/panache),
-which CI checks too; [`panache.toml`](panache.toml) excludes the generated and
-non-prose files. The devenv git hooks run it (and `eslint`, for
-[`editors/code`](editors/code)) on commit.
+which CI checks; [`panache.toml`](panache.toml) excludes the generated and
+non-prose files.
+
+JavaScript and TypeScript are linted and formatted by
+[`biome`](https://biomejs.dev), on both a devenv git hook and a CI job.
+[`biome.jsonc`](biome.jsonc) scopes it to the repo's first-party sources ---
+[`editors/code/src`](editors/code/src) and [`npm`](npm) --- and documents what
+is deliberately left out.
 
 The [`Taskfile.yml`](Taskfile.yml) wraps these and more: `task test`,
 `task lint`, `task format`, `task audit`, `task deny`. Run `task --list` to see
@@ -308,8 +312,8 @@ these if your change touches them.
 
 - **VS Code extension** ([`editors/code`](editors/code)) --- TypeScript, bundled
   with esbuild. `npm run compile` (type-check plus bundle), `npm run watch`
-  while developing, `npm run package` for a VSIX. It is linted by `eslint` (a
-  git hook and a CI-adjacent gate), and versioned separately from the crate
+  while developing, `npm run package` for a VSIX. It is linted and formatted by
+  `biome` (a git hook and a CI job), and versioned separately from the crate
   (`arity-code`, following the crate's releases). At publish time a
   platform-specific `arity` binary is downloaded from the GitHub release into
   `editors/code/server/` and packaged into a per-target VSIX; at runtime the
