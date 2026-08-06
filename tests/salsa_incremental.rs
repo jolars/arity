@@ -1709,3 +1709,77 @@ fn refresh_package_graph_skips_write_when_unchanged() {
         "an unchanged package-metadata refresh must not re-run workspace_project"
     );
 }
+
+/// The per-file roxygen markdown flag keys the salsa parse: a directive-less
+/// block resolves markdown from it, flipping it invalidates the parse, and an
+/// incremental reparse under the flag stays identical to a full parse.
+#[test]
+fn roxygen_markdown_flag_keys_parse_and_reparse() {
+    use arity::incremental::parsed_tree_root;
+
+    let text = "f <- function() {\n  #' *emph* text\n  1\n}\n";
+    let mut db = IncrementalDatabase::default();
+    let file = db.add_file(text);
+
+    let kinds = |root: &arity::syntax::SyntaxNode| {
+        root.descendants_with_tokens()
+            .map(|el| el.kind())
+            .collect::<Vec<_>>()
+    };
+
+    // Off by default (add_file tracks an in-memory doc with no package).
+    assert!(!kinds(&parsed_tree_root(&db, file)).contains(&SyntaxKind::ROXYGEN_MD_EMPH));
+
+    // Flipping the flag re-parses the same text in markdown mode.
+    db.set_roxygen_markdown(file, true);
+    assert!(kinds(&parsed_tree_root(&db, file)).contains(&SyntaxKind::ROXYGEN_MD_EMPH));
+
+    // An edit inside the block reparses incrementally *under the flag*: the
+    // spliced tree keeps the markdown interpretation.
+    let before_hits = db.reparse_hits();
+    db.set_file_text(file, "f <- function() {\n  #' *emph* text\n  12\n}\n");
+    let root = parsed_tree_root(&db, file);
+    assert!(kinds(&root).contains(&SyntaxKind::ROXYGEN_MD_EMPH));
+    assert_eq!(
+        db.reparse_hits(),
+        before_hits + 1,
+        "edit reparses incrementally"
+    );
+
+    // Setting the same value again is a no-op (no invalidation).
+    db.clear_query_log();
+    db.set_roxygen_markdown(file, true);
+    let _ = parsed_tree_root(&db, file);
+    assert!(
+        db.query_log().is_empty(),
+        "re-setting an unchanged flag must not re-run the parse"
+    );
+
+    // Flipping back re-parses Rd-first.
+    db.set_roxygen_markdown(file, false);
+    assert!(!kinds(&parsed_tree_root(&db, file)).contains(&SyntaxKind::ROXYGEN_MD_EMPH));
+}
+
+/// `upsert_file` resolves the flag from the file's package at creation.
+#[test]
+fn upsert_file_resolves_markdown_from_package() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("R")).expect("R/");
+    std::fs::write(
+        dir.path().join("DESCRIPTION"),
+        "Package: p\nRoxygen: list(markdown = TRUE)\n",
+    )
+    .expect("DESCRIPTION");
+    let path = dir.path().join("R/doc.R");
+    let text = "#' *emph* doc\nNULL\n";
+    std::fs::write(&path, text).expect("doc.R");
+
+    let mut db = IncrementalDatabase::default();
+    let file = db.upsert_file(&path, text.to_string());
+    let root = arity::incremental::parsed_tree_root(&db, file);
+    assert!(
+        root.descendants_with_tokens()
+            .any(|el| el.kind() == SyntaxKind::ROXYGEN_MD_EMPH),
+        "package markdown default reaches the salsa parse"
+    );
+}

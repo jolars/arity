@@ -127,12 +127,13 @@ use smol_str::SmolStr;
 
 use crate::ast::{Arg, ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
-use crate::formatter::{FormatStyle, format_node, format_range, format_with_style};
+use crate::formatter::{FormatStyle, format_node, format_range, format_with_options};
 use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
 use crate::linter::rules::ResolvedRules;
 use crate::linter::{Diagnostic, LintError, Severity};
 use crate::parser::{
-    Edit, apply_edits, diff_edit, map_range_through_edit, map_range_through_edits, parse,
+    Edit, ParseOptions, apply_edits, diff_edit, map_range_through_edit, map_range_through_edits,
+    parse, parse_with_options,
 };
 use crate::project::DefKind;
 use crate::rindex::build::{BuildOptions, build_index};

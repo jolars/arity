@@ -357,6 +357,14 @@ impl LintWorker {
             relint = true;
         }
 
+        // A `DESCRIPTION` (or `man/roxygen/meta.R`) edit may flip the
+        // package-wide roxygen markdown default; re-resolve it for every
+        // tracked file. Unchanged resolutions write nothing, so the common
+        // case invalidates no parse.
+        if batch.package_meta_changed {
+            relint |= self.db.refresh_roxygen_markdown();
+        }
+
         if relint {
             let _ = self.out_tx.send(Outbound::RelintAll);
         }

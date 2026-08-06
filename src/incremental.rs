@@ -17,8 +17,9 @@ use rowan::TextRange;
 use salsa::{Durability, Setter};
 
 use crate::parser::{
-    Edit, ParseDiagnostic, apply_edits, diff_edit, map_range_through_edit, map_range_through_edits,
-    parse, reparse, reparse_edits,
+    Edit, ParseDiagnostic, ParseOptions, apply_edits, diff_edit, map_range_through_edit,
+    map_range_through_edits, parse, parse_with_options, reparse_edits_with_options,
+    reparse_with_options,
 };
 use crate::project::{
     ClassSystem, DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
@@ -55,6 +56,12 @@ pub struct SourceFile {
     pub path: Option<PathBuf>,
     #[returns(ref)]
     pub text: String,
+    /// The package-wide roxygen markdown default resolved for this file (see
+    /// [`crate::project::description`]): a directive-less roxygen block parses
+    /// in markdown mode when it is set. A separate input field so flipping it
+    /// (a `DESCRIPTION` edit) invalidates exactly the parse-and-downstream
+    /// slice, while keystrokes (text writes) never re-resolve it.
+    pub roxygen_markdown: bool,
 }
 
 /// Lexically normalize `path` for use as a deduplication key: absolutize it
@@ -244,6 +251,11 @@ pub struct PrevParse {
     pub text: String,
     pub green: rowan::GreenNode,
     pub diagnostics: Vec<ParseDiagnostic>,
+    /// The roxygen markdown default this parse ran under. A reparse may only
+    /// splice this tree when the flag still matches — under a flipped flag the
+    /// old tree's roxygen interpretation is stale even where the text is
+    /// untouched.
+    pub roxygen_markdown: bool,
 }
 
 #[salsa::db]
@@ -277,30 +289,42 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
     });
 
     let text = file.text(db);
+    let markdown = *file.roxygen_markdown(db);
+    let options = ParseOptions::default().with_roxygen_markdown_default(markdown);
 
     // Take any precise per-change edits staged for this parse (Stage B), always
     // clearing them so a stale sequence never lingers past its target revision
     // (first parse, unchanged text, or a reparse miss).
     let pending = db.take_pending_edits(file);
 
-    // Try an incremental reparse off the previous parse of this file. Prefer the
-    // precise multi-edit path when staged edits reconstruct `text` exactly;
-    // otherwise recover a single spanning `diff_edit`. A miss (first parse, or an
-    // edit no strategy handles) falls back to a full parse. Every path yields a
-    // result identical to `parse(text)`.
+    // Try an incremental reparse off the previous parse of this file — only
+    // when that parse ran under the same markdown flag (a flipped flag makes
+    // the old tree's roxygen interpretation stale even where the text is
+    // untouched). Prefer the precise multi-edit path when staged edits
+    // reconstruct `text` exactly; otherwise recover a single spanning
+    // `diff_edit`. A miss (first parse, a flag flip, or an edit no strategy
+    // handles) falls back to a full parse. Every path yields a result
+    // identical to `parse_with_options(text, options)`.
     let reparsed = db
         .reparse_prev(file)
-        .filter(|prev| prev.text != *text)
+        .filter(|prev| prev.text != *text && prev.roxygen_markdown == markdown)
         .and_then(|prev| {
             let old_root = SyntaxNode::new_root(prev.green.clone());
             let precise = pending.as_deref().and_then(|edits| {
-                reparse_edits(&old_root, &prev.text, &prev.diagnostics, edits, text)
+                reparse_edits_with_options(
+                    &old_root,
+                    &prev.text,
+                    &prev.diagnostics,
+                    edits,
+                    text,
+                    &options,
+                )
             });
             let is_precise = precise.is_some();
             precise
                 .or_else(|| {
                     let edit = diff_edit(&prev.text, text);
-                    reparse(&old_root, &prev.text, &prev.diagnostics, &edit)
+                    reparse_with_options(&old_root, &prev.text, &prev.diagnostics, &edit, &options)
                 })
                 .map(|r| (r, is_precise))
         });
@@ -310,7 +334,7 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
     let (green, diagnostics): (rowan::GreenNode, Vec<ParseDiagnostic>) = match reparsed {
         Some((r, _)) => (r.green, r.diagnostics),
         None => {
-            let parsed = parse(text.as_str());
+            let parsed = parse_with_options(text.as_str(), &options);
             (parsed.cst.green().into_owned(), parsed.diagnostics)
         }
     };
@@ -321,6 +345,7 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
             text: text.clone(),
             green: green.clone(),
             diagnostics: diagnostics.clone(),
+            roxygen_markdown: markdown,
         },
         incremental,
         precise,
@@ -549,6 +574,13 @@ pub struct IncrementalDatabase {
     /// ([`reparse_edits`]) rather than the whole-text [`diff_edit`]. For tests and
     /// metrics. Shared across clones.
     precise_reparse_hits: Arc<AtomicU64>,
+    /// Per-directory memo for the package-wide roxygen markdown default,
+    /// consulted when [`upsert_file`](Self::upsert_file) creates an input.
+    /// Dropped (and re-derived) wholesale by
+    /// [`refresh_roxygen_markdown`](Self::refresh_roxygen_markdown) on
+    /// `DESCRIPTION` events. Outside salsa: a disk-read memo, never a query
+    /// output. Shared across clones.
+    markdown_resolver: Arc<Mutex<crate::project::description::MarkdownDefaultResolver>>,
 }
 
 impl Default for IncrementalDatabase {
@@ -561,6 +593,9 @@ impl Default for IncrementalDatabase {
             pending_edits: Arc::new(Mutex::new(HashMap::new())),
             reparse_hits: Arc::new(AtomicU64::new(0)),
             precise_reparse_hits: Arc::new(AtomicU64::new(0)),
+            markdown_resolver: Arc::new(Mutex::new(
+                crate::project::description::MarkdownDefaultResolver::new(),
+            )),
         }
     }
 }
@@ -583,6 +618,7 @@ impl Clone for IncrementalDatabase {
             pending_edits: Arc::clone(&self.pending_edits),
             reparse_hits: Arc::clone(&self.reparse_hits),
             precise_reparse_hits: Arc::clone(&self.precise_reparse_hits),
+            markdown_resolver: Arc::clone(&self.markdown_resolver),
         }
     }
 }
@@ -606,11 +642,58 @@ impl IncrementalDatabase {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .alloc_id();
-        SourceFile::new(self, id, None, text.into())
+        SourceFile::new(self, id, None, text.into(), false)
     }
 
     pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<String>) {
         file.set_text(self).to(text.into());
+    }
+
+    /// Set `file`'s package-wide roxygen markdown default, **skipped when
+    /// unchanged** (a salsa input always bumps its revision on a `set_*`, and
+    /// this is re-derived wholesale on `DESCRIPTION` events). Returns whether
+    /// the flag actually changed.
+    pub fn set_roxygen_markdown(&mut self, file: SourceFile, markdown: bool) -> bool {
+        if *file.roxygen_markdown(self) == markdown {
+            return false;
+        }
+        file.set_roxygen_markdown(self).to(markdown);
+        true
+    }
+
+    /// Re-resolve the roxygen markdown default for every path-tracked file
+    /// from disk (dropping the per-directory memo first) and update the
+    /// changed inputs. Called on `DESCRIPTION`/`man/roxygen/meta.R` watcher
+    /// events; an unchanged resolution writes nothing, so the common case (a
+    /// `DESCRIPTION` edit that didn't touch `Roxygen`) invalidates no parse.
+    /// Returns whether any file's flag changed.
+    pub fn refresh_roxygen_markdown(&mut self) -> bool {
+        *self
+            .markdown_resolver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            crate::project::description::MarkdownDefaultResolver::new();
+        let tracked: Vec<SourceFile> = self
+            .source_map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .by_path
+            .values()
+            .copied()
+            .collect();
+        let mut changed = false;
+        for file in tracked {
+            let Some(path) = file.path(self).clone() else {
+                continue;
+            };
+            let markdown = self
+                .markdown_resolver
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .resolve(&path);
+            changed |= self.set_roxygen_markdown(file, markdown);
+        }
+        changed
     }
 
     /// Get the [`LibraryIndex`] singleton, creating an empty one if absent. Both
@@ -803,10 +886,19 @@ impl IncrementalDatabase {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .alloc_id();
+                // Resolve the package-wide roxygen markdown default once, at
+                // creation (memoized per directory); keystrokes never re-resolve
+                // it, and `DESCRIPTION` watcher events refresh it wholesale via
+                // [`refresh_roxygen_markdown`](Self::refresh_roxygen_markdown).
+                let markdown = self
+                    .markdown_resolver
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .resolve(path);
                 // Store the first-seen spelling as the file's path; the index is
                 // keyed by the normalized form, so later equivalent spellings
                 // resolve to this same input and its first-seen path.
-                let file = SourceFile::new(self, id, Some(path.to_path_buf()), text);
+                let file = SourceFile::new(self, id, Some(path.to_path_buf()), text, markdown);
                 self.source_map
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -964,6 +1056,11 @@ impl Analysis {
     /// The text currently tracked for `file`.
     pub fn file_text(&self, file: SourceFile) -> &str {
         self.0.file_text(file)
+    }
+
+    /// The package-wide roxygen markdown default tracked for `file`.
+    pub fn roxygen_markdown(&self, file: SourceFile) -> bool {
+        *file.roxygen_markdown(&self.0)
     }
 
     /// The path `file` is tracked under, or `None` for an in-memory document.

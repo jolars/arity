@@ -662,7 +662,13 @@ pub fn check_document_with_provider(
     config: &LintConfig,
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
-    let db = IncrementalDatabase::default();
+    let mut db = IncrementalDatabase::default();
     let file = db.add_file(content.to_string());
+    // `add_file` tracks the buffer pathless; the lint path still knows the real
+    // location, so resolve the package-wide roxygen markdown default from it.
+    db.set_roxygen_markdown(
+        file,
+        crate::project::description::roxygen_markdown_default_for_file(path),
+    );
     check_tracked_file(&db, file, path, config, provider)
 }

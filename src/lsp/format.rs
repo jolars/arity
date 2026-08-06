@@ -1,5 +1,17 @@
 use super::*;
 
+/// The [`ParseOptions`] for re-parsing `path`'s buffer outside the db: the
+/// tracked flag when the file is known to `snapshot`, else resolved from disk
+/// (the file may simply not be tracked yet). The cached-tree paths need none of
+/// this — the salsa parse already ran under the tracked flag.
+fn reparse_options(snapshot: &Analysis, path: &Path) -> ParseOptions {
+    let markdown = snapshot
+        .lookup_file(path)
+        .map(|file| snapshot.roxygen_markdown(file))
+        .unwrap_or_else(|| crate::project::description::roxygen_markdown_default_for_file(path));
+    ParseOptions::default().with_roxygen_markdown_default(markdown)
+}
+
 /// Format `text` off the snapshot's cached parse when the db's tracked buffer
 /// for `path` still matches it; otherwise re-parse. A write racing the read
 /// trips [`salsa::Cancelled`], which also falls back to a fresh parse.
@@ -27,7 +39,9 @@ pub(crate) fn format_edits_via_db(
     match cached {
         Ok(Some(edits)) => edits,
         // Cache miss (`Ok(None)`) or a racing write (`Err`): re-parse from text.
-        Ok(None) | Err(_) => compute_format_edits(text, style, encoding),
+        Ok(None) | Err(_) => {
+            compute_format_edits(text, style, encoding, &reparse_options(snapshot, path))
+        }
     }
 }
 
@@ -65,11 +79,18 @@ pub(crate) fn format_range_edits_via_db(
     match cached {
         Ok(Some(edits)) => edits,
         // Cache miss (`Ok(None)`) or a racing write (`Err`): re-parse from text.
-        Ok(None) | Err(_) => compute_format_range_edits(text, range, style, encoding),
+        Ok(None) | Err(_) => compute_format_range_edits(
+            text,
+            range,
+            style,
+            encoding,
+            &reparse_options(snapshot, path),
+        ),
     }
 }
 
-/// Compute the LSP `TextEdit`s to format `text` with `style`, re-parsing it.
+/// Compute the LSP `TextEdit`s to format `text` with `style`, re-parsing it
+/// under `options` (the file's package-wide roxygen markdown default).
 ///
 /// Returns `None` when the formatter rejects the input (e.g. parse error).
 /// An empty `Vec` means the document is already formatted.
@@ -77,13 +98,14 @@ pub fn compute_format_edits(
     text: &str,
     style: FormatStyle,
     encoding: PositionEncoding,
+    options: &ParseOptions,
 ) -> Option<Vec<TextEdit>> {
-    let formatted = format_with_style(text, style).ok()?;
+    let formatted = format_with_options(text, style, options).ok()?;
     Some(edits_for_formatted(text, formatted, encoding))
 }
 
 /// Compute the LSP `TextEdit`s to format the selection `range` of `text`,
-/// re-parsing it.
+/// re-parsing it under `options`.
 ///
 /// Returns `None` when the formatter rejects the input (e.g. parse error). An
 /// empty `Vec` means the selected region is already formatted or covers no
@@ -93,8 +115,9 @@ pub fn compute_format_range_edits(
     range: Range,
     style: FormatStyle,
     encoding: PositionEncoding,
+    options: &ParseOptions,
 ) -> Option<Vec<TextEdit>> {
-    let parsed = parse(text);
+    let parsed = parse_with_options(text, options);
     if !parsed.diagnostics.is_empty() {
         return None;
     }
@@ -220,6 +243,49 @@ pub(crate) fn findings_to_items(
 mod tests {
     use super::*;
 
+    /// LSP document formatting honors the file's package-wide markdown default,
+    /// on both the cached-tree path (the salsa parse ran under the tracked
+    /// flag) and the re-parse fallback (which resolves the flag itself).
+    #[test]
+    fn format_via_db_honors_package_markdown_default() {
+        use crate::incremental::IncrementalDatabase;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(dir.path().join("R")).expect("R/");
+        std::fs::write(
+            dir.path().join("DESCRIPTION"),
+            "Package: p\nRoxygen: list(markdown = TRUE)\n",
+        )
+        .expect("DESCRIPTION");
+        let path = dir.path().join("R/doc.R");
+        // Markdown-canonical: the indented code block survives only in md mode.
+        let buffer = "#' Title\n#'\n#' @details\n#' Some prose before the code.\n#'\n#'     code_looking <- \"indented\"\nNULL\n";
+        std::fs::write(&path, buffer).expect("doc.R");
+        let style = FormatStyle::default();
+        let encoding = PositionEncoding::Utf16;
+
+        // Cached-tree path: the tracked file parsed under the resolved flag.
+        let mut db = IncrementalDatabase::default();
+        db.upsert_file(&path, buffer.to_string());
+        let snapshot = db.snapshot();
+        let edits = format_edits_via_db(&snapshot, &path, buffer, style, encoding)
+            .expect("formatter accepts the buffer");
+        assert!(
+            edits.is_empty(),
+            "markdown-canonical buffer is clean: {edits:?}"
+        );
+
+        // Re-parse fallback (path never tracked): resolves the flag from disk.
+        let empty = IncrementalDatabase::default();
+        let snapshot = empty.snapshot();
+        let edits = format_edits_via_db(&snapshot, &path, buffer, style, encoding)
+            .expect("formatter accepts the buffer");
+        assert!(
+            edits.is_empty(),
+            "fallback resolves the flag too: {edits:?}"
+        );
+    }
+
     #[test]
     fn findings_to_items_maps_range_severity_and_code() {
         use crate::linter::ViolationData;
@@ -256,7 +322,7 @@ mod tests {
         let path = test_path();
         let buffer = "x<-f(1 )\n";
         let encoding = PositionEncoding::Utf16;
-        let expected = compute_format_edits(buffer, style, encoding);
+        let expected = compute_format_edits(buffer, style, encoding, &Default::default());
         assert!(
             matches!(&expected, Some(edits) if !edits.is_empty()),
             "fixture must require reformatting"

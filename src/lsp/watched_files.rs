@@ -71,6 +71,12 @@ fn classify_path(path: &Path) -> WatchedKind {
         Some("DESCRIPTION") | Some("NAMESPACE") => return WatchedKind::PackageMeta,
         _ => {}
     }
+    // `man/roxygen/meta.R` is an `.R` file by extension but carries roxygen2
+    // *options* (it can flip the package-wide markdown default), not source:
+    // treat it as package metadata so an edit re-resolves the flag.
+    if path.ends_with("man/roxygen/meta.R") {
+        return WatchedKind::PackageMeta;
+    }
     match path.extension().and_then(|e| e.to_str()) {
         Some("R") | Some("r") => WatchedKind::RSource,
         _ => WatchedKind::Other,

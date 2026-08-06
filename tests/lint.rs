@@ -4023,3 +4023,48 @@ fn roxygen_examples_multiline_error_range_stays_in_block() {
         );
     }
 }
+
+/// The package-wide roxygen markdown default reaches the linter: a column-5
+/// `@tag` line inside a `@details` section is *indented-code text* under
+/// markdown (no tag, so no `roxygen-unknown-tag`), but a real tag Rd-first.
+#[test]
+fn lint_honors_package_markdown_default() {
+    let source = "#' Title\n#'\n#' @details\n#' Some prose before the code.\n#'\n#'     @nonexistenttag arg\nf <- function() NULL\n";
+
+    let write_package = |markdown_field: &str| {
+        let dir = tempdir().expect("tempdir");
+        std::fs::create_dir(dir.path().join("R")).expect("R/");
+        std::fs::write(
+            dir.path().join("DESCRIPTION"),
+            format!("Package: p\n{markdown_field}"),
+        )
+        .expect("DESCRIPTION");
+        let path = dir.path().join("R/doc.R");
+        std::fs::write(&path, source).expect("doc.R");
+        (dir, path)
+    };
+
+    // Rd-first package: the indented `@nonexistenttag` is a (bogus) tag.
+    let (_dir_rd, path_rd) = write_package("");
+    let diags = check_document(&path_rd, source, &LintConfig::default()).expect("lint");
+    assert!(
+        diags.iter().any(|d| d.rule == "roxygen-unknown-tag"),
+        "Rd-first sees the indented line as a tag: {diags:?}"
+    );
+
+    // Markdown-first package: the same line is indented-code text.
+    let (_dir_md, path_md) = write_package("Roxygen: list(markdown = TRUE)\n");
+    let diags = check_document(&path_md, source, &LintConfig::default()).expect("lint");
+    assert!(
+        !diags.iter().any(|d| d.rule == "roxygen-unknown-tag"),
+        "markdown mode makes the indented line code: {diags:?}"
+    );
+
+    // And the batch CLI path agrees.
+    let (_dir_batch, path_batch) = write_package("Roxygen: list(markdown = TRUE)\n");
+    let result = check_paths(std::slice::from_ref(&path_batch)).expect("lint");
+    assert!(
+        !rules_for(&result, "doc.R").contains(&"roxygen-unknown-tag"),
+        "batch lint honors the package default"
+    );
+}
