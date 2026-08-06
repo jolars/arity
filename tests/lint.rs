@@ -849,8 +849,7 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     let mut db = IncrementalDatabase::default();
     let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
     seed_workspace_for(&mut db, &b, active, &ExcludeFilter::none());
-    let (rules, _) =
-        arity::linter::rules::ResolvedRules::resolve(cfg.select.as_deref(), &cfg.ignore);
+    let (rules, _) = arity::linter::rules::ResolvedRules::resolve(&cfg);
     let prepared = prepare_document_in_project(&mut db, &b, active, std::sync::Arc::new(rules))
         .expect("clean file should prepare");
     let snapshot = db.snapshot();
@@ -1673,6 +1672,193 @@ fn implicit_assignment_ignores_statements_conditions_and_walrus() {
             "did not expect implicit-assignment for {src:?}"
         );
     }
+}
+
+/// `undesirable-function` is default-off, so exercise it through an explicit
+/// `select`. `rules` carries the `[lint.rules.undesirable-function]` table.
+fn undesirable_diags(
+    src: &str,
+    rules: arity::config::RulesConfig,
+) -> Vec<arity::linter::Diagnostic> {
+    let config = LintConfig {
+        select: Some(vec!["undesirable-function".to_string()]),
+        rules,
+        ..LintConfig::default()
+    };
+    check_document(Path::new("t.R"), src, &config)
+        .expect("lint should succeed")
+        .into_iter()
+        .filter(|d| d.rule == "undesirable-function")
+        .collect()
+}
+
+/// A `[lint.rules.undesirable-function]` table. `functions` of `None` keeps the
+/// built-in default set (the `extend-functions`-only case). Deserialization of
+/// the TOML itself is covered by the `src/config.rs` unit tests and end-to-end
+/// by `tests/config.rs`.
+fn undesirable_config(
+    functions: Option<&[(&str, &str)]>,
+    extend: &[(&str, &str)],
+) -> arity::config::RulesConfig {
+    fn map(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+    let mut undesirable_function = arity::config::UndesirableFunctionConfig::default();
+    if let Some(functions) = functions {
+        undesirable_function.functions = map(functions);
+    }
+    undesirable_function.extend_functions = map(extend);
+    arity::config::RulesConfig {
+        undesirable_function,
+    }
+}
+
+#[test]
+fn undesirable_function_is_default_off() {
+    // Which functions are undesirable is a per-project policy, so the rule is
+    // opt-in even though it ships a default set.
+    assert!(
+        !diagnostics("attach(mtcars)\n")
+            .iter()
+            .any(|d| d.rule == "undesirable-function"),
+        "undesirable-function should not fire under the default rule set"
+    );
+}
+
+#[test]
+fn undesirable_function_flags_a_default_set_call() {
+    let d = undesirable_diags("attach(mtcars)\n", Default::default())
+        .into_iter()
+        .next()
+        .expect("expected an undesirable-function finding");
+    assert!(d.message.body.contains("attach"), "{:?}", d.message);
+    // The configured suggestion rides along on the diagnostic.
+    assert!(
+        d.message
+            .suggestion
+            .as_deref()
+            .is_some_and(|s| s.contains("with()")),
+        "{:?}",
+        d.message
+    );
+    // No autofix: only the author knows what to call instead.
+    assert!(d.fix.is_none());
+}
+
+#[test]
+fn undesirable_function_span_covers_only_the_callee() {
+    // Tight span: the caret points at the name, not the whole call.
+    let src = "attach(mtcars)\n";
+    let d = undesirable_diags(src, Default::default())
+        .into_iter()
+        .next()
+        .expect("expected a finding");
+    let (start, end) = (usize::from(d.range.start()), usize::from(d.range.end()));
+    assert_eq!(&src[start..end], "attach");
+}
+
+#[test]
+fn undesirable_function_functions_replaces_the_default_set() {
+    // `functions` is a replacement, so a default name stops firing...
+    let cfg = undesirable_config(Some(&[("sapply", "use `vapply()`")]), &[]);
+    assert!(undesirable_diags("attach(mtcars)\n", cfg.clone()).is_empty());
+    // ...and the configured one starts.
+    let d = undesirable_diags("sapply(x, length)\n", cfg)
+        .into_iter()
+        .next()
+        .expect("expected a finding for the configured name");
+    assert!(
+        d.message
+            .suggestion
+            .as_deref()
+            .is_some_and(|s| s.contains("vapply()")),
+        "{:?}",
+        d.message
+    );
+}
+
+#[test]
+fn undesirable_function_extend_functions_keeps_the_defaults() {
+    let cfg = undesirable_config(None, &[("sapply", "use `vapply()`")]);
+    assert_eq!(undesirable_diags("attach(mtcars)\n", cfg.clone()).len(), 1);
+    assert_eq!(undesirable_diags("sapply(x, length)\n", cfg).len(), 1);
+}
+
+#[test]
+fn undesirable_function_empty_suggestion_yields_a_bare_message() {
+    let cfg = undesirable_config(Some(&[("attach", "")]), &[]);
+    let d = undesirable_diags("attach(mtcars)\n", cfg)
+        .into_iter()
+        .next()
+        .expect("expected a finding");
+    assert!(d.message.body.contains("attach"), "{:?}", d.message);
+    // An empty suggestion is "no alternative", not an empty rendered clause.
+    assert!(d.message.suggestion.is_none(), "{:?}", d.message);
+}
+
+#[test]
+fn undesirable_function_empty_table_silences_the_rule() {
+    let cfg = undesirable_config(Some(&[]), &[]);
+    assert!(undesirable_diags("attach(mtcars)\n", cfg).is_empty());
+}
+
+#[test]
+fn undesirable_function_ignores_a_locally_shadowed_callee() {
+    // A user-defined `attach` is not base R's; flagging it would be a false
+    // positive.
+    let src = "attach <- function(x) x\nattach(1)\n";
+    assert!(
+        undesirable_diags(src, Default::default()).is_empty(),
+        "a locally-defined `attach` is not the base one"
+    );
+}
+
+#[test]
+fn undesirable_function_ignores_a_namespace_qualified_call() {
+    // v1 is bare-name only, consistent with arity's namespace-confirmation gate
+    // everywhere else.
+    for src in ["base::attach(mtcars)\n", "utils::attach(mtcars)\n"] {
+        assert!(
+            undesirable_diags(src, Default::default()).is_empty(),
+            "expected no finding for {src:?}"
+        );
+    }
+}
+
+#[test]
+fn undesirable_function_ignores_non_call_positions() {
+    // A bare symbol read (`sapply(x, setwd)`) is not a call of the undesirable
+    // function; lintr's `symbol_is_undesirable` behavior is out of scope for v1.
+    assert!(undesirable_diags("f(setwd)\n", Default::default()).is_empty());
+    // Nor is a same-named argument, list element, or string.
+    for src in ["f(attach = 1)\n", "list(attach = 1)\n", "\"attach\"\n"] {
+        assert!(
+            undesirable_diags(src, Default::default()).is_empty(),
+            "expected no finding for {src:?}"
+        );
+    }
+}
+
+#[test]
+fn undesirable_function_flags_a_user_added_non_base_name() {
+    // arity cannot attribute an arbitrary package function to a namespace, so a
+    // user-added name is gated on the shadow check alone — otherwise user
+    // config would silently no-op.
+    let cfg = undesirable_config(None, &[("my_helper", "use `helper2()`")]);
+    assert_eq!(undesirable_diags("my_helper(1)\n", cfg.clone()).len(), 1);
+    // ...but a local definition still suppresses it.
+    assert!(undesirable_diags("my_helper <- function(x) x\nmy_helper(1)\n", cfg).is_empty());
+}
+
+#[test]
+fn undesirable_function_respects_arity_ignore() {
+    // Also checks the tight callee-only span still falls inside the suppressed
+    // node's range (the whole `CALL_EXPR`).
+    let src = "# arity-ignore undesirable-function: deliberate, see #123\nattach(mtcars)\n";
+    assert!(undesirable_diags(src, Default::default()).is_empty());
 }
 
 #[test]

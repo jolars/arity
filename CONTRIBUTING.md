@@ -191,8 +191,12 @@ belongs in the file: `index.remote_url` is deliberately `#[serde(skip)]` and
 read from the `ARITY_REMOTE_URL` environment variable instead, because enabling
 network egress is a per-user consent decision, not a committed project setting.
 
-Per-rule configuration (`[lint.rules.<id>]`) does not exist yet; it is a known
-gap tracked in [`TODO.md`](TODO.md) and blocks a couple of planned rules.
+A rule that needs options of its own gets a `[lint.rules.<id>]` table, typed as
+its own struct and added as a field on `RulesConfig`. That keeps the
+unknown-field check working, at the price of one asymmetry worth knowing: a rule
+ID in `select`/`ignore` is data and so an unknown one is reported when linting
+runs, whereas a rule ID under `[lint.rules]` is schema and an unknown one fails
+at parse time. Rules read their table off `RuleContext::config`.
 
 ## Design tenets to keep in mind
 

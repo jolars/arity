@@ -157,7 +157,7 @@ pub fn check_paths_with_index(
         return Err(LintError::MissingPaths);
     }
 
-    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+    let (rules, unknown) = ResolvedRules::resolve(config);
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
@@ -423,7 +423,7 @@ pub fn check_tracked_file(
     config: &LintConfig,
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
-    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+    let (rules, unknown) = ResolvedRules::resolve(config);
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
@@ -629,7 +629,7 @@ pub fn check_document_in_project(
     config: &LintConfig,
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
-    let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+    let (rules, unknown) = ResolvedRules::resolve(config);
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }

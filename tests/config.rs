@@ -326,6 +326,90 @@ fn cli_lint_unknown_selected_rule_errors() {
     );
 }
 
+#[test]
+fn cli_lint_rules_table_configures_a_rule() {
+    // End-to-end proof that `[lint.rules.<id>]` reaches the rule: `sapply` is
+    // not in the built-in set, so it only fires because the config added it.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        concat!(
+            "[lint]\n",
+            "select = [\"undesirable-function\"]\n",
+            "\n",
+            "[lint.rules.undesirable-function]\n",
+            "extend-functions = { sapply = \"use `vapply()`\" }\n",
+        ),
+    )
+    .unwrap();
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, "attach(mtcars)\nsapply(1:3, identity)\n").unwrap();
+
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        ["lint", "--output", "concise", r_file.to_str().unwrap()],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The built-in entry and the configured one both fire.
+    assert_eq!(
+        stderr.matches("undesirable-function").count(),
+        2,
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_lint_rules_functions_replaces_the_builtin_set() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        concat!(
+            "[lint]\n",
+            "select = [\"undesirable-function\"]\n",
+            "\n",
+            "[lint.rules.undesirable-function]\n",
+            "functions = { sapply = \"use `vapply()`\" }\n",
+        ),
+    )
+    .unwrap();
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, "attach(mtcars)\nsapply(1:3, identity)\n").unwrap();
+
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        ["lint", "--output", "concise", r_file.to_str().unwrap()],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("sapply"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("attach"),
+        "`functions` replaces the built-in set; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_lint_unknown_rule_table_is_a_parse_error() {
+    // Unlike `select`/`ignore`, a rule ID under `[lint.rules]` is schema, so a
+    // typo fails at config-parse time with the offending key named.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint.rules.undesirabl-function]\nfunctions = {}\n",
+    )
+    .unwrap();
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, "x <- 1\n").unwrap();
+
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        ["lint", "--output", "concise", r_file.to_str().unwrap()],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("undesirabl-function"), "stderr: {stderr}");
+}
+
 // A misformatted file the formatter would rewrite (used to prove exclusion).
 const MISFORMATTED: &str = "x<-1\n";
 

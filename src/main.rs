@@ -305,6 +305,11 @@ const STARTER_CONFIG: &str = "\
 [lint]
 # select = [\"...\"]  # if set, only these rules run
 # ignore = []        # rules to disable
+
+# A few rules take options of their own, in a table named after the rule ID.
+# `functions` replaces the rule's built-in set; `extend-functions` adds to it.
+# [lint.rules.undesirable-function]
+# extend-functions = { sapply = \"use `vapply()` for a stable return type\" }
 ";
 
 fn run_init(force: bool, out: OutputOptions) -> ExitCode {

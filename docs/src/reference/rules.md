@@ -25,6 +25,7 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`redundant-equals`](rules/redundant-equals.md)
 - [`redundant-ifelse`](rules/redundant-ifelse.md)
 - [`repeat`](rules/repeat.md)
+- [`undesirable-function`](rules/undesirable-function.md)
 
 ## Readability
 

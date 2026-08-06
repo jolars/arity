@@ -22,6 +22,7 @@ use std::path::Path;
 use rowan::ast::AstNode as _;
 
 use crate::ast::{BinaryExpr, CallExpr};
+use crate::config::{LintConfig, RulesConfig};
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{FileControlFlow, PackageOrigin, SemanticModel, SymbolProvider};
@@ -58,6 +59,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::RedundantEquals),
         Box::new(suspicious::RedundantIfelse),
         Box::new(suspicious::Repeat),
+        Box::new(suspicious::UndesirableFunction),
         Box::new(readability::TrueFalseSymbol),
         Box::new(readability::ComparisonNegation),
         Box::new(readability::OuterNegation),
@@ -162,6 +164,9 @@ pub struct RuleContext<'a> {
     /// result instead of re-running masking on every keystroke. `None` on the
     /// single-file paths, where the rule falls back to [`RuleContext::symbols`].
     pub resolution: Option<&'a ExternalResolution>,
+    /// Per-rule option tables from `[lint.rules.<id>]`, resolved once per run and
+    /// carried on [`ResolvedRules`]. Rules that take no options ignore this.
+    pub config: &'a RulesConfig,
 }
 
 impl RuleContext<'_> {
@@ -191,19 +196,28 @@ impl RuleContext<'_> {
         // resolves to a local binding, the base name is shadowed locally. This
         // is the same `resolve_local` pairing `shadowed-builtin` uses, keyed off
         // the call we already hold.
-        if let Some(callee) = call.callee_token() {
-            let range = callee.text_range();
-            let shadowed = self
-                .model
-                .idents()
-                .iter()
-                .any(|i| i.range == range && self.model.resolve_local(i).is_some());
-            if shadowed {
-                return false;
-            }
+        if let Some(callee) = call.callee_token()
+            && self.is_locally_shadowed(callee.text_range())
+        {
+            return false;
         }
         // Not masked by an attached non-default package.
         origin_is_default(self.symbols.origin(&name, self.model.loaded_packages()))
+    }
+
+    /// Whether the identifier read at `range` resolves to a local binding — the
+    /// name is redefined in this file rather than referring to the package
+    /// function of the same name. The shadow half of [`resolves_to_base`],
+    /// shared with rules that match names arity cannot attribute to a package
+    /// (e.g. user-configured `undesirable-function` entries) and so can only
+    /// apply this weaker gate.
+    ///
+    /// [`resolves_to_base`]: RuleContext::resolves_to_base
+    pub fn is_locally_shadowed(&self, range: rowan::TextRange) -> bool {
+        self.model
+            .idents()
+            .iter()
+            .any(|i| i.range == range && self.model.resolve_local(i).is_some())
     }
 
     /// Whether a bare value read (an `IDENT` token used as a value, e.g. a
@@ -217,13 +231,7 @@ impl RuleContext<'_> {
         if !self.symbols.is_base(name) {
             return false;
         }
-        let range = token.text_range();
-        let shadowed = self
-            .model
-            .idents()
-            .iter()
-            .any(|i| i.range == range && self.model.resolve_local(i).is_some());
-        if shadowed {
+        if self.is_locally_shadowed(token.text_range()) {
             return false;
         }
         origin_is_default(self.symbols.origin(name, self.model.loaded_packages()))
@@ -259,12 +267,16 @@ fn origin_is_default(origin: PackageOrigin) -> bool {
 
 /// Configured set of rules for a single linting run, plus the derived dispatch
 /// state that only depends on the rule set: the node-dispatch table and each
-/// rule's stamped severity. Both are computed once here (in [`from_rules`], via
+/// rule's stamped severity. Both are computed once here (in [`with_config`], via
 /// [`resolve`]) rather than rebuilt per file in [`run_rules`], so reusing one
 /// `ResolvedRules` across many files — the CLI batch pass, and the LSP lint
 /// worker, which caches it across keystrokes — pays that cost only once.
 ///
-/// [`from_rules`]: ResolvedRules::from_rules
+/// It also carries the run's `[lint.rules.<id>]` tables, for the same reason:
+/// they are per-run config, so rules read them off [`RuleContext::config`]
+/// without widening [`run_rules`].
+///
+/// [`with_config`]: ResolvedRules::with_config
 /// [`resolve`]: ResolvedRules::resolve
 pub struct ResolvedRules {
     pub rules: Vec<Box<dyn Rule>>,
@@ -278,12 +290,17 @@ pub struct ResolvedRules {
     /// Each rule ID's [`Rule::default_severity`], so the severity-stamping pass
     /// is an `O(1)` lookup keyed by the finding's rule ID.
     severities: HashMap<&'static str, Severity>,
+    /// The `[lint.rules.<id>]` tables, handed to every rule via
+    /// [`RuleContext::config`]. Lives here rather than as a [`run_rules`]
+    /// parameter because it is per-*run* config, exactly like the rest of this
+    /// struct's derived state — so the hot per-file path carries it for free.
+    rules_config: RulesConfig,
 }
 
 impl ResolvedRules {
     /// Build the derived dispatch state (`by_kind`, `severities`) for a chosen
     /// rule set. The single place that knows how a rule set maps to dispatch.
-    fn from_rules(rules: Vec<Box<dyn Rule>>) -> Self {
+    fn with_config(rules: Vec<Box<dyn Rule>>, rules_config: RulesConfig) -> Self {
         let mut by_kind: Vec<Vec<usize>> = vec![Vec::new(); SyntaxKind::COUNT];
         let mut any_node_rules = false;
         for (i, rule) in rules.iter().enumerate() {
@@ -301,6 +318,7 @@ impl ResolvedRules {
             by_kind,
             any_node_rules,
             severities,
+            rules_config,
         }
     }
 
@@ -312,10 +330,16 @@ impl ResolvedRules {
     /// 2. Subtract anything in `ignore`.
     /// 3. Unknown rule IDs in `select` or `ignore` are returned via the second
     ///    element of the tuple so the caller can surface them.
-    pub fn resolve(select: Option<&[String]>, ignore: &[String]) -> (Self, Vec<String>) {
+    ///
+    /// `config.rules` (the `[lint.rules.<id>]` tables) is carried through onto
+    /// the result, reaching rules via [`RuleContext::config`]. Unknown *rule
+    /// tables* are rejected earlier, when the config is parsed — unlike unknown
+    /// IDs in `select`/`ignore`, which are data and so surface here.
+    pub fn resolve(config: &LintConfig) -> (Self, Vec<String>) {
+        let select = config.select.as_deref();
+        let ignore = &config.ignore;
         // Instantiate the registry once and derive the known-ID set from it —
-        // rather than calling `all_rule_ids()` (a second `all_rules()`) — since
-        // this runs per file on the CLI batch pass.
+        // rather than calling `all_rule_ids()` (a second `all_rules()`).
         let all = all_rules();
         let mut unknown = Vec::new();
         for id in select.iter().flat_map(|v| v.iter()).chain(ignore.iter()) {
@@ -331,11 +355,11 @@ impl ResolvedRules {
             None => all.into_iter().filter(|r| r.default_enabled()).collect(),
         };
         chosen.retain(|r| !ignore.iter().any(|i| i == r.id()));
-        (Self::from_rules(chosen), unknown)
+        (Self::with_config(chosen, config.rules.clone()), unknown)
     }
 
     pub fn default_set() -> Self {
-        let (set, _) = Self::resolve(None, &[]);
+        let (set, _) = Self::resolve(&LintConfig::default());
         set
     }
 }
@@ -365,6 +389,7 @@ pub fn run_rules(
         symbols,
         project,
         resolution,
+        config: &resolved.rules_config,
     };
     let rules = &resolved.rules;
     let mut all = Vec::new();
@@ -454,7 +479,8 @@ mod tests {
         let model = SemanticModel::build(&root);
         let cfg = FileControlFlow::build(&root);
         let symbols = crate::semantic::StaticBaseR::new();
-        let resolved = ResolvedRules::from_rules(vec![Box::new(FakeError)]);
+        let resolved =
+            ResolvedRules::with_config(vec![Box::new(FakeError)], RulesConfig::default());
         let diags = run_rules(
             &resolved,
             Path::new("test.R"),
@@ -485,6 +511,7 @@ mod tests {
             symbols: &symbols,
             project: None,
             resolution: None,
+            config: &RulesConfig::default(),
         };
         let call = root
             .descendants()

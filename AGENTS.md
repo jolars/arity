@@ -251,8 +251,12 @@ Conventions when extending it: every struct is
 an error rather than a silent no-op, and TOML keys are kebab-case. `remote_url`
 is deliberately `#[serde(skip)]` and read from `ARITY_REMOTE_URL` instead—
 network egress is a per-user consent decision, not a committed project setting.
-Per-rule config (`[lint.rules.<id>]`) does not exist yet and blocks two planned
-rules; see `TODO.md` §I4.
+Per-rule config lives in `[lint.rules.<id>]` tables, typed one struct per
+configurable rule on `RulesConfig` (so, unlike an unknown ID in
+`select`/`ignore`, a mistyped rule ID here is a *parse* error). It reaches rules
+as `RuleContext::config`, carried on `ResolvedRules` rather than through
+`run_rules`' parameter list. Only `undesirable-function` takes options today;
+per-rule severity is still reserved (`TODO.md` §I4).
 
 **Formatter** (`crates/arity-formatter`, engine in `src/formatter/` there):
 consumes the CST and uses a Wadler/Prettier-style document IR (`ir.rs`) printed

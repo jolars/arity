@@ -39,10 +39,13 @@
       covering element at the callee offset instead of scanning.
 - [ ] `internal-function` `pkg:::fn` via
       `BinaryExpr::namespace_access().internal` (correctness, none)—cheap.
-- [ ] **§I4 per-rule config**: add a `[lint.rules.<id>]` TOML table + typed
-      per-rule struct in `src/config.rs`, threaded into rules via a
-      `config`/`&RuleConfig` field on `RuleContext`. **Blocks**
-      `undesirable-function`, `download-file`.
+- [x] **§I4 per-rule config**: `[lint.rules.<id>]` TOML tables, typed one struct
+      per configurable rule in `src/config.rs` (so a mistyped rule ID is a parse
+      error, unlike `select`/`ignore`). Threaded via a `config: &RulesConfig`
+      field on `RuleContext`, carried on `ResolvedRules` rather than widening
+      `run_rules`—`ResolvedRules::resolve` now takes the whole `&LintConfig`.
+      `undesirable-function` landed as the first consumer. Per-rule **severity**
+      is still reserved, at the stamping loop in `run_rules`.
 - [ ] `unused-function` (suspicious, sem, none)—reuse
       `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
 - [ ] `duplicated-function-definition` (suspicious, sem, none).
@@ -55,8 +58,15 @@
       fix-then-format) and withheld on a dropped comment. The guard-clause /
       early-return (`sem`/CFG) variant was scoped out of v1 — see the deferred
       follow-up under Phase B.
-- [ ] `undesirable-function` (suspicious, ns + config, none)—needs §I4;
-      **default-off**. `download-file` (correctness, ns, none)—low priority.
+- [x] `undesirable-function` (suspicious, ns + config, none). Default-off;
+      name -> suggestion map from `[lint.rules.undesirable-function]`
+      (`functions` replaces the built-in set, `extend-functions` adds, mirroring
+      `exclude`/`extend-exclude`). Two-tier ns gate: full `resolves_to_base` for
+      names arity can place in base R, shadow-check only for user-added names
+      (else user config would silently no-op). Bare-name calls only. Follow-up:
+      lintr's `symbol_is_undesirable` (flag a bare symbol *read*, not just a
+      call) was scoped out of v1.
+- [ ] `download-file` (correctness, ns, none)—low priority.
 
 ### Phase 4—Meta (suppression) rules + hardening
 

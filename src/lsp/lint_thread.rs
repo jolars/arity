@@ -441,7 +441,7 @@ impl LintWorker {
         {
             return Ok(Arc::clone(rules));
         }
-        let (rules, unknown) = ResolvedRules::resolve(config.select.as_deref(), &config.ignore);
+        let (rules, unknown) = ResolvedRules::resolve(config);
         if let Some(rule) = unknown.into_iter().next() {
             return Err(LintError::UnknownRule { rule });
         }

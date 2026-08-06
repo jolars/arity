@@ -1,0 +1,25 @@
+# `undesirable-function`
+
+Flag a call to a function the project has banned, with the configured alternative as the suggestion.
+
+The name -> suggestion map is set in `[lint.rules.undesirable-function]`: `functions` replaces the built-in set, `extend-functions` adds to it. The built-in set covers base-R functions that mutate global state (`attach`, `setwd`, `options`, `Sys.setenv`, ...) and the debugging entry points (`debug`, `trace`, ...); `browser()` is left to the dedicated `browser` rule.
+
+Only bare-name calls are flagged, and a locally redefined name is skipped. There is no autofix — the rule knows the call is unwanted, not what should replace it.
+
+This rule is **disabled by default**; enable it with `select`.
+
+`attach()` is in the built-in set — it puts a data frame's columns on the search path, so later code silently depends on load order:
+
+```r
+attach(mtcars)
+mean(mpg)
+```
+
+```text
+warning: undesirable-function
+ --> example.R:1:1
+  |
+1 | attach(mtcars)
+  | ^^^^^^ call to undesirable function `attach`
+  = help: Avoid `attach()`: use `with()` or refer to columns explicitly.
+```

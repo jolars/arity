@@ -6,6 +6,7 @@
 //! [`Config::exclude_filter`] path so in-editor and index walks honor the same
 //! `exclude`/`extend-exclude` as the CLI.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -160,6 +161,123 @@ pub struct LintConfig {
     /// the default rule set.
     #[serde(default)]
     pub ignore: Vec<String>,
+    /// Per-rule option tables (`[lint.rules.<id>]`).
+    #[serde(default)]
+    pub rules: RulesConfig,
+}
+
+/// `[lint.rules]` — per-rule option tables, one field per *configurable* rule.
+///
+/// Deliberately typed rather than a `Map<String, Value>` keyed by rule ID: the
+/// `deny_unknown_fields` convention then makes a mistyped rule ID a parse error
+/// instead of a silently-ignored table. Note the asymmetry this creates with
+/// `select`/`ignore`, where an unknown ID is reported at *lint* time — there the
+/// IDs are free-form data, here they are schema.
+///
+/// Most rules take no options and so have no field here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct RulesConfig {
+    /// `[lint.rules.undesirable-function]`
+    #[serde(default)]
+    pub undesirable_function: UndesirableFunctionConfig,
+}
+
+/// `[lint.rules.undesirable-function]` — the function-name policy for the
+/// `undesirable-function` rule.
+///
+/// The `functions`/`extend-functions` pair mirrors the top-level
+/// `exclude`/`extend-exclude` idiom: the base key **replaces** the built-in set
+/// ([`default_undesirable_functions`]), the `extend-` key **adds** to whichever
+/// set that resolved to. Use [`resolved`] rather than reading either field
+/// directly.
+///
+/// [`resolved`]: UndesirableFunctionConfig::resolved
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct UndesirableFunctionConfig {
+    /// Function name -> suggested alternative. An empty string means "no
+    /// alternative, just don't call this". Replaces the built-in set; `{}`
+    /// therefore silences the rule entirely.
+    #[serde(default = "default_undesirable_functions")]
+    pub functions: BTreeMap<String, String>,
+    /// Entries added on top of `functions`, overriding same-named ones. The
+    /// usual way to extend the built-in set without restating it.
+    #[serde(default)]
+    pub extend_functions: BTreeMap<String, String>,
+}
+
+impl Default for UndesirableFunctionConfig {
+    fn default() -> Self {
+        Self {
+            functions: default_undesirable_functions(),
+            extend_functions: BTreeMap::new(),
+        }
+    }
+}
+
+impl UndesirableFunctionConfig {
+    /// The suggestion configured for `name`, or `None` if it is not flagged.
+    ///
+    /// Equivalent to `self.resolved().get(name)` but allocation-free, which
+    /// matters because the rule asks this once per call expression in the file:
+    /// `extend-functions` wins, so it is consulted first.
+    pub fn lookup(&self, name: &str) -> Option<&str> {
+        self.extend_functions
+            .get(name)
+            .or_else(|| self.functions.get(name))
+            .map(String::as_str)
+    }
+
+    /// The effective name -> suggestion map: `functions` with `extend-functions`
+    /// layered on top. Materializes the map; prefer [`lookup`] on a hot path.
+    ///
+    /// [`lookup`]: UndesirableFunctionConfig::lookup
+    pub fn resolved(&self) -> BTreeMap<String, String> {
+        let mut out = self.functions.clone();
+        out.extend(
+            self.extend_functions
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        out
+    }
+}
+
+/// The built-in `undesirable-function` set: base-R functions that reach outside
+/// the current evaluation and mutate global state, plus the debugging entry
+/// points that should never survive into committed code.
+///
+/// Deliberately conservative, and deliberately disjoint from the rules that
+/// already own a name: `browser` has its own rule, and `ifelse` overlaps
+/// `redundant-ifelse`. Style-contentious names (`sapply`, `mapply`,
+/// `library`/`require`) are left out — a user who wants them adds them via
+/// `extend-functions`.
+fn default_undesirable_functions() -> BTreeMap<String, String> {
+    [
+        ("attach", "use `with()` or refer to columns explicitly"),
+        ("detach", "avoid modifying the search path"),
+        (".libPaths", "set `R_LIBS` outside the script"),
+        (
+            "install.packages",
+            "declare dependencies in DESCRIPTION or renv",
+        ),
+        ("setwd", "use paths relative to the project root"),
+        ("sink", "use `capture.output()` or an explicit connection"),
+        ("source", "make the code a package or use `box::use()`"),
+        ("options", "set options in the session, not in library code"),
+        ("par", "restore graphical parameters with `on.exit()`"),
+        ("Sys.setenv", "set the environment outside the script"),
+        ("Sys.setlocale", "set the locale outside the script"),
+        ("debug", "remove the debugging call"),
+        ("debugonce", "remove the debugging call"),
+        ("undebug", "remove the debugging call"),
+        ("trace", "remove the debugging call"),
+        ("untrace", "remove the debugging call"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
 }
 
 /// `[index]` — the R-introspection sidecar.
@@ -719,6 +837,155 @@ mod tests {
     fn parses_lint_ignore() {
         let config = parse("[lint]\nignore = [\"undefined-symbol\"]\n").expect("parse");
         assert_eq!(config.lint.ignore, vec!["undefined-symbol".to_string()]);
+    }
+
+    #[test]
+    fn accepts_empty_lint_rules_section() {
+        let config = parse("[lint.rules]\n").expect("parse");
+        assert_eq!(config.lint.rules, RulesConfig::default());
+    }
+
+    #[test]
+    fn accepts_empty_undesirable_function_table() {
+        let config = parse("[lint.rules.undesirable-function]\n").expect("parse");
+        assert_eq!(
+            config.lint.rules.undesirable_function,
+            UndesirableFunctionConfig::default()
+        );
+        // The built-in set is the default; an empty table changes nothing.
+        assert_eq!(
+            config.lint.rules.undesirable_function.resolved(),
+            default_undesirable_functions()
+        );
+    }
+
+    #[test]
+    fn undesirable_function_functions_replaces_the_builtin_set() {
+        // Mirrors `exclude` vs `DEFAULT_EXCLUDE`: the base key *replaces*.
+        let config = parse(concat!(
+            "[lint.rules.undesirable-function]\n",
+            "functions = { sapply = \"use `vapply()`\" }\n",
+        ))
+        .expect("parse");
+        let resolved = config.lint.rules.undesirable_function.resolved();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved.get("sapply").map(String::as_str),
+            Some("use `vapply()`")
+        );
+        assert!(
+            !resolved.contains_key("attach"),
+            "`functions` must replace, not extend: {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn undesirable_function_extend_functions_adds_to_the_builtin_set() {
+        let config = parse(concat!(
+            "[lint.rules.undesirable-function]\n",
+            "extend-functions = { sapply = \"use `vapply()`\" }\n",
+        ))
+        .expect("parse");
+        let resolved = config.lint.rules.undesirable_function.resolved();
+        assert_eq!(
+            resolved.get("sapply").map(String::as_str),
+            Some("use `vapply()`")
+        );
+        assert!(
+            resolved.contains_key("attach"),
+            "`extend-functions` must keep the defaults: {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn undesirable_function_extend_overrides_a_default_entry() {
+        let config = parse(concat!(
+            "[lint.rules.undesirable-function]\n",
+            "extend-functions = { attach = \"custom advice\" }\n",
+        ))
+        .expect("parse");
+        let resolved = config.lint.rules.undesirable_function.resolved();
+        assert_eq!(
+            resolved.get("attach").map(String::as_str),
+            Some("custom advice")
+        );
+    }
+
+    #[test]
+    fn undesirable_function_empty_functions_table_disables_the_rule() {
+        let config = parse(concat!(
+            "[lint.rules.undesirable-function]\n",
+            "functions = {}\n",
+        ))
+        .expect("parse");
+        assert!(config.lint.rules.undesirable_function.resolved().is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_rule_id_table() {
+        // Unlike `select`/`ignore` (validated at lint time), an unknown rule ID
+        // under `[lint.rules]` is a typed field and so a parse error.
+        let err = parse("[lint.rules.undesirabl-function]\nfunctions = {}\n")
+            .expect_err("unknown rule table");
+        match err {
+            ConfigError::Parse { message, .. } => {
+                assert!(message.contains("undesirabl-function"), "got: {message}");
+            }
+            other => panic!("expected Parse error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_field_in_undesirable_function() {
+        let err =
+            parse("[lint.rules.undesirable-function]\nfunction = {}\n").expect_err("unknown field");
+        match err {
+            ConfigError::Parse { message, .. } => {
+                assert!(message.contains("function"), "got: {message}");
+            }
+            other => panic!("expected Parse error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_snake_case_in_undesirable_function() {
+        let err = parse("[lint.rules.undesirable-function]\nextend_functions = {}\n")
+            .expect_err("keys are kebab-case");
+        assert!(matches!(err, ConfigError::Parse { .. }));
+    }
+
+    #[test]
+    fn undesirable_function_lookup_agrees_with_resolved() {
+        // `lookup` is the allocation-free hot path; it must not drift from the
+        // materialized map that documents the semantics.
+        let config = parse(concat!(
+            "[lint.rules.undesirable-function]\n",
+            "functions = { attach = \"a\", sapply = \"b\" }\n",
+            "extend-functions = { attach = \"override\", setwd = \"c\" }\n",
+        ))
+        .expect("parse")
+        .lint
+        .rules
+        .undesirable_function;
+
+        let resolved = config.resolved();
+        for name in ["attach", "sapply", "setwd", "absent"] {
+            assert_eq!(
+                config.lookup(name),
+                resolved.get(name).map(String::as_str),
+                "lookup/resolved disagree on {name:?}"
+            );
+        }
+        // And the override actually took effect, in both.
+        assert_eq!(config.lookup("attach"), Some("override"));
+    }
+
+    #[test]
+    fn default_undesirable_functions_excludes_rules_with_their_own_id() {
+        // `browser` has a dedicated rule; including it here would double-report.
+        let defaults = default_undesirable_functions();
+        assert!(!defaults.contains_key("browser"), "{defaults:?}");
+        assert!(defaults.contains_key("attach"), "{defaults:?}");
     }
 
     #[test]

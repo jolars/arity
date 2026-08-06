@@ -96,6 +96,45 @@ select = ["undefined-symbol", "equals-na"]
 ignore = ["unused-binding"]
 ```
 
+### `[lint.rules.<id>]`
+
+A few rules take options of their own, set in a table named after the rule ID.
+Rules that take no options have no table.
+
+Unlike `select`/`ignore`---where rule IDs are data, checked when linting
+runs---a rule ID here is part of the schema, so a mistyped one is reported when
+the config is *parsed*, alongside any other unknown key.
+
+#### `[lint.rules.undesirable-function]`
+
+The function-name policy for
+[`undesirable-function`](rules/undesirable-function.md).
+
+  | Key                | Type                 | Default      | Description                                                      |
+  | ------------------ | -------------------- | ------------ | ---------------------------------------------------------------- |
+  | `functions`        | table of name → hint | built-in set | Flagged functions. **Replaces** the built-in set.                |
+  | `extend-functions` | table of name → hint | `{}`         | Entries added on top of `functions`, overriding same-named ones. |
+
+The value is the advice shown as the diagnostic's suggestion; an empty string
+means "no alternative, just don't call this". The `functions`/`extend-functions`
+split works like `exclude`/`extend-exclude`: reach for `extend-functions` unless
+you really mean to discard the built-in set. Setting `functions = {}` silences
+the rule entirely.
+
+The built-in set covers base-R functions that mutate global state (`attach`,
+`detach`, `.libPaths`, `install.packages`, `setwd`, `sink`, `source`, `options`,
+`par`, `Sys.setenv`, `Sys.setlocale`) and the debugging entry points (`debug`,
+`debugonce`, `undebug`, `trace`, `untrace`). `browser()` is deliberately absent:
+it has its own [`browser`](rules/browser.md) rule.
+
+```toml
+[lint]
+select = ["undesirable-function"]
+
+[lint.rules.undesirable-function]
+extend-functions = { sapply = "use `vapply()` for a stable return type" }
+```
+
 ## `[index]`
 
 Controls the R-package symbol index used by the language server (and by
@@ -129,6 +168,5 @@ the strict unknown-key check):
 - `[format].indent-style` (`"space"` or `"tab"`)---tab indentation.
 - `[format].skip` and a `# fmt: skip` comment---opt specific calls out of
   formatting.
-- `[lint.rules.<id>]`---per-rule configuration tables (including per-rule
-  severity).
+- `severity` in a `[lint.rules.<id>]` table---overriding a rule's severity.
 - Category names (e.g. `"correctness"`) in `select`/`ignore`.
