@@ -9,10 +9,11 @@
 //! string-predicate, and byte-span logic that has no single node/token home.
 
 use rowan::NodeOrToken;
+use rowan::TextRange;
 use rowan::ast::AstNode as _;
 use smol_str::SmolStr;
 
-use crate::ast::{Arg, AstToken as _, BinaryExpr, CallExpr, Expr, HasArgList as _, Ident};
+use crate::ast::{Arg, AstToken as _, BinaryExpr, CallExpr, Expr, ForExpr, HasArgList as _, Ident};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 // --- calls & callees -------------------------------------------------------
@@ -203,6 +204,47 @@ pub fn is_safe_splice_context(node: &SyntaxNode) -> bool {
             .is_some_and(|t| t.kind() == SyntaxKind::BANG),
         _ => false,
     }
+}
+
+// --- loops -----------------------------------------------------------------
+
+/// A `for` loop's clause, split into the pieces the loop-index rules match on.
+pub struct ForClause {
+    /// The loop-index identifier token (`i` in `for (i in xs)`).
+    pub index: SyntaxToken,
+    /// Range of the sequence expression (`xs`), spanning all of its elements.
+    pub sequence: TextRange,
+}
+
+impl ForClause {
+    /// The whole `i in xs` clause range — the span a finding about the clause
+    /// should point at (tighter than the `FOR_EXPR`, which swallows the body).
+    pub fn range(&self) -> TextRange {
+        TextRange::new(self.index.text_range().start(), self.sequence.end())
+    }
+}
+
+/// Split a `for` loop's clause into its index token and sequence range. `None`
+/// unless the index is a simple name and the sequence is non-empty — a
+/// recovered or malformed clause matches nothing, keeping callers conservative.
+pub fn for_clause(for_expr: &ForExpr) -> Option<ForClause> {
+    let parts = for_expr.parts()?;
+
+    // The index must be exactly one `IDENT` token: anything else (an empty
+    // clause, an error node) is not a plain loop variable.
+    let [NodeOrToken::Token(index)] = parts.variable_elements.as_slice() else {
+        return None;
+    };
+    if index.kind() != SyntaxKind::IDENT {
+        return None;
+    }
+
+    let first = parts.sequence_elements.first()?;
+    let last = parts.sequence_elements.last()?;
+    Some(ForClause {
+        index: index.clone(),
+        sequence: TextRange::new(first.text_range().start(), last.text_range().end()),
+    })
 }
 
 // --- shared helpers --------------------------------------------------------

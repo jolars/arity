@@ -27,6 +27,8 @@ the linter on worked examples. Regenerate with `cargo run --example docgen`.
 - [`redundant-ifelse`](rules/redundant-ifelse.md)
 - [`repeat`](rules/repeat.md)
 - [`undesirable-function`](rules/undesirable-function.md)
+- [`for-loop-index`](rules/for-loop-index.md)
+- [`for-loop-dup-index`](rules/for-loop-dup-index.md)
 
 ## Readability
 

@@ -1,0 +1,41 @@
+# `for-loop-index`
+
+Flag a `for` loop whose index symbol is also read in its own sequence expression, as in `for (x in x)` or `for (x in seq_along(x))`. R evaluates the sequence once and then binds the index over it, so the original value is destroyed by the first iteration and is not what a reader would expect after the loop.
+
+Only a genuine *read* of the name counts: a field name (`for (x in df$x)`), an argument name (`for (x in list(x = 1))`), or a read belonging to a function literal inside the sequence is not a re-use and is not flagged. No fix is offered—the repair is to rename the index or the sequence, which means inventing a name.
+
+This rule is **enabled by default**.
+
+The loop index overwrites the vector being iterated over:
+
+```r
+for (x in x) {
+  print(x)
+}
+```
+
+```text
+warning: for-loop-index
+ --> example.R:1:6
+  |
+1 | for (x in x) {
+  |      ^^^^^^ loop index `x` is also read in the loop's sequence
+  = help: Rename the loop index so iterating does not overwrite `x`.
+```
+
+The same mistake one call deep:
+
+```r
+for (i in seq_along(i)) {
+  print(i)
+}
+```
+
+```text
+warning: for-loop-index
+ --> example.R:1:6
+  |
+1 | for (i in seq_along(i)) {
+  |      ^^^^^^^^^^^^^^^^^ loop index `i` is also read in the loop's sequence
+  = help: Rename the loop index so iterating does not overwrite `i`.
+```

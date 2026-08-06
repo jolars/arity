@@ -3,6 +3,8 @@
 
 mod assignment_in_condition;
 mod browser;
+mod for_loop_dup_index;
+mod for_loop_index;
 mod implicit_assignment;
 mod redundant_equals;
 mod redundant_ifelse;
@@ -12,6 +14,8 @@ mod undesirable_function;
 
 pub use assignment_in_condition::AssignmentInCondition;
 pub use browser::Browser;
+pub use for_loop_dup_index::ForLoopDupIndex;
+pub use for_loop_index::ForLoopIndex;
 pub use implicit_assignment::ImplicitAssignment;
 pub use redundant_equals::RedundantEquals;
 pub use redundant_ifelse::RedundantIfelse;

@@ -49,7 +49,19 @@
 - [ ] `unused-function` (suspicious, sem, none)—reuse
       `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
 - [ ] `duplicated-function-definition` (suspicious, sem, none).
-- [ ] `for-loop-index`/`for-loop-dup-index` (suspicious, sem, none).
+- [x] `for-loop-index`/`for-loop-dup-index` (suspicious, none). Both report-only
+      (the repair is to rename an index, which means inventing a name), spanned
+      on the `i in seq` clause via the shared `matchers::for_clause`.
+      `for-loop-index` is `sem`: the trigger is a *read* of the index name in the
+      sequence per `model.idents()`, not a textual name match, so a field name
+      (`df$x`), an argument name (`list(x = 1)`), and a string subscript never
+      fire—jarl flags the `list(x = 1)` shape, arity does not. Reads inside a
+      function literal in the sequence are skipped (different frame).
+      `for-loop-dup-index` landed as `syn`: an ancestor walk that stops at the
+      first `FUNCTION_EXPR`, since a loop in a closure defined in the outer body
+      runs in its own frame and leaves the outer index intact (confirmed against
+      `Rscript`; jarl flags it). Only the enclosing loop's *body* counts, not its
+      sequence clause.
 - [x] `unnecessary-nesting` collapsible nested `if` (readability, `syn`,
       unsafe). Landed as the purely-syntactic collapsible-`if` variant: an `if`
       with no `else` whose sole body is another `if` with no `else` collapses to

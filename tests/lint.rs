@@ -1861,6 +1861,107 @@ fn undesirable_function_respects_arity_ignore() {
     assert!(undesirable_diags(src, Default::default()).is_empty());
 }
 
+fn rule_diags(src: &str, rule: &'static str) -> Vec<arity::linter::Diagnostic> {
+    diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == rule)
+        .collect()
+}
+
+#[test]
+fn for_loop_index_flags_a_reused_sequence_symbol() {
+    let d = rule_diags("for (x in x) print(x)\n", "for-loop-index");
+    assert_eq!(d.len(), 1, "got: {d:?}");
+    // The span covers the whole `x in x` clause, not the enclosing statement.
+    assert_eq!(
+        &"for (x in x) print(x)\n"[usize::from(d[0].range.start())..usize::from(d[0].range.end())],
+        "x in x"
+    );
+    assert!(d[0].fix.is_none(), "renaming an index is not mechanical");
+}
+
+#[test]
+fn for_loop_index_flags_a_nested_sequence_symbol() {
+    assert_eq!(
+        rule_diags("for (i in seq_along(i)) print(i)\n", "for-loop-index").len(),
+        1
+    );
+    assert_eq!(
+        rule_diags("for (nm in names(nm)) print(nm)\n", "for-loop-index").len(),
+        1
+    );
+    assert_eq!(
+        rule_diags("for (x in rev(sort(x))) print(x)\n", "for-loop-index").len(),
+        1
+    );
+}
+
+#[test]
+fn for_loop_index_ignores_a_distinct_sequence() {
+    assert!(rule_diags("for (i in seq_along(x)) print(i)\n", "for-loop-index").is_empty());
+    assert!(rule_diags("for (i in 1:10) print(i)\n", "for-loop-index").is_empty());
+}
+
+#[test]
+fn for_loop_index_ignores_non_read_name_positions() {
+    // `$`/`@` field names and named-argument names are not symbol reads, so the
+    // index is not actually re-used. (jarl flags the `list(x = 1)` shape; the
+    // semantic model's read set makes arity precise here.)
+    assert!(rule_diags("for (x in df$x) print(x)\n", "for-loop-index").is_empty());
+    assert!(rule_diags("for (x in obj@x) print(x)\n", "for-loop-index").is_empty());
+    assert!(rule_diags("for (x in list(x = 1)) print(x)\n", "for-loop-index").is_empty());
+    assert!(rule_diags("for (x in df[[\"x\"]]) print(x)\n", "for-loop-index").is_empty());
+}
+
+#[test]
+fn for_loop_index_ignores_a_shadowing_lambda_parameter() {
+    // The `f` read is the lambda's own parameter, evaluated while the sequence
+    // is built — it never refers to the loop index.
+    let src = "for (f in lapply(xs, function(f) f)) print(f)\n";
+    assert!(rule_diags(src, "for-loop-index").is_empty());
+}
+
+#[test]
+fn for_loop_dup_index_flags_a_nested_reuse() {
+    let src = "for (i in 1:10) {\n  for (i in 1:5) {\n    print(i)\n  }\n}\n";
+    let d = rule_diags(src, "for-loop-dup-index");
+    assert_eq!(d.len(), 1, "only the inner loop is flagged; got: {d:?}");
+    assert_eq!(
+        &src[usize::from(d[0].range.start())..usize::from(d[0].range.end())],
+        "i in 1:5"
+    );
+    assert!(d[0].fix.is_none(), "renaming an index is not mechanical");
+}
+
+#[test]
+fn for_loop_dup_index_flags_the_innermost_of_a_triple_nest() {
+    let src =
+        "for (i in a) {\n  for (j in b) {\n    for (i in c) {\n      print(i)\n    }\n  }\n}\n";
+    let d = rule_diags(src, "for-loop-dup-index");
+    assert_eq!(d.len(), 1, "got: {d:?}");
+    assert_eq!(
+        &src[usize::from(d[0].range.start())..usize::from(d[0].range.end())],
+        "i in c"
+    );
+}
+
+#[test]
+fn for_loop_dup_index_ignores_distinct_and_sequential_indices() {
+    let nested = "for (i in a) {\n  for (j in b) {\n    print(i + j)\n  }\n}\n";
+    assert!(rule_diags(nested, "for-loop-dup-index").is_empty());
+    // Sibling loops reuse the name harmlessly — neither is live inside the other.
+    let sequential = "for (i in a) print(i)\nfor (i in b) print(i)\n";
+    assert!(rule_diags(sequential, "for-loop-dup-index").is_empty());
+}
+
+#[test]
+fn for_loop_dup_index_stops_at_a_function_boundary() {
+    // Confirmed against Rscript: the closure's `i` lives in its own frame, so
+    // the outer index is untouched. (jarl flags this; arity does not.)
+    let src = "for (i in 1:3) {\n  f <- function() {\n    for (i in 1:10) NULL\n  }\n  f()\n}\n";
+    assert!(rule_diags(src, "for-loop-dup-index").is_empty());
+}
+
 #[test]
 fn fix_output_parses_and_is_format_idempotent() {
     use arity::formatter::{FormatStyle, format_with_style};
@@ -3926,6 +4027,10 @@ fn fixed_output_is_parseable_and_clean() {
         "print(TRUE == f(x))\n",
         // empty-assignment (no fix — must not perturb the input)
         "x <- {}\n",
+        // for-loop-index / for-loop-dup-index (no fix — must not perturb the input)
+        "for (x in x) print(x)\n",
+        "for (i in seq_along(i)) print(i)\n",
+        "for (i in a) {\n  for (i in b) {\n    print(i)\n  }\n}\n",
         // download-file (no fix — must not perturb the input)
         "download.file(u, dest)\n",
         "download.file(u, dest, mode = \"w\")\n",
