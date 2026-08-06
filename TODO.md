@@ -37,165 +37,6 @@
       `return`/`stop`), so the call count is tiny and it is not currently hot—not
       worth an offset->ident index yet. If it ever becomes hot, resolve via the
       covering element at the callee offset instead of scanning.
-- [x] `internal-function` `pkg:::fn` via
-      `BinaryExpr::namespace_access().internal` (correctness, none).
-      Report-only: the repair is a judgement call (find an exported equivalent,
-      vendor the code, ask upstream to export), and `:::`->`::` would turn a
-      working call into a load-time error. Dispatches on `BINARY_EXPR`, so the
-      call form (`CALL_EXPR > BINARY_EXPR`) reports once, spanning `pkg:::fn`
-      rather than the whole call. `::` is never flagged. Landed one tier above
-      the planned `syn`: a package's *own* internals are exempt
-      (`mypkg:::helper` inside `mypkg` is a redundant qualifier in `R/` and the
-      idiomatic internals test in `tests/testthat/`), which needed the enclosing
-      package's name. That arrived as
-      `project::description::package_name{,_for_file}` plus
-      `RuleContext::own_package`, a `OnceLock` resolved lazily per file—so only
-      a file containing a `:::` pays the `DESCRIPTION` read, and the LSP
-      keystroke path is untouched. A loose script has no own-package name, so
-      nothing is exempt there.
-- [x] **§I4 per-rule config**: `[lint.rules.<id>]` TOML tables, typed one struct
-      per configurable rule in `src/config.rs` (so a mistyped rule ID is a parse
-      error, unlike `select`/`ignore`). Threaded via a `config: &RulesConfig`
-      field on `RuleContext`, carried on `ResolvedRules` rather than widening
-      `run_rules`—`ResolvedRules::resolve` now takes the whole `&LintConfig`.
-      `undesirable-function` landed as the first consumer. Per-rule **severity**
-      is still reserved, at the stamping loop in `run_rules`.
-- [x] `unused-function` (suspicious, sem, none). Default-off, report-only (both
-      repairs—delete it, or unexport it—break a published interface, so neither
-      is a mechanical edit). Landed as the **complement** of `unused-binding`,
-      not a subset of it: `unused-binding` already flags every dead top-level
-      function, and already exempts the ones a NAMESPACE `export()`s (via
-      `FileScope::used_elsewhere`), so a literal "unused function binding" rule
-      would have been a pure duplicate. This rule reports exactly that exempted
-      set—declared public, yet with no caller anywhere visible—so each dead
-      top-level function draws exactly one finding
-      (`unused_function_and_unused_binding_never_both_report` pins the matrix).
-      That needed the project layer to stop conflating its two "used elsewhere"
-      sources: `ProjectScope` now keeps `read_by_others` (a sibling reads it)
-      apart from `namespace_exports` (it is public API), surfaced as
-      `FileScope::read_elsewhere`/`exported_by_namespace` with `used_elsewhere`
-      as their union, and carried as two fields on the salsa `Visibility` memo.
-      Export is detected from *either* signal, so the rule also works
-      single-file: a roxygen `@export` on the documenting block is the same
-      declaration one step before the NAMESPACE entry roxygen2 generates from
-      it, correlated through `documentation::documented_function` (so an S4
-      `setMethod`/R6 shape contributes nothing rather than being
-      mis-attributed). Reuses `unused_local_bindings`, then narrows to
-      `ScopeKind::File` bindings whose value is a `FUNCTION_EXPR`.
-      **S3 methods are exempt**, which a tidyr run showed is the rule's one real
-      FP class: dispatch reaches `full_seq.Date` with no direct call anywhere, so
-      "nothing calls it" is not evidence it is dead. `NamespaceInfo.s3_methods`
-      now records the `S3method()` subset of `exports` (they stay in `exports`
-      for resolution), carried through to `FileScope::is_s3_method`, so the
-      project path answers exactly. Without a project arity cannot reproduce
-      roxygen2's `generic.class` split (roxygen2 consults the *build-time*
-      generic set, a runtime fact), so the single-file path withholds any dotted
-      name—under-reporting a dead `my.util`, which the NAMESPACE path still
-      catches. On tidyr's `R/` the rule reports 27 findings, all verified to have
-      no internal caller, and no S3 method among them.
-- [x] `duplicated-function-definition` (suspicious, sem, none). Report-only:
-      which of the two definitions the author meant to keep is a judgement
-      call, so there is nothing mechanical to apply. Two `sem` halves, both
-      needed to keep it FP-free. *Same variable* comes from the model's
-      bindings, so a nested `helper` never pairs with a top-level one; *first
-      one unused* comes from the Phase A def-use index — a redefinition after a
-      genuine read is a deliberate rewrite, not a duplicate, so the pair fires
-      only when the earlier binding has no read site before the later
-      definition. Reads inside the earlier definition's own statement are
-      discounted: a recursive self-call resolves at call time, to the surviving
-      definition, so it is no evidence the earlier body ran. Pairing is confined
-      to definitions that are **siblings in one statement list** (both direct
-      children of the same `BLOCK_EXPR` or of `ROOT`), which is what makes "the
-      second overwrites the first" true rather than merely possible —
-      definition-by-condition (`if (x) f <- ... else f <- ...`) lands in two
-      different lists and only one branch runs. Reports the *redefinition* (the
-      later name token), naming the shadowed definition's line. Deliberately
-      **not** coordinated with `unused-binding` the way `unused-function` is:
-      the two make different claims ("never read at all" vs "replaced before it
-      was used"), and on the shape this rule targets `unused-binding` is silent
-      by construction, since a call to the survivor marks the whole same-name
-      cohort read. Corpus check: 0 findings on tidyr, MASS, and survival; 17
-      across all of r-source, of which the 4 in real library sources
-      (`base/R/parse.R`, `grid/R/typeset.R`, `stats/R/models.R`,
-      `utils/R/hashtab.R`) are all true positives — R core keeps a superseded
-      definition sitting above the live one, commented `## or rather` /
-      `## Future version`.
-- [x] `for-loop-index`/`for-loop-dup-index` (suspicious, none). Both report-only
-      (the repair is to rename an index, which means inventing a name), spanned
-      on the `i in seq` clause via the shared `matchers::for_clause`.
-      `for-loop-index` is `sem`: the trigger is a *read* of the index name in the
-      sequence per `model.idents()`, not a textual name match, so a field name
-      (`df$x`), an argument name (`list(x = 1)`), and a string subscript never
-      fire—jarl flags the `list(x = 1)` shape, arity does not. Reads inside a
-      function literal in the sequence are skipped (different frame).
-      `for-loop-dup-index` landed as `syn`: an ancestor walk that stops at the
-      first `FUNCTION_EXPR`, since a loop in a closure defined in the outer body
-      runs in its own frame and leaves the outer index intact (confirmed against
-      `Rscript`; jarl flags it). Only the enclosing loop's *body* counts, not its
-      sequence clause.
-- [x] `unnecessary-nesting` collapsible nested `if` (readability, `syn`,
-      unsafe). Landed as the purely-syntactic collapsible-`if` variant: an `if`
-      with no `else` whose sole body is another `if` with no `else` collapses to
-      `if (a && b) body`. Fix joins the conditions with `&&` (each non-primary
-      condition parenthesized so grouping survives), unsafe (dedents the body →
-      fix-then-format) and withheld on a dropped comment. The guard-clause /
-      early-return (`sem`/CFG) variant was scoped out of v1 — see the deferred
-      follow-up under Phase B.
-- [x] `undesirable-function` (suspicious, ns + config, none). Default-off;
-      name -> suggestion map from `[lint.rules.undesirable-function]`
-      (`functions` replaces the built-in set, `extend-functions` adds, mirroring
-      `exclude`/`extend-exclude`). Two-tier ns gate: full `resolves_to_base` for
-      names arity can place in base R, shadow-check only for user-added names
-      (else user config would silently no-op). Bare-name calls only. Follow-up:
-      lintr's `symbol_is_undesirable` (flag a bare symbol *read*, not just a
-      call) was scoped out of v1.
-- [x] `download-file` (correctness, ns, none). Reports the three lintr
-      `download_file_linter` shapes: an omitted `mode` (the text-mode default
-      corrupts binary downloads on Windows), an explicit `mode = "w"`/`"a"`, and
-      a `mode` supplied next to `method = "curl"`/`"wget"` (which shell out and
-      ignore it). Arguments resolve through R's real matching rules by reusing
-      `match_args_to_formals` over `download.file`'s formals, so a positional
-      `method` and a unique-prefix `mod =` both land right. Report-only: the
-      shapes need an argument inserted or deleted, not rewritten. Conservative
-      on anything unknowable (non-literal `mode`/`method`, a value-less `ARG`
-      that would shift positional fill). Follow-up: a safe `mode = "w"` ->
-      `"wb"` fix would cover one shape of three; left out so the rule stays
-      uniformly report-only.
-
-### Phase 4—Meta (suppression) rules + hardening
-
-- [x] **§I6 suppression refactor**: `SuppressionMap` now records every
-      recognized directive (`kind`, `RuleRef { id, range }`, `reason`, comment
-      span, `target`, `raw`), *including* the shapes it used to drop silently—an
-      unknown rule ID, a directive with no following sibling, one naming no rule.
-      It reaches rules as `RuleContext::suppressions`. Filtering moved from
-      `check.rs` into `run_rules`, the only place holding both the map and the
-      findings; `SuppressionMap::filter` returns a `DirectiveUsage` and
-      `Rule::check_suppressions` is the post-pass seam that consumes it.
-      `RuleContext::enabled_rules` distinguishes a *dormant* directive (its rule
-      never ran) from a stale one. A directive no longer suppresses a finding
-      spanned inside its own comment—without that, `blanket-suppression` could
-      never report the shape it exists for; inert for every other rule.
-- [x] `misnamed-suppression` (meta, `syn`, safe), `blanket-suppression` (none),
-      `unexplained-suppression` (none, **default-off**), `outdated-suppression`
-      (safe-delete). These subsume the reserved `arity-ignore-unused` follow-up
-      below. New `meta` category (`src/linter/rules/meta/`).
-      `misnamed-suppression`'s rename is safe but withheld unless unambiguous:
-      exactly one shipped ID within a bounded edit distance and strictly closer
-      than every other, and never on a comma list (`# arity-ignore a, b` parses
-      as rule `a,`; repairing to `a` would silently drop `b`).
-      `outdated-suppression` fires only when the named rule actually ran, or
-      when the directive is dangling—so the verdict is about the code, not the
-      invocation—and hands rule-less directives to `blanket-suppression` and
-      unknown IDs to `misnamed-suppression`, so no two meta rules fire on one
-      comment. Its delete uses the new `matchers::comment_deletion_span`, not
-      `deletion_span`, whose blank-line absorption would overlap the spans of
-      two adjacent directives and make `apply_fixes` drop one.
-      Follow-ups deferred: node-level suppression of a `meta` finding cannot
-      work (`next_meaningful_sibling` skips comments, so the directive attaches
-      past the one it would silence)—use the `-file` form; comma-separated rule
-      lists are still unsupported (now audible rather than silent); a bare
-      `# arity-ignore` stays inert rather than gaining node-blanket semantics.
 - [ ] **Hardening sub-pass**: upgrade Phase 1/2 fixes from bare-name to
       `resolves_to_base`-confirmed + shadow-checked, graduating the call-rewrite
       rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
@@ -215,20 +56,6 @@ Gated on the package being attached (`model.loaded_packages()`).
 
 ### Documentation rules (roxygen2), `documentation/`
 
-Lint the roxygen2 blocks the parser now models. All `syn`, no fixes (adding a
-tag/title means inventing prose; deleting one drops prose the author wrote).
-Shared helpers live in `src/linter/rules/roxygen.rs`: `documented_function`
-(strictly conservative next-sibling association—`setMethod`/R6/`"_PACKAGE"`
-yield `None` and the function-shape checks skip), the `KNOWN_TAGS` registry,
-`inherits_docs`/`wants_rd_topic` gates, `param_doc`, and the token-concat
-`extract_examples` + offset map (robust to `@md` fragmentation). Kept honest by
-the **lint differential oracle** `task roxygen-lint-oracle`
-(`tests/roxygen_lint_oracle.rs` + driver op `lint-warnings`): compares against
-roxygen2's own signals per comparable event class, allowlist-ratcheted
-(`tests/oracle/roxygen-lint-allowlist.txt`); arity-stricter findings are
-excluded from the diff by construction. `KNOWN_TAGS` validated against
-roxygen2 7.3.3.
-
 - [ ] Follow-ups (deferred): run the full rule set over extracted example code
       (needs package-context symbol handling to avoid FPs); unsafe-delete fixes
       for duplicate/nonexistent `@param`; a missing-description variant of
@@ -237,83 +64,12 @@ roxygen2 7.3.3.
       "uncovered signals" table (mismatched braces/quotes, markdown-link
       plain-text restriction) for new rules.
 
-## Static analysis (dataflow foundation)
-
-Cross-cutting: a def-use index and a control-flow graph feeding **both** the
-linter and the LSP. Motivated by an audit of flowR
-(https://github.com/flowr-analysis/flowr), a mature static dataflow analyzer for
-R (normalized AST -> hierarchical dataflow graph with typed multi-edges -> CFG ->
-reaching-definitions fixpoint -> composable query API -> dataflow linter +
-program slicing). arity's gap vs flowR is exactly here: today the semantic model
-has a scope tree + bindings + name resolution but only a boolean `read` flag—no
-def-use reverse index, no CFG, no reaching definitions, no DFG.
-
-Everything below stays within arity's tenets: **static** (no R evaluation, no
-type inference), **incremental-first** (each analysis is a `salsa` query in
-`src/incremental.rs`, memoized like `semantic_model()`), consumed by both the
-linter (`RuleContext`) and the LSP. TDD (fixtures first). Recommended ceiling is
-**Phase B (CFG)**; Phase C is an optional later stretch.
-
-### Phase A—Def-use reverse index (cheapest; do first)
-
-- [x] Extend `SemanticModel` so a `Binding` exposes its read sites and each
-      `IdentRef` resolves to its `BindingId`. Build it **during the existing
-      single walk** in `src/semantic/builder.rs` (`reads_reached`)—no extra
-      traversal; it's the reverse of the map the walk already computes. Types in
-      `src/semantic/binding.rs`/`src/semantic.rs`. Still flow-insensitive.
-- [x] Consume it in the linter: strengthen `unused-binding`
-      (`src/linter/rules/correctness/unused_binding.rs`) to reason over the
-      concrete read set rather than the boolean flag.
-- [x] Consume it in the LSP: sharpen intra-file `references`/`rename`
-      (`src/lsp/navigation.rs`) off the def-use edges.
-
-### Phase B—CFG per function body (recommended ceiling)
-
-- [x] New `src/semantic/cfg.rs`: per-function basic blocks + edges for
-      `if`/`else`, `for`/`while`/`repeat`, `break`/`next`,
-      `return()`/`stop()`, and sequential statements, built from the CST/AST
-      wrappers and exposed as a salsa query (`control_flow`). Deterministic and
-      local, so it stays keystroke-fast and incremental. Reachability falls out
-      of the construction (`FileControlFlow::is_unreachable`); `always_diverges`
-      is the shared divergence predicate.
-- [ ] Unblock the Phase 3 lint rules that need reachability:
-  - [x] `unreachable-code` both-branches-return case (was the documented CFG gap
-        in `src/linter/rules/correctness/unreachable_code.rs`); now driven by the
-        CFG's `is_unreachable` verdict, namespace-gated on the responsible
-        `return`/`stop` leaves.
-  - [x] `if-always-true` (literal `if (TRUE/FALSE)` reachability). Flags only
-        the bare literals `TRUE`/`FALSE` (never folded constants or the
-        rebindable `T`/`F`); purely syntactic (`syn`), no CFG needed. Unsafe fix
-        splices in the statically-taken branch (`NULL` for a bare `if (FALSE)`),
-        correct by construction and withheld when it would drop a comment.
-  - [x] `unnecessary-nesting` collapsible nested `if` shipped as a purely
-        syntactic rule (no CFG needed for this variant); see the Linter section
-        entry. Deferred follow-up: the guard-clause / early-return de-nesting
-        variant (`if (c) { body } else stop()` → early-exit guard) is the piece
-        that actually needs CFG reachability (`always_diverges`).
-
-### Phase C—Reaching definitions (optional stretch, not committed)
+## Static analysis
 
 - [ ] Only if a concrete rule (dead-store, redundant reassignment) justifies it:
       a flow-sensitive fixpoint over the Phase B CFG, lattice over bindings. This
       is the first analysis that is real work to keep incremental—revisit after
       B ships and a rule demands it.
-
-#### Out of scope (recorded so they aren't silently dropped)
-
-Borrow/reject verdicts from the flowR audit—rejected because even flowR only
-does these partially/conservatively, and they collide with arity's static tenet:
-
-- **Full hierarchical DFG** (flowR's 5-vertex/9-edge graph). rowan CST +
-  `SyntaxNodePtr` + the Phase A def-use index already give the AST<->flow
-  linkage; add only the edges a rule needs, not a whole graph.
-- **Program slicing** as a core feature—a possible future LSP command ("what
-  affects this variable"), not lint/LSP-quality-critical now.
-- **NSE / environment / `assign`/`get` simulation** and **lazy-eval/promise
-  modeling**—keep the existing conservative data-masking + `resolution_incomplete`
-  gates instead.
-- **Type / signature-based inference**—an explicit arity non-goal; the
-  introspection index stays names+formals+help only.
 
 ## Language Server
 
@@ -324,40 +80,11 @@ does these partially/conservatively, and they collide with arity's static tenet:
 
 ### Symbols
 
-- [x] **Document symbols** (`textDocument/documentSymbol`). A hierarchical
-  `DocumentSymbol` outline of the file's function and variable bindings
-  (`compute_document_symbols`/`on_document_symbol`). The name set is the
-  `SemanticModel`'s `Local`/`Implicit` bindings at *every* scope (the
-  `file_exports` predicate lifted past file scope; params and `for`-vars
-  excluded); the CST then supplies the tree and each symbol's full/selection
-  spans. A binding's children are the symbols nested in its value side, and
-  non-binding nodes (`if`/`for`/`{}`, which introduce no symbol) are
-  descended through so every binding surfaces at the right level. Pure and
-  single-file (no workspace), so it runs straight on the read pool like
-  document highlight. `R6`/`setClass` shapes deferred. Kind is `FUNCTION` vs
-  `VARIABLE`; `detail` (signatures) is a follow-up.
+- [ ] `detail` (signatures) and `container_name` (enclosing binding) for each
+  symbol.
 
-  Follow-ups:
-
-  - [ ] `detail` (signatures) and `container_name` (enclosing binding) for each
-    symbol.
-
-- [x] **Workspace symbols** (`workspace/symbol`). Fuzzy name search across all
-  project files (`src/lsp/workspace_symbols.rs` `workspace_symbols_via_db`).
-  Reuses the cross-file index that references and rename already built:
-  `Analysis::workspace_symbols` scans `project_defs` (the salsa-tracked,
-  name-keyed `DefIndex` aggregated across workspace members), filters names with
-  a dependency-free case-insensitive subsequence matcher, and recovers each
-  span per site via `def_range_in` against the file's current text. A db-backed
-  read job (like definition/references), so it runs on the read pool against a
-  snapshot. Returns modern `WorkspaceSymbol`s with full `Location`s; kind is
-  `FUNCTION` vs `VARIABLE`. Scope is file-scope top-level defs only (nested
-  locals excluded). Empty in single-file mode (no workspace seeded).
-
-  Follow-ups:
-
-  - [ ] `container_name` (enclosing binding) and `detail` (signatures) for each
-    symbol.
+- [ ] `container_name` (enclosing binding) and `detail` (signatures) for each
+  symbol.
 
 - [ ] **RStudio-style code sections** (outline + folding). R tooling (RStudio,
   and the R languageserver's `section.R`) treats a trailing run of 4+
@@ -393,20 +120,6 @@ does these partially/conservatively, and they collide with arity's static tenet:
       fields carry no docs or signature.
   - [ ] Fuzzy/case-insensitive prefix matching
   - [ ] Function-vs-variable kind for locals
-  - [x] **Label details** (`completionItem.labelDetailsSupport`). Advertised in
-    `server_capabilities`; items carry a dimmed origin description (`dplyr`,
-    `base`, `local`) plus a parenthesized signature `detail` for indexed
-    functions, computed after prefix-filtering (over the survivors only, never the
-    full base-R universe). Local-function signatures (from the in-file
-    `FUNCTION_EXPR`) are a follow-up.
-
-- Signature help (`textDocument/signatureHelp`). 
-  - [x] Clamp the active parameter into a `...` formal under R's variadic
-    semantics (done). `active_parameter` in `src/lsp/signature.rs` now follows
-    R's matching order: exact tag, then unique prefix among the formals before
-    `...`, then `...` for an unmatched name; positional slots skip formals
-    already bound by name and stop at `...`. An ambiguous prefix highlights
-    nothing rather than guessing.
 
 ### Diagnostics & misc protocol surface
 
@@ -502,62 +215,6 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   so gate on a client that would actually consume them. Ark's sibling custom
   requests (`helpTopic`, virtual documents) are genuinely out of scope—they
   need a live R session.
-
-- [x] **Completion trigger characters + label details** (done). arity now
-  triggers completion on `$`, `@`, and `.` alongside `:`, and advertises
-  `completionItem.labelDetailsSupport` with origin + signature label details.
-  Unlike Ark (which resolves `$`/`@` members from a live R session), arity's
-  member completion is static—harvested from usage and local construction. See
-  the `$`/`@` member-completion and label-details items under "Completion &
-  signatures".
-
-- [x] **Signature-help retrigger on `=`** (done). arity now advertises `=` as
-  both a trigger and a retrigger character alongside `(`, `,` (and `)`), so
-  typing `=` refreshes the active parameter. It came with the R-faithful
-  argument matching noted under "Completion & signatures" above, which is what
-  makes the refreshed highlight land on the right formal.
-
-- **Package/CRAN index backend—still no *symbol* DB, but a static *source*
-  tier now exists.** Ark has *no* CRAN symbol database in arity's sense. Being a
-  kernel with a **live R session**, it resolves library *symbols* by calling
-  into R via FFI (`harp::exec::RFunction`): `base::.packages()` for the search
-  path (`completions/sources/composite/search_path.rs`), `getNamespace(pkg)` +
-  `R_lsInternal(exports)` for `pkg::` (`.../unique/namespace.rs`), R's help DB
-  for hover. It ships **no bundled/static export lists**, and its only CRAN-repo
-  code (`repos.rs`) is just `options(repos=)` config for `install.packages`
-  (P3M/PPM default)—not a symbol source. Its workspace `.R` indexer
-  (`indexer.rs`, salsa) is the one piece analogous to arity's `DefIndex`. **But**
-  for go-to-definition/source display it now fetches R *source text* from a
-  static, curated tier (`oak_source`, feeding `lsp/sources.rs`'s
-  `SourceHandler`): base-package sources for R 4.2.0 up to a pinned latest are
-  packed into a compressed `r-source.tar.zst`, hosted as a GitHub release at
-  `posit-dev/oak-r-sources`, downloaded once and cached (posit-dev/ark#1328; the
-  PR body's `include_bytes!`-into-the-binary boast is aspirational—the merged
-  code downloads+caches, not embeds), and CRAN package sources come from
-  downloaded package tarballs. This decouples *source navigation* from the
-  installed R (base versions are clamped to the latest present, not required to
-  be installed). So the models stay opposite for *symbols*—Ark = live-session
-  (version/install-exact, free, but needs a running R and only sees installed
-  packages); arity = static/offline by tenet (the whole `src/rindex/`
-  bundled+sidecar+harvest tier exists to avoid that dependency)—but the
-  "installed packages only" framing no longer holds for *source*, where ark's
-  curated `oak-r-sources` archive is a closer analogue to arity's bundled
-  `src/rindex/` (different payload: source text vs. symbol/export index).
-  Nothing to adopt wholesale for the symbol index. Two reinforcements, both
-  already logged under "Cross-cutting prerequisite" above: Ark's P3M/PPM default
-  backs the sidecar-hosting plan, and the version-exactness Ark gets for free is
-  what the **pin-aware versions** follow-up chases statically.
-
-- Cross-ref (already logged, reinforced by this audit):
-  - **On-type formatting.** Ark advertises it with first-trigger `\n` and a
-    tree-sitter reindent (`indent.rs`)—the reference model for the on-type
-    formatting item above (still gated on the CRLF `format_range` bug).
-  - **`INCREMENTAL` text sync.** Both Ark and arity now advertise INCREMENTAL
-    (Stage A done); threading the precise ranges into the reparse is the Parser
-    incremental-reparse Stage B.
-  - **`positionEncoding` UTF-8.** Ark hardcodes UTF-16 today but threads a
-    `PositionEncoding` type throughout (ready to negotiate UTF-8)—the same shape
-    as the P3 `positionEncoding` item above.
 
 ### Cross-cutting prerequisite
 
@@ -675,110 +332,5 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     actually need it. Lower leverage for a single-crate tool (the wart
     is already gone).
 
-- `undefined-symbol` FP frontier from the cran/MASS investigation
-  (2026-08-01). Four unmodeled binding mechanisms drove ~91% of MASS's
-  `undefined-symbol` findings (75/82), each a distinct suppress-only fix. Three
-  are now handled in the semantic-model builder (`src/semantic/builder.rs`
-  `handle_call`), with the model-frame tail deferred:
-  - [x] **`useDynLib(..., .registration = TRUE)` native routines** (14 findings,
-    the only category hitting real `R/` source). NAMESPACE registers each
-    C/Fortran entry point (`VR_sammon`, `mve_fitlots`, …) as a namespace object
-    usable bare in `.C`/`.Call`/`.Fortran`/`.External`. A bare `IDENT` in the
-    *head* (first-argument) position of those calls now has its read suppressed
-    (reusing the `library()` `suppress_read` slot). Repro:
-    `f <- function(x) .C(VR_sammon, as.double(x))`.
-  - [x] **`attach(df)` scope-introducer** (49 findings, the biggest bucket) and
-    **`load("*.rda")` binding-introducer**. Both introduce statically-unknowable
-    bindings, so a file calling either sets `SemanticModel::attaches_opaque_env`
-    and `undefined-symbol` gates the whole file (mirrors the
-    `resolution_incomplete` gate). Repro: `attach(painters); table(School)`.
-  - [x] **`data(name)` NSE loader** (12). `data(sole)` now introduces an
-    `Implicit` binding `sole` in the calling frame, so the loader argument and
-    every later `sole$…` read resolve. Repro:
-    `data(sole); sole$off <- log(sole$a.1)`.
-  - [x] **Model-frame columns** (~1-2 findings). Non-`data` model-fitting args
-    are evaluated in the data frame (`polr(size ~ carrier, data = tonsils,
-    weights = count)`—`count` is a `tonsils` column), which extended the known
-    `with`/`subset` data-variable frontier to `weights`/`subset`/`offset`. This
-    needed the first **per-named-argument** masking (the pre-existing masking
-    masks a call's *whole* arg-list): two tables in `src/semantic/symbols.rs`
-    (`is_model_frame_callee`, stats + MASS core; `is_model_frame_arg`) plus
-    `call_masks_model_frame_args` / `walk_model_frame_arg_list` in
-    `src/semantic/builder.rs`, wired into both `handle_call` and the
-    `COLON2`/`COLON3` arm of `handle_binary` (`MASS::polr(...)`). Masking is
-    gated on a named `data =` argument being present: without a data frame R
-    evaluates these args in the calling environment, so an unresolved bare name
-    there is genuinely undefined and stays flagged. (The 7 other residual MASS
-    findings—`A5`/`pr3`/`labs`/`module`—are genuine dangling refs in incomplete
-    book-excerpt scripts, correctly flagged.)
-
-    - [x] Follow-up: two residual FPs the gate didn't cover, both fixed by the
-      per-callee formals table (`model_frame_formals` in
-      `src/semantic/symbols.rs`) plus a simulation of R's three-pass argument
-      matching (`match_args_to_formals`: exact names, unique-prefix partial
-      matches before `...`, positional fill). **Positional `data`**
-      (`lm(y ~ x, mtcars, weights = cyl)`; `data` is `lm`'s 2nd formal,
-      `glm`'s 3rd) and **partial argument matching** (`weight = cyl`,
-      `dat = mtcars`) now both open the gate and mask. Positionally-supplied
-      model-frame args (`lm(y ~ x, d, s > 1)` binds `subset`) mask too, and a
-      named arg falling into `...` masks when its name prefixes a model-frame
-      name (`aov` forwards `weights` to `lm`). `manova` shares `aov`'s table;
-      generics use their formula method's formals.
-
-- [x] `unused-binding` FP frontier from the cran/MASS investigation
-  (2026-08-01). The `$`/`@`-subscript index-drop FP was fixed earlier (see the
-  Parser extract-precedence entry); the four remaining scope-asymmetry cases
-  (all confirmed against `Rscript`, ~85% of the residual `R/`-source findings)
-  are now fixed in the semantic-model builder via a **"deferred read"** primitive
-  (`IdentRef::deferred`): a promise-evaluated read carries no intra-frame textual
-  ordering, so `reads_reached` lets it reach a same-frame binding assigned
-  *after* it (analogous to the existing `loop_range` relaxation). The fourth
-  bucket is a separate quoted-binding suppression (`BuildCtx::quote_depth`).
-  - **Default-argument expressions** (root cause, ~9 findings). A default is a
-    promise in the function's own frame, so its reads are walked `deferred`.
-    Repro: `f <- function(x, upper = hmax) { hmax <- sqrt(x); upper }` (also
-    `panel = panel.lda` where `panel.lda` is a body-local closure).
-  - **`on.exit` read-before-assign** (1). `on.exit(...)` runs at exit; its
-    arguments are walked `deferred`. Repro:
-    `f <- function() { on.exit(par(oldpar)); oldpar <- par(pty = "s"); plot(1) }`.
-  - **`NextMethod()` reads the reassigned formal from the frame** (2). A
-    `NextMethod()` call synthesizes a deferred read of each enclosing formal, so
-    a reassigned formal (`x <- M`) is used. Repro: `print.foo <- function(x, ...)
-    { M <- cbind(x); x <- M; NextMethod("print") }`.
-  - **Bindings inside `expression({ ... })`** (4). A `<-` inside a quoting callee
-    (`quote`/`bquote`/`substitute`/`expression`) is captured unevaluated and
-    records no binding. Repro: `f <- function() { e <- expression({ n <- rep(1,
-    nobs) }); e }`.
-  - [x] **Unsafe autofix on a chained assignment** (found re-verifying the above
-    against cran/MASS, `corresp.R:141`). The one genuine residual finding,
-    `vlab.real <- vlab <- paste("Var", 1L:p)`, is a true positive (`vlab.real` is
-    dead), but the deletion fix removed the *whole* statement, dropping the live
-    inner `vlab <- ...` (read on the next line) and leaving `vlab` undefined
-    (confirmed against `Rscript`). `deletion_fix` now withholds when the
-    statement's value side is itself an `ASSIGNMENT_EXPR` (a chained assignment);
-    the finding is still reported.
-
 ## Misc
 
-- [x] Non-UTF-8 file aborts the whole lint run. `arity lint <dir>` bails on the
-  first file that isn't valid UTF-8 (`error: failed to read ...: stream did not
-  contain valid UTF-8`) instead of skipping it and continuing — one ISO-8859
-  file (`r-source/tests/utf8-regex.R`) killed the entire run. Skip-and-warn like
-  the corpus harness does for unparseable files. Fixed: `check_paths` now
-  collects undecodable files into `LintResult::skipped` and continues; the CLI
-  warns per skipped file (both `lint` and `--fix`). Other IO errors still abort.
-
-- [x] `arity-ignore-unused` meta-diagnostic: emit a finding for suppression
-  comments that didn't actually suppress anything. Shipped as
-  `outdated-suppression` (Phase 4 above), not under the reserved name.
-
-- [x] **Harvest lazy-data symbols.** The index now covers R's default packages
-  (so hover/signatures work for base-R functions), but `harvest_package`
-  only reads `NAMESPACE`/object exports—it skips a package's lazy-data
-  (`.getNamespaceInfo(ns, "lazydata")`). So `datasets` harvests 0 symbols and
-  hovering a dataset (e.g. `iris`) resolves the package but finds no entry.
-  The static name lists already include lazydata; the harvest does not.
-  Done: `harvest_package` now reads `data/Rdata.rdx` (the on-disk lazydata
-  index) and folds those objects in as `Data` symbols, reusing the existing
-  `Meta/Rd.rds`/help path for titles. `datasets` harvests all 108 symbols
-  (`iris` included).
