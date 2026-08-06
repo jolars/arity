@@ -65,6 +65,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::UndesirableFunction),
         Box::new(suspicious::ForLoopIndex),
         Box::new(suspicious::ForLoopDupIndex),
+        Box::new(suspicious::UnusedFunction),
         Box::new(readability::TrueFalseSymbol),
         Box::new(readability::ComparisonNegation),
         Box::new(readability::OuterNegation),

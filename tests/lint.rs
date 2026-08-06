@@ -5,7 +5,7 @@ use arity::config::{DEFAULT_EXCLUDE, LintConfig};
 use arity::file_discovery::ExcludeFilter;
 use arity::linter::{
     Applicability, LintResult, LintStatus, apply_fixes, check_document, check_paths,
-    check_paths_with_index,
+    check_paths_with_config, check_paths_with_index,
 };
 use tempfile::tempdir;
 
@@ -615,6 +615,268 @@ fn namespace_export_is_not_unused() {
         "a.R: {:?}",
         rules_for(&result, "a.R")
     );
+}
+
+// ---------------------------------------------------------------------------
+// unused-function
+// ---------------------------------------------------------------------------
+
+/// Write a minimal package (DESCRIPTION + NAMESPACE + `R/<name>` per entry) and
+/// lint it under `config`.
+fn lint_package_files(namespace: &str, files: &[(&str, &str)], config: &LintConfig) -> LintResult {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    for (name, src) in files {
+        std::fs::write(r_dir.join(name), src).unwrap();
+    }
+    check_paths_with_config(std::slice::from_ref(&dir.path().to_path_buf()), config)
+        .expect("lint should succeed")
+}
+
+/// `unused-function` is default-off, so every test must select it explicitly.
+fn unused_function_only() -> LintConfig {
+    LintConfig {
+        select: Some(vec!["unused-function".to_string()]),
+        ..LintConfig::default()
+    }
+}
+
+#[test]
+fn unused_function_flags_export_no_one_calls() {
+    let result = lint_package_files(
+        "export(foo)\n",
+        &[("a.R", "foo <- function() 1\n")],
+        &unused_function_only(),
+    );
+    assert!(
+        rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_is_disabled_by_default() {
+    let result = lint_package_files(
+        "export(foo)\n",
+        &[("a.R", "foo <- function() 1\n")],
+        &LintConfig::default(),
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_skips_export_called_by_a_sibling() {
+    let result = lint_package_files(
+        "export(foo)\n",
+        &[
+            ("a.R", "foo <- function() 1\n"),
+            ("b.R", "bar <- function() foo()\n"),
+        ],
+        &unused_function_only(),
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_skips_export_called_in_its_own_file() {
+    let result = lint_package_files(
+        "export(foo)\n",
+        &[("a.R", "foo <- function() 1\nfoo()\n")],
+        &unused_function_only(),
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_skips_unexported_helper() {
+    // A dead *private* helper is `unused-binding`'s finding, not this rule's —
+    // the two must never both report the same binding.
+    let result = lint_package_files(
+        "",
+        &[("a.R", "helper <- function() 1\n")],
+        &unused_function_only(),
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_and_unused_binding_never_both_report() {
+    // Both rules on, over the whole matrix: exported dead function, private dead
+    // function, exported dead constant. No binding may draw both findings.
+    let result = lint_package_files(
+        "export(pub)\nexport(konst)\n",
+        &[(
+            "a.R",
+            "pub <- function() 1\npriv <- function() 2\nkonst <- 3\n",
+        )],
+        &LintConfig {
+            select: Some(vec![
+                "unused-function".to_string(),
+                "unused-binding".to_string(),
+            ]),
+            ..LintConfig::default()
+        },
+    );
+    let report = result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some("a.R"))
+        .expect("a.R report");
+    let at = |offset: u32| -> Vec<&str> {
+        report
+            .diagnostics
+            .iter()
+            .filter(|d| u32::from(d.range.start()) == offset)
+            .map(|d| d.rule)
+            .collect()
+    };
+    // `pub` at 0 → exported dead function → unused-function only.
+    assert_eq!(
+        at(0),
+        vec!["unused-function"],
+        "all: {:?}",
+        report.diagnostics
+    );
+    // `priv` at 20 → private dead function → unused-binding only.
+    assert_eq!(
+        at(20),
+        vec!["unused-binding"],
+        "all: {:?}",
+        report.diagnostics
+    );
+    // `konst` → exported non-function → neither.
+    assert_eq!(report.diagnostics.len(), 2, "all: {:?}", report.diagnostics);
+}
+
+#[test]
+fn unused_function_skips_non_function_export() {
+    let result = lint_package_files(
+        "export(foo)\n",
+        &[("a.R", "foo <- 1\n")],
+        &unused_function_only(),
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_skips_s3_method_registration() {
+    // `S3method(print, foo)` puts `print.foo` in the namespace, but dispatch
+    // reaches it — no direct call is expected, so it is not dead code.
+    let result = lint_package_files(
+        "S3method(print, foo)\n",
+        &[("a.R", "print.foo <- function(x, ...) invisible(x)\n")],
+        &unused_function_only(),
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_skips_dotted_name_without_a_project() {
+    // Single-file, arity can't reproduce roxygen2's `generic.class` split (it
+    // needs the build-time generic set), so a dotted `@export` is withheld.
+    let diags = check_document(
+        Path::new("t.R"),
+        "#' Print\n#' @export\nprint.foo <- function(x, ...) invisible(x)\n",
+        &unused_function_only(),
+    )
+    .expect("lint should succeed");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn unused_function_flags_dotted_plain_export_in_a_project() {
+    // With a NAMESPACE the answer is exact: `my.util` is a plain `export()`,
+    // not an `S3method()`, so the dotted-name withholding does not apply.
+    let result = lint_package_files(
+        "export(my.util)\n",
+        &[("a.R", "my.util <- function() 1\n")],
+        &unused_function_only(),
+    );
+    assert!(
+        rules_for(&result, "a.R").contains(&"unused-function"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn unused_function_flags_roxygen_export() {
+    // No project needed: a roxygen `@export` on the block above the definition
+    // is the same public-API declaration, visible single-file.
+    let diags = check_document(
+        Path::new("t.R"),
+        "#' Add one\n#'\n#' @export\nadd_one <- function(x) x + 1\n",
+        &unused_function_only(),
+    )
+    .expect("lint should succeed");
+    assert_eq!(
+        diags.iter().map(|d| d.rule).collect::<Vec<_>>(),
+        vec!["unused-function"]
+    );
+}
+
+#[test]
+fn unused_function_skips_undocumented_function_without_project() {
+    let diags = check_document(
+        Path::new("t.R"),
+        "helper <- function(x) x + 1\n",
+        &unused_function_only(),
+    )
+    .expect("lint should succeed");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn unused_function_skips_local_closure() {
+    // Only *top-level* definitions can be exported; a dead closure inside a body
+    // stays `unused-binding`'s.
+    let diags = check_document(
+        Path::new("t.R"),
+        "#' Outer\n#' @export\nouter <- function() {\n  helper <- function() 1\n  2\n}\nouter()\n",
+        &unused_function_only(),
+    )
+    .expect("lint should succeed");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn unused_function_reports_without_a_fix() {
+    // Deleting public API is never a mechanical edit — report only.
+    let diags = check_document(
+        Path::new("t.R"),
+        "#' Add one\n#' @export\nadd_one <- function(x) x + 1\n",
+        &unused_function_only(),
+    )
+    .expect("lint should succeed");
+    assert!(diags[0].fix.is_none(), "{:?}", diags[0]);
 }
 
 #[test]

@@ -60,8 +60,39 @@
       `run_rules`—`ResolvedRules::resolve` now takes the whole `&LintConfig`.
       `undesirable-function` landed as the first consumer. Per-rule **severity**
       is still reserved, at the stamping loop in `run_rules`.
-- [ ] `unused-function` (suspicious, sem, none)—reuse
-      `unused_local_bindings`; **default-off** (exported pkg funcs look unused).
+- [x] `unused-function` (suspicious, sem, none). Default-off, report-only (both
+      repairs—delete it, or unexport it—break a published interface, so neither
+      is a mechanical edit). Landed as the **complement** of `unused-binding`,
+      not a subset of it: `unused-binding` already flags every dead top-level
+      function, and already exempts the ones a NAMESPACE `export()`s (via
+      `FileScope::used_elsewhere`), so a literal "unused function binding" rule
+      would have been a pure duplicate. This rule reports exactly that exempted
+      set—declared public, yet with no caller anywhere visible—so each dead
+      top-level function draws exactly one finding
+      (`unused_function_and_unused_binding_never_both_report` pins the matrix).
+      That needed the project layer to stop conflating its two "used elsewhere"
+      sources: `ProjectScope` now keeps `read_by_others` (a sibling reads it)
+      apart from `namespace_exports` (it is public API), surfaced as
+      `FileScope::read_elsewhere`/`exported_by_namespace` with `used_elsewhere`
+      as their union, and carried as two fields on the salsa `Visibility` memo.
+      Export is detected from *either* signal, so the rule also works
+      single-file: a roxygen `@export` on the documenting block is the same
+      declaration one step before the NAMESPACE entry roxygen2 generates from
+      it, correlated through `documentation::documented_function` (so an S4
+      `setMethod`/R6 shape contributes nothing rather than being
+      mis-attributed). Reuses `unused_local_bindings`, then narrows to
+      `ScopeKind::File` bindings whose value is a `FUNCTION_EXPR`.
+      **S3 methods are exempt**, which a tidyr run showed is the rule's one real
+      FP class: dispatch reaches `full_seq.Date` with no direct call anywhere, so
+      "nothing calls it" is not evidence it is dead. `NamespaceInfo.s3_methods`
+      now records the `S3method()` subset of `exports` (they stay in `exports`
+      for resolution), carried through to `FileScope::is_s3_method`, so the
+      project path answers exactly. Without a project arity cannot reproduce
+      roxygen2's `generic.class` split (roxygen2 consults the *build-time*
+      generic set, a runtime fact), so the single-file path withholds any dotted
+      name—under-reporting a dead `my.util`, which the NAMESPACE path still
+      catches. On tidyr's `R/` the rule reports 27 findings, all verified to have
+      no internal caller, and no S3 method among them.
 - [ ] `duplicated-function-definition` (suspicious, sem, none).
 - [x] `for-loop-index`/`for-loop-dup-index` (suspicious, none). Both report-only
       (the repair is to rename an index, which means inventing a name), spanned

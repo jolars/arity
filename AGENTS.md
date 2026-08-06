@@ -215,7 +215,12 @@ implicit shared namespace of an R package, per-file export projection
 (`classes.rs`), and `scope.rs`'s pure `ProjectScope::build`. `graph.rs` wires
 that into salsa; the per-file projections are deliberately **range-free** so
 they backdate across a body edit and the project graph's memo survives
-(`tests/salsa_incremental.rs` guards this).
+(`tests/salsa_incremental.rs` guards this). `FileScope` keeps the three reasons
+a top-level binding is "not unused" apart rather than merging them, because
+different rules need different ones: `read_elsewhere` (a sibling reads it),
+`exported_by_namespace` (public API), and `is_s3_method` (reached by dispatch).
+`used_elsewhere` is the union of the first two, which is what `unused-binding`
+asks; `unused-function` asks for each separately.
 
 **R introspection index** (`src/rindex/`, CLI `arity index`): harvests exports,
 formals, and help from *installed* packages **without an R runtime**, by reading
@@ -284,7 +289,7 @@ rendered-flat `conditional_group` candidates.
 `LintStatus` (`Clean`/`Findings`/`ParseDiagnostics`); parse diagnostics
 block linting a file. The linter is **purely semantic**: anything the
 formatter's `--check` mode can catch belongs to the formatter, not here. Ships
-37 rules across five categories (10 correctness, 7 suspicious, 5 readability,
+43 rules across five categories (12 correctness, 11 suspicious, 5 readability,
 10 performance, 5 documentation) with autofixes, `# arity-ignore` suppression,
 and generated per-rule docs. `src/linter/rules.rs` is the **single source of
 truth** registry (`all_rules`, from which `all_rule_ids` is derived) and owns

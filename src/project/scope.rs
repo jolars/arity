@@ -70,8 +70,17 @@ pub struct FileFacts {
 pub struct ProjectScope {
     /// Per file: top-level names reachable from the files it can see.
     visible: HashMap<PathBuf, BTreeSet<String>>,
-    /// Per file: names read by some file that can see it.
-    used_by_others: HashMap<PathBuf, BTreeSet<String>>,
+    /// Per file: names *read* by some file that can see it. Reads only — the
+    /// NAMESPACE-export contribution lives in `namespace_exports`, so a caller
+    /// can ask "does a sibling call this?" separately from "is this public
+    /// API?".
+    read_by_others: HashMap<PathBuf, BTreeSet<String>>,
+    /// Per package file: the names its package's NAMESPACE `export()`s. Both
+    /// sets feed [`FileScope::used_elsewhere`]; only this one marks public API.
+    namespace_exports: HashMap<PathBuf, BTreeSet<String>>,
+    /// Per package file: the subset of `namespace_exports` registered as S3
+    /// methods (`S3method(...)`). Reached by dispatch, never by a direct call.
+    s3_methods: HashMap<PathBuf, BTreeSet<String>>,
     /// Files whose cross-file visibility is incomplete (unresolved `source()`).
     dynamic: HashSet<PathBuf>,
     /// Per file: the set of *other* files it can see (package siblings, plus the
@@ -145,7 +154,9 @@ pub enum ReadSite {
 /// One file's view of its project.
 pub struct FileScope<'a> {
     visible: &'a BTreeSet<String>,
-    used_by_others: &'a BTreeSet<String>,
+    read_by_others: &'a BTreeSet<String>,
+    namespace_exports: &'a BTreeSet<String>,
+    s3_methods: &'a BTreeSet<String>,
     /// Cross-file visibility is incomplete — an unresolved `source()` or a
     /// wholesale `import(pkg)` could supply otherwise-unresolved names — so
     /// callers must not flag them.
@@ -158,12 +169,16 @@ impl<'a> FileScope<'a> {
     /// through [`ProjectScope::for_file`].
     pub fn new(
         visible: &'a BTreeSet<String>,
-        used_by_others: &'a BTreeSet<String>,
+        read_by_others: &'a BTreeSet<String>,
+        namespace_exports: &'a BTreeSet<String>,
+        s3_methods: &'a BTreeSet<String>,
         resolution_incomplete: bool,
     ) -> Self {
         Self {
             visible,
-            used_by_others,
+            read_by_others,
+            namespace_exports,
+            s3_methods,
             resolution_incomplete,
         }
     }
@@ -173,9 +188,27 @@ impl<'a> FileScope<'a> {
         self.visible
     }
 
-    /// The names of this file's bindings read by some file that can see it.
-    pub fn used_names(&self) -> &BTreeSet<String> {
-        self.used_by_others
+    /// The names of this file's bindings actually *read* by some file that can
+    /// see it. Excludes the NAMESPACE-export contribution — see
+    /// [`namespace_export_names`](Self::namespace_export_names).
+    pub fn read_names(&self) -> &BTreeSet<String> {
+        self.read_by_others
+    }
+
+    /// The names this file's package `export()`s from its NAMESPACE. Kept apart
+    /// from [`read_names`](Self::read_names) because the two answer different
+    /// questions: an exported name is *public API* (so `unused-binding` must
+    /// stay quiet), which is not the same as a name some sibling actually calls
+    /// (which is what `unused-function` asks about).
+    pub fn namespace_export_names(&self) -> &BTreeSet<String> {
+        self.namespace_exports
+    }
+
+    /// The subset of [`namespace_export_names`](Self::namespace_export_names)
+    /// registered via `S3method()`. A method is reached by dispatch, so the
+    /// absence of a direct call to its name means nothing.
+    pub fn s3_method_names(&self) -> &BTreeSet<String> {
+        self.s3_methods
     }
 
     /// True when `name` is bound at top level in a file visible from here.
@@ -185,8 +218,27 @@ impl<'a> FileScope<'a> {
 
     /// True when `name` (a top-level binding here) is read by a file that can
     /// see this one — so it isn't unused even if unread locally.
+    pub fn read_elsewhere(&self, name: &str) -> bool {
+        self.read_by_others.contains(name)
+    }
+
+    /// True when `name` (a top-level binding here) is `export()`ed by the
+    /// package's NAMESPACE, i.e. it is public API.
+    pub fn exported_by_namespace(&self, name: &str) -> bool {
+        self.namespace_exports.contains(name)
+    }
+
+    /// True when `name` is registered as an S3 method by the package's
+    /// NAMESPACE (`S3method(generic, class)`).
+    pub fn is_s3_method(&self, name: &str) -> bool {
+        self.s3_methods.contains(name)
+    }
+
+    /// True when `name` (a top-level binding here) must not be reported unused:
+    /// either a file that can see this one reads it, or it is exported as
+    /// public API.
     pub fn used_elsewhere(&self, name: &str) -> bool {
-        self.used_by_others.contains(name)
+        self.read_elsewhere(name) || self.exported_by_namespace(name)
     }
 }
 
@@ -299,10 +351,12 @@ impl ProjectScope {
 
         // Derive the two directions from `sees`.
         let mut visible: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
-        let mut used_by_others: HashMap<PathBuf, BTreeSet<String>> = files
+        let mut read_by_others: HashMap<PathBuf, BTreeSet<String>> = files
             .iter()
             .map(|f| (f.path.clone(), BTreeSet::new()))
             .collect();
+        let mut namespace_exports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+        let mut s3_methods: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
         for f in files {
             let mut defs = BTreeSet::new();
             for seen in &sees[&f.path] {
@@ -321,7 +375,7 @@ impl ProjectScope {
             // a use too (e.g. `pkg:::helper()` in a test): fold in `f`'s qualified
             // reads, which resolve to a same-package sibling's binding.
             for seen in &sees[&f.path] {
-                if let Some(used) = used_by_others.get_mut(seen) {
+                if let Some(used) = read_by_others.get_mut(seen) {
                     used.extend(f.free_reads.iter().cloned());
                     used.extend(f.qualified_reads.iter().cloned());
                 }
@@ -329,8 +383,9 @@ impl ProjectScope {
         }
 
         // Fold NAMESPACE declarations into the same two directions: imported
-        // names resolve (visible), exported names count as used (used_by_others),
-        // and a wholesale `import(pkg)` makes resolution incomplete.
+        // names resolve (visible), exported names count as used (via
+        // `namespace_exports`), and a wholesale `import(pkg)` makes resolution
+        // incomplete.
         for (root, text) in namespaces {
             let Some(members) = package_members.get(root.as_path()) else {
                 continue;
@@ -347,9 +402,14 @@ impl ProjectScope {
 
             for member in members {
                 let path = member.to_path_buf();
-                if let Some(used) = used_by_others.get_mut(&path) {
-                    used.extend(exported.iter().cloned());
-                }
+                namespace_exports
+                    .entry(path.clone())
+                    .or_default()
+                    .extend(exported.iter().cloned());
+                s3_methods
+                    .entry(path.clone())
+                    .or_default()
+                    .extend(info.s3_methods.iter().cloned());
                 if let Some(vis) = visible.get_mut(&path) {
                     vis.extend(imported.iter().cloned());
                 }
@@ -361,7 +421,9 @@ impl ProjectScope {
 
         Self {
             visible,
-            used_by_others,
+            read_by_others,
+            namespace_exports,
+            s3_methods,
             dynamic,
             sees,
             package_siblings,
@@ -377,7 +439,9 @@ impl ProjectScope {
     pub fn for_file(&self, path: &Path) -> FileScope<'_> {
         FileScope {
             visible: self.visible.get(path).unwrap_or(&EMPTY),
-            used_by_others: self.used_by_others.get(path).unwrap_or(&EMPTY),
+            read_by_others: self.read_by_others.get(path).unwrap_or(&EMPTY),
+            namespace_exports: self.namespace_exports.get(path).unwrap_or(&EMPTY),
+            s3_methods: self.s3_methods.get(path).unwrap_or(&EMPTY),
             resolution_incomplete: self.dynamic.contains(path),
         }
     }

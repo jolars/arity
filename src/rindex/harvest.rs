@@ -410,6 +410,12 @@ pub struct NamespaceInfo {
     /// package is in scope, so without that package's index any unresolved name
     /// could come from it.
     pub imported_packages: BTreeSet<String>,
+    /// The subset of [`exports`](Self::exports) registered via `S3method()`
+    /// rather than `export()`. Still exports (they are in the namespace, so name
+    /// resolution must see them), but reached by *dispatch*, never by a direct
+    /// call — so "nothing calls this name" says nothing about a method being
+    /// dead. Tracked apart so `unused-function` can exclude them.
+    pub s3_methods: BTreeSet<String>,
 }
 
 /// Parse a NAMESPACE file into the exports and imports it declares, expanding
@@ -428,14 +434,14 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
                 // `S3method(generic, class)` registers the method `generic.class`;
                 // the three-arg form `S3method(generic, class, method)` binds the
                 // explicitly named `method` instead.
-                match directive.args.as_slice() {
-                    [_, _, method] => {
-                        info.exports.insert(method.clone());
-                    }
-                    [generic, class] => {
-                        info.exports.insert(format!("{generic}.{class}"));
-                    }
-                    _ => {}
+                let method = match directive.args.as_slice() {
+                    [_, _, method] => Some(method.clone()),
+                    [generic, class] => Some(format!("{generic}.{class}")),
+                    _ => None,
+                };
+                if let Some(method) = method {
+                    info.exports.insert(method.clone());
+                    info.s3_methods.insert(method);
                 }
             }
             "exportPattern" | "exportClassPattern" => {

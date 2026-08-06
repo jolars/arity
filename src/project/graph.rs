@@ -101,14 +101,28 @@ pub struct Project<'db> {
 #[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct Visibility {
     pub visible: BTreeSet<String>,
-    pub used_by_others: BTreeSet<String>,
+    /// Names of this file's bindings *read* by a file that can see it.
+    pub read_by_others: BTreeSet<String>,
+    /// Names this file's package `export()`s (public API). Kept apart from
+    /// `read_by_others` so a rule can distinguish "a sibling calls it" from
+    /// "it is exported" — see [`FileScope::namespace_export_names`].
+    pub namespace_exports: BTreeSet<String>,
+    /// The subset of `namespace_exports` registered via `S3method()` — reached
+    /// by dispatch, so no direct call to the name is expected.
+    pub s3_methods: BTreeSet<String>,
     pub incomplete: bool,
 }
 
 impl Visibility {
     /// Borrow this as a [`FileScope`] for the lint rules.
     pub fn scope(&self) -> FileScope<'_> {
-        FileScope::new(&self.visible, &self.used_by_others, self.incomplete)
+        FileScope::new(
+            &self.visible,
+            &self.read_by_others,
+            &self.namespace_exports,
+            &self.s3_methods,
+            self.incomplete,
+        )
     }
 }
 
@@ -340,7 +354,9 @@ pub fn visible_symbols<'db>(
     let scope = graph.for_file(path);
     Visibility {
         visible: scope.visible_names().clone(),
-        used_by_others: scope.used_names().clone(),
+        read_by_others: scope.read_names().clone(),
+        namespace_exports: scope.namespace_export_names().clone(),
+        s3_methods: scope.s3_method_names().clone(),
         incomplete: scope.resolution_incomplete,
     }
 }
