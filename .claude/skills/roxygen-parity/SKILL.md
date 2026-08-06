@@ -68,7 +68,7 @@ roxygen2 delegates to `cmark`/`cmark-gfm`, so any "pragmatic subset" is a parity
 local, line-scoped span scanners in the lexer (`scan_md_emphasis` etc.); that
 **shape is wrong** for CommonMark, whose inline grammar is a non-local,
 whole-block **delimiter-stack** pass (block parse → inline parse). The agreed
-direction is a real **block→inline pass** (`docs/design/roxygen-inline-pass.md`)
+direction is a real **block→inline pass**
 that emphasis migrates into first, then links/code/etc. When you touch a markdown
 construct: if the current local scanner can't model it correctly, do **not** widen
 the scanner with heuristics—that entrenches the wrong shape. Either land it in

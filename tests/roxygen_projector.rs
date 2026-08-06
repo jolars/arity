@@ -13,7 +13,7 @@
 //!   * the **whole CommonMark spec** --- every spec example's markdown wrapped
 //!     into an `@md` block (`tests/oracle/corpus/commonmark-spec.jsonl`) vs its
 //!     minted pin. The spec is a broad *input* corpus only; roxygen2 remains the
-//!     oracle (see `docs/design/roxygen-inline-pass.md` §10). Adopted as a
+//!     oracle. Adopted as a
 //!     measured backlog with a per-section burndown (see [`write_report`]).
 //!
 //! The harvested and spec corpora are a measured backlog (un-allowlisted
@@ -56,12 +56,11 @@ const BLOCKED_REL: &str = "tests/oracle/roxygen-projector-blocked.txt";
 /// `tests/oracle/roxygen_oracle.R`'s `projector-pins` op.
 const HARVEST_CORPUS_REL: &str = "tests/oracle/corpus/roxygen.jsonl";
 const HARVEST_PINS_REL: &str = "tests/oracle/corpus/roxygen-sections.jsonl";
-/// The **whole** CommonMark spec test set, each example's markdown wrapped into an
-/// `@md` block (`{slug, input, section}`) and its minted pin (`{slug, sections}`).
-/// The spec is a broad *input* corpus only --- roxygen2 is the oracle (see
-/// `docs/design/roxygen-inline-pass.md` §10). Adopted whole, as a measured backlog
-/// with a per-section burndown (mirroring panache's conformance skills), rather
-/// than one section at a time. Built by `scripts/build-commonmark-corpus.R ... ALL`.
+/// The **whole** CommonMark spec test set, each example's markdown wrapped into an `@md` block
+/// (`{slug, input, section}`) and its minted pin (`{slug, sections}`). The spec is a broad *input*
+/// corpus only - roxygen2. Adopted whole, as a measured backlog with a per-section burndown
+/// (mirroring panache's conformance skills), rather than one section at a time. Built by
+/// `scripts/build-commonmark-corpus.R ... ALL`.
 const SPEC_CORPUS_REL: &str = "tests/oracle/corpus/commonmark-spec.jsonl";
 const SPEC_PINS_REL: &str = "tests/oracle/corpus/commonmark-spec-sections.jsonl";
 

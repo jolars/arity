@@ -20,14 +20,13 @@ matches; the harvested corpus is fully closed. Curated fixed-point **212/212**
 preserving; harvested fixed-point 216/217 (1 skipped). The measured backlog is
 **exhausted** — no divergence currently drives parser growth.
 
-**Next growth comes from** either (a) harvesting a fresh/larger roxygen2 corpus to
-surface new gaps, or (b) closing a documented trap-backlog item. Known open items:
-**per-tag `rdComplete` drop parity** (`@note` KEEPS an incomplete field where
-`@details`/`@description` DROP — a concrete gap with a clear oracle probe);
-loose-file default-`@md` ON; the block→inline delimiter-stack migration for the
-remaining local scanners (design in `docs/design/roxygen-inline-pass.md`);
-same-`@name` static-scope object-topic resolution (only explicit `@name`/`@rdname`
-is grouped today).
+**Next growth comes from** either (a) harvesting a fresh/larger roxygen2 corpus
+to surface new gaps, or (b) closing a documented trap-backlog item. Known open
+items: **per-tag `rdComplete` drop parity** (`@note` KEEPS an incomplete field
+where `@details`/`@description` DROP — a concrete gap with a clear oracle
+probe); loose-file default-`@md` ON; the block→inline delimiter-stack migration
+for the remaining local scanners; same-`@name` static-scope object-topic
+resolution (only explicit `@name`/`@rdname` is grouped today).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
