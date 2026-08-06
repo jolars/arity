@@ -48,6 +48,8 @@
             roxygen2
             commonmark
             styler
+            lintr
+            flir
           ];
         }
       );
