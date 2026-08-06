@@ -8,17 +8,14 @@ Two operations are covered:
 - the **linter**, compared against
   [`jarl`](https://github.com/etiennebacher/jarl).
 
-Each operation is measured at two scopes: **single files** (synthetic corpus
-tiers) and a whole **project** (a real R package). `arity` is the baseline in
-every chart, and every other tool's time is reported relative to it.
+Each operation is measured at two scopes: single files (synthetic corpus tiers)
+and a whole project (real R package s). `arity` is the baseline in every chart,
+and every other tool's time is reported relative to it.
 
-**This is not a CI gate and not a parity target.** Timings are machine- and
-run-dependent, and these numbers measure *speed only*, never output or finding
-equivalence (see `AIR_COMPAT.md` or `task air-compat` for formatter output
-comparison). The tools also pay very different startup floors: `styler` runs
-inside an R process, so a large part of its time on small inputs is interpreter
-startup rather than real work. Treat the *ratios*, not the absolute
-milliseconds, as the takeaway.
+The tools also pay very different startup floors: `styler` runs inside an R
+process, so a large part of its time on small inputs is interpreter startup
+rather than real work. Treat the *ratios*, not the absolute milliseconds, as the
+takeaway.
 
 The figures below are regenerated manually with `task bench` and committed as a
 machine-readable artifact (`benches/benchmark_results.json`); they are never
