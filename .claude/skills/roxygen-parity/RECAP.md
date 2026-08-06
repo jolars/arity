@@ -235,7 +235,7 @@ loose-file default ON deferred). CommonMark reference-spec two-pass (block tree 
 section-body subtrees, excluding roclet-generated scaffolding** (`\name`/`\alias`/`\usage`/
 `\arguments`). Markdown = CommonMark core + GFM `table`, `hardbreaks = TRUE`; full parity is
 the end goal (a subset is a gap). The local lexer span-scanners are the **wrong shape** — the
-path is the block→inline delimiter-stack pass (`docs/design/roxygen-inline-pass.md`). The
+path is the block→inline delimiter-stack pass. The
 WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance model). Full
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
