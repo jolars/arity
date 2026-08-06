@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
   "meta": {
-    "generated_at": "2026-07-11T02:55:45Z",
-    "host": {"os": "linux", "arch": "x86_64", "cpu": "Intel(R) Core(TM) Ultra 7 155U"},
+    "generated_at": "2026-08-06T13:53:43Z",
+    "host": {"os": "linux", "arch": "x86_64", "cpu": "AMD Ryzen 9 7900 12-Core Processor"},
     "backend": "hyperfine",
     "min_runs": 3,
     "tools": {
-      "arity": {"version": "0.11.0"},
-      "air": {"version": "0.10.0"},
+      "arity": {"version": "0.16.0"},
+      "air": {"version": "0.11.0"},
       "jarl": {"version": "0.5.0"}
     }
   },
@@ -21,14 +21,14 @@
           "title":"Single files",
           "caption":"Formatting speed on single files relative to arity, one dot per synthetic corpus tier. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.",
           "documents":[
-            {"id":"small","name":"small","size_bytes":123094,"lines":8498},
-            {"id":"large","name":"large","size_bytes":1477128,"lines":101976}
+            {"id":"small","name":"small","size_bytes":128902,"lines":8892},
+            {"id":"large","name":"large","size_bytes":1546824,"lines":106704}
           ],
           "results":[
-            {"document":"small","tool":"arity","mean_ms":26.3464,"stddev_ms":3.1223,"min_ms":20.5507,"max_ms":36.0864},
-            {"document":"small","tool":"air","mean_ms":35.9680,"stddev_ms":3.3876,"min_ms":29.4418,"max_ms":47.8633},
-            {"document":"large","tool":"arity","mean_ms":791.3714,"stddev_ms":18.5129,"min_ms":773.7293,"max_ms":810.6469},
-            {"document":"large","tool":"air","mean_ms":449.5672,"stddev_ms":80.7891,"min_ms":387.3011,"max_ms":588.7086}
+            {"document":"small","tool":"arity","mean_ms":15.3797,"stddev_ms":1.2356,"min_ms":13.7109,"max_ms":20.5640},
+            {"document":"small","tool":"air","mean_ms":25.1502,"stddev_ms":1.3509,"min_ms":22.3817,"max_ms":28.9280},
+            {"document":"large","tool":"arity","mean_ms":411.2087,"stddev_ms":6.5952,"min_ms":400.6302,"max_ms":419.6508},
+            {"document":"large","tool":"air","mean_ms":294.1640,"stddev_ms":3.5827,"min_ms":289.7039,"max_ms":300.5863}
           ]
         },
         {
@@ -39,8 +39,8 @@
             {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":39.4097,"stddev_ms":4.0046,"min_ms":32.7052,"max_ms":49.4364},
-            {"document":"tidyr","tool":"air","mean_ms":56.7434,"stddev_ms":5.0946,"min_ms":48.2065,"max_ms":70.0263}
+            {"document":"tidyr","tool":"arity","mean_ms":25.4120,"stddev_ms":0.8605,"min_ms":23.1833,"max_ms":27.9444},
+            {"document":"tidyr","tool":"air","mean_ms":35.9934,"stddev_ms":0.8720,"min_ms":34.1089,"max_ms":38.3501}
           ]
         }
       ]
@@ -54,14 +54,14 @@
           "title":"Single files",
           "caption":"Linting speed on single files relative to arity, one dot per synthetic corpus tier, on the same log-ratio axis as the formatter charts.",
           "documents":[
-            {"id":"small","name":"small","size_bytes":123094,"lines":8498},
-            {"id":"large","name":"large","size_bytes":1477128,"lines":101976}
+            {"id":"small","name":"small","size_bytes":128902,"lines":8892},
+            {"id":"large","name":"large","size_bytes":1546824,"lines":106704}
           ],
           "results":[
-            {"document":"small","tool":"arity","mean_ms":37.6006,"stddev_ms":3.6100,"min_ms":30.2579,"max_ms":44.9339},
-            {"document":"small","tool":"jarl","mean_ms":44.5027,"stddev_ms":4.9298,"min_ms":32.8220,"max_ms":55.5076},
-            {"document":"large","tool":"arity","mean_ms":385.7874,"stddev_ms":43.3018,"min_ms":307.3075,"max_ms":435.3728},
-            {"document":"large","tool":"jarl","mean_ms":673.2606,"stddev_ms":75.4781,"min_ms":628.6883,"max_ms":760.4076}
+            {"document":"small","tool":"arity","mean_ms":27.9656,"stddev_ms":0.8948,"min_ms":26.3740,"max_ms":29.8739},
+            {"document":"small","tool":"jarl","mean_ms":27.7062,"stddev_ms":1.2810,"min_ms":25.8649,"max_ms":32.2611},
+            {"document":"large","tool":"arity","mean_ms":298.2168,"stddev_ms":5.7707,"min_ms":291.3206,"max_ms":309.1549},
+            {"document":"large","tool":"jarl","mean_ms":400.5323,"stddev_ms":6.6367,"min_ms":393.7606,"max_ms":408.8765}
           ]
         },
         {
@@ -72,8 +72,8 @@
             {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":34.4145,"stddev_ms":3.5912,"min_ms":28.2005,"max_ms":43.7791},
-            {"document":"tidyr","tool":"jarl","mean_ms":23.1374,"stddev_ms":2.7275,"min_ms":17.6572,"max_ms":30.6717}
+            {"document":"tidyr","tool":"arity","mean_ms":31.7475,"stddev_ms":1.1256,"min_ms":29.1063,"max_ms":34.4358},
+            {"document":"tidyr","tool":"jarl","mean_ms":13.5520,"stddev_ms":0.7891,"min_ms":12.2014,"max_ms":16.7206}
           ]
         }
       ]
