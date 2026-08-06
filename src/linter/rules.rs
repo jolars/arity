@@ -30,6 +30,7 @@ use crate::semantic::{FileControlFlow, PackageOrigin, SemanticModel, SymbolProvi
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 use super::diagnostic::{Diagnostic, Severity};
+use super::suppression::{DirectiveUsage, SuppressionMap};
 
 pub mod correctness;
 pub mod documentation;
@@ -152,6 +153,44 @@ pub trait Rule: Send + Sync {
     fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let _ = (ctx, sink);
     }
+
+    /// Post-suppression pass, run once after the surviving findings have been
+    /// filtered through the file's `# arity-ignore` directives. `used` records
+    /// which directives actually matched a finding.
+    ///
+    /// Separate from [`Rule::check_file`] because its input is a *driver* fact —
+    /// which suppressions fired — that does not exist until filtering has run.
+    /// `outdated-suppression` is the only implementor; the default is a no-op.
+    fn check_suppressions(
+        &self,
+        ctx: &RuleContext<'_>,
+        used: &DirectiveUsage,
+        sink: &mut Vec<Diagnostic>,
+    ) {
+        let _ = (ctx, used, sink);
+    }
+
+    /// Rule IDs that must also be enabled when this rule's [`Rule::examples`]
+    /// are rendered and tested. The docs renderer restricts `select` to the rule
+    /// itself so an example cannot trip an unrelated rule; this is the escape
+    /// hatch for a rule whose subject *is* another rule's presence in the run
+    /// (`outdated-suppression` needs the suppressed rule to have run in order to
+    /// know its directive matched nothing). The default is none.
+    fn doc_select(&self) -> &'static [&'static str] {
+        &[]
+    }
+}
+
+/// The rule IDs running in a pass, after `select`/`ignore`. Lets a rule tell
+/// "this rule ran and found nothing" from "this rule never ran" — the
+/// distinction between a stale suppression and a dormant one.
+#[derive(Debug, Clone, Default)]
+pub struct EnabledRules(Vec<&'static str>);
+
+impl EnabledRules {
+    pub fn contains(&self, id: &str) -> bool {
+        self.0.contains(&id)
+    }
 }
 
 pub struct RuleContext<'a> {
@@ -174,6 +213,13 @@ pub struct RuleContext<'a> {
     /// Per-rule option tables from `[lint.rules.<id>]`, resolved once per run and
     /// carried on [`ResolvedRules`]. Rules that take no options ignore this.
     pub config: &'a RulesConfig,
+    /// The file's parsed `# arity-ignore` directives. Built once per file and
+    /// used by [`run_rules`] to drop suppressed findings; the `meta/` rules read
+    /// it to lint the directives themselves.
+    pub suppressions: &'a SuppressionMap,
+    /// The rule IDs running in this pass. A directive naming a rule that did not
+    /// run is dormant, not stale.
+    pub enabled_rules: &'a EnabledRules,
     /// Lazily-resolved enclosing package name — see [`RuleContext::own_package`].
     /// Private and empty at construction: resolving it touches disk, so the cost
     /// is paid only by the rules that ask, on the files where they match.
@@ -319,6 +365,8 @@ pub struct ResolvedRules {
     /// Each rule ID's [`Rule::default_severity`], so the severity-stamping pass
     /// is an `O(1)` lookup keyed by the finding's rule ID.
     severities: HashMap<&'static str, Severity>,
+    /// The chosen rule IDs, handed to rules via [`RuleContext::enabled_rules`].
+    enabled: EnabledRules,
     /// The `[lint.rules.<id>]` tables, handed to every rule via
     /// [`RuleContext::config`]. Lives here rather than as a [`run_rules`]
     /// parameter because it is per-*run* config, exactly like the rest of this
@@ -342,13 +390,20 @@ impl ResolvedRules {
             .iter()
             .map(|r| (r.id(), r.default_severity()))
             .collect();
+        let enabled = EnabledRules(rules.iter().map(|r| r.id()).collect());
         Self {
             rules,
             by_kind,
             any_node_rules,
             severities,
+            enabled,
             rules_config,
         }
+    }
+
+    /// The rule IDs in this set.
+    pub fn enabled(&self) -> &EnabledRules {
+        &self.enabled
     }
 
     /// Build the rule set honoring `select` / `ignore` from `LintConfig`.
@@ -393,8 +448,14 @@ impl ResolvedRules {
     }
 }
 
-/// Run every configured rule against a single file's CST + model. Diagnostics
-/// are stably sorted by `(start, end, rule)` before returning.
+/// Run every configured rule against a single file's CST + model, dropping the
+/// findings the file's `# arity-ignore` directives suppress. Diagnostics are
+/// stably sorted by `(start, end, rule)` before returning.
+///
+/// Suppression is filtered *here*, not by the caller, for two reasons: the
+/// directive list has to reach rules on [`RuleContext`], and the post-suppression
+/// pass ([`Rule::check_suppressions`]) needs the *result* of filtering — which
+/// directives fired — a fact that does not exist any earlier.
 ///
 /// The dispatch table (`resolved.by_kind`) and severity map are precomputed on
 /// `resolved`, so this is on the hot path only for the per-file traversal and
@@ -410,6 +471,7 @@ pub fn run_rules(
     project: Option<&FileScope<'_>>,
     resolution: Option<&ExternalResolution>,
 ) -> Vec<Diagnostic> {
+    let suppressions = SuppressionMap::build(root);
     let ctx = RuleContext {
         path,
         root,
@@ -419,6 +481,8 @@ pub fn run_rules(
         project,
         resolution,
         config: &resolved.rules_config,
+        suppressions: &suppressions,
+        enabled_rules: &resolved.enabled,
         own_package: OnceLock::new(),
     };
     let rules = &resolved.rules;
@@ -438,6 +502,21 @@ pub fn run_rules(
     // Whole-file pass for model-/comment-driven rules.
     for rule in rules {
         rule.check_file(&ctx, &mut all);
+    }
+
+    // Drop the suppressed findings, recording which directives did the work.
+    let used = suppressions.filter(&mut all);
+
+    // Post-suppression pass. Its own findings are suppressible too, but against
+    // the *frozen* usage record — a directive that only ever silenced an
+    // `outdated-suppression` finding is not thereby "used".
+    let mut post = Vec::new();
+    for rule in rules {
+        rule.check_suppressions(&ctx, &used, &mut post);
+    }
+    if !post.is_empty() {
+        post.retain(|d| !suppressions.is_suppressed(d.rule, d.range));
+        all.append(&mut post);
     }
 
     // Stamp each finding's severity from its rule's `default_severity()`. Rules
@@ -526,6 +605,40 @@ mod tests {
         assert_eq!(diags[0].severity, Severity::Error);
     }
 
+    /// Suppression filtering lives in `run_rules`, not in `check.rs` — the rules
+    /// need the directive list on `RuleContext`, and `outdated-suppression`
+    /// needs the *result* of filtering.
+    #[test]
+    fn run_rules_filters_suppressed_findings() {
+        let root = crate::parser::parse("# arity-ignore fake-error: quiet\nf(1)\n").cst;
+        let model = SemanticModel::build(&root);
+        let cfg = FileControlFlow::build(&root);
+        let symbols = crate::semantic::StaticBaseR::new();
+        let resolved =
+            ResolvedRules::with_config(vec![Box::new(FakeError)], RulesConfig::default());
+        let diags = run_rules(
+            &resolved,
+            Path::new("test.R"),
+            &root,
+            &model,
+            &cfg,
+            &symbols,
+            None,
+            None,
+        );
+        assert!(diags.is_empty(), "expected no findings, got {diags:?}");
+    }
+
+    /// The rule set reaches rules through the context, so a post-suppression
+    /// pass can tell "this rule found nothing" from "this rule never ran".
+    #[test]
+    fn enabled_rules_reflects_the_resolved_set() {
+        let resolved =
+            ResolvedRules::with_config(vec![Box::new(FakeError)], RulesConfig::default());
+        assert!(resolved.enabled().contains("fake-error"));
+        assert!(!resolved.enabled().contains("unused-binding"));
+    }
+
     /// `resolves_to_base` for the first `CallExpr` in `src`, over the base-only
     /// `StaticBaseR` provider (the single-file / LSP path).
     fn resolves(src: &str) -> bool {
@@ -542,6 +655,8 @@ mod tests {
             project: None,
             resolution: None,
             config: &RulesConfig::default(),
+            suppressions: &SuppressionMap::default(),
+            enabled_rules: &EnabledRules::default(),
             own_package: OnceLock::new(),
         };
         let call = root

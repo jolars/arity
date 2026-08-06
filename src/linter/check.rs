@@ -27,7 +27,6 @@ use crate::semantic::SymbolProvider;
 
 use super::diagnostic::{Diagnostic, Severity, ViolationData};
 use super::rules::{ResolvedRules, default_symbol_provider, run_rules};
-use super::suppression::SuppressionMap;
 
 /// Synthetic rule id carried by findings that originate from the parser's error
 /// side channel rather than a lint rule. Shown as the `[code]` in CLI output and
@@ -387,8 +386,10 @@ fn intern_project<'db>(
 }
 
 /// Run the resolved rules against a cleanly-parsed file, using the cached parse
-/// tree and semantic model, and drop suppressed findings. Callers must have
-/// already confirmed the file parses without diagnostics.
+/// tree and semantic model. Callers must have already confirmed the file parses
+/// without diagnostics.
+///
+/// Suppression filtering happens inside [`run_rules`], not here — see its doc.
 fn lint_parsed_file(
     db: &dyn IncrementalDb,
     file: SourceFile,
@@ -404,8 +405,6 @@ fn lint_parsed_file(
     let mut diagnostics = run_rules(
         rules, path, &root_node, model, cfg, provider, project, resolution,
     );
-    let suppress = SuppressionMap::build(&root_node);
-    diagnostics.retain(|d| !suppress.is_suppressed(d.rule, d.range));
     for d in &mut diagnostics {
         d.path = path.to_path_buf();
     }
