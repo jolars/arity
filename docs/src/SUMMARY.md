@@ -6,6 +6,7 @@
 # Guide
 
 - [Editor Setup](guide/editors.md)
+- [Integrations](guide/integrations.md)
 
 # Reference
 
