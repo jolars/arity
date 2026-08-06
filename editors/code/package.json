@@ -61,6 +61,21 @@
     "configuration": {
       "title": "Arity",
       "properties": {
+        "arity.formatting.enable": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable Arity as a formatter. When `false`, Arity contributes no formatting edits (document and range formatting), so another formatter can own R without disabling the extension. The language server keeps running for diagnostics and language features."
+        },
+        "arity.diagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show Arity diagnostics (the linter) in the editor. When `false`, all diagnostics are suppressed, including the syntax/parse errors that an `arity.toml` `[lint]` selection cannot silence. Formatting and language features are unaffected."
+        },
+        "arity.languageFeatures.enable": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable Arity language features: hover, completion, signature help, go-to-definition, references, document/workspace symbols, document highlight, rename, code actions, semantic tokens, folding and selection ranges, document links, document color, and call and type hierarchy. When `false`, these are suppressed. Formatting and diagnostics are unaffected."
+        },
         "arity.executableStrategy": {
           "type": "string",
           "enum": [

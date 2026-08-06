@@ -25,6 +25,32 @@ matching binary from GitHub releases when none is bundled.
   (re-reads settings and re-resolves the binary). Useful if the LSP gets wedged
   or after changing settings such as `arity.version` or `arity.executablePath`.
 
+## Using only some features
+
+The formatter, linter, and language features share one server but can be turned
+off independently, so you can adopt just the parts you want:
+
+- `arity.formatting.enable`: use Arity as a formatter.
+- `arity.diagnostics.enable`: show Arity diagnostics (the linter).
+- `arity.languageFeatures.enable`: hover, completion, navigation, symbols,
+  rename, code actions, semantic tokens, and the rest.
+
+All three default to `true`. They are client-side gates, so the server keeps
+running and the toggles take effect without a restart or reinstall. For a
+formatter-only setup, turn off the other two:
+
+```json
+{
+  "arity.diagnostics.enable": false,
+  "arity.languageFeatures.enable": false
+}
+```
+
+Turning off `arity.diagnostics.enable` this way suppresses **every** diagnostic,
+including the syntax/parse errors that an `arity.toml` `[lint]` selection cannot
+silence. The `arity.toml` route stays the right tool when you want to keep parse
+errors but mute specific lint rules across every editor and the CLI.
+
 ## Binary installation
 
 By default, the extension uses an `arity` binary that ships inside the extension
@@ -97,6 +123,11 @@ Use `arity.releaseTag` only if you need an exact tag override:
 
 Arity registers itself as the default formatter for `[r]` files.
 
+- `arity.formatting.enable`: contribute formatting edits (default: `true`).
+- `arity.diagnostics.enable`: show diagnostics from the linter (default:
+  `true`).
+- `arity.languageFeatures.enable`: hover, completion, navigation, symbols,
+  rename, code actions, and the rest (default: `true`).
 - `arity.executableStrategy`: how to locate the `arity` binary: `bundled`
   (default), `environment`, or `path`.
 - `arity.executablePath`: path to the binary, used only when

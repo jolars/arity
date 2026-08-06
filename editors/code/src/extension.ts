@@ -4,8 +4,10 @@ import * as path from "node:path";
 import {
   LanguageClient,
   LanguageClientOptions,
+  Middleware,
   ServerOptions,
   Trace,
+  vsdiag,
 } from "vscode-languageclient/node";
 import { resolveArityBinary } from "./installer";
 
@@ -153,6 +155,127 @@ function mergeServerEnvironment(
   return env;
 }
 
+/** Whether an `arity.<section>.enable` toggle is on (default on). Read live so
+ *  the middleware reflects the current setting without a server round-trip. */
+function featureEnabled(
+  section: "formatting" | "diagnostics" | "languageFeatures",
+): boolean {
+  return vscode.workspace
+    .getConfiguration("arity")
+    .get<boolean>(`${section}.enable`, true);
+}
+
+/**
+ * Client-side gates for the three `arity.*.enable` toggles. Each request is
+ * intercepted before it reaches (or after it leaves) the server: diagnostics can
+ * be dropped wholesale (including the parse errors an `arity.toml` cannot mute)
+ * while formatting and language features are suppressed by returning nothing, so
+ * the server keeps running and the other lanes are untouched.
+ */
+function buildMiddleware(): Middleware {
+  // Run `next` only when the lane is enabled; otherwise contribute nothing.
+  const fmt = <T>(run: () => T): T | undefined =>
+    featureEnabled("formatting") ? run() : undefined;
+  const lf = <T>(run: () => T): T | undefined =>
+    featureEnabled("languageFeatures") ? run() : undefined;
+
+  return {
+    // Diagnostics: push (publishDiagnostics) and pull (textDocument/diagnostic).
+    handleDiagnostics(uri, diagnostics, next) {
+      next(uri, featureEnabled("diagnostics") ? diagnostics : []);
+    },
+    provideDiagnostics(document, previousResultId, token, next) {
+      if (!featureEnabled("diagnostics")) {
+        return { kind: vsdiag.DocumentDiagnosticReportKind.full, items: [] };
+      }
+      return next(document, previousResultId, token);
+    },
+
+    // Formatting.
+    provideDocumentFormattingEdits: (document, options, token, next) =>
+      fmt(() => next(document, options, token)),
+    provideDocumentRangeFormattingEdits: (
+      document,
+      range,
+      options,
+      token,
+      next,
+    ) => fmt(() => next(document, range, options, token)),
+    provideOnTypeFormattingEdits: (
+      document,
+      position,
+      ch,
+      options,
+      token,
+      next,
+    ) => fmt(() => next(document, position, ch, options, token)),
+
+    // Language features.
+    provideHover: (document, position, token, next) =>
+      lf(() => next(document, position, token)),
+    provideSignatureHelp: (document, position, context, token, next) =>
+      lf(() => next(document, position, context, token)),
+    provideCompletionItem: (document, position, context, token, next) =>
+      lf(() => next(document, position, context, token)),
+    provideDefinition: (document, position, token, next) =>
+      lf(() => next(document, position, token)),
+    provideReferences: (document, position, options, token, next) =>
+      lf(() => next(document, position, options, token)),
+    provideDocumentHighlights: (document, position, token, next) =>
+      lf(() => next(document, position, token)),
+    provideDocumentSymbols: (document, token, next) =>
+      lf(() => next(document, token)),
+    provideWorkspaceSymbols: (query, token, next) =>
+      lf(() => next(query, token)),
+    provideCodeActions: (document, range, context, token, next) =>
+      lf(() => next(document, range, context, token)),
+    provideRenameEdits: (document, position, newName, token, next) =>
+      lf(() => next(document, position, newName, token)),
+    prepareRename: (document, position, token, next) =>
+      lf(() => next(document, position, token)),
+    provideFoldingRanges: (document, context, token, next) =>
+      lf(() => next(document, context, token)),
+    provideSelectionRanges: (document, positions, token, next) =>
+      lf(() => next(document, positions, token)),
+    provideDocumentLinks: (document, token, next) =>
+      lf(() => next(document, token)),
+    provideDocumentColors: (document, token, next) =>
+      lf(() => next(document, token)),
+    provideColorPresentations: (color, context, token, next) =>
+      lf(() => next(color, context, token)),
+    provideDocumentSemanticTokens: (document, token, next) =>
+      lf(() => next(document, token)),
+    provideDocumentSemanticTokensEdits: (
+      document,
+      previousResultId,
+      token,
+      next,
+    ) => lf(() => next(document, previousResultId, token)),
+    provideDocumentRangeSemanticTokens: (document, range, token, next) =>
+      lf(() => next(document, range, token)),
+    prepareCallHierarchy: (document, position, token, next) =>
+      lf(() => next(document, position, token)),
+    provideCallHierarchyIncomingCalls: (item, token, next) =>
+      lf(() => next(item, token)),
+    provideCallHierarchyOutgoingCalls: (item, token, next) =>
+      lf(() => next(item, token)),
+    prepareTypeHierarchy: (document, position, token, next) =>
+      lf(() => next(document, position, token)),
+    provideTypeHierarchySupertypes: (item, token, next) =>
+      lf(() => next(item, token)),
+    provideTypeHierarchySubtypes: (item, token, next) =>
+      lf(() => next(item, token)),
+    workspace: {
+      // A moved `.R` file rewrites `source()` literals in its dependents; that is
+      // a language feature, so it follows the same gate.
+      willRenameFiles: (event, next) =>
+        featureEnabled("languageFeatures")
+          ? next(event)
+          : Promise.resolve(undefined),
+    },
+  };
+}
+
 async function startClient(
   context: vscode.ExtensionContext,
   outputChannel: vscode.LogOutputChannel,
@@ -190,6 +313,7 @@ async function startClient(
     ],
     outputChannel,
     traceOutputChannel: outputChannel,
+    middleware: buildMiddleware(),
   };
 
   client = new LanguageClient(
@@ -250,6 +374,21 @@ export async function activate(
     vscode.commands.registerCommand("arity.restart", () =>
       restartClient(context, outputChannel),
     ),
+  );
+
+  // The middleware reads the toggles live, so formatting/languageFeatures need
+  // no restart. Diagnostics are different: the already-displayed set has to be
+  // flushed, and nothing re-triggers a pull on its own. `client.diagnostics` is
+  // only the *push* collection — the pull feature owns a separate one that a
+  // restart disposes — so a restart is what actually clears both, either way.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration("arity.diagnostics")) {
+        return;
+      }
+      client?.diagnostics?.clear();
+      void restartClient(context, outputChannel);
+    }),
   );
 
   await startClient(context, outputChannel);
