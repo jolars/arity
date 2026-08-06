@@ -24,7 +24,7 @@ Arity: a language server, formatter, and linter for R
     - `never`: Never colorize
 
 `-q`, `--quiet`
-:   Suppress informational output (errors are still shown)
+:   Suppress informational output (errors are still shown); under `format --check` this drops the per-file diff, leaving the list of files that would be reformatted and the summary
 
 `-v`, `--verbose`
 :   Print extra informational output (e.g. per-command summaries)

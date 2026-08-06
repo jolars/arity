@@ -126,6 +126,36 @@ fn cli_format_check_prints_diff() {
 }
 
 #[test]
+fn cli_format_check_quiet_lists_files_without_the_diff() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let changed = dir.path().join("changed.R");
+    std::fs::write(&changed, "x<-1+2\n").expect("failed to write changed file");
+
+    let output = run_cli_no_stdin([
+        "format",
+        "--check",
+        "--quiet",
+        changed.to_str().expect("temp file path should be utf-8"),
+    ]);
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("would reformat"),
+        "expected the file list, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("1 of 1 file(s) would be reformatted"),
+        "expected the summary, got:\n{stdout}"
+    );
+    // The point of `--quiet`: the hunks are gone.
+    assert!(
+        !stdout.contains("-x<-1+2"),
+        "diff should be suppressed, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn cli_format_check_succeeds_for_unchanged_files() {
     let dir = tempdir().expect("failed to create temp dir");
     let unchanged = dir.path().join("unchanged.R");

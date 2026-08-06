@@ -29,7 +29,9 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto, global = true, value_name = "WHEN")]
     pub color: ColorChoice,
 
-    /// Suppress informational output (errors are still shown)
+    /// Suppress informational output (errors are still shown); under
+    /// `format --check` this drops the per-file diff, leaving the list of files
+    /// that would be reformatted and the summary
     #[arg(long, short = 'q', global = true, conflicts_with = "verbose")]
     pub quiet: bool,
 

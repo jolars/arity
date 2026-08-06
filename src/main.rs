@@ -584,6 +584,20 @@ fn run_format_check(
                     eprintln!("{} file(s) already formatted", result.checked_files);
                 }
                 ExitCode::SUCCESS
+            } else if out.quiet {
+                // `--check` writes nothing, so the diff is normally the only
+                // account of what would change; `--quiet` trades it for the
+                // file list plus a summary, for callers (a CI step over a
+                // wholly unformatted project) that would drown in hunks.
+                for file in &result.changed_files {
+                    println!("would reformat {}", file.path.display());
+                }
+                println!(
+                    "{} of {} file(s) would be reformatted",
+                    result.changed_files.len(),
+                    result.checked_files
+                );
+                ExitCode::from(1)
             } else {
                 let use_color = color_enabled(out.color, io::stdout().is_terminal());
                 for (idx, file) in result.changed_files.iter().enumerate() {
