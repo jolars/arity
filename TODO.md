@@ -7,17 +7,16 @@
   handling so they attach to `next_arg` instead of the argument list. (Jarl
   solved this by overriding biome's `place_comment`; arity's
   next-non-trivia-sibling walk already handles most cases.)
-- [ ] Wire the package-wide roxygen markdown default into arity's own
-  consumers. `parse_with_options` + `ParseOptions.roxygen_markdown_default`
-  (issue #94) let an embedder honor `Config/roxygen2/markdown` from
-  `DESCRIPTION`, but the CLI, LSP, linter, and salsa layer still parse with the
-  Rd-first default: discover the setting from the project's `DESCRIPTION`
-  (`Config/roxygen2/markdown: true`, or the older
-  `Roxygen: list(markdown = TRUE)`), thread it through `incremental.rs` (the
-  options must key the salsa parse query and the reparse path identically), and
-  give the test-only Rd projector (`src/roxygen/project_rd/section.rs`
-  `block_md`) the same default so oracle cases from markdown-first packages
-  become representable.
+- [ ] Give the test-only Rd projector (`src/roxygen/project_rd/section.rs`
+  `block_md`) a package-wide markdown default, so oracle cases from
+  markdown-first packages become representable without a per-block `@md`. The
+  rest of that wiring landed: `ParseOptions.roxygen_markdown_default`
+  (issue #94), static discovery from `DESCRIPTION`'s `Roxygen` field and
+  `man/roxygen/meta.R` (`src/project/description.rs`; note roxygen2 7.3.3 has
+  no `Config/roxygen2/markdown` field, contrary to the issue), and the format
+  CLI and cache, linter, salsa layer (`SourceFile.roxygen_markdown` input), and
+  LSP all resolve it. Known static limit: a `meta.R` that *computes* its list
+  is unresolvable and defers to the `DESCRIPTION` field.
 
 ## AST wrappers
 
