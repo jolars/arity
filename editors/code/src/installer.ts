@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import * as https from "node:https";
+import * as path from "node:path";
 import AdmZip from "adm-zip";
 import * as tar from "tar";
 
@@ -106,7 +106,9 @@ function httpGet(url: string, redirectCount = 0): Promise<Buffer> {
       },
     );
     const timeout = setTimeout(() => {
-      request.destroy(new Error(`Request timed out after ${HTTP_TIMEOUT_MS}ms`));
+      request.destroy(
+        new Error(`Request timed out after ${HTTP_TIMEOUT_MS}ms`),
+      );
     }, HTTP_TIMEOUT_MS);
     request.on("close", () => {
       clearTimeout(timeout);
@@ -195,68 +197,62 @@ export async function resolveArityBinary(
           ? `https://api.github.com/repos/${repo}/releases?per_page=100`
           : `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(candidate.tag)}`;
     try {
-      selectedRelease = await withRetries(
-        async () => {
-          const releaseBody = await httpGet(releasesUrl);
-          if (candidate.kind === "latest-list") {
-            const releases = JSON.parse(
-              releaseBody.toString("utf8"),
-            ) as ReleaseResponse[];
-            if (!Array.isArray(releases)) {
-              throw new Error(
-                `Expected release list array for ${repo}@latest, received non-array response`,
-              );
-            }
-
-            for (const release of releases) {
-              if (release.draft || release.prerelease) {
-                continue;
-              }
-              if (!isCandidateReleaseTag(release.tag_name)) {
-                continue;
-              }
-              if (
-                !Array.isArray(release.assets) ||
-                release.assets.length === 0
-              ) {
-                continue;
-              }
-              const latestAsset = findAsset(release.assets);
-              if (latestAsset) {
-                return { release, asset: latestAsset };
-              }
-            }
-
-            throw new Error(
-              `No stable Arity release asset '${target.archiveNames.join("' or '")}' found for ${repo}@latest`,
-            );
-          }
-
-          const release = JSON.parse(
+      selectedRelease = await withRetries(async () => {
+        const releaseBody = await httpGet(releasesUrl);
+        if (candidate.kind === "latest-list") {
+          const releases = JSON.parse(
             releaseBody.toString("utf8"),
-          ) as ReleaseResponse;
-          if (
-            candidate.kind === "latest-pointer" &&
-            !isCandidateReleaseTag(release.tag_name)
-          ) {
+          ) as ReleaseResponse[];
+          if (!Array.isArray(releases)) {
             throw new Error(
-              `${repo}/releases/latest points at '${release.tag_name}', which is not an Arity release`,
+              `Expected release list array for ${repo}@latest, received non-array response`,
             );
           }
-          const asset = findAsset(release.assets);
-          if (!asset) {
-            const ref =
-              candidate.kind === "tag"
-                ? `${repo}@${candidate.tag}`
-                : `${repo}@${release.tag_name}`;
-            throw new Error(
-              `No release asset '${target.archiveNames.join("' or '")}' found for ${ref}`,
-            );
+
+          for (const release of releases) {
+            if (release.draft || release.prerelease) {
+              continue;
+            }
+            if (!isCandidateReleaseTag(release.tag_name)) {
+              continue;
+            }
+            if (!Array.isArray(release.assets) || release.assets.length === 0) {
+              continue;
+            }
+            const latestAsset = findAsset(release.assets);
+            if (latestAsset) {
+              return { release, asset: latestAsset };
+            }
           }
-          return { release, asset };
-        },
-        `Fetching release metadata from ${releasesUrl}`,
-      );
+
+          throw new Error(
+            `No stable Arity release asset '${target.archiveNames.join("' or '")}' found for ${repo}@latest`,
+          );
+        }
+
+        const release = JSON.parse(
+          releaseBody.toString("utf8"),
+        ) as ReleaseResponse;
+        if (
+          candidate.kind === "latest-pointer" &&
+          !isCandidateReleaseTag(release.tag_name)
+        ) {
+          throw new Error(
+            `${repo}/releases/latest points at '${release.tag_name}', which is not an Arity release`,
+          );
+        }
+        const asset = findAsset(release.assets);
+        if (!asset) {
+          const ref =
+            candidate.kind === "tag"
+              ? `${repo}@${candidate.tag}`
+              : `${repo}@${release.tag_name}`;
+          throw new Error(
+            `No release asset '${target.archiveNames.join("' or '")}' found for ${ref}`,
+          );
+        }
+        return { release, asset };
+      }, `Fetching release metadata from ${releasesUrl}`);
       break;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -302,7 +298,8 @@ export async function resolveArityBinary(
   }
 
   const resolvedBinary =
-    (await findFileRecursive(installRoot, target.binaryName)) ?? installedBinary;
+    (await findFileRecursive(installRoot, target.binaryName)) ??
+    installedBinary;
   if (resolvedBinary !== installedBinary) {
     await fs.copyFile(resolvedBinary, installedBinary);
   }

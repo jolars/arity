@@ -1,11 +1,11 @@
-import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as vscode from "vscode";
 import {
   LanguageClient,
-  LanguageClientOptions,
-  Middleware,
-  ServerOptions,
+  type LanguageClientOptions,
+  type Middleware,
+  type ServerOptions,
   Trace,
   vsdiag,
 } from "vscode-languageclient/node";
@@ -138,7 +138,7 @@ function mergeServerEnvironment(
 
   const pathKey =
     process.platform === "win32"
-      ? Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "Path"
+      ? (Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "Path")
       : "PATH";
 
   for (const key of Object.keys(env)) {
