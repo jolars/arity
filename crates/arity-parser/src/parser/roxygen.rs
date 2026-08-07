@@ -36,7 +36,11 @@ pub(crate) use lex::{
 /// parsed. Confirmed against `parse_Rd` (see the projector's `rd_macros` work).
 /// Latexlike macros (`\code`, `\emph`, `\strong`, `\link`, …) are everything
 /// else --- their content is sub-parsed, so nested macros become child nodes.
-const VERBATIM_RD_MACROS: &[&str] = &["url", "verb", "samp", "env", "kbd", "option"];
+/// `\eqn`/`\deqn` (LaTeX math) and `\out` (raw output) are verbatim too:
+/// `parse_Rd` yields `(\eqn (VERB "x \code{q} y"))`, the nested markup literal.
+const VERBATIM_RD_MACROS: &[&str] = &[
+    "url", "verb", "samp", "env", "kbd", "option", "eqn", "deqn", "out",
+];
 
 /// Whether the macro named `name` (without the leading `\`) takes verbatim
 /// `{…}` content. Used both when building the CST (don't recurse into a verbatim
@@ -529,7 +533,19 @@ pub fn is_fragile_for_md(name: &str) -> bool {
 pub fn resolve_md_inline(content: &str) -> crate::syntax::SyntaxNode {
     let mut tokens = Vec::new();
     lex::lex_roxygen_prose_fragment(&mut tokens, content, true);
-    resolve_md_inline_tokens(tokens)
+    resolve_md_inline_tokens(tokens, true)
+}
+
+/// Non-markdown twin of [`resolve_md_inline`]: lex `content` as a plain **Rd**
+/// prose fragment (no markdown recognizers; `\name{…}` macros still carve, gated
+/// by the backslash-pairing parity) and return the `ROXYGEN_PARAGRAPH` node.
+/// Drives the projector's re-parse of a *demoted* markdown span's rendered body,
+/// which `tools::parse_Rd` reads as ordinary Rd text once the generating macro's
+/// backslash has been paired away.
+pub fn resolve_rd_inline(content: &str) -> crate::syntax::SyntaxNode {
+    let mut tokens = Vec::new();
+    lex::lex_roxygen_prose_fragment(&mut tokens, content, false);
+    resolve_md_inline_tokens(tokens, false)
 }
 
 /// One piece of a **structural** Rd-macro argument fed to
@@ -575,13 +591,18 @@ pub fn resolve_md_inline_pieces(pieces: &[MdArgPiece]) -> crate::syntax::SyntaxN
             }),
         }
     }
-    resolve_md_inline_tokens(tokens)
+    resolve_md_inline_tokens(tokens, true)
 }
 
 /// Wrap `tokens` in a paragraph, run the emphasis/inline pass, and return the
-/// resolved `ROXYGEN_PARAGRAPH` node. Shared by [`resolve_md_inline`] and
-/// [`resolve_md_inline_pieces`].
-fn resolve_md_inline_tokens(tokens: Vec<crate::parser::lexer::Token>) -> crate::syntax::SyntaxNode {
+/// resolved `ROXYGEN_PARAGRAPH` node. Shared by [`resolve_md_inline`],
+/// [`resolve_rd_inline`], and [`resolve_md_inline_pieces`]. `md` is the mode the
+/// tokens were lexed under; a non-md fragment carries no markdown delimiters, so
+/// the inline pass only threads its tokens through.
+fn resolve_md_inline_tokens(
+    tokens: Vec<crate::parser::lexer::Token>,
+    md: bool,
+) -> crate::syntax::SyntaxNode {
     use crate::parser::events::Event;
     use crate::syntax::SyntaxKind;
 
@@ -589,10 +610,9 @@ fn resolve_md_inline_tokens(tokens: Vec<crate::parser::lexer::Token>) -> crate::
     events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
     events.extend((0..tokens.len()).map(Event::Tok));
     events.push(Event::Finish);
-    // Fragments are markdown by construction (`lex_roxygen_prose_fragment` runs
-    // md-on); they carry no soft breaks, so the multi-line HTML resolution is
+    // Fragments carry no soft breaks, so the multi-line HTML resolution is
     // inert here.
-    inline::resolve_emphasis(&tokens, &mut events, true);
+    inline::resolve_emphasis(&tokens, &mut events, md);
     let root = crate::parser::tree_builder::build_tree(&tokens, &events);
     root.first_child()
         .expect("build_tree always wraps the paragraph in ROOT")

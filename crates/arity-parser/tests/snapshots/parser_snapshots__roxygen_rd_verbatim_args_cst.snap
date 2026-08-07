@@ -1,0 +1,69 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+assertion_line: 13
+expression: tree
+---
+ROOT@0..109
+  ROXYGEN_BLOCK@0..103
+    ROXYGEN_SECTION@0..8
+      ROXYGEN_PARAGRAPH@0..5
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..4 "t"
+        NEWLINE@4..5 "\n"
+      ROXYGEN_MARKER@5..7 "#'"
+      NEWLINE@7..8 "\n"
+    ROXYGEN_SECTION@8..43
+      ROXYGEN_MARKER@8..10 "#'"
+      WHITESPACE@10..11 " "
+      ROXYGEN_TAG@11..42
+        ROXYGEN_AT@11..12 "@"
+        ROXYGEN_TAG_NAME@12..19 "details"
+        WHITESPACE@19..20 " "
+        ROXYGEN_TEXT@20..22 "a "
+        ROXYGEN_RD_MACRO@22..40
+          ROXYGEN_RD_MACRO_NAME@22..26 "\\eqn"
+          ROXYGEN_RD_MACRO_DELIM@26..27 "{"
+          ROXYGEN_RD_MACRO_VERB@27..39 "x \\code{q} y"
+          ROXYGEN_RD_MACRO_DELIM@39..40 "}"
+        ROXYGEN_TEXT@40..42 " b"
+      NEWLINE@42..43 "\n"
+    ROXYGEN_SECTION@43..86
+      ROXYGEN_MARKER@43..45 "#'"
+      WHITESPACE@45..46 " "
+      ROXYGEN_TAG@46..85
+        ROXYGEN_AT@46..47 "@"
+        ROXYGEN_TAG_NAME@47..54 "details"
+        WHITESPACE@54..55 " "
+        ROXYGEN_TEXT@55..57 "c "
+        ROXYGEN_RD_MACRO@57..66
+          ROXYGEN_RD_MACRO_NAME@57..61 "\\out"
+          ROXYGEN_RD_MACRO_DELIM@61..62 "{"
+          ROXYGEN_RD_MACRO_VERB@62..65 "<b>"
+          ROXYGEN_RD_MACRO_DELIM@65..66 "}"
+        ROXYGEN_TEXT@66..73 " d and "
+        ROXYGEN_RD_MACRO@73..83
+          ROXYGEN_RD_MACRO_NAME@73..78 "\\deqn"
+          ROXYGEN_RD_MACRO_DELIM@78..79 "{"
+          ROXYGEN_RD_MACRO_VERB@79..82 "z_i"
+          ROXYGEN_RD_MACRO_DELIM@82..83 "}"
+        ROXYGEN_TEXT@83..85 " e"
+      NEWLINE@85..86 "\n"
+    ROXYGEN_SECTION@86..93
+      ROXYGEN_MARKER@86..88 "#'"
+      WHITESPACE@88..89 " "
+      ROXYGEN_TAG@89..92
+        ROXYGEN_AT@89..90 "@"
+        ROXYGEN_TAG_NAME@90..92 "md"
+      NEWLINE@92..93 "\n"
+    ROXYGEN_SECTION@93..103
+      ROXYGEN_MARKER@93..95 "#'"
+      WHITESPACE@95..96 " "
+      ROXYGEN_TAG@96..103
+        ROXYGEN_AT@96..97 "@"
+        ROXYGEN_TAG_NAME@97..101 "name"
+        WHITESPACE@101..102 " "
+        ROXYGEN_TEXT@102..103 "x"
+  NEWLINE@103..104 "\n"
+  IDENT@104..108 "NULL"
+  NEWLINE@108..109 "\n"
