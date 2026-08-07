@@ -1,0 +1,4 @@
+(\description (TEXT "roxygen2 consumes at most one whitespace character after the marker before looking for `@`, so the next line is description prose, not a tag."))
+(\details (TEXT "@param x Two spaces makes this prose. No separator at all is a real tag."))
+(\title (TEXT "Title"))
+(\value (TEXT "A tab separator is a real tag."))

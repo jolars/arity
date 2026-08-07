@@ -53,7 +53,7 @@
 {"slug":"rx-4adb1f22","sections":"(\\description (TEXT \"See\") (\\code (\\link (TEXT \"11pkg::function()\"))) (TEXT \",\") (\\link (TEXT \"11pkg::object\")) (TEXT \".\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-4c5c90ac","sections":"(\\description (\\verb (VERB \"SELECT <name> FROM <table>\")))\n(\\title (\\verb (VERB \"SELECT <name> FROM <table>\")))"}
 {"slug":"rx-4d550c68","sections":"(\\description (TEXT \"Description.\"))\n(\\title (TEXT \"Title\"))"}
-{"slug":"rx-4d59d472","sections":"(\\description (TEXT \"Title.\"))\n(\\format (TEXT \"An object of class\") (\\code (RCODE \"data.frame\")) (TEXT \"with 10 rows and 1 columns.\"))\n(\\title (TEXT \"Title.\"))"}
+{"slug":"rx-4d59d472","sections":"(\\description (TEXT \"Title.\"))\n(\\title (TEXT \"Title.\"))"}
 {"slug":"rx-528eee33","sections":"(\\description (TEXT \"Title\"))\n(\\format (TEXT \"abc\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-53695cf4","sections":"(\\description (TEXT \"Description.\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-55b6980b","sections":"(\\description (TEXT \"Title default\"))\n(\\details (TEXT \"Details\") (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode r\\\">\"))) (\\preformatted (VERB \"structure('default', class = 'foo')\\n\") (VERB \"#> [1] \\\"default\\\"\\n\") (VERB \"#> attr(,\\\"class\\\")\\n\") (VERB \"#> [1] \\\"foo\\\"\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"Title default\"))"}
@@ -111,7 +111,7 @@
 {"slug":"rx-c0242234","sections":"(\\description (TEXT \"a\"))\n(\\title (TEXT \"a\"))"}
 {"slug":"rx-c605f27d","sections":"(\\description (TEXT \"Description, see\") (\\link (TEXT \"name\")) (TEXT \".\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-cb6ee994","sections":"(\\description (TEXT \"Description\"))\n(\\title (TEXT \"Description\"))"}
-{"slug":"rx-cbcc255c","sections":"(\\description (TEXT \"Title.\"))\n(\\format (TEXT \"An object of class\") (\\code (RCODE \"data.frame\")) (TEXT \"with 10 rows and 1 columns.\"))\n(\\title (TEXT \"Title.\"))"}
+{"slug":"rx-cbcc255c","sections":"(\\description (TEXT \"Title.\"))\n(\\title (TEXT \"Title.\"))"}
 {"slug":"rx-cc0ae196","sections":"(\\description (TEXT \"line1 pre 1 2 3 post\"))\n(\\details (TEXT \"no workaround needed here\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-ccc39f20","sections":"(\\description (TEXT \"Links are very tricky, so I'll put in some links here: Link to a function:\") (\\code (\\link (TEXT \"roxygenize()\"))) (TEXT \". Link to an object:\") (\\link (TEXT \"roxygenize\")) (TEXT \"(we just treat it like an object here).\"))\n(\\details (TEXT \"Link to another package, function:\") (\\code (\\link (TEXT \"desc::desc()\"))) (TEXT \". Link to another package, non-function:\") (\\link (TEXT \"desc::desc\")) (TEXT \". Link with link text:\") (\\link (TEXT \"this great function\")) (TEXT \",\") (\\code (\\link (TEXT \"roxygenize\"))) (TEXT \", or\") (\\link (TEXT \"that great function\")) (TEXT \". In another package:\") (\\link (TEXT \"and this one\")) (TEXT \".\"))\n(\\title (TEXT \"Dummy page to test roxygen's markdown formatting\"))"}
 {"slug":"rx-cf428841","sections":"(\\description (TEXT \"Title\"))\n(\\details (TEXT \"desc\"))\n(\\title (TEXT \"Title\"))"}
@@ -127,7 +127,7 @@
 {"slug":"rx-daf9322f","sections":"(\\description (\\if (TEXT \"html\") (\\out (VERB \"\\n\") (VERB \"<p>This is a paragraph<\/p>\\n\") (VERB \"<p>This is another paragraph<\/p>\\n\"))))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-db08ab08","sections":"(\\description (TEXT \"Title\"))\n(\\details (TEXT \"List:\") (\\itemize (\\item) (TEXT \"item1\") (\\item) (TEXT \"item2\")) (TEXT \"Inline\") (\\code (RCODE \"code\")) (TEXT \"and\") (\\emph (TEXT \"emphasis\")) (TEXT \".\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-dd2506bf","sections":"(\\description (TEXT \"Before\") (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode r\\\">\"))) (\\preformatted (VERB \"x %in% 1:10\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))) (TEXT \"After\"))\n(\\title (TEXT \"Title\"))"}
-{"slug":"rx-deb9d202","sections":"(\\description (TEXT \"foo object\"))\n(\\format (TEXT \"An object of class\") (\\code (RCODE \"list\")) (TEXT \"of length 1.\"))\n(\\title (TEXT \"foo object\"))"}
+{"slug":"rx-deb9d202","sections":"(\\description (TEXT \"foo object\"))\n(\\title (TEXT \"foo object\"))"}
 {"slug":"rx-e02bf95c","sections":"(\\description (TEXT \"Class ABC\"))\n(\\section (TEXT \"Methods\") (\\describe (\\item (\\code (RCODE \"f()\")) (TEXT \"This function has a docstring\"))))\n(\\title (TEXT \"Class ABC\"))"}
 {"slug":"rx-e0e631c5","sections":"(\\description (TEXT \"Title\"))\n(\\details (TEXT \"Details 10\") (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode r\\\">\"))) (\\preformatted (VERB \"y <- x + 10\\n\") (VERB \"y\\n\") (VERB \"#> [1] 20\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-e0fc1b98","sections":"(\\description (TEXT \"A\"))\n(\\title (TEXT \"A\"))"}
@@ -148,4 +148,4 @@
 {"slug":"rx-fabb4413","sections":"(\\description (TEXT \"Description, see\") (\\code (\\link (TEXT \"name\"))) (TEXT \",\") (\\code (\\link (TEXT \"function\"))) (TEXT \",\") (\\code (\\link (TEXT \"filter\"))) (TEXT \",\") (\\code (\\link (TEXT \"bar\"))) (TEXT \",\") (\\code (\\link (TEXT \"terms\"))) (TEXT \",\") (\\code (\\link (TEXT \"abc\"))) (TEXT \".\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-fb5d2ad5","sections":"(\\description (TEXT \"Before\") (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"x %in% 1:10\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))) (TEXT \"After\"))\n(\\title (TEXT \"Title\"))"}
 {"slug":"rx-fc8242e3","sections":"(\\description (TEXT \"Description with some\") (\\itemize (\\item) (TEXT \"itemized\") (\\item) (TEXT \"list\")))\n(\\details (TEXT \"And then another one:\") (\\itemize (\\item) (TEXT \"item 1\") (\\item) (TEXT \"item 2\") (\\item) (TEXT \"item 3\")))\n(\\title (TEXT \"Title\"))"}
-{"slug":"rx-fd84eacf","sections":"(\\description (TEXT \"Description, see\") (\\linkS4class (TEXT \"linktos4\")) (TEXT \"as well.\"))\n(\\title (TEXT \"Title\"))"}
+{"slug":"rx-fd84eacf","sections":"(\\description (TEXT \"Description, see\") (\\link (TEXT \"linktos4\")) (TEXT \"as well.\"))\n(\\title (TEXT \"Title\"))"}

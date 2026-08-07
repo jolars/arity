@@ -1,3 +1,3 @@
 (\description (TEXT "Same-line shortcut links"))
-(\details (TEXT "A shortcut") (\link (TEXT "object")) (TEXT ", a function") (\code (\link (TEXT "func()"))) (TEXT ", and an S4 class") (\linkS4class (TEXT "obj")) (TEXT "all resolve as links on one line."))
+(\details (TEXT "A shortcut") (\link (TEXT "object")) (TEXT ", a function") (\code (\link (TEXT "func()"))) (TEXT ", and an S4 class") (\link (TEXT "obj")) (TEXT "all resolve as links on one line."))
 (\title (TEXT "Same-line shortcut links"))

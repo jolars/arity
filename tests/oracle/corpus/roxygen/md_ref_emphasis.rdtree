@@ -1,3 +1,3 @@
 (\description (TEXT "Reference links that contain markup are dropped"))
-(\details (TEXT "A reference is dropped because its display is not plain text, but") (\link (TEXT "plain")) (TEXT "and") (\code (\link (TEXT "code"))) (TEXT "survive while drops too."))
+(\details (TEXT "A reference") (\link (\emph (TEXT "foo"))) (TEXT "is dropped because its display is not plain text, but") (\link (TEXT "plain")) (TEXT "and") (\code (\link (TEXT "code"))) (TEXT "survive while") (\link (\code (RCODE "x")) (\code (RCODE "y"))) (TEXT "drops too."))
 (\title (TEXT "Reference links that contain markup are dropped"))

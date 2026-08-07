@@ -571,15 +571,10 @@ pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 }
                 atoms.push(inline_link_node_atom(url, display, md));
             }
-            // A reference/shortcut link whose display is not plain text is *dropped*
-            // by roxygen2's `parse_link` ("markdown links must contain plain text").
-            // The dropped link contributes nothing and — like roxygen2's `""` — does
-            // not break the surrounding text run, so it is skipped without flushing
-            // (the run keeps accumulating, coalescing the text on either side).
+            // A reference/shortcut link whose display is not plain text renders
+            // the display's resolved markup inside the `\link` body (roxygen2
+            // 8.0.0's `mdxml_link_text`; 7.x dropped such links outright).
             Inline::MdRefLink { dest, display } => {
-                if link_display_is_droppable(display) {
-                    continue;
-                }
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }
@@ -593,9 +588,6 @@ pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
                 });
             }
             Inline::MdShortcutLink { display } => {
-                if link_display_is_droppable(display) {
-                    continue;
-                }
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
                 }

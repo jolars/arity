@@ -342,10 +342,10 @@ pub(super) fn push_inline(
             out.push(Inline::MdCode(strip_code_span(t.text())));
         }
         // A markdown link leaf: the inline `[text](url)` form projects to `\href`;
-        // the reference (`[text][ref]`) and shortcut (`[dest]`) forms resolve to an
-        // `\link`/`\linkS4class` (optionally `\code`-wrapped) per roxygen2's
-        // `parse_link` (see [`resolve_md_link`]). A leaf that resolves to nothing
-        // (an unrecognized shape) falls through to literal prose.
+        // the reference (`[text][ref]`) and shortcut (`[dest]`) forms resolve to a
+        // `\link` (optionally `\code`-wrapped) per roxygen2's `parse_link` (see
+        // [`resolve_md_link`]). A leaf that resolves to nothing (an unrecognized
+        // shape) falls through to literal prose.
         NodeOrToken::Token(t)
             if t.kind() == SyntaxKind::ROXYGEN_MD_LINK && resolve_md_link(t.text()).is_some() =>
         {

@@ -7,7 +7,7 @@
 {"slug":"cm-007","sections":"(\\description (TEXT \"T\"))\n(\\details (\\itemize (\\item) (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"  foo\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\")))))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-008","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"foo\\n\") (VERB \"bar\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-009","sections":"(\\description (TEXT \"T\"))\n(\\details (\\itemize (\\item) (TEXT \"foo\") (\\itemize (\\item) (TEXT \"bar\") (\\itemize (\\item) (TEXT \"baz\")))))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-010","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"# Foo\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-010","sections":"(\\description (TEXT \"T\"))\n(\\section (TEXT \"Foo\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-011","sections":"(\\description (TEXT \"T\"))\n(\\details)\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-012","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"\\\\!\\\\\\\"\\\\#\\\\$\\\\\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-013","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"\\\\\") (UNKNOWN \"\\\\A\") (UNKNOWN \"\\\\a\") (TEXT \"\\\\ \\\\3\\\\φ\\\\«\"))\n(\\title (TEXT \"T\"))"}
@@ -22,7 +22,7 @@
 {"slug":"cm-022","sections":"(\\description (TEXT \"T\"))\n(\\details (\\href (VERB \"/bar\\\\*\") (TEXT \"foo\")))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-023","sections":"(\\description (TEXT \"T\"))\n(\\details (\\href (VERB \"/bar\\\\*\") (TEXT \"foo\")))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-024","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode foo\\\\+bar\\\">\"))) (\\preformatted (VERB \"foo\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-025","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"& © Æ Ď ¾ ℋ ⅆ ∲ ≧̸\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-025","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"  & © Æ Ď ¾ ℋ ⅆ ∲ ≧̸\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-026","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"# Ӓ Ϡ �\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-027","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"\\\" ആ ಫ\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-028","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"&nbsp &x; &#; &#x; � &#abcdef0; &ThisIsNotDefined; &hi?;\"))\n(\\title (TEXT \"T\"))"}
@@ -63,25 +63,25 @@
 {"slug":"cm-063","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"####### foo\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-064","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"#5 bolt #hashtag\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-065","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"\\\\## foo\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-066","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"# foo *bar* \\\\*baz\\\\*\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-067","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"# foo\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-068","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"### foo ## foo # foo\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-066","sections":"(\\description (TEXT \"T\"))\n(\\section (GRP (TEXT \"foo\") (\\emph (TEXT \"bar\")) (TEXT \"\\\\emph\") (LIST (TEXT \"baz}\")) (LIST)))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-067","sections":"(\\description (TEXT \"T\"))\n(\\section (TEXT \"foo\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-068","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"foo\")) (\\subsection (TEXT \"foo\")))\n(\\section (TEXT \"foo\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-069","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"# foo\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-070","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"foo # bar\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-071","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"foo\") (\\subsection (TEXT \"bar\"))))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-072","sections":"(\\description (TEXT \"T\"))\n(\\section (TEXT \"foo\") (\\subsection (TEXT \"foo\")))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-073","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"foo\")))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-074","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"foo ### b\")))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-075","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"# foo#\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-076","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"### foo \\\\### ## foo #\\\\## # foo \\\\#\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-075","sections":"(\\description (TEXT \"T\"))\n(\\section (TEXT \"foo#\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-076","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"foo \\\\###\")) (\\subsection (TEXT \"foo #\\\\##\")))\n(\\section (TEXT \"foo \\\\#\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-077","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"foo\")))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-078","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foo bar\"))\n(\\section (TEXT \"baz\") (TEXT \"Bar foo\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-079","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection))\n(\\section (\\subsection))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-080","sections":"(\\description (TEXT \"T\"))\n(\\section (GRP (TEXT \"Foo\") (\\emph (TEXT \"bar\"))) (\\subsection (GRP (TEXT \"Foo\") (\\emph (TEXT \"bar\")))))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-081","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foo *bar baz* ====\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-082","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foo *bar baz* ====\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-083","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foo ------------------------- Foo =\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-084","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foo --- Foo ----- Foo ===\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-081","sections":"(\\description (TEXT \"T\"))\n(\\section (GRP (TEXT \"Foo\") (\\emph (TEXT \"bar baz\"))))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-082","sections":"(\\description (TEXT \"T\"))\n(\\section (GRP (TEXT \"Foo\") (\\emph (TEXT \"bar baz\"))))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-083","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"Foo\")))\n(\\section (TEXT \"Foo\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-084","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"Foo\")) (\\subsection (TEXT \"Foo\")))\n(\\section (TEXT \"Foo\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-085","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"Foo\\n\") (VERB \"---\\n\") (VERB \"\\n\") (VERB \"Foo\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-086","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"Foo\")))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-087","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foo ---\"))\n(\\title (TEXT \"T\"))"}
@@ -138,7 +138,7 @@
 {"slug":"cm-138","sections":"(\\description (TEXT \"T\"))\n(\\details (\\verb (VERB \" \")) (TEXT \"aaa\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-139","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"aaa\\n\") (VERB \"~~~ ~~\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-140","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"foo\") (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"bar\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))) (TEXT \"baz\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-141","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"foo --- ~~~ bar ~~~ # baz\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-141","sections":"(\\description (TEXT \"T\"))\n(\\details (\\subsection (TEXT \"foo\") (GRP (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"bar\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))))\n(\\section (TEXT \"baz\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-142","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode ruby\\\">\"))) (\\preformatted (VERB \"def foo(x)\\n\") (VERB \"  return 3\\n\") (VERB \"end\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-143","sections":"(\\description (TEXT \"T\"))\n(\\details)\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-144","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode ;\\\">\"))) (\\preformatted) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))))\n(\\title (TEXT \"T\"))"}
@@ -226,7 +226,7 @@
 {"slug":"cm-226","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"aaa bbb\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-227","sections":"(\\description (TEXT \"T\"))\n(\\details (\\if (TEXT \"html\") (\\out (VERB \"<div class=\\\"sourceCode\\\">\"))) (\\preformatted (VERB \"aaa\\n\")) (\\if (TEXT \"html\") (\\out (VERB \"<\/div>\"))) (TEXT \"bbb\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-228","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"aaa bbb\"))\n(\\title (TEXT \"T\"))"}
-{"slug":"cm-229","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"aaa # aaa\"))\n(\\title (TEXT \"T\"))"}
+{"slug":"cm-229","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"aaa\"))\n(\\section (TEXT \"aaa\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-230","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foobarbaz\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-231","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foobarbaz\"))\n(\\title (TEXT \"T\"))"}
 {"slug":"cm-232","sections":"(\\description (TEXT \"T\"))\n(\\details (TEXT \"Foobarbaz\"))\n(\\title (TEXT \"T\"))"}

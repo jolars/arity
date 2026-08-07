@@ -109,14 +109,14 @@ pub(super) fn project_block_impl(
                 // markdown-OFF mode `markdown_if_active`'s else-branch runs
                 // `rdComplete(x$raw)` unconditionally on the whole `title: body`
                 // value and replaces it with "" on a brace imbalance. `roxy_tag_rd`
-                // then splits "" on its first `:` → title="", content=NA, rendering
-                // `\section{}{NA}` → `(\section (TEXT "NA"))`. As with `@slot`/
-                // `@field`, the raw value's only rd_complete-relevant chars
-                // (`{}`, `\`, `%`) never appear in the scaffolding and `is_code =
-                // FALSE` ignores quotes, so the full section source scans
-                // identically to `x$raw`.
+                // then splits "" on its first `:` (`re_split_half`) → title=""
+                // and content="", rendering `\section{}{}` → a childless
+                // `(\section)`. As with `@slot`/`@field`, the raw value's only
+                // rd_complete-relevant chars (`{}`, `\`, `%`) never appear in the
+                // scaffolding and `is_code = FALSE` ignores quotes, so the full
+                // section source scans identically to `x$raw`.
                 "section" if !md && !rd_complete(&section.syntax().text().to_string()) => {
-                    out.push("(\\section (TEXT \"NA\"))".to_string());
+                    out.push("(\\section)".to_string());
                 }
                 "examples" | "examplesIf" => has_examples = true,
                 _ => tag_sections.push((name, body)),
@@ -675,32 +675,11 @@ pub(super) fn emit_section_with_headings(
     if emit_section_with_list_hoist(out, macro_name, body, md, drop_on_incomplete) {
         return;
     }
-    // A **trailing** level-1 heading whose section body renders empty (cm-010:
-    // `# Foo` as the field's last block) crashes roxygen2's section splicer:
-    // `strsplit` drops the trailing empty piece, so `structure(names = titles)`
-    // errors ("'names' attribute [2] must be the same length as the vector
-    // [1]", `mdxml_children_to_rd_top`, R/markdown.R) and `markdown()` falls
-    // back to the **raw unprocessed text** — the whole tag value renders as if
-    // markdown never ran. An *interior* empty section is kept by `strsplit`
-    // and a trailing `\subsection`/prose piece is non-empty, so only this exact
-    // shape fails.
-    if let Some(pos) = body
-        .iter()
-        .rposition(|inl| matches!(inl, Inline::MdHeading(_)))
-    {
-        let Inline::MdHeading(node) = &body[pos] else {
-            unreachable!("rposition matched MdHeading");
-        };
-        let (level, _) = parse_md_heading(node);
-        if level == 1
-            && !(md && setext_title_strip(node).is_some_and(|s| s.title.is_none()))
-            && serialize_prose_with_linkrefs(&body[pos + 1..], md).is_empty()
-            && let Some(atoms) = section_raw_fallback_atoms(macro_name, node)
-        {
-            out.extend(atoms);
-            return;
-        }
-    }
+    // (A trailing level-1 heading with an empty section body used to crash
+    // roxygen2 7.x's section splicer and abort the whole markdown pass;
+    // 8.0.0 pads `strsplit`'s dropped trailing empties to the title count
+    // (`mdxml_children_to_rd_top`, R/markdown.R), so an empty trailing
+    // section now renders like any other and no raw-text fallback exists.)
     // Segment the body: the leading run, then one (heading, following-run) per
     // heading marker in source order. Under `@md`, a setext heading's title first
     // sheds any leading link-reference definitions — cmark strips them from the
@@ -920,64 +899,6 @@ fn setext_title_strip(node: &SyntaxNode) -> Option<SetextStrip> {
     })
 }
 
-/// The raw-text fallback for a `@description`/`@details` field whose markdown
-/// processing roxygen2 aborts (the trailing-empty-section splicer crash, see
-/// [`emit_section_with_headings`]): `markdown()` returns the tag's **raw**
-/// value, so the field renders through the plain Rd path as if markdown never
-/// ran. The enclosing `ROXYGEN_SECTION` is recovered from the heading node (the
-/// CST is lossless), its raw value lines are re-synthesized as a **non-`@md`**
-/// fragment, and the fragment's own projection supplies the atoms — the same
-/// reparse mould as `quote_flat_reparse`. `None` when the section's first line
-/// does not carry the `@<macro_name>` head (the intro-derived description has
-/// no tag line — backlog), which falls through to the ordinary outline.
-fn section_raw_fallback_atoms(macro_name: &str, heading: &SyntaxNode) -> Option<Vec<String>> {
-    let section = heading
-        .ancestors()
-        .find(|n| n.kind() == SyntaxKind::ROXYGEN_SECTION)?;
-    let text = section.text().to_string();
-    let mut value_lines: Vec<String> = Vec::new();
-    for (idx, line) in text.split('\n').enumerate() {
-        let content = strip_marker(line);
-        if idx == 0 {
-            // The tag-head line: drop `@<macro_name>` and the one whitespace
-            // character roxygen2's tokenizer strips after the tag; a remaining
-            // same-line value becomes the first value line.
-            let rest = content.strip_prefix('@')?.strip_prefix(macro_name)?;
-            if rest.is_empty() {
-                continue;
-            }
-            let rest = rest.strip_prefix([' ', '\t']).unwrap_or(rest);
-            value_lines.push(rest.to_string());
-        } else {
-            value_lines.push(content.to_string());
-        }
-    }
-    while value_lines.last().is_some_and(|l| l.trim().is_empty()) {
-        value_lines.pop();
-    }
-    let mut src = format!("#' @{macro_name}\n");
-    for line in &value_lines {
-        if line.is_empty() {
-            src.push_str("#'\n");
-        } else {
-            src.push_str("#' ");
-            src.push_str(line);
-            src.push('\n');
-        }
-    }
-    src.push_str("#' @name x\nNULL\n");
-    // The fragment is mode-default (markdown off — value lines cannot open a
-    // tag, so no `@md` can sneak in), so its projection is the plain Rd path;
-    // headings are not markdown there, hence no recursion back into this
-    // fallback.
-    let atoms: Vec<String> = project_to_rd(&src)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect();
-    Some(atoms)
-}
-
 /// Render a heading frame as `(\<macro_name> <title> <body>)` — a two-arg
 /// structural macro (like `@section`): the title, then the body. Each argument is
 /// bare when a single atom, `(GRP …)`-wrapped when several, absent when empty. The
@@ -996,7 +917,7 @@ pub(super) fn render_heading_frame(
     seed: &LinkDefs,
 ) -> String {
     let f = &frames[idx];
-    let title_atoms = frame_title_atoms(f, md, seed, true);
+    let mut title_atoms = frame_title_atoms(f, md, seed, true);
     let mut body_atoms = serialize_prose_seeded(&f.body, md, seed);
     for &c in &f.children {
         body_atoms.push(render_heading_frame(frames, c, md, "subsection", seed));
@@ -1007,6 +928,23 @@ pub(super) fn render_heading_frame(
     if f.level == 1 {
         trim_field_atoms(&mut body_atoms);
     }
+    // parse_Rd pairs backslashes left-to-right over the rendered
+    // `\section{title}{body}` string, so a title whose final brace group's
+    // content ends in an **odd** backslash run has that group's closing brace
+    // escaped (`\\emph{baz\}` — the demoted macro's argument renders verbatim,
+    // cm-066): the group re-closes on the *title's* own closing brace (its
+    // content gains the escaped `}` as a literal), the body's `{…}` then opens
+    // as a bare group *inside* the still-open title, and the body's closer ends
+    // the title — so the body folds into the title argument and the `\section`
+    // renders with a single argument (parse_Rd recovers at end of input).
+    if md
+        && let Some(last) = title_atoms.last_mut()
+        && let Some(repaired) = extend_escaped_list_closer(last)
+    {
+        *last = repaired;
+        title_atoms.push(format!("(LIST{})", prefix_space(&body_atoms.join(" "))));
+        body_atoms.clear();
+    }
     let mut inner = grp_arg(&title_atoms);
     let body_arg = grp_arg(&body_atoms);
     if !body_arg.is_empty() {
@@ -1016,6 +954,36 @@ pub(super) fn render_heading_frame(
         inner.push_str(&body_arg);
     }
     format!("(\\{macro_name}{})", prefix_space(&inner))
+}
+
+/// If `atom` is a `(LIST …)` whose final `TEXT` leaf's decoded content ends in
+/// an **odd** backslash run — so the group's rendered closing brace is escaped
+/// by parse_Rd's left-to-right pairing — return the repaired atom: the odd
+/// trailing backslash is consumed by the pairing and the escaped `}` joins the
+/// content as a literal (`baz\` → `baz}`). `None` when the shape does not apply
+/// (not a LIST, no final TEXT leaf, or an even run).
+fn extend_escaped_list_closer(atom: &str) -> Option<String> {
+    let inner = atom.strip_prefix("(LIST ")?.strip_suffix(')')?;
+    let text_start = inner.rfind("(TEXT \"")?;
+    // The final child must be that TEXT leaf (nothing but its closer follows).
+    let leaf = inner[text_start..].strip_suffix(')')?;
+    let bytes = leaf.as_bytes();
+    let mut i = leaf.find('"')?;
+    let text = read_quoted(bytes, &mut i);
+    if i != leaf.len() {
+        return None;
+    }
+    let run = text.chars().rev().take_while(|&c| c == '\\').count();
+    if run % 2 == 0 {
+        return None;
+    }
+    let mut repaired = text[..text.len() - 1].to_string();
+    repaired.push('}');
+    Some(format!(
+        "(LIST {}(TEXT {}))",
+        &inner[..text_start],
+        encode_text(&repaired)
+    ))
 }
 
 /// A heading frame's title as serialized atoms, resolving a field-wide link
@@ -1438,14 +1406,15 @@ fn section_rd_complete_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> boo
 /// (emphasis, bare brace groups, resolved list items, and a link's own display).
 /// Reference and shortcut links (`\link`, whose topic option is dropped) never carry
 /// the destination into a brace argument, so only the inline-link (`\href`) form is
-/// checked.
+/// checked — but a kept link's *rendered display* is checked too
+/// ([`link_display_render_drops`]).
 fn body_has_md_drop(body: &[Inline]) -> bool {
     body.iter().any(|inl| match inl {
         Inline::MdInlineLink { url, display } => {
             md_href_dest_drops(url) || body_has_md_drop(display)
         }
         Inline::MdRefLink { display, .. } | Inline::MdShortcutLink { display } => {
-            body_has_md_drop(display)
+            body_has_md_drop(display) || link_display_render_drops(display)
         }
         Inline::MdEmphasis { children, .. } => body_has_md_drop(children),
         Inline::BraceGroup(children) => body_has_md_drop(children),
@@ -1453,6 +1422,29 @@ fn body_has_md_drop(body: &[Inline]) -> bool {
         Inline::MdCodeBlock(node) => md_fence_info_drops(node),
         _ => false,
     })
+}
+
+/// Whether a kept reference/shortcut link's **rendered display** makes the field
+/// brace-incomplete, so roxygen2's `rdComplete` fails and the whole section drops.
+/// roxygen2 8.0.0 renders a non-plain display inside the generated
+/// `\link[topic]{…}` (`mdxml_link_text`, which renders text **verbatim** — no
+/// backslash escaping), so cmark-derived content like an emphasis whose text ends
+/// in a backslash renders `\emph{b\}`: the trailing `\` escapes the macro's own
+/// closing brace and the whole field string comes up brace-short (`[a\*b\*]` →
+/// display `a\` + emph `b\`). The atom scan cannot see this — the generated
+/// `\link` head is fragile to [`sexpr_to_rd`], which treats its argument as raw
+/// and balanced (right for a *user-written* `\link{…}`, wrong for a generated
+/// one) — so the display subtree is scanned directly here, in isolation (prose
+/// around a link never contributes a bare unescaped `}` that could re-balance
+/// it). A plain-text or single-code-span display renders through the flat
+/// shortcut/code paths and is not subject to `mdxml_link_text`'s verbatim
+/// rendering.
+fn link_display_render_drops(display: &[Inline]) -> bool {
+    let plain = display.iter().all(|inl| matches!(inl, Inline::Text(_)));
+    if plain || matches!(display, [Inline::MdCode(_)]) {
+        return false;
+    }
+    !section_atoms_rd_complete(&serialize_inlines(display, true), true)
 }
 
 /// Whether an inline-link destination `url` (the parsed destination — the lexer's

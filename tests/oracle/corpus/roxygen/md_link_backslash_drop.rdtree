@@ -1,3 +1,3 @@
 (\description (TEXT "Escaped emphasis in a link display drops the link"))
-(\details (TEXT "A display becomes emphasis after double-escaping, so the link is dropped while the surrounding prose stays contiguous."))
+(\details)
 (\title (TEXT "Escaped emphasis in a link display drops the link"))

@@ -878,16 +878,20 @@ fn md_macro_arg_resolution_is_off_without_md() {
 }
 
 #[test]
-fn md_link_display_with_active_markdown_macro_drops() {
+fn md_link_display_with_active_markdown_macro_renders() {
     // A shortcut link whose display carries a macro with cmark-active markdown
-    // (`\emph{*x*}`) is dropped ("markdown links must contain plain text"); the
-    // surrounding prose coalesces. A macro with a literal arg (`\emph{x}`) keeps
-    // the link, and a fragile `\code{*x*}` keeps it too (its body is protected).
-    let drop = "#' @md\n#' @title T\n#' @details See [a\\emph{*x*}] here.\n#' @name x\nNULL\n";
+    // (`\emph{*x*}`) keeps the link and renders the resolved markup inside the
+    // `\link` body (roxygen2 8.0.0's `mdxml_link_text`; 7.x dropped such
+    // links). A macro with a literal arg (`\emph{x}`) links as a re-parsed Rd
+    // subtree, and a fragile `\code{*x*}` keeps its body protected.
+    let active = "#' @md\n#' @title T\n#' @details See [a\\emph{*x*}] here.\n#' @name x\nNULL\n";
     assert!(
-        project_to_rd(drop).contains("(\\details (TEXT \"See here.\"))"),
+        project_to_rd(active).contains(
+            "(\\details (TEXT \"See\") (\\link (TEXT \"a\") (\\emph (\\emph (TEXT \"x\")))) \
+             (TEXT \"here.\"))"
+        ),
         "{}",
-        project_to_rd(drop)
+        project_to_rd(active)
     );
 
     let keep_plain = "#' @md\n#' @title T\n#' @details See [a\\emph{x}] here.\n#' @name x\nNULL\n";
@@ -904,15 +908,18 @@ fn md_link_display_with_active_markdown_macro_drops() {
         project_to_rd(keep_code)
     );
 
-    // Recursive: a nested non-fragile `\strong{*y*}` makes the display active.
-    // (The display carries leading text `x`, so its truncated link-reference
-    // label stays self-consistent — a *macro-only* display like `[\emph{…}]`
-    // hits the empty-label demotion edge and is deferred to backlog.)
-    let drop_nested = "#' @md\n#' @title T\n#' @details See [x \\emph{a \\strong{*y*}}] here.\n#' @name x\nNULL\n";
+    // Recursive: a nested non-fragile `\strong{*y*}` resolves inside the
+    // rendered display too. (The display carries leading text `x`, so its
+    // truncated link-reference label stays self-consistent — a *macro-only*
+    // display like `[\emph{…}]` hits the empty-label demotion edge and is
+    // deferred to backlog.)
+    let nested = "#' @md\n#' @title T\n#' @details See [x \\emph{a \\strong{*y*}}] here.\n#' @name x\nNULL\n";
     assert!(
-        project_to_rd(drop_nested).contains("(\\details (TEXT \"See here.\"))"),
+        project_to_rd(nested).contains(
+            "(\\link (TEXT \"x\") (\\emph (TEXT \"a\") (\\strong (\\emph (TEXT \"y\")))))"
+        ),
         "{}",
-        project_to_rd(drop_nested)
+        project_to_rd(nested)
     );
 }
 
@@ -1017,12 +1024,13 @@ fn inline_link_code_span_text_subrenders() {
 }
 
 #[test]
-fn non_plain_shortcut_links_are_dropped() {
-    // roxygen2's `parse_link` rejects a shortcut/reference link whose display is
-    // not plain text ("markdown links must contain plain text") and renders it as
-    // empty, leaving the surrounding prose contiguous: `[*foo*]` (emphasis) and
-    // `` [`x` `y`] `` (two code spans) drop, while `[a_b]` (intraword `_` is not
-    // emphasis) and `` [`code`] `` (a sole code span) survive.
+fn non_plain_shortcut_links_render_their_display() {
+    // A shortcut link whose display is not plain text renders the resolved
+    // markup inside the `\link` body (roxygen2 8.0.0's `mdxml_link_text`; 7.x
+    // dropped such links): `[*foo*]` (emphasis) and `` [`x` `y`] `` (two code
+    // spans) keep their links, while `[a_b]` (intraword `_` is not emphasis)
+    // links flat and `` [`code`] `` (a sole code span) unwraps to
+    // `\code{\link{…}}`.
     let src = "#' @details\n\
                #' A shortcut [*foo*] is dropped, but [a_b] and [`code`] survive \
                while [`x` `y`] drops too.\n\
@@ -1031,20 +1039,21 @@ fn non_plain_shortcut_links_are_dropped() {
                NULL\n";
     assert_eq!(
         project_to_rd(src),
-        "(\\details (TEXT \"A shortcut is dropped, but\") (\\link (TEXT \"a_b\")) \
-         (TEXT \"and\") (\\code (\\link (TEXT \"code\"))) (TEXT \"survive while drops too.\"))"
+        "(\\details (TEXT \"A shortcut\") (\\link (\\emph (TEXT \"foo\"))) \
+         (TEXT \"is dropped, but\") (\\link (TEXT \"a_b\")) \
+         (TEXT \"and\") (\\code (\\link (TEXT \"code\"))) (TEXT \"survive while\") \
+         (\\link (\\code (RCODE \"x\")) (\\code (RCODE \"y\"))) (TEXT \"drops too.\"))"
     );
 }
 
 #[test]
-fn non_plain_reference_links_are_dropped() {
-    // The reference (`[text][ref]`) analog of the shortcut drop: a reference
-    // whose synthesized `R:` destination links as `\link` requires plain-text
-    // display, so `[*foo*][r1]` (emphasis) and `` [`x` `y`][r4] `` (two code
-    // spans) drop, while `[plain][r2]` (plain) and `` [`code`][r3] `` (a sole
-    // code span) survive. All reference displays are now carved onto the arena
-    // (`same_line_bracket_opener`) as `ROXYGEN_MD_LINK` nodes, reaching the same
-    // projection the opaque leaf used to.
+fn non_plain_reference_links_render_their_display() {
+    // A reference (`[text][ref]`) whose display is not plain text renders the
+    // resolved markup inside the `\link` body (roxygen2 8.0.0's
+    // `mdxml_link_text`; 7.x dropped such links): `[*foo*][r1]` (emphasis) and
+    // `` [`x` `y`][r4] `` (two code spans) keep their links, `[plain][r2]`
+    // links flat, and `` [`code`][r3] `` (a sole code span) unwraps to
+    // `\code{\link{…}}`.
     let src = "#' @details\n\
                #' A reference [*foo*][r1] is dropped, but [plain][r2] and \
                [`code`][r3] survive while [`x` `y`][r4] drops too.\n\
@@ -1053,29 +1062,44 @@ fn non_plain_reference_links_are_dropped() {
                NULL\n";
     assert_eq!(
         project_to_rd(src),
-        "(\\details (TEXT \"A reference is dropped, but\") (\\link (TEXT \"plain\")) \
-         (TEXT \"and\") (\\code (\\link (TEXT \"code\"))) (TEXT \"survive while drops too.\"))"
+        "(\\details (TEXT \"A reference\") (\\link (\\emph (TEXT \"foo\"))) \
+         (TEXT \"is dropped, but\") (\\link (TEXT \"plain\")) \
+         (TEXT \"and\") (\\code (\\link (TEXT \"code\"))) (TEXT \"survive while\") \
+         (\\link (\\code (RCODE \"x\")) (\\code (RCODE \"y\"))) (TEXT \"drops too.\"))"
     );
 }
 
 #[test]
-fn link_display_droppable_boundary() {
-    // A sole code span is unwrapped and allowed; pure text is allowed; anything
-    // richer (emphasis, a second code span, an autolink) drops the link.
-    assert!(!link_display_is_droppable(&[Inline::MdCode("x".into())]));
-    assert!(!link_display_is_droppable(&[Inline::Text("a_b".into())]));
-    assert!(link_display_is_droppable(&[Inline::MdEmphasis {
-        strong: false,
-        children: vec![Inline::Text("foo".into())],
-    }]));
-    assert!(link_display_is_droppable(&[
-        Inline::MdCode("x".into()),
-        Inline::Text(" ".into()),
-        Inline::MdCode("y".into()),
-    ]));
-    assert!(link_display_is_droppable(&[Inline::MdLink(
-        "<https://e.org>".into()
-    )]));
+fn link_display_render_boundary() {
+    // A sole code span unwraps (`\code{\link{…}}`); pure text links flat;
+    // anything richer (emphasis, a second code span) renders inside the
+    // `\link` body (roxygen2 8.0.0; 7.x dropped such links).
+    assert_eq!(
+        ref_link_node_atom(&[Inline::MdCode("x".into())], "y"),
+        "(\\code (\\link (TEXT \"x\")))"
+    );
+    assert_eq!(
+        ref_link_node_atom(&[Inline::Text("a_b".into())], "y"),
+        "(\\link (TEXT \"a_b\"))"
+    );
+    assert_eq!(
+        ref_link_node_atom(
+            &[Inline::MdEmphasis {
+                strong: false,
+                children: vec![Inline::Text("foo".into())],
+            }],
+            "y"
+        ),
+        "(\\link (\\emph (TEXT \"foo\")))"
+    );
+    assert_eq!(
+        shortcut_link_node_atom(&[
+            Inline::MdCode("x".into()),
+            Inline::Text(" ".into()),
+            Inline::MdCode("y".into()),
+        ]),
+        "(\\link (\\code (RCODE \"x\")) (\\code (RCODE \"y\")))"
+    );
 }
 
 #[test]
@@ -1507,18 +1531,20 @@ fn slot_with_percent_commented_brace_survives() {
 }
 
 #[test]
-fn section_with_unbalanced_brace_drops_to_na_md_off() {
+fn section_with_unbalanced_brace_drops_to_empty_md_off() {
     // markdown-OFF: `markdown_if_active`'s else-branch runs `rdComplete(x$raw)`
     // unconditionally on the whole `@section` value; a brace imbalance replaces
-    // it with "". `roxy_tag_rd` then splits "" on ":" → title="", content=NA →
-    // `\section{}{NA}` → `(\section (TEXT "NA"))`.
+    // it with "". `roxy_tag_rd` then splits "" on its first `:`
+    // (`re_split_half`) → title="" and content="" → `\section{}{}` → a
+    // childless `(\section)`. (roxygen2 7.x's `str_split` yielded content=NA
+    // here, rendering a literal "NA".)
     let src = "#' @title T\n\
                #' @section Heading:\n\
                #'   body with brace {\n\
                #' @name x\n\
                NULL\n";
     let out = project_to_rd(src);
-    assert!(out.contains("(\\section (TEXT \"NA\"))"), "got: {out}");
+    assert!(out.contains("(\\section)"), "got: {out}");
     assert!(!out.contains("Heading"), "dropped title leaked: {out}");
 }
 
@@ -1619,11 +1645,12 @@ fn nbsp_cannot_flank_emphasis_stays_literal() {
 }
 
 #[test]
-fn field_edge_unicode_whitespace_trims() {
-    // roxygen2 trims the rendered field with stringr's `str_trim` (the
-    // Unicode White_Space set --- `mdxml_children_to_rd_top`, R/markdown.R),
-    // so an entity-decoded NBSP at either field edge vanishes while an
-    // interior one survives. (cm-025)
+fn field_edge_nbsp_survives_trimws() {
+    // roxygen2 trims the rendered field with base `trimws` (exactly
+    // `[ \t\r\n]` --- `mdxml_children_to_rd_top`, R/markdown.R; 8.0.0 replaced
+    // stringr's Unicode `str_trim`), so an entity-decoded NBSP at a field edge
+    // *stops* the trim and survives, interior ASCII whitespace behind it
+    // included. (cm-025)
     let src = "#' @md\n\
                #' @title T\n\
                #' @details\n\
@@ -1631,19 +1658,19 @@ fn field_edge_unicode_whitespace_trims() {
                #' @name spec\n\
                NULL\n";
     assert!(
-        project_to_rd(src).contains("(\\details (TEXT \"a\u{a0}b\"))"),
+        project_to_rd(src).contains("(\\details (TEXT \"\u{a0} a\u{a0}b \u{a0}\"))"),
         "got: {}",
         project_to_rd(src)
     );
-    // Non-md: `tag_value` runs the same `str_trim` on the raw value, so a
-    // literal NBSP at the field edge trims there too.
+    // Non-md: `tag_value` runs the same `trimws` on the raw value, so a
+    // literal NBSP at the field edge survives there too.
     let src = "#' @title T\n\
                #' @details\n\
                #' \u{a0} lead\n\
                #' @name spec\n\
                NULL\n";
     assert!(
-        project_to_rd(src).contains("(\\details (TEXT \"lead\"))"),
+        project_to_rd(src).contains("(\\details (TEXT \"\u{a0} lead\"))"),
         "got: {}",
         project_to_rd(src)
     );
@@ -1652,9 +1679,10 @@ fn field_edge_unicode_whitespace_trims() {
 #[test]
 fn section_piece_edges_trim_but_subsection_interior_survives() {
     // A level-1 heading emits only the split marker (no braces), so the
-    // `\section` body is a whole piece and `str_trim(secs)` trims both its
-    // edges; a `\subsection` body sits inside literal `{`...`}` in the
-    // rendered string --- interior, never trimmed. (engine-probed)
+    // `\section` body is a whole piece and `trimws(secs)` trims both its
+    // edges — stopping at a non-`[ \t\r\n]` char like NBSP; a `\subsection`
+    // body sits inside literal `{`...`}` in the rendered string --- interior,
+    // never trimmed. (engine-probed)
     let src = "#' @md\n\
                #' @title T\n\
                #' @details\n\
@@ -1665,9 +1693,12 @@ fn section_piece_edges_trim_but_subsection_interior_survives() {
                #' @name spec\n\
                NULL\n";
     let out = project_to_rd(src);
-    assert!(out.contains("(\\details (TEXT \"intro\"))"), "got: {out}");
     assert!(
-        out.contains("(\\section (TEXT \"Head\") (TEXT \"secbody\"))"),
+        out.contains("(\\details (TEXT \"intro \u{a0}\"))"),
+        "got: {out}"
+    );
+    assert!(
+        out.contains("(\\section (TEXT \"Head\") (TEXT \"\u{a0} secbody \u{a0}\"))"),
         "got: {out}"
     );
     let src = "#' @md\n\
@@ -1687,10 +1718,11 @@ fn section_piece_edges_trim_but_subsection_interior_survives() {
 
 #[test]
 fn section_tag_value_trims_as_one_string() {
-    // `@section Title: content` markdown-processes and `str_trim`s the
+    // `@section Title: content` markdown-processes and `trimws`-trims the
     // *whole* value before the `:` split, so the title carries the field's
-    // leading edge and the content its trailing edge; the edges at the
-    // split are interior and keep their whitespace. (engine-probed)
+    // leading edge and the content its trailing edge — and an edge NBSP stops
+    // the trim; the edges at the split are interior and keep their whitespace.
+    // (engine-probed)
     let src = "#' @md\n\
                #' @title T\n\
                #' @section &nbsp;Head&nbsp;:\n\
@@ -1698,7 +1730,8 @@ fn section_tag_value_trims_as_one_string() {
                #' @name spec\n\
                NULL\n";
     assert!(
-        project_to_rd(src).contains("(\\section (TEXT \"Head\u{a0}\") (TEXT \"\u{a0} content\"))"),
+        project_to_rd(src)
+            .contains("(\\section (TEXT \"\u{a0}Head\u{a0}\") (TEXT \"\u{a0} content \u{a0}\"))"),
         "got: {}",
         project_to_rd(src)
     );
@@ -3350,31 +3383,36 @@ fn backslash_word_in_link_display_renders_as_rd_macro() {
 }
 
 #[test]
-fn escaped_emphasis_in_link_display_drops_the_link() {
-    // `[a\*b\*]` resolves an emphasis node in its display (a non-text child), so
-    // roxygen2's `parse_link` drops the whole link ("must contain plain text")
-    // and the surrounding prose coalesces — unlike a backslash *word*, which is
-    // markdown-level plain text and is kept.
+fn escaped_emphasis_in_link_display_drops_the_field() {
+    // `[a\*b\*]` resolves an emphasis whose text ends in a backslash (`b\`), so
+    // the kept link's display renders `a\\emph{b\}` (`mdxml_link_text` renders
+    // text verbatim) — the trailing `\` escapes the emphasis's own closing
+    // brace, the field string comes up brace-short, and roxygen2's field-level
+    // `rdComplete` drops the **whole** section ("has mismatched braces"), not
+    // just the link ([`link_display_render_drops`]).
     let src = "#' @md\n#' @title T\n#' @details A [a\\*b\\*] gap.\n\
                #' @name spec\nNULL\n";
     assert!(
-        project_to_rd(src).contains("(\\details (TEXT \"A gap.\"))"),
+        project_to_rd(src).contains("(\\details)"),
         "got: {}",
         project_to_rd(src)
     );
 }
 
 #[test]
-fn pure_macro_active_link_display_drops() {
+fn pure_macro_active_link_display_renders() {
     // A shortcut whose display is a *pure* macro (no surrounding text) carrying
-    // cmark-active markdown (`[\emph{*x*}]`) drops to empty like any non-plain
-    // display — the link must reach the drop site, not be spuriously demoted to a
-    // literal `[]` by an empty link-reference label. Regression guard for the
-    // pure-macro label fix (`link_label_text` includes the macro source).
+    // cmark-active markdown (`[\emph{*x*}]`) keeps the link and renders the
+    // resolved markup in its body like any non-plain display — the link must
+    // reach the render site, not be spuriously demoted to a literal `[]` by an
+    // empty link-reference label. Regression guard for the pure-macro label fix
+    // (`link_label_text` includes the macro source).
     let src = "#' @md\n#' @title T\n#' @details A [\\emph{*x*}] gap.\n\
                #' @name spec\nNULL\n";
     assert!(
-        project_to_rd(src).contains("(\\details (TEXT \"A gap.\"))"),
+        project_to_rd(src).contains(
+            "(\\details (TEXT \"A\") (\\link (\\emph (\\emph (TEXT \"x\")))) (TEXT \"gap.\"))"
+        ),
         "got: {}",
         project_to_rd(src)
     );
@@ -3718,26 +3756,23 @@ fn in_item_deeper_heading_renders_subsection() {
 }
 
 #[test]
-fn trailing_empty_heading_section_falls_back_to_raw_text() {
-    // A trailing level-1 heading whose section body renders empty crashes
-    // roxygen2's section splicer (`strsplit` drops the trailing empty
-    // piece, `structure(names = )` errors) and `markdown()` returns the
-    // **raw** value — the whole field renders unprocessed (cm-010,
-    // engine-probed): the heading stays literal `# Foo` prose and earlier
-    // markdown (emphasis) stays raw too.
+fn trailing_empty_heading_section_renders() {
+    // A trailing level-1 heading with an empty section body renders like any
+    // other section (cm-010): roxygen2 8.0.0 pads `strsplit`'s dropped
+    // trailing empties to the title count (`mdxml_children_to_rd_top`,
+    // R/markdown.R), so the section survives with an empty body and earlier
+    // markdown (emphasis) resolves normally. (7.x crashed the splicer here and
+    // fell back to the whole field's raw text.)
     for (details, want) in [
-        ("#' # Foo\n", "(\\details (TEXT \"# Foo\"))"),
+        ("#' # Foo\n", "(\\section (TEXT \"Foo\"))"),
         (
             "#' body *raw*\n#'\n#' # Foo\n",
-            "(\\details (TEXT \"body *raw* # Foo\"))",
+            "(\\details (TEXT \"body\") (\\emph (TEXT \"raw\")))\n(\\section (TEXT \"Foo\"))",
         ),
     ] {
         let src = format!("#' @md\n#' @title T\n#' @details\n{details}#' @name spec\nNULL\n");
         let out = project_to_rd(&src);
-        assert!(
-            out.contains(want) && !out.contains("\\section"),
-            "for {details:?} got: {out}"
-        );
+        assert!(out.contains(want), "for {details:?} got: {out}");
     }
     // A trailing `\subsection` (or any non-empty tail) rescues the split:
     // the last piece is non-empty, so the outline renders normally. An

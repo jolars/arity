@@ -1,3 +1,3 @@
 (\description (TEXT "Link displays whose macro argument carries active markdown"))
-(\details (TEXT "A shortcut is dropped because its macro argument is active markdown, but") (\link (TEXT "a") (\emph (TEXT "x"))) (TEXT "survives (literal argument) and") (\link (TEXT "a") (\code (RCODE "*z*"))) (TEXT "too (fragile macro, body protected)."))
+(\details (TEXT "A shortcut") (\link (TEXT "a") (\emph (\emph (TEXT "x")))) (TEXT "is dropped because its macro argument is active markdown, but") (\link (TEXT "a") (\emph (TEXT "x"))) (TEXT "survives (literal argument) and") (\link (TEXT "a") (\code (RCODE "*z*"))) (TEXT "too (fragile macro, body protected)."))
 (\title (TEXT "Link displays whose macro argument carries active markdown"))

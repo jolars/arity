@@ -167,13 +167,20 @@ pub(super) fn is_posix_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
 }
 
-/// Trim a rendered field **piece** at its edges the way roxygen2 does: stringr's
-/// `str_trim` over the whole piece string (`mdxml_children_to_rd_top`'s
-/// `str_trim(rd)`/`str_trim(secs)`, R/markdown.R; the non-md `tag_value` runs the
-/// same trim on the raw value). `str_trim` strips the Unicode **White_Space** set
-/// — exactly Rust's `char::is_whitespace` — which is wider than the ASCII set
-/// [`norm_ws`] already trims, so an edge NBSP/NEL vanishes here while an interior
-/// one survives (cm-025).
+/// Base R `trimws`'s default whitespace set — literally the regex `[ \t\r\n]`
+/// (R's documented default). Narrower than [`is_posix_space`]: no `\v`/`\f`.
+pub(super) fn is_trimws_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\r' | '\n')
+}
+
+/// Trim a rendered field **piece** at its edges the way roxygen2 does: base R's
+/// `trimws` over the whole piece string (`mdxml_children_to_rd_top`'s
+/// `trimws(rd)`/`trimws(secs)`, R/markdown.R; the non-md `tag_value` runs the
+/// same trim on the raw value). `trimws`'s default set is exactly
+/// `[ \t\r\n]` ([`is_trimws_space`]) — narrower than both Unicode White_Space
+/// and POSIX `[[:space:]]` (no `\f`/`\v`), so an edge NBSP survives the trim
+/// (cm-025; roxygen2 8.0.0 replaced stringr's Unicode `str_trim` when it
+/// dropped the stringr dependency).
 ///
 /// At the atom level the piece's leading edge is the front of its first `(TEXT …)`
 /// atoms and the trailing edge the back of its last; a non-TEXT edge atom renders
@@ -192,7 +199,7 @@ pub(super) fn trim_field_atoms(atoms: &mut Vec<String>) {
 /// (engine-probed).
 pub(super) fn trim_field_atoms_start(atoms: &mut Vec<String>) {
     while let Some(text) = atoms.first().and_then(|a| decode_text_atom(a)) {
-        let trimmed = text.trim_start();
+        let trimmed = text.trim_start_matches(is_trimws_space);
         if trimmed.is_empty() {
             atoms.remove(0);
         } else {
@@ -207,7 +214,7 @@ pub(super) fn trim_field_atoms_start(atoms: &mut Vec<String>) {
 /// The trailing half of [`trim_field_atoms`] (see [`trim_field_atoms_start`]).
 pub(super) fn trim_field_atoms_end(atoms: &mut Vec<String>) {
     while let Some(text) = atoms.last().and_then(|a| decode_text_atom(a)) {
-        let trimmed = text.trim_end();
+        let trimmed = text.trim_end_matches(is_trimws_space);
         if trimmed.is_empty() {
             atoms.pop();
         } else {

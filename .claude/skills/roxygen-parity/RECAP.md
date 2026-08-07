@@ -14,11 +14,13 @@ reads this first.
 
 ## Status
 
-**Backlog closed.** Projector gate **1003 matching (all allowlisted), 0
-divergent, 15 blocked** of 1018 pinned. The **whole CommonMark spec (655/655)**
-matches; the harvested corpus is fully closed. Curated fixed-point **212/212**
-preserving; harvested fixed-point 216/217 (1 skipped). The measured backlog is
-**exhausted** — no divergence currently drives parser growth.
+**Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
+`roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
+Projector gate **1007 matching (all allowlisted), 0 divergent, 12 blocked** of
+1019 pinned. The **whole CommonMark spec (655/655)** matches; the harvested
+corpus is fully closed. Curated fixed-point **212/212** preserving (verified
+against 8.0.0). The measured backlog is **exhausted** — no divergence currently
+drives parser growth.
 
 **Next growth comes from** either (a) harvesting a fresh/larger roxygen2 corpus
 to surface new gaps, or (b) closing a documented trap-backlog item. Known open
@@ -240,7 +242,58 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-07-27) — same-`@name` topic merge (rx-aef0e809) — BACKLOG CLOSED
+## Latest session (2026-08-07) — oracle bump to roxygen2 8.0.0 — CHURN ABSORBED
+
+devenv brought roxygen2 8.0.0 (and commonmark 2.0.0); the pin, `roxygen2-ref`, and
+**every** pin corpus were re-minted against it (`task roxygen-projector-refresh`).
+24 allowlisted cases regressed against the fresh pins; all closed, in five clusters:
+
+1. **Field-edge trim narrowed** (`trim_field_atoms` → `is_trimws_space`, text.rs):
+   8.0.0 dropped stringr, so `str_trim` (Unicode White_Space) became base `trimws`
+   (exactly `[ \t\r\n]`) — an edge NBSP now *stops* the trim and survives.
+2. **md-off incomplete `@section`** renders a childless `(\section)`:
+   `re_split_half` yields `""`/`""` where 7.x's `str_split` yielded `NA`
+   (no more literal "NA" text).
+3. **`\linkS4class` is gone** (`shortcut_link_atom`): all generated links share
+   one code path; `[s4-class]` → `\link[=s4-class]{s4}` (anchor serializer-dropped).
+4. **Empty-bodied trailing headings render** (removed `section_raw_fallback_atoms`
+   + the abort branch): 8.0.0 pads `strsplit`'s dropped trailing empties
+   (`mdxml_children_to_rd_top`), so the 7.x splicer-crash → raw-text fallback no
+   longer exists. This unmasked a **parser gap** (cm-070): a >= 4-column line
+   inside an open paragraph is a **lazy continuation** — no block start is
+   recognized at that depth. Gate added at the top of the grouper's Prose chain
+   (`group.rs`, `md && para_open && is_indent_code_line` → prose; loose block
+   leaves degrade to `ROXYGEN_TEXT` in the tree builder).
+5. **Non-plain link displays are KEPT, not dropped** (`mdxml_link_text`):
+   `link_display_is_droppable` and the active-markdown-macro machinery deleted;
+   `ref_link_node_atom`/`shortcut_link_node_atom` route any non-plain display
+   through `link_over_display` (single-code-span unwrap and plain-equality
+   shortcut refinements unchanged). Two cascade consequences, both modeled:
+   a kept display whose emphasis text ends in an odd backslash run renders
+   `\emph{b\}` (text is verbatim in `mdxml_link_text`) and the **whole field**
+   fails roxygen2's rdComplete → `link_display_render_drops` (section.rs, on
+   `body_has_md_drop`'s side channel — the atom scan can't see it because a
+   generated `\link` head is fragile to `sexpr_to_rd`); and in a heading
+   *title* the same escaped closer swallows the title's closing brace so the
+   body's `{…}` folds INTO the title (`extend_escaped_list_closer` in
+   `render_heading_frame`, cm-066: trailing `(LIST)` in the title GRP,
+   single-argument `\section`).
+
+Ratchet: +`tag_separator_ws` (newly mintable — 7.x choked on the probe, 8.0.0
+processes it) and +3 unblocked `rx-*` (8.0.0 dropped the evaluated `\format`
+for data objects — `\docType{data}`/`\keyword{datasets}`/`\format` no longer
+auto-generated — so the non-static blocker vanished). 1003→1007 matching,
+15→12 blocked. Full workspace suite + clippy + fmt green.
+
+**Grammar additions 8.0.0 ships that arity does not yet model** (next targets):
+`` `Rd expr` `` inline code → `\Sexpr[stage=render,results=rd]`; `@prop` (S7)
+and `@R6method` tags (parse today as generic unknown tags — fine for CST, no
+classifier entries); `@inheritParams` filter args (`foo x -z`); backtick-quoted
+`@param` names with spaces; markup in link text is DONE (cluster 5).
+
+## Earlier sessions (condensed)
+
+### 2026-07-27 — same-`@name` topic merge (rx-aef0e809) — 7.3.3 backlog closed
 
 The last measured divergence. Blocks sharing a topic are one Rd file, so roxygen2 merges
 them (`RoxyTopic$add`): the merge combines each section type's value vector, then the
@@ -257,10 +310,7 @@ multi-block → `project_merged_topic` (section.rs) with `project_block_impl(..,
 apply_title_fallback=false)`. Curated `topic_merge`, 4 units, baseline +1. Projector
 1001→1003, 1→0 divergent. Fixed-point 212/212. Full suite + clippy + fmt green.
 
-**Ranked next target:** measured backlog exhausted (see **Status** for the open trap-backlog
-items). Either harvest a fresh corpus or take per-tag `rdComplete` drop parity.
-
-## Earlier sessions
+### Older highlights
 
 Condensed — full per-session detail is in `git log`. Recent highlights:
 

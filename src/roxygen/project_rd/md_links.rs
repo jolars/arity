@@ -31,12 +31,11 @@ pub(super) fn link_display_inlines(inl: &Inline) -> Option<Vec<Inline>> {
 /// - **inline** `[text](url)` → `(\href (VERB url) (TEXT text))`;
 /// - **reference** `[text][ref]` → `(\link (TEXT text))` — the has-link-text
 ///   branch (always `\link`, `\code`-wrapped iff the display text is a code span);
-/// - **shortcut** `[dest]` → `(\link …)`/`(\linkS4class …)`, `\code`-wrapped when
-///   `dest` is a code span or ends in `()`.
+/// - **shortcut** `[dest]` → `(\link …)`, `\code`-wrapped when `dest` is a code
+///   span or ends in `()`.
 ///
-/// The `\link[…]`/`\linkS4class[…]` *topic option* is dropped by roxygen2's
-/// section serializer, so only the macro head, the display text, and the
-/// `\code`-wrap survive. Package resolution (`resolve_link_package`) is inherently
+/// The `\link[…]` *topic option* is dropped by roxygen2's section serializer,
+/// so only the macro head, the display text, and the `\code`-wrap survive. Package resolution (`resolve_link_package`) is inherently
 /// non-static, so the projector models exactly what roxygen2 does with no
 /// resolvable package context (the corpus's `current_package == ""`): a package
 /// prefix in the display text comes only from an explicit `pkg::` in the link.
@@ -145,38 +144,43 @@ pub(super) fn inline_link_node_atom(url: &str, display: &[Inline], md: bool) -> 
 /// *children* rather than a flat string.
 pub(super) fn ref_link_node_atom(display: &[Inline], dest: &str) -> String {
     let display_text = inline_plain_text(display);
-    if norm_ws(&display_text) == norm_ws(dest) {
+    if display_is_plain_text(display) && norm_ws(&display_text) == norm_ws(dest) {
         return shortcut_link_atom(dest);
     }
-    if display_has_macro(display) {
-        return link_over_display(display);
+    match display {
+        // A single-code-span display unwraps first (roxygen2's `is_code` move):
+        // `\code{\link{…}}` with the span's content as the display.
+        [Inline::MdCode(content)] => code_wrap(
+            format!("(\\link {})", text_atom(content).unwrap_or_default()),
+            true,
+        ),
+        _ if display_is_plain_text(display) => {
+            format!("(\\link {})", text_atom(&display_text).unwrap_or_default())
+        }
+        // Any other display — emphasis, several code spans, an Rd macro —
+        // renders its resolved markup inside the `\link` body
+        // (`mdxml_link_text`; roxygen2 8.0.0 keeps such links, 7.x dropped
+        // the non-macro ones).
+        _ => link_over_display(display),
     }
-    let (inner, is_code) = match display {
-        [Inline::MdCode(content)] => (content.clone(), true),
-        _ => (display_text, false),
-    };
-    code_wrap(
-        format!("(\\link {})", text_atom(&inner).unwrap_or_default()),
-        is_code,
-    )
 }
 
-/// Whether a resolved link display carries a `ROXYGEN_RD_MACRO` child (a
-/// backslash-word or `\name{…}` written in the markdown source). Such a display is
-/// rendered as `\link` over the serialized display atoms ([`link_over_display`])
-/// rather than collapsed to a flat destination string, so the macro surfaces as a
-/// nested Rd subtree the way parse_Rd reads it (`[a\b]` → `(\link (TEXT "a")
-/// (UNKNOWN "\\b"))`).
-fn display_has_macro(display: &[Inline]) -> bool {
-    display.iter().any(|inl| matches!(inl, Inline::Macro(_)))
+/// Whether a resolved link display is plain text to roxygen2's `parse_link` —
+/// every child a text run (a softbreak/linebreak, both projected as
+/// `Inline::Text(" ")`, also counts). Only a plain display can be the
+/// auto-generated text of a shortcut (`!has_link_text`), which is what enables
+/// the `-class`/`()`/`pkg::` destination refinements; anything else renders via
+/// [`link_over_display`].
+fn display_is_plain_text(display: &[Inline]) -> bool {
+    display.iter().all(|inl| matches!(inl, Inline::Text(_)))
 }
 
-/// Render `\link` over a macro-bearing display: the topic is the serialized display
-/// atoms (text runs plus each Rd macro as a nested subtree), mirroring roxygen2's
-/// `\link{<markdown display>}` whose body parse_Rd then parses. The `\linkS4class` /
-/// `pkg::` / `()` shortcut-destination refinements operate on a flat string and so do
-/// not apply to a macro-bearing destination (a vanishingly-rare combination — left as
-/// backlog).
+/// Render `\link` over a non-plain display: the body is the serialized display
+/// atoms (text runs, resolved markup like `\emph`/`\code`, and each Rd macro as
+/// a nested subtree), mirroring roxygen2 8.0.0's `\link[…]{<mdxml_link_text>}`
+/// whose body parse_Rd then parses. The `pkg::`/`()`/`-class`
+/// shortcut-destination refinements operate on a flat string and so do not
+/// apply to a non-plain destination.
 fn link_over_display(display: &[Inline]) -> String {
     let body = serialize_inlines(display, true).join(" ");
     format!("(\\link {body})")
@@ -191,64 +195,12 @@ fn link_over_display(display: &[Inline]) -> String {
 pub(super) fn shortcut_link_node_atom(display: &[Inline]) -> String {
     match display {
         [Inline::MdCode(content)] => shortcut_link_atom(&format!("`{content}`")),
-        _ if display_has_macro(display) => link_over_display(display),
-        _ => shortcut_link_atom(&inline_plain_text(display)),
+        _ if display_is_plain_text(display) => shortcut_link_atom(&inline_plain_text(display)),
+        // A non-plain display (markup, an Rd macro, several code spans) renders
+        // inside the `\link` body; the destination refinements operate on a flat
+        // string and do not apply (`mdxml_link_text`, roxygen2 8.0.0).
+        _ => link_over_display(display),
     }
-}
-
-/// Whether roxygen2's `parse_link` would *drop* a shortcut/reference link with this
-/// resolved display, rendering nothing ("markdown links must contain plain text").
-/// `parse_link` first unwraps a display that is a *single* code span (which then
-/// links as `\code{\link{…}}`) and otherwise requires every child to be text (a
-/// softbreak/linebreak, both projected as `Inline::Text(" ")`, also count): any
-/// emphasis, a second code span, an image, an autolink, or raw HTML makes the link
-/// non-plain and roxygen2 discards it. (An inline `[text](url)` link is never
-/// subject to this — it carries its own destination and renders `\href`.)
-///
-/// An `Inline::Macro` child counts as **plain text** *unless* its argument carries
-/// cmark-active markdown: a bare backslash-word (`\b`) or a `\name{…}` whose body is
-/// literal (`\emph{x}`, or any fragile macro like `\code{*x*}`) is literal text to
-/// cmark (a backslash escapes only punctuation, macro braces are literal), so the
-/// link is kept and parse_Rd reinterprets it as an Rd macro. But a non-fragile
-/// macro whose argument *is* markdown-processed and resolves to active markup
-/// (`\emph{*x*}`, `\emph{a \strong{*x*}}`, `` \emph{`c`} ``) makes the display
-/// non-plain to cmark, so roxygen2 drops the link ([`macro_arg_has_active_markdown`]).
-pub(super) fn link_display_is_droppable(display: &[Inline]) -> bool {
-    if matches!(display, [Inline::MdCode(_)]) {
-        return false;
-    }
-    !display.iter().all(|inl| match inl {
-        Inline::Text(_) => true,
-        Inline::Macro(n) => !macro_arg_has_active_markdown(n),
-        _ => false,
-    })
-}
-
-/// Whether a non-fragile Rd macro's markdown-processed argument resolves to any
-/// **cmark-active** markup (emphasis, a code span, a link, an image, raw HTML, or a
-/// nested non-fragile macro whose own argument is active). Such a macro is *not*
-/// plain text to cmark, so a link display containing it is dropped. A fragile macro
-/// (`\code`/`\link`/…) or a non-fragile one with a literal argument (`\emph{x}`) is
-/// inert. Mirrors the resolution [`serialize_macro`] performs, so the drop decision
-/// and the render agree.
-fn macro_arg_has_active_markdown(node: &SyntaxNode) -> bool {
-    let head = macro_head(node);
-    let name = head.trim_start_matches('\\');
-    is_md_inline_text_macro(name)
-        && macro_single_arg_content(node).is_some_and(|content| {
-            inlines_have_active_markdown(&resolve_macro_arg_inlines(&content))
-        })
-}
-
-/// Whether a resolved inline run carries cmark-active markup: any element that is
-/// neither plain text nor an inert macro (see [`macro_arg_has_active_markdown`],
-/// which recurses through nested non-fragile macros).
-fn inlines_have_active_markdown(inlines: &[Inline]) -> bool {
-    inlines.iter().any(|inl| match inl {
-        Inline::Text(_) => false,
-        Inline::Macro(n) => macro_arg_has_active_markdown(n),
-        _ => true,
-    })
 }
 
 /// A best-effort plain-text rendering of a resolved inline run, used only to test a
@@ -382,9 +334,12 @@ fn ref_link_atom(text: &str, dest: &str) -> String {
 }
 
 /// A shortcut link `[dest]` (no explicit link text) → roxygen2's `!has_link_text`
-/// branch: `\linkS4class` for an `-class` destination without a package, else
-/// `\link`; `\code`-wrapped when the destination is a code span or a `()` call.
-/// The display text is `pkg::` + the object (with any `-class` suffix dropped).
+/// branch: always `\link` (roxygen2 8.0.0 unified every generated link onto one
+/// code path, so an `-class` destination now renders `\link[=s4-class]{s4}` and
+/// `\linkS4class` is no longer emitted; the `[=…]` topic option is dropped by
+/// the section serializer); `\code`-wrapped when the destination is a code span
+/// or a `()` call. The display text is `pkg::` + the object (with any `-class`
+/// suffix dropped).
 pub(super) fn shortcut_link_atom(dest: &str) -> String {
     let (dest, code_span) = unwrap_code_span(dest);
     let is_code = code_span || dest.ends_with("()");
@@ -392,23 +347,17 @@ pub(super) fn shortcut_link_atom(dest: &str) -> String {
         Some((p, f)) => (Some(p), f),
         None => (None, dest),
     };
-    let s4 = dest.ends_with("-class");
-    let body = if s4 {
+    let body = if dest.ends_with("-class") {
         fun.strip_suffix("-class").unwrap_or(fun)
     } else {
         fun
-    };
-    let head = if s4 && pkg.is_none() {
-        "\\linkS4class"
-    } else {
-        "\\link"
     };
     let display = match pkg {
         Some(p) => format!("{p}::{body}"),
         None => body.to_string(),
     };
     code_wrap(
-        format!("({head} {})", text_atom(&display).unwrap_or_default()),
+        format!("(\\link {})", text_atom(&display).unwrap_or_default()),
         is_code,
     )
 }

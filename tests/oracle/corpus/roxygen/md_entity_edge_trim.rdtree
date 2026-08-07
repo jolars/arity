@@ -1,4 +1,4 @@
 (\description (TEXT "T"))
-(\details (TEXT "a b"))
-(\section (TEXT "Head") (TEXT "secbody"))
+(\details (TEXT "  a b  "))
+(\section (TEXT "Head") (TEXT "  secbody  "))
 (\title (TEXT "T"))
