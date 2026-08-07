@@ -485,8 +485,8 @@ pub(crate) fn is_zero_arg_rd_macro(name: &str) -> bool {
     rd_macro_arity(name) == 0
 }
 
-/// Known Rd macros whose brace-less misuse does **not** recover as a clean text
-/// drop: by the time parse_Rd's "expecting `{`" error fires, its lexer has
+/// Built-in Rd macros whose brace-less misuse does **not** recover as a clean
+/// text drop: by the time parse_Rd's "expecting `{`" error fires, its lexer has
 /// already switched to the macro's argument mode, and the recovery leaves that
 /// state in place — everything to *section end* (crossing paragraph breaks)
 /// becomes per-line `RCODE`/`VERB` atoms (`\code z` → `(RCODE " z after\n") …`).
@@ -495,6 +495,10 @@ pub(crate) fn is_zero_arg_rd_macro(name: &str) -> bool {
 /// R 4.5 (every [`KNOWN_RD_MACROS`] name as `before \name z after`); every name
 /// *not* here (and not zero-arg) drops cleanly instead — see
 /// [`is_rd_braceless_drop_macro`].
+///
+/// This list covers the **built-ins** only; the argument-taking *system user
+/// macros* are sticky too, and are folded in by
+/// [`is_sticky_braceless_rd_macro`] rather than repeated here.
 const STICKY_BRACELESS_RD_MACROS: &[&str] = &[
     // RCODE-argument macros: recovery leaves parse_Rd in R-code mode.
     "code",
@@ -521,38 +525,60 @@ const STICKY_BRACELESS_RD_MACROS: &[&str] = &[
     "item",
 ];
 
-/// Whether a brace-less `\name` in prose is dropped by parse_Rd's recovery with
-/// the surrounding text continuing as plain `TEXT` (the "unexpected TEXT/section
-/// header, expecting `{`" recovery): a known, non-zero-arg macro outside
-/// [`STICKY_BRACELESS_RD_MACROS`]. Zero-arg names are complete calls (carved by
-/// the lexer), unknown names are `(UNKNOWN …)` nodes (also carved), and the
-/// sticky set leaves parse_Rd in a code/verbatim mode. Of that set, brace-less
-/// `\item` is projected as an `(UNKNOWN "\item")` node (`split_braceless_items` in
-/// the projector); the code/verbatim mode-flip names (`\code`/`\verb`/…) are still
-/// left literal (backlog). Mode-independent: the `@md` pipeline is a net no-op on a
-/// backslash run before a letter, so parse_Rd sees the same brace-less macro either
-/// way.
-pub fn is_rd_braceless_drop_macro(name: &str) -> bool {
-    is_known_rd_macro(name)
-        && !is_zero_arg_rd_macro(name)
-        && !STICKY_BRACELESS_RD_MACROS.contains(&name)
+/// Whether the brace-less misuse of `\name` leaves parse_Rd in its argument
+/// mode, swallowing the rest of the section — the built-ins of
+/// [`STICKY_BRACELESS_RD_MACROS`] plus every **argument-taking system user
+/// macro** ([`SYSTEM_RD_USER_MACROS`]).
+///
+/// A system user macro is sticky for the same reason a built-in is: parse_Rd
+/// consumes its groups ([`is_argument_taking_rd_macro`]) *before* expanding it,
+/// so the "expecting `{`" recovery fires with the lexer already switched — and
+/// it is always the **verbatim** mode, never R-code (probed against R 4.6:
+/// every name in the list as `before \name b after`). The zero-arity ones
+/// (`\sspace`, `\LaTeX`) are excluded: they need no group, so they simply expand
+/// on their name and the prose continues.
+pub(crate) fn is_sticky_braceless_rd_macro(name: &str) -> bool {
+    STICKY_BRACELESS_RD_MACROS.contains(&name)
+        || (SYSTEM_RD_USER_MACROS.contains(&name) && !is_zero_arg_rd_macro(name))
 }
 
-/// For a brace-less sticky Rd macro name (`\code`/`\verb`/…, see
-/// [`STICKY_BRACELESS_RD_MACROS`]), which parse_Rd lexer state its "expecting `{`"
-/// recovery leaves in place: `Some(true)` for the **R-code** macros (the recovery
-/// stays in R-code mode → per-line `RCODE` atoms) and `Some(false)` for the
-/// **verbatim** macros (verbatim mode → per-line `VERB` atoms). `None` for a
+/// Whether a brace-less `\name` in prose is dropped by parse_Rd's recovery with
+/// the surrounding text continuing as plain `TEXT` (the "unexpected TEXT/section
+/// header, expecting `{`" recovery): an argument-taking, non-zero-arg macro
+/// outside [`is_sticky_braceless_rd_macro`]. Zero-arg names are complete calls
+/// (carved by the lexer), unknown names are `(UNKNOWN …)` nodes (also carved),
+/// and the sticky set leaves parse_Rd in a code/verbatim mode. Of that set,
+/// brace-less `\item` is projected as an `(UNKNOWN "\item")` node
+/// (`split_braceless_items` in the projector) and the code/verbatim mode-flip
+/// names swallow the section (`split_sticky_braceless_swallow`).
+/// Mode-independent: the `@md` pipeline is a net no-op on a backslash run before
+/// a letter, so parse_Rd sees the same brace-less macro either way.
+pub fn is_rd_braceless_drop_macro(name: &str) -> bool {
+    is_argument_taking_rd_macro(name)
+        && !is_zero_arg_rd_macro(name)
+        && !is_sticky_braceless_rd_macro(name)
+}
+
+/// For a brace-less sticky Rd macro name (`\code`/`\verb`/`\doi`/…, see
+/// [`is_sticky_braceless_rd_macro`]), which parse_Rd lexer state its "expecting
+/// `{`" recovery leaves in place: `Some(true)` for the **R-code** macros (the
+/// recovery stays in R-code mode → per-line `RCODE` atoms) and `Some(false)` for
+/// the **verbatim** macros (verbatim mode → per-line `VERB` atoms). `None` for a
 /// non-sticky name and for `item`, whose out-of-list misuse is instead an
 /// `(UNKNOWN "\item")` node (handled by the projector's `split_braceless_items`).
-/// The two sets are exactly [`STICKY_BRACELESS_RD_MACROS`] minus `item`, probed
-/// against R 4.5 (see that list's doc).
+/// The two built-in sets are exactly [`STICKY_BRACELESS_RD_MACROS`] minus `item`,
+/// probed against R 4.5 (see that list's doc); the argument-taking system user
+/// macros are uniformly verbatim, probed against R 4.6.
 pub fn sticky_braceless_code_mode(name: &str) -> Option<bool> {
     match name {
         "code" | "donttest" | "dontshow" | "testonly" => Some(true),
         "verb" | "url" | "samp" | "env" | "kbd" | "option" | "out" | "eqn" | "deqn" | "href"
         | "figure" | "preformatted" | "dontrun" | "newcommand" | "renewcommand" => Some(false),
-        _ => None,
+        // `\item` is the one sticky name with no argument mode to leave behind.
+        "item" => None,
+        _ => {
+            (SYSTEM_RD_USER_MACROS.contains(&name) && !is_zero_arg_rd_macro(name)).then_some(false)
+        }
     }
 }
 
@@ -727,5 +753,68 @@ fn utf8_len(b: u8) -> usize {
         0xC0..=0xDF => 2,
         0xE0..=0xEF => 3,
         _ => 4,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The brace-less classification is a three-way split, and every
+    /// argument-taking name must land in exactly one arm: sticky (parse_Rd's
+    /// recovery leaves an argument mode behind), clean drop, or — for the
+    /// zero-arity and unknown names — not a misuse at all.
+    #[test]
+    fn braceless_classification_is_a_partition() {
+        for name in KNOWN_RD_MACROS.iter().chain(SYSTEM_RD_USER_MACROS) {
+            if is_zero_arg_rd_macro(name) {
+                assert!(
+                    !is_sticky_braceless_rd_macro(name),
+                    "{name} zero-arg sticky"
+                );
+                assert!(!is_rd_braceless_drop_macro(name), "{name} zero-arg drop");
+                continue;
+            }
+            assert_ne!(
+                is_sticky_braceless_rd_macro(name),
+                is_rd_braceless_drop_macro(name),
+                "{name} is both or neither sticky and drop",
+            );
+        }
+        // An unrecognized name is an `(UNKNOWN …)` node, neither of the two.
+        assert!(!is_sticky_braceless_rd_macro("zzz"));
+        assert!(!is_rd_braceless_drop_macro("zzz"));
+    }
+
+    /// Every argument-taking system user macro is sticky, and uniformly in the
+    /// **verbatim** mode — probed against R 4.6 (`before \name b after` for each).
+    /// The zero-arity ones expand on their name, so they are not sticky at all.
+    #[test]
+    fn argument_taking_system_macros_are_verbatim_sticky() {
+        for name in SYSTEM_RD_USER_MACROS {
+            if is_zero_arg_rd_macro(name) {
+                assert_eq!(sticky_braceless_code_mode(name), None, "{name}");
+            } else {
+                assert_eq!(sticky_braceless_code_mode(name), Some(false), "{name}");
+            }
+        }
+        // The built-ins keep both modes, and `\item` neither.
+        assert_eq!(sticky_braceless_code_mode("code"), Some(true));
+        assert_eq!(sticky_braceless_code_mode("verb"), Some(false));
+        assert_eq!(sticky_braceless_code_mode("item"), None);
+    }
+
+    /// `sticky_braceless_code_mode` answers for exactly the sticky names minus
+    /// `item`, so the mode table and the set cannot drift apart.
+    #[test]
+    fn sticky_set_and_mode_table_agree() {
+        for name in KNOWN_RD_MACROS.iter().chain(SYSTEM_RD_USER_MACROS) {
+            let expected = is_sticky_braceless_rd_macro(name) && *name != "item";
+            assert_eq!(
+                sticky_braceless_code_mode(name).is_some(),
+                expected,
+                "{name}",
+            );
+        }
     }
 }

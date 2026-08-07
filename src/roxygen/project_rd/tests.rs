@@ -2013,6 +2013,47 @@ fn braceless_sticky_md_strips_continuation_indent() {
 }
 
 #[test]
+fn braceless_system_user_macro_swallows_verbatim() {
+    // An argument-taking *system user macro* (`\doi`, `\I`, the two-argument
+    // `\manual`, …) is sticky for the same reason a built-in is: parse_Rd
+    // consumes its groups before expanding it, so the brace-less "expecting `{`"
+    // recovery fires with the lexer already switched — always into the
+    // **verbatim** mode, never R-code (unlike `\code`, which yields `RCODE`).
+    let src = "#' T\n\
+               #' @details a \\doi z here.\n\
+               #' @seealso b \\I c d.\n\
+               #' @note e \\manual f g.\n\
+               #' @name x\n\
+               NULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (TEXT \"a\") (VERB \" z here.\\n\"))\n\
+         (\\note (TEXT \"e\") (VERB \" f g.\\n\"))\n\
+         (\\seealso (TEXT \"b\") (VERB \" c d.\\n\"))\n\
+         (\\title (TEXT \"T\"))"
+    );
+}
+
+#[test]
+fn braceless_zero_arity_system_macro_does_not_swallow() {
+    // The zero-argument system user macros need no group, so a brace-less one is
+    // a *complete* call: it expands on its name alone and the prose continues —
+    // no recovery, no swallow. The contrast that keeps the sticky gate keyed on
+    // "takes arguments", not merely "is a system macro".
+    let src = "#' T\n\
+               #' @details a \\sspace b c.\n\
+               #' @name x\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(!out.contains("(VERB \" b c."), "unexpected swallow: {out}");
+    assert!(
+        out.contains("(TEXT \"b c.\")"),
+        "prose did not continue: {out}"
+    );
+}
+
+#[test]
 fn braceless_sticky_withholds_impure_tail() {
     // A tail carrying a real macro node still parses inside the swallow (it
     // splits the RCODE), and a bare `{`/`}` or `%` breaks the section or acts
