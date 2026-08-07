@@ -99,14 +99,39 @@ fn line_run_end(bytes: &[u8], i: usize) -> usize {
     j
 }
 
+/// The most whitespace roxygen2 tolerates between the `#'` marker and a tag's
+/// `@`.
+///
+/// roxygen2's tokenizer (`RoxygenLine::consumeRoxygenComment` in its
+/// `src/parser2.cpp`) consumes the marker and then **exactly one** whitespace
+/// character, after which `consumeTag` demands an `@` at the very next byte. So
+/// `#'@x` and `#' @x` open a tag while `#'  @x` (two spaces) is ordinary prose —
+/// the leftover whitespace puts the `@` out of reach. Consuming the whole
+/// whitespace run instead would silently promote such prose to a real tag and
+/// change what roxygen2 renders.
+const MAX_TAG_SEPARATOR_WS: usize = 1;
+
+/// Whether a marker → content whitespace run of `len` characters can still be
+/// followed by a tag (see [`MAX_TAG_SEPARATOR_WS`]). Only `' '`/`'\t'` are ever
+/// counted, so a byte length is also a character count.
+fn ws_run_opens_tag(len: usize) -> bool {
+    len <= MAX_TAG_SEPARATOR_WS
+}
+
 /// Whether `line` (a roxygen line's text, starting at `#`, no trailing newline)
 /// is an `@md` / `@noMd` mode directive: `Some(true)` for `@md`, `Some(false)`
 /// for `@noMd`, `None` otherwise. The tag must stand alone after the marker
-/// (roxygen2 errors on a directive line carrying other content).
+/// (roxygen2 errors on a directive line carrying other content), and be a tag at
+/// all — a directive pushed out of reach by a wide separator is prose
+/// ([`MAX_TAG_SEPARATOR_WS`]) and toggles nothing.
 pub(super) fn roxygen_md_directive(line: &str) -> Option<bool> {
     let after_hashes = line.trim_start_matches('#');
-    let body = after_hashes.strip_prefix('\'')?.trim();
-    match body {
+    let body = after_hashes.strip_prefix('\'')?;
+    let content = body.trim_start_matches([' ', '\t']);
+    if !ws_run_opens_tag(body.len() - content.len()) {
+        return None;
+    }
+    match content.trim_end() {
         "@md" => Some(true),
         "@noMd" => Some(false),
         _ => None,
@@ -122,8 +147,11 @@ pub(super) fn roxygen_md_directive(line: &str) -> Option<bool> {
 pub(crate) fn roxygen_line_tag(line: &str) -> Option<&str> {
     let after_hashes = line.trim_start_matches('#');
     let body = after_hashes.strip_prefix('\'')?;
-    let body = body.trim_start_matches([' ', '\t']);
-    let rest = body.strip_prefix('@')?;
+    let content = body.trim_start_matches([' ', '\t']);
+    if !ws_run_opens_tag(body.len() - content.len()) {
+        return None;
+    }
+    let rest = content.strip_prefix('@')?;
     let bytes = rest.as_bytes();
     // A tag opens with `@` immediately followed by a letter (matching the
     // `@@`/`@ `/`@1` exclusions in `lex_roxygen_line`); the name is
@@ -216,8 +244,13 @@ pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize, m
     }
 
     // A tag opens with `@` immediately followed by a letter, so `@@` (escape),
-    // `@ ` and `@1` are ordinary text.
-    if bytes[pos] == b'@' && bytes.get(pos + 1).is_some_and(u8::is_ascii_alphabetic) {
+    // `@ ` and `@1` are ordinary text — and only when the marker → content
+    // whitespace run is narrow enough to leave the `@` within roxygen2's reach
+    // ([`MAX_TAG_SEPARATOR_WS`]).
+    if ws_run_opens_tag(pos - marker_len)
+        && bytes[pos] == b'@'
+        && bytes.get(pos + 1).is_some_and(u8::is_ascii_alphabetic)
+    {
         lex_roxygen_tag(out, text, start, pos, md);
     } else {
         // A prose line's content begins a fresh markdown block, so a leading list
@@ -2109,6 +2142,48 @@ mod tests {
         assert!(!is_roxygen_comment("#!/usr/bin/env Rscript"));
         assert!(!is_roxygen_comment("###"));
         assert!(!is_roxygen_comment(""));
+    }
+
+    /// roxygen2 consumes at most one whitespace character after the marker before
+    /// demanding the `@`, so a wider separator leaves ordinary prose
+    /// ([`MAX_TAG_SEPARATOR_WS`]).
+    #[test]
+    fn tag_needs_a_narrow_separator() {
+        assert_eq!(roxygen_line_tag("#'@param x"), Some("param"));
+        assert_eq!(roxygen_line_tag("#' @param x"), Some("param"));
+        assert_eq!(roxygen_line_tag("#'\t@param x"), Some("param"));
+        assert_eq!(roxygen_line_tag("#'  @param x"), None);
+        assert_eq!(roxygen_line_tag("#'\t\t@param x"), None);
+        assert_eq!(roxygen_line_tag("#' \t@param x"), None);
+        assert_eq!(roxygen_line_tag("#'     @param x"), None);
+    }
+
+    /// A tag out of roxygen2's reach is prose, so it cannot lex as a tag either.
+    #[test]
+    fn wide_separator_lexes_as_prose() {
+        assert_eq!(
+            kinds("#'  @param x\n"),
+            vec![
+                TokKind::RoxygenMarker,
+                TokKind::Whitespace,
+                TokKind::RoxygenText,
+                TokKind::Newline,
+            ]
+        );
+        assert_lossless("#'  @param x\n");
+    }
+
+    /// The `@md`/`@noMd` mode toggles are tags, so a wide separator makes them
+    /// inert prose rather than a directive.
+    #[test]
+    fn md_directive_needs_a_narrow_separator() {
+        assert_eq!(roxygen_md_directive("#' @md"), Some(true));
+        assert_eq!(roxygen_md_directive("#'@md"), Some(true));
+        assert_eq!(roxygen_md_directive("#'\t@noMd"), Some(false));
+        assert_eq!(roxygen_md_directive("#' @md   "), Some(true));
+        assert_eq!(roxygen_md_directive("#'  @md"), None);
+        assert_eq!(roxygen_md_directive("#'   @noMd"), None);
+        assert_eq!(roxygen_md_directive("#' @md and more"), None);
     }
 
     #[test]

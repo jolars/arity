@@ -1,0 +1,62 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..130
+  ROXYGEN_BLOCK@0..110
+    ROXYGEN_SECTION@0..35
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+      ROXYGEN_MARKER@9..11 "#'"
+      NEWLINE@11..12 "\n"
+      ROXYGEN_PARAGRAPH@12..32
+        ROXYGEN_MARKER@12..14 "#'"
+        WHITESPACE@14..16 "  "
+        ROXYGEN_TEXT@16..31 "@param x Prose."
+        NEWLINE@31..32 "\n"
+      ROXYGEN_MARKER@32..34 "#'"
+      NEWLINE@34..35 "\n"
+    ROXYGEN_SECTION@35..54
+      ROXYGEN_MARKER@35..37 "#'"
+      WHITESPACE@37..38 " "
+      ROXYGEN_TAG@38..53
+        ROXYGEN_AT@38..39 "@"
+        ROXYGEN_TAG_NAME@39..44 "param"
+        WHITESPACE@44..45 " "
+        ROXYGEN_TAG_ARG@45..46 "x"
+        WHITESPACE@46..47 " "
+        ROXYGEN_TEXT@47..53 "A tag."
+      NEWLINE@53..54 "\n"
+    ROXYGEN_SECTION@54..81
+      ROXYGEN_MARKER@54..56 "#'"
+      WHITESPACE@56..57 "\t"
+      ROXYGEN_TAG@57..80
+        ROXYGEN_AT@57..58 "@"
+        ROXYGEN_TAG_NAME@58..64 "return"
+        WHITESPACE@64..65 " "
+        ROXYGEN_TEXT@65..80 "A tab is a tag."
+      NEWLINE@80..81 "\n"
+    ROXYGEN_SECTION@81..110
+      ROXYGEN_MARKER@81..83 "#'"
+      ROXYGEN_TAG@83..110
+        ROXYGEN_AT@83..84 "@"
+        ROXYGEN_TAG_NAME@84..91 "details"
+        WHITESPACE@91..92 " "
+        ROXYGEN_TEXT@92..110 "No space is a tag."
+  NEWLINE@110..111 "\n"
+  ASSIGNMENT_EXPR@111..129
+    IDENT@111..112 "f"
+    WHITESPACE@112..113 " "
+    ASSIGN_LEFT@113..115 "<-"
+    WHITESPACE@115..116 " "
+    FUNCTION_EXPR@116..129
+      FUNCTION_KW@116..124 "function"
+      LPAREN@124..125 "("
+      IDENT@125..126 "x"
+      RPAREN@126..127 ")"
+      WHITESPACE@127..128 " "
+      IDENT@128..129 "x"
+  NEWLINE@129..130 "\n"

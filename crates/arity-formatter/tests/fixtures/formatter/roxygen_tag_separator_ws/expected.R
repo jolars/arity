@@ -1,0 +1,8 @@
+#' Title
+#'
+#'  @param x Prose.
+#'
+#' @param x A tag.
+#' @return A tab is a tag.
+#' @details No space is a tag.
+f <- function(x) x

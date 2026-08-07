@@ -860,7 +860,7 @@ impl Paragraph {
             let prefix = indent_cols + marker.chars().count() + 1;
             let budget = line_width.saturating_sub(prefix).max(1);
             for wrapped in wrap_chunks(&self.chunks, budget) {
-                push_line(items, format!("{marker} {wrapped}"));
+                push_prose_line(items, &marker, &wrapped);
             }
         }
         self.clear();
@@ -1090,7 +1090,7 @@ impl SectionUnit {
                 let prefix = self.indent_cols + marker.chars().count() + 1;
                 let budget = line_width.saturating_sub(prefix).max(1);
                 for wrapped in wrap_chunks(&self.chunks, budget) {
-                    push_line(items, format!("{marker} {wrapped}"));
+                    push_prose_line(items, marker, &wrapped);
                 }
             }
         }
@@ -1873,6 +1873,29 @@ fn block_md(node: &SyntaxNode) -> bool {
     md
 }
 
+/// Whether `text`, emitted straight after a marker and a single space, would
+/// reparse as a roxygen **tag**: an `@` followed by a letter.
+///
+/// roxygen2 consumes at most one whitespace character after the `#'` marker
+/// before demanding the `@`, so prose that merely begins that way (`#'  @param x`,
+/// written with a wide separator, is description text) survives only while the
+/// separator stays wide. Collapsing it to one space would promote the prose to a
+/// real tag and change the rendered Rd — a behavior-preservation bug, not a
+/// layout choice. Mirrors the parser's `MAX_TAG_SEPARATOR_WS` rule; `@@` (the
+/// escape) is not a tag and needs no widening.
+fn reparses_as_tag(text: &str) -> bool {
+    text.strip_prefix('@')
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_alphabetic()))
+}
+
+/// Push one prose line: `marker`, the separator, then `text`. The separator is
+/// the conventional single space, widened to two exactly when `text` would
+/// otherwise reparse as a tag (see [`reparses_as_tag`]).
+fn push_prose_line(items: &mut Vec<Ir>, marker: &str, text: &str) {
+    let sep = if reparses_as_tag(text) { "  " } else { " " };
+    push_line(items, format!("{marker}{sep}{text}"));
+}
+
 /// Whether a chunk placed at the start of a wrapped line could reparse as a
 /// structured construct, which would make reflow non-idempotent. Conservative:
 /// such a paragraph is kept verbatim rather than risk a migrating marker.
@@ -1933,10 +1956,15 @@ fn normalize_roxygen_line(line: &PhysicalLine) -> String {
     }
     let content = content.trim_end();
     if content.is_empty() {
-        marker
-    } else {
-        format!("{marker} {content}")
+        return marker;
     }
+    // Prose that *looks* like a tag keeps a widened separator so it stays prose;
+    // a line whose content really is a `ROXYGEN_TAG` gets the conventional single
+    // space (see [`reparses_as_tag`]).
+    if line.tag().is_none() && reparses_as_tag(content) {
+        return format!("{marker}  {content}");
+    }
+    format!("{marker} {content}")
 }
 
 #[cfg(test)]

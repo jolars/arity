@@ -7,6 +7,7 @@ The **primary, CI-safe** conformance gate: `project_to_rd(parse(x))` vs roxygen2
 - **Matching (pinned):** 1003  (1003 allowlisted)
 - **Divergent (backlog):** 0
 - **Blocked (not targeted):** 15
+- **Unpinned:** 1 (no `.rdtree`)
 
 ## Coverage by section
 

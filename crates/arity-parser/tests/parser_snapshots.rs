@@ -223,6 +223,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_block",
         "roxygen_blank_line",
         "roxygen_tag_param",
+        "roxygen_tag_separator_ws",
         "roxygen_tag_examples",
         "roxygen_md_examples_code_body",
         "roxygen_multi_hash",

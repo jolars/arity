@@ -4960,11 +4960,18 @@ fn roxygen_examples_multiline_error_range_stays_in_block() {
     }
 }
 
-/// The package-wide roxygen markdown default reaches the linter: a column-5
-/// `@tag` line inside a `@details` section is *indented-code text* under
-/// markdown (no tag, so no `roxygen-unknown-tag`), but a real tag Rd-first.
+/// A column-5 `@tag` line inside a `@details` section is never a tag, whatever
+/// the package-wide roxygen markdown default says — so it never draws a
+/// `roxygen-unknown-tag`.
+///
+/// roxygen2 decides tag-hood in its tokenizer, *before* any markdown pass, and
+/// consumes at most one whitespace character after the `#'` marker before
+/// demanding the `@` (the parser's `MAX_TAG_SEPARATOR_WS`). The wide separator
+/// alone settles it: under markdown the line is indented-code text and Rd-first
+/// it is ordinary prose, but neither is a tag. Both the `check_document` path and
+/// the batch CLI path must agree, in both modes.
 #[test]
-fn lint_honors_package_markdown_default() {
+fn lint_indented_tag_line_is_prose_in_both_markdown_modes() {
     let source = "#' Title\n#'\n#' @details\n#' Some prose before the code.\n#'\n#'     @nonexistenttag arg\nf <- function() NULL\n";
 
     let write_package = |markdown_field: &str| {
@@ -4980,15 +4987,15 @@ fn lint_honors_package_markdown_default() {
         (dir, path)
     };
 
-    // Rd-first package: the indented `@nonexistenttag` is a (bogus) tag.
+    // Rd-first package: the indented `@nonexistenttag` is prose, not a tag.
     let (_dir_rd, path_rd) = write_package("");
     let diags = check_document(&path_rd, source, &LintConfig::default()).expect("lint");
     assert!(
-        diags.iter().any(|d| d.rule == "roxygen-unknown-tag"),
-        "Rd-first sees the indented line as a tag: {diags:?}"
+        !diags.iter().any(|d| d.rule == "roxygen-unknown-tag"),
+        "Rd-first: the wide separator keeps the indented line prose: {diags:?}"
     );
 
-    // Markdown-first package: the same line is indented-code text.
+    // Markdown-first package: the same line is indented-code text, still no tag.
     let (_dir_md, path_md) = write_package("Roxygen: list(markdown = TRUE)\n");
     let diags = check_document(&path_md, source, &LintConfig::default()).expect("lint");
     assert!(
@@ -4996,13 +5003,15 @@ fn lint_honors_package_markdown_default() {
         "markdown mode makes the indented line code: {diags:?}"
     );
 
-    // And the batch CLI path agrees.
-    let (_dir_batch, path_batch) = write_package("Roxygen: list(markdown = TRUE)\n");
-    let result = check_paths(std::slice::from_ref(&path_batch)).expect("lint");
-    assert!(
-        !rules_for(&result, "doc.R").contains(&"roxygen-unknown-tag"),
-        "batch lint honors the package default"
-    );
+    // And the batch CLI path agrees, in both modes.
+    for markdown_field in ["", "Roxygen: list(markdown = TRUE)\n"] {
+        let (_dir_batch, path_batch) = write_package(markdown_field);
+        let result = check_paths(std::slice::from_ref(&path_batch)).expect("lint");
+        assert!(
+            !rules_for(&result, "doc.R").contains(&"roxygen-unknown-tag"),
+            "batch lint agrees for {markdown_field:?}"
+        );
+    }
 }
 
 // --- meta: suppression rules ------------------------------------------------

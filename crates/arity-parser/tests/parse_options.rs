@@ -64,9 +64,15 @@ fn no_md_directive_overrides_markdown_default() {
 }
 
 /// The markdown default changes block *structure*, not just leaf kinds: at
-/// column five an `@param` is indented-code text, not a tag.
+/// column five a line is indented-code text under markdown and ordinary prose
+/// Rd-first.
+///
+/// Tag-hood is *not* what differs. roxygen2 tokenizes tags before any markdown
+/// pass and consumes at most one whitespace character after the `#'` marker
+/// before demanding the `@` (`MAX_TAG_SEPARATOR_WS`), so a column-five `@param`
+/// is never a tag in either mode — the separator width alone settles it.
 #[test]
-fn markdown_default_reclassifies_indented_tag_as_code() {
+fn markdown_default_reclassifies_indented_prose_as_code() {
     let text = "#' Title\n#'\n#' @details\n#' Some prose before the code.\n#'\n#'     @param x not a tag\n#' @name x\nNULL\n";
 
     let count_tags = |root: &SyntaxNode| {
@@ -77,11 +83,11 @@ fn markdown_default_reclassifies_indented_tag_as_code() {
 
     let rd_first = parse(text);
     assert!(!kinds(&rd_first.cst).contains(&SyntaxKind::ROXYGEN_MD_INDENTED_CODE));
-    assert_eq!(count_tags(&rd_first.cst), 3); // @details, @param, @name
+    assert_eq!(count_tags(&rd_first.cst), 2); // @details, @name
 
     let md = parse_with_options(text, &md_on());
     assert!(kinds(&md.cst).contains(&SyntaxKind::ROXYGEN_MD_INDENTED_CODE));
-    assert_eq!(count_tags(&md.cst), 2); // @param swallowed by the code block
+    assert_eq!(count_tags(&md.cst), 2); // the indented `@param` is code, not a tag
 }
 
 /// The default also reaches a roxygen block nested inside braces (the
