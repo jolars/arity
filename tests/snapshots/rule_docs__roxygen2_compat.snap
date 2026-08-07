@@ -1,0 +1,28 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(rule.as_ref())
+---
+### `roxygen2-compat`
+
+Flag documentation constructs mismatched with the project's roxygen2 version.
+
+The targeted version comes from `[compat] roxygen2` in `arity.toml`, or from the package `DESCRIPTION` (`Config/roxygen2/version`, then the legacy `RoxygenNote`); without either, the rule stays silent. Targeting a version below 8.0.0 flags syntax only 8.0.0 understands—`@prop`, `@R6method`, `` `Rd expr` `` render-time code spans, `@inheritParams` argument filters (which older versions silently misread as argument names), and backtick-quoted names containing spaces. Targeting 8.0.0 or later flags a single-line tag (`@rdname`, `@importFrom`, …) whose value spans lines, which 8.0.0 warns about.
+
+This rule is **enabled by default**.
+
+An `@inheritParams` filter under a declared roxygen2 7.x (`roxygen2 = "7.3.2"` under `[compat]` in `arity.toml`):
+
+```r
+#' Add one
+#' @inheritParams other -verbose
+add_one <- function(x) x + 1
+```
+
+```text
+warning: roxygen2-compat
+ --> example.R:2:25
+  |
+2 | #' @inheritParams other -verbose
+  |                         ^^^^^^^^ `@inheritParams` argument filters require roxygen2 >= 8.0.0; older versions silently misread them as argument names (this project targets 7.3.2)
+  = help: Drop the filters or raise `[compat] roxygen2`.
+```

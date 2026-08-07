@@ -32,6 +32,7 @@ so this page never drifts from the rules' actual behavior.
 - [`empty-assignment`](#empty-assignment)
 - [`download-file`](#download-file)
 - [`internal-function`](#internal-function)
+- [`r-compat`](#r-compat)
 
 **Suspicious**
 
@@ -76,6 +77,7 @@ so this page never drifts from the rules' actual behavior.
 - [`roxygen-return`](#roxygen-return)
 - [`roxygen-param`](#roxygen-param)
 - [`roxygen-examples`](#roxygen-examples)
+- [`roxygen2-compat`](#roxygen2-compat)
 
 **Meta**
 
@@ -417,6 +419,30 @@ warning: internal-function
 1 | utils:::.getHelpFile(path)
   | ^^^^^^^^^^^^^^^^^^^^ `utils:::.getHelpFile` uses an unexported object, which may change or disappear without notice
   = help: Use an exported function from `utils`, or ask upstream to export `.getHelpFile`.
+```
+
+### `r-compat`
+
+Flag syntax newer than the project's minimum supported R version.
+
+The floor comes from `[compat] r` in `arity.toml`, or from `Depends: R (>= …)` in the package `DESCRIPTION` when the key is unset; with neither, the rule stays silent. Raw strings (`r"(…)"`) need R 4.0.0, the native pipe `|>` and the lambda shorthand `\(x)` need 4.1.0, and the pipe placeholder `_` needs 4.2.0 — on an older R, each is a syntax error. Only the lambda carries a fix (`function(x)` is its exact meaning); the pipe and raw strings have no drop-in textual equivalent, so those findings are report-only.
+
+This rule is **enabled by default**.
+
+The native pipe under a declared `R (>= 4.0)` floor (`r = "4.0"` under `[compat]` in `arity.toml`):
+
+```r
+y <- c(1, 2) |> sum()
+print(y)
+```
+
+```text
+warning: r-compat
+ --> example.R:1:14
+  |
+1 | y <- c(1, 2) |> sum()
+  |              ^^ the native pipe `|>` requires R >= 4.1.0, but this project supports R >= 4.0
+  = help: Raise the floor (`[compat] r` in `arity.toml`, or `Depends: R (>= …)` in `DESCRIPTION`) or rewrite with older syntax.
 ```
 
 ## Suspicious
@@ -1357,6 +1383,31 @@ warning: roxygen-examples
 3 | #' add_one(1
   |           ^ example code does not parse: expected ')' to close function call
   = help: `R CMD check` runs example code; fix the syntax error.
+```
+
+### `roxygen2-compat`
+
+Flag documentation constructs mismatched with the project's roxygen2 version.
+
+The targeted version comes from `[compat] roxygen2` in `arity.toml`, or from the package `DESCRIPTION` (`Config/roxygen2/version`, then the legacy `RoxygenNote`); without either, the rule stays silent. Targeting a version below 8.0.0 flags syntax only 8.0.0 understands—`@prop`, `@R6method`, `` `Rd expr` `` render-time code spans, `@inheritParams` argument filters (which older versions silently misread as argument names), and backtick-quoted names containing spaces. Targeting 8.0.0 or later flags a single-line tag (`@rdname`, `@importFrom`, …) whose value spans lines, which 8.0.0 warns about.
+
+This rule is **enabled by default**.
+
+An `@inheritParams` filter under a declared roxygen2 7.x (`roxygen2 = "7.3.2"` under `[compat]` in `arity.toml`):
+
+```r
+#' Add one
+#' @inheritParams other -verbose
+add_one <- function(x) x + 1
+```
+
+```text
+warning: roxygen2-compat
+ --> example.R:2:25
+  |
+2 | #' @inheritParams other -verbose
+  |                         ^^^^^^^^ `@inheritParams` argument filters require roxygen2 >= 8.0.0; older versions silently misread them as argument names (this project targets 7.3.2)
+  = help: Drop the filters or raise `[compat] roxygen2`.
 ```
 
 ## Meta

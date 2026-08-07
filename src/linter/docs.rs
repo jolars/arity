@@ -69,6 +69,7 @@ pub fn example_lint_config(rule: &dyn Rule) -> LintConfig {
     select.extend(rule.doc_select().iter().map(|id| id.to_string()));
     LintConfig {
         select: Some(select),
+        compat: rule.doc_compat(),
         ..Default::default()
     }
 }

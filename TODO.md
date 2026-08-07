@@ -56,6 +56,15 @@ Gated on the package being attached (`model.loaded_packages()`).
 
 ### Documentation rules (roxygen2), `documentation/`
 
+- [x] `roxygen2-compat` (documentation; syn; no fix) and `r-compat`
+      (correctness; syn; safe lambda fix only)—version-aware rules keyed on
+      the `[compat]` floors (explicit `arity.toml` keys, else derived from
+      `DESCRIPTION`; silent with neither). `roxygen2-compat` flags roxygen2
+      8.0.0-only syntax under an older target (`@prop`/`@R6method`,
+      `` `Rd expr` `` spans, `@inheritParams` filters, backtick-quoted spaced
+      names) and multiline single-line tags at an 8.0.0 target; `r-compat`
+      flags raw strings (4.0), `|>`/`\(x)` (4.1), and the `_` placeholder
+      (4.2) below their floors.
 - [ ] Follow-ups (deferred): run the full rule set over extracted example code
       (needs package-context symbol handling to avoid FPs); unsafe-delete fixes
       for duplicate/nonexistent `@param`; a missing-description variant of

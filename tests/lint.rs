@@ -1832,6 +1832,175 @@ fn diagnostics(src: &str) -> Vec<arity::linter::Diagnostic> {
     check_document(Path::new("t.R"), src, &LintConfig::default()).expect("lint should succeed")
 }
 
+/// A `LintConfig` carrying `[compat]` floors, as `Config::parse_str` would
+/// mirror them onto the lint section.
+fn compat_config(r: Option<&str>, roxygen2: Option<&str>) -> LintConfig {
+    LintConfig {
+        compat: arity::config::CompatConfig {
+            r: r.map(str::to_string),
+            roxygen2: roxygen2.map(str::to_string),
+        },
+        ..LintConfig::default()
+    }
+}
+
+fn diagnostics_with_compat(
+    src: &str,
+    r: Option<&str>,
+    roxygen2: Option<&str>,
+) -> Vec<arity::linter::Diagnostic> {
+    check_document(Path::new("t.R"), src, &compat_config(r, roxygen2)).expect("lint should succeed")
+}
+
+#[test]
+fn r_compat_flags_syntax_newer_than_the_floor() {
+    let src = "f <- \\(x) x + 1\ny <- c(1, 2) |> sum()\nz <- r\"(a)\"\nprint(c(f, y, z))\n";
+    let messages: Vec<String> = diagnostics_with_compat(src, Some("4.0"), None)
+        .into_iter()
+        .filter(|d| d.rule == "r-compat")
+        .map(|d| d.message.body)
+        .collect();
+    // The lambda and the native pipe need R 4.1; the raw string (4.0) is at
+    // the declared floor and passes.
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(messages[0].contains("4.1.0") && messages[0].contains("4.0"));
+}
+
+#[test]
+fn r_compat_flags_pipe_placeholder_past_41() {
+    // The `_` placeholder needs 4.2 even where `|>` itself (4.1) is fine.
+    let src = "y <- c(2, 1) |> sort(decreasing = _)\nprint(y)\n";
+    let compat: Vec<_> = diagnostics_with_compat(src, Some("4.1"), None)
+        .into_iter()
+        .filter(|d| d.rule == "r-compat")
+        .collect();
+    assert_eq!(compat.len(), 1, "{compat:?}");
+    assert!(compat[0].message.body.contains("4.2.0"));
+}
+
+#[test]
+fn r_compat_is_silent_without_a_floor_or_at_a_high_floor() {
+    let src = "f <- \\(x) x + 1\ny <- c(1, 2) |> sum(x = _)\nz <- r\"(a)\"\nprint(c(f(1), y, z))\n";
+    assert!(diagnostics(src).iter().all(|d| d.rule != "r-compat"));
+    assert!(
+        diagnostics_with_compat(src, Some("4.2"), None)
+            .iter()
+            .all(|d| d.rule != "r-compat")
+    );
+}
+
+#[test]
+fn r_compat_lambda_fix_rewrites_to_function() {
+    // `\(x)` is exact sugar for `function(x)`, so the rewrite is safe and
+    // version-portable; the other constructs have no textual equivalent and
+    // carry no fix.
+    let src = "f <- \\(x) x + 1\nprint(f(1))\n";
+    let diags = diagnostics_with_compat(src, Some("4.0"), None);
+    let d = diags
+        .iter()
+        .find(|d| d.rule == "r-compat")
+        .expect("a lambda finding");
+    let fix = d.fix.as_ref().expect("lambda carries a fix");
+    assert_eq!(fix.applicability, Applicability::Safe);
+    let fixed = arity::linter::apply_fixes(src, std::slice::from_ref(fix), false).output;
+    assert_eq!(fixed, "f <- function(x) x + 1\nprint(f(1))\n");
+    assert!(
+        arity::parser::parse(&fixed).diagnostics.is_empty(),
+        "fixed output must parse"
+    );
+    // The pipe finding has no fix.
+    let pipe = diagnostics_with_compat("y <- c(1) |> sum()\nprint(y)\n", Some("4.0"), None);
+    let pipe_finding = pipe.iter().find(|d| d.rule == "r-compat").unwrap();
+    assert!(pipe_finding.fix.is_none());
+}
+
+#[test]
+fn r_compat_derives_the_floor_from_description() {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::create_dir(dir.path().join("R")).unwrap();
+    std::fs::write(
+        dir.path().join("DESCRIPTION"),
+        "Package: mypkg\nDepends: R (>= 3.6)\n",
+    )
+    .unwrap();
+    let file = dir.path().join("R/pipe.R");
+    std::fs::write(&file, "y <- c(1, 2) |> sum()\nprint(y)\n").unwrap();
+    let result = check_paths(std::slice::from_ref(&file)).expect("lint should succeed");
+    assert!(
+        rules_for(&result, "pipe.R").contains(&"r-compat"),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn roxygen2_compat_flags_800_syntax_below_800() {
+    let src = "#' Title\n\
+               #'\n\
+               #' @md\n\
+               #' @details Uses `Rd 1+1` inline.\n\
+               #' @prop size The size.\n\
+               #' @inheritParams other -x\n\
+               #' @param `a b` spaced name\n\
+               #' @param x plain\n\
+               f <- function(`a b`, x) x\n";
+    let compat: Vec<_> = diagnostics_with_compat(src, None, Some("7.3.2"))
+        .into_iter()
+        .filter(|d| d.rule == "roxygen2-compat")
+        .collect();
+    // `Rd ` span, @prop, @inheritParams filters, backtick-quoted name.
+    assert_eq!(compat.len(), 4, "{compat:?}");
+    assert!(compat.iter().all(|d| d.message.body.contains("8.0.0")));
+    // At an 8.0.0 floor the same constructs are fine.
+    assert!(
+        diagnostics_with_compat(src, None, Some("8.0.0"))
+            .iter()
+            .all(|d| d.rule != "roxygen2-compat")
+    );
+}
+
+#[test]
+fn roxygen2_compat_flags_multiline_single_line_tags_at_800() {
+    // roxygen2 8.0.0 warns when a single-line tag's value spans lines.
+    let src = "#' Title\n\
+               #'\n\
+               #' @rdname one\n\
+               #'   two\n\
+               #' @export\n\
+               f <- function(x) x\n";
+    let compat: Vec<_> = diagnostics_with_compat(src, None, Some("8.0.0"))
+        .into_iter()
+        .filter(|d| d.rule == "roxygen2-compat")
+        .collect();
+    assert_eq!(compat.len(), 1, "{compat:?}");
+    assert!(compat[0].message.body.contains("@rdname"));
+    // Below 8.0.0 the shape is accepted silently by roxygen2 — no finding.
+    assert!(
+        diagnostics_with_compat(src, None, Some("7.3.2"))
+            .iter()
+            .all(|d| d.rule != "roxygen2-compat")
+    );
+    // And without any floor, silence.
+    assert!(diagnostics(src).iter().all(|d| d.rule != "roxygen2-compat"));
+}
+
+#[test]
+fn roxygen2_compat_new_tags_are_not_unknown() {
+    // `@prop`/`@R6method` are real roxygen2 8.0.0 tags: the unknown-tag rule
+    // must not flag them (version concerns are roxygen2-compat's job).
+    let src = "#' Title\n\
+               #'\n\
+               #' @prop size The size.\n\
+               #' @R6method Class$method\n\
+               f <- function(x) x\n";
+    assert!(
+        diagnostics(src)
+            .iter()
+            .all(|d| d.rule != "roxygen-unknown-tag"),
+        "{:?}",
+        diagnostics(src)
+    );
+}
+
 #[test]
 fn assignment_in_condition_emits_safe_eq_fix() {
     let src = "if (x = 1) print(x)\n";

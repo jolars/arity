@@ -358,12 +358,41 @@ impl CompatConfig {
 }
 
 /// A parsed tool version for floor comparisons: numeric components in order,
-/// compared the way R's `utils::compareVersion` does — componentwise, with a
-/// missing component losing to a present one (`4.1 < 4.1.0 < 4.2`). R version
-/// strings separate components with `.` or `-` (`"1.2-3"`), and so does this
-/// parser.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+/// compared componentwise with a missing component reading as zero
+/// (`4.1 == 4.1.0 < 4.1.1`). The zero-padding deliberately diverges from R's
+/// `utils::compareVersion` (where the shorter version *loses* on a shared
+/// prefix): a declared `4.0` floor must satisfy a construct introduced "in
+/// 4.0.0" — these are `>=` floors, not release identities. R version strings
+/// separate components with `.` or `-` (`"1.2-3"`), and so does this parser.
+#[derive(Debug, Clone, Eq)]
 pub struct CompatVersion(Vec<u32>);
+
+impl PartialEq for CompatVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Ord for CompatVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let len = self.0.len().max(other.0.len());
+        for i in 0..len {
+            let a = self.0.get(i).copied().unwrap_or(0);
+            let b = other.0.get(i).copied().unwrap_or(0);
+            match a.cmp(&b) {
+                std::cmp::Ordering::Equal => continue,
+                order => return order,
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
+
+impl PartialOrd for CompatVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl CompatVersion {
     /// Parse a version string: one or more non-empty numeric components
@@ -690,11 +719,13 @@ mod tests {
     }
 
     #[test]
-    fn compat_version_ordering_matches_r() {
+    fn compat_version_ordering_zero_pads() {
         let v = |s: &str| CompatVersion::parse(s).unwrap();
-        // Componentwise, with a missing component losing to a present one
-        // (`utils::compareVersion`), and `-` accepted as a separator.
-        assert!(v("4.1") < v("4.1.0"));
+        // Componentwise with missing components reading as zero (floor
+        // semantics: a declared `4.1` floor satisfies a 4.1.0 requirement),
+        // and `-` accepted as a separator.
+        assert!(v("4.1") == v("4.1.0"));
+        assert!(v("4.1") < v("4.1.1"));
         assert!(v("4.1.0") < v("4.2"));
         assert!(v("4.10") > v("4.9"));
         assert!(v("1.2-3") == v("1.2.3"));

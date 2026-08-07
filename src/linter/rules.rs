@@ -111,6 +111,7 @@ fn correctness_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::EmptyAssignment),
         Box::new(correctness::DownloadFile),
         Box::new(correctness::InternalFunction),
+        Box::new(correctness::RCompat),
     ]
 }
 
@@ -163,6 +164,7 @@ fn documentation_rules() -> Vec<Box<dyn Rule>> {
         Box::new(documentation::RoxygenReturn),
         Box::new(documentation::RoxygenParam),
         Box::new(documentation::RoxygenExamples),
+        Box::new(documentation::Roxygen2Compat),
     ]
 }
 
@@ -270,6 +272,14 @@ pub trait Rule: Send + Sync {
     /// know its directive matched nothing). The default is none.
     fn doc_select(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    /// The `[compat]` floors this rule's [`Rule::examples`] are linted under.
+    /// The default run declares none — which silences the version-aware rules
+    /// (`r-compat`, `roxygen2-compat`), so those override this to give their
+    /// examples a floor to violate.
+    fn doc_compat(&self) -> CompatConfig {
+        CompatConfig::default()
     }
 }
 

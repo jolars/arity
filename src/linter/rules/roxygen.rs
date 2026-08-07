@@ -20,10 +20,14 @@ use rowan::{TextRange, TextSize};
 use crate::ast::{AssignmentExpr, FunctionExpr, RoxygenBlock, RoxygenSection};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
-/// Every tag understood by roxygen2 (7.3.x) plus the `@md`/`@noMd` toggles.
+/// Every tag understood by roxygen2 (8.0.0) plus the `@md`/`@noMd` toggles.
+/// Version *availability* (`@prop`/`@R6method` need roxygen2 >= 8.0.0) is the
+/// `roxygen2-compat` rule's concern, not unknown-ness.
 /// Kept sorted for binary search; validated against roxygen2 itself by the
-/// `roxygen_lint_oracle` harness.
+/// `roxygen_lint_oracle` harness. Capitalized names sort before lowercase
+/// (byte order, matching `binary_search`).
 const KNOWN_TAGS: &[&str] = &[
+    "R6method",
     "aliases",
     "author",
     "backref",
@@ -65,6 +69,7 @@ const KNOWN_TAGS: &[&str] = &[
     "note",
     "order",
     "param",
+    "prop",
     "rawNamespace",
     "rawRd",
     "rdname",
