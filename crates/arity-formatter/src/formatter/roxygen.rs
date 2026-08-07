@@ -136,13 +136,16 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
                 cur.marker = el.into_token();
             }
             SyntaxKind::NEWLINE => {
-                if cur.marker.is_some() {
+                if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
                 }
             }
-            // Trivia before this line's marker (continuation indentation) is not
-            // part of any line.
-            _ if cur.marker.is_none() => {}
+            // Indentation before this line's marker (inter-line trivia) is not
+            // part of any line. Any *other* marker-less element is a closing
+            // line's remainder after a block macro (`} tail …` — the line's
+            // marker lives inside the macro node): it forms a marker-less line
+            // whose `#'` the renderer supplies.
+            SyntaxKind::WHITESPACE if cur.marker.is_none() && cur.elements.is_empty() => {}
             SyntaxKind::ROXYGEN_TAG => {
                 cur.tag = el.as_node().cloned().and_then(RoxygenTag::cast);
                 cur.elements.push(el);
@@ -150,7 +153,7 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
             _ => cur.elements.push(el),
         }
     }
-    if cur.marker.is_some() {
+    if cur.marker.is_some() || !cur.elements.is_empty() {
         lines.push(cur);
     }
     lines
