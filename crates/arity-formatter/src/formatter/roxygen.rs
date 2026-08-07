@@ -1516,17 +1516,18 @@ enum TagClass {
 fn classify(name: &str) -> TagClass {
     use TagClass::*;
     match name {
-        // tag_name_description
-        "param" | "slot" | "field" => NameBearingProse,
+        // tag_name_description (+ `@prop`, roxygen2 8.0.0's S7 two-part tag)
+        "param" | "slot" | "field" | "prop" => NameBearingProse,
         // tag_markdown (section-producing prose)
         "description" | "details" | "return" | "value" | "format" | "note" | "references"
         | "source" | "seealso" | "author" | "title" => SectioningProse,
         "section" => Section,
         // tag_examples / tag_code
         "examples" | "examplesIf" | "usage" | "eval" | "evalRd" | "evalNamespace" => Code,
-        // tag_value (single verbatim value; interior spaces significant)
+        // tag_value (single verbatim value; interior spaces significant).
+        // `R6method` (roxygen2 8.0.0) carries a single `Class$method` target.
         "name" | "rdname" | "docType" | "encoding" | "family" | "concept" | "inheritParams"
-        | "backref" | "exportClass" | "exportMethod" | "exportPattern" => AtomicValue,
+        | "backref" | "exportClass" | "exportMethod" | "exportPattern" | "R6method" => AtomicValue,
         // tag_words / namespace directives (join to one line)
         "keywords" | "aliases" | "import" | "importFrom" | "importClassesFrom"
         | "importMethodsFrom" | "exportS3Method" | "useDynLib" | "rawNamespace" => TokenList,
