@@ -346,6 +346,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_md_thematic_break_not",
         "roxygen_md_thematic_break_value",
         "roxygen_md_indented_code",
+        "roxygen_md_lazy_indent_heading",
         "roxygen_rd_figure",
         "roxygen_unterminated_code",
         "roxygen_unbalanced_macro",

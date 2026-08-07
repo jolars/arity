@@ -13,11 +13,11 @@ use super::build::{
     emit_md_indented_code, emit_md_indented_code_from_value, emit_md_list, emit_md_list_from_value,
     emit_md_setext_heading, emit_md_table, emit_md_table_from_value, emit_md_thematic_break,
     emit_md_thematic_break_from_value, is_block_macro_line, is_block_macro_opener,
-    is_md_block_quote_start, is_md_code_block_start, is_md_heading_start, is_md_html_block_start,
-    is_md_html_block_value, is_md_html_block7_line, is_md_indented_code_start,
-    is_md_indented_code_value, is_md_list_start, is_md_promoting_setext_underline,
-    is_md_setext_heading_start, is_md_setext_underline_or_dash, is_md_table_start,
-    is_md_table_value, is_md_thematic_break_line,
+    is_indent_code_line, is_md_block_quote_start, is_md_code_block_start, is_md_heading_start,
+    is_md_html_block_start, is_md_html_block_value, is_md_html_block7_line,
+    is_md_indented_code_start, is_md_indented_code_value, is_md_list_start,
+    is_md_promoting_setext_underline, is_md_setext_heading_start, is_md_setext_underline_or_dash,
+    is_md_table_start, is_md_table_value, is_md_thematic_break_line,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -158,7 +158,15 @@ fn emit_roxygen_block_events(
                         events.push(Event::Start(SyntaxKind::ROXYGEN_SECTION));
                         section_open = true;
                     }
-                    if is_md_html_block_start(tokens, i) {
+                    if md && para_open && is_indent_code_line(tokens, i) {
+                        // A >= 4-column-indented line inside an open paragraph is a
+                        // **lazy continuation** (CommonMark: indented code cannot
+                        // interrupt a paragraph, and no block start is recognized at
+                        // that depth — cm-070), so whatever block leaf its content
+                        // lexed as folds in as plain prose (the tree builder maps a
+                        // loose block leaf to `ROXYGEN_TEXT`).
+                        i = emit_prose_line(tokens, i, events);
+                    } else if is_md_html_block_start(tokens, i) {
                         // A markdown HTML block (`@md` mode) is a direct section child,
                         // like a block macro: close any open paragraph and emit the
                         // HTML block as a sibling.

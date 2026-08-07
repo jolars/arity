@@ -1,0 +1,49 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..70
+  ROXYGEN_BLOCK@0..64
+    ROXYGEN_SECTION@0..7
+      ROXYGEN_MARKER@0..2 "#'"
+      WHITESPACE@2..3 " "
+      ROXYGEN_TAG@3..6
+        ROXYGEN_AT@3..4 "@"
+        ROXYGEN_TAG_NAME@4..6 "md"
+      NEWLINE@6..7 "\n"
+    ROXYGEN_SECTION@7..19
+      ROXYGEN_MARKER@7..9 "#'"
+      WHITESPACE@9..10 " "
+      ROXYGEN_TAG@10..18
+        ROXYGEN_AT@10..11 "@"
+        ROXYGEN_TAG_NAME@11..16 "title"
+        WHITESPACE@16..17 " "
+        ROXYGEN_TEXT@17..18 "T"
+      NEWLINE@18..19 "\n"
+    ROXYGEN_SECTION@19..51
+      ROXYGEN_MARKER@19..21 "#'"
+      WHITESPACE@21..22 " "
+      ROXYGEN_TAG@22..30
+        ROXYGEN_AT@22..23 "@"
+        ROXYGEN_TAG_NAME@23..30 "details"
+      NEWLINE@30..31 "\n"
+      ROXYGEN_PARAGRAPH@31..51
+        ROXYGEN_MARKER@31..33 "#'"
+        WHITESPACE@33..34 " "
+        ROXYGEN_TEXT@34..37 "foo"
+        NEWLINE@37..38 "\n"
+        ROXYGEN_MARKER@38..40 "#'"
+        WHITESPACE@40..45 "     "
+        ROXYGEN_TEXT@45..50 "# bar"
+        NEWLINE@50..51 "\n"
+    ROXYGEN_SECTION@51..64
+      ROXYGEN_MARKER@51..53 "#'"
+      WHITESPACE@53..54 " "
+      ROXYGEN_TAG@54..64
+        ROXYGEN_AT@54..55 "@"
+        ROXYGEN_TAG_NAME@55..59 "name"
+        WHITESPACE@59..60 " "
+        ROXYGEN_TEXT@60..64 "spec"
+  NEWLINE@64..65 "\n"
+  IDENT@65..69 "NULL"
+  NEWLINE@69..70 "\n"

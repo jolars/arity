@@ -1588,7 +1588,7 @@ pub(super) fn is_md_code_block_start(tokens: &[Token], start: usize) -> bool {
 /// whitespace-only line is blank, not code). Mode-blind — the caller gates on `md`;
 /// the leading whitespace is ordinary `Whitespace` (no special leaf), so the
 /// block-macro machinery's whitespace handling is unaffected.
-fn is_indent_code_line(tokens: &[Token], start: usize) -> bool {
+pub(super) fn is_indent_code_line(tokens: &[Token], start: usize) -> bool {
     is_indent_code_line_min(tokens, start, 5)
 }
 
