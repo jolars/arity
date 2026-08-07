@@ -2112,13 +2112,19 @@ pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
     if super::is_zero_arg_rd_macro(name) {
         return Some(j);
     }
-    // A brace-less `\word` that is **not** a known Rd macro is an `UNKNOWN` macro
-    // token (parse_Rd tags any unrecognized `\word` `UNKNOWN`, even without a
-    // group). Any other *known* name brace-less stays literal prose: parse_Rd's
+    // An unrecognized `\word` is an `UNKNOWN` macro token, and parse_Rd never
+    // consumes a group for it — it has no arity to consume one *with*. So this
+    // carves name-only exactly like a zero-argument macro, and a written
+    // `{…}`/`[…]` is left behind as prose (`\zzz{x}` → `(UNKNOWN "\zzz")` plus a
+    // sibling `(LIST (TEXT "x"))`; `\zzz[a]{x}` keeps a literal `[a]` too).
+    if !super::is_argument_taking_rd_macro(name) {
+        return Some(j);
+    }
+    // A *known* name written brace-less stays literal prose: parse_Rd's
     // drop-recovery for an arg-requiring macro's misuse (`\emph z`) is backlog,
     // and leaving it as text keeps the existing tokenization (no regression).
     if bytes.get(j) != Some(&b'{') && bytes.get(j) != Some(&b'[') {
-        return (!super::is_known_rd_macro(name)).then_some(j);
+        return None;
     }
     if bytes.get(j) == Some(&b'[') {
         j = scan_balanced(bytes, j, b'[', b']')?;
@@ -3004,6 +3010,42 @@ mod tests {
             ]
         );
         assert_lossless("#' \\sspace{} and \\LaTeX{x} and \\doi{10.1/2}\n");
+    }
+
+    #[test]
+    fn rd_macro_unknown_never_consumes_a_group() {
+        // parse_Rd tags an unrecognized `\word` `UNKNOWN` and consumes nothing
+        // for it (it has no arity to consume *with*), so every written group ---
+        // and the optional-argument bracket --- stays prose.
+        assert_eq!(
+            prose_texts("#' \\zzz{x} and \\zzz{x}{y} and \\zzz[a]{x} and \\zzz\n"),
+            vec![
+                (TokKind::RoxygenRdMacro, "\\zzz".into()),
+                (TokKind::RoxygenText, "{x} and ".into()),
+                (TokKind::RoxygenRdMacro, "\\zzz".into()),
+                (TokKind::RoxygenText, "{x}{y} and ".into()),
+                (TokKind::RoxygenRdMacro, "\\zzz".into()),
+                (TokKind::RoxygenText, "[a]{x} and ".into()),
+                (TokKind::RoxygenRdMacro, "\\zzz".into()),
+            ]
+        );
+        assert_lossless("#' \\zzz{x} and \\zzz{x}{y} and \\zzz[a]{x} and \\zzz\n");
+    }
+
+    #[test]
+    fn rd_macro_unknown_opener_is_not_a_block_macro() {
+        // An unknown name's unbalanced `{` opens no block macro body either: the
+        // brace is ordinary prose that a later line closes as a brace list.
+        assert_eq!(
+            prose_texts("#' \\zzz{\n#'   spanning\n#' }\n"),
+            vec![
+                (TokKind::RoxygenRdMacro, "\\zzz".into()),
+                (TokKind::RoxygenText, "{".into()),
+                (TokKind::RoxygenText, "spanning".into()),
+                (TokKind::RoxygenText, "}".into()),
+            ]
+        );
+        assert_lossless("#' \\zzz{\n#'   spanning\n#' }\n");
     }
 
     #[test]

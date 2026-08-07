@@ -1036,6 +1036,7 @@ tabular
 tag_sameline_emph
 tag_separator_ws
 topic_merge
+unknown_macro_group
 user_macro_expansion
 verbatim_block_macro
 zero_arity_user_macro

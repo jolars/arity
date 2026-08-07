@@ -222,3 +222,23 @@ pub(super) fn user_macro_atoms(node: &SyntaxNode, md: bool) -> Option<Vec<String
     atoms.extend(serialize_inlines(&expansion, md));
     Some(atoms)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The parser's name list and this definition table must agree exactly: the
+    /// lexer consumes a system user macro's argument groups off the *names*
+    /// (`is_argument_taking_rd_macro`), while the projector expands off the
+    /// *definitions*. A name in only one of the two either loses its argument at
+    /// lex time or reaches the projector unexpandable.
+    #[test]
+    fn system_macro_names_match_the_parsers_list() {
+        let mut ours: Vec<&str> = SYSTEM_RD_MACROS.iter().map(|m| m.name).collect();
+        let mut theirs: Vec<&str> =
+            arity_parser::parser::roxygen::system_rd_user_macro_names().to_vec();
+        ours.sort_unstable();
+        theirs.sort_unstable();
+        assert_eq!(ours, theirs);
+    }
+}

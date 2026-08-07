@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1028 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1029 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **234/234** preserving (verified against 8.0.0).
+closed. Curated fixed-point **235/235** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -32,16 +32,15 @@ for the remaining local scanners; same-`@name` static-scope object-topic
 resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
-output shape is not); **an UNKNOWN Rd macro consumes a written brace group** —
-surfaced 2026-08-07l. parse_Rd tags an unrecognized `\word` `UNKNOWN` and never
-consumes a group for it, so `\zzz{x}` is `(UNKNOWN "\zzz") (LIST (TEXT "x"))`;
-arity's `scan_rd_macro` falls through to the generic group consume and projects
-`(\zzz (TEXT "x"))`. The brace-*less* case is already right (`scan_rd_macro`'s
-`!is_known_rd_macro` name-only carve), so the fix is to hoist that check above
-the `{`/`[` handling — plus a projector arm that renders the leftover group as a
-sibling list (the zero-arity path already does exactly this);
-a **brace-less** argument-taking user macro (`\doi b`, which parse_Rd treats as
-sticky and swallows verbatim to section end);
+output shape is not); **a brace-less argument-taking system user macro**
+(`\doi b`) — probed 2026-08-07m: parse_Rd's "expecting `{`" recovery leaves it
+in *verbatim* mode exactly like a built-in sticky name, so `Before \doi b
+after.` projects as `(TEXT "Before") (VERB " b after.\n") …` per-line to section
+end. The whole machinery already exists
+(`STICKY_BRACELESS_RD_MACROS`/`split_sticky_braceless_swallow`); it is gated on
+`is_known_rd_macro`, so the fix is to widen that gate to
+`is_argument_taking_rd_macro` (minus the zero-arity names, which have nothing to
+swallow) and decide the RCODE-vs-VERB mode per definition;
 merged-topic member with repeated `@title` (within-block collapse keeps only the
 member's first title value, so the *merged* title-as-description fallback joins
 first-values only — roxygen2 joins every value of every member);
@@ -57,11 +56,12 @@ readings agree unless real content follows on a lazily-continued line
 into the first's argument). Closing it means brace arithmetic over rendered
 section strings, like `parse_rd_recovery`.
 
-**Ranked next target: the UNKNOWN-macro brace group** (above) — freshly
-surfaced, self-contained, and the two halves of the same rule currently
-disagree (brace-less right, braced wrong). Probe it with `block-to-sections` on
-a `\details` holding `\zzz`, `\zzz{x}`, and `\zzz[a]{x}`; expect a small
-`scan_rd_macro` reorder plus a projector arm.
+**Ranked next target: the brace-less system user macro** (above) — probed and
+confirmed at the end of 2026-08-07m, and the *only* remaining half of the
+now-complete `is_argument_taking_rd_macro` split. The sticky-swallow machinery
+is already written and tested for built-ins; this is a gate widening plus a
+mode decision, not new structure. (Second: the still-literal built-in sticky
+names `\code`/`\verb`/… — same machinery, same shape.)
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -311,7 +311,56 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07l) — Rd macros inside literal backticks
+## Latest session (2026-08-07m) — UNKNOWN Rd macros never consume a group
+
+Closed the item 2026-08-07l surfaced. parse_Rd tags an unrecognized `\word`
+`UNKNOWN` and consumes **nothing** for it — it has no arity to consume *with* —
+so `\zzz{x}` is `(UNKNOWN "\zzz") (LIST (TEXT "x"))`, `\zzz{x}{y}` is two
+sibling lists, and even the optional-argument bracket stays literal
+(`\zzz[a]{x}` → `(UNKNOWN …) (TEXT "[a]") (LIST …)`). Arity's `scan_rd_macro`
+fell through to the generic group consume and projected `(\zzz (TEXT "x"))`.
+
+A pure **parser** fix, and the projector needed **zero** new code: name-only is
+exactly the zero-arity shape, so `group_brace_lists` already picks the leftover
+braces up as siblings. All eight probed shapes matched on the first run.
+
+**The subtlety that made it more than a two-line hoist.** The obvious fix —
+hoist `scan_rd_macro`'s existing `!is_known_rd_macro` carve above the `{`/`[`
+handling — is *wrong*, and four projector unit tests said so immediately: R's
+**system user macros** (`\doi`, `\CRANpkg`, `\manual`, …) are `\newcommand`
+definitions, not parse_Rd built-ins, so they are deliberately absent from
+`KNOWN_RD_MACROS` — yet parse_Rd very much does consume their groups before
+expanding them. The lexer had been getting them right only by accident, via the
+same fall-through this fix removes. So the split the lexer actually needs is
+"does parse_Rd consume groups for this name", not "is it a built-in": new
+`SYSTEM_RD_USER_MACROS` name list + `is_argument_taking_rd_macro` (built-in ∨
+system user macro) in the parser. The **definitions** stay in the projector's
+`usermacro.rs` — only names and group counts are parsing facts — with a new
+unit test pinning the two tables against each other
+(`system_macro_names_match_the_parsers_list`), since a name in only one of them
+either loses its argument at lex time or reaches the projector unexpandable.
+
+Rode along for free: an unknown name's *unbalanced* `{` no longer opens a block
+macro body either (`scan_rd_macro` now succeeds name-only, short-circuiting
+`is_block_macro_opener_at`), which is exactly what roxygen2 does — the brace is
+prose that a later line closes as a multi-line `(LIST …)`.
+
+Curated +1 (`unknown_macro_group`, 2 blocks: one/two/empty groups, the `[a]`
+bracket with and without a group, nesting in `\emph` and `\code`, the
+line-spanning group, the `\CRANpkg`/`\manual` consuming contrast, and the `@md`
+mode-independence). Parser fixture `roxygen_unknown_macro_group` (CST +
+losslessness). Five unit tests (two lexer carve, two projector shape, one table
+drift). Baseline +1 key (reviewed: **zero** existing lines changed). Projector
+1028→**1029** matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point
+234→**235/235**. Full workspace suite + clippy + fmt green.
+
+**Rode along, unfixed:** probing the same surface confirmed the brace-less
+system user macro (`\doi b`) is sticky-verbatim exactly like a built-in — now
+the ranked next target, with the probe recorded in Status.
+
+## Earlier sessions (condensed)
+
+### 2026-08-07l — Rd macros inside literal backticks
 
 Closed the item 2026-08-07k rode along on. Without `@md`, a backtick is nothing
 to Rd — parse_Rd reads straight through it, so `` `\emph{x}` `` is a genuine
@@ -347,10 +396,8 @@ Baseline +1 key (reviewed: **zero** existing lines changed). Projector
 233→**234/234**. Full workspace suite + clippy + fmt green.
 
 **Rode along, unfixed:** probing the same surface showed an UNKNOWN macro
-wrongly consuming a written brace group (recorded in Status, and now the ranked
-next target). The curated case was written around it.
-
-## Earlier sessions (condensed)
+wrongly consuming a written brace group — closed by 2026-08-07m. The curated
+case was written around it.
 
 ### 2026-08-07k — zero-arity Rd user macros
 

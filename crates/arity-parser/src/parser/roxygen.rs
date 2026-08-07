@@ -139,6 +139,54 @@ pub fn is_multi_arg_rd_macro(name: &str) -> bool {
     rd_macro_arity(name) > 1
 }
 
+/// R's **system user macros** (`share/Rd/macros/system.Rd`, loaded before every
+/// Rd file). They are not parse_Rd built-ins --- they are `\newcommand`
+/// definitions --- so they are absent from [`KNOWN_RD_MACROS`]; but parse_Rd
+/// *does* consume [`rd_macro_arity`] groups for each before expanding it, which
+/// makes their names a parsing fact. Without this list the lexer could not tell
+/// `\doi{10.1/x}` (one consumed argument) from a genuinely unrecognized
+/// `\zzz{x}` (no argument at all --- see [`is_argument_taking_rd_macro`]).
+///
+/// The **definitions** live in the projector's `usermacro` module, which pins
+/// this list against them; only the names and group counts are parsing facts.
+const SYSTEM_RD_USER_MACROS: &[&str] = &[
+    "CRANpkg",
+    "PR",
+    "doi",
+    "I",
+    "packageTitle",
+    "packageDescription",
+    "packageAuthor",
+    "packageMaintainer",
+    "packageDESCRIPTION",
+    "packageIndices",
+    "bibcitep",
+    "bibcitet",
+    "bibshow",
+    "proglang",
+    "sspace",
+    "LaTeX",
+    "manual",
+    "bibinfo",
+];
+
+/// Every name in [`SYSTEM_RD_USER_MACROS`], for the projector's drift check
+/// against its own definition table.
+pub fn system_rd_user_macro_names() -> &'static [&'static str] {
+    SYSTEM_RD_USER_MACROS
+}
+
+/// Whether `parse_Rd` consumes `{…}` argument groups for `\name` --- a built-in
+/// ([`is_known_rd_macro`]) or a system user macro ([`SYSTEM_RD_USER_MACROS`]).
+/// Everything else is an unrecognized `\word`: parse_Rd tags it `UNKNOWN` and
+/// consumes **nothing**, so a written group is a following sibling brace list
+/// (`\zzz{x}` → `(UNKNOWN "\zzz") (LIST (TEXT "x"))`), exactly like a zero-arity
+/// call's. Arity still applies on top --- a zero-arity name in either set takes
+/// no group either.
+pub fn is_argument_taking_rd_macro(name: &str) -> bool {
+    is_known_rd_macro(name) || SYSTEM_RD_USER_MACROS.contains(&name)
+}
+
 /// Split a GFM table row into its cells, honoring backslash-escaped pipes. One
 /// optional leading and one optional trailing **unescaped** `|` are stripped (the
 /// GFM leading/trailing pipe), then the remainder is split on each unescaped `|`.

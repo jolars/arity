@@ -231,6 +231,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_rd_macro_arity",
         "roxygen_rd_macro_in_code_span",
         "roxygen_zero_arity_user_macro",
+        "roxygen_unknown_macro_group",
         "roxygen_md_block_in_macro_body",
         "roxygen_not_roxygen",
         "roxygen_shebang",

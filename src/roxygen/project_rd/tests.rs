@@ -4950,3 +4950,53 @@ fn user_macro_expanding_through_a_conditional_projects_its_branches() {
         "got: {out}"
     );
 }
+
+#[test]
+fn unknown_rd_macro_leaves_its_group_as_a_sibling_list() {
+    // parse_Rd consumes no argument group for an unrecognized `\word`, so each
+    // written group is a following sibling `(LIST …)` and the optional-argument
+    // bracket stays literal text --- the same shape a zero-arity call produces.
+    let src = "#' T\n\
+               #'\n\
+               #' one \\zzz{x} two \\zzz{x}{y} three \\zzz[a]{x} four \\zzz{} five\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(TEXT \"one\") (UNKNOWN \"\\\\zzz\") (LIST (TEXT \"x\")) \
+             (TEXT \"two\") (UNKNOWN \"\\\\zzz\") (LIST (TEXT \"x\")) (LIST (TEXT \"y\")) \
+             (TEXT \"three\") (UNKNOWN \"\\\\zzz\") (TEXT \"[a]\") (LIST (TEXT \"x\")) \
+             (TEXT \"four\") (UNKNOWN \"\\\\zzz\") (LIST) (TEXT \"five\")"
+        ),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn unknown_rd_macro_group_survives_nesting_and_markdown() {
+    // Nested in another macro's argument the same split applies; under `@md` the
+    // leftover group's markdown still resolves inside the `(LIST …)`.
+    let src = "#' T\n\
+               #'\n\
+               #' see \\emph{\\zzz{x} inside} now\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains("(\\emph (UNKNOWN \"\\\\zzz\") (LIST (TEXT \"x\")) (TEXT \"inside\"))"),
+        "got: {out}"
+    );
+
+    let md = "#' T\n\
+              #'\n\
+              #' @md\n\
+              #' @details see \\zzz{*x*} now\n\
+              #' @name d\n\
+              NULL\n";
+    let out = project_to_rd(md);
+    assert!(
+        out.contains("(UNKNOWN \"\\\\zzz\") (LIST (\\emph (TEXT \"x\")))"),
+        "got: {out}"
+    );
+}
