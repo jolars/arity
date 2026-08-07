@@ -682,6 +682,7 @@ md_atx_heading_value
 md_autolink_bracket
 md_backslash_letter
 md_backslash_run
+md_block_in_macro_body
 md_blockquote
 md_blockquote_glue
 md_blockquote_glue_around

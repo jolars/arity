@@ -27,6 +27,22 @@ pub(super) fn serialize_md_list(node: &SyntaxNode) -> String {
     }
 }
 
+/// Project a markdown **block** node that sits inside a block Rd macro's body into
+/// the atoms it contributes to the enclosing argument. roxygen2 runs cmark over the
+/// flat field text, so such a block renders into the macro's argument exactly as it
+/// would at section level — a list is one `\itemize`/`\enumerate` atom, a fenced
+/// block is roxygen2's three-atom `\if{html}…\preformatted…\if{html}` sequence.
+///
+/// Only the kinds the parser admits into a macro body reach here
+/// (`is_md_block_in_body`); anything else contributes nothing.
+pub(super) fn md_block_atoms(node: &SyntaxNode) -> Vec<String> {
+    match node.kind() {
+        SyntaxKind::ROXYGEN_MD_LIST => vec![serialize_md_list(node)],
+        SyntaxKind::ROXYGEN_MD_CODE_BLOCK => serialize_md_code_block(node),
+        _ => Vec::new(),
+    }
+}
+
 /// Serialize a markdown list whose item contents have already been rewritten by the
 /// whole-field link-reference pipeline ([`apply_user_linkrefs`]) — the resolved-items
 /// analog of [`serialize_md_list`]. Each item renders a name-only `(\item)` followed

@@ -2600,6 +2600,10 @@ fn emit_block_macro_from_opener(
     // baseline, so a `}` at an empty stack terminates it).
     let mut frames: Vec<BodyFrame> = Vec::new();
     let mut closed = false;
+    // Whether a markdown paragraph is open coming into the next line. cmark sees
+    // the field text flat — the `\name{` opener line is ordinary paragraph text —
+    // so the body starts inside an open paragraph, and a blank `#'` line closes it.
+    let mut para_open = true;
     // Argument `{` groups opened for this macro so far (Form A: the body is group
     // 1; Form B: the leading balanced groups plus the body). parse_Rd gives a
     // two-argument macro at most two groups, so a close with only one group so
@@ -2702,10 +2706,26 @@ fn emit_block_macro_from_opener(
         if matches!(classify_line(tokens, m), LineKind::Tag) {
             break;
         }
+        // A markdown **block** construct inside the body (`@md`). roxygen2 runs
+        // cmark over the whole field text, which is flat: the `\describe{` and
+        // `\item{term}{…` lines are ordinary paragraph text, so a list or fence at
+        // this column opens a real block rather than continuing the macro's prose.
+        // Emit it as a child node — it owns its own `#'` markers, so only the
+        // newline and indentation are threaded here.
+        let depth = frames.len() as i32;
+        if is_md_block_in_body(tokens, m, para_open, depth) {
+            for idx in i..m {
+                events.push(Event::Tok(idx));
+            }
+            i = emit_md_block_in_body(tokens, m, para_open, depth, events);
+            para_open = false;
+            continue;
+        }
         // `\n` + indentation + `#'` threaded as trivia, then the marker→content ws.
         for idx in i..=m {
             events.push(Event::Tok(idx));
         }
+        para_open = !matches!(classify_line(tokens, m), LineKind::Blank);
         i = m + 1;
         while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
             events.push(Event::Tok(i));
@@ -2723,6 +2743,144 @@ fn emit_block_macro_from_opener(
 
     events.push(Event::Finish); // ROXYGEN_RD_MACRO
     (i, tail)
+}
+
+/// Whether the `#'` line whose marker is at `start` opens a markdown **block**
+/// construct *inside* a block Rd macro's body.
+///
+/// roxygen2 runs cmark over the whole field text before any Rd parsing, and that
+/// text is flat — a block macro is not a CommonMark container, so its `\describe{`
+/// / `\item{term}{…` lines are ordinary paragraph text. A list or fenced code
+/// block on a following line is therefore a genuine block at the *section*'s
+/// column convention (one space after the marker), exactly as it would be outside
+/// the macro; the only difference is where the node lands in the CST.
+///
+/// Only the constructs whose Rd rendering nests cleanly inside a macro argument
+/// are recognized: markdown lists (`\itemize`/`\enumerate`) and fenced code
+/// blocks (roxygen2's `\if{html}…\preformatted…\if{html}` triple). Headings hoist
+/// to a top-level `\section`, and tables/quotes/thematic breaks have no
+/// argument-level rendering, so they stay body prose. Both gates key on
+/// `@md`-only leaf kinds, so this is inert with markdown off.
+///
+/// `depth` is the count of brace groups the body already has open. A block whose
+/// *own opening line* closes the enclosing macro is withheld (the macro's closing
+/// delimiter cannot live inside the block's node), leaving that line body prose.
+fn is_md_block_in_body(tokens: &[Token], start: usize, para_open: bool, depth: i32) -> bool {
+    (is_md_code_block_start(tokens, start) || is_md_list_start(tokens, start, para_open))
+        && md_block_body_horizon(tokens, start, depth).is_some()
+}
+
+/// Emit the markdown block construct at `start` (see [`is_md_block_in_body`]) as a
+/// child of the enclosing `ROXYGEN_RD_MACRO`. The node owns its own `#'` markers
+/// and inter-line trivia; returns the token index at its last line's trailing
+/// `Newline`, the same convention as the section-level emitters.
+///
+/// The container content column is the section-level `1` (the conventional single
+/// space after `#'`) because the enclosing macro adds no CommonMark container
+/// depth. The block is bounded at [`md_block_body_horizon`] by *truncating the
+/// token slice*: the emitters stop at its end exactly as they would at EOF, and
+/// every `Event::Tok` index they emit stays valid because only the tail is cut.
+fn emit_md_block_in_body(
+    tokens: &[Token],
+    start: usize,
+    para_open: bool,
+    depth: i32,
+    events: &mut Vec<Event>,
+) -> usize {
+    let horizon = md_block_body_horizon(tokens, start, depth)
+        .expect("gated by is_md_block_in_body, which withholds a self-closing opener");
+    let bounded = &tokens[..horizon];
+    if is_md_code_block_start(bounded, start) {
+        emit_md_code_block(bounded, start, 1, events)
+    } else {
+        debug_assert!(is_md_list_start(bounded, start, para_open));
+        emit_md_list(bounded, start, events)
+    }
+}
+
+/// The token index bounding a markdown block that starts at the `#'` line whose
+/// marker is at `start`, inside a block Rd macro's body whose enclosing group is
+/// `depth` open frames deep. The result is the trailing `Newline` of the last line
+/// *before* the first line that closes the enclosing macro (or `tokens.len()` when
+/// no line does), so truncating there keeps that closing line out of the block.
+///
+/// **This is a deliberate, scoped deviation from CommonMark.** A line holding only
+/// the macro's `}` is, to cmark, a *lazy continuation* of the block's last
+/// paragraph — cmark swallows it, and roxygen2's braces then balance out on the
+/// *rendered* Rd (the `\itemize{…}` wrapper roxygen2 emits supplies the closer the
+/// swallowed `}` consumed). Modeling that faithfully means doing the brace
+/// arithmetic on rendered text, because the closer that terminates the macro is
+/// **synthetic** — it has no byte in the source, so a lossless token-tiling CST
+/// cannot carry it. Bounding here instead keeps the macro's extent source-derived.
+///
+/// The two readings agree whenever the swallowed lines are nothing but the macro's
+/// own closers (the overwhelmingly common shape); they diverge when real content
+/// follows on a lazily-continued line, which stays recorded backlog.
+///
+/// `None` means the block's *own opening line* closes the enclosing macro, so no
+/// bound can keep that closer outside the block: the caller withholds the md path.
+fn md_block_body_horizon(tokens: &[Token], start: usize, mut depth: i32) -> Option<usize> {
+    let mut i = line_content_start(tokens, start);
+    // Set at each line boundary, so it always names the trailing `Newline` of the
+    // last line scanned in full; `None` until the opening line has cleared.
+    let mut horizon = None;
+    loop {
+        while let Some(tok) = tokens.get(i) {
+            match &tok.kind {
+                TokKind::RoxygenText => {
+                    if brace_scan_closes_body(&tok.text, &mut depth) {
+                        return horizon;
+                    }
+                    i += 1;
+                }
+                k if k.roxygen_role() == Some(RoxygenRole::Content) => i += 1,
+                _ => break,
+            }
+        }
+        // Line boundary: a continuation keeps scanning; anything else ends the
+        // enclosing macro anyway, so the block needs no bound.
+        if tokens.get(i).map(|t| &t.kind) != Some(&TokKind::Newline) {
+            return Some(tokens.len());
+        }
+        horizon = Some(i);
+        let mut m = i + 1;
+        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            m += 1;
+        }
+        if tokens.get(m).map(|t| &t.kind) != Some(&TokKind::RoxygenMarker)
+            || matches!(classify_line(tokens, m), LineKind::Tag)
+        {
+            return Some(tokens.len());
+        }
+        i = line_content_start(tokens, m);
+    }
+}
+
+/// Track the running brace `depth` across `text` (Rd `\`-escapes skipped),
+/// returning `true` the moment a `}` appears with no group of the body's own
+/// open — that `}` closes the *enclosing* block macro. Unlike [`brace_scan`], the
+/// baseline is the body (depth `0`), not the macro's own group.
+fn brace_scan_closes_body(text: &str, depth: &mut i32) -> bool {
+    let bytes = text.as_bytes();
+    let mut j = 0;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'\\' => j += 2, // skip the escaped byte (`\{`, `\}`, `\\`, …)
+            b'{' => {
+                *depth += 1;
+                j += 1;
+            }
+            b'}' => {
+                if *depth == 0 {
+                    return true;
+                }
+                *depth -= 1;
+                j += 1;
+            }
+            _ => j += 1,
+        }
+    }
+    false
 }
 
 /// Emit the opening `\name{` of a block macro: a `ROXYGEN_RD_MACRO_NAME`, the

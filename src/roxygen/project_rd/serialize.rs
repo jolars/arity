@@ -828,6 +828,16 @@ pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
                     pieces.push(ArgPiece::Atom(serialize_macro(n, md)));
                 }
             }
+            // A markdown block construct inside the body (`@md`): cmark parses the
+            // field text flat, so a list or fenced block at the body's column is a
+            // real block that renders into this argument. It projects exactly as it
+            // would at section level, and is opaque to the argument's brace scan.
+            SyntaxKind::ROXYGEN_MD_LIST | SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
+                flush_text(&mut text_buf, &mut pieces);
+                if let Some(n) = el.as_node() {
+                    pieces.extend(md_block_atoms(n).into_iter().map(ArgPiece::Atom));
+                }
+            }
             // A closing `}` ends an argument group: flush the run, then atomize the
             // argument's pieces (folding bare `{…}` groups into `(LIST …)`) and
             // finalize (GRP-wrapping a structural macro's multi-atom argument). The
@@ -1053,6 +1063,10 @@ fn serialize_md_structural_macro(node: &SyntaxNode, head_full: &str) -> String {
     let mut out_atoms: Vec<String> = Vec::new();
     let mut pieces: Vec<MdArgPiece> = Vec::new();
     let mut run = String::new();
+    // The current argument's finished atoms. A markdown *block* child splits the
+    // argument's inline run, so atoms accumulate here rather than being produced
+    // once at the closing `}`.
+    let mut arg_atoms: Vec<String> = Vec::new();
     // A verbatim argument projects as a single `(VERB …)`, never markdown.
     let mut verb: Option<String> = None;
 
@@ -1061,6 +1075,18 @@ fn serialize_md_structural_macro(node: &SyntaxNode, head_full: &str) -> String {
         if !run.is_empty() {
             pieces.push(MdArgPiece::Text(std::mem::take(run)));
         }
+    };
+
+    // Resolve the pending pieces as one markdown inline run into `arg_atoms`.
+    let flush_inlines = |pieces: &mut Vec<MdArgPiece>, arg_atoms: &mut Vec<String>| {
+        if pieces.is_empty() {
+            return;
+        }
+        let para = resolve_md_inline_pieces(pieces);
+        // Fold bare `{…}` groups (Rd `LIST`s) in the resolved run.
+        let grouped = group_brace_lists(&para_to_inlines(&para), true);
+        arg_atoms.extend(serialize_inlines(&grouped, true));
+        pieces.clear();
     };
 
     for el in node.children_with_tokens() {
@@ -1081,6 +1107,17 @@ fn serialize_md_structural_macro(node: &SyntaxNode, head_full: &str) -> String {
                     pieces.push(MdArgPiece::Macro(n.text().to_string()));
                 }
             }
+            // A markdown block construct inside the argument (`@md`): cmark parses
+            // the field text flat, so a list or fenced block at the body's column is
+            // a real block. It terminates the pending inline run and contributes its
+            // own atoms, exactly as it would at section level.
+            SyntaxKind::ROXYGEN_MD_LIST | SyntaxKind::ROXYGEN_MD_CODE_BLOCK => {
+                flush(&mut run, &mut pieces);
+                flush_inlines(&mut pieces, &mut arg_atoms);
+                if let Some(n) = el.as_node() {
+                    arg_atoms.extend(md_block_atoms(n));
+                }
+            }
             // The closing `}` of an argument group: resolve its pieces as one
             // markdown run (or emit the verbatim atom), GRP-wrapping a multi-atom
             // result. The opening `{` carries no content.
@@ -1089,18 +1126,17 @@ fn serialize_md_structural_macro(node: &SyntaxNode, head_full: &str) -> String {
                     flush(&mut run, &mut pieces);
                     if let Some(v) = verb.take() {
                         out_atoms.push(v);
+                        pieces.clear();
+                        arg_atoms.clear();
                     } else {
-                        let para = resolve_md_inline_pieces(&pieces);
-                        // Fold bare `{…}` groups (Rd `LIST`s) in the resolved run.
-                        let grouped = group_brace_lists(&para_to_inlines(&para), true);
-                        let atoms = serialize_inlines(&grouped, true);
-                        match atoms.len() {
+                        flush_inlines(&mut pieces, &mut arg_atoms);
+                        match arg_atoms.len() {
                             0 => {}
-                            1 => out_atoms.push(atoms.into_iter().next().unwrap()),
-                            _ => out_atoms.push(format!("(GRP {})", atoms.join(" "))),
+                            1 => out_atoms.push(arg_atoms.pop().unwrap()),
+                            _ => out_atoms.push(format!("(GRP {})", arg_atoms.join(" "))),
                         }
+                        arg_atoms.clear();
                     }
-                    pieces.clear();
                 }
             }
             SyntaxKind::ROXYGEN_RD_MACRO_OPT | SyntaxKind::ROXYGEN_MARKER => {}

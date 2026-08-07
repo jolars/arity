@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1023 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1024 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **229/229** preserving (verified against 8.0.0).
+closed. Curated fixed-point **230/230** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -36,12 +36,17 @@ output shape is not); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions;
 merged-topic member with repeated `@title` (within-block collapse keeps only the
 member's first title value, so the *merged* title-as-description fallback joins
 first-values only — roxygen2 joins every value of every member);
-**`@md` *block* constructs inside a block-macro body/argument** — a blank line
-plus a `-` list (or a fence) inside an `\item`'s definition renders as
-`(GRP (TEXT …) (\itemize …))` in roxygen2, but the body's consume loop treats
-the list-marker leaf as ordinary content, so it flattens to one TEXT run. (The
-*inline* md path in a macro argument is closed, as is the multi-line-argument
-gap that used to mask this — see 2026-08-07g.)
+**a macro-closing line lazily swallowed by an `@md` block inside a block-macro
+body** — the residual of 2026-08-07h. cmark folds a bare `}` line into the
+block's last paragraph as a *lazy continuation*, and roxygen2's braces then
+re-balance on the **rendered** Rd (the `\itemize{…}` wrapper it emits supplies
+the closer the swallowed `}` consumed). The closer that actually terminates the
+macro is therefore **synthetic** — no source byte — so a lossless token-tiling
+CST cannot carry it; `md_block_body_horizon` bounds the block instead. The two
+readings agree unless real content follows on a lazily-continued line
+(`\item{a}{x\n\n- l\n}\n\item{b}{y}\n}` → roxygen2 swallows the *second* `\item`
+into the first's argument). Closing it means brace arithmetic over rendered
+section strings, like `parse_rd_recovery`.
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -249,6 +254,12 @@ gap that used to mask this — see 2026-08-07g.)
 - **Block Rd macros** — three opener forms (`is_block_macro_line`, mid-prose `Form C`);
   brace-driven nesting (`BodyFrame` stack); atomic passthrough, context-keyed (`@examples`
   flush). Air does not format roxygen content → arity's own rule (Tenet 1).
+  **A block macro is NOT a CommonMark container** — cmark sees the field flat, so an md
+  block in its body uses the *section*'s column convention (content column `1`) and the
+  opener line leaves a paragraph open (a bullet interrupts it). Dispatch:
+  `is_md_block_in_body`/`emit_md_block_in_body` (lists + fences only), bounded by
+  `md_block_body_horizon` via **token-slice truncation**; projector arm `md_block_atoms`,
+  which in `serialize_md_structural_macro` *splits* the argument's inline run.
 
 ## Settled decisions (don't relitigate without reason)
 
@@ -264,7 +275,56 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07g) — multi-line Rd macro arguments (Form B, everywhere)
+## Latest session (2026-08-07h) — `@md` block constructs inside a block-macro body
+
+Closed the item 2026-08-07g teed up. A markdown list or fenced block inside an
+`\item`/`\itemize` body flattened to one TEXT run, because the body's consume
+loop treated the (already correctly lexed) `ROXYGEN_MD_LIST_MARKER` leaf as
+ordinary content.
+
+**The governing fact: a block macro is not a CommonMark container.** roxygen2
+runs cmark over the whole field text *before* any Rd parsing, and that text is
+flat — the `\describe{` and `\item{term}{…` lines are ordinary paragraph text.
+So a list at the body's column is a genuine block at the *section*'s column
+convention (content column `1`), identical to one outside the macro; only its
+place in the CST differs. That made the parser side a dispatch, not new
+markdown machinery: `is_md_block_in_body`/`emit_md_block_in_body` (build.rs) at
+the body loop's line boundary, reusing `emit_md_list`/`emit_md_code_block`
+unchanged, with a `para_open` flag threaded through the loop (the opener line
+leaves a paragraph open, so a bullet *interrupts* it — no blank line needed).
+Only lists and fences are admitted: headings hoist to a top-level `\section`,
+and tables/quotes/breaks have no argument-level rendering.
+
+**Bounding is the one deliberate deviation** (`md_block_body_horizon`, doc-comment
+there is the full story; see Status for the residual). cmark lazily swallows the
+macro's `}` line into the block, and the closer that then terminates the macro is
+*synthetic*. Rather than fake a byte, the block is bounded by **truncating the
+token slice** (`&tokens[..horizon]`) — the emitters stop there exactly as at EOF
+and every `Event::Tok` index stays valid, since only the tail is cut. A block
+whose *own opening line* closes the macro is withheld entirely (the closing
+delimiter cannot live inside the block's node), leaving that line body prose.
+
+Projector: one shared `md_block_atoms` (md_blocks.rs) feeding two existing
+paths — the generic `serialize_macro` loop (an `\itemize`/`\describe` body, via
+the opaque `ArgPiece::Atom`) and `serialize_md_structural_macro` (an `\item`
+argument under `@md`). The latter needed restructuring: a block child *splits*
+the argument's single inline run, so atoms now accumulate in `arg_atoms` across
+`flush_inlines` calls rather than being produced once at the closing `}` — which
+keeps the GRP rule exact (a body that is *only* a list stays a bare `\itemize`,
+no `(GRP …)`).
+
+Curated +1 (`md_block_in_macro_body`, 6 units: blank-line-terminated list with a
+sibling item, list interrupting the definition's paragraph, list-only body,
+fenced block, ordered list in an `\itemize` body, and the markdown-off guard).
+Parser fixture `roxygen_md_block_in_macro_body` (CST + losslessness, incl. the
+withheld self-closing opener). Baseline +1 key (reviewed: **zero** existing
+lines changed — no formatter drift). Projector 1023→**1024** matching (all
+allowlisted), 0 divergent, 12 blocked. Fixed-point 229→**230/230**. Full
+workspace suite (34 suites) + clippy + fmt green.
+
+## Earlier sessions (condensed)
+
+### 2026-08-07g — multi-line Rd macro arguments (Form B, everywhere)
 
 A two-argument macro's **last argument may span `#'` lines** — the single most
 common real-world `\describe` shape (`\item{term}{a definition that\n wraps}`).
@@ -302,8 +362,6 @@ the term arg, link + code span). Parser fixture
 shapes). Baseline +2 keys (reviewed: no existing case's output changed).
 Projector 1021→**1023** matching (all allowlisted), 0 divergent, 12 blocked.
 Fixed-point 227→**229/229**. Full workspace suite + clippy + fmt green.
-
-## Earlier sessions (condensed)
 
 ### 2026-08-07f — within-block same-head collapse + per-topic fallback scope
 
