@@ -182,10 +182,17 @@ pub(super) fn project_block_impl(
     // Description: the intro's 2nd paragraph, else roxygen2's
     // title-as-description fallback — when no description exists anywhere, the
     // title value (intro title, else explicit @title) is reused.
+    let explicit_titles = tag_sections
+        .iter()
+        .filter(|(n, b)| n == "title" && !is_null_section(b, md))
+        .count();
     let description = match intro_desc {
         Some(d) => Some(d),
         None if has_explicit_desc => None, // emitted by the tag loop below
         None if !apply_title_fallback => None, // fallback deferred to the merged topic
+        // Repeated `@title`: the fallback joins every *rendered* title value,
+        // which only exists after the tag loop — deferred to the post-hoc site.
+        None if explicit_titles > 1 => None,
         None => intro_title.clone().or_else(|| explicit_title_body.clone()),
     };
     if let Some(description) = description {
@@ -210,6 +217,14 @@ pub(super) fn project_block_impl(
         project_tag_section(name, body, out, md);
     }
 
+    // roxygen2 merges repeated same-type sections *within* one block exactly as
+    // across blocks (`RoxyTopic$add` vector-appends each `rd_section`'s value;
+    // the per-type `format` renders). Runs at the rendered-string level because
+    // markdown processes each tag value *before* the join — a heading in one
+    // value hoists its own `\section` without swallowing the next value. The
+    // returned title inners feed the fallback below.
+    let title_inners = collapse_same_head_sections(out, block_start);
+
     // roxygen2's `topics_add_default_description` runs *after* the roclet has
     // processed every tag, so an explicit `@description` whose content hoisted
     // entirely into top-level `\section`s (a leading `# heading`, line-start or
@@ -217,11 +232,28 @@ pub(super) fn project_block_impl(
     // and the title fallback re-fires. A *dropped* description (`rdComplete`)
     // still emits an empty `(\description)` atom — the section object exists —
     // so it correctly suppresses the fallback here.
+    // The presence check is scoped to *this block's* sections — the fallback is
+    // per-topic, so an earlier topic's `\description` in the same file must not
+    // suppress it.
     if apply_title_fallback
-        && !out.iter().any(|s| s.starts_with("(\\description"))
-        && let Some(title) = intro_title.as_ref().or(explicit_title_body.as_ref())
+        && !out[block_start..]
+            .iter()
+            .any(|s| s.starts_with("(\\description"))
     {
-        emit_section_with_headings(out, "description", title, md, true);
+        if title_inners.len() > 1 {
+            // Repeated `@title`: `topics_add_default_description` reuses the WHOLE
+            // title value vector, so the fallback description collapses every
+            // rendered title value even though `\title` itself keeps only the first.
+            let inner =
+                collapse_inners(&title_inners.iter().map(String::as_str).collect::<Vec<_>>());
+            out.push(if inner.is_empty() {
+                "(\\description)".to_string()
+            } else {
+                format!("(\\description {inner})")
+            });
+        } else if let Some(title) = intro_title.as_ref().or(explicit_title_body.as_ref()) {
+            emit_section_with_headings(out, "description", title, md, true);
+        }
     }
 
     // The aggregated `@slot`/`@field` sections (roxygen2's Slots/Fields).
@@ -272,6 +304,58 @@ const COLLAPSE_HEADS: &[&str] = &[
     "format",
     "source",
 ];
+
+/// Merge repeated same-head sections *within* one block's projected run
+/// (`out[block_start..]`), the way `RoxyTopic$add` + the per-type `format`
+/// render them: repeated [`COLLAPSE_HEADS`] sections join into one macro
+/// (`format_collapse`, first occurrence anchors the merged section), repeated
+/// `\title`s keep the first (`format_first`). Every other head — hoisted or
+/// explicit `\section`s, `@rawRd`'s bare top-level atoms, aggregates — is kept
+/// in place. Returns every `\title` inner-atom run in order (pre-first-wins),
+/// which the title-as-description fallback consumes: roxygen2's
+/// `topics_add_default_description` takes the whole title value vector.
+fn collapse_same_head_sections(out: &mut Vec<String>, block_start: usize) -> Vec<String> {
+    let mut title_inners: Vec<String> = Vec::new();
+    // (head, first-occurrence index into `out`, inners in value order).
+    let mut collapse: Vec<(String, usize, Vec<String>)> = Vec::new();
+    let mut keep = vec![true; out.len()];
+    for (i, s) in out.iter().enumerate().skip(block_start) {
+        let head = section_head(s);
+        if head == "\\title" {
+            title_inners.push(section_inner(s).to_string());
+            if title_inners.len() > 1 {
+                keep[i] = false;
+            }
+            continue;
+        }
+        let Some(bare) = head.strip_prefix('\\') else {
+            continue;
+        };
+        if !COLLAPSE_HEADS.contains(&bare) {
+            continue;
+        }
+        match collapse.iter_mut().find(|(h, _, _)| h == head) {
+            Some((_, _, inners)) => {
+                inners.push(section_inner(s).to_string());
+                keep[i] = false;
+            }
+            None => collapse.push((head.to_string(), i, vec![section_inner(s).to_string()])),
+        }
+    }
+    for (head, first, inners) in &collapse {
+        if inners.len() > 1 {
+            let inner = collapse_inners(&inners.iter().map(String::as_str).collect::<Vec<_>>());
+            out[*first] = if inner.is_empty() {
+                format!("({head})")
+            } else {
+                format!("({head} {inner})")
+            };
+        }
+    }
+    let mut it = keep.into_iter();
+    out.retain(|_| it.next().unwrap());
+    title_inners
+}
 
 /// Project a set of blocks that share one topic (`@name`/`@rdname`), merging
 /// their sections the way roxygen2's `RoxyTopic$add` does. Each block is

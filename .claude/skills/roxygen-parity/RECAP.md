@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1020 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1021 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **226/226** preserving (verified against 8.0.0).
+closed. Curated fixed-point **227/227** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -33,10 +33,10 @@ resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
 output shape is not); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions;
-**within-block same-head collapse** (two `@details` in ONE block: roxygen2
-vector-appends and `format_collapse` joins them into one `\details`; arity keeps
-separate sections — the collapse is modeled only for multi-*block* topic merges,
-`project_merged_topic`); **`@md` block constructs inside a block-macro body**
+merged-topic member with repeated `@title` (within-block collapse keeps only the
+member's first title value, so the *merged* title-as-description fallback joins
+first-values only — roxygen2 joins every value of every member);
+**`@md` block constructs inside a block-macro body**
 (a body line lexing as a list marker/fence leaf is a non-Content token that
 breaks `emit_block_macro_from_opener`'s consume loop — unterminated-macro
 recovery kicks in; benign under md-off, unprobed under md-on).
@@ -257,49 +257,53 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07e) — block-form verbatim macro bodies + tail placement
+## Latest session (2026-08-07f) — within-block same-head collapse + per-topic fallback scope
 
-Closed the "block-form verbatim macro bodies" backlog item. parse_Rd keeps a
-multi-line `\eqn{`/`\deqn{`/`\out{` (any `VERBATIM_RD_MACROS` name) body
-verbatim — per-line `(VERB …)` atoms, GRP-wrapped per the two-arg rule
-(multi-atom arg → `(GRP …)`, single atom bare) — and consumes an adjacent `{…}`
-second group after the body closes (same-line-touching only; the group itself
-may span lines). Escape regime is **per-macro**: `\out`/`\url`/`\samp`/…
-resolve Rd-string escapes (`\%`→`%`), but **`\eqn`/`\deqn` keep them raw**
-(LaTeX-like text; engine-probed `\eqn{50\% off}` → `(VERB "50\% off")`) — the
-generic VERB-leaf path now exempts eqn/deqn from `resolve_rd_arg_escapes` too.
+Closed the "within-block same-head collapse" backlog item. roxygen2 merges
+repeated same-type sections inside ONE block exactly as across blocks
+(`RoxyTopic$add` vector-appends each `rd_section`'s value; the per-type
+`format` renders): repeated `COLLAPSE_HEADS` tags join into one macro
+(`format_collapse` = `paste(collapse="\n\n")` → space after TEXT coalescing),
+repeated `@title`s keep the first (`format_first`). Two regimes, probed and
+modeled separately: with **leftover intro paragraphs**, every explicit
+`@details` raw-joins into ONE tag *before* markdown (`parse_description` — a
+trailing intro heading swallows the tag bodies; the existing `merge_details`
+path); with **no intro leftovers**, markdown runs per tag value *first*
+(headings hoist their own `\section` without swallowing the next value), then
+the rendered values join.
 
-Three coordinated fixes. **Parser** (`build.rs`/`group.rs`): `emit_block_content`
-returns the post-close remainder instead of burying it inside the node;
-`emit_block_macro_from_opener` consumes an adjacent second group for two-arg
-macros (`groups` counter honors Form B's pre-consumed args) and returns
-`(index, tail)`; call sites place the tail *outside* the macro — section level
-opens a fresh paragraph (`emit_prose_rest`, extracted from `emit_prose_line`)
-that following lines continue, mid-prose pushes into the open paragraph, in-list
-folds as item content. This also fixed a latent breakage: trailing tokens on a
-closing line (`#' } tail \code{x}`) used to fall out of the roxygen block
-entirely as R-level parse errors. **Projector** (`serialize.rs`):
-`preformatted_atoms` generalized to `serialize_verbatim_block` (marker-stripped
-node-text reconstruction, escape-aware brace pairing, up to two groups),
-routed for `preformatted` always plus any `is_verbatim_rd_macro` name in block
-form (`threads_markers`; single-line stays on the generic VERB-leaf path).
-`is_verbatim_rd_macro` made `pub`. **Formatter** (`roxygen.rs`):
-`physical_lines` no longer drops marker-less content — a closing line's
-remainder forms a marker-less `PhysicalLine` (renderer supplies `#'`), so the
-tail reflows onto its own line instead of being silently deleted (caught by the
-baseline re-bless review; fixed-point-preserving since parse_Rd coalesces the
-soft wrap).
+Projector-processing only (no CST change): `collapse_same_head_sections`
+(section.rs) runs post-tag-loop over the block's rendered section strings —
+first occurrence anchors the merged section, `\title` keeps first — and
+returns every title inner for the fallback. Two fallback fixes rode along:
+(1) repeated `@title` with no description — `topics_add_default_description`
+reuses the WHOLE title value vector, so the early Inline-level fallback site
+defers (`explicit_titles > 1`) to a string-level collapse at the post-hoc
+site; (2) the post-hoc site's `\description` presence check was scanning ALL
+of `out` — now scoped to `out[block_start..]`, so an earlier topic's
+description no longer suppresses a later topic's fallback. Trap re-learned:
+the title-as-description fallback has **two sites** (the early `description`
+match and the post-hoc check) — change both or the early one masks the fix.
 
-Fixture `roxygen_verbatim_block_macro`; curated +1 (`verbatim_block_macro`, 10
-units: adjacent/spaced/next-line/cross-line/third-group second-arg edges, Form
-B, out/eqn escapes, md-on, itemize tail); baseline re-blessed (+1 key, reviewed
-twice — the first bless exposed the formatter drop). Projector 1019→**1020**
-matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point **226/226**.
-Full workspace suite + clippy + fmt green. New recorded backlog: **within-block
-same-head collapse** and **`@md` block constructs inside block-macro bodies**
-(see Status).
+Curated +1 (`same_head_collapse`, 7 units: details/seealso+note+source
+collapse, title first-wins, multi-title fallback, md-on per-value heading
+hoist, per-topic fallback scope, intro raw-join non-interference); baseline
++1 key (reviewed: only TagClass reflow). Projector 1020→**1021** matching
+(all allowlisted), 0 divergent, 12 blocked. Fixed-point **227/227**. Full
+workspace suite + clippy + fmt green. New recorded sub-edge: merged-topic
+member with repeated `@title` (see Status).
 
 ## Earlier sessions (condensed)
+
+### 2026-08-07e — block-form verbatim macro bodies + tail placement
+
+Multi-line `\eqn{`/`\deqn{`/`\out{` bodies stay verbatim (per-line VERB atoms,
+GRP per two-arg rule) with an adjacent second group consumed after the close;
+escape regime per-macro (`eqn`/`deqn` raw, others resolve `\%`). Parser: block
+macro tails placed *outside* the node (`emit_block_macro_from_opener` returns
+`(index, tail)`; `emit_prose_rest`). Projector: `serialize_verbatim_block`.
+Formatter: marker-less closing-line remainder kept as its own `PhysicalLine`.
+Curated +1 (`verbatim_block_macro`, 10 units). 1019→1020. Fixed-point 226/226.
 
 ### 2026-08-07d — `\eqn`/`\deqn` optional second argument
 

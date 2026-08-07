@@ -1023,6 +1023,7 @@ rx-fabb4413
 rx-fb5d2ad5
 rx-fc8242e3
 rx-fd84eacf
+same_head_collapse
 sexpr_demote
 sexpr_percent_drop
 sexpr_rcode_fragile
