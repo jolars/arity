@@ -1,7 +1,18 @@
+# roxygen2 projector-parity allowlist --- cases whose CST projection currently
+# matches their pinned roxygen2 section tree. Three kinds of identifier:
+#   * curated file stems  (tests/oracle/corpus/roxygen/<stem>.R vs <stem>.rdtree)
+#   * harvested slugs rx-* (tests/oracle/corpus/roxygen.jsonl, projector-eligible
+#     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
+#   * CommonMark spec slugs cm-* (tests/oracle/corpus/commonmark-emphasis.jsonl
+#     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)
+# Guarded against regression by `roxygen_projector.rs` (pure Rust, no R, plain
+# `cargo test`). Re-seed from matching cases with `task roxygen-projector-seed`.
+# Divergent cases in ROXYGEN_PROJECTOR.md are the backlog: close the structural
+# gap in the *parser*, refresh/keep the pin, then add the id here. A faithful
+# divergence means the CST is wrong --- never patch the projector to pass.
 #
 backtick_field_name
 block_attachment
-# `cargo test`). Re-seed from matching cases with `task roxygen-projector-seed`.
 cm-001
 cm-002
 cm-003
@@ -657,22 +668,15 @@ cm-652
 cm-653
 cm-654
 cm-655
-#   * CommonMark spec slugs cm-* (tests/oracle/corpus/commonmark-emphasis.jsonl
-#   * curated file stems  (tests/oracle/corpus/roxygen/<stem>.R vs <stem>.rdtree)
+code_span_demote
 describe_format
-# divergence means the CST is wrong --- never patch the projector to pass.
-# Divergent cases in ROXYGEN_PROJECTOR.md are the backlog: close the structural
 examples
 examples_merge
-# gap in the *parser*, refresh/keep the pin, then add the id here. A faithful
-# Guarded against regression by `roxygen_projector.rs` (pure Rust, no R, plain
-#   * harvested slugs rx-* (tests/oracle/corpus/roxygen.jsonl, projector-eligible
 itemize_enumerate
 markdown_html_block
 markdown_inline
 markdown_list
 markdown_url
-# matches their pinned roxygen2 section tree. Three kinds of identifier:
 md_atx_heading_value
 md_autolink_bracket
 md_backslash_letter
@@ -877,8 +881,8 @@ rd_macro_arg_brace_group
 rd_macro_arg_escapes
 rd_macros
 rd_nested_list
+rd_verbatim_args
 rd_zero_arg_macros
-# roxygen2 projector-parity allowlist --- cases whose CST projection currently
 rx-0273da0d
 rx-031cfdcb
 rx-03328a0f
@@ -1018,9 +1022,10 @@ rx-fabb4413
 rx-fb5d2ad5
 rx-fc8242e3
 rx-fd84eacf
-#     subset, vs tests/oracle/corpus/roxygen-sections.jsonl)
+sexpr_demote
+sexpr_percent_drop
+sexpr_rcode_fragile
 tabular
 tag_sameline_emph
 tag_separator_ws
 topic_merge
-#     vs commonmark-emphasis-sections.jsonl; spec inputs, roxygen2 the oracle)

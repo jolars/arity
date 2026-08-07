@@ -1073,30 +1073,60 @@ pub(super) fn md_code_atom(content: &str) -> String {
 
 /// The `(\Sexpr …)` atom for an `` `Rd expr` `` span's body, mirroring what
 /// parse_Rd yields for `\Sexpr[…]{body}`. The body is R-code context, so plain
-/// text is a verbatim `RCODE` leaf — but parse_Rd still recognizes a `\word{…}`
-/// macro inside R code, the macro node carrying a verbatim argument. In a run
-/// of backslashes before `word{`, only the **last** one opens the macro; the
-/// rest stay in the code text (engine-probed: `` `Rd \eqn{x}` `` →
-/// `(\Sexpr (\eqn (VERB "x")))`, `` `Rd \\eqn{x}` `` → `(\Sexpr (RCODE "\")
-/// (\eqn (VERB "x")))`). A backslash not opening a `word{…}` shape stays in
-/// the code text.
+/// text is a verbatim `RCODE` leaf — but a **fragile** macro's source survives
+/// roxygen2's markdown pipeline raw (protected by `escape_rd_for_md`, restored
+/// after), so parse_Rd still sees and parses it inside the R code. A
+/// *non-fragile* `\word{…}` is NOT protected: `double_escape_md` doubles its
+/// backslash, parse_Rd's `\\` escape pairs it back to a literal `\`, and the
+/// whole shape stays code text (engine-probed: `` `Rd \eqn{x}` `` →
+/// `(\Sexpr (\eqn (VERB "x")))` but `` `Rd \href{a}{b}` `` →
+/// `(\Sexpr (RCODE "\href{a}{b}"))`). In a run of backslashes before a fragile
+/// tag, the protection regex matches at the run's **last** backslash, so the
+/// rest stay in the code text in source coordinates (`` `Rd \\eqn{x}` `` →
+/// `(\Sexpr (RCODE "\") (\eqn (VERB "x")))`). The carved tag re-parses through
+/// the real fragment pipeline ([`resolve_rd_inline`] + [`serialize_macro`]),
+/// so its per-macro argument convention (`\eqn` → `VERB`, `\code` → `RCODE`,
+/// `\var` → `TEXT`) is the CST's own model, not a local table.
 fn sexpr_atom(body: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut text = String::new();
     let bytes = body.as_bytes();
     let mut i = 0;
+    fn flush(text: &mut String, parts: &mut Vec<String>) {
+        if !text.is_empty() {
+            parts.push(format!("(RCODE {})", encode_text(text)));
+            text.clear();
+        }
+    }
     while i < bytes.len() {
-        if bytes[i] == b'\\'
-            && let Some((name_end, end)) = rd_code_macro_span(body, i)
-        {
-            if !text.is_empty() {
-                parts.push(format!("(RCODE {})", encode_text(&text)));
-                text.clear();
+        if bytes[i] == b'\\' {
+            let start = i;
+            while i < bytes.len() && bytes[i] == b'\\' {
+                i += 1;
             }
-            let name = &body[i + 1..name_end];
-            let arg = &body[name_end + 1..end - 1];
-            parts.push(format!("(\\{name} (VERB {}))", encode_text(arg)));
-            i = end;
+            match fragile_tag_end(body, i - 1) {
+                // A fragile tag with arguments: the run's other backslashes stay
+                // literal code text; the tag itself parses as a macro.
+                Some((name_end, end)) if end > name_end => {
+                    text.push_str(&body[start..i - 1]);
+                    for inl in para_to_inlines(&resolve_rd_inline(&body[i - 1..end])) {
+                        match inl {
+                            Inline::Macro(node) => {
+                                flush(&mut text, &mut parts);
+                                parts.push(serialize_macro(&node, false));
+                            }
+                            // A trailing piece the fragment models as prose (an
+                            // extra `{…}` group past the macro's own arity)
+                            // stays code text.
+                            inl => text.push_str(&inline_raw_text(&inl)),
+                        }
+                    }
+                    i = end;
+                }
+                // Not protected (or name-only): the doubled backslashes resolve
+                // back to the source run, all literal code text.
+                _ => text.push_str(&body[start..i]),
+            }
         } else {
             // Advance one char; multi-byte chars never start with `\`.
             let ch_len = body[i..].chars().next().map_or(1, char::len_utf8);
@@ -1104,9 +1134,7 @@ fn sexpr_atom(body: &str) -> String {
             i += ch_len;
         }
     }
-    if !text.is_empty() {
-        parts.push(format!("(RCODE {})", encode_text(&text)));
-    }
+    flush(&mut text, &mut parts);
     if parts.is_empty() {
         "(\\Sexpr)".to_string()
     } else {
@@ -1114,12 +1142,87 @@ fn sexpr_atom(body: &str) -> String {
     }
 }
 
-/// The `(name end, span end)` of a `\word{…}` Rd macro opening at `body[i]`
-/// (which must be a `\`): the name's exclusive end and the index just past the
-/// balanced closing `}`. `None` when the shape does not match: no
-/// `[A-Za-z][A-Za-z0-9]*` name, no `{` after it, or an unbalanced brace run.
-fn rd_code_macro_span(body: &str, i: usize) -> Option<(usize, usize)> {
-    let bytes = body.as_bytes();
+/// The raw source text of a fragment inline, for gluing back into a code run.
+/// Non-md fragments only produce `Text` and `Macro` inlines; a macro's raw
+/// source is its node text.
+fn inline_raw_text(inl: &Inline) -> String {
+    match inl {
+        Inline::Text(s) => s.clone(),
+        Inline::Macro(node) => node.text().to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The rendering branch `mdxml_code` (R/markdown.R) picks for a markdown code
+/// span: the `` `Rd …` `` render-time-`\Sexpr` form, `\code` for parseable R
+/// (and the `special` operator/keyword set), else `\verb`. Each branch escapes
+/// its body differently, which is what a *demoted* span's re-parse must see:
+/// `\Sexpr` takes the span text raw, `\code` escapes only `%`, and `\verb`
+/// (`escape_verb`) escapes `%`, `{`, and `}` — while a **fragile** macro's
+/// source is protected from the escaping (and from `double_escape_md`'s
+/// backslash doubling) and restored verbatim.
+enum SpanBranch {
+    Sexpr,
+    Code,
+    Verb,
+}
+
+/// Rebuild the markdown-**rendered** body of a code span from its source
+/// `content`: every fragile Rd tag ([`fragile_tag_end`]) passes through raw;
+/// everything else has its backslash runs doubled (`double_escape_md` — cmark
+/// leaves code-span content untouched, so the doubling survives to the render)
+/// and the branch's escaping applied. The result is exactly the text parse_Rd
+/// reads inside the generated macro's braces, so a demoted span's body can
+/// re-parse through the ordinary non-md Rd text pipeline.
+fn rendered_span_body(content: &str, branch: &SpanBranch) -> String {
+    let mut out = String::new();
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            let start = i;
+            while i < bytes.len() && bytes[i] == b'\\' {
+                i += 1;
+            }
+            let k = i - start;
+            if let Some((_, end)) = fragile_tag_end(content, i - 1) {
+                // The protection regex takes the run's last backslash; the rest
+                // double. The tag's own source (name + args) stays raw.
+                out.extend(std::iter::repeat_n('\\', 2 * (k - 1)));
+                out.push_str(&content[i - 1..end]);
+                i = end;
+            } else {
+                out.extend(std::iter::repeat_n('\\', 2 * k));
+            }
+        } else {
+            let ch = content[i..].chars().next().unwrap_or('\u{FFFD}');
+            let escaped = match branch {
+                SpanBranch::Sexpr => false,
+                SpanBranch::Code => ch == '%',
+                SpanBranch::Verb => matches!(ch, '{' | '}' | '%'),
+            };
+            if escaped {
+                out.push('\\');
+            }
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
+/// The `(name_end, end)` byte range of the fragile Rd tag whose backslash sits
+/// at `s[i]`, per roxygen2's protection scan (`find_fragile_rd_tags` +
+/// `findEndOfTag`, R/markdown-escaping.R + src/isComplete.cpp): a
+/// `[A-Za-z][A-Za-z0-9]*` name in `escaped_for_md` followed greedily by every
+/// immediately-adjacent balanced `{…}` group (a `\` escapes the next char, a
+/// `%` opens an Rd comment hiding the rest of the line). `end == name_end` for
+/// a brace-less tag (name-only protection); an unclosed group likewise falls
+/// back to name-only (findEndOfTag reports the tag incomplete — the truncated
+/// protection roxygen2 derives from its `-1` is not modeled). `None` when no
+/// fragile name starts at `i`.
+fn fragile_tag_end(s: &str, i: usize) -> Option<(usize, usize)> {
+    let bytes = s.as_bytes();
     let mut name_end = i + 1;
     if !bytes.get(name_end).is_some_and(u8::is_ascii_alphabetic) {
         return None;
@@ -1127,25 +1230,170 @@ fn rd_code_macro_span(body: &str, i: usize) -> Option<(usize, usize)> {
     while bytes.get(name_end).is_some_and(u8::is_ascii_alphanumeric) {
         name_end += 1;
     }
-    if bytes.get(name_end) != Some(&b'{') {
+    if !is_fragile_for_md(&s[i + 1..name_end]) {
         return None;
     }
+    let mut end = name_end;
+    while bytes.get(end) == Some(&b'{') {
+        let Some(close) = balanced_group_end(bytes, end) else {
+            return Some((name_end, name_end));
+        };
+        end = close;
+    }
+    Some((name_end, end))
+}
+
+/// The index just past the `}` closing the group opening at `bytes[open]`
+/// (which must be `{`), with `findEndOfTag`'s Rd scanning: `\` escapes the next
+/// char, `%` opens a comment hiding everything to the next newline. `None` when
+/// the group never closes.
+fn balanced_group_end(bytes: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0usize;
-    let mut j = name_end;
+    let mut j = open;
     while j < bytes.len() {
         match bytes[j] {
             b'{' => depth += 1,
             b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some((name_end, j + 1));
+                    return Some(j + 1);
                 }
+            }
+            b'\\' => j += 1,
+            b'%' => {
+                while j < bytes.len() && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                continue;
             }
             _ => {}
         }
         j += 1;
     }
     None
+}
+
+/// The demoted rendering of a markdown code span — the macro name that glues
+/// onto the preceding `TEXT` (its backslash paired away by parse_Rd) and the
+/// serialized content of the bare `{…}` group its argument re-parses into. The
+/// `` `Rd …` `` branch demotes the full generated head, **option string
+/// included** (`Sexpr[stage=render,results=rd]` — at parse_Rd level the `[…]`
+/// is plain text once the macro is gone); the body group re-parses as ordinary
+/// Rd text ([`demoted_span_arg`]), where a fragile macro is a real macro node,
+/// bare braces are nested `LIST` groups, and a non-fragile `\word`'s doubled
+/// backslash resolves back to a literal `\` + prose (engine-probed:
+/// `` x\`Rd \href{a}{b}` `` → `(TEXT "x\Sexpr[…]\href") (LIST (TEXT "a"))
+/// (LIST (TEXT "b"))` — the name glues, the arg braces are bare groups).
+pub(super) fn demoted_md_code_parts(content: &str) -> (String, String) {
+    if let Some(body) = content.strip_prefix("Rd ") {
+        (
+            "Sexpr[stage=render,results=rd]".to_string(),
+            demoted_span_arg(body, &SpanBranch::Sexpr),
+        )
+    } else if code_span_is_r(content) {
+        (
+            "code".to_string(),
+            demoted_span_arg(content, &SpanBranch::Code),
+        )
+    } else {
+        (
+            "verb".to_string(),
+            demoted_span_arg(content, &SpanBranch::Verb),
+        )
+    }
+}
+
+/// Serialize a demoted span's rendered body as the content of its bare `{…}`
+/// group: the ordinary non-md Rd text pipeline over the rendered form — the
+/// fragment lexer carves fragile macros (whose source survived raw), bare
+/// braces group into `LIST`s ([`group_brace_lists`]), and escape resolution
+/// undoes the doubling/`escape_verb` escapes — exactly parse_Rd's read of the
+/// group.
+///
+/// When the rendered body's structural braces balance, every brace left in a
+/// `TEXT` leaf is a resolved *literal*, and the leaves re-**defer** their brace
+/// escaping ([`defer_md_text_braces`]) — a projected `@md` section string holds
+/// prose braces pre-resolution until [`resolve_md_text_braces`] finalizes after
+/// the drop scan, and an eagerly-bare brace would be double-resolved there. An
+/// unbalanced body skips the deferral and stays a flat run with its raw
+/// structural braces, so the `rdComplete` scan ([`sexpr_to_rd`]) still counts
+/// the imbalance and drops the section where roxygen2 does (the kept-tag
+/// output shape for that case is parse_Rd error-recovery territory — recorded
+/// backlog, not modeled here).
+fn demoted_span_arg(content: &str, branch: &SpanBranch) -> String {
+    let rendered = rendered_span_body(content, branch);
+    let inlines = para_to_inlines(&resolve_rd_inline(&rendered));
+    let grouped = group_brace_lists(&inlines, false);
+    let atoms = serialize_inlines(&grouped, false);
+    if rendered_braces_balanced(&rendered) {
+        atoms
+            .iter()
+            .map(|a| defer_md_text_braces(a))
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        atoms.join(" ")
+    }
+}
+
+/// Whether a rendered span body's **structural** braces balance without ever
+/// dipping negative — [`group_brace_lists`]'s non-md parity rules: a brace
+/// after an odd backslash run is escaped-literal (not counted), a bare `%`
+/// opens an Rd comment hiding the rest of the line, and everything else counts
+/// toward depth. An early `}` (a dip) closes the demoted group's own brace,
+/// restructuring the section — bail territory, treated as unbalanced.
+fn rendered_braces_balanced(rendered: &str) -> bool {
+    let bytes = rendered.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                let start = i;
+                while i < bytes.len() && bytes[i] == b'\\' {
+                    i += 1;
+                }
+                if (i - start) % 2 == 1 && matches!(bytes.get(i), Some(b'{' | b'}' | b'%')) {
+                    i += 1;
+                }
+            }
+            b'%' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    depth == 0
+}
+
+/// Whether a markdown code span's rendering alone makes roxygen2's `rdComplete`
+/// scan fail, dropping the whole section — a shape the atom scan cannot see. A
+/// `` `Rd …` `` span's body reaches the rendered Rd **raw** (the `\Sexpr`
+/// branch of `mdxml_code` does no `%` escaping, unlike prose/code/verbatim), so
+/// any `%` in the body opens an Rd comment that hides the generated macro's own
+/// closing `}` to the end of the rendered line — the field comes up
+/// brace-short. The projected atoms neutralize this (the kept-projection
+/// serializer strips or re-escapes the `%`), so the drop is detected here on
+/// the span source directly, like [`md_href_dest_drops`]. Prose after the span
+/// could in principle re-balance the count on a later line, which this check
+/// ignores — the same bounded approximation the other direct checks make.
+pub(super) fn md_sexpr_span_drops(content: &str) -> bool {
+    content
+        .strip_prefix("Rd ")
+        .is_some_and(|body| body.contains('%'))
 }
 
 /// Operator and keyword tokens roxygen2's `can_parse` treats as `\code` even

@@ -1418,10 +1418,11 @@ fn section_rd_complete_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> boo
 
 /// Whether `body` holds an inline whose rendering alone makes roxygen2 drop the
 /// section — a construct the atom scan cannot see because its atom neutralizes the
-/// offending characters. Two shapes: an inline `[text](dest)` link whose destination
-/// renders into a brace-incomplete `\href{dest}{text}` ([`md_href_dest_drops`]), and
+/// offending characters. Three shapes: an inline `[text](dest)` link whose destination
+/// renders into a brace-incomplete `\href{dest}{text}` ([`md_href_dest_drops`]),
 /// a fenced code block whose raw info string breaks the rendered fragment's balance
-/// ([`md_fence_info_drops`]). Recurses into every container that can hold either
+/// ([`md_fence_info_drops`]), and a `` `Rd …` `` span whose raw body carries a `%`
+/// that comments out the generated `\Sexpr`'s closing brace ([`md_sexpr_span_drops`]). Recurses into every container that can hold either
 /// (emphasis, bare brace groups, resolved list items, and a link's own display).
 /// Reference and shortcut links (`\link`, whose topic option is dropped) never carry
 /// the destination into a brace argument, so only the inline-link (`\href`) form is
@@ -1429,6 +1430,7 @@ fn section_rd_complete_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> boo
 /// ([`link_display_render_drops`]).
 fn body_has_md_drop(body: &[Inline]) -> bool {
     body.iter().any(|inl| match inl {
+        Inline::MdCode(content) => md_sexpr_span_drops(content),
         Inline::MdInlineLink { url, display } => {
             md_href_dest_drops(url) || body_has_md_drop(display)
         }

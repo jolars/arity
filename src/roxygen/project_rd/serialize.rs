@@ -513,14 +513,11 @@ pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
             Inline::MdCode(content) => {
                 if md && run_ends_odd_backslash_run(&run) {
                     // Demoted, the span's verbatim-ness is lost: the bare brace
-                    // group re-parses as plain prose text.
-                    let name = if code_span_is_r(content) {
-                        "code"
-                    } else {
-                        "verb"
-                    };
-                    let arg = text_atom(content).unwrap_or_default();
-                    push_demoted_macro(&mut atoms, &mut run, md, name, vec![arg]);
+                    // group re-parses as ordinary Rd text — fragile macros
+                    // become real nodes, bare braces nest as `LIST` groups
+                    // ([`demoted_md_code_parts`]).
+                    let (name, arg) = demoted_md_code_parts(content);
+                    push_demoted_macro(&mut atoms, &mut run, md, &name, vec![arg]);
                     continue;
                 }
                 if let Some(atom) = flush_run(&mut run, md) {

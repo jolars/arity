@@ -451,6 +451,68 @@ pub(super) fn resolve_md_brace_runs(run: &str) -> String {
 /// The scan tracks quote state so a literal `(TEXT "` *inside* another leaf's
 /// string (e.g. a code span) is copied as data, never mistaken for a leaf opener.
 pub(super) fn resolve_md_text_braces(sexpr: &str) -> String {
+    map_text_leaves(sexpr, resolve_md_brace_runs)
+}
+
+/// Re-**defer** the brace escaping in a demoted span argument's `TEXT` leaves:
+/// the exact inverse of [`resolve_md_brace_runs`], so the section-level
+/// finalization pass ([`resolve_md_text_braces`]) resolves these leaves to the
+/// text they carry now. The demoted re-parse pipeline resolves parse_Rd's
+/// escapes eagerly ([`process_prose`] md-off), but a projected `@md` section
+/// string holds its prose `TEXT` leaves in *pre-resolution* form until after the
+/// `rdComplete` drop scan — a literal brace preceded by `m` backslashes becomes
+/// a run of `2m+1` (the odd run that marks it escaped, which is also what the
+/// drop scan must weigh). Only leaves whose braces are all literal may take
+/// this (the caller checks structural balance first); a bail shape keeps its
+/// raw structural braces so the scan counts the imbalance.
+pub(super) fn defer_md_text_braces(sexpr: &str) -> String {
+    map_text_leaves(sexpr, defer_brace_runs)
+}
+
+/// Rewrite each brace in `run` (all literal, per the caller's contract) into
+/// its escaped pre-resolution form: `m` preceding backslashes + brace → a run
+/// of `2m+1` + the brace. [`resolve_md_brace_runs`] maps that back to exactly
+/// `m` backslashes + a bare brace. Backslash runs not abutting a brace copy
+/// verbatim (both transforms leave them alone).
+fn defer_brace_runs(run: &str) -> String {
+    let bytes = run.as_bytes();
+    let mut out = String::with_capacity(run.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            let mut k = 0usize;
+            while i + k < bytes.len() && bytes[i + k] == b'\\' {
+                k += 1;
+            }
+            if matches!(bytes.get(i + k), Some(b'{' | b'}')) {
+                out.extend(std::iter::repeat_n('\\', 2 * k + 1));
+                out.push(bytes[i + k] as char);
+                i += k + 1;
+            } else {
+                out.extend(std::iter::repeat_n('\\', k));
+                i += k;
+            }
+            continue;
+        }
+        if matches!(bytes[i], b'{' | b'}') {
+            out.push('\\');
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && !matches!(bytes[i], b'\\' | b'{' | b'}') {
+            i += 1;
+        }
+        out.push_str(&run[start..i]);
+    }
+    out
+}
+
+/// Apply `transform` to every `(TEXT "…")` leaf's decoded content in a projected
+/// section S-expression, copying everything else verbatim. Shared by
+/// [`resolve_md_text_braces`] and [`defer_md_text_braces`].
+fn map_text_leaves(sexpr: &str, transform: impl Fn(&str) -> String) -> String {
     let bytes = sexpr.as_bytes();
     let mut out = String::with_capacity(sexpr.len());
     let mut i = 0usize;
@@ -475,7 +537,7 @@ pub(super) fn resolve_md_text_braces(sexpr: &str) -> String {
                     }
                     if bytes.get(i) == Some(&b'"') {
                         let text = read_quoted(bytes, &mut i);
-                        out.push_str(&encode_text(&resolve_md_brace_runs(&text)));
+                        out.push_str(&encode_text(&transform(&text)));
                     }
                 }
             }

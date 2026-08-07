@@ -65,13 +65,17 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
     // lone-backslash `RCODE` leaf before each in-code macro). Re-joining the
     // children inside a single brace pair reconstructs the true rendered body,
     // so a genuinely unbalanced span (`` `Rd foo{` ``) still fails the scan
-    // while the artifact split alone does not.
-    let is_sexpr = head == b"\\Sexpr";
+    // while the artifact split alone does not. A `LIST` is likewise ONE bare
+    // `{…}` group whose children are parse_Rd's split of a single run (a
+    // demoted macro's argument, a grouped brace pair) — wrapping each child in
+    // its own pair would let a child's trailing `\` escape a brace that does
+    // not exist in the rendered text.
+    let single_group = head == b"\\Sexpr" || head == b"LIST";
     // A fragile macro keeps its argument raw in markdown() output, so its whole
     // subtree stays brace-balanced regardless of the resolved leaf braces beneath.
     let child_verbatim = verbatim
         || (!is_grp
-            && !is_sexpr
+            && !single_group
             && is_fragile_for_md(
                 std::str::from_utf8(head)
                     .unwrap_or("")
@@ -82,7 +86,7 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
         // letter for `rd_complete`, which is harmless (a letter, never a brace).
         out.push_str(std::str::from_utf8(head).unwrap_or(""));
     }
-    if is_sexpr {
+    if single_group {
         out.push('{');
     }
     loop {
@@ -94,7 +98,7 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
                 break;
             }
             Some(_) => {
-                if is_grp || is_sexpr {
+                if is_grp || single_group {
                     render_sexpr(bytes, i, md, child_verbatim, out);
                 } else {
                     out.push('{');
@@ -104,7 +108,7 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
             }
         }
     }
-    if is_sexpr {
+    if single_group {
         out.push('}');
     }
 }

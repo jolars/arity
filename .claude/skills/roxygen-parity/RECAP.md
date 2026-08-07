@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1013 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1018 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **219/219** preserving (verified against 8.0.0).
+closed. Curated fixed-point **224/224** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -29,8 +29,11 @@ crosses generated `\usage`/`\arguments`; merged-topic members; `@section`
 two-arg bodies; imbalance inside macro atoms — see `parse_rd_recovery`'s module
 doc); loose-file default-`@md` ON; the block→inline delimiter-stack migration
 for the remaining local scanners; same-`@name` static-scope object-topic
-resolution (only explicit `@name`/`@rdname` is grouped today); demoted
-(post-odd-run) `` `Rd …` `` spans still demote as code/verb, not `\Sexpr`.
+resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
+(`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
+imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
+output shape is not); `\eqn{a}{b}` second-group consumption (arity models eqn
+single-arg); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions.
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -248,46 +251,59 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07b) — parse_Rd brace recovery for kept-incomplete `@md` sections
+## Latest session (2026-08-07c) — demoted code spans + fragile gating in `` `Rd …` `` bodies
 
-Closed the "per-tag `rdComplete` drop parity" open item. With markdown on, a
-`sections = FALSE` prose tag (`tag_markdown`: `@note`/`@return`/`@seealso`/
-`@references`/`@author`, plus intro-derived `@title`) gets **no** `rdComplete`
-check (8.0.0 `markdown_if_active`, R/tag-parser.R) — the brace-imbalanced
-rendered body is **kept** and flows into the Rd file, where `tools::parse_Rd`'s
-error recovery restructures it (engine-probed): a stray `{` opens a `LIST`
-group swallowing to the next `}` (the section's own closer), so each following
-section's header error-drops while its `{…}` body folds in as a sibling `LIST`;
-a stray `}` closes the section early and the remainder spills as **separate
-top-level `TEXT` sections** (top-level stray braces drop, bounding the runs); at
-EOF open groups keep content, and an empty swallowed group stays a childless
-`(LIST)`. A net-zero **dip** (`a } b { c`) passes roxygen2's count-based
-`rdComplete` yet still restructures — so kept `@description`/`@details` trigger
-too.
+Closed the "demoted `` `Rd …` `` spans demote as code/verb" open item, plus the
+cluster around it. Root insight (engine-probed + R/markdown-escaping.R): a code
+span's content reaches the rendered Rd through roxygen2's **fragile-tag
+protection** — `find_fragile_rd_tags`/`findEndOfTag` protect each
+`escaped_for_md` macro (name + greedy adjacent balanced `{…}` groups) from both
+`double_escape_md` (which doubles every other backslash; cmark leaves code-span
+content untouched) and the branch escaping (`mdxml_code`: `Rd `-span → raw
+`\Sexpr[stage=render,results=rd]{…}` body, `\code` → `%`-escape only, `\verb` →
+`escape_verb` `%`/`{`/`}`). So inside a span body only a **fragile** `\word{…}`
+survives as a parseable macro; a non-fragile one resolves back to a literal `\`
++ prose whose braces stay bare in the `Sexpr`/`code` branches (→ `LIST` groups)
+but escaped in `verb`.
 
-**Projector bucket** (CST untouched): `parse_rd_recovery`
-(`src/roxygen/project_rd/recovery.rs`), a bracket machine over the projected
-section strings, run per **standalone** topic at the end of `project_block_impl`
-*before* `resolve_md_text_braces` (so `\{` escapes are still distinguishable
-from structural braces). Sections are consumed in roxygen2's physical emission
-order (`RoxyTopic$format`'s fixed `order`, R/topic.R — note `\value` renders
-BEFORE `\description`, so an incomplete `@return` swallows the description).
-Detection = `text_brace_disturbance` (depth dips negative or ends nonzero over
-structural TEXT braces), **not** `rd_complete`. Bounded by bails (each a
-recorded backlog shape): non-md; merged-topic member; any tag outside
-`SAFE_RECOVERY_TAGS` (`@keywords`/`@family`/`@describeIn`/… inject Rd the
-projector cannot place); `\section`/`\examples`/unknown heads in the affected
-tail; imbalance not attributable to top-level TEXT braces
-(`text_braces_attributable` — the `\emph{\}` family stays with
-`link_display_render_drops`). Incomplete `@title`/`@format`/`@source` stay
-backlog (their tails cross generated `\usage`/`\arguments`).
+Landed (all buckets): **parser** — `VERBATIM_RD_MACROS` += `eqn`/`deqn`/`out`
+(parse_Rd yields `VERB`; prose `\eqn{x \code{q} y}` was divergent too), new
+`resolve_rd_inline` (non-md fragment twin of `resolve_md_inline`), fixture
+`roxygen_rd_verbatim_args`. **Projector** — `sexpr_atom` carve now
+fragile-gated and routed through the real fragment pipeline (`serialize_macro`
+gives per-macro arg heads: `\code`→RCODE, `\var`→TEXT, `\eqn`→VERB); the
+`MdCode` demotion arm emits `demoted_md_code_parts` (full `Sexpr[…]` head +
+body re-parsed via `rendered_span_body` → `resolve_rd_inline` →
+`group_brace_lists`/`serialize_inlines` md-off); `sexpr_to_rd` renders `LIST`
+children in ONE brace pair (per-child pairs let an artifact-split trailing `\`
+escape a phantom brace → false drop); `defer_md_text_braces`
+(exact inverse of `resolve_md_brace_runs`, `map_text_leaves` refactor) re-defers
+the demoted arg's literal braces so the section-level
+`resolve_md_text_braces` finalization resolves them exactly once — gated on
+`rendered_braces_balanced` (bail shapes keep raw structural braces so the scan
+counts them); `body_has_md_drop` gained `md_sexpr_span_drops` (any `%` in an
+`Rd `-span body comments out the generated `}` → section drops, both demoted
+and not — the atoms neutralize it, so it is a direct check like
+`md_href_dest_drops`).
 
-Curated +4 (`rdcomplete_keep_{note,nested,spill,value}`); format-stability
-baseline re-blessed (+4 identity keys, reviewed). Projector 1009→**1013**
-matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point **219/219**.
-Full workspace suite + clippy + fmt green.
+Curated +5 (`sexpr_demote`, `code_span_demote`, `sexpr_rcode_fragile`,
+`rd_verbatim_args`, `sexpr_percent_drop`); baseline re-blessed (+5 identity
+keys, reviewed). Projector 1013→**1018** matching (all allowlisted), 0
+divergent, 12 blocked. Fixed-point **224/224**. Full workspace suite + clippy +
+fmt green. New recorded backlog: kept-tag span bodies with `%`/imbalance
+(recovery territory), `\eqn{a}{b}` 2nd group, `doi`/`CRANpkg` USERMACROs,
+multi-arg fragile names in span bodies.
 
 ## Earlier sessions (condensed)
+
+### 2026-08-07b — parse_Rd brace recovery for kept-incomplete `@md` sections
+
+Kept-incomplete md-on prose tags (`markdown_if_active` skips `rdComplete`) reach
+parse_Rd, whose recovery restructures the Rd tail — modeled by
+`parse_rd_recovery` (recovery.rs), a bracket machine over projected section
+strings in roxygen2's physical emission order (`\value` BEFORE `\description`),
+detection via `text_brace_disturbance`, bounded by `SAFE_RECOVERY_TAGS` bails.
+Curated +4 (`rdcomplete_keep_*`). 1009→1013. Fixed-point 219/219.
 
 ### 2026-08-07 — oracle bump to roxygen2 8.0.0 (churn absorbed) + grammar additions
 
