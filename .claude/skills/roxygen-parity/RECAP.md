@@ -16,19 +16,21 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1007 matching (all allowlisted), 0 divergent, 12 blocked** of
-1019 pinned. The **whole CommonMark spec (655/655)** matches; the harvested
-corpus is fully closed. Curated fixed-point **212/212** preserving (verified
-against 8.0.0). The measured backlog is **exhausted** — no divergence currently
-drives parser growth.
+Projector gate **1013 matching (all allowlisted), 0 divergent, 12 blocked**.
+The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
+closed. Curated fixed-point **219/219** preserving (verified against 8.0.0).
+The measured backlog is **exhausted** — no divergence currently drives parser
+growth.
 
 **Next growth comes from** either (a) harvesting a fresh/larger roxygen2 corpus
 to surface new gaps, or (b) closing a documented trap-backlog item. Known open
-items: **per-tag `rdComplete` drop parity** (`@note` KEEPS an incomplete field
-where `@details`/`@description` DROP — a concrete gap with a clear oracle
-probe); loose-file default-`@md` ON; the block→inline delimiter-stack migration
+items: **recovery-pass bails** (incomplete `@title`/`@format`/`@source` — tail
+crosses generated `\usage`/`\arguments`; merged-topic members; `@section`
+two-arg bodies; imbalance inside macro atoms — see `parse_rd_recovery`'s module
+doc); loose-file default-`@md` ON; the block→inline delimiter-stack migration
 for the remaining local scanners; same-`@name` static-scope object-topic
-resolution (only explicit `@name`/`@rdname` is grouped today).
+resolution (only explicit `@name`/`@rdname` is grouped today); demoted
+(post-odd-run) `` `Rd …` `` spans still demote as code/verb, not `\Sexpr`.
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -179,7 +181,11 @@ resolution (only explicit `@name`/`@rdname` is grouped today).
   `title: content` as one string). Wider than `norm_ws`'s ASCII set; interior NBSPs survive.
 - **`rdComplete` brace-balance drop is mode-dependent** (`section_rd_complete`): md-on scans
   `rdComplete(markdown(text))` (only `@description`/`@details` drop); md-off scans
-  `rdComplete(x$raw)` unconditionally (every prose section, title included). `@field`/`@slot`
+  `rdComplete(x$raw)` unconditionally (every prose section, title included). A md-on
+  **kept**-incomplete section's imbalance reaches parse_Rd, whose error recovery
+  restructures the Rd file's affected tail — modeled by `parse_rd_recovery`
+  (recovery.rs), a bounded bracket machine in roxygen2's physical emission order
+  (`\value` renders BEFORE `\description`). `@field`/`@slot`
   drop the whole tag; `@section` md-off → `(\section (TEXT "NA"))`. A fragile macro's interior
   braces are neutralized in the scan.
 - **`@md` text transforms** (order in `prose_text_atom`): `%`-swallow (parity-keyed on the
@@ -242,65 +248,61 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07) — oracle bump to roxygen2 8.0.0 — CHURN ABSORBED
+## Latest session (2026-08-07b) — parse_Rd brace recovery for kept-incomplete `@md` sections
 
-devenv brought roxygen2 8.0.0 (and commonmark 2.0.0); the pin, `roxygen2-ref`, and
-**every** pin corpus were re-minted against it (`task roxygen-projector-refresh`).
-24 allowlisted cases regressed against the fresh pins; all closed, in five clusters:
+Closed the "per-tag `rdComplete` drop parity" open item. With markdown on, a
+`sections = FALSE` prose tag (`tag_markdown`: `@note`/`@return`/`@seealso`/
+`@references`/`@author`, plus intro-derived `@title`) gets **no** `rdComplete`
+check (8.0.0 `markdown_if_active`, R/tag-parser.R) — the brace-imbalanced
+rendered body is **kept** and flows into the Rd file, where `tools::parse_Rd`'s
+error recovery restructures it (engine-probed): a stray `{` opens a `LIST`
+group swallowing to the next `}` (the section's own closer), so each following
+section's header error-drops while its `{…}` body folds in as a sibling `LIST`;
+a stray `}` closes the section early and the remainder spills as **separate
+top-level `TEXT` sections** (top-level stray braces drop, bounding the runs); at
+EOF open groups keep content, and an empty swallowed group stays a childless
+`(LIST)`. A net-zero **dip** (`a } b { c`) passes roxygen2's count-based
+`rdComplete` yet still restructures — so kept `@description`/`@details` trigger
+too.
 
-1. **Field-edge trim narrowed** (`trim_field_atoms` → `is_trimws_space`, text.rs):
-   8.0.0 dropped stringr, so `str_trim` (Unicode White_Space) became base `trimws`
-   (exactly `[ \t\r\n]`) — an edge NBSP now *stops* the trim and survives.
-2. **md-off incomplete `@section`** renders a childless `(\section)`:
-   `re_split_half` yields `""`/`""` where 7.x's `str_split` yielded `NA`
-   (no more literal "NA" text).
-3. **`\linkS4class` is gone** (`shortcut_link_atom`): all generated links share
-   one code path; `[s4-class]` → `\link[=s4-class]{s4}` (anchor serializer-dropped).
-4. **Empty-bodied trailing headings render** (removed `section_raw_fallback_atoms`
-   + the abort branch): 8.0.0 pads `strsplit`'s dropped trailing empties
-   (`mdxml_children_to_rd_top`), so the 7.x splicer-crash → raw-text fallback no
-   longer exists. This unmasked a **parser gap** (cm-070): a >= 4-column line
-   inside an open paragraph is a **lazy continuation** — no block start is
-   recognized at that depth. Gate added at the top of the grouper's Prose chain
-   (`group.rs`, `md && para_open && is_indent_code_line` → prose; loose block
-   leaves degrade to `ROXYGEN_TEXT` in the tree builder).
-5. **Non-plain link displays are KEPT, not dropped** (`mdxml_link_text`):
-   `link_display_is_droppable` and the active-markdown-macro machinery deleted;
-   `ref_link_node_atom`/`shortcut_link_node_atom` route any non-plain display
-   through `link_over_display` (single-code-span unwrap and plain-equality
-   shortcut refinements unchanged). Two cascade consequences, both modeled:
-   a kept display whose emphasis text ends in an odd backslash run renders
-   `\emph{b\}` (text is verbatim in `mdxml_link_text`) and the **whole field**
-   fails roxygen2's rdComplete → `link_display_render_drops` (section.rs, on
-   `body_has_md_drop`'s side channel — the atom scan can't see it because a
-   generated `\link` head is fragile to `sexpr_to_rd`); and in a heading
-   *title* the same escaped closer swallows the title's closing brace so the
-   body's `{…}` folds INTO the title (`extend_escaped_list_closer` in
-   `render_heading_frame`, cm-066: trailing `(LIST)` in the title GRP,
-   single-argument `\section`).
+**Projector bucket** (CST untouched): `parse_rd_recovery`
+(`src/roxygen/project_rd/recovery.rs`), a bracket machine over the projected
+section strings, run per **standalone** topic at the end of `project_block_impl`
+*before* `resolve_md_text_braces` (so `\{` escapes are still distinguishable
+from structural braces). Sections are consumed in roxygen2's physical emission
+order (`RoxyTopic$format`'s fixed `order`, R/topic.R — note `\value` renders
+BEFORE `\description`, so an incomplete `@return` swallows the description).
+Detection = `text_brace_disturbance` (depth dips negative or ends nonzero over
+structural TEXT braces), **not** `rd_complete`. Bounded by bails (each a
+recorded backlog shape): non-md; merged-topic member; any tag outside
+`SAFE_RECOVERY_TAGS` (`@keywords`/`@family`/`@describeIn`/… inject Rd the
+projector cannot place); `\section`/`\examples`/unknown heads in the affected
+tail; imbalance not attributable to top-level TEXT braces
+(`text_braces_attributable` — the `\emph{\}` family stays with
+`link_display_render_drops`). Incomplete `@title`/`@format`/`@source` stay
+backlog (their tails cross generated `\usage`/`\arguments`).
 
-Ratchet: +`tag_separator_ws` (newly mintable — 7.x choked on the probe, 8.0.0
-processes it) and +3 unblocked `rx-*` (8.0.0 dropped the evaluated `\format`
-for data objects — `\docType{data}`/`\keyword{datasets}`/`\format` no longer
-auto-generated — so the non-static blocker vanished). 1003→1007 matching,
-15→12 blocked. Full workspace suite + clippy + fmt green.
-
-**8.0.0 grammar additions (same-day follow-up, all landed):** `` `Rd expr` ``
-inline code → `(\Sexpr …)` (`md_code_atom`/`sexpr_atom`, checked *before* the
-`can_parse` code/verb split; body is verbatim R-code where parse_Rd still
-recognizes `\word{…}` macros — only the **last** backslash of a run opens the
-macro; `sexpr_to_rd` re-joins the children in ONE brace pair so the scan sees
-the true single-argument render). Backtick-quoted two-part names with spaces
-(`@param `arg 1``): the lexer's ARG carve extends to the closing backtick
-(whitespace fallback when unclosed), and the projector strips the backticks for
-field/slot item names (`split_two_part`). `@prop` (S7 two-part) → arg-bearing +
-formatter `NameBearingProse`; `@R6method` (single `Class$method` value) →
-`tag_value` exclusions + formatter `AtomicValue`. Curated `md_rd_sexpr` +
-`backtick_field_name`, 1007→1009. Known micro-gap: a demoted (post-odd-run)
-`` `Rd …` `` span still demotes as code/verb, not `\Sexpr`; `@inheritParams`
-filter args need no CST change (single verbatim value).
+Curated +4 (`rdcomplete_keep_{note,nested,spill,value}`); format-stability
+baseline re-blessed (+4 identity keys, reviewed). Projector 1009→**1013**
+matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point **219/219**.
+Full workspace suite + clippy + fmt green.
 
 ## Earlier sessions (condensed)
+
+### 2026-08-07 — oracle bump to roxygen2 8.0.0 (churn absorbed) + grammar additions
+
+Every pin re-minted at 8.0.0; 24 allowlisted regressions closed in five clusters,
+all folded into the invariant sections above: trim narrowed to base `trimws`
+(`is_trimws_space`); md-off incomplete `@section` → childless `(\section)`;
+`\linkS4class` gone (`[s4-class]` → `\link[=s4-class]{s4}`); empty-bodied trailing
+headings render (7.x splicer-crash fallback removed — unmasked the cm-070 lazy-
+continuation parser gap, gated in `group.rs`); non-plain link displays KEPT
+(`link_over_display`, with the `\emph{b\}` whole-field drop via
+`link_display_render_drops` and the heading-title brace swallow via
+`extend_escaped_list_closer`). Same-day grammar additions: `` `Rd expr` `` →
+`(\Sexpr …)` (`sexpr_atom`), backtick-quoted two-part names (`split_two_part`),
+`@prop`/`@R6method` classification. 1003→1009 matching, 15→12 blocked. Full
+detail: `git log --follow` this file.
 
 ### 2026-07-27 — same-`@name` topic merge (rx-aef0e809) — 7.3.3 backlog closed
 

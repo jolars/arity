@@ -4722,3 +4722,79 @@ fn thematic_break_ends_block_quote() {
         project_to_rd(src)
     );
 }
+
+#[test]
+fn parse_rd_recovery_folds_following_sections() {
+    // A kept-incomplete `@md` note: the stray `{` swallows to the section's own
+    // closing brace, then the following section's header drops and its body
+    // folds in as another `LIST` (parse_Rd error recovery, engine-probed).
+    let mut out = vec![
+        "(\\note (TEXT \"a { b\"))".to_string(),
+        "(\\seealso (TEXT \"after\"))".to_string(),
+    ];
+    parse_rd_recovery(&mut out, 0, true, &["note".into(), "seealso".into()]);
+    assert_eq!(
+        out,
+        vec!["(\\note (TEXT \"a\") (LIST (TEXT \"b\")) (LIST (TEXT \"after\")))".to_string()]
+    );
+}
+
+#[test]
+fn parse_rd_recovery_spills_early_close_at_top_level() {
+    // A net-zero brace *dip* passes roxygen2's count-based `rdComplete` (the
+    // section is kept) yet still restructures: the stray `}` closes the section
+    // early, the remainder spills as separate top-level `TEXT` sections (each
+    // dropped stray brace bounds a run), and a following section is unaffected.
+    let mut out = vec![
+        "(\\note (TEXT \"a } b { c\"))".to_string(),
+        "(\\seealso (TEXT \"after\"))".to_string(),
+    ];
+    parse_rd_recovery(&mut out, 0, true, &["note".into(), "seealso".into()]);
+    out.sort();
+    assert_eq!(
+        out,
+        vec![
+            "(TEXT \"b\")".to_string(),
+            "(TEXT \"c\")".to_string(),
+            "(\\note (TEXT \"a\"))".to_string(),
+            "(\\seealso (TEXT \"after\"))".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn parse_rd_recovery_bails_outside_the_modeled_shape() {
+    let incomplete = "(\\note (TEXT \"a { b\"))".to_string();
+    let baseline = vec![incomplete.clone()];
+
+    // Markdown off: kept sections cannot be incomplete (unconditional drop).
+    let mut out = baseline.clone();
+    parse_rd_recovery(&mut out, 0, false, &["note".into()]);
+    assert_eq!(out, baseline);
+
+    // An unsafe tag (`@keywords` renders a trailing `\keyword` the projector
+    // does not place) bails the whole pass.
+    let mut out = baseline.clone();
+    parse_rd_recovery(&mut out, 0, true, &["note".into(), "keywords".into()]);
+    assert_eq!(out, baseline);
+
+    // A non-consumable section in the affected tail (`\examples`, reformatted
+    // R body) bails.
+    let mut out = vec![incomplete.clone(), "(\\examples ...)".to_string()];
+    let before = out.clone();
+    parse_rd_recovery(&mut out, 0, true, &["note".into(), "examples".into()]);
+    assert_eq!(out, before);
+
+    // An imbalance not attributable to top-level TEXT braces (here a rendered
+    // `\emph{\}`, whose trailing `\` escapes the macro's closing brace) bails.
+    let mut out = vec!["(\\note (TEXT \"x\") (\\emph (TEXT \"\\\\\")))".to_string()];
+    let before = out.clone();
+    parse_rd_recovery(&mut out, 0, true, &["note".into()]);
+    assert_eq!(out, before);
+
+    // A balanced, undisturbed section is left alone.
+    let mut out = vec!["(\\note (TEXT \"plain\"))".to_string()];
+    let before = out.clone();
+    parse_rd_recovery(&mut out, 0, true, &["note".into()]);
+    assert_eq!(out, before);
+}

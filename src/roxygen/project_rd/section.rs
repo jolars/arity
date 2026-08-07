@@ -65,10 +65,14 @@ pub(super) fn project_block_impl(
     // topic concatenates into a single `\examples` section. The body is
     // reformatted R, so the projector only records *that* one exists.
     let mut has_examples = false;
+    // Every tag name the block carries, for the recovery pass's safe-tag gate
+    // (see `parse_rd_recovery`).
+    let mut tag_names: Vec<String> = Vec::new();
 
     for section in block.sections() {
         if let Some(tag) = section.tag() {
             let name = tag.name().map(|n| n.to_string()).unwrap_or_default();
+            tag_names.push(name.clone());
             let mut body = tag_inlines(&tag);
             for part in section_body_parts(&section) {
                 // A part that leads with a block quote carries no separator: its
@@ -233,6 +237,15 @@ pub(super) fn project_block_impl(
         out.push("(\\examples ...)".to_string());
     }
 
+    // A kept-incomplete `@md` prose section's imbalance reaches parse_Rd, whose
+    // error recovery restructures the affected tail of the Rd file (see
+    // `parse_rd_recovery`). Runs on the standalone-topic path only: for a
+    // merged-topic member the recovery belongs to the *merged* file, which the
+    // pass does not model (a member's incomplete section stays backlog).
+    if apply_title_fallback {
+        parse_rd_recovery(out, block_start, md, &tag_names);
+    }
+
     // parse_Rd renders a `@md` prose escape `\{`/`\}` as a bare brace in the final
     // TEXT node. This runs after every section (and its `rdComplete` drop) is built
     // so the drop scan still weighs the escaped brace (an unbalanced *escaped* brace
@@ -384,7 +397,7 @@ fn text_atom_content(atom: &str) -> Option<&str> {
 
 /// Split a run of space-separated top-level parenthesized atoms, respecting nested
 /// parens and `"…"` string literals (with `\`-escapes).
-fn split_top_level_atoms(s: &str) -> Vec<&str> {
+pub(super) fn split_top_level_atoms(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut atoms = Vec::new();
     let mut i = 0;

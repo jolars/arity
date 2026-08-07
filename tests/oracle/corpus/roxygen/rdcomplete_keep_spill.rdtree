@@ -1,0 +1,6 @@
+(TEXT "b")
+(TEXT "c")
+(\description (TEXT "T"))
+(\note (TEXT "a"))
+(\seealso (TEXT "after"))
+(\title (TEXT "T"))

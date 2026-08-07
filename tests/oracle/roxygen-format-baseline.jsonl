@@ -205,6 +205,10 @@
 {"key":"curated/rd_nested_list","formatted":"#' @details\n#' \\enumerate{\n#'   \\item numbered\n#'   \\itemize{\n#'     \\item itemized\n#'     \\item sublist\n#'   }\n#'   \\item list\n#' }\n#' @name x\n#' @title A title\nNULL\n"}
 {"key":"curated/rd_zero_arg_macros","formatted":"#' Zero-argument Rd macros in prose\n#'\n#' @details\n#' Dots \\dots and ldots \\ldots and the \\R logo and a break \\cr end. Parity\n#' applies: even \\\\dots is literal, odd \\\\\\dots re-forms.\n#' @name rd_zero_arg_macros\nNULL\n"}
 {"key":"curated/rdcomplete_field_drop","formatted":"#' @title T\n#' @field a fi{eld a\nsetRefClass(\"X\", fields = c(a = \"numeric\"))\n"}
+{"key":"curated/rdcomplete_keep_nested","formatted":"#' @title T\n#' @note a { b { c\n#' @seealso after\n#' @md\n#' @name x\nNULL\n"}
+{"key":"curated/rdcomplete_keep_note","formatted":"#' @title T\n#' @note a { b\n#' @seealso after\n#' @md\n#' @name x\nNULL\n"}
+{"key":"curated/rdcomplete_keep_spill","formatted":"#' @title T\n#' @note a } b { c\n#' @seealso after\n#' @md\n#' @name x\nNULL\n"}
+{"key":"curated/rdcomplete_keep_value","formatted":"#' @title T\n#' @return r {\n#' @md\n#' @name x\nNULL\n"}
 {"key":"curated/rdcomplete_off_description","formatted":"#' @title A title\n#' @description has \\code{unbalanced brace\n#' @details fine here\n#' @name x\nNULL\n"}
 {"key":"curated/rdcomplete_off_seealso","formatted":"#' @title T\n#' @description Fine desc\n#' @seealso has \\code{unbalanced\n#' @name x\nNULL\n"}
 {"key":"curated/rdcomplete_section_drop","formatted":"#' @title T\n#' @section Heading:\n#' body with brace {\n#' @name x\nNULL\n"}

@@ -1,0 +1,2 @@
+(\title (TEXT "T"))
+(\value (TEXT "r") (LIST) (LIST (TEXT "T")))
