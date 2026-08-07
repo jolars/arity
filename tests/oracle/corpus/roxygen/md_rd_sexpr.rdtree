@@ -1,0 +1,3 @@
+(\description (TEXT "Render-time Rd expressions"))
+(\details (TEXT "Pre") (\Sexpr (RCODE "1+1")) (TEXT "mid") (\Sexpr (RCODE "\\") (\eqn (VERB "a+b"))) (TEXT "post."))
+(\title (TEXT "Render-time Rd expressions"))

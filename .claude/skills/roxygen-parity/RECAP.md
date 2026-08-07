@@ -285,11 +285,20 @@ for data objects — `\docType{data}`/`\keyword{datasets}`/`\format` no longer
 auto-generated — so the non-static blocker vanished). 1003→1007 matching,
 15→12 blocked. Full workspace suite + clippy + fmt green.
 
-**Grammar additions 8.0.0 ships that arity does not yet model** (next targets):
-`` `Rd expr` `` inline code → `\Sexpr[stage=render,results=rd]`; `@prop` (S7)
-and `@R6method` tags (parse today as generic unknown tags — fine for CST, no
-classifier entries); `@inheritParams` filter args (`foo x -z`); backtick-quoted
-`@param` names with spaces; markup in link text is DONE (cluster 5).
+**8.0.0 grammar additions (same-day follow-up, all landed):** `` `Rd expr` ``
+inline code → `(\Sexpr …)` (`md_code_atom`/`sexpr_atom`, checked *before* the
+`can_parse` code/verb split; body is verbatim R-code where parse_Rd still
+recognizes `\word{…}` macros — only the **last** backslash of a run opens the
+macro; `sexpr_to_rd` re-joins the children in ONE brace pair so the scan sees
+the true single-argument render). Backtick-quoted two-part names with spaces
+(`@param `arg 1``): the lexer's ARG carve extends to the closing backtick
+(whitespace fallback when unclosed), and the projector strips the backticks for
+field/slot item names (`split_two_part`). `@prop` (S7 two-part) → arg-bearing +
+formatter `NameBearingProse`; `@R6method` (single `Class$method` value) →
+`tag_value` exclusions + formatter `AtomicValue`. Curated `md_rd_sexpr` +
+`backtick_field_name`, 1007→1009. Known micro-gap: a demoted (post-odd-run)
+`` `Rd …` `` span still demotes as code/verb, not `\Sexpr`; `@inheritParams`
+filter args need no CST change (single verbatim value).
 
 ## Earlier sessions (condensed)
 

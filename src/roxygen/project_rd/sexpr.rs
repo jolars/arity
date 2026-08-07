@@ -60,10 +60,18 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
         return;
     }
     let is_grp = head == b"GRP";
+    // A generated `\Sexpr` (an `` `Rd expr` `` span) carries ONE argument — the
+    // span text verbatim — but its atoms are parse_Rd's *artifact* split (a
+    // lone-backslash `RCODE` leaf before each in-code macro). Re-joining the
+    // children inside a single brace pair reconstructs the true rendered body,
+    // so a genuinely unbalanced span (`` `Rd foo{` ``) still fails the scan
+    // while the artifact split alone does not.
+    let is_sexpr = head == b"\\Sexpr";
     // A fragile macro keeps its argument raw in markdown() output, so its whole
     // subtree stays brace-balanced regardless of the resolved leaf braces beneath.
     let child_verbatim = verbatim
         || (!is_grp
+            && !is_sexpr
             && is_fragile_for_md(
                 std::str::from_utf8(head)
                     .unwrap_or("")
@@ -74,6 +82,9 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
         // letter for `rd_complete`, which is harmless (a letter, never a brace).
         out.push_str(std::str::from_utf8(head).unwrap_or(""));
     }
+    if is_sexpr {
+        out.push('{');
+    }
     loop {
         skip_spaces(bytes, i);
         match bytes.get(*i) {
@@ -83,7 +94,7 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
                 break;
             }
             Some(_) => {
-                if is_grp {
+                if is_grp || is_sexpr {
                     render_sexpr(bytes, i, md, child_verbatim, out);
                 } else {
                     out.push('{');
@@ -92,6 +103,9 @@ fn render_sexpr(bytes: &[u8], i: &mut usize, md: bool, verbatim: bool, out: &mut
                 }
             }
         }
+    }
+    if is_sexpr {
+        out.push('}');
     }
 }
 

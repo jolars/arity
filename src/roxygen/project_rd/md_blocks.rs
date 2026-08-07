@@ -1053,12 +1053,99 @@ pub(super) fn md_list_item_inlines(item: &SyntaxNode) -> Vec<Inline> {
 /// projector replicates the decision with arity's own parser: parseable ⇒
 /// `(\code (RCODE …))`, else `(\verb (VERB …))`. Both bodies are verbatim (no
 /// whitespace collapse).
+///
+/// A span whose content opens with `Rd ` is roxygen2 8.0.0's render-time
+/// expression syntax, checked *before* the `can_parse` decision: it renders
+/// `\Sexpr[stage=render,results=rd]{<rest>}` with the rest verbatim — no `%`
+/// escaping, no evaluation (the evaluation happens when the Rd renders, so the
+/// construct is fully static, unlike the knitr-evaluated `` `r …` `` form).
+/// The `[…]` option is dropped by the section serializer ([`sexpr_atom`]).
 pub(super) fn md_code_atom(content: &str) -> String {
+    if let Some(body) = content.strip_prefix("Rd ") {
+        return sexpr_atom(body);
+    }
     if code_span_is_r(content) {
         format!("(\\code (RCODE {}))", encode_text(content))
     } else {
         format!("(\\verb (VERB {}))", encode_text(content))
     }
+}
+
+/// The `(\Sexpr …)` atom for an `` `Rd expr` `` span's body, mirroring what
+/// parse_Rd yields for `\Sexpr[…]{body}`. The body is R-code context, so plain
+/// text is a verbatim `RCODE` leaf — but parse_Rd still recognizes a `\word{…}`
+/// macro inside R code, the macro node carrying a verbatim argument. In a run
+/// of backslashes before `word{`, only the **last** one opens the macro; the
+/// rest stay in the code text (engine-probed: `` `Rd \eqn{x}` `` →
+/// `(\Sexpr (\eqn (VERB "x")))`, `` `Rd \\eqn{x}` `` → `(\Sexpr (RCODE "\")
+/// (\eqn (VERB "x")))`). A backslash not opening a `word{…}` shape stays in
+/// the code text.
+fn sexpr_atom(body: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut text = String::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && let Some((name_end, end)) = rd_code_macro_span(body, i)
+        {
+            if !text.is_empty() {
+                parts.push(format!("(RCODE {})", encode_text(&text)));
+                text.clear();
+            }
+            let name = &body[i + 1..name_end];
+            let arg = &body[name_end + 1..end - 1];
+            parts.push(format!("(\\{name} (VERB {}))", encode_text(arg)));
+            i = end;
+        } else {
+            // Advance one char; multi-byte chars never start with `\`.
+            let ch_len = body[i..].chars().next().map_or(1, char::len_utf8);
+            text.push_str(&body[i..i + ch_len]);
+            i += ch_len;
+        }
+    }
+    if !text.is_empty() {
+        parts.push(format!("(RCODE {})", encode_text(&text)));
+    }
+    if parts.is_empty() {
+        "(\\Sexpr)".to_string()
+    } else {
+        format!("(\\Sexpr {})", parts.join(" "))
+    }
+}
+
+/// The `(name end, span end)` of a `\word{…}` Rd macro opening at `body[i]`
+/// (which must be a `\`): the name's exclusive end and the index just past the
+/// balanced closing `}`. `None` when the shape does not match: no
+/// `[A-Za-z][A-Za-z0-9]*` name, no `{` after it, or an unbalanced brace run.
+fn rd_code_macro_span(body: &str, i: usize) -> Option<(usize, usize)> {
+    let bytes = body.as_bytes();
+    let mut name_end = i + 1;
+    if !bytes.get(name_end).is_some_and(u8::is_ascii_alphabetic) {
+        return None;
+    }
+    while bytes.get(name_end).is_some_and(u8::is_ascii_alphanumeric) {
+        name_end += 1;
+    }
+    if bytes.get(name_end) != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut j = name_end;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((name_end, j + 1));
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
 }
 
 /// Operator and keyword tokens roxygen2's `can_parse` treats as `\code` even

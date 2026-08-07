@@ -97,7 +97,13 @@ pub(super) fn project_block_impl(
                     if !rd_complete(&section.syntax().text().to_string()) {
                         continue;
                     }
-                    let arg = tag.arg().map(|t| t.text().to_string()).unwrap_or_default();
+                    // A backtick-quoted name may contain spaces; roxygen2's
+                    // `split_two_part` strips the backticks (8.0.0, so the name
+                    // matches `names(formals(fn))`).
+                    let mut arg = tag.arg().map(|t| t.text().to_string()).unwrap_or_default();
+                    if arg.len() >= 2 && arg.starts_with('`') && arg.ends_with('`') {
+                        arg = arg[1..arg.len() - 1].to_string();
+                    }
                     if name == "slot" {
                         slots.push((arg, body));
                     } else {
