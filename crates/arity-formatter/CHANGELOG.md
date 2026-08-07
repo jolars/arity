@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/jolars/arity/compare/arity-formatter-v0.2.0...arity-formatter-v0.3.0) (2026-08-07)
+
+### Features
+- **formatter:** classify `@prop` and `@R6method` tags ([`a0e81d0`](https://github.com/jolars/arity/commit/a0e81d09890d0935c36d219c640e6cab679f411e))
+
+### Bug Fixes
+- **formatter:** keep marker-less remainder after a block macro ([`40a89cb`](https://github.com/jolars/arity/commit/40a89cb78a342281ecce8e674302788ab4be7c4f))
+- **roxygen:** treat a wide tag separator as prose ([`d9f6a1b`](https://github.com/jolars/arity/commit/d9f6a1be7125da36513b8463bb322e27ae5563c3)), closes [#96](https://github.com/jolars/arity/issues/96)
+
+### Dependencies
+- updated crates/arity-parser to v0.3.0
+
 ## [0.2.0](https://github.com/jolars/arity/compare/arity-formatter-v0.1.0...arity-formatter-v0.2.0) (2026-08-06)
 
 ### Features

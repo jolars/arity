@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.17.0](https://github.com/jolars/arity/compare/v0.16.0...v0.17.0) (2026-08-07)
+
+### Features
+- **parser:** let Rd macros win over literal backticks ([`c9a88c4`](https://github.com/jolars/arity/commit/c9a88c46558d137f839f7923bffa6b2d0ecbef22))
+- **parser:** model zero-arity Rd user macros ([`884448e`](https://github.com/jolars/arity/commit/884448eadf47998aeb1e28644f10b90aaf1e982b))
+- **parser:** model per-macro Rd argument arity ([`b0b3f34`](https://github.com/jolars/arity/commit/b0b3f345d31a01f190e2264197c5235e91da41d6))
+- **roxygen:** expand R system Rd user macros ([`4867f69`](https://github.com/jolars/arity/commit/4867f694a6d68d8c97f82c310b917ed2fb4d6c97))
+- **parser:** model md blocks in block-macro bodies ([`26aaa75`](https://github.com/jolars/arity/commit/26aaa75ad0e4a8ed998388ed0b01840736cf77e6))
+- **parser:** model multi-line Rd macro arguments ([`b3b88e4`](https://github.com/jolars/arity/commit/b3b88e400f75b31ee7bfd8fd91415e6454399045))
+- **roxygen:** collapse within-block same-head sections ([`104da98`](https://github.com/jolars/arity/commit/104da989ff98f525a753578573d5438764de3261))
+- **roxygen:** project block-form verbatim macro bodies per-line ([`c5e5f8b`](https://github.com/jolars/arity/commit/c5e5f8b7b580efecdaad0e56a574f801a450c8ad))
+- **parser:** model `\eqn` and `\deqn` optional second argument ([`3051dd4`](https://github.com/jolars/arity/commit/3051dd4013f591292118eb61a9d8f0693aed2afc))
+- **roxygen:** model demoted md code spans via fragile gating ([`30f0127`](https://github.com/jolars/arity/commit/30f0127031e9b4f4fc477f1f021a2cea945304bc))
+- **roxygen:** model parse_Rd brace recovery for kept md sections ([`6121854`](https://github.com/jolars/arity/commit/612185494977522608b474656ea74cfdb15bc520))
+- **lint:** add `r-compat` and `roxygen2-compat` rules ([`9098185`](https://github.com/jolars/arity/commit/90981859908f88a520914e219f8a91c902ab9ab6))
+- **config:** add `[compat]` minimum-version floors ([`4152c80`](https://github.com/jolars/arity/commit/4152c80a9c4093832464c8265a0ab93e5743c48e))
+- **roxygen:** model roxygen2 8.0.0 grammar additions ([`501180c`](https://github.com/jolars/arity/commit/501180ce824f95c0187beb05d0a8a8ff4b61ac1b))
+- **roxygen:** track roxygen2 8.0.0 as the parity oracle ([`925411f`](https://github.com/jolars/arity/commit/925411f02952ed145bca189a5ae00b1135cbceaa))
+- **linter:** add `outdated-suppression` ([`e017cbf`](https://github.com/jolars/arity/commit/e017cbf0b67d3d2ceb4dae78396976fdc3e08033))
+- **linter:** add `unexplained-suppression` ([`b84eea9`](https://github.com/jolars/arity/commit/b84eea93fe7de6153bfd74fb0750c5006d6e9f56))
+- **linter:** add `blanket-suppression` ([`cba661e`](https://github.com/jolars/arity/commit/cba661ebc6d1545bb906f20f7784925c89628699))
+- **linter:** add `misnamed-suppression` ([`404baa7`](https://github.com/jolars/arity/commit/404baa70f84f332fa0ad7645cf1d205abfe7cc58))
+- **linter:** add `duplicated-function-definition` ([`f3ec2fc`](https://github.com/jolars/arity/commit/f3ec2fc7a08f7199838a0cd8b8534a898e21a348))
+- **linter:** add `unused-function` ([`740bf81`](https://github.com/jolars/arity/commit/740bf810ea8a19fe98630b477e3f43234cfcf84b))
+- **linter:** add `internal-function` ([`6632b06`](https://github.com/jolars/arity/commit/6632b061aec49f72b303ca5dd35b611309d9c666))
+- **cli:** suppress `format --check` diff under `--quiet` ([`3865fb0`](https://github.com/jolars/arity/commit/3865fb0c07b7db4de41f2a9f94155af4fb111af0))
+- **linter:** add `for-loop-index`/`for-loop-dup-index` ([`e75efad`](https://github.com/jolars/arity/commit/e75efadbdbc08c005d4a956d1307f44e20c07435))
+- **linter:** add `download-file` ([`bea9893`](https://github.com/jolars/arity/commit/bea98930dfe9d45c2f370a8408ae6d1ab2da18bd))
+- **linter:** add per-rule config and `undesirable-function` ([`4f7a112`](https://github.com/jolars/arity/commit/4f7a112069b284fb034029e8d52c0bcbf8183df8))
+- **formatter:** classify `@prop` and `@R6method` tags ([`a0e81d0`](https://github.com/jolars/arity/commit/a0e81d09890d0935c36d219c640e6cab679f411e))
+- **parser:** model block-macro tails and adjacent second arg groups ([`f7413a7`](https://github.com/jolars/arity/commit/f7413a7537cd6be7f9946881325157afbf20da12))
+- **parser:** model parse_Rd verbatim args and Rd fragment reparse ([`903f500`](https://github.com/jolars/arity/commit/903f5006f932293b4b3f89f9651d146f20879343))
+- **parser:** roxygen2 8.0.0 tag grammar ([`f6d3647`](https://github.com/jolars/arity/commit/f6d3647be8cd0d64cec61105856800d58d197b91))
+- **vscode:** add per-feature enable toggles ([`e8370b0`](https://github.com/jolars/arity/commit/e8370b096f2b5883c94271af399ab5f44b028136))
+
+### Bug Fixes
+- **roxygen:** treat a wide tag separator as prose ([`d9f6a1b`](https://github.com/jolars/arity/commit/d9f6a1be7125da36513b8463bb322e27ae5563c3)), closes [#96](https://github.com/jolars/arity/issues/96)
+- **formatter:** keep marker-less remainder after a block macro ([`40a89cb`](https://github.com/jolars/arity/commit/40a89cb78a342281ecce8e674302788ab4be7c4f))
+- **parser:** fold deep-indented block starts into an open paragraph ([`72ef2f1`](https://github.com/jolars/arity/commit/72ef2f1568dc6231f0f7337a783a6f33a8063be9))
+
+### Dependencies
+- updated crates/arity-formatter to v0.3.0
+- updated crates/arity-parser to v0.3.0
+
 ## [0.16.0](https://github.com/jolars/arity/compare/v0.15.0...v0.16.0) (2026-08-06)
 
 ### Features
