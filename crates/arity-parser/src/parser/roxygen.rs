@@ -44,8 +44,10 @@ const VERBATIM_RD_MACROS: &[&str] = &[
 
 /// Whether the macro named `name` (without the leading `\`) takes verbatim
 /// `{…}` content. Used both when building the CST (don't recurse into a verbatim
-/// body) and when projecting it (emit `VERB`, not coalesced `TEXT`).
-pub(crate) fn is_verbatim_rd_macro(name: &str) -> bool {
+/// body) and when projecting it (emit `VERB`, not coalesced `TEXT`) — the
+/// projector's block-form verbatim arm keys on this set, so it is `pub` like its
+/// [`is_two_arg_rd_macro`] sibling (semver-loose, see the crate docs).
+pub fn is_verbatim_rd_macro(name: &str) -> bool {
     VERBATIM_RD_MACROS.contains(&name)
 }
 

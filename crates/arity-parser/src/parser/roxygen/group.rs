@@ -213,12 +213,26 @@ fn emit_roxygen_block_events(
                     } else if is_block_macro_line(tokens, i) {
                         // A block Rd macro (`\itemize{ … }` across lines) is a direct
                         // section child, not paragraph prose: close any open paragraph
-                        // and emit the macro as a sibling.
+                        // and emit the macro as a sibling. Prose on the closing line
+                        // after the macro's `}` is *outside* the node (parse_Rd resumes
+                        // plain text there): it opens a fresh paragraph that following
+                        // prose lines continue.
                         if para_open {
                             events.push(Event::Finish); // ROXYGEN_PARAGRAPH
                             para_open = false;
                         }
-                        i = emit_block_macro(tokens, i, events);
+                        let (next, tail) = emit_block_macro(tokens, i, events);
+                        i = next;
+                        if !tail.is_empty()
+                            || tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind))
+                        {
+                            events.push(Event::Start(SyntaxKind::ROXYGEN_PARAGRAPH));
+                            para_open = true;
+                            if !tail.is_empty() {
+                                events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, tail));
+                            }
+                            i = emit_prose_rest(tokens, i, events);
+                        }
                     } else if is_md_table_start(tokens, i) {
                         // A GFM table (header + delimiter row) is a direct section
                         // child, like a block macro; it interrupts an open paragraph.
@@ -364,7 +378,13 @@ fn emit_line_tokens(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> 
 /// `RoxygenText`, which is emitted unchanged here).
 fn emit_prose_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
     events.push(Event::Tok(start)); // RoxygenMarker
-    let mut i = start + 1;
+    emit_prose_rest(tokens, start + 1, events)
+}
+
+/// Emit prose tokens from `i` (already past the line's marker) into the open
+/// paragraph — the body of [`emit_prose_line`], also used to resume a closing
+/// line's trailing prose after a section-level block macro.
+pub(super) fn emit_prose_rest(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
     while let Some(tok) = tokens.get(i) {
         if !is_line_body_kind(&tok.kind) {
             break;
@@ -374,8 +394,13 @@ fn emit_prose_line(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> u
             && block_macro_opener_closes(tokens, i)
         {
             // Consumes the opener and its body across following lines, then resumes
-            // emitting any trailing prose on the macro's closing line.
-            i = emit_block_macro_inline(tokens, i, events);
+            // emitting any trailing prose on the macro's closing line; the post-`}`
+            // remainder is paragraph prose right after the macro node.
+            let (next, tail) = emit_block_macro_inline(tokens, i, events);
+            i = next;
+            if !tail.is_empty() {
+                events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, tail));
+            }
             continue;
         }
         events.push(Event::Tok(i));

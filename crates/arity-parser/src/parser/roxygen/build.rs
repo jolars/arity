@@ -1283,7 +1283,7 @@ fn emit_md_list_level_inner(
                 for idx in i..m {
                     events.push(Event::Tok(idx)); // `\n` (trivia)
                 }
-                i = emit_block_macro(tokens, m, events);
+                i = emit_item_block_macro(tokens, m, events);
                 continue;
             }
             if item_has_content
@@ -1294,7 +1294,7 @@ fn emit_md_list_level_inner(
                 for idx in i..m {
                     events.push(Event::Tok(idx)); // `\n` + blank lines (trivia)
                 }
-                i = emit_block_macro(tokens, m, events);
+                i = emit_item_block_macro(tokens, m, events);
                 continue;
             }
 
@@ -2511,15 +2511,40 @@ fn emit_md_item_setext_heading(
     }
 }
 
+/// Emit a block Rd macro folded into a list item's content, then place its
+/// closing line's post-close remainder (and any further tokens on that line) as
+/// item prose right after the macro node — the item folds paragraph content as
+/// bare tokens, so no paragraph wrapper is opened.
+fn emit_item_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+    let (mut i, tail) = emit_block_macro(tokens, start, events);
+    if !tail.is_empty() {
+        events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, tail));
+    }
+    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+        events.push(Event::Tok(i));
+        i += 1;
+    }
+    i
+}
+
 /// Emit a multi-line block Rd macro as a `ROXYGEN_RD_MACRO` node spanning `#'`
 /// lines. The node owns its opening line's marker and the inter-line markers,
 /// newlines, and indentation as threaded trivia (losslessness); its body is a
 /// sequence of brace-less name-only `\item`/`\cr`/… macros, nested inline macros,
 /// and prose, ending at the matching `}` (or, for an unterminated macro, at the
-/// next tag opener or block end — greedy and lossless, no close delimiter).
+/// next tag opener or block end — greedy and lossless, no close delimiter). A
+/// two-argument macro ([`super::is_two_arg_rd_macro`]) whose closing `}` is
+/// immediately followed by `{` consumes that second group into the node too
+/// (parse_Rd's adjacent-argument rule; the group may itself span lines).
 /// Returns the token index just past the last consumed content (at its trailing
-/// `Newline` / non-roxygen token / EOF), leaving line separation to the caller.
-pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>) -> usize {
+/// `Newline` / non-roxygen token / EOF) plus the closing line's post-close
+/// remainder — prose *outside* the macro, which the caller places in the
+/// enclosing context (parse_Rd resumes plain text right after the `}`).
+pub(super) fn emit_block_macro(
+    tokens: &[Token],
+    start: usize,
+    events: &mut Vec<Event>,
+) -> (usize, String) {
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_RD_MACRO));
 
@@ -2535,15 +2560,17 @@ pub(super) fn emit_block_macro(tokens: &[Token], start: usize, events: &mut Vec<
 
 /// Emit a block Rd macro whose `\name{` opener appears **mid-prose** (not as the
 /// line's first content). The enclosing `ROXYGEN_PARAGRAPH` stays open, so the
-/// macro nests inside it as an inline sibling of the preceding prose (the way the
+/// macro nests inside it as an inline sibling of the surrounding prose (the way the
 /// projector folds an abutting block macro into the same section). `opener` must
 /// index the `\name{…` opener token; unlike [`emit_block_macro`] there is no
 /// leading marker to thread (it belongs to the prose that precedes the opener).
+/// Returns the next token index plus the post-close remainder (see
+/// [`emit_block_macro`]), which the caller emits into the open paragraph.
 pub(super) fn emit_block_macro_inline(
     tokens: &[Token],
     opener: usize,
     events: &mut Vec<Event>,
-) -> usize {
+) -> (usize, String) {
     events.push(Event::Start(SyntaxKind::ROXYGEN_RD_MACRO));
     emit_block_macro_from_opener(tokens, opener, events)
 }
@@ -2551,12 +2578,25 @@ pub(super) fn emit_block_macro_inline(
 /// Emit the body of a `ROXYGEN_RD_MACRO` (already `Start`ed) from its opener token
 /// at `i`, consuming following `#'` lines until the group closes (or a tag / block
 /// end terminates it), and `Finish` the node. Shared by the line-start
-/// [`emit_block_macro`] and the mid-prose [`emit_block_macro_inline`].
-fn emit_block_macro_from_opener(tokens: &[Token], mut i: usize, events: &mut Vec<Event>) -> usize {
+/// [`emit_block_macro`] and the mid-prose [`emit_block_macro_inline`]. Returns the
+/// next token index and the closing line's remainder *after* the macro's last
+/// consumed `}` — that text is outside the macro, so the caller places it.
+fn emit_block_macro_from_opener(
+    tokens: &[Token],
+    mut i: usize,
+    events: &mut Vec<Event>,
+) -> (usize, String) {
     // The body's open brace groups (the parent macro's own body is the empty-stack
     // baseline, so a `}` at an empty stack terminates it).
     let mut frames: Vec<BodyFrame> = Vec::new();
     let mut closed = false;
+    // Argument `{` groups opened for this macro so far (Form A: the body is group
+    // 1; Form B: the leading balanced groups plus the body). parse_Rd gives a
+    // two-argument macro at most two groups, so a close with only one group so
+    // far may consume an *adjacent* second `{…}` (which may span lines).
+    let mut groups = 1usize;
+    let mut two_arg = false;
+    let mut tail = String::new();
 
     // Opening content. Form A: a `RoxygenText` `\name{ …` --- split off the name
     // and brace, then parse trailing same-line content. Form B: a balanced
@@ -2565,11 +2605,15 @@ fn emit_block_macro_from_opener(tokens: &[Token], mut i: usize, events: &mut Vec
     // the body brace.
     match tokens.get(i) {
         Some(tok) if tok.kind == TokKind::RoxygenText => {
+            two_arg = rd_macro_name(&tok.text).is_some_and(super::is_two_arg_rd_macro);
+            // The opener token is unbalanced to end-of-line (the block-macro
+            // gates), so this cannot close the macro; the remainder is empty.
             emit_block_open(events, &tok.text, &mut frames, &mut closed);
             i += 1;
         }
         Some(tok) if tok.kind == TokKind::RoxygenRdMacro => {
-            emit_block_open_arg_macro(events, &tok.text);
+            two_arg = rd_macro_name(&tok.text).is_some_and(super::is_two_arg_rd_macro);
+            groups = emit_block_open_arg_macro(events, &tok.text) + 1;
             i += 1;
             if let Some(next) = tokens.get(i) {
                 emit_block_body_open(events, &next.text, &mut frames, &mut closed);
@@ -2584,8 +2628,25 @@ fn emit_block_macro_from_opener(tokens: &[Token], mut i: usize, events: &mut Vec
         while let Some(tok) = tokens.get(i) {
             match &tok.kind {
                 TokKind::RoxygenText => {
-                    emit_block_content(events, &tok.text, &mut frames, &mut closed);
+                    let mut rest = emit_block_content(events, &tok.text, &mut frames, &mut closed);
                     i += 1;
+                    // A two-argument macro's adjacent second group: parse_Rd
+                    // consumes a `{` touching the closing `}` (`\deqn{…}{ascii}`)
+                    // as the macro's second argument — same-line balanced or
+                    // spanning following lines. A spaced/next-line `{…}` (and any
+                    // third group) stays outside as literal prose.
+                    while closed && two_arg && groups < 2 && rest.starts_with('{') {
+                        events.push(Event::Leaf(
+                            SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
+                            "{".to_string(),
+                        ));
+                        groups += 1;
+                        closed = false;
+                        rest = emit_block_content(events, &rest[1..], &mut frames, &mut closed);
+                    }
+                    if closed {
+                        tail = rest;
+                    }
                 }
                 // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`, or a
                 // resolved markdown emphasis/strong/code leaf): pass the whole token
@@ -2637,12 +2698,14 @@ fn emit_block_macro_from_opener(tokens: &[Token], mut i: usize, events: &mut Vec
     }
 
     events.push(Event::Finish); // ROXYGEN_RD_MACRO
-    i
+    (i, tail)
 }
 
 /// Emit the opening `\name{` of a block macro: a `ROXYGEN_RD_MACRO_NAME`, the
 /// `{` delimiter, then any trailing same-line content. The parent body is the
-/// empty-frame baseline ([`emit_block_content`]).
+/// empty-frame baseline ([`emit_block_content`]). The opener token is unbalanced
+/// to end-of-line (the block-macro gates), so the body never closes here and the
+/// remainder is always empty.
 fn emit_block_open(
     events: &mut Vec<Event>,
     text: &str,
@@ -2668,8 +2731,9 @@ fn emit_block_open(
 /// `[opt]`, and each balanced `{…}` argument group as `{`/content/`}` leaves (the
 /// content a single `ROXYGEN_TEXT` --- a format/term argument carries no nested
 /// markup in practice). The leaves tile `text` exactly. The body `{` that follows
-/// is opened separately by [`emit_block_body_open`].
-fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) {
+/// is opened separately by [`emit_block_body_open`]. Returns the number of
+/// argument groups emitted (the caller counts the body group on top).
+fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) -> usize {
     let bytes = text.as_bytes();
     let k = super::rd_macro_name_end(bytes, 1);
     events.push(Event::Leaf(
@@ -2677,6 +2741,7 @@ fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) {
         text[..k].to_string(),
     ));
     let mut j = k;
+    let mut emitted = 0usize;
     if bytes.get(j) == Some(&b'[')
         && let Some(opt_end) = scan_balanced(bytes, j, b'[', b']')
     {
@@ -2703,11 +2768,13 @@ fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) {
             "}".to_string(),
         ));
         j = group_end;
+        emitted += 1;
     }
     // Defensive remainder (a malformed token the gate should never admit).
     if j < text.len() {
         events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, text[j..].to_string()));
     }
+    emitted
 }
 
 /// Open a Form-B block macro's body brace from a `RoxygenText` `{ …` token: emit
@@ -2733,13 +2800,16 @@ fn emit_block_body_open(
 /// child `ROXYGEN_RD_MACRO`), the closing `}` delimiter that terminates the
 /// enclosing macro (setting `closed`), and prose runs as `ROXYGEN_TEXT`. The open
 /// brace `frames` are tracked across calls, so a group can open and close on
-/// different `#'` lines.
+/// different `#'` lines. Returns the text *after* the terminating `}` (empty
+/// unless this call closed the macro): that remainder is outside the macro, so
+/// the caller decides its placement (an adjacent second argument group, or prose
+/// in the enclosing context) rather than it landing inside the node.
 fn emit_block_content(
     events: &mut Vec<Event>,
     text: &str,
     frames: &mut Vec<BodyFrame>,
     closed: &mut bool,
-) {
+) -> String {
     let bytes = text.as_bytes();
     let mut run_start = 0usize;
     let mut i = 0usize;
@@ -2807,9 +2877,7 @@ fn emit_block_content(
                         "}".to_string(),
                     ));
                     *closed = true;
-                    run_start = i + 1;
-                    push_text(events, &text[run_start..]);
-                    return;
+                    return text[i + 1..].to_string();
                 }
                 // Closes a nested block macro: finalize its `ROXYGEN_RD_MACRO`.
                 Some(BodyFrame::Macro) => {
@@ -2829,6 +2897,7 @@ fn emit_block_content(
         }
     }
     push_text(events, &text[run_start..]);
+    String::new()
 }
 
 /// Push a non-empty `ROXYGEN_TEXT` leaf for a prose run.
