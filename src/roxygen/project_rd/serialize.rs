@@ -73,7 +73,14 @@ pub(super) fn serialize_prose(
     // no braces either way, so it needs no split.
     let split = group.then(|| split_braceless_items(scan)).flatten();
     let scan = split.as_deref().unwrap_or(scan);
-    let mut atoms = serialize_inlines(scan, md);
+    // Output path only: the `group = false` md `rdComplete` scan reads the body as
+    // roxygen2's markdown left it, before parse_Rd expanded any system Rd macro
+    // (see [`serialize_inlines_unexpanded`]).
+    let mut atoms = if group {
+        serialize_inlines(scan, md)
+    } else {
+        serialize_inlines_unexpanded(scan, md)
+    };
     if !leaked.is_empty() {
         append_leaked_defs(&mut atoms, &leaked, &leak_defs);
     }
@@ -499,11 +506,31 @@ pub(super) fn group_brace_lists(body: &[Inline], md: bool) -> Vec<Inline> {
 /// block's resolved markdown mode: with markdown off a prose run is literal Rd, so
 /// `process_prose` strips its `%` line comments.
 pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
+    // parse_Rd expands R's system Rd macros (`\doi`, `\CRANpkg`, …) into a
+    // `USERMACRO` leaf plus their spliced expansion. Rewriting the run first lets
+    // an expansion that is plain text (`\I`) coalesce with the prose around it.
+    let expanded = expand_user_macros(body);
+    serialize_inlines_unexpanded(expanded.as_deref().unwrap_or(body), md)
+}
+
+/// [`serialize_inlines`] without the system-Rd-macro expansion — the form the md
+/// `rdComplete` drop scan needs. roxygen2 decides that drop on `markdown(text)`,
+/// which is *pre*-`parse_Rd`: the macros are still written as `\doi{…}` there, so
+/// counting the braces of an expansion parse_Rd has not performed yet would both
+/// mis-weigh the scan and feed [`parse_rd_recovery`] a disturbance that is not in
+/// roxygen2's input.
+pub(super) fn serialize_inlines_unexpanded(body: &[Inline], md: bool) -> Vec<String> {
     let mut atoms: Vec<String> = Vec::new();
     let mut run: Vec<RunSeg> = Vec::new();
     for inl in body {
         match inl {
             Inline::Text(s) => push_raw(&mut run, s),
+            Inline::UserMacro(leaf) => {
+                if let Some(atom) = flush_run(&mut run, md) {
+                    atoms.push(atom);
+                }
+                atoms.push(format!("(USERMACRO {})", encode_text(leaf)));
+            }
             Inline::Macro(node) => {
                 if let Some(atom) = flush_run(&mut run, md) {
                     atoms.push(atom);
@@ -825,7 +852,13 @@ pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
             SyntaxKind::ROXYGEN_RD_MACRO => {
                 flush_text(&mut text_buf, &mut pieces);
                 if let Some(n) = el.as_node() {
-                    pieces.push(ArgPiece::Atom(serialize_macro(n, md)));
+                    // A system Rd macro nested in this argument expands in place
+                    // (`\code{\CRANpkg{utils}}`), contributing its `USERMACRO`
+                    // leaf and expansion as sibling atoms.
+                    match user_macro_atoms(n, md) {
+                        Some(expanded) => pieces.extend(expanded.into_iter().map(ArgPiece::Atom)),
+                        None => pieces.push(ArgPiece::Atom(serialize_macro(n, md))),
+                    }
                 }
             }
             // A markdown block construct inside the body (`@md`): cmark parses the
@@ -845,7 +878,12 @@ pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
             SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
                 if el.as_token().is_some_and(|t| t.text() == "}") {
                     flush_text(&mut text_buf, &mut pieces);
-                    finalize_macro_arg(&mut pieces, head == "\\code", structural, &mut out_atoms);
+                    finalize_macro_arg(
+                        &mut pieces,
+                        is_rcode_body_macro(&head),
+                        structural,
+                        &mut out_atoms,
+                    );
                 }
             }
             // The dropped option and the `#'` markers threaded into a multi-line
@@ -861,7 +899,12 @@ pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     }
     // Defensive: trailing content with no closing brace (a malformed macro).
     flush_text(&mut text_buf, &mut pieces);
-    finalize_macro_arg(&mut pieces, head == "\\code", structural, &mut out_atoms);
+    finalize_macro_arg(
+        &mut pieces,
+        is_rcode_body_macro(&head),
+        structural,
+        &mut out_atoms,
+    );
     if out_atoms.is_empty() {
         // A name-only macro node (no `{…}` content). A known zero-argument macro
         // (`\cr`, or a list child `\item` under `\itemize`) renders name-only;
@@ -875,6 +918,14 @@ pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     } else {
         format!("({head} {})", out_atoms.join(" "))
     }
+}
+
+/// Whether the macro whose head is `head` (with its leading `\`) has an **R code**
+/// body — projected as verbatim `(RCODE …)` line atoms rather than normalized
+/// `(TEXT …)` prose. parse_Rd keeps `\code`'s body verbatim, and `\Sexpr`'s body
+/// *is* R (it is evaluated), so both take the code path.
+fn is_rcode_body_macro(head: &str) -> bool {
+    matches!(head.trim_start_matches('\\'), "code" | "Sexpr")
 }
 
 /// A piece of a non-`@md` (or fragile) macro argument while folding bare `{…}`

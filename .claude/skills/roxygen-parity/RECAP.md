@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1024 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1025 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **230/230** preserving (verified against 8.0.0).
+closed. Curated fixed-point **231/231** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -32,7 +32,15 @@ for the remaining local scanners; same-`@name` static-scope object-topic
 resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
-output shape is not); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions;
+output shape is not); **Rd macro arity beyond two** — the blocker left by
+2026-08-07i for the rest of the system-macro set: `is_two_arg_rd_macro` is a
+*two-valued* predicate carrying structural meaning (GRP-wrap, md-structural
+routing, Form-B block detection) across ~8 sites, so a third `{…}` group
+projects as a sibling `(LIST …)`. That stops `\ifelse{fmt}{yes}{no}` (hence the
+`\sspace`/`\LaTeX`/`\proglang` *expansions*) and the multi-argument `\manual`
+(2) and `\bibinfo` (3) *invocations*; a **brace-less** user macro (`\doi b`,
+which parse_Rd treats as sticky and swallows verbatim to section end) is the
+other omission;
 merged-topic member with repeated `@title` (within-block collapse keeps only the
 member's first title value, so the *merged* title-as-description fallback joins
 first-values only — roxygen2 joins every value of every member);
@@ -129,6 +137,12 @@ section strings, like `parse_rd_recovery`.
 - **Format-stability baseline** (`roxygen-format-baseline.jsonl`,
   `roxygen_format_stability.rs`): any intended formatter change re-blesses with
   `BLESS_ROXYGEN_FORMAT=1` **and review**. A new curated case adds one key.
+- **The md `rdComplete` scan sees roxygen2's markdown output, NOT parse_Rd's.** Anything
+  parse_Rd does *later* (today: system-Rd-macro expansion, `usermacro.rs`) must stay off
+  the `group = false` path — `serialize_prose` routes it to
+  `serialize_inlines_unexpanded`. Leaking a parse_Rd-stage brace into the scan mis-weighs
+  the drop *and* hands `parse_rd_recovery` a disturbance absent from roxygen2's input
+  (it spins). Same "output path only" guard as `split_braceless_items`.
 - **SOFT_BREAK sentinel** (`'\u{c}'`): a soft-wrap carries it, not a space, so `%`-comment/
   linkref-block machinery reads paragraph breaks (`\n`) correctly. All NEWLINE→text sites
   in the projector emit it.
@@ -275,7 +289,54 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07h) — `@md` block constructs inside a block-macro body
+## Latest session (2026-08-07i) — R system Rd user-macro expansion
+
+Closed the `doi`/`CRANpkg`/`PR` `USERMACRO` item. R loads
+`share/Rd/macros/system.Rd` before every Rd file, so parse_Rd emits **two**
+siblings per call: a `USERMACRO` leaf whose text is the raw definition body ++
+each argument's raw text, then the **expansion** (definition with `#N`
+substituted, re-parsed as Rd and spliced in). A pure **projector gap** — the CST
+was already right.
+
+New `project_rd/usermacro.rs`: the definition table (transcribed from R 4.6.1,
+with the omissions documented in place), `expand_user_macro` (leaf + expansion
+inlines), `expand_user_macros` (run rewrite, `None` when nothing matches so the
+common path keeps its borrowed slice), and `user_macro_atoms` for the
+nested-in-a-macro-argument path (`\code{\CRANpkg{utils}}`).
+
+**The expansion splices, so it must re-enter the inline run, not arrive as
+finished atoms** — `\I` is defined as bare `#1`, and its expansion coalesces
+with the prose around it (`\I{this} together` → one `(TEXT "this together")`).
+Hence a new `Inline::UserMacro(String)` variant carrying just the leaf; only one
+match in the codebase was exhaustive.
+
+**The load-bearing trap** (cost most of the session; it presented as a *hang*):
+the expansion must **not** reach the md `rdComplete` scan. roxygen2 decides that
+drop on `markdown(text)`, which is *pre*-parse_Rd — the macro is still written
+`\doi{…}` there. Feeding the scan an expansion whose `USERMACRO` leaf carries
+braces both mis-weighs it and hands `parse_rd_recovery` a disturbance absent
+from roxygen2's input, which spun. Fix follows the file's existing "output path
+only" discipline (the same guard `split_braceless_items` uses):
+`serialize_inlines` expands, `serialize_inlines_unexpanded` does not, and
+`serialize_prose` picks by its `group` flag — `group = false` *is* the scan, its
+only caller being `section_rd_complete_seeded`.
+
+Rode along: **`\Sexpr`'s body projects as `(RCODE …)`**, not normalized `(TEXT
+…)` — its body *is* R. Pre-existing latent divergence (`is_rcode_body_macro`,
+shared with `\code`), and a prerequisite since most expansions are `\Sexpr`.
+
+Curated +1 (`user_macro_expansion`, both modes: prose, `\I` coalescing,
+build-stage and bibentry variants, nesting in `\emph`/`\code`, a `@references`
+tag, and the md guard that an argument is never markdown). Three unit tests
+pin the expansion shape, the `\I` coalescing, and the rdComplete-scan exclusion.
+No parser fixture: the CST is unchanged. Baseline +1 key (reviewed: **zero**
+existing lines changed). Projector 1024→**1025** matching (all allowlisted), 0
+divergent, 12 blocked. Fixed-point 230→**231/231**. Full workspace suite (34
+suites) + clippy + fmt green.
+
+## Earlier sessions (condensed)
+
+### 2026-08-07h — `@md` block constructs inside a block-macro body
 
 Closed the item 2026-08-07g teed up. A markdown list or fenced block inside an
 `\item`/`\itemize` body flattened to one TEXT run, because the body's consume
@@ -321,8 +382,6 @@ withheld self-closing opener). Baseline +1 key (reviewed: **zero** existing
 lines changed — no formatter drift). Projector 1023→**1024** matching (all
 allowlisted), 0 divergent, 12 blocked. Fixed-point 229→**230/230**. Full
 workspace suite (34 suites) + clippy + fmt green.
-
-## Earlier sessions (condensed)
 
 ### 2026-08-07g — multi-line Rd macro arguments (Form B, everywhere)
 

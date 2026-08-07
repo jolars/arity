@@ -4798,3 +4798,57 @@ fn parse_rd_recovery_bails_outside_the_modeled_shape() {
     parse_rd_recovery(&mut out, 0, true, &["note".into()]);
     assert_eq!(out, before);
 }
+
+#[test]
+fn system_rd_macro_expands_to_usermacro_plus_expansion() {
+    // parse_Rd sees R's `share/Rd/macros/system.Rd` definitions, so it emits a
+    // `USERMACRO` leaf (raw definition ++ argument text) followed by the
+    // expansion itself.
+    let src = "#' T\n\
+               #'\n\
+               #' A \\doi{10.1/2} here\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(TEXT \"A\") \
+             (USERMACRO \"\\\\Sexpr[results=rd]{tools:::Rd_expr_doi(\\\"#1\\\")}10.1/2\") \
+             (\\Sexpr (RCODE \"tools:::Rd_expr_doi(\\\"10.1/2\\\")\")) (TEXT \"here\")"
+        ),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn identity_user_macro_expansion_coalesces_with_prose() {
+    // `\I` is defined as bare `#1`, so its expansion is plain text that parse_Rd
+    // splices in — and adjacent TEXT leaves coalesce into one atom. This is why
+    // the expansion re-enters the inline run instead of arriving as finished
+    // atoms.
+    let src = "#' T\n\
+               #'\n\
+               #' keep \\I{this} together\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains("(TEXT \"keep\") (USERMACRO \"#1this\") (TEXT \"this together\")"),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn user_macro_expansion_is_absent_from_the_rd_complete_scan() {
+    // roxygen2 decides the md `rdComplete` drop on `markdown(text)`, which is
+    // *pre*-`parse_Rd`: the macro is still written `\doi{…}` there. Counting an
+    // expansion's braces would mis-weigh the scan, so a section carrying one is
+    // kept exactly as the same section without it.
+    let with = "#' T\n#'\n#' @md\n#' @details\n#' x \\doi{10.1/2} y\n#' @name d\nNULL\n";
+    let without = "#' T\n#'\n#' @md\n#' @details\n#' x y\n#' @name d\nNULL\n";
+    assert!(
+        project_to_rd(with).contains("(\\details"),
+        "section dropped"
+    );
+    assert!(project_to_rd(without).contains("(\\details"));
+}

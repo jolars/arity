@@ -60,6 +60,7 @@ mod sexpr;
 #[cfg(test)]
 mod tests;
 mod text;
+mod usermacro;
 
 use self::collect::*;
 use self::escapes::*;
@@ -71,6 +72,7 @@ use self::section::*;
 use self::serialize::*;
 use self::sexpr::*;
 use self::text::*;
+use self::usermacro::*;
 
 /// Project `text` to the parser-owned Rd section subtrees, one canonical
 /// S-expression per line, sorted --- byte-identical to the R driver's
@@ -186,6 +188,12 @@ fn topic_name(block: &RoxygenBlock) -> Option<String> {
 enum Inline {
     Text(String),
     Macro(SyntaxNode),
+    /// The `USERMACRO` leaf parse_Rd emits ahead of a **system Rd macro's**
+    /// expansion (`\doi`, `\CRANpkg`, …), carrying the macro's raw definition
+    /// body followed by its argument text. The expansion itself follows as
+    /// ordinary inlines, so a definition that expands to plain text (`\I`)
+    /// coalesces with the surrounding prose. See [`usermacro`].
+    UserMacro(String),
     /// A markdown inline leaf resolved under `@md` mode — emphasis, strong, or a
     /// code span — carrying its delimiter-stripped inner content. Emphasis/strong
     /// project to `\emph`/`\strong` over `(TEXT …)`; a code span projects to
