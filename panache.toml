@@ -16,4 +16,5 @@ extend-exclude = [
   "docs/src/SUMMARY.md",
   ".claude/**/*",
   ".github/**/*",
+  "npm/platform-template/",
 ]
