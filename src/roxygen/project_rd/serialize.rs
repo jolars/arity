@@ -754,7 +754,7 @@ pub(super) fn serialize_inlines_unexpanded(body: &[Inline], md: bool) -> Vec<Str
 /// `{`/`}` delimiters are dropped, prose text coalesces into `(TEXT …)`, verbatim
 /// content becomes `(VERB …)` (no whitespace collapse), and nested macros recurse.
 ///
-/// A *structural* macro (`\item`, `\tabular` --- [`is_two_arg_rd_macro`]) models
+/// A *structural* macro (`\item`, `\tabular` --- [`is_multi_arg_rd_macro`]) models
 /// each `{…}` argument as a list, so a multi-atom argument projects to a
 /// `(GRP …)` wrapper (`\tabular{rl}{a \tab b}` → `(\tabular (TEXT "rl") (GRP …))`)
 /// while a single-atom argument unwraps (`\item{a}{first}` → `(\item (TEXT "a")
@@ -831,7 +831,7 @@ pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
                     .as_token()
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
-                structural = is_two_arg_rd_macro(head.trim_start_matches('\\'));
+                structural = is_multi_arg_rd_macro(head.trim_start_matches('\\'));
             }
             SyntaxKind::ROXYGEN_RD_MACRO_VERB => {
                 flush_text(&mut text_buf, &mut pieces);
@@ -1209,63 +1209,74 @@ fn serialize_md_structural_macro(node: &SyntaxNode, head_full: &str) -> String {
 /// **markdown-processed** when it appears inline under `@md`. roxygen2 protects
 /// only its `escaped_for_md` set ([`is_fragile_for_md`]) from cmark, so *every*
 /// other macro's argument is markdown — but arity already models the block and
-/// structural macros (`\itemize`/`\describe`/`\tabular`/`\Sexpr`/…) as their own
-/// constructs, so resolving their bodies as inline prose would be wrong; they are
-/// excluded here. The remainder are the inline text macros (`\emph`, `\strong`,
-/// `\sQuote`, `\value`, …) whose body is a latexlike inline run.
+/// multi-argument macros (`\itemize`/`\describe`/`\tabular`/`\Sexpr`/…) as their
+/// own constructs, so resolving their bodies as inline prose would be wrong; they
+/// are excluded here. The remainder are the inline text macros (`\emph`,
+/// `\strong`, `\sQuote`, `\value`, …) whose body is a latexlike inline run.
 pub(super) fn is_md_inline_text_macro(name: &str) -> bool {
     is_known_rd_macro(name)
         && !is_fragile_for_md(name)
-        && !is_two_arg_rd_macro(name)
+        && !is_multi_arg_rd_macro(name)
         && !matches!(
             name,
-            "itemize" | "enumerate" | "describe" | "Sexpr" | "RdOpts" | "enc"
+            "itemize" | "enumerate" | "describe" | "Sexpr" | "RdOpts"
         )
 }
 
-/// Whether macro `name` (without the leading `\`) is a **structural** two-argument
-/// macro whose arguments are markdown-processed when it appears under `@md`. These
-/// are the non-fragile members of [`is_two_arg_rd_macro`] (`\item`, `\tabular`,
-/// `\href`) --- `\figure` is fragile ([`is_fragile_for_md`]), so it stays literal.
-/// Unlike a latexlike single-arg macro ([`is_md_inline_text_macro`]), each `{…}`
-/// argument is resolved independently and a multi-atom one wraps in `(GRP …)`.
+/// Whether macro `name` (without the leading `\`) is a **structural**
+/// multi-argument macro whose arguments are markdown-processed when it appears
+/// under `@md`. These are the non-fragile members of [`is_multi_arg_rd_macro`]
+/// (`\item`, `\tabular`, `\href`, `\enc`, `\subsection`) --- `\figure`, `\if`,
+/// `\ifelse`, `\method`, `\S3method`, and `\S4method` are fragile
+/// ([`is_fragile_for_md`]), so they stay literal. Unlike a latexlike single-arg
+/// macro ([`is_md_inline_text_macro`]), each `{…}` argument is resolved
+/// independently and a multi-atom one wraps in `(GRP …)`.
 fn is_md_structural_macro(name: &str) -> bool {
-    is_known_rd_macro(name) && !is_fragile_for_md(name) && is_two_arg_rd_macro(name)
+    is_known_rd_macro(name) && !is_fragile_for_md(name) && is_multi_arg_rd_macro(name)
 }
 
 /// The raw source text of a single-argument macro's `{…}` content (everything
 /// between the first `{` delimiter and its matching `}`), or `None` if the macro
-/// has no argument group. Nested macros contribute their *source* (their own
-/// braces live inside the child node, not as direct delimiters), so the result
-/// re-lexes faithfully; threaded `#'` markers are dropped (defensive — an inline
-/// macro carries none).
+/// has no argument group. See [`macro_arg_contents`].
 pub(super) fn macro_single_arg_content(node: &SyntaxNode) -> Option<String> {
-    let mut content = String::new();
-    let mut opened = false;
+    macro_arg_contents(node).into_iter().next()
+}
+
+/// The raw source text of each of a macro's `{…}` argument groups, in order
+/// (everything between a `{` delimiter and its matching `}`). Empty when the
+/// macro has no argument group. Nested macros contribute their *source* (their
+/// own braces live inside the child node, not as direct delimiters), so each
+/// result re-lexes faithfully; threaded `#'` markers are dropped (defensive — an
+/// inline macro carries none).
+pub(super) fn macro_arg_contents(node: &SyntaxNode) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let mut current = String::new();
     let mut inside = false;
     for el in node.children_with_tokens() {
         match el.kind() {
             SyntaxKind::ROXYGEN_RD_MACRO_DELIM => {
-                let text = el
-                    .as_token()
-                    .map(|t| t.text().to_string())
-                    .unwrap_or_default();
-                if text == "{" && !opened {
-                    opened = true;
+                let text = el.as_token().map(|t| t.text()).unwrap_or_default();
+                if text == "{" && !inside {
                     inside = true;
                 } else if text == "}" && inside {
                     inside = false;
+                    args.push(std::mem::take(&mut current));
                 }
             }
             SyntaxKind::ROXYGEN_MARKER => {}
             _ if inside => match el {
-                NodeOrToken::Node(n) => content.push_str(&n.text().to_string()),
-                NodeOrToken::Token(t) => content.push_str(t.text()),
+                NodeOrToken::Node(n) => current.push_str(&n.text().to_string()),
+                NodeOrToken::Token(t) => current.push_str(t.text()),
             },
             _ => {}
         }
     }
-    opened.then_some(content)
+    // An unterminated final group (a block macro that ran to the block's end)
+    // still contributes its content.
+    if inside {
+        args.push(current);
+    }
+    args
 }
 
 /// Resolve a non-fragile macro's raw argument `content` as a `@md` markdown inline
@@ -1316,9 +1327,9 @@ fn threads_markers(node: &SyntaxNode) -> bool {
 /// walking typed children stays faithful and mirrors [`serialize_md_html_block`].
 /// Each continuation `#'` line drops its marker (and the single following
 /// whitespace character), the lines rejoin with `\n`, and [`verb_atoms`] splits
-/// each `{…}` argument at newlines exactly as parse_Rd does. A two-argument
-/// macro (`\eqn`/`\deqn` — [`is_two_arg_rd_macro`]) may carry a consumed second
-/// group; each group is a list argument, so a multi-atom one wraps in `(GRP …)`
+/// each `{…}` argument at newlines exactly as parse_Rd does. A multi-argument
+/// macro (`\eqn`/`\deqn` — [`rd_macro_arity`]) may carry further consumed
+/// groups; each group is a list argument, so a multi-atom one wraps in `(GRP …)`
 /// while a single atom splices in (the [`finalize_macro_arg`] rule).
 ///
 /// parse_Rd resolves the Rd-string escapes inside most verbatim bodies (`\{` ->
@@ -1354,10 +1365,12 @@ fn serialize_verbatim_block(node: &SyntaxNode, head_full: &str) -> String {
     {
         j += end + 1;
     }
-    let structural = is_two_arg_rd_macro(name);
+    let structural = is_multi_arg_rd_macro(name);
+    let arity = rd_macro_arity(name);
     let raw_escapes = matches!(name, "eqn" | "deqn");
     let mut out_atoms: Vec<String> = Vec::new();
-    while bytes.get(j) == Some(&b'{') && out_atoms.len() < 2 {
+    let mut groups = 0usize;
+    while bytes.get(j) == Some(&b'{') && groups < arity {
         // parse_Rd's escape-aware brace pairing: an escaped `\{`/`\}` is literal
         // in both escape regimes. An unterminated body (no closing `}` — the
         // macro ended at a tag opener or block end) runs to the node's end.
@@ -1392,6 +1405,7 @@ fn serialize_verbatim_block(node: &SyntaxNode, head_full: &str) -> String {
         } else {
             out_atoms.extend(atoms);
         }
+        groups += 1;
         j = (k + 1).min(logical.len());
     }
     if out_atoms.is_empty() {

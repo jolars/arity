@@ -4852,3 +4852,60 @@ fn user_macro_expansion_is_absent_from_the_rd_complete_scan() {
     );
     assert!(project_to_rd(without).contains("(\\details"));
 }
+
+#[test]
+fn three_argument_macro_consumes_exactly_its_arity() {
+    // `\ifelse` takes three `{…}` groups; a fourth is not an argument but a bare
+    // brace group, which parse_Rd models as a sibling `(LIST …)`.
+    let src = "#' T\n\
+               #'\n\
+               #' a \\ifelse{html}{yes}{no}{extra} b\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(TEXT \"a\") (\\ifelse (TEXT \"html\") (TEXT \"yes\") (TEXT \"no\")) \
+             (LIST (TEXT \"extra\")) (TEXT \"b\")"
+        ),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn multi_argument_user_macro_substitutes_each_placeholder() {
+    // `\manual` takes two arguments: the `USERMACRO` leaf concatenates both raw
+    // texts onto the definition, and the expansion substitutes `#1`/`#2`.
+    let src = "#' T\n\
+               #'\n\
+               #' see \\manual{R-exts}{Writing R Extensions} now\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(USERMACRO \"\\\\Sexpr[results=rd]{tools:::Rd_expr_manual(\\\"#1\\\", \\\"#2\\\")}\
+             R-extsWriting R Extensions\") \
+             (\\Sexpr (RCODE \"tools:::Rd_expr_manual(\\\"R-exts\\\", \\\"Writing R Extensions\\\")\"))"
+        ),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn user_macro_expanding_through_a_conditional_projects_its_branches() {
+    // `\proglang` is defined as `\ifelse{latex}{\out{\textsf{#1}}}{#1}`, so its
+    // expansion only parses once `\ifelse` takes three arguments.
+    let src = "#' T\n\
+               #'\n\
+               #' the \\proglang{C++} language\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(\\ifelse (TEXT \"latex\") (\\out (VERB \"\\\\textsf{C++}\")) (TEXT \"C++\"))"
+        ),
+        "got: {out}"
+    );
+}

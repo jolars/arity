@@ -46,7 +46,7 @@ const VERBATIM_RD_MACROS: &[&str] = &[
 /// `{…}` content. Used both when building the CST (don't recurse into a verbatim
 /// body) and when projecting it (emit `VERB`, not coalesced `TEXT`) — the
 /// projector's block-form verbatim arm keys on this set, so it is `pub` like its
-/// [`is_two_arg_rd_macro`] sibling (semver-loose, see the crate docs).
+/// [`rd_macro_arity`] sibling (semver-loose, see the crate docs).
 pub fn is_verbatim_rd_macro(name: &str) -> bool {
     VERBATIM_RD_MACROS.contains(&name)
 }
@@ -62,35 +62,68 @@ pub(crate) fn is_verbatim_rd_arg(name: &str, index: usize) -> bool {
     is_verbatim_rd_macro(name) || (name == "href" && index == 0) || name == "figure"
 }
 
-/// Inline Rd macros that take **two** adjacent `{…}` argument groups, the way
-/// `tools::parse_Rd` does: `\item{term}{description}` (in `\describe`/`\value`/
-/// `\arguments`) and `\tabular{format}{content}`. A one-argument macro like
-/// `\code` consumes only its first group, so a trailing `\code{x}{y}`'s `{y}`
-/// stays literal --- the arity is per macro. Also `\href{url}{text}`, whose first
-/// argument is verbatim, `\figure{path}{caption}` (both args verbatim --- see
-/// [`is_verbatim_rd_arg`]), and `\eqn{latex}{ascii}`/`\deqn{latex}{ascii}`,
-/// whose second (ASCII fallback) group is *optional* --- `\eqn{x^2}` alone is a
-/// complete call, and the lexer's consumption is already
-/// present-and-adjacent-only, so the optionality costs nothing. parse_Rd
-/// requires same-line adjacency: `\eqn{a} {b}` and a next-line `{b}` leave the
-/// group a literal brace `LIST`, as does a third group (`\eqn{a}{b}{c}`).
-/// Extensible (`\section`/… are
-/// future targets, several of which surface as block macros instead). A braceless
-/// `\item` (under `\itemize`/`\enumerate`) never reaches here: it has no `{`, so
-/// it is not a macro token at all.
+/// The Rd macros that take **more than one** adjacent `{…}` argument group, with
+/// their argument count the way `tools::parse_Rd` counts it. Every name absent
+/// here takes exactly one group, so a trailing `\code{x}{y}`'s `{y}` stays
+/// literal --- the arity is per macro, and a group past the count is likewise
+/// literal (`\ifelse{a}{b}{c}{d}` → `(\ifelse …)` plus a sibling `(LIST …)`).
+/// Probed exhaustively against R 4.6 (every [`KNOWN_RD_MACROS`] name written
+/// `\name{A}{B}{C}` in a `\details` section).
+///
+/// A trailing group is *optional*: `\eqn{x^2}` alone is a complete call, and the
+/// lexer's consumption is present-and-adjacent-only, so the optionality costs
+/// nothing. parse_Rd requires same-line adjacency --- `\eqn{a} {b}` and a
+/// next-line `{b}` leave the group a literal brace `LIST`. A brace-less `\item`
+/// (under `\itemize`/`\enumerate`) never reaches here: it has no `{`, so it is
+/// not a macro token at all.
+///
+/// The last two entries are **not** parse_Rd built-ins but R's *system user
+/// macros* (`share/Rd/macros/system.Rd`, always loaded before every Rd file);
+/// their arity is the largest `#N` in the definition, and parse_Rd consumes that
+/// many groups before expanding. The definitions themselves live in the
+/// projector's `usermacro` module --- only the group count is a parsing fact.
 ///
 /// These are also the macros whose `{…}` arguments `parse_Rd` models as *list*
 /// wrappers (so a multi-atom argument projects to a `(GRP …)`), as opposed to
 /// latexlike macros (`\code`, `\emph`, …) whose single argument's content is
-/// inlined directly. The projector keys its GRP rule on this set.
-const TWO_ARG_RD_MACROS: &[&str] = &["item", "tabular", "href", "figure", "eqn", "deqn"];
+/// inlined directly. The projector keys its GRP rule on
+/// [`is_multi_arg_rd_macro`].
+const MULTI_ARG_RD_MACROS: &[(&str, usize)] = &[
+    ("if", 2),
+    ("ifelse", 3),
+    ("item", 2),
+    ("tabular", 2),
+    ("href", 2),
+    ("figure", 2),
+    ("eqn", 2),
+    ("deqn", 2),
+    ("enc", 2),
+    ("method", 2),
+    ("S3method", 2),
+    ("S4method", 2),
+    ("subsection", 2),
+    // R system user macros (see above).
+    ("manual", 2),
+    ("bibinfo", 3),
+];
 
-/// Whether the macro named `name` (without the leading `\`) takes two `{…}`
-/// argument groups. Drives the lexer (consume the second group into one token),
-/// the tree builder (emit both groups as children), and the projector (each
-/// group is a list argument --- a multi-atom one becomes a `(GRP …)`).
-pub fn is_two_arg_rd_macro(name: &str) -> bool {
-    TWO_ARG_RD_MACROS.contains(&name)
+/// How many `{…}` argument groups the macro named `name` (without the leading
+/// `\`) takes; `1` for every name outside [`MULTI_ARG_RD_MACROS`]. Drives the
+/// lexer (consume that many groups into one token), the tree builder (emit them
+/// as children), and the projector (each group of a multi-argument macro is a
+/// list argument --- a multi-atom one becomes a `(GRP …)`).
+pub fn rd_macro_arity(name: &str) -> usize {
+    MULTI_ARG_RD_MACROS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map_or(1, |(_, arity)| *arity)
+}
+
+/// Whether the macro named `name` (without the leading `\`) takes more than one
+/// `{…}` argument group --- parse_Rd's *structural* macros, whose arguments are
+/// list wrappers. See [`rd_macro_arity`].
+pub fn is_multi_arg_rd_macro(name: &str) -> bool {
+    rd_macro_arity(name) > 1
 }
 
 /// Split a GFM table row into its cells, honoring backslash-escaped pipes. One

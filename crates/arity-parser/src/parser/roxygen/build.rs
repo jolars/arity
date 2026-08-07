@@ -8,7 +8,8 @@
 
 use super::group::{LineKind, classify_line, is_line_body_kind, line_content_start};
 use super::{
-    advance_md_col, is_two_arg_rd_macro, md_fence_run_closes, md_ws_gauge, scan_balanced, utf8_len,
+    advance_md_col, is_multi_arg_rd_macro, md_fence_run_closes, md_ws_gauge, scan_balanced,
+    utf8_len,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -45,9 +46,10 @@ pub(super) fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
 }
 
 /// Whether the token at `i` begins a **Form B** block macro: a *balanced*
-/// `RoxygenRdMacro` token for a two-argument macro (`\tabular{format}`,
-/// `\item{term}`) immediately followed by a `RoxygenText` opening an unbalanced
-/// `{` — the macro's last argument spans following `#'` lines. Shared by the
+/// `RoxygenRdMacro` token for a multi-argument macro (`\tabular{format}`,
+/// `\item{term}`, `\ifelse{html}{yes}`) immediately followed by a `RoxygenText`
+/// opening an unbalanced `{` — the macro's next argument spans following `#'`
+/// lines (the token carries the ones that fit on the opener line). Shared by the
 /// line-start gate ([`is_block_macro_line`]) and the mid-body one
 /// ([`emit_block_macro_from_opener`]), where the same shape appears nested
 /// inside an enclosing block macro's body (`\item{a}{def …}` in a `\describe`),
@@ -55,7 +57,7 @@ pub(super) fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
 pub(super) fn is_form_b_block_macro(tokens: &[Token], i: usize) -> bool {
     tokens.get(i).is_some_and(|tok| {
         tok.kind == TokKind::RoxygenRdMacro
-            && rd_macro_name(&tok.text).is_some_and(is_two_arg_rd_macro)
+            && rd_macro_name(&tok.text).is_some_and(is_multi_arg_rd_macro)
     }) && matches!(
         tokens.get(i + 1),
         Some(next) if next.kind == TokKind::RoxygenText && opens_unbalanced_brace(&next.text)
@@ -2543,9 +2545,9 @@ fn emit_item_block_macro(tokens: &[Token], start: usize, events: &mut Vec<Event>
 /// sequence of brace-less name-only `\item`/`\cr`/… macros, nested inline macros,
 /// and prose, ending at the matching `}` (or, for an unterminated macro, at the
 /// next tag opener or block end — greedy and lossless, no close delimiter). A
-/// two-argument macro ([`super::is_two_arg_rd_macro`]) whose closing `}` is
-/// immediately followed by `{` consumes that second group into the node too
-/// (parse_Rd's adjacent-argument rule; the group may itself span lines).
+/// multi-argument macro ([`super::rd_macro_arity`]) whose closing `}` is
+/// immediately followed by `{` consumes that group into the node too, up to its
+/// arity (parse_Rd's adjacent-argument rule; a group may itself span lines).
 /// Returns the token index just past the last consumed content (at its trailing
 /// `Newline` / non-roxygen token / EOF) plus the closing line's post-close
 /// remainder — prose *outside* the macro, which the caller places in the
@@ -2605,11 +2607,11 @@ fn emit_block_macro_from_opener(
     // so the body starts inside an open paragraph, and a blank `#'` line closes it.
     let mut para_open = true;
     // Argument `{` groups opened for this macro so far (Form A: the body is group
-    // 1; Form B: the leading balanced groups plus the body). parse_Rd gives a
-    // two-argument macro at most two groups, so a close with only one group so
-    // far may consume an *adjacent* second `{…}` (which may span lines).
+    // 1; Form B: the leading balanced groups plus the body), and the macro's total
+    // argument count. A close short of that count may consume a further *adjacent*
+    // `{…}` (which may itself span lines).
     let mut groups = 1usize;
-    let mut two_arg = false;
+    let mut arity = 1usize;
     let mut tail = String::new();
 
     // Opening content. Form A: a `RoxygenText` `\name{ …` --- split off the name
@@ -2619,14 +2621,14 @@ fn emit_block_macro_from_opener(
     // the body brace.
     match tokens.get(i) {
         Some(tok) if tok.kind == TokKind::RoxygenText => {
-            two_arg = rd_macro_name(&tok.text).is_some_and(super::is_two_arg_rd_macro);
+            arity = rd_macro_name(&tok.text).map_or(1, super::rd_macro_arity);
             // The opener token is unbalanced to end-of-line (the block-macro
             // gates), so this cannot close the macro; the remainder is empty.
             emit_block_open(events, &tok.text, &mut frames, &mut closed);
             i += 1;
         }
         Some(tok) if tok.kind == TokKind::RoxygenRdMacro => {
-            two_arg = rd_macro_name(&tok.text).is_some_and(super::is_two_arg_rd_macro);
+            arity = rd_macro_name(&tok.text).map_or(1, super::rd_macro_arity);
             groups = emit_block_open_arg_macro(events, &tok.text) + 1;
             i += 1;
             if let Some(next) = tokens.get(i) {
@@ -2644,12 +2646,13 @@ fn emit_block_macro_from_opener(
                 TokKind::RoxygenText => {
                     let mut rest = emit_block_content(events, &tok.text, &mut frames, &mut closed);
                     i += 1;
-                    // A two-argument macro's adjacent second group: parse_Rd
-                    // consumes a `{` touching the closing `}` (`\deqn{…}{ascii}`)
-                    // as the macro's second argument — same-line balanced or
-                    // spanning following lines. A spaced/next-line `{…}` (and any
-                    // third group) stays outside as literal prose.
-                    while closed && two_arg && groups < 2 && rest.starts_with('{') {
+                    // A multi-argument macro's further adjacent groups: parse_Rd
+                    // consumes a `{` touching the closing `}` (`\deqn{…}{ascii}`,
+                    // `\ifelse{fmt}{…}{…}`) as the next argument — same-line
+                    // balanced or spanning following lines. A spaced/next-line
+                    // `{…}` (and any group past the arity) stays outside as
+                    // literal prose.
+                    while closed && groups < arity && rest.starts_with('{') {
                         events.push(Event::Leaf(
                             SyntaxKind::ROXYGEN_RD_MACRO_DELIM,
                             "{".to_string(),

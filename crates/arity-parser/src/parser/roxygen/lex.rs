@@ -11,7 +11,7 @@
 //! Block grouping (`Vec<Token>` → `Vec<Event>`) lives in [`super::group`] and
 //! [`super::build`].
 
-use super::{is_two_arg_rd_macro, scan_balanced, utf8_len};
+use super::{scan_balanced, utf8_len};
 use crate::parser::lexer::{TokKind, Token};
 
 /// Roxygen tags whose first content word is a *name* argument (e.g. `@param x`,
@@ -2092,13 +2092,16 @@ pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
         return None;
     }
     let mut end = scan_balanced(bytes, j, b'{', b'}')?;
-    // A two-argument macro pulls its adjacent second `{…}` group into the same
-    // token; an unbalanced or absent second group leaves `end` after the first.
-    if is_two_arg_rd_macro(name)
+    // A multi-argument macro pulls each adjacent `{…}` group into the same token,
+    // up to its arity; an unbalanced, absent, or surplus group leaves `end` where
+    // the run stopped (a surplus group is literal prose → an Rd `LIST`).
+    let mut groups = 1;
+    while groups < super::rd_macro_arity(name)
         && bytes.get(end) == Some(&b'{')
-        && let Some(second) = scan_balanced(bytes, end, b'{', b'}')
+        && let Some(next) = scan_balanced(bytes, end, b'{', b'}')
     {
-        end = second;
+        end = next;
+        groups += 1;
     }
     Some(end)
 }

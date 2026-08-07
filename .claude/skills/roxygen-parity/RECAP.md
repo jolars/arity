@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1025 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1026 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **231/231** preserving (verified against 8.0.0).
+closed. Curated fixed-point **232/232** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -32,15 +32,12 @@ for the remaining local scanners; same-`@name` static-scope object-topic
 resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
-output shape is not); **Rd macro arity beyond two** — the blocker left by
-2026-08-07i for the rest of the system-macro set: `is_two_arg_rd_macro` is a
-*two-valued* predicate carrying structural meaning (GRP-wrap, md-structural
-routing, Form-B block detection) across ~8 sites, so a third `{…}` group
-projects as a sibling `(LIST …)`. That stops `\ifelse{fmt}{yes}{no}` (hence the
-`\sspace`/`\LaTeX`/`\proglang` *expansions*) and the multi-argument `\manual`
-(2) and `\bibinfo` (3) *invocations*; a **brace-less** user macro (`\doi b`,
-which parse_Rd treats as sticky and swallows verbatim to section end) is the
-other omission;
+output shape is not); **zero-arity user macros** — the residual of 2026-08-07j:
+`rd_macro_arity` floors at one group, so `\sspace{}`/`\LaTeX{}` (defined with no
+`#N`) would swallow the `{}` parse_Rd leaves as a sibling `(LIST)`. Modeling it
+means the lexer knowing the system user-macro *names*, the same gap as a
+**brace-less** user macro (`\doi b`, which parse_Rd treats as sticky and swallows
+verbatim to section end);
 merged-topic member with repeated `@title` (within-block collapse keeps only the
 member's first title value, so the *merged* title-as-description fallback joins
 first-values only — roxygen2 joins every value of every member);
@@ -176,8 +173,14 @@ section strings, like `parse_rd_recovery`.
 ## Rd macro encoding (projector, faithful translation)
 
 - **Name = `[A-Za-z][A-Za-z0-9]*`** (`rd_macro_name_end`, one source; digits allowed).
-- **Arity is per-macro** — only `is_two_arg_rd_macro` (`TWO_ARG_RD_MACROS`: `item, tabular,
-  href, figure`) consumes a 2nd `{…}`. GRP-wrap is per-arg, keyed on structural-vs-latexlike.
+- **Arity is per-macro** — `rd_macro_arity` (`MULTI_ARG_RD_MACROS`, default 1) says how many
+  `{…}` groups a name consumes: 3 for `ifelse`/`bibinfo`, 2 for `if, item, tabular, href,
+  figure, eqn, deqn, enc, method, S3method, S4method, subsection, manual`. A group past the
+  arity is prose → a sibling `(LIST …)`. The last two entries are R **system user macros**,
+  not parse_Rd built-ins (arity = max `#N` in the definition; the definitions live in the
+  projector's `usermacro.rs`). `is_multi_arg_rd_macro` (arity > 1) carries the *structural*
+  meaning — GRP-wrap, md-structural routing, Form-B block detection.
+  GRP-wrap is per-arg, keyed on structural-vs-latexlike.
   **Verbatim is per-arg** (`is_verbatim_rd_arg`, `VERBATIM_RD_MACROS` + `href` arg 0 + `figure`).
 - **`\code` body is `RCODE`** (verbatim R, no norm_ws); other latexlike text macros are TEXT;
   fully-verbatim are VERB. Nested macros recurse.
@@ -289,52 +292,73 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07i) — R system Rd user-macro expansion
+## Latest session (2026-08-07j) — per-macro Rd argument arity (beyond two)
+
+Closed the blocker 2026-08-07i left. `is_two_arg_rd_macro` was a *two-valued*
+predicate doing two jobs at once — "how many `{…}` groups does the token
+consume" and "is this macro *structural*" (GRP-wrap per argument, md-structural
+routing, Form-B block detection). Split into **`rd_macro_arity`** (a
+`&[(&str, usize)]` table, default 1) for the count and **`is_multi_arg_rd_macro`**
+(arity > 1) for the structural meaning, then every consume site became a loop
+bounded by the arity rather than a `bool`.
+
+Probed the whole `KNOWN_RD_MACROS` set against R 4.6 (`\name{A}{B}{C}` in a
+`\details`, one `rd-to-tree` run) and took the answers wholesale: `\ifelse` is
+**3**; `\if`, `\method`, `\S3method`, `\S4method`, `\enc`, and `\subsection` are
+**2** and were simply missing. Four consume sites generalized —
+`scan_rd_macro` (lexer), `build_rd_macro` (tree builder),
+`emit_block_macro_from_opener`'s adjacent-group loop plus `is_form_b_block_macro`
+(block form), and `serialize_verbatim_block`'s group cap, which also stopped
+counting *atoms* where it meant *groups*.
+
+Rode along on the projector: `is_md_structural_macro` now covers `\enc` and
+`\subsection` (both non-fragile → each argument markdown-processed), which
+retired the hand-written `"enc"` exclusion in `is_md_inline_text_macro`;
+`macro_single_arg_content` became the first element of a new
+`macro_arg_contents`.
+
+**The payoff is the multi-argument system user macros** (`usermacro.rs`):
+`\proglang` (whose definition *is* an `\ifelse`), `\manual` (2), and `\bibinfo`
+(3). The leaf is the definition ++ every argument's raw text concatenated, and
+`substitute_placeholders` replaces `#N` in one left-to-right pass — so an
+argument containing a `#N` is never re-substituted, as parse_Rd does. A call
+with fewer groups than the definition uses returns `None` (parse_Rd errors
+there). Remaining omission recorded in Status: **zero-arity** user macros
+(`\sspace`/`\LaTeX`), which need the lexer to know the user-macro names.
+
+Curated +1 (`rd_macro_arity`, 4 blocks: the arity table in prose incl. the
+surplus-group `(LIST …)`, the multi-argument user macros incl. nesting in
+`\emph`/`\code`, an `@md` block separating fragile from non-fragile
+multi-argument macros, and block-form `\subsection`/`\ifelse` bodies spanning
+lines). Parser fixture `roxygen_rd_macro_arity` (CST + losslessness, incl. the
+one-argument `\code{x}{y}` guard, a mid-prose last argument across lines, and an
+unterminated `\ifelse`). Three unit tests pin the surplus group, the two-argument
+substitution, and the expand-through-`\ifelse` shape. Baseline +1 key (reviewed:
+**zero** existing lines changed). Projector 1025→**1026** matching (all
+allowlisted), 0 divergent, 12 blocked. Fixed-point 231→**232/232**. Full
+workspace suite + clippy + fmt green.
+
+## Earlier sessions (condensed)
+
+### 2026-08-07i — R system Rd user-macro expansion
 
 Closed the `doi`/`CRANpkg`/`PR` `USERMACRO` item. R loads
 `share/Rd/macros/system.Rd` before every Rd file, so parse_Rd emits **two**
-siblings per call: a `USERMACRO` leaf whose text is the raw definition body ++
-each argument's raw text, then the **expansion** (definition with `#N`
-substituted, re-parsed as Rd and spliced in). A pure **projector gap** — the CST
-was already right.
-
-New `project_rd/usermacro.rs`: the definition table (transcribed from R 4.6.1,
-with the omissions documented in place), `expand_user_macro` (leaf + expansion
-inlines), `expand_user_macros` (run rewrite, `None` when nothing matches so the
-common path keeps its borrowed slice), and `user_macro_atoms` for the
-nested-in-a-macro-argument path (`\code{\CRANpkg{utils}}`).
-
-**The expansion splices, so it must re-enter the inline run, not arrive as
-finished atoms** — `\I` is defined as bare `#1`, and its expansion coalesces
-with the prose around it (`\I{this} together` → one `(TEXT "this together")`).
-Hence a new `Inline::UserMacro(String)` variant carrying just the leaf; only one
-match in the codebase was exhaustive.
-
-**The load-bearing trap** (cost most of the session; it presented as a *hang*):
-the expansion must **not** reach the md `rdComplete` scan. roxygen2 decides that
-drop on `markdown(text)`, which is *pre*-parse_Rd — the macro is still written
-`\doi{…}` there. Feeding the scan an expansion whose `USERMACRO` leaf carries
-braces both mis-weighs it and hands `parse_rd_recovery` a disturbance absent
-from roxygen2's input, which spun. Fix follows the file's existing "output path
-only" discipline (the same guard `split_braceless_items` uses):
-`serialize_inlines` expands, `serialize_inlines_unexpanded` does not, and
-`serialize_prose` picks by its `group` flag — `group = false` *is* the scan, its
-only caller being `section_rd_complete_seeded`.
-
-Rode along: **`\Sexpr`'s body projects as `(RCODE …)`**, not normalized `(TEXT
-…)` — its body *is* R. Pre-existing latent divergence (`is_rcode_body_macro`,
-shared with `\code`), and a prerequisite since most expansions are `\Sexpr`.
-
-Curated +1 (`user_macro_expansion`, both modes: prose, `\I` coalescing,
-build-stage and bibentry variants, nesting in `\emph`/`\code`, a `@references`
-tag, and the md guard that an argument is never markdown). Three unit tests
-pin the expansion shape, the `\I` coalescing, and the rdComplete-scan exclusion.
-No parser fixture: the CST is unchanged. Baseline +1 key (reviewed: **zero**
-existing lines changed). Projector 1024→**1025** matching (all allowlisted), 0
-divergent, 12 blocked. Fixed-point 230→**231/231**. Full workspace suite (34
-suites) + clippy + fmt green.
-
-## Earlier sessions (condensed)
+siblings per call: a `USERMACRO` leaf (raw definition body ++ each argument's
+raw text), then the **expansion** (definition with `#N` substituted, re-parsed
+as Rd and spliced in). A pure **projector gap** — the CST was already right.
+New `project_rd/usermacro.rs` (definition table, `expand_user_macro`,
+`expand_user_macros`, `user_macro_atoms`). Because the expansion *splices*, it
+re-enters the inline run rather than arriving as finished atoms (`\I` is bare
+`#1`, so it coalesces with surrounding prose) — hence `Inline::UserMacro`.
+**Load-bearing trap** (presented as a *hang*): the expansion must not reach the
+md `rdComplete` scan, which roxygen2 decides *pre*-parse_Rd — leaking its braces
+mis-weighs the drop and hands `parse_rd_recovery` a disturbance roxygen2 never
+saw. Guarded by the file's "output path only" discipline
+(`serialize_inlines` vs `serialize_inlines_unexpanded`, picked by
+`serialize_prose`'s `group` flag). Rode along: `\Sexpr`'s body projects as
+`(RCODE …)`. Curated +1 (`user_macro_expansion`), 3 unit tests, no parser
+fixture. 1024→**1025**. Fixed-point 230/230→231/231.
 
 ### 2026-08-07h — `@md` block constructs inside a block-macro body
 

@@ -883,6 +883,7 @@ rdcomplete_slot_drop
 rd_even_braced_macro
 rd_macro_arg_brace_group
 rd_macro_arg_escapes
+rd_macro_arity
 rd_macros
 rd_nested_list
 rd_verbatim_args

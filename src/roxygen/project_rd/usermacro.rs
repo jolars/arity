@@ -23,25 +23,26 @@
 use super::*;
 
 /// One system Rd macro: its name (no leading `\`) and its raw definition body,
-/// verbatim from `share/Rd/macros/system.Rd`.
+/// verbatim from `share/Rd/macros/system.Rd`. The argument count is the largest
+/// `#N` in the definition, which is also what the parser's
+/// [`rd_macro_arity`] must say for a multi-argument one (it decides how many
+/// `{…}` groups the macro token consumes).
 struct SystemRdMacro {
     name: &'static str,
     definition: &'static str,
 }
 
-/// The single-argument system Rd macros, transcribed from R 4.6.1's
+/// The system Rd macros, transcribed from R 4.6.1's
 /// `share/Rd/macros/system.Rd` (the definitions are stable across R releases;
 /// they are data, not behavior, so a drift shows up as a pin mismatch).
 ///
 /// **Deliberately omitted**, because arity cannot yet render their expansions
-/// faithfully — each is recorded backlog, not a silent gap:
-///
-/// * `\sspace`, `\LaTeX`, `\proglang` expand through `\ifelse{fmt}{yes}{no}`, a
-///   **three**-argument Rd macro. Arity's macro arity is the two-valued
-///   [`is_two_arg_rd_macro`], so a third `{…}` group projects as a sibling
-///   `(LIST …)` instead of an argument.
-/// * `\manual` (two arguments) and `\bibinfo` (three) need the same
-///   generalization on the *invocation* side.
+/// faithfully — recorded backlog, not a silent gap: `\sspace` and `\LaTeX` take
+/// **no** argument, so parse_Rd expands them on the name alone and leaves a
+/// written `{}` as a *sibling* `(LIST)`. Arity's [`rd_macro_arity`] floors at one
+/// group, so that `{}` would be swallowed as an argument instead; a zero-arity
+/// *user* macro needs the lexer to know these names — the same gap as a
+/// brace-less `\doi`.
 ///
 /// A macro written **brace-less** (`\doi b`) is likewise out of scope: parse_Rd
 /// treats it as sticky and swallows the rest of the section verbatim, which is
@@ -99,6 +100,19 @@ const SYSTEM_RD_MACROS: &[SystemRdMacro] = &[
         name: "bibshow",
         definition: r##"\Sexpr[results=rd,stage=build]{tools:::Rd_expr_bibshow("#1")}"##,
     },
+    SystemRdMacro {
+        name: "proglang",
+        definition: r"\ifelse{latex}{\out{\textsf{#1}}}{#1}",
+    },
+    // Multi-argument (see `rd_macro_arity`, which consumes their groups).
+    SystemRdMacro {
+        name: "manual",
+        definition: r##"\Sexpr[results=rd]{tools:::Rd_expr_manual("#1", "#2")}"##,
+    },
+    SystemRdMacro {
+        name: "bibinfo",
+        definition: r##"\Sexpr[stage=build]{tools:::Rd_expr_bibinfo("#1", "#2", r"(#3)")}"##,
+    },
 ];
 
 /// The definition body of the system Rd macro `name` (without the leading `\`),
@@ -113,21 +127,56 @@ fn system_rd_macro(name: &str) -> Option<&'static str> {
 /// Expand a `ROXYGEN_RD_MACRO` node that names a system Rd macro into the
 /// `USERMACRO` leaf text and the inline run its expansion contributes (see the
 /// module doc). Returns `None` for any other macro, and for a system macro
-/// written without its `{…}` argument (parse_Rd's brace-less handling is the
-/// brace-less machinery's job, not an expansion).
+/// written with fewer `{…}` groups than its definition uses --- parse_Rd errors
+/// on that, and its brace-less handling belongs to the brace-less machinery, not
+/// here.
 pub(super) fn expand_user_macro(node: &SyntaxNode) -> Option<(String, Vec<Inline>)> {
     let name = macro_head(node);
     let definition = system_rd_macro(name.trim_start_matches('\\'))?;
-    let argument = macro_single_arg_content(node)?;
+    let arguments = macro_arg_contents(node);
+    if arguments.len() < rd_macro_arity(name.trim_start_matches('\\')) {
+        return None;
+    }
 
-    // The `USERMACRO` leaf is the definition followed by the raw argument text;
-    // the expansion substitutes it for `#1`.
-    let leaf = format!("{definition}{argument}");
-    let expanded = definition.replace("#1", &argument);
+    // The `USERMACRO` leaf is the definition followed by each argument's raw text,
+    // concatenated; the expansion substitutes argument `N` for `#N`.
+    let mut leaf = definition.to_string();
+    for argument in &arguments {
+        leaf.push_str(argument);
+    }
+    let expanded = substitute_placeholders(definition, &arguments);
     // parse_Rd expands *after* roxygen2's markdown pass, so the substituted body
     // is plain Rd — never re-run through the markdown lexer.
     let para = resolve_rd_inline(&expanded);
     Some((leaf, para_to_inlines(&para)))
+}
+
+/// Replace each `#N` placeholder in a user macro's `definition` with argument
+/// `N` (1-based). Done in one left-to-right pass, so an argument that itself
+/// contains a `#N` is never re-substituted (`\I{#1}` expands to a literal `#1`,
+/// as parse_Rd does). A placeholder past the supplied arguments is left as
+/// written.
+fn substitute_placeholders(definition: &str, arguments: &[String]) -> String {
+    let bytes = definition.as_bytes();
+    let mut out = String::with_capacity(definition.len());
+    let mut run_start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#'
+            && let Some(d) = bytes.get(i + 1).and_then(|b| (*b as char).to_digit(10))
+            && d >= 1
+            && let Some(argument) = arguments.get(d as usize - 1)
+        {
+            out.push_str(&definition[run_start..i]);
+            out.push_str(argument);
+            i += 2;
+            run_start = i;
+        } else {
+            i += 1;
+        }
+    }
+    out.push_str(&definition[run_start..]);
+    out
 }
 
 /// Rewrite an inline run, replacing every system-Rd-macro node with its

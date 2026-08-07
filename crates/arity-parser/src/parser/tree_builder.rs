@@ -3,8 +3,8 @@ use rowan::GreenNodeBuilder;
 use crate::parser::events::Event;
 use crate::parser::lexer::{TokKind, Token};
 use crate::parser::roxygen::{
-    is_two_arg_rd_macro, is_verbatim_rd_arg, rd_backslash_is_escaped, rd_macro_name_end,
-    scan_balanced, scan_rd_macro,
+    is_verbatim_rd_arg, rd_backslash_is_escaped, rd_macro_arity, rd_macro_name_end, scan_balanced,
+    scan_rd_macro,
 };
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -96,9 +96,10 @@ fn build_rd_macro<S: RdSink + ?Sized>(builder: &mut S, text: &str) {
     }
 
     // Each `{…}` argument group becomes a `{` DELIM, sub-parsed (or verbatim)
-    // content, and a `}` DELIM. A two-argument macro (`\item{term}{desc}`) has a
-    // second adjacent group; every other macro stops after the first. The group
-    // ends are found by scanning, so the slices tile `text` exactly.
+    // content, and a `}` DELIM. A multi-argument macro (`\item{term}{desc}`,
+    // `\ifelse{fmt}{yes}{no}`) has further adjacent groups, up to its arity;
+    // every other macro stops after the first. The group ends are found by
+    // scanning, so the slices tile `text` exactly.
     let mut arg_index = 0;
     while bytes.get(j) == Some(&b'{') {
         let Some(group_end) = scan_balanced(bytes, j, b'{', b'}') else {
@@ -119,7 +120,7 @@ fn build_rd_macro<S: RdSink + ?Sized>(builder: &mut S, text: &str) {
         builder.leaf(SyntaxKind::ROXYGEN_RD_MACRO_DELIM, "}");
         j = group_end;
         arg_index += 1;
-        if !is_two_arg_rd_macro(name) {
+        if arg_index >= rd_macro_arity(name) {
             break;
         }
     }
