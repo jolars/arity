@@ -40,16 +40,26 @@ pub(super) fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
     let content = line_content_start(tokens, start);
     match tokens.get(content) {
         Some(tok) if tok.kind == TokKind::RoxygenText => is_block_macro_opener(&tok.text),
-        Some(tok) if tok.kind == TokKind::RoxygenRdMacro => {
-            rd_macro_name(&tok.text).is_some_and(is_two_arg_rd_macro)
-                && matches!(
-                    tokens.get(content + 1),
-                    Some(next)
-                        if next.kind == TokKind::RoxygenText && opens_unbalanced_brace(&next.text)
-                )
-        }
-        _ => false,
+        _ => is_form_b_block_macro(tokens, content),
     }
+}
+
+/// Whether the token at `i` begins a **Form B** block macro: a *balanced*
+/// `RoxygenRdMacro` token for a two-argument macro (`\tabular{format}`,
+/// `\item{term}`) immediately followed by a `RoxygenText` opening an unbalanced
+/// `{` — the macro's last argument spans following `#'` lines. Shared by the
+/// line-start gate ([`is_block_macro_line`]) and the mid-body one
+/// ([`emit_block_macro_from_opener`]), where the same shape appears nested
+/// inside an enclosing block macro's body (`\item{a}{def …}` in a `\describe`),
+/// and the mid-prose one ([`super::group::emit_prose_rest`]).
+pub(super) fn is_form_b_block_macro(tokens: &[Token], i: usize) -> bool {
+    tokens.get(i).is_some_and(|tok| {
+        tok.kind == TokKind::RoxygenRdMacro
+            && rd_macro_name(&tok.text).is_some_and(is_two_arg_rd_macro)
+    }) && matches!(
+        tokens.get(i + 1),
+        Some(next) if next.kind == TokKind::RoxygenText && opens_unbalanced_brace(&next.text)
+    )
 }
 
 /// The macro name (without the leading `\`) of a `\name…` span, or `None` when
@@ -2648,6 +2658,20 @@ fn emit_block_macro_from_opener(
                         tail = rest;
                     }
                 }
+                // A *nested* Form-B block macro: a two-argument macro whose last
+                // argument opens here and closes on a following `#'` line (an
+                // `\item{term}{def …}` inside a `\describe` body). Recurse, then
+                // feed its closing line's remainder back through this body's own
+                // frames — that text is outside the child but inside us, so it may
+                // itself close this macro.
+                TokKind::RoxygenRdMacro if is_form_b_block_macro(tokens, i) => {
+                    let (next, remainder) = emit_block_macro_inline(tokens, i, events);
+                    i = next;
+                    let rest = emit_block_content(events, &remainder, &mut frames, &mut closed);
+                    if closed {
+                        tail = rest;
+                    }
+                }
                 // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`, or a
                 // resolved markdown emphasis/strong/code leaf): pass the whole token
                 // through; the tree builder expands a macro token. `RoxygenText` is
@@ -2728,11 +2752,16 @@ fn emit_block_open(
 
 /// Emit the leading `\name{arg}…` of a Form-B block macro from a *balanced*
 /// `RoxygenRdMacro` token (`\tabular{rl}`): a `ROXYGEN_RD_MACRO_NAME`, an optional
-/// `[opt]`, and each balanced `{…}` argument group as `{`/content/`}` leaves (the
-/// content a single `ROXYGEN_TEXT` --- a format/term argument carries no nested
-/// markup in practice). The leaves tile `text` exactly. The body `{` that follows
-/// is opened separately by [`emit_block_body_open`]. Returns the number of
-/// argument groups emitted (the caller counts the body group on top).
+/// `[opt]`, and each balanced `{…}` argument group as `{`/content/`}`. The
+/// content goes through the tree builder's own expansion
+/// ([`crate::parser::tree_builder::build_rd_content`], reached through its
+/// `Event` sink), so a nested `\code{x}` in an `\item` term is modeled exactly
+/// as it would be in a single-line call, and verbatim stays per *argument*
+/// ([`super::is_verbatim_rd_arg`]): `\href`'s URL is a `ROXYGEN_RD_MACRO_VERB`
+/// while `\tabular`'s format is `ROXYGEN_TEXT`. The leaves tile `text` exactly.
+/// The body `{` that follows is opened separately by [`emit_block_body_open`].
+/// Returns the number of argument groups emitted (the caller counts the body
+/// group on top).
 fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) -> usize {
     let bytes = text.as_bytes();
     let k = super::rd_macro_name_end(bytes, 1);
@@ -2740,6 +2769,7 @@ fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) -> usize {
         SyntaxKind::ROXYGEN_RD_MACRO_NAME,
         text[..k].to_string(),
     ));
+    let name = &text[1..k];
     let mut j = k;
     let mut emitted = 0usize;
     if bytes.get(j) == Some(&b'[')
@@ -2760,8 +2790,15 @@ fn emit_block_open_arg_macro(events: &mut Vec<Event>, text: &str) -> usize {
             "{".to_string(),
         ));
         let content = &text[j + 1..group_end - 1];
-        if !content.is_empty() {
-            events.push(Event::Leaf(SyntaxKind::ROXYGEN_TEXT, content.to_string()));
+        if super::is_verbatim_rd_arg(name, emitted) {
+            if !content.is_empty() {
+                events.push(Event::Leaf(
+                    SyntaxKind::ROXYGEN_RD_MACRO_VERB,
+                    content.to_string(),
+                ));
+            }
+        } else {
+            crate::parser::tree_builder::build_rd_content(events, content);
         }
         events.push(Event::Leaf(
             SyntaxKind::ROXYGEN_RD_MACRO_DELIM,

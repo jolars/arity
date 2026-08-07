@@ -1,0 +1,3 @@
+(\description (TEXT "Markdown in a multi-line Rd macro argument"))
+(\details (TEXT "Under") (\verb (VERB "@md")) (TEXT "a structural macro's argument is markdown, and an inline span may cross the argument's line break.") (\describe (\item (TEXT "a") (GRP (\emph (TEXT "emphasis across the line")) (TEXT "and") (\emph (TEXT "an Rd macro")))) (\item (\strong (TEXT "b")) (GRP (TEXT "a") (\href (VERB "https://example.org") (TEXT "link")) (TEXT "and a") (\verb (VERB "code span"))))))
+(\title (TEXT "Markdown in a multi-line Rd macro argument"))

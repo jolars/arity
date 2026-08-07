@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1021 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1023 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **227/227** preserving (verified against 8.0.0).
+closed. Curated fixed-point **229/229** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -36,10 +36,12 @@ output shape is not); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions;
 merged-topic member with repeated `@title` (within-block collapse keeps only the
 member's first title value, so the *merged* title-as-description fallback joins
 first-values only — roxygen2 joins every value of every member);
-**`@md` block constructs inside a block-macro body**
-(a body line lexing as a list marker/fence leaf is a non-Content token that
-breaks `emit_block_macro_from_opener`'s consume loop — unterminated-macro
-recovery kicks in; benign under md-off, unprobed under md-on).
+**`@md` *block* constructs inside a block-macro body/argument** — a blank line
+plus a `-` list (or a fence) inside an `\item`'s definition renders as
+`(GRP (TEXT …) (\itemize …))` in roxygen2, but the body's consume loop treats
+the list-marker leaf as ordinary content, so it flattens to one TEXT run. (The
+*inline* md path in a macro argument is closed, as is the multi-line-argument
+gap that used to mask this — see 2026-08-07g.)
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -101,6 +103,11 @@ recovery kicks in; benign under md-off, unprobed under md-on).
 - **Every *inline* recognizer MUST be `if md`-gated** (`*`/`_`/`` ` ``/`[`/`<`/`!`/list/
   fence/…) — else its leaf kind stops implying `@md` and the projector misfires in a
   non-`@md` block. Audit every new recognizer.
+- **Rd-macro expansion has ONE implementation, two sinks** (`RdSink`,
+  tree_builder.rs): `build_rd_macro`/`build_rd_content` serve both the inline path
+  (green nodes) and the block-macro Form-B leading args (`Vec<Event>`). Never
+  hand-roll a second arg expander in build.rs — verbatim-per-arg and nested-macro
+  sub-parsing silently drift (that was the `\deqn{a}{…multi-line…}` TEXT-vs-VERB bug).
 - **`ROXYGEN_RD_MACRO` is a NODE, not a leaf** — classify with `el.kind()`, never
   `as_token()`. Lexed atomically; `build_rd_macro` expands it.
 - **Logical CST, not line-based.** `ROXYGEN_BLOCK` → `ROXYGEN_SECTION`* (intro + one per
@@ -257,7 +264,48 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07f) — within-block same-head collapse + per-topic fallback scope
+## Latest session (2026-08-07g) — multi-line Rd macro arguments (Form B, everywhere)
+
+A two-argument macro's **last argument may span `#'` lines** — the single most
+common real-world `\describe` shape (`\item{term}{a definition that\n wraps}`).
+The block-macro machinery already had a name for it (**Form B**: a *balanced*
+`RoxygenRdMacro` token `\item{term}` followed by a `RoxygenText` opening an
+unbalanced `{`), but the gate was wired **only at line start**
+(`is_block_macro_line`). Everywhere else the token passed through as ordinary
+content and the `{def` became a bare `BodyFrame::Plain` prose group — so the
+second argument projected as a sibling `(LIST …)`, not the `\item`'s arg.
+
+Extracted the Form-B condition into `is_form_b_block_macro` (build.rs) and
+wired it into the two missing sites: `emit_block_macro_from_opener`'s consume
+loop (nested inside an enclosing block macro's body — recurse via
+`emit_block_macro_inline`, then feed the child's closing-line remainder back
+through the **parent's** frames, since that text is outside the child but
+inside us and may itself close us) and `emit_prose_rest` (mid-prose, gated on
+`block_macro_opener_closes` like Form A — an unclosed one stays literal prose).
+
+Two correctness fixes rode along, both from `emit_block_open_arg_macro`'s
+"content is a single `ROXYGEN_TEXT`" shortcut, which diverged from the
+single-line path once these args started appearing: (1) leading args are now
+**per-argument verbatim** (`\href`'s URL, `\deqn`'s LaTeX → `VERB`, not TEXT —
+this corrected the existing `roxygen_verbatim_block_macro` snapshot), and (2)
+they **sub-parse nested macros** (`\item{\code{t}}{…}`). Rather than duplicate
+the tree builder's expansion, `build_rd_macro`/`build_rd_content` became
+generic over a new `RdSink` trait (tree_builder.rs) implemented for both
+`GreenNodeBuilder` and `Vec<Event>` — one expansion, two outputs, so the
+inline and block-form paths can't drift.
+
+Curated +2 (`multiline_macro_arg`: nested-term macro, trailing prose after the
+close, two items on one line, mid-prose `\href` display, unterminated forms;
+`md_multiline_macro_arg`: emphasis crossing the argument's line break, md in
+the term arg, link + code span). Parser fixture
+`roxygen_multiline_macro_arg` (CST + losslessness, incl. both unterminated
+shapes). Baseline +2 keys (reviewed: no existing case's output changed).
+Projector 1021→**1023** matching (all allowlisted), 0 divergent, 12 blocked.
+Fixed-point 227→**229/229**. Full workspace suite + clippy + fmt green.
+
+## Earlier sessions (condensed)
+
+### 2026-08-07f — within-block same-head collapse + per-topic fallback scope
 
 Closed the "within-block same-head collapse" backlog item. roxygen2 merges
 repeated same-type sections inside ONE block exactly as across blocks
@@ -292,8 +340,6 @@ hoist, per-topic fallback scope, intro raw-join non-interference); baseline
 (all allowlisted), 0 divergent, 12 blocked. Fixed-point **227/227**. Full
 workspace suite + clippy + fmt green. New recorded sub-edge: merged-topic
 member with repeated `@title` (see Status).
-
-## Earlier sessions (condensed)
 
 ### 2026-08-07e — block-form verbatim macro bodies + tail placement
 

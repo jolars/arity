@@ -13,8 +13,8 @@ use super::build::{
     emit_md_indented_code, emit_md_indented_code_from_value, emit_md_list, emit_md_list_from_value,
     emit_md_setext_heading, emit_md_table, emit_md_table_from_value, emit_md_thematic_break,
     emit_md_thematic_break_from_value, is_block_macro_line, is_block_macro_opener,
-    is_indent_code_line, is_md_block_quote_start, is_md_code_block_start, is_md_heading_start,
-    is_md_html_block_start, is_md_html_block_value, is_md_html_block7_line,
+    is_form_b_block_macro, is_indent_code_line, is_md_block_quote_start, is_md_code_block_start,
+    is_md_heading_start, is_md_html_block_start, is_md_html_block_value, is_md_html_block7_line,
     is_md_indented_code_start, is_md_indented_code_value, is_md_list_start,
     is_md_promoting_setext_underline, is_md_setext_heading_start, is_md_setext_underline_or_dash,
     is_md_table_start, is_md_table_value, is_md_thematic_break_line,
@@ -389,10 +389,15 @@ pub(super) fn emit_prose_rest(tokens: &[Token], mut i: usize, events: &mut Vec<E
         if !is_line_body_kind(&tok.kind) {
             break;
         }
-        if tok.kind == TokKind::RoxygenText
-            && is_block_macro_opener(&tok.text)
-            && block_macro_opener_closes(tokens, i)
-        {
+        // Form A (`\name{ …`) or Form B (`\name{arg}{ …`, the balanced leading
+        // groups already their own `RoxygenRdMacro` token) — either way the last
+        // argument opens here and closes on a following `#'` line.
+        let opens_block_macro = if tok.kind == TokKind::RoxygenText {
+            is_block_macro_opener(&tok.text)
+        } else {
+            is_form_b_block_macro(tokens, i)
+        };
+        if opens_block_macro && block_macro_opener_closes(tokens, i) {
             // Consumes the opener and its body across following lines, then resumes
             // emitting any trailing prose on the macro's closing line; the post-`}`
             // remainder is paragraph prose right after the macro node.

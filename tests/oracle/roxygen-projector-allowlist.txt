@@ -809,6 +809,7 @@ md_macro_arg_emphasis
 md_macro_arg_escapes
 md_macro_arg_span
 md_macro_arg_structural
+md_multiline_macro_arg
 md_nested_link
 md_nested_link_chain
 md_nested_list
@@ -855,6 +856,7 @@ md_url_reference_list_def
 md_url_reference_multiline
 md_url_reference_section
 md_url_reference_trailing_macro
+multiline_macro_arg
 param_prose
 preformatted
 rawrd

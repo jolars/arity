@@ -37,25 +37,61 @@ fn push_token(builder: &mut GreenNodeBuilder<'_>, tok: &Token) {
     }
 }
 
+/// Where an Rd-macro expansion writes its nodes and leaves. The tree builder
+/// writes green nodes directly; the roxygen block builder writes `Event`s (a
+/// Form-B block macro's leading argument groups are expanded there, since the
+/// node they belong to spans following `#'` lines). One expansion, two sinks —
+/// so a nested `\code{x}` in an `\item` term is modeled identically whether the
+/// call closed on its line or not.
+pub(crate) trait RdSink {
+    fn start(&mut self, kind: SyntaxKind);
+    fn leaf(&mut self, kind: SyntaxKind, text: &str);
+    fn finish(&mut self);
+}
+
+impl RdSink for GreenNodeBuilder<'_> {
+    fn start(&mut self, kind: SyntaxKind) {
+        self.start_node(kind.into());
+    }
+    fn leaf(&mut self, kind: SyntaxKind, text: &str) {
+        self.token(kind.into(), text);
+    }
+    fn finish(&mut self) {
+        self.finish_node();
+    }
+}
+
+impl RdSink for Vec<Event> {
+    fn start(&mut self, kind: SyntaxKind) {
+        self.push(Event::Start(kind));
+    }
+    fn leaf(&mut self, kind: SyntaxKind, text: &str) {
+        self.push(Event::Leaf(kind, text.to_string()));
+    }
+    fn finish(&mut self) {
+        self.push(Event::Finish);
+    }
+}
+
 /// Expand a `RoxygenRdMacro` token's text into a structured `ROXYGEN_RD_MACRO`
 /// node, mirroring `tools::parse_Rd`: a `\name` head, an optional `[…]` option,
 /// `{`/`}` delimiters, and content that is either verbatim (`VERB` macros, e.g.
 /// `\url`) or sub-parsed so nested `\macro` calls become child nodes. The emitted
 /// leaves tile `text` exactly (losslessness). `text` is a complete, well-formed
 /// macro span — the lexer only produces the token when `scan_rd_macro` succeeded.
-fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
-    builder.start_node(SyntaxKind::ROXYGEN_RD_MACRO.into());
+fn build_rd_macro<S: RdSink + ?Sized>(builder: &mut S, text: &str) {
+    builder.start(SyntaxKind::ROXYGEN_RD_MACRO);
     let bytes = text.as_bytes();
 
     // `\name` (backslash plus the `[A-Za-z][A-Za-z0-9]*` run after it).
     let mut j = rd_macro_name_end(bytes, 1);
-    builder.token(SyntaxKind::ROXYGEN_RD_MACRO_NAME.into(), &text[..j]);
+    builder.leaf(SyntaxKind::ROXYGEN_RD_MACRO_NAME, &text[..j]);
     let name = &text[1..j];
 
     // Optional `[…]` option group (e.g. the `[pkg]` in `\link[pkg]{x}`).
     if bytes.get(j) == Some(&b'[') {
         let opt_end = scan_balanced(bytes, j, b'[', b']').unwrap_or(bytes.len());
-        builder.token(SyntaxKind::ROXYGEN_RD_MACRO_OPT.into(), &text[j..opt_end]);
+        builder.leaf(SyntaxKind::ROXYGEN_RD_MACRO_OPT, &text[j..opt_end]);
         j = opt_end;
     }
 
@@ -68,19 +104,19 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
         let Some(group_end) = scan_balanced(bytes, j, b'{', b'}') else {
             break; // unbalanced: fall through to the defensive remainder
         };
-        builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "{");
+        builder.leaf(SyntaxKind::ROXYGEN_RD_MACRO_DELIM, "{");
         let content = &text[j + 1..group_end - 1];
         // Verbatim is per *argument*, not per macro: `\href`'s first arg (the URL)
         // is `VERB` while its second (the link text) is sub-parsed like any
         // latexlike body.
         if is_verbatim_rd_arg(name, arg_index) {
             if !content.is_empty() {
-                builder.token(SyntaxKind::ROXYGEN_RD_MACRO_VERB.into(), content);
+                builder.leaf(SyntaxKind::ROXYGEN_RD_MACRO_VERB, content);
             }
         } else {
             build_rd_content(builder, content);
         }
-        builder.token(SyntaxKind::ROXYGEN_RD_MACRO_DELIM.into(), "}");
+        builder.leaf(SyntaxKind::ROXYGEN_RD_MACRO_DELIM, "}");
         j = group_end;
         arg_index += 1;
         if !is_two_arg_rd_macro(name) {
@@ -91,10 +127,10 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
         // Defensive: a span without the expected brace (or an unbalanced one)
         // keeps its remainder whole so the round-trip is preserved (the lexer
         // should never emit this shape for a well-formed macro).
-        builder.token(SyntaxKind::ROXYGEN_TEXT.into(), &text[j..]);
+        builder.leaf(SyntaxKind::ROXYGEN_TEXT, &text[j..]);
     }
 
-    builder.finish_node();
+    builder.finish();
 }
 
 /// Sub-parse the content of a latexlike Rd macro into alternating `ROXYGEN_TEXT`
@@ -106,7 +142,7 @@ fn build_rd_macro(builder: &mut GreenNodeBuilder<'_>, text: &str) {
 /// preceded by an odd-length backslash run is consumed by its pair
 /// ([`rd_backslash_is_escaped`]). `\\y` is a literal `\` + `y`, not a `\y` macro;
 /// `\\\dots` re-forms `\dots` (the third backslash is unescaped).
-fn build_rd_content(builder: &mut GreenNodeBuilder<'_>, content: &str) {
+pub(crate) fn build_rd_content<S: RdSink + ?Sized>(builder: &mut S, content: &str) {
     let bytes = content.as_bytes();
     let mut run_start = 0;
     let mut i = 0;
@@ -116,7 +152,7 @@ fn build_rd_content(builder: &mut GreenNodeBuilder<'_>, content: &str) {
             && let Some(end) = scan_rd_macro(bytes, i)
         {
             if run_start < i {
-                builder.token(SyntaxKind::ROXYGEN_TEXT.into(), &content[run_start..i]);
+                builder.leaf(SyntaxKind::ROXYGEN_TEXT, &content[run_start..i]);
             }
             build_rd_macro(builder, &content[i..end]);
             i = end;
@@ -128,10 +164,9 @@ fn build_rd_content(builder: &mut GreenNodeBuilder<'_>, content: &str) {
         }
     }
     if run_start < bytes.len() {
-        builder.token(SyntaxKind::ROXYGEN_TEXT.into(), &content[run_start..]);
+        builder.leaf(SyntaxKind::ROXYGEN_TEXT, &content[run_start..]);
     }
 }
-
 /// The `SyntaxKind` a lexed token of `kind` is materialized as in the CST. The
 /// single source of truth for the token-kind mapping, shared by [`build_tree`]
 /// and incremental reparse (`crate::parser::reparse`).
