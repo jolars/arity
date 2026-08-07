@@ -42,7 +42,7 @@ use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, Roxyge
 use crate::parser::parse;
 use crate::parser::roxygen::{
     MdArgPiece, advance_md_col, is_fragile_for_md, is_known_rd_macro, is_rd_braceless_drop_macro,
-    is_two_arg_rd_macro, md_fence_run_closes, md_ws_gauge, resolve_md_inline,
+    is_two_arg_rd_macro, is_verbatim_rd_macro, md_fence_run_closes, md_ws_gauge, resolve_md_inline,
     resolve_md_inline_pieces, resolve_rd_inline, split_table_row_cells, sticky_braceless_code_mode,
 };
 use crate::roxygen::entities;

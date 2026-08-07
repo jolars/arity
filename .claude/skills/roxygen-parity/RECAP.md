@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1019 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1020 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **225/225** preserving (verified against 8.0.0).
+closed. Curated fixed-point **226/226** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -32,12 +32,14 @@ for the remaining local scanners; same-`@name` static-scope object-topic
 resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
-output shape is not); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions; **block-form
-verbatim macro bodies** (a multi-line `\deqn{`/`\eqn{`/`\out{` body is sub-parsed
-as Rd content in the CST, but parse_Rd keeps it verbatim — per-line `(VERB …)`
-atoms in a `(GRP …)`, `\preformatted`-style — and consumes an adjacent `{…}`
-second group after the multi-line body closes; `preformatted_atoms` is the
-projector precedent).
+output shape is not); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions;
+**within-block same-head collapse** (two `@details` in ONE block: roxygen2
+vector-appends and `format_collapse` joins them into one `\details`; arity keeps
+separate sections — the collapse is modeled only for multi-*block* topic merges,
+`project_merged_topic`); **`@md` block constructs inside a block-macro body**
+(a body line lexing as a list marker/fence leaf is a non-Content token that
+breaks `emit_block_macro_from_opener`'s consume loop — unterminated-macro
+recovery kicks in; benign under md-off, unprobed under md-on).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -255,31 +257,57 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07d) — `\eqn`/`\deqn` optional second argument
+## Latest session (2026-08-07e) — block-form verbatim macro bodies + tail placement
 
-Closed the "`\eqn{a}{b}` second-group consumption" open item. parse_Rd gives
-`eqn`/`deqn` an *optional* second (ASCII fallback) `{…}` group, both args
-verbatim: `\eqn{a}{b}` → `(\eqn (VERB "a") (VERB "b"))`. Consumption requires
-same-line adjacency — `\eqn{a} {b}`, a next-line `{b}`, and a third group
-(`\eqn{a}{b}{c}`'s `{c}`) all stay literal brace `LIST` groups; identical under
-`@md` (eqn/deqn are fragile, protection covers both groups). **One-line parser
-fix**: `TWO_ARG_RD_MACROS` += `eqn`/`deqn` — the lexer's second-group
-consumption is already present-and-adjacent-only (optionality free), the tree
-builder's per-arg `is_verbatim_rd_arg` already covers both args
-(`VERBATIM_RD_MACROS`), and every projector gate keyed on the two-arg set
-(`is_md_inline_text_macro`, `is_md_structural_macro`) already excludes them via
-fragility. No projector change.
+Closed the "block-form verbatim macro bodies" backlog item. parse_Rd keeps a
+multi-line `\eqn{`/`\deqn{`/`\out{` (any `VERBATIM_RD_MACROS` name) body
+verbatim — per-line `(VERB …)` atoms, GRP-wrapped per the two-arg rule
+(multi-atom arg → `(GRP …)`, single atom bare) — and consumes an adjacent `{…}`
+second group after the body closes (same-line-touching only; the group itself
+may span lines). Escape regime is **per-macro**: `\out`/`\url`/`\samp`/…
+resolve Rd-string escapes (`\%`→`%`), but **`\eqn`/`\deqn` keep them raw**
+(LaTeX-like text; engine-probed `\eqn{50\% off}` → `(VERB "50\% off")`) — the
+generic VERB-leaf path now exempts eqn/deqn from `resolve_rd_arg_escapes` too.
 
-Fixture `roxygen_eqn_two_arg`; curated +1 (`eqn_two_arg`, 3 units: md-off
-two-arg + edges, md-on); baseline re-blessed (+1 key, reviewed). Projector
-1018→**1019** matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point
-**225/225**. Full workspace suite + clippy + fmt green. New recorded backlog:
-**block-form verbatim macro bodies** (multi-line `\deqn{` body is sub-parsed in
-the CST but parse_Rd keeps it per-line-`VERB`-in-`GRP` verbatim, and consumes
-an adjacent second group after the body closes — pre-existing latent gap,
-surfaced while probing; `preformatted_atoms` is the projector precedent).
+Three coordinated fixes. **Parser** (`build.rs`/`group.rs`): `emit_block_content`
+returns the post-close remainder instead of burying it inside the node;
+`emit_block_macro_from_opener` consumes an adjacent second group for two-arg
+macros (`groups` counter honors Form B's pre-consumed args) and returns
+`(index, tail)`; call sites place the tail *outside* the macro — section level
+opens a fresh paragraph (`emit_prose_rest`, extracted from `emit_prose_line`)
+that following lines continue, mid-prose pushes into the open paragraph, in-list
+folds as item content. This also fixed a latent breakage: trailing tokens on a
+closing line (`#' } tail \code{x}`) used to fall out of the roxygen block
+entirely as R-level parse errors. **Projector** (`serialize.rs`):
+`preformatted_atoms` generalized to `serialize_verbatim_block` (marker-stripped
+node-text reconstruction, escape-aware brace pairing, up to two groups),
+routed for `preformatted` always plus any `is_verbatim_rd_macro` name in block
+form (`threads_markers`; single-line stays on the generic VERB-leaf path).
+`is_verbatim_rd_macro` made `pub`. **Formatter** (`roxygen.rs`):
+`physical_lines` no longer drops marker-less content — a closing line's
+remainder forms a marker-less `PhysicalLine` (renderer supplies `#'`), so the
+tail reflows onto its own line instead of being silently deleted (caught by the
+baseline re-bless review; fixed-point-preserving since parse_Rd coalesces the
+soft wrap).
+
+Fixture `roxygen_verbatim_block_macro`; curated +1 (`verbatim_block_macro`, 10
+units: adjacent/spaced/next-line/cross-line/third-group second-arg edges, Form
+B, out/eqn escapes, md-on, itemize tail); baseline re-blessed (+1 key, reviewed
+twice — the first bless exposed the formatter drop). Projector 1019→**1020**
+matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point **226/226**.
+Full workspace suite + clippy + fmt green. New recorded backlog: **within-block
+same-head collapse** and **`@md` block constructs inside block-macro bodies**
+(see Status).
 
 ## Earlier sessions (condensed)
+
+### 2026-08-07d — `\eqn`/`\deqn` optional second argument
+
+parse_Rd gives `eqn`/`deqn` an optional second (ASCII fallback) `{…}` group,
+both args verbatim, same-line-adjacent only. One-line parser fix:
+`TWO_ARG_RD_MACROS` += `eqn`/`deqn` (lexer consumption already
+present-and-adjacent-only; per-arg verbatim + md fragility already covered).
+Curated +1 (`eqn_two_arg`). 1018→1019. Fixed-point 225/225.
 
 ### 2026-08-07c — demoted code spans + fragile gating in `` `Rd …` `` bodies
 

@@ -746,21 +746,20 @@ pub(super) fn serialize_inlines(body: &[Inline], md: bool) -> Vec<String> {
 /// the loop's existing arms keep nested macros (`\tab`/`\cr`), verbatim args (the
 /// `\href` URL), and the per-argument `(GRP …)` wrap intact.
 pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
-    // `\preformatted` is a *verbatim block* macro: parse_Rd keeps its body
-    // verbatim (no whitespace collapse, no nested-macro / markdown parsing) and
-    // splits it at newlines into one `(VERB …)` per line — the same shape as an
-    // `\out` body. The run/flush prose model below normalizes whitespace, so this
-    // macro takes a dedicated verbatim arm instead.
-    if macro_head(node).trim_start_matches('\\') == "preformatted" {
-        let atoms = preformatted_atoms(node);
-        return if atoms.is_empty() {
-            "(\\preformatted)".to_string()
-        } else {
-            format!("(\\preformatted {})", atoms.join(" "))
-        };
-    }
     let head_full = macro_head(node);
     let name = head_full.trim_start_matches('\\');
+    // A *verbatim block* body: parse_Rd keeps a `\preformatted` body (always)
+    // and the body of a fully-verbatim macro written in **block form** (`\eqn{`/
+    // `\deqn{`/`\out{` spanning `#'` lines — the node threads inter-line
+    // markers) verbatim — no whitespace collapse, no nested-macro / markdown
+    // parsing — and splits it at newlines into one `(VERB …)` per line. The
+    // run/flush prose model below normalizes whitespace and expands nested
+    // nodes, so these take a dedicated reconstruction arm. (A *single-line*
+    // verbatim macro is a `ROXYGEN_RD_MACRO_VERB` leaf handled by the generic
+    // path — identical output, and the path the existing pins exercise.)
+    if name == "preformatted" || (is_verbatim_rd_macro(name) && threads_markers(node)) {
+        return serialize_verbatim_block(node, &head_full);
+    }
     if md
         && is_md_inline_text_macro(name)
         && let Some(content) = macro_single_arg_content(node)
@@ -813,10 +812,15 @@ pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
                     .as_token()
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
-                pieces.push(ArgPiece::Atom(format!(
-                    "(VERB {})",
-                    encode_text(&resolve_rd_arg_escapes(&raw))
-                )));
+                // parse_Rd resolves Rd-string escapes in verbatim arguments —
+                // except `\eqn`/`\deqn`, whose LaTeX-like text keeps them raw
+                // (see `serialize_verbatim_block`).
+                let resolved = if matches!(head.trim_start_matches('\\'), "eqn" | "deqn") {
+                    raw
+                } else {
+                    resolve_rd_arg_escapes(&raw)
+                };
+                pieces.push(ArgPiece::Atom(format!("(VERB {})", encode_text(&resolved))));
             }
             SyntaxKind::ROXYGEN_RD_MACRO => {
                 flush_text(&mut text_buf, &mut pieces);
@@ -1209,36 +1213,103 @@ pub(super) fn macro_head(node: &SyntaxNode) -> String {
         .unwrap_or_default()
 }
 
-/// The per-line `(VERB …)` atoms of a `\preformatted` block macro. The body is
-/// the verbatim text between the opening `{` and closing `}`; each continuation
-/// `#'` line has its marker (and the single following space) stripped, the lines
-/// rejoin with `\n`, and [`verb_atoms`] splits at newlines exactly as parse_Rd
-/// does for a verbatim macro body. (A `\preformatted` body never nests another
-/// macro or a markdown construct, so reconstructing from the node text — rather
-/// than walking typed children — stays faithful and mirrors
-/// [`serialize_md_html_block`].)
-fn preformatted_atoms(node: &SyntaxNode) -> Vec<String> {
+/// Whether a `ROXYGEN_RD_MACRO` node is in **block form** — it spans `#'` lines,
+/// threading the inter-line markers as direct trivia children. A single-line
+/// macro node (expanded from an atomic `RoxygenRdMacro` token) never holds one.
+fn threads_markers(node: &SyntaxNode) -> bool {
+    node.children_with_tokens()
+        .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
+}
+
+/// Project a verbatim-body macro (`\preformatted`, or a block-form `\eqn`/
+/// `\deqn`/`\out`/… — see [`is_verbatim_rd_macro`]) by reconstructing its raw
+/// argument text from the node: parse_Rd treats the body as verbatim (nested
+/// `\macro` markup and markdown stay literal), so the CST's richer structure is
+/// flattened back to bytes — reconstructing from the node text rather than
+/// walking typed children stays faithful and mirrors [`serialize_md_html_block`].
+/// Each continuation `#'` line drops its marker (and the single following
+/// whitespace character), the lines rejoin with `\n`, and [`verb_atoms`] splits
+/// each `{…}` argument at newlines exactly as parse_Rd does. A two-argument
+/// macro (`\eqn`/`\deqn` — [`is_two_arg_rd_macro`]) may carry a consumed second
+/// group; each group is a list argument, so a multi-atom one wraps in `(GRP …)`
+/// while a single atom splices in (the [`finalize_macro_arg`] rule).
+///
+/// parse_Rd resolves the Rd-string escapes inside most verbatim bodies (`\{` ->
+/// `{`, `\%` -> `%`, `\\` -> `\`) — so the rd_complete scan counts a balanced
+/// pair — but keeps them **raw** in `\eqn`/`\deqn`, whose LaTeX-like text passes
+/// through untouched (engine-probed: `\eqn{50\% off}` -> `(VERB "50\% off")`).
+/// Escape-aware brace *pairing* applies in both regimes.
+fn serialize_verbatim_block(node: &SyntaxNode, head_full: &str) -> String {
+    let name = head_full.trim_start_matches('\\');
+    // Reconstruct from the name leaf on (dropping a top-level form's leading
+    // `#'` marker), stripping each continuation line's marker: the logical text
+    // roxygen2 writes into the Rd file.
     let text = node.text().to_string();
-    let (Some(open), Some(close)) = (text.find('{'), text.rfind('}')) else {
-        return Vec::new();
-    };
-    if close <= open {
-        return Vec::new();
-    }
-    // The opener-line remainder keeps its leading space verbatim; later lines drop
-    // only the `#'` marker (and one conventional space).
-    let mut body = String::new();
-    for (idx, line) in text[open + 1..close].split('\n').enumerate() {
+    let name_at = node
+        .children_with_tokens()
+        .find(|el| el.kind() == SyntaxKind::ROXYGEN_RD_MACRO_NAME)
+        .map(|el| usize::from(el.text_range().start() - node.text_range().start()))
+        .unwrap_or(0);
+    let mut logical = String::new();
+    for (idx, line) in text[name_at..].split('\n').enumerate() {
         if idx == 0 {
-            body.push_str(line);
+            logical.push_str(line);
         } else {
-            body.push('\n');
-            body.push_str(strip_marker(line));
+            logical.push('\n');
+            logical.push_str(strip_marker(line));
         }
     }
-    // parse_Rd resolves the Rd-string escapes inside a `\preformatted` body exactly
-    // as it does for any other verbatim macro argument (`\{` -> `{`, `\%` -> `%`,
-    // `\\` -> `\`), so the projected `(VERB …)` matches — and the rd_complete scan
-    // (which neutralizes fragile-macro braces) counts a balanced pair.
-    verb_atoms(&resolve_rd_arg_escapes(&body))
+    let bytes = logical.as_bytes();
+    let mut j = head_full.len();
+    // An `[opt]` group is dropped, exactly as in the generic path.
+    if bytes.get(j) == Some(&b'[')
+        && let Some(end) = logical[j..].find(']')
+    {
+        j += end + 1;
+    }
+    let structural = is_two_arg_rd_macro(name);
+    let raw_escapes = matches!(name, "eqn" | "deqn");
+    let mut out_atoms: Vec<String> = Vec::new();
+    while bytes.get(j) == Some(&b'{') && out_atoms.len() < 2 {
+        // parse_Rd's escape-aware brace pairing: an escaped `\{`/`\}` is literal
+        // in both escape regimes. An unterminated body (no closing `}` — the
+        // macro ended at a tag opener or block end) runs to the node's end.
+        let mut depth = 1usize;
+        let mut k = j + 1;
+        while k < bytes.len() {
+            match bytes[k] {
+                b'\\' => k += 2,
+                b'{' => {
+                    depth += 1;
+                    k += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    k += 1;
+                }
+                _ => k += 1,
+            }
+        }
+        let body = &logical[j + 1..k.min(logical.len())];
+        let resolved = if raw_escapes {
+            body.to_string()
+        } else {
+            resolve_rd_arg_escapes(body)
+        };
+        let atoms = verb_atoms(&resolved);
+        if structural && atoms.len() > 1 {
+            out_atoms.push(format!("(GRP {})", atoms.join(" ")));
+        } else {
+            out_atoms.extend(atoms);
+        }
+        j = (k + 1).min(logical.len());
+    }
+    if out_atoms.is_empty() {
+        format!("({head_full})")
+    } else {
+        format!("({head_full} {})", out_atoms.join(" "))
+    }
 }
