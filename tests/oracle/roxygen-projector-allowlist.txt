@@ -884,6 +884,7 @@ rd_even_braced_macro
 rd_macro_arg_brace_group
 rd_macro_arg_escapes
 rd_macro_arity
+rd_macro_in_code_span
 rd_macros
 rd_nested_list
 rd_verbatim_args

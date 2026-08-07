@@ -432,6 +432,11 @@ fn lex_roxygen_prose(
     let bytes = text.as_bytes();
     let mut run_start = pos;
     let mut i = pos;
+    // End of the most recent literal-backtick span that *yielded* to an Rd macro
+    // (see [`code_span_holds_rd_macro`]). Backtick scanning stays off until then,
+    // so the span's own closing run cannot re-open as the *opener* of a bogus span
+    // over the prose that follows it.
+    let mut code_yield_end = pos;
     // Under `@md`, a prose line whose content begins with a code fence (3+
     // backticks) carves the *whole* remaining line off as a `RoxygenMdFence`
     // leaf (an opener with its info string, or a bare closer). The block builder
@@ -792,7 +797,14 @@ fn lex_roxygen_prose(
         // span set is the pure-Rd one (`*x*` and `` `x` `` stay literal prose).
         let span = match bytes[i] {
             b'`' if md => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenMdCode, end)),
-            b'`' => scan_inline_code(bytes, i).map(|end| (TokKind::RoxygenCode, end)),
+            b'`' if i < code_yield_end => None,
+            b'`' => match scan_inline_code(bytes, i) {
+                Some(end) if code_span_holds_rd_macro(bytes, i, end) => {
+                    code_yield_end = end;
+                    None
+                }
+                span => span.map(|end| (TokKind::RoxygenCode, end)),
+            },
             // A `*`/`_` run under `@md` is carved *neutrally* as a maximal same-
             // char delimiter run (`RoxygenMdDelim`); the open/close decision and
             // matching are the inline pass's job (CommonMark delimiter stack), not
@@ -905,6 +917,29 @@ pub(super) fn scan_inline_code(bytes: &[u8], i: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// Whether the literal-backtick span `bytes[i..end]` holds an Rd macro the
+/// surrounding scan would carve on its own.
+///
+/// Backticks mean **nothing** to Rd, so without `@md` parse_Rd sees straight
+/// through them: `` `\emph{x}` `` is a genuine `\emph` between two literal
+/// backtick characters. The non-markdown `ROXYGEN_CODE` span is only a
+/// *formatter* protection (an atomic unit during prose reflow), so it must never
+/// win over real structure — carving it whole would bury the macro in an opaque
+/// leaf and the projected Rd would lose its head. When the span holds a macro the
+/// span yields; the backticks fall back into the prose run and the `\` arm carves
+/// the macro exactly as it would outside them.
+///
+/// Only a macro *start* inside the span matters — its groups may well close past
+/// the closing backtick (`` `\emph{a` b}` ``), which is likewise what parse_Rd
+/// sees.
+fn code_span_holds_rd_macro(bytes: &[u8], i: usize, end: usize) -> bool {
+    (i + 1..end).any(|j| {
+        bytes[j] == b'\\'
+            && !rd_backslash_is_escaped(bytes, j)
+            && (scan_rd_macro(bytes, j).is_some() || is_block_macro_opener_at(bytes, j))
+    })
 }
 
 /// A markdown code fence at a line's content start: a run of three or more
@@ -2804,6 +2839,58 @@ mod tests {
             vec![
                 (TokKind::RoxygenText, "a *one* and ".into()),
                 (TokKind::RoxygenCode, "`code`".into()),
+                (TokKind::RoxygenText, " end".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rd_macro_wins_over_literal_backtick_span() {
+        // Backticks are nothing to Rd, so without `@md` parse_Rd sees straight
+        // through them: `` `\emph{x}` `` is a real macro between two literal
+        // backticks. The `ROXYGEN_CODE` span (a formatter protection only) yields
+        // rather than burying it, and the span's own closing backtick stays
+        // literal text instead of re-opening over the prose that follows.
+        assert_eq!(
+            prose_texts("#' a `\\emph{x}` and `code` end\n"),
+            vec![
+                (TokKind::RoxygenText, "a `".into()),
+                (TokKind::RoxygenRdMacro, "\\emph{x}".into()),
+                (TokKind::RoxygenText, "` and ".into()),
+                (TokKind::RoxygenCode, "`code`".into()),
+                (TokKind::RoxygenText, " end".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn literal_backtick_span_keeps_non_macro_backslashes() {
+        // The yield is keyed on a macro the surrounding scan would carve on its
+        // own: an *escaped* backslash forms none (parse_Rd pairs left to right),
+        // so the span is carved whole — as is a double-backtick span, which
+        // likewise yields only when a macro starts inside it.
+        assert_eq!(
+            prose_texts("#' a `\\\\emph{x}` and ``\\emph{y}`` end\n"),
+            vec![
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenCode, "`\\\\emph{x}`".into()),
+                (TokKind::RoxygenText, " and ``".into()),
+                (TokKind::RoxygenRdMacro, "\\emph{y}".into()),
+                (TokKind::RoxygenText, "`` end".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn md_code_span_keeps_protecting_rd_macros() {
+        // Under `@md` the backticks *are* a code span, so the macro inside stays
+        // protected content (roxygen2's fragile-tag handling decides its fate) —
+        // the yield is the non-markdown rule only.
+        assert_eq!(
+            prose_texts("#' a `\\emph{x}` end\n#' @md\n"),
+            vec![
+                (TokKind::RoxygenText, "a ".into()),
+                (TokKind::RoxygenMdCode, "`\\emph{x}`".into()),
                 (TokKind::RoxygenText, " end".into()),
             ]
         );

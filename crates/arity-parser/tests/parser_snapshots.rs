@@ -229,6 +229,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_multi_hash",
         "roxygen_multiline_macro_arg",
         "roxygen_rd_macro_arity",
+        "roxygen_rd_macro_in_code_span",
         "roxygen_zero_arity_user_macro",
         "roxygen_md_block_in_macro_body",
         "roxygen_not_roxygen",

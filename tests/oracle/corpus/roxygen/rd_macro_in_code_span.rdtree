@@ -1,0 +1,7 @@
+(\description (TEXT "Backticks under markdown are a code span"))
+(\description (TEXT "Rd macros inside literal backticks"))
+(\details (TEXT "With markdown on the same text is a code span, so") (\verb (VERB "\\emph{x}")) (TEXT "is protected content rather than a macro, and") (\emph (TEXT "emphasis")) (TEXT "around it still resolves."))
+(\details (TEXT "Without markdown a backtick is nothing to Rd, so parse_Rd sees straight through it: `") (\emph (TEXT "x")) (TEXT "` and `") (\code (RCODE "f()")) (TEXT "` are real macros between two literal backtick characters. The arity rule is unchanged inside them: `") (\href (VERB "https://e.org") (TEXT "disp")) (TEXT "` takes both groups, and `") (\code (\link (TEXT "y"))) (TEXT "` nests. A zero-arity name stops at itself, so `") (\dots) (LIST) (TEXT "` leaves its group behind. An escaped backslash still forms no macro: `\\emph") (LIST (TEXT "x")) (TEXT "` stays a plain span, just like `f(x)` with no backslash at all. A double-backtick span behaves the same: ``") (\emph (TEXT "y")) (TEXT "`` and ``a `b` c``."))
+(\references (TEXT "See `") (\link (TEXT "stats")) (TEXT "` for the rest."))
+(\title (TEXT "Backticks under markdown are a code span"))
+(\title (TEXT "Rd macros inside literal backticks"))

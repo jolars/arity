@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1027 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1028 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **233/233** preserving (verified against 8.0.0).
+closed. Curated fixed-point **234/234** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -32,13 +32,14 @@ for the remaining local scanners; same-`@name` static-scope object-topic
 resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
-output shape is not); **a `ROXYGEN_CODE` (backtick) leaf in a NON-`@md` block
-swallows the Rd macros inside it** — surfaced 2026-08-07k. Backticks are nothing
-to Rd, so roxygen2 parses `` `\emph{x}` `` as literal backticks around a real
-`\emph`; arity projects `(TEXT "`") (LIST (TEXT "x"))`, losing the macro head
-while its brace group still becomes a `(LIST …)`. The leaf is deliberately
-carved in both modes (`md_inline_off_without_md_directive`), so the fix belongs
-in the projector's handling of it, not in a mode gate;
+output shape is not); **an UNKNOWN Rd macro consumes a written brace group** —
+surfaced 2026-08-07l. parse_Rd tags an unrecognized `\word` `UNKNOWN` and never
+consumes a group for it, so `\zzz{x}` is `(UNKNOWN "\zzz") (LIST (TEXT "x"))`;
+arity's `scan_rd_macro` falls through to the generic group consume and projects
+`(\zzz (TEXT "x"))`. The brace-*less* case is already right (`scan_rd_macro`'s
+`!is_known_rd_macro` name-only carve), so the fix is to hoist that check above
+the `{`/`[` handling — plus a projector arm that renders the leftover group as a
+sibling list (the zero-arity path already does exactly this);
 a **brace-less** argument-taking user macro (`\doi b`, which parse_Rd treats as
 sticky and swallows verbatim to section end);
 merged-topic member with repeated `@title` (within-block collapse keeps only the
@@ -56,10 +57,11 @@ readings agree unless real content follows on a lazily-continued line
 into the first's argument). Closing it means brace arithmetic over rendered
 section strings, like `parse_rd_recovery`.
 
-**Ranked next target: the non-`@md` backtick leaf** (above) — freshly surfaced,
-self-contained, and it costs real fidelity today (any `` `\code{f}` `` written
-in a non-markdown block loses its macro). Probe it with `rd-to-tree` on a
-`\details` holding backticked macros; expect a projector-side fix.
+**Ranked next target: the UNKNOWN-macro brace group** (above) — freshly
+surfaced, self-contained, and the two halves of the same rule currently
+disagree (brace-less right, braced wrong). Probe it with `block-to-sections` on
+a `\details` holding `\zzz`, `\zzz{x}`, and `\zzz[a]{x}`; expect a small
+`scan_rd_macro` reorder plus a projector arm.
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -202,6 +204,12 @@ in a non-markdown block loses its macro). Probe it with `rd-to-tree` on a
   `STICKY_BRACELESS_RD_MACROS`. Sticky names leave RCODE/VERB swallow to section end
   (`split_sticky_braceless_swallow`, single-paragraph plain-text tails only) or an
   `(UNKNOWN "\item")` node (`split_braceless_items`).
+- **Backticks are nothing to Rd** — without `@md` the literal `ROXYGEN_CODE` span is a
+  *formatter* protection only, so it **yields** to any Rd macro starting inside it
+  (`code_span_holds_rd_macro`): `` `\emph{x}` `` lexes TEXT + macro + TEXT, exactly as
+  parse_Rd reads it. The yielded span's own closing run then stays literal
+  (`code_yield_end`) so it cannot re-open as a bogus span over the prose after it.
+  Under `@md` the backticks *are* a code span — the yield is the non-markdown rule only.
 - **Literal macro args resolve parse_Rd's Rd-string escapes** (`resolve_rd_arg_escapes`:
   `\{`→`{`, `\%`→`%`, `\\`→`\`, both modes). Non-md TEXT: `resolve_rd_text_escapes`.
 - **Under `@md`, a non-fragile macro's ARG is markdown** (`is_fragile_for_md` = roxygen2's
@@ -303,47 +311,62 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07k) — zero-arity Rd user macros
+## Latest session (2026-08-07l) — Rd macros inside literal backticks
+
+Closed the item 2026-08-07k rode along on. Without `@md`, a backtick is nothing
+to Rd — parse_Rd reads straight through it, so `` `\emph{x}` `` is a genuine
+`\emph` between two literal backtick characters. Arity's `ROXYGEN_CODE` span
+swallowed the whole thing into one opaque leaf, and the projector then saw only
+text: the macro head fell to brace-less drop-recovery and its group came back as
+a sibling `(LIST (TEXT "x"))`.
+
+A **parser** fix, not a projector one (the RECAP had guessed projector). The
+`ROXYGEN_CODE` leaf is a *formatter* protection — an atomic unit during prose
+reflow — with no Rd meaning at all, so it must never win over real structure.
+`code_span_holds_rd_macro` (lex.rs) makes the span yield when any unescaped `\`
+inside it would start a macro (or a block-macro opener) on the surrounding
+scan's own terms; the backticks then fall back into the prose run and the `\`
+arm carves exactly as it would outside them. Not a mode gate: the leaf is
+emitted only in non-`@md` mode to begin with (under `@md` it is
+`ROXYGEN_MD_CODE`, whose fragile-tag handling is the 2026-08-07c machinery).
+
+**The subtlety worth keeping** (the first snapshot caught it): yielding at the
+*opening* backtick leaves the *closing* one free to pair with the next opener,
+so `` `\emph{x}` macro and a plain `code` span `` carved a bogus
+`ROXYGEN_CODE` over " macro and a plain ". Backtick scanning is therefore
+suppressed through the rest of a yielded span (`code_yield_end`), which also
+makes the double-backtick form fall out for free.
+
+Curated +1 (`rd_macro_in_code_span`, 2 blocks: single/nested/two-arg/zero-arity
+macros in spans, the escaped-backslash non-macro span, a double-backtick span,
+a macro in a `@references` field, and the `@md` contrast where the span wins).
+Parser fixture `roxygen_rd_macro_in_code_span` (CST + losslessness). Three unit
+tests (the yield, the escape/double-backtick guards, the `@md` non-yield).
+Baseline +1 key (reviewed: **zero** existing lines changed). Projector
+1027→**1028** matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point
+233→**234/234**. Full workspace suite + clippy + fmt green.
+
+**Rode along, unfixed:** probing the same surface showed an UNKNOWN macro
+wrongly consuming a written brace group (recorded in Status, and now the ranked
+next target). The curated case was written around it.
+
+## Earlier sessions (condensed)
+
+### 2026-08-07k — zero-arity Rd user macros
 
 Closed the residual 2026-08-07j recorded. `\sspace` and `\LaTeX` are defined in
 `share/Rd/macros/system.Rd` with **no** `#N`, so parse_Rd expands them on the
 name alone and never consumes a group: a written `{}`/`{x}` is a *following
-sibling* brace list. Arity's group count floored at one, so the group was
-swallowed as an argument and the macro projected `(UNKNOWN "\\sspace")` /
-`(\sspace (TEXT "x"))`.
-
-The parser side was already built — `is_zero_arg_rd_macro` makes `scan_rd_macro`
-carve name-only even when a `{` follows — it just lived in a *second* table
-(`ZERO_ARG_RD_MACROS`) that only the built-ins could reach. Folded that table
-into `MULTI_ARG_RD_MACROS`, renamed **`RD_MACRO_ARITY`** (it is now the one
-group-count table, holding `0`, `2`, and `3` entries alike), and rewrote
-`is_zero_arg_rd_macro` as `rd_macro_arity(name) == 0`. Adding `("sspace", 0)` and
-`("LaTeX", 0)` is then the whole parser change; `is_multi_arg_rd_macro`
-(arity > 1) keeps carrying the structural meaning untouched.
-
-Projector: two `SYSTEM_RD_MACROS` rows. Their arity-0 definitions are
-`\ifelse` conditionals, so the existing `expand_user_macro` path renders them
-with **zero** new code — `substitute_placeholders` is a no-op on a definition
-with no `#N`, and the `arguments.len() < arity` guard passes vacuously. The
-`{}`/`{x}` left behind is picked up by `group_brace_lists` as `(LIST)` /
-`(LIST (TEXT "x"))` exactly as parse_Rd emits it.
-
-Curated +1 (`zero_arity_user_macro`, 2 blocks: brace-less, empty and non-empty
-written groups, nesting in `\emph`/`\code` — where `\code`'s RCODE argument
-keeps the leftover `{}` as `(RCODE "{}")` rather than a `(LIST)` — and an `@md`
-block). Parser fixture `roxygen_zero_arity_user_macro` (CST + losslessness, with
-the arity-1 `\doi{10.1/2}` alongside as the contrast). Three unit tests: the
-lexer's name-only carve next to `\doi`'s consumed group, and the two projector
-shapes (sibling list, brace-less expansion). Baseline +1 key (reviewed: **zero**
-existing lines changed). Projector 1026→**1027** matching (all allowlisted), 0
-divergent, 12 blocked. Fixed-point 232→**233/233**. Full workspace suite (34
-suites) + clippy + fmt green.
-
-**Rode along, unfixed:** probing this surfaced a new gap — in a **non-`@md`**
-block a backtick `ROXYGEN_CODE` leaf swallows the Rd macros inside it (recorded
-in Status). The curated case was written around it rather than through it.
-
-## Earlier sessions (condensed)
+sibling* brace list. The parser side already existed
+(`is_zero_arg_rd_macro` → name-only carve) but lived in a second table only the
+built-ins could reach; folded `ZERO_ARG_RD_MACROS` into the one group-count
+table (**`RD_MACRO_ARITY`**, now holding `0`/`2`/`3` alike) so two rows are the
+whole parser change. Projector: two `SYSTEM_RD_MACROS` rows, expanded by the
+existing `expand_user_macro` path with **zero** new code (`substitute_placeholders`
+no-ops on a `#N`-free definition), the leftover braces picked up by
+`group_brace_lists`. Curated +1 (`zero_arity_user_macro`), fixture
+`roxygen_zero_arity_user_macro`, 3 unit tests. 1026→**1027**. Fixed-point
+232→233/233.
 
 ### 2026-08-07j — per-macro Rd argument arity (beyond two)
 
