@@ -27,6 +27,8 @@ const ARG_BEARING_TAGS: &[&str] = &[
     "template",
     "templateVar",
     "method",
+    // S7 property (roxygen2 8.0.0): `@prop name description`, a two-part tag.
+    "prop",
 ];
 
 fn is_arg_bearing_tag(name: &str) -> bool {
@@ -212,9 +214,11 @@ pub(crate) fn tag_folds_prose_continuation(name: &str) -> bool {
         name,
         // tag_code / tag_examples
         "examples" | "examplesIf" | "usage" | "eval" | "evalRd" | "evalNamespace"
-        // tag_value (single verbatim value; interior spaces significant)
+        // tag_value (single verbatim value; interior spaces significant).
+        // `R6method` (roxygen2 8.0.0) carries a single `Class$method` target.
         | "name" | "rdname" | "docType" | "encoding" | "family" | "concept"
         | "inheritParams" | "backref" | "exportClass" | "exportMethod" | "exportPattern"
+        | "R6method"
         // tag_words / namespace directives (join to one line)
         | "keywords" | "aliases" | "import" | "importFrom" | "importClassesFrom"
         | "importMethodsFrom" | "exportS3Method" | "useDynLib" | "rawNamespace"
@@ -301,8 +305,18 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
 
     if is_arg_bearing_tag(&name) {
         let arg_start = pos;
-        while pos < text.len() && !matches!(bytes[pos], b' ' | b'\t') {
-            pos += 1;
+        // A backtick-quoted name may contain spaces (`@param `arg 1` desc`,
+        // roxygen2 8.0.0's `split_two_part`): the argument runs to the closing
+        // backtick. With no closing backtick roxygen2 falls back to whitespace
+        // splitting, and so does this carve.
+        if bytes[pos] == b'`'
+            && let Some(close) = text[pos + 1..].find('`')
+        {
+            pos += 1 + close + 1;
+        } else {
+            while pos < text.len() && !matches!(bytes[pos], b' ' | b'\t') {
+                pos += 1;
+            }
         }
         push(
             out,

@@ -1,0 +1,5 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[]

@@ -1,0 +1,71 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..163
+  ROXYGEN_BLOCK@0..143
+    ROXYGEN_SECTION@0..12
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+      ROXYGEN_MARKER@9..11 "#'"
+      NEWLINE@11..12 "\n"
+    ROXYGEN_SECTION@12..50
+      ROXYGEN_MARKER@12..14 "#'"
+      WHITESPACE@14..15 " "
+      ROXYGEN_TAG@15..49
+        ROXYGEN_AT@15..16 "@"
+        ROXYGEN_TAG_NAME@16..21 "param"
+        WHITESPACE@21..22 " "
+        ROXYGEN_TAG_ARG@22..29 "`arg 1`"
+        WHITESPACE@29..30 " "
+        ROXYGEN_TEXT@30..49 "a name with a space"
+      NEWLINE@49..50 "\n"
+    ROXYGEN_SECTION@50..81
+      ROXYGEN_MARKER@50..52 "#'"
+      WHITESPACE@52..53 " "
+      ROXYGEN_TAG@53..80
+        ROXYGEN_AT@53..54 "@"
+        ROXYGEN_TAG_NAME@54..59 "field"
+        WHITESPACE@59..60 " "
+        ROXYGEN_TAG_ARG@60..65 "`a b`"
+        WHITESPACE@65..66 " "
+        ROXYGEN_TEXT@66..80 "backtick field"
+      NEWLINE@80..81 "\n"
+    ROXYGEN_SECTION@81..114
+      ROXYGEN_MARKER@81..83 "#'"
+      WHITESPACE@83..84 " "
+      ROXYGEN_TAG@84..113
+        ROXYGEN_AT@84..85 "@"
+        ROXYGEN_TAG_NAME@85..90 "param"
+        WHITESPACE@90..91 " "
+        ROXYGEN_TAG_ARG@91..100 "`unclosed"
+        WHITESPACE@100..101 " "
+        ROXYGEN_TEXT@101..113 "rest of line"
+      NEWLINE@113..114 "\n"
+    ROXYGEN_SECTION@114..143
+      ROXYGEN_MARKER@114..116 "#'"
+      WHITESPACE@116..117 " "
+      ROXYGEN_TAG@117..143
+        ROXYGEN_AT@117..118 "@"
+        ROXYGEN_TAG_NAME@118..123 "param"
+        WHITESPACE@123..124 " "
+        ROXYGEN_TAG_ARG@124..129 "plain"
+        WHITESPACE@129..130 " "
+        ROXYGEN_TEXT@130..143 "ordinary name"
+  NEWLINE@143..144 "\n"
+  ASSIGNMENT_EXPR@144..162
+    IDENT@144..145 "f"
+    WHITESPACE@145..146 " "
+    ASSIGN_LEFT@146..148 "<-"
+    WHITESPACE@148..149 " "
+    FUNCTION_EXPR@149..162
+      FUNCTION_KW@149..157 "function"
+      LPAREN@157..158 "("
+      IDENT@158..159 "x"
+      RPAREN@159..160 ")"
+      WHITESPACE@160..161 " "
+      IDENT@161..162 "x"
+  NEWLINE@162..163 "\n"

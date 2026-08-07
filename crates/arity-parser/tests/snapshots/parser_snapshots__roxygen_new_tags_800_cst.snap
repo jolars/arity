@@ -1,0 +1,47 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..124
+  ROXYGEN_BLOCK@0..118
+    ROXYGEN_SECTION@0..12
+      ROXYGEN_PARAGRAPH@0..9
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+      ROXYGEN_MARKER@9..11 "#'"
+      NEWLINE@11..12 "\n"
+    ROXYGEN_SECTION@12..82
+      ROXYGEN_MARKER@12..14 "#'"
+      WHITESPACE@14..15 " "
+      ROXYGEN_TAG@15..81
+        ROXYGEN_AT@15..16 "@"
+        ROXYGEN_TAG_NAME@16..20 "prop"
+        WHITESPACE@20..21 " "
+        ROXYGEN_TAG_ARG@21..25 "size"
+        WHITESPACE@25..26 " "
+        ROXYGEN_TEXT@26..48 "The size of the thing."
+        NEWLINE@48..49 "\n"
+        ROXYGEN_MARKER@49..51 "#'"
+        WHITESPACE@51..54 "   "
+        ROXYGEN_TEXT@54..81 "Continues on the next ..."
+      NEWLINE@81..82 "\n"
+    ROXYGEN_SECTION@82..108
+      ROXYGEN_MARKER@82..84 "#'"
+      WHITESPACE@84..85 " "
+      ROXYGEN_TAG@85..107
+        ROXYGEN_AT@85..86 "@"
+        ROXYGEN_TAG_NAME@86..94 "R6method"
+        WHITESPACE@94..95 " "
+        ROXYGEN_TEXT@95..107 "Class$method"
+      NEWLINE@107..108 "\n"
+    ROXYGEN_SECTION@108..118
+      ROXYGEN_MARKER@108..110 "#'"
+      WHITESPACE@110..111 " "
+      ROXYGEN_TAG@111..118
+        ROXYGEN_AT@111..112 "@"
+        ROXYGEN_TAG_NAME@112..118 "export"
+  NEWLINE@118..119 "\n"
+  IDENT@119..123 "NULL"
+  NEWLINE@123..124 "\n"
