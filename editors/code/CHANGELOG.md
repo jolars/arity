@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/jolars/arity/compare/arity-code-v0.16.0...arity-code-v0.17.0) (2026-08-07)
+
+### Features
+- **vscode:** add per-feature enable toggles ([`e8370b0`](https://github.com/jolars/arity/commit/e8370b096f2b5883c94271af399ab5f44b028136))
+
+### Dependencies
+- updated arity to v0.17.0
+
 ## [0.16.0](https://github.com/jolars/arity/compare/arity-code-v0.15.0...arity-code-v0.16.0) (2026-08-06)
 
 ### Dependencies
