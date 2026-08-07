@@ -1037,3 +1037,4 @@ tag_separator_ws
 topic_merge
 user_macro_expansion
 verbatim_block_macro
+zero_arity_user_macro

@@ -36,17 +36,13 @@ struct SystemRdMacro {
 /// `share/Rd/macros/system.Rd` (the definitions are stable across R releases;
 /// they are data, not behavior, so a drift shows up as a pin mismatch).
 ///
-/// **Deliberately omitted**, because arity cannot yet render their expansions
-/// faithfully — recorded backlog, not a silent gap: `\sspace` and `\LaTeX` take
-/// **no** argument, so parse_Rd expands them on the name alone and leaves a
-/// written `{}` as a *sibling* `(LIST)`. Arity's [`rd_macro_arity`] floors at one
-/// group, so that `{}` would be swallowed as an argument instead; a zero-arity
-/// *user* macro needs the lexer to know these names — the same gap as a
-/// brace-less `\doi`.
-///
-/// A macro written **brace-less** (`\doi b`) is likewise out of scope: parse_Rd
-/// treats it as sticky and swallows the rest of the section verbatim, which is
-/// the brace-less machinery's concern, not this table's.
+/// A macro written **brace-less** (`\doi b`) is out of scope for the
+/// *argument-taking* entries: parse_Rd treats it as sticky and swallows the rest
+/// of the section verbatim, which is the brace-less machinery's concern, not
+/// this table's. The zero-argument entries (`\sspace`, `\LaTeX`) have nothing to
+/// swallow, so they expand brace-less exactly as written with a group — the
+/// group is a *sibling* `(LIST)`, which is what [`rd_macro_arity`] returning `0`
+/// makes the lexer produce.
 const SYSTEM_RD_MACROS: &[SystemRdMacro] = &[
     SystemRdMacro {
         name: "CRANpkg",
@@ -103,6 +99,16 @@ const SYSTEM_RD_MACROS: &[SystemRdMacro] = &[
     SystemRdMacro {
         name: "proglang",
         definition: r"\ifelse{latex}{\out{\textsf{#1}}}{#1}",
+    },
+    // Zero-argument: no `#N` in the definition, so parse_Rd expands on the name
+    // alone (see `rd_macro_arity`, which consumes no group for them).
+    SystemRdMacro {
+        name: "sspace",
+        definition: r"\ifelse{latex}{\out{~}}{ }",
+    },
+    SystemRdMacro {
+        name: "LaTeX",
+        definition: r"\ifelse{latex}{\out{{\LaTeX}}}{LaTeX}",
     },
     // Multi-argument (see `rd_macro_arity`, which consumes their groups).
     SystemRdMacro {

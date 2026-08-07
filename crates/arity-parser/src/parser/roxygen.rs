@@ -62,12 +62,12 @@ pub(crate) fn is_verbatim_rd_arg(name: &str, index: usize) -> bool {
     is_verbatim_rd_macro(name) || (name == "href" && index == 0) || name == "figure"
 }
 
-/// The Rd macros that take **more than one** adjacent `{…}` argument group, with
-/// their argument count the way `tools::parse_Rd` counts it. Every name absent
-/// here takes exactly one group, so a trailing `\code{x}{y}`'s `{y}` stays
-/// literal --- the arity is per macro, and a group past the count is likewise
-/// literal (`\ifelse{a}{b}{c}{d}` → `(\ifelse …)` plus a sibling `(LIST …)`).
-/// Probed exhaustively against R 4.6 (every [`KNOWN_RD_MACROS`] name written
+/// The Rd macros whose adjacent-`{…}`-group count is **not one**, with that
+/// count the way `tools::parse_Rd` counts it. Every name absent here takes
+/// exactly one group, so a trailing `\code{x}{y}`'s `{y}` stays literal --- the
+/// arity is per macro, and a group past the count is likewise literal
+/// (`\ifelse{a}{b}{c}{d}` → `(\ifelse …)` plus a sibling `(LIST …)`). Probed
+/// exhaustively against R 4.6 (every [`KNOWN_RD_MACROS`] name written
 /// `\name{A}{B}{C}` in a `\details` section).
 ///
 /// A trailing group is *optional*: `\eqn{x^2}` alone is a complete call, and the
@@ -77,18 +77,23 @@ pub(crate) fn is_verbatim_rd_arg(name: &str, index: usize) -> bool {
 /// (under `\itemize`/`\enumerate`) never reaches here: it has no `{`, so it is
 /// not a macro token at all.
 ///
-/// The last two entries are **not** parse_Rd built-ins but R's *system user
-/// macros* (`share/Rd/macros/system.Rd`, always loaded before every Rd file);
-/// their arity is the largest `#N` in the definition, and parse_Rd consumes that
-/// many groups before expanding. The definitions themselves live in the
-/// projector's `usermacro` module --- only the group count is a parsing fact.
+/// **Arity `0` is a complete call by name alone**: parse_Rd consumes no group at
+/// all, so a written `{}`/`{x}` is a *following sibling* brace list, never an
+/// argument (`\dots{}` → `(\dots)` plus `(LIST)`). See [`is_zero_arg_rd_macro`].
 ///
-/// These are also the macros whose `{…}` arguments `parse_Rd` models as *list*
-/// wrappers (so a multi-atom argument projects to a `(GRP …)`), as opposed to
-/// latexlike macros (`\code`, `\emph`, …) whose single argument's content is
-/// inlined directly. The projector keys its GRP rule on
+/// The trailing entries are **not** parse_Rd built-ins but R's *system user
+/// macros* (`share/Rd/macros/system.Rd`, always loaded before every Rd file);
+/// their arity is the largest `#N` in the definition --- zero when it has none
+/// --- and parse_Rd consumes that many groups before expanding. The definitions
+/// themselves live in the projector's `usermacro` module --- only the group
+/// count is a parsing fact.
+///
+/// The arity-above-one names are also the macros whose `{…}` arguments
+/// `parse_Rd` models as *list* wrappers (so a multi-atom argument projects to a
+/// `(GRP …)`), as opposed to latexlike macros (`\code`, `\emph`, …) whose single
+/// argument's content is inlined directly. The projector keys its GRP rule on
 /// [`is_multi_arg_rd_macro`].
-const MULTI_ARG_RD_MACROS: &[(&str, usize)] = &[
+const RD_MACRO_ARITY: &[(&str, usize)] = &[
     ("if", 2),
     ("ifelse", 3),
     ("item", 2),
@@ -102,18 +107,26 @@ const MULTI_ARG_RD_MACROS: &[(&str, usize)] = &[
     ("S3method", 2),
     ("S4method", 2),
     ("subsection", 2),
+    // Zero-argument built-ins: `\cr`, `\dots`, … are complete by name alone.
+    ("cr", 0),
+    ("tab", 0),
+    ("dots", 0),
+    ("ldots", 0),
+    ("R", 0),
     // R system user macros (see above).
     ("manual", 2),
     ("bibinfo", 3),
+    ("sspace", 0),
+    ("LaTeX", 0),
 ];
 
 /// How many `{…}` argument groups the macro named `name` (without the leading
-/// `\`) takes; `1` for every name outside [`MULTI_ARG_RD_MACROS`]. Drives the
-/// lexer (consume that many groups into one token), the tree builder (emit them
-/// as children), and the projector (each group of a multi-argument macro is a
-/// list argument --- a multi-atom one becomes a `(GRP …)`).
+/// `\`) takes; `1` for every name outside [`RD_MACRO_ARITY`]. Drives the lexer
+/// (consume that many groups into one token), the tree builder (emit them as
+/// children), and the projector (each group of a multi-argument macro is a list
+/// argument --- a multi-atom one becomes a `(GRP …)`).
 pub fn rd_macro_arity(name: &str) -> usize {
-    MULTI_ARG_RD_MACROS
+    RD_MACRO_ARITY
         .iter()
         .find(|(n, _)| *n == name)
         .map_or(1, |(_, arity)| *arity)
@@ -412,16 +425,16 @@ pub fn is_known_rd_macro(name: &str) -> bool {
     KNOWN_RD_MACROS.contains(&name)
 }
 
-/// The zero-argument Rd macros in `parse_Rd`'s table. A brace-less occurrence
-/// in prose is a *complete* macro call (`\dots` → `(\dots)`), so the lexer
-/// carves it — unlike other known names, whose brace-less misuse triggers
-/// parse_Rd's drop-recovery (left literal here; backlog).
-const ZERO_ARG_RD_MACROS: &[&str] = &["cr", "tab", "dots", "ldots", "R"];
-
-/// Whether `name` (without the leading `\`) is a zero-argument Rd macro. See
-/// [`ZERO_ARG_RD_MACROS`].
+/// Whether the macro named `name` (without the leading `\`) takes **no**
+/// argument group --- `parse_Rd`'s zero-argument built-ins (`\dots`, `\cr`, …)
+/// and the zero-placeholder system user macros (`\sspace`, `\LaTeX`). Such an
+/// occurrence is a *complete* call by its name alone, so the lexer carves it
+/// name-only even when a `{` follows (the group is then a sibling brace list) —
+/// unlike other known names, whose brace-less misuse triggers parse_Rd's
+/// drop-recovery. One source of truth with the rest of the group count:
+/// [`RD_MACRO_ARITY`].
 pub(crate) fn is_zero_arg_rd_macro(name: &str) -> bool {
-    ZERO_ARG_RD_MACROS.contains(&name)
+    rd_macro_arity(name) == 0
 }
 
 /// Known Rd macros whose brace-less misuse does **not** recover as a clean text

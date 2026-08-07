@@ -4893,6 +4893,47 @@ fn multi_argument_user_macro_substitutes_each_placeholder() {
 }
 
 #[test]
+fn zero_arity_user_macro_leaves_a_written_group_a_sibling_list() {
+    // `\sspace` is defined with no `#N`, so parse_Rd expands it on the name alone
+    // and never consumes a following group: the written `{}`/`{x}` is a sibling
+    // brace list, not an argument.
+    let src = "#' T\n\
+               #'\n\
+               #' a.\\sspace{} b \\sspace{x} c\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(TEXT \"a.\") (USERMACRO \"\\\\ifelse{latex}{\\\\out{~}}{ }\") \
+             (\\ifelse (TEXT \"latex\") (\\out (VERB \"~\"))) (LIST) (TEXT \"b\") \
+             (USERMACRO \"\\\\ifelse{latex}{\\\\out{~}}{ }\") \
+             (\\ifelse (TEXT \"latex\") (\\out (VERB \"~\"))) (LIST (TEXT \"x\")) (TEXT \"c\")"
+        ),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn zero_arity_user_macro_expands_brace_less() {
+    // With nothing to consume there is no misuse to recover from, so a brace-less
+    // `\LaTeX` expands exactly as one written with a group.
+    let src = "#' T\n\
+               #'\n\
+               #' typeset with \\LaTeX today\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(TEXT \"typeset with\") (USERMACRO \"\\\\ifelse{latex}{\\\\out{{\\\\LaTeX}}}{LaTeX}\") \
+             (\\ifelse (TEXT \"latex\") (\\out (VERB \"{\\\\LaTeX}\")) (TEXT \"LaTeX\")) (TEXT \"today\")"
+        ),
+        "got: {out}"
+    );
+}
+
+#[test]
 fn user_macro_expanding_through_a_conditional_projects_its_branches() {
     // `\proglang` is defined as `\ifelse{latex}{\out{\textsf{#1}}}{#1}`, so its
     // expansion only parses once `\ifelse` takes three arguments.

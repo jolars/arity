@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1026 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1027 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **232/232** preserving (verified against 8.0.0).
+closed. Curated fixed-point **233/233** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -32,12 +32,15 @@ for the remaining local scanners; same-`@name` static-scope object-topic
 resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
-output shape is not); **zero-arity user macros** — the residual of 2026-08-07j:
-`rd_macro_arity` floors at one group, so `\sspace{}`/`\LaTeX{}` (defined with no
-`#N`) would swallow the `{}` parse_Rd leaves as a sibling `(LIST)`. Modeling it
-means the lexer knowing the system user-macro *names*, the same gap as a
-**brace-less** user macro (`\doi b`, which parse_Rd treats as sticky and swallows
-verbatim to section end);
+output shape is not); **a `ROXYGEN_CODE` (backtick) leaf in a NON-`@md` block
+swallows the Rd macros inside it** — surfaced 2026-08-07k. Backticks are nothing
+to Rd, so roxygen2 parses `` `\emph{x}` `` as literal backticks around a real
+`\emph`; arity projects `(TEXT "`") (LIST (TEXT "x"))`, losing the macro head
+while its brace group still becomes a `(LIST …)`. The leaf is deliberately
+carved in both modes (`md_inline_off_without_md_directive`), so the fix belongs
+in the projector's handling of it, not in a mode gate;
+a **brace-less** argument-taking user macro (`\doi b`, which parse_Rd treats as
+sticky and swallows verbatim to section end);
 merged-topic member with repeated `@title` (within-block collapse keeps only the
 member's first title value, so the *merged* title-as-description fallback joins
 first-values only — roxygen2 joins every value of every member);
@@ -52,6 +55,11 @@ readings agree unless real content follows on a lazily-continued line
 (`\item{a}{x\n\n- l\n}\n\item{b}{y}\n}` → roxygen2 swallows the *second* `\item`
 into the first's argument). Closing it means brace arithmetic over rendered
 section strings, like `parse_rd_recovery`.
+
+**Ranked next target: the non-`@md` backtick leaf** (above) — freshly surfaced,
+self-contained, and it costs real fidelity today (any `` `\code{f}` `` written
+in a non-markdown block loses its macro). Probe it with `rd-to-tree` on a
+`\details` holding backticked macros; expect a projector-side fix.
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -173,19 +181,22 @@ section strings, like `parse_rd_recovery`.
 ## Rd macro encoding (projector, faithful translation)
 
 - **Name = `[A-Za-z][A-Za-z0-9]*`** (`rd_macro_name_end`, one source; digits allowed).
-- **Arity is per-macro** — `rd_macro_arity` (`MULTI_ARG_RD_MACROS`, default 1) says how many
-  `{…}` groups a name consumes: 3 for `ifelse`/`bibinfo`, 2 for `if, item, tabular, href,
-  figure, eqn, deqn, enc, method, S3method, S4method, subsection, manual`. A group past the
-  arity is prose → a sibling `(LIST …)`. The last two entries are R **system user macros**,
-  not parse_Rd built-ins (arity = max `#N` in the definition; the definitions live in the
-  projector's `usermacro.rs`). `is_multi_arg_rd_macro` (arity > 1) carries the *structural*
-  meaning — GRP-wrap, md-structural routing, Form-B block detection.
+- **Arity is per-macro** — `rd_macro_arity` (`RD_MACRO_ARITY`, the ONE group-count table,
+  default 1) says how many `{…}` groups a name consumes: 3 for `ifelse`/`bibinfo`, 2 for
+  `if, item, tabular, href, figure, eqn, deqn, enc, method, S3method, S4method, subsection,
+  manual`, **0** for `cr,tab,dots,ldots,R` + `sspace,LaTeX`. A group past the arity is prose
+  → a sibling `(LIST …)`, so an arity-0 name's written `{}` is *always* a sibling. The
+  `manual`/`bibinfo`/`sspace`/`LaTeX` entries are R **system user macros**, not parse_Rd
+  built-ins (arity = max `#N` in the definition, 0 when it has none; the definitions live in
+  the projector's `usermacro.rs`). `is_multi_arg_rd_macro` (arity > 1) carries the
+  *structural* meaning — GRP-wrap, md-structural routing, Form-B block detection;
+  `is_zero_arg_rd_macro` (arity == 0) drives the name-only carve.
   GRP-wrap is per-arg, keyed on structural-vs-latexlike.
   **Verbatim is per-arg** (`is_verbatim_rd_arg`, `VERBATIM_RD_MACROS` + `href` arg 0 + `figure`).
 - **`\code` body is `RCODE`** (verbatim R, no norm_ws); other latexlike text macros are TEXT;
   fully-verbatim are VERB. Nested macros recurse.
-- **Brace-less `\word` carves only when unknown or zero-arg-known** (`is_known_rd_macro`/
-  `KNOWN_RD_MACROS`; `ZERO_ARG_RD_MACROS`: `cr,tab,dots,ldots,R`). Any other known name
+- **Brace-less `\word` carves only when unknown or zero-arity** (`is_known_rd_macro`/
+  `KNOWN_RD_MACROS`; `is_zero_arg_rd_macro`, see the arity table). Any other known name
   brace-less stays literal prose in the CST; the *projector* renders parse_Rd's
   drop-recovery: `is_rd_braceless_drop_macro` = known ∧ ¬zero-arg ∧ ∉
   `STICKY_BRACELESS_RD_MACROS`. Sticky names leave RCODE/VERB swallow to section end
@@ -292,53 +303,64 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07j) — per-macro Rd argument arity (beyond two)
+## Latest session (2026-08-07k) — zero-arity Rd user macros
 
-Closed the blocker 2026-08-07i left. `is_two_arg_rd_macro` was a *two-valued*
-predicate doing two jobs at once — "how many `{…}` groups does the token
-consume" and "is this macro *structural*" (GRP-wrap per argument, md-structural
-routing, Form-B block detection). Split into **`rd_macro_arity`** (a
-`&[(&str, usize)]` table, default 1) for the count and **`is_multi_arg_rd_macro`**
-(arity > 1) for the structural meaning, then every consume site became a loop
-bounded by the arity rather than a `bool`.
+Closed the residual 2026-08-07j recorded. `\sspace` and `\LaTeX` are defined in
+`share/Rd/macros/system.Rd` with **no** `#N`, so parse_Rd expands them on the
+name alone and never consumes a group: a written `{}`/`{x}` is a *following
+sibling* brace list. Arity's group count floored at one, so the group was
+swallowed as an argument and the macro projected `(UNKNOWN "\\sspace")` /
+`(\sspace (TEXT "x"))`.
 
-Probed the whole `KNOWN_RD_MACROS` set against R 4.6 (`\name{A}{B}{C}` in a
-`\details`, one `rd-to-tree` run) and took the answers wholesale: `\ifelse` is
-**3**; `\if`, `\method`, `\S3method`, `\S4method`, `\enc`, and `\subsection` are
-**2** and were simply missing. Four consume sites generalized —
-`scan_rd_macro` (lexer), `build_rd_macro` (tree builder),
-`emit_block_macro_from_opener`'s adjacent-group loop plus `is_form_b_block_macro`
-(block form), and `serialize_verbatim_block`'s group cap, which also stopped
-counting *atoms* where it meant *groups*.
+The parser side was already built — `is_zero_arg_rd_macro` makes `scan_rd_macro`
+carve name-only even when a `{` follows — it just lived in a *second* table
+(`ZERO_ARG_RD_MACROS`) that only the built-ins could reach. Folded that table
+into `MULTI_ARG_RD_MACROS`, renamed **`RD_MACRO_ARITY`** (it is now the one
+group-count table, holding `0`, `2`, and `3` entries alike), and rewrote
+`is_zero_arg_rd_macro` as `rd_macro_arity(name) == 0`. Adding `("sspace", 0)` and
+`("LaTeX", 0)` is then the whole parser change; `is_multi_arg_rd_macro`
+(arity > 1) keeps carrying the structural meaning untouched.
 
-Rode along on the projector: `is_md_structural_macro` now covers `\enc` and
-`\subsection` (both non-fragile → each argument markdown-processed), which
-retired the hand-written `"enc"` exclusion in `is_md_inline_text_macro`;
-`macro_single_arg_content` became the first element of a new
-`macro_arg_contents`.
+Projector: two `SYSTEM_RD_MACROS` rows. Their arity-0 definitions are
+`\ifelse` conditionals, so the existing `expand_user_macro` path renders them
+with **zero** new code — `substitute_placeholders` is a no-op on a definition
+with no `#N`, and the `arguments.len() < arity` guard passes vacuously. The
+`{}`/`{x}` left behind is picked up by `group_brace_lists` as `(LIST)` /
+`(LIST (TEXT "x"))` exactly as parse_Rd emits it.
 
-**The payoff is the multi-argument system user macros** (`usermacro.rs`):
-`\proglang` (whose definition *is* an `\ifelse`), `\manual` (2), and `\bibinfo`
-(3). The leaf is the definition ++ every argument's raw text concatenated, and
-`substitute_placeholders` replaces `#N` in one left-to-right pass — so an
-argument containing a `#N` is never re-substituted, as parse_Rd does. A call
-with fewer groups than the definition uses returns `None` (parse_Rd errors
-there). Remaining omission recorded in Status: **zero-arity** user macros
-(`\sspace`/`\LaTeX`), which need the lexer to know the user-macro names.
+Curated +1 (`zero_arity_user_macro`, 2 blocks: brace-less, empty and non-empty
+written groups, nesting in `\emph`/`\code` — where `\code`'s RCODE argument
+keeps the leftover `{}` as `(RCODE "{}")` rather than a `(LIST)` — and an `@md`
+block). Parser fixture `roxygen_zero_arity_user_macro` (CST + losslessness, with
+the arity-1 `\doi{10.1/2}` alongside as the contrast). Three unit tests: the
+lexer's name-only carve next to `\doi`'s consumed group, and the two projector
+shapes (sibling list, brace-less expansion). Baseline +1 key (reviewed: **zero**
+existing lines changed). Projector 1026→**1027** matching (all allowlisted), 0
+divergent, 12 blocked. Fixed-point 232→**233/233**. Full workspace suite (34
+suites) + clippy + fmt green.
 
-Curated +1 (`rd_macro_arity`, 4 blocks: the arity table in prose incl. the
-surplus-group `(LIST …)`, the multi-argument user macros incl. nesting in
-`\emph`/`\code`, an `@md` block separating fragile from non-fragile
-multi-argument macros, and block-form `\subsection`/`\ifelse` bodies spanning
-lines). Parser fixture `roxygen_rd_macro_arity` (CST + losslessness, incl. the
-one-argument `\code{x}{y}` guard, a mid-prose last argument across lines, and an
-unterminated `\ifelse`). Three unit tests pin the surplus group, the two-argument
-substitution, and the expand-through-`\ifelse` shape. Baseline +1 key (reviewed:
-**zero** existing lines changed). Projector 1025→**1026** matching (all
-allowlisted), 0 divergent, 12 blocked. Fixed-point 231→**232/232**. Full
-workspace suite + clippy + fmt green.
+**Rode along, unfixed:** probing this surfaced a new gap — in a **non-`@md`**
+block a backtick `ROXYGEN_CODE` leaf swallows the Rd macros inside it (recorded
+in Status). The curated case was written around it rather than through it.
 
 ## Earlier sessions (condensed)
+
+### 2026-08-07j — per-macro Rd argument arity (beyond two)
+
+Split the two-valued `is_two_arg_rd_macro` into **`rd_macro_arity`** (a
+`&[(&str, usize)]` count table, default 1) and **`is_multi_arg_rd_macro`**
+(arity > 1, the *structural* meaning); every consume site became a loop bounded
+by the arity. Probed the whole `KNOWN_RD_MACROS` set against R 4.6 and took the
+answers wholesale: `\ifelse` is 3; `\if`, `\method`, `\S3method`, `\S4method`,
+`\enc`, `\subsection` are 2 and were simply missing. Four consume sites
+generalized (`scan_rd_macro`, `build_rd_macro`,
+`emit_block_macro_from_opener`/`is_form_b_block_macro`,
+`serialize_verbatim_block`'s cap, which also stopped counting *atoms* where it
+meant *groups*). Payoff: the multi-argument system user macros `\proglang`,
+`\manual` (2), `\bibinfo` (3), via `substitute_placeholders`' single
+left-to-right pass (an argument holding a `#N` is never re-substituted). Curated
++1 (`rd_macro_arity`), fixture `roxygen_rd_macro_arity`, 3 unit tests.
+1025→**1026**. Fixed-point 231→232/232.
 
 ### 2026-08-07i — R system Rd user-macro expansion
 

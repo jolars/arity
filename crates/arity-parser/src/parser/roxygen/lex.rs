@@ -2902,6 +2902,24 @@ mod tests {
     }
 
     #[test]
+    fn rd_macro_zero_arity_never_consumes_a_group() {
+        // A zero-arity macro is complete by its name alone, so a following `{…}`
+        // is a sibling brace group left in prose --- unlike `\doi`, whose one
+        // argument the token swallows.
+        assert_eq!(
+            prose_texts("#' \\sspace{} and \\LaTeX{x} and \\doi{10.1/2}\n"),
+            vec![
+                (TokKind::RoxygenRdMacro, "\\sspace".into()),
+                (TokKind::RoxygenText, "{} and ".into()),
+                (TokKind::RoxygenRdMacro, "\\LaTeX".into()),
+                (TokKind::RoxygenText, "{x} and ".into()),
+                (TokKind::RoxygenRdMacro, "\\doi{10.1/2}".into()),
+            ]
+        );
+        assert_lossless("#' \\sspace{} and \\LaTeX{x} and \\doi{10.1/2}\n");
+    }
+
+    #[test]
     fn md_inline_link() {
         // An inline `[text](url)` link is split into neutral bracket leaves around
         // the recursively-lexed link text (here a single plain run), so emphasis or

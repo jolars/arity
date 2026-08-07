@@ -1,0 +1,147 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..457
+  ROXYGEN_BLOCK@0..316
+    ROXYGEN_SECTION@0..32
+      ROXYGEN_PARAGRAPH@0..29
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..28 "Zero-arity Rd user ma ..."
+        NEWLINE@28..29 "\n"
+      ROXYGEN_MARKER@29..31 "#'"
+      NEWLINE@31..32 "\n"
+    ROXYGEN_SECTION@32..297
+      ROXYGEN_MARKER@32..34 "#'"
+      WHITESPACE@34..35 " "
+      ROXYGEN_TAG@35..43
+        ROXYGEN_AT@35..36 "@"
+        ROXYGEN_TAG_NAME@36..43 "details"
+      NEWLINE@43..44 "\n"
+      ROXYGEN_PARAGRAPH@44..97
+        ROXYGEN_MARKER@44..46 "#'"
+        WHITESPACE@46..47 " "
+        ROXYGEN_TEXT@47..58 "Brace-less "
+        ROXYGEN_RD_MACRO@58..65
+          ROXYGEN_RD_MACRO_NAME@58..65 "\\sspace"
+        ROXYGEN_TEXT@65..70 " and "
+        ROXYGEN_RD_MACRO@70..76
+          ROXYGEN_RD_MACRO_NAME@70..76 "\\LaTeX"
+        ROXYGEN_TEXT@76..96 " are complete calls."
+        NEWLINE@96..97 "\n"
+      ROXYGEN_MARKER@97..99 "#'"
+      NEWLINE@99..100 "\n"
+      ROXYGEN_PARAGRAPH@100..164
+        ROXYGEN_MARKER@100..102 "#'"
+        WHITESPACE@102..103 " "
+        ROXYGEN_TEXT@103..139 "A written group is no ..."
+        ROXYGEN_RD_MACRO@139..146
+          ROXYGEN_RD_MACRO_NAME@139..146 "\\sspace"
+        ROXYGEN_TEXT@146..153 "{} and "
+        ROXYGEN_RD_MACRO@153..159
+          ROXYGEN_RD_MACRO_NAME@153..159 "\\LaTeX"
+        ROXYGEN_TEXT@159..163 "{x}."
+        NEWLINE@163..164 "\n"
+      ROXYGEN_MARKER@164..166 "#'"
+      NEWLINE@166..167 "\n"
+      ROXYGEN_PARAGRAPH@167..221
+        ROXYGEN_MARKER@167..169 "#'"
+        WHITESPACE@169..170 " "
+        ROXYGEN_TEXT@170..178 "Nested: "
+        ROXYGEN_RD_MACRO@178..198
+          ROXYGEN_RD_MACRO_NAME@178..183 "\\emph"
+          ROXYGEN_RD_MACRO_DELIM@183..184 "{"
+          ROXYGEN_RD_MACRO@184..190
+            ROXYGEN_RD_MACRO_NAME@184..190 "\\LaTeX"
+          ROXYGEN_TEXT@190..197 "{} here"
+          ROXYGEN_RD_MACRO_DELIM@197..198 "}"
+        ROXYGEN_TEXT@198..203 " and "
+        ROXYGEN_RD_MACRO@203..219
+          ROXYGEN_RD_MACRO_NAME@203..208 "\\code"
+          ROXYGEN_RD_MACRO_DELIM@208..209 "{"
+          ROXYGEN_RD_MACRO@209..216
+            ROXYGEN_RD_MACRO_NAME@209..216 "\\sspace"
+          ROXYGEN_TEXT@216..218 "{}"
+          ROXYGEN_RD_MACRO_DELIM@218..219 "}"
+        ROXYGEN_TEXT@219..220 "."
+        NEWLINE@220..221 "\n"
+      ROXYGEN_MARKER@221..223 "#'"
+      NEWLINE@223..224 "\n"
+      ROXYGEN_PARAGRAPH@224..297
+        ROXYGEN_MARKER@224..226 "#'"
+        WHITESPACE@226..227 " "
+        ROXYGEN_TEXT@227..283 "An argument-taking us ..."
+        ROXYGEN_RD_MACRO@283..295
+          ROXYGEN_RD_MACRO_NAME@283..287 "\\doi"
+          ROXYGEN_RD_MACRO_DELIM@287..288 "{"
+          ROXYGEN_TEXT@288..294 "10.1/2"
+          ROXYGEN_RD_MACRO_DELIM@294..295 "}"
+        ROXYGEN_TEXT@295..296 "."
+        NEWLINE@296..297 "\n"
+    ROXYGEN_SECTION@297..316
+      ROXYGEN_MARKER@297..299 "#'"
+      WHITESPACE@299..300 " "
+      ROXYGEN_TAG@300..316
+        ROXYGEN_AT@300..301 "@"
+        ROXYGEN_TAG_NAME@301..305 "name"
+        WHITESPACE@305..306 " "
+        ROXYGEN_TEXT@306..316 "zero_arity"
+  NEWLINE@316..317 "\n"
+  IDENT@317..321 "NULL"
+  NEWLINE@321..322 "\n"
+  NEWLINE@322..323 "\n"
+  ROXYGEN_BLOCK@323..451
+    ROXYGEN_SECTION@323..344
+      ROXYGEN_PARAGRAPH@323..341
+        ROXYGEN_MARKER@323..325 "#'"
+        WHITESPACE@325..326 " "
+        ROXYGEN_TEXT@326..340 "Under markdown"
+        NEWLINE@340..341 "\n"
+      ROXYGEN_MARKER@341..343 "#'"
+      NEWLINE@343..344 "\n"
+    ROXYGEN_SECTION@344..351
+      ROXYGEN_MARKER@344..346 "#'"
+      WHITESPACE@346..347 " "
+      ROXYGEN_TAG@347..350
+        ROXYGEN_AT@347..348 "@"
+        ROXYGEN_TAG_NAME@348..350 "md"
+      NEWLINE@350..351 "\n"
+    ROXYGEN_SECTION@351..429
+      ROXYGEN_MARKER@351..353 "#'"
+      WHITESPACE@353..354 " "
+      ROXYGEN_TAG@354..362
+        ROXYGEN_AT@354..355 "@"
+        ROXYGEN_TAG_NAME@355..362 "details"
+      NEWLINE@362..363 "\n"
+      ROXYGEN_PARAGRAPH@363..429
+        ROXYGEN_MARKER@363..365 "#'"
+        WHITESPACE@365..366 " "
+        ROXYGEN_TEXT@366..384 "Still zero-arity: "
+        ROXYGEN_RD_MACRO@384..390
+          ROXYGEN_RD_MACRO_NAME@384..390 "\\LaTeX"
+        ROXYGEN_TEXT@390..397 "{} and "
+        ROXYGEN_MD_EMPH@397..407
+          ROXYGEN_MD_DELIM@397..398 "*"
+          ROXYGEN_TEXT@398..406 "emphasis"
+          ROXYGEN_MD_DELIM@406..407 "*"
+        ROXYGEN_TEXT@407..415 " around "
+        ROXYGEN_RD_MACRO@415..422
+          ROXYGEN_RD_MACRO_NAME@415..422 "\\sspace"
+        ROXYGEN_TEXT@422..428 " here."
+        NEWLINE@428..429 "\n"
+    ROXYGEN_SECTION@429..451
+      ROXYGEN_MARKER@429..431 "#'"
+      WHITESPACE@431..432 " "
+      ROXYGEN_TAG@432..451
+        ROXYGEN_AT@432..433 "@"
+        ROXYGEN_TAG_NAME@433..437 "name"
+        WHITESPACE@437..438 " "
+        ROXYGEN_TEXT@438..442 "zero"
+        ROXYGEN_MD_DELIM@442..443 "_"
+        ROXYGEN_TEXT@443..448 "arity"
+        ROXYGEN_MD_DELIM@448..449 "_"
+        ROXYGEN_TEXT@449..451 "md"
+  NEWLINE@451..452 "\n"
+  IDENT@452..456 "NULL"
+  NEWLINE@456..457 "\n"
