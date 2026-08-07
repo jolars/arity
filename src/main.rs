@@ -310,6 +310,12 @@ const STARTER_CONFIG: &str = "\
 # `functions` replaces the rule's built-in set; `extend-functions` adds to it.
 # [lint.rules.undesirable-function]
 # extend-functions = { sapply = \"use `vapply()` for a stable return type\" }
+
+# Minimum supported tool versions (plain strings; the key is the `>=` floor).
+# When unset, derived from the package DESCRIPTION where possible.
+# [compat]
+# r = \"4.1\"
+# roxygen2 = \"7.3.2\"
 ";
 
 fn run_init(force: bool, out: OutputOptions) -> ExitCode {

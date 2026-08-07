@@ -254,6 +254,15 @@ excludes. The schema:
   (`auto`/`lf`/`crlf`/`native`).
 - `[lint]`: `select` (allowlist; when `Some`, only those run) and `ignore`
   (subtracted). Unknown rule IDs are reported at lint time, not parse time.
+- `[compat]`: `r` and `roxygen2` minimum-version floors (MSRV-style, plain
+  version strings). Top-level because they are project facts, not lint options.
+  When unset, derived per file from the enclosing `DESCRIPTION`
+  (`Depends: R (>= …)`; `Config/roxygen2/version`, then `RoxygenNote`) — see
+  `src/project/description.rs`; with no floor at all the version-aware rules
+  stay silent. The parsed table is mirrored onto `LintConfig::compat`
+  (a `#[serde(skip)]` field, like `remote_url`) so the CLI and the LSP lint
+  thread ship it without a parallel plumbing path; rules read the resolved
+  floors via `RuleContext::r_compat_floor`/`roxygen2_compat_floor`.
 - `[index]`: `library-paths`, `cache-dir`, `auto-build`, `help`.
 
 Conventions when extending it: every struct is

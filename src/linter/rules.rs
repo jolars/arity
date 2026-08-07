@@ -24,7 +24,8 @@ use std::sync::OnceLock;
 use rowan::ast::AstNode as _;
 
 use crate::ast::{BinaryExpr, CallExpr};
-use crate::config::{LintConfig, RulesConfig};
+use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
+use crate::project::description::DescriptionCompat;
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{FileControlFlow, PackageOrigin, SemanticModel, SymbolProvider};
@@ -315,6 +316,15 @@ pub struct RuleContext<'a> {
     /// Private and empty at construction: resolving it touches disk, so the cost
     /// is paid only by the rules that ask, on the files where they match.
     own_package: OnceLock<Option<String>>,
+    /// The configured `[compat]` floors (empty when the project sets none),
+    /// resolved once per run and carried on [`ResolvedRules`]. Consult
+    /// [`RuleContext::r_compat_floor`]/[`RuleContext::roxygen2_compat_floor`],
+    /// which layer the per-file `DESCRIPTION` derivation underneath.
+    pub compat: &'a CompatConfig,
+    /// Lazily-derived `DESCRIPTION` compat facts for this file's package — the
+    /// fallback under the configured floors. Same lazy-disk discipline as
+    /// [`RuleContext::own_package`]: only the version-aware rules pay the walk.
+    description_compat: OnceLock<DescriptionCompat>,
 }
 
 impl RuleContext<'_> {
@@ -334,6 +344,32 @@ impl RuleContext<'_> {
         self.own_package
             .get_or_init(|| crate::project::description::package_name_for_file(self.path))
             .as_deref()
+    }
+
+    /// The minimum supported R version this file targets, or `None` when no
+    /// floor is declared anywhere — the version-aware rules must then stay
+    /// silent. Resolution order: the configured `[compat] r` wins; otherwise
+    /// the enclosing package's `Depends: R (>= …)` (lazily resolved and
+    /// memoized, like [`RuleContext::own_package`]).
+    pub fn r_compat_floor(&self) -> Option<CompatVersion> {
+        self.compat
+            .r_version()
+            .or_else(|| self.description_compat().r.clone())
+    }
+
+    /// The roxygen2 version this file's documentation targets, or `None` when
+    /// undeclared (rules stay silent). Resolution order: the configured
+    /// `[compat] roxygen2` wins; otherwise the enclosing package's
+    /// `Config/roxygen2/version`, then its legacy `RoxygenNote`.
+    pub fn roxygen2_compat_floor(&self) -> Option<CompatVersion> {
+        self.compat
+            .roxygen2_version()
+            .or_else(|| self.description_compat().roxygen2.clone())
+    }
+
+    fn description_compat(&self) -> &DescriptionCompat {
+        self.description_compat
+            .get_or_init(|| crate::project::description::description_compat_for_file(self.path))
     }
 
     /// Whether `call`'s callee is confirmed to invoke a base-R function: a
@@ -463,12 +499,20 @@ pub struct ResolvedRules {
     /// parameter because it is per-*run* config, exactly like the rest of this
     /// struct's derived state — so the hot per-file path carries it for free.
     rules_config: RulesConfig,
+    /// The run's `[compat]` floors (mirrored onto `LintConfig` at config parse
+    /// time), handed to rules via [`RuleContext::compat`] — same per-run
+    /// rationale as `rules_config`.
+    compat: CompatConfig,
 }
 
 impl ResolvedRules {
     /// Build the derived dispatch state (`by_kind`, `severities`) for a chosen
     /// rule set. The single place that knows how a rule set maps to dispatch.
-    fn with_config(rules: Vec<Box<dyn Rule>>, rules_config: RulesConfig) -> Self {
+    fn with_config(
+        rules: Vec<Box<dyn Rule>>,
+        rules_config: RulesConfig,
+        compat: CompatConfig,
+    ) -> Self {
         let mut by_kind: Vec<Vec<usize>> = vec![Vec::new(); SyntaxKind::COUNT];
         let mut any_node_rules = false;
         for (i, rule) in rules.iter().enumerate() {
@@ -489,6 +533,7 @@ impl ResolvedRules {
             severities,
             enabled,
             rules_config,
+            compat,
         }
     }
 
@@ -530,7 +575,10 @@ impl ResolvedRules {
             None => all.into_iter().filter(|r| r.default_enabled()).collect(),
         };
         chosen.retain(|r| !ignore.iter().any(|i| i == r.id()));
-        (Self::with_config(chosen, config.rules.clone()), unknown)
+        (
+            Self::with_config(chosen, config.rules.clone(), config.compat.clone()),
+            unknown,
+        )
     }
 
     pub fn default_set() -> Self {
@@ -575,6 +623,8 @@ pub fn run_rules(
         suppressions: &suppressions,
         enabled_rules: &resolved.enabled,
         own_package: OnceLock::new(),
+        compat: &resolved.compat,
+        description_compat: OnceLock::new(),
     };
     let rules = &resolved.rules;
     let mut all = Vec::new();
@@ -679,8 +729,11 @@ mod tests {
         let model = SemanticModel::build(&root);
         let cfg = FileControlFlow::build(&root);
         let symbols = crate::semantic::StaticBaseR::new();
-        let resolved =
-            ResolvedRules::with_config(vec![Box::new(FakeError)], RulesConfig::default());
+        let resolved = ResolvedRules::with_config(
+            vec![Box::new(FakeError)],
+            RulesConfig::default(),
+            CompatConfig::default(),
+        );
         let diags = run_rules(
             &resolved,
             Path::new("test.R"),
@@ -705,8 +758,11 @@ mod tests {
         let model = SemanticModel::build(&root);
         let cfg = FileControlFlow::build(&root);
         let symbols = crate::semantic::StaticBaseR::new();
-        let resolved =
-            ResolvedRules::with_config(vec![Box::new(FakeError)], RulesConfig::default());
+        let resolved = ResolvedRules::with_config(
+            vec![Box::new(FakeError)],
+            RulesConfig::default(),
+            CompatConfig::default(),
+        );
         let diags = run_rules(
             &resolved,
             Path::new("test.R"),
@@ -724,8 +780,11 @@ mod tests {
     /// pass can tell "this rule found nothing" from "this rule never ran".
     #[test]
     fn enabled_rules_reflects_the_resolved_set() {
-        let resolved =
-            ResolvedRules::with_config(vec![Box::new(FakeError)], RulesConfig::default());
+        let resolved = ResolvedRules::with_config(
+            vec![Box::new(FakeError)],
+            RulesConfig::default(),
+            CompatConfig::default(),
+        );
         assert!(resolved.enabled().contains("fake-error"));
         assert!(!resolved.enabled().contains("unused-binding"));
     }
@@ -749,6 +808,8 @@ mod tests {
             suppressions: &SuppressionMap::default(),
             enabled_rules: &EnabledRules::default(),
             own_package: OnceLock::new(),
+            compat: &CompatConfig::default(),
+            description_compat: OnceLock::new(),
         };
         let call = root
             .descendants()

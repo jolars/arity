@@ -20,6 +20,7 @@
 use std::path::Path;
 
 use crate::ast::{Arg, AstNode, CallExpr, HasArgList};
+use crate::config::CompatVersion;
 use crate::parser::parse;
 use crate::project::scope::package_root;
 use crate::rindex::harvest::parse_dcf;
@@ -113,6 +114,77 @@ fn roxygen_field(description: &str) -> Option<String> {
         .map(|(_, value)| value)
 }
 
+/// The tool-version facts a package's `DESCRIPTION` declares, for the
+/// version-aware lint rules' compat floors (see `config::CompatConfig`, whose
+/// explicit keys override these).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DescriptionCompat {
+    /// The R floor from `Depends: R (>= x.y)` (a `>` constraint counts too —
+    /// close enough for a floor).
+    pub r: Option<CompatVersion>,
+    /// The roxygen2 version the package documents with:
+    /// `Config/roxygen2/version` (written by roxygen2 >= 8.0.0), then the
+    /// legacy `RoxygenNote`.
+    pub roxygen2: Option<CompatVersion>,
+}
+
+/// Read the [`DescriptionCompat`] facts of the package at `root` (a directory
+/// holding `DESCRIPTION`). One disk read for both fields; all-`None` when
+/// there is no readable `DESCRIPTION`. Touches disk.
+pub fn description_compat(root: &Path) -> DescriptionCompat {
+    let Ok(text) = std::fs::read_to_string(root.join("DESCRIPTION")) else {
+        return DescriptionCompat::default();
+    };
+    let fields = parse_dcf(&text);
+    let get = |name: &str| {
+        fields
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
+    DescriptionCompat {
+        r: get("Depends").and_then(r_depends_floor),
+        roxygen2: get("Config/roxygen2/version")
+            .or_else(|| get("RoxygenNote"))
+            .and_then(|v| CompatVersion::parse(v.trim())),
+    }
+}
+
+/// [`description_compat`] resolved for a single file: walk up to the enclosing
+/// package root (`DESCRIPTION` + `R/`). All-`None` for a loose file outside
+/// any package — the version-aware rules then stay silent unless the user
+/// configures a floor. Touches disk.
+pub fn description_compat_for_file(path: &Path) -> DescriptionCompat {
+    package_root(path)
+        .map(|root| description_compat(&root))
+        .unwrap_or_default()
+}
+
+/// The R version floor a `Depends` field declares: the comma-separated entry
+/// naming exactly `R`, with a parenthesized `>=`/`>` constraint (any other
+/// operator states no floor). `Depends: R (>= 4.1.0), stats` → `4.1.0`.
+fn r_depends_floor(depends: &str) -> Option<CompatVersion> {
+    for entry in depends.split(',') {
+        let entry = entry.trim();
+        let (name, constraint) = match entry.find('(') {
+            Some(open) => (
+                entry[..open].trim(),
+                entry[open + 1..].trim_end().strip_suffix(')'),
+            ),
+            None => (entry, None),
+        };
+        if name != "R" {
+            continue;
+        }
+        let constraint = constraint?.trim();
+        let version = constraint
+            .strip_prefix(">=")
+            .or_else(|| constraint.strip_prefix('>'))?;
+        return CompatVersion::parse(version.trim());
+    }
+    None
+}
+
 /// Statically resolve the `markdown` element of the R text's value: the text's
 /// **last** top-level expression (both `eval(parse(text = field))` and
 /// `source(meta.R)$value` yield the last expression's value) must be a plain
@@ -179,6 +251,60 @@ mod tests {
         let meta_dir = dir.path().join("man/roxygen");
         std::fs::create_dir_all(&meta_dir).expect("man/roxygen/");
         std::fs::write(meta_dir.join("meta.R"), source).expect("meta.R");
+    }
+
+    #[test]
+    fn description_compat_reads_r_floor_and_roxygen2_version() {
+        let dir = package(
+            "Package: mypkg\n\
+             Depends: methods, R (>= 4.1.0), stats\n\
+             RoxygenNote: 7.3.2\n",
+        );
+        let compat = description_compat(dir.path());
+        assert_eq!(compat.r, CompatVersion::parse("4.1.0"));
+        assert_eq!(compat.roxygen2, CompatVersion::parse("7.3.2"));
+        // Per-file resolution walks to the package root.
+        assert_eq!(
+            description_compat_for_file(&dir.path().join("R/a.R")),
+            compat
+        );
+        // A loose file outside any package resolves to no floors.
+        let loose = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            description_compat_for_file(&loose.path().join("script.R")),
+            DescriptionCompat::default()
+        );
+    }
+
+    #[test]
+    fn description_compat_prefers_the_modern_roxygen2_field() {
+        // roxygen2 8.0.0 records its version in `Config/roxygen2/version`;
+        // the legacy `RoxygenNote` remains as the fallback.
+        let dir = package(
+            "Package: mypkg\n\
+             Config/roxygen2/version: 8.0.0\n\
+             RoxygenNote: 7.3.2\n",
+        );
+        assert_eq!(
+            description_compat(dir.path()).roxygen2,
+            CompatVersion::parse("8.0.0")
+        );
+    }
+
+    #[test]
+    fn r_depends_floor_parses_constraint_shapes() {
+        let floor = |s: &str| r_depends_floor(s);
+        assert_eq!(floor("R (>= 4.1)"), CompatVersion::parse("4.1"));
+        assert_eq!(floor("R (> 4.0.5)"), CompatVersion::parse("4.0.5"));
+        assert_eq!(
+            floor("stats, R(>=3.5.0), utils"),
+            CompatVersion::parse("3.5.0")
+        );
+        // No constraint, a non-floor operator, or no R entry: no floor.
+        assert_eq!(floor("R"), None);
+        assert_eq!(floor("R (== 4.1)"), None);
+        assert_eq!(floor("Rcpp (>= 1.0)"), None);
+        assert_eq!(floor(""), None);
     }
 
     #[test]

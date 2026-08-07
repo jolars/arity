@@ -48,6 +48,13 @@ pub struct Config {
     pub lint: LintConfig,
     #[serde(default)]
     pub index: IndexConfig,
+    /// Minimum supported tool versions the project targets. A top-level table
+    /// (not under `[lint]`) because it states a project fact, not a lint
+    /// option — the lint rules are merely its first consumer. When a key is
+    /// absent it is derived from the package `DESCRIPTION` where possible;
+    /// see [`CompatConfig`].
+    #[serde(default)]
+    pub compat: CompatConfig,
     /// Enable the persistent result cache (currently the `format --check`
     /// already-formatted cache). A top-level key because it will govern the
     /// lint cache too. The `--no-cache` CLI flag overrides this to `false`.
@@ -63,6 +70,7 @@ impl Default for Config {
             format: FormatConfig::default(),
             lint: LintConfig::default(),
             index: IndexConfig::default(),
+            compat: CompatConfig::default(),
             cache: true,
         }
     }
@@ -164,6 +172,14 @@ pub struct LintConfig {
     /// Per-rule option tables (`[lint.rules.<id>]`).
     #[serde(default)]
     pub rules: RulesConfig,
+    /// The resolved top-level `[compat]` table, copied here when the config is
+    /// parsed (`Config::parse_str`) so every consumer that ships a
+    /// [`LintConfig`] — the CLI, the LSP's lint thread — carries the compat
+    /// floors without a parallel plumbing path. `#[serde(skip)]` (like
+    /// `IndexConfig::remote_url`): the authored key is the *top-level*
+    /// `[compat]`, never `[lint.compat]`, which `deny_unknown_fields` rejects.
+    #[serde(skip)]
+    pub compat: CompatConfig,
 }
 
 /// `[lint.rules]` — per-rule option tables, one field per *configurable* rule.
@@ -278,6 +294,106 @@ fn default_undesirable_functions() -> BTreeMap<String, String> {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect()
+}
+
+/// `[compat]` — the minimum tool versions the project supports, MSRV-style
+/// (clippy's `msrv`, ruff's `target-version`). Consumed by the version-aware
+/// lint rules (`r-compat`, `roxygen2-compat`): syntax or documentation
+/// constructs needing a *newer* version than the declared floor are flagged.
+///
+/// Resolution order, per file: an explicit key here wins; an absent key is
+/// derived from the enclosing package's `DESCRIPTION` (`Depends: R (>= …)` for
+/// `r`; `Config/roxygen2/version`, then the legacy `RoxygenNote`, for
+/// `roxygen2` — see `project::description`); with neither, the version-aware
+/// rules stay silent (no floor, nothing to flag), so loose scripts see no
+/// false positives.
+///
+/// Values are plain version strings (`"4.1"`, `"7.3.2"`), not requirement
+/// specs — the key *is* the `>=` floor.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct CompatConfig {
+    /// Minimum supported R version, e.g. `"4.1"`.
+    #[serde(default)]
+    pub r: Option<String>,
+    /// The roxygen2 version the project documents with, e.g. `"7.3.2"`.
+    #[serde(default)]
+    pub roxygen2: Option<String>,
+}
+
+impl CompatConfig {
+    /// Validate that both keys, when present, parse as version strings.
+    fn validate(&self, path: Option<&Path>) -> Result<(), ConfigError> {
+        for (field, value) in [("compat.r", &self.r), ("compat.roxygen2", &self.roxygen2)] {
+            if let Some(text) = value
+                && CompatVersion::parse(text).is_none()
+            {
+                return Err(ConfigError::InvalidValue {
+                    path: path.map(Path::to_path_buf),
+                    field,
+                    message: format!(
+                        "`{text}` is not a version string (expected dot- or \
+                         dash-separated numbers, e.g. \"4.1\" or \"7.3.2\")"
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The parsed `r` floor, when configured. Infallible after [`validate`].
+    ///
+    /// [`validate`]: CompatConfig::validate
+    pub fn r_version(&self) -> Option<CompatVersion> {
+        self.r.as_deref().and_then(CompatVersion::parse)
+    }
+
+    /// The parsed `roxygen2` floor, when configured. Infallible after
+    /// [`validate`].
+    ///
+    /// [`validate`]: CompatConfig::validate
+    pub fn roxygen2_version(&self) -> Option<CompatVersion> {
+        self.roxygen2.as_deref().and_then(CompatVersion::parse)
+    }
+}
+
+/// A parsed tool version for floor comparisons: numeric components in order,
+/// compared the way R's `utils::compareVersion` does — componentwise, with a
+/// missing component losing to a present one (`4.1 < 4.1.0 < 4.2`). R version
+/// strings separate components with `.` or `-` (`"1.2-3"`), and so does this
+/// parser.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CompatVersion(Vec<u32>);
+
+impl CompatVersion {
+    /// Parse a version string: one or more non-empty numeric components
+    /// separated by `.` or `-`. `None` on anything else (empty string, empty
+    /// or non-numeric components).
+    pub fn parse(text: &str) -> Option<Self> {
+        let components: Option<Vec<u32>> = text
+            .split(['.', '-'])
+            .map(|c| {
+                (!c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()))
+                    .then(|| c.parse().ok())
+                    .flatten()
+            })
+            .collect();
+        components.filter(|c| !c.is_empty()).map(CompatVersion)
+    }
+}
+
+impl fmt::Display for CompatVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for c in &self.0 {
+            if !first {
+                write!(f, ".")?;
+            }
+            write!(f, "{c}")?;
+            first = false;
+        }
+        Ok(())
+    }
 }
 
 /// `[index]` — the R-introspection sidecar.
@@ -404,7 +520,7 @@ impl Config {
     }
 
     fn parse_str(text: &str, path: &Path) -> Result<Self, ConfigError> {
-        let config: Self = toml::from_str(text).map_err(|err| {
+        let mut config: Self = toml::from_str(text).map_err(|err| {
             let (line, column) = match err.span() {
                 Some(span) => byte_offset_to_line_col(text, span.start),
                 None => (1, 1),
@@ -417,11 +533,15 @@ impl Config {
             }
         })?;
         config.validate(Some(path))?;
+        // Mirror the top-level `[compat]` onto the lint section (see
+        // `LintConfig::compat`).
+        config.lint.compat = config.compat.clone();
         Ok(config)
     }
 
     fn validate(&self, path: Option<&Path>) -> Result<(), ConfigError> {
-        self.format.validate(path)
+        self.format.validate(path)?;
+        self.compat.validate(path)
     }
 
     /// Walk `start` and its ancestors looking for a `arity.toml`. Stops at the
@@ -536,6 +656,52 @@ mod tests {
 
     fn parse(text: &str) -> Result<Config, ConfigError> {
         Config::parse_str(text, Path::new("arity.toml"))
+    }
+
+    #[test]
+    fn compat_table_parses_and_resolves() {
+        let config = parse("[compat]\nr = \"4.1\"\nroxygen2 = \"7.3.2\"\n").unwrap();
+        assert_eq!(config.compat.r_version(), CompatVersion::parse("4.1"));
+        assert_eq!(
+            config.compat.roxygen2_version(),
+            CompatVersion::parse("7.3.2")
+        );
+        // Absent keys resolve to no floor.
+        let config = parse("").unwrap();
+        assert_eq!(config.compat.r_version(), None);
+        assert_eq!(config.compat.roxygen2_version(), None);
+    }
+
+    #[test]
+    fn compat_invalid_version_is_a_config_error() {
+        let err = parse("[compat]\nr = \"latest\"\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::InvalidValue {
+                    field: "compat.r",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        // A mistyped key is a parse error (`deny_unknown_fields`).
+        assert!(parse("[compat]\nroxygen = \"7.0\"\n").is_err());
+    }
+
+    #[test]
+    fn compat_version_ordering_matches_r() {
+        let v = |s: &str| CompatVersion::parse(s).unwrap();
+        // Componentwise, with a missing component losing to a present one
+        // (`utils::compareVersion`), and `-` accepted as a separator.
+        assert!(v("4.1") < v("4.1.0"));
+        assert!(v("4.1.0") < v("4.2"));
+        assert!(v("4.10") > v("4.9"));
+        assert!(v("1.2-3") == v("1.2.3"));
+        assert!(v("7.3.2") < v("7.3.2.9000"));
+        assert_eq!(CompatVersion::parse(""), None);
+        assert_eq!(CompatVersion::parse("4."), None);
+        assert_eq!(CompatVersion::parse("v4.1"), None);
     }
 
     #[test]
