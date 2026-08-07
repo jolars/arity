@@ -1,0 +1,91 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..187
+  ROXYGEN_BLOCK@0..181
+    ROXYGEN_SECTION@0..8
+      ROXYGEN_PARAGRAPH@0..5
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..4 "t"
+        NEWLINE@4..5 "\n"
+      ROXYGEN_MARKER@5..7 "#'"
+      NEWLINE@7..8 "\n"
+    ROXYGEN_SECTION@8..59
+      ROXYGEN_MARKER@8..10 "#'"
+      WHITESPACE@10..11 " "
+      ROXYGEN_TAG@11..58
+        ROXYGEN_AT@11..12 "@"
+        ROXYGEN_TAG_NAME@12..19 "details"
+        WHITESPACE@19..20 " "
+        ROXYGEN_TEXT@20..22 "a "
+        ROXYGEN_RD_MACRO@22..56
+          ROXYGEN_RD_MACRO_NAME@22..26 "\\eqn"
+          ROXYGEN_RD_MACRO_DELIM@26..27 "{"
+          ROXYGEN_RD_MACRO_VERB@27..41 "\\alpha + \\beta"
+          ROXYGEN_RD_MACRO_DELIM@41..42 "}"
+          ROXYGEN_RD_MACRO_DELIM@42..43 "{"
+          ROXYGEN_RD_MACRO_VERB@43..55 "alpha + beta"
+          ROXYGEN_RD_MACRO_DELIM@55..56 "}"
+        ROXYGEN_TEXT@56..58 " b"
+      NEWLINE@58..59 "\n"
+    ROXYGEN_SECTION@59..99
+      ROXYGEN_MARKER@59..61 "#'"
+      WHITESPACE@61..62 " "
+      ROXYGEN_TAG@62..98
+        ROXYGEN_AT@62..63 "@"
+        ROXYGEN_TAG_NAME@63..70 "details"
+        WHITESPACE@70..71 " "
+        ROXYGEN_TEXT@71..73 "c "
+        ROXYGEN_RD_MACRO@73..96
+          ROXYGEN_RD_MACRO_NAME@73..78 "\\deqn"
+          ROXYGEN_RD_MACRO_DELIM@78..79 "{"
+          ROXYGEN_RD_MACRO_VERB@79..90 "\\frac{x}{y}"
+          ROXYGEN_RD_MACRO_DELIM@90..91 "}"
+          ROXYGEN_RD_MACRO_DELIM@91..92 "{"
+          ROXYGEN_RD_MACRO_VERB@92..95 "x/y"
+          ROXYGEN_RD_MACRO_DELIM@95..96 "}"
+        ROXYGEN_TEXT@96..98 " d"
+      NEWLINE@98..99 "\n"
+    ROXYGEN_SECTION@99..171
+      ROXYGEN_MARKER@99..101 "#'"
+      WHITESPACE@101..102 " "
+      ROXYGEN_TAG@102..170
+        ROXYGEN_AT@102..103 "@"
+        ROXYGEN_TAG_NAME@103..110 "details"
+        WHITESPACE@110..111 " "
+        ROXYGEN_TEXT@111..113 "e "
+        ROXYGEN_RD_MACRO@113..120
+          ROXYGEN_RD_MACRO_NAME@113..117 "\\eqn"
+          ROXYGEN_RD_MACRO_DELIM@117..118 "{"
+          ROXYGEN_RD_MACRO_VERB@118..119 "a"
+          ROXYGEN_RD_MACRO_DELIM@119..120 "}"
+        ROXYGEN_TEXT@120..133 " {b} spaced, "
+        ROXYGEN_RD_MACRO@133..143
+          ROXYGEN_RD_MACRO_NAME@133..137 "\\eqn"
+          ROXYGEN_RD_MACRO_DELIM@137..138 "{"
+          ROXYGEN_RD_MACRO_VERB@138..139 "a"
+          ROXYGEN_RD_MACRO_DELIM@139..140 "}"
+          ROXYGEN_RD_MACRO_DELIM@140..141 "{"
+          ROXYGEN_RD_MACRO_VERB@141..142 "b"
+          ROXYGEN_RD_MACRO_DELIM@142..143 "}"
+        ROXYGEN_TEXT@143..154 "{c} third, "
+        ROXYGEN_RD_MACRO@154..163
+          ROXYGEN_RD_MACRO_NAME@154..158 "\\eqn"
+          ROXYGEN_RD_MACRO_DELIM@158..159 "{"
+          ROXYGEN_RD_MACRO_VERB@159..162 "x^2"
+          ROXYGEN_RD_MACRO_DELIM@162..163 "}"
+        ROXYGEN_TEXT@163..170 " single"
+      NEWLINE@170..171 "\n"
+    ROXYGEN_SECTION@171..181
+      ROXYGEN_MARKER@171..173 "#'"
+      WHITESPACE@173..174 " "
+      ROXYGEN_TAG@174..181
+        ROXYGEN_AT@174..175 "@"
+        ROXYGEN_TAG_NAME@175..179 "name"
+        WHITESPACE@179..180 " "
+        ROXYGEN_TEXT@180..181 "x"
+  NEWLINE@181..182 "\n"
+  IDENT@182..186 "NULL"
+  NEWLINE@186..187 "\n"

@@ -670,6 +670,7 @@ cm-654
 cm-655
 code_span_demote
 describe_format
+eqn_two_arg
 examples
 examples_merge
 itemize_enumerate

@@ -65,8 +65,14 @@ pub(crate) fn is_verbatim_rd_arg(name: &str, index: usize) -> bool {
 /// `\arguments`) and `\tabular{format}{content}`. A one-argument macro like
 /// `\code` consumes only its first group, so a trailing `\code{x}{y}`'s `{y}`
 /// stays literal --- the arity is per macro. Also `\href{url}{text}`, whose first
-/// argument is verbatim, and `\figure{path}{caption}` (both args verbatim --- see
-/// [`is_verbatim_rd_arg`]). Extensible (`\section`/… are
+/// argument is verbatim, `\figure{path}{caption}` (both args verbatim --- see
+/// [`is_verbatim_rd_arg`]), and `\eqn{latex}{ascii}`/`\deqn{latex}{ascii}`,
+/// whose second (ASCII fallback) group is *optional* --- `\eqn{x^2}` alone is a
+/// complete call, and the lexer's consumption is already
+/// present-and-adjacent-only, so the optionality costs nothing. parse_Rd
+/// requires same-line adjacency: `\eqn{a} {b}` and a next-line `{b}` leave the
+/// group a literal brace `LIST`, as does a third group (`\eqn{a}{b}{c}`).
+/// Extensible (`\section`/… are
 /// future targets, several of which surface as block macros instead). A braceless
 /// `\item` (under `\itemize`/`\enumerate`) never reaches here: it has no `{`, so
 /// it is not a macro token at all.
@@ -75,7 +81,7 @@ pub(crate) fn is_verbatim_rd_arg(name: &str, index: usize) -> bool {
 /// wrappers (so a multi-atom argument projects to a `(GRP …)`), as opposed to
 /// latexlike macros (`\code`, `\emph`, …) whose single argument's content is
 /// inlined directly. The projector keys its GRP rule on this set.
-const TWO_ARG_RD_MACROS: &[&str] = &["item", "tabular", "href", "figure"];
+const TWO_ARG_RD_MACROS: &[&str] = &["item", "tabular", "href", "figure", "eqn", "deqn"];
 
 /// Whether the macro named `name` (without the leading `\`) takes two `{…}`
 /// argument groups. Drives the lexer (consume the second group into one token),

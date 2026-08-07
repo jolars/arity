@@ -16,9 +16,9 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1018 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1019 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **224/224** preserving (verified against 8.0.0).
+closed. Curated fixed-point **225/225** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -32,8 +32,12 @@ for the remaining local scanners; same-`@name` static-scope object-topic
 resolution (only explicit `@name`/`@rdname` is grouped today); kept-tag
 (`@note`/…) code spans whose body holds a `%` or unbalanced braces (the
 imbalance reaches parse_Rd's recovery — the drop side is modeled, the kept
-output shape is not); `\eqn{a}{b}` second-group consumption (arity models eqn
-single-arg); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions.
+output shape is not); `doi`/`CRANpkg`/`PR` `USERMACRO` expansions; **block-form
+verbatim macro bodies** (a multi-line `\deqn{`/`\eqn{`/`\out{` body is sub-parsed
+as Rd content in the CST, but parse_Rd keeps it verbatim — per-line `(VERB …)`
+atoms in a `(GRP …)`, `\preformatted`-style — and consumes an adjacent `{…}`
+second group after the multi-line body closes; `preformatted_atoms` is the
+projector precedent).
 
 **Three checks, three roles** (don't conflate):
 1. **Projector parity** (`tests/roxygen_projector.rs`, pure Rust, no R) — the
@@ -251,50 +255,43 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07c) — demoted code spans + fragile gating in `` `Rd …` `` bodies
+## Latest session (2026-08-07d) — `\eqn`/`\deqn` optional second argument
 
-Closed the "demoted `` `Rd …` `` spans demote as code/verb" open item, plus the
-cluster around it. Root insight (engine-probed + R/markdown-escaping.R): a code
-span's content reaches the rendered Rd through roxygen2's **fragile-tag
-protection** — `find_fragile_rd_tags`/`findEndOfTag` protect each
-`escaped_for_md` macro (name + greedy adjacent balanced `{…}` groups) from both
-`double_escape_md` (which doubles every other backslash; cmark leaves code-span
-content untouched) and the branch escaping (`mdxml_code`: `Rd `-span → raw
-`\Sexpr[stage=render,results=rd]{…}` body, `\code` → `%`-escape only, `\verb` →
-`escape_verb` `%`/`{`/`}`). So inside a span body only a **fragile** `\word{…}`
-survives as a parseable macro; a non-fragile one resolves back to a literal `\`
-+ prose whose braces stay bare in the `Sexpr`/`code` branches (→ `LIST` groups)
-but escaped in `verb`.
+Closed the "`\eqn{a}{b}` second-group consumption" open item. parse_Rd gives
+`eqn`/`deqn` an *optional* second (ASCII fallback) `{…}` group, both args
+verbatim: `\eqn{a}{b}` → `(\eqn (VERB "a") (VERB "b"))`. Consumption requires
+same-line adjacency — `\eqn{a} {b}`, a next-line `{b}`, and a third group
+(`\eqn{a}{b}{c}`'s `{c}`) all stay literal brace `LIST` groups; identical under
+`@md` (eqn/deqn are fragile, protection covers both groups). **One-line parser
+fix**: `TWO_ARG_RD_MACROS` += `eqn`/`deqn` — the lexer's second-group
+consumption is already present-and-adjacent-only (optionality free), the tree
+builder's per-arg `is_verbatim_rd_arg` already covers both args
+(`VERBATIM_RD_MACROS`), and every projector gate keyed on the two-arg set
+(`is_md_inline_text_macro`, `is_md_structural_macro`) already excludes them via
+fragility. No projector change.
 
-Landed (all buckets): **parser** — `VERBATIM_RD_MACROS` += `eqn`/`deqn`/`out`
-(parse_Rd yields `VERB`; prose `\eqn{x \code{q} y}` was divergent too), new
-`resolve_rd_inline` (non-md fragment twin of `resolve_md_inline`), fixture
-`roxygen_rd_verbatim_args`. **Projector** — `sexpr_atom` carve now
-fragile-gated and routed through the real fragment pipeline (`serialize_macro`
-gives per-macro arg heads: `\code`→RCODE, `\var`→TEXT, `\eqn`→VERB); the
-`MdCode` demotion arm emits `demoted_md_code_parts` (full `Sexpr[…]` head +
-body re-parsed via `rendered_span_body` → `resolve_rd_inline` →
-`group_brace_lists`/`serialize_inlines` md-off); `sexpr_to_rd` renders `LIST`
-children in ONE brace pair (per-child pairs let an artifact-split trailing `\`
-escape a phantom brace → false drop); `defer_md_text_braces`
-(exact inverse of `resolve_md_brace_runs`, `map_text_leaves` refactor) re-defers
-the demoted arg's literal braces so the section-level
-`resolve_md_text_braces` finalization resolves them exactly once — gated on
-`rendered_braces_balanced` (bail shapes keep raw structural braces so the scan
-counts them); `body_has_md_drop` gained `md_sexpr_span_drops` (any `%` in an
-`Rd `-span body comments out the generated `}` → section drops, both demoted
-and not — the atoms neutralize it, so it is a direct check like
-`md_href_dest_drops`).
-
-Curated +5 (`sexpr_demote`, `code_span_demote`, `sexpr_rcode_fragile`,
-`rd_verbatim_args`, `sexpr_percent_drop`); baseline re-blessed (+5 identity
-keys, reviewed). Projector 1013→**1018** matching (all allowlisted), 0
-divergent, 12 blocked. Fixed-point **224/224**. Full workspace suite + clippy +
-fmt green. New recorded backlog: kept-tag span bodies with `%`/imbalance
-(recovery territory), `\eqn{a}{b}` 2nd group, `doi`/`CRANpkg` USERMACROs,
-multi-arg fragile names in span bodies.
+Fixture `roxygen_eqn_two_arg`; curated +1 (`eqn_two_arg`, 3 units: md-off
+two-arg + edges, md-on); baseline re-blessed (+1 key, reviewed). Projector
+1018→**1019** matching (all allowlisted), 0 divergent, 12 blocked. Fixed-point
+**225/225**. Full workspace suite + clippy + fmt green. New recorded backlog:
+**block-form verbatim macro bodies** (multi-line `\deqn{` body is sub-parsed in
+the CST but parse_Rd keeps it per-line-`VERB`-in-`GRP` verbatim, and consumes
+an adjacent second group after the body closes — pre-existing latent gap,
+surfaced while probing; `preformatted_atoms` is the projector precedent).
 
 ## Earlier sessions (condensed)
+
+### 2026-08-07c — demoted code spans + fragile gating in `` `Rd …` `` bodies
+
+A code span's content reaches rendered Rd through roxygen2's fragile-tag
+protection (`find_fragile_rd_tags`/`findEndOfTag`): inside a span body only a
+**fragile** `\word{…}` survives as a parseable macro; non-fragile resolves to
+literal `\` + prose (braces bare in `Sexpr`/`code` branches → `LIST`, escaped in
+`verb`). Parser: `VERBATIM_RD_MACROS` += `eqn`/`deqn`/`out`, new
+`resolve_rd_inline`. Projector: fragile-gated `sexpr_atom` via the real fragment
+pipeline, `demoted_md_code_parts`, one-brace-pair `sexpr_to_rd` LIST rendering,
+`defer_md_text_braces` (gated on `rendered_braces_balanced`),
+`md_sexpr_span_drops`. Curated +5. 1013→1018. Fixed-point 224/224.
 
 ### 2026-08-07b — parse_Rd brace recovery for kept-incomplete `@md` sections
 

@@ -357,6 +357,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_backslash_parity",
         "roxygen_rd_arg_backslash_parity",
         "roxygen_rd_verbatim_args",
+        "roxygen_eqn_two_arg",
         "roxygen_rd_brace_group",
         "roxygen_md_brace_group",
         "roxygen_macro_arg_brace_group",
