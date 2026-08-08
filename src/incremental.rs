@@ -18,8 +18,7 @@ use salsa::{Durability, Setter};
 
 use crate::parser::{
     Edit, ParseDiagnostic, ParseOptions, apply_edits, diff_edit, map_range_through_edit,
-    map_range_through_edits, parse, parse_with_options, reparse_edits_with_options,
-    reparse_with_options,
+    map_range_through_edits, parse_with_options, reparse_edits_with_options, reparse_with_options,
 };
 use crate::project::{
     ClassSystem, DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
@@ -85,6 +84,62 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Resolve a batch of `(old, new)` renames into a normalized `old -> new` map,
+/// fanning a *directory* rename out into one entry per known path beneath it.
+///
+/// `known` is the set of paths a rename could plausibly be about — workspace
+/// members plus the resolved targets of `source()` calls. Nothing here touches
+/// the filesystem: `willRenameFiles` fires before the move and `didRenameFiles`
+/// after it, so `old` exists on disk in one case and `new` in the other, and a
+/// stat would answer differently depending on which side asked. Prefix matching
+/// against `known` is stable for both.
+///
+/// A path is claimed by the *deepest* `old` that is a strict ancestor of it, so
+/// a batch naming both `R` and `R/sub` puts `R/sub/a.R` under `R/sub`. A pair
+/// that claimed at least one path is a proven directory and is dropped from the
+/// result; one that claimed nothing is kept verbatim, which is what makes a
+/// plain file rename (and a folder holding nothing we know about) fall through
+/// unchanged. No-op renames are dropped.
+pub(crate) fn expand_dir_renames<'a>(
+    renames: &[(PathBuf, PathBuf)],
+    known: impl IntoIterator<Item = &'a Path>,
+) -> BTreeMap<PathBuf, PathBuf> {
+    let pairs: Vec<(PathBuf, PathBuf)> = renames
+        .iter()
+        .map(|(old, new)| (normalize_path(old), normalize_path(new)))
+        .filter(|(old, new)| old != new)
+        .collect();
+    if pairs.is_empty() {
+        return BTreeMap::new();
+    }
+
+    let mut map = BTreeMap::new();
+    let mut expanded = vec![false; pairs.len()];
+    for path in known {
+        let path = normalize_path(path);
+        // Strict ancestors only: an exact match is a file rename, which falls
+        // through to the verbatim pass below.
+        let claim = pairs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (old, new))| {
+                let rel = path.strip_prefix(old).ok()?;
+                (rel.components().next().is_some()).then(|| (i, new.join(rel)))
+            })
+            .max_by_key(|(i, _)| pairs[*i].0.components().count());
+        if let Some((i, target)) = claim {
+            expanded[i] = true;
+            map.insert(path, target);
+        }
+    }
+    for (i, (old, new)) in pairs.into_iter().enumerate() {
+        if !expanded[i] {
+            map.insert(old, new);
+        }
+    }
+    map
 }
 
 /// Render a path with forward slashes, the separator R source paths use on every
@@ -1507,72 +1562,130 @@ impl Analysis {
             .unwrap_or_default()
     }
 
-    /// Edits that rewrite `source("old")` literals in dependents when files are
-    /// renamed/moved (`workspace/willRenameFiles`). Each `(old, new)` pair is a
-    /// file rename; the result is `(sourcer path, literal token range, new
+    /// Edits that rewrite `source("old")` literals when files are renamed/moved
+    /// (`workspace/willRenameFiles`). Each `(old, new)` pair is a file *or*
+    /// directory rename; the result is `(sourcer path, literal token range, new
     /// quoted literal)` triples, range-bearing so the LSP layer can position
     /// them (it stays free of `lsp_types`, mirroring
     /// [`cross_file_rename_edits`](crate::lsp)).
     ///
-    /// Found via the reverse `source()` graph
-    /// ([`reverse_source_edges`]): its keys are the un-normalized resolved
-    /// targets, so matching against an incoming `old` path normalizes both sides
-    /// ([`normalize_path`]). A dynamic `source(var)` is never in the forward
-    /// `sourced_by` map, so it is left untouched. A pure read — the caller wraps
-    /// it in [`salsa::Cancelled::catch`].
+    /// A directory rename is fanned out by [`expand_dir_renames`] over the paths
+    /// we know about: workspace members, plus the resolved targets in the reverse
+    /// `source()` graph ([`reverse_source_edges`]) — the latter because a sourced
+    /// file need not be a member (it may sit outside the roots or be excluded)
+    /// and still has to remap. The rev map's keys are un-normalized, so both
+    /// sides are normalized ([`normalize_path`]) before matching.
+    ///
+    /// Two sets of candidates are considered: files that *depend on* something
+    /// renamed, and the renamed files themselves — a file that moves must rebase
+    /// its own literals even when its targets stayed put. For each, literals are
+    /// resolved against the sourcer's **old** parent (that is what they currently
+    /// mean) but respelled against its **new** one. An edit is emitted only when
+    /// the literal as written would no longer resolve to the right file from the
+    /// new location, so a folder rename that moves sourcer and target together
+    /// produces nothing rather than flooding the client with no-op edits.
+    ///
+    /// Edits are keyed to the sourcer's *old* path because the client applies the
+    /// returned `WorkspaceEdit` before performing the move. A dynamic
+    /// `source(var)` is never in the forward `sourced_by` map and yields no
+    /// literal edge, so it is left untouched. A pure read — the caller wraps it in
+    /// [`salsa::Cancelled::catch`].
     pub fn source_rename_edits(
         &self,
         renames: &[(PathBuf, PathBuf)],
     ) -> Vec<(PathBuf, TextRange, String)> {
-        if self.0.workspace().is_none() {
+        let Some(ws) = self.0.workspace() else {
             return Vec::new();
-        }
-        // Normalized old → new, dropping no-op renames.
-        let targets: Vec<(PathBuf, PathBuf)> = renames
-            .iter()
-            .map(|(old, new)| (normalize_path(old), normalize_path(new)))
-            .filter(|(old, new)| old != new)
-            .collect();
-        if targets.is_empty() {
-            return Vec::new();
-        }
+        };
 
         let project = workspace_project(&self.0);
         let rev = reverse_source_edges(&self.0, project);
+        // Raw workspace members, not `workspace_project`'s: that query drops
+        // files with parse errors, but a broken file is still a legitimate
+        // `source()` target whose remapping a healthy sourcer needs.
+        let members: Vec<PathBuf> = ws
+            .members(&self.0)
+            .iter()
+            .filter_map(|&f| self.0.file_path(f).map(Path::to_path_buf))
+            .collect();
+        // Normalize each rev key once — the per-edge lookups below probe the map.
+        let rev_targets: Vec<(PathBuf, &BTreeSet<PathBuf>)> = rev
+            .sourced_by
+            .iter()
+            .map(|(key, members)| (normalize_path(key), members))
+            .collect();
 
-        // Candidate sourcers per normalized target: the reverse map keys are
-        // un-normalized, so normalize each before matching.
+        let known = members
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(rev_targets.iter().map(|(key, _)| key.as_path()));
+        let map = expand_dir_renames(renames, known);
+        if map.is_empty() {
+            return Vec::new();
+        }
+
+        // Candidates: dependents of anything renamed, plus the renamed files
+        // themselves (they rebase their own literals).
         let mut sourcers: BTreeSet<PathBuf> = BTreeSet::new();
-        for (key, members) in &rev.sourced_by {
-            if targets.iter().any(|(old, _)| normalize_path(key) == *old) {
-                sourcers.extend(members.iter().cloned());
+        for (key, dependents) in &rev_targets {
+            if map.contains_key(key) {
+                sourcers.extend(dependents.iter().cloned());
             }
         }
+        sourcers.extend(
+            members
+                .into_iter()
+                .filter(|m| map.contains_key(&normalize_path(m))),
+        );
 
         let mut edits = Vec::new();
         for sourcer in sourcers {
             let Some(file) = self.lookup_file(&sourcer) else {
                 continue;
             };
-            let text = self.file_text(file);
-            let root = parse(text).cst;
-            let base_dir = sourcer.parent();
-            for edge in collect_source_literal_edges(&root, base_dir) {
+            let root = self.parsed_tree(file);
+            let base_old = sourcer.parent();
+            let norm_sourcer = normalize_path(&sourcer);
+            let base_new = map
+                .get(&norm_sourcer)
+                .unwrap_or(&norm_sourcer)
+                .parent()
+                .map(Path::to_path_buf);
+
+            for edge in collect_source_literal_edges(&root, base_old) {
                 let edge_norm = normalize_path(&edge.target);
-                let Some((_, new)) = targets.iter().find(|(old, _)| *old == edge_norm) else {
-                    continue;
+                let target_new = map.get(&edge_norm).unwrap_or(&edge_norm);
+
+                // Would the literal, exactly as written, still reach the target
+                // from the sourcer's new home? Then leave it alone — this is what
+                // keeps `./b.R` and other non-canonical spellings from churning.
+                let resolved_from_new = if edge.was_relative {
+                    base_new
+                        .as_ref()
+                        .map(|dir| normalize_path(&dir.join(&edge.spelling)))
+                } else {
+                    Some(normalize_path(Path::new(&edge.spelling)))
                 };
+                if resolved_from_new.as_ref() == Some(target_new) {
+                    continue;
+                }
+
                 // Preserve the original quote; recompute the spelling, keeping the
                 // relative/absolute shape the author wrote.
                 let new_spelling = if edge.was_relative {
-                    base_dir
-                        .map(normalize_path)
-                        .and_then(|dir| relative_path(&dir, new))
+                    base_new
+                        .as_ref()
+                        .and_then(|dir| relative_path(dir, target_new))
                         .map(|rel| to_forward_slash(&rel))
-                        .unwrap_or_else(|| to_forward_slash(new))
+                        .unwrap_or_else(|| to_forward_slash(target_new))
                 } else {
-                    to_forward_slash(new)
+                    to_forward_slash(target_new)
                 };
+                // Guards the `base_new == None` path, where the resolution check
+                // above can't conclude anything.
+                if new_spelling == edge.spelling {
+                    continue;
+                }
                 let quote = edge.quote as char;
                 // No escaping: skip rather than corrupt if the path carries the
                 // quote byte (vanishingly rare for R source paths).
@@ -1746,5 +1859,112 @@ mod tests {
         let file = db.upsert_file(path, "x <- 1\n".to_string());
         assert_eq!(db.file_text(file), "x <- 1\n");
         assert!(db.lookup_file(path) == Some(file), "lookup after poison");
+    }
+
+    // --- expand_dir_renames ---------------------------------------------
+
+    /// An absolute root, so the fixtures don't depend on the current directory.
+    fn root(rest: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!(r"C:\ws\{rest}"))
+        } else {
+            PathBuf::from(format!("/ws/{rest}"))
+        }
+    }
+
+    #[test]
+    fn expand_dir_renames_maps_files_under_a_renamed_folder() {
+        let known = [root("R/a.R"), root("R/b.R"), root("main.R")];
+        let map = expand_dir_renames(
+            &[(root("R"), root("src"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert_eq!(map.get(&root("R/a.R")), Some(&root("src/a.R")));
+        assert_eq!(map.get(&root("R/b.R")), Some(&root("src/b.R")));
+        assert!(!map.contains_key(&root("main.R")), "a sibling is untouched");
+    }
+
+    #[test]
+    fn expand_dir_renames_drops_a_folder_pair_it_expanded() {
+        let known = [root("R/a.R")];
+        let map = expand_dir_renames(
+            &[(root("R"), root("src"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert!(
+            !map.contains_key(&root("R")),
+            "the folder pair itself is meaningless once fanned out"
+        );
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn expand_dir_renames_keeps_a_folder_pair_with_nothing_beneath_it() {
+        let known = [root("main.R")];
+        let map = expand_dir_renames(
+            &[(root("data"), root("data2"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert_eq!(map.get(&root("data")), Some(&root("data2")));
+    }
+
+    #[test]
+    fn expand_dir_renames_keeps_a_plain_file_rename() {
+        // An exact match is not a strict ancestor, so it falls through verbatim.
+        let known = [root("a.R")];
+        let map = expand_dir_renames(
+            &[(root("a.R"), root("b.R"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert_eq!(map.get(&root("a.R")), Some(&root("b.R")));
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn expand_dir_renames_prefers_the_deepest_prefix() {
+        let known = [root("R/sub/a.R"), root("R/b.R")];
+        let map = expand_dir_renames(
+            &[(root("R"), root("src")), (root("R/sub"), root("other"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert_eq!(map.get(&root("R/sub/a.R")), Some(&root("other/a.R")));
+        assert_eq!(map.get(&root("R/b.R")), Some(&root("src/b.R")));
+    }
+
+    #[test]
+    fn expand_dir_renames_does_not_match_a_sibling_sharing_a_name_prefix() {
+        // Component-wise prefixing: `R2/` must not be claimed by `R/`.
+        let known = [root("R2/a.R")];
+        let map = expand_dir_renames(
+            &[(root("R"), root("src"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert!(!map.contains_key(&root("R2/a.R")));
+        assert_eq!(map.get(&root("R")), Some(&root("src")));
+    }
+
+    #[test]
+    fn expand_dir_renames_ignores_a_noop() {
+        let known = [root("R/a.R")];
+        let map = expand_dir_renames(
+            &[(root("R"), root("R"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert!(
+            map.is_empty(),
+            "renaming a folder to itself changes nothing"
+        );
+    }
+
+    #[test]
+    fn expand_dir_renames_normalizes_a_trailing_slash() {
+        // A client may hand us `file:///ws/R/`; components ignore the trailing
+        // separator, so prefix matching still works.
+        let known = [root("R/a.R")];
+        let map = expand_dir_renames(
+            &[(root("R/"), root("src/"))],
+            known.iter().map(PathBuf::as_path),
+        );
+        assert_eq!(map.get(&root("R/a.R")), Some(&root("src/a.R")));
     }
 }

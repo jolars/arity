@@ -110,7 +110,33 @@ Gated on the package being attached (`model.loaded_packages()`).
 
 ### Rename
 
-- [ ] Folder renaming
+- [x] **Folder renaming.** `r_file_rename_registration` now carries a second
+  filter (glob `**`, `matches: Folder`) alongside the `.R` one (pinned to `File`),
+  so a directory move reaches `willRenameFiles`/`didRenameFiles` at all.
+  `expand_dir_renames` (`src/incremental.rs`) fans a directory pair out into one
+  `old -> new` entry per known path beneath it—workspace members *plus* the
+  resolved targets in `reverse_source_edges`, since a sourced file need not be a
+  member—with the deepest matching prefix winning for nested pairs, and drops a
+  pair it expanded. It is deliberately disk-free: `willRenameFiles` fires before
+  the move and `didRenameFiles` after, so a stat would answer differently
+  depending on which side asked, while membership holds the *old* paths in both.
+  Fixing folder renames also fixed two latent bugs in `source_rename_edits`:
+  spellings are now recomputed against the sourcer's **new** parent (literals are
+  still *resolved* against the old one), and a renamed file is itself a candidate
+  sourcer, so a moved file rebases its own literals even when its targets stayed
+  put (this was wrong for single-file cross-directory moves too). An edit is
+  emitted only when the literal as written would no longer resolve from the new
+  location, so a folder move that carries sourcer and target together produces
+  nothing rather than flooding the client. Also switched off `parse(text).cst`
+  onto the memoized `parsed_tree`, since a folder rename reparses every candidate
+  on the read pool while the editor blocks on the rename dialog.
+  - [ ] Follow-up: `apply_file_renames` never checks workspace scope, so moving
+    files *out* of scope (`R/` -> `inst/extdata/`, or out of the tree) still adds
+    them as members. Pre-existing for file renames, more reachable with folders.
+    The fix is `in_workspace_scope` (`src/lsp/watched_files.rs`), but it calls
+    `scope_members` (a full root walk) *per path*, so it must first be
+    batch-amortized to one walk per root—`apply_r_membership`'s create loop has
+    the identical N-walk problem on a batch create.
 
 ### Completion & signatures
 

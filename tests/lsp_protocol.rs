@@ -343,6 +343,35 @@ fn initialize_advertises_core_capabilities() {
 }
 
 #[test]
+fn initialize_advertises_file_and_folder_rename_operations() {
+    // `FileOperationPatternKind` serializes lowercase, and the folder filter is
+    // what makes a client send `willRenameFiles` for a directory move at all —
+    // both are wire-level facts a typed assertion would not catch.
+    let mut h = Harness::start_push();
+    let file_ops = h
+        .capabilities
+        .get("workspace")
+        .and_then(|w| w.get("fileOperations"))
+        .expect("file operations advertised");
+
+    for op in ["willRename", "didRename"] {
+        let filters = file_ops
+            .get(op)
+            .and_then(|r| r.get("filters"))
+            .unwrap_or_else(|| panic!("{op} registered: {file_ops:#?}"));
+        assert_eq!(
+            filters,
+            &json!([
+                { "scheme": "file", "pattern": { "glob": "**/*.{R,r}", "matches": "file" } },
+                { "scheme": "file", "pattern": { "glob": "**", "matches": "folder" } },
+            ]),
+            "{op} covers .R files and any folder"
+        );
+    }
+    h.shutdown();
+}
+
+#[test]
 fn did_open_then_formatting_request_responds() {
     let mut h = Harness::start_push();
     let uri = doc_uri();

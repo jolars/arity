@@ -338,7 +338,8 @@ cases).
 `arity lsp`): a stdio JSON-RPC server on the `lsp-server` crate (rust-analyzer's
 transport)—offers formatting (document and range), pushed and pull diagnostics,
 quick-fix code actions, hover, completion, signature help, go-to-definition and
-references, rename (with prepare) and `workspace/willRenameFiles`, document and
+references, rename (with prepare) and `workspace/willRenameFiles` for both files
+and folders (a folder rename is fanned out over workspace membership), document and
 workspace symbols, document highlight, semantic tokens, folding and selection
 ranges, document links, document color, and call and type hierarchy, plus
 on-disk change detection via dynamically-registered

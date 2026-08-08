@@ -6,6 +6,10 @@ help, go-to-definition and find-references, rename, document and workspace
 symbols, semantic tokens, folding and selection ranges, document links, document
 color swatches, and call and type hierarchy.
 
+Renaming reaches beyond symbols: moving or renaming an `.R` file, or a folder of
+them, rewrites the `source()` paths that referred to it, and rebases the moved
+files' own `source()` paths to their new location.
+
 Configuration is read from an `arity.toml` discovered from each file's directory
 (see the [configuration reference](../reference/configuration.md)).
 

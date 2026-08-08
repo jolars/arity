@@ -25,10 +25,15 @@ pub(crate) fn will_rename_via_db(
 
 /// Apply on-disk file renames to the db's workspace membership: track each new
 /// path (read from disk, where the move already landed) and swap it in for the
-/// old member. The old [`SourceFile`] input lingers — there is no removal
-/// primitive — but is dropped from the member set, so cross-file scope ignores
-/// it, the same posture as a closed file. Returns whether anything changed (so
-/// the caller can skip a needless re-lint). No-op when no workspace is seeded.
+/// old member. A *directory* rename is fanned out over the members beneath it by
+/// [`expand_dir_renames`], so a folder move swaps every file it carried.
+///
+/// The old [`SourceFile`] input lingers — there is no removal primitive — but is
+/// dropped from the member set, so cross-file scope ignores it, the same posture
+/// as a closed file; a folder move just does that N times over. Reading the *new*
+/// path is deliberate: the client has already applied the `willRenameFiles` edits
+/// there. Returns whether anything changed (so the caller can skip a needless
+/// re-lint). No-op when no workspace is seeded.
 pub(crate) fn apply_file_renames(
     db: &mut IncrementalDatabase,
     renames: &[(PathBuf, PathBuf)],
@@ -38,9 +43,14 @@ pub(crate) fn apply_file_renames(
     };
     let mut members: Vec<SourceFile> = ws.members(db).to_vec();
     let roots = ws.roots(db).to_vec();
+    let known: Vec<PathBuf> = members
+        .iter()
+        .filter_map(|&f| db.file_path(f).map(Path::to_path_buf))
+        .collect();
+    let expanded = expand_dir_renames(renames, known.iter().map(PathBuf::as_path));
 
     let mut changed = false;
-    for (old, new) in renames {
+    for (old, new) in &expanded {
         let Ok(text) = std::fs::read_to_string(new) else {
             continue;
         };
@@ -217,5 +227,224 @@ mod tests {
         let members = db.workspace().unwrap().members(&db).to_vec();
         assert!(members.contains(&new_file), "new path is a member");
         assert!(!members.contains(&a), "old member is dropped from the set");
+    }
+
+    // --- folder renames -------------------------------------------------
+
+    #[test]
+    fn will_rename_folder_leaves_a_colocated_literal_untouched() {
+        // R/a.R sources its sibling R/b.R. Renaming the whole folder moves both,
+        // so the relative spelling still resolves — the correct edit is none.
+        let snapshot = rename_workspace_files(&[
+            ("R/a.R", "source(\"b.R\")\n"),
+            ("R/b.R", "foo <- function() 1\n"),
+        ]);
+        assert!(
+            will_rename_via_db(
+                &snapshot,
+                &[(ws_path("R"), ws_path("src"))],
+                PositionEncoding::Utf16
+            )
+            .is_none(),
+            "a literal that still resolves from the new folder is not rewritten"
+        );
+    }
+
+    #[test]
+    fn will_rename_folder_rewrites_a_literal_escaping_the_folder() {
+        // R/a.R reaches outside the renamed folder. Moving R/ deeper changes how
+        // far it must climb, even though the target itself never moved.
+        let snapshot = rename_workspace_files(&[
+            ("R/a.R", "source(\"../data/x.R\")\n"),
+            ("data/x.R", "foo <- function() 1\n"),
+        ]);
+        let uri_a = uri::from_path(&ws_path("R/a.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[(ws_path("R"), ws_path("nested/src"))],
+            PositionEncoding::Utf16,
+        )
+        .expect("the moved sourcer's own literal is rebased");
+        assert_eq!(sole_edit(&edit, &uri_a).1, "\"../../data/x.R\"");
+    }
+
+    #[test]
+    fn will_rename_folder_rewrites_an_outside_sourcer() {
+        // main.R stays put while its target moves with the folder.
+        let snapshot = rename_workspace_files(&[
+            ("main.R", "source(\"R/a.R\")\n"),
+            ("R/a.R", "foo <- function() 1\n"),
+        ]);
+        let uri_main = uri::from_path(&ws_path("main.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[(ws_path("R"), ws_path("src"))],
+            PositionEncoding::Utf16,
+        )
+        .expect("the outside dependent is rewritten");
+        assert_eq!(sole_edit(&edit, &uri_main).1, "\"src/a.R\"");
+    }
+
+    #[test]
+    fn will_rename_folder_batched_with_a_file_rename() {
+        // Both ends move in one request: the folder holding the target, and the
+        // sourcer itself.
+        let snapshot = rename_workspace_files(&[
+            ("main.R", "source(\"R/a.R\")\n"),
+            ("R/a.R", "foo <- function() 1\n"),
+        ]);
+        let uri_main = uri::from_path(&ws_path("main.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[
+                (ws_path("R"), ws_path("src")),
+                (ws_path("main.R"), ws_path("sub/main2.R")),
+            ],
+            PositionEncoding::Utf16,
+        )
+        .expect("both moves are accounted for");
+        assert_eq!(sole_edit(&edit, &uri_main).1, "\"../src/a.R\"");
+    }
+
+    #[test]
+    fn will_rename_folder_prefers_the_deepest_rename() {
+        // `R/sub/a.R` matches both `R` and `R/sub`; the more specific pair wins.
+        let snapshot = rename_workspace_files(&[
+            ("main.R", "source(\"R/sub/a.R\")\n"),
+            ("R/sub/a.R", "foo <- function() 1\n"),
+        ]);
+        let uri_main = uri::from_path(&ws_path("main.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[
+                (ws_path("R"), ws_path("src")),
+                (ws_path("R/sub"), ws_path("other")),
+            ],
+            PositionEncoding::Utf16,
+        )
+        .expect("the deepest matching prefix decides");
+        assert_eq!(sole_edit(&edit, &uri_main).1, "\"other/a.R\"");
+    }
+
+    #[test]
+    fn will_rename_folder_rewrites_a_non_member_target() {
+        // `scripts/x.R` is sourced but never seeded as a member, so it exists only
+        // as a key in the reverse graph. It still has to remap.
+        let snapshot = rename_workspace_files(&[("R/a.R", "source(\"../scripts/x.R\")\n")]);
+        let uri_a = uri::from_path(&ws_path("R/a.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[(ws_path("scripts"), ws_path("tools"))],
+            PositionEncoding::Utf16,
+        )
+        .expect("a non-member source target is remapped");
+        assert_eq!(sole_edit(&edit, &uri_a).1, "\"../tools/x.R\"");
+    }
+
+    #[test]
+    fn will_rename_folder_leaves_a_noncanonical_spelling_alone() {
+        // `./b.R` still resolves after the folder moves. Comparing recomputed
+        // spellings as strings would "fix" it to `b.R` — a cosmetic edit in a file
+        // the rename did not affect. The check is resolution, not spelling.
+        let snapshot = rename_workspace_files(&[
+            ("R/a.R", "source(\"./b.R\")\n"),
+            ("R/b.R", "foo <- function() 1\n"),
+        ]);
+        assert!(
+            will_rename_via_db(
+                &snapshot,
+                &[(ws_path("R"), ws_path("src"))],
+                PositionEncoding::Utf16
+            )
+            .is_none(),
+            "a still-resolving literal is left exactly as written"
+        );
+    }
+
+    #[test]
+    fn will_rename_folder_rewrites_an_absolute_literal() {
+        // An absolute spelling never depends on the sourcer's location, but it
+        // does have to follow its target into the renamed folder.
+        let absolute = ws_path("R/a.R").display().to_string().replace('\\', "/");
+        let snapshot = rename_workspace_files(&[
+            ("main.R", &format!("source(\"{absolute}\")\n")),
+            ("R/a.R", "foo <- function() 1\n"),
+        ]);
+        let uri_main = uri::from_path(&ws_path("main.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[(ws_path("R"), ws_path("src"))],
+            PositionEncoding::Utf16,
+        )
+        .expect("the absolute literal follows its target");
+        let expected = ws_path("src/a.R").display().to_string().replace('\\', "/");
+        assert_eq!(sole_edit(&edit, &uri_main).1, format!("\"{expected}\""));
+    }
+
+    #[test]
+    fn will_rename_folder_with_no_members_is_a_noop() {
+        let snapshot = rename_workspace("foo <- function() 1\n", "source(\"a.R\")\n");
+        assert!(
+            will_rename_via_db(
+                &snapshot,
+                &[(ws_path("data"), ws_path("data2"))],
+                PositionEncoding::Utf16
+            )
+            .is_none(),
+            "a folder holding nothing we track produces no edits"
+        );
+    }
+
+    #[test]
+    fn will_rename_moved_file_rebases_its_own_literal() {
+        // A single-file move across directories: a.R's own literal has to climb
+        // one more level. (Latent bug the folder work fixes.)
+        let snapshot = rename_workspace("source(\"b.R\")\n", "foo <- function() 1\n");
+        let uri_a = uri::from_path(&ws_path("a.R")).unwrap();
+
+        let edit = will_rename_via_db(
+            &snapshot,
+            &[(ws_path("a.R"), ws_path("sub/a.R"))],
+            PositionEncoding::Utf16,
+        )
+        .expect("the moved file's own literal is rebased");
+        assert_eq!(sole_edit(&edit, &uri_a).1, "\"../b.R\"");
+    }
+
+    #[test]
+    fn apply_file_renames_expands_a_folder_rename() {
+        // didRenameFiles for a folder: every member under it swaps to its new path.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let old_dir = root.join("R");
+        let new_dir = root.join("src");
+        std::fs::create_dir(&old_dir).expect("create R/");
+        let src = "foo <- function() 1\n";
+        std::fs::write(old_dir.join("a.R"), src).expect("write a.R");
+        std::fs::write(old_dir.join("b.R"), src).expect("write b.R");
+
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&old_dir.join("a.R"), src.to_string());
+        let b = db.upsert_file(&old_dir.join("b.R"), src.to_string());
+        db.set_workspace_members(vec![a, b], vec![root.to_path_buf()]);
+
+        std::fs::rename(&old_dir, &new_dir).expect("move R/ -> src/");
+        assert!(apply_file_renames(&mut db, &[(old_dir, new_dir.clone())]));
+
+        let members = db.workspace().unwrap().members(&db).to_vec();
+        for name in ["a.R", "b.R"] {
+            let file = db
+                .lookup_file(&new_dir.join(name))
+                .expect("new path is tracked");
+            assert!(members.contains(&file), "{name} moved with the folder");
+        }
+        assert!(!members.contains(&a), "old a.R is dropped");
+        assert!(!members.contains(&b), "old b.R is dropped");
     }
 }

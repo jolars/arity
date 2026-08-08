@@ -237,18 +237,37 @@ pub(crate) fn server_capabilities(position_encoding: PositionEncoding) -> Server
     }
 }
 
-/// Register `willRenameFiles`/`didRenameFiles` for `.R`/`.r` files only — a moved
-/// R source is the one rename that rewrites `source()` literals in dependents.
+/// Register `willRenameFiles`/`didRenameFiles` for `.R`/`.r` files and for any
+/// folder — a moved R source is the one rename that rewrites `source()` literals
+/// in dependents, and a moved folder is that same rename in bulk.
+///
+/// The folder glob has to be `**`: any directory may hold `.R` files, so there is
+/// nothing to narrow it to client-side. A folder carrying nothing we track is
+/// rejected cheaply server-side once
+/// [`expand_dir_renames`](crate::incremental::expand_dir_renames) finds no paths
+/// beneath it. The file filter states `File` explicitly rather than leaving
+/// `matches` unset ("both"), so that a *directory* named `foo.R` is routed
+/// through the folder filter instead of masquerading as a file.
 pub(crate) fn r_file_rename_registration() -> FileOperationRegistrationOptions {
     FileOperationRegistrationOptions {
-        filters: vec![FileOperationFilter {
-            scheme: Some("file".to_string()),
-            pattern: FileOperationPattern {
-                glob: "**/*.{R,r}".to_string(),
-                matches: None,
-                options: None,
+        filters: vec![
+            FileOperationFilter {
+                scheme: Some("file".to_string()),
+                pattern: FileOperationPattern {
+                    glob: "**/*.{R,r}".to_string(),
+                    matches: Some(FileOperationPatternKind::File),
+                    options: None,
+                },
             },
-        }],
+            FileOperationFilter {
+                scheme: Some("file".to_string()),
+                pattern: FileOperationPattern {
+                    glob: "**".to_string(),
+                    matches: Some(FileOperationPatternKind::Folder),
+                    options: None,
+                },
+            },
+        ],
     }
 }
 
@@ -388,6 +407,28 @@ mod tests {
         let folders = ws.workspace_folders.expect("workspace folders advertised");
         assert_eq!(folders.supported, Some(true));
         assert_eq!(folders.change_notifications, Some(OneOf::Left(true)));
+    }
+
+    #[test]
+    fn registers_rename_for_r_files_and_any_folder() {
+        // Both kinds are stated explicitly: a directory named `foo.R` must be
+        // routed by the folder filter, not matched as a file.
+        let registration = r_file_rename_registration();
+        let shapes: Vec<(&str, Option<FileOperationPatternKind>)> = registration
+            .filters
+            .iter()
+            .map(|f| {
+                assert_eq!(f.scheme.as_deref(), Some("file"));
+                (f.pattern.glob.as_str(), f.pattern.matches.clone())
+            })
+            .collect();
+        assert_eq!(
+            shapes,
+            vec![
+                ("**/*.{R,r}", Some(FileOperationPatternKind::File)),
+                ("**", Some(FileOperationPatternKind::Folder)),
+            ]
+        );
     }
 
     #[test]

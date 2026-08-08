@@ -1,6 +1,7 @@
 //! Stdio-based LSP server (built on `lsp-server`): formatting (whole-document
 //! and range), pushed and pull diagnostics, quick-fix code actions, hover,
-//! completion, signature help, go-to-definition and references, rename, document
+//! completion, signature help, go-to-definition and references, rename (of
+//! symbols, and of files and folders — see [`file_rename`]), document
 //! and workspace symbols, semantic tokens, folding and selection ranges,
 //! document links, and call and type hierarchy, backed by the introspection
 //! index and a per-file semantic model.
@@ -98,27 +99,27 @@ use lsp_types::{
     DocumentHighlightKind, DocumentHighlightParams, DocumentLink, DocumentLinkOptions,
     DocumentLinkParams, DocumentRangeFormattingParams, DocumentSymbol, DocumentSymbolParams,
     DocumentSymbolResponse, Documentation, FileChangeType, FileOperationFilter,
-    FileOperationPattern, FileOperationRegistrationOptions, FileSystemWatcher, FoldingRange,
-    FoldingRangeKind, FoldingRangeParams, FoldingRangeProviderCapability,
-    FullDocumentDiagnosticReport, GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverContents, HoverParams, HoverProviderCapability, InitializeResult, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, ParameterInformation, ParameterLabel, Position,
-    PositionEncodingKind, PrepareRenameResponse, ProgressParams, ProgressParamsValue,
-    ProgressToken, PublishDiagnosticsParams, Range, ReferenceParams, Registration,
-    RegistrationParams, RelatedFullDocumentDiagnosticReport,
-    RelatedUnchangedDocumentDiagnosticReport, RenameFilesParams, RenameOptions, RenameParams,
-    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
-    SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
-    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    TypeHierarchyItem, TypeHierarchyPrepareParams, TypeHierarchySubtypesParams,
-    TypeHierarchySupertypesParams, UnchangedDocumentDiagnosticReport, Uri, WorkDoneProgress,
-    WorkDoneProgressBegin, WorkDoneProgressCreateParams, WorkDoneProgressEnd,
-    WorkDoneProgressReport, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
-    WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities, WorkspaceSymbol,
-    WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    FileOperationPattern, FileOperationPatternKind, FileOperationRegistrationOptions,
+    FileSystemWatcher, FoldingRange, FoldingRangeKind, FoldingRangeParams,
+    FoldingRangeProviderCapability, FullDocumentDiagnosticReport, GlobPattern,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
+    OneOf, ParameterInformation, ParameterLabel, Position, PositionEncodingKind,
+    PrepareRenameResponse, ProgressParams, ProgressParamsValue, ProgressToken,
+    PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
+    RenameFilesParams, RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    SignatureInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, TypeHierarchyItem,
+    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
+    UnchangedDocumentDiagnosticReport, Uri, WorkDoneProgress, WorkDoneProgressBegin,
+    WorkDoneProgressCreateParams, WorkDoneProgressEnd, WorkDoneProgressReport, WorkspaceEdit,
+    WorkspaceFileOperationsServerCapabilities, WorkspaceFoldersServerCapabilities,
+    WorkspaceServerCapabilities, WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -128,7 +129,7 @@ use smol_str::SmolStr;
 use crate::ast::{Arg, ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_options};
-use crate::incremental::{Analysis, IncrementalDatabase, SourceFile};
+use crate::incremental::{Analysis, IncrementalDatabase, SourceFile, expand_dir_renames};
 use crate::linter::rules::ResolvedRules;
 use crate::linter::{Diagnostic, LintError, Severity};
 use crate::parser::{
