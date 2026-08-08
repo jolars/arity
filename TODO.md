@@ -130,13 +130,21 @@ Gated on the package being attached (`model.loaded_packages()`).
   nothing rather than flooding the client. Also switched off `parse(text).cst`
   onto the memoized `parsed_tree`, since a folder rename reparses every candidate
   on the read pool while the editor blocks on the rename dialog.
-  - [ ] Follow-up: `apply_file_renames` never checks workspace scope, so moving
-    files *out* of scope (`R/` -> `inst/extdata/`, or out of the tree) still adds
-    them as members. Pre-existing for file renames, more reachable with folders.
-    The fix is `in_workspace_scope` (`src/lsp/watched_files.rs`), but it calls
-    `scope_members` (a full root walk) *per path*, so it must first be
-    batch-amortized to one walk per root—`apply_r_membership`'s create loop has
-    the identical N-walk problem on a batch create.
+  - [x] **Follow-up: `apply_file_renames` now checks workspace scope.** A
+    destination the seed would not have found is dropped rather than tracked. The
+    original note's example was wrong: nothing excludes `inst/`, and
+    `collect_r_files` walks the whole root, so `R/a.R` -> `inst/extdata/a.R` stays
+    a member (correctly—a fresh seed finds it too). The real out-of-scope
+    destinations are outside every root, an excluded or ignored path, and a
+    non-`.R` name (`R/a.R` -> `R/a.txt`, which used to stay a member and get
+    parsed as R). The amortization landed first as `WorkspaceScope`
+    (`src/lsp/workspace_scope.rs`): one walk per *touched* root, built per
+    notification and never cached across them, over a new `scope_members_at`
+    kernel that `seed_workspace` shares so the seed and the incremental checks
+    can't drift. `in_workspace_scope` is gone. The scope check in turn forced
+    `rebase_roots`—a root is often just a package directory or a file's parent,
+    so renaming one would otherwise leave `roots` pointing at a dead path and
+    every file it carried judged out of scope.
 
 ### Completion & signatures
 

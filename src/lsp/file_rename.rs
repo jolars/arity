@@ -32,10 +32,19 @@ pub(crate) fn will_rename_via_db(
 ///
 /// The old [`SourceFile`] input lingers — there is no removal primitive — but is
 /// dropped from the member set, so cross-file scope ignores it, the same posture
-/// as a closed file; a folder move just does that N times over. Reading the *new*
-/// path is deliberate: the client has already applied the `willRenameFiles` edits
-/// there. Returns whether anything changed (so the caller can skip a needless
-/// re-lint). No-op when no workspace is seeded.
+/// as a closed file; a folder move just does that N times over. The drop is
+/// unconditional: `didRenameFiles` says the old path is gone, so an unreadable
+/// destination must not leave a stale member behind whose text can never refresh.
+///
+/// A destination the seed would not have found — outside every root, excluded by
+/// config, or no longer an R source — is *dropped rather than tracked*, judged by
+/// the same [`WorkspaceScope`] the watched-file creates use, so incremental
+/// membership can't drift from a fresh seed. Reading the *new* path is
+/// deliberate: the client has already applied the `willRenameFiles` edits there.
+///
+/// Returns whether the *member set* moved (so the caller can skip a needless
+/// re-lint); a rebase that only moved a root still writes the input but reports
+/// no change. No-op when no workspace is seeded.
 pub(crate) fn apply_file_renames(
     db: &mut IncrementalDatabase,
     renames: &[(PathBuf, PathBuf)],
@@ -51,18 +60,28 @@ pub(crate) fn apply_file_renames(
         .filter_map(|&f| db.file_path(f).map(Path::to_path_buf))
         .collect();
     let expanded = expand_dir_renames(renames, known.iter().map(PathBuf::as_path));
+    let mut scope = WorkspaceScope::new(&roots);
 
     let mut changed = false;
     for (old, new) in &expanded {
-        let Ok(text) = std::fs::read_to_string(new) else {
-            continue;
-        };
-        let new_file = db.upsert_file(new, text);
+        // Drop first, unconditionally: `didRenameFiles` is a statement that `old`
+        // is gone, whatever became of `new`.
         if let Some(old_file) = db.lookup_file(old) {
+            let before = members.len();
             members.retain(|&f| f != old_file);
+            changed |= members.len() != before;
         }
-        members.push(new_file);
-        changed = true;
+        // Scope before the read: a destination the seed would not have found is
+        // not tracked at all, and one outside every root answers without a walk.
+        if scope.contains(new)
+            && let Ok(text) = std::fs::read_to_string(new)
+        {
+            let new_file = db.upsert_file(new, text);
+            if !members.contains(&new_file) {
+                members.push(new_file);
+                changed = true;
+            }
+        }
     }
     if changed || roots != old_roots {
         db.set_workspace_members(members, roots);
@@ -295,6 +314,101 @@ mod tests {
             "a folder holding nothing tracked is not a membership change"
         );
         assert!(db.workspace().unwrap().members(&db).to_vec() == before);
+    }
+
+    /// The member set after a rename batch, as `(returned, tracked?, member?)`
+    /// for the batch's single destination path.
+    fn rename_outcome(db: &mut IncrementalDatabase, old: &Path, new: &Path) -> (bool, bool, bool) {
+        let returned = apply_file_renames(db, &[(old.to_path_buf(), new.to_path_buf())]);
+        let tracked = db.lookup_file(new);
+        let member = tracked.is_some_and(|f| db.workspace().unwrap().members(db).contains(&f));
+        (returned, tracked.is_some(), member)
+    }
+
+    #[test]
+    fn apply_file_renames_drops_a_move_out_of_the_workspace() {
+        // Moved outside every tracked root, so the seed would never find it: the
+        // old member is dropped and the destination is not tracked at all.
+        let (_dir, mut db, a) = seeded_package();
+        let elsewhere = tempfile::tempdir().expect("second tempdir");
+        let new = elsewhere.path().join("a.R");
+        let a_file = db.lookup_file(&a).expect("tracked");
+
+        std::fs::rename(&a, &new).expect("move out of the workspace");
+        assert_eq!(
+            rename_outcome(&mut db, &a, &new),
+            (true, false, false),
+            "the member set changed, but the destination is untracked"
+        );
+        assert!(!db.workspace().unwrap().members(&db).contains(&a_file));
+    }
+
+    #[test]
+    fn apply_file_renames_drops_a_move_into_an_excluded_directory() {
+        // In-tree but out of scope: `renv/` is in `DEFAULT_EXCLUDE`, so a move
+        // into it leaves the workspace just as surely as a move out of the tree.
+        let (dir, mut db, a) = seeded_package();
+        let renv = dir.path().join("renv");
+        std::fs::create_dir(&renv).expect("renv/");
+        let new = renv.join("a.R");
+
+        std::fs::rename(&a, &new).expect("move into renv/");
+        assert_eq!(rename_outcome(&mut db, &a, &new), (true, false, false));
+    }
+
+    #[test]
+    fn apply_file_renames_drops_a_rename_to_a_non_r_extension() {
+        // Scope is R sources; renaming away the extension takes the file out of
+        // it. Otherwise a `.txt` would stay a member and be parsed as R.
+        let (dir, mut db, a) = seeded_package();
+        let new = dir.path().join("R").join("a.txt");
+
+        std::fs::rename(&a, &new).expect("move a.R -> a.txt");
+        assert_eq!(rename_outcome(&mut db, &a, &new), (true, false, false));
+    }
+
+    #[test]
+    fn apply_file_renames_keeps_a_move_that_stays_in_scope() {
+        // Scope is the whole root, not just `R/`: nothing excludes `inst/`, so a
+        // fresh seed would find this file and membership must agree.
+        let (dir, mut db, a) = seeded_package();
+        let extdata = dir.path().join("inst").join("extdata");
+        std::fs::create_dir_all(&extdata).expect("inst/extdata/");
+        let new = extdata.join("a.R");
+
+        std::fs::rename(&a, &new).expect("move into inst/extdata/");
+        assert_eq!(rename_outcome(&mut db, &a, &new), (true, true, true));
+    }
+
+    #[test]
+    fn apply_file_renames_adds_a_move_into_scope() {
+        // The mirror image: an excluded file that moves into scope joins the set.
+        let (dir, mut db, _a) = seeded_package();
+        let renv = dir.path().join("renv");
+        std::fs::create_dir(&renv).expect("renv/");
+        let old = renv.join("vendored.R");
+        std::fs::write(&old, "x <- 1\n").expect("vendored.R");
+        let new = dir.path().join("R").join("vendored.R");
+
+        std::fs::rename(&old, &new).expect("move out of renv/");
+        assert_eq!(rename_outcome(&mut db, &old, &new), (true, true, true));
+    }
+
+    #[test]
+    fn apply_file_renames_drops_the_old_member_when_the_new_path_is_gone() {
+        // `didRenameFiles` is a statement that the old path no longer exists, so
+        // an unreadable destination must not leave a stale member behind whose
+        // text can never refresh.
+        let (_dir, mut db, a) = seeded_package();
+        let a_file = db.lookup_file(&a).expect("tracked");
+        let new = a.with_file_name("b.R");
+        std::fs::remove_file(&a).expect("remove a.R");
+
+        assert!(
+            apply_file_renames(&mut db, &[(a, new)]),
+            "the old member leaves the set"
+        );
+        assert!(!db.workspace().unwrap().members(&db).contains(&a_file));
     }
 
     #[test]
