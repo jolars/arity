@@ -92,9 +92,6 @@ Gated on the package being attached (`model.loaded_packages()`).
 - [ ] `detail` (signatures) and `container_name` (enclosing binding) for each
   symbol.
 
-- [ ] `container_name` (enclosing binding) and `detail` (signatures) for each
-  symbol.
-
 - [ ] **RStudio-style code sections** (outline + folding). R tooling (RStudio,
   and the R languageserver's `section.R`) treats a trailing run of 4+
   `-`/`#`/`=`/`+`/`*` markers on a comment line (`# Foo ----`, `#### Bar ####`)
