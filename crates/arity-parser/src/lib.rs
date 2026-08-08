@@ -8,7 +8,9 @@
 //! - [`syntax`] — `SyntaxKind`, the rowan language definition, and
 //!   position-independent node pointers.
 //! - [`parser`] — the lossless parser (`parse`/`reconstruct`), diagnostics,
-//!   and the incremental reparse entry points (`reparse`, `apply_edits`).
+//!   the incremental reparse entry points (`reparse`, `apply_edits`), and the
+//!   predicates that judge a parse against R's own acceptance rules
+//!   (`is_single_expression`).
 //! - [`ast`] — zero-cost typed wrappers over the CST, in rust-analyzer's
 //!   mould.
 //!

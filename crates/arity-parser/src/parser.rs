@@ -15,6 +15,7 @@ pub mod reparse;
 pub mod roxygen;
 pub(crate) mod structural;
 pub(crate) mod tree_builder;
+pub(crate) mod validate;
 
 pub use core::{
     ParseDiagnostic, ParseOptions, ParseOutput, parse, parse_with_options, reconstruct,
@@ -24,3 +25,4 @@ pub use reparse::{
     map_range_through_edits, reparse, reparse_edits, reparse_edits_with_options,
     reparse_with_options,
 };
+pub use validate::{has_r_invalid_name, is_single_expression};
