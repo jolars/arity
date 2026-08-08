@@ -1421,49 +1421,15 @@ const SPECIAL_CODE: &[&str] = &[
     "function", "if", "repeat", "while",
 ];
 
-/// Whether `code` parses as a single R expression, the way roxygen2's `can_parse`
-/// (rlang's `parse_expr`) does: exactly one complete top-level expression with no
-/// parse diagnostics, or a `special` token. arity's lenient recovery would accept
-/// two adjacent symbols (`inline code`) as two expressions, so the one-expression
+/// Whether `code` parses as a single R expression, the way roxygen2's
+/// `can_parse` (rlang's `parse_expr`) does — or is a `special` token, which
+/// roxygen2 waves through even though it is not a complete expression.
+///
+/// The expression test itself is R's, not roxygen2's, so it lives in the
+/// parser crate ([`parser::is_single_expression`]); only the `special` list
+/// below is roxygen2 display policy. arity's lenient recovery would accept two
+/// adjacent symbols (`inline code`) as two expressions, so the one-expression
 /// count is what discriminates `\code` from `\verb`.
 pub(super) fn code_span_is_r(code: &str) -> bool {
-    if SPECIAL_CODE.contains(&code) {
-        return true;
-    }
-    let out = crate::parser::parse(code);
-    if !out.diagnostics.is_empty() {
-        return false;
-    }
-    let one_expr = out
-        .cst
-        .children_with_tokens()
-        .filter(|el| {
-            !matches!(
-                el.kind(),
-                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
-            )
-        })
-        .count()
-        == 1;
-    one_expr && !has_invalid_name(&out.cst)
-}
-
-/// Name shapes R's parser rejects but arity's more lenient lexer accepts as
-/// ordinary identifiers — screened out here to mirror roxygen2's `can_parse`.
-/// A `_`-leading name errors in R's lexer, with one exception: a lone `_` used
-/// as the native-pipe placeholder, valid only inside a `|>` pipeline (a
-/// `_`-leading name of length ≥ 2 is never valid). A zero-length backquoted
-/// name `` `` `` errors at parse time ("attempt to use zero-length variable
-/// name"); any non-empty backquoted name is valid.
-fn has_invalid_name(cst: &SyntaxNode) -> bool {
-    let has_pipe = cst
-        .descendants_with_tokens()
-        .any(|el| el.kind() == SyntaxKind::PIPE);
-    cst.descendants_with_tokens()
-        .filter_map(|el| el.into_token())
-        .filter(|t| t.kind() == SyntaxKind::IDENT)
-        .any(|t| {
-            let text = t.text();
-            text == "``" || (text.starts_with('_') && (text.len() > 1 || !has_pipe))
-        })
+    SPECIAL_CODE.contains(&code) || crate::parser::is_single_expression(&crate::parser::parse(code))
 }

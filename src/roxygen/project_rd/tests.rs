@@ -1266,6 +1266,38 @@ fn underscore_leading_code_span_is_verb_not_code() {
 }
 
 #[test]
+fn trailing_semicolon_code_span_is_code_not_verb() {
+    // R's grammar lets a `;` terminate a statement, so `parse_expr("x;")` is
+    // one expression and roxygen2's `can_parse` is true. The semicolon has to
+    // be judged positionally, though: it must follow the expression on the
+    // same line, and only one of them may.
+    assert!(code_span_is_r("x;"));
+    assert!(code_span_is_r("x ;"));
+    assert!(code_span_is_r("f(a);"));
+    assert!(!code_span_is_r(";x"));
+    assert!(!code_span_is_r("x;;"));
+    assert!(!code_span_is_r("x; y"));
+    assert!(!code_span_is_r(";"));
+
+    // End to end: roxygen2 renders these spans
+    // `\code{x;} and \verb{x;;} and \verb{;x}`.
+    let src = "#' T\n\
+               #' @details\n\
+               #' Spans `x;` and `x;;` and `;x` here.\n\
+               #' @md\n\
+               #' @name d\n\
+               NULL\n";
+    let out = project_to_rd(src);
+    assert!(
+        out.contains(
+            "(\\details (TEXT \"Spans\") (\\code (RCODE \"x;\")) (TEXT \"and\") \
+             (\\verb (VERB \"x;;\")) (TEXT \"and\") (\\verb (VERB \";x\")) (TEXT \"here.\"))"
+        ),
+        "got: {out}"
+    );
+}
+
+#[test]
 fn empty_backquoted_name_code_span_is_verb_not_code() {
     // R's parser rejects a zero-length backquoted name (`parse(text = "``")`
     // errors "attempt to use zero-length variable name"), so roxygen2's
