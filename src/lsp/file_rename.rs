@@ -26,7 +26,9 @@ pub(crate) fn will_rename_via_db(
 /// Apply on-disk file renames to the db's workspace membership: track each new
 /// path (read from disk, where the move already landed) and swap it in for the
 /// old member. A *directory* rename is fanned out over the members beneath it by
-/// [`expand_dir_renames`], so a folder move swaps every file it carried.
+/// [`expand_dir_renames`], so a folder move swaps every file it carried, and the
+/// tracked roots follow the move too ([`rebase_roots`]) — a root is often just a
+/// package directory or a file's parent, so it can be renamed like anything else.
 ///
 /// The old [`SourceFile`] input lingers — there is no removal primitive — but is
 /// dropped from the member set, so cross-file scope ignores it, the same posture
@@ -42,7 +44,8 @@ pub(crate) fn apply_file_renames(
         return false;
     };
     let mut members: Vec<SourceFile> = ws.members(db).to_vec();
-    let roots = ws.roots(db).to_vec();
+    let old_roots = ws.roots(db).to_vec();
+    let roots = rebase_roots(&old_roots, renames);
     let known: Vec<PathBuf> = members
         .iter()
         .filter_map(|&f| db.file_path(f).map(Path::to_path_buf))
@@ -61,10 +64,56 @@ pub(crate) fn apply_file_renames(
         members.push(new_file);
         changed = true;
     }
-    if changed {
+    if changed || roots != old_roots {
         db.set_workspace_members(members, roots);
     }
     changed
+}
+
+/// Follow the workspace roots through a rename batch: a root that is itself
+/// renamed — or sits under a renamed folder — moves with it, so the next seed
+/// anchors on where the tree actually is.
+///
+/// Reads the **raw** `renames`, not the [`expand_dir_renames`] output: a folder
+/// pair that claimed at least one known path is expanded away there, which is
+/// precisely the case a renamed root hits. The deepest match wins, mirroring the
+/// expansion's own tie-break. Roots that don't move keep their original spelling,
+/// so an untouched workspace never rewrites the salsa input.
+///
+/// A root renamed somewhere that doesn't exist needs no special case: the scope
+/// walk errors, yields an empty scope, and the members it carried correctly drop
+/// out.
+fn rebase_roots(roots: &[PathBuf], renames: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
+    let pairs: Vec<(PathBuf, PathBuf)> = renames
+        .iter()
+        .map(|(old, new)| (normalize_path(old), normalize_path(new)))
+        .filter(|(old, new)| old != new)
+        .collect();
+    if pairs.is_empty() {
+        return roots.to_vec();
+    }
+    roots
+        .iter()
+        .map(|root| {
+            let normalized = normalize_path(root);
+            pairs
+                .iter()
+                .filter_map(|(old, new)| {
+                    let rel = normalized.strip_prefix(old).ok()?;
+                    // `root == old` is the common case here (unlike
+                    // `expand_dir_renames`, which only handles strict ancestors);
+                    // `new.join("")` would tack on a trailing separator.
+                    let rebased = if rel.as_os_str().is_empty() {
+                        new.clone()
+                    } else {
+                        new.join(rel)
+                    };
+                    Some((old.components().count(), rebased))
+                })
+                .max_by_key(|(depth, _)| *depth)
+                .map_or_else(|| root.clone(), |(_, rebased)| rebased)
+        })
+        .collect()
 }
 
 /// Convert `RenameFilesParams` into `(old, new)` filesystem path pairs, dropping
@@ -246,6 +295,44 @@ mod tests {
             "a folder holding nothing tracked is not a membership change"
         );
         assert!(db.workspace().unwrap().members(&db).to_vec() == before);
+    }
+
+    #[test]
+    fn apply_file_renames_follows_a_renamed_root() {
+        // A workspace root is not always a folder the user can't touch:
+        // `seed_workspace_for` makes a package root — or a file's parent
+        // directory — a root, and either can be renamed from the explorer.
+        // Roots must follow the move, or every file the root carried would be
+        // judged against a path that no longer exists.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let proj = dir.path().join("proj");
+        std::fs::create_dir(&proj).expect("proj/");
+        let old_a = proj.join("a.R");
+        std::fs::write(&old_a, "foo <- function() 1\n").expect("a.R");
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&old_a, "foo <- function() 1\n".to_string());
+        db.set_workspace_members(vec![a], vec![proj.clone()]);
+
+        let proj2 = dir.path().join("proj2");
+        std::fs::rename(&proj, &proj2).expect("move proj -> proj2");
+        assert!(apply_file_renames(&mut db, &[(proj, proj2.clone())]));
+
+        // `a.R` is a known member, so `expand_dir_renames` consumes the folder
+        // pair and only `proj/a.R -> proj2/a.R` survives it — which is why the
+        // rebase has to read the *raw* renames.
+        assert_eq!(
+            db.workspace().unwrap().roots(&db).to_vec(),
+            vec![proj2.clone()],
+            "the root follows the rename"
+        );
+        let new_file = db.lookup_file(&proj2.join("a.R")).expect("tracked");
+        assert!(
+            db.workspace()
+                .unwrap()
+                .members(&db)
+                .to_vec()
+                .contains(&new_file)
+        );
     }
 
     // --- folder renames -------------------------------------------------
