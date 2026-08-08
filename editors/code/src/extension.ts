@@ -266,8 +266,10 @@ function buildMiddleware(): Middleware {
     provideTypeHierarchySubtypes: (item, token, next) =>
       lf(() => next(item, token)),
     workspace: {
-      // A moved `.R` file rewrites `source()` literals in its dependents; that is
-      // a language feature, so it follows the same gate.
+      // A moved `.R` file or folder rewrites `source()` literals in its
+      // dependents; that is a language feature, so it follows the same gate. The
+      // client sends folder events off the server's registration alone, so
+      // covering them needs no code here.
       willRenameFiles: (event, next) =>
         featureEnabled("languageFeatures")
           ? next(event)

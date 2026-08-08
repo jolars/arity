@@ -74,7 +74,7 @@
         "arity.languageFeatures.enable": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Enable Arity language features: hover, completion, signature help, go-to-definition, references, document/workspace symbols, document highlight, rename, code actions, semantic tokens, folding and selection ranges, document links, document color, and call and type hierarchy. When `false`, these are suppressed. Formatting and diagnostics are unaffected."
+          "markdownDescription": "Enable Arity language features: hover, completion, signature help, go-to-definition, references, document/workspace symbols, document highlight, rename (including `source()` path updates when a file or folder is moved), code actions, semantic tokens, folding and selection ranges, document links, document color, and call and type hierarchy. When `false`, these are suppressed. Formatting and diagnostics are unaffected."
         },
         "arity.executableStrategy": {
           "type": "string",

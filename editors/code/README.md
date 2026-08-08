@@ -33,7 +33,8 @@ off independently, so you can adopt just the parts you want:
 - `arity.formatting.enable`: use Arity as a formatter.
 - `arity.diagnostics.enable`: show Arity diagnostics (the linter).
 - `arity.languageFeatures.enable`: hover, completion, navigation, symbols,
-  rename, code actions, semantic tokens, and the rest.
+  rename (including `source()` path updates when you move a file or folder),
+  code actions, semantic tokens, and the rest.
 
 All three default to `true`. They are client-side gates, so the server keeps
 running and the toggles take effect without a restart or reinstall. For a
@@ -127,7 +128,8 @@ Arity registers itself as the default formatter for `[r]` files.
 - `arity.diagnostics.enable`: show diagnostics from the linter (default:
   `true`).
 - `arity.languageFeatures.enable`: hover, completion, navigation, symbols,
-  rename, code actions, and the rest (default: `true`).
+  rename (including `source()` path updates when you move a file or folder),
+  code actions, and the rest (default: `true`).
 - `arity.executableStrategy`: how to locate the `arity` binary: `bundled`
   (default), `environment`, or `path`.
 - `arity.executablePath`: path to the binary, used only when
