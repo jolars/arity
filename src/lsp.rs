@@ -129,7 +129,9 @@ use smol_str::SmolStr;
 use crate::ast::{Arg, ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
 use crate::formatter::{FormatStyle, format_node, format_range, format_with_options};
-use crate::incremental::{Analysis, IncrementalDatabase, SourceFile, expand_dir_renames};
+use crate::incremental::{
+    Analysis, IncrementalDatabase, SourceFile, expand_dir_renames, normalize_path,
+};
 use crate::linter::rules::ResolvedRules;
 use crate::linter::{Diagnostic, LintError, Severity};
 use crate::parser::{
@@ -177,6 +179,7 @@ mod symbols;
 mod type_hierarchy;
 mod uri;
 mod watched_files;
+mod workspace_scope;
 mod workspace_symbols;
 
 pub(crate) use call_hierarchy::*;
@@ -196,6 +199,7 @@ pub(crate) use signature::*;
 pub(crate) use state::*;
 pub(crate) use type_hierarchy::*;
 pub(crate) use watched_files::*;
+pub(crate) use workspace_scope::*;
 pub(crate) use workspace_symbols::*;
 
 pub use code_actions::compute_code_actions;

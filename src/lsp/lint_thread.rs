@@ -302,12 +302,8 @@ impl LintWorker {
             .workspace()
             .map(|ws| ws.members(&self.db).to_vec())
             .unwrap_or_default();
-        // Resolve the exclude config per root (each may live under a different
-        // `arity.toml`) and seed its scope: kept files plus the generated package
-        // sources exclusion drops, so cross-file resolution stays complete.
         for root in &roots {
-            let exclude = crate::linter::check::resolve_exclude_at(root);
-            for path in crate::linter::check::scope_members(std::slice::from_ref(root), &exclude) {
+            for path in crate::linter::check::scope_members_at(root) {
                 if let Ok(text) = std::fs::read_to_string(&path) {
                     files.push(self.db.upsert_file(&path, text));
                 }

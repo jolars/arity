@@ -229,6 +229,25 @@ mod tests {
         assert!(!members.contains(&a), "old member is dropped from the set");
     }
 
+    #[test]
+    fn apply_file_renames_ignores_a_folder_holding_nothing_tracked() {
+        // `expand_dir_renames` keeps a pair that claimed nothing verbatim, so the
+        // directory pair itself reaches the loop. A directory was never upserted
+        // and `scope_members` yields only files, so nothing moves either way.
+        let (dir, mut db, _a) = seeded_package();
+        let data = dir.path().join("data");
+        std::fs::create_dir(&data).expect("data/");
+        let data2 = dir.path().join("data2");
+        let before = db.workspace().unwrap().members(&db).to_vec();
+
+        std::fs::rename(&data, &data2).expect("move data -> data2");
+        assert!(
+            !apply_file_renames(&mut db, &[(data, data2)]),
+            "a folder holding nothing tracked is not a membership change"
+        );
+        assert!(db.workspace().unwrap().members(&db).to_vec() == before);
+    }
+
     // --- folder renames -------------------------------------------------
 
     #[test]

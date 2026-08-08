@@ -125,7 +125,9 @@ pub(crate) fn classify_watched_files(
 /// member set, then reinstall it (which refreshes the package graph via
 /// [`set_workspace_members`](IncrementalDatabase::set_workspace_members)). A
 /// created file is only added if the workspace scope (excludes applied) would
-/// include it, so a generated/vendored source (`renv/`, …) doesn't leak in.
+/// include it, so a generated/vendored source (`renv/`, …) doesn't leak in; the
+/// whole batch is judged against one [`WorkspaceScope`], so a mass create costs
+/// one disk walk per touched root rather than one per file.
 /// Deleted files are dropped from the set but their [`SourceFile`] input lingers,
 /// the same posture as [`apply_file_renames`]. Returns whether membership
 /// actually changed. No-op when no workspace is seeded.
@@ -148,8 +150,9 @@ pub(crate) fn apply_r_membership(
             changed |= members.len() != before;
         }
     }
+    let mut scope = WorkspaceScope::new(&roots);
     for path in created {
-        if !in_workspace_scope(&roots, path) {
+        if !scope.contains(path) {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(path) else {
@@ -166,26 +169,6 @@ pub(crate) fn apply_r_membership(
         db.set_workspace_members(members, roots);
     }
     changed
-}
-
-/// Whether a newly-created `path` belongs in the workspace member set: it must
-/// sit under a tracked root and survive that root's exclude config. Reuses the
-/// same walk the initial seed does
-/// ([`scope_members`](crate::linter::check::scope_members)), so the include rules
-/// can't drift. The deepest matching root wins (a nested package root is more
-/// specific than its parent workspace root).
-fn in_workspace_scope(roots: &[PathBuf], path: &Path) -> bool {
-    let Some(root) = roots
-        .iter()
-        .filter(|r| path.starts_with(r))
-        .max_by_key(|r| r.components().count())
-    else {
-        return false;
-    };
-    let exclude = crate::linter::check::resolve_exclude_at(root);
-    crate::linter::check::scope_members(std::slice::from_ref(root), &exclude)
-        .iter()
-        .any(|p| p == path)
 }
 
 #[cfg(test)]
@@ -268,21 +251,6 @@ mod tests {
         assert!(!c.config_changed);
     }
 
-    /// A real on-disk package (`DESCRIPTION` + `R/a.R`) seeded as one member.
-    fn seeded_package() -> (tempfile::TempDir, IncrementalDatabase, PathBuf) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path();
-        std::fs::write(root.join("DESCRIPTION"), "Package: testpkg\n").expect("DESCRIPTION");
-        let r_dir = root.join("R");
-        std::fs::create_dir(&r_dir).expect("R/");
-        let a = r_dir.join("a.R");
-        std::fs::write(&a, "foo <- function() 1\n").expect("a.R");
-        let mut db = IncrementalDatabase::default();
-        let file = db.upsert_file(&a, "foo <- function() 1\n".to_string());
-        db.set_workspace_members(vec![file], vec![root.to_path_buf()]);
-        (dir, db, a)
-    }
-
     #[test]
     fn apply_r_membership_adds_created_and_drops_deleted() {
         let (dir, mut db, a) = seeded_package();
@@ -313,5 +281,46 @@ mod tests {
             "a file outside every tracked root is not added"
         );
         assert!(db.lookup_file(&stray).is_none());
+    }
+
+    #[test]
+    fn apply_r_membership_ignores_a_create_excluded_by_config() {
+        // `renv/` is in `DEFAULT_EXCLUDE`, so a vendored source appearing under
+        // the root is neither added nor tracked — the same posture as a file
+        // outside every root.
+        let (dir, mut db, _a) = seeded_package();
+        let renv = dir.path().join("renv");
+        std::fs::create_dir(&renv).expect("renv/");
+        let activate = renv.join("activate.R");
+        std::fs::write(&activate, "invisible(NULL)\n").expect("activate.R");
+
+        assert!(
+            !apply_r_membership(&mut db, std::slice::from_ref(&activate), &[]),
+            "an excluded create does not join the member set"
+        );
+        assert!(db.lookup_file(&activate).is_none());
+    }
+
+    #[test]
+    fn apply_r_membership_adds_a_batch_of_creates() {
+        // A whole batch is judged against one `WorkspaceScope`, so every sibling
+        // still lands (behavioral stand-in for the one-walk-per-root property).
+        let (dir, mut db, _a) = seeded_package();
+        let r_dir = dir.path().join("R");
+        let created: Vec<PathBuf> = ["b.R", "c.R", "d.R"]
+            .iter()
+            .map(|name| {
+                let path = r_dir.join(name);
+                std::fs::write(&path, "x <- 1\n").expect("create");
+                path
+            })
+            .collect();
+
+        assert!(apply_r_membership(&mut db, &created, &[]));
+        let members = db.workspace().unwrap().members(&db).to_vec();
+        for path in &created {
+            let file = db.lookup_file(path).expect("tracked");
+            assert!(members.contains(&file), "{} joined the set", path.display());
+        }
     }
 }

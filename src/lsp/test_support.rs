@@ -173,6 +173,31 @@ pub(crate) fn rename_workspace_files(files: &[(&str, &str)]) -> Analysis {
     db.snapshot()
 }
 
+/// A real on-disk R package (`DESCRIPTION` + `R/a.R`) seeded as one workspace
+/// member, with `R/a.R`'s path returned as the anchor. Used by the membership
+/// tests, which reason about disk state rather than about analysis.
+///
+/// The empty `arity.toml` is load-bearing: [`Config::resolve`] discovers config
+/// by walking *upward* from the anchor, so without a bound here a stray
+/// `arity.toml` in a real ancestor of the system temp dir would replace
+/// [`DEFAULT_EXCLUDE`](crate::config::DEFAULT_EXCLUDE) and silently change what
+/// counts as in scope. An empty file takes the serde default (so `renv/` and
+/// friends still apply) and roots the patterns at the tempdir.
+pub(crate) fn seeded_package() -> (tempfile::TempDir, IncrementalDatabase, PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::write(root.join("arity.toml"), "").expect("arity.toml");
+    std::fs::write(root.join("DESCRIPTION"), "Package: testpkg\n").expect("DESCRIPTION");
+    let r_dir = root.join("R");
+    std::fs::create_dir(&r_dir).expect("R/");
+    let a = r_dir.join("a.R");
+    std::fs::write(&a, "foo <- function() 1\n").expect("a.R");
+    let mut db = IncrementalDatabase::default();
+    let file = db.upsert_file(&a, "foo <- function() 1\n".to_string());
+    db.set_workspace_members(vec![file], vec![root.to_path_buf()]);
+    (dir, db, a)
+}
+
 /// A real on-disk R package (`DESCRIPTION` + `R/`) with two member files,
 /// seeded and snapshotted. Package siblings share one flat namespace, which
 /// the scope layer derives from the `package_root` disk walk — so this can't

@@ -572,6 +572,24 @@ pub fn scope_members(dirs: &[PathBuf], exclude: &ExcludeFilter) -> Vec<PathBuf> 
     files
 }
 
+/// The workspace scope of a *single* `root`: the R files [`scope_members`] finds
+/// under it, judged by that root's own exclude config ([`resolve_exclude_at`]).
+///
+/// Per-root by construction, and it has to stay that way: exclude patterns are
+/// rooted at the directory holding the `arity.toml` discovered upward from the
+/// anchor (or at the anchor itself when there is none), so two roots cannot share
+/// one filter — folding them into a single `scope_members(all_roots, one_filter)`
+/// call would apply one root's patterns to the other's tree.
+///
+/// The single source of truth for "what the seed would have found under this
+/// root", shared by the bulk workspace seed and the incremental membership
+/// checks, so the two can't drift.
+pub(crate) fn scope_members_at(root: &Path) -> Vec<PathBuf> {
+    let exclude = resolve_exclude_at(root);
+    let dirs = [root.to_path_buf()];
+    scope_members(&dirs, &exclude)
+}
+
 /// Read-phase of cross-file linting (`&db` only — no disk, no writes). Builds the
 /// per-file facts from cached models/trees, assembles the project scope, and
 /// lints the active file against it. Safe to run on a db clone; salsa aborts it
