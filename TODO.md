@@ -214,19 +214,6 @@ Gated on the package being attached (`model.loaded_packages()`).
   edit in a CRLF buffer splices LF); fix that first, then advertise. (2026-07-02
   languageserver survey.)
 
-- [ ] **Minor capability-conformance gaps vs. the R languageserver** (2026-07-02
-  survey). (a) *(resolved)* arity's completion trigger set now includes `.`, `$`,
-  and `@` alongside `:` (`src/lsp/server.rs`; see the `$`/`@` member-completion
-  and label-details items under "Completion & signatures"). (b) *(resolved)*
-  arity now advertises
-  `workspaceFolders.changeNotifications` and reacts to
-  `workspace/didChangeWorkspaceFolders` by seeding added folders (removal-drop is
-  a tracked follow-up); see the `didChangeWatchedFiles` entry above.
-  (c) `textDocumentSync` is FULL-only with no `willSave`/`save` registration
-  (benign). Note: the languageserver's `codeLens`, `executeCommand`,
-  `linkedEditingRange`, `moniker`, and type/implementation-definition providers are
-  **commented out in its own `capabilities.R`**, so they are *not* arity gaps.
-
 - [ ] **Inlay hints** (`textDocument/inlayHint`). E.g. argument-name hints at
   call sites (matching positional args to index formals). Speculative. Not
   loved by all users, possibly opt-in or omit altogether.
