@@ -13,5 +13,6 @@
 
 - [Configuration](reference/configuration.md)
 - [CLI Reference](reference/cli.md)
+- [Code Actions](reference/code-actions.md)
 - [Suppressing Findings](reference/suppression.md)
 - [Lint Rules](reference/rules.md)

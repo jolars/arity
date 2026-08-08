@@ -10,6 +10,10 @@ Renaming reaches beyond symbols: moving or renaming an `.R` file, or a folder of
 them, rewrites the `source()` paths that referred to it, and rebases the moved
 files' own `source()` paths to their new location.
 
+Beyond the quick fixes attached to lint diagnostics, the server offers a
+cursor-context refactor that writes a roxygen2 skeleton for the function you are
+on; see the [code action reference](../reference/code-actions.md).
+
 Configuration is read from an `arity.toml` discovered from each file's directory
 (see the [configuration reference](../reference/configuration.md)).
 
