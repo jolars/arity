@@ -27,12 +27,11 @@ pub(super) fn split_lines(
             }
         }
 
-        if break_count >= 2
-            && (!matches!(lines.last(), Some(last) if is_comment_only_line(last))
-                || matches!(element, NodeOrToken::Token(ref tok) if tok.kind() == SyntaxKind::COMMENT)
-                || matches!(lines.last(), Some(last) if is_separator_comment_line(last))
-                || should_preserve_section_heading_gap(&lines))
-        {
+        // A blank-line gap is preserved as a single empty line, whatever sits on
+        // either side of it. A comment is not implicitly attached to whatever
+        // follows: a license header, a section divider, and a `#'` block that
+        // opens a new documentation unit all need the author's gap to survive.
+        if break_count >= 2 {
             lines.push(Vec::new());
         }
         break_count = 0;
@@ -91,46 +90,4 @@ pub(super) fn inline_trailing_comment_text(element: &SyntaxElement<RLanguage>) -
         }
         _ => None,
     }
-}
-
-fn is_comment_only_line(line: &[SyntaxElement<RLanguage>]) -> bool {
-    let significant: Vec<_> = line.iter().filter(|el| !is_trivia(el.kind())).collect();
-    matches!(
-        significant.as_slice(),
-        [NodeOrToken::Token(tok)] if tok.kind() == SyntaxKind::COMMENT
-    )
-}
-
-fn is_separator_comment_line(line: &[SyntaxElement<RLanguage>]) -> bool {
-    let significant: Vec<_> = line.iter().filter(|el| !is_trivia(el.kind())).collect();
-    matches!(
-        significant.as_slice(),
-        [NodeOrToken::Token(tok)]
-            if tok.kind() == SyntaxKind::COMMENT
-                && tok.text().trim() == "# ------------------------------------------------------------------------"
-    )
-}
-
-fn should_preserve_section_heading_gap(lines: &[Vec<SyntaxElement<RLanguage>>]) -> bool {
-    let Some(last) = lines.last() else {
-        return false;
-    };
-    if !is_section_heading_comment_line(last) {
-        return false;
-    }
-    lines
-        .iter()
-        .rev()
-        .nth(1)
-        .is_some_and(|line| is_separator_comment_line(line))
-}
-
-fn is_section_heading_comment_line(line: &[SyntaxElement<RLanguage>]) -> bool {
-    let significant: Vec<_> = line.iter().filter(|el| !is_trivia(el.kind())).collect();
-    matches!(
-        significant.as_slice(),
-        [NodeOrToken::Token(tok)]
-            if tok.kind() == SyntaxKind::COMMENT
-                && matches!(tok.text().trim(), "# Dots" | "# Dot dot i")
-    )
 }

@@ -38,6 +38,7 @@ fn fixture_names() -> &'static [&'static str] {
         "air_while_statement",
         "assignment_precedence",
         "assignment_walrus",
+        "comment_blank_line_gap_preserved",
         "binary_comment_after_operator",
         "binary_comment_before_operator",
         "binary_chain_comment_before_operator",
