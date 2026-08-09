@@ -21,7 +21,8 @@ pub use cfg::{BasicBlock, BlockId, ControlFlowGraph, FileControlFlow, Terminator
 pub use scope::{Scope, ScopeId, ScopeKind};
 pub use symbols::{
     LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, implicit_attached_packages,
-    is_data_masking_callee, is_model_frame_arg, is_model_frame_arg_prefix, is_model_frame_callee,
+    is_data_masking_callee, is_data_table_arg_name, is_data_table_constructor,
+    is_data_table_pronoun, is_model_frame_arg, is_model_frame_arg_prefix, is_model_frame_callee,
     match_args_to_formals, meta_package_members, model_frame_formals,
 };
 
@@ -824,6 +825,194 @@ mod tests {
     fn non_masking_call_args_not_masked() {
         let m = model_of("paste(a, b)");
         assert!(m.idents().iter().all(|i| !i.data_masked));
+    }
+
+    #[test]
+    fn data_table_by_argument_masks_subset_args() {
+        // data.table's masking is `[`-shaped, not a call: `dt[i, j, by]`
+        // evaluates every slot in the frame's column mask. A `by =` argument is
+        // data.table-only syntax, so it identifies the shape unambiguously.
+        let m = model_of("dt[grp == 1, .(m = mean(val)), by = key]");
+        for name in ["grp", "val", "key"] {
+            let i = ident_named(&m, name);
+            assert!(i.data_masked, "column read `{name}` should be data-masked");
+        }
+        // The table itself is a genuine read: a typo'd `dt` stays flaggable.
+        assert!(!ident_named(&m, "dt").data_masked, "base is not masked");
+    }
+
+    #[test]
+    fn data_table_walrus_masks_subset_args() {
+        // `:=` only exists inside data.table's `[`, so it identifies the shape.
+        let m = model_of("dt[, newcol := old * 2]");
+        assert!(ident_named(&m, "old").data_masked);
+    }
+
+    #[test]
+    fn data_table_walrus_target_is_a_column_not_a_binding() {
+        // `dt[, newcol := 1]` adds a *column*; it binds nothing in the frame, so
+        // recording a binding would make `newcol` a false unused-binding.
+        let m = model_of("dt[, newcol := 1]");
+        assert!(
+            !m.bindings.iter().any(|b| b.name == "newcol"),
+            "`:=` target must not become a binding"
+        );
+        assert!(
+            ident_named(&m, "newcol").data_masked,
+            "`:=` target is a masked column read"
+        );
+    }
+
+    #[test]
+    fn data_table_pronoun_masks_subset_args() {
+        // `.N`/`.SD`/… are data.table's pronouns, bound only inside its `[`.
+        let m = model_of("dt[, .N]");
+        assert!(ident_named(&m, ".N").data_masked);
+        let m = model_of("dt[, lapply(.SD, sum)]");
+        assert!(ident_named(&m, ".SD").data_masked);
+    }
+
+    #[test]
+    fn data_table_constructor_binding_masks_bare_subset() {
+        // The marker-free filter idiom `dt[x > 3]` is shaped exactly like plain
+        // vector indexing, so it masks only when the base is known to hold a
+        // data.table.
+        let m = model_of("dt <- data.table(a = 1)\ndt[col > 3]");
+        assert!(ident_named(&m, "col").data_masked);
+    }
+
+    #[test]
+    fn set_dt_marks_base_as_data_table() {
+        // `setDT(df)` converts in place, so `df` is a data.table afterwards.
+        let m = model_of("setDT(df)\ndf[col > 3]");
+        assert!(ident_named(&m, "col").data_masked);
+    }
+
+    #[test]
+    fn data_table_identity_propagates_through_subsets() {
+        // `dt <- data.table(…)[, x := y][]` is the common build-then-modify
+        // idiom: a subscript of a table is still a table, so the name it lands
+        // in must be recognized too — and so must a name assigned from *that*.
+        let src = "en <- data.table(f = 1)[, ef := rm(f)][]\n\
+                   link <- en[, cap(ef), by = ef]\n\
+                   link[first != second]\n";
+        let m = model_of(src);
+        for name in ["first", "second"] {
+            assert!(
+                ident_named(&m, name).data_masked,
+                "`{name}` is a column of a derived table"
+            );
+        }
+    }
+
+    #[test]
+    fn chained_data_table_subset_stays_masked() {
+        // `dt[...][...]`: the second `[`'s base is the first subset, which is
+        // itself a data.table expression.
+        let m = model_of("dt[, .N, by = g][order(cnt)]");
+        assert!(ident_named(&m, "cnt").data_masked);
+    }
+
+    #[test]
+    fn data_table_method_called_directly_masks_args() {
+        // Calling the `[` method by name bypasses the `SUBSET_EXPR` path, but
+        // the arguments are still data.table's `i`/`j`/`by` slots.
+        let m = model_of("data.table:::`[.data.table`(dt, , 1, by = grp)");
+        assert!(ident_named(&m, "grp").data_masked);
+    }
+
+    #[test]
+    fn plain_subset_args_not_masked() {
+        // Ordinary indexing must stay flaggable: `v[i]` with an undefined `i` is
+        // a genuine error, and it carries no data.table marker.
+        let m = model_of("v[i]");
+        assert!(m.idents().iter().all(|i| !i.data_masked));
+        let m = model_of("m[rows, cols]");
+        assert!(m.idents().iter().all(|i| !i.data_masked));
+    }
+
+    #[test]
+    fn double_bracket_subset_args_not_masked() {
+        // `[[` is not data.table's NSE form.
+        let m = model_of("x[[i]]");
+        assert!(m.idents().iter().all(|i| !i.data_masked));
+    }
+
+    #[test]
+    fn locally_shadowed_masking_verb_unmasks_args() {
+        // The masking table is name-only. When the file defines its own
+        // `filter`, the call is *that* function — an ordinary one that evaluates
+        // its arguments — so its bare names are genuine reads again.
+        let m = model_of("filter <- function(x, y) x\nfilter(d, a)");
+        assert!(!ident_named(&m, "a").data_masked, "shadowed verb unmasks");
+        assert!(!ident_named(&m, "d").data_masked);
+    }
+
+    #[test]
+    fn masking_verb_defined_after_use_stays_masked() {
+        // A top-level call runs before a definition placed below it, so the call
+        // really is dplyr's `filter`. Resolution is frame-ordered, so this falls
+        // out for free — and errs toward suppression either way.
+        let m = model_of("filter(d, a)\nfilter <- function(x, y) x");
+        assert!(ident_named(&m, "a").data_masked);
+    }
+
+    #[test]
+    fn qualified_masking_verb_ignores_local_shadowing() {
+        // `dplyr::filter(...)` names the package's function outright; a local
+        // `filter` cannot shadow it.
+        let m = model_of("filter <- function(x, y) x\ndplyr::filter(d, a)");
+        assert!(ident_named(&m, "a").data_masked);
+    }
+
+    #[test]
+    fn nested_masking_verb_keeps_args_masked_when_outer_shadowed() {
+        // Unmasking is attributed to a single enclosing verb; a read nested in a
+        // second, unshadowed verb keeps its mask.
+        let m = model_of("filter <- function(x, y) x\nfilter(d, mutate(d2, a))");
+        assert!(
+            ident_named(&m, "a").data_masked,
+            "`a` is masked by the inner `mutate`"
+        );
+        assert!(!ident_named(&m, "d").data_masked);
+    }
+
+    #[test]
+    fn shadowed_quoting_callee_keeps_args_masked() {
+        // Only data-masking verbs are gated. A quoting callee doesn't evaluate
+        // its argument at all, so the mask holds regardless of shadowing.
+        let m = model_of("quote <- function(x) x\nquote(a)");
+        assert!(ident_named(&m, "a").data_masked);
+    }
+
+    #[test]
+    fn mask_carries_into_inline_function_body() {
+        // A closure written inside a masked argument is *created in* the data
+        // mask, so the mask is its lexical parent and a bare column name in its
+        // body resolves. Verified against R:
+        // `with(d, sapply(col, function(v) v + other[1]))` finds `other` in `d`.
+        // The mask must therefore not stop at the closure boundary.
+        let m = model_of("mutate(df, y = sapply(x, function(v) v + z))");
+        assert!(ident_named(&m, "x").data_masked, "`x` is a column");
+        assert!(
+            ident_named(&m, "z").data_masked,
+            "a closure body inherits the enclosing data mask"
+        );
+    }
+
+    #[test]
+    fn mask_carries_into_inline_function_inside_quote() {
+        // Nothing inside `quote()` is evaluated at all.
+        let m = model_of("quote(function(x) y)");
+        assert!(ident_named(&m, "y").data_masked);
+    }
+
+    #[test]
+    fn mask_carries_into_inline_function_inside_opaque_infix() {
+        // An opaque `%op%` may capture its operands symbolically, closure
+        // included.
+        let m = model_of("A %---% sapply(v, function(x) y)");
+        assert!(ident_named(&m, "y").data_masked);
     }
 
     #[test]

@@ -135,6 +135,56 @@ pub fn is_data_masking_callee(name: &str) -> bool {
         | "unpack" | "hoist"
         // ggplot2
         | "aes"
+        // data.table's `[` method called directly rather than as a subscript
+        // (`data.table:::`[.data.table`(dt, , 1, by = a)`), which the
+        // `SUBSET_EXPR` path can't see. The backticks are part of the token.
+        | "`[.data.table`"
+    )
+}
+
+/// Whether `name`, used as a *named argument of `[`*, marks the subscript as
+/// data.table's `dt[i, j, by]` form rather than ordinary indexing.
+///
+/// data.table masks through `[`, not through a call, and `dt[x > 3]` is shaped
+/// exactly like plain vector indexing — so the builder needs a signal before it
+/// dares suppress a subscript's bare names. These argument names exist only on
+/// `[.data.table`; base R's `[.data.frame` takes just `i`, `j`, and `drop`.
+pub fn is_data_table_arg_name(name: &str) -> bool {
+    matches!(
+        name,
+        "by" | "keyby"
+            | ".SDcols"
+            | "with"
+            | "on"
+            | "mult"
+            | "roll"
+            | "rollends"
+            | "nomatch"
+            | "which"
+            | "allow.cartesian"
+            | "env"
+            | "verbose"
+    )
+}
+
+/// Whether `name` is one of data.table's pronouns — bound only inside its `[`,
+/// and thus, like [`is_data_table_arg_name`], a marker for that form.
+pub fn is_data_table_pronoun(name: &str) -> bool {
+    matches!(
+        name,
+        ".N" | ".SD" | ".I" | ".GRP" | ".BY" | ".EACHI" | ".NGRP"
+    )
+}
+
+/// Whether a call to `name` yields (or, for `setDT`, converts in place to) a
+/// data.table. Lets the builder recognize the marker-free `dt[x > 3]` filter
+/// idiom by remembering which names hold a table.
+///
+/// Name-only and hand-curated, matching [`is_data_masking_callee`].
+pub fn is_data_table_constructor(name: &str) -> bool {
+    matches!(
+        name,
+        "data.table" | "as.data.table" | "fread" | "rbindlist" | "CJ" | "setDT"
     )
 }
 

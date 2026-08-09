@@ -285,12 +285,45 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   (the whole arg subtree, nested calls included)—over-matching only ever
   suppresses, the safe direction for a false-positive-only rule.
 
-  - [ ] Follow-ups: data.table's `dt[i, j, by]` masking is `[`-shaped, not a
-    call, so it's unhandled. Masking is not package-gated (a user's own
-    non-NSE `filter`/`transform` under-flags its args); gate on the verb's
-    package actually being attached if that proves too coarse. Mask carries
-    into inline `function(...)` bodies inside a masked arg (lexically those
-    aren't masked)—deliberately conservative for now.
+  - [x] data.table's `[`-shaped masking (landed). `handle_subset` masks a
+    `SUBSET_EXPR`'s argument list on either of two prongs: a marker unique to
+    `[.data.table` (a `by`/`keyby`/`.SDcols`/… named argument, a `:=` anywhere
+    inside, or a pronoun like `.N`/`.SD`—`is_data_table_arg_name` and
+    `is_data_table_pronoun` in `src/semantic/symbols.rs`), or a base known to
+    hold a table. The latter is what catches the marker-free filter idiom
+    `dt[x > 3]`, which is shaped exactly like vector indexing: `ctx.data_tables`
+    records names assigned from `is_data_table_constructor` calls, from
+    `setDT(df)`, and from any data.table-shaped subscript, so identity
+    propagates through `en <- data.table(...)[, x := y][]`. `[[` is excluded,
+    and a `:=` inside the mask now records a *column* read instead of a
+    binding—`dt[, newcol := 1]` binds nothing in the frame. Direct calls to
+    `` `[.data.table` `` join the masking-callee table for the same reason.
+    Over-matching only ever suppresses, the safe direction here.
+
+  - [x] Gate the name-only masking match (landed, but on *shadowing*, not on
+    package attachment). `apply_shadow_gate` (`src/semantic/builder.rs`) runs
+    after `resolve_reads` and clears `data_masked` on reads whose masking verb
+    resolves to a local binding: a file defining its own non-NSE `filter` is
+    calling *that* function, which evaluates its arguments. Gating on
+    `library(<pkg>)` instead was rejected—package code using `@importFrom`
+    never calls `library()`, so that gate would stop suppressing exactly where
+    suppression is needed. Only bare data-masking verbs are gateable; quoting
+    callees, formulas, opaque `%op%` operands, model-frame arguments, and
+    data.table subscripts are pinned, as is a read nested in a second verb.
+    Reusing `resolve_reads`'s frame ordering means a top-level call *above* the
+    definition stays masked, matching what R does at runtime.
+
+  - [x] Mask carrying into inline `function(...)` bodies is *correct*, not
+    conservative—the follow-up's premise was wrong. A closure written inside a
+    masked argument is created in the mask environment, so the mask is its
+    lexical parent and a bare column name in its body resolves. Verified
+    against R: `with(d, sapply(col, function(v) v + other[1]))` finds `other`
+    in `d`, and the same holds for rlang's data mask. Locked by
+    `mask_carries_into_inline_function_body`.
+
+  - [ ] Remaining: masking a subscript still needs a marker or a known base, so
+    `dt[x > 3]` on a table arriving as a function parameter is unmasked. A
+    lightweight per-binding data.table type would close that.
 
 - [x] Meta-package attachment (Option A—static table, landed). A meta-package
   like `tidyverse` attaches a fixed set of core packages (dplyr, ggplot2,

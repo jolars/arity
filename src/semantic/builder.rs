@@ -19,11 +19,13 @@
 //! After the walk, a separate `resolve_reads` pass marks each binding as
 //! `read` if any recorded `IdentRef` resolves to it.
 
+use std::collections::{HashMap, HashSet};
+
 use rowan::ast::AstNode as _;
 use rowan::{NodeOrToken, SyntaxToken, TextRange};
 use smol_str::SmolStr;
 
-use crate::ast::{Arg, AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ident};
+use crate::ast::{Arg, AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ident, SubsetExpr};
 use crate::semantic::binding::{Binding, BindingId, BindingKind};
 use crate::semantic::scope::{Scope, ScopeId, ScopeKind};
 use crate::semantic::symbols::LoadedPackage;
@@ -34,17 +36,27 @@ use crate::syntax::{RLanguage, SyntaxElement, SyntaxKind, SyntaxNode};
 pub fn build(root: &SyntaxNode) -> SemanticModel {
     let mut model = SemanticModel::default();
     let file_scope = push_scope(&mut model, ScopeKind::File, None, root.text_range());
-    let mut ctx = BuildCtx {
-        model: &mut model,
-        function_depth: 0,
-        suppress_read: None,
-        mask_depth: 0,
-        loop_range: None,
-        deferred: false,
-        quote_depth: 0,
+    let ident_gates = {
+        let mut ctx = BuildCtx {
+            model: &mut model,
+            function_depth: 0,
+            suppress_read: None,
+            mask_depth: 0,
+            loop_range: None,
+            deferred: false,
+            quote_depth: 0,
+            gate_depth: 0,
+            pin_depth: 0,
+            gate_verb: None,
+            ident_gates: Vec::new(),
+            column_depth: 0,
+            data_tables: HashSet::new(),
+        };
+        walk_generic(&mut ctx, root, file_scope);
+        ctx.ident_gates
     };
-    walk_generic(&mut ctx, root, file_scope);
     resolve_reads(&mut model);
+    apply_shadow_gate(&mut model, &ident_gates);
     model
 }
 
@@ -81,6 +93,111 @@ struct BuildCtx<'a> {
     /// unevaluated, not a real local binding, so `handle_assignment` records no
     /// binding for it.
     quote_depth: usize,
+    /// How many *gateable* masks deep we are — those from a bare data-masking
+    /// verb, whose name-only match `apply_shadow_gate` may later retract.
+    gate_depth: usize,
+    /// How many *pinned* masks deep we are: quoting callees, formulas, opaque
+    /// `%op%` operands, model-frame arguments, and data.table `[` subscripts.
+    /// None of those hinge on a name that a local binding could shadow, so a
+    /// read under one is masked for good.
+    pin_depth: usize,
+    /// Index into [`SemanticModel::idents`] of the read of the enclosing
+    /// gateable verb's own name, when exactly one such mask is open and nothing
+    /// pins it. Stamped onto each read via [`ident_gates`](Self::ident_gates).
+    gate_verb: Option<u32>,
+    /// Parallel to [`SemanticModel::idents`]: which verb read, if any, is solely
+    /// responsible for that read being masked. Builder-local so `IdentRef` (and
+    /// with it every salsa projection) stays untouched.
+    ident_gates: Vec<Option<u32>>,
+    /// How many data.table `[` argument lists deep we are. While `> 0` a `:=`
+    /// adds a *column*, so `handle_assignment` records a masked read instead of
+    /// a binding.
+    column_depth: usize,
+    /// Names known to hold a data.table, from a constructor call
+    /// (`dt <- data.table(…)`) or an in-place `setDT(df)`. Name-only and
+    /// scope-free, populated during the same walk — so, exactly like
+    /// `loaded_packages`, only conversions appearing textually *earlier* are
+    /// visible. Both directions are safe: a miss just leaves `dt[x > 3]`
+    /// unmasked, and masking only ever suppresses.
+    data_tables: HashSet<SmolStr>,
+}
+
+impl BuildCtx<'_> {
+    /// Open a mask no shadowing check can retract (see
+    /// [`pin_depth`](Self::pin_depth)).
+    fn enter_pinned_mask(&mut self) {
+        self.mask_depth += 1;
+        self.pin_depth += 1;
+    }
+
+    fn exit_pinned_mask(&mut self) {
+        self.pin_depth -= 1;
+        self.mask_depth -= 1;
+    }
+
+    /// Open a data-masking verb's mask, attributing the reads inside to
+    /// `verb` (an index into `idents`). Returns the previous attribution to hand
+    /// back to [`exit_gated_mask`](Self::exit_gated_mask).
+    ///
+    /// Only the outermost gateable mask attributes: a read nested in a second
+    /// verb gets no gate at all, so unmasking the outer verb can't reach it.
+    fn enter_gated_mask(&mut self, verb: Option<u32>) -> Option<u32> {
+        self.mask_depth += 1;
+        self.gate_depth += 1;
+        let prev = self.gate_verb;
+        if self.gate_depth == 1 && self.pin_depth == 0 {
+            self.gate_verb = verb;
+        }
+        prev
+    }
+
+    fn exit_gated_mask(&mut self, prev: Option<u32>) {
+        self.gate_verb = prev;
+        self.gate_depth -= 1;
+        self.mask_depth -= 1;
+    }
+}
+
+/// Record an identifier read, keeping [`BuildCtx::ident_gates`] in lockstep with
+/// the model's `idents`. Every push must go through here.
+fn push_ident(ctx: &mut BuildCtx<'_>, ident: IdentRef) {
+    let gate = if ctx.pin_depth == 0 && ctx.gate_depth == 1 {
+        ctx.gate_verb
+    } else {
+        None
+    };
+    ctx.model.idents.push(ident);
+    ctx.ident_gates.push(gate);
+}
+
+/// Retract the name-only data-masking match wherever the verb turned out to be
+/// the file's own function.
+///
+/// `is_data_masking_callee` matches on name alone, so a file that defines its
+/// own non-NSE `filter`/`transform` used to have that call's arguments
+/// suppressed. A verb read that resolves to a local binding is *that* function —
+/// an ordinary one, which evaluates its arguments — so its reads are genuine
+/// again.
+///
+/// This has to run after `resolve_reads`, not during the walk: R routinely
+/// defines a function below its first use. Reusing that pass's `ident_bindings`
+/// also gets the frame-ordering rule for free — a top-level call *above* the
+/// definition resolves to nothing and stays masked, which is what R does at
+/// runtime.
+fn apply_shadow_gate(model: &mut SemanticModel, ident_gates: &[Option<u32>]) {
+    // One verdict per verb read, not per masked read under it.
+    let mut shadowed: HashMap<u32, bool> = HashMap::new();
+    for idx in 0..model.idents.len() {
+        let Some(verb) = ident_gates.get(idx).copied().flatten() else {
+            continue;
+        };
+        let is_shadowed = *shadowed
+            .entry(verb)
+            .or_insert_with(|| !model.ident_bindings[verb as usize].is_empty());
+        if is_shadowed {
+            model.idents[idx].data_masked = false;
+        }
+    }
 }
 
 fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -93,6 +210,7 @@ fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         SyntaxKind::BINARY_EXPR => handle_binary(ctx, node, scope),
         SyntaxKind::UNARY_EXPR => handle_unary(ctx, node, scope),
         SyntaxKind::ARG => handle_arg(ctx, node, scope),
+        SyntaxKind::SUBSET_EXPR => handle_subset(ctx, node, scope),
         _ => walk_generic(ctx, node, scope),
     }
 }
@@ -134,13 +252,16 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
     {
         return;
     }
-    ctx.model.idents.push(IdentRef {
-        name: SmolStr::new(tok.text()),
-        range: tok.text_range(),
-        scope,
-        data_masked: ctx.mask_depth > 0,
-        deferred: ctx.deferred,
-    });
+    push_ident(
+        ctx,
+        IdentRef {
+            name: SmolStr::new(tok.text()),
+            range: tok.text_range(),
+            scope,
+            data_masked: ctx.mask_depth > 0,
+            deferred: ctx.deferred,
+        },
+    );
 }
 
 /// Record the `USER_OP` token of a binary expression (`a %op% b`) as a read of
@@ -152,13 +273,16 @@ fn record_user_op_read(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId
         if let NodeOrToken::Token(t) = el
             && t.kind() == SyntaxKind::USER_OP
         {
-            ctx.model.idents.push(IdentRef {
-                name: SmolStr::new(format!("`{}`", t.text())),
-                range: t.text_range(),
-                scope,
-                data_masked: ctx.mask_depth > 0,
-                deferred: ctx.deferred,
-            });
+            push_ident(
+                ctx,
+                IdentRef {
+                    name: SmolStr::new(format!("`{}`", t.text())),
+                    range: t.text_range(),
+                    scope,
+                    data_masked: ctx.mask_depth > 0,
+                    deferred: ctx.deferred,
+                },
+            );
             return;
         }
     }
@@ -193,6 +317,13 @@ fn handle_function(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, parent: ScopeId) {
     // body evaluates eagerly even when the function is itself a param default.
     let prev_loop = ctx.loop_range.take();
     let prev_deferred = std::mem::replace(&mut ctx.deferred, false);
+    // The data mask deliberately does *not* stop here. A closure written inside
+    // a masked argument is created in the mask environment, so the mask is its
+    // lexical parent and a bare column name in its body resolves:
+    // `with(d, sapply(col, function(v) v + other[1]))` finds `other` in `d`.
+    // That holds for rlang's data mask too, which is likewise the enclosure of
+    // anything defined in it.
+    //
     // Walk the body subtree, plus any param-default expressions. Param-default
     // values live as raw tokens between `=` and the next `,` / `)`, so we walk
     // the entire token range between LPAREN and RPAREN looking for nested
@@ -326,6 +457,21 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
     if ctx.quote_depth > 0 {
         return;
     }
+    // 2b. Inside a data.table `[`, `:=` adds or updates a *column*, not a
+    //     variable: `dt[, newcol := 1]` binds nothing in the frame. Record the
+    //     target as a masked read (it names a column) so it neither resolves
+    //     nor surfaces as an unused binding.
+    if ctx.column_depth > 0 && op == Some(SyntaxKind::WALRUS) {
+        match (assign.target_name_token(), &target) {
+            (Some(tok), _) => record_ident_read(ctx, &tok, scope),
+            // A computed LHS (`dt[, c("a", "b") := …]`) holds ordinary reads.
+            (None, Some(NodeOrToken::Node(target_node))) => {
+                walk_node(ctx, target_node, scope);
+            }
+            _ => {}
+        }
+        return;
+    }
     if let Some(name) = assign.target_name() {
         let range = assign
             .target_name_token()
@@ -341,6 +487,15 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
             BindingKind::Implicit => enclosing_function_or_file(ctx.model, scope),
             _ => scope,
         };
+        // Remember a name assigned a data.table, so a later marker-free
+        // `dt[x > 3]` is recognized as a column filter.
+        if value
+            .as_ref()
+            .and_then(|v| v.as_node())
+            .is_some_and(|v| node_yields_data_table(ctx, v))
+        {
+            ctx.data_tables.insert(name.clone());
+        }
         push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
     } else if let Some(NodeOrToken::Node(target_node)) = target {
         // Complex LHS (e.g. `dim(x) <- ...`): treat contents as reads.
@@ -403,6 +558,13 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             // caller's frame, so a later `name$col` read resolves. Introduce a
             // binding for each bare-name argument, then walk normally.
             "data" => introduce_data_bindings(ctx, &call, scope),
+            // `setDT(df)` converts in place and returns invisibly, so `df` is a
+            // data.table from here on even with no assignment.
+            "setDT" | "setalloccol" => {
+                if let Some((name, _)) = first_string_or_ident_arg(&call) {
+                    ctx.data_tables.insert(name);
+                }
+            }
             // `on.exit(expr)` registers `expr` as a promise run at function exit,
             // so it may read a local assigned *after* the call. Walk it deferred
             // (order-free within the frame), like a param default.
@@ -435,17 +597,37 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         let quoting = CallExpr::cast(node.clone())
             .and_then(|call| call_callee_ident(&call))
             .is_some_and(|name| is_quoting_callee(&name));
+        // The callee is the first read recorded below (it precedes the
+        // `ARG_LIST` among the call's children). Remember which one it is so
+        // `apply_shadow_gate` can retract the mask if it turns out to name the
+        // file's own function. A quoting callee is pinned instead: it evaluates
+        // nothing regardless of what the name resolves to.
+        let verb_start = ctx.model.idents.len();
         for el in node.children_with_tokens() {
             // Mask the argument list (bare names there may be data columns);
             // walk everything else (the callee) unmasked.
             if let NodeOrToken::Node(child) = &el
                 && child.kind() == SyntaxKind::ARG_LIST
             {
-                ctx.mask_depth += 1;
-                ctx.quote_depth += usize::from(quoting);
+                // `None` when no read was recorded for the callee — a
+                // `pkg::verb(…)` shape, whose name no local binding can shadow.
+                let verb = u32::try_from(verb_start)
+                    .ok()
+                    .filter(|_| ctx.model.idents.len() > verb_start);
+                let prev = if quoting {
+                    ctx.enter_pinned_mask();
+                    ctx.quote_depth += 1;
+                    None
+                } else {
+                    ctx.enter_gated_mask(verb)
+                };
                 walk_node(ctx, child, scope);
-                ctx.quote_depth -= usize::from(quoting);
-                ctx.mask_depth -= 1;
+                if quoting {
+                    ctx.quote_depth -= 1;
+                    ctx.exit_pinned_mask();
+                } else {
+                    ctx.exit_gated_mask(prev);
+                }
             } else {
                 walk_element(ctx, &el, scope);
             }
@@ -536,9 +718,13 @@ fn walk_model_frame_arg_list(
             }
             _ => false,
         };
-        ctx.mask_depth += usize::from(masked);
+        if masked {
+            ctx.enter_pinned_mask();
+        }
         walk_element(ctx, &el, scope);
-        ctx.mask_depth -= usize::from(masked);
+        if masked {
+            ctx.exit_pinned_mask();
+        }
     }
 }
 
@@ -597,13 +783,113 @@ fn synthesize_formal_reads(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: Sco
         })
         .collect();
     for name in formals {
-        ctx.model.idents.push(IdentRef {
-            name,
-            range,
-            scope,
-            data_masked: false,
-            deferred: true,
+        push_ident(
+            ctx,
+            IdentRef {
+                name,
+                range,
+                scope,
+                data_masked: false,
+                deferred: true,
+            },
+        );
+    }
+}
+
+/// A `[` subscript. data.table is the one masking construct that is
+/// `[`-shaped rather than a call: `dt[i, j, by]` evaluates every slot against
+/// the table's columns. Mask the argument list when the subscript is
+/// recognizably that form, walking the base unmasked (a typo'd `dt` is still a
+/// genuine read); otherwise this is ordinary indexing and walks normally.
+///
+/// `[[` is deliberately excluded — it is not data.table's NSE form.
+fn handle_subset(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    if !subset_masks_arguments(ctx, node) {
+        walk_generic(ctx, node, scope);
+        return;
+    }
+    for el in node.children_with_tokens() {
+        if let NodeOrToken::Node(child) = &el
+            && child.kind() == SyntaxKind::ARG_LIST
+        {
+            // Pinned: the form was identified by syntax, not by a name a local
+            // binding could shadow.
+            ctx.enter_pinned_mask();
+            ctx.column_depth += 1;
+            walk_node(ctx, child, scope);
+            ctx.column_depth -= 1;
+            ctx.exit_pinned_mask();
+        } else {
+            walk_element(ctx, &el, scope);
+        }
+    }
+}
+
+/// Whether a `SUBSET_EXPR` is data.table's masking form. Two independent
+/// prongs, since the syntax alone can't always tell:
+///
+/// - A **marker** unique to `[.data.table`: one of [`is_data_table_arg_name`]'s
+///   named arguments, a `:=` anywhere inside, or a pronoun like `.N`/`.SD`.
+/// - A **known table base**, which is what identifies the marker-free filter
+///   idiom `dt[x > 3]` — indistinguishable from vector indexing otherwise.
+///
+/// The marker scan covers the whole argument subtree, so a nested table
+/// expression can mark its enclosing subscript too. That over-matches, which
+/// only ever suppresses — the safe direction for a false-positive-only rule.
+fn subset_masks_arguments(ctx: &BuildCtx<'_>, node: &SyntaxNode) -> bool {
+    let Some(subset) = SubsetExpr::cast(node.clone()) else {
+        return false;
+    };
+    let Some(arg_list) = subset.arg_list() else {
+        return false;
+    };
+    let named_marker = arg_list.args().any(|arg| {
+        arg.name()
+            .is_some_and(|name| crate::semantic::is_data_table_arg_name(&name))
+    });
+    if named_marker {
+        return true;
+    }
+    let inner_marker = arg_list
+        .syntax()
+        .descendants_with_tokens()
+        .any(|el| match el {
+            NodeOrToken::Token(t) => {
+                t.kind() == SyntaxKind::WALRUS
+                    || (t.kind() == SyntaxKind::IDENT
+                        && crate::semantic::is_data_table_pronoun(t.text()))
+            }
+            NodeOrToken::Node(_) => false,
         });
+    inner_marker || base_is_data_table(ctx, &subset)
+}
+
+/// Whether a subscript's base is known to hold a data.table: a name recorded in
+/// [`BuildCtx::data_tables`], a constructor call subscripted directly
+/// (`data.table(…)[…]`), or a chained subscript (`dt[…][…]`) that is itself
+/// data.table-shaped.
+fn base_is_data_table(ctx: &BuildCtx<'_>, subset: &SubsetExpr) -> bool {
+    match subset.base() {
+        Some(NodeOrToken::Token(t)) if t.kind() == SyntaxKind::IDENT => {
+            ctx.data_tables.contains(t.text())
+        }
+        Some(NodeOrToken::Node(inner)) => node_yields_data_table(ctx, &inner),
+        _ => false,
+    }
+}
+
+/// Whether an expression node evaluates to a data.table: a constructor call, or
+/// a data.table-shaped subscript (which returns another table). Drives both
+/// [`base_is_data_table`] and the assignment tracking that fills
+/// [`BuildCtx::data_tables`], so `en.dt <- data.table(…)[, x := y][]` registers
+/// `en.dt` and every later `en.dt[…]` masks.
+fn node_yields_data_table(ctx: &BuildCtx<'_>, node: &SyntaxNode) -> bool {
+    match node.kind() {
+        SyntaxKind::CALL_EXPR => CallExpr::cast(node.clone())
+            .and_then(|call| call_callee_ident(&call))
+            .is_some_and(|callee| crate::semantic::is_data_table_constructor(&callee)),
+        SyntaxKind::SUBSET_EXPR => subset_masks_arguments(ctx, node),
+        _ => false,
     }
 }
 
@@ -712,12 +998,15 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                                         walk_model_frame_arg_list(ctx, &grandchild, scope, mask);
                                     }
                                     NodeOrToken::Node(grandchild) => {
+                                        // A qualified verb names the package's
+                                        // function outright, so no local
+                                        // binding can shadow it: pinned.
                                         if masked {
-                                            ctx.mask_depth += 1;
+                                            ctx.enter_pinned_mask();
                                         }
                                         walk_node(ctx, &grandchild, scope);
                                         if masked {
-                                            ctx.mask_depth -= 1;
+                                            ctx.exit_pinned_mask();
                                         }
                                     }
                                     _ => {}
@@ -754,9 +1043,9 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             // are model terms (typically data-frame columns), never in-scope
             // reads. Mask the whole subtree so `undefined-symbol` leaves them
             // alone — the same suppress-only direction as data masking.
-            ctx.mask_depth += 1;
+            ctx.enter_pinned_mask();
             walk_generic(ctx, node, scope);
-            ctx.mask_depth -= 1;
+            ctx.exit_pinned_mask();
         }
         Some(SyntaxKind::USER_OP) => {
             // Opaque custom operator: walk operands with the data mask bumped so
@@ -764,14 +1053,14 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             // only here isn't mis-flagged unused) but skipped by `undefined-symbol`.
             // Over-masking only ever suppresses — the safe direction for a
             // false-positive-only rule.
-            ctx.mask_depth += 1;
+            ctx.enter_pinned_mask();
             // The operator itself is a read of its (backtick-quoted) definition:
             // `a %||% b` uses `` `%||%` ``. Record it masked, matching the operand
             // policy — so a locally- or cross-file-defined operator isn't flagged
             // unused, while an external one stays out of `undefined-symbol`.
             record_user_op_read(ctx, node, scope);
             walk_generic(ctx, node, scope);
-            ctx.mask_depth -= 1;
+            ctx.exit_pinned_mask();
         }
         _ => walk_generic(ctx, node, scope),
     }
@@ -786,9 +1075,9 @@ fn handle_unary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         .children_with_tokens()
         .any(|el| el.kind() == SyntaxKind::TILDE);
     if is_formula {
-        ctx.mask_depth += 1;
+        ctx.enter_pinned_mask();
         walk_generic(ctx, node, scope);
-        ctx.mask_depth -= 1;
+        ctx.exit_pinned_mask();
     } else {
         walk_generic(ctx, node, scope);
     }

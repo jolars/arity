@@ -1601,6 +1601,67 @@ fn undefined_symbol_still_flags_outside_data_mask() {
 }
 
 #[test]
+fn undefined_symbol_skips_data_table_columns() {
+    // data.table masks through `[`, not a call: every slot of `dt[i, j, by]` is
+    // evaluated against the table's columns.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "data.table",
+        &["data.table", "fread"],
+    )]));
+    let src = "library(data.table)\n\
+               dt <- data.table(a = 1)\n\
+               dt[grp == 1, .(m = mean(val)), by = key]\n\
+               dt[, newcol := val * 2]\n\
+               dt[filtered > 3]\n";
+    let msgs = undefined_with(src, &p);
+    assert!(
+        msgs.is_empty(),
+        "data.table column reads must not be flagged, got {msgs:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_still_flags_plain_subset_index() {
+    // Ordinary indexing carries no data.table marker and its base is not a known
+    // table, so an undefined subscript is still a genuine finding.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("v <- c(1, 2)\nv[bogus]\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_flags_args_of_shadowed_verb() {
+    // The masking table is name-only. A file that defines its own `filter` is
+    // calling an ordinary function, which evaluates its arguments — so a typo
+    // there must still be flagged.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("filter <- function(x, y) x\nd <- 1\nfilter(d, bogus)\n", &p);
+    assert_eq!(msgs.len(), 1, "expected only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+}
+
+#[test]
+fn undefined_symbol_skips_inline_lambda_body_in_mask() {
+    // A closure written inside a masked argument is created *in* the data mask,
+    // which is therefore its lexical parent: a bare column name in its body
+    // resolves. Verified against R --
+    // `with(d, sapply(col, function(v) v + other[1]))` finds `other` in `d`.
+    let p = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "dplyr",
+        &["mutate"],
+    )]));
+    let msgs = undefined_with(
+        "library(dplyr)\nmutate(df, y = sapply(col, function(v) v + other))\n",
+        &p,
+    );
+    assert!(
+        msgs.is_empty(),
+        "a closure body inherits the data mask, got {msgs:?}"
+    );
+}
+
+#[test]
 fn undefined_symbol_skips_formula_operands() {
     // A formula (`y ~ x`) captures its operands symbolically — they name model
     // terms (data-frame columns), not in-scope bindings — so neither side is an

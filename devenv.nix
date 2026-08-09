@@ -51,6 +51,7 @@
             styler
             lintr
             flir
+            data_table
           ];
         }
       );
