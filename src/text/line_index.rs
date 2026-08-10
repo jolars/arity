@@ -6,13 +6,17 @@
 //!   (UTF-8 or UTF-16 units) for LSP positions.
 //!
 //! The index is **self-contained**: rather than holding a borrow of the text, it
-//! precomputes the line-start offsets plus a per-line table of *wide characters*
-//! (chars wider than one byte in UTF-8), so every conversion is O(log n) in the
-//! line count with no text slicing. Being owned and `Eq`, it can be cached as a
+//! precomputes the line-start offsets plus a table of *wide characters* (chars
+//! wider than one byte in UTF-8), so every conversion is O(log n) in the line
+//! count with no text slicing. Being owned and `Eq`, it can be cached as a
 //! `salsa` query (see [`crate::incremental::line_index`]), à la rust-analyzer's
 //! `LineIndex`.
-
-use std::collections::HashMap;
+//!
+//! Both tables are keyed by **absolute** byte offset and kept sorted, which is
+//! what lets an edit *patch* the index instead of rebuilding it: line starts and
+//! wide chars splice under one rule (keep the prefix, drop the replaced span,
+//! shift the tail by the byte delta) with no renumbering. A per-line wide-char
+//! table cannot do that — inserting a line renumbers every later entry.
 
 use lsp_types::{Position, PositionEncodingKind};
 
@@ -57,14 +61,17 @@ pub struct LineCol {
     pub column: usize,
 }
 
-/// A character wider than one byte in UTF-8, recorded by its **line-relative**
-/// byte range. Anything outside a wide char is a 1-byte ASCII char that counts
-/// as one unit in every metric.
+/// A character wider than one byte in UTF-8, recorded by its **absolute** byte
+/// range in the buffer. Anything outside a wide char is a 1-byte ASCII char that
+/// counts as one unit in every metric.
+///
+/// `u32` caps a buffer at 4 GiB, the same tradeoff rust-analyzer's `TextSize`
+/// makes; [`LineIndex::new`] asserts it in debug builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct WideChar {
-    /// Byte offset of the char's start, relative to the start of its line.
+    /// Byte offset of the char's start.
     start: u32,
-    /// Byte offset just past the char, relative to the start of its line.
+    /// Byte offset just past the char.
     end: u32,
 }
 
@@ -109,38 +116,46 @@ impl Metric {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineIndex {
     line_starts: Vec<usize>,
-    /// Wide chars per 0-indexed line, in ascending order; a line with none is
-    /// simply absent from the map.
-    line_wide_chars: HashMap<usize, Vec<WideChar>>,
+    /// Every wide char in the buffer, by absolute byte offset, ascending. Empty
+    /// for pure-ASCII text, which is nearly every R file.
+    wide_chars: Vec<WideChar>,
     /// Total byte length of the text.
     len: usize,
 }
 
 impl LineIndex {
     pub fn new(text: &str) -> Self {
-        let mut line_starts = Vec::with_capacity(text.len() / 40 + 1);
+        debug_assert!(
+            text.len() <= u32::MAX as usize,
+            "LineIndex records wide chars as u32 offsets"
+        );
+        let bytes = text.as_bytes();
+        let mut line_starts = Vec::with_capacity(bytes.len() / 40 + 1);
         line_starts.push(0);
-        let mut line_wide_chars: HashMap<usize, Vec<WideChar>> = HashMap::new();
-        let mut cur_line = 0usize;
-        let mut line_start = 0usize;
-        for (offset, ch) in text.char_indices() {
-            if ch == '\n' {
-                line_starts.push(offset + 1);
-                cur_line += 1;
-                line_start = offset + 1;
-                continue;
-            }
-            let bytes = ch.len_utf8();
-            if bytes > 1 {
-                line_wide_chars.entry(cur_line).or_default().push(WideChar {
-                    start: (offset - line_start) as u32,
-                    end: (offset + bytes - line_start) as u32,
-                });
-            }
-        }
+        line_starts.extend(
+            bytes
+                .iter()
+                .enumerate()
+                .filter(|&(_, &b)| b == b'\n')
+                .map(|(i, _)| i + 1),
+        );
+        // Absolute offsets make the two tables independent, so the wide-char
+        // scan can be skipped wholesale. `is_ascii` is word-chunked, so the
+        // common case costs a fast pass rather than a `char_indices` walk.
+        let wide_chars = if bytes.is_ascii() {
+            Vec::new()
+        } else {
+            text.char_indices()
+                .filter(|(_, ch)| ch.len_utf8() > 1)
+                .map(|(offset, ch)| WideChar {
+                    start: offset as u32,
+                    end: (offset + ch.len_utf8()) as u32,
+                })
+                .collect()
+        };
         Self {
             line_starts,
-            line_wide_chars,
+            wide_chars,
             len: text.len(),
         }
     }
@@ -149,10 +164,9 @@ impl LineIndex {
     pub fn byte_to_lc(&self, offset: usize) -> LineCol {
         let clamped = offset.min(self.len);
         let line = self.line_index_for(clamped);
-        let rel = clamped - self.line_starts[line];
         LineCol {
             line: line + 1,
-            column: self.col_in(line, rel, Metric::CodePoint) as usize + 1,
+            column: self.col_in(self.line_starts[line], clamped, Metric::CodePoint) as usize + 1,
         }
     }
 
@@ -160,8 +174,7 @@ impl LineIndex {
     pub fn byte_to_position(&self, offset: usize, encoding: PositionEncoding) -> Position {
         let clamped = offset.min(self.len);
         let line = self.line_index_for(clamped);
-        let rel = clamped - self.line_starts[line];
-        let character = self.col_in(line, rel, encoding.metric());
+        let character = self.col_in(self.line_starts[line], clamped, encoding.metric());
         Position::new(line as u32, character)
     }
 
@@ -195,21 +208,35 @@ impl LineIndex {
         self.line_starts.get(line).copied().unwrap_or(self.len)
     }
 
-    /// The column of a line-relative byte offset `rel` on `line`, in `metric`
-    /// units. Each wide char fully before `rel` contributes fewer units than its
-    /// byte length, so the column is `rel` minus that accumulated shortfall.
-    fn col_in(&self, line: usize, rel: usize, metric: Metric) -> u32 {
-        let mut shortfall = 0u32;
-        if let Some(wides) = self.line_wide_chars.get(&line) {
-            for w in wides {
-                if w.end as usize <= rel {
-                    shortfall += w.len() - metric.wide_units(*w);
-                } else {
-                    break;
-                }
-            }
+    /// The wide chars starting at or after `from`, ascending. Callers stop at
+    /// their own upper bound; because the table is sorted, the first entry past
+    /// that bound ends the run.
+    fn wide_chars_from(&self, from: usize) -> &[WideChar] {
+        let i = self
+            .wide_chars
+            .partition_point(|w| (w.start as usize) < from);
+        &self.wide_chars[i..]
+    }
+
+    /// The column of absolute byte offset `offset` on the line starting at
+    /// `line_start`, in `metric` units. Each wide char fully before `offset`
+    /// contributes fewer units than its byte length, so the column is the
+    /// line-relative offset minus that accumulated shortfall.
+    fn col_in(&self, line_start: usize, offset: usize, metric: Metric) -> u32 {
+        let rel = (offset - line_start) as u32;
+        if self.wide_chars.is_empty() {
+            return rel;
         }
-        rel as u32 - shortfall
+        let mut shortfall = 0u32;
+        for w in self.wide_chars_from(line_start) {
+            // The first char reaching past `offset` ends the run — including
+            // any on a later line, which start at or after this line's end.
+            if w.end as usize > offset {
+                break;
+            }
+            shortfall += w.len() - metric.wide_units(*w);
+        }
+        rel - shortfall
     }
 
     /// The absolute byte offset at column `target_col` (in `metric` units) on
@@ -218,26 +245,31 @@ impl LineIndex {
     fn byte_at_col(&self, line: usize, target_col: u32, metric: Metric) -> usize {
         let line_start = self.line_starts[line];
         let line_end = self.line_starts.get(line + 1).copied().unwrap_or(self.len);
+        if self.wide_chars.is_empty() {
+            // Pure ASCII: 1 unit == 1 byte for every metric.
+            return (line_start + target_col as usize).min(line_end);
+        }
         let mut col = 0u32;
         let mut byte = line_start;
-        if let Some(wides) = self.line_wide_chars.get(&line) {
-            for w in wides {
-                let w_start = line_start + w.start as usize;
-                // The ASCII run before this wide char: 1 unit == 1 byte each.
-                let ascii = (w_start - byte) as u32;
-                if col + ascii >= target_col {
-                    return byte + (target_col - col) as usize;
-                }
-                col += ascii;
-                byte = w_start;
-                let units = metric.wide_units(*w);
-                if col + units > target_col {
-                    // Column lands inside the wide char: clamp to its start.
-                    return byte;
-                }
-                col += units;
-                byte = line_start + w.end as usize;
+        for w in self.wide_chars_from(line_start) {
+            let w_start = w.start as usize;
+            if w_start >= line_end {
+                break;
             }
+            // The ASCII run before this wide char: 1 unit == 1 byte each.
+            let ascii = (w_start - byte) as u32;
+            if col + ascii >= target_col {
+                return byte + (target_col - col) as usize;
+            }
+            col += ascii;
+            byte = w_start;
+            let units = metric.wide_units(*w);
+            if col + units > target_col {
+                // Column lands inside the wide char: clamp to its start.
+                return byte;
+            }
+            col += units;
+            byte = w.end as usize;
         }
         // Trailing ASCII after the last wide char (or the whole line if none):
         // 1 unit == 1 byte, clamped to the line end on overshoot.
@@ -337,21 +369,52 @@ mod tests {
     }
 
     #[test]
-    fn position_to_byte_round_trips_both_encodings() {
-        let text = "ab\ncde\nf\u{00e1}g\n\u{1F600}h";
+    fn wide_chars_on_late_lines() {
+        // Wide chars far from line 0, and a run of empty lines between them: the
+        // arrangement a line-keyed wide-char table has to renumber and a flat
+        // offset-keyed one does not.
+        let text = "a\n\n\n\u{00e1}b\n\n\u{1F600}\u{00e1}c\nd";
         let idx = LineIndex::new(text);
-        for encoding in [Utf8, Utf16] {
-            for offset in 0..=text.len() {
-                // Only byte offsets on char boundaries round-trip exactly.
-                if !text.is_char_boundary(offset) {
-                    continue;
+        // Line 3 starts at byte 4 and is "áb", so 'b' is at byte 6: UTF-16
+        // column 1 (á is one unit), UTF-8 column 2 (á is two bytes).
+        assert_eq!(idx.byte_to_position(6, Utf16), Position::new(3, 1));
+        assert_eq!(idx.byte_to_position(6, Utf8), Position::new(3, 2));
+        assert_eq!(idx.position_to_byte(Position::new(3, 1), Utf16), 6);
+        // Line 5 starts at byte 9 and is "😀ác", so 'c' is at byte 15: UTF-16
+        // column 3 (the emoji is a surrogate pair), UTF-8 column 6.
+        assert_eq!(idx.byte_to_position(15, Utf16), Position::new(5, 3));
+        assert_eq!(idx.byte_to_position(15, Utf8), Position::new(5, 6));
+        assert_eq!(idx.position_to_byte(Position::new(5, 3), Utf16), 15);
+        // Line 6 is "d", past every wide char.
+        assert_eq!(idx.byte_to_position(17, Utf16), Position::new(6, 0));
+        assert_eq!(idx.byte_to_lc(17), LineCol { line: 7, column: 1 });
+    }
+
+    #[test]
+    fn position_to_byte_round_trips_both_encodings() {
+        let texts = [
+            "ab\ncde\nf\u{00e1}g\n\u{1F600}h",
+            // Several wide chars per line, on lines other than the first, with
+            // empty lines and a trailing newline in the mix.
+            "\u{00e1}\u{1F600}\u{00e1}\n\nx\u{1F600}y\u{00e1}z\n\u{00e1}\u{00e1}\n",
+            // Wide chars only, no ASCII to anchor a scan on.
+            "\u{1F600}\u{1F600}\n\u{00e1}\u{1F600}",
+        ];
+        for text in texts {
+            let idx = LineIndex::new(text);
+            for encoding in [Utf8, Utf16] {
+                for offset in 0..=text.len() {
+                    // Only byte offsets on char boundaries round-trip exactly.
+                    if !text.is_char_boundary(offset) {
+                        continue;
+                    }
+                    let pos = idx.byte_to_position(offset, encoding);
+                    assert_eq!(
+                        idx.position_to_byte(pos, encoding),
+                        offset,
+                        "text {text:?} offset {offset} encoding {encoding:?}"
+                    );
                 }
-                let pos = idx.byte_to_position(offset, encoding);
-                assert_eq!(
-                    idx.position_to_byte(pos, encoding),
-                    offset,
-                    "offset {offset} encoding {encoding:?}"
-                );
             }
         }
     }
