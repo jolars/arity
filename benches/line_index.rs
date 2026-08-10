@@ -17,7 +17,7 @@
 //!
 //! Run with `cargo bench --bench line_index` (or `task bench-line-index`).
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 use arity::parser::{Edit, parse, reparse};
@@ -98,34 +98,98 @@ fn convert(c: &mut Criterion) {
     group.finish();
 }
 
-fn keystroke(c: &mut Criterion) {
-    let src = corpus(UNIT, 1024 * 1024);
-    // A keystroke in the middle of the buffer: the honest average for the tail
-    // shift a patch has to do, and the worst case for a rebuild either way.
-    let mut at = src.len() / 2;
-    while !src.is_char_boundary(at) {
+/// A char-boundary offset at `frac` of the way through `text`.
+fn boundary_at(text: &str, frac: f64) -> usize {
+    let mut at = (text.len() as f64 * frac) as usize;
+    while !text.is_char_boundary(at) {
         at -= 1;
     }
+    at
+}
 
+fn keystroke(c: &mut Criterion) {
+    let src = corpus(UNIT, 1024 * 1024);
+    // Mid-buffer: the honest average for the tail shift a patch has to do.
+    let at = boundary_at(&src, 0.5);
+    let index = LineIndex::new(&src);
+
+    // Both arms time *index work only* — the text splice is common to either
+    // strategy, so including it would understate the difference.
     let mut group = c.benchmark_group("keystroke");
-    group.bench_function("rebuild", |b| {
-        b.iter(|| {
-            let mut text = src.clone();
-            text.insert(at, 'x');
-            LineIndex::new(black_box(&text))
-        })
+    group.bench_function("rebuild", |b| b.iter(|| LineIndex::new(black_box(&src))));
+    group.bench_function("patch", |b| {
+        b.iter_batched_ref(
+            || index.clone(),
+            |idx| idx.apply_edit(black_box(at..at), "x"),
+            BatchSize::SmallInput,
+        )
     });
     // The `didChange` loop re-indexes once *per change*, so a 10-change batch
     // (a multi-cursor edit, or a paste the client splits up) pays 10 rebuilds.
     group.bench_function("batch10/rebuild", |b| {
         b.iter(|| {
-            let mut text = src.clone();
-            for i in 0..10 {
-                let index = LineIndex::new(black_box(&text));
-                black_box(&index);
-                text.insert(at + i, 'x');
+            for _ in 0..10 {
+                black_box(LineIndex::new(black_box(&src)));
             }
         })
+    });
+    group.bench_function("batch10/patch", |b| {
+        b.iter_batched_ref(
+            || index.clone(),
+            |idx| {
+                for i in 0..10 {
+                    idx.apply_edit(black_box(at + i..at + i), "x");
+                }
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    group.finish();
+}
+
+fn patch(c: &mut Criterion) {
+    // Where the edit lands decides how much tail has to shift: offset 0 is the
+    // worst case, the end is the best.
+    let src = corpus(UNIT, 1024 * 1024);
+    let index = LineIndex::new(&src);
+    let mut group = c.benchmark_group("patch");
+
+    for (name, frac) in [("start", 0.0), ("middle", 0.5), ("end", 1.0)] {
+        let at = boundary_at(&src, frac);
+        group.bench_function(name, |b| {
+            b.iter_batched_ref(
+                || index.clone(),
+                |idx| idx.apply_edit(black_box(at..at), "x"),
+                BatchSize::SmallInput,
+            )
+        });
+    }
+
+    let at = boundary_at(&src, 0.5);
+    group.bench_function("newline", |b| {
+        b.iter_batched_ref(
+            || index.clone(),
+            |idx| idx.apply_edit(black_box(at..at), "\n"),
+            BatchSize::SmallInput,
+        )
+    });
+    // Delete the line containing `at`, newline included.
+    let line_start = src[..at].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = src[at..].find('\n').map_or(src.len(), |i| at + i + 1);
+    group.bench_function("delete_line", |b| {
+        b.iter_batched_ref(
+            || index.clone(),
+            |idx| idx.apply_edit(black_box(line_start..line_end), ""),
+            BatchSize::SmallInput,
+        )
+    });
+    let paste = "value <- transform(data)\n".repeat(100);
+    group.bench_function("paste_100_lines", |b| {
+        b.iter_batched_ref(
+            || index.clone(),
+            |idx| idx.apply_edit(black_box(at..at), &paste),
+            BatchSize::SmallInput,
+        )
     });
     group.finish();
 }
@@ -150,17 +214,40 @@ fn pipeline(c: &mut Criterion) {
     );
 
     let mut group = c.benchmark_group("pipeline");
+    // All three arms run under `iter_batched_ref` with the same clone-in-setup.
+    // That matters for more than symmetry: `iter` drops the returned CST inside
+    // the timed region while `iter_batched_ref` drops it after, and dropping a
+    // green tree is not free — mixing the two understates the reparse by ~30%.
+    let index = LineIndex::new(&src);
     group.bench_function("reparse_only", |b| {
-        b.iter(|| reparse(&root, &src, &diags, black_box(&edit)))
+        b.iter_batched_ref(
+            || index.clone(),
+            |_| reparse(&root, &src, &diags, black_box(&edit)),
+            BatchSize::SmallInput,
+        )
     });
     group.bench_function("rebuild_then_reparse", |b| {
-        b.iter(|| {
-            black_box(LineIndex::new(black_box(&src)));
-            reparse(&root, &src, &diags, black_box(&edit))
-        })
+        b.iter_batched_ref(
+            || index.clone(),
+            |idx| {
+                *idx = LineIndex::new(black_box(&src));
+                reparse(&root, &src, &diags, black_box(&edit))
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    group.bench_function("patch_then_reparse", |b| {
+        b.iter_batched_ref(
+            || index.clone(),
+            |idx| {
+                idx.apply_edit(black_box(at..at), "X");
+                reparse(&root, &src, &diags, black_box(&edit))
+            },
+            BatchSize::SmallInput,
+        )
     });
     group.finish();
 }
 
-criterion_group!(benches, build, convert, keystroke, pipeline);
+criterion_group!(benches, build, convert, keystroke, patch, pipeline);
 criterion_main!(benches);

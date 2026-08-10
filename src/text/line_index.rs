@@ -154,6 +154,97 @@ impl LineIndex {
         }
     }
 
+    /// Patch the index for an edit replacing `range` with `insert`, instead of
+    /// rebuilding it from the edited text. Cost is `O(log n + insert.len() +
+    /// lines after the edit)` rather than linear in the whole document.
+    ///
+    /// The result is **bit-identical** to `LineIndex::new(edited_text)`; that is
+    /// what `apply_edit_matches_rebuild_exhaustively` pins, and what lets a
+    /// patched index and the salsa `line_index` query be used interchangeably.
+    ///
+    /// `range` must be within the *pre-edit* text and both ends must fall on
+    /// char boundaries. The LSP path cannot violate this: [`position_to_byte`]
+    /// clamps a column landing inside a wide char to that char's start.
+    ///
+    /// [`position_to_byte`]: Self::position_to_byte
+    pub fn apply_edit(&mut self, range: std::ops::Range<usize>, insert: &str) {
+        let (start, end) = (range.start, range.end);
+        debug_assert!(
+            start <= end && end <= self.len,
+            "edit {range:?} out of range"
+        );
+        debug_assert!(
+            self.is_char_boundary(start) && self.is_char_boundary(end),
+            "edit {range:?} splits a wide char"
+        );
+
+        let removed = end - start;
+        let inserted = insert.len();
+        // A length-preserving edit (typing over a selection) shifts nothing, so
+        // both tails stay put and the splice is all that is needed.
+        let shift = removed != inserted;
+
+        // `line_starts[i]` for `i > 0` is `newline_offset + 1`, so an entry `s`
+        // dies exactly when its newline at `s - 1` falls in `start..end`, i.e.
+        // when `start < s <= end`.
+        let first = self.line_starts.partition_point(|&s| s <= start);
+        let last = self.line_starts.partition_point(|&s| s <= end);
+        // Shift before splicing, while these indices still address the old Vec.
+        if shift {
+            for s in &mut self.line_starts[last..] {
+                *s = *s - removed + inserted;
+            }
+        }
+        // `line_starts[0]` is 0, which is `<= start` for every edit, so `first`
+        // is at least 1: the leading zero is structurally never touched.
+        self.line_starts.splice(
+            first..last,
+            memchr::memchr_iter(b'\n', insert.as_bytes()).map(|i| start + i + 1),
+        );
+
+        // Wide chars splice the same way. Under the char-boundary precondition,
+        // a wide char starting inside the edit also ends inside it, so testing
+        // `start` alone selects exactly the wholly-replaced run.
+        let wfirst = self
+            .wide_chars
+            .partition_point(|w| (w.start as usize) < start);
+        let wlast = self
+            .wide_chars
+            .partition_point(|w| (w.start as usize) < end);
+        if shift {
+            for w in &mut self.wide_chars[wlast..] {
+                w.start = (w.start as usize - removed + inserted) as u32;
+                w.end = (w.end as usize - removed + inserted) as u32;
+            }
+        }
+        if insert.is_ascii() {
+            self.wide_chars.splice(wfirst..wlast, std::iter::empty());
+        } else {
+            let new: Vec<WideChar> = insert
+                .char_indices()
+                .filter(|(_, ch)| ch.len_utf8() > 1)
+                .map(|(i, ch)| WideChar {
+                    start: (start + i) as u32,
+                    end: (start + i + ch.len_utf8()) as u32,
+                })
+                .collect();
+            self.wide_chars.splice(wfirst..wlast, new);
+        }
+
+        self.len = self.len - removed + inserted;
+    }
+
+    /// Whether `offset` falls on a char boundary, decided from the wide-char
+    /// table alone — no access to the text. Only a wide char can straddle an
+    /// offset, so an offset strictly inside one is the only non-boundary.
+    fn is_char_boundary(&self, offset: usize) -> bool {
+        !self
+            .wide_chars_from(offset.saturating_sub(3))
+            .iter()
+            .take_while(|w| (w.start as usize) < offset)
+            .any(|w| (w.end as usize) > offset)
+    }
+
     /// 1-indexed (line, column-in-code-points). Suitable for CLI diagnostics.
     pub fn byte_to_lc(&self, offset: usize) -> LineCol {
         let clamped = offset.min(self.len);
@@ -275,6 +366,40 @@ impl LineIndex {
             Ok(idx) => idx,
             Err(idx) => idx.saturating_sub(1),
         }
+    }
+
+    /// Assert the representation invariants a rebuild always satisfies. Equality
+    /// against a rebuilt index proves a patch agrees with `new`; this proves the
+    /// pair are not *both* wrong.
+    #[cfg(test)]
+    fn assert_canonical(&self) {
+        assert_eq!(self.line_starts.first(), Some(&0), "missing leading zero");
+        assert!(
+            self.line_starts.windows(2).all(|w| w[0] < w[1]),
+            "line starts not strictly increasing: {:?}",
+            self.line_starts
+        );
+        assert!(
+            self.line_starts.iter().all(|&s| s <= self.len),
+            "line start past the end: {:?} len {}",
+            self.line_starts,
+            self.len
+        );
+        assert!(
+            self.wide_chars
+                .windows(2)
+                .all(|w| w[0].end <= w[1].start && w[0].start < w[0].end),
+            "wide chars overlap or are unsorted: {:?}",
+            self.wide_chars
+        );
+        assert!(
+            self.wide_chars
+                .iter()
+                .all(|w| (2..=4).contains(&w.len()) && w.end as usize <= self.len),
+            "wide char out of range: {:?} len {}",
+            self.wide_chars,
+            self.len
+        );
     }
 }
 
@@ -436,5 +561,188 @@ mod tests {
     fn to_kind_maps_to_lsp() {
         assert_eq!(Utf8.to_kind(), PositionEncodingKind::UTF8);
         assert_eq!(Utf16.to_kind(), PositionEncodingKind::UTF16);
+    }
+
+    /// Splice `insert` over `range` in `base` and assert that patching an index
+    /// built from `base` lands on exactly the index a rebuild would produce.
+    /// Bit-identity is the bar: a divergence makes live-buffer handlers report
+    /// wrong positions, and would silently break the salsa query's backdating.
+    #[track_caller]
+    fn assert_patch_matches_rebuild(base: &str, range: std::ops::Range<usize>, insert: &str) {
+        let mut spliced = base.to_string();
+        spliced.replace_range(range.clone(), insert);
+
+        let mut patched = LineIndex::new(base);
+        patched.apply_edit(range.clone(), insert);
+        patched.assert_canonical();
+
+        assert_eq!(
+            patched,
+            LineIndex::new(&spliced),
+            "base {base:?} range {range:?} insert {insert:?}"
+        );
+    }
+
+    /// Bases spanning the structural cases: empty, no newline, only newlines,
+    /// with and without a trailing newline, wide chars early and late, CRLF,
+    /// and a line made entirely of wide chars.
+    const BASES: [&str; 9] = [
+        "",
+        "a",
+        "\n",
+        "\n\n\n",
+        "ab\ncd\nef",
+        "ab\ncd\nef\n",
+        "\u{00e1}b\nc\u{1F600}\nd",
+        "a\r\nb\r\n",
+        "\u{1F600}\n\u{1F600}",
+    ];
+
+    /// Inserts covering: nothing, plain text, newlines at either end, several
+    /// newlines, both wide-char widths, a multi-line insert carrying wide
+    /// chars, and a CRLF pair.
+    const INSERTS: [&str; 11] = [
+        "",
+        "x",
+        "\n",
+        "\nx",
+        "x\n",
+        "\n\n",
+        "xy",
+        "\u{00e1}",
+        "\u{1F600}",
+        "a\u{00e1}\nb\u{1F600}\n",
+        "\r\n",
+    ];
+
+    #[test]
+    fn apply_edit_matches_rebuild_exhaustively() {
+        for base in BASES {
+            let bounds: Vec<usize> = (0..=base.len())
+                .filter(|&o| base.is_char_boundary(o))
+                .collect();
+            for (i, &start) in bounds.iter().enumerate() {
+                for &end in &bounds[i..] {
+                    for insert in INSERTS {
+                        assert_patch_matches_rebuild(base, start..end, insert);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn apply_edit_sequences_match_rebuild() {
+        // State that is only wrong on the *second* patch — a stale `len`, a tail
+        // shifted twice — survives a single-edit test. Chain three edits and
+        // check against a rebuild after every step.
+        type Recipe = fn(&str) -> (std::ops::Range<usize>, &'static str);
+        let recipes: [Recipe; 6] = [
+            |_| (0..0, "\n"),
+            |t| (t.len()..t.len(), "x"),
+            // Delete the first line, newline included, if there is one.
+            |t| (0..t.find('\n').map_or(0, |i| i + 1), ""),
+            // Delete the last byte, snapped to a char boundary.
+            |t| {
+                let mut at = t.len();
+                while at > 0 && !t.is_char_boundary(at - 1) {
+                    at -= 1;
+                }
+                (at.saturating_sub(1)..t.len(), "")
+            },
+            // Replace the middle byte with a wide char.
+            |t| {
+                let mut at = t.len() / 2;
+                while !t.is_char_boundary(at) {
+                    at -= 1;
+                }
+                (at..at, "\u{00e1}")
+            },
+            |t| {
+                let mut at = t.len() / 2;
+                while !t.is_char_boundary(at) {
+                    at -= 1;
+                }
+                (at..at, "p\nq\n")
+            },
+        ];
+
+        for base in ["ab\ncd\nef\n", "\u{1F600}x\n\u{00e1}", ""] {
+            for a in recipes {
+                for b in recipes {
+                    for c in recipes {
+                        let mut text = base.to_string();
+                        let mut index = LineIndex::new(&text);
+                        for step in [a, b, c] {
+                            let (range, insert) = step(&text);
+                            index.apply_edit(range.clone(), insert);
+                            text.replace_range(range, insert);
+                            index.assert_canonical();
+                            assert_eq!(index, LineIndex::new(&text), "after {text:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn apply_edit_no_op_leaves_the_index_untouched() {
+        let before = LineIndex::new("ab\ncd\n");
+        let mut after = before.clone();
+        after.apply_edit(3..3, "");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn apply_edit_pure_insert_and_pure_delete() {
+        assert_patch_matches_rebuild("ab\ncd", 2..2, "XY");
+        assert_patch_matches_rebuild("ab\ncd", 1..3, "");
+    }
+
+    #[test]
+    fn apply_edit_at_the_buffer_end() {
+        assert_patch_matches_rebuild("ab\ncd", 5..5, "e");
+        // Appending after a trailing newline starts a new line.
+        assert_patch_matches_rebuild("ab\n", 3..3, "c");
+    }
+
+    #[test]
+    fn apply_edit_deleting_the_trailing_newline() {
+        assert_patch_matches_rebuild("ab\ncd\n", 5..6, "");
+    }
+
+    #[test]
+    fn apply_edit_inserting_a_newline_at_offset_zero() {
+        assert_patch_matches_rebuild("ab\ncd", 0..0, "\n");
+    }
+
+    #[test]
+    fn apply_edit_deleting_from_zero_across_a_newline() {
+        assert_patch_matches_rebuild("ab\ncd\nef", 0..4, "");
+    }
+
+    #[test]
+    fn apply_edit_spanning_several_newlines() {
+        assert_patch_matches_rebuild("a\nb\nc\nd\ne", 1..7, "Z");
+    }
+
+    #[test]
+    fn apply_edit_multi_line_paste() {
+        assert_patch_matches_rebuild("ab\ncd", 2..2, "1\n2\n3\n4");
+    }
+
+    #[test]
+    fn apply_edit_swapping_wide_chars_and_ascii() {
+        // A wide char replaced by ASCII, and the reverse: the wide-char run
+        // splices out or in while the tail shifts by a different byte delta.
+        assert_patch_matches_rebuild("a\u{1F600}b\n\u{00e1}c", 1..5, "z");
+        assert_patch_matches_rebuild("azb\n\u{00e1}c", 1..2, "\u{1F600}");
+    }
+
+    #[test]
+    fn apply_edit_keeps_crlf_line_starts() {
+        // Only `\n` starts a line; `\r` is an ordinary byte in both producers.
+        assert_patch_matches_rebuild("a\r\nb", 1..1, "\r\n");
     }
 }
