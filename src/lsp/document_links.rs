@@ -18,11 +18,23 @@ pub fn compute_document_links(
     file_size_limit: u64,
     encoding: PositionEncoding,
 ) -> Vec<DocumentLink> {
+    compute_document_links_in(&TextBuffer::from(text), base_dir, file_size_limit, encoding)
+}
+
+/// [`compute_document_links`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_document_links_in(
+    buffer: &TextBuffer,
+    base_dir: Option<&Path>,
+    file_size_limit: u64,
+    encoding: PositionEncoding,
+) -> Vec<DocumentLink> {
+    let text = buffer.text();
     if text.len() as u64 > file_size_limit {
         return Vec::new();
     }
     let root = parse(text).cst;
-    let line_index = LineIndex::new(text);
+    let line_index = buffer.line_index();
     collect_link_literals(&root)
         .into_iter()
         .filter_map(|literal| {
@@ -38,7 +50,7 @@ pub fn compute_document_links(
             }
             let target = uri::from_path(&target_path)?;
             Some(DocumentLink {
-                range: text_range_to_lsp_range(&line_index, literal.literal_range, encoding),
+                range: text_range_to_lsp_range(line_index, literal.literal_range, encoding),
                 target: Some(target),
                 tooltip: None,
                 data: None,

@@ -654,7 +654,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let symbols = compute_document_symbols(buffer.text(), encoding);
+            let symbols = compute_document_symbols_in(&buffer, encoding);
             let response = DocumentSymbolResponse::Nested(symbols);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
         });
@@ -678,7 +678,7 @@ impl GlobalState {
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
         self.read_spawner.spawn(move || {
-            let ranges = compute_folding_ranges(buffer.text());
+            let ranges = compute_folding_ranges_in(&buffer);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, ranges)));
         });
     }
@@ -704,7 +704,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let ranges = compute_selection_ranges(buffer.text(), &positions, encoding);
+            let ranges = compute_selection_ranges_in(&buffer, &positions, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, ranges)));
         });
     }
@@ -732,7 +732,7 @@ impl GlobalState {
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
             let links =
-                compute_document_links(buffer.text(), base_dir.as_deref(), size_limit, encoding);
+                compute_document_links_in(&buffer, base_dir.as_deref(), size_limit, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, links)));
         });
     }
@@ -756,7 +756,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let colors = compute_document_colors(buffer.text(), encoding);
+            let colors = compute_document_colors_in(&buffer, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, colors)));
         });
     }
@@ -782,7 +782,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let presentations = compute_color_presentations(buffer.text(), &color, range, encoding);
+            let presentations = compute_color_presentations_in(&buffer, &color, range, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, presentations)));
         });
     }
@@ -808,7 +808,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let tokens = compute_semantic_tokens(buffer.text(), encoding);
+            let tokens = compute_semantic_tokens_in(&buffer, encoding);
             let result = SemanticTokensResult::Tokens(tokens);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         });

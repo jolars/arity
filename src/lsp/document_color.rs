@@ -98,13 +98,22 @@ fn color_of_content(content: &str) -> Option<Rgba> {
 /// is a recognized hex or named color. A pure CST walk — no semantic model, no
 /// workspace snapshot — so it runs straight on the read pool.
 pub fn compute_document_colors(text: &str, encoding: PositionEncoding) -> Vec<ColorInformation> {
-    let root = parse(text).cst;
-    let line_index = LineIndex::new(text);
+    compute_document_colors_in(&TextBuffer::from(text), encoding)
+}
+
+/// [`compute_document_colors`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_document_colors_in(
+    buffer: &TextBuffer,
+    encoding: PositionEncoding,
+) -> Vec<ColorInformation> {
+    let root = parse(buffer.text()).cst;
+    let line_index = buffer.line_index();
     collect_string_literals(&root)
         .into_iter()
         .filter_map(|literal| {
             let rgba = color_of_content(&literal.spelling)?;
-            let range = text_range_to_lsp_range(&line_index, literal.literal_range, encoding);
+            let range = text_range_to_lsp_range(line_index, literal.literal_range, encoding);
             // Editors draw the swatch on a single line; skip any literal that
             // straddles a newline (e.g. a multi-line raw string).
             (range.start.line == range.end.line).then(|| ColorInformation {
@@ -130,7 +139,19 @@ pub fn compute_color_presentations(
     range: Range,
     encoding: PositionEncoding,
 ) -> Vec<ColorPresentation> {
-    let line_index = LineIndex::new(text);
+    compute_color_presentations_in(&TextBuffer::from(text), color, range, encoding)
+}
+
+/// [`compute_color_presentations`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_color_presentations_in(
+    buffer: &TextBuffer,
+    color: &Color,
+    range: Range,
+    encoding: PositionEncoding,
+) -> Vec<ColorPresentation> {
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let start = line_index.position_to_byte(range.start, encoding);
     let quote = if text.as_bytes().get(start) == Some(&b'\'') {
         '\''

@@ -70,10 +70,20 @@ pub(crate) fn semantic_tokens_legend() -> SemanticTokensLegend {
 /// structural shapes the model doesn't record as reads (callees, `::`/`$`
 /// operands, arg names), then plain reads via scope resolution.
 pub fn compute_semantic_tokens(text: &str, encoding: PositionEncoding) -> SemanticTokens {
+    compute_semantic_tokens_in(&TextBuffer::from(text), encoding)
+}
+
+/// [`compute_semantic_tokens`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_semantic_tokens_in(
+    buffer: &TextBuffer,
+    encoding: PositionEncoding,
+) -> SemanticTokens {
+    let text = buffer.text();
     let parsed = parse(text);
     let root = &parsed.cst;
     let model = SemanticModel::build(root);
-    let line_index = LineIndex::new(text);
+    let line_index = buffer.line_index();
 
     // Definition sites, keyed by the defining identifier's range.
     let mut def_kinds: HashMap<TextRange, TokKind> = HashMap::new();
@@ -139,7 +149,7 @@ pub fn compute_semantic_tokens(text: &str, encoding: PositionEncoding) -> Semant
         }
     }
 
-    encode(&line_index, &raw, encoding)
+    encode(line_index, &raw, encoding)
 }
 
 /// Whether `name` is a dot-dot identifier (`...`, `..1`) — lexed as IDENT but

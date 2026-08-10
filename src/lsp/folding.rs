@@ -10,8 +10,15 @@ use super::*;
 /// single-line constructs never fold. Comment runs (two or more standalone
 /// comment lines on consecutive lines) fold under [`FoldingRangeKind::Comment`].
 pub fn compute_folding_ranges(text: &str) -> Vec<FoldingRange> {
+    compute_folding_ranges_in(&TextBuffer::from(text))
+}
+
+/// [`compute_folding_ranges`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_folding_ranges_in(buffer: &TextBuffer) -> Vec<FoldingRange> {
+    let text = buffer.text();
     let root = parse(text).cst;
-    let line_index = LineIndex::new(text);
+    let line_index = buffer.line_index();
     let line_of = |offset: TextSize| line_index.byte_to_line(u32::from(offset) as usize);
     let mut ranges = Vec::new();
 

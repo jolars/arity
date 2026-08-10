@@ -14,8 +14,19 @@ pub fn compute_selection_ranges(
     positions: &[Position],
     encoding: PositionEncoding,
 ) -> Vec<SelectionRange> {
+    compute_selection_ranges_in(&TextBuffer::from(text), positions, encoding)
+}
+
+/// [`compute_selection_ranges`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_selection_ranges_in(
+    buffer: &TextBuffer,
+    positions: &[Position],
+    encoding: PositionEncoding,
+) -> Vec<SelectionRange> {
+    let text = buffer.text();
     let root = parse(text).cst;
-    let line_index = LineIndex::new(text);
+    let line_index = buffer.line_index();
     positions
         .iter()
         .map(|&position| {
@@ -24,7 +35,7 @@ pub fn compute_selection_ranges(
                     .position_to_byte(position, encoding)
                     .min(text.len()) as u32,
             );
-            selection_range_at(&root, &line_index, offset, encoding)
+            selection_range_at(&root, line_index, offset, encoding)
         })
         .collect()
 }

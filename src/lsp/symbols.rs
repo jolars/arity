@@ -11,6 +11,16 @@ use super::*;
 /// spans. Best-effort, with no clean-parse gate (an outline of partial input is
 /// still useful).
 pub fn compute_document_symbols(text: &str, encoding: PositionEncoding) -> Vec<DocumentSymbol> {
+    compute_document_symbols_in(&TextBuffer::from(text), encoding)
+}
+
+/// [`compute_document_symbols`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_document_symbols_in(
+    buffer: &TextBuffer,
+    encoding: PositionEncoding,
+) -> Vec<DocumentSymbol> {
+    let text = buffer.text();
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
     // Name keyed by the defining identifier's span: an assignment is a symbol iff
@@ -22,9 +32,9 @@ pub fn compute_document_symbols(text: &str, encoding: PositionEncoding) -> Vec<D
         .filter(|b| matches!(b.kind, BindingKind::Local | BindingKind::Implicit))
         .map(|b| (b.def_range, b.name.clone()))
         .collect();
-    let line_index = LineIndex::new(text);
+    let line_index = buffer.line_index();
     let mut symbols = Vec::new();
-    collect_document_symbols(&root, &bindings, &line_index, &mut symbols, encoding);
+    collect_document_symbols(&root, &bindings, line_index, &mut symbols, encoding);
     symbols
 }
 
