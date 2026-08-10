@@ -153,6 +153,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "clapdown",
+ "criterion",
  "crossbeam-channel",
  "env_logger",
  "flate2",

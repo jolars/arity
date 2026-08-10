@@ -65,7 +65,14 @@ toml = "1.1.2"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = [
+  "cargo_bench_support",
+] }
 insta = "1.47.2"
+
+[[bench]]
+name = "line_index"
+harness = false
 
 [build-dependencies]
 clap = { version = "4.6.1", features = ["derive"] }

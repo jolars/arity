@@ -138,6 +138,11 @@ tasks:
     cmds:
       - cargo bench -p arity-parser --bench parse
 
+  bench-line-index:
+    desc: Benchmark line-index build, patch, and conversion speed (criterion)
+    cmds:
+      - cargo bench --bench line_index
+
   docs-gen:
     desc: Regenerate generated mdBook pages (CLI reference + rule docs)
     cmds:
