@@ -565,6 +565,143 @@ fn incremental_multi_cursor_change_reparses_and_diagnoses() {
 }
 
 #[test]
+fn incremental_did_change_applies_utf16_ranged_edit() {
+    // The ranged-edit tests above are pure ASCII, where a UTF-16 `character`
+    // happens to equal a byte offset. Put a 2-byte and a 4-byte char before the
+    // edit site so the two disagree: `x<-"é😀"` is 11 bytes but 8 UTF-16 units.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "x<-\"\u{00e1}\u{1F600}\"\ny<-2\n", 1);
+    // Line 0 in UTF-16 units: x(0) <(1) -(2) "(3) á(4) 😀(5..7) "(7).
+    // Replacing 4..7 covers both wide chars, i.e. bytes 4..10.
+    h.did_change_raw(
+        uri,
+        2,
+        json!([{
+            "range": { "start": { "line": 0, "character": 4 },
+                       "end": { "line": 0, "character": 7 } },
+            "text": "z"
+        }]),
+    );
+    assert_eq!(h.formatted_buffer(uri), "x <- \"z\"\ny <- 2\n");
+    h.shutdown();
+}
+
+#[test]
+fn incremental_did_change_across_a_wide_char_boundary() {
+    // A range starting *inside* a surrogate pair must clamp to the char's start
+    // rather than splitting it — splitting would panic the buffer splice.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "x<-\"\u{00e1}\u{1F600}\"\n", 1);
+    // 😀 occupies UTF-16 units 5 and 6, so 6 is its trailing surrogate.
+    h.did_change_raw(
+        uri,
+        2,
+        json!([{
+            "range": { "start": { "line": 0, "character": 6 },
+                       "end": { "line": 0, "character": 7 } },
+            "text": "Q"
+        }]),
+    );
+    assert_eq!(h.formatted_buffer(uri), "x <- \"\u{00e1}Q\"\n");
+    h.shutdown();
+}
+
+#[test]
+fn incremental_did_change_inserting_a_wide_char_shifts_later_positions() {
+    // Two changes in one batch where the first *introduces* wide chars and the
+    // second addresses a UTF-16 column after them on the same line. The second
+    // change resolves correctly only if the wide chars the first inserted were
+    // recorded — a buffer that tracked line starts alone would land on the
+    // wrong byte here.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    // The `x<-` prefix keeps the buffer un-canonical, so formatting always
+    // yields an edit to read the stored text back from.
+    h.did_open(uri, "x<-c(\"a\", \"bb\")\n", 1);
+    h.did_change_raw(
+        uri,
+        2,
+        json!([
+            // `a` (UTF-16 6..7) becomes `á😀`: the line grows by 5 bytes but
+            // only 2 UTF-16 units.
+            { "range": { "start": { "line": 0, "character": 6 },
+                         "end": { "line": 0, "character": 7 } },
+              "text": "\u{00e1}\u{1F600}" },
+            // `bb` now sits at UTF-16 13..15, which is bytes 16..18 — the two
+            // differ only because the wide chars above were recorded.
+            { "range": { "start": { "line": 0, "character": 13 },
+                         "end": { "line": 0, "character": 15 } },
+              "text": "z" }
+        ]),
+    );
+    assert_eq!(
+        h.formatted_buffer(uri),
+        "x <- c(\"\u{00e1}\u{1F600}\", \"z\")\n"
+    );
+    h.shutdown();
+}
+
+#[test]
+fn incremental_did_change_coerces_an_inverted_range() {
+    // An inverted client range used to panic the buffer splice. The main loop's
+    // per-message `catch_unwind` kept the server alive, so the failure was
+    // invisible — but the whole notification was abandoned, leaving the buffer
+    // *and its version* behind what the client believes it sent.
+    //
+    // The range is coerced instead: the end collapses onto the start, making
+    // this an insertion at the start offset, and the change is applied.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "x<-1\ny<-2\n", 1);
+    // Start is line 1 char 3 (byte 8, at the `2`); end is line 0 char 1 (byte 1).
+    h.did_change_raw(
+        uri,
+        2,
+        json!([{
+            "range": { "start": { "line": 1, "character": 3 },
+                       "end": { "line": 0, "character": 1 } },
+            "text": "9"
+        }]),
+    );
+    assert_eq!(h.formatted_buffer(uri), "x <- 1\ny <- 92\n");
+    h.shutdown();
+}
+
+#[test]
+fn full_replacement_after_ranged_edits_reseeds_the_buffer() {
+    // A `range: None` change following ranged ones takes the `edits.clear()` /
+    // `precise = false` path and reseeds the whole buffer.
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "x<-1\n", 1);
+    h.did_change_raw(
+        uri,
+        2,
+        json!([
+            { "range": { "start": { "line": 0, "character": 3 },
+                         "end": { "line": 0, "character": 4 } },
+              "text": "42" },
+            { "text": "z<-\"\u{1F600}\"\n" }
+        ]),
+    );
+    assert_eq!(h.formatted_buffer(uri), "z <- \"\u{1F600}\"\n");
+    // A ranged edit against the reseeded buffer still resolves correctly.
+    h.did_change_raw(
+        uri,
+        3,
+        json!([{
+            "range": { "start": { "line": 0, "character": 0 },
+                       "end": { "line": 0, "character": 1 } },
+            "text": "w"
+        }]),
+    );
+    assert_eq!(h.formatted_buffer(uri), "w <- \"\u{1F600}\"\n");
+    h.shutdown();
+}
+
+#[test]
 fn rename_anchor_reanchors_across_disjoint_edits_via_precise_slice() {
     // prepareRename stashes an anchor on the function-local `value` (kept local so
     // the rename stays intra-file — a file-scope binding would need a seeded

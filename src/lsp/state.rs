@@ -1,9 +1,34 @@
 use super::*;
 
+/// An open document: the live buffer plus the version the client last sent.
+///
+/// The buffer is shared — reads and lints clone the `Arc`, never the text — and
+/// is **immutable once shared**: [`Document::apply_edit`] mutates only a
+/// uniquely-owned buffer, so an in-flight read observes exactly the bytes of
+/// the version it was dispatched at. `version` sits outside the `Arc` because
+/// the staleness gate compares it, not the contents.
 #[derive(Debug, Clone)]
 pub(crate) struct Document {
-    text: String,
+    buffer: Arc<TextBuffer>,
     version: i32,
+}
+
+impl Document {
+    fn new(text: String, version: i32) -> Self {
+        Self {
+            buffer: Arc::new(TextBuffer::new(text)),
+            version,
+        }
+    }
+
+    /// Splice `range` -> `insert` into the buffer, patching its line index.
+    ///
+    /// `Arc::make_mut` copies only while the buffer is still shared, so a
+    /// `didChange` batch pays at most one copy: the first change unshares it and
+    /// the rest splice in place (the main loop is the only writer).
+    fn apply_edit(&mut self, range: std::ops::Range<usize>, insert: &str) {
+        Arc::make_mut(&mut self.buffer).apply_edit(range, insert);
+    }
 }
 
 /// A `textDocument/diagnostic` request awaiting fresh findings: the buffer had no
@@ -271,11 +296,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -288,7 +309,7 @@ impl GlobalState {
         self.dispatch_read(ReadJob::Format {
             id,
             path,
-            text,
+            buffer,
             style: settings.style,
             out: self.out_tx.clone(),
         });
@@ -302,11 +323,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -319,7 +336,7 @@ impl GlobalState {
         self.dispatch_read(ReadJob::FormatRange {
             id,
             path,
-            text,
+            buffer,
             range: params.range,
             style: settings.style,
             out: self.out_tx.clone(),
@@ -333,11 +350,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -354,7 +367,8 @@ impl GlobalState {
         {
             let findings = Arc::clone(findings);
             self.read_spawner.spawn(move || {
-                let actions = code_actions_from_findings(&findings, &text, &uri, range, encoding);
+                let actions =
+                    code_actions_from_findings(&findings, buffer.text(), &uri, range, encoding);
                 let _ = out.send(Outbound::ReadReply(Response::new_ok(id, actions)));
             });
             return;
@@ -368,7 +382,7 @@ impl GlobalState {
             .map(|s| s.lint)
             .unwrap_or_default();
         self.read_spawner.spawn(move || {
-            let actions = compute_code_actions(&text, &path, &lint, &uri, range, encoding);
+            let actions = compute_code_actions(buffer.text(), &path, &lint, &uri, range, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, actions)));
         });
     }
@@ -388,11 +402,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             // Unknown document (never opened, or already closed): an empty report.
             self.respond_diagnostic(id, DiagnosticReport::Full(Vec::new(), None));
             return;
@@ -409,7 +419,8 @@ impl GlobalState {
                     ),
                     DiagnosticReportKind::Full => {
                         let (_, findings) = self.findings.get(&uri).expect("present above");
-                        let items = findings_to_items(findings, &text, self.position_encoding);
+                        let items =
+                            findings_to_items(findings, buffer.text(), self.position_encoding);
                         DiagnosticReport::Full(items, result_id)
                     }
                 };
@@ -439,11 +450,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -452,7 +459,7 @@ impl GlobalState {
         self.dispatch_read(ReadJob::Hover {
             id,
             path,
-            text,
+            buffer,
             position,
             out: self.out_tx.clone(),
         });
@@ -471,11 +478,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -484,7 +487,7 @@ impl GlobalState {
         self.dispatch_read(ReadJob::SignatureHelp {
             id,
             path,
-            text,
+            buffer,
             position,
             out: self.out_tx.clone(),
         });
@@ -501,11 +504,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -514,7 +513,7 @@ impl GlobalState {
         self.dispatch_read(ReadJob::Completion {
             id,
             path,
-            text,
+            buffer,
             position,
             out: self.out_tx.clone(),
         });
@@ -549,11 +548,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -563,7 +558,7 @@ impl GlobalState {
             id,
             path,
             uri,
-            text,
+            buffer,
             position,
             out: self.out_tx.clone(),
         });
@@ -582,11 +577,7 @@ impl GlobalState {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -596,7 +587,7 @@ impl GlobalState {
             id,
             path,
             uri,
-            text,
+            buffer,
             position,
             include_declaration,
             out: self.out_tx.clone(),
@@ -618,11 +609,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -630,15 +617,15 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let line_index = LineIndex::new(&text);
+            let line_index = buffer.line_index();
             let offset = line_index
                 .position_to_byte(position, encoding)
-                .min(text.len());
-            let result = compute_document_highlights(&text, offset).map(|highlights| {
+                .min(buffer.len());
+            let result = compute_document_highlights(buffer.text(), offset).map(|highlights| {
                 highlights
                     .into_iter()
                     .map(|(range, kind)| DocumentHighlight {
-                        range: text_range_to_lsp_range(&line_index, range, encoding),
+                        range: text_range_to_lsp_range(line_index, range, encoding),
                         kind: Some(kind),
                     })
                     .collect::<Vec<_>>()
@@ -659,11 +646,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -671,7 +654,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let symbols = compute_document_symbols(&text, encoding);
+            let symbols = compute_document_symbols(buffer.text(), encoding);
             let response = DocumentSymbolResponse::Nested(symbols);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
         });
@@ -688,18 +671,14 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
         self.register_read(id.clone(), Some((uri, version)));
         let out = self.out_tx.clone();
         self.read_spawner.spawn(move || {
-            let ranges = compute_folding_ranges(&text);
+            let ranges = compute_folding_ranges(buffer.text());
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, ranges)));
         });
     }
@@ -716,11 +695,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -729,7 +704,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let ranges = compute_selection_ranges(&text, &positions, encoding);
+            let ranges = compute_selection_ranges(buffer.text(), &positions, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, ranges)));
         });
     }
@@ -746,11 +721,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -760,7 +731,8 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let links = compute_document_links(&text, base_dir.as_deref(), size_limit, encoding);
+            let links =
+                compute_document_links(buffer.text(), base_dir.as_deref(), size_limit, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, links)));
         });
     }
@@ -776,11 +748,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -788,7 +756,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let colors = compute_document_colors(&text, encoding);
+            let colors = compute_document_colors(buffer.text(), encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, colors)));
         });
     }
@@ -805,7 +773,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+        let Some(buffer) = self.doc_snapshot(&uri).map(|(buffer, _)| buffer) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -814,7 +782,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let presentations = compute_color_presentations(&text, &color, range, encoding);
+            let presentations = compute_color_presentations(buffer.text(), &color, range, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, presentations)));
         });
     }
@@ -832,11 +800,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -844,7 +808,7 @@ impl GlobalState {
         let out = self.out_tx.clone();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let tokens = compute_semantic_tokens(&text, encoding);
+            let tokens = compute_semantic_tokens(buffer.text(), encoding);
             let result = SemanticTokensResult::Tokens(tokens);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         });
@@ -864,16 +828,16 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some(text) = self.documents.get(&uri).map(|d| d.text.clone()) else {
+        let Some(buffer) = self.doc_snapshot(&uri).map(|(buffer, _)| buffer) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
         let encoding = self.position_encoding;
-        let line_index = LineIndex::new(&text);
+        let line_index = buffer.line_index();
         let offset = line_index
             .position_to_byte(params.position, encoding)
-            .min(text.len());
-        match compute_prepare_rename(&text, offset, encoding) {
+            .min(buffer.len());
+        match compute_prepare_rename(buffer.text(), offset, encoding) {
             Some(prepared) => {
                 self.rename_anchors.insert(uri, prepared.anchor);
                 let response = PrepareRenameResponse::RangeWithPlaceholder {
@@ -905,11 +869,7 @@ impl GlobalState {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let new_name = params.new_name;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -918,12 +878,12 @@ impl GlobalState {
         let offset = self
             .rename_anchors
             .get(&uri)
-            .and_then(|anchor| rename_cursor_offset(&text, anchor))
+            .and_then(|anchor| rename_cursor_offset(buffer.text(), anchor))
             .unwrap_or_else(|| {
-                let line_index = LineIndex::new(&text);
+                let line_index = buffer.line_index();
                 line_index
                     .position_to_byte(position, encoding)
-                    .min(text.len())
+                    .min(buffer.len())
             });
         // A rename consumes its anchor; a fresh prepare precedes any next rename.
         self.rename_anchors.remove(&uri);
@@ -934,7 +894,7 @@ impl GlobalState {
             id,
             path,
             uri,
-            text,
+            buffer,
             offset,
             new_name,
             out: self.out_tx.clone(),
@@ -999,11 +959,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -1013,7 +969,7 @@ impl GlobalState {
             id,
             path,
             uri,
-            text,
+            buffer,
             position,
             out: self.out_tx.clone(),
         });
@@ -1072,11 +1028,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((text, version)) = self
-            .documents
-            .get(&uri)
-            .map(|d| (d.text.clone(), d.version))
-        else {
+        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -1086,7 +1038,7 @@ impl GlobalState {
             id,
             path,
             uri,
-            text,
+            buffer,
             position,
             out: self.out_tx.clone(),
         });
@@ -1170,10 +1122,7 @@ impl GlobalState {
                     let uri = params.text_document.uri;
                     self.documents.insert(
                         uri.clone(),
-                        Document {
-                            text: params.text_document.text,
-                            version: params.text_document.version,
-                        },
+                        Document::new(params.text_document.text, params.text_document.version),
                     );
                     self.send_lint(uri, Vec::new());
                 }
@@ -1202,13 +1151,8 @@ impl GlobalState {
                     for change in params.content_changes {
                         match change.range {
                             None => {
-                                self.documents.insert(
-                                    uri.clone(),
-                                    Document {
-                                        text: change.text,
-                                        version,
-                                    },
-                                );
+                                self.documents
+                                    .insert(uri.clone(), Document::new(change.text, version));
                                 applied = true;
                                 precise = false;
                                 edits.clear();
@@ -1218,14 +1162,19 @@ impl GlobalState {
                                 // splice into; without one (a change before open)
                                 // there is nothing to edit, so skip it.
                                 if let Some(doc) = self.documents.get_mut(&uri) {
-                                    // Re-index per change: an earlier change in the
-                                    // batch can shift line offsets, and each range
-                                    // is against the text its predecessors left.
-                                    let line_index = LineIndex::new(&doc.text);
-                                    let start = line_index.position_to_byte(range.start, encoding);
-                                    let end = line_index.position_to_byte(range.end, encoding);
+                                    // Each range is against the text its
+                                    // predecessors in this batch left, and the
+                                    // buffer's index is patched in step with
+                                    // them — so resolve against it directly
+                                    // rather than re-scanning per change.
+                                    let index = doc.buffer.line_index();
+                                    let start = index.position_to_byte(range.start, encoding);
+                                    let end = index.position_to_byte(range.end, encoding);
                                     let insert = change.text;
-                                    doc.text.replace_range(start..end, &insert);
+                                    // Resolve and record the byte range *before*
+                                    // editing: the rename anchor replays these
+                                    // against the pre-edit buffer.
+                                    doc.apply_edit(start..end, &insert);
                                     applied = true;
                                     if precise {
                                         edits.push(Edit {
@@ -1505,7 +1454,7 @@ impl GlobalState {
         let Some(doc) = self.documents.get(&uri) else {
             return;
         };
-        let text = doc.text.clone();
+        let lint_text = doc.buffer.text().to_string();
         let version = doc.version;
         let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
         let (lint_config, index_config) = match self.resolve_settings(&uri) {
@@ -1515,12 +1464,20 @@ impl GlobalState {
         let _ = self.lint_tx.send(LintMsg::Request(Box::new(LintRequest {
             uri,
             path,
-            text,
+            text: lint_text,
             edits,
             version,
             lint_config,
             index_config,
         })));
+    }
+
+    /// The live buffer and version for `uri`, if it is open. Reads clone the
+    /// `Arc`, never the text.
+    fn doc_snapshot(&self, uri: &Uri) -> Option<(Arc<TextBuffer>, i32)> {
+        self.documents
+            .get(uri)
+            .map(|d| (Arc::clone(&d.buffer), d.version))
     }
 
     fn resolve_settings(&mut self, uri: &Uri) -> Result<ResolvedSettings, ConfigResolveError> {
@@ -1849,13 +1806,9 @@ mod cancellation_gate {
         // The read was dispatched against version 1...
         state.register_read(id.clone(), Some((uri.clone(), 1)));
         // ...but the buffer has since advanced to version 2.
-        state.documents.insert(
-            uri,
-            Document {
-                text: "y <- 2\n".to_string(),
-                version: 2,
-            },
-        );
+        state
+            .documents
+            .insert(uri, Document::new("y <- 2\n".to_string(), 2));
 
         state.on_read_reply(Response::new_ok(id.clone(), serde_json::Value::Null));
 
@@ -1874,13 +1827,9 @@ mod cancellation_gate {
         let uri = doc_uri();
         let id = RequestId::from(1);
         state.register_read(id.clone(), Some((uri.clone(), 1)));
-        state.documents.insert(
-            uri,
-            Document {
-                text: "x <- 1\n".to_string(),
-                version: 1,
-            },
-        );
+        state
+            .documents
+            .insert(uri, Document::new("x <- 1\n".to_string(), 1));
 
         state.on_read_reply(Response::new_ok(id.clone(), serde_json::json!("ok")));
 
@@ -1983,13 +1932,9 @@ mod cancellation_gate {
         };
         let uri = doc_uri();
         let version = 1;
-        state.documents.insert(
-            uri.clone(),
-            Document {
-                text: "x <- 1\n".to_string(),
-                version,
-            },
-        );
+        state
+            .documents
+            .insert(uri.clone(), Document::new("x <- 1\n".to_string(), version));
         let findings = Arc::new(findings);
         let result_id = content_result_id(&findings);
         let req_id = RequestId::from(42);

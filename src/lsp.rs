@@ -151,7 +151,7 @@ use crate::rindex::remote::{RemoteExports, Sidecar};
 use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
 use crate::semantic::{BindingId, BindingKind, PackageOrigin, ScopeId, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
-use crate::text::{LineIndex, PositionEncoding};
+use crate::text::{LineIndex, PositionEncoding, TextBuffer};
 use task_pool::{Spawner, TaskPool, read_pool_size};
 
 mod call_hierarchy;
