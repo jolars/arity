@@ -392,5 +392,51 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     actually need it. Lower leverage for a single-crate tool (the wart
     is already gone).
 
+### Performance
+
+- [ ] **Maintain the line index across edits instead of rebuilding it.**
+  `LineIndex::new` is linear in the *document*, not in the edit, and the live
+  buffer pays it repeatedly: once per ranged change inside the `didChange` loop
+  on the main loop (`src/lsp/state.rs`, the `Some(range)` arm), then again in
+  every handler that answers against the buffer (`definition_via_db` and the
+  rest of `src/lsp/navigation.rs`, `semantic_tokens.rs`, `document_color.rs`,
+  `document_links.rs`, `type_hierarchy.rs`). `src/lsp/state.rs` also does
+  `d.text.clone()` per read request, copying the whole buffer.
+
+  Measured on a repeated `tests/oracle/roxygen_oracle.R` (machine under load, so
+  upper bounds): 22 us at 16 KB, 162 us at 130 KB, 1259 us at 1 MB. Our builder
+  is heavier than it needs to be—`char_indices()` plus a `HashMap`, where a
+  `memchr` scan over line starts would do most of the work.
+
+  fatou fixed the same thing (its issue #76, commits `6f949d5` + `a054ecf`): a
+  `TextBuffer` holds the text next to its line-start table and *patches* the
+  table per edit—starts at or before the edit are untouched, those inside the
+  replaced span splice out, the tail shifts by the byte delta—and an open
+  document is an `Arc<TextBuffer>` shared with the analysis thread and every
+  read job, so nobody rescans and nobody copies the text. That took a keystroke
+  on a 1 MB buffer from ~690 us to ~4 us. See `benches/line_index.rs` there for
+  the harness, and the rule note in fatou's `.claude/rules/lsp.md`.
+
+  Two things make it more than a copy-paste here:
+
+  - We are already ahead on the *other* half: `line_index` is a salsa tracked
+    query returning an owned, `Eq` index (`src/incremental.rs`), so db-routed
+    consumers do not rescan and a line-structure-preserving edit backdates the
+    query. fatou has no equivalent. So what is actually missing is the
+    patch-on-edit half, plus routing the live-buffer handlers through the
+    buffer.
+  - Our wide-char table is a `HashMap<usize, Vec<WideChar>>` keyed by line
+    number, so inserting a line renumbers every later key—not the flat-`Vec`
+    splice fatou patches. Either re-key the tail, or move wide chars into a
+    `Vec` parallel to `line_starts` so the two splice together. R is nearly all
+    ASCII (56 wide chars in that 130 KB file), so the table is nearly empty
+    either way.
+
+  Worth sizing before doing: the number that made fatou's case was the rescan
+  measured against the *incremental reparse it precedes*. That ratio is unknown
+  here, and R files are typically small—the largest in this tree is 16 KB, where
+  22 us is below anything a user perceives. The win only shows up on 100 KB+
+  files (generated code, large Shiny apps).
+
 ## Misc
 
