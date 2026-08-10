@@ -66,6 +66,7 @@ TMB
 TSP
 TTR
 V8
+WGCNA
 XML
 abind
 ade4
@@ -107,6 +108,7 @@ caret
 cellranger
 checkmate
 chromote
+chron
 circlize
 class
 classInt
@@ -429,6 +431,7 @@ rstanarm
 rstantools
 rstatix
 rstudioapi
+rsvg
 rugarch
 rversions
 rvest
@@ -466,6 +469,7 @@ sp
 spData
 spam
 sparsevctrs
+spatial
 spatstat.data
 spatstat.explore
 spatstat.geom
