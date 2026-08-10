@@ -1454,7 +1454,7 @@ impl GlobalState {
         let Some(doc) = self.documents.get(&uri) else {
             return;
         };
-        let lint_text = doc.buffer.text().to_string();
+        let buffer = Arc::clone(&doc.buffer);
         let version = doc.version;
         let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
         let (lint_config, index_config) = match self.resolve_settings(&uri) {
@@ -1464,7 +1464,7 @@ impl GlobalState {
         let _ = self.lint_tx.send(LintMsg::Request(Box::new(LintRequest {
             uri,
             path,
-            text: lint_text,
+            buffer,
             edits,
             version,
             lint_config,

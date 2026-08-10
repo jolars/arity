@@ -4,7 +4,7 @@ use super::*;
 pub(crate) struct LintRequest {
     pub(crate) uri: Uri,
     pub(crate) path: PathBuf,
-    pub(crate) text: String,
+    pub(crate) buffer: Arc<TextBuffer>,
     /// Precise per-change edits transforming the *previously sent* buffer into
     /// `text` (Stage B), in application order. Threaded to `parsed_document` for
     /// a precise multi-edit reparse; empty means "no hint, use `diff_edit`". The
@@ -465,7 +465,9 @@ impl LintWorker {
 
         // Write-phase: push the live buffer + sibling files into the persistent
         // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
-        let active = self.db.upsert_file(&req.path, req.text.clone());
+        let active = self
+            .db
+            .upsert_file(&req.path, req.buffer.text().to_string());
         // Stage the precise per-change edits (Stage B) for the parse this upsert
         // will force below (via `prepare_document_in_project`). Overwrites any
         // unconsumed sequence; `parsed_document` verifies they reconstruct the
@@ -512,11 +514,11 @@ impl LintWorker {
         // `index_attempts`, so it stays on the lint thread; it spawns its own
         // background build, whose result is installed back here on `build_rx`.
         if req.index_config.auto_build {
-            self.maybe_build(&anchor, &req.index_config, &req.text);
+            self.maybe_build(&anchor, &req.index_config, req.buffer.text());
         }
         // Fetch names-only exports for referenced packages the offline tiers don't
         // cover, when a sidecar URL is configured. Background, like `maybe_build`.
-        self.maybe_fetch_remote(&anchor, &req.index_config, &req.text);
+        self.maybe_fetch_remote(&anchor, &req.index_config, req.buffer.text());
 
         // Read-phase on the read pool, holding a db clone. A superseding edit (or any
         // write) trips `salsa::Cancelled`, caught here so a canceled analyze
@@ -526,7 +528,7 @@ impl LintWorker {
         let done_tx = self.done_tx.clone();
         let uri = req.uri.clone();
         let version = req.version;
-        let text = req.text;
+        let buffer = req.buffer;
         self.inflight = Some(InflightAnalyze {
             uri: uri.clone(),
             version,
@@ -542,10 +544,10 @@ impl LintWorker {
                 crate::linter::check::analyze_prepared(&snapshot, &prepared, &fallback)
             }));
             if let Ok(diagnostics) = result {
-                let line_index = LineIndex::new(&text);
+                let line_index = buffer.line_index();
                 let diags: Vec<LspDiagnostic> = diagnostics
                     .iter()
-                    .map(|d| to_lsp_diagnostic(d, &line_index, encoding))
+                    .map(|d| to_lsp_diagnostic(d, line_index, encoding))
                     .collect();
                 let _ = out_tx.send(Outbound::Diagnostics {
                     uri: uri.clone(),
@@ -571,10 +573,10 @@ impl LintWorker {
     fn publish_parse_diagnostics(&self, req: &LintRequest, active: SourceFile) {
         let findings =
             crate::linter::syntax_error_diagnostics(self.db.parse_diagnostics(active), &req.path);
-        let line_index = LineIndex::new(&req.text);
+        let line_index = req.buffer.line_index();
         let diags: Vec<LspDiagnostic> = findings
             .iter()
-            .map(|d| to_lsp_diagnostic(d, &line_index, self.position_encoding))
+            .map(|d| to_lsp_diagnostic(d, line_index, self.position_encoding))
             .collect();
         let _ = self.out_tx.send(Outbound::Diagnostics {
             uri: req.uri.clone(),
