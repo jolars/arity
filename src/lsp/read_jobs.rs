@@ -153,7 +153,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             style,
             out,
         } => {
-            let result = format_edits_via_db(&snapshot, &path, buffer.text(), style, encoding);
+            let result = format_edits_via_db(&snapshot, &path, &buffer, style, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::FormatRange {
@@ -165,7 +165,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             out,
         } => {
             let result =
-                format_range_edits_via_db(&snapshot, &path, buffer.text(), range, style, encoding);
+                format_range_edits_via_db(&snapshot, &path, &buffer, range, style, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Hover {
@@ -175,7 +175,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             position,
             out,
         } => {
-            let result = hover_via_db(&snapshot, &path, buffer.text(), position, encoding);
+            let result = hover_via_db(&snapshot, &path, &buffer, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Completion {
@@ -185,7 +185,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             position,
             out,
         } => {
-            let result = completion_via_db(&snapshot, &path, buffer.text(), position, encoding);
+            let result = completion_via_db(&snapshot, &path, &buffer, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::SignatureHelp {
@@ -195,7 +195,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             position,
             out,
         } => {
-            let result = signature_help_via_db(&snapshot, &path, buffer.text(), position, encoding);
+            let result = signature_help_via_db(&snapshot, &path, &buffer, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::ResolveCompletion { id, item, out } => {
@@ -210,8 +210,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             position,
             out,
         } => {
-            let result =
-                definition_via_db(&snapshot, &path, &uri, buffer.text(), position, encoding);
+            let result = definition_via_db(&snapshot, &path, &uri, &buffer, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::References {
@@ -227,7 +226,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
                 &snapshot,
                 &path,
                 &uri,
-                buffer.text(),
+                &buffer,
                 position,
                 include_declaration,
                 encoding,
@@ -243,15 +242,8 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             new_name,
             out,
         } => {
-            let result = rename_via_db(
-                &snapshot,
-                &path,
-                &uri,
-                buffer.text(),
-                offset,
-                &new_name,
-                encoding,
-            );
+            let result =
+                rename_via_db(&snapshot, &path, &uri, &buffer, offset, &new_name, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::WillRenameFiles { id, renames, out } => {
@@ -271,14 +263,8 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             position,
             out,
         } => {
-            let result = prepare_call_hierarchy_via_db(
-                &snapshot,
-                &path,
-                &uri,
-                buffer.text(),
-                position,
-                encoding,
-            );
+            let result =
+                prepare_call_hierarchy_via_db(&snapshot, &path, &uri, &buffer, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::IncomingCalls { id, item, out } => {
@@ -297,14 +283,8 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             position,
             out,
         } => {
-            let result = prepare_type_hierarchy_via_db(
-                &snapshot,
-                &path,
-                &uri,
-                buffer.text(),
-                position,
-                encoding,
-            );
+            let result =
+                prepare_type_hierarchy_via_db(&snapshot, &path, &uri, &buffer, position, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Supertypes { id, item, out } => {

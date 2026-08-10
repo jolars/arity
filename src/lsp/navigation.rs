@@ -12,11 +12,12 @@ pub(crate) fn definition_via_db(
     snapshot: &Analysis,
     path: &Path,
     uri: &Uri,
-    text: &str,
+    buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
 ) -> Option<GotoDefinitionResponse> {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let offset = TextSize::new(
         line_index
             .position_to_byte(position, encoding)
@@ -29,7 +30,7 @@ pub(crate) fn definition_via_db(
     if let Some(def_range) = definition_local_range(&root, &model, offset) {
         let location = Location {
             uri: uri.clone(),
-            range: text_range_to_lsp_range(&line_index, def_range, encoding),
+            range: text_range_to_lsp_range(line_index, def_range, encoding),
         };
         return Some(GotoDefinitionResponse::Scalar(location));
     }
@@ -96,12 +97,13 @@ pub(crate) fn references_via_db(
     snapshot: &Analysis,
     path: &Path,
     uri: &Uri,
-    text: &str,
+    buffer: &TextBuffer,
     position: Position,
     include_declaration: bool,
     encoding: PositionEncoding,
 ) -> Option<Vec<Location>> {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let offset = TextSize::new(
         line_index
             .position_to_byte(position, encoding)
@@ -117,13 +119,13 @@ pub(crate) fn references_via_db(
             .iter()
             .map(|range| Location {
                 uri: uri.clone(),
-                range: text_range_to_lsp_range(&line_index, *range, encoding),
+                range: text_range_to_lsp_range(line_index, *range, encoding),
             })
             .collect();
         if include_declaration {
             locations.extend(occ.defs.iter().map(|range| Location {
                 uri: uri.clone(),
-                range: text_range_to_lsp_range(&line_index, *range, encoding),
+                range: text_range_to_lsp_range(line_index, *range, encoding),
             }));
         }
         // Cross-file: a top-level binding can be read from files that can see
@@ -206,15 +208,16 @@ pub(crate) fn rename_via_db(
     snapshot: &Analysis,
     path: &Path,
     uri: &Uri,
-    text: &str,
+    buffer: &TextBuffer,
     offset: usize,
     new_name: &str,
     encoding: PositionEncoding,
 ) -> Option<WorkspaceEdit> {
+    let text = buffer.text();
     if !is_syntactic_r_name(new_name) {
         return None;
     }
-    let line_index = LineIndex::new(text);
+    let line_index = buffer.line_index();
     let off = TextSize::new(offset.min(text.len()) as u32);
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
@@ -223,7 +226,7 @@ pub(crate) fn rename_via_db(
 
     // Intra-file: the cursor names a local binding (or sits on its definition).
     if let Some(target) = resolve_local_target(&root, &model, off) {
-        let intra = rename_edits(&model, &target, new_name, &line_index, encoding);
+        let intra = rename_edits(&model, &target, new_name, line_index, encoding);
         // Cross-file: a top-level binding can be free-read from files that can
         // see this one. Scope to that component; refuse if it isn't safe. Nested
         // locals are file-private, so they stay intra-file.
@@ -516,6 +519,17 @@ pub fn compute_prepare_rename(
     offset: usize,
     encoding: PositionEncoding,
 ) -> Option<PreparedRename> {
+    compute_prepare_rename_in(&TextBuffer::from(text), offset, encoding)
+}
+
+/// [`compute_prepare_rename`] against a live buffer, reusing its maintained
+/// line index instead of rebuilding one per request.
+pub(crate) fn compute_prepare_rename_in(
+    buffer: &TextBuffer,
+    offset: usize,
+    encoding: PositionEncoding,
+) -> Option<PreparedRename> {
+    let text = buffer.text();
     let parsed = parse(text);
     if !parsed.diagnostics.is_empty() {
         return None;
@@ -527,7 +541,7 @@ pub fn compute_prepare_rename(
     let token = pick_name_token(&root, off)?;
     let node = token.parent()?;
     let offset_in_node = u32::from(target.range.start()) - u32::from(node.text_range().start());
-    let line_index = LineIndex::new(text);
+    let line_index = buffer.line_index();
     Some(PreparedRename {
         range: Range {
             start: line_index.byte_to_position(usize::from(target.range.start()), encoding),
@@ -905,7 +919,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -942,7 +956,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -975,7 +989,7 @@ mod tests {
             &snapshot,
             &ws_path("b.R"),
             &uri_b,
-            b_src,
+            &buf(b_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1005,7 +1019,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1035,7 +1049,7 @@ mod tests {
             &snapshot,
             &a_path,
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1066,7 +1080,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1097,7 +1111,7 @@ mod tests {
             &snapshot,
             &a_path,
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1183,7 +1197,7 @@ mod tests {
                 &snapshot,
                 &ws_path("a.R"),
                 &uri_a,
-                a_src,
+                &buf(a_src),
                 offset,
                 "renamed",
                 PositionEncoding::Utf16
@@ -1211,7 +1225,7 @@ mod tests {
                 &snapshot,
                 &ws_path("a.R"),
                 &uri_a,
-                a_src,
+                &buf(a_src),
                 offset,
                 "renamed",
                 PositionEncoding::Utf16
@@ -1239,7 +1253,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1267,7 +1281,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1297,7 +1311,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1329,7 +1343,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1360,7 +1374,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1398,7 +1412,7 @@ mod tests {
                 &snapshot,
                 &ws_path("a.R"),
                 &uri_a,
-                a_src,
+                &buf(a_src),
                 offset,
                 "renamed",
                 PositionEncoding::Utf16
@@ -1424,7 +1438,7 @@ mod tests {
             &snapshot,
             &ws_path("b.R"),
             &uri_b,
-            b_src,
+            &buf(b_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1455,7 +1469,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1484,7 +1498,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             position,
             true,
             PositionEncoding::Utf16,
@@ -1523,7 +1537,7 @@ mod tests {
             &snapshot,
             &ws_path("c.R"),
             &uri_c,
-            c_src,
+            &buf(c_src),
             offset,
             "renamed",
             PositionEncoding::Utf16,
@@ -1554,7 +1568,7 @@ mod tests {
                 &snapshot,
                 &ws_path("b.R"),
                 &uri_b,
-                b_src,
+                &buf(b_src),
                 offset,
                 "renamed",
                 PositionEncoding::Utf16
@@ -1579,7 +1593,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             offset,
             "y",
             PositionEncoding::Utf16,
@@ -1609,7 +1623,7 @@ mod tests {
                 &snapshot,
                 &ws_path("a.R"),
                 &uri_a,
-                a_src,
+                &buf(a_src),
                 offset,
                 "new name",
                 PositionEncoding::Utf16,
@@ -1634,7 +1648,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             position,
             true,
             PositionEncoding::Utf16,
@@ -1658,7 +1672,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             position,
             true,
             PositionEncoding::Utf16,
@@ -1682,7 +1696,7 @@ mod tests {
             &snapshot,
             &a_path,
             &uri_a,
-            a_src,
+            &buf(a_src),
             position,
             true,
             PositionEncoding::Utf16,
@@ -1708,7 +1722,7 @@ mod tests {
             &snapshot,
             &ws_path("a.R"),
             &uri_a,
-            a_src,
+            &buf(a_src),
             position,
             true,
             PositionEncoding::Utf16,
@@ -1737,7 +1751,7 @@ mod tests {
             &snapshot,
             &a_path,
             &uri_a,
-            a_src,
+            &buf(a_src),
             position,
             true,
             PositionEncoding::Utf16,
@@ -1775,7 +1789,7 @@ mod tests {
             &snapshot,
             &ws_path("c.R"),
             &uri_c,
-            c_src,
+            &buf(c_src),
             position,
             true,
             PositionEncoding::Utf16,

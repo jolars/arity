@@ -67,11 +67,12 @@ pub(crate) fn prepare_type_hierarchy_via_db(
     snapshot: &Analysis,
     path: &Path,
     uri: &Uri,
-    text: &str,
+    buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let offset = TextSize::new(
         line_index
             .position_to_byte(position, encoding)
@@ -83,7 +84,7 @@ pub(crate) fn prepare_type_hierarchy_via_db(
     let mut items: Vec<TypeHierarchyItem> = Vec::new();
     // Local: the live buffer's own definition (freshest — never a stale copy).
     if let Some(loc) = locate_class_def(&root, &name) {
-        items.push(location_to_item(&name, &loc, uri, &line_index, encoding));
+        items.push(location_to_item(&name, &loc, uri, line_index, encoding));
     }
     // Cross-file: sibling workspace files that define the same class name.
     let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
@@ -168,7 +169,7 @@ mod tests {
             snapshot,
             path,
             &uri,
-            text,
+            &buf(text),
             pos_at(text, offset),
             PositionEncoding::Utf16,
         )

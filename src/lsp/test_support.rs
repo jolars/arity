@@ -267,7 +267,7 @@ pub(crate) fn package_multidef_rename_offered(
         &snapshot,
         &a_path,
         &uri_a,
-        a_src,
+        &buf(a_src),
         offset,
         "renamed",
         PositionEncoding::Utf16,
@@ -279,6 +279,11 @@ pub(crate) fn package_multidef_rename_offered(
 
 pub(crate) fn pos_at(text: &str, offset: usize) -> Position {
     LineIndex::new(text).byte_to_position(offset, PositionEncoding::Utf16)
+}
+
+/// A live buffer over `text`, for the `*_via_db` entry points.
+pub(crate) fn buf(text: &str) -> TextBuffer {
+    TextBuffer::from(text)
 }
 
 /// The set of distinct URIs touched by a reference result.

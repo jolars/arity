@@ -11,21 +11,22 @@ pub fn compute_code_actions(
     encoding: PositionEncoding,
 ) -> CodeActionResponse {
     let diagnostics = crate::linter::check_document(path, text, lint).unwrap_or_default();
-    code_actions_from_findings(&diagnostics, text, uri, range, encoding)
+    code_actions_from_findings(&diagnostics, &TextBuffer::from(text), uri, range, encoding)
 }
 
 /// Build quick-fix code actions from already-computed lint findings, for the
-/// fixes whose diagnostics overlap `range`. `text` must be the source the
+/// fixes whose diagnostics overlap `range`. `buffer` must be the source the
 /// `findings` were produced against (their ranges are byte offsets into it), so
 /// the LSP only serves cached findings when the buffer version still matches.
 pub(crate) fn code_actions_from_findings(
     findings: &[Diagnostic],
-    text: &str,
+    buffer: &TextBuffer,
     uri: &Uri,
     range: Range,
     encoding: PositionEncoding,
 ) -> CodeActionResponse {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
 
     let mut actions: CodeActionResponse = findings
         .iter()
@@ -50,7 +51,7 @@ pub(crate) fn code_actions_from_findings(
             Some(CodeActionOrCommand::CodeAction(CodeAction {
                 title: fix.description.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: Some(vec![to_lsp_diagnostic(d, &line_index, encoding)]),
+                diagnostics: Some(vec![to_lsp_diagnostic(d, line_index, encoding)]),
                 edit: Some(WorkspaceEdit {
                     changes: Some(changes),
                     ..Default::default()

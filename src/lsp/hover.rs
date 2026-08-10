@@ -5,11 +5,12 @@ use super::*;
 pub(crate) fn hover_via_db(
     snapshot: &Analysis,
     path: &Path,
-    text: &str,
+    buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
 ) -> Option<Hover> {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let offset = line_index
         .position_to_byte(position, encoding)
         .min(text.len());
@@ -23,19 +24,13 @@ pub(crate) fn hover_via_db(
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(hover_from_node(
-            &root,
-            &line_index,
-            offset,
-            &index,
-            encoding,
-        ))
+        Some(hover_from_node(&root, line_index, offset, &index, encoding))
     }));
     match cached {
         Ok(Some(hover)) => hover,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            hover_from_node(&root, &line_index, offset, &index, encoding)
+            hover_from_node(&root, line_index, offset, &index, encoding)
         }
     }
 }
@@ -327,8 +322,14 @@ mod tests {
         let mut db = IncrementalDatabase::default();
         db.set_library_index(documented_dplyr());
         db.upsert_file(path, src.to_string());
-        let hover = hover_via_db(&db.snapshot(), path, src, position, PositionEncoding::Utf16)
-            .expect("hover for across via db");
+        let hover = hover_via_db(
+            &db.snapshot(),
+            path,
+            &buf(src),
+            position,
+            PositionEncoding::Utf16,
+        )
+        .expect("hover for across via db");
         let md = match hover.contents {
             HoverContents::Markup(m) => m.value,
             other => panic!("expected markup, got {other:?}"),
@@ -342,7 +343,7 @@ mod tests {
             hover_via_db(
                 &empty.snapshot(),
                 path,
-                src,
+                &buf(src),
                 position,
                 PositionEncoding::Utf16
             )

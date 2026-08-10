@@ -6,11 +6,12 @@ use super::*;
 pub(crate) fn signature_help_via_db(
     snapshot: &Analysis,
     path: &Path,
-    text: &str,
+    buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
 ) -> Option<SignatureHelp> {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let offset = line_index
         .position_to_byte(position, encoding)
         .min(text.len());
@@ -473,9 +474,14 @@ mod tests {
         let mut db = IncrementalDatabase::default();
         db.set_library_index(documented_dplyr());
         db.upsert_file(path, src.to_string());
-        let help =
-            signature_help_via_db(&db.snapshot(), path, src, position, PositionEncoding::Utf16)
-                .expect("signature via db");
+        let help = signature_help_via_db(
+            &db.snapshot(),
+            path,
+            &buf(src),
+            position,
+            PositionEncoding::Utf16,
+        )
+        .expect("signature via db");
         assert_eq!(help.signatures.len(), 1);
 
         // Untracked path still resolves, via the fresh-parse fallback.
@@ -485,7 +491,7 @@ mod tests {
             signature_help_via_db(
                 &empty.snapshot(),
                 path,
-                src,
+                &buf(src),
                 position,
                 PositionEncoding::Utf16
             )

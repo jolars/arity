@@ -70,11 +70,12 @@ struct Candidate {
 pub(crate) fn completion_via_db(
     snapshot: &Analysis,
     path: &Path,
-    text: &str,
+    buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
 ) -> Option<CompletionResponse> {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let offset = TextSize::new(
         line_index
             .position_to_byte(position, encoding)

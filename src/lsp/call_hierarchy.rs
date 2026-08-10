@@ -266,11 +266,12 @@ pub(crate) fn prepare_call_hierarchy_via_db(
     snapshot: &Analysis,
     path: &Path,
     uri: &Uri,
-    text: &str,
+    buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyItem>> {
-    let line_index = LineIndex::new(text);
+    let text = buffer.text();
+    let line_index = buffer.line_index();
     let offset = TextSize::new(
         line_index
             .position_to_byte(position, encoding)
@@ -279,7 +280,7 @@ pub(crate) fn prepare_call_hierarchy_via_db(
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
 
-    if let Some(items) = prepare_local(&root, &model, offset, uri, &line_index, encoding) {
+    if let Some(items) = prepare_local(&root, &model, offset, uri, line_index, encoding) {
         return Some(items);
     }
 
@@ -740,7 +741,7 @@ mod tests {
             snapshot,
             path,
             &uri,
-            text,
+            &buf(text),
             pos_at(text, offset),
             PositionEncoding::Utf16,
         )

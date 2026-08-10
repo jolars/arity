@@ -367,8 +367,7 @@ impl GlobalState {
         {
             let findings = Arc::clone(findings);
             self.read_spawner.spawn(move || {
-                let actions =
-                    code_actions_from_findings(&findings, buffer.text(), &uri, range, encoding);
+                let actions = code_actions_from_findings(&findings, &buffer, &uri, range, encoding);
                 let _ = out.send(Outbound::ReadReply(Response::new_ok(id, actions)));
             });
             return;
@@ -419,8 +418,7 @@ impl GlobalState {
                     ),
                     DiagnosticReportKind::Full => {
                         let (_, findings) = self.findings.get(&uri).expect("present above");
-                        let items =
-                            findings_to_items(findings, buffer.text(), self.position_encoding);
+                        let items = findings_to_items(findings, &buffer, self.position_encoding);
                         DiagnosticReport::Full(items, result_id)
                     }
                 };
@@ -837,7 +835,7 @@ impl GlobalState {
         let offset = line_index
             .position_to_byte(params.position, encoding)
             .min(buffer.len());
-        match compute_prepare_rename(buffer.text(), offset, encoding) {
+        match compute_prepare_rename_in(&buffer, offset, encoding) {
             Some(prepared) => {
                 self.rename_anchors.insert(uri, prepared.anchor);
                 let response = PrepareRenameResponse::RangeWithPlaceholder {
