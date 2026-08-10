@@ -394,49 +394,41 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 
 ### Performance
 
-- [ ] **Maintain the line index across edits instead of rebuilding it.**
-  `LineIndex::new` is linear in the *document*, not in the edit, and the live
-  buffer pays it repeatedly: once per ranged change inside the `didChange` loop
-  on the main loop (`src/lsp/state.rs`, the `Some(range)` arm), then again in
-  every handler that answers against the buffer (`definition_via_db` and the
-  rest of `src/lsp/navigation.rs`, `semantic_tokens.rs`, `document_color.rs`,
-  `document_links.rs`, `type_hierarchy.rs`). `src/lsp/state.rs` also does
-  `d.text.clone()` per read request, copying the whole buffer.
+- [x] **Maintain the line index across edits instead of rebuilding it.** Done.
+  An open document is now an `Arc<TextBuffer>` (`src/text/buffer.rs`) holding
+  the text next to a `LineIndex` that `apply_edit` *splices* per edit, shared
+  with the lint thread and every read job. `LineIndex` keys wide chars by
+  absolute offset in a flat `Vec` (the old per-line `HashMap` renumbered on
+  every line insert, so it could not splice) and scans line starts with
+  `memchr`.
 
-  Measured on a repeated `tests/oracle/roxygen_oracle.R` (machine under load, so
-  upper bounds): 22 us at 16 KB, 162 us at 130 KB, 1259 us at 1 MB. Our builder
-  is heavier than it needs to be—`char_indices()` plus a `HashMap`, where a
-  `memchr` scan over line starts would do most of the work.
+  Measured at 1 MB, criterion (`task bench-line-index`): building the index
+  went 1.36 ms -> 356 us; a keystroke's index cost 354 us -> 13 us, and a
+  10-change `didChange` batch 3.34 ms -> 54 us. A second run on a loaded
+  machine gave 524 us -> 25 us and 5.99 ms -> 61 us; the ratios (>20x and
+  >60x) are what hold, not the absolute numbers.
 
-  fatou fixed the same thing (its issue #76, commits `6f949d5` + `a054ecf`): a
-  `TextBuffer` holds the text next to its line-start table and *patches* the
-  table per edit—starts at or before the edit are untouched, those inside the
-  replaced span splice out, the tail shifts by the byte delta—and an open
-  document is an `Arc<TextBuffer>` shared with the analysis thread and every
-  read job, so nobody rescans and nobody copies the text. That took a keystroke
-  on a 1 MB buffer from ~690 us to ~4 us. See `benches/line_index.rs` there for
-  the harness, and the rule note in fatou's `.claude/rules/lsp.md`.
+  Against the ~160-180 us incremental reparse it precedes, the index was
+  **68%** of a keystroke and is now well under a fifth. Do not quote a tighter
+  figure than that from `pipeline/`: `patch_then_reparse` minus `reparse_only`
+  is a ~15 us difference between two ~170 us measurements, which is noise. The
+  `keystroke/patch` number is the one to trust, since it times the patch
+  directly.
 
-  Two things make it more than a copy-paste here:
+  The representation switch alone also made conversions 35-46% faster and the
+  CJK-heavy build 3.4x faster.
 
-  - We are already ahead on the *other* half: `line_index` is a salsa tracked
-    query returning an owned, `Eq` index (`src/incremental.rs`), so db-routed
-    consumers do not rescan and a line-structure-preserving edit backdates the
-    query. fatou has no equivalent. So what is actually missing is the
-    patch-on-edit half, plus routing the live-buffer handlers through the
-    buffer.
-  - Our wide-char table is a `HashMap<usize, Vec<WideChar>>` keyed by line
-    number, so inserting a line renumbers every later key—not the flat-`Vec`
-    splice fatou patches. Either re-key the tail, or move wide chars into a
-    `Vec` parallel to `line_starts` so the two splice together. R is nearly all
-    ASCII (56 wide chars in that 130 KB file), so the table is nearly empty
-    either way.
+  The remaining `LineIndex::new` calls are on re-parse fallbacks
+  (`compute_hover`, `compute_rename`, `compute_format_range_edits`,
+  `roxygen_code_action`), where a parse dwarfs the index. Follow-ups worth
+  doing separately:
 
-  Worth sizing before doing: the number that made fatou's case was the rescan
-  measured against the *incremental reparse it precedes*. That ratio is unknown
-  here, and R files are typically small—the largest in this tree is 16 KB, where
-  22 us is below anything a user perceives. The win only shows up on 100 KB+
-  files (generated code, large Shiny apps).
+  - `src/linter/rules/suspicious/duplicated_function_definition.rs` builds an
+    index over `ctx.root.text().to_string()` — a full text materialization per
+    rule run, unrelated to the LSP path.
+  - Salsa's `SourceFile.text` is still a `String`, so the lint thread's write
+    phase makes one owned copy per keystroke. Making it an `Arc<str>` would
+    remove the last copy.
 
 ## Misc
 

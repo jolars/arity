@@ -110,9 +110,10 @@ impl Metric {
     }
 }
 
-/// Precomputed line-start byte offsets plus per-line wide-char tables for a text
-/// buffer. `line_starts[i]` is the byte offset of the first character of line `i`
-/// (0-indexed); `line_starts` always starts with `0`.
+/// Precomputed line-start byte offsets plus a wide-char table for a text buffer.
+/// `line_starts[i]` is the byte offset of the first character of line `i`
+/// (0-indexed); `line_starts` always starts with `0`. Both tables are sorted by
+/// absolute byte offset, so [`apply_edit`](Self::apply_edit) can splice them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineIndex {
     line_starts: Vec<usize>,

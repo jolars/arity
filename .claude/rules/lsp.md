@@ -40,6 +40,31 @@ model.
   `salsa::Cancelled`; that and a cache miss both fall back to a fresh parse.
   **Reads are always correct, only sometimes warm** — never trade that away.
 
+## Buffers
+
+- An open document is an `Arc<TextBuffer>`: text next to its `LineIndex`, kept
+  in sync by `TextBuffer::apply_edit`, which **splices** the index rather than
+  rebuilding it. `LineIndex::new` is linear in the *document*, not the edit — at
+  1 MB it was 68% of a keystroke's cost, next to the incremental reparse it
+  precedes.
+- **A shared buffer is immutable.** The main loop edits through
+  `Arc::make_mut`, so it only ever mutates a uniquely-owned buffer and an
+  in-flight read sees exactly the bytes of the version it was dispatched at.
+  `version` lives on `Document`, outside the `Arc`, because the staleness gate
+  compares it and not the contents.
+- **Reads clone the `Arc`, never the text**, and answer off
+  `buffer.line_index()`. A handler that calls `LineIndex::new` on the live
+  buffer has reintroduced the per-request rescan. The remaining `LineIndex::new`
+  calls sit on re-parse fallbacks, where a parse dwarfs the index.
+- The salsa `line_index` query stays an **independent** rebuild from the text —
+  never fed the patched index. Both must agree, and
+  `apply_edit_matches_rebuild_exhaustively` is what proves it; a divergence is a
+  wrong position reported to the editor, not a salsa fault. `TextBuffer` also
+  debug-asserts patch-equals-rebuild on every edit, so the LSP suites double as
+  coverage for the splice.
+- `compute_*` keep `&str` signatures (public API, and `tests/lsp.rs` drives
+  them); the buffer-taking `*_in` / `*_via_db` forms are the hot path.
+
 ## Paths
 
 Convert URIs only through `src/lsp/uri.rs` (`to_path`/`from_path`), which strips
