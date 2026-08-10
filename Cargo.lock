@@ -163,6 +163,7 @@ dependencies = [
  "log",
  "lsp-server",
  "lsp-types",
+ "memchr",
  "mimalloc",
  "postcard",
  "rayon",

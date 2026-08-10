@@ -132,13 +132,7 @@ impl LineIndex {
         let bytes = text.as_bytes();
         let mut line_starts = Vec::with_capacity(bytes.len() / 40 + 1);
         line_starts.push(0);
-        line_starts.extend(
-            bytes
-                .iter()
-                .enumerate()
-                .filter(|&(_, &b)| b == b'\n')
-                .map(|(i, _)| i + 1),
-        );
+        line_starts.extend(memchr::memchr_iter(b'\n', bytes).map(|i| i + 1));
         // Absolute offsets make the two tables independent, so the wide-char
         // scan can be skipped wholesale. `is_ascii` is word-chunked, so the
         // common case costs a fast pass rather than a `char_indices` walk.
