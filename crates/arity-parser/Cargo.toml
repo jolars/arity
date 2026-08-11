@@ -15,7 +15,7 @@ keywords = ["r", "parser", "cst", "incremental"]
 categories = ["parsing", "parser-implementations", "text-processing"]
 
 [dependencies]
-rowan = "0.16.1"
+rowan = "0.17.0"
 serde = { version = "1.0.228", features = ["derive"] }
 smol_str = { version = "0.3.2", features = ["serde"] }
 
