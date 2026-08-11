@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/jolars/arity/compare/arity-parser-v0.3.0...arity-parser-v0.4.0) (2026-08-11)
+
+### Features
+- **parser:** expose an `is_single_expression` predicate ([`93cae60`](https://github.com/jolars/arity/commit/93cae60d35c342b62a82df4737971fe8e6b1722d))
+- **parser:** make brace-less system Rd macros sticky ([`aed2df0`](https://github.com/jolars/arity/commit/aed2df0dcccd8633eac694e0b1ce0d6e86a1f61a))
+- **parser:** stop unknown Rd macros consuming a group ([`374879e`](https://github.com/jolars/arity/commit/374879e0002373f955554ed651f98725a63268e9))
+
 ## [0.3.0](https://github.com/jolars/arity/compare/arity-parser-v0.2.0...arity-parser-v0.3.0) (2026-08-07)
 
 ### Features

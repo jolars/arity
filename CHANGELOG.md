@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.18.0](https://github.com/jolars/arity/compare/v0.17.0...v0.18.0) (2026-08-11)
+
+### Features
+- **cli:** read stdin from `-`, not a bare terminal ([`ae70cbb`](https://github.com/jolars/arity/commit/ae70cbb3c86455fcf368c73503c774fe65ceff39))
+- **text:** add TextBuffer pairing text with its line index ([`bff3617`](https://github.com/jolars/arity/commit/bff3617575cb920d0f520c5a39fb5235b14c5b1e))
+- **text:** patch the line index across an edit ([`06c10c5`](https://github.com/jolars/arity/commit/06c10c598103ebb49faeade850bcdb0d73872eea))
+- **semantic:** mask data.table subsets, gate masking verbs ([`aa7a8aa`](https://github.com/jolars/arity/commit/aa7a8aa7b56f51d620d3ec66a4de0780652c7b2f))
+- **lsp:** support folder renames ([`00151ee`](https://github.com/jolars/arity/commit/00151ee19e749c31482d1de4112318a8d540b151))
+- **parser:** make brace-less system Rd macros sticky ([`aed2df0`](https://github.com/jolars/arity/commit/aed2df0dcccd8633eac694e0b1ce0d6e86a1f61a))
+- **parser:** stop unknown Rd macros consuming a group ([`374879e`](https://github.com/jolars/arity/commit/374879e0002373f955554ed651f98725a63268e9))
+- **parser:** expose an `is_single_expression` predicate ([`93cae60`](https://github.com/jolars/arity/commit/93cae60d35c342b62a82df4737971fe8e6b1722d))
+
+### Bug Fixes
+- **lsp:** drop file renames that leave the workspace scope ([`237daea`](https://github.com/jolars/arity/commit/237daea34f724f94661bd37260848cfddf64e25b))
+- **lsp:** follow a renamed workspace root through a rename ([`1de3fb2`](https://github.com/jolars/arity/commit/1de3fb2efd4994646a55e85dde5aaab1f54ed6d9))
+- **roxygen:** keep a trailing `;` in a code span as `\code` ([`a1fcff9`](https://github.com/jolars/arity/commit/a1fcff97d632179cd03b3b9e909ad4e909de3521)), closes [#99](https://github.com/jolars/arity/issues/99)
+- **formatter:** keep blank line after a comment ([`e50f7fe`](https://github.com/jolars/arity/commit/e50f7fef855b33152f9f0f948f9efe14072185ae))
+
+### Performance Improvements
+- **lsp:** answer position reads off the shared index ([`e53de52`](https://github.com/jolars/arity/commit/e53de527dea8df5b1459f215a052e57757226b01))
+- **lsp:** answer whole-document reads off the shared index ([`a354814`](https://github.com/jolars/arity/commit/a3548145f5c4ac3eb5308c51cda0d68d41a0021e))
+- **lsp:** thread the shared buffer into the lint request ([`9b610a0`](https://github.com/jolars/arity/commit/9b610a090a372091fd905a43f3a969077790cd6c))
+- **text:** scan for line starts with memchr ([`6aa8b3b`](https://github.com/jolars/arity/commit/6aa8b3bed8ae6c4d1f67762f9a8dd422a8cfbbb5))
+
+### Dependencies
+- updated crates/arity-formatter to v0.3.1
+- updated crates/arity-parser to v0.4.0
+
 ## [0.17.0](https://github.com/jolars/arity/compare/v0.16.0...v0.17.0) (2026-08-07)
 
 ### Features

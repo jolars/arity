@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/jolars/arity/compare/arity-formatter-v0.3.0...arity-formatter-v0.3.1) (2026-08-11)
+
+### Bug Fixes
+- **formatter:** keep blank line after a comment ([`e50f7fe`](https://github.com/jolars/arity/commit/e50f7fef855b33152f9f0f948f9efe14072185ae))
+
+### Dependencies
+- updated crates/arity-parser to v0.4.0
+
 ## [0.3.0](https://github.com/jolars/arity/compare/arity-formatter-v0.2.0...arity-formatter-v0.3.0) (2026-08-07)
 
 ### Features
