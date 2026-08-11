@@ -80,8 +80,8 @@ To lint your code, you can use:
 
 - `arity lint <path> [<path> ...]`
 
-`arity lint` reads from stdin when given no paths, and exits non-zero when it
-reports any findings.
+`arity lint` reads from stdin when given `-` (or when piped with no paths), and
+exits non-zero when it reports any findings.
 
 ## Configuration
 

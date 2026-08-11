@@ -264,3 +264,60 @@ fn cli_format_check_without_markdown_default_flags_reflow() {
     assert!(stdout.contains("-#'     code_looking"));
     assert!(stdout.contains("+#' code_looking"));
 }
+
+/// The positional-input contract: `-` is the explicit stdin spelling, an
+/// implicit (piped) stdin still works, and neither can be mixed with paths. The
+/// gated case — no paths at an interactive terminal — is a usage error rather
+/// than a silent wait; it needs a pty to reproduce, so the decision itself is
+/// unit-tested in `main.rs` (`resolve_inputs`).
+#[test]
+fn cli_format_dash_reads_stdin() {
+    let output = run_cli(["format", "-"], "x<-1+2\n");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "x <- 1 + 2\n");
+}
+
+#[test]
+fn cli_lint_dash_reads_stdin() {
+    // `T` for `TRUE` is a stock finding, so stdin reaching the linter is visible.
+    let output = run_cli(["lint", "-"], "x <- T\n");
+    assert!(!output.status.success(), "a finding should exit non-zero");
+}
+
+#[test]
+fn cli_format_dash_cannot_be_mixed_with_paths() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let file = dir.path().join("mixed.R");
+    std::fs::write(&file, "x<-1\n").expect("failed to write input file");
+
+    let output = run_cli_no_stdin([
+        "format",
+        "-",
+        file.to_str().expect("temp file path should be utf-8"),
+    ]);
+
+    // Clap's own usage-error exit code, so the message reads like any other
+    // argument mistake.
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be combined with other paths"),
+        "expected the conflict error, got:\n{stderr}"
+    );
+    // The named file must be left alone.
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("failed to read file"),
+        "x<-1\n"
+    );
+}
+
+#[test]
+fn cli_format_check_rejects_stdin() {
+    let output = run_cli(["format", "--check", "-"], "x<-1\n");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot read from stdin"),
+        "`--check` reports on files it leaves on disk"
+    );
+}

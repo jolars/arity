@@ -59,7 +59,8 @@ pub enum ColorChoice {
 pub enum Commands {
     /// Parse and display the CST tree for debugging
     Parse {
-        /// Input file (stdin if not provided)
+        /// Input file. Pass `-` for stdin, also read when the path is omitted
+        /// and stdin is not a terminal
         file: Option<PathBuf>,
 
         /// Suppress CST output to stdout
@@ -72,7 +73,8 @@ pub enum Commands {
     },
     /// Format .R files
     Format {
-        /// Input file(s) or path(s) (stdin if omitted)
+        /// Input file(s) or director(ies). Pass `-` for stdin, also read when
+        /// paths are omitted and stdin is not a terminal
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
 
@@ -81,7 +83,9 @@ pub enum Commands {
         verify: bool,
 
         /// Check formatting without writing changes; prints a diff for each file
-        /// that would be reformatted and exits non-zero if any differ
+        /// that would be reformatted and exits non-zero if any differ. Requires
+        /// path arguments: there is no file on disk to report on when reading
+        /// stdin
         #[arg(long)]
         check: bool,
 
@@ -111,10 +115,12 @@ pub enum Commands {
     },
     /// Lint .R files
     ///
-    /// Reads stdin when no paths are given. Exit codes: 0 = no findings,
+    /// Reads stdin when given `-`, or when paths are omitted and stdin is not
+    /// a terminal. Exit codes: 0 = no findings,
     /// 1 = findings (or files blocked by parse errors), 2 = usage/IO error.
     Lint {
-        /// Input file(s) or path(s) (stdin if omitted)
+        /// Input file(s) or director(ies). Pass `-` for stdin, also read when
+        /// paths are omitted and stdin is not a terminal
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
 

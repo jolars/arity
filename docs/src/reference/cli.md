@@ -38,7 +38,7 @@ Parse and display the CST tree for debugging
 ### Arguments
 
 `<FILE>`
-:   Input file (stdin if not provided)
+:   Input file. Pass `-` for stdin, also read when the path is omitted and stdin is not a terminal
 
 ### Options
 
@@ -57,7 +57,7 @@ Format .R files
 ### Arguments
 
 `<PATH>...`
-:   Input file(s) or path(s) (stdin if omitted)
+:   Input file(s) or director(ies). Pass `-` for stdin, also read when paths are omitted and stdin is not a terminal
 
 ### Options
 
@@ -65,7 +65,7 @@ Format .R files
 :   Verify formatting idempotence for supported inputs (does not write files)
 
 `--check`
-:   Check formatting without writing changes; prints a diff for each file that would be reformatted and exits non-zero if any differ
+:   Check formatting without writing changes; prints a diff for each file that would be reformatted and exits non-zero if any differ. Requires path arguments: there is no file on disk to report on when reading stdin
 
 `--line-width <N>`
 :   Override the configured line width
@@ -86,14 +86,14 @@ Format .R files
 
 Lint .R files
 
-Reads stdin when no paths are given. Exit codes: 0 = no findings, 1 = findings (or files blocked by parse errors), 2 = usage/IO error.
+Reads stdin when given `-`, or when paths are omitted and stdin is not a terminal. Exit codes: 0 = no findings, 1 = findings (or files blocked by parse errors), 2 = usage/IO error.
 
 **Usage:** `arity lint [OPTIONS] [PATH]...`
 
 ### Arguments
 
 `<PATH>...`
-:   Input file(s) or path(s) (stdin if omitted)
+:   Input file(s) or director(ies). Pass `-` for stdin, also read when paths are omitted and stdin is not a terminal
 
 ### Options
 
