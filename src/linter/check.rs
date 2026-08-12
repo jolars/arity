@@ -22,9 +22,9 @@ use crate::incremental::{
 };
 use crate::project::description::DescriptionFacts;
 use crate::project::{
-    ExternalResolution, FileScope, PackageCollation, PackageDeclarations, Project, ProjectMember,
-    expected_r_sources, external_resolution, package_facts_for, package_root, visible_symbols,
-    workspace_project,
+    ExternalResolution, FileScope, PackageCollation, PackageDeclarations, PackageUsage, Project,
+    ProjectMember, expected_r_sources, external_resolution, package_facts_for, package_root,
+    package_usage_for, visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -384,8 +384,11 @@ pub fn check_paths_with_index(
     let description_count = description_sources.len();
     let description_reports: Vec<LintFileReport> = description_sources
         .into_par_iter()
-        .map(|(path, content)| {
-            let (status, diagnostics) = lint_description_source(&path, &content, &rules);
+        .map_with(db.clone(), |worker, (path, content)| {
+            let worker = &*worker;
+            let project = workspace_project(worker);
+            let usage = package_usage_for(worker, project, &path);
+            let (status, diagnostics) = lint_description_source(&path, &content, &rules, usage);
             LintFileReport {
                 path,
                 status,
@@ -762,6 +765,7 @@ fn lint_description_source(
     path: &Path,
     content: &str,
     rules: &ResolvedRules,
+    usage: Option<&PackageUsage>,
 ) -> (LintStatus, Vec<Diagnostic>) {
     let parsed = crate::dcf::parse(content);
     if !parsed.diagnostics.is_empty() {
@@ -774,7 +778,7 @@ fn lint_description_source(
 
     let document = parsed.document();
     let facts = DescriptionFacts::from_document(&document);
-    let mut diagnostics = run_dcf_rules(rules, path, &parsed.cst, &document, &facts);
+    let mut diagnostics = run_dcf_rules(rules, path, &parsed.cst, &document, &facts, usage);
     for d in &mut diagnostics {
         d.path = path.to_path_buf();
     }
@@ -802,7 +806,7 @@ pub fn check_description_document(
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
-    Ok(lint_description_source(path, content, &rules).1)
+    Ok(lint_description_source(path, content, &rules, None).1)
 }
 
 /// Like [`check_document`] but with a caller-supplied symbol provider.

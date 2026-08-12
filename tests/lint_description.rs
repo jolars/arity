@@ -49,7 +49,7 @@ fn description_report(result: &LintResult) -> &arity::linter::LintFileReport {
         .expect("a report for DESCRIPTION")
 }
 
-fn rules_reported(result: &LintResult) -> Vec<&str> {
+fn rules_reported(result: &LintResult) -> Vec<&'static str> {
     description_report(result)
         .diagnostics
         .iter()
@@ -686,4 +686,262 @@ fn a_description_without_a_package_field_flags_nothing() {
         .map(|r| r.diagnostics.iter().map(|d| d.rule).collect())
         .unwrap_or_default();
     assert!(!reported.contains(&"undeclared-dependency"), "{reported:?}");
+}
+
+// ---------------------------------------------------------------------------
+// unused-dependency
+//
+// Default-off, so every test selects it. It reports on *absence*, which is why
+// most of these tests are about the reasons it must stay quiet.
+// ---------------------------------------------------------------------------
+
+fn unused_dependency_only() -> LintConfig {
+    LintConfig {
+        select: Some(vec!["unused-dependency".to_string()]),
+        ..LintConfig::default()
+    }
+}
+
+/// Lint a whole package and report the rule ids on its `DESCRIPTION`.
+fn unused_in(description: &str, namespace: &str, files: &[(&str, &str)]) -> Vec<&'static str> {
+    let (_dir, root) = package(description, namespace, files);
+    let result = check_paths_with_config(std::slice::from_ref(&root), &unused_dependency_only())
+        .expect("lint should succeed");
+    rules_reported(&result)
+}
+
+/// `COMPLETE_DESCRIPTION` plus an `Imports:` line.
+fn imports(line: &str) -> String {
+    format!("{COMPLETE_DESCRIPTION}Imports: {line}\n")
+}
+
+const NOTHING: &[(&str, &str)] = &[("a.R", "f <- function() 1\n")];
+
+#[test]
+fn an_import_nothing_reaches_is_flagged() {
+    assert!(unused_in(&imports("dplyr"), "export(f)\n", NOTHING).contains(&"unused-dependency"));
+}
+
+#[test]
+fn every_unused_entry_is_flagged() {
+    let reported = unused_in(&imports("dplyr,\n    rlang"), "export(f)\n", NOTHING);
+    assert_eq!(
+        reported
+            .iter()
+            .filter(|id| **id == "unused-dependency")
+            .count(),
+        2
+    );
+}
+
+/// The span is the name, not the version constraint: the constraint is not
+/// what is unused.
+#[test]
+fn unused_dependency_spans_the_name_only() {
+    let description = imports("dplyr (>= 1.0.0)");
+    let (_dir, root) = package(&description, "export(f)\n", NOTHING);
+    let result = check_paths_with_config(std::slice::from_ref(&root), &unused_dependency_only())
+        .expect("lint should succeed");
+    let finding = description_report(&result)
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "unused-dependency")
+        .expect("an unused-dependency finding");
+    let start: usize = finding.range.start().into();
+    let end: usize = finding.range.end().into();
+    assert_eq!(&description[start..end], "dplyr");
+}
+
+// --- one negative per usage signal ---
+
+#[test]
+fn a_qualified_call_counts_as_use() {
+    assert!(
+        !unused_in(
+            &imports("dplyr"),
+            "export(f)\n",
+            &[("a.R", "f <- function() dplyr::filter(x)\n")]
+        )
+        .contains(&"unused-dependency")
+    );
+}
+
+/// The conditional-dependency idiom, inside a function body. Reading usage off
+/// the semantic model's attach set would miss it and report the most careful
+/// way to depend on a package as unused.
+#[test]
+fn a_conditional_load_inside_a_function_counts_as_use() {
+    for body in [
+        "if (requireNamespace(\"dplyr\", quietly = TRUE)) 1\n",
+        "loadNamespace(\"dplyr\")\n",
+    ] {
+        let source = format!("f <- function() {{\n  {body}}}\n");
+        assert!(
+            !unused_in(&imports("dplyr"), "export(f)\n", &[("a.R", &source)])
+                .contains(&"unused-dependency"),
+            "{body} was not counted as use",
+        );
+    }
+}
+
+#[test]
+fn a_namespace_import_counts_as_use() {
+    for directive in [
+        "import(dplyr)",
+        "importFrom(dplyr, filter)",
+        "importClassesFrom(dplyr, X)",
+        "importMethodsFrom(dplyr, show)",
+    ] {
+        let namespace = format!("export(f)\n{directive}\n");
+        assert!(
+            !unused_in(&imports("dplyr"), &namespace, NOTHING).contains(&"unused-dependency"),
+            "{directive} was not counted as use",
+        );
+    }
+}
+
+/// A roxygen tag counts even when NAMESPACE has not been regenerated yet —
+/// mid-`document()` is exactly when a maintainer runs the linter.
+#[test]
+fn a_roxygen_import_tag_counts_as_use() {
+    assert!(
+        !unused_in(
+            &imports("dplyr"),
+            "export(f)\n",
+            &[("a.R", "#' @importFrom dplyr filter\nf <- function() 1\n")]
+        )
+        .contains(&"unused-dependency")
+    );
+}
+
+/// `Imports: Rcpp` + `LinkingTo: Rcpp` with no R-side reference is the
+/// canonical Rcpp skeleton: the entry exists so the shared library loads.
+#[test]
+fn a_linking_to_package_is_exempt() {
+    let description = format!("{COMPLETE_DESCRIPTION}Imports: Rcpp\nLinkingTo: Rcpp\n");
+    assert!(!unused_in(&description, "export(f)\n", NOTHING).contains(&"unused-dependency"));
+}
+
+/// An S4 class needs `methods` with nothing naming it. R's own `uses_methods`.
+#[test]
+fn methods_is_exempt_for_an_s4_package() {
+    assert!(
+        !unused_in(
+            &imports("methods"),
+            "export(f)\n",
+            &[("a.R", "setClass(\"A\", representation(x = \"numeric\"))\n")]
+        )
+        .contains(&"unused-dependency")
+    );
+}
+
+/// A dynamic use names the package as a plain string, which is enough to stay
+/// quiet — this rule would rather miss a real finding than invent one.
+#[test]
+fn a_string_mention_silences_the_finding() {
+    assert!(
+        !unused_in(
+            &imports("dplyr"),
+            "export(f)\n",
+            &[(
+                "a.R",
+                "f <- function() do.call(\"::\", list(\"dplyr\", \"filter\"))\n"
+            )]
+        )
+        .contains(&"unused-dependency")
+    );
+}
+
+// --- fields other than Imports ---
+
+#[test]
+fn only_imports_is_checked() {
+    for field in ["Depends", "Suggests", "LinkingTo", "Enhances"] {
+        let description = format!("{COMPLETE_DESCRIPTION}{field}: dplyr\n");
+        assert!(
+            !unused_in(&description, "export(f)\n", NOTHING).contains(&"unused-dependency"),
+            "{field} should not be checked",
+        );
+    }
+}
+
+#[test]
+fn the_r_entry_is_never_a_dependency() {
+    let description = format!("{COMPLETE_DESCRIPTION}Imports: R (>= 4.1)\n");
+    assert!(!unused_in(&description, "export(f)\n", NOTHING).contains(&"unused-dependency"));
+}
+
+#[test]
+fn a_self_import_is_not_flagged() {
+    assert!(!unused_in(&imports("testpkg"), "export(f)\n", NOTHING).contains(&"unused-dependency"));
+}
+
+// --- the completeness guard ---
+
+#[test]
+fn the_rule_is_off_by_default() {
+    let (_dir, root) = package(&imports("dplyr"), "export(f)\n", NOTHING);
+    let result = check_paths(std::slice::from_ref(&root)).expect("lint should succeed");
+    assert!(!rules_reported(&result).contains(&"unused-dependency"));
+}
+
+/// Linting one file of a package must not declare every *other* file's imports
+/// unused. It stays silent for the right reason: the driver pulls the whole
+/// expected `R/` set in as scope-only members, so the run is still complete and
+/// `dplyr` is correctly seen as used.
+#[test]
+fn linting_one_file_still_sees_the_whole_package() {
+    let (_dir, root) = package(
+        &imports("dplyr"),
+        "export(f)\n",
+        &[
+            ("a.R", "f <- function() 1\n"),
+            ("b.R", "g <- function() dplyr::filter(x)\n"),
+        ],
+    );
+    let result = check_paths_with_config(
+        std::slice::from_ref(&root.join("R").join("a.R")),
+        &unused_dependency_only(),
+    )
+    .expect("lint should succeed");
+    assert_eq!(result.total_findings, 0, "{:?}", result.reports);
+}
+
+/// A parse error anywhere in `R/` means the run has not seen everything — the
+/// only `dplyr::` in the package could be in the file that failed.
+#[test]
+fn a_parse_error_in_the_package_silences_the_rule() {
+    let reported = unused_in(
+        &imports("dplyr"),
+        "export(f)\n",
+        &[("a.R", "f <- function() 1\n"), ("b.R", "f <- function(\n")],
+    );
+    assert!(!reported.contains(&"unused-dependency"), "{reported:?}");
+}
+
+/// No NAMESPACE means the `import()` half of the usage set is simply absent, so
+/// a package mid-`document()` is not lectured.
+#[test]
+fn a_package_without_a_namespace_is_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("DESCRIPTION"), imports("dplyr")).unwrap();
+    std::fs::create_dir(root.join("R")).unwrap();
+    std::fs::write(root.join("R").join("a.R"), "f <- function() 1\n").unwrap();
+
+    let result = check_paths_with_config(std::slice::from_ref(&root), &unused_dependency_only())
+        .expect("lint should succeed");
+    assert!(!rules_reported(&result).contains(&"unused-dependency"));
+}
+
+/// A `DESCRIPTION` linted on its own has no package around it to check against.
+#[test]
+fn a_lone_description_is_silent() {
+    let diagnostics = check_description_document(
+        Path::new("DESCRIPTION"),
+        &imports("dplyr"),
+        &unused_dependency_only(),
+    )
+    .expect("linting should not error");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }

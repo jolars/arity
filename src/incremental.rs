@@ -21,8 +21,8 @@ use crate::parser::{
     map_range_through_edits, parse_with_options, reparse_edits_with_options, reparse_with_options,
 };
 use crate::project::{
-    ClassSystem, DefKind, DescriptionFacts, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey,
-    TopLevelEvent, collect_source_literal_edges, collect_top_level_events,
+    ClassSystem, DefKind, DescriptionFacts, PackageInfo, PackageReferences, ReadBinding, ReadSite,
+    SourceEdgeKey, TopLevelEvent, collect_source_literal_edges, collect_top_level_events,
     collect_top_level_events_spanned, discover_packages, project_classes, project_defs,
     project_graph, project_reads, relative_path, reverse_source_edges, workspace_project,
 };
@@ -308,6 +308,8 @@ pub enum QueryKind {
     AttachedNames,
     ExternalResolution,
     DescriptionFacts,
+    PackageReferences,
+    PackageUsage,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -609,6 +611,22 @@ pub fn loaded_names(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String
         }
     }
     names
+}
+
+/// The packages an R file names ([`crate::project::file_package_references`]).
+///
+/// A backdating firewall like [`loaded_names`], and deliberately *not* that
+/// query: `loaded_names` is top-level-only and models attachment, while this
+/// asks the broader "does this file reach the package at all" — the question
+/// the package-level dependency-usage fold above it is built from. Range-free
+/// and `Eq`, so a body edit leaves it equal and the fold is not re-run.
+#[salsa::tracked(returns(ref))]
+pub fn package_references(db: &dyn IncrementalDb, file: SourceFile) -> PackageReferences {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::PackageReferences,
+        file: Some(file),
+    });
+    crate::project::file_package_references(&parsed_tree_root(db, file), semantic_model(db, file))
 }
 
 /// The analysis facts a package's `DESCRIPTION` declares.

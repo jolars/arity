@@ -25,7 +25,8 @@ use smol_str::SmolStr;
 use crate::incremental::{
     Descriptions, IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile,
     Workspace, description_facts, file_class_defs, file_def_sites, file_exports, file_free_reads,
-    file_qualified_reads, loaded_names, parse_diagnostics, source_edges, top_level_events,
+    file_qualified_reads, loaded_names, package_references, parse_diagnostics, source_edges,
+    top_level_events,
 };
 use crate::project::classes::ClassSystem;
 use crate::project::description::DescriptionFacts;
@@ -369,6 +370,107 @@ pub fn package_facts_for<'db>(
         .iter()
         .find(|file| file.root(db) == &root)
         .map(|&file| description_facts(db, file))
+}
+
+/// One package root's dependency-usage verdict: every package its own code
+/// reaches, and whether the run is entitled to conclude anything from a
+/// package's *absence* from that set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackageUsage {
+    /// Every package this root's R sources, NAMESPACE, and roxygen tags reach.
+    pub used: BTreeSet<String>,
+    /// Package-shaped string literals anywhere in the root's sources. Not a
+    /// reference — the guard a consumer consults so a dynamic use cannot become
+    /// a false report of disuse
+    /// ([`PackageReferences::string_mentions`](crate::project::PackageReferences::string_mentions)).
+    pub mentioned: BTreeSet<String>,
+    /// **The guard that makes reporting on absence safe.** `true` only when the
+    /// run actually analyzed every R source this package will load, read its
+    /// NAMESPACE, and found at least one source.
+    ///
+    /// Without it, `arity lint R/one.R` would declare every dependency the
+    /// other files use unused. In practice single-file runs are still complete
+    /// — the driver adds a package's whole expected `R/` set as scope-only
+    /// members — so this is the backstop for an unrelated directory, for a
+    /// package with a parse error in `R/`, and for a package mid-`document()`
+    /// with no NAMESPACE yet.
+    pub complete: bool,
+}
+
+/// Every tracked package root's [`PackageUsage`], keyed by root.
+///
+/// Keyed on the interned [`Project`] and folded from the backdated per-file
+/// [`package_references`], so it backdates across a body edit exactly like
+/// [`project_graph`]: editing inside a function changes neither the packages a
+/// file names nor the membership, so this is not re-executed.
+#[salsa::tracked(returns(ref))]
+pub fn package_usage<'db>(
+    db: &'db dyn IncrementalDb,
+    project: Project<'db>,
+) -> BTreeMap<PathBuf, PackageUsage> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::PackageUsage,
+        file: None,
+    });
+
+    let mut usage: BTreeMap<PathBuf, PackageUsage> = BTreeMap::new();
+    let mut sources: BTreeMap<PathBuf, usize> = BTreeMap::new();
+    for member in project.members(db) {
+        let Some(root) = member.package_root.clone() else {
+            continue;
+        };
+        let refs = package_references(db, member.file);
+        let entry = usage.entry(root.clone()).or_default();
+        entry.used.extend(refs.direct.iter().cloned());
+        entry.used.extend(refs.roxygen_imports.iter().cloned());
+        entry.mentioned.extend(refs.string_mentions.iter().cloned());
+        if refs.uses_methods {
+            // R's own `uses_methods`: an S4 or reference class makes
+            // `Imports: methods` mandatory with nothing naming it.
+            entry.used.insert("methods".to_string());
+        }
+        *sources.entry(root).or_default() += 1;
+    }
+
+    // A NAMESPACE `import()`/`importFrom()` reaches its package as surely as a
+    // `::` does, and for many packages it is the *only* thing that does.
+    for (root, namespace) in project.namespaces(db) {
+        let info = crate::rindex::harvest::parse_namespace(namespace, &[]);
+        let entry = usage.entry(root.clone()).or_default();
+        entry.used.extend(info.imported_packages);
+        entry.used.extend(info.imported_from_packages);
+    }
+
+    let complete_roots: BTreeSet<&PathBuf> = project
+        .collations(db)
+        .iter()
+        .filter(|collation| collation.complete)
+        .map(|collation| &collation.root)
+        .collect();
+    let with_namespace: BTreeSet<&PathBuf> = project
+        .namespaces(db)
+        .iter()
+        .map(|(root, _)| root)
+        .collect();
+    for (root, entry) in &mut usage {
+        entry.complete = complete_roots.contains(root)
+            && with_namespace.contains(root)
+            && sources.get(root).is_some_and(|count| *count > 0);
+    }
+    usage
+}
+
+/// The [`PackageUsage`] of the package enclosing `path` — a `DESCRIPTION`, or
+/// any file under a package root. `None` outside every tracked package.
+pub fn package_usage_for<'db>(
+    db: &'db dyn IncrementalDb,
+    project: Project<'db>,
+    path: &Path,
+) -> Option<&'db PackageUsage> {
+    let usage = package_usage(db, project);
+    let roots: BTreeSet<&PathBuf> = usage.keys().collect();
+    let root = package_root_in(path, &roots)?;
+    usage.get(&root)
 }
 
 /// Every tracked package root's [`DescriptionFacts`], keyed by root.
