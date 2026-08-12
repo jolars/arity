@@ -25,6 +25,13 @@ linter against a real R codebase: the `linter-investigation` skill.
 - `src/linter/rules.rs` is the **single source of truth**: `rules_by_category`
   is what `all_rules`, `all_rule_ids`, and the reference page's category
   sections are all derived from. Register there, once.
+- **Two grammars, one catalogue.** A `DESCRIPTION` rule implements `DcfRule`
+  and is registered as `AnyRule::Dcf` in that same list, so rule IDs are one
+  namespace and everything derived from the registry sees both. `run_dcf_rules`
+  mirrors `run_rules`; `ResolvedRules` splits the two dispatch tables exactly
+  once, in `with_config`, leaving the R hot path untouched. Never add a second
+  registry — merging two per-category lists back together to render one section
+  *is* a second source of truth for catalogue order.
 - `run_rules` owns **suppression filtering** — it is the only place holding both
   the directive map and the findings — plus the post-suppression pass.
 - `Rule::check_suppressions` is the post-pass for facts that only exist after

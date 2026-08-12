@@ -16,6 +16,11 @@
 //!    source of truth. Both the registry ([`all_rules`], and from it the set of
 //!    valid rule IDs, [`all_rule_ids`]) and the generated rule reference are
 //!    derived from it, so there is no second list to keep in sync.
+//!
+//! A rule over `DESCRIPTION` implements [`DcfRule`] instead and is registered as
+//! [`AnyRule::Dcf`] in the *same* catalogue: two grammars, one list of rules,
+//! one namespace of rule IDs. [`run_dcf_rules`] is that grammar's twin of
+//! [`run_rules`], with the same single-shared-walk discipline.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -25,6 +30,7 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::{BinaryExpr, CallExpr};
 use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
+use crate::dcf;
 use crate::project::description::{DescriptionCompat, DescriptionFacts};
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
@@ -78,19 +84,30 @@ impl RuleCategory {
 /// All rules currently shipped, grouped into the categories the reference page
 /// is organized by — the single source of truth. [`all_rules`] flattens this,
 /// so the registry order and the catalogue order are one list.
-pub fn rules_by_category() -> Vec<(RuleCategory, Vec<Box<dyn Rule>>)> {
+///
+/// Both grammars live in this one list. Merging them here rather than keeping a
+/// second DCF registry is what keeps the catalogue single-sourced: a parallel
+/// registry would have to be merged back per category to render one
+/// `## Correctness` section, and that merge would *be* a second source of truth
+/// for catalogue order.
+pub fn rules_by_category() -> Vec<(RuleCategory, Vec<AnyRule>)> {
     vec![
-        (RuleCategory::Correctness, correctness_rules()),
-        (RuleCategory::Suspicious, suspicious_rules()),
-        (RuleCategory::Readability, readability_rules()),
-        (RuleCategory::Performance, performance_rules()),
-        (RuleCategory::Documentation, documentation_rules()),
-        (RuleCategory::Meta, meta_rules()),
+        (RuleCategory::Correctness, r_rules(correctness_rules())),
+        (RuleCategory::Suspicious, r_rules(suspicious_rules())),
+        (RuleCategory::Readability, r_rules(readability_rules())),
+        (RuleCategory::Performance, r_rules(performance_rules())),
+        (RuleCategory::Documentation, r_rules(documentation_rules())),
+        (RuleCategory::Meta, r_rules(meta_rules())),
     ]
 }
 
+/// Lift a category's R rules into the mixed-grammar catalogue.
+fn r_rules(rules: Vec<Box<dyn Rule>>) -> Vec<AnyRule> {
+    rules.into_iter().map(AnyRule::R).collect()
+}
+
 /// All rules currently shipped, in registry order.
-pub fn all_rules() -> Vec<Box<dyn Rule>> {
+pub fn all_rules() -> Vec<AnyRule> {
     rules_by_category()
         .into_iter()
         .flat_map(|(_, rules)| rules)
@@ -179,6 +196,10 @@ fn meta_rules() -> Vec<Box<dyn Rule>> {
 
 /// Every shipped rule's ID, derived from [`all_rules`] so the two never drift.
 /// Used to validate `LintConfig::select` / `ignore`.
+///
+/// Both grammars' IDs, in one namespace: `select`, `ignore`, `# arity-ignore`,
+/// and `misnamed-suppression` all see one flat set of rule names, and none of
+/// them has to learn which file type a rule fires in.
 pub fn all_rule_ids() -> Vec<&'static str> {
     all_rules().iter().map(|r| r.id()).collect()
 }
@@ -280,6 +301,127 @@ pub trait Rule: Send + Sync {
     /// examples a floor to violate.
     fn doc_compat(&self) -> CompatConfig {
         CompatConfig::default()
+    }
+}
+
+/// A rule over the DCF grammar — `DESCRIPTION`, not R.
+///
+/// Same discipline as [`Rule`], one grammar over: declare the DCF
+/// [`SyntaxKind`](dcf::SyntaxKind)s you care about via [`DcfRule::interests`]
+/// and implement [`DcfRule::check`], or leave `interests` empty and override
+/// [`DcfRule::check_file`]. [`run_dcf_rules`] walks the document once.
+///
+/// The metadata half is spelled out again rather than factored into a supertrait
+/// shared with [`Rule`]: a supertrait would mean splitting every existing `impl
+/// Rule` in two for no behavior change, and [`AnyRule`] already gives the
+/// catalogue one grammar-blind view of it.
+pub trait DcfRule: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn default_enabled(&self) -> bool {
+        true
+    }
+
+    /// See [`Rule::description`].
+    fn description(&self) -> &'static str {
+        ""
+    }
+
+    /// See [`Rule::examples`]. A DCF rule's `source` is `DESCRIPTION` text, and
+    /// the docs renderer lints it under that file name.
+    fn examples(&self) -> &'static [Example] {
+        &[]
+    }
+
+    /// See [`Rule::doc_select`].
+    fn doc_select(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// The DCF `SyntaxKind`s this rule subscribes to, for [`run_dcf_rules`]'
+    /// shared traversal. The default opts out of node dispatch entirely.
+    fn interests(&self) -> &'static [dcf::SyntaxKind] {
+        &[]
+    }
+
+    /// Per-element callback, invoked for each DCF element (node *or* token)
+    /// whose kind is in [`DcfRule::interests`].
+    fn check(&self, el: &dcf::SyntaxElement, ctx: &DcfRuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+        let _ = (el, ctx, sink);
+    }
+
+    /// Whole-document pass, run once after the shared traversal. The natural
+    /// shape for a rule keyed on a *field* rather than on node shape, which is
+    /// most of them.
+    fn check_file(&self, ctx: &DcfRuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+        let _ = (ctx, sink);
+    }
+}
+
+/// A registered rule, whichever grammar it runs over.
+///
+/// The catalogue is one list ([`rules_by_category`]), so everything derived from
+/// it — the valid rule IDs, the reference page, `select`/`ignore` resolution —
+/// is written once and sees both grammars. Dispatch is the only place the
+/// distinction matters, and [`ResolvedRules`] splits it exactly once.
+pub enum AnyRule {
+    R(Box<dyn Rule>),
+    Dcf(Box<dyn DcfRule>),
+}
+
+impl AnyRule {
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::R(rule) => rule.id(),
+            Self::Dcf(rule) => rule.id(),
+        }
+    }
+
+    pub fn default_severity(&self) -> Severity {
+        match self {
+            Self::R(rule) => rule.default_severity(),
+            Self::Dcf(rule) => rule.default_severity(),
+        }
+    }
+
+    pub fn default_enabled(&self) -> bool {
+        match self {
+            Self::R(rule) => rule.default_enabled(),
+            Self::Dcf(rule) => rule.default_enabled(),
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::R(rule) => rule.description(),
+            Self::Dcf(rule) => rule.description(),
+        }
+    }
+
+    pub fn examples(&self) -> &'static [Example] {
+        match self {
+            Self::R(rule) => rule.examples(),
+            Self::Dcf(rule) => rule.examples(),
+        }
+    }
+
+    pub fn doc_select(&self) -> &'static [&'static str] {
+        match self {
+            Self::R(rule) => rule.doc_select(),
+            Self::Dcf(rule) => rule.doc_select(),
+        }
+    }
+
+    /// The `[compat]` floors this rule's examples are linted under. Only the R
+    /// version-aware rules declare any; `DESCRIPTION` *is* the compat source, so
+    /// a DCF rule has nothing to say here.
+    pub fn doc_compat(&self) -> CompatConfig {
+        match self {
+            Self::R(rule) => rule.doc_compat(),
+            Self::Dcf(_) => CompatConfig::default(),
+        }
     }
 }
 
@@ -511,8 +653,16 @@ pub struct ResolvedRules {
     /// Whether any rule subscribed to a node kind at all — lets [`run_rules`]
     /// skip the whole-tree traversal when every rule is `check_file`-only.
     any_node_rules: bool,
-    /// Each rule ID's [`Rule::default_severity`], so the severity-stamping pass
-    /// is an `O(1)` lookup keyed by the finding's rule ID.
+    /// The DESCRIPTION rules in this set, and their own dispatch table over the
+    /// DCF `SyntaxKind`s. A second, independent table rather than a widened
+    /// first one: a run over R files never touches it, so the R hot path below
+    /// keeps the exact indices and types it had before DCF existed.
+    dcf_rules: Vec<Box<dyn DcfRule>>,
+    dcf_by_kind: Vec<Vec<usize>>,
+    dcf_any_node_rules: bool,
+    /// Each rule ID's default severity, so the severity-stamping pass is an
+    /// `O(1)` lookup keyed by the finding's rule ID. Covers **both** grammars —
+    /// stamping is one rule, whatever the file type.
     severities: HashMap<&'static str, Severity>,
     /// The chosen rule IDs, handed to rules via [`RuleContext::enabled_rules`].
     enabled: EnabledRules,
@@ -530,11 +680,25 @@ pub struct ResolvedRules {
 impl ResolvedRules {
     /// Build the derived dispatch state (`by_kind`, `severities`) for a chosen
     /// rule set. The single place that knows how a rule set maps to dispatch.
-    fn with_config(
-        rules: Vec<Box<dyn Rule>>,
-        rules_config: RulesConfig,
-        compat: CompatConfig,
-    ) -> Self {
+    fn with_config(chosen: Vec<AnyRule>, rules_config: RulesConfig, compat: CompatConfig) -> Self {
+        // Severities and the enabled-ID set are built from the *whole* chosen
+        // set, before the grammar split: both are keyed by rule ID, and IDs are
+        // one namespace.
+        let severities = chosen
+            .iter()
+            .map(|r| (r.id(), r.default_severity()))
+            .collect();
+        let enabled = EnabledRules(chosen.iter().map(|r| r.id()).collect());
+
+        let mut rules: Vec<Box<dyn Rule>> = Vec::new();
+        let mut dcf_rules: Vec<Box<dyn DcfRule>> = Vec::new();
+        for rule in chosen {
+            match rule {
+                AnyRule::R(rule) => rules.push(rule),
+                AnyRule::Dcf(rule) => dcf_rules.push(rule),
+            }
+        }
+
         let mut by_kind: Vec<Vec<usize>> = vec![Vec::new(); SyntaxKind::COUNT];
         let mut any_node_rules = false;
         for (i, rule) in rules.iter().enumerate() {
@@ -543,20 +707,34 @@ impl ResolvedRules {
                 any_node_rules = true;
             }
         }
-        let severities = rules
-            .iter()
-            .map(|r| (r.id(), r.default_severity()))
-            .collect();
-        let enabled = EnabledRules(rules.iter().map(|r| r.id()).collect());
+
+        let mut dcf_by_kind: Vec<Vec<usize>> = vec![Vec::new(); dcf::SyntaxKind::COUNT];
+        let mut dcf_any_node_rules = false;
+        for (i, rule) in dcf_rules.iter().enumerate() {
+            for kind in rule.interests() {
+                dcf_by_kind[*kind as usize].push(i);
+                dcf_any_node_rules = true;
+            }
+        }
+
         Self {
             rules,
             by_kind,
             any_node_rules,
+            dcf_rules,
+            dcf_by_kind,
+            dcf_any_node_rules,
             severities,
             enabled,
             rules_config,
             compat,
         }
+    }
+
+    /// Whether any `DESCRIPTION` rule is in this set. Lets the driver skip DCF
+    /// discovery and its whole pass when none is enabled.
+    pub fn has_dcf_rules(&self) -> bool {
+        !self.dcf_rules.is_empty()
     }
 
     /// The rule IDs in this set.
@@ -589,7 +767,7 @@ impl ResolvedRules {
                 unknown.push(id.clone());
             }
         }
-        let mut chosen: Vec<Box<dyn Rule>> = match select {
+        let mut chosen: Vec<AnyRule> = match select {
             Some(picks) => all
                 .into_iter()
                 .filter(|r| picks.iter().any(|p| p == r.id()))
@@ -684,14 +862,23 @@ pub fn run_rules(
         all.append(&mut post);
     }
 
-    // Stamp each finding's severity from its rule's `default_severity()`. Rules
-    // build findings with a placeholder severity (`Default::default()`); the
-    // authoritative value lives on the rule, so overriding `default_severity()`
-    // actually takes effect here (and is the natural seam for a future per-rule
-    // severity config override). Keyed by rule ID against the parallel `rules`
-    // /`severities` vecs — a whole-file pass may interleave findings from
-    // several rules, so post-hoc lookup is simpler than tracking emit order.
-    for d in &mut all {
+    stamp_and_sort(resolved, &mut all);
+    all
+}
+
+/// Stamp each finding's severity from its rule's `default_severity()`, then
+/// apply the stable `(start, end, rule)` ordering.
+///
+/// Rules build findings with a placeholder severity (`Default::default()`); the
+/// authoritative value lives on the rule, so overriding `default_severity()`
+/// actually takes effect here (and is the natural seam for a future per-rule
+/// severity config override). Keyed by rule ID rather than by emit order — a
+/// whole-file pass may interleave findings from several rules.
+///
+/// Shared by both grammars' drivers so the two can never drift on severity or
+/// ordering.
+fn stamp_and_sort(resolved: &ResolvedRules, all: &mut [Diagnostic]) {
+    for d in all.iter_mut() {
         if let Some(&sev) = resolved.severities.get(d.rule) {
             d.severity = sev;
         }
@@ -704,6 +891,77 @@ pub fn run_rules(
             b.rule,
         ))
     });
+}
+
+/// What a [`DcfRule`] gets to see: one parsed `DESCRIPTION`, and the facts
+/// derived from it.
+///
+/// Deliberately narrow. There is no `compat` (this file *is* the compat
+/// source), none of the R-grammar state, and no lazily-resolved disk fallback —
+/// unlike [`RuleContext`], whose `own_package`/`description_compat` exist
+/// precisely because an R file has to go looking for the document a DCF rule is
+/// already holding.
+pub struct DcfRuleContext<'a> {
+    /// The `DESCRIPTION`'s path. Its parent is the package root.
+    pub path: &'a Path,
+    /// The DCF CST root, for a rule that wants raw tokens or ranges.
+    pub root: &'a dcf::SyntaxNode,
+    /// The typed view — how a rule reads fields.
+    pub document: &'a dcf::Document,
+    /// The facts this document declares, folded once per file so several rules
+    /// don't refold the same fields. Derived from `document`, never from disk.
+    pub facts: &'a DescriptionFacts,
+    /// Per-rule option tables from `[lint.rules.<id>]`. See [`RuleContext::config`].
+    pub config: &'a RulesConfig,
+    /// The document's `# arity-ignore` directives, used by [`run_dcf_rules`] to
+    /// drop suppressed findings.
+    pub suppressions: &'a SuppressionMap,
+    /// The rule IDs running in this pass. See [`RuleContext::enabled_rules`].
+    pub enabled_rules: &'a EnabledRules,
+}
+
+/// Run every configured `DESCRIPTION` rule against one parsed document — the
+/// DCF twin of [`run_rules`], and subject to the same contract: one shared
+/// traversal, suppression filtered here rather than by the caller, findings
+/// stamped and stably sorted.
+///
+/// No post-suppression pass: `Rule::check_suppressions` exists for
+/// `outdated-suppression`, which has no DCF counterpart yet. Adding one is a
+/// default method away.
+pub fn run_dcf_rules(
+    resolved: &ResolvedRules,
+    path: &Path,
+    root: &dcf::SyntaxNode,
+    document: &dcf::Document,
+    facts: &DescriptionFacts,
+) -> Vec<Diagnostic> {
+    let suppressions = SuppressionMap::build_dcf(root);
+    let ctx = DcfRuleContext {
+        path,
+        root,
+        document,
+        facts,
+        config: &resolved.rules_config,
+        suppressions: &suppressions,
+        enabled_rules: &resolved.enabled,
+    };
+    let rules = &resolved.dcf_rules;
+    let mut all = Vec::new();
+
+    if resolved.dcf_any_node_rules {
+        for el in root.descendants_with_tokens() {
+            for &i in &resolved.dcf_by_kind[el.kind() as usize] {
+                rules[i].check(&el, &ctx, &mut all);
+            }
+        }
+    }
+
+    for rule in rules {
+        rule.check_file(&ctx, &mut all);
+    }
+
+    suppressions.filter(&mut all);
+    stamp_and_sort(resolved, &mut all);
     all
 }
 
@@ -747,6 +1005,167 @@ mod tests {
         }
     }
 
+    /// The DCF twin of [`FakeError`]: subscribes to every `FIELD` and emits a
+    /// finding with the placeholder severity, so the same stamping and
+    /// suppression contract can be asserted over the second grammar.
+    struct FakeDcfError;
+    impl DcfRule for FakeDcfError {
+        fn id(&self) -> &'static str {
+            "fake-dcf-error"
+        }
+        fn default_severity(&self) -> Severity {
+            Severity::Error
+        }
+        fn interests(&self) -> &'static [dcf::SyntaxKind] {
+            &[dcf::SyntaxKind::FIELD]
+        }
+        fn check(
+            &self,
+            el: &dcf::SyntaxElement,
+            _ctx: &DcfRuleContext<'_>,
+            sink: &mut Vec<Diagnostic>,
+        ) {
+            sink.push(Diagnostic {
+                rule: "fake-dcf-error",
+                severity: Default::default(),
+                path: Default::default(),
+                range: el.text_range(),
+                message: ViolationData::new("fake-dcf-error", "boom"),
+                fix: None,
+            });
+        }
+    }
+
+    fn dcf_resolved() -> ResolvedRules {
+        ResolvedRules::with_config(
+            vec![AnyRule::Dcf(Box::new(FakeDcfError))],
+            RulesConfig::default(),
+            CompatConfig::default(),
+        )
+    }
+
+    fn run_dcf(resolved: &ResolvedRules, text: &str) -> Vec<Diagnostic> {
+        let parsed = crate::dcf::parse(text);
+        let document = parsed.document();
+        let facts = DescriptionFacts::from_document(&document);
+        run_dcf_rules(
+            resolved,
+            Path::new("DESCRIPTION"),
+            &parsed.cst,
+            &document,
+            &facts,
+        )
+    }
+
+    /// The grammar split happens exactly once, in `with_config`: a DCF rule
+    /// lands in the DCF dispatch table and never in the R one, so the R hot
+    /// path cannot pay for it.
+    #[test]
+    fn with_config_files_rules_by_grammar() {
+        let resolved = ResolvedRules::with_config(
+            vec![
+                AnyRule::R(Box::new(FakeError)),
+                AnyRule::Dcf(Box::new(FakeDcfError)),
+            ],
+            RulesConfig::default(),
+            CompatConfig::default(),
+        );
+        assert_eq!(resolved.rules.len(), 1);
+        assert_eq!(resolved.dcf_rules.len(), 1);
+        assert!(resolved.has_dcf_rules());
+        assert_eq!(resolved.by_kind[SyntaxKind::CALL_EXPR as usize], vec![0]);
+        assert_eq!(
+            resolved.dcf_by_kind[dcf::SyntaxKind::FIELD as usize],
+            vec![0]
+        );
+        // One namespace of IDs and one severity map, whatever the grammar.
+        assert!(resolved.enabled().contains("fake-error"));
+        assert!(resolved.enabled().contains("fake-dcf-error"));
+    }
+
+    #[test]
+    fn run_dcf_rules_stamps_default_severity() {
+        let diags = run_dcf(&dcf_resolved(), "Package: p\n");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Error);
+    }
+
+    /// A `# arity-ignore` line in a `DESCRIPTION` suppresses the field that
+    /// follows it, the DCF answer to "the next non-trivia sibling".
+    #[test]
+    fn run_dcf_rules_filters_suppressed_findings() {
+        let diags = run_dcf(
+            &dcf_resolved(),
+            "# arity-ignore fake-dcf-error: quiet\nPackage: p\n",
+        );
+        assert!(diags.is_empty(), "expected no findings, got {diags:?}");
+    }
+
+    /// The range of `field` in `text`, for asserting *which* finding survived.
+    fn field_range(text: &str, name: &str) -> rowan::TextRange {
+        crate::dcf::parse(text)
+            .document()
+            .field(name)
+            .unwrap_or_else(|| panic!("a `{name}` field"))
+            .syntax()
+            .text_range()
+    }
+
+    /// The directive reaches only the field it precedes — the next-item scope
+    /// must not silently widen to the whole record.
+    #[test]
+    fn dcf_node_directive_covers_only_the_next_field() {
+        let text = "# arity-ignore fake-dcf-error: quiet\nPackage: p\nVersion: 1.0\n";
+        let diags = run_dcf(&dcf_resolved(), text);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].range, field_range(text, "Version"));
+    }
+
+    /// A comment *between* two fields is grammatically a child of the earlier
+    /// one — a `FIELD` stays open across its continuation lines — but it points
+    /// at the field that follows, which is what its author meant.
+    #[test]
+    fn dcf_trailing_directive_covers_the_following_field() {
+        let text = "Package: p\n# arity-ignore fake-dcf-error: quiet\nVersion: 1.0\n";
+        let diags = run_dcf(&dcf_resolved(), text);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].range, field_range(text, "Package"));
+    }
+
+    /// A comment *inside* a field's continuation attaches to that field: R
+    /// skips the line and resumes the value, so there is no "next line" that
+    /// means anything else.
+    #[test]
+    fn dcf_directive_inside_a_field_covers_that_field() {
+        let diags = run_dcf(
+            &dcf_resolved(),
+            "Imports:\n    dplyr,\n# arity-ignore fake-dcf-error: quiet\n    rlang\n",
+        );
+        assert!(diags.is_empty(), "expected no findings, got {diags:?}");
+    }
+
+    #[test]
+    fn dcf_file_directive_covers_the_whole_document() {
+        let diags = run_dcf(
+            &dcf_resolved(),
+            "# arity-ignore-file: quiet\nPackage: p\nVersion: 1.0\n",
+        );
+        assert!(diags.is_empty(), "expected no findings, got {diags:?}");
+    }
+
+    /// A directive with nothing after it is dangling, exactly as in R — it is
+    /// recorded (so the `meta` rules can see it) but suppresses nothing. The
+    /// blank line closes the record, and a comment never opens one, so nothing
+    /// follows this directive even though the file continues.
+    #[test]
+    fn dcf_dangling_directive_suppresses_nothing() {
+        let text = "Package: p\n\n# arity-ignore fake-dcf-error: quiet\n";
+        let map = SuppressionMap::build_dcf(&crate::dcf::parse(text).cst);
+        assert_eq!(map.directives().len(), 1);
+        assert!(map.directives()[0].is_dangling());
+        assert_eq!(run_dcf(&dcf_resolved(), text).len(), 1);
+    }
+
     #[test]
     fn run_rules_stamps_default_severity() {
         let root = crate::parser::parse("f(1)").cst;
@@ -754,7 +1173,7 @@ mod tests {
         let cfg = FileControlFlow::build(&root);
         let symbols = crate::semantic::StaticBaseR::new();
         let resolved = ResolvedRules::with_config(
-            vec![Box::new(FakeError)],
+            vec![AnyRule::R(Box::new(FakeError))],
             RulesConfig::default(),
             CompatConfig::default(),
         );
@@ -784,7 +1203,7 @@ mod tests {
         let cfg = FileControlFlow::build(&root);
         let symbols = crate::semantic::StaticBaseR::new();
         let resolved = ResolvedRules::with_config(
-            vec![Box::new(FakeError)],
+            vec![AnyRule::R(Box::new(FakeError))],
             RulesConfig::default(),
             CompatConfig::default(),
         );
@@ -807,7 +1226,7 @@ mod tests {
     #[test]
     fn enabled_rules_reflects_the_resolved_set() {
         let resolved = ResolvedRules::with_config(
-            vec![Box::new(FakeError)],
+            vec![AnyRule::R(Box::new(FakeError))],
             RulesConfig::default(),
             CompatConfig::default(),
         );

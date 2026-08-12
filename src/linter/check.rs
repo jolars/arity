@@ -28,7 +28,7 @@ use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
 
 use super::diagnostic::{Diagnostic, Severity, ViolationData};
-use super::rules::{ResolvedRules, default_symbol_provider, run_rules};
+use super::rules::{ResolvedRules, default_symbol_provider, run_dcf_rules, run_rules};
 
 /// Synthetic rule id carried by findings that originate from the parser's error
 /// side channel rather than a lint rule. Shown as the `[code]` in CLI output and
@@ -54,6 +54,21 @@ pub fn syntax_error_diagnostics(diags: &[ParseDiagnosticData], path: &Path) -> V
             fix: None,
         })
         .collect()
+}
+
+/// The DCF parser reports on its own [`ParseDiagnostic`] type (the parser crate
+/// stays salsa-free), structurally identical to the salsa-side one. Converting
+/// here lets `DESCRIPTION` reuse [`syntax_error_diagnostics`] verbatim.
+///
+/// [`ParseDiagnostic`]: crate::parser::ParseDiagnostic
+impl From<&crate::parser::ParseDiagnostic> for ParseDiagnosticData {
+    fn from(value: &crate::parser::ParseDiagnostic) -> Self {
+        Self {
+            message: value.message.clone(),
+            start: value.start,
+            end: value.end,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -684,6 +699,64 @@ pub fn check_document(
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, LintError> {
     check_document_with_provider(path, content, config, &default_symbol_provider())
+}
+
+/// Lint one `DESCRIPTION` buffer: parse it as DCF, and either report the
+/// parser's diagnostics or run the configured [`DcfRule`]s over the document.
+///
+/// **Parse diagnostics block the rules**, exactly as they do for R
+/// (`.claude/rules/linter.md`): a `DESCRIPTION` that `read.dcf` would reject is
+/// a fix-this-first state, and `LintStatus` must not mean different things for
+/// different file types. The whole policy lives in this one function, so
+/// reporting-without-blocking would be a one-line change here rather than a
+/// scattered one.
+///
+/// [`DcfRule`]: super::rules::DcfRule
+fn lint_description_source(
+    path: &Path,
+    content: &str,
+    rules: &ResolvedRules,
+) -> (LintStatus, Vec<Diagnostic>) {
+    let parsed = crate::dcf::parse(content);
+    if !parsed.diagnostics.is_empty() {
+        let data: Vec<ParseDiagnosticData> = parsed.diagnostics.iter().map(Into::into).collect();
+        return (
+            LintStatus::ParseDiagnostics { count: data.len() },
+            syntax_error_diagnostics(&data, path),
+        );
+    }
+
+    let document = parsed.document();
+    let facts = DescriptionFacts::from_document(&document);
+    let mut diagnostics = run_dcf_rules(rules, path, &parsed.cst, &document, &facts);
+    for d in &mut diagnostics {
+        d.path = path.to_path_buf();
+    }
+    let status = if diagnostics.is_empty() {
+        LintStatus::Clean
+    } else {
+        LintStatus::Findings {
+            count: diagnostics.len(),
+        }
+    };
+    (status, diagnostics)
+}
+
+/// Lint a single in-memory `DESCRIPTION` by path + text — the DCF twin of
+/// [`check_document`], used by the docs generator and tests.
+///
+/// No database: a document's facts come from the document itself, and no
+/// cross-file question is answerable from one buffer anyway.
+pub fn check_description_document(
+    path: &Path,
+    content: &str,
+    config: &LintConfig,
+) -> Result<Vec<Diagnostic>, LintError> {
+    let (rules, unknown) = ResolvedRules::resolve(config);
+    if let Some(rule) = unknown.into_iter().next() {
+        return Err(LintError::UnknownRule { rule });
+    }
+    Ok(lint_description_source(path, content, &rules).1)
 }
 
 /// Like [`check_document`] but with a caller-supplied symbol provider.

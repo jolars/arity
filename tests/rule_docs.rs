@@ -4,10 +4,7 @@
 //! the same `render_rule_doc` sections into the single `reference/rules.md`
 //! page in the mdBook source tree.
 
-use std::path::Path;
-
-use arity::linter::check_document;
-use arity::linter::docs::{example_lint_config, render_rule_doc, render_rules_page};
+use arity::linter::docs::{lint_example, render_rule_doc, render_rules_page};
 use arity::linter::rules::{all_rules, rules_by_category};
 
 /// Pin the rendered reference section for every documented rule. Any change to
@@ -19,7 +16,7 @@ fn rule_docs_render() {
         if rule.examples().is_empty() {
             continue;
         }
-        insta::assert_snapshot!(rule.id().replace('-', "_"), render_rule_doc(rule.as_ref()));
+        insta::assert_snapshot!(rule.id().replace('-', "_"), render_rule_doc(&rule));
     }
 }
 
@@ -95,9 +92,9 @@ fn every_rule_is_documented() {
 fn documented_examples_actually_trigger() {
     for rule in all_rules() {
         for example in rule.examples() {
-            let config = example_lint_config(rule.as_ref());
-            let diagnostics = check_document(Path::new("example.R"), example.source, &config)
-                .expect("linting a documented example should not error");
+            // The same call the reference page makes, so this check cannot
+            // drift from what is actually rendered.
+            let diagnostics = lint_example(&rule, example);
             assert!(
                 diagnostics.iter().any(|d| d.rule == rule.id()),
                 "example for rule `{}` produced no finding of that rule:\n{}",

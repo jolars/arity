@@ -27,6 +27,7 @@ use std::collections::HashMap;
 
 use rowan::{NodeOrToken, TextRange};
 
+use crate::dcf;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 use super::diagnostic::Diagnostic;
@@ -114,6 +115,30 @@ impl SuppressionMap {
     pub fn build(root: &SyntaxNode) -> Self {
         let mut map = Self::default();
         visit(root, &mut map);
+        map
+    }
+
+    /// Build from a `DESCRIPTION` document: every `COMMENT` token, which in DCF
+    /// only ever sits under a `COMMENT_LINE`.
+    ///
+    /// DCF has no trailing comments — a `#` mid-value is value text — so a
+    /// directive is always a line of its own at column zero. What a node-scope
+    /// directive attaches to follows from where that line sits: see
+    /// [`next_meaningful_dcf_sibling`].
+    pub fn build_dcf(root: &dcf::SyntaxNode) -> Self {
+        let mut map = Self::default();
+        for el in root.descendants_with_tokens() {
+            if let NodeOrToken::Token(tok) = el
+                && tok.kind() == dcf::SyntaxKind::COMMENT
+            {
+                classify_comment_with(
+                    tok.text(),
+                    tok.text_range(),
+                    || next_meaningful_dcf_sibling(&tok),
+                    &mut map,
+                );
+            }
+        }
         map
     }
 
@@ -205,8 +230,28 @@ fn visit(node: &SyntaxNode, map: &mut SuppressionMap) {
 }
 
 fn classify_comment(tok: &rowan::SyntaxToken<crate::syntax::RLanguage>, map: &mut SuppressionMap) {
-    let text = tok.text();
-    let base = tok.text_range().start();
+    classify_comment_with(
+        tok.text(),
+        tok.text_range(),
+        || next_meaningful_sibling(tok),
+        map,
+    );
+}
+
+/// Parse one `#` comment into a directive, grammar-free.
+///
+/// `target` is invoked only for the node-scope form, so the common case (a
+/// file-scope directive, and every comment that is not a directive at all)
+/// never pays for the sibling walk. That laziness is the whole reason this
+/// function is split out: it is what lets both grammars share the parsing
+/// without sharing a tree type.
+fn classify_comment_with(
+    text: &str,
+    comment: TextRange,
+    target: impl FnOnce() -> Option<TextRange>,
+    map: &mut SuppressionMap,
+) {
+    let base = comment.start();
     // Byte offset of the comment body within the token, so a `RuleRef` range is
     // absolute in the file.
     let Some(body_start) = text.find('#').map(|i| i + 1) else {
@@ -225,7 +270,7 @@ fn classify_comment(tok: &rowan::SyntaxToken<crate::syntax::RLanguage>, map: &mu
                     kind: DirectiveKind::FileAll,
                     rule: None,
                     reason: clean_reason(reason),
-                    comment: tok.text_range(),
+                    comment,
                     target: None,
                     raw: text.to_string(),
                 },
@@ -239,7 +284,7 @@ fn classify_comment(tok: &rowan::SyntaxToken<crate::syntax::RLanguage>, map: &mu
                 kind: DirectiveKind::File,
                 rule: parse_rule(rest, rest_offset, base),
                 reason: parse_reason(rest),
-                comment: tok.text_range(),
+                comment,
                 target: None,
                 raw: text.to_string(),
             },
@@ -256,8 +301,8 @@ fn classify_comment(tok: &rowan::SyntaxToken<crate::syntax::RLanguage>, map: &mu
                 kind: DirectiveKind::Node,
                 rule: parse_rule(rest, rest_offset, base),
                 reason: parse_reason(rest),
-                comment: tok.text_range(),
-                target: next_meaningful_sibling(tok),
+                comment,
+                target: target(),
                 raw: text.to_string(),
             },
         );
@@ -320,6 +365,62 @@ fn parse_reason(rest: &str) -> Option<String> {
 fn clean_reason(reason: &str) -> Option<String> {
     let trimmed = reason.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// What a node-scope directive in a `DESCRIPTION` attaches to: the next thing,
+/// same as in R, but "next" has to be read off a tree where a comment line is a
+/// child of the field it follows.
+///
+/// A `COMMENT_LINE` lands under whatever node is open, and a `FIELD` stays open
+/// across its continuation lines. So a comment between two fields is a child of
+/// the *earlier* one — which is not what its author meant. The distinction that
+/// matters is therefore whether a value line still follows inside that field:
+///
+/// - **A value line follows** — the comment interrupts a multi-line value, the
+///   case `read.dcf` skips before *resuming* the field. It attaches to the
+///   whole enclosing field, which is the only useful answer: a finding on one
+///   dependency entry lies inside that field's range.
+/// - **Otherwise** — the comment is trailing, and points past its field at
+///   whatever line comes next.
+///
+/// `None` when nothing follows, which leaves the directive dangling exactly as
+/// in R. A comment never opens a record, so it can never bridge two.
+fn next_meaningful_dcf_sibling(tok: &dcf::SyntaxToken) -> Option<TextRange> {
+    let line = tok.parent()?;
+    let field = line.parent().filter(|p| p.kind() == dcf::SyntaxKind::FIELD);
+    if let Some(field) = field {
+        let interrupts_value = line
+            .siblings(rowan::Direction::Next)
+            .skip(1)
+            .any(|sibling| sibling.kind() == dcf::SyntaxKind::VALUE_LINE);
+        if interrupts_value {
+            return Some(field.text_range());
+        }
+        return next_dcf_sibling_of(&field);
+    }
+    next_dcf_sibling_of(&line)
+}
+
+/// The range a directive sitting immediately before `node`'s successor covers.
+fn next_dcf_sibling_of(node: &dcf::SyntaxNode) -> Option<TextRange> {
+    let next = next_dcf_line(node.siblings(rowan::Direction::Next).skip(1))?;
+    // A comment above the first field sits under ROOT (it opens no record), so
+    // the sibling found there is the whole RECORD. Descend into it rather than
+    // silently widening a next-item directive to the entire file.
+    if next.kind() == dcf::SyntaxKind::RECORD {
+        return Some(next_dcf_line(next.children())?.text_range());
+    }
+    Some(next.text_range())
+}
+
+/// The first line node in `lines` that is neither a comment nor blank.
+fn next_dcf_line(mut lines: impl Iterator<Item = dcf::SyntaxNode>) -> Option<dcf::SyntaxNode> {
+    lines.find(|node| {
+        !matches!(
+            node.kind(),
+            dcf::SyntaxKind::COMMENT_LINE | dcf::SyntaxKind::BLANK_LINE
+        )
+    })
 }
 
 fn next_meaningful_sibling(
