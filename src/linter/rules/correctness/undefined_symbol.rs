@@ -90,32 +90,30 @@ impl UndefinedSymbol {
         // Allocate only when there is something to add: the common case keeps
         // the model's slice.
         let implicit = implicit_attached_packages(ctx.path);
-        let wildcards = ctx
-            .project
-            .map(|p| p.wildcard_import_packages().iter().map(String::as_str))
-            .into_iter()
-            .flatten();
-        let augmented: Vec<LoadedPackage> = ctx
-            .model
-            .loaded_packages()
-            .iter()
-            .cloned()
-            .chain(
-                implicit
+        let wildcards = ctx.project.map(|p| p.wildcard_import_packages());
+        let augmented: Vec<LoadedPackage>;
+        let loaded: &[LoadedPackage] =
+            if implicit.is_empty() && wildcards.is_none_or(|packages| packages.is_empty()) {
+                ctx.model.loaded_packages()
+            } else {
+                augmented = ctx
+                    .model
+                    .loaded_packages()
                     .iter()
-                    .copied()
-                    .chain(wildcards)
-                    .map(|name| LoadedPackage {
-                        name: SmolStr::new(name),
-                        range: TextRange::default(),
-                    }),
-            )
-            .collect();
-        let loaded: &[LoadedPackage] = if augmented.len() == ctx.model.loaded_packages().len() {
-            ctx.model.loaded_packages()
-        } else {
-            &augmented
-        };
+                    .cloned()
+                    .chain(
+                        implicit
+                            .iter()
+                            .copied()
+                            .chain(wildcards.into_iter().flatten().map(String::as_str))
+                            .map(|name| LoadedPackage {
+                                name: SmolStr::new(name),
+                                range: TextRange::default(),
+                            }),
+                    )
+                    .collect();
+                &augmented
+            };
         // Conservative gate: bail out entirely if any attached package's exports
         // are unknown, since such a package could define the unresolved names. A
         // meta-package (e.g. tidyverse) also attaches its core members (the
