@@ -513,12 +513,16 @@ impl LintWorker {
         // `auto_build` reads the buffer + the current salsa index and mutates
         // `index_attempts`, so it stays on the lint thread; it spawns its own
         // background build, whose result is installed back here on `build_rx`.
+        // The enclosing package's declared dependencies count as referenced even
+        // when no `.R` file mentions them: they are exactly what the file is
+        // entitled to use, and the undefined-symbol gates need them enumerable.
+        let declared = self.declared_packages_for(&req.path);
         if req.index_config.auto_build {
-            self.maybe_build(&anchor, &req.index_config, req.buffer.text());
+            self.maybe_build(&anchor, &req.index_config, req.buffer.text(), &declared);
         }
         // Fetch names-only exports for referenced packages the offline tiers don't
         // cover, when a sidecar URL is configured. Background, like `maybe_build`.
-        self.maybe_fetch_remote(&anchor, &req.index_config, req.buffer.text());
+        self.maybe_fetch_remote(&anchor, &req.index_config, req.buffer.text(), &declared);
 
         // Read-phase on the read pool, holding a db clone. A superseding edit (or any
         // write) trips `salsa::Cancelled`, caught here so a canceled analyze
@@ -617,11 +621,34 @@ impl LintWorker {
     /// Spawn a background harvest for the document's unknown packages. On success
     /// the freshly-loaded index is sent back on `build_tx` for the lint thread to
     /// install. The "already indexed?" check reads the current salsa index.
-    fn maybe_build(&mut self, anchor: &Path, cfg: &IndexConfig, source: &str) {
+    /// The packages the `DESCRIPTION` of the package enclosing `path` declares.
+    /// Pure: it reads the tracked `DESCRIPTION` input, never disk. Empty for a
+    /// loose script outside any package.
+    fn declared_packages_for(&self, path: &Path) -> Vec<SmolStr> {
+        let Some(root) = crate::project::package_root(path) else {
+            return Vec::new();
+        };
+        let Some(file) = self.db.lookup_description(&root) else {
+            return Vec::new();
+        };
+        crate::incremental::description_facts(&self.db, file)
+            .declared_packages()
+            .iter()
+            .map(SmolStr::new)
+            .collect()
+    }
+
+    fn maybe_build(
+        &mut self,
+        anchor: &Path,
+        cfg: &IndexConfig,
+        source: &str,
+        declared: &[SmolStr],
+    ) {
         let current = self.db.library_data();
         let empty = IndexedProvider::empty();
         let indexed = current.as_deref().unwrap_or(&empty);
-        let to_build = packages_to_build(&mut self.index_attempts, indexed, source);
+        let to_build = packages_to_build(&mut self.index_attempts, indexed, source, declared);
         if to_build.is_empty() {
             return;
         }
@@ -688,7 +715,13 @@ impl LintWorker {
     /// that the offline tiers (base, harvested, bundled) don't already cover. On
     /// success the fetched names-only batch is sent back on `remote_tx` for the
     /// lint thread to merge and install. No-op unless a sidecar URL is configured.
-    fn maybe_fetch_remote(&mut self, anchor: &Path, cfg: &IndexConfig, source: &str) {
+    fn maybe_fetch_remote(
+        &mut self,
+        anchor: &Path,
+        cfg: &IndexConfig,
+        source: &str,
+        declared: &[SmolStr],
+    ) {
         let Some(url) = cfg.remote_url.as_deref() else {
             return;
         };
@@ -698,7 +731,8 @@ impl LintWorker {
         let empty_remote = RemoteExports::new();
         let remote = self.db.remote_exports();
         let remote = remote.as_deref().unwrap_or(&empty_remote);
-        let to_fetch = packages_to_fetch(&mut self.remote_attempts, index, remote, source);
+        let to_fetch =
+            packages_to_fetch(&mut self.remote_attempts, index, remote, source, declared);
         if to_fetch.is_empty() {
             return;
         }
@@ -737,8 +771,10 @@ impl LintWorker {
     }
 }
 
-/// Packages to fetch from the sidecar for `source`: everything it references
-/// minus what the offline tiers already cover (base/default packages, locally
+/// Packages to fetch from the sidecar for `source`: everything it references —
+/// plus everything the enclosing package's `DESCRIPTION` declares, which is why
+/// a dependency mentioned in no `.R` file still gets fetched — minus what the
+/// offline tiers already cover (base/default packages, locally
 /// harvested packages, and the bundled CRAN list — all captured by
 /// [`package_indexed`]) and minus what we've already attempted this session.
 /// Marks the returned packages as attempted so they aren't fetched twice.
@@ -747,15 +783,18 @@ pub(crate) fn packages_to_fetch(
     indexed: &IndexedProvider,
     remote: &RemoteExports,
     source: &str,
+    declared: &[SmolStr],
 ) -> Vec<SmolStr> {
     referenced_in_source(source)
         .into_iter()
+        .chain(declared.iter().cloned())
         .filter(|pkg| !package_indexed(indexed, remote, pkg) && attempts.insert(pkg.clone()))
         .collect()
 }
 
 /// Packages to harvest for `source`: the always-attached default packages plus
-/// everything `source` references, minus what we already hold a *harvested*
+/// everything `source` references and everything the enclosing package
+/// declares, minus what we already hold a *harvested*
 /// index for and minus what we've already attempted this session. Marks the
 /// returned packages as attempted so they aren't built twice.
 ///
@@ -767,6 +806,7 @@ pub(crate) fn packages_to_build(
     attempts: &mut HashSet<SmolStr>,
     indexed: &IndexedProvider,
     source: &str,
+    declared: &[SmolStr],
 ) -> Vec<SmolStr> {
     // A referenced meta-package also attaches its members (harvested attach
     // set, static table fallback), and the undefined-symbol gates require each
@@ -775,7 +815,11 @@ pub(crate) fn packages_to_build(
     // pass 1 harvests the meta, the installed index triggers a re-lint, and
     // pass 2 sees the meta's attaches (its members weren't marked attempted).
     let mut candidates: Vec<SmolStr> = Vec::new();
-    for pkg in with_default_packages(referenced_in_source(source)) {
+    let referenced: Vec<SmolStr> = referenced_in_source(source)
+        .into_iter()
+        .chain(declared.iter().cloned())
+        .collect();
+    for pkg in with_default_packages(referenced) {
         for member in attach_members(indexed, &pkg) {
             let member = SmolStr::new(member);
             if !candidates.contains(&member) {
@@ -906,7 +950,7 @@ mod tests {
         // referenced-but-unharvested package (stats is a default; notarealpkg
         // is neither default nor harvested) still need a build for rich data.
         let src = "library(dplyr)\nlibrary(stats)\nlibrary(notarealpkg)\n";
-        let first = packages_to_build(&mut attempts, &indexed, src);
+        let first = packages_to_build(&mut attempts, &indexed, src, &[]);
         assert!(
             !first.contains(&SmolStr::new("dplyr")),
             "harvested dep skipped"
@@ -919,7 +963,7 @@ mod tests {
         }
         assert!(first.contains(&SmolStr::new("notarealpkg")));
         // A second pass returns nothing — every package was already attempted.
-        let second = packages_to_build(&mut attempts, &indexed, src);
+        let second = packages_to_build(&mut attempts, &indexed, src, &[]);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }
 
@@ -941,7 +985,7 @@ mod tests {
         };
         let indexed = IndexedProvider::from_indices([meta]);
         let mut attempts = HashSet::new();
-        let got = packages_to_build(&mut attempts, &indexed, "library(metaverse)\n");
+        let got = packages_to_build(&mut attempts, &indexed, "library(metaverse)\n", &[]);
         assert!(
             got.contains(&SmolStr::new("helperpkg")),
             "harvested attach member should be queued, got {got:?}"
@@ -958,6 +1002,7 @@ mod tests {
             &mut attempts,
             &IndexedProvider::empty(),
             "library(tidyverse)\n",
+            &[],
         );
         assert!(got.contains(&SmolStr::new("tidyverse")));
         assert!(
@@ -975,7 +1020,7 @@ mod tests {
         // dplyr: locally harvested. data.table: bundled. stats: a default package.
         // alreadyremote: already in the sidecar. notonremote: genuinely uncovered.
         let src = "library(dplyr)\nlibrary(data.table)\nlibrary(stats)\nlibrary(alreadyremote)\nlibrary(notonremote)\n";
-        let first = packages_to_fetch(&mut attempts, &indexed, &remote, src);
+        let first = packages_to_fetch(&mut attempts, &indexed, &remote, src, &[]);
         assert!(
             first.contains(&SmolStr::new("notonremote")),
             "uncovered package fetched, got {first:?}"
@@ -987,7 +1032,7 @@ mod tests {
             );
         }
         // Second pass: nothing left to attempt.
-        let second = packages_to_fetch(&mut attempts, &indexed, &remote, src);
+        let second = packages_to_fetch(&mut attempts, &indexed, &remote, src, &[]);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }
 }
