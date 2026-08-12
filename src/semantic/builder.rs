@@ -510,10 +510,7 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     // deliberately top-level-only because attachment is the narrower fact.
     if let Some(call) = CallExpr::cast(node.clone())
         && let Some(callee) = call_callee_ident(&call)
-        && matches!(
-            callee.as_str(),
-            "library" | "require" | "requireNamespace" | "loadNamespace"
-        )
+        && crate::semantic::symbols::PACKAGE_LOAD_CALLS.contains(&callee.as_str())
         && let Some((pkg_name, _)) = first_string_or_ident_arg(&call)
     {
         ctx.model.referenced_packages.push(pkg_name);
