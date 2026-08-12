@@ -44,6 +44,7 @@ pub mod correctness;
 pub mod documentation;
 pub mod matchers;
 pub mod meta;
+pub mod packaging;
 pub mod performance;
 pub mod readability;
 pub mod regex;
@@ -64,6 +65,10 @@ pub enum RuleCategory {
     Readability,
     Performance,
     Documentation,
+    /// The package's declared metadata, and whether it matches its code. The
+    /// one category spanning both grammars — an undeclared dependency and an
+    /// unused one are the same defect seen from two sides.
+    Packaging,
     Meta,
 }
 
@@ -76,6 +81,7 @@ impl RuleCategory {
             Self::Readability => "Readability",
             Self::Performance => "Performance",
             Self::Documentation => "Documentation",
+            Self::Packaging => "Packaging",
             Self::Meta => "Meta",
         }
     }
@@ -97,6 +103,7 @@ pub fn rules_by_category() -> Vec<(RuleCategory, Vec<AnyRule>)> {
         (RuleCategory::Readability, r_rules(readability_rules())),
         (RuleCategory::Performance, r_rules(performance_rules())),
         (RuleCategory::Documentation, r_rules(documentation_rules())),
+        (RuleCategory::Packaging, packaging_rules()),
         (RuleCategory::Meta, r_rules(meta_rules())),
     ]
 }
@@ -182,6 +189,16 @@ fn documentation_rules() -> Vec<Box<dyn Rule>> {
         Box::new(documentation::RoxygenParam),
         Box::new(documentation::RoxygenExamples),
         Box::new(documentation::Roxygen2Compat),
+    ]
+}
+
+/// The one category holding rules over both grammars, so it builds its
+/// `AnyRule`s directly rather than going through [`r_rules`].
+fn packaging_rules() -> Vec<AnyRule> {
+    vec![
+        AnyRule::Dcf(Box::new(packaging::DescriptionMissingField)),
+        AnyRule::Dcf(Box::new(packaging::DescriptionDuplicateField)),
+        AnyRule::Dcf(Box::new(packaging::DescriptionVersionConstraint)),
     ]
 }
 

@@ -1,0 +1,38 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `description-version-constraint`
+
+Flag a dependency entry whose parenthesized part is not a version constraint.
+
+R reads `pkg (>= 1.0.0)`: an operator and a version. Anything else—`dplyr (1.0.0)`, `dplyr (>=)`, `dplyr (latest)`—states no bound at all, and R's dependency check enforces nothing. The line reads as a requirement and behaves as none, so the package installs against exactly the versions its author meant to exclude.
+
+Checked in all five dependency fields, `R` included: `Depends: R (>= 4.1)` is the most common constraint in any `DESCRIPTION`.
+
+There is no autofix. `dplyr (1.0.0)` most likely means `>=`, but it could mean `==` or `>`, and guessing would invent a requirement the author never wrote.
+
+This rule is **enabled by default**.
+
+A version requirement R will not enforce:
+
+```text
+Package: mypkg
+Depends: R (4.1)
+Imports: dplyr (1.0.0)
+```
+
+```text
+warning: description-version-constraint
+ --> DESCRIPTION:2:10
+  |
+2 | Depends: R (4.1)
+  |          ^^^^^^^ the version constraint on `R` states no bound, so R enforces nothing here
+  = help: Write a comparison operator and a version, as in `(>= 1.0.0)`.
+warning: description-version-constraint
+ --> DESCRIPTION:3:10
+  |
+3 | Imports: dplyr (1.0.0)
+  |          ^^^^^^^^^^^^^ the version constraint on `dplyr` states no bound, so R enforces nothing here
+  = help: Write a comparison operator and a version, as in `(>= 1.0.0)`.
+```

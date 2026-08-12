@@ -1,0 +1,33 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `description-missing-field`
+
+Flag a `DESCRIPTION` missing a field R requires.
+
+`R CMD build` refuses a package whose `DESCRIPTION` omits `Package`, `Version`, `Title`, `Description`, `Author`, `Maintainer`, or `License`. `Authors@R` satisfies `Author` and `Maintainer`, since `R CMD build` derives both from it. A field that is present but empty declares nothing and counts as missing.
+
+Every missing field is reported as one finding rather than one each: the defect is that the file is incomplete, and it takes one decision—and one suppression—to settle.
+
+A file with no fields at all is left alone; that is not an incomplete package description.
+
+There is no autofix: each of these fields needs a value only the author has.
+
+This rule is **enabled by default**.
+
+A `DESCRIPTION` that `R CMD build` would reject:
+
+```text
+Package: mypkg
+Version: 0.1.0
+```
+
+```text
+warning: description-missing-field
+ --> DESCRIPTION:1:1
+  |
+1 | Package: mypkg
+  | ^^^^^^^ DESCRIPTION is missing the required fields `Title`, `Description`, `Author`, `Maintainer`, `License`
+  = help: Add the fields `Title`, `Description`, `Author`, `Maintainer`, `License`, or declare `Authors@R` in place of `Author` and `Maintainer`.
+```
