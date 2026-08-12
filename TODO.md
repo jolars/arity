@@ -237,9 +237,10 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   - [ ] Pin-aware versions: resolve the project's actual version from
         renv.lock/DESCRIPTION (needs CRAN Archive coverage); the URL/disk schema
         is already version-keyed for this.
-  - [ ] Feed DESCRIPTION `Imports`/`Depends` and `import(pkg)` into the referenced
+  - [x] Feed DESCRIPTION `Imports`/`Depends` and `import(pkg)` into the referenced
         and resolved sets so the `resolution_incomplete` poison
         (`src/project/scope.rs`) clears once the sidecar can enumerate exports.
+        Landed with DESCRIPTION stage 2 below, as one change.
 
 - [x] Data-masking/tidy-eval suppression (landed). A bare name in a
   data-masking verb's arguments (`mutate(b = a + 1)`) resolves to a data-frame
@@ -416,19 +417,57 @@ completion and hover, and it formats. Staged so each step is useful alone.
       `parse_dcf` and all five of its consumers with no behavior change. Lives
       in the published parser crate so a dprint plugin can reach it at stage 5.
 
-- [ ] **2. DESCRIPTION as an analysis input.** Parse structured dependency
-      entries (`Depends`, `Imports`, `Suggests`, `LinkingTo`, `Enhances`—name
-      plus optional version constraint, generalizing `r_depends_floor`) and make
-      DESCRIPTION a salsa input rather than an ad-hoc `read_to_string` at query
-      time. Five readers still re-read and re-parse the same file per package
-      (`harvest`, `package_name`, `description_compat`,
-      `roxygen_markdown_default`, `expected_r_sources`), memoized only in
-      `MarkdownDefaultResolver`; invalidation is the blunt
-      `package_meta_changed -> refresh the whole graph`
-      (`src/lsp/lint_thread.rs`). Then feed the declared packages into the
-      referenced and resolved sets—this **is** the Cross-cutting-prerequisite
-      item "Feed DESCRIPTION `Imports`/`Depends` and `import(pkg)` into the
-      referenced and resolved sets" above; do them as one change.
+- [x] **2. DESCRIPTION as an analysis input.** Done. `dcf::deps` parses
+      dependency entries (name plus version constraints, spanned), and
+      `DescriptionFacts` (`src/project/description.rs`) derives every fact in
+      one parse: `package_name`, `description_compat`, the `Roxygen` field, and
+      `expected_r_sources`'s `Collate` half are all projections of it, and
+      `r_depends_floor` became a lookup over the entries rather than a bespoke
+      string splitter. `harvest` is deliberately untouched—it reads *installed*
+      packages in a library directory, a different problem with no database and
+      no watcher.
+
+      DESCRIPTION is a salsa input holding **text** (`DescriptionFile`), with
+      `description_facts` the `Eq` projection over it. That split is the whole
+      point: a `Description:` prose edit re-derives the facts, they compare
+      equal, and salsa backdates—so `workspace_project` is never re-executed.
+      `discover_packages` no longer reads DESCRIPTION at all
+      (`PackageInfo.expected_sources` became `dir_sources`).
+
+      Declared packages feed both sets. `Depends` joins the resolved set via
+      `attached_names`; `Imports` deliberately does **not** (R does not attach
+      it). All five fields join the referenced set, so `arity index` and the
+      sidecar fetch cover a dependency no `.R` file mentions. `import(pkg)` no
+      longer poisons: `ProjectScope::build` stays pure and records the packages,
+      and `external_resolution`—which holds the library index—runs them through
+      the existing enumerability gate, so the suppression lifts by itself once
+      the package can be enumerated. `resolution_incomplete` now means only "a
+      dynamic or unanalyzed `source()`".
+
+      Invalidation is no longer blunt: `WatchedFilesBatch` carries each changed
+      path with its kind, the refreshers report whether they actually wrote, and
+      a save that changed nothing no longer relints.
+
+      Two consequences worth knowing, both the conservative-correct direction
+      and both pinned by tests: a `Depends` we cannot enumerate now suppresses
+      the whole file (exactly as an unindexed `library()` already did), and
+      lifting the `import(pkg)` poison exposes findings in every package using
+      it—which is how the item below was found.
+
+- [ ] **A backticked name never resolves against a package export list.**
+      `` e$a <- `:` `` and ``map_lgl(imp, `%in%`, x = topic)`` are flagged
+      `undefined-symbol`. The backticks are part of the `IDENT` token, which is
+      *correct* and load-bearing for user operators (`src/semantic/builder.rs`
+      records a `` `%+%` `` binding backtick-quoted so references match), but
+      the base and CRAN export lists store `:` and `%in%` unquoted, so the
+      lookup misses. The fix belongs in the provider lookup
+      (`origin`/`is_base`/`resolve_origin`, `src/semantic/symbols.rs` +
+      `src/rindex/provider.rs`), which should also try the backtick-stripped
+      name—**not** in the builder, which must keep quoting bindings.
+
+      Predates stage 2 (reproduces on `2c5168c`); it was invisible in packages
+      using `import(pkg)` only because the wholesale-import poison suppressed
+      the whole file. Repro: `f <- function() { e <- new.env(); e$a <- `:`; e }`.
 
 - [ ] **3. DESCRIPTION lint rules.** `undeclared-dependency` (`pkg::x` or
       `library(pkg)` in `R/` with `pkg` absent from `Depends`/`Imports`) and
