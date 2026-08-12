@@ -348,16 +348,39 @@ impl LintWorker {
         };
         relint |= member_changed;
 
-        if batch.package_meta_changed && !member_changed {
-            self.db.refresh_package_graph();
-            relint = true;
+        if !member_changed {
+            // Refresh only what actually moved. A `NAMESPACE` change reshapes
+            // the package graph, and so does a `DESCRIPTION` for a root we do
+            // not track yet — it may have just turned a directory into a
+            // package. A `DESCRIPTION` edit for a known root needs nothing but
+            // its own text re-read.
+            let mut refresh_graph = false;
+            for (path, kind) in &batch.meta_changed {
+                match kind {
+                    WatchedKind::Namespace => refresh_graph = true,
+                    WatchedKind::Description => match path
+                        .parent()
+                        .filter(|root| self.db.lookup_description(root).is_some())
+                    {
+                        Some(root) => {
+                            let root = root.to_path_buf();
+                            relint |= self.db.refresh_description(&root);
+                        }
+                        None => refresh_graph = true,
+                    },
+                    _ => {}
+                }
+            }
+            if refresh_graph {
+                relint |= self.db.refresh_package_graph();
+            }
         }
 
         // A `DESCRIPTION` (or `man/roxygen/meta.R`) edit may flip the
         // package-wide roxygen markdown default; re-resolve it for every
         // tracked file. Unchanged resolutions write nothing, so the common
-        // case invalidates no parse.
-        if batch.package_meta_changed {
+        // case invalidates no parse. A `NAMESPACE` change cannot flip it.
+        if batch.touches_roxygen_options() {
             relint |= self.db.refresh_roxygen_markdown();
         }
 

@@ -1807,6 +1807,33 @@ fn refresh_descriptions_skips_write_when_unchanged() {
 }
 
 #[test]
+fn an_untouched_metadata_refresh_reports_no_write() {
+    // The watcher fires on any `DESCRIPTION`/`NAMESPACE` event, including saves
+    // that changed nothing. The refreshers report whether they actually wrote,
+    // so the lint thread can skip a re-lint that would find nothing new.
+    let (mut db, _m, dir) = description_package(DESCRIPTION_BASE);
+
+    assert!(
+        !db.refresh_package_graph(),
+        "identical on-disk metadata must not write"
+    );
+    assert!(
+        !db.refresh_description(dir.path()),
+        "an identical DESCRIPTION must not write"
+    );
+
+    std::fs::write(
+        dir.path().join("DESCRIPTION"),
+        DESCRIPTION_BASE.replace("Title: A Package", "Title: Renamed"),
+    )
+    .expect("DESCRIPTION");
+    assert!(
+        db.refresh_description(dir.path()),
+        "a real edit must write, even when it changes no fact"
+    );
+}
+
+#[test]
 fn description_facts_are_tracked_per_root() {
     // The facts really are derived from the tracked input, and `R` never
     // reaches the dependency list.
