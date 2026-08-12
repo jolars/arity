@@ -38,6 +38,21 @@ const DEFAULT_PACKAGES: &[&str] = &[
     PACKAGE_GRAPHICS,
 ];
 
+/// The bare name a package export list would store for `name`: a matched pair
+/// of surrounding backticks removed, everything else returned unchanged.
+///
+/// A backtick-quoted reference lexes as a *single* `IDENT` token with the
+/// backticks inside it, and that is load-bearing — the semantic builder records
+/// a user operator's binding backtick-quoted so its references match. Export
+/// lists, on the other hand, store `:` and `%in%` unquoted, so every provider
+/// lookup has to bridge the two. Strip here, at the lookup, never at the
+/// binding.
+pub fn unbacktick(name: &str) -> &str {
+    name.strip_prefix('`')
+        .and_then(|rest| rest.strip_suffix('`'))
+        .unwrap_or(name)
+}
+
 /// A `library()` / `require()` / `requireNamespace()` call discovered in the
 /// file, in source order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -537,7 +552,7 @@ impl StaticBaseR {
     /// default packages export it), if any.
     pub fn package_of(&self, name: &str) -> Option<&SmolStr> {
         self.name_to_packages
-            .get(name)
+            .get(unbacktick(name))
             .and_then(|pkgs| pkgs.first())
     }
 }
@@ -545,7 +560,7 @@ impl StaticBaseR {
 impl SymbolProvider for StaticBaseR {
     fn origin(&self, name: &str, loaded: &[LoadedPackage]) -> PackageOrigin {
         let mut candidates: Vec<SmolStr> = Vec::new();
-        if let Some(pkgs) = self.name_to_packages.get(name) {
+        if let Some(pkgs) = self.name_to_packages.get(unbacktick(name)) {
             candidates.extend(pkgs.iter().cloned());
         }
         // Non-default `library()` calls add nothing this pass — no manifest yet.
@@ -558,7 +573,7 @@ impl SymbolProvider for StaticBaseR {
     }
 
     fn is_base(&self, name: &str) -> bool {
-        self.base_names.contains(name)
+        self.base_names.contains(unbacktick(name))
     }
 
     fn package_indexed(&self, pkg: &str) -> bool {
@@ -629,7 +644,7 @@ impl BundledPackages {
     pub fn exports(&self, package: &str, name: &str) -> bool {
         self.exports
             .get(package)
-            .is_some_and(|set| set.contains(name))
+            .is_some_and(|set| set.contains(unbacktick(name)))
     }
 
     /// Iterate a bundled package's export names, if it is in the set (for
@@ -735,5 +750,44 @@ mod tests {
         let bundled = BundledPackages::new();
         assert!(bundled.exports("rlang", "abort"));
         assert!(!base.is_base("abort"));
+    }
+
+    #[test]
+    fn unbacktick_strips_only_a_matched_pair() {
+        assert_eq!(unbacktick("`%in%`"), "%in%");
+        assert_eq!(unbacktick("`a b`"), "a b");
+        assert_eq!(unbacktick("mean"), "mean");
+        // Unmatched or degenerate input is left alone.
+        assert_eq!(unbacktick("`c"), "`c");
+        assert_eq!(unbacktick("c`"), "c`");
+        assert_eq!(unbacktick("`"), "`");
+        assert_eq!(unbacktick(""), "");
+    }
+
+    #[test]
+    fn backtick_quoted_names_resolve_against_base() {
+        // A backtick-quoted reference is a single IDENT token, backticks
+        // included; the export lists store the bare name.
+        let p = StaticBaseR::new();
+        assert!(p.is_base("`%in%`"));
+        assert!(p.is_base("`[`"));
+        assert_eq!(
+            p.origin("`:`", &[]),
+            PackageOrigin::Resolved(SmolStr::new("base"))
+        );
+        assert_eq!(p.package_of("`length`").map(|s| s.as_str()), Some("base"));
+        // Stripping must not invent a name.
+        assert_eq!(
+            p.origin("`not_a_real_symbol_xyz`", &[]),
+            PackageOrigin::Unknown
+        );
+        assert!(!p.is_base("`c"));
+    }
+
+    #[test]
+    fn backtick_quoted_names_resolve_against_bundled() {
+        let b = BundledPackages::new();
+        assert!(b.exports("dplyr", "`%>%`"));
+        assert!(!b.exports("dplyr", "`definitely_not_a_real_export`"));
     }
 }

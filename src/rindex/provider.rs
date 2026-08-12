@@ -19,7 +19,7 @@ use crate::rindex::remote::RemoteExports;
 use crate::rindex::schema::{PackageIndex, SymbolEntry};
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
-    meta_package_members,
+    meta_package_members, unbacktick,
 };
 
 /// R's default-package export lists. A compile-time constant (baked-in symbol
@@ -237,6 +237,7 @@ impl IndexedProvider {
 
     /// The rich entry for `pkg::name`, if indexed.
     pub fn lookup(&self, package: &str, name: &str) -> Option<&SymbolEntry> {
+        let name = unbacktick(name);
         self.indices
             .get(package)?
             .symbols
@@ -259,7 +260,7 @@ impl IndexedProvider {
     fn exports(&self, package: &str, name: &str) -> bool {
         self.pkg_exports
             .get(package)
-            .is_some_and(|set| set.contains(name))
+            .is_some_and(|set| set.contains(unbacktick(name)))
     }
 }
 
@@ -661,6 +662,52 @@ mod tests {
         // ...but the rich per-symbol data is deliberately not loaded.
         assert!(lean.lookup("dplyr", "filter").is_none());
         assert!(lean.package("dplyr").is_none());
+    }
+
+    #[test]
+    fn backtick_quoted_name_resolves_through_every_tier() {
+        // Export lists — baked-in, harvested, remote, and bundled alike — store
+        // operator names unquoted, but a reference to one is a single IDENT
+        // token with the backticks inside it.
+        let p = CompositeProvider::base_only();
+        assert!(p.is_base("`%in%`"));
+        assert_eq!(
+            p.origin("`:`", &[]),
+            PackageOrigin::Resolved(SmolStr::new("base"))
+        );
+        // Harvested index.
+        let p = CompositeProvider::with_index(IndexedProvider::from_indices([pkg(
+            "magrittr",
+            &["%>%"],
+        )]));
+        assert_eq!(
+            p.origin("`%>%`", &[loaded("magrittr")]),
+            PackageOrigin::Resolved(SmolStr::new("magrittr"))
+        );
+        // Remote sidecar.
+        let p = CompositeProvider::base_only().with_remote(remote(&[("tinytable", &["%op%"])]));
+        assert_eq!(
+            p.origin("`%op%`", &[loaded("tinytable")]),
+            PackageOrigin::Resolved(SmolStr::new("tinytable"))
+        );
+        // Bundled CRAN list.
+        let p = CompositeProvider::base_only();
+        assert_eq!(
+            p.origin("`%>%`", &[loaded("dplyr")]),
+            PackageOrigin::Resolved(SmolStr::new("dplyr"))
+        );
+        // A backtick-quoted name that no tier exports is still Unknown.
+        assert_eq!(
+            p.origin("`not_a_real_export_xyz`", &[loaded("dplyr")]),
+            PackageOrigin::Unknown
+        );
+    }
+
+    #[test]
+    fn lookup_accepts_a_backtick_quoted_name() {
+        let provider = IndexedProvider::from_indices([pkg("magrittr", &["%>%"])]);
+        assert!(provider.lookup("magrittr", "`%>%`").is_some());
+        assert!(provider.lookup("magrittr", "`nope`").is_none());
     }
 
     #[test]
