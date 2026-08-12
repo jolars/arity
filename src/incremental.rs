@@ -933,8 +933,10 @@ impl IncrementalDatabase {
     /// every membership change, and a future `didChangeWatchedFiles` watcher calls
     /// it directly to pick up a NAMESPACE/DESCRIPTION/`R/` edit without touching
     /// membership. The write is **skipped when the metadata is unchanged**, since
-    /// a salsa input always bumps its revision on a `set_*`.
-    pub fn refresh_package_graph(&mut self) -> PackageGraph {
+    /// a salsa input always bumps its revision on a `set_*`; the return value
+    /// reports whether anything was actually written, so a caller can skip a
+    /// re-lint that would find nothing new.
+    pub fn refresh_package_graph(&mut self) -> bool {
         let member_paths: Vec<PathBuf> = Workspace::try_get(self)
             .map(|ws| {
                 ws.members(self)
@@ -948,7 +950,7 @@ impl IncrementalDatabase {
         // `PackageInfo`s name roots that `workspace_project` resolves to these
         // handles, so writing it first would open a window where it points at
         // stale bytes.
-        self.refresh_descriptions(packages.iter().map(|p| p.root.clone()));
+        let mut wrote = self.refresh_descriptions(packages.iter().map(|p| p.root.clone()));
         match PackageGraph::try_get(self) {
             Some(graph) => {
                 if graph.packages(self) != &packages {
@@ -956,8 +958,8 @@ impl IncrementalDatabase {
                         .set_packages(self)
                         .with_durability(Durability::MEDIUM)
                         .to(packages);
+                    wrote = true;
                 }
-                graph
             }
             None => {
                 let graph = PackageGraph::new(self, packages.clone());
@@ -967,9 +969,10 @@ impl IncrementalDatabase {
                     .set_packages(self)
                     .with_durability(Durability::MEDIUM)
                     .to(packages);
-                graph
+                wrote = true;
             }
         }
+        wrote
     }
 
     /// Re-read each root's `DESCRIPTION` from disk into its [`DescriptionFile`]
@@ -979,15 +982,15 @@ impl IncrementalDatabase {
     /// Each text write is **skipped when unchanged** — a salsa input always
     /// bumps its revision — so a `didChangeWatchedFiles` event for a
     /// touched-but-unedited `DESCRIPTION` invalidates nothing at all.
-    pub fn refresh_descriptions(
-        &mut self,
-        roots: impl IntoIterator<Item = PathBuf>,
-    ) -> Descriptions {
+    pub fn refresh_descriptions(&mut self, roots: impl IntoIterator<Item = PathBuf>) -> bool {
+        let mut wrote = false;
         let mut files: Vec<DescriptionFile> = roots
             .into_iter()
             .map(|root| {
                 let text = std::fs::read_to_string(root.join("DESCRIPTION")).unwrap_or_default();
-                self.upsert_description(&root, text)
+                let (file, changed) = self.upsert_description(&root, text);
+                wrote |= changed;
+                file
             })
             .collect();
         files.sort_by(|a, b| a.root(self).cmp(b.root(self)));
@@ -999,8 +1002,8 @@ impl IncrementalDatabase {
                     set.set_files(self)
                         .with_durability(Durability::MEDIUM)
                         .to(files);
+                    wrote = true;
                 }
-                set
             }
             None => {
                 let set = Descriptions::new(self, files.clone());
@@ -1009,15 +1012,29 @@ impl IncrementalDatabase {
                 set.set_files(self)
                     .with_durability(Durability::MEDIUM)
                     .to(files);
-                set
+                wrote = true;
             }
         }
+        wrote
+    }
+
+    /// Re-read one root's `DESCRIPTION` from disk. Returns whether the tracked
+    /// text actually changed — the caller's cue to re-lint, so a touched but
+    /// unedited file costs nothing.
+    ///
+    /// Only valid for a root already tracked (see
+    /// [`lookup_description`](Self::lookup_description)); a *new* `DESCRIPTION`
+    /// reshapes package roots and needs the full
+    /// [`refresh_package_graph`](Self::refresh_package_graph).
+    pub fn refresh_description(&mut self, root: &Path) -> bool {
+        let text = std::fs::read_to_string(root.join("DESCRIPTION")).unwrap_or_default();
+        self.upsert_description(root, text).1
     }
 
     /// Insert or update the [`DescriptionFile`] input for `root`, reusing the
     /// existing input so its cached [`description_facts`] survive. Skips the
     /// write when the text is unchanged.
-    pub fn upsert_description(&mut self, root: &Path, text: String) -> DescriptionFile {
+    pub fn upsert_description(&mut self, root: &Path, text: String) -> (DescriptionFile, bool) {
         let existing = self
             .description_map
             .lock()
@@ -1026,12 +1043,13 @@ impl IncrementalDatabase {
             .copied();
         match existing {
             Some(file) => {
-                if file.text(self) != &text {
-                    file.set_text(self)
-                        .with_durability(Durability::MEDIUM)
-                        .to(text);
+                if file.text(self) == &text {
+                    return (file, false);
                 }
-                file
+                file.set_text(self)
+                    .with_durability(Durability::MEDIUM)
+                    .to(text);
+                (file, true)
             }
             None => {
                 let file = DescriptionFile::new(self, root.to_path_buf(), text.clone());
@@ -1044,7 +1062,7 @@ impl IncrementalDatabase {
                     .lock()
                     .expect("description map mutex poisoned")
                     .insert(root.to_path_buf(), file);
-                file
+                (file, true)
             }
         }
     }

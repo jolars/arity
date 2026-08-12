@@ -26,9 +26,11 @@ pub(crate) struct WatchedFilesBatch {
     /// editor — re-`upsert_file` from disk. Open buffers are authoritative, so the
     /// classifier filters them out here (see [`classify_watched_files`]).
     pub(crate) r_changed: Vec<PathBuf>,
-    /// A `DESCRIPTION`/`NAMESPACE` was created, changed, or deleted — refresh the
-    /// package graph (re-reads that metadata from disk).
-    pub(crate) package_meta_changed: bool,
+    /// Package metadata that changed on disk, with what each path is. Carrying
+    /// the paths rather than a single bool is what lets the lint thread refresh
+    /// only what moved: a `DESCRIPTION` edit for a known root re-reads that one
+    /// file, where a `NAMESPACE` change still reshapes the package graph.
+    pub(crate) meta_changed: Vec<(PathBuf, WatchedKind)>,
 }
 
 impl WatchedFilesBatch {
@@ -37,7 +39,16 @@ impl WatchedFilesBatch {
         self.r_created.is_empty()
             && self.r_deleted.is_empty()
             && self.r_changed.is_empty()
-            && !self.package_meta_changed
+            && self.meta_changed.is_empty()
+    }
+
+    /// Whether anything here can flip the package-wide roxygen markdown
+    /// default: the `Roxygen` field of a `DESCRIPTION`, or `man/roxygen/meta.R`.
+    /// A `NAMESPACE` change cannot, so it must not trigger the re-resolve.
+    pub(crate) fn touches_roxygen_options(&self) -> bool {
+        self.meta_changed
+            .iter()
+            .any(|(_, kind)| matches!(kind, WatchedKind::Description | WatchedKind::RoxygenMeta))
     }
 }
 
@@ -52,11 +63,16 @@ pub(crate) struct WatchedClassification {
 }
 
 /// What a watched path is, by name/extension.
-enum WatchedKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WatchedKind {
     /// An R source (`.R`/`.r`).
     RSource,
-    /// `DESCRIPTION` or `NAMESPACE` (package metadata).
-    PackageMeta,
+    /// A package `DESCRIPTION`.
+    Description,
+    /// A package `NAMESPACE`.
+    Namespace,
+    /// `man/roxygen/meta.R` — roxygen2 *options*, not source.
+    RoxygenMeta,
     /// `arity.toml` (configuration).
     Config,
     /// Anything else (ignored — a watcher glob may over-match).
@@ -68,14 +84,15 @@ fn classify_path(path: &Path) -> WatchedKind {
     // by extension. Name wins (a file literally named `NAMESPACE` has no ext).
     match path.file_name().and_then(|n| n.to_str()) {
         Some("arity.toml") => return WatchedKind::Config,
-        Some("DESCRIPTION") | Some("NAMESPACE") => return WatchedKind::PackageMeta,
+        Some("DESCRIPTION") => return WatchedKind::Description,
+        Some("NAMESPACE") => return WatchedKind::Namespace,
         _ => {}
     }
     // `man/roxygen/meta.R` is an `.R` file by extension but carries roxygen2
     // *options* (it can flip the package-wide markdown default), not source:
     // treat it as package metadata so an edit re-resolves the flag.
     if path.ends_with("man/roxygen/meta.R") {
-        return WatchedKind::PackageMeta;
+        return WatchedKind::RoxygenMeta;
     }
     match path.extension().and_then(|e| e.to_str()) {
         Some("R") | Some("r") => WatchedKind::RSource,
@@ -108,9 +125,11 @@ pub(crate) fn classify_watched_files(
                     batch.r_changed.push(path);
                 }
             }
-            // A create/change/delete of package metadata all reduce to the same
-            // refresh; the graph re-reads whatever is (or is not) on disk now.
-            WatchedKind::PackageMeta => batch.package_meta_changed = true,
+            // A create/change/delete all reduce to the same refresh; the db
+            // re-reads whatever is (or is not) on disk now.
+            kind @ (WatchedKind::Description
+            | WatchedKind::Namespace
+            | WatchedKind::RoxygenMeta) => batch.meta_changed.push((path, kind)),
             WatchedKind::Config => config_changed = true,
             WatchedKind::Other => {}
         }
@@ -209,7 +228,7 @@ mod tests {
         assert_eq!(c.batch.r_created.len(), 1);
         assert_eq!(c.batch.r_deleted.len(), 1);
         assert_eq!(c.batch.r_changed.len(), 1);
-        assert!(!c.batch.package_meta_changed);
+        assert!(c.batch.meta_changed.is_empty());
         assert!(!c.config_changed);
     }
 
@@ -229,10 +248,31 @@ mod tests {
     }
 
     #[test]
-    fn description_and_namespace_set_package_meta() {
-        for name in ["DESCRIPTION", "NAMESPACE"] {
+    fn package_metadata_is_classified_by_kind() {
+        // The kinds stay apart so the lint thread can refresh only what moved:
+        // a NAMESPACE reshapes the package graph, a DESCRIPTION usually does not,
+        // and only the latter two can flip the roxygen markdown default.
+        let cases = [
+            ("DESCRIPTION", WatchedKind::Description, true),
+            ("NAMESPACE", WatchedKind::Namespace, false),
+            ("man/roxygen/meta.R", WatchedKind::RoxygenMeta, true),
+        ];
+        for (name, kind, roxygen) in cases {
             let c = classify(vec![event(name, FileChangeType::CHANGED)], &[]);
-            assert!(c.batch.package_meta_changed, "{name} sets package meta");
+            assert_eq!(
+                c.batch
+                    .meta_changed
+                    .iter()
+                    .map(|(_, k)| *k)
+                    .collect::<Vec<_>>(),
+                vec![kind],
+                "{name}"
+            );
+            assert_eq!(
+                c.batch.touches_roxygen_options(),
+                roxygen,
+                "{name} roxygen options"
+            );
             assert!(!c.config_changed);
         }
     }
