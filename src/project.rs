@@ -16,6 +16,9 @@ pub mod source;
 pub use classes::{
     ClassDef, ClassLocation, ClassSystem, class_name_at_offset, file_class_defs, locate_class_def,
 };
+pub use description::{
+    Dependency, DependencyField, DescriptionCache, DescriptionCompat, DescriptionFacts,
+};
 pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads, file_qualified_reads};
 pub use graph::{
     ClassIndex, DefIndex, ExternalResolution, PackageCollation, PackageInfo, Project,
