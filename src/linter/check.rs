@@ -19,8 +19,8 @@ use crate::incremental::{
     source_edges, top_level_events,
 };
 use crate::project::{
-    ExternalResolution, FileScope, PackageCollation, Project, ProjectMember, expected_r_sources,
-    external_resolution, package_root, visible_symbols, workspace_project,
+    ExternalResolution, FileScope, PackageCollation, PackageDeclarations, Project, ProjectMember,
+    expected_r_sources, external_resolution, package_root, visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -380,9 +380,10 @@ fn intern_project<'db>(
     mut members: Vec<ProjectMember>,
     namespaces: Vec<(PathBuf, String)>,
     collations: Vec<PackageCollation>,
+    declarations: Vec<PackageDeclarations>,
 ) -> Project<'db> {
     members.sort_by(|a, b| a.path.cmp(&b.path));
-    Project::new(db, members, namespaces, collations)
+    Project::new(db, members, namespaces, collations, declarations)
 }
 
 /// Run the resolved rules against a cleanly-parsed file, using the cached parse
@@ -461,6 +462,9 @@ pub struct PreparedProject {
     /// from the interned [`Project`] (disk-derived in [`workspace_project`]) so
     /// the read-phase re-interns it without touching disk.
     collations: Vec<PackageCollation>,
+    /// Per package root, the dependencies its `DESCRIPTION` declares, sorted by
+    /// root. Snapshotted from the interned [`Project`] like `collations`.
+    declarations: Vec<PackageDeclarations>,
 }
 
 /// Write-phase of cross-file linting (needs `&mut db`). Discovers the enclosing
@@ -495,6 +499,7 @@ pub fn prepare_document_in_project(
     let members = project.members(&*db).clone();
     let namespaces = project.namespaces(&*db).clone();
     let collations = project.collations(&*db).clone();
+    let declarations = project.declarations(&*db).clone();
 
     Some(PreparedProject {
         active,
@@ -502,6 +507,7 @@ pub fn prepare_document_in_project(
         members,
         namespaces,
         collations,
+        declarations,
     })
 }
 
@@ -610,6 +616,7 @@ pub fn analyze_prepared(
         prepared.members.clone(),
         prepared.namespaces.clone(),
         prepared.collations.clone(),
+        prepared.declarations.clone(),
     );
     let active_path = analysis
         .file_path(prepared.active)

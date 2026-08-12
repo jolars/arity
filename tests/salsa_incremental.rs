@@ -449,7 +449,7 @@ fn project_ab(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project
             package_root: Some(PathBuf::from("/pkg")),
         },
     ];
-    Project::new(db, members, Vec::new(), Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new(), Vec::new())
 }
 
 /// A two-script project where `a.R` sources `b.R`. No package root, so the only
@@ -474,7 +474,7 @@ fn project_scripts(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Pr
             package_root: None,
         },
     ];
-    Project::new(db, members, Vec::new(), Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new(), Vec::new())
 }
 
 #[test]
@@ -1188,7 +1188,7 @@ fn project_one<'db>(db: &'db IncrementalDatabase, file: SourceFile, path: &str) 
         path: PathBuf::from(path),
         package_root: None,
     }];
-    Project::new(db, members, Vec::new(), Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new(), Vec::new())
 }
 
 /// A harvested package index for `name` exporting `exports`.
@@ -1826,6 +1826,78 @@ fn description_facts_are_tracked_per_root() {
         !facts.declared_packages().contains("R"),
         "`R` names the language; an attach set containing it would suppress \
          every diagnostic in the package"
+    );
+}
+
+#[test]
+fn depends_attaches_but_imports_does_not() {
+    // The R semantics the whole stage hangs on. `Depends: pkg` puts pkg on the
+    // search path, so a bare export of it resolves. `Imports: pkg` does not —
+    // R reaches an imported package only through `pkg::` or a NAMESPACE
+    // `importFrom`/`import`, so resolving it here would accept code that fails
+    // under `R CMD check`.
+    let describe = |field: &str| format!("Package: foo\n{field}: helperpkg\n");
+    let (mut db, m, dir) = description_package(&describe("Depends"));
+    std::fs::write(dir.path().join("R/foo.R"), "foo <- function() helper(1)\n").expect("foo.R");
+    db.set_file_text(m, "foo <- function() helper(1)\n");
+    let manifest = db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "helperpkg",
+        &["helper"],
+    )]));
+
+    {
+        let project = workspace_project(&db);
+        let res = external_resolution(&db, manifest, project, m);
+        assert!(
+            res.unresolved.is_empty(),
+            "a Depends package is attached, so its bare export resolves: {:?}",
+            res.unresolved
+        );
+    }
+
+    // The same package under `Imports` must leave the bare name unresolved.
+    std::fs::write(dir.path().join("DESCRIPTION"), describe("Imports")).expect("DESCRIPTION");
+    db.refresh_package_graph();
+    let project = workspace_project(&db);
+    let res = external_resolution(&db, manifest, project, m);
+    assert!(
+        res.unresolved.contains("helper"),
+        "an Imports package is not attached, so a bare name stays unresolved: {:?}",
+        res.unresolved
+    );
+}
+
+#[test]
+fn an_unindexed_depends_suppresses_the_file() {
+    // The other edge of the same gate, and a real behavior change: a `Depends`
+    // we cannot enumerate could define any unresolved name, so the whole file
+    // is suppressed — exactly as an unindexed `library()` call already does.
+    let (mut db, m, dir) = description_package("Package: foo\nDepends: nosuchpkgzz\n");
+    let body = "foo <- function() mystery(1)\n";
+    std::fs::write(dir.path().join("R/foo.R"), body).expect("foo.R");
+    db.set_file_text(m, body);
+    let manifest = db.set_library_index(IndexedProvider::empty());
+
+    {
+        let project = workspace_project(&db);
+        let res = external_resolution(&db, manifest, project, m);
+        assert!(
+            res.unresolved.is_empty(),
+            "an unindexed Depends could define the name, so the file is suppressed: {:?}",
+            res.unresolved
+        );
+    }
+
+    // Control: with no `Depends` at all, the very same name is reported. Without
+    // this the assertion above would also hold if nothing resolved anything.
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: foo\n").expect("DESCRIPTION");
+    db.refresh_package_graph();
+    let project = workspace_project(&db);
+    let res = external_resolution(&db, manifest, project, m);
+    assert!(
+        res.unresolved.contains("mystery"),
+        "with nothing attached the undefined name must be reported: {:?}",
+        res.unresolved
     );
 }
 
