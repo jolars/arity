@@ -393,6 +393,12 @@ pub struct NamespaceInfo {
     /// package is in scope, so without that package's index any unresolved name
     /// could come from it.
     pub imported_packages: BTreeSet<String>,
+    /// Packages named by `importFrom(pkg, ...)`. A *reference* to `pkg` just as
+    /// `import(pkg)` is — and the fact stage 3's `unused-dependency` asks for —
+    /// but kept apart because the names it brings in are already enumerated in
+    /// [`imported_names`](Self::imported_names), so it never leaves resolution
+    /// incomplete.
+    pub imported_from_packages: BTreeSet<String>,
     /// The subset of [`exports`](Self::exports) registered via `S3method()`
     /// rather than `export()`. Still exports (they are in the namespace, so name
     /// resolution must see them), but reached by *dispatch*, never by a direct
@@ -411,13 +417,14 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
     for directive in NamespaceDirectives::new(namespace) {
         match directive.name {
             "export" | "exportMethods" | "exportClasses" => {
-                info.exports.extend(directive.args);
+                info.exports.extend(directive.values());
             }
             "S3method" => {
                 // `S3method(generic, class)` registers the method `generic.class`;
                 // the three-arg form `S3method(generic, class, method)` binds the
                 // explicitly named `method` instead.
-                let method = match directive.args.as_slice() {
+                let args: Vec<String> = directive.values().collect();
+                let method = match args.as_slice() {
                     [_, _, method] => Some(method.clone()),
                     [generic, class] => Some(format!("{generic}.{class}")),
                     _ => None,
@@ -428,7 +435,7 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
                 }
             }
             "exportPattern" | "exportClassPattern" => {
-                for arg in directive.args {
+                for arg in directive.values() {
                     if let Some(re) = compile_r_pattern(&arg) {
                         patterns.push(re);
                     }
@@ -437,13 +444,18 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
             "importFrom" => {
                 // `importFrom(pkg, a, b, ...)`: the first arg is the package, the
                 // rest are the imported names.
-                let mut args = directive.args.into_iter();
-                if args.next().is_some() {
+                let mut args = directive.values();
+                if let Some(package) = args.next() {
+                    info.imported_from_packages.insert(package);
                     info.imported_names.extend(args);
                 }
             }
             "import" => {
-                info.imported_packages.extend(directive.args);
+                // R drops `except` and treats every remaining argument as a
+                // package, so only the *positional* arguments name packages. A
+                // kept `except = c(a, b)` would enter the set as a package no
+                // index can enumerate.
+                info.imported_packages.extend(directive.positional());
             }
             _ => {}
         }
@@ -479,7 +491,31 @@ fn compile_r_pattern(pattern: &str) -> Option<regex::Regex> {
 
 struct NamespaceDirective {
     name: &'static str,
-    args: Vec<String>,
+    args: Vec<NamespaceArg>,
+}
+
+impl NamespaceDirective {
+    /// Every argument's value, named or not.
+    fn values(self) -> impl Iterator<Item = String> {
+        self.args.into_iter().map(|arg| arg.value)
+    }
+
+    /// Only the *positional* arguments' values. `import(pkg, except = ...)`
+    /// names packages positionally and options by keyword, so this is how the
+    /// two are told apart after the fact.
+    fn positional(self) -> impl Iterator<Item = String> {
+        self.args
+            .into_iter()
+            .filter(|arg| arg.name.is_none())
+            .map(|arg| arg.value)
+    }
+}
+
+/// One argument of a NAMESPACE directive.
+struct NamespaceArg {
+    /// The keyword, for `name = value`.
+    name: Option<String>,
+    value: String,
 }
 
 /// Iterator over the recognized top-level NAMESPACE directives. Tolerant of
@@ -599,20 +635,24 @@ fn matching_paren(text: &str, open: usize) -> Option<usize> {
 /// Parse the comma-separated arguments of a directive, unquoting string
 /// literals and interpreting R string escapes. Keyword arguments
 /// (`name = value`) are reduced to their value.
-fn parse_args(inner: &str) -> Vec<String> {
+fn parse_args(inner: &str) -> Vec<NamespaceArg> {
     let mut args = Vec::new();
     for raw in split_top_level_commas(inner) {
         let raw = raw.trim();
         if raw.is_empty() {
             continue;
         }
-        // Drop a leading `name =` for things like `pattern = "..."`.
-        let value = match raw.split_once('=') {
-            Some((lhs, rhs)) if !lhs.trim_end().ends_with(['<', '>', '!']) => rhs.trim(),
-            _ => raw,
+        // Split a leading `name =` off things like `pattern = "..."`. The
+        // keyword is kept rather than discarded: `import(pkg, except = ...)`
+        // needs it to tell a package from an option.
+        let (name, value) = match raw.split_once('=') {
+            Some((lhs, rhs)) if !lhs.trim_end().ends_with(['<', '>', '!']) => {
+                (Some(lhs.trim().to_string()), rhs.trim())
+            }
+            _ => (None, raw),
         };
-        if let Some(s) = unquote(value) {
-            args.push(s);
+        if let Some(value) = unquote(value) {
+            args.push(NamespaceArg { name, value });
         }
     }
     args
@@ -937,6 +977,38 @@ mod tests {
         // The package name is not itself an imported name.
         assert!(!info.imported_names.contains("dplyr"));
         assert!(info.imported_packages.contains("rlang"));
+    }
+
+    #[test]
+    fn import_keeps_only_the_packages_it_names() {
+        // R's `import()` drops its `except` argument and treats every remaining
+        // argument as a package. Keeping `except`'s value would invent a
+        // package named `c(filter, lag)` — and since no index can enumerate
+        // that, a consumer gating on "are these exports knowable" would
+        // suppress the file permanently.
+        let info = parse_namespace("import(dplyr, except = c(filter, lag))\n", &[]);
+        assert_eq!(info.imported_packages, ["dplyr".to_string()].into());
+
+        // Several packages in one directive is legal and must all be kept.
+        let info = parse_namespace("import(stats, utils)\n", &[]);
+        assert_eq!(
+            info.imported_packages,
+            ["stats".to_string(), "utils".to_string()].into()
+        );
+    }
+
+    #[test]
+    fn import_from_records_the_package_it_names() {
+        // `importFrom(pkg, x)` references `pkg` as surely as `import(pkg)` does.
+        // It is tracked apart because its names are already enumerated, so it
+        // never makes resolution incomplete.
+        let info = parse_namespace("importFrom(dplyr, filter, select)\n", &[]);
+        assert_eq!(info.imported_from_packages, ["dplyr".to_string()].into());
+        assert!(info.imported_packages.is_empty());
+        assert_eq!(
+            info.imported_names,
+            ["filter".to_string(), "select".to_string()].into()
+        );
     }
 
     #[test]
