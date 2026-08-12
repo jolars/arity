@@ -23,8 +23,9 @@ pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads, file_q
 pub use graph::{
     ClassIndex, DefIndex, ExternalResolution, PackageCollation, PackageDeclarations, PackageInfo,
     Project, ProjectMember, ReadIndex, ReverseSources, Visibility, attached_names,
-    discover_packages, expected_r_sources, external_resolution, project_classes, project_defs,
-    project_graph, project_reads, reverse_source_edges, visible_symbols, workspace_project,
+    discover_packages, expected_r_sources, external_resolution, package_facts_for, project_classes,
+    project_defs, project_graph, project_reads, reverse_source_edges, visible_symbols,
+    workspace_project,
 };
 pub use scope::{FileFacts, FileScope, ProjectScope, ReadBinding, ReadSite, package_root};
 pub use sequence::{collect_top_level_events, collect_top_level_events_spanned};
