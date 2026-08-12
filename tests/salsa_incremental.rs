@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use arity::incremental::{
-    IncrementalDatabase, QueryKind, SourceFile, file_def_sites, line_index, top_level_events,
+    IncrementalDatabase, QueryKind, SourceFile, description_facts, file_def_sites, line_index,
+    top_level_events,
 };
 use arity::parser::Edit;
 use arity::project::{
@@ -1679,6 +1680,152 @@ fn workspace_project_is_pure_namespace_not_reread_on_keystroke() {
         refreshed,
         vec![(root.to_path_buf(), "export(bar)\n".to_string())],
         "refresh_package_graph must pick up the on-disk NAMESPACE change"
+    );
+}
+
+/// A package on disk with a `DESCRIPTION`, one `R/` member, and a NAMESPACE,
+/// seeded into a fresh database. Returns the db, the member input, and the root.
+fn description_package(description: &str) -> (IncrementalDatabase, SourceFile, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::create_dir(root.join("R")).expect("R/");
+    std::fs::write(root.join("DESCRIPTION"), description).expect("DESCRIPTION");
+    std::fs::write(root.join("NAMESPACE"), "export(foo)\n").expect("NAMESPACE");
+    let member_path = root.join("R/foo.R");
+    std::fs::write(&member_path, "foo <- function() 1\n").expect("foo.R");
+
+    let mut db = IncrementalDatabase::default();
+    let m = db.upsert_file(&member_path, "foo <- function() 1\n".to_string());
+    db.set_workspace_members(vec![m], vec![root.to_path_buf()]);
+    (db, m, dir)
+}
+
+const DESCRIPTION_BASE: &str = "Package: foo\n\
+     Title: A Package\n\
+     Depends: R (>= 4.1), stats\n\
+     Imports: dplyr\n\
+     Collate: foo.R\n";
+
+#[test]
+fn description_prose_edit_backdates_and_spares_the_project() {
+    // THE headline guarantee of making DESCRIPTION a text input with an `Eq`
+    // facts projection: an edit that changes no *fact* re-runs the parse and
+    // stops there. Storing facts directly in `PackageGraph` would instead make
+    // this a full project-graph rebuild, on every prose keystroke.
+    let (mut db, _m, dir) = description_package(DESCRIPTION_BASE);
+    let _ = workspace_project(&db);
+
+    db.clear_query_log();
+    std::fs::write(
+        dir.path().join("DESCRIPTION"),
+        DESCRIPTION_BASE.replace("Title: A Package", "Title: A Rather Nice Package"),
+    )
+    .expect("DESCRIPTION");
+    db.refresh_package_graph();
+    let _ = workspace_project(&db);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::DescriptionFacts),
+        Some(&1),
+        "the text changed, so the facts must be re-derived"
+    );
+    assert_eq!(
+        counts.get(&QueryKind::WorkspaceProject),
+        None,
+        "the facts compare equal, so they must backdate and spare the project"
+    );
+}
+
+#[test]
+fn description_collate_edit_reaches_the_project() {
+    // The negative control for the test above: a `Collate:` edit changes a fact
+    // the project graph consumes, so it must propagate. Without this, "nothing
+    // re-runs" could just as well mean the dependency was never wired up.
+    let (mut db, _m, dir) = description_package(DESCRIPTION_BASE);
+    let before = workspace_project(&db).collations(&db).clone();
+    assert!(
+        before.iter().all(|c| c.complete),
+        "`Collate: foo.R` matches the analyzed member, so the package is complete"
+    );
+
+    db.clear_query_log();
+    std::fs::write(
+        dir.path().join("DESCRIPTION"),
+        DESCRIPTION_BASE.replace("Collate: foo.R", "Collate: foo.R generated.R"),
+    )
+    .expect("DESCRIPTION");
+    db.refresh_package_graph();
+    let after = workspace_project(&db).collations(&db).clone();
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::WorkspaceProject),
+        Some(&1),
+        "a Collate change is a fact the project consumes and must propagate"
+    );
+    assert!(
+        after.iter().all(|c| !c.complete),
+        "an un-analyzed collated source makes the package incomplete"
+    );
+}
+
+#[test]
+fn r_keystroke_does_not_revalidate_description_facts() {
+    // The durability guard. `DescriptionFile.text` is written at MEDIUM and a
+    // keystroke is a LOW write, so a body edit must not touch the DCF subgraph
+    // at all — not even to revalidate it.
+    let (mut db, m, _dir) = description_package(DESCRIPTION_BASE);
+    let _ = workspace_project(&db);
+
+    db.clear_query_log();
+    db.set_file_text(m, "foo <- function() 2\n");
+    let _ = workspace_project(&db);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::DescriptionFacts),
+        None,
+        "a body edit must never re-derive DESCRIPTION facts"
+    );
+}
+
+#[test]
+fn refresh_descriptions_skips_write_when_unchanged() {
+    // The conditional setter, as for every other input: re-reading identical
+    // bytes must not bump the revision.
+    let (mut db, _m, _dir) = description_package(DESCRIPTION_BASE);
+    let _ = workspace_project(&db);
+
+    db.clear_query_log();
+    db.refresh_package_graph();
+    let _ = workspace_project(&db);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::DescriptionFacts),
+        None,
+        "an unchanged DESCRIPTION refresh must write nothing"
+    );
+}
+
+#[test]
+fn description_facts_are_tracked_per_root() {
+    // The facts really are derived from the tracked input, and `R` never
+    // reaches the dependency list.
+    let (db, _m, dir) = description_package(DESCRIPTION_BASE);
+    let file = db
+        .lookup_description(dir.path())
+        .expect("the package root has a tracked DESCRIPTION");
+    let facts = description_facts(&db, file);
+
+    assert_eq!(facts.package.as_deref(), Some("foo"));
+    assert_eq!(facts.attached_packages(), ["stats".to_string()].into());
+    assert_eq!(
+        facts.declared_packages(),
+        ["dplyr".to_string(), "stats".to_string()].into()
+    );
+    assert!(
+        !facts.declared_packages().contains("R"),
+        "`R` names the language; an attach set containing it would suppress \
+         every diagnostic in the package"
     );
 }
 

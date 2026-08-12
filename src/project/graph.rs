@@ -23,11 +23,12 @@ use rowan::TextRange;
 use smol_str::SmolStr;
 
 use crate::incremental::{
-    IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile, Workspace,
-    file_class_defs, file_def_sites, file_exports, file_free_reads, file_qualified_reads,
-    loaded_names, parse_diagnostics, source_edges, top_level_events,
+    Descriptions, IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile,
+    Workspace, description_facts, file_class_defs, file_def_sites, file_exports, file_free_reads,
+    file_qualified_reads, loaded_names, parse_diagnostics, source_edges, top_level_events,
 };
 use crate::project::classes::ClassSystem;
+use crate::project::description::DescriptionFacts;
 use crate::project::exports::DefKind;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
@@ -73,9 +74,13 @@ pub struct PackageInfo {
     pub root: PathBuf,
     /// The root's `NAMESPACE` text, or `None` when the file is absent.
     pub namespace: Option<String>,
-    /// The R source *basenames* the package will load ([`expected_r_sources`]):
-    /// the union of the `R/*.[RrSsQq]` listing and any `DESCRIPTION` `Collate:`.
-    pub expected_sources: BTreeSet<String>,
+    /// The R source *basenames* on disk under `R/` ([`r_dir_sources`]).
+    ///
+    /// The `Collate:` half of the expected source set deliberately lives in
+    /// [`description_facts`](crate::incremental::description_facts) instead: a
+    /// `Collate` edit then reaches the graph through the backdating firewall,
+    /// while an unrelated `DESCRIPTION` edit does not reach it at all.
+    pub dir_sources: BTreeSet<String>,
 }
 
 /// A project as an interned membership snapshot: the set of member files, the
@@ -128,7 +133,10 @@ impl Visibility {
 /// Discover the [`PackageInfo`] for every distinct package root among
 /// `member_paths`, sorted by root. **The sole filesystem reader** behind the
 /// project graph: it walks each member to its [`package_root`] and, per root,
-/// reads `NAMESPACE` and computes [`expected_r_sources`]. Run in the write-phase
+/// reads `NAMESPACE` and lists [`r_dir_sources`]. It deliberately does *not*
+/// read `DESCRIPTION` — that file is its own tracked input
+/// ([`DescriptionFile`](crate::incremental::DescriptionFile)), so its facts
+/// reach the graph through a query that backdates. Run in the write-phase
 /// (see [`refresh_package_graph`](crate::incremental::IncrementalDatabase::refresh_package_graph));
 /// the result is stored in the [`PackageGraph`](crate::incremental::PackageGraph)
 /// input so [`workspace_project`] stays pure.
@@ -141,7 +149,7 @@ pub fn discover_packages(member_paths: &[PathBuf]) -> Vec<PackageInfo> {
         .into_iter()
         .map(|root| PackageInfo {
             namespace: std::fs::read_to_string(root.join("NAMESPACE")).ok(),
-            expected_sources: expected_r_sources(&root),
+            dir_sources: r_dir_sources(&root),
             root,
         })
         .collect()
@@ -175,6 +183,14 @@ const R_SOURCE_EXTS: [&str; 6] = ["R", "r", "S", "s", "Q", "q"];
 /// `Collate:` nor an unlisted file can shrink the expected set and let an
 /// incomplete package pass. Touches disk.
 pub fn expected_r_sources(root: &Path) -> BTreeSet<String> {
+    let mut expected = r_dir_sources(root);
+    expected.extend(crate::project::description::facts_at(root).collate);
+    expected
+}
+
+/// The R source *basenames* on disk under `root/R`. The disk-listing half of
+/// [`expected_r_sources`]; the `Collate:` half comes from the DESCRIPTION facts.
+pub fn r_dir_sources(root: &Path) -> BTreeSet<String> {
     let mut expected: BTreeSet<String> = BTreeSet::new();
     if let Ok(entries) = std::fs::read_dir(root.join("R")) {
         for entry in entries.flatten() {
@@ -263,12 +279,23 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
         })
         .collect();
     namespaces.sort_by(|a, b| a.0.cmp(&b.0));
+    // The expected source set is the `R/` listing (from the graph input) union
+    // the `Collate:` entries (from the DESCRIPTION facts) — union, not
+    // intersection, so neither a stale `Collate:` nor an unlisted file can
+    // shrink it and let an incomplete package pass.
+    let facts_by_root = description_facts_by_root(db);
     let collations: Vec<PackageCollation> = analyzed
         .into_iter()
         .map(|(root, analyzed_names)| {
             let complete = by_root.get(&root).is_some_and(|info| {
-                info.expected_sources
+                let collate = facts_by_root
+                    .get(&root)
+                    .map(|facts| facts.collate.iter())
+                    .into_iter()
+                    .flatten();
+                info.dir_sources
                     .iter()
+                    .chain(collate)
                     .all(|name| analyzed_names.contains(name))
             });
             PackageCollation { root, complete }
@@ -276,6 +303,21 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
         .collect();
 
     Project::new(db, members, namespaces, collations)
+}
+
+/// Every tracked package root's [`DescriptionFacts`], keyed by root.
+///
+/// Pure: it reads the [`Descriptions`] input's handles and goes through
+/// [`description_facts`], so an unrelated `DESCRIPTION` edit backdates there
+/// and never reaches this caller.
+fn description_facts_by_root(db: &dyn IncrementalDb) -> HashMap<PathBuf, &DescriptionFacts> {
+    let Some(set) = Descriptions::try_get(db) else {
+        return HashMap::new();
+    };
+    set.files(db)
+        .iter()
+        .map(|&file| (file.root(db).clone(), description_facts(db, file)))
+        .collect()
 }
 
 /// The cross-file scope for `project`, built from the per-file firewall queries.
