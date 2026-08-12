@@ -305,6 +305,7 @@ pub enum QueryKind {
     ProjectReads,
     VisibleSymbols,
     LoadedNames,
+    AttachedNames,
     ExternalResolution,
     DescriptionFacts,
 }

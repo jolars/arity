@@ -83,12 +83,32 @@ pub struct PackageInfo {
     pub dir_sources: BTreeSet<String>,
 }
 
+/// One package root's *resolution-relevant* declarations, frozen into the
+/// interned [`Project`] so the graph queries stay pure.
+///
+/// Deliberately a strict subset of
+/// [`DescriptionFacts`](crate::project::DescriptionFacts): the compat floors and
+/// the `Roxygen` field affect no cross-file scope, so keeping them out means a
+/// `RoxygenNote:` bump re-interns to the *same* `Project` id and the
+/// [`project_graph`] memo survives it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PackageDeclarations {
+    pub root: PathBuf,
+    /// `Depends`, minus `R` — the packages R **attaches** to the search path
+    /// when this package loads, so their exports resolve as bare names.
+    pub attached: BTreeSet<String>,
+    /// Every declared package, any field. *Referenced* — worth harvesting and
+    /// fetching — but **not** attached: an `Imports` package is reachable only
+    /// through `pkg::` or a NAMESPACE `importFrom`/`import`.
+    pub declared: BTreeSet<String>,
+}
+
 /// A project as an interned membership snapshot: the set of member files, the
-/// NAMESPACE texts of the packages they belong to, and each package root's
-/// collation/completeness verdict. Interning dedups by value, so an unchanged
-/// membership yields the same id across lints (a body edit doesn't change the
-/// set) and the graph memo survives. Callers must sort `members`, `namespaces`,
-/// and `collations` for a stable, dedup-friendly key.
+/// NAMESPACE texts of the packages they belong to, each package root's
+/// collation/completeness verdict, and its declared dependencies. Interning
+/// dedups by value, so an unchanged membership yields the same id across lints
+/// (a body edit doesn't change the set) and the graph memo survives. Callers
+/// must sort every field for a stable, dedup-friendly key.
 #[salsa::interned]
 pub struct Project<'db> {
     #[returns(ref)]
@@ -97,6 +117,8 @@ pub struct Project<'db> {
     pub namespaces: Vec<(PathBuf, String)>,
     #[returns(ref)]
     pub collations: Vec<PackageCollation>,
+    #[returns(ref)]
+    pub declarations: Vec<PackageDeclarations>,
 }
 
 /// One file's owned view of its project: the names it can see, the names of its
@@ -302,7 +324,21 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
         })
         .collect();
 
-    Project::new(db, members, namespaces, collations)
+    // Restricted to roots with an analyzed member, like `namespaces`, and
+    // sorted for a stable interning key.
+    let mut declarations: Vec<PackageDeclarations> = collations
+        .iter()
+        .filter_map(|c| {
+            facts_by_root.get(&c.root).map(|facts| PackageDeclarations {
+                root: c.root.clone(),
+                attached: facts.attached_packages(),
+                declared: facts.declared_packages(),
+            })
+        })
+        .collect();
+    declarations.sort_by(|a, b| a.root.cmp(&b.root));
+
+    Project::new(db, members, namespaces, collations, declarations)
 }
 
 /// Every tracked package root's [`DescriptionFacts`], keyed by root.
@@ -597,6 +633,43 @@ pub struct ExternalResolution {
     pub unresolved: BTreeSet<String>,
 }
 
+/// Every package whose exports resolve as **bare names** in `file`.
+///
+/// The union of two provenances: the file's own `library()`/`require()` calls
+/// and location-implied attaches ([`loaded_names`], a per-file firewall), and
+/// the `Depends` its package declares (this project's interned declarations).
+///
+/// Deliberately **not** `Imports`: R does not attach an `Imports` package, and
+/// resolving its exports as bare names here would accept code that fails under
+/// `R CMD check`. Those reach a file only through `pkg::` or a NAMESPACE
+/// `importFrom`/`import`, all of which the project layer models separately.
+///
+/// A `BTreeSet<String>` like `loaded_names`, so it backdates: a body edit
+/// leaves it equal and [`external_resolution`] is not re-run.
+#[salsa::tracked(returns(ref))]
+pub fn attached_names<'db>(
+    db: &'db dyn IncrementalDb,
+    project: Project<'db>,
+    file: SourceFile,
+) -> BTreeSet<String> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::AttachedNames,
+        file: Some(file),
+    });
+    let mut names = loaded_names(db, file).clone();
+    let root = project
+        .members(db)
+        .iter()
+        .find(|m| m.file == file)
+        .and_then(|m| m.package_root.as_ref());
+    if let Some(root) = root
+        && let Some(decl) = project.declarations(db).iter().find(|d| &d.root == root)
+    {
+        names.extend(decl.attached.iter().cloned());
+    }
+    names
+}
+
 /// Resolve a file's free reads against the project graph and the
 /// HIGH-durability [`LibraryIndex`], yielding the `undefined-symbol` candidate
 /// names.
@@ -624,7 +697,7 @@ pub fn external_resolution<'db>(
 
     let index: &crate::rindex::provider::IndexedProvider = manifest.data(db);
     let remote: &crate::rindex::remote::RemoteExports = manifest.remote(db);
-    let loaded = loaded_names(db, file);
+    let loaded = attached_names(db, project, file);
 
     // Gate: an attached package whose exports we don't fully know could define
     // any of the unresolved names — suppress the whole file. A meta-package
