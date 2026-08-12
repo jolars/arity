@@ -552,7 +552,7 @@ fn parse_stmt_in_isolation(
     if children.next().is_some() || node.kind() != expected_kind {
         return None;
     }
-    Some((node.green().into_owned(), diagnostics))
+    Some((node.green().to_owned(), diagnostics))
 }
 
 /// Whether `stmt_text` still ends at the same boundary once `forward_ctx` (the
@@ -614,7 +614,7 @@ fn parse_block_in_isolation(
         return None;
     }
 
-    Some((block.green().into_owned(), diagnostics))
+    Some((block.green().to_owned(), diagnostics))
 }
 
 fn shift(d: &ParseDiagnostic, delta: isize) -> ParseDiagnostic {
