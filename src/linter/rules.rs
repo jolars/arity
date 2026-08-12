@@ -731,12 +731,6 @@ impl ResolvedRules {
         }
     }
 
-    /// Whether any `DESCRIPTION` rule is in this set. Lets the driver skip DCF
-    /// discovery and its whole pass when none is enabled.
-    pub fn has_dcf_rules(&self) -> bool {
-        !self.dcf_rules.is_empty()
-    }
-
     /// The rule IDs in this set.
     pub fn enabled(&self) -> &EnabledRules {
         &self.enabled
@@ -1072,7 +1066,6 @@ mod tests {
         );
         assert_eq!(resolved.rules.len(), 1);
         assert_eq!(resolved.dcf_rules.len(), 1);
-        assert!(resolved.has_dcf_rules());
         assert_eq!(resolved.by_kind[SyntaxKind::CALL_EXPR as usize], vec![0]);
         assert_eq!(
             resolved.dcf_by_kind[dcf::SyntaxKind::FIELD as usize],

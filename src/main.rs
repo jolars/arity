@@ -982,6 +982,10 @@ fn run_lint(
 /// Discover `.R` files under `paths` and apply autofixes in place. Returns
 /// `Some(exit_code)` only on a hard error (discovery / IO); on success returns
 /// `None` so the caller falls through to the normal reporting pass.
+///
+/// Deliberately `collect_r_files`, not `collect_lint_files`: no `DESCRIPTION`
+/// rule ships a fix, and reading one here would only invite feeding it to the R
+/// parser. The day a DCF fix lands, this has to widen.
 fn apply_fixes_to_paths(
     paths: &[PathBuf],
     config: &LintConfig,

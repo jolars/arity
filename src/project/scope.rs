@@ -750,12 +750,22 @@ fn source_dependency(edge: &SourceEdgeKey) -> Dependency<'_> {
     }
 }
 
+/// Whether `dir` is an R package root: it holds both a `DESCRIPTION` file and an
+/// `R/` subdirectory. Touches the filesystem.
+///
+/// The one statement of what arity considers a package. File discovery asks it
+/// directly (to tell a package's `DESCRIPTION` from an `inst/extdata` fixture of
+/// the same name), and [`package_root`] is the walk-upward form.
+pub fn is_package_root(dir: &Path) -> bool {
+    dir.join("DESCRIPTION").is_file() && dir.join("R").is_dir()
+}
+
 /// Walk up from `path` to find an enclosing R package root: a directory with
 /// both a `DESCRIPTION` file and an `R/` subdirectory. Touches the filesystem.
 pub fn package_root(path: &Path) -> Option<PathBuf> {
     let mut dir = path.parent();
     while let Some(d) = dir {
-        if d.join("DESCRIPTION").is_file() && d.join("R").is_dir() {
+        if is_package_root(d) {
             return Some(d.to_path_buf());
         }
         dir = d.parent();

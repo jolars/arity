@@ -12,7 +12,9 @@ use rayon::prelude::*;
 use rowan::{TextRange, TextSize};
 
 use crate::config::LintConfig;
-use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
+use crate::file_discovery::{
+    ExcludeFilter, FileDiscoveryError, collect_lint_files, collect_r_files,
+};
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, control_flow,
     file_exports, file_free_reads, file_qualified_reads, parsed_tree_root, semantic_model,
@@ -115,10 +117,10 @@ impl fmt::Display for LintError {
                     "lint requires at least one input path (file or directory)"
                 )
             }
-            Self::NoRFiles => write!(f, "no .R files found under the provided input paths"),
+            Self::NoRFiles => write!(f, "no lintable files found under the provided input paths"),
             Self::NonRFilePath { path } => write!(
                 f,
-                "input file {} is not an .R file; lint only supports .R files",
+                "input file {} is not lintable; lint supports .R files and DESCRIPTION",
                 path.display()
             ),
             Self::WalkError { path, message } => {
@@ -178,8 +180,14 @@ pub fn check_paths_with_index(
         return Err(LintError::UnknownRule { rule });
     }
 
-    let files = collect_r_files(paths, exclude).map_err(LintError::from)?;
-    if files.is_empty() {
+    let discovered = collect_lint_files(paths, exclude).map_err(LintError::from)?;
+    let files = discovered.r;
+    // Every package `DESCRIPTION` is an input regardless of which rules are
+    // selected: `syntax-error` is not a rule, and a `DESCRIPTION` that
+    // `read.dcf` would reject must surface under `--select` exactly as a broken
+    // `.R` file does.
+    let descriptions = discovered.description;
+    if files.is_empty() && descriptions.is_empty() {
         // Under force-exclude every named file may be excluded; that is an
         // expected clean no-op, not an error.
         if exclude.force() {
@@ -226,6 +234,24 @@ pub fn check_paths_with_index(
         readable.push(path);
     }
     let files = readable;
+
+    // `DESCRIPTION` buffers, under the same skip-or-fail policy. They are held
+    // as text rather than pushed through `upsert_file`: a `SourceFile` carries
+    // R-parse state and every query over one assumes the R grammar, which is
+    // exactly why `DescriptionFile` is a separate input.
+    let mut description_sources: Vec<(PathBuf, String)> = Vec::with_capacity(descriptions.len());
+    for path in descriptions {
+        match fs::read_to_string(&path) {
+            Ok(content) => description_sources.push((path, content)),
+            Err(err) if err.kind() == io::ErrorKind::InvalidData => skipped.push(path),
+            Err(err) => {
+                return Err(LintError::ReadError {
+                    path,
+                    source: err.to_string(),
+                });
+            }
+        }
+    }
 
     // Scope-only members: a package's generated R sources (`cpp11.R`,
     // `RcppExports.R`, `extendr-wrappers.R`, `import-standalone-*.R`) are in the
@@ -309,7 +335,7 @@ pub fn check_paths_with_index(
     // parallel on db clones. `Project<'db>` is lifetime-bound to its handle, so
     // each worker re-derives it from its own clone (a memo hit after the force
     // above). The ordered collect keeps reports in `files` order.
-    let reports: Vec<LintFileReport> = files
+    let mut reports: Vec<LintFileReport> = files
         .into_par_iter()
         .map_with(db.clone(), |worker, path| {
             let worker = &*worker;
@@ -351,6 +377,26 @@ pub fn check_paths_with_index(
         })
         .collect();
 
+    // Pass 3: the `DESCRIPTION`s. Separate from pass 2 because it runs over a
+    // second grammar with no salsa input of its own, and it comes *after*
+    // because the cross-file DESCRIPTION rules read facts the project graph
+    // above derives.
+    let description_count = description_sources.len();
+    let description_reports: Vec<LintFileReport> = description_sources
+        .into_par_iter()
+        .map(|(path, content)| {
+            let (status, diagnostics) = lint_description_source(&path, &content, &rules);
+            LintFileReport {
+                path,
+                status,
+                diagnostics,
+            }
+        })
+        .collect();
+    reports.extend(description_reports);
+    // `collect_lint_files` sorts each list, so this only interleaves the two.
+    reports.sort_by(|a, b| a.path.cmp(&b.path));
+
     let total_findings = reports
         .iter()
         .map(|r| match r.status {
@@ -360,7 +406,7 @@ pub fn check_paths_with_index(
         .sum();
 
     Ok(LintResult {
-        checked_files: tracked.len(),
+        checked_files: tracked.len() + description_count,
         total_findings,
         reports,
         skipped,
