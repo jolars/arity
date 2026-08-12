@@ -324,8 +324,9 @@ impl LintWorker {
     /// Apply a `workspace/didChangeWatchedFiles` batch to the db, then re-lint if
     /// anything changed. `.R` content changes to tracked-but-unopened files refresh
     /// their text; `.R` create/delete adjusts membership (which cascades a package
-    /// graph refresh); a bare `DESCRIPTION`/`NAMESPACE` edit refreshes the graph on
-    /// its own. See [`WatchedFilesBatch`].
+    /// graph refresh); a bare `NAMESPACE` edit, or a `DESCRIPTION` event that moves
+    /// package-ness, refreshes the graph on its own, while an edit to a tracked
+    /// root's `DESCRIPTION` re-reads only that file. See [`WatchedFilesBatch`].
     fn on_watched_files(&mut self, batch: WatchedFilesBatch) {
         let mut relint = false;
 
@@ -350,23 +351,25 @@ impl LintWorker {
 
         if !member_changed {
             // Refresh only what actually moved. A `NAMESPACE` change reshapes
-            // the package graph, and so does a `DESCRIPTION` for a root we do
-            // not track yet — it may have just turned a directory into a
-            // package. A `DESCRIPTION` edit for a known root needs nothing but
-            // its own text re-read.
+            // the package graph, and so does a `DESCRIPTION` whose arrival or
+            // departure changes which directories are packages
+            // ([`description_edit_is_local`]). An edit to a known root's
+            // `DESCRIPTION` needs nothing but its own text re-read.
             let mut refresh_graph = false;
             for (path, kind) in &batch.meta_changed {
                 match kind {
                     WatchedKind::Namespace => refresh_graph = true,
-                    WatchedKind::Description => match path
-                        .parent()
-                        .filter(|root| self.db.lookup_description(root).is_some())
-                    {
-                        Some(root) => {
+                    WatchedKind::Description => match path.parent() {
+                        Some(root)
+                            if description_edit_is_local(
+                                path,
+                                self.db.lookup_description(root).is_some(),
+                            ) =>
+                        {
                             let root = root.to_path_buf();
                             relint |= self.db.refresh_description(&root);
                         }
-                        None => refresh_graph = true,
+                        _ => refresh_graph = true,
                     },
                     _ => {}
                 }
@@ -859,6 +862,21 @@ pub(crate) fn packages_to_build(
         .collect()
 }
 
+/// Whether a watched `DESCRIPTION` event can be applied by re-reading that one
+/// file, instead of refreshing the whole package graph.
+///
+/// `tracked` is whether the db already holds an input for the file's root. Both
+/// halves are about *package-ness* moving, which is what the graph records:
+///
+/// - **An untracked root** may have just become a package — the file is new.
+/// - **A file no longer on disk** may have just stopped being one. The watcher
+///   collapses create/change/delete into one event, so a deletion arrives here
+///   looking exactly like an edit; without the disk check it would only blank
+///   the tracked text and leave the graph pointing at a package that is gone.
+fn description_edit_is_local(path: &Path, tracked: bool) -> bool {
+    tracked && path.is_file()
+}
+
 /// Format a package count for a progress message, pluralizing the noun
 /// ("1 package", "3 packages").
 fn package_count(n: usize) -> String {
@@ -875,6 +893,32 @@ pub(crate) fn now_unix_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The watcher reports a create, an edit, and a delete as the same event, so
+    /// the decision has to be read off the disk state, not off the event.
+    #[test]
+    fn a_description_delete_is_not_a_local_edit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("DESCRIPTION");
+        std::fs::write(&path, "Package: p\n").expect("DESCRIPTION");
+
+        assert!(
+            description_edit_is_local(&path, true),
+            "an edit to a tracked root's DESCRIPTION only re-reads that file"
+        );
+        assert!(
+            !description_edit_is_local(&path, false),
+            "an untracked root may have just become a package"
+        );
+
+        // The regression this guards: a deleted DESCRIPTION means the directory
+        // may no longer be a package at all, which only the graph refresh sees.
+        std::fs::remove_file(&path).expect("remove");
+        assert!(
+            !description_edit_is_local(&path, true),
+            "a deleted DESCRIPTION reshapes package roots, tracked or not"
+        );
+    }
 
     #[test]
     fn guard_contains_a_panic_and_reports_completion() {
