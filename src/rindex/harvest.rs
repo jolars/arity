@@ -99,13 +99,14 @@ pub fn harvest_package_in(
     let desc = read_dcf(&desc_path)?;
     let package = desc
         .field("Package")
-        .ok_or_else(|| HarvestError::BadDescription("no Package field".into()))?
-        .to_string();
+        .ok_or_else(|| HarvestError::BadDescription("no Package field".into()))?;
     let version = desc
         .field("Version")
-        .ok_or_else(|| HarvestError::BadDescription("no Version field".into()))?
-        .to_string();
-    let r_version = desc.field("Built").and_then(parse_built_r_version);
+        .ok_or_else(|| HarvestError::BadDescription("no Version field".into()))?;
+    let r_version = desc
+        .field("Built")
+        .as_deref()
+        .and_then(parse_built_r_version);
 
     let object_names = read_object_names(pkg_dir, &package);
     let exports = resolve_package_exports(pkg_dir, &object_names);
@@ -342,44 +343,26 @@ fn extract_formals(formals: &Robj) -> Vec<Formal> {
 // DESCRIPTION (DCF)
 // ---------------------------------------------------------------------------
 
+/// A parsed DESCRIPTION, reduced to the field lookup this module needs.
 struct Dcf {
-    fields: Vec<(String, String)>,
+    document: crate::dcf::Document,
 }
 
 impl Dcf {
-    fn field(&self, name: &str) -> Option<&str> {
-        self.fields
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.as_str())
+    /// The first field named `name`, folded to its logical value.
+    fn field(&self, name: &str) -> Option<String> {
+        self.document.field(name).map(|field| field.folded_value())
     }
-}
-
-/// Parse DCF (Debian Control File) text into its `(field, value)` pairs, in
-/// file order. A continuation line (one starting with whitespace) appends to the
-/// previous field's value, joined with `\n`. Shared by the DESCRIPTION readers
-/// (`harvest` for package metadata, `project::graph` for `Collate:`); kept
-/// IO-free so callers do their own `read_to_string`.
-pub(crate) fn parse_dcf(text: &str) -> Vec<(String, String)> {
-    let mut fields: Vec<(String, String)> = Vec::new();
-    for line in text.lines() {
-        if line.starts_with([' ', '\t']) {
-            // Continuation of the previous field.
-            if let Some(last) = fields.last_mut() {
-                last.1.push('\n');
-                last.1.push_str(line.trim());
-            }
-        } else if let Some((k, v)) = line.split_once(':') {
-            fields.push((k.trim().to_string(), v.trim().to_string()));
-        }
-    }
-    fields
 }
 
 fn read_dcf(path: &Path) -> Result<Dcf> {
     let text = std::fs::read_to_string(path).map_err(|e| HarvestError::Io(e.to_string()))?;
+    // The parser's diagnostics are dropped on purpose. This DESCRIPTION comes
+    // from whatever the user happens to have installed, and a malformed one is
+    // input, not a bug report: it must degrade to "no symbols for this package"
+    // rather than fail the harvest.
     Ok(Dcf {
-        fields: parse_dcf(&text),
+        document: crate::dcf::parse(&text).document(),
     })
 }
 
@@ -859,14 +842,19 @@ mod tests {
         assert!(validate_attach_set(&obj, "tidyverse", &|_| true).is_none());
     }
 
+    /// Harvest reads its metadata through folded field values, so it keeps
+    /// pinning the folding itself — including the leading `\n` a field whose
+    /// own line is empty produces. The tree-level guarantees live in
+    /// `arity_parser::dcf`.
     #[test]
-    fn parse_dcf_folds_continuation_lines() {
+    fn dcf_folds_continuation_lines() {
         let text = "Package: testpkg\nCollate:\n    a.R\n    b.R\nVersion: 1.0\n";
-        let fields = parse_dcf(text);
-        assert_eq!(fields[0], ("Package".to_string(), "testpkg".to_string()));
-        // The leading-whitespace lines append to `Collate`, joined with `\n`.
-        assert_eq!(fields[1], ("Collate".to_string(), "\na.R\nb.R".to_string()));
-        assert_eq!(fields[2], ("Version".to_string(), "1.0".to_string()));
+        let desc = Dcf {
+            document: crate::dcf::parse(text).document(),
+        };
+        assert_eq!(desc.field("Package").as_deref(), Some("testpkg"));
+        assert_eq!(desc.field("Collate").as_deref(), Some("\na.R\nb.R"));
+        assert_eq!(desc.field("Version").as_deref(), Some("1.0"));
     }
 
     #[test]
