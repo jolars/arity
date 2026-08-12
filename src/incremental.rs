@@ -21,10 +21,10 @@ use crate::parser::{
     map_range_through_edits, parse_with_options, reparse_edits_with_options, reparse_with_options,
 };
 use crate::project::{
-    ClassSystem, DefKind, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
-    collect_source_literal_edges, collect_top_level_events, collect_top_level_events_spanned,
-    discover_packages, project_classes, project_defs, project_graph, project_reads, relative_path,
-    reverse_source_edges, workspace_project,
+    ClassSystem, DefKind, DescriptionFacts, PackageInfo, ReadBinding, ReadSite, SourceEdgeKey,
+    TopLevelEvent, collect_source_literal_edges, collect_top_level_events,
+    collect_top_level_events_spanned, discover_packages, project_classes, project_defs,
+    project_graph, project_reads, relative_path, reverse_source_edges, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
@@ -242,6 +242,48 @@ pub struct PackageGraph {
     pub packages: Vec<PackageInfo>,
 }
 
+/// One package root's `DESCRIPTION`, as a tracked input holding the raw text.
+///
+/// Deliberately **not** a [`SourceFile`]: that input carries R-parse state
+/// (`roxygen_markdown`) and every query over it assumes the R grammar. DCF is a
+/// second, independent grammar, and keeping the two input families apart is the
+/// same rule that keeps the two `SyntaxKind` enums apart.
+///
+/// The *text* lives here rather than the derived facts because that is what
+/// buys the backdating: an edit to `Description:` prose bumps this input, and
+/// [`description_facts`] then compares equal and backdates, so
+/// [`workspace_project`](crate::project::workspace_project) is never
+/// re-executed. Storing facts directly in [`PackageGraph`] would instead make
+/// every prose keystroke a project-graph rebuild once stage 4 lands.
+///
+/// A missing or unreadable `DESCRIPTION` is `""` — a salsa input cannot be
+/// un-created, and empty text derives all-default facts, which is exactly what
+/// "no DESCRIPTION" should mean.
+#[salsa::input]
+pub struct DescriptionFile {
+    /// The package root holding this `DESCRIPTION`. Set once, never mutated.
+    #[returns(ref)]
+    pub root: PathBuf,
+    #[returns(ref)]
+    pub text: String,
+}
+
+/// Every tracked `DESCRIPTION`, as a salsa **singleton** input at
+/// `Durability::MEDIUM` — the handle set
+/// [`workspace_project`](crate::project::workspace_project) reads so it can
+/// resolve a package root's facts without touching the filesystem.
+///
+/// Refreshed in lockstep with [`PackageGraph`] by
+/// [`refresh_package_graph`](IncrementalDatabase::refresh_package_graph), which
+/// upserts each root's text *before* writing the graph — so the graph never
+/// points at a handle carrying stale bytes.
+#[salsa::input(singleton)]
+pub struct Descriptions {
+    /// One entry per package root with a tracked `DESCRIPTION`, sorted by root.
+    #[returns(ref)]
+    pub files: Vec<DescriptionFile>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryKind {
     ParsedDocument,
@@ -264,6 +306,7 @@ pub enum QueryKind {
     VisibleSymbols,
     LoadedNames,
     ExternalResolution,
+    DescriptionFacts,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -567,6 +610,26 @@ pub fn loaded_names(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String
     names
 }
 
+/// The analysis facts a package's `DESCRIPTION` declares.
+///
+/// **The backdating firewall for `DESCRIPTION`.** [`DescriptionFile`] holds raw
+/// text, so any edit bumps it; this projection is range-free and `Eq`, so an
+/// edit that changes no fact (prose in `Description:`, a reflowed `Title:`, a
+/// new `Authors@R`) compares equal and backdates — and
+/// [`workspace_project`](crate::project::workspace_project) is not re-executed.
+/// An edit that *does* change a fact propagates, which is the whole point.
+///
+/// Adding a range to [`DescriptionFacts`] would defeat this silently; a
+/// consumer needing spans re-derives them from the CST instead.
+#[salsa::tracked(returns(ref))]
+pub fn description_facts(db: &dyn IncrementalDb, file: DescriptionFile) -> DescriptionFacts {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::DescriptionFacts,
+        file: None,
+    });
+    DescriptionFacts::from_text(file.text(db))
+}
+
 /// The file's top-level `source()` edges, range-free
 /// ([`crate::project::collect_source_edge_keys`]), as a tracked query. Resolves
 /// relative targets against the file's own directory (`path.parent()`); the
@@ -636,6 +699,11 @@ pub struct IncrementalDatabase {
     /// `DESCRIPTION` events. Outside salsa: a disk-read memo, never a query
     /// output. Shared across clones.
     markdown_resolver: Arc<Mutex<crate::project::description::MarkdownDefaultResolver>>,
+    /// Package root → its [`DescriptionFile`] input, so re-reading the same
+    /// root reuses one input (and its cached facts) instead of minting a
+    /// duplicate. The DCF counterpart of [`source_map`](Self::source_map).
+    /// Shared across clones.
+    description_map: Arc<Mutex<HashMap<PathBuf, DescriptionFile>>>,
 }
 
 impl Default for IncrementalDatabase {
@@ -651,6 +719,7 @@ impl Default for IncrementalDatabase {
             markdown_resolver: Arc::new(Mutex::new(
                 crate::project::description::MarkdownDefaultResolver::new(),
             )),
+            description_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -674,6 +743,7 @@ impl Clone for IncrementalDatabase {
             reparse_hits: Arc::clone(&self.reparse_hits),
             precise_reparse_hits: Arc::clone(&self.precise_reparse_hits),
             markdown_resolver: Arc::clone(&self.markdown_resolver),
+            description_map: Arc::clone(&self.description_map),
         }
     }
 }
@@ -873,6 +943,11 @@ impl IncrementalDatabase {
             })
             .unwrap_or_default();
         let packages = discover_packages(&member_paths);
+        // Upsert the DESCRIPTION texts **before** writing the graph: the graph's
+        // `PackageInfo`s name roots that `workspace_project` resolves to these
+        // handles, so writing it first would open a window where it points at
+        // stale bytes.
+        self.refresh_descriptions(packages.iter().map(|p| p.root.clone()));
         match PackageGraph::try_get(self) {
             Some(graph) => {
                 if graph.packages(self) != &packages {
@@ -894,6 +969,93 @@ impl IncrementalDatabase {
                 graph
             }
         }
+    }
+
+    /// Re-read each root's `DESCRIPTION` from disk into its [`DescriptionFile`]
+    /// input, and install the handle set as the [`Descriptions`] singleton at
+    /// `Durability::MEDIUM`.
+    ///
+    /// Each text write is **skipped when unchanged** — a salsa input always
+    /// bumps its revision — so a `didChangeWatchedFiles` event for a
+    /// touched-but-unedited `DESCRIPTION` invalidates nothing at all.
+    pub fn refresh_descriptions(
+        &mut self,
+        roots: impl IntoIterator<Item = PathBuf>,
+    ) -> Descriptions {
+        let mut files: Vec<DescriptionFile> = roots
+            .into_iter()
+            .map(|root| {
+                let text = std::fs::read_to_string(root.join("DESCRIPTION")).unwrap_or_default();
+                self.upsert_description(&root, text)
+            })
+            .collect();
+        files.sort_by(|a, b| a.root(self).cmp(b.root(self)));
+        files.dedup();
+
+        match Descriptions::try_get(self) {
+            Some(set) => {
+                if set.files(self) != &files {
+                    set.set_files(self)
+                        .with_durability(Durability::MEDIUM)
+                        .to(files);
+                }
+                set
+            }
+            None => {
+                let set = Descriptions::new(self, files.clone());
+                // Creation lands at default durability; re-set at MEDIUM so the
+                // first edit after seeding also skips revalidating the set.
+                set.set_files(self)
+                    .with_durability(Durability::MEDIUM)
+                    .to(files);
+                set
+            }
+        }
+    }
+
+    /// Insert or update the [`DescriptionFile`] input for `root`, reusing the
+    /// existing input so its cached [`description_facts`] survive. Skips the
+    /// write when the text is unchanged.
+    pub fn upsert_description(&mut self, root: &Path, text: String) -> DescriptionFile {
+        let existing = self
+            .description_map
+            .lock()
+            .expect("description map mutex poisoned")
+            .get(root)
+            .copied();
+        match existing {
+            Some(file) => {
+                if file.text(self) != &text {
+                    file.set_text(self)
+                        .with_durability(Durability::MEDIUM)
+                        .to(text);
+                }
+                file
+            }
+            None => {
+                let file = DescriptionFile::new(self, root.to_path_buf(), text.clone());
+                // Creation lands at default durability; re-set at MEDIUM so an
+                // R-file keystroke (a LOW write) skips revalidating the facts.
+                file.set_text(self)
+                    .with_durability(Durability::MEDIUM)
+                    .to(text);
+                self.description_map
+                    .lock()
+                    .expect("description map mutex poisoned")
+                    .insert(root.to_path_buf(), file);
+                file
+            }
+        }
+    }
+
+    /// The tracked `DESCRIPTION` for `root`, if one has been seeded. Read-only,
+    /// so it is safe on a shared clone.
+    pub fn lookup_description(&self, root: &Path) -> Option<DescriptionFile> {
+        self.description_map
+            .lock()
+            .expect("description map mutex poisoned")
+            .get(root)
+            .copied()
     }
 
     /// The [`Workspace`] singleton, if one has been seeded. Read-only.
