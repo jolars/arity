@@ -34,6 +34,6 @@ pub mod syntax;
 pub use ast::{CommentLine, Document, Field, MalformedLine, Record, ValueLine};
 pub use deps::{DependencyEntry, VersionConstraint, VersionOp, dependency_entries};
 pub use parser::{ParseOutput, parse, reconstruct};
-pub use syntax::{DcfLanguage, SyntaxKind, SyntaxNode, SyntaxToken};
+pub use syntax::{DcfLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 pub use crate::parser::ParseDiagnostic;

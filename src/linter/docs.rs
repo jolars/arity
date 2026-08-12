@@ -15,11 +15,11 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use crate::config::LintConfig;
-use crate::linter::check::check_document;
-use crate::linter::diagnostic::Fix;
+use crate::linter::check::{check_description_document, check_document};
+use crate::linter::diagnostic::{Diagnostic, Fix};
 use crate::linter::fix::apply_fixes;
 use crate::linter::render::{OutputMode, render_findings};
-use crate::linter::rules::{Rule, rules_by_category};
+use crate::linter::rules::{AnyRule, Example, rules_by_category};
 
 /// Preamble for the generated page: the header comment warning it off
 /// hand-edits, the title, and the prose that frames the catalogue.
@@ -46,17 +46,32 @@ Every example below is linted live to produce its diagnostic and fixed output,
 so this page never drifts from the rules' actual behavior.
 ";
 
-/// The synthetic path used when linting an example snippet. The same value must
-/// key both `check_document` and the `render_findings` source lookup: the
-/// linter rewrites every diagnostic's `path` to the one passed here, and the
-/// pretty renderer silently degrades to a one-liner if the source can't be
-/// found for that exact path.
-fn example_path() -> PathBuf {
-    PathBuf::from("example.R")
+/// The synthetic path an example snippet is linted under — one per grammar, and
+/// the real file name in both cases.
+///
+/// The same value must key both the lint call and the `render_findings` source
+/// lookup: the linter rewrites every diagnostic's `path` to the one passed
+/// here, and the pretty renderer silently degrades to a one-liner if the source
+/// can't be found for that exact path.
+fn example_path(rule: &AnyRule) -> PathBuf {
+    match rule {
+        AnyRule::R(_) => PathBuf::from("example.R"),
+        AnyRule::Dcf(_) => PathBuf::from("DESCRIPTION"),
+    }
+}
+
+/// The fenced-block language an example is rendered under. mdBook ships stock
+/// highlight.js, which has no DCF grammar — and `yaml`, the nearest thing,
+/// would highlight a lie about continuation lines.
+fn example_language(rule: &AnyRule) -> &'static str {
+    match rule {
+        AnyRule::R(_) => "r",
+        AnyRule::Dcf(_) => "text",
+    }
 }
 
 /// The rule set an example snippet is linted under: the rule itself, plus
-/// whatever it declares via [`Rule::doc_select`].
+/// whatever it declares via `doc_select`.
 ///
 /// Restricting `select` keeps an example from tripping an unrelated rule. Some
 /// rules need company all the same — `outdated-suppression` can only tell a
@@ -64,7 +79,7 @@ fn example_path() -> PathBuf {
 ///
 /// Shared with `tests/rule_docs.rs`, so the pinned pages and the "every example
 /// triggers its rule" check agree on what is enabled.
-pub fn example_lint_config(rule: &dyn Rule) -> LintConfig {
+pub fn example_lint_config(rule: &AnyRule) -> LintConfig {
     let mut select = vec![rule.id().to_string()];
     select.extend(rule.doc_select().iter().map(|id| id.to_string()));
     LintConfig {
@@ -72,6 +87,20 @@ pub fn example_lint_config(rule: &dyn Rule) -> LintConfig {
         compat: rule.doc_compat(),
         ..Default::default()
     }
+}
+
+/// Lint one documented example exactly as the reference page does.
+///
+/// Shared with `tests/rule_docs.rs` so the "does this example still trigger?"
+/// check can never drift from what the page actually renders.
+pub fn lint_example(rule: &AnyRule, example: &Example) -> Vec<Diagnostic> {
+    let config = example_lint_config(rule);
+    let path = example_path(rule);
+    match rule {
+        AnyRule::R(_) => check_document(&path, example.source, &config),
+        AnyRule::Dcf(_) => check_description_document(&path, example.source, &config),
+    }
+    .unwrap_or_default()
 }
 
 /// Render the whole rule reference: preamble, a per-category index, and every
@@ -115,7 +144,7 @@ pub fn render_rules_page() -> String {
         let _ = writeln!(out, "## {}", category.title());
         for rule in rules {
             let _ = writeln!(out);
-            let _ = out.write_str(&render_rule_doc(rule.as_ref()));
+            let _ = out.write_str(&render_rule_doc(rule));
         }
     }
 
@@ -124,7 +153,7 @@ pub fn render_rules_page() -> String {
 
 /// Render one rule's section of the reference page — the unit the snapshot test
 /// pins and [`render_rules_page`] assembles.
-pub fn render_rule_doc(rule: &dyn Rule) -> String {
+pub fn render_rule_doc(rule: &AnyRule) -> String {
     let mut out = String::new();
     let id = rule.id();
     let _ = writeln!(out, "### `{id}`");
@@ -143,7 +172,8 @@ pub fn render_rule_doc(rule: &dyn Rule) -> String {
     };
     let _ = writeln!(out, "{status}");
 
-    let config = example_lint_config(rule);
+    let language = example_language(rule);
+    let path = example_path(rule);
 
     for example in rule.examples() {
         let _ = writeln!(out);
@@ -151,13 +181,12 @@ pub fn render_rule_doc(rule: &dyn Rule) -> String {
             let _ = writeln!(out, "{}", example.caption);
             let _ = writeln!(out);
         }
-        fenced(&mut out, "r", example.source);
+        fenced(&mut out, language, example.source);
 
-        let diagnostics =
-            check_document(&example_path(), example.source, &config).unwrap_or_default();
+        let diagnostics = lint_example(rule, example);
         let source = example.source.to_string();
-        let rendered = render_findings(&diagnostics, OutputMode::Pretty, false, &|path| {
-            (path == &example_path()).then(|| source.clone())
+        let rendered = render_findings(&diagnostics, OutputMode::Pretty, false, &|candidate| {
+            (candidate == &path).then(|| source.clone())
         });
         let _ = writeln!(out);
         fenced(&mut out, "text", &rendered);
@@ -168,7 +197,7 @@ pub fn render_rule_doc(rule: &dyn Rule) -> String {
             let _ = writeln!(out);
             let _ = writeln!(out, "After applying the fix:");
             let _ = writeln!(out);
-            fenced(&mut out, "r", &after.output);
+            fenced(&mut out, language, &after.output);
         }
     }
 
