@@ -1450,6 +1450,31 @@ fn undefined_symbol_flags_base_only_typo() {
 }
 
 #[test]
+fn undefined_symbol_resolves_backtick_quoted_base_names() {
+    // Backticks are part of the IDENT token, but the export lists store the
+    // bare name, so the provider lookup has to try the stripped form.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with(
+        "f <- function(imp, topic) {\n  \
+           e <- new.env()\n  \
+           e$a <- `:`\n  \
+           vapply(imp, `%in%`, logical(1), x = topic)\n\
+         }\n",
+        &p,
+    );
+    assert!(msgs.is_empty(), "expected no findings, got {msgs:?}");
+}
+
+#[test]
+fn undefined_symbol_flags_backtick_quoted_unknown_name() {
+    // Stripping the backticks must not make every quoted name resolve.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("`no such thing`()\n", &p);
+    assert_eq!(msgs.len(), 1, "expected one finding, got {msgs:?}");
+    assert!(msgs[0].contains("no such thing"));
+}
+
+#[test]
 fn undefined_symbol_gated_off_when_attached_package_unindexed() {
     // `library(somepkg)` with somepkg un-indexed: the rule stays silent for the
     // whole file because somepkg could export `bogus`.

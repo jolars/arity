@@ -28,6 +28,8 @@ use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
+use crate::semantic::symbols::unbacktick;
+
 /// Names-only export lists for packages fetched from the remote sidecar, keyed
 /// by package name. Owned (not `&'static`) because it is built dynamically from
 /// the disk cache and network fetches, unlike the compile-time bundled lists.
@@ -68,7 +70,7 @@ impl RemoteExports {
     pub fn exports(&self, package: &str, name: &str) -> bool {
         self.exports
             .get(package)
-            .is_some_and(|set| set.contains(name))
+            .is_some_and(|set| set.contains(unbacktick(name)))
     }
 
     /// Iterate a package's export names, if it is in the sidecar (for

@@ -454,20 +454,26 @@ completion and hover, and it formats. Staged so each step is useful alone.
       lifting the `import(pkg)` poison exposes findings in every package using
       it—which is how the item below was found.
 
-- [ ] **A backticked name never resolves against a package export list.**
-      `` e$a <- `:` `` and ``map_lgl(imp, `%in%`, x = topic)`` are flagged
+- [x] **A backticked name never resolves against a package export list.** Fixed.
+      `` e$a <- `:` `` and ``map_lgl(imp, `%in%`, x = topic)`` were flagged
       `undefined-symbol`. The backticks are part of the `IDENT` token, which is
       *correct* and load-bearing for user operators (`src/semantic/builder.rs`
       records a `` `%+%` `` binding backtick-quoted so references match), but
       the base and CRAN export lists store `:` and `%in%` unquoted, so the
-      lookup misses. The fix belongs in the provider lookup
-      (`origin`/`is_base`/`resolve_origin`, `src/semantic/symbols.rs` +
-      `src/rindex/provider.rs`), which should also try the backtick-stripped
-      name—**not** in the builder, which must keep quoting bindings.
+      lookup missed.
 
-      Predates stage 2 (reproduces on `2c5168c`); it was invisible in packages
+      `semantic::symbols::unbacktick` strips a *matched* backtick pair, and
+      every leaf provider lookup now applies it: `StaticBaseR`'s
+      `origin`/`is_base`/`package_of`, `BundledPackages::exports`,
+      `RemoteExports::exports`, and `IndexedProvider`'s `exports`/`lookup`. Put
+      at the leaves rather than in `resolve_origin` so all four resolution
+      tiers, `StaticBaseR` used as a bare provider, and hover's rich `lookup`
+      are covered by one rule. Nothing changed in the builder, which must keep
+      quoting bindings.
+
+      Predated stage 2 (reproduced on `2c5168c`); it was invisible in packages
       using `import(pkg)` only because the wholesale-import poison suppressed
-      the whole file. Repro: `f <- function() { e <- new.env(); e$a <- `:`; e }`.
+      the whole file.
 
 - [ ] **3. DESCRIPTION lint rules.** `undeclared-dependency` (`pkg::x` or
       `library(pkg)` in `R/` with `pkg` absent from `Depends`/`Imports`) and
