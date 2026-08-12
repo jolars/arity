@@ -96,9 +96,9 @@ pub fn sole_positional(call: &CallExpr) -> Option<SyntaxElement> {
 // --- package loads ---------------------------------------------------------
 
 /// The base callees whose `package` argument names a package, exactly the set
-/// `tools:::.check_packages_used` matches.
-pub const PACKAGE_LOAD_CALLS: [&str; 4] =
-    ["library", "require", "requireNamespace", "loadNamespace"];
+/// `tools:::.check_packages_used` matches. Owned by the semantic layer, which
+/// records the same calls, so the two readings cannot drift.
+pub use crate::semantic::symbols::PACKAGE_LOAD_CALLS;
 
 /// The package `call` names and the token to span, when `call` is one of
 /// [`PACKAGE_LOAD_CALLS`] and its `package` argument is a bare name or a string

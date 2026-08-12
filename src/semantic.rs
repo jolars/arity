@@ -58,10 +58,18 @@ pub struct SemanticModel {
     /// Identifier *read* sites. Definition sites are recorded as `Binding`s.
     idents: Vec<IdentRef>,
     loaded_packages: Vec<LoadedPackage>,
-    /// Packages named on the left of `::` / `:::`. Unlike `loaded_packages`,
-    /// these are *not* attached to the search path — `pkg::name` is a direct
-    /// reference — so they never affect bare-name resolution. They drive
-    /// which packages the introspection index should harvest.
+    /// Packages this file *names*: the left of every `::` / `:::`, and the
+    /// package argument of every
+    /// [`PACKAGE_LOAD_CALLS`](symbols::PACKAGE_LOAD_CALLS) call **at any
+    /// depth**.
+    ///
+    /// Deliberately wider than `loaded_packages`, which is top-level-only
+    /// because it models *attachment*: a `requireNamespace()` inside a function
+    /// body is the conditional-dependency idiom, and it references a package
+    /// without attaching it. Naming a package never affects bare-name
+    /// resolution, so this set only drives which packages the introspection
+    /// index should harvest and which ones a package's code can be said to
+    /// reach.
     referenced_packages: Vec<SmolStr>,
     /// Names accessed on the right of `::` / `:::` (`pkg::name` -> `name`). Kept
     /// out of [`idents`](Self::idents) so they never resolve locally or reach
@@ -157,8 +165,10 @@ impl SemanticModel {
         self.attaches_opaque_env
     }
 
-    /// Packages referenced via `pkg::name` / `pkg:::name`, in source order
-    /// (with duplicates preserved as encountered).
+    /// Packages named via `pkg::name` / `pkg:::name` or by a `library` /
+    /// `require` / `requireNamespace` / `loadNamespace` call at any depth, in
+    /// source order (with duplicates preserved as encountered). See the field
+    /// doc for why this is wider than [`loaded_packages`](Self::loaded_packages).
     pub fn referenced_packages(&self) -> &[SmolStr] {
         &self.referenced_packages
     }

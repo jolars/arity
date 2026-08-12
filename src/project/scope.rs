@@ -87,10 +87,10 @@ pub struct ProjectScope {
     /// Per package file: the subset of `namespace_exports` registered as S3
     /// methods (`S3method(...)`). Reached by dispatch, never by a direct call.
     s3_methods: HashMap<PathBuf, BTreeSet<String>>,
-    /// Files whose cross-file visibility is incomplete (unresolved `source()`).
     /// Per file: the packages its NAMESPACE `import()`s wholesale. Recorded
     /// rather than resolved — see [`FileScope::wildcard_import_packages`].
     wildcard_imports: HashMap<PathBuf, BTreeSet<String>>,
+    /// Files whose cross-file visibility is incomplete (unresolved `source()`).
     dynamic: HashSet<PathBuf>,
     /// Per file: the set of *other* files it can see (package siblings, plus the
     /// transitive non-local `source()` closure). Directional: `a` sourcing `b`

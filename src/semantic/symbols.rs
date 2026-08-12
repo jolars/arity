@@ -38,6 +38,17 @@ const DEFAULT_PACKAGES: &[&str] = &[
     PACKAGE_GRAPHICS,
 ];
 
+/// The base callees whose package argument *names* a package: exactly the set
+/// `tools:::.check_packages_used` matches.
+///
+/// One list rather than one per consumer, because two would drift: the semantic
+/// builder records what these calls name at any depth, and the linter's
+/// `matchers::package_load_arg` re-reads the same calls to span one. Note this
+/// is deliberately wider than the *attach* set the builder's top-level branch
+/// matches — `loadNamespace` references a package without attaching it.
+pub const PACKAGE_LOAD_CALLS: [&str; 4] =
+    ["library", "require", "requireNamespace", "loadNamespace"];
+
 /// The bare name a package export list would store for `name`: a matched pair
 /// of surrounding backticks removed, everything else returned unchanged.
 ///
