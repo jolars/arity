@@ -1,0 +1,26 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..47
+  RECORD@0..11
+    FIELD@0..11
+      FIELD_NAME@0..7 "Package"
+      COLON@7..8 ":"
+      VALUE_LINE@8..11
+        WHITESPACE@8..9 " "
+        VALUE_TEXT@9..10 "p"
+        NEWLINE@10..11 "\n"
+  BLANK_LINE@11..12
+    NEWLINE@11..12 "\n"
+  RECORD@12..47
+    MALFORMED_LINE@12..36
+      TEXT@12..35 "    orphan continuation"
+      NEWLINE@35..36 "\n"
+    FIELD@36..47
+      FIELD_NAME@36..43 "Version"
+      COLON@43..44 ":"
+      VALUE_LINE@44..47
+        WHITESPACE@44..45 " "
+        VALUE_TEXT@45..46 "1"
+        NEWLINE@46..47 "\n"

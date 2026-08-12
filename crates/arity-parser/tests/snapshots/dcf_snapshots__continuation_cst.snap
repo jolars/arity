@@ -1,0 +1,32 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..131
+  RECORD@0..131
+    FIELD@0..98
+      FIELD_NAME@0..11 "Description"
+      COLON@11..12 ":"
+      VALUE_LINE@12..43
+        WHITESPACE@12..13 " "
+        VALUE_TEXT@13..42 "A long description th ..."
+        NEWLINE@42..43 "\n"
+      VALUE_LINE@43..73
+        WHITESPACE@43..47 "    "
+        VALUE_TEXT@47..72 "across several lines  ..."
+        NEWLINE@72..73 "\n"
+      VALUE_LINE@73..98
+        WHITESPACE@73..77 "    "
+        VALUE_TEXT@77..97 "hanging indentation."
+        NEWLINE@97..98 "\n"
+    FIELD@98..131
+      FIELD_NAME@98..105 "Depends"
+      COLON@105..106 ":"
+      VALUE_LINE@106..121
+        WHITESPACE@106..107 " "
+        VALUE_TEXT@107..120 "R (>= 4.1.0),"
+        NEWLINE@120..121 "\n"
+      VALUE_LINE@121..131
+        WHITESPACE@121..125 "    "
+        VALUE_TEXT@125..130 "stats"
+        NEWLINE@130..131 "\n"

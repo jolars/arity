@@ -1,0 +1,235 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..1673
+  RECORD@0..1673
+    FIELD@0..14
+      FIELD_NAME@0..4 "Type"
+      COLON@4..5 ":"
+      VALUE_LINE@5..14
+        WHITESPACE@5..6 " "
+        VALUE_TEXT@6..13 "Package"
+        NEWLINE@13..14 "\n"
+    FIELD@14..32
+      FIELD_NAME@14..21 "Package"
+      COLON@21..22 ":"
+      VALUE_LINE@22..32
+        WHITESPACE@22..23 " "
+        VALUE_TEXT@23..31 "magrittr"
+        NEWLINE@31..32 "\n"
+    FIELD@32..69
+      FIELD_NAME@32..37 "Title"
+      COLON@37..38 ":"
+      VALUE_LINE@38..69
+        WHITESPACE@38..39 " "
+        VALUE_TEXT@39..68 "A Forward-Pipe Operat ..."
+        NEWLINE@68..69 "\n"
+    FIELD@69..84
+      FIELD_NAME@69..76 "Version"
+      COLON@76..77 ":"
+      VALUE_LINE@77..84
+        WHITESPACE@77..78 " "
+        VALUE_TEXT@78..83 "2.0.4"
+        NEWLINE@83..84 "\n"
+    FIELD@84..491
+      FIELD_NAME@84..93 "Authors@R"
+      COLON@93..94 ":"
+      VALUE_LINE@94..98
+        WHITESPACE@94..95 " "
+        VALUE_TEXT@95..97 "c("
+        NEWLINE@97..98 "\n"
+      VALUE_LINE@98..186
+        WHITESPACE@98..102 "    "
+        VALUE_TEXT@102..185 "person(\"Stefan Milton ..."
+        NEWLINE@185..186 "\n"
+      VALUE_LINE@186..251
+        WHITESPACE@186..197 "           "
+        VALUE_TEXT@197..250 "comment = \"Original a ..."
+        NEWLINE@250..251 "\n"
+      VALUE_LINE@251..319
+        WHITESPACE@251..255 "    "
+        VALUE_TEXT@255..318 "person(\"Hadley\", \"Wic ..."
+        NEWLINE@318..319 "\n"
+      VALUE_LINE@319..385
+        WHITESPACE@319..323 "    "
+        VALUE_TEXT@323..384 "person(\"Lionel\", \"Hen ..."
+        NEWLINE@384..385 "\n"
+      VALUE_LINE@385..443
+        WHITESPACE@385..389 "    "
+        VALUE_TEXT@389..442 "person(\"Posit Softwar ..."
+        NEWLINE@442..443 "\n"
+      VALUE_LINE@443..487
+        WHITESPACE@443..455 "            "
+        VALUE_TEXT@455..486 "comment = c(ROR = \"03 ..."
+        NEWLINE@486..487 "\n"
+      VALUE_LINE@487..491
+        WHITESPACE@487..489 "  "
+        VALUE_TEXT@489..490 ")"
+        NEWLINE@490..491 "\n"
+    FIELD@491..880
+      FIELD_NAME@491..502 "Description"
+      COLON@502..503 ":"
+      VALUE_LINE@503..558
+        WHITESPACE@503..504 " "
+        VALUE_TEXT@504..557 "Provides a mechanism  ..."
+        NEWLINE@557..558 "\n"
+      VALUE_LINE@558..633
+        WHITESPACE@558..562 "    "
+        VALUE_TEXT@562..632 "forward-pipe operator ..."
+        NEWLINE@632..633 "\n"
+      VALUE_LINE@633..702
+        WHITESPACE@633..637 "    "
+        VALUE_TEXT@637..701 "result of an expressi ..."
+        NEWLINE@701..702 "\n"
+      VALUE_LINE@702..777
+        WHITESPACE@702..706 "    "
+        VALUE_TEXT@706..776 "There is flexible sup ..."
+        NEWLINE@776..777 "\n"
+      VALUE_LINE@777..850
+        WHITESPACE@777..781 "    "
+        VALUE_TEXT@781..849 "For more information, ..."
+        NEWLINE@849..850 "\n"
+      VALUE_LINE@850..880
+        WHITESPACE@850..854 "    "
+        VALUE_TEXT@854..879 "\"Ceci n'est pas un pi ..."
+        NEWLINE@879..880 "\n"
+    FIELD@880..908
+      FIELD_NAME@880..887 "License"
+      COLON@887..888 ":"
+      VALUE_LINE@888..908
+        WHITESPACE@888..889 " "
+        VALUE_TEXT@889..907 "MIT + file LICENSE"
+        NEWLINE@907..908 "\n"
+    FIELD@908..991
+      FIELD_NAME@908..911 "URL"
+      COLON@911..912 ":"
+      VALUE_LINE@912..945
+        WHITESPACE@912..913 " "
+        VALUE_TEXT@913..944 "https://magrittr.tidy ..."
+        NEWLINE@944..945 "\n"
+      VALUE_LINE@945..991
+        WHITESPACE@945..953 "        "
+        VALUE_TEXT@953..990 "https://github.com/ti ..."
+        NEWLINE@990..991 "\n"
+    FIELD@991..1048
+      FIELD_NAME@991..1001 "BugReports"
+      COLON@1001..1002 ":"
+      VALUE_LINE@1002..1048
+        WHITESPACE@1002..1003 " "
+        VALUE_TEXT@1003..1047 "https://github.com/ti ..."
+        NEWLINE@1047..1048 "\n"
+    FIELD@1048..1070
+      FIELD_NAME@1048..1055 "Depends"
+      COLON@1055..1056 ":"
+      VALUE_LINE@1056..1070
+        WHITESPACE@1056..1057 " "
+        VALUE_TEXT@1057..1069 "R (>= 3.4.0)"
+        NEWLINE@1069..1070 "\n"
+    FIELD@1070..1120
+      FIELD_NAME@1070..1078 "Suggests"
+      COLON@1078..1079 ":"
+      VALUE_LINE@1079..1120
+        WHITESPACE@1079..1080 " "
+        VALUE_TEXT@1080..1119 "covr, knitr, rlang, r ..."
+        NEWLINE@1119..1120 "\n"
+    FIELD@1120..1143
+      FIELD_NAME@1120..1135 "VignetteBuilder"
+      COLON@1135..1136 ":"
+      VALUE_LINE@1136..1143
+        WHITESPACE@1136..1137 " "
+        VALUE_TEXT@1137..1142 "knitr"
+        NEWLINE@1142..1143 "\n"
+    FIELD@1143..1160
+      FIELD_NAME@1143..1154 "ByteCompile"
+      COLON@1154..1155 ":"
+      VALUE_LINE@1155..1160
+        WHITESPACE@1155..1156 " "
+        VALUE_TEXT@1156..1159 "Yes"
+        NEWLINE@1159..1160 "\n"
+    FIELD@1160..1205
+      FIELD_NAME@1160..1180 "Config/Needs/website"
+      COLON@1180..1181 ":"
+      VALUE_LINE@1181..1205
+        WHITESPACE@1181..1182 " "
+        VALUE_TEXT@1182..1204 "tidyverse/tidytemplate"
+        NEWLINE@1204..1205 "\n"
+    FIELD@1205..1221
+      FIELD_NAME@1205..1213 "Encoding"
+      COLON@1213..1214 ":"
+      VALUE_LINE@1214..1221
+        WHITESPACE@1214..1215 " "
+        VALUE_TEXT@1215..1220 "UTF-8"
+        NEWLINE@1220..1221 "\n"
+    FIELD@1221..1240
+      FIELD_NAME@1221..1232 "RoxygenNote"
+      COLON@1232..1233 ":"
+      VALUE_LINE@1233..1240
+        WHITESPACE@1233..1234 " "
+        VALUE_TEXT@1234..1239 "7.3.3"
+        NEWLINE@1239..1240 "\n"
+    FIELD@1240..1262
+      FIELD_NAME@1240..1256 "NeedsCompilation"
+      COLON@1256..1257 ":"
+      VALUE_LINE@1257..1262
+        WHITESPACE@1257..1258 " "
+        VALUE_TEXT@1258..1261 "yes"
+        NEWLINE@1261..1262 "\n"
+    FIELD@1262..1304
+      FIELD_NAME@1262..1270 "Packaged"
+      COLON@1270..1271 ":"
+      VALUE_LINE@1271..1304
+        WHITESPACE@1271..1272 " "
+        VALUE_TEXT@1272..1303 "2025-09-11 16:45:15 U ..."
+        NEWLINE@1303..1304 "\n"
+    FIELD@1304..1504
+      FIELD_NAME@1304..1310 "Author"
+      COLON@1310..1311 ":"
+      VALUE_LINE@1311..1375
+        WHITESPACE@1311..1312 " "
+        VALUE_TEXT@1312..1374 "Stefan Milton Bache [ ..."
+        NEWLINE@1374..1375 "\n"
+      VALUE_LINE@1375..1390
+        WHITESPACE@1375..1379 "    "
+        VALUE_TEXT@1379..1389 "magrittr),"
+        NEWLINE@1389..1390 "\n"
+      VALUE_LINE@1390..1414
+        WHITESPACE@1390..1392 "  "
+        VALUE_TEXT@1392..1413 "Hadley Wickham [aut],"
+        NEWLINE@1413..1414 "\n"
+      VALUE_LINE@1414..1436
+        WHITESPACE@1414..1416 "  "
+        VALUE_TEXT@1416..1435 "Lionel Henry [cre],"
+        NEWLINE@1435..1436 "\n"
+      VALUE_LINE@1436..1504
+        WHITESPACE@1436..1438 "  "
+        VALUE_TEXT@1438..1503 "Posit Software, PBC [ ..."
+        NEWLINE@1503..1504 "\n"
+    FIELD@1504..1547
+      FIELD_NAME@1504..1514 "Maintainer"
+      COLON@1514..1515 ":"
+      VALUE_LINE@1515..1547
+        WHITESPACE@1515..1516 " "
+        VALUE_TEXT@1516..1546 "Lionel Henry <lionel@ ..."
+        NEWLINE@1546..1547 "\n"
+    FIELD@1547..1564
+      FIELD_NAME@1547..1557 "Repository"
+      COLON@1557..1558 ":"
+      VALUE_LINE@1558..1564
+        WHITESPACE@1558..1559 " "
+        VALUE_TEXT@1559..1563 "CRAN"
+        NEWLINE@1563..1564 "\n"
+    FIELD@1564..1606
+      FIELD_NAME@1564..1580 "Date/Publication"
+      COLON@1580..1581 ":"
+      VALUE_LINE@1581..1606
+        WHITESPACE@1581..1582 " "
+        VALUE_TEXT@1582..1605 "2025-09-12 07:20:14 UTC"
+        NEWLINE@1605..1606 "\n"
+    FIELD@1606..1673
+      FIELD_NAME@1606..1611 "Built"
+      COLON@1611..1612 ":"
+      VALUE_LINE@1612..1673
+        WHITESPACE@1612..1613 " "
+        VALUE_TEXT@1613..1672 "R 4.5.3; x86_64-pc-li ..."
+        NEWLINE@1672..1673 "\n"

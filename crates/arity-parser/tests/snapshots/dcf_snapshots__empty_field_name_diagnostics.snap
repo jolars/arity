@@ -1,0 +1,11 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "empty field name",
+        start: 11,
+        end: 12,
+    },
+]

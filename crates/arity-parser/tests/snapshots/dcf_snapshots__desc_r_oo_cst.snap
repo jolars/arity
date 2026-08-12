@@ -1,0 +1,147 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..1197
+  RECORD@0..1197
+    FIELD@0..14
+      FIELD_NAME@0..7 "Package"
+      COLON@7..8 ":"
+      VALUE_LINE@8..14
+        WHITESPACE@8..9 " "
+        VALUE_TEXT@9..13 "R.oo"
+        NEWLINE@13..14 "\n"
+    FIELD@14..30
+      FIELD_NAME@14..21 "Version"
+      COLON@21..22 ":"
+      VALUE_LINE@22..30
+        WHITESPACE@22..23 " "
+        VALUE_TEXT@23..29 "1.27.1"
+        NEWLINE@29..30 "\n"
+    FIELD@30..77
+      FIELD_NAME@30..37 "Depends"
+      COLON@37..38 ":"
+      VALUE_LINE@38..77
+        WHITESPACE@38..39 " "
+        VALUE_TEXT@39..76 "R (>= 2.13.0), R.meth ..."
+        NEWLINE@76..77 "\n"
+    FIELD@77..101
+      FIELD_NAME@77..84 "Imports"
+      COLON@84..85 ":"
+      VALUE_LINE@85..101
+        WHITESPACE@85..86 " "
+        VALUE_TEXT@86..100 "methods, utils"
+        NEWLINE@100..101 "\n"
+    FIELD@101..117
+      FIELD_NAME@101..109 "Suggests"
+      COLON@109..110 ":"
+      VALUE_LINE@110..117
+        WHITESPACE@110..111 " "
+        VALUE_TEXT@111..116 "tools"
+        NEWLINE@116..117 "\n"
+    FIELD@117..181
+      FIELD_NAME@117..122 "Title"
+      COLON@122..123 ":"
+      VALUE_LINE@123..181
+        WHITESPACE@123..124 " "
+        VALUE_TEXT@124..180 "R Object-Oriented Pro ..."
+        NEWLINE@180..181 "\n"
+    FIELD@181..325
+      FIELD_NAME@181..190 "Authors@R"
+      COLON@190..191 ":"
+      VALUE_LINE@191..253
+        WHITESPACE@191..192 " "
+        VALUE_TEXT@192..252 "c(person(\"Henrik\", \"B ..."
+        NEWLINE@252..253 "\n"
+      VALUE_LINE@253..325
+        WHITESPACE@253..295 "                      ..."
+        VALUE_TEXT@295..324 "email = \"henrikb@braj ..."
+        NEWLINE@324..325 "\n"
+    FIELD@325..366
+      FIELD_NAME@325..331 "Author"
+      COLON@331..332 ":"
+      VALUE_LINE@332..366
+        WHITESPACE@332..333 " "
+        VALUE_TEXT@333..365 "Henrik Bengtsson [aut ..."
+        NEWLINE@365..366 "\n"
+    FIELD@366..415
+      FIELD_NAME@366..376 "Maintainer"
+      COLON@376..377 ":"
+      VALUE_LINE@377..415
+        WHITESPACE@377..378 " "
+        VALUE_TEXT@378..414 "Henrik Bengtsson <hen ..."
+        NEWLINE@414..415 "\n"
+    FIELD@415..836
+      FIELD_NAME@415..426 "Description"
+      COLON@426..427 ":"
+      VALUE_LINE@427..836
+        WHITESPACE@427..428 " "
+        VALUE_TEXT@428..835 "Methods and classes f ..."
+        NEWLINE@835..836 "\n"
+    FIELD@836..859
+      FIELD_NAME@836..843 "License"
+      COLON@843..844 ":"
+      VALUE_LINE@844..859
+        WHITESPACE@844..845 " "
+        VALUE_TEXT@845..858 "LGPL (>= 2.1)"
+        NEWLINE@858..859 "\n"
+    FIELD@859..874
+      FIELD_NAME@859..867 "LazyLoad"
+      COLON@867..868 ":"
+      VALUE_LINE@868..874
+        WHITESPACE@868..869 " "
+        VALUE_TEXT@869..873 "TRUE"
+        NEWLINE@873..874 "\n"
+    FIELD@874..968
+      FIELD_NAME@874..877 "URL"
+      COLON@877..878 ":"
+      VALUE_LINE@878..920
+        WHITESPACE@878..879 " "
+        VALUE_TEXT@879..919 "https://henrikbengtss ..."
+        NEWLINE@919..920 "\n"
+      VALUE_LINE@920..968
+        WHITESPACE@920..928 "        "
+        VALUE_TEXT@928..967 "https://github.com/He ..."
+        NEWLINE@967..968 "\n"
+    FIELD@968..1027
+      FIELD_NAME@968..978 "BugReports"
+      COLON@978..979 ":"
+      VALUE_LINE@979..1027
+        WHITESPACE@979..980 " "
+        VALUE_TEXT@980..1026 "https://github.com/He ..."
+        NEWLINE@1026..1027 "\n"
+    FIELD@1027..1048
+      FIELD_NAME@1027..1043 "NeedsCompilation"
+      COLON@1043..1044 ":"
+      VALUE_LINE@1044..1048
+        WHITESPACE@1044..1045 " "
+        VALUE_TEXT@1045..1047 "no"
+        NEWLINE@1047..1048 "\n"
+    FIELD@1048..1090
+      FIELD_NAME@1048..1056 "Packaged"
+      COLON@1056..1057 ":"
+      VALUE_LINE@1057..1090
+        WHITESPACE@1057..1058 " "
+        VALUE_TEXT@1058..1089 "2025-05-02 20:29:15 U ..."
+        NEWLINE@1089..1090 "\n"
+    FIELD@1090..1107
+      FIELD_NAME@1090..1100 "Repository"
+      COLON@1100..1101 ":"
+      VALUE_LINE@1101..1107
+        WHITESPACE@1101..1102 " "
+        VALUE_TEXT@1102..1106 "CRAN"
+        NEWLINE@1106..1107 "\n"
+    FIELD@1107..1149
+      FIELD_NAME@1107..1123 "Date/Publication"
+      COLON@1123..1124 ":"
+      VALUE_LINE@1124..1149
+        WHITESPACE@1124..1125 " "
+        VALUE_TEXT@1125..1148 "2025-05-02 21:00:05 UTC"
+        NEWLINE@1148..1149 "\n"
+    FIELD@1149..1197
+      FIELD_NAME@1149..1154 "Built"
+      COLON@1154..1155 ":"
+      VALUE_LINE@1155..1197
+        WHITESPACE@1155..1156 " "
+        VALUE_TEXT@1156..1196 "R 4.5.3; ; 1970-01-01 ..."
+        NEWLINE@1196..1197 "\n"

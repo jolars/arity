@@ -1,0 +1,4 @@
+# a leading comment
+Package: p
+# Depends: R (>= 4.0)
+Version: 1

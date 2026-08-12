@@ -5,6 +5,10 @@
 tests/fixtures/**/*.R eol=lf
 crates/*/tests/fixtures/**/*.R eol=lf
 
+# DCF fixtures likewise: the snapshots pin byte offsets, so a normalized
+# line ending would shift every range in the tree.
+crates/*/tests/fixtures/dcf/**/*.dcf eol=lf
+
 # Oracle corpus + baselines must use LF so format/projector baselines (which
 # are blessed on LF) stay byte-identical on every platform, Windows included.
 tests/oracle/** eol=lf
@@ -20,3 +24,4 @@ crates/arity-parser/tests/fixtures/parser/*_crlf_*/* -text
 crates/arity-parser/tests/fixtures/parser/*_lf_*/* -text
 crates/arity-parser/tests/fixtures/parser/*_crlf/* -text
 crates/arity-parser/tests/fixtures/parser/*_lf/* -text
+crates/arity-parser/tests/fixtures/dcf/crlf/* -text

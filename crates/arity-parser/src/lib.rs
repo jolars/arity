@@ -13,10 +13,13 @@
 //!   (`is_single_expression`).
 //! - [`ast`] — zero-cost typed wrappers over the CST, in rust-analyzer's
 //!   mould.
+//! - [`dcf`] — a second, independent grammar: a lossless CST for DCF, the
+//!   format of R's `DESCRIPTION`.
 //!
 //! The parser preserves all source text: `reconstruct(&parse(text).syntax())`
 //! is always `text`.
 
 pub mod ast;
+pub mod dcf;
 pub mod parser;
 pub mod syntax;

@@ -1,0 +1,7 @@
+Package: metatoy
+Version: 1.0.0
+Title: Toy Meta-Package Fixture for Arity
+Description: Checked-in fixture for arity's harvest-time attach capture.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Built: R 4.6.1; ; 2026-08-05 17:16:31 UTC; unix

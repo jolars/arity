@@ -1,0 +1,23 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..45
+  RECORD@0..45
+    FIELD@0..11
+      FIELD_NAME@0..7 "Package"
+      COLON@7..8 ":"
+      VALUE_LINE@8..11
+        WHITESPACE@8..9 " "
+        VALUE_TEXT@9..10 "p"
+        NEWLINE@10..11 "\n"
+    MALFORMED_LINE@11..34
+      TEXT@11..33 "this line has no colon"
+      NEWLINE@33..34 "\n"
+    FIELD@34..45
+      FIELD_NAME@34..41 "Version"
+      COLON@41..42 ":"
+      VALUE_LINE@42..45
+        WHITESPACE@42..43 " "
+        VALUE_TEXT@43..44 "1"
+        NEWLINE@44..45 "\n"

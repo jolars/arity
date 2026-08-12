@@ -1,0 +1,22 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..24
+  RECORD@0..24
+    FIELD@0..12
+      FIELD_NAME@0..7 "Package"
+      WHITESPACE@7..8 " "
+      COLON@8..9 ":"
+      VALUE_LINE@9..12
+        WHITESPACE@9..10 " "
+        VALUE_TEXT@10..11 "p"
+        NEWLINE@11..12 "\n"
+    FIELD@12..24
+      FIELD_NAME@12..19 "Version"
+      WHITESPACE@19..20 "\t"
+      COLON@20..21 ":"
+      VALUE_LINE@21..24
+        WHITESPACE@21..22 " "
+        VALUE_TEXT@22..23 "1"
+        NEWLINE@23..24 "\n"

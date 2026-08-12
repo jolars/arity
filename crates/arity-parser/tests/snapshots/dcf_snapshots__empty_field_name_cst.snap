@@ -1,0 +1,19 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..40
+  RECORD@0..40
+    FIELD@0..11
+      FIELD_NAME@0..7 "Package"
+      COLON@7..8 ":"
+      VALUE_LINE@8..11
+        WHITESPACE@8..9 " "
+        VALUE_TEXT@9..10 "p"
+        NEWLINE@10..11 "\n"
+    FIELD@11..40
+      COLON@11..12 ":"
+      VALUE_LINE@12..40
+        WHITESPACE@12..13 " "
+        VALUE_TEXT@13..39 "a value with no field ..."
+        NEWLINE@39..40 "\n"

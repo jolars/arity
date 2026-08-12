@@ -1,0 +1,55 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..239
+  RECORD@0..239
+    FIELD@0..17
+      FIELD_NAME@0..7 "Package"
+      COLON@7..8 ":"
+      VALUE_LINE@8..17
+        WHITESPACE@8..9 " "
+        VALUE_TEXT@9..16 "metatoy"
+        NEWLINE@16..17 "\n"
+    FIELD@17..32
+      FIELD_NAME@17..24 "Version"
+      COLON@24..25 ":"
+      VALUE_LINE@25..32
+        WHITESPACE@25..26 " "
+        VALUE_TEXT@26..31 "1.0.0"
+        NEWLINE@31..32 "\n"
+    FIELD@32..74
+      FIELD_NAME@32..37 "Title"
+      COLON@37..38 ":"
+      VALUE_LINE@38..74
+        WHITESPACE@38..39 " "
+        VALUE_TEXT@39..73 "Toy Meta-Package Fixt ..."
+        NEWLINE@73..74 "\n"
+    FIELD@74..147
+      FIELD_NAME@74..85 "Description"
+      COLON@85..86 ":"
+      VALUE_LINE@86..147
+        WHITESPACE@86..87 " "
+        VALUE_TEXT@87..146 "Checked-in fixture fo ..."
+        NEWLINE@146..147 "\n"
+    FIELD@147..175
+      FIELD_NAME@147..154 "License"
+      COLON@154..155 ":"
+      VALUE_LINE@155..175
+        WHITESPACE@155..156 " "
+        VALUE_TEXT@156..174 "MIT + file LICENSE"
+        NEWLINE@174..175 "\n"
+    FIELD@175..191
+      FIELD_NAME@175..183 "Encoding"
+      COLON@183..184 ":"
+      VALUE_LINE@184..191
+        WHITESPACE@184..185 " "
+        VALUE_TEXT@185..190 "UTF-8"
+        NEWLINE@190..191 "\n"
+    FIELD@191..239
+      FIELD_NAME@191..196 "Built"
+      COLON@196..197 ":"
+      VALUE_LINE@197..239
+        WHITESPACE@197..198 " "
+        VALUE_TEXT@198..238 "R 4.6.1; ; 2026-08-05 ..."
+        NEWLINE@238..239 "\n"

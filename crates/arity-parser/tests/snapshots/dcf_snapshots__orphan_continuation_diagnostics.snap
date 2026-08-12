@@ -1,0 +1,11 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "continuation line at the start of a record",
+        start: 12,
+        end: 35,
+    },
+]

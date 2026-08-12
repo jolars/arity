@@ -1,0 +1,5 @@
+Collate:
+    a.R
+# skipped, the field resumes
+    b.R
+Package: p

@@ -1,0 +1,26 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..36
+  RECORD@0..36
+    FIELD@0..11
+      FIELD_NAME@0..7 "Package"
+      COLON@7..8 ":"
+      VALUE_LINE@8..11
+        WHITESPACE@8..9 " "
+        VALUE_TEXT@9..10 "p"
+        NEWLINE@10..11 "\n"
+    FIELD@11..36
+      FIELD_NAME@11..18 "Collate"
+      COLON@18..19 ":"
+      VALUE_LINE@19..20
+        NEWLINE@19..20 "\n"
+      VALUE_LINE@20..28
+        WHITESPACE@20..24 "    "
+        VALUE_TEXT@24..27 "a.R"
+        NEWLINE@27..28 "\n"
+      VALUE_LINE@28..36
+        WHITESPACE@28..32 "    "
+        VALUE_TEXT@32..35 "b.R"
+        NEWLINE@35..36 "\n"

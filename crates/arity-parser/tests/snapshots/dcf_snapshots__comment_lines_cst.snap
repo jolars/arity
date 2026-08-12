@@ -1,0 +1,26 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.cst)"
+---
+ROOT@0..64
+  COMMENT_LINE@0..20
+    COMMENT@0..19 "# a leading comment"
+    NEWLINE@19..20 "\n"
+  RECORD@20..64
+    FIELD@20..53
+      FIELD_NAME@20..27 "Package"
+      COLON@27..28 ":"
+      VALUE_LINE@28..31
+        WHITESPACE@28..29 " "
+        VALUE_TEXT@29..30 "p"
+        NEWLINE@30..31 "\n"
+      COMMENT_LINE@31..53
+        COMMENT@31..52 "# Depends: R (>= 4.0)"
+        NEWLINE@52..53 "\n"
+    FIELD@53..64
+      FIELD_NAME@53..60 "Version"
+      COLON@60..61 ":"
+      VALUE_LINE@61..64
+        WHITESPACE@61..62 " "
+        VALUE_TEXT@62..63 "1"
+        NEWLINE@63..64 "\n"

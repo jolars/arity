@@ -1,0 +1,11 @@
+---
+source: crates/arity-parser/tests/dcf_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "malformed line: expected 'Field: value' or an indented continuation line",
+        start: 11,
+        end: 33,
+    },
+]

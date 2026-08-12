@@ -1,0 +1,5 @@
+Description: A long description that wraps
+    across several lines with
+    hanging indentation.
+Depends: R (>= 4.1.0),
+    stats

@@ -62,6 +62,32 @@ fn parser_round_trips_crlf_roxygen() {
     );
 }
 
+/// The DCF grammar owes the same guarantee. Its scanner deliberately avoids
+/// [`str::lines`], which eats the `\r` of a CRLF pair; a leak would show up
+/// here rather than in `folded_value`, which trims it away invisibly.
+#[test]
+fn dcf_round_trips_crlf_fixture() {
+    let path = Path::new("tests")
+        .join("fixtures")
+        .join("dcf")
+        .join("crlf")
+        .join("input.dcf");
+    let input = fs::read_to_string(&path).expect("DCF CRLF fixture");
+    assert!(input.contains("\r\n"), "CRLF fixture should contain \\r\\n");
+
+    let parsed = arity_parser::dcf::parse(&input);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "DCF CRLF fixture should parse cleanly, got diagnostics: {:#?}",
+        parsed.diagnostics
+    );
+    assert_eq!(
+        arity_parser::dcf::reconstruct(&input),
+        input,
+        "DCF CRLF fixture should round-trip losslessly"
+    );
+}
+
 fn fixture_text(name: &str) -> String {
     let path = Path::new("tests")
         .join("fixtures")
