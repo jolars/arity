@@ -7,10 +7,10 @@
 //!
 //! **`Imports` only.** `Depends` is an API decision (`Depends: R6` re-exports a
 //! world to the *user*), and a package's own code may legitimately never name
-//! it. `Suggests` is by definition reached from tests, vignettes, and examples,
-//! which the usage set does not cover. `LinkingTo` is C or C++ headers and
-//! `Enhances` is optional by definition, both structurally invisible to
-//! R-source analysis.
+//! it. `Suggests` is optional by definition, reached from tests, vignettes, and
+//! examples rather than from the package's own code. `LinkingTo` is C or C++
+//! headers and `Enhances` is optional by definition, both structurally
+//! invisible to R-source analysis.
 //!
 //! **This rule reports on absence**, which is a much stronger claim than every
 //! other rule makes, and a wrong one leads a maintainer to delete a dependency
@@ -33,9 +33,16 @@
 //! - **`methods`.** An S4 or reference class needs it with nothing naming it,
 //!   which is why [`PackageReferences::uses_methods`] exists.
 //!
-//! What is **accepted and documented rather than fixed**: a package used only
-//! from `tests/`, vignettes, `inst/`, or `data-raw/` is flagged. R agrees — such
-//! a dependency belongs in `Suggests`.
+//! **What counts as "the package" is the run's file set.** Usage is folded over
+//! every analyzed member under the package root
+//! ([`package_usage`](crate::project::package_usage)), so a `tests/`,
+//! `inst/`, or `data-raw/` file counts as a use whenever the run covers it — as
+//! `arity lint .` does. Narrow the run to `R/` and the same entry is reported.
+//! Both readings are defensible (R would want a test-only dependency in
+//! `Suggests`), and the quieter one falls out of the default, which is the right
+//! way round for a rule that reports on absence. A vignette is never analyzed at
+//! all — `.Rmd` is not an R source — so a dependency used only there is
+//! reported.
 //!
 //! **No autofix**, for three independent reasons. The edit is not local
 //! (deleting a middle entry leaves a dangling comma; deleting the only one
@@ -99,10 +106,15 @@ impl DcfRule for UnusedDependency {
          class, and any package whose name appears as a plain string (a dynamic \
          `do.call(\"::\", …)` or `system.file(package = …)`).\n\nOnly `Imports` \
          is checked. `Depends` is an API decision the package's own code may \
-         never name; `Suggests` is for tests, vignettes, and examples, which \
-         this analysis does not cover; `LinkingTo` and `Enhances` are invisible \
-         to R-source analysis. A package used *only* from `tests/` or a \
-         vignette **is** flagged—it belongs in `Suggests`.\n\nIt reports on \
+         never name; `Suggests` is for tests, vignettes, and examples, reached \
+         from outside the package's own code; `LinkingTo` and `Enhances` are \
+         invisible to R-source analysis.\n\nUsage is folded over every R file \
+         the run analyzed under the package root, so a package reached only \
+         from `tests/`, `inst/`, or `data-raw/` counts as used when those files \
+         are in the run (`arity lint .`) and is reported when they are not \
+         (`arity lint R/`). A vignette's R code is never analyzed either way, \
+         so a dependency used only there is reported—it belongs in \
+         `Suggests`.\n\nIt reports on \
          *absence*, and a wrong finding would have a maintainer delete a \
          dependency their package needs, so it stays silent unless the run \
          analyzed the package's whole `R/` source set and read its \

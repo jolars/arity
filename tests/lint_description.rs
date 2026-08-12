@@ -886,6 +886,42 @@ fn only_imports_is_checked() {
     }
 }
 
+/// Usage is folded over every analyzed member under the package root, and a
+/// `tests/` file is one — so whether a test-only dependency is flagged depends
+/// on which files the run covers. Pinned in both directions because the rule's
+/// own documentation states it.
+#[test]
+fn a_test_only_dependency_counts_as_use_when_tests_are_in_the_run() {
+    let (_dir, root) = package(&imports("dplyr"), "export(f)\n", NOTHING);
+    let testthat = root.join("tests").join("testthat");
+    std::fs::create_dir_all(&testthat).unwrap();
+    std::fs::write(
+        testthat.join("test-a.R"),
+        "test_that(\"f\", { dplyr::filter(x) })\n",
+    )
+    .unwrap();
+
+    let whole = check_paths_with_config(std::slice::from_ref(&root), &unused_dependency_only())
+        .expect("lint should succeed");
+    assert!(
+        !rules_reported(&whole).contains(&"unused-dependency"),
+        "a walk of the package covers `tests/`, so the use there counts",
+    );
+
+    // The same package, linted as R sources plus its `DESCRIPTION`: nothing in
+    // the run reaches `dplyr`, and the run is still complete, so it is flagged.
+    let r_only = check_paths_with_config(
+        &[root.join("R"), root.join("DESCRIPTION")],
+        &unused_dependency_only(),
+    )
+    .expect("lint should succeed");
+    assert!(
+        rules_reported(&r_only).contains(&"unused-dependency"),
+        "{:?}",
+        r_only.reports,
+    );
+}
+
 #[test]
 fn the_r_entry_is_never_a_dependency() {
     let description = format!("{COMPLETE_DESCRIPTION}Imports: R (>= 4.1)\n");
