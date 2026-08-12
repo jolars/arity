@@ -79,6 +79,12 @@ so this page never drifts from the rules' actual behavior.
 - [`roxygen-examples`](#roxygen-examples)
 - [`roxygen2-compat`](#roxygen2-compat)
 
+**Packaging**
+
+- [`description-missing-field`](#description-missing-field)
+- [`description-duplicate-field`](#description-duplicate-field)
+- [`description-version-constraint`](#description-version-constraint)
+
 **Meta**
 
 - [`misnamed-suppression`](#misnamed-suppression)
@@ -1408,6 +1414,103 @@ warning: roxygen2-compat
 2 | #' @inheritParams other -verbose
   |                         ^^^^^^^^ `@inheritParams` argument filters require roxygen2 >= 8.0.0; older versions silently misread them as argument names (this project targets 7.3.2)
   = help: Drop the filters or raise `[compat] roxygen2`.
+```
+
+## Packaging
+
+### `description-missing-field`
+
+Flag a `DESCRIPTION` missing a field R requires.
+
+`R CMD build` refuses a package whose `DESCRIPTION` omits `Package`, `Version`, `Title`, `Description`, `Author`, `Maintainer`, or `License`. `Authors@R` satisfies `Author` and `Maintainer`, since `R CMD build` derives both from it. A field that is present but empty declares nothing and counts as missing.
+
+Every missing field is reported as one finding rather than one each: the defect is that the file is incomplete, and it takes one decision—and one suppression—to settle.
+
+A file with no fields at all is left alone; that is not an incomplete package description.
+
+There is no autofix: each of these fields needs a value only the author has.
+
+This rule is **enabled by default**.
+
+A `DESCRIPTION` that `R CMD build` would reject:
+
+```text
+Package: mypkg
+Version: 0.1.0
+```
+
+```text
+warning: description-missing-field
+ --> DESCRIPTION:1:1
+  |
+1 | Package: mypkg
+  | ^^^^^^^ DESCRIPTION is missing the required fields `Title`, `Description`, `Author`, `Maintainer`, `License`
+  = help: Add the fields `Title`, `Description`, `Author`, `Maintainer`, `License`, or declare `Authors@R` in place of `Author` and `Maintainer`.
+```
+
+### `description-duplicate-field`
+
+Flag a `DESCRIPTION` field declared more than once.
+
+A repeated field is a silent mistake: nothing errors, and the file keeps whichever value the reader picks—except the readers disagree. R's `read.dcf` takes the **last** occurrence; arity takes the **first**. A duplicated `Version` therefore means R and arity are describing two different packages, and every tool downstream of either inherits the split.
+
+The finding is reported on the *later* occurrence, since the earlier one is what arity already read. Duplicates are detected across DCF records, so a stray blank line does not hide one.
+
+There is no autofix: removing a duplicate means choosing a value, and this rule exists precisely because it is not settled which value is already in effect.
+
+This rule is **enabled by default**.
+
+A field declared twice, which arity and `read.dcf` read differently:
+
+```text
+Package: mypkg
+Version: 0.1.0
+License: MIT + file LICENSE
+Version: 0.2.0
+```
+
+```text
+warning: description-duplicate-field
+ --> DESCRIPTION:4:1
+  |
+4 | Version: 0.2.0
+  | ^^^^^^^ `Version` is already declared on line 2; arity reads the first occurrence and R's `read.dcf` reads the last, so the two disagree about this file
+  = help: Keep one `Version` field and delete the other.
+```
+
+### `description-version-constraint`
+
+Flag a dependency entry whose parenthesized part is not a version constraint.
+
+R reads `pkg (>= 1.0.0)`: an operator and a version. Anything else—`dplyr (1.0.0)`, `dplyr (>=)`, `dplyr (latest)`—states no bound at all, and R's dependency check enforces nothing. The line reads as a requirement and behaves as none, so the package installs against exactly the versions its author meant to exclude.
+
+Checked in all five dependency fields, `R` included: `Depends: R (>= 4.1)` is the most common constraint in any `DESCRIPTION`.
+
+There is no autofix. `dplyr (1.0.0)` most likely means `>=`, but it could mean `==` or `>`, and guessing would invent a requirement the author never wrote.
+
+This rule is **enabled by default**.
+
+A version requirement R will not enforce:
+
+```text
+Package: mypkg
+Depends: R (4.1)
+Imports: dplyr (1.0.0)
+```
+
+```text
+warning: description-version-constraint
+ --> DESCRIPTION:2:10
+  |
+2 | Depends: R (4.1)
+  |          ^^^^^^^ the version constraint on `R` states no bound, so R enforces nothing here
+  = help: Write a comparison operator and a version, as in `(>= 1.0.0)`.
+warning: description-version-constraint
+ --> DESCRIPTION:3:10
+  |
+3 | Imports: dplyr (1.0.0)
+  |          ^^^^^^^^^^^^^ the version constraint on `dplyr` states no bound, so R enforces nothing here
+  = help: Write a comparison operator and a version, as in `(>= 1.0.0)`.
 ```
 
 ## Meta

@@ -167,6 +167,278 @@ fn a_non_lintable_explicit_path_is_still_an_error() {
 }
 
 // ---------------------------------------------------------------------------
+// description-duplicate-field
+// ---------------------------------------------------------------------------
+
+/// Lint one `DESCRIPTION` buffer and report the rule ids it produced.
+fn ids(description: &str) -> Vec<&'static str> {
+    check_description_document(
+        Path::new("DESCRIPTION"),
+        description,
+        &LintConfig::default(),
+    )
+    .expect("linting should not error")
+    .iter()
+    .map(|d| d.rule)
+    .collect()
+}
+
+/// Lint one `DESCRIPTION` buffer and report the message bodies for `rule`.
+fn messages(description: &str, rule: &str) -> Vec<String> {
+    check_description_document(
+        Path::new("DESCRIPTION"),
+        description,
+        &LintConfig::default(),
+    )
+    .expect("linting should not error")
+    .iter()
+    .filter(|d| d.rule == rule)
+    .map(|d| d.message.body.clone())
+    .collect()
+}
+
+#[test]
+fn duplicate_field_is_flagged_once_per_repeat() {
+    let text = format!("{COMPLETE_DESCRIPTION}Version: 0.2.0\n");
+    assert_eq!(
+        ids(&text)
+            .into_iter()
+            .filter(|id| *id == "description-duplicate-field")
+            .count(),
+        1
+    );
+}
+
+/// The span is the *later* name: the first occurrence is the one arity reads,
+/// so the repeat is what the author has to resolve.
+#[test]
+fn duplicate_field_spans_the_later_occurrence() {
+    let text = format!("{COMPLETE_DESCRIPTION}Version: 0.2.0\n");
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    let finding = diagnostics
+        .iter()
+        .find(|d| d.rule == "description-duplicate-field")
+        .expect("a duplicate-field finding");
+    let at: usize = finding.range.start().into();
+    assert_eq!(&text[at..at + "Version".len()], "Version");
+    assert!(
+        at > text.find("Version: 0.1.0").expect("the first Version"),
+        "the finding should be on the second `Version`, not the first",
+    );
+}
+
+/// The message states which occurrence arity reads *and* which one R reads —
+/// the two disagree, and a duplicate field is where that becomes visible.
+#[test]
+fn duplicate_field_message_names_both_readings() {
+    let text = format!("{COMPLETE_DESCRIPTION}Version: 0.2.0\n");
+    let body = messages(&text, "description-duplicate-field")
+        .pop()
+        .expect("a message");
+    assert!(body.contains("Version"), "{body}");
+    assert!(body.contains("first"), "{body}");
+    assert!(body.contains("read.dcf"), "{body}");
+}
+
+/// Three occurrences are two repeats, not one.
+#[test]
+fn duplicate_field_flags_every_repeat() {
+    let text = format!("{COMPLETE_DESCRIPTION}Version: 0.2.0\nVersion: 0.3.0\n");
+    assert_eq!(
+        ids(&text)
+            .into_iter()
+            .filter(|id| *id == "description-duplicate-field")
+            .count(),
+        2
+    );
+}
+
+/// Record-blind, like every other `DESCRIPTION` reader: a stray blank line
+/// splits the file into two DCF records but does not make a repeat a new field.
+#[test]
+fn duplicate_field_sees_across_records() {
+    let text = format!("{COMPLETE_DESCRIPTION}\nVersion: 0.2.0\n");
+    assert!(ids(&text).contains(&"description-duplicate-field"));
+}
+
+#[test]
+fn distinct_fields_are_not_duplicates() {
+    assert!(!ids(COMPLETE_DESCRIPTION).contains(&"description-duplicate-field"));
+}
+
+/// Field names are case-sensitive to `read.dcf`, so these are two fields.
+#[test]
+fn a_differently_cased_field_is_not_a_duplicate() {
+    let text = format!("{COMPLETE_DESCRIPTION}version: 0.2.0\n");
+    assert!(!ids(&text).contains(&"description-duplicate-field"));
+}
+
+// ---------------------------------------------------------------------------
+// description-missing-field
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_complete_description_reports_no_missing_field() {
+    assert!(!ids(COMPLETE_DESCRIPTION).contains(&"description-missing-field"));
+}
+
+#[test]
+fn missing_fields_are_reported_together_in_canonical_order() {
+    let body = messages(
+        "Package: testpkg\nVersion: 0.1.0\n",
+        "description-missing-field",
+    )
+    .pop()
+    .expect("a message");
+    assert!(
+        body.contains("`Title`, `Description`, `Author`, `Maintainer`, `License`"),
+        "{body}"
+    );
+}
+
+/// One finding, not one per field: the defect is that this DESCRIPTION is
+/// incomplete, and stacking five diagnostics on one line says it five times.
+#[test]
+fn missing_fields_are_one_finding() {
+    assert_eq!(
+        ids("Package: testpkg\n")
+            .into_iter()
+            .filter(|id| *id == "description-missing-field")
+            .count(),
+        1
+    );
+}
+
+/// `Authors@R` is how modern packages declare both, and `R CMD build` derives
+/// `Author` and `Maintainer` from it.
+#[test]
+fn authors_at_r_satisfies_author_and_maintainer() {
+    let text = "\
+Package: testpkg
+Version: 0.1.0
+Title: A Test Package
+Description: Fixture data.
+License: MIT + file LICENSE
+Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
+";
+    assert!(!ids(text).contains(&"description-missing-field"));
+}
+
+/// The legacy pair satisfies it too — plenty of packages still write both.
+#[test]
+fn author_and_maintainer_satisfy_the_pair() {
+    let text = "\
+Package: testpkg
+Version: 0.1.0
+Title: A Test Package
+Description: Fixture data.
+License: MIT + file LICENSE
+Author: Test User
+Maintainer: Test User <test@example.com>
+";
+    assert!(!ids(text).contains(&"description-missing-field"));
+}
+
+/// A field present but empty declares nothing — `R CMD check` says the same.
+#[test]
+fn an_empty_required_field_is_missing() {
+    let text = format!(
+        "{}Title:\n",
+        COMPLETE_DESCRIPTION.replace("Title: A Test Package\n", "")
+    );
+    assert!(ids(&text).contains(&"description-missing-field"));
+}
+
+/// A file with no fields at all is not an incomplete package description; it
+/// is not a package description.
+#[test]
+fn an_empty_file_reports_nothing() {
+    assert!(ids("").is_empty());
+    assert!(ids("\n\n").is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// description-version-constraint
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_constraint_with_no_operator_is_flagged() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (1.0.0)\n");
+    assert!(ids(&text).contains(&"description-version-constraint"));
+}
+
+#[test]
+fn an_empty_constraint_is_flagged() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (>=)\n");
+    assert!(ids(&text).contains(&"description-version-constraint"));
+}
+
+#[test]
+fn a_well_formed_constraint_is_not_flagged() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (>= 1.0.0), rlang\n");
+    assert!(!ids(&text).contains(&"description-version-constraint"));
+}
+
+/// `Depends: R (>= 4.1)` is the most common constraint in any DESCRIPTION, and
+/// the language entry is checked exactly like a package entry.
+#[test]
+fn the_r_entry_is_checked_too() {
+    let text = format!("{COMPLETE_DESCRIPTION}Depends: R (4.1)\n");
+    assert!(ids(&text).contains(&"description-version-constraint"));
+}
+
+#[test]
+fn every_dependency_field_is_checked() {
+    for field in ["Depends", "Imports", "Suggests", "LinkingTo", "Enhances"] {
+        let text = format!("{COMPLETE_DESCRIPTION}{field}: dplyr (1.0.0)\n");
+        assert!(
+            ids(&text).contains(&"description-version-constraint"),
+            "{field} was not checked",
+        );
+    }
+}
+
+/// A non-dependency field's parentheses are prose, not a constraint.
+#[test]
+fn a_non_dependency_field_is_not_parsed_as_dependencies() {
+    let text = format!("{COMPLETE_DESCRIPTION}Note: see the manual (section 2) for details\n");
+    assert!(!ids(&text).contains(&"description-version-constraint"));
+}
+
+/// The span is the whole entry, constraint included: the name alone would point
+/// away from the part that is wrong.
+#[test]
+fn version_constraint_spans_the_whole_entry() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (1.0.0)\n");
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    let finding = diagnostics
+        .iter()
+        .find(|d| d.rule == "description-version-constraint")
+        .expect("a version-constraint finding");
+    let start: usize = finding.range.start().into();
+    let end: usize = finding.range.end().into();
+    assert_eq!(&text[start..end], "dplyr (1.0.0)");
+}
+
+// ---------------------------------------------------------------------------
+// Suppression
+// ---------------------------------------------------------------------------
+
+/// The escape hatch works in `DESCRIPTION` too: a directive line suppresses the
+/// field that follows it.
+#[test]
+fn a_directive_suppresses_a_description_finding() {
+    let text = format!(
+        "{COMPLETE_DESCRIPTION}# arity-ignore description-duplicate-field: deliberate\nVersion: 0.2.0\n"
+    );
+    assert!(!ids(&text).contains(&"description-duplicate-field"));
+}
+
+// ---------------------------------------------------------------------------
 // The single-file entry point
 // ---------------------------------------------------------------------------
 

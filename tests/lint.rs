@@ -9,6 +9,17 @@ use arity::linter::{
 };
 use tempfile::tempdir;
 
+/// A `DESCRIPTION` complete enough that the `packaging` rules have nothing to
+/// say about it, so a package fixture only ever reports what its test is about.
+const TEST_DESCRIPTION: &str = "\
+Package: testpkg
+Version: 0.1.0
+Title: A Test Package
+Description: Fixture data for arity's own tests.
+License: MIT + file LICENSE
+Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
+";
+
 /// Rule ids reported for the file named `file_name` in `result`.
 fn rules_for<'a>(result: &'a LintResult, file_name: &str) -> Vec<&'a str> {
     result
@@ -297,7 +308,7 @@ fn package_resolves_bindings_across_files() {
     // resolves from b.R (no undefined-symbol) and counts as used (no
     // unused-binding in a.R).
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
@@ -319,7 +330,7 @@ fn excluded_generated_file_still_contributes_bindings() {
     // every caller is a false `undefined-symbol`. (The exclude only suppresses
     // findings *in* the generated file, not its contribution to scope.)
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(
@@ -367,7 +378,7 @@ fn excluded_generated_file_still_contributes_bindings() {
 /// `tests/testthat/test-foo.R`.
 fn lint_pkg_with_test(r_file: &str, test_file: &str, indexed: IndexedProvider) -> LintResult {
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(r_dir.join("foo.R"), r_file).unwrap();
@@ -597,7 +608,7 @@ fn shadowed_builtin_ignores_parameters() {
 /// Write a minimal package (DESCRIPTION + NAMESPACE + R/a.R) and lint it.
 fn lint_package(namespace: &str, a_r: &str) -> LintResult {
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
@@ -625,7 +636,7 @@ fn namespace_export_is_not_unused() {
 /// lint it under `config`.
 fn lint_package_files(namespace: &str, files: &[(&str, &str)], config: &LintConfig) -> LintResult {
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
@@ -885,7 +896,7 @@ fn self_qualified_internal_use_is_not_unused() {
     // (here a test) is used cross-file, so it must not flag unused. Mirrors the
     // real-world `SLOPE:::randomProblem(...)` case.
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     std::fs::write(dir.path().join("NAMESPACE"), "").unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
@@ -938,7 +949,7 @@ fn project_aware_document_resolves_cross_file() {
     use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
@@ -966,7 +977,7 @@ fn project_aware_document_keeps_excluded_generated_scope() {
     use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(
@@ -999,7 +1010,7 @@ fn project_aware_relint_reuses_unchanged_siblings() {
     use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
@@ -1031,7 +1042,7 @@ fn body_edit_relint_does_not_rebuild_project_scope() {
     use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
@@ -1070,7 +1081,7 @@ fn prepared_split_matches_wrapper_and_runs_on_clone() {
     use arity::rindex::provider::CompositeProvider;
 
     let dir = tempdir().expect("failed to create temp dir");
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: testpkg\n").unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
     let r_dir = dir.path().join("R");
     std::fs::create_dir(&r_dir).unwrap();
     std::fs::write(r_dir.join("a.R"), "foo <- function() 1\n").unwrap();
