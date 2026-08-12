@@ -27,10 +27,12 @@
 //! sharing a name, disambiguated by module path — never glob-import both.
 
 pub mod ast;
+pub mod deps;
 pub mod parser;
 pub mod syntax;
 
 pub use ast::{CommentLine, Document, Field, MalformedLine, Record, ValueLine};
+pub use deps::{DependencyEntry, VersionConstraint, VersionOp, dependency_entries};
 pub use parser::{ParseOutput, parse, reconstruct};
 pub use syntax::{DcfLanguage, SyntaxKind, SyntaxNode, SyntaxToken};
 
