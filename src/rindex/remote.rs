@@ -148,10 +148,16 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     pub fn new() -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(15))
+        // `http_status_as_error(false)` keeps non-2xx responses on the `Ok` path
+        // so a conditional request's `304` still carries its headers; the status
+        // is classified below instead.
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(15)))
+            .http_status_as_error(false)
             .build();
-        Self { agent }
+        Self {
+            agent: ureq::Agent::new_with_config(config),
+        }
     }
 }
 
@@ -165,31 +171,40 @@ impl SidecarTransport for HttpTransport {
     fn get(&self, url: &str, if_none_match: Option<&str>) -> Result<SidecarResponse, SidecarError> {
         let mut req = self.agent.get(url);
         if let Some(tag) = if_none_match {
-            req = req.set("If-None-Match", tag);
+            req = req.header("If-None-Match", tag);
         }
-        match req.call() {
-            Ok(resp) => {
-                let etag = resp.header("ETag").map(str::to_string);
-                let mut body = Vec::new();
-                resp.into_reader()
-                    .take(MAX_BODY_BYTES)
-                    .read_to_end(&mut body)
-                    .map_err(|e| SidecarError::Io(e.to_string()))?;
-                Ok(SidecarResponse {
-                    status: 200,
-                    body,
-                    etag,
-                })
-            }
-            // ureq surfaces any non-2xx as `Error::Status`; 304 is the expected
-            // "unchanged" answer to a conditional request, not a failure.
-            Err(ureq::Error::Status(NOT_MODIFIED, resp)) => Ok(SidecarResponse {
+        let resp = req.call().map_err(|e| SidecarError::Http(e.to_string()))?;
+        let (parts, body) = resp.into_parts();
+        let status = parts.status.as_u16();
+        let etag = parts
+            .headers
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+
+        // 304 is the expected "unchanged" answer to a conditional request, not a
+        // failure; any other non-2xx is.
+        if status == NOT_MODIFIED {
+            return Ok(SidecarResponse {
                 status: NOT_MODIFIED,
                 body: Vec::new(),
-                etag: resp.header("ETag").map(str::to_string),
-            }),
-            Err(e) => Err(SidecarError::Http(e.to_string())),
+                etag,
+            });
         }
+        if !parts.status.is_success() {
+            return Err(SidecarError::Http(format!("HTTP {status}")));
+        }
+
+        let body = body
+            .into_with_config()
+            .limit(MAX_BODY_BYTES)
+            .read_to_vec()
+            .map_err(|e| SidecarError::Io(e.to_string()))?;
+        Ok(SidecarResponse {
+            status: 200,
+            body,
+            etag,
+        })
     }
 }
 
