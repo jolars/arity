@@ -31,7 +31,6 @@ use crate::project::classes::ClassSystem;
 use crate::project::exports::DefKind;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
-use crate::rindex::harvest::parse_dcf;
 use crate::rindex::provider::{attach_members, package_indexed, resolve_origin};
 use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
 
@@ -192,11 +191,15 @@ pub fn expected_r_sources(root: &Path) -> BTreeSet<String> {
         }
     }
     if let Ok(text) = std::fs::read_to_string(root.join("DESCRIPTION")) {
-        for (key, value) in parse_dcf(&text) {
+        // `fields()` is record-blind on purpose: a stray blank line in a
+        // DESCRIPTION splits it into two DCF records, and a `Collate` after
+        // that split still names files R will load.
+        for field in crate::dcf::parse(&text).document().fields() {
             // R picks an OS-specific `Collate@unix`/`Collate@windows` over plain
             // `Collate`; we union every `Collate*` field, since over-including
             // only tightens completeness (the safe direction).
-            if key.starts_with("Collate") {
+            if field.name().starts_with("Collate") {
+                let value = field.folded_value();
                 for entry in value.split_whitespace() {
                     let name = entry.trim_matches(['\'', '"']);
                     if !name.is_empty() {

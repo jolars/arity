@@ -23,7 +23,6 @@ use crate::ast::{Arg, AstNode, CallExpr, HasArgList};
 use crate::config::CompatVersion;
 use crate::parser::parse;
 use crate::project::scope::package_root;
-use crate::rindex::harvest::parse_dcf;
 use crate::syntax::SyntaxKind;
 
 /// The package-wide roxygen markdown default for the package at `root`
@@ -87,10 +86,10 @@ impl MarkdownDefaultResolver {
 /// it declares no `Package`. Touches disk.
 pub fn package_name(root: &Path) -> Option<String> {
     let text = std::fs::read_to_string(root.join("DESCRIPTION")).ok()?;
-    parse_dcf(&text)
-        .into_iter()
-        .find(|(key, _)| key == "Package")
-        .map(|(_, value)| value)
+    crate::dcf::parse(&text)
+        .document()
+        .field("Package")
+        .map(|field| field.folded_value())
         .filter(|name| !name.is_empty())
 }
 
@@ -108,10 +107,10 @@ pub fn package_name_for_file(path: &Path) -> Option<String> {
 /// The `Roxygen` field's value from DESCRIPTION text (continuation lines
 /// joined), if present.
 fn roxygen_field(description: &str) -> Option<String> {
-    parse_dcf(description)
-        .into_iter()
-        .find(|(key, _)| key == "Roxygen")
-        .map(|(_, value)| value)
+    crate::dcf::parse(description)
+        .document()
+        .field("Roxygen")
+        .map(|field| field.folded_value())
 }
 
 /// The tool-version facts a package's `DESCRIPTION` declares, for the
@@ -135,15 +134,10 @@ pub fn description_compat(root: &Path) -> DescriptionCompat {
     let Ok(text) = std::fs::read_to_string(root.join("DESCRIPTION")) else {
         return DescriptionCompat::default();
     };
-    let fields = parse_dcf(&text);
-    let get = |name: &str| {
-        fields
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_str())
-    };
+    let document = crate::dcf::parse(&text).document();
+    let get = |name: &str| document.field(name).map(|field| field.folded_value());
     DescriptionCompat {
-        r: get("Depends").and_then(r_depends_floor),
+        r: get("Depends").as_deref().and_then(r_depends_floor),
         roxygen2: get("Config/roxygen2/version")
             .or_else(|| get("RoxygenNote"))
             .and_then(|v| CompatVersion::parse(v.trim())),
