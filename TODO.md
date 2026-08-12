@@ -105,59 +105,10 @@ Gated on the package being attached (`model.loaded_packages()`).
   existing symbol/folding walks. Convention, not language; gate behind a setting
   if it proves noisy. (Gap surfaced by the 2026-07-02 languageserver survey.)
 
-### Rename
-
-- [x] **Folder renaming.** `r_file_rename_registration` now carries a second
-  filter (glob `**`, `matches: Folder`) alongside the `.R` one (pinned to `File`),
-  so a directory move reaches `willRenameFiles`/`didRenameFiles` at all.
-  `expand_dir_renames` (`src/incremental.rs`) fans a directory pair out into one
-  `old -> new` entry per known path beneath it—workspace members *plus* the
-  resolved targets in `reverse_source_edges`, since a sourced file need not be a
-  member—with the deepest matching prefix winning for nested pairs, and drops a
-  pair it expanded. It is deliberately disk-free: `willRenameFiles` fires before
-  the move and `didRenameFiles` after, so a stat would answer differently
-  depending on which side asked, while membership holds the *old* paths in both.
-  Fixing folder renames also fixed two latent bugs in `source_rename_edits`:
-  spellings are now recomputed against the sourcer's **new** parent (literals are
-  still *resolved* against the old one), and a renamed file is itself a candidate
-  sourcer, so a moved file rebases its own literals even when its targets stayed
-  put (this was wrong for single-file cross-directory moves too). An edit is
-  emitted only when the literal as written would no longer resolve from the new
-  location, so a folder move that carries sourcer and target together produces
-  nothing rather than flooding the client. Also switched off `parse(text).cst`
-  onto the memoized `parsed_tree`, since a folder rename reparses every candidate
-  on the read pool while the editor blocks on the rename dialog.
-  - [x] **Follow-up: `apply_file_renames` now checks workspace scope.** A
-    destination the seed would not have found is dropped rather than tracked. The
-    original note's example was wrong: nothing excludes `inst/`, and
-    `collect_r_files` walks the whole root, so `R/a.R` -> `inst/extdata/a.R` stays
-    a member (correctly—a fresh seed finds it too). The real out-of-scope
-    destinations are outside every root, an excluded or ignored path, and a
-    non-`.R` name (`R/a.R` -> `R/a.txt`, which used to stay a member and get
-    parsed as R). The amortization landed first as `WorkspaceScope`
-    (`src/lsp/workspace_scope.rs`): one walk per *touched* root, built per
-    notification and never cached across them, over a new `scope_members_at`
-    kernel that `seed_workspace` shares so the seed and the incremental checks
-    can't drift. `in_workspace_scope` is gone. The scope check in turn forced
-    `rebase_roots`—a root is often just a package directory or a file's parent,
-    so renaming one would otherwise leave `roots` pointing at a dead path and
-    every file it carried judged out of scope.
-
 ### Completion & signatures
 
 - Completion (`textDocument/completion` + `completionItem/resolve`).
   - [ ] Snippet/paren insertion
-  - [x] **`$`/`@` member completion** (static, no eval). New `Field` context in
-    `src/lsp/completion.rs` mirrors the `pkg::` path: it harvests field names used
-    with the same operator on the same receiver anywhere in the file, and—for `$`
-    only—infers the named fields of a local
-    `list()`/`data.frame()`/`tibble()`/`data.table()` construction bound to the
-    receiver. Also stops the prior bare-name leak after `$`/`@`. Triggers on `$`
-    and `@` are advertised (`src/lsp/server.rs`).
-    - **v1 limits:** the receiver is keyed by whitespace-normalized source text,
-      so a chained `a$b$` recover-path key is the immediate token (`b`), not
-      `a$b`; `@` harvests only (S4 `new()`/`setClass` slot inference deferred);
-      fields carry no docs or signature.
   - [ ] Fuzzy/case-insensitive prefix matching
   - [ ] Function-vs-variable kind for locals
 
