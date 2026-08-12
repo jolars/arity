@@ -136,6 +136,13 @@ pub struct Visibility {
     /// The subset of `namespace_exports` registered via `S3method()` — reached
     /// by dispatch, so no direct call to the name is expected.
     pub s3_methods: BTreeSet<String>,
+    /// Packages this file's NAMESPACE `import()`s wholesale. Range-free and
+    /// `Eq`, so this projection still backdates across a body edit.
+    pub wildcard_imports: BTreeSet<String>,
+    /// An unresolved `source()` left cross-file visibility incomplete. A
+    /// wildcard import is *not* expressed here — it is an entry in
+    /// `wildcard_imports` that the consumer (which holds the library index)
+    /// finds unenumerable.
     pub incomplete: bool,
 }
 
@@ -147,6 +154,7 @@ impl Visibility {
             &self.read_by_others,
             &self.namespace_exports,
             &self.s3_methods,
+            &self.wildcard_imports,
             self.incomplete,
         )
     }
@@ -420,6 +428,7 @@ pub fn visible_symbols<'db>(
         read_by_others: scope.read_names().clone(),
         namespace_exports: scope.namespace_export_names().clone(),
         s3_methods: scope.s3_method_names().clone(),
+        wildcard_imports: scope.wildcard_import_packages().clone(),
         incomplete: scope.resolution_incomplete,
     }
 }
@@ -657,6 +666,14 @@ pub fn attached_names<'db>(
         file: Some(file),
     });
     let mut names = loaded_names(db, file).clone();
+    // A NAMESPACE `import(pkg)` puts every export of pkg in this file's scope,
+    // which for name resolution is indistinguishable from attaching it.
+    names.extend(
+        visible_symbols(db, project, file)
+            .wildcard_imports
+            .iter()
+            .cloned(),
+    );
     let root = project
         .members(db)
         .iter()
@@ -704,6 +721,11 @@ pub fn external_resolution<'db>(
     // (e.g. tidyverse) also attaches its core members (harvested attach set,
     // static table as fallback), so each of those must be indexed too, or one
     // of them could be the otherwise-unresolved name's home.
+    //
+    // This gate is also where a wholesale `import(pkg)` lands: `attached_names`
+    // folds those packages in, so an unenumerable one suppresses here — the old
+    // unconditional poison, now conditional on the index, and therefore lifting
+    // the moment the sidecar can enumerate the package.
     if loaded.iter().any(|pkg| {
         !package_indexed(index, remote, pkg)
             || attach_members(index, pkg).any(|m| !package_indexed(index, remote, m))
@@ -712,8 +734,8 @@ pub fn external_resolution<'db>(
     }
 
     let visibility = visible_symbols(db, project, file);
-    // Gate: incomplete cross-file visibility (an unresolved `source()` or a
-    // wholesale `import(pkg)`) could supply otherwise-unresolved names.
+    // Gate: cross-file visibility left incomplete by something nothing can
+    // resolve — a dynamic or unanalyzed `source()` — could supply any name.
     if visibility.incomplete {
         return ExternalResolution::default();
     }

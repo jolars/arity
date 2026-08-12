@@ -1902,6 +1902,71 @@ fn an_unindexed_depends_suppresses_the_file() {
 }
 
 #[test]
+fn wildcard_import_clears_once_the_package_is_indexed() {
+    // The roadmap item: `import(pkg)` used to suppress the whole file
+    // unconditionally. It now goes through the same enumerability gate as an
+    // attached package, so the suppression lifts as soon as the index (or the
+    // sidecar) can enumerate pkg — and a genuine typo in that file is reported.
+    let (mut db, m, dir) = description_package("Package: foo\n");
+    std::fs::write(dir.path().join("NAMESPACE"), "import(helperpkg)\n").expect("NAMESPACE");
+    let body = "foo <- function() helper(mystery)\n";
+    std::fs::write(dir.path().join("R/foo.R"), body).expect("foo.R");
+    db.set_file_text(m, body);
+    db.refresh_package_graph();
+
+    // Unindexed: we cannot enumerate helperpkg, so the file stays suppressed.
+    {
+        let manifest = db.set_library_index(IndexedProvider::empty());
+        let project = workspace_project(&db);
+        let res = external_resolution(&db, manifest, project, m);
+        assert!(
+            res.unresolved.is_empty(),
+            "an unenumerable wildcard import must still suppress: {:?}",
+            res.unresolved
+        );
+    }
+
+    // Indexed: `helper` resolves through the import, and `mystery` — which the
+    // whole-file suppression used to hide — is finally reported.
+    let manifest = db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "helperpkg",
+        &["helper"],
+    )]));
+    let project = workspace_project(&db);
+    let res = external_resolution(&db, manifest, project, m);
+    assert!(
+        !res.unresolved.contains("helper"),
+        "import(helperpkg) puts its exports in scope: {:?}",
+        res.unresolved
+    );
+    assert!(
+        res.unresolved.contains("mystery"),
+        "with the import enumerable, a real typo must surface: {:?}",
+        res.unresolved
+    );
+}
+
+#[test]
+fn dynamic_source_still_suppresses() {
+    // The control for the poison lift: `resolution_incomplete` keeps its one
+    // remaining meaning, and a dynamic `source()` still suppresses the file.
+    let mut db = IncrementalDatabase::default();
+    let path = "/proj/a.R";
+    let file = db.upsert_file(
+        Path::new(path),
+        "source(paste0(dir, '/x.R'))\nfoo <- function() mystery(1)\n".to_string(),
+    );
+    let manifest = db.set_library_index(IndexedProvider::empty());
+    let project = project_one(&db, file, path);
+    let res = external_resolution(&db, manifest, project, file);
+    assert!(
+        res.unresolved.is_empty(),
+        "a dynamic source() could supply any name, so the file stays suppressed: {:?}",
+        res.unresolved
+    );
+}
+
+#[test]
 fn refresh_package_graph_skips_write_when_unchanged() {
     // The conditional setter: refreshing with identical on-disk metadata must not
     // bump the revision, so `workspace_project` is not re-run.

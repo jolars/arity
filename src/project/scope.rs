@@ -19,10 +19,16 @@
 //! top-level binding as used (it's public API).
 //!
 //! Visibility can be *incomplete* — a `source()` target that can't be resolved
-//! (dynamic argument, or a path outside the analyzed set), or a wholesale
-//! `import(pkg)` whose exports we can't enumerate. Then
+//! (dynamic argument, or a path outside the analyzed set). Then
 //! [`FileScope::resolution_incomplete`] is set and callers must stay
 //! conservative (no `undefined-symbol` findings).
+//!
+//! A wholesale `import(pkg)` is deliberately **not** expressed that way. It is
+//! reported as-is by [`FileScope::wildcard_import_packages`], because "can we
+//! enumerate pkg's exports" is a question for the library index and this module
+//! is pure — that purity is what the project-graph memo depends on. The
+//! consumer that holds the index decides, so the file stops being suppressed
+//! the moment the package becomes enumerable.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -82,6 +88,9 @@ pub struct ProjectScope {
     /// methods (`S3method(...)`). Reached by dispatch, never by a direct call.
     s3_methods: HashMap<PathBuf, BTreeSet<String>>,
     /// Files whose cross-file visibility is incomplete (unresolved `source()`).
+    /// Per file: the packages its NAMESPACE `import()`s wholesale. Recorded
+    /// rather than resolved — see [`FileScope::wildcard_import_packages`].
+    wildcard_imports: HashMap<PathBuf, BTreeSet<String>>,
     dynamic: HashSet<PathBuf>,
     /// Per file: the set of *other* files it can see (package siblings, plus the
     /// transitive non-local `source()` closure). Directional: `a` sourcing `b`
@@ -157,9 +166,20 @@ pub struct FileScope<'a> {
     read_by_others: &'a BTreeSet<String>,
     namespace_exports: &'a BTreeSet<String>,
     s3_methods: &'a BTreeSet<String>,
-    /// Cross-file visibility is incomplete — an unresolved `source()` or a
-    /// wholesale `import(pkg)` could supply otherwise-unresolved names — so
-    /// callers must not flag them.
+    /// Packages this file's NAMESPACE `import()`s wholesale.
+    ///
+    /// Every export of such a package is in scope here, which for resolution is
+    /// indistinguishable from being attached. Whether those exports are
+    /// *enumerable* is a question only the library index can answer, and
+    /// [`ProjectScope::build`] is pure — so the packages are reported and the
+    /// verdict is left to the caller, which holds the index. Reintroducing an
+    /// index lookup inside `build` would look like a simplification and would
+    /// silently break the purity the project-graph memo depends on.
+    wildcard_imports: &'a BTreeSet<String>,
+    /// Cross-file visibility is incomplete for a reason nothing can resolve: a
+    /// dynamic or unanalyzed `source()` could supply any name, so callers must
+    /// not flag them. **No longer set by `import(pkg)`** — see
+    /// [`wildcard_import_packages`](Self::wildcard_import_packages).
     pub resolution_incomplete: bool,
 }
 
@@ -172,6 +192,7 @@ impl<'a> FileScope<'a> {
         read_by_others: &'a BTreeSet<String>,
         namespace_exports: &'a BTreeSet<String>,
         s3_methods: &'a BTreeSet<String>,
+        wildcard_imports: &'a BTreeSet<String>,
         resolution_incomplete: bool,
     ) -> Self {
         Self {
@@ -179,8 +200,14 @@ impl<'a> FileScope<'a> {
             read_by_others,
             namespace_exports,
             s3_methods,
+            wildcard_imports,
             resolution_incomplete,
         }
+    }
+
+    /// The packages this file's NAMESPACE `import()`s wholesale.
+    pub fn wildcard_import_packages(&self) -> &BTreeSet<String> {
+        self.wildcard_imports
     }
 
     /// The names visible to this file from the rest of the project.
@@ -311,6 +338,7 @@ impl ProjectScope {
         // For each file, the set of *other* files it can see.
         let mut sees: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
         let mut dynamic: HashSet<PathBuf> = HashSet::new();
+        let mut wildcard_imports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
         for f in files {
             let mut seen: HashSet<PathBuf> = HashSet::new();
             if let Some(root) = &f.package_root {
@@ -383,9 +411,10 @@ impl ProjectScope {
         }
 
         // Fold NAMESPACE declarations into the same two directions: imported
-        // names resolve (visible), exported names count as used (via
-        // `namespace_exports`), and a wholesale `import(pkg)` makes resolution
-        // incomplete.
+        // names resolve (visible) and exported names count as used (via
+        // `namespace_exports`). A wholesale `import(pkg)` is *recorded*, not
+        // resolved: whether pkg's exports are enumerable needs the library
+        // index, which this pure builder does not have.
         for (root, text) in namespaces {
             let Some(members) = package_members.get(root.as_path()) else {
                 continue;
@@ -398,7 +427,7 @@ impl ProjectScope {
             let info = parse_namespace(text, &object_names);
             let exported: BTreeSet<String> = info.exports.iter().cloned().collect();
             let imported: BTreeSet<String> = info.imported_names.iter().cloned().collect();
-            let incomplete = !info.imported_packages.is_empty();
+            let wildcards: BTreeSet<String> = info.imported_packages.iter().cloned().collect();
 
             for member in members {
                 let path = member.to_path_buf();
@@ -413,8 +442,11 @@ impl ProjectScope {
                 if let Some(vis) = visible.get_mut(&path) {
                     vis.extend(imported.iter().cloned());
                 }
-                if incomplete {
-                    dynamic.insert(path);
+                if !wildcards.is_empty() {
+                    wildcard_imports
+                        .entry(path)
+                        .or_default()
+                        .extend(wildcards.iter().cloned());
                 }
             }
         }
@@ -424,6 +456,7 @@ impl ProjectScope {
             read_by_others,
             namespace_exports,
             s3_methods,
+            wildcard_imports,
             dynamic,
             sees,
             package_siblings,
@@ -442,6 +475,7 @@ impl ProjectScope {
             read_by_others: self.read_by_others.get(path).unwrap_or(&EMPTY),
             namespace_exports: self.namespace_exports.get(path).unwrap_or(&EMPTY),
             s3_methods: self.s3_methods.get(path).unwrap_or(&EMPTY),
+            wildcard_imports: self.wildcard_imports.get(path).unwrap_or(&EMPTY),
             resolution_incomplete: self.dynamic.contains(path),
         }
     }
@@ -1025,14 +1059,21 @@ mod tests {
     }
 
     #[test]
-    fn namespace_wholesale_import_marks_resolution_incomplete() {
+    fn namespace_wholesale_import_is_recorded_not_poisoned() {
+        // `import(pkg)` used to poison the file unconditionally. It now reports
+        // the package instead: whether pkg's exports are enumerable needs the
+        // library index, which this pure builder deliberately does not have.
         let files = [facts("/pkg/R/a.R", &[], &["abort"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "import(rlang)\n")]);
         let scope = ProjectScope::build(&files, &ns, &HashMap::new());
+        let a = scope.for_file(Path::new("/pkg/R/a.R"));
+        assert_eq!(
+            a.wildcard_import_packages(),
+            &["rlang".to_string()].into_iter().collect()
+        );
         assert!(
-            scope
-                .for_file(Path::new("/pkg/R/a.R"))
-                .resolution_incomplete
+            !a.resolution_incomplete,
+            "a wildcard import is a question for the index, not an unresolvable"
         );
     }
 

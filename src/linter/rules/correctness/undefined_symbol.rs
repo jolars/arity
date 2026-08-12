@@ -84,23 +84,36 @@ impl UndefinedSymbol {
     /// the [`RuleContext::symbols`] provider directly.
     fn run_standalone(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         // Fold in packages attached by the file's location (e.g. testthat for a
-        // `tests/testthat/` file), which no `library()` call names. Allocate only
-        // when there is something to add — the common case keeps the model's slice.
+        // `tests/testthat/` file), which no `library()` call names, and the ones
+        // the package's NAMESPACE `import()`s wholesale — every export of those
+        // is in scope here, which for resolution is the same thing as attached.
+        // Allocate only when there is something to add: the common case keeps
+        // the model's slice.
         let implicit = implicit_attached_packages(ctx.path);
-        let augmented: Vec<LoadedPackage>;
-        let loaded: &[LoadedPackage] = if implicit.is_empty() {
+        let wildcards = ctx
+            .project
+            .map(|p| p.wildcard_import_packages().iter().map(String::as_str))
+            .into_iter()
+            .flatten();
+        let augmented: Vec<LoadedPackage> = ctx
+            .model
+            .loaded_packages()
+            .iter()
+            .cloned()
+            .chain(
+                implicit
+                    .iter()
+                    .copied()
+                    .chain(wildcards)
+                    .map(|name| LoadedPackage {
+                        name: SmolStr::new(name),
+                        range: TextRange::default(),
+                    }),
+            )
+            .collect();
+        let loaded: &[LoadedPackage] = if augmented.len() == ctx.model.loaded_packages().len() {
             ctx.model.loaded_packages()
         } else {
-            augmented = ctx
-                .model
-                .loaded_packages()
-                .iter()
-                .cloned()
-                .chain(implicit.iter().map(|name| LoadedPackage {
-                    name: SmolStr::new(name),
-                    range: TextRange::default(),
-                }))
-                .collect();
             &augmented
         };
         // Conservative gate: bail out entirely if any attached package's exports
@@ -118,9 +131,10 @@ impl UndefinedSymbol {
         }) {
             return;
         }
-        // Conservative gate: incomplete cross-file visibility (an unresolved
-        // `source()`, or a wholesale `import(pkg)`) could define any of the
-        // names below.
+        // Conservative gate: cross-file visibility left incomplete by something
+        // nothing can resolve — a dynamic or unanalyzed `source()` — could
+        // define any of the names below. A wholesale `import(pkg)` is *not*
+        // that: it went through the enumerability gate above.
         if ctx.project.is_some_and(|p| p.resolution_incomplete) {
             return;
         }
