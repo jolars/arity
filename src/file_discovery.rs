@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
+use crate::project::is_package_root;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileDiscoveryError {
     NonRFilePath { path: PathBuf },
@@ -128,11 +130,48 @@ impl ExcludeFilter {
     }
 }
 
+/// The files one lint run will process, split by grammar.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiscoveredFiles {
+    pub r: Vec<PathBuf>,
+    /// Package `DESCRIPTION`s — see [`collect_lint_files`] for which ones a walk
+    /// picks up.
+    pub description: Vec<PathBuf>,
+}
+
+/// Discover the `.R` files under `paths`. The R-only view, for the callers that
+/// want exactly that: the formatter, `arity index`, and the lint driver's
+/// project-scope seeding.
 pub fn collect_r_files(
     paths: &[PathBuf],
     exclude: &ExcludeFilter,
 ) -> Result<Vec<PathBuf>, FileDiscoveryError> {
+    collect(paths, exclude, false).map(|files| files.r)
+}
+
+/// Discover both grammars' lint inputs under `paths` — the lint driver's entry
+/// point.
+///
+/// A **walk** picks up a `DESCRIPTION` only when its directory is a package root
+/// ([`is_package_root`]), so an `inst/extdata/DESCRIPTION` fixture, a vendored
+/// copy, or a test corpus's scraped metadata is skipped rather than linted as if
+/// it described the project. An **explicitly named** `DESCRIPTION` is always
+/// accepted, matching how an explicitly named excluded `.R` file is still
+/// processed.
+pub fn collect_lint_files(
+    paths: &[PathBuf],
+    exclude: &ExcludeFilter,
+) -> Result<DiscoveredFiles, FileDiscoveryError> {
+    collect(paths, exclude, true)
+}
+
+fn collect(
+    paths: &[PathBuf],
+    exclude: &ExcludeFilter,
+    descriptions: bool,
+) -> Result<DiscoveredFiles, FileDiscoveryError> {
     let mut files = Vec::new();
+    let mut found_descriptions = Vec::new();
 
     for path in paths {
         if path.is_file() {
@@ -142,11 +181,15 @@ pub fn collect_r_files(
             if exclude.force_excludes(path) {
                 continue;
             }
-            if !is_r_file(path) {
-                return Err(FileDiscoveryError::NonRFilePath { path: path.clone() });
+            if is_r_file(path) {
+                files.push(path.clone());
+                continue;
             }
-            files.push(path.clone());
-            continue;
+            if descriptions && is_description_file(path) {
+                found_descriptions.push(path.clone());
+                continue;
+            }
+            return Err(FileDiscoveryError::NonRFilePath { path: path.clone() });
         }
 
         if path.is_dir() {
@@ -165,9 +208,16 @@ pub fn collect_r_files(
                 match entry {
                     Ok(entry) => {
                         let entry_path = entry.path();
-                        if entry.file_type().is_some_and(|ft| ft.is_file()) && is_r_file(entry_path)
-                        {
+                        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                            continue;
+                        }
+                        if is_r_file(entry_path) {
                             files.push(entry_path.to_path_buf());
+                        } else if descriptions
+                            && is_description_file(entry_path)
+                            && entry_path.parent().is_some_and(is_package_root)
+                        {
+                            found_descriptions.push(entry_path.to_path_buf());
                         }
                     }
                     Err(err) => {
@@ -189,13 +239,24 @@ pub fn collect_r_files(
 
     files.sort();
     files.dedup();
-    Ok(files)
+    found_descriptions.sort();
+    found_descriptions.dedup();
+    Ok(DiscoveredFiles {
+        r: files,
+        description: found_descriptions,
+    })
 }
 
 fn is_r_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("r"))
+}
+
+/// Whether `path` is named `DESCRIPTION`. Case-sensitive: R reads that exact
+/// name, so `description` is an unrelated file.
+fn is_description_file(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "DESCRIPTION")
 }
 
 #[cfg(test)]
