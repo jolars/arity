@@ -41,6 +41,15 @@
       `resolves_to_base`-confirmed + shadow-checked, graduating the call-rewrite
       rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
       user-redefined. (`true-false-symbol` already shipped shadow-checked.)
+- [ ] **Give the driver's per-file context a struct.** `lint_parsed_file` takes
+      eight arguments behind an `#[allow(clippy::too_many_arguments)]` and
+      `run_rules` takes nine, each ending in three adjacent `Option<&_>`
+      (`project`, `resolution`, `package`) that only get threaded through to
+      `RuleContext`—so a transposed pair type-checks. Building that context once
+      per file and passing it whole removes both the allow and the hazard. Every
+      DESCRIPTION-stage addition landed as one more parameter, and stage 4 adds
+      another, so do it before that: it touches every call site of both
+      functions, `run_dcf_rules`' twin included, and `run_rules` is public API.
 
 ### Phase 5—Package-aware rules
 
