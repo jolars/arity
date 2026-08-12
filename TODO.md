@@ -475,16 +475,72 @@ completion and hover, and it formats. Staged so each step is useful alone.
       using `import(pkg)` only because the wholesale-import poison suppressed
       the whole file.
 
-- [ ] **3. DESCRIPTION lint rules.** `undeclared-dependency` (`pkg::x` or
-      `library(pkg)` in `R/` with `pkg` absent from `Depends`/`Imports`) and
-      `unused-dependency` (an `Imports` entry no `::` or `importFrom()`
-      reaches—cross-file, so it needs the project layer and NAMESPACE, both of
-      which exist). Plus file-local rules: `duplicate-field` (also the place to
-      fix the first-vs-last divergence below, visibly), missing required fields,
-      unparseable version constraints. Needs a non-`.R` path through
-      `file_discovery.rs` (the extension filter is hard-coded `"r"`) and the
-      lint driver; `linter::render` and `to_lsp_diagnostic` are already
-      file-type-agnostic and need no change.
+- [x] **3. DESCRIPTION lint rules.** Done. Five rules in a new `Packaging`
+      category, the one category spanning both grammars:
+      `undeclared-dependency` (R-side, default on), `unused-dependency`
+      (DESCRIPTION-side, **default off**), `description-missing-field`,
+      `description-duplicate-field`, `description-version-constraint`. None
+      ships an autofix; each repair needs a value or a decision only the author
+      has, and for `unused-dependency` a fix would also mean editing a
+      comma-separated list, which is stage 5's job.
+
+      A `DcfRule` runs over a parsed `DESCRIPTION` the way `Rule` runs over R,
+      and both register in the **same** `rules_by_category` via `AnyRule`, so
+      rule IDs stay one namespace and `all_rule_ids`, `select`/`ignore`, and the
+      reference page are still derived from one list. A second registry was
+      rejected: merging two per-category lists back together to render one
+      section *is* a second source of truth for catalogue order. `ResolvedRules`
+      splits the two dispatch tables once, in `with_config`, so a run over R
+      files never pays for the DCF table. `linter::render` and
+      `to_lsp_diagnostic` needed no change, as predicted.
+
+      `# arity-ignore` works in `DESCRIPTION`. A comment line is a child of the
+      field it follows—a `FIELD` stays open across its continuation lines—so a
+      directive attaches to its enclosing field only when a value line still
+      follows it, and otherwise points at the next field, which is what its
+      author meant.
+
+      `collect_lint_files` splits discovery by grammar. A walk takes a
+      `DESCRIPTION` only at a package root that is not itself inside another
+      package: the first half skips `inst/extdata` fixtures, the second skips
+      the complete fake packages roxygen2 and devtools keep under `tests/`,
+      which a corpus sweep found immediately. An explicitly named one is always
+      linted. Reading is *not* gated on the rule set: `syntax-error` is not a
+      rule, so a `DESCRIPTION` `read.dcf` would reject surfaces under `--select`
+      exactly as a broken `.R` file does.
+
+      The exempt set for `undeclared-dependency` is R's own, read off
+      `tools:::.check_packages_used` and pinned against R by
+      `tests/deps_oracle.rs` (`task deps-oracle`): the base-priority packages
+      minus `methods` and `stats4`. That is deliberately **not**
+      `default_packages()`, which answers what a session *attaches* and differs
+      in both directions—`parallel` and `tools` ship unattached, `methods` is
+      attached and still has to be declared.
+
+      `unused-dependency` reports on *absence*, so it is the one rule here that
+      could talk a maintainer into deleting a dependency their package needs.
+      Hence default-off, `PackageUsage::complete` (the whole `R/` set analyzed,
+      a NAMESPACE read, at least one source), and exemptions for a `LinkingTo`
+      co-declaration, `methods` under S4, and any package named as a plain
+      string. `PackageReferences` records load calls at **any depth**—
+      `requireNamespace()` in a function body is the conditional-dependency
+      idiom, and `SemanticModel::loaded_packages` is top-level-only because it
+      models attachment, a narrower fact. Both it and the `package_usage` fold
+      are range-free `Eq` firewalls, guarded with negative controls in
+      `tests/salsa_incremental.rs`.
+
+      A sweep over 15 real packages (tidyverse, r-lib, data.table, Rcpp) found
+      zero findings; injecting an unused `Imports` entry and deleting a used one
+      proved both dependency rules fire. That sweep is the gate for ever
+      flipping `unused-dependency` on, and it is not enough on its own—the
+      `linter-investigation` skill is.
+
+      Two rules deliberately **not** written here. `library-in-package`:
+      `library(dplyr)` in `R/` is wrong even when `dplyr` *is* in `Imports`, and
+      reporting that under an ID meaning "not declared" would read as a false
+      positive. `unconditional-suggest`: flagging unguarded use of a `Suggests`
+      package is a control-flow question over `ctx.cfg`, not a name-set one, and
+      R exempts `Suggests` for exactly that reason.
 
 - [ ] **4. DESCRIPTION in the LSP.** `didOpen` for DESCRIPTION (today it is only
       a watched file, never a document), a `documentSelector` entry in
@@ -520,6 +576,8 @@ completion and hover, and it formats. Staged so each step is useful alone.
   - A field whose own line is empty folds with a leading `\n`
     (`Collate:\n a.R\n b.R` -> `"\na.R\nb.R"`); R drops the empty segment.
   - A duplicate field resolves to the **first** occurrence; R takes the last.
+    `description-duplicate-field` now makes this visible at the duplicate
+    instead of leaving it silent, which is the prerequisite for the flip.
   - A field name is trimmed. R does *not*: `Package : p` declares a field
     literally named `"Package "`, so R sees no `Package` at all. arity is
     deliberately lenient here (it reads the obvious intent of a typo'd header),

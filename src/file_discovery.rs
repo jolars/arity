@@ -153,11 +153,14 @@ pub fn collect_r_files(
 /// point.
 ///
 /// A **walk** picks up a `DESCRIPTION` only when its directory is a package root
-/// ([`is_package_root`]), so an `inst/extdata/DESCRIPTION` fixture, a vendored
-/// copy, or a test corpus's scraped metadata is skipped rather than linted as if
-/// it described the project. An **explicitly named** `DESCRIPTION` is always
-/// accepted, matching how an explicitly named excluded `.R` file is still
-/// processed.
+/// ([`is_package_root`]) that is not itself inside another package. The first
+/// half skips an `inst/extdata/DESCRIPTION` fixture, a vendored copy, or a test
+/// corpus's scraped metadata; the second skips a *complete* fake package under
+/// `tests/`, which is fixture data for a test rather than anybody's package
+/// metadata — the same reason `undeclared-dependency` looks only at `R/`.
+///
+/// An **explicitly named** `DESCRIPTION` is always accepted, matching how an
+/// explicitly named excluded `.R` file is still processed.
 pub fn collect_lint_files(
     paths: &[PathBuf],
     exclude: &ExcludeFilter,
@@ -215,7 +218,7 @@ fn collect(
                             files.push(entry_path.to_path_buf());
                         } else if descriptions
                             && is_description_file(entry_path)
-                            && entry_path.parent().is_some_and(is_package_root)
+                            && entry_path.parent().is_some_and(is_own_package_root)
                         {
                             found_descriptions.push(entry_path.to_path_buf());
                         }
@@ -257,6 +260,20 @@ fn is_r_file(path: &Path) -> bool {
 /// name, so `description` is an unrelated file.
 fn is_description_file(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == "DESCRIPTION")
+}
+
+/// Whether `dir` is a package root in its own right, rather than a package
+/// nested inside another one.
+///
+/// A package under a package is a *fixture* — roxygen2, devtools, and pkgbuild
+/// all keep whole miniature packages under `tests/testthat/` — and its
+/// `DESCRIPTION` is data for a test, deliberately minimal, describing nothing
+/// anybody ships. Linting it produces a screenful of findings about files whose
+/// author was never addressing us. Naming one explicitly still lints it.
+fn is_own_package_root(dir: &Path) -> bool {
+    // `package_root` starts one level up, so this asks "is any *ancestor* a
+    // package root", not "is this one".
+    is_package_root(dir) && crate::project::package_root(dir).is_none()
 }
 
 #[cfg(test)]

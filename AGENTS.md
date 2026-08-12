@@ -134,8 +134,10 @@ matching `.claude/rules/` file.
   `source()` graph, a package's implicit shared namespace, per-file export
   projection, the S4/R6/reference-class index, wired into salsa by `graph.rs`.
 - **Linter** (`src/linter/`) — **purely semantic**; anything `format --check`
-  catches belongs to the formatter. 48 rules across six categories, with
-  autofixes, `# arity-ignore` suppression, and a generated rule reference.
+  catches belongs to the formatter. 55 rules across seven categories, with
+  autofixes, `# arity-ignore` suppression, and a generated rule reference. Runs
+  over **two grammars**: `Rule` for `.R`, `DcfRule` for `DESCRIPTION`, one
+  registry and one namespace of rule IDs.
 - **Language server** (`src/lsp.rs` + `src/lsp/`) — stdio JSON-RPC on
   `lsp-server`, with a dedicated lint thread owning the salsa database and
   purpose-built read and index task pools.
@@ -146,7 +148,8 @@ matching `.claude/rules/` file.
 - **File discovery** (`src/file_discovery.rs`) — walks for `.R` files honoring
   the config's `ExcludeFilter`; a non-`.R` explicit path is rejected unless
   force-excluded, so a runner like pre-commit staging one is skipped, not an
-  error.
+  error. `collect_lint_files` adds the lint driver's second input, a package's
+  `DESCRIPTION`; `collect_r_files` stays the R-only view its other callers need.
 
 ## Invariants and conventions
 
@@ -190,7 +193,8 @@ fixture case or snapshot) before touching the fix. **Run
   `cargo insta review`. **Never accept a snapshot you have not read.**
 - Which suite to reach for: formatter bug → a formatter fixture; parser bug → a
   parser fixture + `cargo insta review`; lint rule → a `#[test]` in
-  `tests/lint.rs` (no fixture dir) plus the rule's own `examples()`;
+  `tests/lint.rs` (no fixture dir), or `tests/lint_description.rs` for a
+  `DESCRIPTION` rule, plus the rule's own `examples()`;
   cross-file/LSP work → `tests/lsp.rs`, `tests/lsp_protocol.rs`, and
   `tests/salsa_incremental.rs`, which guards that a body edit does *not*
   invalidate the project graph.

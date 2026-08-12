@@ -108,6 +108,27 @@ fn a_description_outside_a_package_root_is_not_walked() {
     assert_eq!(described, vec![&root.join("DESCRIPTION")]);
 }
 
+/// A *complete* fake package under `tests/` is fixture data for a test —
+/// roxygen2 and devtools keep dozens — and its deliberately minimal
+/// `DESCRIPTION` describes nothing anybody ships.
+#[test]
+fn a_fixture_package_inside_a_package_is_not_walked() {
+    let (_dir, root) = package(COMPLETE_DESCRIPTION, "", &[("a.R", "f <- function() 1\n")]);
+    let fixture = root.join("tests").join("testthat").join("minimal");
+    std::fs::create_dir_all(fixture.join("R")).unwrap();
+    std::fs::write(fixture.join("DESCRIPTION"), "Package: minimal\n").unwrap();
+    std::fs::write(fixture.join("R").join("a.R"), "g <- function() 1\n").unwrap();
+
+    let result = check_paths(std::slice::from_ref(&root)).expect("lint should succeed");
+    let described: Vec<&PathBuf> = result
+        .reports
+        .iter()
+        .map(|r| &r.path)
+        .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("DESCRIPTION"))
+        .collect();
+    assert_eq!(described, vec![&root.join("DESCRIPTION")]);
+}
+
 /// ...but naming it explicitly still lints it, exactly as naming an excluded
 /// `.R` file does.
 #[test]
