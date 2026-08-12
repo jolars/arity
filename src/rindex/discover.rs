@@ -1,7 +1,13 @@
 //! Discover which packages a project references, so `arity index` harvests
 //! only those. A package is "referenced" if it is attached via
 //! `library()`/`require()`/`requireNamespace()` or named via `pkg::` / `pkg:::`
-//! anywhere in the project's `.R` files.
+//! anywhere in the project's `.R` files, **or** if the enclosing package's
+//! `DESCRIPTION` declares it as a dependency.
+//!
+//! The DESCRIPTION half matters because a package's R code reaches an `Imports`
+//! dependency through a NAMESPACE `importFrom` that names no package in any
+//! `.R` file — so scanning sources alone would leave exactly the dependencies
+//! the project is entitled to use unharvested.
 
 use std::collections::BTreeSet;
 
@@ -21,6 +27,13 @@ pub fn referenced_packages(
 ) -> Result<Vec<SmolStr>, FileDiscoveryError> {
     let files = collect_r_files(paths, exclude)?;
     let mut set: BTreeSet<SmolStr> = BTreeSet::new();
+    let mut descriptions = crate::project::DescriptionCache::new();
+    for file in &files {
+        // The enclosing package's declared dependencies, read once per root.
+        for pkg in descriptions.for_file(file).declared_packages() {
+            set.insert(SmolStr::new(pkg));
+        }
+    }
     for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
@@ -84,6 +97,32 @@ mod tests {
         for expected in ["dplyr", "tidyr", "purrr", "rlang", "stringr"] {
             assert!(pkgs.contains(&expected), "missing {expected} in {pkgs:?}");
         }
+    }
+
+    #[test]
+    fn declared_dependencies_are_referenced() {
+        use std::fs;
+        // The case source-scanning alone misses: a package whose R code reaches
+        // its `Imports` through a NAMESPACE `importFrom`, so no `.R` file names
+        // it. It is still exactly what the package is entitled to use.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("R")).unwrap();
+        fs::write(root.join("R/a.R"), "foo <- function() filter(1)\n").unwrap();
+        fs::write(
+            root.join("DESCRIPTION"),
+            "Package: mypkg\nDepends: R (>= 4.1)\nImports: dplyr\nSuggests: testthat\n",
+        )
+        .unwrap();
+
+        let found = referenced_packages(&[root.to_path_buf()], &ExcludeFilter::none()).unwrap();
+        let pkgs: Vec<&str> = found.iter().map(|s| s.as_str()).collect();
+        assert!(pkgs.contains(&"dplyr"), "declared Imports: {pkgs:?}");
+        assert!(pkgs.contains(&"testthat"), "declared Suggests: {pkgs:?}");
+        assert!(
+            !pkgs.contains(&"R"),
+            "`R` names the language, not a package: {pkgs:?}"
+        );
     }
 
     #[test]
