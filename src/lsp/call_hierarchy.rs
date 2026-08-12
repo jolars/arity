@@ -5,16 +5,19 @@
 //! the names the cross-file index keys on ([`Analysis::workspace_def_sites`],
 //! [`Analysis::cross_file_binding`], [`Analysis::visible_def_files`]) — and
 //! nested/local ones. An edge is a *callee-position* use `F(...)`, never a value
-//! use (`lapply(xs, F)`); call sites at script top-level (inside no function) are
-//! dropped.
+//! use (`lapply(xs, F)`).
 //!
 //! A call is attributed to the **innermost enclosing named function**
 //! ([`enclosing_function`]). Anonymous function scopes own no item, so their calls
-//! fall through to the nearest named ancestor. Incoming and outgoing share that one
-//! predicate, so the two directions can never disagree: an edge is in
+//! fall through to the nearest named ancestor, and a call inside *no* function
+//! falls through to the file's synthetic **script-scope** item ([`script_item`]) —
+//! in an R script that is where most calls live. Incoming and outgoing share that
+//! one predicate, so the two directions can never disagree: an edge is in
 //! `outgoing(A)` exactly when `incoming(B)` groups it under `A`. Callees resolve
 //! through the scope tree ([`resolve_callee`]), so a nested `helper` shadows a
-//! sibling file's top-level `helper` instead of misresolving to it.
+//! sibling file's top-level `helper` instead of misresolving to it; a free read
+//! that several visible siblings define yields one edge per candidate rather than
+//! a silent first-wins pick.
 //!
 //! An item's identity is its enclosing-function **name chain**, round-tripped in
 //! [`CallHierarchyItem::data`] (see [`ItemData`]). A bare name cannot identify a
@@ -178,28 +181,52 @@ fn function_defs(root: &SyntaxNode, model: &SemanticModel) -> FileFunctions {
     FileFunctions { defs, owners }
 }
 
+/// What an item denotes: a named function, or a file's **script scope** — the
+/// top level, which owns every call written inside no function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ItemId {
+    /// The enclosing-function name chain, ending with the function's own name.
+    Function(Vec<SmolStr>),
+    /// The file's top level. Never a *callee* (nothing calls a script), so it
+    /// appears only as the `from` of an incoming edge; its own outgoing edges are
+    /// the file's top-level calls.
+    ScriptScope,
+}
+
 /// The identity payload round-tripped through [`CallHierarchyItem::data`]: the
-/// item's enclosing-function name chain. See the module doc for why identity is
-/// symbolic rather than positional.
+/// item's enclosing-function name chain, or the script-scope marker. See the
+/// module doc for why identity is symbolic rather than positional.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ItemData {
     path: Vec<SmolStr>,
+    /// Set only on the script-scope item, whose `path` is empty — a name chain
+    /// cannot name the top level. Skipped when false so a function item's payload
+    /// stays byte-identical to the pre-script-scope encoding.
+    #[serde(default, skip_serializing_if = "is_false")]
+    script: bool,
 }
 
-/// The name chain identifying `item`, falling back to its bare `name` when `data`
-/// is absent or undecodable — an item minted before this field existed, or a
-/// client that dropped it. The fallback is exactly the old file-scope-only
-/// behavior; its one hazard is that a *nested* item stripped of its `data` would
-/// then name a same-named file-scope function, if one exists. The LSP spec
-/// requires clients to preserve `data`, so this is a degradation path, not a
-/// design assumption.
-fn item_path(item: &CallHierarchyItem) -> Vec<SmolStr> {
-    item.data
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// What `item` identifies, falling back to its bare `name` as a file-scope
+/// function when `data` is absent or undecodable — an item minted before this
+/// field existed, or a client that dropped it. The fallback is exactly the old
+/// file-scope-only behavior; its one hazard is that a *nested* item stripped of
+/// its `data` would then name a same-named file-scope function, if one exists.
+/// The LSP spec requires clients to preserve `data`, so this is a degradation
+/// path, not a design assumption.
+fn item_id(item: &CallHierarchyItem) -> ItemId {
+    let data = item
+        .data
         .clone()
-        .and_then(|data| serde_json::from_value::<ItemData>(data).ok())
-        .filter(|d| !d.path.is_empty())
-        .map(|d| d.path)
-        .unwrap_or_else(|| vec![SmolStr::new(&item.name)])
+        .and_then(|data| serde_json::from_value::<ItemData>(data).ok());
+    match data {
+        Some(d) if d.script => ItemId::ScriptScope,
+        Some(d) if !d.path.is_empty() => ItemId::Function(d.path),
+        _ => ItemId::Function(vec![SmolStr::new(&item.name)]),
+    }
 }
 
 /// The enclosing-function chain shown as an item's `detail`, disambiguating
@@ -233,6 +260,44 @@ fn fn_def_to_item(
         selection_range: text_range_to_lsp_range(line_index, def.selection, encoding),
         data: serde_json::to_value(ItemData {
             path: def.path.clone(),
+            script: false,
+        })
+        .ok(),
+    }
+}
+
+/// The synthetic item for a file's script scope, named after the file.
+///
+/// Its `range` is the whole file and its `selection_range` the start of it: there
+/// is no defining identifier to point at, and the client uses the selection only
+/// to navigate. Neither range participates in identity — [`ItemData::script`]
+/// does — so neither can go stale the way a function's would.
+fn script_item(
+    file_path: &Path,
+    uri: &Uri,
+    root: &SyntaxNode,
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> CallHierarchyItem {
+    let start = TextSize::new(0);
+    CallHierarchyItem {
+        name: file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "<script>".to_string()),
+        kind: LspSymbolKind::FILE,
+        tags: None,
+        detail: Some("top level".to_string()),
+        uri: uri.clone(),
+        range: text_range_to_lsp_range(
+            line_index,
+            TextRange::new(start, root.text_range().end()),
+            encoding,
+        ),
+        selection_range: text_range_to_lsp_range(line_index, TextRange::empty(start), encoding),
+        data: serde_json::to_value(ItemData {
+            path: Vec::new(),
+            script: true,
         })
         .ok(),
     }
@@ -369,18 +434,19 @@ fn prepare_local(
     )
 }
 
-/// `callHierarchy/incomingCalls`: every top-level function that calls the
-/// function the item denotes, each with the call-site ranges within it. Works off
-/// the snapshot; `None` on a non-file URI.
+/// `callHierarchy/incomingCalls`: every caller of the function the item denotes —
+/// a named function, or a file's script scope — each with the call-site ranges
+/// within it. Empty for the script-scope item, which nothing calls. Works off the
+/// snapshot; `None` on a non-file URI.
 pub(crate) fn incoming_calls_via_db(
     snapshot: &Analysis,
     item: &CallHierarchyItem,
     encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyIncomingCall>> {
     let path = uri::to_path(&item.uri)?;
-    let fn_path = item_path(item);
+    let id = item_id(item);
     salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        incoming_calls(snapshot, &path, &fn_path, encoding)
+        incoming_calls(snapshot, &path, &id, encoding)
     }))
     .ok()
     .flatten()
@@ -401,13 +467,17 @@ enum RefSet<'a> {
 fn incoming_calls(
     snapshot: &Analysis,
     def_path: &Path,
-    fn_path: &[SmolStr],
+    id: &ItemId,
     encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyIncomingCall>> {
-    // Per caller, keyed by (uri, selection span): the built `from` item and its
+    // Nothing calls a script's top level.
+    let ItemId::Function(fn_path) = id else {
+        return Some(Vec::new());
+    };
+    // Per caller, keyed by (uri, caller identity): the built `from` item and its
     // call-site ranges. Insertion order is preserved for deterministic output.
     let mut groups: Vec<IncomingGroup> = Vec::new();
-    match fn_path {
+    match fn_path.as_slice() {
         // File-scope: the name is in the cross-file index, so walk the visibility
         // component. Cohort members read it through their own file-scope binding,
         // readers through a free read — the same split
@@ -428,10 +498,10 @@ fn incoming_calls(
             }
         }
         // Nested: file-private, so the defining file is the whole world.
-        _ => collect_incoming(
+        nested => collect_incoming(
             snapshot,
             def_path,
-            RefSet::Local(fn_path),
+            RefSet::Local(nested),
             &mut groups,
             encoding,
         ),
@@ -449,7 +519,9 @@ fn incoming_calls(
 
 struct IncomingGroup {
     uri: Uri,
-    selection: TextRange,
+    /// The caller's identity, so a function and its file's script scope stay
+    /// distinct groups even though both are `from` items in the same file.
+    id: ItemId,
     from: CallHierarchyItem,
     from_ranges: Vec<Range>,
 }
@@ -491,38 +563,46 @@ fn collect_incoming(
         if call_at_callee(&root, range).is_none() {
             continue;
         }
-        let Some(caller) = enclosing_function(model, &functions.owners, range) else {
-            continue; // script-level call site: dropped (v1).
+        // A call inside no function belongs to the file's script scope, not to
+        // nothing: in an R *script* that is where most calls live.
+        let (id, from) = match enclosing_function(model, &functions.owners, range) {
+            Some(idx) => {
+                let caller = functions.def(idx);
+                (
+                    ItemId::Function(caller.path.clone()),
+                    fn_def_to_item(caller, &uri, line_index, encoding),
+                )
+            }
+            None => (
+                ItemId::ScriptScope,
+                script_item(file_path, &uri, &root, line_index, encoding),
+            ),
         };
-        let caller = functions.def(caller);
         let from_range = text_range_to_lsp_range(line_index, range, encoding);
-        match groups
-            .iter_mut()
-            .find(|g| g.uri == uri && g.selection == caller.selection)
-        {
+        match groups.iter_mut().find(|g| g.uri == uri && g.id == id) {
             Some(group) => group.from_ranges.push(from_range),
             None => groups.push(IncomingGroup {
                 uri: uri.clone(),
-                selection: caller.selection,
-                from: fn_def_to_item(caller, &uri, line_index, encoding),
+                id,
+                from,
                 from_ranges: vec![from_range],
             }),
         }
     }
 }
 
-/// `callHierarchy/outgoingCalls`: every top-level function the item's function
-/// calls, each with the call-site ranges within the item's body. Works off the
-/// snapshot; `None` on a non-file URI.
+/// `callHierarchy/outgoingCalls`: every function the item calls, each with the
+/// call-site ranges within it — the item's body for a function, the file's top
+/// level for the script scope. Works off the snapshot; `None` on a non-file URI.
 pub(crate) fn outgoing_calls_via_db(
     snapshot: &Analysis,
     item: &CallHierarchyItem,
     encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyOutgoingCall>> {
     let path = uri::to_path(&item.uri)?;
-    let fn_path = item_path(item);
+    let id = item_id(item);
     salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        outgoing_calls(snapshot, &path, &fn_path, encoding)
+        outgoing_calls(snapshot, &path, &id, encoding)
     }))
     .ok()
     .flatten()
@@ -545,7 +625,7 @@ struct OutgoingGroup {
 fn outgoing_calls(
     snapshot: &Analysis,
     path: &Path,
-    fn_path: &[SmolStr],
+    id: &ItemId,
     encoding: PositionEncoding,
 ) -> Option<Vec<CallHierarchyOutgoingCall>> {
     let file = snapshot.lookup_file(path)?;
@@ -555,14 +635,22 @@ fn outgoing_calls(
     let line_index = snapshot.line_index(file);
 
     let functions = function_defs(&root, model);
-    let idx = functions.by_path(fn_path)?;
-    // The whole `FUNCTION_EXPR`, not just its body: a call in a parameter default
-    // (`main <- function(x = helper()) x`) is a call this function makes, and
-    // incoming already reports it.
-    let func = functions.defs[idx].1.clone();
+    // What to walk, and which owner a call must attribute to. `None` is the script
+    // scope, so the same `enclosing_function` predicate decides both cases —
+    // which is what keeps outgoing in step with incoming.
+    let (scan, owner) = match id {
+        ItemId::Function(fn_path) => {
+            let idx = functions.by_path(fn_path)?;
+            // The whole `FUNCTION_EXPR`, not just its body: a call in a parameter
+            // default (`main <- function(x = helper()) x`) is a call this function
+            // makes, and incoming already reports it.
+            (functions.defs[idx].1.syntax().clone(), Some(idx))
+        }
+        ItemId::ScriptScope => (root.clone(), None),
+    };
 
     let mut groups: Vec<OutgoingGroup> = Vec::new();
-    for call_node in func.syntax().descendants() {
+    for call_node in scan.descendants() {
         if call_node.kind() != SyntaxKind::CALL_EXPR {
             continue;
         }
@@ -589,20 +677,19 @@ fn outgoing_calls(
         // that function's outgoing edge, not ours. Anonymous bodies own no item, so
         // their calls stay here — the same predicate incoming attributes by, which
         // is what makes the two directions agree.
-        if enclosing_function(model, &functions.owners, callee.text_range()) != Some(idx) {
+        if enclosing_function(model, &functions.owners, callee.text_range()) != owner {
             continue;
         }
-        let Some(target) = resolve_callee(snapshot, model, &functions, path, &callee, encoding)
-        else {
-            continue;
-        };
         let range = callee.text_range();
-        match groups.iter_mut().find(|g| g.target == target) {
-            Some(group) => group.from_ranges.push(range),
-            None => groups.push(OutgoingGroup {
-                target,
-                from_ranges: vec![range],
-            }),
+        // One call site can yield several targets when the callee is ambiguous.
+        for target in resolve_callee(snapshot, model, &functions, path, &callee, encoding) {
+            match groups.iter_mut().find(|g| g.target == target) {
+                Some(group) => group.from_ranges.push(range),
+                None => groups.push(OutgoingGroup {
+                    target,
+                    from_ranges: vec![range],
+                }),
+            }
         }
     }
 
@@ -640,8 +727,15 @@ fn outgoing_calls(
 /// A callee bound to a local *non-function* (a parameter holding a callback, a
 /// value) resolves to nothing. R would look past a non-function binding when
 /// resolving a callee, but arity models no values, so we decline rather than guess
-/// a sibling file's definition. Only a genuinely *free* read falls through to the
-/// cross-file index, where the first visible def wins (a known limitation).
+/// a sibling file's definition.
+///
+/// A local binding resolves to exactly one target. A genuinely *free* read falls
+/// through to the cross-file index, where **every** visible definition of the name
+/// is a target: with more than one in scope, which one R would reach is a runtime
+/// fact ([`Analysis::visible_def_files`] treats >1 as unresolved for the same
+/// reason). Reporting them all keeps the ambiguity visible — and matches
+/// [`prepare_call_hierarchy_via_db`], which already returns one item per candidate
+/// — instead of silently picking the first.
 fn resolve_callee(
     snapshot: &Analysis,
     model: &SemanticModel,
@@ -649,23 +743,30 @@ fn resolve_callee(
     from_path: &Path,
     callee: &SyntaxToken<RLanguage>,
     encoding: PositionEncoding,
-) -> Option<CalleeTarget> {
+) -> Vec<CalleeTarget> {
     let range = callee.text_range();
     if let Some(ident) = model.idents().iter().find(|i| i.range == range)
         && let Some(binding) = model.resolve_local(ident)
     {
         // Bound locally: a function here, or nothing.
-        let idx = functions.by_binding(binding)?;
-        return Some(CalleeTarget::Local {
-            path: functions.def(idx).path.clone(),
-        });
+        return functions
+            .by_binding(binding)
+            .map(|idx| CalleeTarget::Local {
+                path: functions.def(idx).path.clone(),
+            })
+            .into_iter()
+            .collect();
     }
     let name = SmolStr::new(callee.text());
     snapshot
         .visible_def_files(from_path, &name)
         .into_iter()
-        .find(|p| function_item(snapshot, p, std::slice::from_ref(&name), encoding).is_some())
-        .map(|file| CalleeTarget::CrossFile { file, name })
+        .filter(|p| function_item(snapshot, p, std::slice::from_ref(&name), encoding).is_some())
+        .map(|file| CalleeTarget::CrossFile {
+            file,
+            name: name.clone(),
+        })
+        .collect()
 }
 
 /// The `CALL_EXPR` node `range` is the callee of, when `range` is exactly that
@@ -709,7 +810,7 @@ fn call_at_callee(root: &SyntaxNode, range: TextRange) -> Option<SyntaxNode> {
 /// `lapply(xs, function(x) foo(x))` belongs to the enclosing named function.
 ///
 /// `None` at file scope: a call site at script top-level, inside no function,
-/// which is dropped (a known limitation).
+/// which belongs to the file's script-scope item ([`script_item`]).
 fn enclosing_function(
     model: &SemanticModel,
     owners: &HashMap<ScopeId, usize>,
@@ -760,7 +861,10 @@ mod tests {
 
     /// The name chain an item carries in its `data` payload — its identity.
     fn path_of(item: &CallHierarchyItem) -> Vec<String> {
-        item_path(item).iter().map(SmolStr::to_string).collect()
+        match item_id(item) {
+            ItemId::Function(path) => path.iter().map(SmolStr::to_string).collect(),
+            ItemId::ScriptScope => panic!("expected a function item, got the script scope"),
+        }
     }
 
     // --- prepare ------------------------------------------------------------
@@ -1046,10 +1150,31 @@ mod tests {
         assert_eq!(calls[0].from_ranges.len(), 1);
     }
 
+    // --- script scope -------------------------------------------------------
+
     #[test]
-    fn incoming_drops_script_level_calls() {
-        // The call to foo is at script top level, inside no function.
-        let src = "foo <- function() 1\nfoo()\n";
+    fn incoming_reports_a_script_level_call_site() {
+        // The calls to foo are at script top level, inside no function: they are
+        // attributed to the file's synthetic script-scope item.
+        let src = "foo <- function() 1\nfoo()\nfoo()\n";
+        let snapshot = rename_workspace(src, "");
+        let a = ws_path("a.R");
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &a, "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
+        assert_eq!(calls.len(), 1, "both sites group under one script item");
+        assert_eq!(calls[0].from.name, "a.R");
+        assert_eq!(calls[0].from.kind, LspSymbolKind::FILE);
+        assert_eq!(calls[0].from.uri, uri::from_path(&a).unwrap());
+        assert_eq!(calls[0].from_ranges.len(), 2);
+    }
+
+    #[test]
+    fn incoming_keeps_the_script_scope_separate_from_a_function_caller() {
+        let src = "foo <- function() 1\nbar <- function() foo()\nfoo()\n";
         let snapshot = rename_workspace(src, "");
         let calls = incoming_calls_via_db(
             &snapshot,
@@ -1057,7 +1182,135 @@ mod tests {
             PositionEncoding::Utf16,
         )
         .expect("incoming");
-        assert!(calls.is_empty(), "script-level call site is dropped in v1");
+        let names: Vec<&str> = calls.iter().map(|c| c.from.name.as_str()).collect();
+        assert_eq!(names, ["bar", "a.R"]);
+    }
+
+    #[test]
+    fn incoming_reports_a_script_level_caller_across_a_source_edge() {
+        let a_src = "foo <- function() 1\n";
+        let b_src = "source(\"a.R\")\nfoo()\n";
+        let snapshot = rename_workspace(a_src, b_src);
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].from.name, "b.R");
+        assert_eq!(calls[0].from.uri, uri::from_path(&ws_path("b.R")).unwrap());
+    }
+
+    #[test]
+    fn script_item_round_trips_from_incoming_into_outgoing() {
+        // The script item goes to outgoing exactly as incoming built it, so this
+        // pins the real `data` payload rather than a test-reconstructed one.
+        let src = "foo <- function() 1\nbar <- function() 2\nfoo()\nbar()\nfoo()\n";
+        let snapshot = rename_workspace(src, "");
+        let a = ws_path("a.R");
+        let incoming = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &a, "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
+        assert_eq!(incoming.len(), 1);
+        let script = &incoming[0].from;
+
+        let calls = outgoing_calls_via_db(&snapshot, script, PositionEncoding::Utf16)
+            .expect("outgoing from the script item");
+        let names: Vec<&str> = calls.iter().map(|c| c.to.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["foo", "bar"],
+            "every top-level call, in source order"
+        );
+        assert_eq!(calls[0].from_ranges.len(), 2, "both foo() sites");
+    }
+
+    #[test]
+    fn outgoing_from_the_script_item_excludes_calls_inside_functions() {
+        // `helper()` is called from inside `main`, never at top level.
+        let src = "helper <- function() 1\nmain <- function() helper()\nmain()\n";
+        let snapshot = rename_workspace(src, "");
+        let a = ws_path("a.R");
+        let incoming = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &a, "main"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
+        assert_eq!(incoming.len(), 1);
+        let calls = outgoing_calls_via_db(&snapshot, &incoming[0].from, PositionEncoding::Utf16)
+            .expect("outgoing");
+        let names: Vec<&str> = calls.iter().map(|c| c.to.name.as_str()).collect();
+        assert_eq!(names, ["main"], "helper() belongs to main, not the script");
+    }
+
+    #[test]
+    fn incoming_for_the_script_item_is_empty() {
+        // Nothing calls a script's top level.
+        let src = "foo <- function() 1\nfoo()\n";
+        let snapshot = rename_workspace(src, "");
+        let a = ws_path("a.R");
+        let incoming = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &a, "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
+        let calls = incoming_calls_via_db(&snapshot, &incoming[0].from, PositionEncoding::Utf16)
+            .expect("incoming");
+        assert!(calls.is_empty(), "nothing calls a script top level");
+    }
+
+    #[test]
+    fn script_scope_attributes_an_anonymous_top_level_call() {
+        // The anonymous function owns no item and sits at top level, so its call
+        // belongs to the script scope.
+        let src = "foo <- function() 1\nlapply(xs, function(x) foo(x))\n";
+        let snapshot = rename_workspace(src, "");
+        let calls = incoming_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("a.R"), "foo"),
+            PositionEncoding::Utf16,
+        )
+        .expect("incoming");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].from.kind, LspSymbolKind::FILE);
+    }
+
+    // --- ambiguous cross-file callees ---------------------------------------
+
+    #[test]
+    fn outgoing_reports_every_visible_definition_of_an_ambiguous_callee() {
+        // c.R sources both a.R and b.R, and each defines `foo`. Which one wins is
+        // not statically decidable, so report both rather than silently picking.
+        let snapshot = rename_workspace_files(&[
+            ("a.R", "foo <- function() 1\n"),
+            ("b.R", "foo <- function() 2\n"),
+            (
+                "c.R",
+                "source(\"a.R\")\nsource(\"b.R\")\nbar <- function() foo()\n",
+            ),
+        ]);
+        let calls = outgoing_calls_via_db(
+            &snapshot,
+            &item_named(&snapshot, &ws_path("c.R"), "bar"),
+            PositionEncoding::Utf16,
+        )
+        .expect("outgoing");
+        let mut uris: Vec<String> = calls.iter().map(|c| c.to.uri.to_string()).collect();
+        uris.sort();
+        assert_eq!(calls.len(), 2, "both visible definitions are reported");
+        assert!(uris[0].ends_with("a.R"), "got {uris:?}");
+        assert!(uris[1].ends_with("b.R"), "got {uris:?}");
+        assert!(calls.iter().all(|c| c.to.name == "foo"));
+        assert!(
+            calls.iter().all(|c| c.from_ranges.len() == 1),
+            "one call site, reported under each candidate"
+        );
     }
 
     #[test]

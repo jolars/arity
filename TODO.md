@@ -133,7 +133,8 @@ Gated on the package being attached (`model.loaded_packages()`).
   `CALL_EXPR`s, resolving each callee through the scope tree then via
   `visible_def_files`.
   - **Scope:** items are **named function definitions at any scope**—file-scope
-    functions (the names the cross-file index keys on) and nested/local ones. An
+    functions (the names the cross-file index keys on) and nested/local ones—plus
+    the synthetic per-file script scope that owns top-level calls. An
     item's identity is its enclosing-function name chain, round-tripped in
     `CallHierarchyItem::data`; a range would go stale, since `prepare` reads the
     live buffer while incoming/outgoing read the db snapshot the lint thread only
@@ -146,11 +147,29 @@ Gated on the package being attached (`model.loaded_packages()`).
     scope tree, so a nested `helper` no longer misresolves to a sibling file's
     top-level `helper`. Nested names are file-private, so their incoming edges
     are intra-file by construction.
-  - [ ] Call sites at script top-level (inside no function) are dropped from
-    incoming.
-  - [ ] Ambiguous cross-file callees (a name visibly defined in >1 sibling)
-    resolve to the first sorted def.
-  - [ ] String/backtick callees (`` `+`(…) ``) are skipped.
+  - [x] **Script top-level call sites are items.** A call inside no function is
+    attributed to the file's synthetic **script-scope** item (`script_item`):
+    `SymbolKind::FILE`, named after the file, identified by `ItemData::script`
+    rather than a name chain (nothing names a top level). It is never a callee, so
+    `incoming` on it is empty, while `outgoing` lists the file's top-level calls.
+    Attribution stays the one `enclosing_function` predicate—`None` now means the
+    script scope instead of "drop"—so the two directions still cannot disagree.
+  - [x] **Ambiguous cross-file callees report every candidate.** A free read that
+    more than one visible sibling defines yields one outgoing edge per definition,
+    not the first sorted one. Which one R reaches is a runtime fact
+    (`visible_def_files` treats >1 as unresolved for the same reason), and
+    `prepare` already returns one item per candidate, so this makes the two ends
+    agree. A locally bound callee still resolves to exactly one target.
+  - [ ] String/backtick callees (`` `+`(…) ``, `"foo"()`) are skipped. **Not a
+    call-hierarchy fix**: the semantic model records a backticked read's name
+    *with* its backticks (so `` `foo`() `` never resolves to binding `foo`), and
+    records no ident at all for a `STRING` callee. Both ends of call hierarchy read
+    the model's binding and read sets, so normalizing in this layer alone would put
+    `incoming` and `outgoing` out of step. The fix belongs in `semantic/builder.rs`
+    (unquote `IDENT` names, treat a `STRING` callee as a read), and its blast
+    radius is the hazard: `binding.name` is what rename writes back, so unquoting
+    without re-quoting on the write side would emit invalid R. Do it there, with
+    rename and references covered first.
 
 - [ ] **On-type formatting** (`textDocument/onTypeFormatting`). The R
   languageserver advertises it with first-trigger `\n` and more-triggers `)`,
