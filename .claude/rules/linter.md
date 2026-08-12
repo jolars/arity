@@ -14,7 +14,14 @@ linter against a real R codebase: the `linter-investigation` skill.
 - **The linter is purely semantic.** Anything the formatter's `--check` mode can
   catch belongs to the formatter, not here.
 - Parse diagnostics **block** linting a file: `check_paths` reports
-  `LintStatus::{Clean, Findings, ParseDiagnostics}`.
+  `LintStatus::{Clean, Findings, ParseDiagnostics}`. That holds for
+  `DESCRIPTION` too; the whole policy is `lint_description_source`.
+- Lint inputs are `.R` files **and** a package's `DESCRIPTION`
+  (`collect_lint_files`). A walked `DESCRIPTION` must sit at a package root that
+  is not itself inside another package — the fake packages under a project's
+  `tests/` are fixture data, not its metadata. An explicitly named one is always
+  linted, and reading is never gated on the rule set (`syntax-error` is not a
+  rule).
 
 ## Dispatch
 
@@ -47,6 +54,9 @@ linter against a real R codebase: the `linter-investigation` skill.
   `[lint.rules.<id>]` key. Renaming one is a breaking change.
 - Every rule needs a description and `examples()`. The examples are run through
   the **real linter** to render the docs page, so they are behavior, not prose.
+  A rule whose subject is a *package-level* fact is silent on the single-file
+  path, so it declares the synthetic package its examples live in via
+  `doc_package` — otherwise the example renders with no finding.
 
 ## Autofix correctness
 
@@ -79,8 +89,11 @@ A fix is a **textual edit**, so the bar is **correctness, not formatting**.
 
 ## Testing and docs
 
-- Lint has no fixture directory: add a `#[test]` in `tests/lint.rs`, plus the
-  rule's own `examples()`. Write the failing test first.
+- Lint has no fixture directory: add a `#[test]` in `tests/lint.rs` — or in
+  `tests/lint_description.rs` for anything about `DESCRIPTION` — plus the rule's
+  own `examples()`. Write the failing test first.
+- A package fixture's `DESCRIPTION` should be *complete* (`TEST_DESCRIPTION` in
+  `tests/lint.rs`), so a test only ever reports what it is about.
 - `tests/lint.rs` checks that fixed output parses, and stays format-clean on the
   curated width-safe cases.
 - The rule reference (`docs/src/reference/rules.md`) is **generated** by

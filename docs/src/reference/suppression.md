@@ -39,6 +39,25 @@ Suppresses **every** rule in the file, including every rule arity ships in the
 future. It is rarely what you want; prefer the rule-scoped form above. The
 [`blanket-suppression`](rules.md#blanket-suppression) rule flags it.
 
+## In `DESCRIPTION`
+
+The same three forms work in a `DESCRIPTION`, on a line of their own:
+
+```text
+Package: mypkg
+# arity-ignore unused-dependency: loaded reflectively by the plugin registry
+Imports: somepkg
+```
+
+DCF has no trailing comments --- a `#` in the middle of a value is part of that
+value --- so a directive must start at column zero, and one written after a
+field applies to the field that *follows* it. A `#` line between the
+continuation lines of a single field is the exception: R's `read.dcf` skips it
+and resumes the value, so a directive there covers the whole field it
+interrupts.
+
+The `meta` rules below lint directives in `.R` files only.
+
 ## Reasons
 
 The text after the `:` is free-form and arity never interprets it --- but a

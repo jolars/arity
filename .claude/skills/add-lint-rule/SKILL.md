@@ -49,11 +49,16 @@ the rule's correctness actually requires.
   **`rules_by_category()`, the single source of truth**. `all_rules()` flattens
   it, `all_rule_ids()` derives from that, and the generated rule reference takes
   its category sections from the same grouping—so there is no second list to
-  sync. Every new rule is added here exactly once.
+  sync. Every new rule is added here exactly once, wrapped in `AnyRule::R`.
+- **A `DESCRIPTION` rule** implements `DcfRule` instead (`interests`/`check`
+  over `dcf::SyntaxKind`, or `check_file`; `DcfRuleContext` carries the parsed
+  `Document`, the `DescriptionFacts` folded from it, and the enclosing package's
+  `PackageUsage`), registers as `AnyRule::Dcf` in that **same** list, and is
+  tested in `tests/lint_description.rs`. `run_dcf_rules` is the driver twin.
+  Never add a second registry.
 - `src/linter/rules/<category>.rs`—the category module
-  (`correctness`/`suspicious`/`readability`; add `performance`/`meta`/`pkg/...`
-  per the roadmap when first needed). Holds `mod <id>;` +
-  `pub use <id>::<Name>;`.
+  (`correctness`/`suspicious`/`readability`/`performance`/`documentation`/
+  `packaging`/`meta`). Holds `mod <id>;` + `pub use <id>::<Name>;`.
 - `src/linter/rules/<category>/<id>.rs`—one file per rule: a unit
   `pub struct` implementing `Rule`. (File name may differ from the rule id when
   the id is a Rust keyword, e.g. `repeat` lives in `suspicious/repeat_loop.rs`.)
@@ -85,7 +90,9 @@ the rule's correctness actually requires.
   in registry order, and asserts every rule has a non-empty
   `description()` + at least one `examples()` entry, **and that each example
   actually triggers its own rule**. Accept new snapshots with
-  `cargo insta   accept`.
+  `cargo insta   accept`. A rule whose subject is a package-level fact is silent
+  on the single-file path the renderer uses, so it declares the synthetic
+  package its examples live in via `doc_package`.
 - `docs/src/reference/rules.md`—**generated**; never hand-edit it, and never
   add a `SUMMARY.md` entry for a rule (the reference is one page).
 - `TODO.md`—the live roadmap. Check off the rule's item (with a one-line
