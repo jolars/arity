@@ -400,5 +400,68 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     phase makes one owned copy per keystroke. Making it an `Arc<str>` would
     remove the last copy.
 
+## DESCRIPTION and package metadata
+
+`DESCRIPTION` used to be scraped for four facts and was otherwise invisible to
+arity. The end state is the `Cargo.toml`/rust-analyzer analogue: declared
+dependencies drive name resolution, the file itself carries diagnostics,
+completion and hover, and it formats. Staged so each step is useful alone.
+
+- [x] **1. A principled DCF parser** (`crates/arity-parser/src/dcf/`). A second
+      `rowan::Language` alongside the R grammar: lossless
+      (`reconstruct(text) == text`), spanned, record-aware, with diagnostics on
+      the usual side channel (malformed line, orphan continuation, empty field
+      name). Typed wrappers (`dcf::ast`) are the only surface consumers touch,
+      so nothing outside the module names the second `SyntaxKind`. Replaced
+      `parse_dcf` and all five of its consumers with no behavior change. Lives
+      in the published parser crate so a dprint plugin can reach it at stage 5.
+
+- [ ] **2. DESCRIPTION as an analysis input.** Parse structured dependency
+      entries (`Depends`, `Imports`, `Suggests`, `LinkingTo`, `Enhances`—name
+      plus optional version constraint, generalizing `r_depends_floor`) and make
+      DESCRIPTION a salsa input rather than an ad-hoc `read_to_string` at query
+      time. Five readers still re-read and re-parse the same file per package
+      (`harvest`, `package_name`, `description_compat`,
+      `roxygen_markdown_default`, `expected_r_sources`), memoized only in
+      `MarkdownDefaultResolver`; invalidation is the blunt
+      `package_meta_changed -> refresh the whole graph`
+      (`src/lsp/lint_thread.rs`). Then feed the declared packages into the
+      referenced and resolved sets—this **is** the Cross-cutting-prerequisite
+      item "Feed DESCRIPTION `Imports`/`Depends` and `import(pkg)` into the
+      referenced and resolved sets" above; do them as one change.
+
+- [ ] **3. DESCRIPTION lint rules.** `undeclared-dependency` (`pkg::x` or
+      `library(pkg)` in `R/` with `pkg` absent from `Depends`/`Imports`) and
+      `unused-dependency` (an `Imports` entry no `::` or `importFrom()`
+      reaches—cross-file, so it needs the project layer and NAMESPACE, both of
+      which exist). Plus file-local rules: `duplicate-field` (also the place to
+      fix the first-vs-last divergence below, visibly), missing required fields,
+      unparseable version constraints. Needs a non-`.R` path through
+      `file_discovery.rs` (the extension filter is hard-coded `"r"`) and the
+      lint driver; `linter::render` and `to_lsp_diagnostic` are already
+      file-type-agnostic and need no change.
+
+- [ ] **4. DESCRIPTION in the LSP.** `didOpen` for DESCRIPTION (today it is only
+      a watched file, never a document), a `documentSelector` entry in
+      `editors/code`, then: diagnostics from stages 1+3; **completion of package
+      names** in dependency fields off the rindex plus the bundled CRAN
+      lists—the flashiest item here and nearly free; hover showing a
+      dependency's installed version and `Title`.
+
+- [ ] **5. DESCRIPTION formatting.** Canonical style is what `desc`/`usethis`
+      write: field order, dependency lists one per line with `,\n    `, wrapped
+      `Description`. arity's differentiator is that `Authors@R` and `Roxygen`
+      are *R code*, which we can format with our own formatter—`desc` cannot.
+      Must be opt-in: `usethis`, `devtools` and `R CMD build` rewrite this file
+      on their own schedule, and a field-order fight is a fast way to lose
+      trust. Ships through the dprint plugin too, which is why stage 1 lives in
+      the parser crate.
+
+- [ ] **Known divergences from R's `read.dcf`**, deliberate and pinned by tests
+      in `dcf/parser.rs`; each is its own future commit, never a drive-by:
+  - A field whose own line is empty folds with a leading `\n`
+    (`Collate:\n a.R\n b.R` -> `"\na.R\nb.R"`); R drops the empty segment.
+  - A duplicate field resolves to the **first** occurrence; R takes the last.
+
 ## Misc
 

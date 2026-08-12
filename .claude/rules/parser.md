@@ -6,9 +6,9 @@ paths:
 
 # Parser rules
 
-Crate: `crates/arity-parser` (`syntax`, `ast`, `parser`). Re-exported by the
-root crate as `arity::{syntax, ast, parser}`, so intra-repo consumers keep
-writing `crate::parser::…`.
+Crate: `crates/arity-parser` (`syntax`, `ast`, `parser`, and `dcf`).
+Re-exported by the root crate as `arity::{syntax, ast, parser, dcf}`, so
+intra-repo consumers keep writing `crate::parser::…`.
 
 ## Hard invariants
 
@@ -68,6 +68,32 @@ mould), not a re-model.
 - Consumers (linter `matchers.rs`, semantic builder, LSP) navigate **through the
   wrappers**, not by re-walking raw CST. The **formatter deliberately stays on
   raw CST** for byte-level layout precision (Tenet 1) and is not migrated.
+
+## DCF (`dcf/`)
+
+A **second grammar** for `DESCRIPTION`, independent of the R one and subject to
+the same hard invariants — losslessness above all. Roadmap in `TODO.md`.
+
+- **Two `SyntaxKind` enums now exist.** They are distinct types sharing a name,
+  disambiguated by module path: never glob-import both. Outside `dcf/`, go
+  through the typed wrappers (`dcf::Document`/`Field`/…) so no consumer has to
+  name the second kind at all.
+- **Every physical line is exactly one line node** (`VALUE_LINE`,
+  `COMMENT_LINE`, `BLANK_LINE`, `MALFORMED_LINE`), or is a `FIELD`'s own first
+  line. A field's own line *is* a `VALUE_LINE`, which is what makes
+  `folded_value()` uniform. `COMMENT_LINE` is a legal `FIELD` child because R
+  skips a `#` between continuations and resumes the field.
+- **No event pipeline and no incremental path**, both deliberate: DCF never
+  backtracks, and a `DESCRIPTION` is tiny, so a full reparse is microseconds.
+  Do not use `str::lines()` — it eats a CRLF's `\r`.
+- Diagnostics reuse `parser::ParseDiagnostic`. The parser reports only lexical
+  facts (the three cases where `read.dcf` hard-errors); duplicate fields and
+  required-field policy belong to a lint, indentation style to the formatter.
+- Fixtures: `crates/arity-parser/tests/fixtures/dcf/<case>/input.dcf`,
+  hand-registered in `tests/dcf_snapshots.rs`. The CRLF case needs a `-text`
+  entry in `.gitattributes` or git normalizes it away on clone.
+- Known, tested divergences from R's `read.dcf` are listed in `TODO.md`; they
+  are preserved on purpose and change only in their own commit.
 
 ## Incrementality (Tenet 2)
 

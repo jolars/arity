@@ -30,8 +30,10 @@ semantic model, project graph, and introspection index, and builds on two
 independently published member crates:
 
 - **`crates/arity-parser`** — `syntax` (SyntaxKind, node pointers), `ast` (typed
-  wrappers), `parser` (lossless CST parser + incremental reparse). Depends only
-  on `rowan`, `serde`, `smol_str`.
+  wrappers), `parser` (lossless CST parser + incremental reparse), plus `dcf`, a
+  **second, independent grammar** for the format of `DESCRIPTION` (its own
+  `Language`, its own `syntax`/`parser`/`ast`). Depends only on `rowan`,
+  `serde`, `smol_str`.
 - **`crates/arity-formatter`** — the formatting engine, for embedders such as a
   dprint plugin. Depends on `arity-parser`; optional `serde`/`schema` features
   derive serde and schemars on `FormatStyle`.
