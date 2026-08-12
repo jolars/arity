@@ -1554,7 +1554,9 @@ An `Imports` entry promises that installing this package installs that one, so a
 
 A package counts as reached by `pkg::`, `pkg:::`, a `library`, `require`, `requireNamespace`, or `loadNamespace` call at any depth, a NAMESPACE `import()`/`importFrom()`/`importClassesFrom()`/`importMethodsFrom()`, or a roxygen `@import`/`@importFrom` tag. Exempt on top of that: anything also in `LinkingTo` (the Rcpp skeleton), `methods` when the package defines an S4 or reference class, and any package whose name appears as a plain string (a dynamic `do.call("::", …)` or `system.file(package = …)`).
 
-Only `Imports` is checked. `Depends` is an API decision the package's own code may never name; `Suggests` is for tests, vignettes, and examples, which this analysis does not cover; `LinkingTo` and `Enhances` are invisible to R-source analysis. A package used *only* from `tests/` or a vignette **is** flagged—it belongs in `Suggests`.
+Only `Imports` is checked. `Depends` is an API decision the package's own code may never name; `Suggests` is for tests, vignettes, and examples, reached from outside the package's own code; `LinkingTo` and `Enhances` are invisible to R-source analysis.
+
+Usage is folded over every R file the run analyzed under the package root, so a package reached only from `tests/`, `inst/`, or `data-raw/` counts as used when those files are in the run (`arity lint .`) and is reported when they are not (`arity lint R/`). A vignette's R code is never analyzed either way, so a dependency used only there is reported—it belongs in `Suggests`.
 
 It reports on *absence*, and a wrong finding would have a maintainer delete a dependency their package needs, so it stays silent unless the run analyzed the package's whole `R/` source set and read its NAMESPACE—which is also why it is off by default.
 
