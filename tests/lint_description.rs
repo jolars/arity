@@ -466,3 +466,224 @@ fn check_description_document_is_clean_on_a_good_file() {
     .expect("linting should not error");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
+
+// ---------------------------------------------------------------------------
+// undeclared-dependency
+//
+// An R-file rule, but a packaging one: what it reads is DESCRIPTION.
+// ---------------------------------------------------------------------------
+
+/// Rule ids reported for `R/a.R` after linting a package whose `DESCRIPTION`
+/// declares `declares` (appended to the complete fixture) and whose `R/a.R` is
+/// `source`.
+fn package_rules(declares: &str, source: &str) -> Vec<&'static str> {
+    let (_dir, root) = package(
+        &format!("{COMPLETE_DESCRIPTION}{declares}"),
+        "",
+        &[("a.R", source)],
+    );
+    let result = check_paths(std::slice::from_ref(&root)).expect("lint should succeed");
+    result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some("a.R"))
+        .map(|r| r.diagnostics.iter().map(|d| d.rule).collect())
+        .unwrap_or_default()
+}
+
+fn flags_undeclared(declares: &str, source: &str) -> bool {
+    package_rules(declares, source).contains(&"undeclared-dependency")
+}
+
+#[test]
+fn a_qualified_call_to_an_undeclared_package_is_flagged() {
+    assert!(flags_undeclared("", "dplyr::filter(x)\n"));
+}
+
+#[test]
+fn an_internal_access_to_an_undeclared_package_is_flagged() {
+    let rules = package_rules("", "dplyr:::internal(x)\n");
+    assert!(rules.contains(&"undeclared-dependency"));
+    // Two different facts about the same line, both worth saying.
+    assert!(rules.contains(&"internal-function"));
+}
+
+#[test]
+fn attaching_an_undeclared_package_is_flagged() {
+    assert!(flags_undeclared("", "library(dplyr)\n"));
+    assert!(flags_undeclared("", "require(dplyr)\n"));
+}
+
+/// The conditional-dependency idiom lives inside a function body, and the
+/// semantic model records attaches only at depth zero — so this rule cannot
+/// read them off the model.
+#[test]
+fn a_conditional_load_inside_a_function_is_flagged() {
+    assert!(flags_undeclared(
+        "",
+        "f <- function() {\n  if (requireNamespace(\"dplyr\", quietly = TRUE)) 1\n}\n"
+    ));
+}
+
+/// `methods` ships with R and is even attached by default, but `R CMD check`
+/// still requires a package that uses it to declare it.
+#[test]
+fn methods_must_be_declared() {
+    assert!(flags_undeclared("", "methods::new(\"A\")\n"));
+}
+
+/// Every site, not just the first: each one is separately suppressible, and one
+/// DESCRIPTION line clears them all.
+#[test]
+fn every_site_is_reported() {
+    let rules = package_rules("", "dplyr::filter(x)\ndplyr::mutate(y)\n");
+    assert_eq!(
+        rules
+            .iter()
+            .filter(|id| **id == "undeclared-dependency")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_declared_package_is_not_flagged() {
+    for field in ["Depends", "Imports", "Suggests", "LinkingTo", "Enhances"] {
+        let declares = format!("{field}: dplyr\n");
+        assert!(
+            !flags_undeclared(&declares, "dplyr::filter(x)\n"),
+            "declared in {field} but still flagged",
+        );
+    }
+}
+
+/// R exempts `Suggests` here too. Flagging *unconditional* use of a suggested
+/// package is a different, control-flow question.
+#[test]
+fn a_suggested_package_is_not_flagged_when_attached() {
+    assert!(!flags_undeclared("Suggests: dplyr\n", "library(dplyr)\n"));
+}
+
+/// R's base-priority set, which is *not* arity's `default_packages()`:
+/// `parallel`, `tools`, `grid`, and `compiler` ship with R but are not
+/// attached, and using them needs no declaration.
+#[test]
+fn base_priority_packages_need_no_declaration() {
+    for source in [
+        "stats::median(x)\n",
+        "parallel::mclapply(x, f)\n",
+        "tools::file_ext(p)\n",
+        "grid::unit(1, \"cm\")\n",
+        "compiler::cmpfun(f)\n",
+        "splines::ns(x)\n",
+        "utils::head(x)\n",
+    ] {
+        assert!(!flags_undeclared("", source), "{source} was flagged");
+    }
+}
+
+#[test]
+fn a_self_reference_is_not_flagged() {
+    assert!(!flags_undeclared("", "testpkg::exported()\n"));
+}
+
+/// Only `R/` is package code. R does not scan `tests/` for this check either,
+/// and a test file's dependencies belong in `Suggests`.
+#[test]
+fn a_test_file_is_not_package_code() {
+    let (_dir, root) = package(COMPLETE_DESCRIPTION, "", &[("a.R", "f <- function() 1\n")]);
+    let tests = root.join("tests").join("testthat");
+    std::fs::create_dir_all(&tests).unwrap();
+    std::fs::write(tests.join("test-a.R"), "dplyr::filter(x)\n").unwrap();
+
+    let result = check_paths(std::slice::from_ref(&root)).expect("lint should succeed");
+    let reported: Vec<&str> = result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some("test-a.R"))
+        .map(|r| r.diagnostics.iter().map(|d| d.rule).collect())
+        .unwrap_or_default();
+    assert!(!reported.contains(&"undeclared-dependency"), "{reported:?}");
+}
+
+/// A loose script is not a package, and there is no DESCRIPTION to consult.
+#[test]
+fn a_loose_script_is_not_flagged() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("script.R");
+    std::fs::write(&path, "dplyr::filter(x)\n").unwrap();
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert_eq!(result.total_findings, 0, "{:?}", result.reports);
+}
+
+/// `library(pkg)` where `pkg` is a variable names no package statically, so
+/// matching it could only invent a finding. R's own `common_names`.
+#[test]
+fn a_package_name_placeholder_is_not_flagged() {
+    assert!(!flags_undeclared(
+        "",
+        "attach_it <- function(pkg) library(pkg)\n"
+    ));
+}
+
+/// `character.only = TRUE` says the argument is a variable, by contract.
+#[test]
+fn character_only_is_not_flagged() {
+    assert!(!flags_undeclared(
+        "",
+        "f <- function(x) library(x, character.only = TRUE)\n"
+    ));
+}
+
+/// The span is the package token alone, not the whole access.
+#[test]
+fn undeclared_dependency_spans_the_package_name() {
+    let (_dir, root) = package(COMPLETE_DESCRIPTION, "", &[("a.R", "dplyr::filter(x)\n")]);
+    let result = check_paths(std::slice::from_ref(&root)).expect("lint should succeed");
+    let finding = result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some("a.R"))
+        .and_then(|r| {
+            r.diagnostics
+                .iter()
+                .find(|d| d.rule == "undeclared-dependency")
+        })
+        .expect("an undeclared-dependency finding");
+    let start: usize = finding.range.start().into();
+    let end: usize = finding.range.end().into();
+    assert_eq!((start, end), (0, "dplyr".len()));
+}
+
+/// `base::library(dplyr)` is one finding on `dplyr`, not also one on `base`.
+#[test]
+fn a_qualified_load_call_reports_once() {
+    let rules = package_rules("", "base::library(dplyr)\n");
+    assert_eq!(
+        rules
+            .iter()
+            .filter(|id| **id == "undeclared-dependency")
+            .count(),
+        1
+    );
+}
+
+/// Nothing to check against: a DESCRIPTION with no `Package` field would make
+/// every dependency look undeclared.
+#[test]
+fn a_description_without_a_package_field_flags_nothing() {
+    let (_dir, root) = package(
+        "Title: Not A Package\n",
+        "",
+        &[("a.R", "dplyr::filter(x)\n")],
+    );
+    let result = check_paths(std::slice::from_ref(&root)).expect("lint should succeed");
+    let reported: Vec<&str> = result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some("a.R"))
+        .map(|r| r.diagnostics.iter().map(|d| d.rule).collect())
+        .unwrap_or_default();
+    assert!(!reported.contains(&"undeclared-dependency"), "{reported:?}");
+}

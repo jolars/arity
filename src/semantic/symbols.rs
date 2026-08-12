@@ -586,6 +586,61 @@ pub fn default_packages() -> &'static [&'static str] {
     DEFAULT_PACKAGES
 }
 
+/// Every package R ships at `Priority: base` — the set R itself keeps in
+/// `tools:::.get_standard_package_names()$base` (checked against R 4.6.1 by the
+/// `deps-oracle` task).
+///
+/// **Not the same list as [`default_packages`]**, and conflating the two is
+/// wrong in both directions: `parallel`, `tools`, `grid`, `splines`, `stats4`,
+/// `tcltk`, and `compiler` ship with R but are not attached to a fresh
+/// session's search path, while `methods` is attached and yet, per `R CMD
+/// check`, still has to be declared by a package that uses it. This list
+/// answers "does R ship it", [`default_packages`] answers "is it attached".
+const BASE_PRIORITY_PACKAGES: &[&str] = &[
+    "base",
+    "tools",
+    "utils",
+    "grDevices",
+    "graphics",
+    "stats",
+    "datasets",
+    "methods",
+    "grid",
+    "splines",
+    "stats4",
+    "tcltk",
+    "compiler",
+    "parallel",
+];
+
+/// The two base-priority packages `R CMD check` still expects a package to
+/// declare (`tools:::.check_packages_used`).
+const DECLARED_BASE_PACKAGES: &[&str] = &["methods", "stats4"];
+
+/// See [`BASE_PRIORITY_PACKAGES`].
+pub fn base_priority_packages() -> &'static [&'static str] {
+    BASE_PRIORITY_PACKAGES
+}
+
+/// Whether `pkg` needs no `DESCRIPTION` entry to be reachable: R ships it at
+/// base priority, and it is not one of the two `R CMD check` nonetheless
+/// requires a package to declare.
+///
+/// This is `tools:::.check_packages_used`'s `standard_package_names`, and it is
+/// the exemption set a "you used an undeclared package" check must use.
+pub fn is_implicitly_available(pkg: &str) -> bool {
+    BASE_PRIORITY_PACKAGES.contains(&pkg) && !DECLARED_BASE_PACKAGES.contains(&pkg)
+}
+
+/// Identifier spellings R treats as a *variable* holding a package name rather
+/// than as a package: `library(pkg)` inside a helper that takes `pkg` as an
+/// argument. R's own `common_names`, and the same conservative reason —
+/// a name matched here is unresolvable statically, so treating it as a package
+/// could only ever invent a finding.
+pub fn is_package_name_placeholder(name: &str) -> bool {
+    matches!(name, "pkg" | "pkgName" | "package" | "pos" | "dep_name")
+}
+
 /// Names-only export lists for the top-N CRAN packages by download count,
 /// baked in from `cran/exports.txt` and parsed once.
 ///

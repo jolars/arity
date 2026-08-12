@@ -12,10 +12,10 @@
 //! index to fall out of step with the registry when a rule is added.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::LintConfig;
-use crate::linter::check::{check_description_document, check_document};
+use crate::linter::check::{check_description_document, check_document, check_paths_with_config};
 use crate::linter::diagnostic::{Diagnostic, Fix};
 use crate::linter::fix::apply_fixes;
 use crate::linter::render::{OutputMode, render_findings};
@@ -96,11 +96,66 @@ pub fn example_lint_config(rule: &AnyRule) -> LintConfig {
 pub fn lint_example(rule: &AnyRule, example: &Example) -> Vec<Diagnostic> {
     let config = example_lint_config(rule);
     let path = example_path(rule);
+    if !rule.doc_package().is_empty() {
+        return lint_example_in_package(rule, example, &config, &path);
+    }
     match rule {
         AnyRule::R(_) => check_document(&path, example.source, &config),
         AnyRule::Dcf(_) => check_description_document(&path, example.source, &config),
     }
     .unwrap_or_default()
+}
+
+/// Lint an example inside the synthetic package its rule declares — the
+/// `doc_package` path, for rules whose subject is a package-level fact and are
+/// therefore silent on the single-file path.
+///
+/// The example is written where R would keep it (`R/example.R`, or the
+/// `DESCRIPTION` itself), the whole root is linted through the cross-file
+/// driver, and the surviving findings are relabelled with the synthetic path so
+/// the rendered snippet still matches the source the reader is shown.
+fn lint_example_in_package(
+    rule: &AnyRule,
+    example: &Example,
+    config: &LintConfig,
+    path: &Path,
+) -> Vec<Diagnostic> {
+    let Ok(dir) = tempfile::tempdir() else {
+        return Vec::new();
+    };
+    let root = dir.path();
+    let example_at = match rule {
+        AnyRule::R(_) => root.join("R").join("example.R"),
+        AnyRule::Dcf(_) => root.join("DESCRIPTION"),
+    };
+    let files = rule
+        .doc_package()
+        .iter()
+        .map(|(relative, contents)| (root.join(relative), *contents))
+        .chain(std::iter::once((example_at.clone(), example.source)));
+    for (at, contents) in files {
+        if at
+            .parent()
+            .is_some_and(|parent| std::fs::create_dir_all(parent).is_err())
+            || std::fs::write(&at, contents).is_err()
+        {
+            return Vec::new();
+        }
+    }
+
+    let Ok(result) = check_paths_with_config(&[root.to_path_buf()], config) else {
+        return Vec::new();
+    };
+    result
+        .reports
+        .into_iter()
+        .filter(|report| report.path == example_at)
+        .flat_map(|report| report.diagnostics)
+        .map(|mut d| {
+            d.path = path.to_path_buf();
+            d
+        })
+        .collect()
 }
 
 /// Render the whole rule reference: preamble, a per-category index, and every

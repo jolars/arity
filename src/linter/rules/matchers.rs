@@ -93,6 +93,42 @@ pub fn sole_positional(call: &CallExpr) -> Option<SyntaxElement> {
     only.value
 }
 
+// --- package loads ---------------------------------------------------------
+
+/// The base callees whose `package` argument names a package, exactly the set
+/// `tools:::.check_packages_used` matches.
+pub const PACKAGE_LOAD_CALLS: [&str; 4] =
+    ["library", "require", "requireNamespace", "loadNamespace"];
+
+/// The package `call` names and the token to span, when `call` is one of
+/// [`PACKAGE_LOAD_CALLS`] and its `package` argument is a bare name or a string
+/// literal.
+///
+/// `None` for a computed argument, for `character.only = TRUE` (where a symbol
+/// names a variable holding the package name, not the package), and for R's
+/// `common_names` placeholders — none of which name a package statically, so
+/// matching them could only ever invent a finding.
+pub fn package_load_arg(call: &CallExpr) -> Option<(SmolStr, SyntaxToken)> {
+    if !PACKAGE_LOAD_CALLS.contains(&callee_name(call)?.as_str()) {
+        return None;
+    }
+    // `character.only = TRUE` says the argument is a variable, by contract.
+    if named_arg(call, "character.only").is_some_and(|el| is_true(&el)) {
+        return None;
+    }
+    let value = named_arg(call, "package").or_else(|| nth_arg(call, 0))?;
+    let token = value.as_token()?;
+    let name = match token.kind() {
+        SyntaxKind::IDENT => SmolStr::new(token.text()),
+        SyntaxKind::STRING => SmolStr::new(string_literal(token)?.1),
+        _ => return None,
+    };
+    if name.is_empty() || crate::semantic::symbols::is_package_name_placeholder(&name) {
+        return None;
+    }
+    Some((name, token.clone()))
+}
+
 // --- binary expressions ----------------------------------------------------
 
 /// Split a `BINARY_EXPR` into `(lhs, operator, rhs)` at its top-level operator
