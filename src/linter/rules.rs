@@ -25,7 +25,7 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::{BinaryExpr, CallExpr};
 use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
-use crate::project::description::DescriptionCompat;
+use crate::project::description::{DescriptionCompat, DescriptionFacts};
 use crate::project::{ExternalResolution, FileScope};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{FileControlFlow, PackageOrigin, SemanticModel, SymbolProvider};
@@ -312,6 +312,12 @@ pub struct RuleContext<'a> {
     /// result instead of re-running masking on every keystroke. `None` on the
     /// single-file paths, where the rule falls back to [`RuleContext::symbols`].
     pub resolution: Option<&'a ExternalResolution>,
+    /// The enclosing package's `DESCRIPTION` facts, when the caller already
+    /// resolved them — the cross-file paths read them from the tracked
+    /// `DESCRIPTION` input. `None` on the single-file paths, where
+    /// [`RuleContext::own_package`] and the compat floors fall back to the lazy
+    /// disk walk below.
+    pub package: Option<&'a DescriptionFacts>,
     /// Per-rule option tables from `[lint.rules.<id>]`, resolved once per run and
     /// carried on [`ResolvedRules`]. Rules that take no options ignore this.
     pub config: &'a RulesConfig,
@@ -351,6 +357,9 @@ impl RuleContext<'_> {
     /// a different question from cross-file visibility ([`RuleContext::project`]
     /// answers that, and is `None` on the single-file paths).
     pub fn own_package(&self) -> Option<&str> {
+        if let Some(facts) = self.package {
+            return facts.package.as_deref();
+        }
         self.own_package
             .get_or_init(|| crate::project::description::package_name_for_file(self.path))
             .as_deref()
@@ -378,6 +387,9 @@ impl RuleContext<'_> {
     }
 
     fn description_compat(&self) -> &DescriptionCompat {
+        if let Some(facts) = self.package {
+            return &facts.compat;
+        }
         self.description_compat
             .get_or_init(|| crate::project::description::description_compat_for_file(self.path))
     }
@@ -619,6 +631,7 @@ pub fn run_rules(
     symbols: &dyn SymbolProvider,
     project: Option<&FileScope<'_>>,
     resolution: Option<&ExternalResolution>,
+    package: Option<&DescriptionFacts>,
 ) -> Vec<Diagnostic> {
     let suppressions = SuppressionMap::build(root);
     let ctx = RuleContext {
@@ -629,6 +642,7 @@ pub fn run_rules(
         symbols,
         project,
         resolution,
+        package,
         config: &resolved.rules_config,
         suppressions: &suppressions,
         enabled_rules: &resolved.enabled,
@@ -753,6 +767,7 @@ mod tests {
             &symbols,
             None,
             None,
+            None,
         );
         assert_eq!(diags.len(), 1);
         // Emitted with the `Warning` placeholder; the override stamps `Error`.
@@ -780,6 +795,7 @@ mod tests {
             &model,
             &cfg,
             &symbols,
+            None,
             None,
             None,
         );
@@ -814,6 +830,7 @@ mod tests {
             symbols: &symbols,
             project: None,
             resolution: None,
+            package: None,
             config: &RulesConfig::default(),
             suppressions: &SuppressionMap::default(),
             enabled_rules: &EnabledRules::default(),

@@ -7,8 +7,8 @@ use arity::incremental::{
 };
 use arity::parser::Edit;
 use arity::project::{
-    DefKind, Project, ProjectMember, external_resolution, project_classes, project_defs,
-    project_reads, reverse_source_edges, visible_symbols, workspace_project,
+    DefKind, Project, ProjectMember, external_resolution, package_facts_for, project_classes,
+    project_defs, project_reads, reverse_source_edges, visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -1804,6 +1804,23 @@ fn refresh_descriptions_skips_write_when_unchanged() {
         None,
         "an unchanged DESCRIPTION refresh must write nothing"
     );
+}
+
+#[test]
+fn package_facts_resolve_for_a_member_without_disk() {
+    // What the lint rules read instead of walking to the package root and
+    // re-reading DESCRIPTION per file, per question. Deleting the file proves
+    // the lookup goes through the tracked input, not disk.
+    let (db, _m, dir) = description_package(DESCRIPTION_BASE);
+    let member = dir.path().join("R/foo.R");
+    std::fs::remove_file(dir.path().join("DESCRIPTION")).expect("remove");
+
+    let facts = package_facts_for(&db, &member).expect("the member's package is tracked");
+    assert_eq!(facts.package.as_deref(), Some("foo"));
+    assert_eq!(facts.attached_packages(), ["stats".to_string()].into());
+
+    // A file outside any package has none.
+    assert!(package_facts_for(&db, Path::new("/elsewhere/loose.R")).is_none());
 }
 
 #[test]

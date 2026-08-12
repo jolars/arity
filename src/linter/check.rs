@@ -18,9 +18,11 @@ use crate::incremental::{
     file_exports, file_free_reads, file_qualified_reads, parsed_tree_root, semantic_model,
     source_edges, top_level_events,
 };
+use crate::project::description::DescriptionFacts;
 use crate::project::{
     ExternalResolution, FileScope, PackageCollation, PackageDeclarations, Project, ProjectMember,
-    expected_r_sources, external_resolution, package_root, visible_symbols, workspace_project,
+    expected_r_sources, external_resolution, package_facts_for, package_root, visible_symbols,
+    workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -308,6 +310,7 @@ pub fn check_paths_with_index(
                 let visibility = visible_symbols(worker, project, file);
                 let file_scope = visibility.scope();
                 let resolution = external_resolution(worker, manifest, project, file);
+                let package = package_facts_for(worker, &path);
                 let kept = lint_parsed_file(
                     worker,
                     file,
@@ -316,6 +319,7 @@ pub fn check_paths_with_index(
                     &fallback,
                     Some(&file_scope),
                     Some(resolution),
+                    package,
                 );
                 let status = if kept.is_empty() {
                     LintStatus::Clean
@@ -391,6 +395,7 @@ fn intern_project<'db>(
 /// without diagnostics.
 ///
 /// Suppression filtering happens inside [`run_rules`], not here — see its doc.
+#[allow(clippy::too_many_arguments)]
 fn lint_parsed_file(
     db: &dyn IncrementalDb,
     file: SourceFile,
@@ -399,12 +404,13 @@ fn lint_parsed_file(
     provider: &dyn SymbolProvider,
     project: Option<&FileScope<'_>>,
     resolution: Option<&ExternalResolution>,
+    package: Option<&DescriptionFacts>,
 ) -> Vec<Diagnostic> {
     let root_node = parsed_tree_root(db, file);
     let model = semantic_model(db, file);
     let cfg = control_flow(db, file);
     let mut diagnostics = run_rules(
-        rules, path, &root_node, model, cfg, provider, project, resolution,
+        rules, path, &root_node, model, cfg, provider, project, resolution, package,
     );
     for d in &mut diagnostics {
         d.path = path.to_path_buf();
@@ -432,7 +438,7 @@ pub fn check_tracked_file(
         return Ok(syntax_error_diagnostics(parse_diagnostics, path));
     }
     Ok(lint_parsed_file(
-        db, file, path, &rules, provider, None, None,
+        db, file, path, &rules, provider, None, None, None,
     ))
 }
 
@@ -638,6 +644,7 @@ pub fn analyze_prepared(
         provider,
         Some(&file_scope),
         resolution,
+        package_facts_for(db, &active_path),
     )
 }
 

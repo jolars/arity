@@ -349,6 +349,28 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
     Project::new(db, members, namespaces, collations, declarations)
 }
 
+/// The [`DescriptionFacts`] of the package enclosing `path`, from the tracked
+/// `DESCRIPTION` inputs. `None` for a file outside any tracked package.
+///
+/// Pure — it touches no disk, which is the point: the lint rules used to walk
+/// to the package root (stat-ing for `DESCRIPTION` and `R/`) and then re-read
+/// and re-parse `DESCRIPTION`, per file and per question. The root is resolved
+/// against the *tracked* roots via [`package_root_in`], the same disk-free walk
+/// [`workspace_project`] uses.
+pub fn package_facts_for<'db>(
+    db: &'db dyn IncrementalDb,
+    path: &Path,
+) -> Option<&'db DescriptionFacts> {
+    let set = Descriptions::try_get(db)?;
+    let files = set.files(db);
+    let roots: BTreeSet<&PathBuf> = files.iter().map(|file| file.root(db)).collect();
+    let root = package_root_in(path, &roots)?;
+    files
+        .iter()
+        .find(|file| file.root(db) == &root)
+        .map(|&file| description_facts(db, file))
+}
+
 /// Every tracked package root's [`DescriptionFacts`], keyed by root.
 ///
 /// Pure: it reads the [`Descriptions`] input's handles and goes through
