@@ -81,6 +81,7 @@ so this page never drifts from the rules' actual behavior.
 
 **Packaging**
 
+- [`undeclared-dependency`](#undeclared-dependency)
 - [`description-missing-field`](#description-missing-field)
 - [`description-duplicate-field`](#description-duplicate-field)
 - [`description-version-constraint`](#description-version-constraint)
@@ -1417,6 +1418,37 @@ warning: roxygen2-compat
 ```
 
 ## Packaging
+
+### `undeclared-dependency`
+
+Flag package code that reaches a package its `DESCRIPTION` never declares.
+
+`dplyr::filter()` in `R/` works on the author's machine because `dplyr` happens to be installed there; on a clean machine it is a load-time error, and `R CMD check` reports it. Declaring the dependency is what causes it to be installed, so leaving it out is a bug that only ever surfaces somewhere else.
+
+The rule matches `pkg::name`, `pkg:::name`, and the package argument of `library`, `require`, `requireNamespace`, and `loadNamespace`—at any depth, since the conditional-dependency idiom lives inside a function body.
+
+The exempt set is R's own: everything declared in any of `Depends`, `Imports`, `Suggests`, `LinkingTo`, or `Enhances`, the package's own name, and the packages R ships at base priority—except `methods` and `stats4`, which `R CMD check` still expects a package to declare. Only files directly in `R/` are checked: a test's or a vignette's dependencies belong in `Suggests`, and R does not scan those directories for this check either.
+
+There is no autofix. A fix is an edit to the file the finding is in, and the repair here is a line in `DESCRIPTION`.
+
+This rule is **enabled by default**.
+
+In `R/` of a package whose `DESCRIPTION` declares only `Imports: rlang`:
+
+```r
+summarize <- function(data) {
+  dplyr::group_by(data, id)
+}
+```
+
+```text
+warning: undeclared-dependency
+ --> example.R:2:3
+  |
+2 |   dplyr::group_by(data, id)
+  |   ^^^^^ package `dplyr` is used here but is not declared in DESCRIPTION
+  = help: Add `dplyr` to `Imports:` in DESCRIPTION.
+```
 
 ### `description-missing-field`
 

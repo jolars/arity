@@ -196,6 +196,7 @@ fn documentation_rules() -> Vec<Box<dyn Rule>> {
 /// `AnyRule`s directly rather than going through [`r_rules`].
 fn packaging_rules() -> Vec<AnyRule> {
     vec![
+        AnyRule::R(Box::new(packaging::UndeclaredDependency)),
         AnyRule::Dcf(Box::new(packaging::DescriptionMissingField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionDuplicateField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionVersionConstraint)),
@@ -319,6 +320,20 @@ pub trait Rule: Send + Sync {
     fn doc_compat(&self) -> CompatConfig {
         CompatConfig::default()
     }
+
+    /// A synthetic package this rule's [`Rule::examples`] are linted *inside*:
+    /// `(relative path, contents)` pairs written to a temporary directory, with
+    /// the example itself placed at `R/example.R`.
+    ///
+    /// The escape hatch for a rule whose subject is a package-level fact.
+    /// `check_document`'s single-file path leaves `RuleContext::package` and
+    /// `project` `None`, so such a rule is silent there by construction — and an
+    /// example that produces no finding is not documentation. Same shape and
+    /// same reason as [`Rule::doc_compat`]. The default is none, which lints the
+    /// example as the loose script it looks like.
+    fn doc_package(&self) -> &'static [(&'static str, &'static str)] {
+        &[]
+    }
 }
 
 /// A rule over the DCF grammar — `DESCRIPTION`, not R.
@@ -354,6 +369,13 @@ pub trait DcfRule: Send + Sync {
 
     /// See [`Rule::doc_select`].
     fn doc_select(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// See [`Rule::doc_package`]. The example itself is placed at the package's
+    /// `DESCRIPTION`, so a fixture only supplies the `R/` sources and NAMESPACE
+    /// the rule reads.
+    fn doc_package(&self) -> &'static [(&'static str, &'static str)] {
         &[]
     }
 
@@ -440,6 +462,13 @@ impl AnyRule {
             Self::Dcf(_) => CompatConfig::default(),
         }
     }
+
+    pub fn doc_package(&self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::R(rule) => rule.doc_package(),
+            Self::Dcf(rule) => rule.doc_package(),
+        }
+    }
 }
 
 /// The rule IDs running in a pass, after `select`/`ignore`. Lets a rule tell
@@ -522,6 +551,24 @@ impl RuleContext<'_> {
         self.own_package
             .get_or_init(|| crate::project::description::package_name_for_file(self.path))
             .as_deref()
+    }
+
+    /// Whether this file is one of its package's R sources — a direct member of
+    /// `<root>/R/`.
+    ///
+    /// R loads `R/*.R` flat (it does not recurse), so the parent directory's
+    /// name plus the presence of package facts is exact. Deliberately narrower
+    /// than "belongs to a package": [`RuleContext::package`] resolves for a
+    /// `tests/testthat/` file too, since it walks up to the package root — and
+    /// a test file is not code R will load, which is exactly the distinction a
+    /// dependency check needs and `internal-function` needs the opposite of.
+    pub fn is_package_r_source(&self) -> bool {
+        self.package.is_some()
+            && self
+                .path
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|dir| dir == "R")
     }
 
     /// The minimum supported R version this file targets, or `None` when no

@@ -9,7 +9,9 @@
 mod description_duplicate_field;
 mod description_missing_field;
 mod description_version_constraint;
+mod undeclared_dependency;
 
 pub use description_duplicate_field::DescriptionDuplicateField;
 pub use description_missing_field::DescriptionMissingField;
 pub use description_version_constraint::DescriptionVersionConstraint;
+pub use undeclared_dependency::UndeclaredDependency;
