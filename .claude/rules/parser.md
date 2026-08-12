@@ -92,8 +92,12 @@ the same hard invariants — losslessness above all. Roadmap in `TODO.md`.
 - Fixtures: `crates/arity-parser/tests/fixtures/dcf/<case>/input.dcf`,
   hand-registered in `tests/dcf_snapshots.rs`. The CRLF case needs a `-text`
   entry in `.gitattributes` or git normalizes it away on clone.
-- Known, tested divergences from R's `read.dcf` are listed in `TODO.md`; they
-  are preserved on purpose and change only in their own commit.
+- **`read.dcf` is the oracle**, not a comment: `task dcf-oracle`
+  (`tests/oracle/dcf_oracle.R` + `tests/dcf_oracle.rs`, `#[ignore]`d) diffs
+  arity against R over the fixtures plus an adversarial table. It normalizes
+  exactly the divergences `TODO.md` records and fails on anything else, so
+  never "explain" a new disagreement — either fix the parser or add the
+  divergence there deliberately.
 
 ## Incrementality (Tenet 2)
 

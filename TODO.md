@@ -457,11 +457,39 @@ completion and hover, and it formats. Staged so each step is useful alone.
       trust. Ships through the dprint plugin too, which is why stage 1 lives in
       the parser crate.
 
-- [ ] **Known divergences from R's `read.dcf`**, deliberate and pinned by tests
-      in `dcf/parser.rs`; each is its own future commit, never a drive-by:
+- [x] **A `read.dcf` differential oracle** (`tests/oracle/dcf_oracle.R` +
+      `tests/dcf_oracle.rs`, `#[ignore]`d, `task dcf-oracle`). R's `read.dcf`
+      *is* the definition of what a DESCRIPTION means, so the parser is checked
+      against it rather than against comments claiming what R does. 71 cases:
+      the committed DCF fixtures, the rindex DESCRIPTIONs, the untracked
+      `roxygen2-ref` checkout when present, and an adversarial table mirroring
+      the parser's losslessness cases. The three divergences below are
+      normalized; **anything else fails**, so closing one is a matter of
+      deleting its normalization and watching the oracle prove the fix. It
+      earned its keep immediately by finding divergence 3, which had been
+      assumed away.
+
+- [ ] **Known divergences from R's `read.dcf`**, deliberate, normalized in the
+      oracle and pinned by tests in `dcf/parser.rs`; each is its own future
+      commit, never a drive-by:
   - A field whose own line is empty folds with a leading `\n`
     (`Collate:\n a.R\n b.R` -> `"\na.R\nb.R"`); R drops the empty segment.
   - A duplicate field resolves to the **first** occurrence; R takes the last.
+  - A field name is trimmed. R does *not*: `Package : p` declares a field
+    literally named `"Package "`, so R sees no `Package` at all. arity is
+    deliberately lenient here (it reads the obvious intent of a typo'd header),
+    and the CST keeps the whitespace as its own token, so a DESCRIPTION lint
+    can flag it precisely instead of the parser guessing.
+
+- [ ] **`desc` is a style reference for stage 5, not an oracle.** Tested against
+      desc 1.4.3: `desc::desc_normalize()` reorders fields, splits dependency
+      lists one per line, and quotes `Collate` entries—all of which stage 5
+      wants—but it **drops comments even on a plain parse->write with no
+      normalization**, and emits a trailing space after `Depends:`. Matching it
+      byte for byte would mean deleting user content, which contradicts the
+      invariant the DCF parser exists to uphold. So measure against it the way
+      `air` is measured for R: soft, one-directional, never a gate, with comment
+      preservation and the trailing space as known divergences.
 
 ## Misc
 

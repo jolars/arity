@@ -505,6 +505,10 @@ mod tests {
         );
     }
 
+    /// arity trims the name. R's `read.dcf` does **not**: `Package : p`
+    /// declares a field literally named `"Package "`, so R sees no `Package`
+    /// at all. Trimming is the lenient direction, and the whitespace survives
+    /// as its own token, so a lint can still flag the typo precisely.
     #[test]
     fn field_name_excludes_trailing_space() {
         let text = "Package : p\n";

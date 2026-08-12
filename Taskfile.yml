@@ -93,6 +93,11 @@ tasks:
           && mv /tmp/roxygen-projector-allowlist.txt tests/oracle/roxygen-projector-allowlist.txt
         echo "seeded $(wc -l < /tmp/roxygen-projector-pass.txt) matching cases into the projector allowlist"
 
+  dcf-oracle:
+    desc: Check the DCF parser against R's own `read.dcf` (needs R)
+    cmds:
+      - cargo test --test dcf_oracle -- --ignored --nocapture
+
   roxygen-oracle:
     desc: Measure roxygen2 Rd-preservation fixed point on the curated corpus (writes ROXYGEN_ORACLE.md; needs R + roxygen2)
     cmds:
