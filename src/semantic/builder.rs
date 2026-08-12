@@ -504,6 +504,21 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
 }
 
 fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    // Naming a package in a load call *references* it, wherever the call sits —
+    // `requireNamespace()` inside a function body is the conditional-dependency
+    // idiom. Recorded separately from the attach set below, which is
+    // deliberately top-level-only because attachment is the narrower fact.
+    if let Some(call) = CallExpr::cast(node.clone())
+        && let Some(callee) = call_callee_ident(&call)
+        && matches!(
+            callee.as_str(),
+            "library" | "require" | "requireNamespace" | "loadNamespace"
+        )
+        && let Some((pkg_name, _)) = first_string_or_ident_arg(&call)
+    {
+        ctx.model.referenced_packages.push(pkg_name);
+    }
+
     // Detect a top-level `library(pkg)` / `require(pkg)` / `requireNamespace("pkg")`.
     if ctx.function_depth == 0
         && let Some(call) = CallExpr::cast(node.clone())

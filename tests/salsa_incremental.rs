@@ -7,8 +7,9 @@ use arity::incremental::{
 };
 use arity::parser::Edit;
 use arity::project::{
-    DefKind, Project, ProjectMember, external_resolution, package_facts_for, project_classes,
-    project_defs, project_reads, reverse_source_edges, visible_symbols, workspace_project,
+    DefKind, Project, ProjectMember, external_resolution, package_facts_for, package_usage,
+    project_classes, project_defs, project_reads, reverse_source_edges, visible_symbols,
+    workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -1767,6 +1768,68 @@ fn description_collate_edit_reaches_the_project() {
         after.iter().all(|c| !c.complete),
         "an un-analyzed collated source makes the package incomplete"
     );
+}
+
+/// The backdating firewall under `unused-dependency`. That rule reports on
+/// *absence*, so it folds every member's package references — and if that fold
+/// re-ran on every keystroke, an opt-in audit rule would cost the LSP a project
+/// walk per character.
+#[test]
+fn a_body_edit_spares_the_package_usage_fold() {
+    let (mut db, m, _dir) = description_package(DESCRIPTION_BASE);
+    let project = workspace_project(&db);
+    let _ = package_usage(&db, project);
+
+    db.clear_query_log();
+    // A body edit: the file still names no package and still exports `foo`.
+    db.set_file_text(
+        m,
+        "foo <- function() 1 + 1
+",
+    );
+    let project = workspace_project(&db);
+    let _ = package_usage(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::PackageReferences),
+        Some(&1),
+        "the text changed, so the per-file references must be re-derived"
+    );
+    assert_eq!(
+        counts.get(&QueryKind::PackageUsage),
+        None,
+        "the references compare equal, so they must backdate and spare the fold"
+    );
+}
+
+/// The negative control: adding a `pkg::` does change the fold's input, so it
+/// must propagate. Without this, "nothing re-runs" could mean nothing is wired.
+#[test]
+fn a_new_qualified_call_reaches_the_package_usage_fold() {
+    let (mut db, m, _dir) = description_package(DESCRIPTION_BASE);
+    let project = workspace_project(&db);
+    assert!(
+        !package_usage(&db, project)[&_dir.path().to_path_buf()]
+            .used
+            .contains("dplyr")
+    );
+
+    db.clear_query_log();
+    db.set_file_text(
+        m,
+        "foo <- function() dplyr::filter(x)
+",
+    );
+    let project = workspace_project(&db);
+    let usage = package_usage(&db, project);
+
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::PackageUsage),
+        Some(&1),
+        "a new package reference is a fact the fold consumes and must propagate"
+    );
+    assert!(usage[&_dir.path().to_path_buf()].used.contains("dplyr"));
 }
 
 #[test]

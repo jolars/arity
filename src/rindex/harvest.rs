@@ -441,9 +441,12 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
                     }
                 }
             }
-            "importFrom" => {
+            "importFrom" | "importClassesFrom" | "importMethodsFrom" => {
                 // `importFrom(pkg, a, b, ...)`: the first arg is the package, the
-                // rest are the imported names.
+                // rest are the imported names. The S4 forms have the same shape
+                // and reference `pkg` just as surely; their names go into the
+                // same set, which can only ever *suppress* an
+                // `undefined-symbol` — the conservative direction.
                 let mut args = directive.values();
                 if let Some(package) = args.next() {
                     info.imported_from_packages.insert(package);
@@ -532,6 +535,8 @@ const RECOGNIZED: &[&str] = &[
     "exportMethods",
     "export",
     "importFrom",
+    "importClassesFrom",
+    "importMethodsFrom",
     "import",
     "S3method",
 ];
@@ -1008,6 +1013,22 @@ mod tests {
         assert_eq!(
             info.imported_names,
             ["filter".to_string(), "select".to_string()].into()
+        );
+    }
+
+    /// The S4 forms reference their package exactly as `importFrom` does. An S4
+    /// package whose only reference to a dependency is one of these would
+    /// otherwise look unused.
+    #[test]
+    fn s4_import_forms_record_the_package_they_name() {
+        let info = parse_namespace(
+            "importClassesFrom(Matrix, dgCMatrix)\nimportMethodsFrom(Matrix, crossprod)\n",
+            &[],
+        );
+        assert_eq!(info.imported_from_packages, ["Matrix".to_string()].into());
+        assert_eq!(
+            info.imported_names,
+            ["dgCMatrix".to_string(), "crossprod".to_string()].into()
         );
     }
 

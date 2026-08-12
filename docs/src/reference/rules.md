@@ -85,6 +85,7 @@ so this page never drifts from the rules' actual behavior.
 - [`description-missing-field`](#description-missing-field)
 - [`description-duplicate-field`](#description-duplicate-field)
 - [`description-version-constraint`](#description-version-constraint)
+- [`unused-dependency`](#unused-dependency)
 
 **Meta**
 
@@ -1543,6 +1544,39 @@ warning: description-version-constraint
 3 | Imports: dplyr (1.0.0)
   |          ^^^^^^^^^^^^^ the version constraint on `dplyr` states no bound, so R enforces nothing here
   = help: Write a comparison operator and a version, as in `(>= 1.0.0)`.
+```
+
+### `unused-dependency`
+
+Flag an `Imports:` entry that nothing in the package reaches.
+
+An `Imports` entry promises that installing this package installs that one, so an entry no code reaches costs every user a download, a build, and a constraint to satisfy for nothing. `R CMD check` reports it too.
+
+A package counts as reached by `pkg::`, `pkg:::`, a `library`, `require`, `requireNamespace`, or `loadNamespace` call at any depth, a NAMESPACE `import()`/`importFrom()`/`importClassesFrom()`/`importMethodsFrom()`, or a roxygen `@import`/`@importFrom` tag. Exempt on top of that: anything also in `LinkingTo` (the Rcpp skeleton), `methods` when the package defines an S4 or reference class, and any package whose name appears as a plain string (a dynamic `do.call("::", …)` or `system.file(package = …)`).
+
+Only `Imports` is checked. `Depends` is an API decision the package's own code may never name; `Suggests` is for tests, vignettes, and examples, which this analysis does not cover; `LinkingTo` and `Enhances` are invisible to R-source analysis. A package used *only* from `tests/` or a vignette **is** flagged—it belongs in `Suggests`.
+
+It reports on *absence*, and a wrong finding would have a maintainer delete a dependency their package needs, so it stays silent unless the run analyzed the package's whole `R/` source set and read its NAMESPACE—which is also why it is off by default.
+
+There is no autofix: removing an entry from a comma-separated list is not a local edit, and this is not a claim a tool should act on destructively.
+
+This rule is **disabled by default**; enable it with `select`.
+
+In a package whose only R source is `f <- function() rlang::abort("no")`:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Imports: rlang, tibble
+```
+
+```text
+warning: unused-dependency
+ --> DESCRIPTION:3:17
+  |
+3 | Imports: rlang, tibble
+  |                 ^^^^^^ `tibble` is declared in `Imports:` but nothing in the package uses it
+  = help: Remove `tibble` from `Imports:`, or move it to `Suggests:` if only tests, vignettes, or examples need it.
 ```
 
 ## Meta

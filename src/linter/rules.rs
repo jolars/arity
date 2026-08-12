@@ -32,7 +32,7 @@ use crate::ast::{BinaryExpr, CallExpr};
 use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
 use crate::dcf;
 use crate::project::description::{DescriptionCompat, DescriptionFacts};
-use crate::project::{ExternalResolution, FileScope};
+use crate::project::{ExternalResolution, FileScope, PackageUsage};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{FileControlFlow, PackageOrigin, SemanticModel, SymbolProvider};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
@@ -200,6 +200,7 @@ fn packaging_rules() -> Vec<AnyRule> {
         AnyRule::Dcf(Box::new(packaging::DescriptionMissingField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionDuplicateField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionVersionConstraint)),
+        AnyRule::Dcf(Box::new(packaging::UnusedDependency)),
     ]
 }
 
@@ -969,6 +970,12 @@ pub struct DcfRuleContext<'a> {
     /// The facts this document declares, folded once per file so several rules
     /// don't refold the same fields. Derived from `document`, never from disk.
     pub facts: &'a DescriptionFacts,
+    /// The enclosing package's R-side dependency usage, when the caller
+    /// computed one — the cross-file driver does. `None` on the single-file
+    /// paths (`check_description_document`, the docs renderer), where a rule
+    /// that needs it must stay silent, exactly as the version-aware rules do
+    /// without a floor.
+    pub usage: Option<&'a PackageUsage>,
     /// Per-rule option tables from `[lint.rules.<id>]`. See [`RuleContext::config`].
     pub config: &'a RulesConfig,
     /// The document's `# arity-ignore` directives, used by [`run_dcf_rules`] to
@@ -992,6 +999,7 @@ pub fn run_dcf_rules(
     root: &dcf::SyntaxNode,
     document: &dcf::Document,
     facts: &DescriptionFacts,
+    usage: Option<&PackageUsage>,
 ) -> Vec<Diagnostic> {
     let suppressions = SuppressionMap::build_dcf(root);
     let ctx = DcfRuleContext {
@@ -999,6 +1007,7 @@ pub fn run_dcf_rules(
         root,
         document,
         facts,
+        usage,
         config: &resolved.rules_config,
         suppressions: &suppressions,
         enabled_rules: &resolved.enabled,
@@ -1112,6 +1121,7 @@ mod tests {
             &parsed.cst,
             &document,
             &facts,
+            None,
         )
     }
 
