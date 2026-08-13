@@ -1,5 +1,6 @@
 pub(crate) mod context;
 pub mod core;
+pub mod description;
 pub(crate) mod ir;
 pub(crate) mod printer;
 pub(crate) mod render;
@@ -11,5 +12,8 @@ pub(crate) mod trivia;
 pub use core::{
     FormatError, RangeFormatted, format, format_node, format_range, format_with_options,
     format_with_style,
+};
+pub use description::{
+    DeclineReason, DescriptionFormatError, format_description, format_description_with_style,
 };
 pub use style::{FormatStyle, LineEnding};

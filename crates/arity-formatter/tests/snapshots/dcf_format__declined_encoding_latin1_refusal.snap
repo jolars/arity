@@ -1,0 +1,5 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: err.to_string()
+---
+left unformatted: declared encoding "latin1" is not UTF-8

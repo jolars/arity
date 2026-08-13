@@ -1,0 +1,2 @@
+Package: p
+Authors@R: person("Jo", "La", email = "jo@example.com", role = c("aut", "cre"))

@@ -1,0 +1,9 @@
+Package: p
+Title: A Thing
+Version: 0.1.0
+Description: Short.
+License: MIT + file LICENSE
+Imports:
+    a,
+    b
+Encoding: UTF-8

@@ -1,0 +1,5 @@
+Package: p
+Collate:
+    'a.R'
+# an interior comment
+    'b.R'

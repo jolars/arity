@@ -25,3 +25,4 @@ crates/arity-parser/tests/fixtures/parser/*_lf_*/* -text
 crates/arity-parser/tests/fixtures/parser/*_crlf/* -text
 crates/arity-parser/tests/fixtures/parser/*_lf/* -text
 crates/arity-parser/tests/fixtures/dcf/crlf/* -text
+crates/arity-formatter/tests/fixtures/dcf/crlf/* -text

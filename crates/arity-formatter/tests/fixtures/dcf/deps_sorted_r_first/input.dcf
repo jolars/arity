@@ -1,0 +1,3 @@
+Package: p
+Depends: zoo, R (>= 3.5), MASS
+Imports: rlang, R6, cli

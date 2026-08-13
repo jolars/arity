@@ -1,0 +1,9 @@
+Package: p
+Depends:
+    R (>= 3.5),
+    MASS,
+    zoo
+Imports:
+    cli,
+    R6,
+    rlang

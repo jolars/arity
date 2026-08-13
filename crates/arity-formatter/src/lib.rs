@@ -10,10 +10,14 @@
 //! [`FormatStyle`]. With the `serde` feature, `FormatStyle` is
 //! (de)serializable; the `schema` feature additionally derives
 //! `schemars::JsonSchema`.
+//!
+//! A package's `DESCRIPTION` is a second grammar with its own entry point,
+//! [`format_description`]; see [`formatter::description`].
 
 pub mod formatter;
 
 pub mod ast;
+pub mod dcf;
 pub mod parser;
 pub mod syntax;
 
@@ -26,6 +30,7 @@ pub mod syntax;
 pub use rowan;
 
 pub use formatter::{
-    FormatError, FormatStyle, LineEnding, RangeFormatted, format, format_node, format_range,
+    DeclineReason, DescriptionFormatError, FormatError, FormatStyle, LineEnding, RangeFormatted,
+    format, format_description, format_description_with_style, format_node, format_range,
     format_with_options, format_with_style,
 };

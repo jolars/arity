@@ -1,0 +1,3 @@
+Package: p
+Config/Needs/website: pkgdown,
+  tidyverse/tidytemplate

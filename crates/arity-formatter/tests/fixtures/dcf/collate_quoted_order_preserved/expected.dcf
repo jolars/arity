@@ -1,0 +1,4 @@
+Package: p
+Collate:
+    'b.R'
+    'a.R'
