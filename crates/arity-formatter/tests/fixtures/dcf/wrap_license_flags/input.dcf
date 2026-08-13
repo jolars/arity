@@ -1,0 +1,5 @@
+Package: p
+License_restricts_use:
+    yes
+License_is_FOSS: no
+License: GPL-3

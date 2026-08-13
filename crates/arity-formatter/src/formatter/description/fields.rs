@@ -64,9 +64,12 @@ fn opaque(name: &str, lines: &[String], indent: &str) -> Vec<String> {
 /// The field's own bytes, appended straight after the colon.
 fn verbatim(name: &str, raw: &str) -> Vec<String> {
     let joined = format!("{name}:{raw}");
+    // `strip_suffix`, not `trim_end_matches`: exactly one `\r` is this line's
+    // CRLF terminator. Any further one is a byte of the value, and replaying the
+    // value's bytes is the whole point of this shape.
     let mut lines: Vec<String> = joined
         .split('\n')
-        .map(|line| line.trim_end_matches('\r').to_string())
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
         .collect();
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();

@@ -97,6 +97,8 @@ const PROSE: &[&str] = &[
     "Biarch",
     "BuildVignettes",
     "NeedsCompilation",
+    "License_is_FOSS",
+    "License_restricts_use",
 ];
 
 pub fn meaning(text: &str) -> Meaning {

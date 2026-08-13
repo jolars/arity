@@ -1,0 +1,8 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: formatted
+---
+Package: p
+License: GPL-3
+License_is_FOSS: no
+License_restricts_use: yes

@@ -180,9 +180,20 @@ fn check_encoding(fields: &[FieldPlan]) -> Result<(), DeclineReason> {
     let Some(field) = fields.iter().find(|field| field.name == "Encoding") else {
         return Ok(());
     };
+    // Whichever body the field landed in, it still *declares* an encoding, and
+    // the guard is about the other fields: re-wrapping prose we cannot decode is
+    // the guesswork being refused. Waving it through for any shape but `Wrapped`
+    // would disarm the check exactly when the field is unusual.
     let declared = match &field.body {
-        FieldBody::Wrapped(value) => value.trim().to_string(),
-        _ => return Ok(()),
+        FieldBody::Wrapped(value) => collapse_whitespace(value),
+        // Frozen by an interior comment. The comment lines are not the value.
+        FieldBody::Verbatim(raw) => collapse_whitespace(&strip_comment_lines(raw)),
+        FieldBody::Opaque(lines) => collapse_whitespace(&lines.join(" ")),
+        // Unreachable while `Encoding` is in `WRAPPED`, but a class table is a
+        // thing that changes; decline rather than assume.
+        FieldBody::CommaList(_) | FieldBody::OrderedList(_) | FieldBody::RCode(_) => {
+            return Err(DeclineReason::UnsupportedStructure);
+        }
     };
     if declared.is_empty()
         || declared.eq_ignore_ascii_case("UTF-8")
@@ -400,6 +411,15 @@ fn collapse_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A frozen field's value with its interleaved comment lines dropped — what
+/// `read.dcf` sees, which skips them and resumes the field.
+fn strip_comment_lines(raw: &str) -> String {
+    raw.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn strip_whitespace(value: &str) -> String {
     value.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
@@ -531,6 +551,21 @@ mod tests {
                 declared: "latin1".to_string()
             })
         );
+    }
+
+    #[test]
+    fn an_encoding_frozen_by_a_comment_still_declines() {
+        // The interior comment makes the field `Verbatim`. Reading the guard off
+        // `Wrapped` alone would wave the file through and re-wrap every *other*
+        // field's prose, which is the guesswork the guard exists to refuse.
+        assert_eq!(
+            build(&dcf::parse("Package: p\nEncoding:\n# why\n    latin1\n").document()),
+            Err(DeclineReason::Encoding {
+                declared: "latin1".to_string()
+            })
+        );
+        // A frozen UTF-8 declaration is still fine.
+        assert!(build(&dcf::parse("Package: p\nEncoding:\n# why\n    UTF-8\n").document()).is_ok());
     }
 
     #[test]

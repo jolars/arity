@@ -49,6 +49,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_field_inline",
         "utf8_value",
         "wrap_description",
+        "wrap_license_flags",
         "wrap_tab_continuation",
         "wrap_unbreakable_url",
     ]
