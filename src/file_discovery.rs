@@ -559,24 +559,28 @@ mod tests {
     /// `tests/fixtures/` among them, which is what broke on Windows, where
     /// `canonicalize` returns a `\\?\` verbatim path and nothing else does.
     ///
-    /// Modeled here with a symlink, the one spelling difference Unix has.
+    /// Modeled here with a symlink, the one spelling difference Unix has: the
+    /// matcher is rooted at the symlinked name and the walk reports canonical
+    /// paths, which is the spelling [`root_spellings`] bridges to. Both sides go
+    /// through `canonicalize` rather than trusting `tempdir()`'s own path —
+    /// macOS hands out `/var/...`, where `/var` is itself a symlink, so the two
+    /// spellings would otherwise differ in a second, unmodeled way.
     #[test]
     #[cfg(unix)]
     fn an_anchored_pattern_holds_through_a_differently_spelled_root() {
         use std::os::unix::fs::symlink;
 
-        let dir = tempdir().unwrap().keep();
-        let real = dir.join("real");
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("real");
         touch(&real.join("keep.R"));
         touch(&real.join("tests").join("fixtures").join("skip.R"));
-        let link = dir.join("link");
+        let link = dir.path().join("link");
         symlink(&real, &link).unwrap();
+        let canonical = real.canonicalize().unwrap();
 
-        // Rooted at the symlinked spelling; the walk reports the real one.
         let filter = ExcludeFilter::new(&link, &["tests/fixtures/".to_string()]).unwrap();
-        let files = collect_r_files(std::slice::from_ref(&real), &filter).unwrap();
-        assert_eq!(files, vec![real.join("keep.R")]);
-        std::fs::remove_dir_all(&dir).ok();
+        let files = collect_r_files(std::slice::from_ref(&canonical), &filter).unwrap();
+        assert_eq!(files, vec![canonical.join("keep.R")]);
     }
 
     #[test]
