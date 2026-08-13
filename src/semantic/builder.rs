@@ -557,13 +557,13 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             "attach" | "load" => {
                 ctx.model.attaches_opaque_env = true;
             }
-            // `.C`/`.Call`/`.Fortran`/`.External`: a bare IDENT in the head
-            // (first-argument) position names a native routine registered via
-            // `useDynLib`, not a scope read. Suppress just that read; the
-            // remaining arguments stay ordinary reads. A string head has no
-            // IDENT (a no-op), and a compound/`::`-qualified head yields no
-            // bare token here, so it walks normally.
-            ".C" | ".Call" | ".Fortran" | ".External" => {
+            // `.C`/`.Call`/`.Fortran`/`.External`/`.External2`: a bare IDENT in
+            // the head (first-argument) position names a native routine
+            // registered via `useDynLib`, not a scope read. Suppress just that
+            // read; the remaining arguments stay ordinary reads. A string head
+            // has no IDENT (a no-op), and a compound/`::`-qualified head yields
+            // no bare token here, so it walks normally.
+            ".C" | ".Call" | ".Fortran" | ".External" | ".External2" => {
                 if let Some((_, head_range)) = first_string_or_ident_arg(&call) {
                     let prev = ctx.suppress_read.replace(head_range);
                     walk_generic(ctx, node, scope);

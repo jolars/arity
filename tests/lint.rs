@@ -1945,14 +1945,20 @@ fn undefined_symbol_skips_implicit_method_variables() {
 
 #[test]
 fn undefined_symbol_skips_native_routine_head() {
-    // A bare name in the head position of `.C`/`.Call`/`.Fortran`/`.External`
-    // names a native routine registered via `useDynLib`, not a scope read.
+    // A bare name in the head position of `.C`/`.Call`/`.Fortran`/`.External`/
+    // `.External2` names a native routine registered via `useDynLib`, not a
+    // scope read.
     let p = CompositeProvider::base_only();
-    let msgs = undefined_with("f <- function(x) .C(VR_sammon, as.double(x))\n", &p);
-    assert!(
-        msgs.is_empty(),
-        "native routine head must not be flagged, got {msgs:?}"
-    );
+    for src in [
+        "f <- function(x) .C(VR_sammon, as.double(x))\n",
+        "f <- function(expr, env) .External2(ffi_eval, expr, env)\n",
+    ] {
+        let msgs = undefined_with(src, &p);
+        assert!(
+            msgs.is_empty(),
+            "native routine head must not be flagged in {src:?}, got {msgs:?}"
+        );
+    }
 }
 
 #[test]
