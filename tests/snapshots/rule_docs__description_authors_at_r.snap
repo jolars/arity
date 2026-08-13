@@ -1,0 +1,91 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `description-authors-at-r`
+
+Flag an `Authors@R` field R will not read the way its author meant it.
+
+`R CMD build` derives `Author` and `Maintainer` from this field, and the derivation is exacting: it needs a person with the `cre` role, a non-empty name, **and** an email. Without one it errors out—"Authors@R field gives no person with maintainer role, valid email address and non-empty name"—so `person("Jane", "Doe", role = c("aut", "cre"))` is a package that does not build.
+
+The rest of R's `.check_package_description_authors_at_R_field` is reported by the same rule: a field that is not R, or that holds a call R refuses to evaluate (only `person`, `as.person`, `c`, `list`, `paste`, and `paste0` are allowed); a person with no name or no role, who is credited nowhere at all; a role outside the MARC relator table, which `person()` silently drops; more than one `cre`, where R stores exactly one maintainer; and a malformed or duplicated ORCID iD or ROR ID. Both identifiers are self-validating—an ORCID carries a MOD 11-2 check digit—so no network is involved.
+
+Two checks on the neighboring `Author` field are here for the same reason, since both are `Authors@R` content written under the wrong key: a value that begins with the field header `Author:`, and a value that is a `person(...)` or `c(...)` call, which R stores verbatim and never evaluates.
+
+Nothing is evaluated. The value is parsed with arity's own R parser and resolved only as far as literal text goes; a computed argument resolves to unknown and every finding that depends on it is withheld, so the rule reports strictly less than `R CMD check` does and never more.
+
+There is no autofix: an email, a name, a role, and a check digit are all facts about a person that only that person has.
+
+This rule is **enabled by default**.
+
+A creator with no `email`, which is what R needs to derive a `Maintainer` and refuses to build without:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Authors@R: person("Jane", "Doe", role = c("aut", "cre"))
+```
+
+```text
+warning: description-authors-at-r
+ --> DESCRIPTION:3:12
+  |
+3 | Authors@R: person("Jane", "Doe", role = c("aut", "cre"))
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the package's `cre` has no email address, so R can derive no `Maintainer`
+  = help: Add `email = "name@example.com"`. `R CMD build` needs a `cre` with a name and an address, and errors out without one.
+```
+
+A person credited nowhere, because `person()` drops anyone with no role:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Authors@R: c(
+    person("Jane", "Doe", , "jane@example.com", c("aut", "cre")),
+    person("John", "Roe")
+  )
+```
+
+```text
+warning: description-authors-at-r
+ --> DESCRIPTION:5:5
+  |
+5 |     person("John", "Roe")
+  |     ^^^^^^^^^^^^^^^^^^^^^ this person has no role, so R credits them nowhere
+  = help: Add a `role`, such as `"aut"` for an author or `"ctb"` for a contributor: `person()` drops anyone with no role from `Author`.
+```
+
+An ORCID iD whose MOD 11-2 check digit does not add up:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Authors@R: person("Jane", "Doe", , "jane@example.com", c("aut", "cre"),
+    comment = c(ORCID = "0000-0002-1825-0098"))
+```
+
+```text
+warning: description-authors-at-r
+ --> DESCRIPTION:4:25
+  |
+4 |     comment = c(ORCID = "0000-0002-1825-0098"))
+  |                         ^^^^^^^^^^^^^^^^^^^^^ `0000-0002-1825-0098` is not a valid ORCID iD
+  = help: An ORCID iD is `0000-0002-1825-0097` and carries a check digit, so a mistyped one is decidable without asking orcid.org.
+```
+
+R code under the `Author` key, which R stores as a plain string and never evaluates:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Author: person("Jane", "Doe", role = c("aut", "cre"))
+```
+
+```text
+warning: description-authors-at-r
+ --> DESCRIPTION:3:9
+  |
+3 | Author: person("Jane", "Doe", role = c("aut", "cre"))
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `person("Jane", "Doe", role = c("aut", "cre"))` is R code under the `Author` key
+  = help: Move the call to `Authors@R`, which R evaluates. `Author` is a plain string R prints as written, brackets and quotes included.
+```

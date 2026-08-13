@@ -6,6 +6,8 @@
 //! `DESCRIPTION` declares and no code reaches, are the same defect seen from
 //! two sides, and a reader looking for either should find both in one place.
 
+mod authors;
+mod description_authors_at_r;
 mod description_duplicate_field;
 mod description_malformed_maintainer;
 mod description_malformed_name;
@@ -17,6 +19,7 @@ mod scalar_field;
 mod undeclared_dependency;
 mod unused_dependency;
 
+pub use description_authors_at_r::DescriptionAuthorsAtR;
 pub use description_duplicate_field::DescriptionDuplicateField;
 pub use description_malformed_maintainer::DescriptionMalformedMaintainer;
 pub use description_malformed_name::DescriptionMalformedName;

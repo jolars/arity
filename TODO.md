@@ -207,8 +207,10 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   So `person("Jane", "Doe", role = c("aut", "cre"))`—no `email`—is rejected
   by R and passes arity today. Confirmed against R. Fixing it means the rule
   consults the parsed `Authors@R` rather than testing the field for
-  non-emptiness, which makes it depend on `description-authors-at-r` below;
-  do that one first. Write the failing test before the fix.
+  non-emptiness; `description-authors-at-r` has landed, so the resolver it
+  needs (`src/linter/rules/packaging/authors.rs`) is there and the file is no
+  longer silent—only this rule's own reading of it is. Write the failing test
+  before the fix.
 
 - [ ] `description-title-format`. The parts R and CRAN actually enforce: no
   continuation lines (R-exts says Title *cannot* have any, and
@@ -248,25 +250,28 @@ Tier 2—needs a small bundled table or the project layer:
   as UTF-8, so "is this valid UTF-8" is decided, which makes
   `Encoding: UTF-8` a **safe fix**.
 
-- [ ] `description-authors-at-r`. Parse the `Authors@R` value with arity's own R
-  parser—exactly the trick `src/project/description.rs` already plays on the
-  `Roxygen` field—then check statically: at least one `"cre"` role, an
-  `email` on that person, a non-empty name, and roles drawn from R's known
-  set. Those first three are what R's own derivation needs, so this rule is
-  the prerequisite for the `description-missing-field` gap above. R's
-  `.check_package_description_authors_at_R_field` adds, at its strict tiers,
-  persons with no name and persons with no role, plus ORCID and ROR checksum
-  validation—the identifiers are self-validating, so they need no network.
-  No evaluation, so the static-semantics tenet holds; anything computed
-  resolves to "unknown" and the rule stays silent, like the markdown
-  resolver.
-
-  Two CRAN-incoming checks on the neighboring `Author` field fold in here,
-  since both are about `Authors@R` content written under the wrong key:
-  `author_starts_with_Author` (a value literally beginning `Author:`, i.e. a
-  pasted-in field header) and `author_should_be_authors_at_R` (a value that
-  is a `person(...)` or `c(...)` call, which R stores as a plain string and
-  never evaluates).
+- [x] `description-authors-at-r` (packaging; syn; no fix, default on). Done.
+  The value is parsed with arity's own R parser and resolved statically, the
+  trick `src/project/description.rs` plays on `Roxygen`: no `cre` with a name
+  and an `email` (what R's derivation needs, and what makes this the
+  prerequisite for the `description-missing-field` gap above), more than one
+  `cre`, a person with no name or no role, a role outside the relator table,
+  ORCID and ROR validation, a field that is not R, and a call
+  `.read_authors_at_R_field(strict = TRUE)` refuses. The two CRAN-incoming
+  `Author` clauses fold in as promised. Anything computed resolves to
+  "unknown" and every finding depending on it is withheld, so the rule reports
+  strictly less than R does. Three things a rule written from the checker
+  alone would get wrong, each pinned by a planted oracle case: **`person()`
+  with no arguments is a zero-length person vector**, not a nameless
+  somebody — it really does end `xfun`'s `Authors@R`, and arity reported it
+  until the corpus sweep caught it; **the per-person clauses are unreachable
+  when the field yields no author at all**, so a lone nameless person is
+  `has_no_author` and nothing else; and **no check component ever mentions an
+  unknown role**, because `person()` drops it first, so the oracle driver had
+  to grow a signal off the warning (and to call the reader itself, since the
+  checker wraps it in `suppressWarnings`). `has_no_author_roles` is
+  deliberately left to R: it fires on any package whose sole author writes
+  `cre` without `aut`.
 - [ ] Emails appear in exactly three places in a `DESCRIPTION`—`Maintainer`,
   `Authors@R`'s `email =`, and the rare `Contact` field—so there is **no**
   general "lint emails" rule to write. Validate them where they occur, in

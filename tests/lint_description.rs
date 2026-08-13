@@ -362,9 +362,11 @@ Authors@R: person(\"Test\", \"User\", email = \"test@example.com\", role = c(\"a
 /// `bad_authors_at_R_field_has_no_valid_maintainer`, confirmed by
 /// `tests/description_oracle.rs`.
 ///
-/// Closing it means consulting the parsed field instead of testing it for
-/// non-emptiness, so it waits on `description-authors-at-r` (`TODO.md`). When it
-/// lands, invert this assertion.
+/// `description-authors-at-r` has since landed and *does* report the file, so
+/// the defect is no longer silent — see `a_creator_without_an_email_is_flagged`.
+/// What is left is this rule's own reading: closing it means consulting the
+/// parsed field instead of testing it for non-emptiness (`TODO.md`). When that
+/// lands, invert the first assertion.
 #[test]
 fn a_creator_without_an_email_is_not_yet_reported() {
     let text = "\
@@ -377,8 +379,11 @@ Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
 ";
     assert!(
         !ids(text).contains(&"description-missing-field"),
-        "the gap has been closed — invert this assertion and gate \
-         `bad_authors_at_R_field_has_no_valid_maintainer` in the oracle",
+        "the gap has been closed — invert this assertion",
+    );
+    assert!(
+        ids(text).contains(&"description-authors-at-r"),
+        "the defect is reported, just not by the rule whose subject it also is",
     );
 }
 
@@ -1219,6 +1224,335 @@ fn malformed_maintainer_ships_no_fix() {
             .into_iter()
             .find(|d| d.rule == MALFORMED_MAINTAINER)
             .expect("a malformed-maintainer finding");
+    assert!(finding.fix.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// description-authors-at-r
+// ---------------------------------------------------------------------------
+
+const AUTHORS_AT_R: &str = "description-authors-at-r";
+
+/// `COMPLETE_DESCRIPTION` with its `Authors@R` replaced, so a case varies only
+/// the field the rule reads.
+fn authored(value: &str) -> String {
+    let base = COMPLETE_DESCRIPTION
+        .lines()
+        .filter(|line| !line.starts_with("Authors@R:"))
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    format!("{base}Authors@R: {value}\n")
+}
+
+/// The findings of `AUTHORS_AT_R`, as the source text each one spans.
+fn authors_hits(text: &str) -> Vec<String> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .expect("linting should not error")
+        .iter()
+        .filter(|d| d.rule == AUTHORS_AT_R)
+        .map(|d| {
+            let start: usize = d.range.start().into();
+            let end: usize = d.range.end().into();
+            text[start..end].to_string()
+        })
+        .collect()
+}
+
+/// The headline check, and the one the roadmap wants first: R derives
+/// `Maintainer` only from a person with role `cre`, a non-empty name, **and**
+/// an email, and errors out otherwise
+/// (`bad_authors_at_R_field_has_no_valid_maintainer`, confirmed against R
+/// 4.6.1).
+#[test]
+fn a_creator_without_an_email_is_flagged() {
+    let text = authored("person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))");
+    assert_eq!(
+        authors_hits(&text),
+        ["person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))"],
+    );
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("email"));
+}
+
+/// The same defect from the other two directions: no `cre` at all, and a `cre`
+/// with an address but no name.
+#[test]
+fn a_field_that_derives_no_maintainer_is_flagged() {
+    for value in [
+        "person(\"Jane\", \"Doe\", role = \"aut\", email = \"jane@example.com\")",
+        "person(role = \"cre\", email = \"jane@example.com\")",
+        "c(person(\"Jane\", \"Doe\", role = \"aut\"), person(\"John\", \"Roe\", role = \"ctb\"))",
+    ] {
+        assert!(
+            !authors_hits(&authored(value)).is_empty(),
+            "`{value}` names nobody R can derive a maintainer from",
+        );
+    }
+}
+
+/// The shape every modern `DESCRIPTION` writes, in both spellings R accepts.
+#[test]
+fn a_well_formed_authors_at_r_is_silent() {
+    for value in [
+        "person(\"Jane\", \"Doe\", email = \"jane@example.com\", role = c(\"aut\", \"cre\"))",
+        "person(given = \"Jane\", family = \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = \"jane@example.com\")",
+        "c(person(\"Jane\", \"Doe\", , \"jane@example.com\", c(\"aut\", \"cre\")), \
+         person(\"John\", \"Roe\", role = \"ctb\"))",
+        "person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\", \"cre\"), \
+         email = \"info@posit.co\", comment = c(ROR = \"03wc8by49\"))",
+    ] {
+        assert!(
+            authors_hits(&authored(value)).is_empty(),
+            "`{value}` is a field R reads without complaint",
+        );
+    }
+}
+
+/// R reads the field with `str2expression`, so text that is not R is the first
+/// thing it rejects — `bad_authors_at_R_field`, and nothing else is worth
+/// saying about the value until it parses.
+#[test]
+fn an_unparseable_authors_at_r_is_flagged() {
+    let text = authored("person(\"Jane\",");
+    assert_eq!(authors_hits(&text), ["person(\"Jane\","]);
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("parse"));
+}
+
+/// `.read_authors_at_R_field(strict = TRUE)` refuses any call outside
+/// `person`, `as.person`, `c`, `list`, `paste`, `paste0`, and `(` — it is about
+/// to *evaluate* the field. `utils::person(...)` is refused for the same
+/// reason: `::` is itself a call.
+#[test]
+fn an_unsafe_call_in_authors_at_r_is_flagged() {
+    let text = authored("person(\"Jane\", \"Doe\", email = Sys.getenv(\"EMAIL\"), role = \"cre\")");
+    assert_eq!(authors_hits(&text), ["Sys.getenv"]);
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("evaluate"));
+
+    assert_eq!(
+        authors_hits(&authored("utils::person(\"Jane\", \"Doe\")")),
+        ["utils::person"],
+    );
+}
+
+/// The calls R spells out as safe, so the rule is not just "any call".
+#[test]
+fn the_calls_r_allows_are_not_flagged() {
+    let value = "c(person(paste(\"Jane\", \"Q\"), \"Doe\", role = c(\"aut\", \"cre\"), \
+                 email = paste0(\"jane\", \"@example.com\")))";
+    assert!(authors_hits(&authored(value)).is_empty(), "{value}");
+}
+
+/// `strict >= 1`: a person R can put neither in `Author` nor in `Maintainer`.
+#[test]
+fn a_person_without_a_name_is_flagged() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person(role = \"ctb\"))",
+    );
+    assert_eq!(authors_hits(&text), ["person(role = \"ctb\")"]);
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("no name"));
+}
+
+/// `strict >= 1`: a person with no role is credited nowhere at all —
+/// `.format_person_for_plain_author_spec` drops them from `Author` outright.
+#[test]
+fn a_person_without_a_role_is_flagged() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person(\"John\", \"Roe\"))",
+    );
+    assert_eq!(authors_hits(&text), ["person(\"John\", \"Roe\")"]);
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("no role"));
+}
+
+/// A role outside the MARC relator table is *dropped* by `person()`, so the
+/// credit the author wrote is silently lost.
+#[test]
+fn a_role_r_does_not_know_is_flagged() {
+    let text = authored(
+        "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\", \"zzz\"), \
+         email = \"jane@example.com\")",
+    );
+    assert_eq!(authors_hits(&text), ["\"zzz\""]);
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("role"));
+}
+
+/// The table is the whole 302-code MARC relator db, not the eleven codes CRAN
+/// suggests — `person()` accepts every one of them. A role spelled as a
+/// relator *term* is left alone too: R's own name fallback is what would read
+/// it, and reporting it would be arity's opinion rather than R's.
+#[test]
+fn a_marc_relator_role_is_not_flagged() {
+    for role in ["\"spy\"", "\"aud\"", "\"Author\"", "\"compiler\""] {
+        let value = format!(
+            "person(\"Jane\", \"Doe\", role = c(\"cre\", {role}), email = \"jane@example.com\")"
+        );
+        assert!(
+            authors_hits(&authored(&value)).is_empty(),
+            "`{role}` is a role R reads",
+        );
+    }
+}
+
+/// R stores exactly one maintainer, so a second `cre` is a field R rejects
+/// (`bad_authors_at_R_field_too_many_maintainers`).
+#[test]
+fn two_creators_are_flagged() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person(\"John\", \"Roe\", role = \"cre\", email = \"john@example.org\"))",
+    );
+    assert_eq!(authors_hits(&text).len(), 1, "{:?}", authors_hits(&text));
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("`cre` role to 2 people"));
+}
+
+/// ORCID iDs carry a MOD 11-2 check digit, so a mistyped one is decidable
+/// offline — which is the whole reason this is a lint and not a network call.
+#[test]
+fn a_malformed_orcid_is_flagged() {
+    let bad = authored(
+        "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\", \
+         comment = c(ORCID = \"1234-5678-9012-3456\"))",
+    );
+    assert_eq!(authors_hits(&bad), ["\"1234-5678-9012-3456\""]);
+    assert!(messages(&bad, AUTHORS_AT_R)[0].contains("ORCID"));
+
+    let good = authored(
+        "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\", \
+         comment = c(ORCID = \"0000-0002-1825-0097\"))",
+    );
+    assert!(authors_hits(&good).is_empty());
+}
+
+/// R accepts the identifier in any of its written forms, and so must the rule.
+#[test]
+fn an_orcid_url_is_read_in_every_variant() {
+    for id in [
+        "0000-0002-1825-0097",
+        "https://orcid.org/0000-0002-1825-0097",
+        "orcid.org/0000-0002-1825-0097",
+        "<https://orcid.org/0000-0002-1825-0097>",
+    ] {
+        let value = format!(
+            "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+             email = \"jane@example.com\", comment = c(ORCID = \"{id}\"))"
+        );
+        assert!(authors_hits(&authored(&value)).is_empty(), "`{id}`");
+    }
+}
+
+/// Two people cannot share one ORCID iD; one of the two is a copy-paste.
+#[test]
+fn a_duplicated_orcid_is_flagged() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\", \
+         comment = c(ORCID = \"0000-0002-1825-0097\")), \
+         person(\"John\", \"Roe\", role = \"ctb\", \
+         comment = c(ORCID = \"0000-0002-1825-0097\")))",
+    );
+    let messages = messages(&text, AUTHORS_AT_R);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("same ORCID"), "{messages:?}");
+}
+
+/// A ROR ID is nine characters, in the same variant spellings.
+#[test]
+fn a_malformed_ror_is_flagged() {
+    let bad = authored(
+        "person(\"Posit Software, PBC\", role = c(\"cph\", \"cre\"), \
+         email = \"info@posit.co\", comment = c(ROR = \"12345\"))",
+    );
+    assert_eq!(authors_hits(&bad), ["\"12345\""]);
+    assert!(messages(&bad, AUTHORS_AT_R)[0].contains("ROR"));
+}
+
+/// Nothing about a computed value is decidable without running R, and running R
+/// is not something arity does. The rule resolves what it can and says nothing
+/// about the rest.
+#[test]
+fn a_computed_authors_at_r_is_silent() {
+    for value in [
+        "person(\"Jane\", \"Doe\", role = ROLES, email = \"jane@example.com\")",
+        "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = the_email)",
+        "as.person(AUTHORS)",
+        "paste0(\"Jane Doe <jane@example.com>\")",
+    ] {
+        assert!(
+            authors_hits(&authored(value)).is_empty(),
+            "`{value}` is not statically resolvable, so the rule has nothing to say",
+        );
+    }
+}
+
+/// A field wrapped across continuation lines is what a real `DESCRIPTION` looks
+/// like, and the span has to land on the person, not on the whole field.
+#[test]
+fn a_wrapped_field_spans_the_offending_person() {
+    let text = authored(
+        "c(\n    person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = \"jane@example.com\"),\n    person(\"John\", \"Roe\")\n  )",
+    );
+    assert_eq!(authors_hits(&text), ["person(\"John\", \"Roe\")"]);
+}
+
+/// `person()` with no arguments returns a **zero-length** person vector, so it
+/// names nobody rather than naming a nameless somebody — and one really does
+/// sit at the end of `xfun`'s `Authors@R`, which is where this came from.
+#[test]
+fn an_argument_less_person_names_nobody() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person())",
+    );
+    assert!(authors_hits(&text).is_empty(), "{:?}", authors_hits(&text));
+}
+
+/// No `Authors@R` at all is `description-missing-field`'s subject, not this
+/// rule's.
+#[test]
+fn an_absent_authors_at_r_is_silent() {
+    let text = "Package: testpkg\nVersion: 0.1.0\nAuthor: Jane Doe\n\
+                Maintainer: Jane Doe <jane@example.com>\n";
+    assert!(authors_hits(text).is_empty());
+}
+
+/// CRAN's `author_starts_with_Author`: a value that begins with the field
+/// header is one someone pasted in whole.
+#[test]
+fn an_author_field_repeating_its_own_header_is_flagged() {
+    let text = format!("{COMPLETE_DESCRIPTION}Author: Author: Jane Doe [aut, cre]\n");
+    assert_eq!(authors_hits(&text), ["Author: Jane Doe [aut, cre]"]);
+    assert!(messages(&text, AUTHORS_AT_R)[0].contains("field name"));
+}
+
+/// CRAN's `author_should_be_authors_at_R`: `Author` is a plain string R never
+/// evaluates, so a `person(...)` written there is displayed verbatim, brackets
+/// and all.
+#[test]
+fn an_author_field_holding_r_code_is_flagged() {
+    for value in [
+        "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))",
+        "c(person(\"Jane\", \"Doe\"))",
+        "Authors@R: person(\"Jane\", \"Doe\")",
+    ] {
+        let text = format!("{COMPLETE_DESCRIPTION}Author: {value}\n");
+        assert_eq!(authors_hits(&text), [value], "`{value}`");
+    }
+    let text = format!("{COMPLETE_DESCRIPTION}Author: Jane Doe [aut, cre]\n");
+    assert!(authors_hits(&text).is_empty());
+}
+
+/// No autofix anywhere in the rule: an email, a name, a role, and an ORCID
+/// check digit are all facts about a person that only that person has.
+#[test]
+fn authors_at_r_ships_no_fix() {
+    let text = authored("person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))");
+    let finding =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error")
+            .into_iter()
+            .find(|d| d.rule == AUTHORS_AT_R)
+            .expect("an authors-at-r finding");
     assert!(finding.fix.is_none());
 }
 

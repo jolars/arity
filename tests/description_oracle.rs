@@ -145,6 +145,46 @@ const GATES: &[Gate] = &[
         ],
         backing: Backing::Signal,
     },
+    // Thirteen signals, three checkers, two fields — the widest gate here, and
+    // presence-backed for the usual reason: most of them are logical flags, and
+    // the ones that do name an offender name R's *formatted* person
+    // (`Jane Doe <jane@example.com> [aut, cre]`), which is not text that appears
+    // in the file at all, so there is nothing to compare span to span.
+    //
+    // What the gate is really worth is the real-world half of the corpus: a
+    // clean `DESCRIPTION` raises none of these, so any finding on one is a
+    // false positive and fails here.
+    //
+    // Note the exclusions the rule mirrors for containment to hold: it resolves
+    // the field statically and withholds every finding that depends on a
+    // computed argument, roles are matched against the whole 302-code relator
+    // table (not the eleven codes CRAN suggests) plus the terms R's own
+    // fallback would resolve, and `bad_authors_at_R_field_has_no_author_roles`
+    // is left to R — see `PLANNED`.
+    //
+    // The role signal is the driver's own, and it has to be: `person()` drops a
+    // role it cannot match *before* any check component runs, so R says so only
+    // in a warning. `authors_at_R_field_has_persons_with_nonstandard_roles`
+    // could never back the finding — by the time it looks, the role is gone.
+    Gate {
+        rule: "description-authors-at-r",
+        signals: &[
+            "bad_authors_at_R_field",
+            "bad_authors_at_R_field_has_no_author",
+            "bad_authors_at_R_field_has_no_valid_maintainer",
+            "bad_authors_at_R_field_too_many_maintainers",
+            "bad_authors_at_R_field_has_persons_with_no_name",
+            "bad_authors_at_R_field_has_persons_with_no_role",
+            "bad_authors_at_R_field_has_persons_with_bad_ORCID_identifiers",
+            "bad_authors_at_R_field_has_persons_with_dup_ORCID_identifiers",
+            "bad_authors_at_R_field_has_persons_with_bad_ROR_identifiers",
+            "bad_authors_at_R_field_has_persons_with_dup_ROR_identifiers",
+            "authors_at_R_field_has_invalid_role_specifications",
+            "author_starts_with_Author",
+            "author_should_be_authors_at_R",
+        ],
+        backing: Backing::Signal,
+    },
 ];
 
 /// Signals no rule covers yet, each tagged with the `TODO.md` rule it is
@@ -156,50 +196,20 @@ const PLANNED: &[(&str, &str)] = &[
     ("missing_encoding", "description-encoding"),
     ("fields_with_non_ASCII_tags", "description-encoding"),
     ("fields_with_non_ASCII_values", "description-encoding"),
-    ("bad_authors_at_R_field", "description-authors-at-r"),
-    (
-        "bad_authors_at_R_field_for_author",
-        "description-authors-at-r",
-    ),
-    (
-        "bad_authors_at_R_field_has_no_author",
-        "description-authors-at-r",
-    ),
-    // The one signal that indicts a rule arity *already ships*. Pinned as a
-    // lint test, where someone editing the rule will meet it:
-    // `a_creator_without_an_email_is_not_yet_reported` in `lint_description.rs`.
-    (
-        "bad_authors_at_R_field_has_no_valid_maintainer",
-        "description-missing-field",
-    ),
-    (
-        "bad_authors_at_R_field_has_no_author_roles",
-        "description-authors-at-r",
-    ),
-    (
-        "bad_authors_at_R_field_has_persons_with_no_name",
-        "description-authors-at-r",
-    ),
-    (
-        "bad_authors_at_R_field_has_persons_with_no_role",
-        "description-authors-at-r",
-    ),
-    (
-        "bad_authors_at_R_field_has_persons_with_bad_ORCID_identifiers",
-        "description-authors-at-r",
-    ),
-    (
-        "bad_authors_at_R_field_has_persons_with_dup_ORCID_identifiers",
-        "description-authors-at-r",
-    ),
-    (
-        "bad_authors_at_R_field_has_persons_with_bad_ROR_identifiers",
-        "description-authors-at-r",
-    ),
-    (
-        "bad_authors_at_R_field_has_persons_with_dup_ROR_identifiers",
-        "description-authors-at-r",
-    ),
+    // `bad_authors_at_R_field_*` is otherwise gated; these three are the ones
+    // `description-authors-at-r` deliberately leaves to R.
+    //
+    // The two formatting failures are reachable only through `format.person`
+    // itself, which arity does not reimplement — there is no static reading of
+    // "R could not render this person" — and the `Author` half of the pair
+    // still gates the more basic `has_no_author` it implies.
+    ("bad_authors_at_R_field_for_author", ""),
+    ("bad_authors_at_R_field_for_maintainer", ""),
+    // Deliberately unclaimed: R raises it only at `strict >= 2`, which
+    // `R CMD check` never asks for, and it fires on any package whose sole
+    // author writes `role = "cre"` without also writing `"aut"` — a shape CRAN
+    // accepts by the thousand. Reporting it would be arity's opinion, not R's.
+    ("bad_authors_at_R_field_has_no_author_roles", ""),
     // Deliberately unclaimed. `Priority: base`/`recommended` is reserved for the
     // packages that ship with R, so this fires on roughly nobody, and
     // `VignetteBuilder` is checked only under R's `strict`. Both are classified
@@ -575,6 +585,15 @@ const PLANTED: &[(&str, &str)] = &[
          Authors@R: c(person(\"A\", \"B\", role = c(\"aut\", \"cre\"), \
          email = \"a@example.com\"), person(\"C\", \"D\"))\n",
     ),
+    // The per-person clauses live inside R's `else` branch, so they are
+    // reachable only when the field yields *some* author: a lone nameless
+    // person is `bad_authors_at_R_field_has_no_author` and nothing more.
+    (
+        "authors-person-without-a-name",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: c(person(\"A\", \"B\", role = c(\"aut\", \"cre\"), \
+         email = \"a@example.com\"), person(role = \"ctb\"))\n",
+    ),
     (
         "authors-cre-without-email",
         "Package: testpkg\nVersion: 0.1.0\n\
@@ -585,6 +604,81 @@ const PLANTED: &[(&str, &str)] = &[
         "Package: testpkg\nVersion: 0.1.0\n\
          Authors@R: person(\"A\", \"B\", role = c(\"aut\", \"cre\"), \
          email = \"a@example.com\", comment = c(ORCID = \"1234-5678-9012-3456\"))\n",
+    ),
+    (
+        "authors-dup-orcid",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: c(person(\"A\", \"B\", role = c(\"aut\", \"cre\"), \
+         email = \"a@example.com\", comment = c(ORCID = \"0000-0002-1825-0097\")), \
+         person(\"C\", \"D\", role = \"ctb\", \
+         comment = c(ORCID = \"0000-0002-1825-0097\")))\n",
+    ),
+    (
+        "authors-bad-ror",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"Some Institute\", role = c(\"cph\", \"cre\"), \
+         email = \"a@example.com\", comment = c(ROR = \"12345\"))\n",
+    ),
+    (
+        "authors-dup-ror",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: c(person(\"Some Institute\", role = c(\"cph\", \"cre\"), \
+         email = \"a@example.com\", comment = c(ROR = \"03wc8by49\")), \
+         person(\"Other Institute\", role = \"fnd\", \
+         comment = c(ROR = \"03wc8by49\")))\n",
+    ),
+    (
+        "authors-two-creators",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: c(person(\"A\", \"B\", role = c(\"aut\", \"cre\"), \
+         email = \"a@example.com\"), person(\"C\", \"D\", role = \"cre\", \
+         email = \"c@example.com\"))\n",
+    ),
+    (
+        "authors-nonstandard-role",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"A\", \"B\", role = c(\"aut\", \"cre\", \"zzz\"), \
+         email = \"a@example.com\")\n",
+    ),
+    // Where the rule deliberately says nothing about a role, so the gate sees
+    // the withholding: `spy` is a real relator code however it reads, and
+    // `compiler` is a relator *term*, which R's own fallback is what would
+    // resolve.
+    (
+        "authors-relator-code-and-term",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"A\", \"B\", role = c(\"aut\", \"cre\", \"spy\", \"compiler\"), \
+         email = \"a@example.com\")\n",
+    ),
+    // ...and where it says nothing about the people at all, because a computed
+    // argument is not something a static reading may guess at.
+    (
+        "authors-computed",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"A\", \"B\", role = ROLES, email = \"a@example.com\")\n",
+    ),
+    // `person()` with no arguments is a zero-length person vector, not a
+    // nameless person — a shape that really does end `xfun`'s `Authors@R`, and
+    // one arity reported until this case existed.
+    (
+        "authors-argument-less-person",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: c(person(\"A\", \"B\", role = c(\"aut\", \"cre\"), \
+         email = \"a@example.com\"), person())\n",
+    ),
+    // The two `Author` clauses. Both are CRAN pretest components, so the case
+    // needs the `Title` and `Maintainer` that checker insists on.
+    (
+        "author-starts-with-author",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\
+         Maintainer: Jane Doe <jane@example.com>\n\
+         Author: Author: Jane Doe [aut, cre]\n",
+    ),
+    (
+        "author-should-be-authors-at-r",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\
+         Maintainer: Jane Doe <jane@example.com>\n\
+         Author: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))\n",
     ),
     // The two CRAN version NOTEs. `.check_package_CRAN_incoming` reaches the
     // version only after a `Maintainer` it can compare against "ORPHANED" and a

@@ -11,18 +11,22 @@
 #   tools:::.check_package_description(strict = TRUE)
 #       what `R CMD check` enforces, including the strict-only Title and
 #       Description clauses.
-#   tools:::.check_package_description_authors_at_R_field(strict = 2L)
+#   tools:::.check_package_description_authors_at_R_field(strict = 3L)
 #       called again directly, because the outer checker invokes it at
 #       strict = FALSE and so never reaches the per-person name, role, ORCID,
-#       and ROR signals.
+#       and ROR signals, nor the non-standard-role one above them. The
+#       *warnings* `person()` raises while it reads the field are collected
+#       too — a role outside the relator table is dropped there, before any
+#       component sees it, so the warning is the only place R says so.
 #   tools:::.check_package_description2()
 #       only its `duplicates` component: a package named in more than one
 #       dependency field. Its other components need installed packages and a
 #       `src/` directory, which a text-only oracle has no business simulating.
 #   tools:::.check_package_CRAN_incoming(localOnly = TRUE)
-#       only its version and Maintainer components, on the same grounds: the
-#       CRAN pretest is mostly about files, URLs, and network state, but these
-#       are functions of the DESCRIPTION text and nothing else covers them.
+#       only its version, Maintainer, and Author components, on the same
+#       grounds: the CRAN pretest is mostly about files, URLs, and network
+#       state, but these are functions of the DESCRIPTION text and nothing else
+#       covers them.
 #
 # Reads DESCRIPTION text from stdin, writes a line-oriented report to stdout.
 # stderr is diagnostic noise; a non-zero exit means "could not process" and the
@@ -42,6 +46,10 @@
 # arity-ignore-file internal-function: reaching into `tools:::` is the point —
 # these checkers are unexported, and pinning arity against them is precisely
 # what makes an R upgrade that changes them visible instead of silent.
+
+# Messages are compared by name, but the role one is matched by text, so the
+# driver pins the language rather than inheriting the caller's locale.
+Sys.setenv(LANGUAGE = "en")
 
 escape <- function(x) {
   x <- gsub("\\", "\\\\", x, fixed = TRUE)
@@ -137,16 +145,35 @@ for (name in names(out)) {
 }
 
 # The outer checker calls this at strict = FALSE, so its per-person signals are
-# unreachable from there. Called again at strict = 2L for the full set.
+# unreachable from there. Called again at the top tier for the full set.
 aar <- db["Authors@R"]
 if (!is.na(aar)) {
   strict_aar <- tryCatch(
-    tools:::.check_package_description_authors_at_R_field(aar, strict = 2L),
+    tools:::.check_package_description_authors_at_R_field(aar, strict = 3L),
     error = function(e) NULL
   )
   for (name in names(strict_aar)) {
     emit_component(name, strict_aar[[name]])
   }
+
+  # `.canonicalize_person_role` drops a role it cannot match and warns, so by
+  # the time any check component runs the role is gone and no component ever
+  # mentions it. The warning is R's whole opinion on "is this a role", which is
+  # why it is reported as a signal of its own — and why the reader has to be
+  # called here directly: the checker wraps it in `suppressWarnings`, whose
+  # handler muffles before any of ours would run.
+  warnings_seen <- character()
+  invisible(withCallingHandlers(
+    tryCatch(utils:::.read_authors_at_R_field(aar, TRUE), error = function(e) NULL),
+    warning = function(w) {
+      warnings_seen <<- c(warnings_seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  ))
+  emit(
+    "authors_at_R_field_has_invalid_role_specifications",
+    grep("Invalid role specification", warnings_seen, value = TRUE)
+  )
 }
 
 out2 <- tryCatch(
@@ -187,6 +214,10 @@ if (!is.null(cran)) {
     "Maintainer_invalid_or_multi_person",
     cran$Maintainer_invalid_or_multi_person
   )
+  # The two `Author` clauses, which are about `Authors@R` content written under
+  # the wrong key and so belong to the same rule as the field itself.
+  emit_component("author_starts_with_Author", cran$author_starts_with_Author)
+  emit_component("author_should_be_authors_at_R", cran$author_should_be_authors_at_R)
 }
 
 cat(seen, sep = "\n")
