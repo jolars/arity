@@ -24,22 +24,24 @@ suppressWarnings(suppressMessages(library(jsonlite)))
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
-  stop("usage: build-commonmark-corpus.R <spec.txt> <section-substr> <out.jsonl>")
+  stop(
+    "usage: build-commonmark-corpus.R <spec.txt> <section-substr> <out.jsonl>"
+  )
 }
 spec_path <- args[[1]]
 section_match <- args[[2]]
 out_path <- args[[3]]
 
 lines <- readLines(spec_path, warn = FALSE)
-fence_re <- "^`{32,} example"     # an example opener (32+ backticks, ` example`)
-close_re <- "^`{32,}$"            # the matching closer
+fence_re <- "^`{32,} example" # an example opener (32+ backticks, ` example`)
+close_re <- "^`{32,}$" # the matching closer
 
 match_all <- identical(section_match, "ALL")
 
 records <- list()
-example_no <- 0L                  # global counter over *every* example fence
+example_no <- 0L # global counter over *every* example fence
 in_section <- FALSE
-current_section <- NA_character_  # heading text of the section we are inside
+current_section <- NA_character_ # heading text of the section we are inside
 i <- 1L
 n <- length(lines)
 while (i <= n) {
@@ -64,7 +66,9 @@ while (i <= n) {
     }
     # Skip the `.`, then the expected-HTML half, then the closing fence.
     i <- i + 1L
-    while (i <= n && !grepl(close_re, lines[[i]])) i <- i + 1L
+    while (i <= n && !grepl(close_re, lines[[i]])) {
+      i <- i + 1L
+    }
     i <- i + 1L
     if (in_section) {
       # The spec writes literal tabs as U+2192 RIGHTWARDS ARROW.
@@ -74,13 +78,24 @@ while (i <= n) {
       # markdown line is a bare `#'` marker (a paragraph break).
       body <- ifelse(nzchar(md), paste0("#' ", md), "#'")
       input <- paste0(
-        paste(c("#' @md", "#' @title T", "#' @details", body, "#' @name spec",
-                "NULL"), collapse = "\n"),
+        paste(
+          c(
+            "#' @md",
+            "#' @title T",
+            "#' @details",
+            body,
+            "#' @name spec",
+            "NULL"
+          ),
+          collapse = "\n"
+        ),
         "\n"
       )
       slug <- sprintf("cm-%03d", example_no)
       records[[length(records) + 1L]] <- list(
-        slug = slug, input = input, section = current_section
+        slug = slug,
+        input = input,
+        section = current_section
       )
     }
     next
@@ -90,10 +105,15 @@ while (i <= n) {
 
 con <- file(out_path, "w")
 on.exit(close(con))
-for (r in records) writeLines(toJSON(r, auto_unbox = TRUE), con)
-cat(sprintf(
-  "wrote %d example(s) from %s -> %s\n",
-  length(records),
-  if (match_all) "ALL sections" else sprintf("section '%s'", section_match),
-  out_path
-), file = stderr())
+for (r in records) {
+  writeLines(toJSON(r, auto_unbox = TRUE), con)
+}
+cat(
+  sprintf(
+    "wrote %d example(s) from %s -> %s\n",
+    length(records),
+    if (match_all) "ALL sections" else sprintf("section '%s'", section_match),
+    out_path
+  ),
+  file = stderr()
+)

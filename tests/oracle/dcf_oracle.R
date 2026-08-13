@@ -57,14 +57,23 @@ if (identical(commandArgs(trailingOnly = TRUE)[1], "authors")) {
   value <- read_stdin()
   aar <- tryCatch(
     utils:::.read_authors_at_R_field(value, TRUE),
-    error = function(e) structure(list(msg = conditionMessage(e)), class = "aar_error"),
-    warning = function(w) structure(list(msg = conditionMessage(w)), class = "aar_error")
+    error = function(e) {
+      structure(list(msg = conditionMessage(e)), class = "aar_error")
+    },
+    warning = function(w) {
+      structure(list(msg = conditionMessage(w)), class = "aar_error")
+    }
   )
   if (inherits(aar, "aar_error")) {
     cat("AAR-ERROR\t", escape(aar$msg), "\n", sep = "")
     quit(status = 0)
   }
-  cat("AAR-AUTHOR\t", escape(utils:::.format_authors_at_R_field_for_author(aar)), "\n", sep = "")
+  cat(
+    "AAR-AUTHOR\t",
+    escape(utils:::.format_authors_at_R_field_for_author(aar)),
+    "\n",
+    sep = ""
+  )
   cat(
     "AAR-MAINTAINER\t",
     escape(utils:::.format_authors_at_R_field_for_maintainer(aar)),
@@ -89,7 +98,9 @@ if (nzchar(text)) {
 
 parsed <- tryCatch(
   read.dcf(textConnection(text)),
-  error = function(e) structure(list(msg = conditionMessage(e)), class = "dcf_error")
+  error = function(e) {
+    structure(list(msg = conditionMessage(e)), class = "dcf_error")
+  }
 )
 
 if (inherits(parsed, "dcf_error")) {

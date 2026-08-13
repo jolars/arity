@@ -96,9 +96,7 @@ node_tag <- function(nd) {
 # brace-group *argument wrappers* (which are lists) as TEXT --- those are NOT
 # prose and must never be coalesced with siblings (e.g. \item{term}{def} has two
 # such groups), so the is.list() guard is load-bearing.
-is_text_leaf <- function(nd) {
-  !is.list(nd) && identical(node_tag(nd), "TEXT")
-}
+is_text_leaf <- function(nd) !is.list(nd) && identical(node_tag(nd), "TEXT")
 
 serialize_children <- function(nodes) {
   out <- character(0)
@@ -127,7 +125,9 @@ serialize_children <- function(nodes) {
       next
     }
     s <- serialize_node(nodes[[i]])
-    if (nzchar(s)) out <- c(out, s)
+    if (nzchar(s)) {
+      out <- c(out, s)
+    }
     i <- i + 1L
   }
   out
@@ -198,13 +198,18 @@ block_to_topics <- function(src) {
 # Canonical tree text for one block's topics, sorted by topic name, joined into a
 # single string (one `name\t(Rd ...)` line per topic). Returns NULL on error.
 block_trees <- function(src) {
-  tryCatch({
-    topics <- block_to_topics(src)
-    lines <- vapply(names(topics), function(nm) {
-      paste0(nm, "\t", rd_to_canonical(format(topics[[nm]])))
-    }, character(1))
-    paste(lines, collapse = "\n")
-  }, error = function(e) NULL)
+  tryCatch(
+    {
+      topics <- block_to_topics(src)
+      lines <- vapply(
+        names(topics),
+        function(nm) paste0(nm, "\t", rd_to_canonical(format(topics[[nm]]))),
+        character(1)
+      )
+      paste(lines, collapse = "\n")
+    },
+    error = function(e) NULL
+  )
 }
 
 # Macros roxygen2 *generates* during rendering rather than parsing out of the
@@ -214,8 +219,16 @@ block_trees <- function(src) {
 # projector excludes them and the section pins must too --- otherwise the gate
 # would force a roxygen2-roclet reimplementation into a "faithful" projector.
 ROCLET_ONLY <- c(
-  "\\name", "\\alias", "\\usage", "\\arguments", "\\docType",
-  "\\keyword", "\\concept", "\\encoding", "\\Rdversion", "\\RdOpts"
+  "\\name",
+  "\\alias",
+  "\\usage",
+  "\\arguments",
+  "\\docType",
+  "\\keyword",
+  "\\concept",
+  "\\encoding",
+  "\\Rdversion",
+  "\\RdOpts"
 )
 
 # The parser-owned section subtrees of one topic's Rd, each a canonical
@@ -243,17 +256,21 @@ topic_sections <- function(rd_text) {
 # All parser-owned sections across a block's topics, sorted, one per line.
 # Returns NULL on error (so the harness records the case as skipped).
 block_sections <- function(src) {
-  tryCatch({
-    topics <- block_to_topics(src)
-    secs <- unlist(lapply(names(topics), function(nm) {
-      topic_sections(format(topics[[nm]]))
-    }))
-    # `method = "radix"` sorts in C-locale byte order, matching the Rust
-    # projector's byte-order sort and making the pins locale-independent. (Most
-    # sections head with `(\<macro>`, so this only matters once a section heads
-    # with something else — e.g. a bare top-level `(TEXT …)` from `@rawRd`.)
-    paste(sort(secs, method = "radix"), collapse = "\n")
-  }, error = function(e) NULL)
+  tryCatch(
+    {
+      topics <- block_to_topics(src)
+      secs <- unlist(lapply(
+        names(topics),
+        function(nm) topic_sections(format(topics[[nm]]))
+      ))
+      # `method = "radix"` sorts in C-locale byte order, matching the Rust
+      # projector's byte-order sort and making the pins locale-independent. (Most
+      # sections head with `(\<macro>`, so this only matters once a section heads
+      # with something else — e.g. a bare top-level `(TEXT …)` from `@rawRd`.)
+      paste(sort(secs, method = "radix"), collapse = "\n")
+    },
+    error = function(e) NULL
+  )
 }
 
 # Tags whose rendered Rd is NOT a pure function of the block's own text: they
@@ -282,19 +299,22 @@ projector_eligible <- function(src) {
   if (grepl(OUT_OF_SCOPE_TAG_RE, src, perl = TRUE)) {
     return(NULL)
   }
-  tryCatch({
-    topics <- block_to_topics(src)
-    if (length(topics) != 1L) {
-      NULL
-    } else {
-      secs <- topic_sections(format(topics[[1L]]))
-      # `method = "radix"` sorts in C-locale byte order, matching the Rust
-    # projector's byte-order sort and making the pins locale-independent. (Most
-    # sections head with `(\<macro>`, so this only matters once a section heads
-    # with something else — e.g. a bare top-level `(TEXT …)` from `@rawRd`.)
-    paste(sort(secs, method = "radix"), collapse = "\n")
-    }
-  }, error = function(e) NULL)
+  tryCatch(
+    {
+      topics <- block_to_topics(src)
+      if (length(topics) != 1L) {
+        NULL
+      } else {
+        secs <- topic_sections(format(topics[[1L]]))
+        # `method = "radix"` sorts in C-locale byte order, matching the Rust
+        # projector's byte-order sort and making the pins locale-independent. (Most
+        # sections head with `(\<macro>`, so this only matters once a section heads
+        # with something else — e.g. a bare top-level `(TEXT …)` from `@rawRd`.)
+        paste(sort(secs, method = "radix"), collapse = "\n")
+      }
+    },
+    error = function(e) NULL
+  )
 }
 
 # Capture every warning/message roxygen2 signals while parsing `text` and
@@ -305,16 +325,19 @@ lint_warnings <- function(text) {
   msgs <- character(0)
   collect <- function(cnd) {
     msgs <<- c(msgs, gsub("\n", "\\n", conditionMessage(cnd), fixed = TRUE))
-    if (inherits(cnd, "warning")) tryInvokeRestart("muffleWarning")
+    if (inherits(cnd, "warning")) {
+      tryInvokeRestart("muffleWarning")
+    }
     if (inherits(cnd, "message")) tryInvokeRestart("muffleMessage")
   }
   ok <- TRUE
   tryCatch(
     withCallingHandlers(
       # Stray stdout from processing must not corrupt the protocol.
-      invisible(utils::capture.output(
-        roxygen2::roc_proc_text(roxygen2::rd_roclet(), text)
-      )),
+      invisible(utils::capture.output(roxygen2::roc_proc_text(
+        roxygen2::rd_roclet(),
+        text
+      ))),
       warning = collect,
       message = collect
     ),
@@ -374,10 +397,13 @@ main <- function() {
       if (is.null(secs)) {
         next
       }
-      out <- c(out, as.character(jsonlite::toJSON(
-        list(slug = obj$slug, sections = secs),
-        auto_unbox = TRUE
-      )))
+      out <- c(
+        out,
+        as.character(jsonlite::toJSON(
+          list(slug = obj$slug, sections = secs),
+          auto_unbox = TRUE
+        ))
+      )
     }
     writeLines(out[nzchar(out)])
     return(invisible())
