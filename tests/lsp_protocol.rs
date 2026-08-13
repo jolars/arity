@@ -454,6 +454,13 @@ fn initialize_advertises_core_capabilities() {
         caps.get("diagnosticProvider").is_some(),
         "diagnostic provider advertised"
     );
+    // An explicit `false`: the label and its tooltip both come from the initial
+    // response, so there is nothing for `inlayHint/resolve` to fetch.
+    assert_eq!(
+        caps.get("inlayHintProvider"),
+        Some(&json!({ "resolveProvider": false })),
+        "inlay hints advertised: {caps:#?}"
+    );
     // Injected via raw JSON (no typed field in lsp-types 0.97).
     assert_eq!(
         caps.get("typeHierarchyProvider"),
@@ -862,6 +869,87 @@ fn closing_a_dirty_description_restores_the_on_disk_facts() {
     h.recv_publish_matching(&r_uri, "reporting dplyr again after the close", |d| {
         rules_in(d).contains(&"undeclared-dependency".to_string())
     });
+    h.shutdown();
+}
+
+/// The same dispatch claim as the completion test below, for inlay hints: the
+/// DESCRIPTION has to reach the DCF resolver. An array — even an empty one —
+/// proves it routed; `null` is what a declined document looks like. The versions
+/// themselves come from the real machine's library via an async harvest, so
+/// asserting on them here would not be hermetic (`src/lsp/description.rs` owns
+/// that).
+#[test]
+fn inlay_hints_in_a_dependency_field_reach_the_client() {
+    let description = "Package: testpkg\nImports: dplyr (>= 1.0)\n";
+    let (_dir, desc_uri, _) = package_fixture(description, "f <- function() 1\n");
+
+    let mut h = Harness::start_push();
+    h.did_open_as(&desc_uri, description, 1, "r-description");
+
+    let id = h.request(
+        "textDocument/inlayHint",
+        json!({
+            "textDocument": { "uri": desc_uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 2, "character": 0 }
+            }
+        }),
+    );
+    let resp = h.recv_response(&id);
+    let result = resp.response_result.expect("inlay hint result");
+    assert!(result.is_array(), "the DESCRIPTION routed: {result:?}");
+    h.shutdown();
+}
+
+/// R has no hints yet, and the main loop declines before spending a read slot —
+/// this is the test that changes the day argument-name hints land.
+#[test]
+fn inlay_hints_for_an_r_document_are_declined() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, CLEAN, 1);
+
+    let id = h.request(
+        "textDocument/inlayHint",
+        json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 1, "character": 0 }
+            }
+        }),
+    );
+    let resp = h.recv_response(&id);
+    assert_eq!(
+        resp.response_result.expect("an inlay hint result"),
+        Value::Null
+    );
+    h.shutdown();
+}
+
+/// Inlay hints are pull-only: a change in cross-file context that arrives without
+/// a document edit reaches them solely through `workspace/inlayHint/refresh`. A
+/// push-mode harness, so this also pins that the refresh is not gated on the pull
+/// diagnostic model.
+#[test]
+fn a_watched_config_change_asks_the_client_to_refresh_inlay_hints() {
+    let mut h = Harness::start_with_capabilities(json!({
+        "textDocument": { "hover": {} },
+        "workspace": { "inlayHint": { "refreshSupport": true } }
+    }));
+    let uri = doc_uri();
+    h.did_open(uri, CLEAN, 1);
+
+    h.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({ "changes": [ { "uri": arity_toml_uri(), "type": 2 } ] }),
+    );
+
+    h.recv_until(
+        "an inlay hint refresh",
+        |msg| matches!(msg, Message::Request(req) if req.method == "workspace/inlayHint/refresh"),
+    );
     h.shutdown();
 }
 

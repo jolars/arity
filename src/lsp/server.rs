@@ -33,6 +33,9 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
     // capability (there is no server capability to advertise for it); without it
     // the background index/sidecar jobs stay silent.
     let work_done_progress = client_supports_work_done_progress(&params);
+    // Inlay hints have no push channel, so a fresh package index only reaches an
+    // already-open `DESCRIPTION` if the client can be asked to re-request.
+    let inlay_hint_refresh = client_supports_inlay_refresh(&params);
     // Pick the position encoding: prefer UTF-8 (arity stores text as UTF-8, so no
     // re-encoding) when the client offers it, else the UTF-16 default.
     let position_encoding = negotiate_position_encoding(&params);
@@ -58,6 +61,7 @@ pub fn serve(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
         pull_mode,
         register_watchers,
         work_done_progress,
+        inlay_hint_refresh,
         position_encoding,
     )?;
     Ok(())
@@ -150,6 +154,20 @@ pub(crate) fn client_supports_work_done_progress(params: &serde_json::Value) -> 
         .unwrap_or(false)
 }
 
+/// Whether the client declared support for `workspace/inlayHint/refresh`
+/// (`capabilities.workspace.inlayHint.refreshSupport`). Without it a fresh
+/// package index cannot reach an open `DESCRIPTION` until the user edits it —
+/// inlay hints are pull-only, with no server-initiated notification.
+pub(crate) fn client_supports_inlay_refresh(params: &serde_json::Value) -> bool {
+    params
+        .get("capabilities")
+        .and_then(|c| c.get("workspace"))
+        .and_then(|w| w.get("inlayHint"))
+        .and_then(|h| h.get("refreshSupport"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 pub(crate) fn server_capabilities(position_encoding: PositionEncoding) -> ServerCapabilities {
     ServerCapabilities {
         position_encoding: Some(position_encoding.to_kind()),
@@ -206,6 +224,15 @@ pub(crate) fn server_capabilities(position_encoding: PositionEncoding) -> Server
                 work_done_progress_options: Default::default(),
             },
         )),
+        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+            InlayHintOptions {
+                // The label and its tooltip both come from one index lookup the
+                // initial response has already made, so there is nothing left to
+                // defer to an `inlayHint/resolve` round trip.
+                resolve_provider: Some(false),
+                work_done_progress_options: Default::default(),
+            },
+        ))),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -274,6 +301,10 @@ pub(crate) fn r_file_rename_registration() -> FileOperationRegistrationOptions {
 /// The main event loop: dispatch incoming JSON-RPC messages and lint results.
 /// Owns the connection so that returning drops the sender and lets the writer
 /// thread finish; joins the lint thread before returning.
+///
+/// Three of the parameters are now negotiated client capabilities, threaded
+/// straight through to [`GlobalState`]; the next one earns them a struct.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn main_loop(
     connection: Connection,
     editor_settings: EditorSettings,
@@ -281,6 +312,7 @@ pub(crate) fn main_loop(
     pull_mode: bool,
     register_watchers: bool,
     work_done_progress: bool,
+    inlay_hint_refresh: bool,
     position_encoding: PositionEncoding,
 ) -> Result<(), DynError> {
     let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
@@ -319,6 +351,7 @@ pub(crate) fn main_loop(
         editor_settings,
         pull_mode,
         work_done_progress,
+        inlay_hint_refresh,
         position_encoding,
     );
 
@@ -476,6 +509,21 @@ mod tests {
         });
         assert!(!client_supports_work_done_progress(&off));
         assert!(!client_supports_work_done_progress(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn detects_client_inlay_refresh_support() {
+        let with = serde_json::json!({
+            "capabilities": { "workspace": { "inlayHint": { "refreshSupport": true } } }
+        });
+        assert!(client_supports_inlay_refresh(&with));
+
+        // Explicitly false, or absent, means a stale hint waits for the next edit.
+        let off = serde_json::json!({
+            "capabilities": { "workspace": { "inlayHint": { "refreshSupport": false } } }
+        });
+        assert!(!client_supports_inlay_refresh(&off));
+        assert!(!client_supports_inlay_refresh(&serde_json::json!({})));
     }
 
     #[test]

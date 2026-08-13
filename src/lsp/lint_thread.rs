@@ -753,8 +753,16 @@ impl LintWorker {
             Ok(root) => IndexedProvider::from_cache(&Cache::new(root)),
             Err(_) => IndexedProvider::empty(),
         };
+        // Unlike a background build, this needs no `RelintAll`: it runs in the
+        // write-phase of the first lint for this anchor, so nothing has been
+        // analyzed against the empty index yet. Inlay hints are the exception —
+        // one may already have been answered, and they have no push channel.
+        let loaded_any = indexed.packages().next().is_some();
         self.db.set_library_index(indexed);
         self.index_loaded.insert(anchor.to_path_buf());
+        if loaded_any {
+            let _ = self.out_tx.send(Outbound::RefreshInlayHints);
+        }
     }
 
     /// Spawn a background harvest for the document's unknown packages. On success

@@ -3,8 +3,9 @@
 //! completion, signature help, go-to-definition and references, rename (of
 //! symbols, and of files and folders — see [`file_rename`]), document
 //! and workspace symbols, semantic tokens, folding and selection ranges,
-//! document links, and call and type hierarchy, backed by the introspection
-//! index and a per-file semantic model.
+//! document links, inlay hints (a `DESCRIPTION`'s dependency versions), and call
+//! and type hierarchy, backed by the introspection index and a per-file semantic
+//! model.
 //!
 //! Architecture (see the dedicated-lint-thread design): the main loop owns no
 //! salsa database. A dedicated thread owns the persistent [`IncrementalDatabase`]
@@ -76,11 +77,11 @@ use lsp_types::request::{
     CodeActionRequest, ColorPresentationRequest, Completion, DocumentColor,
     DocumentDiagnosticRequest, DocumentHighlightRequest, DocumentLinkRequest,
     DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest,
-    PrepareRenameRequest, RangeFormatting, References, RegisterCapability, Rename,
-    Request as RequestTrait, ResolveCompletionItem, SelectionRangeRequest,
-    SemanticTokensFullRequest, SignatureHelpRequest, TypeHierarchyPrepare, TypeHierarchySubtypes,
-    TypeHierarchySupertypes, WillRenameFiles, WorkDoneProgressCreate, WorkspaceDiagnosticRefresh,
-    WorkspaceSymbolRequest,
+    InlayHintRefreshRequest, InlayHintRequest, PrepareRenameRequest, RangeFormatting, References,
+    RegisterCapability, Rename, Request as RequestTrait, ResolveCompletionItem,
+    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest, TypeHierarchyPrepare,
+    TypeHierarchySubtypes, TypeHierarchySupertypes, WillRenameFiles, WorkDoneProgressCreate,
+    WorkspaceDiagnosticRefresh, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
@@ -103,23 +104,25 @@ use lsp_types::{
     FileSystemWatcher, FoldingRange, FoldingRangeKind, FoldingRangeParams,
     FoldingRangeProviderCapability, FullDocumentDiagnosticReport, GlobPattern,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
-    OneOf, ParameterInformation, ParameterLabel, Position, PositionEncodingKind,
-    PrepareRenameResponse, ProgressParams, ProgressParamsValue, ProgressToken,
-    PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
-    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    RenameFilesParams, RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
-    SelectionRangeProviderCapability, SemanticToken, SemanticTokenModifier, SemanticTokenType,
-    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
-    SignatureInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, TypeHierarchyItem,
-    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
-    UnchangedDocumentDiagnosticReport, Uri, WorkDoneProgress, WorkDoneProgressBegin,
-    WorkDoneProgressCreateParams, WorkDoneProgressEnd, WorkDoneProgressReport, WorkspaceEdit,
-    WorkspaceFileOperationsServerCapabilities, WorkspaceFoldersServerCapabilities,
-    WorkspaceServerCapabilities, WorkspaceSymbol, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    HoverProviderCapability, InitializeResult, InlayHint, InlayHintLabel, InlayHintOptions,
+    InlayHintParams, InlayHintServerCapabilities, InlayHintTooltip, Location, MarkupContent,
+    MarkupKind, NumberOrString, OneOf, ParameterInformation, ParameterLabel, Position,
+    PositionEncodingKind, PrepareRenameResponse, ProgressParams, ProgressParamsValue,
+    ProgressToken, PublishDiagnosticsParams, Range, ReferenceParams, Registration,
+    RegistrationParams, RelatedFullDocumentDiagnosticReport,
+    RelatedUnchangedDocumentDiagnosticReport, RenameFilesParams, RenameOptions, RenameParams,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeHierarchyItem, TypeHierarchyPrepareParams, TypeHierarchySubtypesParams,
+    TypeHierarchySupertypesParams, UnchangedDocumentDiagnosticReport, Uri, WorkDoneProgress,
+    WorkDoneProgressBegin, WorkDoneProgressCreateParams, WorkDoneProgressEnd,
+    WorkDoneProgressReport, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
+    WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities, WorkspaceSymbol,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use rowan::{NodeOrToken, SyntaxToken, TextRange, TextSize, TokenAtOffset};
 use salsa::Database as _;
@@ -150,7 +153,7 @@ use crate::rindex::provider::{
     bundled_exports, package_indexed, resolve_origin,
 };
 use crate::rindex::remote::{RemoteExports, Sidecar};
-use crate::rindex::schema::{Formal, SymbolEntry, SymbolKind};
+use crate::rindex::schema::{Formal, PackageIndex, SymbolEntry, SymbolKind};
 use crate::semantic::{BindingId, BindingKind, PackageOrigin, ScopeId, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, RLanguage, SyntaxKind, SyntaxNode};
 use crate::text::{LineIndex, PositionEncoding, TextBuffer};
@@ -167,6 +170,7 @@ mod file_rename;
 mod folding;
 mod format;
 mod hover;
+mod inlay_hints;
 mod lint_thread;
 mod navigation;
 mod progress;
@@ -195,6 +199,7 @@ pub(crate) use file_rename::*;
 pub(crate) use folding::*;
 pub(crate) use format::*;
 pub(crate) use hover::*;
+pub(crate) use inlay_hints::*;
 pub(crate) use lint_thread::*;
 pub(crate) use navigation::*;
 pub(crate) use progress::*;
@@ -213,7 +218,9 @@ pub(crate) use workspace_symbols::*;
 
 pub use code_actions::compute_code_actions;
 pub use completion::{compute_completions, resolve_completion};
-pub use description::{compute_description_completions, compute_description_hover};
+pub use description::{
+    compute_description_completions, compute_description_hover, compute_description_inlay_hints,
+};
 pub use document_color::{compute_color_presentations, compute_document_colors};
 pub use document_links::compute_document_links;
 pub use folding::compute_folding_ranges;

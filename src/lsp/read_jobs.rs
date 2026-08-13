@@ -29,6 +29,14 @@ pub(crate) enum ReadJob {
         position: Position,
         out: Sender<Outbound>,
     },
+    InlayHints {
+        id: RequestId,
+        path: PathBuf,
+        buffer: Arc<TextBuffer>,
+        /// The client's visible range, honored verbatim.
+        range: Range,
+        out: Sender<Outbound>,
+    },
     Completion {
         id: RequestId,
         path: PathBuf,
@@ -176,6 +184,16 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             out,
         } => {
             let result = hover_via_db(&snapshot, &path, &buffer, position, encoding);
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
+        }
+        ReadJob::InlayHints {
+            id,
+            path,
+            buffer,
+            range,
+            out,
+        } => {
+            let result = inlay_hints_via_db(&snapshot, &path, &buffer, range, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::Completion {

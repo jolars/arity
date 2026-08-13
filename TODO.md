@@ -463,9 +463,13 @@ Gated on the package being attached (`model.loaded_packages()`).
   edit in a CRLF buffer splices LF); fix that first, then advertise. (2026-07-02
   languageserver survey.)
 
-- [ ] **Inlay hints** (`textDocument/inlayHint`). E.g. argument-name hints at
-  call sites (matching positional args to index formals). Speculative. Not
-  loved by all users, possibly opt-in or omit altogether.
+- [ ] **Inlay hints for R** (`textDocument/inlayHint`). E.g. argument-name hints
+  at call sites (matching positional args to index formals). Speculative. Not
+  loved by all users, possibly opt-in or omit altogether. The provider itself now
+  exists, serving a `DESCRIPTION`'s dependency versions; the R arm attaches in
+  `inlay_hints_via_db`, and `on_inlay_hint`'s early decline for non-DESCRIPTION
+  documents is what goes away. If this lands, the knob it wants is a granularity
+  one (off / description-versions / all), not a bare boolean.
 
 ### Audit vs Ark (2026-07-30)
 
@@ -1006,8 +1010,11 @@ completion and hover, and it formats. Staged so each step is useful alone.
   field it cannot read. An `Authors@R` of `person("Jo",` comes back from
   `desc_normalize()` as `c(\n .\n)`. arity leaves it byte-identical.
 
-- [ ] Inlay hints for dependency fields: show the installed version for Imports,
-  Depends, Suggests.
+- [x] Inlay hints for dependency fields: show the installed version for Imports,
+  Depends, Suggests. The label is anchored at the end of the whole entry, so a
+  declared floor is not split from its name, and only locally harvested packages
+  get one (`R` never does). `workspace/inlayHint/refresh` carries a late harvest
+  to an already-open buffer.
 
 ## Misc
 

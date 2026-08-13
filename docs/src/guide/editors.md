@@ -4,7 +4,7 @@ Arity ships a language server, started with `arity lsp` (stdio, JSON-RPC). It
 offers formatting, diagnostics with quick fixes, hover, completion, signature
 help, go-to-definition and find-references, rename, document and workspace
 symbols, semantic tokens, folding and selection ranges, document links, document
-color swatches, and call and type hierarchy.
+color swatches, inlay hints, and call and type hierarchy.
 
 Renaming reaches beyond symbols: moving or renaming an `.R` file, or a folder of
 them, rewrites the `source()` paths that referred to it, and rebases the moved
@@ -26,6 +26,19 @@ showing a dependency's installed version and title. An unsaved edit counts
 immediately, so adding a package to `Imports` clears the
 [`undeclared-dependency`](../reference/rules.md#undeclared-dependency) findings
 in the R files that use it without saving first.
+
+The installed version is also shown inline, as an inlay hint after each
+dependency:
+
+```text
+Imports:
+    dplyr (>= 1.0.0) 1.1.4,
+    rlang 1.1.4,
+```
+
+Only indexed packages get one, so a dependency you have not installed stays
+bare. Arity has no setting of its own for these — your editor's inlay hint
+switch (`editor.inlayHints.enabled` in VS Code) turns them off.
 
 Diagnostics are reported only for a `DESCRIPTION` at a package root of its own,
 matching what `arity lint` walks. A complete miniature package under

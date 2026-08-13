@@ -54,6 +54,44 @@ fn description_completion_offers_package_names_with_an_explicit_edit() {
 }
 
 #[test]
+fn description_inlay_hints_report_installed_versions() {
+    use arity::rindex::schema::{PackageIndex, SCHEMA_VERSION};
+    use arity::text::TextBuffer;
+    use lsp_types::InlayHintLabel;
+
+    let text = "Package: p\nImports:\n    dplyr (>= 1.0),\n    stats\n";
+    let buffer = TextBuffer::new(text.to_string());
+    let indexed = IndexedProvider::from_indices([PackageIndex {
+        schema_version: SCHEMA_VERSION,
+        package: "dplyr".into(),
+        version: "1.1.4".into(),
+        lib_path: "/lib".into(),
+        title: Some("A Grammar of Data Manipulation".into()),
+        r_version: None,
+        harvested_at: 0,
+        attaches: Vec::new(),
+        symbols: Vec::new(),
+    }]);
+
+    let hints = arity::lsp::compute_description_inlay_hints(
+        text,
+        line_range(0, 0, 4, 0),
+        &indexed,
+        buffer.line_index(),
+        PositionEncoding::Utf16,
+    );
+
+    // `stats` is not harvested here, so only `dplyr` has a version to state, and
+    // it lands just past the closing paren of its own constraint.
+    assert_eq!(hints.len(), 1, "{hints:?}");
+    assert_eq!(hints[0].position, Position::new(2, 18));
+    match &hints[0].label {
+        InlayHintLabel::String(label) => assert_eq!(label, "1.1.4"),
+        other => panic!("expected a plain label, got {other:?}"),
+    }
+}
+
+#[test]
 fn description_completion_is_silent_outside_a_dependency_field() {
     use arity::rindex::remote::RemoteExports;
     use arity::text::TextBuffer;

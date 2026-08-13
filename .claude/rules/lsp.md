@@ -58,7 +58,9 @@ misleading (rename).
 - Read jobs branch **inside** `hover_via_db`/`completion_via_db`/
   `format_edits_via_db` on `DocumentKind::from_path`, not on new `ReadJob`
   variants: a variant needs an arm in `run_read` *and* in `state.rs`'s drain
-  match, where a miss leaks a request forever.
+  match, where a miss leaks a request forever. A genuinely **new method** has no
+  job to ride, so it does add a variant — all three arms, and neither match may
+  be closed with a wildcard (`ReadJob::InlayHints` is the worked example).
 - **Whole-document formatting serves both**; `rangeFormatting` stays R-only.
   Canonical `DESCRIPTION` field order is a whole-document property, so a range
   has no coherent answer, and a range formatter that quietly declined to reorder

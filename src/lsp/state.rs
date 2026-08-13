@@ -169,6 +169,12 @@ pub(crate) enum Outbound {
     },
     /// A background index build completed; re-lint every open document.
     RelintAll,
+    /// The on-disk index cache was loaded into the db for a newly-seen workspace.
+    /// Nothing needs re-linting — the document that triggered the load is about to
+    /// be analyzed against it — but an `inlayHint` already answered from the empty
+    /// index is now wrong, and hints have no push channel. See
+    /// [`GlobalState::send_inlay_hint_refresh`].
+    RefreshInlayHints,
     /// A work-done progress update from a background job (`build_index` or the
     /// sidecar fetch). The main loop forwards it to the client as `$/progress`
     /// (creating the token via `window/workDoneProgress/create` on the first
@@ -227,6 +233,11 @@ pub(crate) struct GlobalState {
     /// server-initiated progress: without it we emit no `window/workDoneProgress/
     /// create` and no `$/progress` (see [`on_progress`](Self::on_progress)).
     work_done_progress: bool,
+    /// True when the client advertised `workspace.inlayHint.refreshSupport`.
+    /// Gates [`send_inlay_hint_refresh`](Self::send_inlay_hint_refresh), the only
+    /// way a freshly harvested package index reaches an already-open
+    /// `DESCRIPTION`: inlay hints are pull-only, with no push counterpart.
+    inlay_hint_refresh: bool,
     /// The position encoding negotiated at `initialize` (see
     /// [`negotiate_position_encoding`](super::server::negotiate_position_encoding)).
     /// Threaded into every byte-offset ↔ LSP-position conversion; a session
@@ -286,6 +297,7 @@ impl GlobalState {
         editor_settings: EditorSettings,
         pull_mode: bool,
         work_done_progress: bool,
+        inlay_hint_refresh: bool,
         position_encoding: PositionEncoding,
     ) -> Self {
         Self {
@@ -294,6 +306,7 @@ impl GlobalState {
             rename_anchors: HashMap::new(),
             pull_mode,
             work_done_progress,
+            inlay_hint_refresh,
             position_encoding,
             pending_pull: HashMap::new(),
             report_ids: HashMap::new(),
@@ -337,6 +350,7 @@ impl GlobalState {
             ColorPresentationRequest::METHOD => self.on_color_presentation(req),
             DocumentLinkRequest::METHOD => self.on_document_link(req),
             SemanticTokensFullRequest::METHOD => self.on_semantic_tokens(req),
+            InlayHintRequest::METHOD => self.on_inlay_hint(req),
             PrepareRenameRequest::METHOD => self.on_prepare_rename(req),
             Rename::METHOD => self.on_rename(req),
             WillRenameFiles::METHOD => self.on_will_rename_files(req),
@@ -902,6 +916,43 @@ impl GlobalState {
         });
     }
 
+    /// `textDocument/inlayHint`: the installed version of each dependency in an
+    /// open `DESCRIPTION`. Needs the harvested package index, which lives in the
+    /// db, so it goes through the lint thread rather than straight onto the read
+    /// pool. See [`inlay_hints_via_db`].
+    fn on_inlay_hint(&mut self, req: Request) {
+        let id = req.id.clone();
+        let Ok((_, params)) = req.extract::<InlayHintParams>(InlayHintRequest::METHOD) else {
+            self.respond_err(id, "invalid inlayHint params");
+            return;
+        };
+        let uri = params.text_document.uri;
+        let Some((buffer, version, kind)) = self.doc_snapshot_any(&uri) else {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        };
+        if kind != DocumentKind::Description {
+            // R has no hints yet, and clients poll this on every scroll — so
+            // decline here rather than spend a channel hop, a db snapshot, and a
+            // read slot per frame to compute nothing. When R hints land, this
+            // early return goes away and `inlay_hints_via_db` grows the arm.
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        }
+        // The synthesized name must match the kind: `run_read` re-derives the
+        // grammar from this path.
+        let path =
+            uri::to_path(&uri).unwrap_or_else(|| PathBuf::from(kind.placeholder_file_name()));
+        self.register_read(id.clone(), Some((uri, version)));
+        self.dispatch_read(ReadJob::InlayHints {
+            id,
+            path,
+            buffer,
+            range: params.range,
+            out: self.out_tx.clone(),
+        });
+    }
+
     /// `textDocument/prepareRename`: confirm the cursor sits on a renameable
     /// local identifier and return its range + placeholder. Computed
     /// synchronously (a single cheap parse) because the result anchors per-URI
@@ -1179,6 +1230,7 @@ impl GlobalState {
                 ReadJob::Format { id, out, .. } => (id, out),
                 ReadJob::FormatRange { id, out, .. } => (id, out),
                 ReadJob::Hover { id, out, .. } => (id, out),
+                ReadJob::InlayHints { id, out, .. } => (id, out),
                 ReadJob::Completion { id, out, .. } => (id, out),
                 ReadJob::SignatureHelp { id, out, .. } => (id, out),
                 ReadJob::ResolveCompletion { id, out, .. } => (id, out),
@@ -1442,6 +1494,7 @@ impl GlobalState {
             }
             Outbound::ReadReply(response) => self.on_read_reply(response),
             Outbound::RelintAll => self.request_relint_all(),
+            Outbound::RefreshInlayHints => self.send_inlay_hint_refresh(),
             Outbound::Progress { token, work } => self.on_progress(token, work),
         }
     }
@@ -1481,6 +1534,10 @@ impl GlobalState {
     /// disk). Pull clients are asked to re-request (after invalidating their cached
     /// reports); push clients get a fresh lint per buffer.
     fn request_relint_all(&mut self) {
+        // Inlay hints are shown by push and pull clients alike and have no push
+        // channel of their own, so this sits above the `pull_mode` split: a fresh
+        // index is exactly the change a `DESCRIPTION`'s version hints depend on.
+        self.send_inlay_hint_refresh();
         let uris: Vec<Uri> = self.documents.keys().cloned().collect();
         if self.pull_mode {
             for uri in &uris {
@@ -1701,6 +1758,25 @@ impl GlobalState {
         let _ = self.sender.send(Message::Request(req));
     }
 
+    /// Ask the client to re-request inlay hints (server→client request). Sent when
+    /// cross-file context changed without a document edit — above all a freshly
+    /// harvested package index, which is what turns the version hints on for a
+    /// `DESCRIPTION` that was opened before the harvest finished. A no-op when the
+    /// client didn't advertise `workspace.inlayHint.refreshSupport`; the client's
+    /// response is ignored by the main loop.
+    fn send_inlay_hint_refresh(&mut self) {
+        if !self.inlay_hint_refresh {
+            return;
+        }
+        self.next_req_id += 1;
+        let req = Request::new(
+            RequestId::from(self.next_req_id),
+            InlayHintRefreshRequest::METHOD.to_string(),
+            serde_json::Value::Null,
+        );
+        let _ = self.sender.send(Message::Request(req));
+    }
+
     /// Deliver a finished read-pool reply, gating it on the same single thread
     /// that owns the live-request set and buffer versions. A reply whose id is no
     /// longer live was canceled (its `RequestCancelled` already went out) and is
@@ -1857,18 +1933,26 @@ mod cancellation_gate {
     }
 
     fn test_state() -> (GlobalState, Rig) {
-        test_state_full(false, false)
+        test_state_full(false, false, false)
     }
 
     fn test_state_with(work_done_progress: bool) -> (GlobalState, Rig) {
-        test_state_full(false, work_done_progress)
+        test_state_full(false, work_done_progress, false)
     }
 
     fn test_state_pull() -> (GlobalState, Rig) {
-        test_state_full(true, false)
+        test_state_full(true, false, false)
     }
 
-    fn test_state_full(pull_mode: bool, work_done_progress: bool) -> (GlobalState, Rig) {
+    fn test_state_inlay_refresh() -> (GlobalState, Rig) {
+        test_state_full(false, false, true)
+    }
+
+    fn test_state_full(
+        pull_mode: bool,
+        work_done_progress: bool,
+        inlay_hint_refresh: bool,
+    ) -> (GlobalState, Rig) {
         let (sender, client_rx) = crossbeam_channel::unbounded::<Message>();
         let (out_tx, out_rx) = crossbeam_channel::unbounded::<Outbound>();
         let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
@@ -1883,6 +1967,7 @@ mod cancellation_gate {
             EditorSettings::default(),
             pull_mode,
             work_done_progress,
+            inlay_hint_refresh,
             PositionEncoding::Utf16,
         );
         let rig = Rig {
@@ -2400,6 +2485,75 @@ mod cancellation_gate {
                 other.is_some()
             ),
         }
+    }
+
+    /// The disk cache loading into the db moves no diagnostics — the document it
+    /// happens for has not been analyzed yet — but it does turn version hints on
+    /// for an already-answered `inlayHint`. So it refreshes hints without
+    /// re-linting anything.
+    #[test]
+    fn an_index_cache_load_refreshes_hints_without_relinting() {
+        let (mut state, rig) = test_state_inlay_refresh();
+        state.on_notification(did_open(
+            &description_uri(),
+            "Package: testpkg\n",
+            "r-description",
+        ));
+        let _ = rig.try_lint_msg();
+
+        state.on_outbound(Outbound::RefreshInlayHints);
+
+        match rig.try_message() {
+            Some(Message::Request(req)) => {
+                assert_eq!(req.method, InlayHintRefreshRequest::METHOD);
+            }
+            other => panic!("expected an inlay hint refresh, got {other:?}"),
+        }
+        assert!(
+            rig.try_lint_msg().is_none(),
+            "a hint refresh must not re-lint"
+        );
+    }
+
+    /// A fresh package index arrives as `RelintAll`, and it is what turns a
+    /// `DESCRIPTION`'s version hints on. Push mode, deliberately: hints are not a
+    /// diagnostic, so the refresh must not be gated on the pull model.
+    #[test]
+    fn a_relint_all_asks_a_capable_client_to_refresh_inlay_hints() {
+        let (mut state, rig) = test_state_inlay_refresh();
+        state.on_notification(did_open(
+            &description_uri(),
+            "Package: testpkg\n",
+            "r-description",
+        ));
+        let _ = rig.try_lint_msg();
+
+        state.on_outbound(Outbound::RelintAll);
+
+        match rig.try_message() {
+            Some(Message::Request(req)) => {
+                assert_eq!(req.method, InlayHintRefreshRequest::METHOD);
+            }
+            other => panic!("expected an inlay hint refresh, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_relint_all_sends_no_inlay_refresh_without_the_capability() {
+        let (mut state, rig) = test_state();
+        state.on_notification(did_open(
+            &description_uri(),
+            "Package: testpkg\n",
+            "r-description",
+        ));
+        let _ = rig.try_lint_msg();
+
+        state.on_outbound(Outbound::RelintAll);
+
+        assert!(
+            rig.try_message().is_none(),
+            "a client that cannot refresh must not be asked to"
+        );
     }
 
     /// Closing an R buffer must *not* send the refresh: it has no

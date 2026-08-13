@@ -343,19 +343,88 @@ pub fn compute_description_hover(
     })
 }
 
+/// The installed version of every declared dependency, rendered after the entry
+/// it belongs to.
+///
+/// Anchored at the **end of the whole entry** rather than the end of the name:
+/// the two coincide for a constraint-free entry, and where they differ
+/// (`dplyr (>= 1.0.0)`) the fact belongs after the declaration instead of
+/// between the name and the floor it declares.
+///
+/// Only locally harvested packages get a hint — the same rule hover follows, for
+/// the same reason: there is nothing to state about a package we have not read.
+pub fn compute_description_inlay_hints(
+    text: &str,
+    visible: Range,
+    indexed: &IndexedProvider,
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> Vec<InlayHint> {
+    let visible = lsp_range_to_text_range(line_index, visible, encoding);
+    let document = crate::dcf::parse(text).document();
+    let mut hints = Vec::new();
+    for field in document.fields() {
+        if !is_dependency_field(&field.name()) {
+            continue;
+        }
+        for entry in dependency_entries(&field) {
+            // `R` names the language, not a package (see
+            // `compute_description_hover`).
+            if entry.name == "R" {
+                continue;
+            }
+            let anchor = entry.range.end();
+            // Filter on the anchor, not the entry, so a hint is computed exactly
+            // when it would be drawn.
+            if !visible.contains_inclusive(anchor) {
+                continue;
+            }
+            let Some(index) = indexed.package(&entry.name) else {
+                continue;
+            };
+            hints.push(InlayHint {
+                position: line_index.byte_to_position(u32::from(anchor) as usize, encoding),
+                label: InlayHintLabel::String(index.version.to_string()),
+                // No kind: neither `TYPE` nor `PARAMETER` describes an installed
+                // version, and the kind is what a client's hint filters key on.
+                kind: None,
+                // Accepting a hint inserts its label, and a bare version is not
+                // valid DCF there; rewriting the floor to the installed version
+                // pins the dev machine's library, which is a code action's
+                // decision to offer, not a hint's to make silently.
+                text_edits: None,
+                tooltip: Some(InlayHintTooltip::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: package_card(index),
+                })),
+                // The label sits flush against the entry's own comma.
+                padding_left: Some(true),
+                padding_right: None,
+                data: None,
+            });
+        }
+    }
+    hints
+}
+
 /// The markdown card for a package: its installed version and its own `Title`.
 ///
 /// Shared by hover and `completionItem/resolve`, so the two never drift. `None`
 /// when the package is not locally harvested — there is nothing to say beyond
 /// the name the user already typed, and an empty card is worse than no card.
 pub(crate) fn render_package_markdown(package: &str, indexed: &IndexedProvider) -> Option<String> {
-    let index = indexed.package(package)?;
+    Some(package_card(indexed.package(package)?))
+}
+
+/// The card body, taken straight off an index the caller already holds — which
+/// is how an inlay hint gets the version and the tooltip from one lookup.
+fn package_card(index: &PackageIndex) -> String {
     let mut out = format!("**`{}`** {}", index.package, index.version);
     if let Some(title) = &index.title {
         out.push_str("\n\n");
         out.push_str(title);
     }
-    Some(out)
+    out
 }
 
 /// The one-word provenance shown after a candidate.
@@ -602,6 +671,114 @@ Suggests: testthat
     fn hover_on_a_field_name_returns_none() {
         let text = "Package: testpkg\nImports: dplyr\n";
         assert!(hover_at(text, at(text, "Impo"), &indexed()).is_none());
+    }
+
+    fn hints_in(text: &str, visible: Range, indexed: &IndexedProvider) -> Vec<InlayHint> {
+        let buffer = TextBuffer::new(text.to_string());
+        compute_description_inlay_hints(
+            text,
+            visible,
+            indexed,
+            buffer.line_index(),
+            PositionEncoding::Utf16,
+        )
+    }
+
+    /// The whole document, which is what a client sends for a file this small.
+    fn whole(text: &str) -> Range {
+        let buffer = TextBuffer::new(text.to_string());
+        Range::new(
+            Position::new(0, 0),
+            buffer
+                .line_index()
+                .byte_to_position(text.len(), PositionEncoding::Utf16),
+        )
+    }
+
+    fn hints(text: &str, indexed: &IndexedProvider) -> Vec<InlayHint> {
+        hints_in(text, whole(text), indexed)
+    }
+
+    fn label_text(hint: &InlayHint) -> &str {
+        match &hint.label {
+            InlayHintLabel::String(label) => label,
+            other => panic!("expected a plain label, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inlay_hints_report_the_installed_version_at_the_end_of_each_entry() {
+        let text = "Package: testpkg\nImports: dplyr (>= 1.0)\nSuggests: testthat\n";
+        let got = hints(text, &indexed());
+        // `testthat` is not harvested, so there is no installed version to state.
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(label_text(&got[0]), "1.1.4");
+        // Character 23 is just past the closing paren, not the name's end at 14:
+        // the fact follows the whole declaration rather than splitting the name
+        // from the floor it declares.
+        assert_eq!(got[0].position, Position::new(1, 23));
+    }
+
+    #[test]
+    fn an_inlay_hint_is_kindless_and_carries_the_package_card_as_a_tooltip() {
+        let text = "Package: testpkg\nImports: dplyr\n";
+        let got = hints(text, &indexed());
+        let hint = got.first().expect("a hint on dplyr");
+        // `TYPE` and `PARAMETER` are the only kinds and neither describes an
+        // installed version — and the kind is what a client's "hide type hints"
+        // setting filters on, which would silently eat these.
+        assert!(hint.kind.is_none());
+        assert_eq!(hint.padding_left, Some(true));
+        // Accepting a hint inserts its label, and a bare version is not valid
+        // DCF there; rewriting the floor is a code action's call, not a hint's.
+        assert!(hint.text_edits.is_none());
+        let Some(InlayHintTooltip::MarkupContent(tooltip)) = &hint.tooltip else {
+            panic!("expected a markdown tooltip, got {:?}", hint.tooltip);
+        };
+        assert_eq!(tooltip.kind, MarkupKind::Markdown);
+        assert!(tooltip.value.contains("`dplyr`"), "{}", tooltip.value);
+        assert!(tooltip.value.contains("1.1.4"), "{}", tooltip.value);
+        assert!(
+            tooltip.value.contains("A Grammar of Data Manipulation"),
+            "the same card hover shows: {}",
+            tooltip.value
+        );
+    }
+
+    #[test]
+    fn inlay_hints_skip_r_in_depends() {
+        // Same reason `hover_on_r_in_depends_returns_none` does: `r_version` is
+        // the R that *built* some package, not the R this constraint is about.
+        let text = "Package: testpkg\nDepends: R (>= 4.1)\nImports: dplyr\n";
+        let got = hints(text, &indexed());
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].position.line, 2, "the hint is on the dplyr line");
+    }
+
+    /// The canonical `usethis` layout is one package per line. A position derived
+    /// from the folded value would be off by every continuation indent before it.
+    #[test]
+    fn an_inlay_hint_on_a_continuation_line_uses_the_source_position() {
+        let text = "Package: p\nImports:\n    stats,\n    dplyr (>= 1.0)\n";
+        let got = hints(text, &indexed());
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].position, Position::new(3, 18));
+    }
+
+    #[test]
+    fn inlay_hints_outside_the_visible_range_are_not_computed() {
+        let text = "Package: p\nImports: dplyr\nSuggests: dplyr\n";
+        // Only the `Suggests` line is on screen.
+        let visible = Range::new(Position::new(2, 0), Position::new(3, 0));
+        let got = hints_in(text, visible, &indexed());
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].position.line, 2);
+    }
+
+    #[test]
+    fn inlay_hints_ignore_non_dependency_fields() {
+        let text = "Package: testpkg\nTitle: dplyr is great\n";
+        assert!(hints(text, &indexed()).is_empty());
     }
 
     #[test]
