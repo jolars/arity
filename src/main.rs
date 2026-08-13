@@ -733,8 +733,9 @@ fn run_format(
 fn format_description_stdin(input: &str, style: FormatStyle, verify: bool) -> ExitCode {
     let formatted = match format_description_with_style(input, style) {
         Ok(formatted) => formatted,
+        // `err` already reads "left unformatted: <reason>".
         Err(err) if err.is_decline() => {
-            eprintln!("warning: left unformatted: {err}");
+            eprintln!("warning: {err}");
             print!("{input}");
             return ExitCode::SUCCESS;
         }
@@ -781,11 +782,11 @@ fn run_format_check(
 
     match check_paths_with_style_cached(paths, style, exclude, descriptions, cache.as_mut()) {
         Ok(result) => {
+            report_unchecked(&result.failed_files, &result.skipped, out.quiet);
             if result.changed_files.is_empty() {
                 if out.verbose {
                     eprintln!("{} file(s) already formatted", result.checked_files);
                 }
-                ExitCode::SUCCESS
             } else if out.quiet {
                 // `--check` writes nothing, so the diff is normally the only
                 // account of what would change; `--quiet` trades it for the
@@ -799,7 +800,6 @@ fn run_format_check(
                     result.changed_files.len(),
                     result.checked_files
                 );
-                ExitCode::from(1)
             } else {
                 let use_color = color_enabled(out.color, io::stdout().is_terminal());
                 for (idx, file) in result.changed_files.iter().enumerate() {
@@ -808,6 +808,15 @@ fn run_format_check(
                     }
                     print_diff(file, use_color);
                 }
+            }
+            // Reported *after* the diff, so a file that could not be checked
+            // never costs the user the account of the files that could. A
+            // failure outranks a mere reformat: the run has no verdict for it.
+            if !result.failed_files.is_empty() {
+                ExitCode::from(2)
+            } else if result.changed_files.is_empty() {
+                ExitCode::SUCCESS
+            } else {
                 ExitCode::from(1)
             }
         }
@@ -815,6 +824,25 @@ fn run_format_check(
             eprintln!("error: {err}");
             ExitCode::from(2)
         }
+    }
+}
+
+/// Report the files a `format` run could not check, so neither bucket is silent.
+///
+/// A failure is an error even under `--quiet` — it is why the run is about to
+/// exit 2. A skip is a warning, matching how `arity lint` reports the same file.
+fn report_unchecked(failed: &[arity::formatter::FailedFile], skipped: &[PathBuf], quiet: bool) {
+    for failure in failed {
+        eprintln!("error: {failure}");
+    }
+    if quiet {
+        return;
+    }
+    for path in skipped {
+        eprintln!(
+            "warning: skipped {}: stream did not contain valid UTF-8",
+            path.display()
+        );
     }
 }
 
@@ -903,13 +931,29 @@ fn run_format_write_paths(
 
     let total = files.len();
     let mut reformatted_count = 0usize;
+    // A per-file problem is reported and the walk carries on. Returning here
+    // would let one file decide whether the rest of the tree gets formatted at
+    // all, and `merge` sorts by path, so a package's `DESCRIPTION` sorts before
+    // its `R/` and would reliably preempt everything the user asked about.
+    let mut failed = 0usize;
     let mut markdown = arity::project::description::MarkdownDefaultResolver::new();
     for path in files {
         let input = match fs::read_to_string(&path) {
             Ok(input) => input,
+            // Not UTF-8: skipped, the same answer `arity lint` gives.
+            Err(err) if err.kind() == io::ErrorKind::InvalidData => {
+                if !out.quiet {
+                    eprintln!(
+                        "warning: skipped {}: stream did not contain valid UTF-8",
+                        path.display()
+                    );
+                }
+                continue;
+            }
             Err(err) => {
                 eprintln!("error: failed to read {}: {err}", path.display());
-                return ExitCode::from(2);
+                failed += 1;
+                continue;
             }
         };
         let formatted = match format_file(&path, &input, style, &mut markdown) {
@@ -922,7 +966,8 @@ fn run_format_write_paths(
             }
             Err(err) => {
                 eprintln!("error: failed to format {}: {err}", path.display());
-                return ExitCode::from(1);
+                failed += 1;
+                continue;
             }
         };
         if verify {
@@ -933,14 +978,16 @@ fn run_format_write_paths(
                         "error: formatted output of {} would now be declined: {reason}",
                         path.display()
                     );
-                    return ExitCode::from(1);
+                    failed += 1;
+                    continue;
                 }
                 Err(err) => {
                     eprintln!(
                         "error: formatted output failed verification for {}: {err}",
                         path.display()
                     );
-                    return ExitCode::from(1);
+                    failed += 1;
+                    continue;
                 }
             };
             if reformatted != formatted {
@@ -948,14 +995,15 @@ fn run_format_write_paths(
                     "error: formatter verification failed for {} (non-idempotent output)",
                     path.display()
                 );
-                return ExitCode::from(1);
+                failed += 1;
             }
             continue;
         }
         if formatted != input {
             if let Err(err) = fs::write(&path, formatted) {
                 eprintln!("error: failed to write {}: {err}", path.display());
-                return ExitCode::from(2);
+                failed += 1;
+                continue;
             }
             reformatted_count += 1;
             if out.verbose {
@@ -968,6 +1016,10 @@ fn run_format_write_paths(
         eprintln!("{reformatted_count} of {total} file(s) reformatted");
     }
 
+    if failed > 0 {
+        eprintln!("error: {failed} of {total} file(s) could not be formatted");
+        return ExitCode::from(1);
+    }
     ExitCode::SUCCESS
 }
 

@@ -11,6 +11,7 @@ use arity_formatter::formatter::{DeclineReason, DescriptionFormatError};
 
 use super::{FormatError, FormatStyle, format_description_with_style, format_with_options};
 use crate::file_discovery::{DiscoveredFiles, is_description_file};
+use crate::formatter::cache::CacheKey;
 use crate::parser::ParseOptions;
 use crate::project::description::MarkdownDefaultResolver;
 
@@ -73,6 +74,23 @@ pub fn format_file(
     format_with_options(content, style, &options)
         .map(Formatted::Text)
         .map_err(FormatSourceError::R)
+}
+
+/// The format-cache key for `content` at `path`.
+///
+/// Takes [`format_file`]'s grammar branch rather than repeating it, so a key can
+/// never name a grammar the formatter did not use — a cross-grammar hit would
+/// report a dirty `DESCRIPTION` clean. Resolving the roxygen markdown default
+/// here also keeps the directory probe off the DCF path, where it means nothing.
+pub fn cache_key<'a>(
+    path: &Path,
+    content: &'a str,
+    markdown: &mut MarkdownDefaultResolver,
+) -> CacheKey<'a> {
+    if is_description_file(path) {
+        return CacheKey::dcf(content);
+    }
+    CacheKey::r(content, markdown.resolve(path))
 }
 
 #[cfg(test)]

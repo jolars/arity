@@ -13,7 +13,7 @@ pub use arity_formatter::formatter::*;
 
 pub use cache::{CacheKey, FormatCache};
 pub use check::{
-    ChangedFile, CheckError, CheckResult, check_paths, check_paths_with_style,
+    ChangedFile, CheckError, CheckResult, FailedFile, check_paths, check_paths_with_style,
     check_paths_with_style_cached,
 };
-pub use source::{FormatSourceError, Formatted, format_file, merge};
+pub use source::{FormatSourceError, Formatted, cache_key, format_file, merge};

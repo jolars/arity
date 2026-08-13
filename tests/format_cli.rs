@@ -479,6 +479,67 @@ fn cli_format_refuses_a_description_it_cannot_restyle_safely() {
     );
 }
 
+/// A file arity cannot format must not decide the fate of the ones it can.
+///
+/// `merge` sorts by path, so a package's `DESCRIPTION` sorts before its `R/`:
+/// returning on the first failure would let one unparseable metadata file
+/// deterministically preempt every source file the user actually asked about.
+#[test]
+fn cli_format_keeps_going_past_an_unformattable_description() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let pkg = dir.path().join("pkg");
+    std::fs::create_dir_all(pkg.join("R")).expect("create dirs");
+    std::fs::write(pkg.join("DESCRIPTION"), "Package: p\ngarbage line\n").expect("write");
+    std::fs::write(pkg.join("R").join("a.R"), "x<-1\n").expect("write");
+    std::fs::write(pkg.join("R").join("z.R"), "y<-2\n").expect("write");
+
+    let output = run_cli_in(dir.path(), ["format", "--no-config", "."]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the failure is still reported: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(pkg.join("R").join("a.R")).expect("read back"),
+        "x <- 1\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(pkg.join("R").join("z.R")).expect("read back"),
+        "y <- 2\n"
+    );
+}
+
+/// A `DESCRIPTION` whose bytes are not UTF-8 is skipped, exactly as
+/// `arity lint` skips it — not a failure, and not a reason to stop.
+#[test]
+fn cli_format_skips_a_description_it_cannot_decode() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let pkg = dir.path().join("pkg");
+    std::fs::create_dir_all(pkg.join("R")).expect("create dirs");
+    std::fs::write(
+        pkg.join("DESCRIPTION"),
+        b"Package: p\nEncoding: latin1\nAuthor: Jos\xe9\n",
+    )
+    .expect("write");
+    std::fs::write(pkg.join("R").join("a.R"), "x<-1\n").expect("write");
+
+    let output = run_cli_in(dir.path(), ["format", "--no-config", "."]);
+    assert!(
+        output.status.success(),
+        "an undecodable file is skipped, not fatal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("skipped"),
+        "the skip must be reported"
+    );
+    assert_eq!(
+        std::fs::read_to_string(pkg.join("R").join("a.R")).expect("read back"),
+        "x <- 1\n"
+    );
+}
+
 #[test]
 fn cli_format_stdin_is_r_unless_the_filename_says_otherwise() {
     // Valid under both grammars — as R it is two `:` expressions — so only
