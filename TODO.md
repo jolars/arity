@@ -830,19 +830,68 @@ completion and hover, and it formats. Staged so each step is useful alone.
   twice is the failure mode. And no `configurationDefaults` formatter entry for
   the new `r-description` language: declaring ourselves the formatter for a
   file we answer `null` for makes format-on-save silently do nothing, which
-  reads as a broken extension.
+  reads as a broken extension. (Stage 5 landed both halves of that: the entry
+  is there now, and it answers edits.)
 
   Neovim ships **no** filetype for `DESCRIPTION` (verified, not assumed), so
   `docs/src/guide/editors.md` hands users a `vim.filetype.add` line.
 
-- [ ] **5. DESCRIPTION formatting.** Canonical style is what `desc`/`usethis`
-  write: field order, dependency lists one per line with `,\n    `, wrapped
-  `Description`. arity's differentiator is that `Authors@R` and `Roxygen`
-  are *R code*, which we can format with our own formatter—`desc` cannot.
-  Must be opt-in: `usethis`, `devtools` and `R CMD build` rewrite this file
-  on their own schedule, and a field-order fight is a fast way to lose
-  trust. Ships through the dprint plugin too, which is why stage 1 lives in
-  the parser crate.
+- [x] **5. DESCRIPTION formatting.** Done, and **on by default**. Canonical
+  style is what `desc::desc_normalize()` writes: `desc:::field_order`,
+  dependency lists one per line with `,\n    `, four-space continuations,
+  quoted `Collate`. arity's differentiator is that `Authors@R` and `Roxygen`
+  are *R code*, which we format with our own formatter—`desc` round-trips
+  them through `deparse()`.
+
+  This entry used to say "must be opt-in", on the grounds that `usethis`,
+  `devtools` and `R CMD build` rewrite the file on their own schedule. Checked
+  against R 4.6.1 with `desc` 1.4.3, that is mostly wrong. `desc$write()`
+  rewrites **only the field it was asked to change**: `desc_set_dep()` (what
+  `use_package()` calls) left field order, an unwrapped `Description`, and a
+  hand-laid-out `Authors@R` untouched. `roxygen2::roxygenise()` is purely
+  additive—it appends `Config/roxygen2/version` and nothing else. `R CMD build`
+  does not touch the source file at all; `Packaged:`/`Built:` go into the
+  tarball copy. The one real collision is `usethis::use_author()`, which
+  deparses `Authors@R` through `desc`: one field, on an explicit and
+  infrequent call. `desc_normalize()` does reorder, but nobody wires it into a
+  pipeline. So the field-order fight does not exist in a normal workflow, and
+  the mitigation is the off switch (`[format] description`) rather than an
+  opt-in default.
+
+  What makes default-on defensible is not that argument, though—it is the
+  **closed class table whose default is `Opaque`**: a field arity does not
+  recognize keeps its line structure byte for byte, so `read.dcf` sees an
+  identical value. And restyling is **refused outright** wherever it could
+  change what R reads: duplicate fields (R takes the last, our reader the
+  first), multiple records, whitespace before a colon (`Package : p` declares a
+  field named `"Package "`), a non-UTF-8 `Encoding`, a BOM.
+
+  Comments are never dropped, unlike `desc`. They attach **forward**, to the
+  next field, because that is what `next_meaningful_dcf_sibling` already
+  implements for `# arity-ignore`—moving one relative to its anchor would
+  silently retarget a suppression. A comment *interior* to a field freezes that
+  field's value verbatim, since it has no position once the value is reflowed.
+
+  No document IR: every break is decided by the field's class, and prose wants
+  first-fit rather than the layout engine's all-or-nothing group. Lives in the
+  published formatter crate so the dprint plugin can reach it, which is why
+  stage 1 went in the parser crate.
+
+  Verified in three layers: the fixture suite's meaning relation (pure Rust,
+  every commit), `formatted_dcf_matches_read_dcf` and
+  `formatted_authors_at_r_reads_identically` in the oracle (the latter through
+  `utils:::.read_authors_at_R_field`, so the comparison is against the bytes
+  `R CMD build` writes), and `dcf-*` categories in the corpus sweep.
+  `task desc-compat` is the soft gauge; never a gate.
+
+- [ ] **Follow-ups to stage 5.** Field-name completion in the LSP
+  (`Package`, `Version`, …) now has a canonical order to draw from —
+  `description/order.rs` owns it, so the candidate list is a projection of that
+  rather than a second copy. Range formatting for `DESCRIPTION` stays
+  deliberately unimplemented (field order is a whole-document property), so
+  `editor.formatOnSaveMode: "modifications"` does nothing there. And
+  `jolars/arity-pre-commit`'s `arity-format` hook still filters to `.R`: until
+  its `files`/`types` widens, no pre-commit user sees any of this.
 
 - [x] **A `read.dcf` differential oracle** (`tests/oracle/dcf_oracle.R` +
   `tests/dcf_oracle.rs`, `#[ignore]`d, `task dcf-oracle`). R's `read.dcf`
@@ -873,15 +922,24 @@ completion and hover, and it formats. Staged so each step is useful alone.
     and the CST keeps the whitespace as its own token, so a DESCRIPTION lint
     can flag it precisely instead of the parser guessing.
 
-- [ ] **`desc` is a style reference for stage 5, not an oracle.** Tested against
-  desc 1.4.3: `desc::desc_normalize()` reorders fields, splits dependency
-  lists one per line, and quotes `Collate` entries—all of which stage 5
-  wants—but it **drops comments even on a plain parse->write with no
-  normalization**, and emits a trailing space after `Depends:`. Matching it
+- [x] **`desc` is a style reference for stage 5, not an oracle.** Settled that
+  way. Tested against desc 1.4.3: `desc::desc_normalize()` reorders fields,
+  splits dependency lists one per line, and quotes `Collate` entries—all of
+  which stage 5 took—but it **drops comments even on a plain parse->write with
+  no normalization**, and emits a trailing space after `Depends:`. Matching it
   byte for byte would mean deleting user content, which contradicts the
-  invariant the DCF parser exists to uphold. So measure against it the way
-  `air` is measured for R: soft, one-directional, never a gate, with comment
-  preservation and the trailing space as known divergences.
+  invariant the DCF parser exists to uphold.
+
+  So it is measured the way `air` is for R: `task desc-compat`, soft,
+  one-directional, never a gate, with comment preservation and the trailing
+  space normalized away as recorded deviations. One departure from
+  `air_compat.rs`: the primary number is taken at `line-width = 75`, desc's own
+  hard-coded `strwrap` width, so it tracks rule divergence rather than the
+  width we happen to default to. `DESC_COMPAT.md` is the artifact.
+
+  Worth knowing: `desc` does not merely drop comments, it can **corrupt** a
+  field it cannot read. An `Authors@R` of `person("Jo",` comes back from
+  `desc_normalize()` as `c(\n .\n)`. arity leaves it byte-identical.
 
 - [ ] Inlay hints for dependency fields: show the installed version for Imports,
   Depends, Suggests.
