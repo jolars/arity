@@ -807,6 +807,43 @@ fn closing_a_dirty_description_restores_the_on_disk_facts() {
     h.shutdown();
 }
 
+/// The read path end to end: `on_completion` has to hand a DESCRIPTION to the
+/// DCF resolver rather than declining it as non-R. Nothing in the unit tests
+/// covers the dispatch.
+#[test]
+fn completion_in_a_dependency_field_reaches_the_client() {
+    let description = "Package: testpkg\nImports: dp\n";
+    let (_dir, desc_uri, _) = package_fixture(description, "f <- function() 1\n");
+
+    let mut h = Harness::start_push();
+    h.did_open_as(&desc_uri, description, 1, "r-description");
+
+    let id = h.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": desc_uri },
+            // End of `Imports: dp`.
+            "position": { "line": 1, "character": 11 }
+        }),
+    );
+    let resp = h.recv_response(&id);
+    let result = resp.response_result.expect("completion result");
+    let items = result
+        .get("items")
+        .and_then(Value::as_array)
+        .expect("a completion list");
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|i| i.get("label").and_then(Value::as_str))
+        .collect();
+    assert!(labels.contains(&"dplyr"), "{labels:?}");
+    assert!(
+        labels.iter().all(|l| l.starts_with("dp")),
+        "the typed prefix must filter: {labels:?}"
+    );
+    h.shutdown();
+}
+
 #[test]
 fn did_open_buggy_publishes_diagnostics() {
     let mut h = Harness::start_push();

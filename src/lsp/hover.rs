@@ -18,6 +18,11 @@ pub(crate) fn hover_via_db(
     // index the lint thread last installed. An empty index (none installed yet)
     // still resolves base-R + bundled names via the static layers.
     let index = snapshot.library_data().unwrap_or_default();
+    // A `DESCRIPTION` hovers packages, not symbols, and has no `SourceFile` in
+    // the db whose parse could be reused — so it branches before the lookup.
+    if DocumentKind::from_path(path) == DocumentKind::Description {
+        return compute_description_hover(text, offset, &index, line_index, encoding);
+    }
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
         if snapshot.file_text(file) != text {

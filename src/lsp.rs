@@ -211,7 +211,7 @@ pub(crate) use workspace_symbols::*;
 
 pub use code_actions::compute_code_actions;
 pub use completion::{compute_completions, resolve_completion};
-pub use description::compute_description_completions;
+pub use description::{compute_description_completions, compute_description_hover};
 pub use document_color::{compute_color_presentations, compute_document_colors};
 pub use document_links::compute_document_links;
 pub use folding::compute_folding_ranges;

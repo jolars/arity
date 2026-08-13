@@ -519,11 +519,13 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
+        // Both grammars hover; `hover_via_db` picks the resolver off the path.
+        let Some((buffer, version, kind)) = self.doc_snapshot_any(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let path =
+            uri::to_path(&uri).unwrap_or_else(|| PathBuf::from(kind.placeholder_file_name()));
         self.register_read(id.clone(), Some((uri, version)));
         self.dispatch_read(ReadJob::Hover {
             id,

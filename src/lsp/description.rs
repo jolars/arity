@@ -304,6 +304,45 @@ pub fn compute_description_completions(
     }))
 }
 
+/// Hover over a declared dependency: its installed version and its own `Title`.
+///
+/// Requires the cursor to be *on* an entry's name. Fresh ground after a comma
+/// is a place to complete, not a thing to describe, and a version constraint is
+/// not a package.
+pub fn compute_description_hover(
+    text: &str,
+    offset: usize,
+    indexed: &IndexedProvider,
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> Option<Hover> {
+    let DescriptionContext::DependencyName {
+        replace,
+        on_entry: true,
+        ..
+    } = classify(text, offset)
+    else {
+        return None;
+    };
+    let start: usize = replace.start().into();
+    let end: usize = replace.end().into();
+    let name = &text[start..end];
+    // `R` names the language, and `PackageIndex::r_version` is the R that built
+    // some package — not the R this constraint is about. Say nothing rather
+    // than something false.
+    if name == "R" {
+        return None;
+    }
+    let markdown = render_package_markdown(name, indexed)?;
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: Some(text_range_to_lsp_range(line_index, replace, encoding)),
+    })
+}
+
 /// The markdown card for a package: its installed version and its own `Title`.
 ///
 /// Shared by hover and `completionItem/resolve`, so the two never drift. `None`
@@ -501,6 +540,68 @@ Suggests: testthat
             Some("A Grammar of Data Manipulation"),
             "an installed candidate is labeled with its own Title"
         );
+    }
+
+    fn hover_at(text: &str, offset: usize, indexed: &IndexedProvider) -> Option<Hover> {
+        let buffer = TextBuffer::new(text.to_string());
+        compute_description_hover(
+            text,
+            offset,
+            indexed,
+            buffer.line_index(),
+            PositionEncoding::Utf16,
+        )
+    }
+
+    fn hover_markdown(hover: &Hover) -> &str {
+        match &hover.contents {
+            HoverContents::Markup(m) => &m.value,
+            other => panic!("expected markup, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hover_on_a_dependency_shows_the_installed_version_and_title() {
+        let text = "Package: testpkg\nImports: dplyr (>= 1.0)\n";
+        let hover = hover_at(text, at(text, "Imports: dpl"), &indexed()).expect("hover on dplyr");
+        let md = hover_markdown(&hover);
+        assert!(md.contains("`dplyr`"), "{md}");
+        assert!(md.contains("1.1.4"), "version: {md}");
+        assert!(md.contains("A Grammar of Data Manipulation"), "title: {md}");
+
+        // The range covers the name alone, not the version constraint.
+        let range = hover.range.expect("a range");
+        assert_eq!(range.start.line, 1);
+        assert_eq!(range.start.character, 9);
+        assert_eq!(range.end.character, 14);
+    }
+
+    #[test]
+    fn hover_on_a_version_constraint_returns_none() {
+        let text = "Package: testpkg\nImports: dplyr (>= 1.0)\n";
+        assert!(hover_at(text, at(text, ">= 1."), &indexed()).is_none());
+    }
+
+    #[test]
+    fn hover_on_an_unindexed_package_returns_none() {
+        // Known to CRAN but not harvested here: there is nothing to say beyond
+        // the name the user already typed, and an empty card is worse than none.
+        let text = "Package: testpkg\nImports: dplyr\n";
+        assert!(hover_at(text, at(text, "Imports: dpl"), &IndexedProvider::empty()).is_none());
+    }
+
+    #[test]
+    fn hover_on_r_in_depends_returns_none() {
+        // `PackageIndex::r_version` is the R that *built* some package, not the
+        // R this constraint is about. Reporting it here would be a lie.
+        let text = "Package: testpkg\nDepends: R (>= 4.1)\n";
+        assert!(hover_at(text, at(text, "Depends: R"), &indexed()).is_none());
+    }
+
+    #[test]
+    fn hover_on_a_field_name_returns_none() {
+        let text = "Package: testpkg\nImports: dplyr\n";
+        assert!(hover_at(text, at(text, "Impo"), &indexed()).is_none());
     }
 
     #[test]
