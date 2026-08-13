@@ -8,12 +8,14 @@
 
 mod description_duplicate_field;
 mod description_missing_field;
+mod description_package_in_multiple_fields;
 mod description_version_constraint;
 mod undeclared_dependency;
 mod unused_dependency;
 
 pub use description_duplicate_field::DescriptionDuplicateField;
 pub use description_missing_field::DescriptionMissingField;
+pub use description_package_in_multiple_fields::DescriptionPackageInMultipleFields;
 pub use description_version_constraint::DescriptionVersionConstraint;
 pub use undeclared_dependency::UndeclaredDependency;
 pub use unused_dependency::UnusedDependency;

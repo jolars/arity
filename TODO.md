@@ -123,10 +123,15 @@ Prerequisite worth doing first, and the thing that makes the rest defensible:
 
 Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
 
-- [ ] `description-package-in-multiple-fields`. A package named in more than one
-  of `Depends`/`Imports`/`Suggests`/`Enhances`; R-exts says a package should
-  be listed in only one. Reads straight off `DescriptionFacts::dependencies`.
-  Highest real-world hit rate of anything here and the cheapest—do it first.
+- [x] `description-package-in-multiple-fields` (packaging; syn; no fix, default
+  on). Done. Spans the *later* listing's bare package name and names the field
+  holding the earlier one; source order, so the finding always points backwards
+  up the file. Mirrors R's three exclusions, each of which a rule written from
+  the manual would get wrong: `LinkingTo` is not compared at all (`LinkingTo` +
+  `Imports` is the Rcpp idiom), `R` is never a dependency, and each field is
+  uniqued first, so `Imports: dplyr, dplyr` is not this rule. No fix—which
+  field to keep decides whether the code may rely on the package. `duplicates`
+  moved from `PLANNED` to `GATES` in `tests/description_oracle.rs`.
 
 - [ ] `description-malformed-name`. `Package` against R's
   `valid_package_name` (`[[:alpha:]][[:alnum:].]*[[:alnum:]]`), plus "this is

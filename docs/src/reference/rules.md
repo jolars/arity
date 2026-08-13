@@ -85,6 +85,7 @@ so this page never drifts from the rules' actual behavior.
 - [`description-missing-field`](#description-missing-field)
 - [`description-duplicate-field`](#description-duplicate-field)
 - [`description-version-constraint`](#description-version-constraint)
+- [`description-package-in-multiple-fields`](#description-package-in-multiple-fields)
 - [`unused-dependency`](#unused-dependency)
 
 **Meta**
@@ -1544,6 +1545,36 @@ warning: description-version-constraint
 3 | Imports: dplyr (1.0.0)
   |          ^^^^^^^^^^^^^ the version constraint on `dplyr` states no bound, so R enforces nothing here
   = help: Write a comparison operator and a version, as in `(>= 1.0.0)`.
+```
+
+### `description-package-in-multiple-fields`
+
+Flag a package listed in more than one of `Depends`, `Imports`, `Suggests`, and `Enhances`.
+
+*Writing R Extensions* says a package should be listed in only one of these fields. They are a choice, not an accumulation, and every pair contradicts itself: `Imports` plus `Suggests` declares the package both required and optional, `Depends` plus `Imports` both attached and not. R settles it by picking one field, so the second declaration is inert, and `R CMD check` reports the pair.
+
+`LinkingTo` is deliberately excluded. A package that supplies headers *and* R code belongs in both `LinkingTo` and `Imports`—the Rcpp idiom—and R's own check leaves it out of the comparison for the same reason. `R` is excluded too: it names the language, not a package.
+
+The finding sits on the *later* listing, and names the field holding the earlier one. There is no autofix: which field to keep is a decision about whether the code may rely on the package at all.
+
+This rule is **enabled by default**.
+
+A package declared as both a hard requirement and an optional one:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Imports: dplyr, rlang
+Suggests: dplyr, testthat
+```
+
+```text
+warning: description-package-in-multiple-fields
+ --> DESCRIPTION:4:11
+  |
+4 | Suggests: dplyr, testthat
+  |           ^^^^^ `dplyr` is already listed in `Imports`; a package belongs in only one dependency field
+  = help: List `dplyr` in either `Imports` or `Suggests`, and delete the other entry.
 ```
 
 ### `unused-dependency`

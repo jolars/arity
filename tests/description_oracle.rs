@@ -56,10 +56,22 @@ struct Gate {
 /// `bad_dep_entry` (the parenthesized part is not `op version` at all),
 /// `dplyr (=> 1.0)` a `bad_dep_op`, and `dplyr (>= foo)` a `bad_dep_version`.
 /// The rule's subject is the union, so the union is what backs it.
-const GATES: &[Gate] = &[Gate {
-    rule: "description-version-constraint",
-    signals: &["bad_dep_entry", "bad_dep_op", "bad_dep_version"],
-}];
+const GATES: &[Gate] = &[
+    Gate {
+        rule: "description-version-constraint",
+        signals: &["bad_dep_entry", "bad_dep_op", "bad_dep_version"],
+    },
+    // R reports the bare package name, and the rule spans the bare package
+    // name, so the two are directly comparable. Note R's own exclusions the
+    // rule has to mirror for containment to hold: `LinkingTo` is not one of
+    // the compared fields, `R` is dropped from `Depends`, and each field is
+    // uniqued before the comparison, so a within-field repeat is not a
+    // duplicate.
+    Gate {
+        rule: "description-package-in-multiple-fields",
+        signals: &["duplicates"],
+    },
+];
 
 /// Signals no rule covers yet, each tagged with the `TODO.md` rule it is
 /// earmarked for. Listing them is the point: this is the work-list, and moving
@@ -70,7 +82,6 @@ const PLANNED: &[(&str, &str)] = &[
     ("bad_maintainer", "description-malformed-maintainer"),
     ("bad_Title", "description-title-format"),
     ("bad_Description", "description-text-format"),
-    ("duplicates", "description-package-in-multiple-fields"),
     ("missing_encoding", "description-encoding"),
     ("fields_with_non_ASCII_tags", "description-encoding"),
     ("fields_with_non_ASCII_values", "description-encoding"),

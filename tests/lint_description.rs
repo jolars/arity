@@ -481,6 +481,149 @@ fn version_constraint_spans_the_whole_entry() {
 }
 
 // ---------------------------------------------------------------------------
+// description-package-in-multiple-fields
+// ---------------------------------------------------------------------------
+
+const MULTI: &str = "description-package-in-multiple-fields";
+
+/// The findings of `MULTI`, as the source text each one spans.
+fn multi_hits(text: &str) -> Vec<String> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .expect("linting should not error")
+        .iter()
+        .filter(|d| d.rule == MULTI)
+        .map(|d| {
+            let start: usize = d.range.start().into();
+            let end: usize = d.range.end().into();
+            text[start..end].to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn a_package_in_two_dependency_fields_is_flagged() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr, rlang\nSuggests: dplyr, testthat\n");
+    assert_eq!(multi_hits(&text).len(), 1);
+}
+
+#[test]
+fn a_package_in_one_dependency_field_is_not_flagged() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr, rlang\nSuggests: testthat\n");
+    assert!(multi_hits(&text).is_empty());
+}
+
+/// The span is the *later* listing's package name, and nothing else: the
+/// earlier field is the one the message points back at, and R reports the bare
+/// name, which is what the differential oracle compares against.
+#[test]
+fn the_span_is_the_later_package_name() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (>= 1.0.0)\nSuggests: dplyr\n");
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    let finding = diagnostics
+        .iter()
+        .find(|d| d.rule == MULTI)
+        .expect("a multiple-fields finding");
+    let start: usize = finding.range.start().into();
+    let end: usize = finding.range.end().into();
+    assert_eq!(&text[start..end], "dplyr");
+    assert!(
+        start > text.find("Suggests:").expect("the Suggests field"),
+        "the finding should be on the `Suggests` entry, not the `Imports` one",
+    );
+}
+
+/// A version constraint is not part of the identity: `dplyr (>= 1.0.0)` and
+/// `dplyr` are the same package listed twice.
+#[test]
+fn a_version_constraint_does_not_hide_the_second_listing() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (>= 1.0.0)\nSuggests: dplyr\n");
+    assert_eq!(multi_hits(&text), ["dplyr"]);
+}
+
+/// The message names the field the package was already listed in — that field
+/// is unique in the file, so it locates the other listing on its own.
+#[test]
+fn the_message_names_the_earlier_field() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr\nSuggests: dplyr\n");
+    let body = messages(&text, MULTI).pop().expect("a message");
+    assert!(body.contains("dplyr"), "{body}");
+    assert!(body.contains("Imports"), "{body}");
+}
+
+/// `LinkingTo` is not one of the four. A C++ package belongs in both
+/// `LinkingTo` (headers) and `Imports` (its R code), and R's own check excludes
+/// `LinkingTo` for exactly that reason.
+#[test]
+fn linking_to_alongside_imports_is_not_flagged() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: Rcpp\nLinkingTo: Rcpp\n");
+    assert!(multi_hits(&text).is_empty());
+}
+
+/// `R` names the language, not a package, and is never a dependency.
+#[test]
+fn the_r_entry_is_never_a_duplicate() {
+    let text = format!("{COMPLETE_DESCRIPTION}Depends: R (>= 4.1)\nImports: R (>= 4.1)\n");
+    assert!(multi_hits(&text).is_empty());
+}
+
+/// A package repeated inside one field is a different defect, and R's
+/// `duplicates` check uniques each field before comparing them.
+#[test]
+fn a_package_repeated_within_one_field_is_not_this_rule() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr, dplyr\n");
+    assert!(multi_hits(&text).is_empty());
+}
+
+/// Three listings are two redundant ones.
+#[test]
+fn a_package_in_three_fields_is_flagged_twice() {
+    let text = format!("{COMPLETE_DESCRIPTION}Depends: dplyr\nImports: dplyr\nSuggests: dplyr\n");
+    assert_eq!(multi_hits(&text), ["dplyr", "dplyr"]);
+}
+
+/// Every pair drawn from the four fields, not just the common `Imports`
+/// /`Suggests` one.
+#[test]
+fn every_pair_of_dependency_fields_is_checked() {
+    let fields = ["Depends", "Imports", "Suggests", "Enhances"];
+    for (i, first) in fields.iter().enumerate() {
+        for second in &fields[i + 1..] {
+            let text = format!("{COMPLETE_DESCRIPTION}{first}: dplyr\n{second}: dplyr\n");
+            assert_eq!(
+                multi_hits(&text).len(),
+                1,
+                "`{first}` + `{second}` was not flagged",
+            );
+        }
+    }
+}
+
+/// Case-sensitive, like every R package name.
+#[test]
+fn a_differently_cased_package_is_a_different_package() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr\nSuggests: Dplyr\n");
+    assert!(multi_hits(&text).is_empty());
+}
+
+/// No autofix: deleting a listing means deciding which field the package
+/// belongs in, and `Imports` versus `Suggests` is a decision about whether the
+/// code may rely on it at all.
+#[test]
+fn multiple_fields_ships_no_fix() {
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr\nSuggests: dplyr\n");
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    let finding = diagnostics
+        .iter()
+        .find(|d| d.rule == MULTI)
+        .expect("a multiple-fields finding");
+    assert!(finding.fix.is_none());
+}
+
+// ---------------------------------------------------------------------------
 // Suppression
 // ---------------------------------------------------------------------------
 
