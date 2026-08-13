@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use arity::dcf;
+use arity::formatter::{format, format_description};
 
 /// One case's view of the world according to R.
 #[derive(Debug, PartialEq, Eq)]
@@ -149,6 +150,235 @@ fn normalize(value: &str) -> String {
     value.strip_prefix('\n').unwrap_or(value).to_string()
 }
 
+/// The formatter's output must mean the same thing to R as its input did.
+///
+/// This is the leg the pure-Rust gates cannot cover. They prove formatting
+/// preserves *arity's* reading; this proves arity's reading is R's. The two
+/// compose everywhere except across the recorded divergences — and duplicate
+/// fields and a whitespace-padded name are both in this feature's blast radius,
+/// which is exactly why the formatter refuses those inputs outright.
+#[test]
+#[ignore = "read.dcf differential oracle; run via `task dcf-oracle`"]
+fn formatted_dcf_matches_read_dcf() {
+    let Some(rscript) = locate_rscript() else {
+        eprintln!("dcf-oracle: `Rscript` not found on PATH; skipping (this is not a failure).");
+        return;
+    };
+    let driver = manifest_path("tests/oracle/dcf_oracle.R");
+    if !driver.is_file() {
+        eprintln!("dcf-oracle: driver {} missing; skipping.", driver.display());
+        return;
+    }
+
+    let mut checked = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (label, input) in &corpus() {
+        // Inputs the formatter refuses are not its problem, and inputs R
+        // rejects have no verdict to compare against.
+        let Ok(formatted) = format_description(input) else {
+            continue;
+        };
+        let (Some(before), Some(after)) = (
+            run_oracle(&rscript, &driver, input),
+            run_oracle(&rscript, &driver, &formatted),
+        ) else {
+            continue;
+        };
+        let Oracle::Records(before) = before else {
+            continue;
+        };
+        checked += 1;
+
+        let after = match after {
+            // The loudest possible failure: R took the input and chokes on what
+            // we wrote.
+            Oracle::Error(message) => {
+                failures.push(format!(
+                    "{label}: read.dcf accepted the input but errored on the formatted output: {message}"
+                ));
+                continue;
+            }
+            Oracle::Records(records) => records,
+        };
+
+        if let Err(why) = compare_meaning(&before, &after) {
+            failures.push(format!("{label}: {why}"));
+        }
+    }
+
+    eprintln!("dcf-oracle: {checked} formatted case(s) checked.");
+    assert!(
+        failures.is_empty(),
+        "formatting changed what read.dcf sees in {} case(s):\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
+/// Compare two `read.dcf` verdicts under the only value rewrites the formatter
+/// performs.
+///
+/// Deliberately not a second copy of the formatter's field-class table: the
+/// pure-Rust gate owns that. Here the relation is generic and slightly loose —
+/// whitespace-insensitive everywhere, order-insensitive for the dependency
+/// fields the parser already names, and R-equivalent for the two R-code fields.
+/// Loose is the right direction for an oracle: it cannot produce a false alarm,
+/// and anything it does catch is real.
+fn compare_meaning(
+    before: &[BTreeMap<String, String>],
+    after: &[BTreeMap<String, String>],
+) -> Result<(), String> {
+    if before.len() != after.len() {
+        return Err(format!(
+            "record count: {} before, {} after",
+            before.len(),
+            after.len()
+        ));
+    }
+    for (index, (want, got)) in before.iter().zip(after).enumerate() {
+        let want_names: Vec<&String> = want.keys().collect();
+        let got_names: Vec<&String> = got.keys().collect();
+        if want_names != got_names {
+            return Err(format!(
+                "record {index} field names: {want_names:?} -> {got_names:?}"
+            ));
+        }
+        for (name, before_value) in want {
+            let after_value = &got[name];
+            if !values_agree(name, before_value, after_value) {
+                return Err(format!(
+                    "record {index} field {name:?}:\n  before: {before_value:?}\n  after:  {after_value:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn values_agree(name: &str, before: &str, after: &str) -> bool {
+    if dcf::is_dependency_field(name) {
+        // Entries are sorted, so only the multiset is preserved.
+        return sorted_entries(before) == sorted_entries(after);
+    }
+    if matches!(name, "Authors@R" | "Roxygen") {
+        // R code: equal iff it formats to the same R.
+        let lhs = format(before).unwrap_or_else(|_| before.to_string());
+        let rhs = format(after).unwrap_or_else(|_| after.to_string());
+        return lhs == rhs;
+    }
+    if matches!(name, "Collate" | "Collate.windows" | "Collate.unix") {
+        // Quoting is added; order is not touched.
+        let unquote = |value: &str| -> Vec<String> {
+            value
+                .split_whitespace()
+                .map(|token| token.trim_matches(['\'', '"']).to_string())
+                .collect()
+        };
+        return unquote(before) == unquote(after);
+    }
+    collapse_ws(before) == collapse_ws(after)
+}
+
+fn sorted_entries(value: &str) -> Vec<String> {
+    let mut entries: Vec<String> = value
+        .split(',')
+        .map(collapse_ws)
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    entries.sort();
+    entries
+}
+
+fn collapse_ws(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `Authors@R` is R code that `R CMD build` evaluates, and formatting it is
+/// arity's whole differentiator over `desc`. So compare what R itself derives
+/// from the field — including the bytes it writes into a built tarball's
+/// `Author:` and `Maintainer:`.
+#[test]
+#[ignore = "read.dcf differential oracle; run via `task dcf-oracle`"]
+fn formatted_authors_at_r_reads_identically() {
+    let Some(rscript) = locate_rscript() else {
+        eprintln!("dcf-oracle: `Rscript` not found on PATH; skipping (this is not a failure).");
+        return;
+    };
+    let driver = manifest_path("tests/oracle/dcf_oracle.R");
+    if !driver.is_file() {
+        eprintln!("dcf-oracle: driver {} missing; skipping.", driver.display());
+        return;
+    }
+
+    let mut checked = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (label, input) in &corpus() {
+        let Ok(formatted) = format_description(input) else {
+            continue;
+        };
+        let Some(before) = authors_field(input) else {
+            continue;
+        };
+        let after = authors_field(&formatted).unwrap_or_default();
+
+        let before_report = run_authors(&rscript, &driver, &before);
+        let after_report = run_authors(&rscript, &driver, &after);
+        checked += 1;
+
+        match (before_report, after_report) {
+            // An `Authors@R` R cannot read must come back byte-identical: we do
+            // not get to guess at a field we could not parse either.
+            (Some(lhs), _) if lhs.starts_with("AAR-ERROR") => {
+                if before != after {
+                    failures.push(format!(
+                        "{label}: an unreadable Authors@R was rewritten:\n  before: {before:?}\n  after:  {after:?}"
+                    ));
+                }
+            }
+            (Some(lhs), Some(rhs)) if lhs != rhs => {
+                failures.push(format!(
+                    "{label}: R reads a different Authors@R after formatting:\n  before: {lhs}\n  after:  {rhs}"
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    eprintln!("dcf-oracle: {checked} Authors@R case(s) checked.");
+    assert!(
+        failures.is_empty(),
+        "formatting changed Authors@R in {} case(s):\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
+/// The `Authors@R` value of `text`, folded as `read.dcf` would see it.
+fn authors_field(text: &str) -> Option<String> {
+    let parsed = dcf::parse(text);
+    let field = parsed.document().field("Authors@R")?;
+    let folded = field.folded_value();
+    Some(folded.strip_prefix('\n').unwrap_or(&folded).to_string())
+}
+
+fn run_authors(rscript: &Path, driver: &Path, value: &str) -> Option<String> {
+    let mut child = Command::new(rscript)
+        .arg(driver)
+        .arg("authors")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    child.stdin.as_mut()?.write_all(value.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 // ---------------------------------------------------------------------------
 // Corpus
 // ---------------------------------------------------------------------------
@@ -244,6 +474,13 @@ const ADVERSARIAL: &[&str] = &[
     "Description: one\n  # two\n",
     "Authors@R: c(person(\"A\", \"B\", role = c(\"aut\", \"cre\")))\n",
     "Roxygen: list(load = \"installed\",\n    markdown = TRUE)\n",
+    // `Authors@R` shapes worth their own R-side verdict: an ORCID comment that
+    // `format()` would hide, a `person()` long enough that the R formatter has
+    // to break it, a role-less copyright holder, and one R cannot read at all.
+    "Authors@R: person(\"Jo\", \"La\", , \"jo@example.com\", role = c(\"aut\", \"cre\"), comment = c(ORCID = \"0000-0002-1825-0097\"))\n",
+    "Authors@R: c(\n    person(\"Aaaaaaaaaa\", \"Bbbbbbbbbbbb\", , \"aaaaaaaaaa@example.com\", role = c(\"aut\", \"cre\")),\n    person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\"))\n  )\n",
+    "Authors@R: person(\"Jo\",\n",
+    "Package: p\nAuthors@R:\n    person(\"Jo\", \"La\", role = \"cre\", email = \"jo@example.com\")\n",
 ];
 
 // ---------------------------------------------------------------------------

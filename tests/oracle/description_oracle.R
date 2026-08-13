@@ -99,7 +99,9 @@ writeLines(text, dfile, useBytes = TRUE)
 
 db <- tryCatch(
   tools:::.read_description(dfile),
-  error = function(e) structure(list(msg = conditionMessage(e)), class = "read_error")
+  error = function(e) {
+    structure(list(msg = conditionMessage(e)), class = "read_error")
+  }
 )
 if (inherits(db, "read_error")) {
   cat("ERROR\t", escape(db$msg), "\n", sep = "")
@@ -108,7 +110,9 @@ if (inherits(db, "read_error")) {
 
 out <- tryCatch(
   tools:::.check_package_description(dfile, strict = TRUE),
-  error = function(e) structure(list(msg = conditionMessage(e)), class = "check_error")
+  error = function(e) {
+    structure(list(msg = conditionMessage(e)), class = "check_error")
+  }
 )
 if (inherits(out, "check_error")) {
   cat("ERROR\t", escape(out$msg), "\n", sep = "")

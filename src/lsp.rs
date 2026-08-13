@@ -128,7 +128,9 @@ use smol_str::SmolStr;
 
 use crate::ast::{Arg, ArgList, AssignmentExpr, AstNode as _, BinaryExpr, CallExpr, FunctionExpr};
 use crate::config::{Config, FormatConfig, IndexConfig, LintConfig};
-use crate::formatter::{FormatStyle, format_node, format_range, format_with_options};
+use crate::formatter::{
+    FormatStyle, format_description_with_style, format_node, format_range, format_with_options,
+};
 use crate::incremental::{
     Analysis, IncrementalDatabase, SourceFile, expand_dir_renames, normalize_path,
 };

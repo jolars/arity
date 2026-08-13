@@ -1,0 +1,5 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: err.to_string()
+---
+left unformatted: the file holds 2 records, not one

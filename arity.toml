@@ -2,8 +2,24 @@
 # All values shown below are the built-in defaults; this file dogfoods the
 # configuration discovery path and serves as a reference.
 
+# Test fixtures are inputs, not sources, and formatting them would break the
+# suites that assert on them byte for byte: `input.R` is unformatted on purpose,
+# several parser cases are unparseable on purpose, and `tests/fixtures/rindex/*`
+# are complete miniature packages whose DESCRIPTION a walk would collect.
+# Both patterns are needed: a pattern containing a slash is anchored at this
+# file's directory, so `tests/fixtures/` does not reach into `crates/`.
+extend-exclude = [
+  "tests/fixtures/",
+  "crates/*/tests/fixtures/",
+  # Fixture data too, despite the directory name: the roxygen parity corpus is
+  # input to the projector gate, and reformatting it would change what that gate
+  # compares against roxygen2.
+  "tests/oracle/corpus/",
+]
+
 [format]
 line-width = 80
 indent-width = 2
+description = true
 
 [lint]

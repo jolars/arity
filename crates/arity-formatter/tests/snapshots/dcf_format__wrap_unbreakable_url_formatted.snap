@@ -1,0 +1,7 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: formatted
+---
+Package: p
+URL:
+    https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

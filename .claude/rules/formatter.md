@@ -48,10 +48,37 @@ tidyverse R style guide (vendored in `style/`, untracked).
 `src/formatter.rs` re-exports the engine and hosts what needs the filesystem:
 
 - `check.rs` — the batch `check_paths*` API (needs `file_discovery`).
+- `source.rs` — the per-file grammar branch, so the write path and `--check`
+  cannot drift on which file is formatted how. The roxygen markdown probe is
+  R-only; a `DESCRIPTION` decline is not a failure.
 - `cache.rs` — the persistent already-formatted cache for `format --check`. It
   is a **disposable optimization that must never be a source of errors**; its
   cache key stays the CLI's version, so a formatter change can never hand back a
-  stale "clean". `--no-cache` overrides per run.
+  stale "clean". `--no-cache` overrides per run. The key names the **grammar**
+  first: a lone comment line is a fixed point of both, and a cross-grammar hit
+  would report a dirty `DESCRIPTION` clean.
+
+## `DESCRIPTION`
+
+`formatter/description/` formats the *other* grammar. It reuses none of the
+layout engine — every break is decided by the field's class, and prose wants
+first-fit, not the engine's all-or-nothing group.
+
+- **`desc` is a style reference, never an oracle.** Field order and the
+  four-space continuation indent come from `desc:::field_order` and
+  `desc:::format.DescriptionField`, but `desc` drops every comment and we must
+  not. Gauge it with `task desc-compat`; never gate on it.
+- **The class table is closed, and its default is `Opaque`** — line structure
+  preserved byte for byte. That is what makes formatting on by default
+  defensible: an unrecognized field's value is identical to `read.dcf`.
+- **Comments attach forward**, to the *next* field, matching
+  `next_meaningful_dcf_sibling` in the linter's suppression map. Moving one
+  relative to its anchor would silently retarget a `# arity-ignore`.
+- **Refuse rather than guess.** Duplicate fields, multiple records, whitespace
+  before a colon, a non-UTF-8 `Encoding`: each is a case where restyling could
+  change what R reads. A refusal is not an error.
+- The continuation indent is a fixed four spaces, **not** `indent_width`, which
+  configures R-code nesting.
 
 ## Air compatibility (soft gauge, never a gate)
 

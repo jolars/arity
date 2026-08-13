@@ -606,3 +606,50 @@ fn cli_init_refuses_to_overwrite_without_force() {
     let forced = run_cli_in_no_stdin(dir.path(), ["init", "--force"]);
     assert_eq!(forced.status.code(), Some(0));
 }
+
+#[test]
+fn format_description_defaults_to_enabled() {
+    let config: arity::config::Config = toml::from_str("").expect("empty config parses");
+    assert!(config.format.description);
+}
+
+#[test]
+fn format_description_can_be_turned_off() {
+    let config: arity::config::Config =
+        toml::from_str("[format]\ndescription = false\n").expect("parses");
+    assert!(!config.format.description);
+}
+
+#[test]
+fn a_mistyped_description_key_is_a_parse_error() {
+    let err = toml::from_str::<arity::config::Config>("[format]\ndescriptions = true\n")
+        .expect_err("deny_unknown_fields rejects the typo");
+    assert!(err.to_string().contains("descriptions"), "{err}");
+}
+
+#[test]
+fn the_repos_own_config_shields_its_fixture_descriptions() {
+    // `tests/fixtures/rindex/*/` are complete miniature packages: a DESCRIPTION
+    // beside an `R/`, which is exactly what a walk collects. They are inputs the
+    // parser and oracle suites assert on, so `arity format .` in this repo must
+    // not walk in and rewrite them.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let (config_path, config) = arity::config::Config::discover(root)
+        .expect("config loads")
+        .expect("the repo has an arity.toml");
+    let exclude = config
+        .exclude_filter(Some(&config_path), root, &[])
+        .expect("exclude patterns compile");
+
+    let found = arity::file_discovery::collect_source_files(&[root.to_path_buf()], &exclude)
+        .expect("walk succeeds");
+    let fixtures: Vec<_> = found
+        .description
+        .iter()
+        .filter(|path| path.starts_with(root.join("tests/fixtures")))
+        .collect();
+    assert!(
+        fixtures.is_empty(),
+        "fixture DESCRIPTIONs collected: {fixtures:?}"
+    );
+}

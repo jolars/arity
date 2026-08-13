@@ -23,6 +23,20 @@ pub(crate) fn format_edits_via_db(
     encoding: PositionEncoding,
 ) -> Option<Vec<TextEdit>> {
     let text = buffer.text();
+
+    // A `DESCRIPTION` is the other grammar and has no `SourceFile` in the db
+    // whose parse could be reused, so it branches before the lookup — the same
+    // shape `hover_via_db` and `completion_via_db` use. A red DCF tree is
+    // neither `Send` nor `Eq` and has no business in salsa; the file is a few
+    // kilobytes, so a fresh parse is not worth caching.
+    //
+    // `Err` covers both a refusal and a parse error, and `None` here means "no
+    // edits", which is what leaves the client's file alone.
+    if DocumentKind::from_path(path) == DocumentKind::Description {
+        let formatted = format_description_with_style(text, style).ok()?;
+        return Some(edits_for_formatted_in(buffer, formatted, encoding));
+    }
+
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
         if snapshot.file_text(file) != text {
@@ -254,6 +268,55 @@ pub(crate) fn findings_to_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `DESCRIPTION` is served by the DCF grammar off the live buffer, never
+    /// through salsa: there is no `SourceFile` for it, and a red DCF tree is
+    /// neither `Send` nor `Eq`.
+    #[test]
+    fn format_via_db_routes_a_description_to_dcf() {
+        use crate::incremental::IncrementalDatabase;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("DESCRIPTION");
+        // Valid as R *and* as DCF, so only the routing decides the answer.
+        let buffer = "Package: p\nImports: b, a\n";
+        let db = IncrementalDatabase::default();
+        let snapshot = db.snapshot();
+
+        let edits = format_edits_via_db(
+            &snapshot,
+            &path,
+            &buf(buffer),
+            FormatStyle::default(),
+            PositionEncoding::Utf16,
+        )
+        .expect("formatter accepts the buffer");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "Package: p\nImports:\n    a,\n    b\n");
+    }
+
+    /// A `DESCRIPTION` the formatter refuses produces no edits at all, which is
+    /// what leaves the client's file untouched.
+    #[test]
+    fn format_via_db_declines_a_description_it_cannot_restyle() {
+        use crate::incremental::IncrementalDatabase;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("DESCRIPTION");
+        let db = IncrementalDatabase::default();
+        let snapshot = db.snapshot();
+
+        assert!(
+            format_edits_via_db(
+                &snapshot,
+                &path,
+                &buf("Package: p\n\nPackage: q\n"),
+                FormatStyle::default(),
+                PositionEncoding::Utf16,
+            )
+            .is_none()
+        );
+    }
 
     /// LSP document formatting honors the file's package-wide markdown default,
     /// on both the cached-tree path (the salsa parse ran under the tracked

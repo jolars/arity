@@ -13,7 +13,7 @@ use rowan::{TextRange, TextSize};
 
 use crate::config::LintConfig;
 use crate::file_discovery::{
-    ExcludeFilter, FileDiscoveryError, collect_lint_files, collect_r_files,
+    ExcludeFilter, FileDiscoveryError, collect_r_files, collect_source_files,
 };
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, control_flow,
@@ -101,8 +101,8 @@ pub struct LintResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LintError {
     MissingPaths,
-    NoRFiles,
-    NonRFilePath { path: PathBuf },
+    NoFiles,
+    UnsupportedFilePath { path: PathBuf },
     WalkError { path: PathBuf, message: String },
     ReadError { path: PathBuf, source: String },
     UnknownRule { rule: String },
@@ -117,8 +117,8 @@ impl fmt::Display for LintError {
                     "lint requires at least one input path (file or directory)"
                 )
             }
-            Self::NoRFiles => write!(f, "no lintable files found under the provided input paths"),
-            Self::NonRFilePath { path } => write!(
+            Self::NoFiles => write!(f, "no lintable files found under the provided input paths"),
+            Self::UnsupportedFilePath { path } => write!(
                 f,
                 "input file {} is not lintable; lint supports .R files and DESCRIPTION",
                 path.display()
@@ -139,7 +139,7 @@ impl std::error::Error for LintError {}
 impl From<FileDiscoveryError> for LintError {
     fn from(value: FileDiscoveryError) -> Self {
         match value {
-            FileDiscoveryError::NonRFilePath { path } => Self::NonRFilePath { path },
+            FileDiscoveryError::UnsupportedFilePath { path } => Self::UnsupportedFilePath { path },
             FileDiscoveryError::WalkError { path, message } => Self::WalkError { path, message },
         }
     }
@@ -180,7 +180,7 @@ pub fn check_paths_with_index(
         return Err(LintError::UnknownRule { rule });
     }
 
-    let discovered = collect_lint_files(paths, exclude).map_err(LintError::from)?;
+    let discovered = collect_source_files(paths, exclude).map_err(LintError::from)?;
     let files = discovered.r;
     // Every package `DESCRIPTION` is an input regardless of which rules are
     // selected: `syntax-error` is not a rule, and a `DESCRIPTION` that
@@ -198,7 +198,7 @@ pub fn check_paths_with_index(
                 skipped: Vec::new(),
             });
         }
-        return Err(LintError::NoRFiles);
+        return Err(LintError::NoFiles);
     }
 
     let mut db = IncrementalDatabase::default();
@@ -397,7 +397,7 @@ pub fn check_paths_with_index(
         })
         .collect();
     reports.extend(description_reports);
-    // `collect_lint_files` sorts each list, so this only interleaves the two.
+    // `collect_source_files` sorts each list, so this only interleaves the two.
     reports.sort_by(|a, b| a.path.cmp(&b.path));
 
     let total_findings = reports

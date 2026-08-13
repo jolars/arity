@@ -8,7 +8,7 @@ use crate::project::is_package_root;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileDiscoveryError {
-    NonRFilePath { path: PathBuf },
+    UnsupportedFilePath { path: PathBuf },
     WalkError { path: PathBuf, message: String },
 }
 
@@ -25,6 +25,9 @@ pub enum FileDiscoveryError {
 #[derive(Debug, Clone)]
 pub struct ExcludeFilter {
     matcher: Option<Gitignore>,
+    /// Every spelling of the pattern root a candidate path might be written
+    /// with. See [`ExcludeFilter::relativize`].
+    roots: Vec<PathBuf>,
     force: bool,
 }
 
@@ -53,6 +56,7 @@ impl ExcludeFilter {
     pub fn none() -> Self {
         Self {
             matcher: None,
+            roots: Vec::new(),
             force: false,
         }
     }
@@ -81,6 +85,7 @@ impl ExcludeFilter {
         })?;
         Ok(Self {
             matcher: Some(matcher),
+            roots: root_spellings(root),
             force: false,
         })
     }
@@ -107,13 +112,14 @@ impl ExcludeFilter {
         }
         match &self.matcher {
             Some(matcher) => {
+                let path = self.relativize(path);
                 // `matched_path_or_any_parents` asserts that `path`, after
                 // stripping the matcher root, has no root component left; a
                 // rooted path outside the matcher root cannot match its
                 // root-relative patterns anyway. `has_root` rather than
                 // `is_absolute`: on Windows a driveless path like `\foo` is
                 // rooted but not absolute, and would still trip the assert.
-                if path.has_root() && !path.starts_with(matcher.path()) {
+                if path.has_root() {
                     return false;
                 }
                 matcher.matched_path_or_any_parents(path, false).is_ignore()
@@ -124,24 +130,81 @@ impl ExcludeFilter {
 
     fn is_excluded(&self, path: &Path, is_dir: bool) -> bool {
         match &self.matcher {
-            Some(matcher) => matcher.matched(path, is_dir).is_ignore(),
+            Some(matcher) => matcher.matched(self.relativize(path), is_dir).is_ignore(),
             None => false,
         }
     }
+
+    /// `path` re-expressed relative to the pattern root.
+    ///
+    /// [`Gitignore`] strips its root from a candidate **textually**, so a path
+    /// naming the same directory through a different spelling strips nothing and
+    /// every anchored pattern (`tests/fixtures/`, anything with a `/`) silently
+    /// stops matching. That is not a corner case: config discovery
+    /// canonicalizes, walk paths come from the command line, and on Windows
+    /// `canonicalize` returns a `\\?\`-verbatim path that nothing else in the
+    /// process produces — so *every* absolute walk path missed.
+    ///
+    /// Covers the spellings [`root_spellings`] can **derive from the root**. The
+    /// reverse — a candidate reached through a symlink the root does not name —
+    /// would need a `canonicalize` per entry, which is a syscall per file to fix
+    /// a case that needs an explicitly symlinked path on the command line.
+    ///
+    /// Relativizing here rather than teaching the matcher about spellings keeps
+    /// this in one place: what a pattern is anchored to is this filter's
+    /// business, not `ignore`'s.
+    fn relativize<'a>(&self, path: &'a Path) -> &'a Path {
+        for root in &self.roots {
+            if let Ok(relative) = path.strip_prefix(root) {
+                return relative;
+            }
+        }
+        path
+    }
 }
 
-/// The files one lint run will process, split by grammar.
+/// Every spelling of `root` a candidate path might arrive written with: as
+/// given, canonicalized (symlinks resolved), and each with any Windows verbatim
+/// prefix removed. Computed once, at construction, so matching stays syscall-free.
+fn root_spellings(root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![root.to_path_buf()];
+    if let Ok(canonical) = root.canonicalize() {
+        roots.push(canonical);
+    }
+    for index in 0..roots.len() {
+        if let Some(simplified) = strip_verbatim_prefix(&roots[index]) {
+            roots.push(simplified);
+        }
+    }
+    roots.dedup();
+    roots
+}
+
+/// `\\?\D:\pkg` as `D:\pkg`, and `\\?\UNC\server\share` as `\\server\share`.
+///
+/// `Path::canonicalize` returns the verbatim form on Windows; no other path in
+/// the process is written that way, so it has to be matchable against both.
+/// `None` when there is no verbatim prefix to remove.
+fn strip_verbatim_prefix(path: &Path) -> Option<PathBuf> {
+    let rest = path.to_str()?.strip_prefix(r"\\?\")?;
+    match rest.strip_prefix(r"UNC\") {
+        Some(share) => Some(PathBuf::from(format!(r"\\{share}"))),
+        None => Some(PathBuf::from(rest)),
+    }
+}
+
+/// The files one run will process, split by grammar.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveredFiles {
     pub r: Vec<PathBuf>,
-    /// Package `DESCRIPTION`s — see [`collect_lint_files`] for which ones a walk
+    /// Package `DESCRIPTION`s — see [`collect_source_files`] for which ones a walk
     /// picks up.
     pub description: Vec<PathBuf>,
 }
 
 /// Discover the `.R` files under `paths`. The R-only view, for the callers that
-/// want exactly that: the formatter, `arity index`, and the lint driver's
-/// project-scope seeding.
+/// want exactly that: `arity index`, the lint driver's project-scope seeding,
+/// and `lint --fix`.
 pub fn collect_r_files(
     paths: &[PathBuf],
     exclude: &ExcludeFilter,
@@ -149,8 +212,8 @@ pub fn collect_r_files(
     collect(paths, exclude, false).map(|files| files.r)
 }
 
-/// Discover both grammars' lint inputs under `paths` — the lint driver's entry
-/// point.
+/// Discover both grammars' inputs under `paths` — what `arity lint` and
+/// `arity format` each process.
 ///
 /// A **walk** picks up a `DESCRIPTION` only when its directory is a package root
 /// ([`is_package_root`]) that is not itself inside another package. The first
@@ -159,9 +222,15 @@ pub fn collect_r_files(
 /// `tests/`, which is fixture data for a test rather than anybody's package
 /// metadata — the same reason `undeclared-dependency` looks only at `R/`.
 ///
+/// That gate matters more to `format` than it did to `lint`, and for a different
+/// reason: a fixture package's `DESCRIPTION` is often deliberately malformed and
+/// asserted on byte for byte by its own project's tests. Linting one wastes the
+/// reader's time; rewriting one breaks their suite.
+///
 /// An **explicitly named** `DESCRIPTION` is always accepted, matching how an
-/// explicitly named excluded `.R` file is still processed.
-pub fn collect_lint_files(
+/// explicitly named excluded `.R` file is still processed. The user typed the
+/// path; that is consent.
+pub fn collect_source_files(
     paths: &[PathBuf],
     exclude: &ExcludeFilter,
 ) -> Result<DiscoveredFiles, FileDiscoveryError> {
@@ -192,7 +261,7 @@ fn collect(
                 found_descriptions.push(path.clone());
                 continue;
             }
-            return Err(FileDiscoveryError::NonRFilePath { path: path.clone() });
+            return Err(FileDiscoveryError::UnsupportedFilePath { path: path.clone() });
         }
 
         if path.is_dir() {
@@ -256,10 +325,18 @@ fn is_r_file(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("r"))
 }
 
+/// The one file name R reads package metadata from.
+pub const DESCRIPTION_FILE_NAME: &str = "DESCRIPTION";
+
 /// Whether `path` is named `DESCRIPTION`. Case-sensitive: R reads that exact
 /// name, so `description` is an unrelated file.
-fn is_description_file(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "DESCRIPTION")
+///
+/// The single path-to-grammar classifier. The language server's `DocumentKind`
+/// goes through it too, so a path can never be an R file to one half of the
+/// codebase and a `DESCRIPTION` to the other.
+pub fn is_description_file(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == DESCRIPTION_FILE_NAME)
 }
 
 /// Whether `dir` is a package root in its own right, rather than a package
@@ -470,5 +547,52 @@ mod tests {
         let forced =
             collect_r_files(&[root.to_path_buf()], &filter.with_force_exclude(true)).unwrap();
         assert_eq!(walked, forced);
+    }
+
+    /// An anchored pattern must hold when the walk spells the root differently
+    /// from the matcher.
+    ///
+    /// The two routinely differ, because config discovery canonicalizes while
+    /// walk paths come from the command line. `Gitignore` strips its root
+    /// textually, so without [`ExcludeFilter::relativize`] every pattern
+    /// containing a `/` silently stops matching — this repo's own
+    /// `tests/fixtures/` among them, which is what broke on Windows, where
+    /// `canonicalize` returns a `\\?\` verbatim path and nothing else does.
+    ///
+    /// Modeled here with a symlink, the one spelling difference Unix has: the
+    /// matcher is rooted at the symlinked name and the walk reports canonical
+    /// paths, which is the spelling [`root_spellings`] bridges to. Both sides go
+    /// through `canonicalize` rather than trusting `tempdir()`'s own path —
+    /// macOS hands out `/var/...`, where `/var` is itself a symlink, so the two
+    /// spellings would otherwise differ in a second, unmodeled way.
+    #[test]
+    #[cfg(unix)]
+    fn an_anchored_pattern_holds_through_a_differently_spelled_root() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("real");
+        touch(&real.join("keep.R"));
+        touch(&real.join("tests").join("fixtures").join("skip.R"));
+        let link = dir.path().join("link");
+        symlink(&real, &link).unwrap();
+        let canonical = real.canonicalize().unwrap();
+
+        let filter = ExcludeFilter::new(&link, &["tests/fixtures/".to_string()]).unwrap();
+        let files = collect_r_files(std::slice::from_ref(&canonical), &filter).unwrap();
+        assert_eq!(files, vec![canonical.join("keep.R")]);
+    }
+
+    #[test]
+    fn a_verbatim_root_prefix_is_matchable_without_it() {
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\D:\pkg")),
+            Some(PathBuf::from(r"D:\pkg"))
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\UNC\server\share")),
+            Some(PathBuf::from(r"\\server\share"))
+        );
+        assert_eq!(strip_verbatim_prefix(Path::new("/project")), None);
     }
 }

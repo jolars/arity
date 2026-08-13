@@ -15,10 +15,7 @@
 names <- sort(grDevices::colors(), method = "radix")
 rgb <- grDevices::col2rgb(names)
 
-rows <- sprintf(
-  '    ("%s", %d, %d, %d),',
-  names, rgb[1, ], rgb[2, ], rgb[3, ]
-)
+rows <- sprintf('    ("%s", %d, %d, %d),', names, rgb[1, ], rgb[2, ], rgb[3, ])
 
 out <- file.path("src", "lsp", "color_names.rs")
 writeLines(

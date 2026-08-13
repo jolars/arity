@@ -1,0 +1,5 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: err.to_string()
+---
+left unformatted: whitespace before the colon of field "Package"

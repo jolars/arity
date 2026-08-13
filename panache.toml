@@ -5,6 +5,7 @@ extend-exclude = [
   "AGENTS.md",
   "CHANGELOG.md",
   "AIR_COMPAT.md",
+  "DESC_COMPAT.md",
   # Generated mdBook pages (clap reference + rule reference + benchmark
   # partials); not hand-written prose.
   "docs/src/reference/cli.md",

@@ -1,0 +1,5 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: err.to_string()
+---
+input contains 1 DCF diagnostic(s); formatter only supports parseable input

@@ -26,11 +26,19 @@ suppressWarnings(suppressMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 src_dir <- if (length(args) >= 1) args[[1]] else "roxygen2-ref"
-out_path <- if (length(args) >= 2) args[[2]] else "tests/oracle/corpus/roxygen.jsonl"
+out_path <- if (length(args) >= 2) {
+  args[[2]]
+} else {
+  "tests/oracle/corpus/roxygen.jsonl"
+}
 
 test_dir <- file.path(src_dir, "tests", "testthat")
 if (!dir.exists(test_dir)) {
-  stop(sprintf("test dir not found: %s (clone roxygen2 to %s)", test_dir, src_dir))
+  stop(sprintf(
+    "test dir not found: %s (clone roxygen2 to %s)",
+    test_dir,
+    src_dir
+  ))
 }
 
 # --- extract roc_proc_text source strings via the R parser ------------------
@@ -38,11 +46,16 @@ if (!dir.exists(test_dir)) {
 raw_blocks <- character(0)
 
 walk <- function(node) {
-  if (!is.call(node)) return(invisible())
+  if (!is.call(node)) {
+    return(invisible())
+  }
   fn <- node[[1]]
   if (is.symbol(fn) && as.character(fn) == "roc_proc_text") {
     for (a in as.list(node)[-1]) {
-      is_str <- tryCatch(is.character(a) && length(a) == 1, error = function(e) FALSE)
+      is_str <- tryCatch(
+        is.character(a) && length(a) == 1,
+        error = function(e) FALSE
+      )
       if (isTRUE(is_str)) {
         raw_blocks[[length(raw_blocks) + 1]] <<- a
         break
@@ -51,7 +64,13 @@ walk <- function(node) {
   }
   # Recurse into call children, guarding R's empty-symbol arg placeholder.
   for (i in seq_along(node)) {
-    is_c <- tryCatch({ el <- node[[i]]; is.call(el) }, error = function(e) FALSE)
+    is_c <- tryCatch(
+      {
+        el <- node[[i]]
+        is.call(el)
+      },
+      error = function(e) FALSE
+    )
     if (isTRUE(is_c)) walk(node[[i]])
   }
 }
@@ -59,8 +78,12 @@ walk <- function(node) {
 files <- sort(list.files(test_dir, pattern = "\\.[Rr]$", full.names = TRUE))
 for (f in files) {
   exprs <- tryCatch(parse(f, keep.source = FALSE), error = function(e) NULL)
-  if (is.null(exprs)) next
-  for (e in exprs) walk(e)
+  if (is.null(exprs)) {
+    next
+  }
+  for (e in exprs) {
+    walk(e)
+  }
 }
 
 # --- dedent ----------------------------------------------------------------
@@ -69,14 +92,24 @@ dedent <- function(src) {
   lines <- strsplit(src, "\n", fixed = TRUE)[[1]]
   # Drop leading and trailing blank lines.
   nonblank <- which(nzchar(trimws(lines)))
-  if (length(nonblank) == 0) return("")
+  if (length(nonblank) == 0) {
+    return("")
+  }
   lines <- lines[seq(min(nonblank), max(nonblank))]
-  indents <- vapply(lines, function(l) {
-    if (!nzchar(trimws(l))) return(NA_integer_)
-    nchar(sub("^([ \t]*).*$", "\\1", l))
-  }, integer(1))
+  indents <- vapply(
+    lines,
+    function(l) {
+      if (!nzchar(trimws(l))) {
+        return(NA_integer_)
+      }
+      nchar(sub("^([ \t]*).*$", "\\1", l))
+    },
+    integer(1)
+  )
   common <- min(indents, na.rm = TRUE)
-  if (common > 0) lines <- substring(lines, common + 1)
+  if (common > 0) {
+    lines <- substring(lines, common + 1)
+  }
   paste0(paste(lines, collapse = "\n"), "\n")
 }
 
@@ -88,7 +121,9 @@ renderable <- function(src) {
   # benign and deterministic --- both sides of the fixed point see them alike ---
   # so they stay in the corpus.
   ok <- tryCatch(
-    suppressWarnings(suppressMessages(length(roc_proc_text(rd_roclet(), src)) >= 1)),
+    suppressWarnings(suppressMessages(
+      length(roc_proc_text(rd_roclet(), src)) >= 1
+    )),
     error = function(e) FALSE
   )
   isTRUE(ok)
@@ -99,8 +134,12 @@ records <- list()
 n_render_fail <- 0L
 for (b in raw_blocks) {
   src <- dedent(b)
-  if (!nzchar(trimws(src))) next
-  if (exists(src, envir = seen, inherits = FALSE)) next
+  if (!nzchar(trimws(src))) {
+    next
+  }
+  if (exists(src, envir = seen, inherits = FALSE)) {
+    next
+  }
   assign(src, TRUE, envir = seen)
   if (!renderable(src)) {
     n_render_fail <- n_render_fail + 1L
@@ -119,7 +158,13 @@ for (r in records) {
   writeLines(toJSON(r, auto_unbox = TRUE), con)
 }
 
-cat(sprintf(
-  "harvested %d raw -> %d unique renderable blocks (%d unrenderable dropped) -> %s\n",
-  length(raw_blocks), length(records), n_render_fail, out_path
-), file = stderr())
+cat(
+  sprintf(
+    "harvested %d raw -> %d unique renderable blocks (%d unrenderable dropped) -> %s\n",
+    length(raw_blocks),
+    length(records),
+    n_render_fail,
+    out_path
+  ),
+  file = stderr()
+)

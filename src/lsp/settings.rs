@@ -3,6 +3,10 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedSettings {
     pub(crate) style: FormatStyle,
+    /// The `[format] description` key. With no `arity.toml` there is nothing to
+    /// read it from, so it stays at its default of on — the same answer every
+    /// other unset key gives.
+    pub(crate) format_descriptions: bool,
     pub(crate) lint: LintConfig,
     pub(crate) index: IndexConfig,
 }

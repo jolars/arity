@@ -31,8 +31,13 @@ Diagnostics are reported only for a `DESCRIPTION` at a package root of its own,
 matching what `arity lint` walks. A complete miniature package under
 `tests/testthat/` is fixture data for a test, so it stays quiet.
 
-There is no formatter for `DESCRIPTION` yet: formatting requests return no
-edits, and format-on-save leaves the file alone.
+A `DESCRIPTION` is formatted too, by default, so format-on-save canonicalizes it
+the same way it canonicalizes your `.R` files. Set `description = false` under
+`[format]` in `arity.toml` to leave it alone.
+
+Only whole-document formatting is offered: canonical field order is a property
+of the whole file, so `editor.formatOnSaveMode: "modifications"` (and
+format-selection generally) will not touch a `DESCRIPTION`.
 
 Editors need to be told to send the file, since most do not recognize
 `DESCRIPTION` on their own. The VS Code extension does this for you; for the
@@ -98,10 +103,13 @@ Format on save (optional):
 
 ```lua
 vim.api.nvim_create_autocmd("BufWritePre", {
-  pattern = "*.R",
+  pattern = { "*.R", "DESCRIPTION" },
   callback = function() vim.lsp.buf.format() end,
 })
 ```
+
+The `DESCRIPTION` entry matters: without it, the file is attached to the server
+and linted but never formatted on save.
 
 ## Helix
 

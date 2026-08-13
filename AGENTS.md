@@ -126,7 +126,9 @@ matching `.claude/rules/` file.
   consumers go through, while the formatter deliberately stays on raw CST.
 - **Formatter** (`crates/arity-formatter`) — a Wadler/Prettier-style document IR
   printed by a single best-fit layout engine that makes every line-break
-  decision. Target style is the tidyverse R style guide.
+  decision. Target style is the tidyverse R style guide. Also formats a
+  package's `DESCRIPTION` (`formatter/description/`), which needs no layout
+  engine at all: every break there is decided by the field's class.
 - **Semantic model** (`src/semantic/`) — strictly *single-file*: scopes,
   bindings, resolution, in-file `library()` tracking, per-region CFG, plus
   namespace resolution against base R and bundled CRAN symbol lists.
@@ -146,10 +148,12 @@ matching `.claude/rules/` file.
 - **Roxygen analysis** (`src/roxygen/`) — the test-only CST → Rd-tree projector
   behind the parity gate.
 - **File discovery** (`src/file_discovery.rs`) — walks for `.R` files honoring
-  the config's `ExcludeFilter`; a non-`.R` explicit path is rejected unless
+  the config's `ExcludeFilter`; an unsupported explicit path is rejected unless
   force-excluded, so a runner like pre-commit staging one is skipped, not an
-  error. `collect_lint_files` adds the lint driver's second input, a package's
-  `DESCRIPTION`; `collect_r_files` stays the R-only view its other callers need.
+  error. `collect_source_files` adds the second grammar, a package's
+  `DESCRIPTION`, and is what both `lint` and `format` walk; `collect_r_files`
+  stays the R-only view its other callers need. `is_description_file` is the one
+  path-to-grammar classifier, shared with the language server's `DocumentKind`.
 
 ## Invariants and conventions
 

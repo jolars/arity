@@ -7,7 +7,8 @@ use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
 use arity::file_discovery::{ExcludeFilter, collect_r_files};
 use arity::formatter::{
-    ChangedFile, FormatCache, FormatStyle, check_paths_with_style_cached, format_with_options,
+    ChangedFile, FormatCache, FormatStyle, Formatted, check_paths_with_style_cached,
+    format_description_with_style, format_file, format_with_options,
 };
 use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
 use arity::parser::ParseOptions;
@@ -59,6 +60,7 @@ fn main() -> ExitCode {
         } => run_parse(file, quiet, verify),
         Commands::Format {
             paths,
+            stdin_filename,
             verify,
             check,
             line_width,
@@ -68,6 +70,7 @@ fn main() -> ExitCode {
             no_cache,
         } => run_format(
             paths,
+            stdin_filename,
             FormatModes {
                 verify,
                 check,
@@ -428,15 +431,25 @@ struct FormatCacheSetup {
     dir: Option<PathBuf>,
 }
 
-/// Resolve the formatter style, exclude filter, and cache settings for the
-/// `format` command from a single config load. Prints and returns an exit code
-/// on error.
+/// Everything the `format` command resolves from one config load.
+struct FormatSetup {
+    style: FormatStyle,
+    exclude: ExcludeFilter,
+    cache: FormatCacheSetup,
+    /// The `[format] description` key: whether a package `DESCRIPTION` is one of
+    /// the files this run is about.
+    descriptions: bool,
+}
+
+/// Resolve the formatter style, exclude filter, cache settings, and grammar
+/// scope for the `format` command from a single config load. Prints and returns
+/// an exit code on error.
 fn resolve_format_setup(
     source: &ConfigSource,
     overrides: &FormatOverrides,
     cli_excludes: &[String],
     anchor: &Path,
-) -> Result<(FormatStyle, ExcludeFilter, FormatCacheSetup), ExitCode> {
+) -> Result<FormatSetup, ExitCode> {
     let (config, config_path) = load_config_with_source(source, anchor).map_err(|err| {
         eprintln!("error: {err}");
         ExitCode::from(2)
@@ -450,7 +463,12 @@ fn resolve_format_setup(
         enabled: config.cache,
         dir: config.index.cache_dir.clone(),
     };
-    Ok((style, exclude, cache))
+    Ok(FormatSetup {
+        style,
+        exclude,
+        cache,
+        descriptions: config.format.description,
+    })
 }
 
 /// Where a subcommand's positional arguments say to read from.
@@ -601,6 +619,7 @@ const CACHE_SUPPORTED: bool = true;
 
 fn run_format(
     paths: Vec<PathBuf>,
+    stdin_filename: Option<PathBuf>,
     modes: FormatModes,
     overrides: FormatOverrides,
     excludes: ExcludeOptions,
@@ -611,11 +630,16 @@ fn run_format(
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let (style, exclude, cache_setup) =
-        match resolve_format_setup(config_source, &overrides, &excludes.patterns, &anchor) {
-            Ok(setup) => setup,
-            Err(code) => return code,
-        };
+    let setup = match resolve_format_setup(config_source, &overrides, &excludes.patterns, &anchor) {
+        Ok(setup) => setup,
+        Err(code) => return code,
+    };
+    let FormatSetup {
+        style,
+        exclude,
+        cache: cache_setup,
+        descriptions,
+    } = setup;
     let exclude = exclude.with_force_exclude(excludes.force);
 
     if modes.check {
@@ -633,7 +657,15 @@ fn run_format(
             );
         }
         let cache_enabled = cache_setup.enabled && !modes.no_cache && CACHE_SUPPORTED;
-        return run_format_check(&paths, style, &exclude, cache_enabled, cache_setup.dir, out);
+        return run_format_check(
+            &paths,
+            style,
+            &exclude,
+            descriptions,
+            cache_enabled,
+            cache_setup.dir,
+            out,
+        );
     }
 
     let paths = match inputs_or_exit(&paths, "format", FORMAT_MISSING_INPUT) {
@@ -648,6 +680,24 @@ fn run_format(
                 return ExitCode::from(2);
             }
         };
+
+        // A buffer with no path is R unless `--stdin-filename` says otherwise.
+        // Without that flag, `cat DESCRIPTION | arity format -` would reflow DCF
+        // as R — the one door into the formatter with no path to classify on.
+        if stdin_filename
+            .as_deref()
+            .is_some_and(arity::file_discovery::is_description_file)
+        {
+            // `[format] description = false` reaches stdin too. Falling through
+            // would reflow DCF as R, which is the corruption the key exists to
+            // prevent, and stdin is the shape an editor or pre-commit hook uses
+            // — the integrations most likely to need the off switch.
+            if !descriptions {
+                print!("{input}");
+                return ExitCode::SUCCESS;
+            }
+            return format_description_stdin(&input, style, modes.verify);
+        }
 
         // Stdin carries no path; resolve the package-wide roxygen markdown
         // default from the working directory, the same anchor config
@@ -681,13 +731,52 @@ fn run_format(
         return ExitCode::SUCCESS;
     };
 
-    run_format_write_paths(paths, modes.verify, style, &exclude, out)
+    run_format_write_paths(paths, modes.verify, style, &exclude, descriptions, out)
 }
 
+/// The stdin path for a buffer `--stdin-filename` identified as a
+/// `DESCRIPTION`. A decline prints the buffer back unchanged: stdin formatting
+/// is a filter, and a filter that swallows its input is worse than one that
+/// passes it through.
+fn format_description_stdin(input: &str, style: FormatStyle, verify: bool) -> ExitCode {
+    let formatted = match format_description_with_style(input, style) {
+        Ok(formatted) => formatted,
+        // `err` already reads "left unformatted: <reason>".
+        Err(err) if err.is_decline() => {
+            eprintln!("warning: {err}");
+            print!("{input}");
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::from(1);
+        }
+    };
+
+    if verify {
+        match format_description_with_style(&formatted, style) {
+            Ok(reformatted) if reformatted == formatted => {}
+            Ok(_) => {
+                eprintln!("error: formatter verification failed (non-idempotent output)");
+                return ExitCode::from(1);
+            }
+            Err(err) => {
+                eprintln!("error: formatted output failed verification: {err}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    print!("{formatted}");
+    ExitCode::SUCCESS
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_format_check(
     paths: &[PathBuf],
     style: FormatStyle,
     exclude: &ExcludeFilter,
+    descriptions: bool,
     cache_enabled: bool,
     cache_dir: Option<PathBuf>,
     out: OutputOptions,
@@ -699,13 +788,13 @@ fn run_format_check(
         .flatten()
         .map(|root| FormatCache::load(&root, &style));
 
-    match check_paths_with_style_cached(paths, style, exclude, cache.as_mut()) {
+    match check_paths_with_style_cached(paths, style, exclude, descriptions, cache.as_mut()) {
         Ok(result) => {
+            report_unchecked(&result.failed_files, &result.skipped, out.quiet);
             if result.changed_files.is_empty() {
                 if out.verbose {
                     eprintln!("{} file(s) already formatted", result.checked_files);
                 }
-                ExitCode::SUCCESS
             } else if out.quiet {
                 // `--check` writes nothing, so the diff is normally the only
                 // account of what would change; `--quiet` trades it for the
@@ -719,7 +808,6 @@ fn run_format_check(
                     result.changed_files.len(),
                     result.checked_files
                 );
-                ExitCode::from(1)
             } else {
                 let use_color = color_enabled(out.color, io::stdout().is_terminal());
                 for (idx, file) in result.changed_files.iter().enumerate() {
@@ -728,6 +816,15 @@ fn run_format_check(
                     }
                     print_diff(file, use_color);
                 }
+            }
+            // Reported *after* the diff, so a file that could not be checked
+            // never costs the user the account of the files that could. A
+            // failure outranks a mere reformat: the run has no verdict for it.
+            if !result.failed_files.is_empty() {
+                ExitCode::from(2)
+            } else if result.changed_files.is_empty() {
+                ExitCode::SUCCESS
+            } else {
                 ExitCode::from(1)
             }
         }
@@ -735,6 +832,25 @@ fn run_format_check(
             eprintln!("error: {err}");
             ExitCode::from(2)
         }
+    }
+}
+
+/// Report the files a `format` run could not check, so neither bucket is silent.
+///
+/// A failure is an error even under `--quiet` — it is why the run is about to
+/// exit 2. A skip is a warning, matching how `arity lint` reports the same file.
+fn report_unchecked(failed: &[arity::formatter::FailedFile], skipped: &[PathBuf], quiet: bool) {
+    for failure in failed {
+        eprintln!("error: {failure}");
+    }
+    if quiet {
+        return;
+    }
+    for path in skipped {
+        eprintln!(
+            "warning: skipped {}: stream did not contain valid UTF-8",
+            path.display()
+        );
     }
 }
 
@@ -780,15 +896,30 @@ fn run_format_write_paths(
     verify: bool,
     style: FormatStyle,
     exclude: &ExcludeFilter,
+    descriptions: bool,
     out: OutputOptions,
 ) -> ExitCode {
-    let files = match arity::file_discovery::collect_r_files(paths, exclude) {
-        Ok(files) => files,
-        Err(arity::file_discovery::FileDiscoveryError::NonRFilePath { path }) => {
-            eprintln!(
-                "error: input file {} is not an .R file; format only supports .R files",
+    let discovered = if descriptions {
+        arity::file_discovery::collect_source_files(paths, exclude)
+    } else {
+        arity::file_discovery::collect_r_files(paths, exclude).map(|r| {
+            arity::file_discovery::DiscoveredFiles {
+                r,
+                description: Vec::new(),
+            }
+        })
+    };
+    let files = match discovered {
+        Ok(files) => arity::formatter::merge(files),
+        Err(arity::file_discovery::FileDiscoveryError::UnsupportedFilePath { path }) => {
+            eprint!(
+                "error: input file {} is not formattable; format supports .R files and DESCRIPTION",
                 path.display()
             );
+            if !descriptions && arity::file_discovery::is_description_file(&path) {
+                eprint!(" (DESCRIPTION formatting is off: `[format] description = false`)");
+            }
+            eprintln!();
             return ExitCode::from(2);
         }
         Err(arity::file_discovery::FileDiscoveryError::WalkError { path, message }) => {
@@ -802,39 +933,69 @@ fn run_format_write_paths(
         if exclude.force() {
             return ExitCode::SUCCESS;
         }
-        eprintln!("error: no .R files found under the provided input paths");
+        eprintln!("error: no .R files or DESCRIPTION files found under the provided input paths");
         return ExitCode::from(2);
     }
 
     let total = files.len();
     let mut reformatted_count = 0usize;
+    // A per-file problem is reported and the walk carries on. Returning here
+    // would let one file decide whether the rest of the tree gets formatted at
+    // all, and `merge` sorts by path, so a package's `DESCRIPTION` sorts before
+    // its `R/` and would reliably preempt everything the user asked about.
+    let mut failed = 0usize;
     let mut markdown = arity::project::description::MarkdownDefaultResolver::new();
     for path in files {
         let input = match fs::read_to_string(&path) {
             Ok(input) => input,
+            // Not UTF-8: skipped, the same answer `arity lint` gives.
+            Err(err) if err.kind() == io::ErrorKind::InvalidData => {
+                if !out.quiet {
+                    eprintln!(
+                        "warning: skipped {}: stream did not contain valid UTF-8",
+                        path.display()
+                    );
+                }
+                continue;
+            }
             Err(err) => {
                 eprintln!("error: failed to read {}: {err}", path.display());
-                return ExitCode::from(2);
+                failed += 1;
+                continue;
             }
         };
-        let options =
-            ParseOptions::default().with_roxygen_markdown_default(markdown.resolve(&path));
-        let formatted = match format_with_options(&input, style, &options) {
-            Ok(formatted) => formatted,
+        let formatted = match format_file(&path, &input, style, &mut markdown) {
+            Ok(Formatted::Text(formatted)) => formatted,
+            Ok(Formatted::Declined(reason)) => {
+                if out.verbose {
+                    eprintln!("Skipped {}: {reason}", path.display());
+                }
+                continue;
+            }
             Err(err) => {
                 eprintln!("error: failed to format {}: {err}", path.display());
-                return ExitCode::from(1);
+                failed += 1;
+                continue;
             }
         };
         if verify {
-            let reformatted = match format_with_options(&formatted, style, &options) {
-                Ok(reformatted) => reformatted,
+            let reformatted = match format_file(&path, &formatted, style, &mut markdown) {
+                Ok(Formatted::Text(reformatted)) => reformatted,
+                Ok(Formatted::Declined(reason)) => {
+                    eprintln!(
+                        "error: formatted output of {} would now be declined: {reason}",
+                        path.display()
+                    );
+                    failed += 1;
+                    continue;
+                }
                 Err(err) => {
                     eprintln!(
                         "error: formatted output failed verification for {}: {err}",
                         path.display()
                     );
-                    return ExitCode::from(1);
+                    failed += 1;
+                    continue;
                 }
             };
             if reformatted != formatted {
@@ -842,14 +1003,15 @@ fn run_format_write_paths(
                     "error: formatter verification failed for {} (non-idempotent output)",
                     path.display()
                 );
-                return ExitCode::from(1);
+                failed += 1;
             }
             continue;
         }
         if formatted != input {
             if let Err(err) = fs::write(&path, formatted) {
                 eprintln!("error: failed to write {}: {err}", path.display());
-                return ExitCode::from(2);
+                failed += 1;
+                continue;
             }
             reformatted_count += 1;
             if out.verbose {
@@ -862,6 +1024,10 @@ fn run_format_write_paths(
         eprintln!("{reformatted_count} of {total} file(s) reformatted");
     }
 
+    if failed > 0 {
+        eprintln!("error: {failed} of {total} file(s) could not be formatted");
+        return ExitCode::from(1);
+    }
     ExitCode::SUCCESS
 }
 
@@ -983,7 +1149,7 @@ fn run_lint(
 /// `Some(exit_code)` only on a hard error (discovery / IO); on success returns
 /// `None` so the caller falls through to the normal reporting pass.
 ///
-/// Deliberately `collect_r_files`, not `collect_lint_files`: no `DESCRIPTION`
+/// Deliberately `collect_r_files`, not `collect_source_files`: no `DESCRIPTION`
 /// rule ships a fix, and reading one here would only invite feeding it to the R
 /// parser. The day a DCF fix lands, this has to widen.
 fn apply_fixes_to_paths(

@@ -1,0 +1,9 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: formatted
+---
+Package: p
+Collate:
+    'a.R'
+# an interior comment
+    'b.R'

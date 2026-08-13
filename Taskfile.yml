@@ -94,9 +94,14 @@ tasks:
         echo "seeded $(wc -l < /tmp/roxygen-projector-pass.txt) matching cases into the projector allowlist"
 
   dcf-oracle:
-    desc: Check the DCF parser against R's own `read.dcf` (needs R)
+    desc: Check the DCF parser and formatter against R's own `read.dcf` (needs R)
     cmds:
       - cargo test --test dcf_oracle -- --ignored --nocapture
+
+  desc-compat:
+    desc: Measure DESCRIPTION formatting against `desc` (soft gauge, needs R + desc)
+    cmds:
+      - cargo test --test desc_compat -- --ignored --nocapture
 
   deps-oracle:
     desc: Check the dependency-exemption sets against `R CMD check`'s own (needs R)

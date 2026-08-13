@@ -1,0 +1,6 @@
+---
+source: crates/arity-formatter/tests/dcf_format.rs
+expression: formatted
+---
+Package: p
+Version: 1.0
