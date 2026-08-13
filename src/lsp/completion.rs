@@ -17,9 +17,12 @@ use crate::syntax::SyntaxElement;
 /// so `completionItem/resolve` can attach docs without the original document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t")]
-enum CompletionData {
+pub(crate) enum CompletionData {
     /// A namespaced or attached-package symbol; resolve via `indexed.lookup`.
     Member { package: SmolStr, name: SmolStr },
+    /// A package name completed in a `DESCRIPTION` dependency field; resolve to
+    /// the package's own version + `Title`, not a symbol's.
+    Package { name: SmolStr },
     /// A bare base-R name; resolve via the base name→package map then lookup.
     Bare { name: SmolStr },
     /// A scope local; nothing to attach.
@@ -83,6 +86,19 @@ pub(crate) fn completion_via_db(
     );
     let index = snapshot.library_data().unwrap_or_default();
     let remote = snapshot.remote_exports().unwrap_or_default();
+    // A `DESCRIPTION` is a second grammar with its own candidate pool; it also
+    // has no `SourceFile` in the db to reuse a parse from, so it branches
+    // before the cache lookup.
+    if DocumentKind::from_path(path) == DocumentKind::Description {
+        return compute_description_completions(
+            text,
+            usize::from(offset),
+            &index,
+            &remote,
+            line_index,
+            encoding,
+        );
+    }
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
         if snapshot.file_text(file) != text {
@@ -129,6 +145,17 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
             .map(|entry| (package.clone(), entry)),
         CompletionData::Bare { name } => base_package_of(name)
             .and_then(|pkg| indexed.lookup(pkg, name).map(|entry| (pkg.clone(), entry))),
+        // A package, not a symbol: its card is built from the package index
+        // itself, so it short-circuits the symbol lookup below.
+        CompletionData::Package { name } => {
+            if let Some(markdown) = render_package_markdown(name, indexed) {
+                item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: markdown,
+                }));
+            }
+            return item;
+        }
         CompletionData::Local | CompletionData::Field => None,
     };
     if let Some((package, entry)) = resolved {
@@ -596,7 +623,10 @@ fn signature_detail(data: &CompletionData, indexed: &IndexedProvider) -> Option<
     let entry = match data {
         CompletionData::Member { package, name } => indexed.lookup(package, name)?,
         CompletionData::Bare { name } => indexed.lookup(base_package_of(name)?, name)?,
-        CompletionData::Local | CompletionData::Field => return None,
+        // A package label is not a call, so there is no parameter list.
+        CompletionData::Package { .. } | CompletionData::Local | CompletionData::Field => {
+            return None;
+        }
     };
     // `signature_of` yields `name(args)`; keep just `(args)` so it does not
     // duplicate the label.
@@ -689,6 +719,7 @@ mod tests {
             package: "pkg".into(),
             version: "1.0".into(),
             lib_path: "/lib".into(),
+            title: None,
             r_version: None,
             harvested_at: 0,
             attaches: Vec::new(),

@@ -107,6 +107,9 @@ pub fn harvest_package_in(
         .field("Built")
         .as_deref()
         .and_then(parse_built_r_version);
+    // `folded_value` joins continuation lines with newlines; a `Title` is one
+    // logical line, so flatten it back for display.
+    let title = desc.field("Title").map(|t| SmolStr::new(flatten_ws(&t)));
 
     let object_names = read_object_names(pkg_dir, &package);
     let exports = resolve_package_exports(pkg_dir, &object_names);
@@ -174,6 +177,7 @@ pub fn harvest_package_in(
             .parent()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default(),
+        title,
         r_version,
         harvested_at,
         attaches: detect_attaches(db.as_ref(), &package, search),
@@ -364,6 +368,12 @@ fn read_dcf(path: &Path) -> Result<Dcf> {
     Ok(Dcf {
         document: crate::dcf::parse(&text).document(),
     })
+}
+
+/// Collapse every run of whitespace (including the newlines `folded_value`
+/// leaves between continuation lines) to a single space.
+fn flatten_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `Built:` looks like `R 4.5.3; ; 2025-...; unix` — pull the R version.

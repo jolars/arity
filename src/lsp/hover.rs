@@ -259,6 +259,7 @@ mod tests {
             package: "base".into(),
             version: "4.5.3".into(),
             lib_path: "/lib".into(),
+            title: None,
             r_version: None,
             harvested_at: 0,
             attaches: Vec::new(),

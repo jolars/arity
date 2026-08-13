@@ -17,7 +17,7 @@ use smol_str::SmolStr;
 
 /// Bump when the on-disk shape changes incompatibly. Files (and the enclosing
 /// `v{N}/` directory) carrying a different version are ignored and rebuilt.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Everything harvested for a single installed package at a single version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +30,13 @@ pub struct PackageIndex {
     /// Absolute path of the library directory the package was found in at
     /// harvest time (used for staleness checks).
     pub lib_path: String,
+    /// The package's own one-line `Title`, from its `DESCRIPTION` — not a
+    /// symbol's Rd help title (that is [`HelpDoc::title`]). Harvested rather
+    /// than read on demand because dependency-field completion labels *every*
+    /// candidate at once, and a file read per candidate is not an option.
+    /// `None` for a `DESCRIPTION` with no `Title` field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<SmolStr>,
     /// R version that built the package (from `DESCRIPTION`'s `Built:` field),
     /// when available. Informational.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,6 +170,7 @@ mod tests {
             package: SmolStr::new("magrittr"),
             version: SmolStr::new("2.0.4"),
             lib_path: "/lib".to_string(),
+            title: None,
             r_version: Some(SmolStr::new("4.5.3")),
             harvested_at: 0,
             attaches: Vec::new(),

@@ -701,6 +701,13 @@ impl BundledPackages {
         }
     }
 
+    /// Iterate every bundled package name. The keys are the top-N CRAN
+    /// packages by download count, which is exactly the candidate pool for
+    /// completing a dependency field.
+    pub fn packages(&self) -> impl Iterator<Item = &'static SmolStr> {
+        self.exports.keys()
+    }
+
     /// True if `package` is in the bundled set.
     pub fn has_package(&self, package: &str) -> bool {
         self.exports.contains_key(package)

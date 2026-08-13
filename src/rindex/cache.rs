@@ -234,6 +234,7 @@ mod tests {
             package: SmolStr::new(pkg),
             version: SmolStr::new(ver),
             lib_path: "/lib".into(),
+            title: None,
             r_version: None,
             harvested_at: 0,
             attaches: Vec::new(),

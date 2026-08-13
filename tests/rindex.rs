@@ -49,6 +49,21 @@ fn reads_rd_index_data_frame() {
 }
 
 #[test]
+fn harvests_the_packages_own_title() {
+    // The package-level `Title:`, distinct from a *symbol's* Rd help title. It
+    // is what a DESCRIPTION dependency hovers to, and what labels an installed
+    // package in dependency-field completion — where reading each candidate's
+    // DESCRIPTION off disk is not an option.
+    let idx = harvest_package(&fixture("magrittr"), HarvestOptions::default(), 0)
+        .expect("harvest magrittr");
+    assert_eq!(
+        idx.title.as_deref(),
+        Some("A Forward-Pipe Operator for R"),
+        "the DESCRIPTION's own Title field"
+    );
+}
+
+#[test]
 fn harvests_explicit_exports_with_titles() {
     let idx = harvest_package(&fixture("magrittr"), HarvestOptions::default(), 0)
         .expect("harvest magrittr");

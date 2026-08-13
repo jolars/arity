@@ -14,6 +14,68 @@ use lsp_types::{
 };
 
 #[test]
+fn description_completion_offers_package_names_with_an_explicit_edit() {
+    use arity::rindex::remote::RemoteExports;
+    use arity::text::TextBuffer;
+    use lsp_types::{CompletionResponse, CompletionTextEdit};
+
+    // The canonical `usethis` layout: one package per line. The replace range
+    // has to land on the real bytes of line 4, not on a folded offset.
+    let text = "Package: p\nImports:\n    stats,\n    dp\n";
+    let offset = text.rfind("dp").expect("dp present") + 2;
+    let buffer = TextBuffer::new(text.to_string());
+    let resp = arity::lsp::compute_description_completions(
+        text,
+        offset,
+        &IndexedProvider::empty(),
+        &RemoteExports::new(),
+        buffer.line_index(),
+        PositionEncoding::Utf16,
+    )
+    .expect("completions in a dependency field");
+
+    let items = match resp {
+        CompletionResponse::Array(items) => items,
+        CompletionResponse::List(list) => list.items,
+    };
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(labels.contains(&"dplyr"), "{labels:?}");
+    assert!(
+        labels.iter().all(|l| l.starts_with("dp")),
+        "the typed prefix must filter the pool: {labels:?}"
+    );
+
+    let dplyr = items.iter().find(|i| i.label == "dplyr").expect("dplyr");
+    let Some(CompletionTextEdit::Edit(edit)) = &dplyr.text_edit else {
+        panic!("expected an explicit text edit, got {:?}", dplyr.text_edit);
+    };
+    assert_eq!(edit.range, line_range(3, 4, 3, 6), "{:?}", edit.range);
+    assert_eq!(edit.new_text, "dplyr");
+}
+
+#[test]
+fn description_completion_is_silent_outside_a_dependency_field() {
+    use arity::rindex::remote::RemoteExports;
+    use arity::text::TextBuffer;
+
+    let text = "Package: p\nTitle: A dp\n";
+    let offset = text.rfind("dp").expect("dp present") + 2;
+    let buffer = TextBuffer::new(text.to_string());
+    assert!(
+        arity::lsp::compute_description_completions(
+            text,
+            offset,
+            &IndexedProvider::empty(),
+            &RemoteExports::new(),
+            buffer.line_index(),
+            PositionEncoding::Utf16,
+        )
+        .is_none(),
+        "`Title:` is prose, not a dependency list"
+    );
+}
+
+#[test]
 fn completion_bare_includes_base_name() {
     use lsp_types::CompletionResponse;
     // With an empty index, base-R names still complete via the static layer.

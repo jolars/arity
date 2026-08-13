@@ -144,6 +144,14 @@ pub fn base_package_of(name: &str) -> Option<&'static SmolStr> {
     base.package_of(name)
 }
 
+/// Iterate every bundled CRAN package *name* — the candidate pool for
+/// completing a dependency field, where the question is which packages exist
+/// rather than what any one of them exports.
+pub fn bundled_packages() -> impl Iterator<Item = &'static SmolStr> {
+    let bundled: &'static BundledPackages = &BUNDLED;
+    bundled.packages()
+}
+
 /// Iterate a bundled CRAN package's export names, if bundled — completion's
 /// member fallback when the package isn't locally harvested.
 pub fn bundled_exports(package: &str) -> Option<impl Iterator<Item = &'static SmolStr>> {
@@ -233,6 +241,15 @@ impl IndexedProvider {
     /// True if this provider has an index for `package`.
     pub fn has_package(&self, package: &str) -> bool {
         self.pkg_exports.contains_key(package)
+    }
+
+    /// Iterate every locally harvested package name.
+    ///
+    /// Reads `pkg_exports`, not `indices`, so it stays correct under the lean
+    /// [`from_cache_exports`](Self::from_cache_exports) load, which never
+    /// populates the rich map.
+    pub fn packages(&self) -> impl Iterator<Item = &SmolStr> {
+        self.pkg_exports.keys()
     }
 
     /// The rich entry for `pkg::name`, if indexed.
@@ -338,6 +355,7 @@ mod tests {
             package: SmolStr::new(name),
             version: SmolStr::new("1.0"),
             lib_path: "/lib".into(),
+            title: None,
             r_version: None,
             harvested_at: 0,
             attaches: Vec::new(),

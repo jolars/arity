@@ -79,6 +79,12 @@ impl RemoteExports {
         self.exports.get(package).map(|set| set.iter())
     }
 
+    /// Iterate every package name the sidecar knows, for dependency-field
+    /// completion.
+    pub fn packages(&self) -> impl Iterator<Item = &SmolStr> {
+        self.exports.keys()
+    }
+
     /// Number of packages currently cached, for diagnostics/tests.
     pub fn len(&self) -> usize {
         self.exports.len()

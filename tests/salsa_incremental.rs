@@ -1199,6 +1199,7 @@ fn index_pkg(name: &str, exports: &[&str]) -> PackageIndex {
         package: name.into(),
         version: "1.0".into(),
         lib_path: "/lib".into(),
+        title: None,
         r_version: None,
         harvested_at: 0,
         attaches: Vec::new(),

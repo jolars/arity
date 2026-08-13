@@ -1158,6 +1158,7 @@ mod tests {
             package: "metaverse".into(),
             version: "1.0".into(),
             lib_path: "/lib".into(),
+            title: None,
             r_version: None,
             harvested_at: 0,
             attaches: vec!["helperpkg".into()],

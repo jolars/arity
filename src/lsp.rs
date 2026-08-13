@@ -89,7 +89,7 @@ use lsp_types::{
     CodeActionParams, CodeActionProviderCapability, CodeActionResponse, Color, ColorInformation,
     ColorPresentation, ColorPresentationParams, ColorProviderCapability, CompletionItem,
     CompletionItemKind, CompletionItemLabelDetails, CompletionList, CompletionOptions,
-    CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
+    CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
     Diagnostic as LspDiagnostic, DiagnosticOptions, DiagnosticServerCapabilities,
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
     DidChangeWatchedFilesParams, DidChangeWatchedFilesRegistrationOptions,
@@ -158,6 +158,7 @@ mod call_hierarchy;
 mod code_actions;
 mod color_names;
 mod completion;
+mod description;
 mod document_color;
 mod document_links;
 mod file_rename;
@@ -185,6 +186,7 @@ mod workspace_symbols;
 pub(crate) use call_hierarchy::*;
 pub(crate) use code_actions::*;
 pub(crate) use completion::*;
+pub(crate) use description::*;
 pub(crate) use document_color::*;
 pub(crate) use document_links::*;
 pub(crate) use file_rename::*;
@@ -209,6 +211,7 @@ pub(crate) use workspace_symbols::*;
 
 pub use code_actions::compute_code_actions;
 pub use completion::{compute_completions, resolve_completion};
+pub use description::compute_description_completions;
 pub use document_color::{compute_color_presentations, compute_document_colors};
 pub use document_links::compute_document_links;
 pub use folding::compute_folding_ranges;
