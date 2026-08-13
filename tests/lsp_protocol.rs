@@ -318,6 +318,81 @@ impl Harness {
         }
     }
 
+    /// Wait for a `publishDiagnostics` for `uri` whose diagnostics satisfy
+    /// `pred`. Needed where a re-lint republishes at the *same* version (a
+    /// cross-file `RelintAll` does not bump the buffer's version), so
+    /// [`recv_publish_for`](Self::recv_publish_for) would return the stale
+    /// generation.
+    fn recv_publish_matching(
+        &self,
+        uri: &str,
+        what: &str,
+        mut pred: impl FnMut(&[Value]) -> bool,
+    ) -> Vec<Value> {
+        let msg = self.recv_until(
+            &format!("publishDiagnostics for {uri} {what}"),
+            |m| match m {
+                Message::Notification(n) if n.method == "textDocument/publishDiagnostics" => {
+                    n.params.get("uri").and_then(Value::as_str) == Some(uri)
+                        && n.params
+                            .get("diagnostics")
+                            .and_then(Value::as_array)
+                            .is_some_and(|d| pred(d))
+                }
+                _ => false,
+            },
+        );
+        match msg {
+            Message::Notification(n) => n
+                .params
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .cloned()
+                .expect("publishDiagnostics carries a diagnostics array"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Drain for `window` and count the `publishDiagnostics` notifications for
+    /// `uri`. Used where the *number* of generations is the property under test.
+    fn count_publishes_for(&self, uri: &str, window: Duration) -> usize {
+        let deadline = std::time::Instant::now() + window;
+        let mut seen = 0;
+        while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match self.client.receiver.recv_timeout(remaining) {
+                Ok(Message::Notification(n))
+                    if n.method == "textDocument/publishDiagnostics"
+                        && n.params.get("uri").and_then(Value::as_str) == Some(uri) =>
+                {
+                    seen += 1;
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        seen
+    }
+
+    /// Assert that nothing is published for `uri` within `window`. The absence
+    /// counterpart to [`recv_until`](Self::recv_until), for the negative
+    /// controls: a *shorter* wait than [`TIMEOUT`], since it is spent on every
+    /// run of a passing test.
+    fn expect_no_publish_for(&self, uri: &str, window: Duration) {
+        let deadline = std::time::Instant::now() + window;
+        while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match self.client.receiver.recv_timeout(remaining) {
+                Ok(Message::Notification(n))
+                    if n.method == "textDocument/publishDiagnostics"
+                        && n.params.get("uri").and_then(Value::as_str) == Some(uri) =>
+                {
+                    panic!("expected no publish for {uri}, got {:#?}", n.params);
+                }
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+    }
+
     /// Graceful shutdown: `shutdown` request -> read its response -> `exit`
     /// notification -> join the server thread. A clean join asserts the loop
     /// broke and the lint thread was joined.
@@ -610,6 +685,125 @@ fn a_malformed_description_publishes_dcf_syntax_errors() {
 
     let diags = h.recv_publish_for(&desc_uri, 1);
     assert_eq!(rules_in(&diags), vec!["syntax-error"], "{diags:#?}");
+    h.shutdown();
+}
+
+/// The headline: a DESCRIPTION edit the user has not saved must already count
+/// for the R files around it. `dplyr::filter` is undeclared until `Imports`
+/// names it, and the editor should agree the moment it is typed.
+#[test]
+fn editing_a_description_dependency_relints_an_open_r_file() {
+    let (_dir, desc_uri, r_uri) = package_fixture(
+        COMPLETE_DESCRIPTION,
+        "f <- function(x) dplyr::filter(x, TRUE)\n",
+    );
+
+    let mut h = Harness::start_push();
+    h.did_open(&r_uri, "f <- function(x) dplyr::filter(x, TRUE)\n", 1);
+    let diags = h.recv_publish_matching(&r_uri, "reporting the undeclared dplyr", |d| {
+        rules_in(d).contains(&"undeclared-dependency".to_string())
+    });
+    assert!(!diags.is_empty());
+
+    h.did_open_as(&desc_uri, COMPLETE_DESCRIPTION, 1, "r-description");
+    let _ = h.recv_publish_for(&desc_uri, 1);
+
+    // Declare it — in the buffer only, nothing written to disk.
+    let declared = COMPLETE_DESCRIPTION.replace("Encoding: UTF-8\n", "Imports:\n    dplyr\n");
+    h.did_change(&desc_uri, &declared, 2);
+
+    h.recv_publish_matching(&r_uri, "cleared once dplyr is declared", |d| {
+        !rules_in(d).contains(&"undeclared-dependency".to_string())
+    });
+    h.shutdown();
+}
+
+/// The `description_facts` firewall's negative control. `Description:` is prose:
+/// no R file's diagnostics can turn on it, so typing there must not re-lint the
+/// package. Without the facts comparison every keystroke would fan out.
+#[test]
+fn editing_description_prose_does_not_relint_other_documents() {
+    let (_dir, desc_uri, r_uri) = package_fixture(COMPLETE_DESCRIPTION, "f <- function() 1\n");
+
+    let mut h = Harness::start_push();
+    h.did_open(&r_uri, "f <- function() 1\n", 1);
+    let _ = h.recv_publish_for(&r_uri, 1);
+    h.did_open_as(&desc_uri, COMPLETE_DESCRIPTION, 1, "r-description");
+    let _ = h.recv_publish_for(&desc_uri, 1);
+
+    let edited = COMPLETE_DESCRIPTION.replace(
+        "Description: One sentence: it has a colon.",
+        "Description: One sentence: it has a colon and more words.",
+    );
+    h.did_change(&desc_uri, &edited, 2);
+    // The DESCRIPTION itself still re-lints; `a.R` must not.
+    let _ = h.recv_publish_for(&desc_uri, 2);
+    h.expect_no_publish_for(&r_uri, Duration::from_millis(400));
+    h.shutdown();
+}
+
+/// A facts change fans out with `RelintAll`, which re-lints *every* open
+/// document — including the DESCRIPTION that triggered it. That converges only
+/// because `upsert_description` short-circuits on unchanged text, so the second
+/// pass sees the facts compare equal and stops. Lose that guard and the server
+/// spins, publishing forever. Nothing else in the suite would notice.
+#[test]
+fn a_facts_change_relints_once_and_settles() {
+    let (_dir, desc_uri, r_uri) = package_fixture(COMPLETE_DESCRIPTION, "f <- function() 1\n");
+
+    let mut h = Harness::start_push();
+    h.did_open(&r_uri, "f <- function() 1\n", 1);
+    let _ = h.recv_publish_for(&r_uri, 1);
+    h.did_open_as(&desc_uri, COMPLETE_DESCRIPTION, 1, "r-description");
+    let _ = h.recv_publish_for(&desc_uri, 1);
+
+    // `Imports` is a fact the project graph consumes, so this does fan out.
+    let declared = COMPLETE_DESCRIPTION.replace("Encoding: UTF-8\n", "Imports:\n    dplyr\n");
+    h.did_change(&desc_uri, &declared, 2);
+
+    // Exactly two: the edit's own lint, plus the one re-lint the fan-out costs.
+    // A third would mean the loop is feeding itself.
+    let publishes = h.count_publishes_for(&desc_uri, Duration::from_millis(600));
+    assert_eq!(
+        publishes, 2,
+        "expected one lint plus one fan-out re-lint, then silence"
+    );
+    h.shutdown();
+}
+
+/// Closing a dirty buffer must put the on-disk facts back. Otherwise the
+/// unsaved dependency list outlives the editor session and silently gates every
+/// R diagnostic in the package.
+#[test]
+fn closing_a_dirty_description_restores_the_on_disk_facts() {
+    let (_dir, desc_uri, r_uri) = package_fixture(
+        COMPLETE_DESCRIPTION,
+        "f <- function(x) dplyr::filter(x, TRUE)\n",
+    );
+
+    let mut h = Harness::start_push();
+    h.did_open(&r_uri, "f <- function(x) dplyr::filter(x, TRUE)\n", 1);
+    let _ = h.recv_publish_matching(&r_uri, "reporting the undeclared dplyr", |d| {
+        rules_in(d).contains(&"undeclared-dependency".to_string())
+    });
+
+    h.did_open_as(&desc_uri, COMPLETE_DESCRIPTION, 1, "r-description");
+    let _ = h.recv_publish_for(&desc_uri, 1);
+    let declared = COMPLETE_DESCRIPTION.replace("Encoding: UTF-8\n", "Imports:\n    dplyr\n");
+    h.did_change(&desc_uri, &declared, 2);
+    let _ = h.recv_publish_matching(&r_uri, "cleared once dplyr is declared", |d| {
+        !rules_in(d).contains(&"undeclared-dependency".to_string())
+    });
+
+    // Close without saving: disk never gained the `Imports`, so the finding
+    // must come back.
+    h.notify(
+        "textDocument/didClose",
+        json!({ "textDocument": { "uri": desc_uri } }),
+    );
+    h.recv_publish_matching(&r_uri, "reporting dplyr again after the close", |d| {
+        rules_in(d).contains(&"undeclared-dependency".to_string())
+    });
     h.shutdown();
 }
 

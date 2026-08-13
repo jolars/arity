@@ -125,6 +125,13 @@ pub(crate) fn classify_watched_files(
                     batch.r_changed.push(path);
                 }
             }
+            // An open `DESCRIPTION` buffer is authoritative for its file, same
+            // as an open `.R` one: a disk *change* under it (autosave, a
+            // `git checkout`, another tool rewriting the file) must not revert
+            // salsa to the saved bytes while the editor still holds unsaved
+            // edits. Create and delete still pass through — those move
+            // package-ness, which only the graph refresh can track.
+            WatchedKind::Description if ev.typ == FileChangeType::CHANGED && is_open(&ev.uri) => {}
             // A create/change/delete all reduce to the same refresh; the db
             // re-reads whatever is (or is not) on disk now.
             kind @ (WatchedKind::Description
@@ -213,6 +220,35 @@ mod tests {
         classify_watched_files(&DidChangeWatchedFilesParams { changes }, |uri| {
             open_uris.contains(uri)
         })
+    }
+
+    /// An open buffer owns its file. A disk change under it — autosave, a
+    /// `git checkout`, another tool — must not revert salsa to the saved bytes
+    /// while the editor still holds unsaved edits. Create and delete still get
+    /// through: those move package-ness, which only the graph refresh tracks.
+    #[test]
+    fn watched_description_change_is_dropped_for_an_open_buffer() {
+        let open = classify(
+            vec![event("DESCRIPTION", FileChangeType::CHANGED)],
+            &["DESCRIPTION"],
+        );
+        assert!(
+            open.batch.meta_changed.is_empty(),
+            "a disk change under an open DESCRIPTION must be ignored: {:?}",
+            open.batch.meta_changed
+        );
+
+        let closed = classify(vec![event("DESCRIPTION", FileChangeType::CHANGED)], &[]);
+        assert_eq!(closed.batch.meta_changed.len(), 1, "closed still refreshes");
+
+        for typ in [FileChangeType::CREATED, FileChangeType::DELETED] {
+            let c = classify(vec![event("DESCRIPTION", typ)], &["DESCRIPTION"]);
+            assert_eq!(
+                c.batch.meta_changed.len(),
+                1,
+                "{typ:?} moves package-ness and must still refresh the graph"
+            );
+        }
     }
 
     #[test]

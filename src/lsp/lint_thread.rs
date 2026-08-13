@@ -597,8 +597,37 @@ impl LintWorker {
         // Seeding walks the package's `R/` files into the db, which is what lets
         // `package_usage_for` answer at all (and so what keeps
         // `unused-dependency` from being silently inert in the editor).
+        //
+        // This MUST happen before the buffer is written below: seeding runs
+        // `refresh_package_graph`, which re-reads every root's `DESCRIPTION`
+        // from disk — and would silently overwrite the live buffer with the
+        // saved bytes.
         if self.db.lookup_description(&root).is_none() {
             self.seed_workspace(vec![root.clone()]);
+        }
+
+        // Make the open buffer authoritative in salsa, so an unsaved dependency
+        // already counts for the package's R files. Fan out only when the
+        // *facts* moved: `DescriptionFacts` is the range-free `Eq` firewall, so
+        // typing in `Description:` prose costs one DCF parse while typing in
+        // `Imports:` re-lints the package. The clone is required — the borrow
+        // ends at the `&mut db` write below.
+        let before = self
+            .db
+            .lookup_description(&root)
+            .map(|file| crate::incremental::description_facts(&self.db, file).clone());
+        let (file, _) = self
+            .db
+            .upsert_description(&root, req.buffer.text().to_string());
+        let after = crate::incremental::description_facts(&self.db, file);
+        if before.as_ref() != Some(after) {
+            // A `Roxygen` field change can flip the package-wide markdown
+            // default, which every roxygen block in `R/` is parsed against.
+            self.db.refresh_roxygen_markdown();
+            // Terminates after exactly one extra generation: `request_relint_all`
+            // re-lints this document too, and `upsert_description` short-circuits
+            // on unchanged text, so the second pass finds `before == after`.
+            let _ = self.out_tx.send(Outbound::RelintAll);
         }
 
         self.ensure_index(&root, &req.index_config);

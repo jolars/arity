@@ -1276,10 +1276,27 @@ impl GlobalState {
                     not.extract::<DidCloseTextDocumentParams>(DidCloseTextDocument::METHOD)
                 {
                     let uri = params.text_document.uri;
-                    self.documents.remove(&uri);
+                    let closed = self.documents.remove(&uri);
                     self.findings.remove(&uri);
                     self.report_ids.remove(&uri);
                     self.rename_anchors.remove(&uri);
+                    // A closed `DESCRIPTION` buffer stops being authoritative:
+                    // put the on-disk facts back, or an unsaved dependency list
+                    // outlives the editor session and keeps gating every R
+                    // diagnostic in the package. This is exactly what a watched
+                    // on-disk edit already does, so reuse that path rather than
+                    // inventing a second message for it.
+                    if let Some(doc) = &closed
+                        && doc.kind == DocumentKind::Description
+                        && let Some(path) = uri::to_path(&uri)
+                    {
+                        let _ = self.lint_tx.send(LintMsg::WatchedFiles {
+                            batch: WatchedFilesBatch {
+                                meta_changed: vec![(path, WatchedKind::Description)],
+                                ..Default::default()
+                            },
+                        });
+                    }
                     // Resolve any parked pulls with an empty report so they don't
                     // hang now that the buffer is gone.
                     for PendingPull { id, .. } in self.pending_pull.remove(&uri).unwrap_or_default()
@@ -2099,7 +2116,7 @@ mod cancellation_gate {
         assert_eq!(report["kind"], "full");
     }
 
-    use lsp_types::TextDocumentItem;
+    use lsp_types::{TextDocumentIdentifier, TextDocumentItem};
     use serde_json::json;
 
     fn description_uri() -> Uri {
@@ -2284,6 +2301,55 @@ mod cancellation_gate {
                 "{method} did nothing at all for an R buffer — is it routed?"
             );
         }
+    }
+
+    #[test]
+    fn did_close_description_asks_the_lint_thread_to_refresh_from_disk() {
+        let (mut state, rig) = test_state();
+        let uri = description_uri();
+        state.on_notification(did_open(&uri, "Package: testpkg\n", "r-description"));
+        let _ = rig.try_lint_msg();
+
+        state.on_notification(Notification::new(
+            DidCloseTextDocument::METHOD.to_string(),
+            DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+            },
+        ));
+
+        match rig.try_lint_msg() {
+            Some(LintMsg::WatchedFiles { batch }) => {
+                let expected = uri::to_path(&uri).expect("a file uri");
+                assert_eq!(
+                    batch.meta_changed,
+                    vec![(expected, WatchedKind::Description)]
+                );
+            }
+            other => panic!(
+                "expected a watched-files refresh, got {:?}",
+                other.is_some()
+            ),
+        }
+    }
+
+    /// Closing an R buffer must *not* send the refresh: it has no
+    /// `DESCRIPTION` input to restore, and a spurious batch would re-lint the
+    /// world on every tab close.
+    #[test]
+    fn did_close_r_document_sends_no_refresh() {
+        let (mut state, rig) = test_state();
+        let uri = test_uri();
+        state.on_notification(did_open(&uri, "x <- 1\n", "r"));
+        let _ = rig.try_lint_msg();
+
+        state.on_notification(Notification::new(
+            DidCloseTextDocument::METHOD.to_string(),
+            DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri },
+            },
+        ));
+
+        assert!(rig.try_lint_msg().is_none(), "no lint message expected");
     }
 
     /// Retarget a request's `textDocument.uri` at `uri`, leaving the rest alone.

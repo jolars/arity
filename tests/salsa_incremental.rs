@@ -1739,6 +1739,39 @@ fn description_prose_edit_backdates_and_spares_the_project() {
 }
 
 #[test]
+fn description_buffer_prose_edit_does_not_invalidate_the_project_graph() {
+    // The same guarantee as above, but for the path the language server takes
+    // now that a `DESCRIPTION` can be an open document: the text arrives from
+    // `upsert_description` (the live buffer) rather than `refresh_package_graph`
+    // (disk). A keystroke in `Description:` prose must still stop at the facts.
+    let (mut db, _m, dir) = description_package(DESCRIPTION_BASE);
+    let root = dir.path().to_path_buf();
+    // Seed the root's `DESCRIPTION` input, as the lint thread does on open.
+    db.refresh_descriptions([root.clone()]);
+    let _ = workspace_project(&db);
+
+    db.clear_query_log();
+    let (_, changed) = db.upsert_description(
+        &root,
+        DESCRIPTION_BASE.replace("Title: A Package", "Title: A Rather Nice Package"),
+    );
+    assert!(changed, "the buffer text really did change");
+    let _ = workspace_project(&db);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::DescriptionFacts),
+        Some(&1),
+        "the text changed, so the facts must be re-derived"
+    );
+    assert_eq!(
+        counts.get(&QueryKind::WorkspaceProject),
+        None,
+        "the facts compare equal, so they must backdate and spare the project"
+    );
+}
+
+#[test]
 fn description_collate_edit_reaches_the_project() {
     // The negative control for the test above: a `Collate:` edit changes a fact
     // the project graph consumes, so it must propagate. Without this, "nothing
