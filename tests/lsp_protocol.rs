@@ -44,6 +44,17 @@ fn arity_toml_uri() -> &'static str {
     }
 }
 
+/// A file URI for a `DESCRIPTION` in the same directory as [`doc_uri`]. The
+/// directory is not a package root, so this exercises routing without pulling
+/// in the diagnostics gate.
+fn description_uri() -> &'static str {
+    if cfg!(windows) {
+        "file:///C:/tmp/DESCRIPTION"
+    } else {
+        "file:///tmp/DESCRIPTION"
+    }
+}
+
 /// A file URI whose *parent directory does not exist* on disk. Config
 /// discovery anchors on that directory, so this is the shape that used to make
 /// `textDocument/formatting` answer `null` (an editor buffer in a directory
@@ -142,12 +153,19 @@ impl Harness {
     }
 
     fn did_open(&self, uri: &str, text: &str, version: i32) {
+        self.did_open_as(uri, text, version, "r");
+    }
+
+    /// `didOpen` with a caller-chosen `languageId`. The server routes on the
+    /// URI's file name, not this field, so a test can send a deliberately wrong
+    /// one to pin that precedence.
+    fn did_open_as(&self, uri: &str, text: &str, version: i32, language_id: &str) {
         self.notify(
             "textDocument/didOpen",
             json!({
                 "textDocument": {
                     "uri": uri,
-                    "languageId": "r",
+                    "languageId": language_id,
                     "version": version,
                     "text": text,
                 }
@@ -428,6 +446,67 @@ fn formatting_works_when_the_documents_directory_is_missing() {
         edits[0].get("newText").and_then(Value::as_str),
         Some("x <- 1\n"),
         "reformatted text: {edits:#?}"
+    );
+    h.shutdown();
+}
+
+/// A perfectly valid `DESCRIPTION`. As *R* it is a pile of syntax errors (eight,
+/// at the time of writing): `Title: A Test Package` is three juxtaposed symbols,
+/// `Authors@R:` is a slot access, and so on.
+const DESCRIPTION: &str = "\
+Package: testpkg
+Type: Package
+Title: A Test Package
+Version: 0.1.0
+Authors@R: person(\"A\", \"B\", email = \"a@b.co\", role = c(\"aut\", \"cre\"))
+Description: One sentence: it has a colon.
+License: MIT + file LICENSE
+Encoding: UTF-8
+";
+
+#[test]
+fn did_open_description_publishes_no_r_syntax_errors() {
+    let mut h = Harness::start_push();
+    let uri = description_uri();
+    // Deliberately mislabeled: some clients register `DESCRIPTION` under the R
+    // language (as `editors/code` already does for `NAMESPACE`). The URI's file
+    // name must win, or we parse DCF with the R grammar.
+    h.did_open_as(uri, DESCRIPTION, 1, "r");
+
+    let diags = h.recv_publish_for(uri, 1);
+    assert!(
+        diags.is_empty(),
+        "a DESCRIPTION must not be linted as R, got: {diags:#?}"
+    );
+    h.shutdown();
+}
+
+/// A `DESCRIPTION` that also happens to be *valid R* — each line is a `:` call
+/// between two symbols — so nothing upstream bails on a parse error and the R
+/// formatter really would rewrite it (to `Package:testpkg`, stripping the space
+/// `read.dcf` needs). The guard, not a parse failure, has to be what stops it.
+const DESCRIPTION_VALID_AS_R: &str = "Package: testpkg\nDepends: R\n";
+
+#[test]
+fn formatting_a_description_returns_null_over_the_wire() {
+    let mut h = Harness::start_push();
+    let uri = description_uri();
+    h.did_open_as(uri, DESCRIPTION_VALID_AS_R, 1, "r-description");
+
+    let id = h.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": 2, "insertSpaces": true }
+        }),
+    );
+    let resp = h.recv_response(&id);
+    // There is no DCF formatter. Answering with R-formatted edits here would
+    // rewrite the user's DESCRIPTION into something `read.dcf` rejects.
+    assert_eq!(
+        resp.response_result.expect("formatting result"),
+        Value::Null,
+        "formatting a DESCRIPTION must produce no edits"
     );
     h.shutdown();
 }

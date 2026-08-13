@@ -12,6 +12,10 @@ pub(crate) struct LintRequest {
     /// requests so none are lost.
     pub(crate) edits: Vec<Edit>,
     pub(crate) version: i32,
+    /// Which grammar `buffer` is in, decided at `didOpen`. Picks the pipeline in
+    /// [`LintWorker::start`]; the two share the queue, the in-flight slot, and
+    /// the coalescing, but nothing below them.
+    pub(crate) kind: DocumentKind,
     pub(crate) lint_config: LintConfig,
     pub(crate) index_config: IndexConfig,
 }
@@ -479,7 +483,15 @@ impl LintWorker {
     ///
     /// Returns `true` if a worker was spawned (the in-flight slot is now busy),
     /// `false` if the buffer couldn't be linted (no worker, slot still free).
-    fn start(&mut self, mut req: LintRequest) -> bool {
+    fn start(&mut self, req: LintRequest) -> bool {
+        match req.kind {
+            DocumentKind::R => self.start_r(req),
+            DocumentKind::Description => self.start_description(req),
+        }
+    }
+
+    /// The R pipeline: parse + model + cross-file rules over a `SourceFile`.
+    fn start_r(&mut self, mut req: LintRequest) -> bool {
         let anchor = req
             .path
             .parent()
@@ -558,6 +570,16 @@ impl LintWorker {
         self.spawn_analyze(&req, buffer, move |analysis| {
             crate::linter::check::analyze_prepared(analysis, &prepared, &fallback)
         })
+    }
+
+    /// The `DESCRIPTION` pipeline: DCF parse + the packaging rules.
+    ///
+    /// Publishing nothing is already the correct answer for most `DESCRIPTION`s
+    /// the editor hands us — anything that is not its own package root — so this
+    /// starts there and grows.
+    fn start_description(&mut self, req: LintRequest) -> bool {
+        self.publish_empty(&req);
+        false
     }
 
     /// Occupy the in-flight slot and run `analyze` on the read pool against a db

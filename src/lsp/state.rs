@@ -1,5 +1,59 @@
 use super::*;
 
+/// Which grammar an open document is written in.
+///
+/// The server serves **two** languages — R and the DCF of a `DESCRIPTION` — and
+/// nearly every request is R-only. Answering an R-grammar request for a
+/// `DESCRIPTION` ranges from useless (folding) to destructive: formatting would
+/// hand the client the DCF reflowed as R and rewrite the file. So the kind is
+/// decided once, at `didOpen`, and every buffer lookup states which grammar it
+/// expects (see [`GlobalState::r_doc_snapshot`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocumentKind {
+    /// R source. The default: anything not recognized as another grammar.
+    R,
+    /// A package `DESCRIPTION`, in DCF.
+    Description,
+}
+
+impl DocumentKind {
+    /// Classify from the URI, with the client's `languageId` as a fallback.
+    ///
+    /// **The file name wins.** `editors/code` already registers `NAMESPACE`
+    /// under language `r`, so a client sending `languageId: "r"` for a
+    /// `DESCRIPTION` is entirely plausible — and trusting it would format DCF
+    /// as R. The last path segment is read off the URI rather than a converted
+    /// path because [`uri::to_path`] gives up on non-`file` schemes, and a
+    /// `git:`-scheme diff of a `DESCRIPTION` must not route as R either.
+    pub(crate) fn from_uri(uri: &Uri, language_id: Option<&str>) -> Self {
+        let name = uri.path().as_str().rsplit('/').next().unwrap_or_default();
+        if name == DESCRIPTION_FILE_NAME {
+            return Self::Description;
+        }
+        match language_id {
+            // DCF is the Debian `control` grammar, so a client may have picked
+            // up any of these ids for the file from another extension.
+            Some("r-description" | "dcf" | "debian-control") => Self::Description,
+            _ => Self::R,
+        }
+    }
+
+    /// The file name a document of this kind gets when its URI has no path —
+    /// an `untitled:` buffer. Keeps the synthesized path and the kind agreeing,
+    /// so anything downstream that re-derives the grammar from the path reaches
+    /// the same answer.
+    pub(crate) fn placeholder_file_name(self) -> &'static str {
+        match self {
+            Self::R => "untitled.R",
+            Self::Description => DESCRIPTION_FILE_NAME,
+        }
+    }
+}
+
+/// The one spelling of the file name, shared by both [`DocumentKind`]
+/// constructors so they cannot drift apart.
+const DESCRIPTION_FILE_NAME: &str = "DESCRIPTION";
+
 /// An open document: the live buffer plus the version the client last sent.
 ///
 /// The buffer is shared — reads and lints clone the `Arc`, never the text — and
@@ -11,13 +65,16 @@ use super::*;
 pub(crate) struct Document {
     buffer: Arc<TextBuffer>,
     version: i32,
+    /// Decided once at `didOpen`: a document's grammar cannot change under it.
+    kind: DocumentKind,
 }
 
 impl Document {
-    fn new(text: String, version: i32) -> Self {
+    fn new(text: String, version: i32, kind: DocumentKind) -> Self {
         Self {
             buffer: Arc::new(TextBuffer::new(text)),
             version,
+            kind,
         }
     }
 
@@ -296,7 +353,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -323,7 +380,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -350,7 +407,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -401,7 +458,9 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        // Both grammars publish diagnostics, and the pull path only shuttles
+        // whatever the lint thread decided — so it does not branch on the kind.
+        let Some((buffer, version, _kind)) = self.doc_snapshot_any(&uri) else {
             // Unknown document (never opened, or already closed): an empty report.
             self.respond_diagnostic(id, DiagnosticReport::Full(Vec::new(), None));
             return;
@@ -448,7 +507,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -476,7 +535,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -502,7 +561,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -546,7 +605,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -575,7 +634,7 @@ impl GlobalState {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -607,7 +666,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -644,7 +703,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -669,7 +728,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -693,7 +752,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -719,7 +778,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -746,7 +805,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -771,7 +830,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some(buffer) = self.doc_snapshot(&uri).map(|(buffer, _)| buffer) else {
+        let Some(buffer) = self.r_doc_snapshot(&uri).map(|(buffer, _)| buffer) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -798,7 +857,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -826,7 +885,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some(buffer) = self.doc_snapshot(&uri).map(|(buffer, _)| buffer) else {
+        let Some(buffer) = self.r_doc_snapshot(&uri).map(|(buffer, _)| buffer) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -867,7 +926,7 @@ impl GlobalState {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let new_name = params.new_name;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -957,7 +1016,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -1026,7 +1085,7 @@ impl GlobalState {
         };
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((buffer, version)) = self.doc_snapshot(&uri) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -1118,9 +1177,15 @@ impl GlobalState {
                     not.extract::<DidOpenTextDocumentParams>(DidOpenTextDocument::METHOD)
                 {
                     let uri = params.text_document.uri;
+                    let kind =
+                        DocumentKind::from_uri(&uri, Some(&params.text_document.language_id));
                     self.documents.insert(
                         uri.clone(),
-                        Document::new(params.text_document.text, params.text_document.version),
+                        Document::new(
+                            params.text_document.text,
+                            params.text_document.version,
+                            kind,
+                        ),
                     );
                     self.send_lint(uri, Vec::new());
                 }
@@ -1149,8 +1214,15 @@ impl GlobalState {
                     for change in params.content_changes {
                         match change.range {
                             None => {
+                                // A full replacement reseeds the text, never the
+                                // grammar: the file the client has open is the
+                                // same file it opened.
+                                let kind = self
+                                    .documents
+                                    .get(&uri)
+                                    .map_or(DocumentKind::R, |doc| doc.kind);
                                 self.documents
-                                    .insert(uri.clone(), Document::new(change.text, version));
+                                    .insert(uri.clone(), Document::new(change.text, version, kind));
                                 applied = true;
                                 precise = false;
                                 edits.clear();
@@ -1454,7 +1526,9 @@ impl GlobalState {
         };
         let buffer = Arc::clone(&doc.buffer);
         let version = doc.version;
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let kind = doc.kind;
+        let path =
+            uri::to_path(&uri).unwrap_or_else(|| PathBuf::from(kind.placeholder_file_name()));
         let (lint_config, index_config) = match self.resolve_settings(&uri) {
             Ok(s) => (s.lint, s.index),
             Err(_) => (LintConfig::default(), IndexConfig::default()),
@@ -1465,17 +1539,35 @@ impl GlobalState {
             buffer,
             edits,
             version,
+            kind,
             lint_config,
             index_config,
         })));
     }
 
-    /// The live buffer and version for `uri`, if it is open. Reads clone the
-    /// `Arc`, never the text.
-    fn doc_snapshot(&self, uri: &Uri) -> Option<(Arc<TextBuffer>, i32)> {
+    /// The live buffer and version for `uri`, **only if it is an R document**.
+    /// Reads clone the `Arc`, never the text.
+    ///
+    /// Every R-grammar request goes through this, and there is deliberately no
+    /// un-annotated way to get a buffer: a `DESCRIPTION` answers `None` here, so
+    /// each handler's existing "not open" arm already declines correctly, and a
+    /// handler added later cannot silently inherit the wrong grammar. Use
+    /// [`doc_snapshot_any`](Self::doc_snapshot_any) for the few requests that
+    /// serve both.
+    fn r_doc_snapshot(&self, uri: &Uri) -> Option<(Arc<TextBuffer>, i32)> {
+        let doc = self.documents.get(uri)?;
+        match doc.kind {
+            DocumentKind::R => Some((Arc::clone(&doc.buffer), doc.version)),
+            DocumentKind::Description => None,
+        }
+    }
+
+    /// The live buffer, version, and grammar for `uri` — for the requests that
+    /// serve both languages and branch on the kind themselves.
+    fn doc_snapshot_any(&self, uri: &Uri) -> Option<(Arc<TextBuffer>, i32, DocumentKind)> {
         self.documents
             .get(uri)
-            .map(|d| (Arc::clone(&d.buffer), d.version))
+            .map(|d| (Arc::clone(&d.buffer), d.version, d.kind))
     }
 
     fn resolve_settings(&mut self, uri: &Uri) -> Result<ResolvedSettings, ConfigResolveError> {
@@ -1674,13 +1766,30 @@ mod cancellation_gate {
     /// lifetime, so senders inside [`GlobalState`] never see a closed channel.
     struct Rig {
         client_rx: Receiver<Message>,
-        _out_rx: Receiver<Outbound>,
-        _lint_rx: Receiver<LintMsg>,
-        _read_rx: Receiver<ReadJob>,
+        out_rx: Receiver<Outbound>,
+        lint_rx: Receiver<LintMsg>,
+        read_rx: Receiver<ReadJob>,
         _pool: TaskPool,
     }
 
     impl Rig {
+        /// The next message queued for the lint thread, or `None` on a short poll.
+        fn try_lint_msg(&self) -> Option<LintMsg> {
+            self.lint_rx.recv_timeout(Duration::from_millis(200)).ok()
+        }
+
+        /// Whether the server queued no read work of either shape. Most handlers
+        /// dispatch a [`ReadJob`]; `on_code_action` instead spawns on the read
+        /// pool directly and answers over `out_tx`, so both count. A guarded
+        /// handler must decline *before* spending a read slot, not after.
+        fn no_read_work(&self) -> bool {
+            self.read_rx.try_recv().is_err()
+                && self
+                    .out_rx
+                    .recv_timeout(Duration::from_millis(200))
+                    .is_err()
+        }
+
         /// The next message the server sent to the client, or `None` if it sent
         /// nothing (a short poll — the loop is synchronous in these tests).
         fn try_response(&self) -> Option<Response> {
@@ -1729,9 +1838,9 @@ mod cancellation_gate {
         );
         let rig = Rig {
             client_rx,
-            _out_rx: out_rx,
-            _lint_rx: lint_rx,
-            _read_rx: read_rx,
+            out_rx,
+            lint_rx,
+            read_rx,
             _pool: pool,
         };
         (state, rig)
@@ -1804,9 +1913,10 @@ mod cancellation_gate {
         // The read was dispatched against version 1...
         state.register_read(id.clone(), Some((uri.clone(), 1)));
         // ...but the buffer has since advanced to version 2.
-        state
-            .documents
-            .insert(uri, Document::new("y <- 2\n".to_string(), 2));
+        state.documents.insert(
+            uri,
+            Document::new("y <- 2\n".to_string(), 2, DocumentKind::R),
+        );
 
         state.on_read_reply(Response::new_ok(id.clone(), serde_json::Value::Null));
 
@@ -1825,9 +1935,10 @@ mod cancellation_gate {
         let uri = doc_uri();
         let id = RequestId::from(1);
         state.register_read(id.clone(), Some((uri.clone(), 1)));
-        state
-            .documents
-            .insert(uri, Document::new("x <- 1\n".to_string(), 1));
+        state.documents.insert(
+            uri,
+            Document::new("x <- 1\n".to_string(), 1, DocumentKind::R),
+        );
 
         state.on_read_reply(Response::new_ok(id.clone(), serde_json::json!("ok")));
 
@@ -1930,9 +2041,10 @@ mod cancellation_gate {
         };
         let uri = doc_uri();
         let version = 1;
-        state
-            .documents
-            .insert(uri.clone(), Document::new("x <- 1\n".to_string(), version));
+        state.documents.insert(
+            uri.clone(),
+            Document::new("x <- 1\n".to_string(), version, DocumentKind::R),
+        );
         let findings = Arc::new(findings);
         let result_id = content_result_id(&findings);
         let req_id = RequestId::from(42);
@@ -1985,5 +2097,199 @@ mod cancellation_gate {
         let findings = vec![sample_diagnostic("rule-a", 0, 1)];
         let (report, _) = drive_parked_pull(true, None, findings);
         assert_eq!(report["kind"], "full");
+    }
+
+    use lsp_types::TextDocumentItem;
+    use serde_json::json;
+
+    fn description_uri() -> Uri {
+        uri_named("DESCRIPTION")
+    }
+
+    fn did_open(uri: &Uri, text: &str, language_id: &str) -> Notification {
+        Notification::new(
+            DidOpenTextDocument::METHOD.to_string(),
+            DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: language_id.to_string(),
+                    version: 1,
+                    text: text.to_string(),
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn document_kind_prefers_the_path_over_the_language_id() {
+        // A client that registered `DESCRIPTION` under the R language (as
+        // `editors/code` already does for `NAMESPACE`) must not get DCF parsed
+        // as R. The file name is the authority.
+        assert_eq!(
+            DocumentKind::from_uri(&description_uri(), Some("r")),
+            DocumentKind::Description
+        );
+        // ...and the converse: a mislabeled R file is still R.
+        assert_eq!(
+            DocumentKind::from_uri(&test_uri(), Some("plaintext")),
+            DocumentKind::R
+        );
+        // With no file name to go on, the language id is all there is.
+        assert_eq!(
+            DocumentKind::from_uri(&test_uri(), Some("r-description")),
+            DocumentKind::Description
+        );
+    }
+
+    #[test]
+    fn a_description_lint_request_carries_its_grammar() {
+        let (mut state, rig) = test_state();
+        let uri = description_uri();
+        state.on_notification(did_open(&uri, "Package: testpkg\n", "r"));
+
+        match rig.try_lint_msg() {
+            Some(LintMsg::Request(req)) => assert_eq!(req.kind, DocumentKind::Description),
+            other => panic!("expected a lint request, got {:?}", other.is_some()),
+        }
+    }
+
+    /// Every R-grammar request, asked of a `DESCRIPTION`.
+    ///
+    /// `textDocument/formatting` is the one that matters most: the R formatter
+    /// happily rewrites `Package: testpkg` to `Package:testpkg`, so answering it
+    /// here would corrupt the user's file. The rest range from useless to
+    /// misleading. Each must decline *without* spending a read slot.
+    #[test]
+    fn r_only_requests_return_null_for_a_description() {
+        let uri = description_uri();
+        let position = json!({ "line": 0, "character": 3 });
+        let doc = json!({ "uri": uri.as_str() });
+        let cases: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "textDocument/formatting",
+                json!({ "textDocument": doc, "options": { "tabSize": 2, "insertSpaces": true } }),
+            ),
+            (
+                "textDocument/rangeFormatting",
+                json!({
+                    "textDocument": doc,
+                    "range": { "start": { "line": 0, "character": 0 }, "end": position },
+                    "options": { "tabSize": 2, "insertSpaces": true }
+                }),
+            ),
+            (
+                "textDocument/codeAction",
+                json!({
+                    "textDocument": doc,
+                    "range": { "start": { "line": 0, "character": 0 }, "end": position },
+                    "context": { "diagnostics": [] }
+                }),
+            ),
+            (
+                "textDocument/signatureHelp",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+            (
+                "textDocument/definition",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+            (
+                "textDocument/references",
+                json!({
+                    "textDocument": doc, "position": position,
+                    "context": { "includeDeclaration": true }
+                }),
+            ),
+            (
+                "textDocument/documentHighlight",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+            (
+                "textDocument/documentSymbol",
+                json!({ "textDocument": doc }),
+            ),
+            ("textDocument/foldingRange", json!({ "textDocument": doc })),
+            (
+                "textDocument/selectionRange",
+                json!({ "textDocument": doc, "positions": [position] }),
+            ),
+            ("textDocument/documentLink", json!({ "textDocument": doc })),
+            ("textDocument/documentColor", json!({ "textDocument": doc })),
+            (
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": doc }),
+            ),
+            (
+                "textDocument/prepareRename",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+            (
+                "textDocument/rename",
+                json!({ "textDocument": doc, "position": position, "newName": "z" }),
+            ),
+            (
+                "textDocument/prepareCallHierarchy",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+            (
+                "textDocument/prepareTypeHierarchy",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+        ];
+
+        for (method, params) in cases {
+            // The DESCRIPTION case: decline, and spend nothing doing it.
+            let (mut state, rig) = test_state();
+            state.on_notification(did_open(&uri, "Package: testpkg\nDepends: R\n", "r"));
+            // Drain the lint request the open queued, so the read assertion below
+            // is about this request alone.
+            let _ = rig.try_lint_msg();
+
+            state.on_request(Request::new(
+                RequestId::from(1),
+                method.to_string(),
+                params.clone(),
+            ));
+
+            let resp = rig
+                .try_response()
+                .unwrap_or_else(|| panic!("{method} answered nothing"));
+            assert_eq!(
+                resp.response_result.clone().ok(),
+                Some(serde_json::Value::Null),
+                "{method} must answer null for a DESCRIPTION, got {resp:?}"
+            );
+            assert!(
+                rig.no_read_work(),
+                "{method} queued read work for a DESCRIPTION"
+            );
+
+            // The negative control, without which the assertions above would
+            // pass just as happily for a misspelled method name: the same
+            // request against an R buffer must reach a handler that does work.
+            let (mut state, rig) = test_state();
+            let r_uri = test_uri();
+            let r_params = params_for(&params, &r_uri);
+            state.on_notification(did_open(&r_uri, "x <- 1\ny <- x\n", "r"));
+            let _ = rig.try_lint_msg();
+
+            state.on_request(Request::new(
+                RequestId::from(1),
+                method.to_string(),
+                r_params,
+            ));
+
+            assert!(
+                !rig.no_read_work() || rig.try_response().is_some(),
+                "{method} did nothing at all for an R buffer — is it routed?"
+            );
+        }
+    }
+
+    /// Retarget a request's `textDocument.uri` at `uri`, leaving the rest alone.
+    fn params_for(params: &serde_json::Value, uri: &Uri) -> serde_json::Value {
+        let mut params = params.clone();
+        params["textDocument"]["uri"] = json!(uri.as_str());
+        params
     }
 }
