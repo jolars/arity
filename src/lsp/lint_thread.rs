@@ -81,8 +81,8 @@ pub(crate) fn spawn_lint_thread(
         .expect("spawn lint thread")
 }
 
-/// Signal from a finished read-phase ([`LintWorker::start`]) back to the lint
-/// thread: the analyze for `uri`@`version` has completed (or unwound on
+/// Signal from a finished read-phase ([`LintWorker::spawn_analyze`]) back to the
+/// lint thread: the analyze for `uri`@`version` has completed (or unwound on
 /// cancellation) and dropped its db clone, so the in-flight slot is free.
 pub(crate) struct AnalyzeDone {
     uri: Uri,
@@ -550,29 +550,46 @@ impl LintWorker {
         // cover, when a sidecar URL is configured. Background, like `maybe_build`.
         self.maybe_fetch_remote(&anchor, &req.index_config, req.buffer.text(), &declared);
 
-        // Read-phase on the read pool, holding a db clone. A superseding edit (or any
-        // write) trips `salsa::Cancelled`, caught here so a canceled analyze
-        // publishes nothing; the main loop's version gate is the backstop.
+        // The snapshot carries the salsa library index, so `analyze_prepared`
+        // resolves undefined symbols through it; this provider is only the
+        // fallback for rules that read static base-R facts (`is_base`).
+        let fallback = CompositeProvider::base_only();
+        let buffer = Arc::clone(&req.buffer);
+        self.spawn_analyze(&req, buffer, move |analysis| {
+            crate::linter::check::analyze_prepared(analysis, &prepared, &fallback)
+        })
+    }
+
+    /// Occupy the in-flight slot and run `analyze` on the read pool against a db
+    /// clone, publishing its findings for `req` and freeing the slot once that
+    /// clone has dropped.
+    ///
+    /// The read-phase shape is the same for both grammars, so this is the one
+    /// place it lives — including the drop-before-`done` ordering, which is not
+    /// optional (see below). A superseding edit (or any write) trips
+    /// `salsa::Cancelled`, caught here so a canceled analyze publishes nothing;
+    /// the main loop's version gate is the backstop.
+    ///
+    /// Returns `true`: a worker was spawned, so the in-flight slot is now busy.
+    fn spawn_analyze(
+        &mut self,
+        req: &LintRequest,
+        buffer: Arc<TextBuffer>,
+        analyze: impl FnOnce(&Analysis) -> Vec<Diagnostic> + Send + 'static,
+    ) -> bool {
         let snapshot = self.db.snapshot();
         let out_tx = self.out_tx.clone();
         let done_tx = self.done_tx.clone();
         let uri = req.uri.clone();
         let version = req.version;
-        let buffer = req.buffer;
         self.inflight = Some(InflightAnalyze {
             uri: uri.clone(),
             version,
         });
 
-        // The snapshot carries the salsa library index, so `analyze_prepared`
-        // resolves undefined symbols through it; this provider is only the
-        // fallback for rules that read static base-R facts (`is_base`).
-        let fallback = CompositeProvider::base_only();
         let encoding = self.position_encoding;
         self.read_spawner.spawn(move || {
-            let result = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-                crate::linter::check::analyze_prepared(&snapshot, &prepared, &fallback)
-            }));
+            let result = salsa::Cancelled::catch(AssertUnwindSafe(|| analyze(&snapshot)));
             if let Ok(diagnostics) = result {
                 let line_index = buffer.line_index();
                 let diags: Vec<LspDiagnostic> = diagnostics
