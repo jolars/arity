@@ -272,6 +272,16 @@ Tier 2—needs a small bundled table or the project layer:
   checker wraps it in `suppressWarnings`). `has_no_author_roles` is
   deliberately left to R: it fires on any package whose sole author writes
   `cre` without `aut`.
+- [x] `description-empty-person` (packaging; syn; no fix, default on). Done,
+  and it came out of the corpus sweep for the rule above: `person()` with no
+  arguments is a **zero-length** person vector, so R concatenates it away
+  without a word and `R CMD check` never mentions it. A leftover contributor
+  someone opened and never filled in—style rather than correctness, which is
+  the whole reason it is a rule of its own: `description-authors-at-r` is gated
+  against R in `tests/description_oracle.rs`, and folding an opinion R does not
+  share into it would make that gate's claim conditional. Separate ids keep the
+  claim exact and let this one be suppressed on its own.
+
 - [ ] Emails appear in exactly three places in a `DESCRIPTION`—`Maintainer`,
   `Authors@R`'s `email =`, and the rare `Contact` field—so there is **no**
   general "lint emails" rule to write. Validate them where they occur, in

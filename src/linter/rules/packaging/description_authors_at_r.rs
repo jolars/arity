@@ -188,7 +188,7 @@ fn check_authors_at_r(ctx: &DcfRuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         // Not statically resolvable: the rule has nothing to say, exactly as
         // the roxygen markdown resolver stays silent on a computed list.
         Authors::Unresolved => return,
-        Authors::Persons(persons) => persons,
+        Authors::Persons(resolved) => resolved.persons,
     };
 
     let creators = creators(&persons);

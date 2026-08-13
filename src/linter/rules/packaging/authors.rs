@@ -70,10 +70,22 @@ pub enum Authors {
     /// A call R's strict reader refuses, and the source range naming it.
     UnsafeCall(String, TextRange),
     /// The people the field names, resolved.
-    Persons(Vec<Person>),
+    Persons(Resolved),
     /// R, and safe, but not statically resolvable — a bare variable, an
     /// `as.person` over one, a value built by `paste()`.
     Unresolved,
+}
+
+/// What a resolvable `Authors@R` value came to.
+pub struct Resolved {
+    /// The people R ends up with — what every question about authorship and
+    /// maintainership is asked of.
+    pub persons: Vec<Person>,
+    /// The `person()` calls supplying nothing at all. R returns a
+    /// **zero-length** person vector for those, so they are not nameless
+    /// people; they are not people, and no clause about authorship reaches
+    /// them. `description-empty-person` is their subject.
+    pub empty: Vec<TextRange>,
 }
 
 /// One `person(...)` call, with each argument resolved as far as the text goes.
@@ -225,8 +237,8 @@ pub fn resolve(folded: &Folded) -> Authors {
         return Authors::Unresolved;
     };
 
-    match persons(&last, folded) {
-        Some(persons) => Authors::Persons(persons),
+    match resolve_persons(&last, folded) {
+        Some(resolved) => Authors::Persons(resolved),
         None => Authors::Unresolved,
     }
 }
@@ -384,7 +396,7 @@ fn unsafe_call(root: &SyntaxNode) -> Option<(SmolStr, TextRange)> {
 }
 
 /// The people an expression names, or `None` when it is not resolvable.
-fn persons(el: &SyntaxElement, folded: &Folded) -> Option<Vec<Person>> {
+fn resolve_persons(el: &SyntaxElement, folded: &Folded) -> Option<Resolved> {
     let node = el.as_node()?;
     match node.kind() {
         SyntaxKind::PAREN_EXPR => {
@@ -392,7 +404,7 @@ fn persons(el: &SyntaxElement, folded: &Folded) -> Option<Vec<Person>> {
                 .children_with_tokens()
                 .filter(|e| !is_ignorable(e.kind()) && !is_paren(e.kind()))
                 .last()?;
-            persons(&inner, folded)
+            resolve_persons(&inner, folded)
         }
         SyntaxKind::CALL_EXPR => {
             let call = CallExpr::cast(node.clone())?;
@@ -400,15 +412,26 @@ fn persons(el: &SyntaxElement, folded: &Folded) -> Option<Vec<Person>> {
                 "person" => {
                     let resolved = person(&call, folded);
                     Some(if resolved.is_empty() {
-                        Vec::new()
+                        Resolved {
+                            persons: Vec::new(),
+                            empty: vec![resolved.range],
+                        }
                     } else {
-                        vec![resolved]
+                        Resolved {
+                            persons: vec![resolved],
+                            empty: Vec::new(),
+                        }
                     })
                 }
                 "c" | "list" => {
-                    let mut all = Vec::new();
+                    let mut all = Resolved {
+                        persons: Vec::new(),
+                        empty: Vec::new(),
+                    };
                     for arg in call.args() {
-                        all.extend(persons(&arg.value()?, folded)?);
+                        let inner = resolve_persons(&arg.value()?, folded)?;
+                        all.persons.extend(inner.persons);
+                        all.empty.extend(inner.empty);
                     }
                     Some(all)
                 }

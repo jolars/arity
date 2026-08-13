@@ -90,6 +90,7 @@ so this page never drifts from the rules' actual behavior.
 - [`description-malformed-version`](#description-malformed-version)
 - [`description-malformed-maintainer`](#description-malformed-maintainer)
 - [`description-authors-at-r`](#description-authors-at-r)
+- [`description-empty-person`](#description-empty-person)
 - [`unused-dependency`](#unused-dependency)
 
 **Meta**
@@ -1846,6 +1847,42 @@ warning: description-authors-at-r
 3 | Author: person("Jane", "Doe", role = c("aut", "cre"))
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `person("Jane", "Doe", role = c("aut", "cre"))` is R code under the `Author` key
   = help: Move the call to `Authors@R`, which R evaluates. `Author` is a plain string R prints as written, brackets and quotes included.
+```
+
+### `description-empty-person`
+
+Flag a `person()` in `Authors@R` that supplies no arguments.
+
+`person()`—and `person(NULL)`, which takes the same early return—is a **zero-length** person vector, not a nameless person. R concatenates it away without a word: `c(person("Jane", …), person())` is a one-element vector, `Author` and `Maintainer` derive exactly as they would have, and nothing in `R CMD check` will ever mention it.
+
+So this is style rather than correctness. The call is a contributor someone opened and never filled in, left in shipped metadata where it reads as an intention—and it is invisible to every tool that reads the field unless one looks for it.
+
+It is a rule of its own rather than a clause of `description-authors-at-r` because it is the one packaging finding `R CMD check` does not back, and keeping the ids apart keeps that rule's claim exact—as well as letting this one be suppressed on its own.
+
+A person carrying anything at all is a person, however little R can make of them: `person(role = "ctb")` and even `person("")` are `description-authors-at-r`'s subject, not this rule's. A computed argument could be `NULL` and could be a name, so the rule stays silent there.
+
+There is no autofix: deleting the call means deleting a comma that belongs to its neighbor, and filling the person in is the author's.
+
+This rule is **enabled by default**.
+
+A contributor opened and never filled in. R drops the call silently, so the credit was never going to appear:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Authors@R: c(
+    person("Jane", "Doe", , "jane@example.com", c("aut", "cre")),
+    person()
+  )
+```
+
+```text
+warning: description-empty-person
+ --> DESCRIPTION:5:5
+  |
+5 |     person()
+  |     ^^^^^^^^ this `person()` supplies nothing, so it names nobody
+  = help: Fill the person in, or delete the call: R reads `person()` as a zero-length person vector and drops it silently.
 ```
 
 ### `unused-dependency`

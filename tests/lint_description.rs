@@ -1496,8 +1496,9 @@ fn a_wrapped_field_spans_the_offending_person() {
 }
 
 /// `person()` with no arguments returns a **zero-length** person vector, so it
-/// names nobody rather than naming a nameless somebody — and one really does
-/// sit at the end of `xfun`'s `Authors@R`, which is where this came from.
+/// names nobody rather than naming a nameless somebody — every clause this rule
+/// has is about a person R actually holds. The leftover call itself is
+/// `description-empty-person`'s subject.
 #[test]
 fn an_argument_less_person_names_nobody() {
     let text = authored(
@@ -1553,6 +1554,113 @@ fn authors_at_r_ships_no_fix() {
             .into_iter()
             .find(|d| d.rule == AUTHORS_AT_R)
             .expect("an authors-at-r finding");
+    assert!(finding.fix.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// description-empty-person
+// ---------------------------------------------------------------------------
+
+const EMPTY_PERSON: &str = "description-empty-person";
+
+/// The findings of `EMPTY_PERSON`, as the source text each one spans.
+fn empty_person_hits(text: &str) -> Vec<String> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .expect("linting should not error")
+        .iter()
+        .filter(|d| d.rule == EMPTY_PERSON)
+        .map(|d| {
+            let start: usize = d.range.start().into();
+            let end: usize = d.range.end().into();
+            text[start..end].to_string()
+        })
+        .collect()
+}
+
+/// The shape this rule exists for, taken from `xfun`'s `DESCRIPTION`: a
+/// `person()` opened for a contributor who was never filled in. R drops it
+/// without a word, so nothing in `R CMD check` will ever mention it.
+#[test]
+fn an_argument_less_person_is_flagged() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person())",
+    );
+    assert_eq!(empty_person_hits(&text), ["person()"]);
+    assert!(messages(&text, EMPTY_PERSON)[0].contains("nobody"));
+}
+
+/// `person(NULL)` is the same zero-length vector by the same branch: R returns
+/// early when *every* argument is `NULL`.
+#[test]
+fn a_person_of_nulls_is_flagged() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person(NULL, NULL))",
+    );
+    assert_eq!(empty_person_hits(&text), ["person(NULL, NULL)"]);
+}
+
+/// Every empty call is its own leftover, and each gets its own caret.
+#[test]
+fn every_empty_person_is_reported() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person(), person())",
+    );
+    assert_eq!(empty_person_hits(&text), ["person()", "person()"]);
+}
+
+/// A person carrying anything at all is a person, however little R can make of
+/// them — that is `description-authors-at-r`'s subject, not this rule's.
+#[test]
+fn a_person_with_any_argument_is_not_empty() {
+    for value in [
+        "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\")",
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = \"jane@example.com\"), person(role = \"ctb\"))",
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = \"jane@example.com\"), person(\"\"))",
+    ] {
+        assert!(
+            empty_person_hits(&authored(value)).is_empty(),
+            "`{value}` names somebody, however thinly",
+        );
+    }
+}
+
+/// A computed argument could be `NULL` and could be a name, and which one it is
+/// needs R. The rule reports only what the text decides.
+#[test]
+fn a_computed_person_is_silent() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person(given = the_name))",
+    );
+    assert!(empty_person_hits(&text).is_empty());
+}
+
+/// A field arity cannot read at all says nothing about empty people either.
+#[test]
+fn an_unresolvable_field_reports_no_empty_person() {
+    assert!(empty_person_hits(&authored("person(\"Jane\",")).is_empty());
+    assert!(empty_person_hits(&authored("as.person(AUTHORS)")).is_empty());
+}
+
+/// No autofix: deleting the call means deleting a comma that belongs to its
+/// neighbor, and filling it in is the author's.
+#[test]
+fn empty_person_ships_no_fix() {
+    let text = authored(
+        "c(person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person())",
+    );
+    let finding =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error")
+            .into_iter()
+            .find(|d| d.rule == EMPTY_PERSON)
+            .expect("an empty-person finding");
     assert!(finding.fix.is_none());
 }
 

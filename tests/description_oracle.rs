@@ -659,7 +659,10 @@ const PLANTED: &[(&str, &str)] = &[
     ),
     // `person()` with no arguments is a zero-length person vector, not a
     // nameless person — a shape that really does end `xfun`'s `Authors@R`, and
-    // one arity reported until this case existed.
+    // one `description-authors-at-r` reported until this case existed. The
+    // leftover call is `description-empty-person`'s subject instead, and that
+    // rule is deliberately **not** in `GATES`: it is the one packaging finding
+    // R does not back, which is exactly why it has an id of its own.
     (
         "authors-argument-less-person",
         "Package: testpkg\nVersion: 0.1.0\n\
