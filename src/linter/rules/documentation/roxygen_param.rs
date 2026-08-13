@@ -71,6 +71,12 @@ impl Rule for RoxygenParam {
         let Some(block) = el.as_node().cloned().and_then(RoxygenBlock::cast) else {
             return;
         };
+        // `@noRd` suppresses the topic outright, so there is no argument list
+        // that could be incomplete or name a nonexistent formal. Matches
+        // `roxygen-return`, which already skips these blocks.
+        if block.has_tag("noRd") {
+            return;
+        }
         let function = documented_function(&block);
         let judge_coverage = function.is_some() && !inherits_docs(&block);
         // A registered S3 method with no title generates no `.Rd`, so it has no

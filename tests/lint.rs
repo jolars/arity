@@ -5242,6 +5242,10 @@ fn roxygen_param_negatives() {
         "#' Add\n#' @inheritParams other\n#' @export\nf <- function(x, y) x\n",
         // In a merged topic a param may belong to a sibling function.
         "#' @rdname topic\n#' @param extra E.\nf <- function(x) x\n",
+        // @noRd blocks generate no topic, so there is no argument list to be
+        // complete — in either direction. `roxygen-return` already skips them.
+        "#' Title\n#' @keywords internal\n#' @noRd\nf <- function(x) x\n",
+        "#' @noRd\n#' @param z Z.\nf <- function(x) x\n",
         // Unassociated block: no formals to judge.
         "#' Add\n#' @param x X.\nsetMethod(\"show\", \"C\", function(object) 1)\n",
         // No roxygen block at all.
