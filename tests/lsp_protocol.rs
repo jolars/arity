@@ -68,6 +68,49 @@ fn missing_dir_uri() -> &'static str {
     }
 }
 
+/// A `file:` URI for an on-disk path, matching `src/lsp/uri.rs`'s convention of
+/// a leading `/` before a Windows drive letter.
+fn path_uri(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
+    }
+}
+
+/// A `DESCRIPTION` with every field `R CMD check` requires, so a test varies
+/// only the one thing it is about (mirrors `tests/lint_description.rs`).
+const COMPLETE_DESCRIPTION: &str = "\
+Package: testpkg
+Type: Package
+Title: A Test Package
+Version: 0.1.0
+Authors@R: person(\"A\", \"B\", email = \"a@b.co\", role = c(\"aut\", \"cre\"))
+Description: One sentence: it has a colon.
+License: MIT + file LICENSE
+Encoding: UTF-8
+";
+
+/// A real on-disk package: `DESCRIPTION`, `R/a.R`, `NAMESPACE`, and an **empty
+/// `arity.toml`**. The last is load-bearing — without it, config discovery walks
+/// out of the temp dir and a stray ancestor `arity.toml` could change the rule
+/// set under the test.
+///
+/// Returns the dir (the caller must keep it alive) plus the two URIs.
+fn package_fixture(description: &str, r_source: &str) -> (tempfile::TempDir, String, String) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("R")).expect("create R/");
+    std::fs::write(root.join("arity.toml"), "").expect("write arity.toml");
+    std::fs::write(root.join("DESCRIPTION"), description).expect("write DESCRIPTION");
+    std::fs::write(root.join("NAMESPACE"), "").expect("write NAMESPACE");
+    std::fs::write(root.join("R").join("a.R"), r_source).expect("write R/a.R");
+    let desc_uri = path_uri(&root.join("DESCRIPTION"));
+    let r_uri = path_uri(&root.join("R").join("a.R"));
+    (dir, desc_uri, r_uri)
+}
+
 /// Drives the client end of an in-memory connection against a real `serve`
 /// loop running on a background thread.
 struct Harness {
@@ -508,6 +551,65 @@ fn formatting_a_description_returns_null_over_the_wire() {
         Value::Null,
         "formatting a DESCRIPTION must produce no edits"
     );
+    h.shutdown();
+}
+
+/// Pull the `code` (the rule id) out of each published diagnostic.
+fn rules_in(diags: &[Value]) -> Vec<String> {
+    diags
+        .iter()
+        .filter_map(|d| d.get("code").and_then(Value::as_str).map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn did_open_description_publishes_packaging_diagnostics() {
+    // Everything `R CMD check` wants except `License`.
+    let description = COMPLETE_DESCRIPTION.replace("License: MIT + file LICENSE\n", "");
+    let (_dir, desc_uri, _) = package_fixture(&description, "f <- function() 1\n");
+
+    let mut h = Harness::start_push();
+    h.did_open_as(&desc_uri, &description, 1, "r-description");
+
+    let diags = h.recv_publish_for(&desc_uri, 1);
+    assert_eq!(
+        rules_in(&diags),
+        vec!["description-missing-field"],
+        "expected the missing `License` to be reported: {diags:#?}"
+    );
+    h.shutdown();
+}
+
+#[test]
+fn description_outside_a_package_publishes_nothing() {
+    // A `DESCRIPTION` with no `R/` beside it is not a package root, so the
+    // editor gets silence rather than a screenful of missing-field findings.
+    // The editor opens files for reasons a CLI never has.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("arity.toml"), "").expect("write arity.toml");
+    let path = dir.path().join("DESCRIPTION");
+    std::fs::write(&path, "Package: notapackage\n").expect("write DESCRIPTION");
+    let uri = path_uri(&path);
+
+    let mut h = Harness::start_push();
+    h.did_open_as(&uri, "Package: notapackage\n", 1, "r-description");
+
+    let diags = h.recv_publish_for(&uri, 1);
+    assert!(diags.is_empty(), "expected silence, got: {diags:#?}");
+    h.shutdown();
+}
+
+#[test]
+fn a_malformed_description_publishes_dcf_syntax_errors() {
+    let (_dir, desc_uri, _) = package_fixture(COMPLETE_DESCRIPTION, "f <- function() 1\n");
+    // A continuation line with no field to continue: what `read.dcf` rejects.
+    let text = "  orphan continuation\n";
+
+    let mut h = Harness::start_push();
+    h.did_open_as(&desc_uri, text, 1, "r-description");
+
+    let diags = h.recv_publish_for(&desc_uri, 1);
+    assert_eq!(rules_in(&diags), vec!["syntax-error"], "{diags:#?}");
     h.shutdown();
 }
 

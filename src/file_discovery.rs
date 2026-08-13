@@ -270,7 +270,7 @@ fn is_description_file(path: &Path) -> bool {
 /// `DESCRIPTION` is data for a test, deliberately minimal, describing nothing
 /// anybody ships. Linting it produces a screenful of findings about files whose
 /// author was never addressing us. Naming one explicitly still lints it.
-fn is_own_package_root(dir: &Path) -> bool {
+pub(crate) fn is_own_package_root(dir: &Path) -> bool {
     // `package_root` starts one level up, so this asks "is any *ancestor* a
     // package root", not "is this one".
     is_package_root(dir) && crate::project::package_root(dir).is_none()

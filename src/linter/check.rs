@@ -750,6 +750,28 @@ pub fn check_document(
     check_document_with_provider(path, content, config, &default_symbol_provider())
 }
 
+/// Read-phase of cross-file `DESCRIPTION` linting (`&db` only — no disk, no
+/// writes), the DCF twin of [`analyze_prepared`].
+///
+/// The language server's counterpart to pass 3 of [`check_paths_with_index`]:
+/// same project graph, same [`PackageUsage`], so `unused-dependency` says the
+/// same thing in the editor as it does on the CLI. Safe on a db clone; salsa
+/// aborts it with [`salsa::Cancelled`] if a write races.
+///
+/// The buffer is passed in rather than read back out of the db because the
+/// editor's unsaved text is the authority — the tracked input may lag it by a
+/// keystroke.
+pub fn check_description_in_project(
+    analysis: &Analysis,
+    path: &Path,
+    content: &str,
+    rules: &ResolvedRules,
+) -> Vec<Diagnostic> {
+    let db = analysis.as_db();
+    let usage = package_usage_for(db, workspace_project(db), path);
+    lint_description_source(path, content, rules, usage).1
+}
+
 /// Lint one `DESCRIPTION` buffer: parse it as DCF, and either report the
 /// parser's diagnostics or run the configured [`DcfRule`]s over the document.
 ///
@@ -761,7 +783,7 @@ pub fn check_document(
 /// scattered one.
 ///
 /// [`DcfRule`]: super::rules::DcfRule
-fn lint_description_source(
+pub(crate) fn lint_description_source(
     path: &Path,
     content: &str,
     rules: &ResolvedRules,

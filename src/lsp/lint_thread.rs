@@ -574,12 +574,57 @@ impl LintWorker {
 
     /// The `DESCRIPTION` pipeline: DCF parse + the packaging rules.
     ///
-    /// Publishing nothing is already the correct answer for most `DESCRIPTION`s
-    /// the editor hands us — anything that is not its own package root — so this
-    /// starts there and grows.
+    /// Gated on the file sitting at its own package root, which mirrors the
+    /// CLI's *walk* policy rather than its explicit-path one. The CLI lints any
+    /// `DESCRIPTION` a user names, but an editor sends every file a user so much
+    /// as glances at — a grep hit, a git diff, a testthat fixture package — and
+    /// answering those with a screenful of missing-field findings is noise about
+    /// a file whose author was never addressing us.
     fn start_description(&mut self, req: LintRequest) -> bool {
-        self.publish_empty(&req);
-        false
+        // An `untitled:` buffer has no root and so no package to be part of.
+        // `send_lint` synthesizes a bare `DESCRIPTION` for it, whose parent is
+        // the empty path.
+        let Some(root) = req.path.parent().filter(|p| !p.as_os_str().is_empty()) else {
+            self.publish_empty(&req);
+            return false;
+        };
+        if !crate::file_discovery::is_own_package_root(root) {
+            self.publish_empty(&req);
+            return false;
+        }
+        let root = root.to_path_buf();
+
+        // Seeding walks the package's `R/` files into the db, which is what lets
+        // `package_usage_for` answer at all (and so what keeps
+        // `unused-dependency` from being silently inert in the editor).
+        if self.db.lookup_description(&root).is_none() {
+            self.seed_workspace(vec![root.clone()]);
+        }
+
+        self.ensure_index(&root, &req.index_config);
+        self.ensure_remote(&root, &req.index_config);
+        // A `DESCRIPTION` names exactly the packages its author is entitled to
+        // use, so opening one warms the harvest for them — no R source needed.
+        let declared = self.declared_packages_for(&req.path);
+        if req.index_config.auto_build {
+            self.maybe_build(&root, &req.index_config, "", &declared);
+        }
+        self.maybe_fetch_remote(&root, &req.index_config, "", &declared);
+
+        let rules = match self.resolved_rules(&req.lint_config) {
+            Ok(rules) => rules,
+            Err(_) => {
+                self.publish_empty(&req);
+                return false;
+            }
+        };
+
+        let buffer = Arc::clone(&req.buffer);
+        let path = req.path.clone();
+        let content = req.buffer.text().to_string();
+        self.spawn_analyze(&req, buffer, move |analysis| {
+            crate::linter::check::check_description_in_project(analysis, &path, &content, &rules)
+        })
     }
 
     /// Occupy the in-flight slot and run `analyze` on the read pool against a db
