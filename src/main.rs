@@ -10,14 +10,17 @@ use arity::formatter::{
     ChangedFile, FormatCache, FormatStyle, Formatted, check_paths_with_style_cached,
     format_description_with_style, format_file, format_with_options,
 };
-use arity::linter::{OutputMode, apply_fixes, check_document, render_findings};
+use arity::incremental::IncrementalDatabase;
+use arity::linter::{
+    OutputMode, apply_fixes, check_document, check_document_in_project, render_findings,
+};
 use arity::parser::ParseOptions;
 use arity::parser::{parse, reconstruct};
 use arity::rindex::build::{BuildOptions, PackageOutcome, build_index};
 use arity::rindex::cache::{Cache, resolve_cache_root};
 use arity::rindex::discover::{referenced_packages, with_default_packages};
 use arity::rindex::libpaths::LibrarySearch;
-use arity::rindex::provider::IndexedProvider;
+use arity::rindex::provider::{CompositeProvider, IndexedProvider};
 use clap::Parser;
 use similar::{ChangeTag, TextDiff};
 use std::io::IsTerminal;
@@ -1092,7 +1095,7 @@ fn run_lint(
     // disk and shows whatever findings remain.
     if fix_opts.fix
         && let Some(code) =
-            apply_fixes_to_paths(paths, &config.lint, fix_opts.unsafe_fixes, &exclude, out)
+            apply_fixes_to_paths(paths, &config, fix_opts.unsafe_fixes, &exclude, out)
     {
         return code;
     }
@@ -1154,7 +1157,7 @@ fn run_lint(
 /// parser. The day a DCF fix lands, this has to widen.
 fn apply_fixes_to_paths(
     paths: &[PathBuf],
-    config: &LintConfig,
+    config: &Config,
     include_unsafe: bool,
     exclude: &ExcludeFilter,
     out: OutputOptions,
@@ -1166,8 +1169,14 @@ fn apply_fixes_to_paths(
             return Some(ExitCode::from(2));
         }
     };
+    // The fix loop must see the same cross-file scope the reporting pass does.
+    // On the single-file path a NAMESPACE export or a sibling's call is
+    // invisible, so every top-level binding reads as unused and `--unsafe-fixes`
+    // deletes the package.
+    let provider = CompositeProvider::with_index(lint_index(config));
+    let mut db = IncrementalDatabase::default();
     for path in files {
-        match fix_file(&path, config, include_unsafe) {
+        match fix_file(&mut db, &provider, &path, &config.lint, include_unsafe) {
             Ok(0) => {}
             Ok(n) => {
                 if !out.quiet {
@@ -1195,13 +1204,54 @@ fn apply_fixes_to_paths(
 
 /// Run the fixpoint loop on a single file and write it back if anything changed.
 /// Returns the number of individual fixes applied.
-fn fix_file(path: &Path, config: &LintConfig, include_unsafe: bool) -> io::Result<usize> {
+fn fix_file(
+    db: &mut IncrementalDatabase,
+    provider: &CompositeProvider,
+    path: &Path,
+    config: &LintConfig,
+    include_unsafe: bool,
+) -> io::Result<usize> {
     let content = fs::read_to_string(path)?;
-    let (fixed, total) = fix_source(path, &content, config, include_unsafe);
+    let (fixed, total) =
+        fix_source_in_project(db, provider, path, &content, config, include_unsafe);
     if total > 0 {
         fs::write(path, &fixed)?;
     }
     Ok(total)
+}
+
+/// [`fix_source`] with cross-file resolution: the active file's text is the
+/// in-memory buffer while its siblings are seeded from disk, so project-aware
+/// rules judge the same way they do under `arity lint`.
+fn fix_source_in_project(
+    db: &mut IncrementalDatabase,
+    provider: &CompositeProvider,
+    path: &Path,
+    content: &str,
+    config: &LintConfig,
+    include_unsafe: bool,
+) -> (String, usize) {
+    let mut content = content.to_string();
+    let mut total = 0usize;
+    for _ in 0..MAX_FIX_ITERATIONS {
+        let active = db.upsert_file(path, content.clone());
+        let Ok(diagnostics) = check_document_in_project(db, path, active, config, provider) else {
+            break;
+        };
+        let fixes: Vec<_> = diagnostics.into_iter().filter_map(|d| d.fix).collect();
+        if fixes.is_empty() {
+            break;
+        }
+        let outcome = apply_fixes(&content, &fixes, include_unsafe);
+        if outcome.applied == 0 {
+            break;
+        }
+        total += outcome.applied;
+        content = outcome.output;
+    }
+    // Leave the tracked buffer agreeing with what we are about to write.
+    db.upsert_file(path, content.clone());
+    (content, total)
 }
 
 /// Apply safe (and optionally unsafe) autofixes to `content` to a fixpoint,
