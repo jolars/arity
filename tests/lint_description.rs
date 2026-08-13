@@ -779,6 +779,232 @@ fn malformed_name_ships_no_fix() {
 }
 
 // ---------------------------------------------------------------------------
+// description-malformed-version
+// ---------------------------------------------------------------------------
+
+const MALFORMED_VERSION: &str = "description-malformed-version";
+
+/// `COMPLETE_DESCRIPTION` with a different version, so a case varies only the
+/// field the rule reads.
+fn versioned(version: &str) -> String {
+    COMPLETE_DESCRIPTION.replacen("Version: 0.1.0", &format!("Version: {version}"), 1)
+}
+
+/// The findings of `MALFORMED_VERSION`, as the source text each one spans.
+fn version_hits(text: &str) -> Vec<String> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .expect("linting should not error")
+        .iter()
+        .filter(|d| d.rule == MALFORMED_VERSION)
+        .map(|d| {
+            let start: usize = d.range.start().into();
+            let end: usize = d.range.end().into();
+            text[start..end].to_string()
+        })
+        .collect()
+}
+
+/// Every shape R's `valid_package_version` rejects. The regexp is
+/// `([[:digit:]]+[.-]){1,}[[:digit:]]+`: digit runs joined by `.` or `-`, and
+/// because the trailing run is written separately, **at least two components**.
+#[test]
+fn a_version_r_would_reject_is_flagged() {
+    for version in [
+        "1",          // at least two components
+        "1.0.0.beta", // every component is digits
+        "1.",         // and the last one has to be there
+        "1..0",       // exactly one separator between them
+        "1.0_1",      // `.` and `-` are the only separators
+        "v1.0",       // no prefix
+        "1.0rc1",     // and no suffix
+    ] {
+        assert_eq!(
+            version_hits(&versioned(version)),
+            [version],
+            "`{version}` should be flagged, spanning the version",
+        );
+    }
+}
+
+#[test]
+fn a_version_r_accepts_is_not_flagged() {
+    for version in ["0.1.0", "1.0", "1-0", "1.0-3", "0.1.0.9000", "1.27.1"] {
+        assert!(
+            version_hits(&versioned(version)).is_empty(),
+            "`{version}` should not be flagged",
+        );
+    }
+}
+
+/// Unlike `[[:alpha:]]` in `description-malformed-name`, R's `[[:digit:]]`
+/// matches **ASCII only** here — verified against `grepl` under a UTF-8 locale,
+/// where an Arabic-Indic digit is rejected. The two rules read their POSIX
+/// classes differently because R does.
+#[test]
+fn a_non_ascii_digit_is_flagged() {
+    assert_eq!(
+        version_hits(&versioned("\u{661}.0")),
+        ["\u{661}.0"],
+        "R's `[[:digit:]]` does not match an Arabic-Indic digit",
+    );
+}
+
+/// CRAN's `version_with_leading_zeroes`: `(^|[.-])0[0-9]+`. A lone `0`
+/// component is not a leading zero — `0.1.0` is the most ordinary version there
+/// is.
+#[test]
+fn a_component_with_a_leading_zero_is_flagged() {
+    for version in ["1.01", "01.2", "1.0.010"] {
+        assert_eq!(
+            version_hits(&versioned(version)),
+            [version],
+            "`{version}` has a component with a leading zero",
+        );
+    }
+}
+
+/// CRAN's own carve-out, `^[0-9]{4}[.-][0-9]{2}`: calendar versioning is the
+/// one place a leading zero is intended.
+#[test]
+fn calendar_versioning_is_not_a_leading_zero() {
+    for version in ["2024.01", "2024-01-15", "2024.06.3"] {
+        assert!(
+            version_hits(&versioned(version)).is_empty(),
+            "`{version}` is calendar versioning, which CRAN exempts",
+        );
+    }
+}
+
+/// CRAN's `version_with_large_components`, at its threshold of 1234.
+#[test]
+fn an_absurd_component_is_flagged() {
+    for version in ["1234.0", "1.0.5000", "20240115.1"] {
+        assert_eq!(
+            version_hits(&versioned(version)),
+            [version],
+            "`{version}` has an implausibly large component",
+        );
+    }
+}
+
+/// CRAN exempts a component equal to the submission year, so that calendar
+/// versioning survives. arity has no submission date and refuses to make a
+/// diagnostic depend on the wall clock, so it exempts the whole four-digit year
+/// band instead. That is strictly *more* permissive than CRAN — every component
+/// arity flags, CRAN flags too, in any year through 2999 — which is the
+/// direction the oracle's containment gate requires.
+#[test]
+fn a_year_component_is_not_absurd() {
+    for version in ["2026.1", "2026.1.0", "0.1.2026", "1999.4"] {
+        assert!(
+            version_hits(&versioned(version)).is_empty(),
+            "`{version}` reads as a calendar year, not an absurd component",
+        );
+    }
+}
+
+/// `usethis::use_dev_version()` appends `.9000`, so this is what a package
+/// under development looks like nearly everywhere. CRAN's check reports it and
+/// is right to — nobody submits a development version — but a linter reads
+/// packages in exactly that state, so a *trailing* component of 9000 or more is
+/// read as the marker it is.
+#[test]
+fn a_development_version_suffix_is_not_absurd() {
+    for version in ["0.0.0.9000", "1.2.3.9000", "0.1.0.9017"] {
+        assert!(
+            version_hits(&versioned(version)).is_empty(),
+            "`{version}` is a development version, not an absurd component",
+        );
+    }
+}
+
+/// The carve-out is for the *trailing* component only: a large number anywhere
+/// else is the typo the check exists for.
+#[test]
+fn a_large_component_before_the_last_is_still_absurd() {
+    assert_eq!(version_hits(&versioned("9000.1")), ["9000.1"]);
+    assert_eq!(version_hits(&versioned("1.9000.2")), ["1.9000.2"]);
+}
+
+/// A component just under the threshold, and one just over the exempt band.
+#[test]
+fn the_absurd_component_boundaries_are_rs() {
+    assert!(version_hits(&versioned("1233.0")).is_empty());
+    assert_eq!(version_hits(&versioned("1234.0")), ["1234.0"]);
+    assert!(version_hits(&versioned("1900.1")).is_empty());
+    assert_eq!(version_hits(&versioned("3000.1")), ["3000.1"]);
+}
+
+/// R's `bad_version` clause is guarded by `!is_base_package`, and a package
+/// declaring `Priority: base` is R's own — its version is R's to spell,
+/// `@VERSION@` placeholder included. CRAN's two clauses never see a base
+/// package at all, so the exemption covers the whole rule.
+#[test]
+fn a_base_package_version_is_exempt() {
+    for version in ["@VERSION@", "1.01", "9999.1"] {
+        let text = format!("{}Priority: base\n", versioned(version));
+        assert!(
+            version_hits(&text).is_empty(),
+            "`{version}` is exempt in a package declaring `Priority: base`",
+        );
+    }
+}
+
+/// The three defects are three different repairs, so they read differently.
+#[test]
+fn the_message_names_which_version_defect_it_is() {
+    let malformed = messages(&versioned("1.0.0.beta"), MALFORMED_VERSION)
+        .pop()
+        .expect("a message");
+    assert!(
+        malformed.contains("not a valid package version"),
+        "{malformed}"
+    );
+
+    let zeroes = messages(&versioned("1.01"), MALFORMED_VERSION)
+        .pop()
+        .expect("a message");
+    assert!(zeroes.contains("leading zero"), "{zeroes}");
+
+    let large = messages(&versioned("1.5000"), MALFORMED_VERSION)
+        .pop()
+        .expect("a message");
+    assert!(large.contains("5000"), "{large}");
+}
+
+/// A wrapped `Version` is one R rejects — `read.dcf` folds the continuation in
+/// with a newline, and no newline is part of any version.
+#[test]
+fn a_wrapped_version_is_flagged() {
+    let text = versioned("1.\n  0");
+    assert_eq!(version_hits(&text), ["1.\n  0"]);
+}
+
+/// An absent or empty `Version` is `description-missing-field`'s finding, and
+/// "malformed" is the wrong word for a field with no value in it.
+#[test]
+fn a_version_field_without_a_value_is_silent() {
+    assert!(version_hits("Package: testpkg\n").is_empty());
+    assert!(version_hits("Package: testpkg\nVersion:\n").is_empty());
+    assert!(version_hits("Package: testpkg\nVersion:   \n").is_empty());
+}
+
+/// No autofix: which version number a release carries is a decision about the
+/// release, and it is also in the package's tags, its `NEWS.md`, and every
+/// dependency's constraint on it.
+#[test]
+fn malformed_version_ships_no_fix() {
+    let text = versioned("1.0.0.beta");
+    let finding =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error")
+            .into_iter()
+            .find(|d| d.rule == MALFORMED_VERSION)
+            .expect("a malformed-version finding");
+    assert!(finding.fix.is_none());
+}
+
+// ---------------------------------------------------------------------------
 // Suppression
 // ---------------------------------------------------------------------------
 

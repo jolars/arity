@@ -1,0 +1,67 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `description-malformed-version`
+
+Flag a `Version` value R or CRAN will object to.
+
+R's `valid_package_version` is `([[:digit:]]+[.-]){1,}[[:digit:]]+`: runs of digits joined by `.` or `-`. The trailing run is written separately from the repeated group, so a version has **at least two components**—a bare `Version: 1` is one R rejects, and so is any component that is not digits (`1.0.0-beta`, `v1.0`).
+
+Two CRAN pretest NOTEs are reported by the same rule, since the repair is the same: a component with a **leading zero** (`1.01`, which sorts before `1.1` as text and equal to it as a version), and an **implausibly large** component (1234 or more). Calendar versioning is exempt from both, exactly as CRAN exempts it: `2026.01` keeps its zero, and a four-digit component that reads as a year is not an absurd one.
+
+The digit class is matched as ASCII, exactly as R matches it under a UTF-8 locale—note that this is the opposite of `description-malformed-name`, whose letter class is Unicode there. A description declaring `Priority: base` is exempt, since a base package's version is R's own to spell.
+
+An absent or empty `Version` is `description-missing-field`'s finding, not this one's.
+
+There is no autofix: which number a release carries is a decision about the release, and it is also in the package's tags, its `NEWS.md`, and every constraint a dependent puts on it.
+
+This rule is **enabled by default**.
+
+A version R's `valid_package_version` rejects, since a component has to be digits:
+
+```text
+Package: mypkg
+Version: 1.0.0-beta
+```
+
+```text
+warning: description-malformed-version
+ --> DESCRIPTION:2:10
+  |
+2 | Version: 1.0.0-beta
+  |          ^^^^^^^^^^ `1.0.0-beta` is not a valid package version: R requires runs of digits joined by `.` or `-`
+  = help: Renumber the release: at least two components, each one digits, separated by `.` or `-`.
+```
+
+A component with a leading zero, which sorts one way as text and another as a version:
+
+```text
+Package: mypkg
+Version: 1.01
+```
+
+```text
+warning: description-malformed-version
+ --> DESCRIPTION:2:10
+  |
+2 | Version: 1.01
+  |          ^^^^ `1.01` has a component with a leading zero
+  = help: Drop the leading zero: `1.01` and `1.1` are the same version to R, but not to anything that sorts the text.
+```
+
+A component too large to be a release number:
+
+```text
+Package: mypkg
+Version: 1.0.5000
+```
+
+```text
+warning: description-malformed-version
+ --> DESCRIPTION:2:10
+  |
+2 | Version: 1.0.5000
+  |          ^^^^^^^^ `1.0.5000` has an implausibly large component (`5000`)
+  = help: Check the number: a component of 1234 or more is usually a typo or a date in the wrong slot.
+```

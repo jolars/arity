@@ -67,17 +67,22 @@ Prerequisite worth doing first, and the thing that makes the rest defensible:
 
 - [x] **A `.check_package_description` differential oracle.** Done:
   `tests/oracle/description_oracle.R` + `tests/description_oracle.rs`,
-  `#[ignore]`d, `task description-oracle`. 47 cases (the rindex fixtures,
+  `#[ignore]`d, `task description-oracle`. 53 cases (the rindex fixtures,
   the reference checkouts when present, and a planted-defect table), and a
   missing `Rscript` is a skip, as in the other two oracles.
 
-  Three checkers, because one is not enough:
+  Four checkers, because one is not enough:
   `.check_package_description(strict = TRUE)`,
   `.check_package_description_authors_at_R_field(strict = 2L)` (the outer
   checker calls it at `strict = FALSE`, so the per-person name, role, ORCID,
-  and ROR signals are unreachable from there), and the `duplicates` half of
-  `.check_package_description2`. Its other halves need installed packages
-  and a `src/`, which a text-only oracle has no business simulating.
+  and ROR signals are unreachable from there), the `duplicates` half of
+  `.check_package_description2`, and the two version components of
+  `.check_package_CRAN_incoming(localOnly = TRUE)`. The last two are
+  cherry-picked, not taken whole: their other components need installed
+  packages, a `src/`, files, or the network, which a text-only oracle has no
+  business simulating. Note the CRAN checker reaches the version only after a
+  `Maintainer` and a `Title` it can inspect, and errors on the `NA`
+  otherwise—a planted case that wants those signals has to carry both.
 
   **Two-sided by construction**, because arity implements a fraction of what
   R checks. `GATES` holds the rules arity ships and requires containment,
@@ -87,8 +92,8 @@ Prerequisite worth doing first, and the thing that makes the rest defensible:
   parity would be demanding a rule that does not exist. `PLANNED` holds the
   signals no rule covers, each tagged with the rule above that will claim
   it; they are counted and ranked, never failed, and that ranking is the
-  work-list. Today: text-format 10, authors-at-r 4, encoding 3,
-  malformed-name 3, then one or two each for the rest.
+  work-list. Today: text-format 10, authors-at-r 4, encoding 3, then one or
+  two each for the rest.
 
   Two structural failures keep it honest, and both were verified by
   mutation rather than assumed: an **unknown signal fails** (R's checkers
@@ -146,9 +151,30 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   `PLANNED` to `GATES` in `tests/description_oracle.rs`, backed by the signal's
   presence rather than its detail (R's detail is its own message, not the name).
 
-- [ ] `description-malformed-version`. `Version` against
-  `valid_package_version` (`([[:digit:]]+[.-]){1,}[[:digit:]]+`), plus CRAN's
-  leading-zeroes (`1.01`) and absurd-component NOTEs.
+- [x] `description-malformed-version` (packaging; syn; no fix, default on).
+  Done. `Version` against `valid_package_version`
+  (`([[:digit:]]+[.-]){1,}[[:digit:]]+`, so **at least two components**—a bare
+  `Version: 1` is rejected), plus CRAN's leading-zeroes (`1.01`, carving out
+  `^[0-9]{4}[.-][0-9]{2}` calendar versioning) and absurd-component
+  (threshold 1234) NOTEs. First clause wins; the repair is the same either
+  way. Four things a rule written from the regexps alone would get wrong:
+  `[[:digit:]]` is **ASCII** here, the opposite of `[[:alpha:]]` in
+  `description-malformed-name`—confirmed against `grepl`, which rejects an
+  Arabic-Indic digit; `Priority: base` exempts the field, since R guards
+  `bad_version` with `!is_base_package` and a base package's `@VERSION@` is
+  R's own to spell; CRAN's absurd-component carve-out is "equal to the
+  *submission year*", which a linter cannot know without reading the clock, so
+  arity exempts the whole 1900–2999 band instead (strictly more permissive, so
+  containment holds through 2999); and CRAN NOTEs the trailing `.9000` of a
+  development version, which is right for a pretest nobody submits one to and
+  wrong for a linter reading packages in exactly that state, so a *trailing*
+  component of 9000 or more is read as the marker `usethis` writes. No
+  fix—which number a release carries is a decision about the release, and it
+  is also in the tags, the `NEWS.md`, and every dependent's constraint.
+  `bad_version` moved from `PLANNED` to `GATES` in
+  `tests/description_oracle.rs`, joined there by the two CRAN signals the
+  fourth checker now exposes; four planted cases exercise them, two of them
+  pinning the places arity deliberately withholds.
 
 - [ ] `description-malformed-maintainer`. R's
   `.valid_maintainer_field_regexp`: exactly one `Name <email>`, or the

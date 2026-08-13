@@ -3,9 +3,13 @@
 //! `Writing R Extensions` paraphrases the checks and is looser than they are, so
 //! the Packaging rules are pinned against the code that actually decides —
 //! `tools:::.check_package_description(strict = TRUE)`, the `Authors@R` checker
-//! at its strict tier, and the `duplicates` half of
-//! `.check_package_description2`. The driver is `tests/oracle/description_oracle.R`;
-//! its report is a *set* of `(signal, detail)` pairs.
+//! at its strict tier, the `duplicates` half of `.check_package_description2`,
+//! and the two version components of `.check_package_CRAN_incoming`. The last
+//! two are cherry-picked rather than taken whole, because most of what those
+//! checkers report is about files, URLs, network state, and installed packages,
+//! which a text-only oracle has no business simulating. The driver is
+//! `tests/oracle/description_oracle.R`; its report is a *set* of
+//! `(signal, detail)` pairs.
 //!
 //! The harness is deliberately two-sided, because arity implements a fraction of
 //! what R checks:
@@ -98,13 +102,32 @@ const GATES: &[Gate] = &[
         signals: &["bad_package"],
         backing: Backing::Signal,
     },
+    // The rule's subject spans two checkers: `R CMD check` rejects a version
+    // that is not `digits[.-]digits...`, and CRAN's pretest adds the two NOTEs
+    // about a component's *value*. All three details are the version string
+    // itself, which is what the rule spans, so they compare entry to entry.
+    //
+    // Containment holds in the direction that matters even though arity is
+    // deliberately looser than CRAN in two places, each of which only ever
+    // *withholds* a finding: the year band stands in for CRAN's "equal to the
+    // submission year" (the current year is always inside it), and a trailing
+    // `.9000` is read as the development-version marker CRAN's check has no
+    // reason to expect.
+    Gate {
+        rule: "description-malformed-version",
+        signals: &[
+            "bad_version",
+            "version_with_leading_zeroes",
+            "version_with_large_components",
+        ],
+        backing: Backing::Entry,
+    },
 ];
 
 /// Signals no rule covers yet, each tagged with the `TODO.md` rule it is
 /// earmarked for. Listing them is the point: this is the work-list, and moving
 /// one into [`GATES`] is what "the rule landed" means.
 const PLANNED: &[(&str, &str)] = &[
-    ("bad_version", "description-malformed-version"),
     ("bad_maintainer", "description-malformed-maintainer"),
     ("bad_Title", "description-title-format"),
     ("bad_Description", "description-text-format"),
@@ -502,6 +525,35 @@ const PLANTED: &[(&str, &str)] = &[
         "Package: testpkg\nVersion: 0.1.0\n\
          Authors@R: person(\"A\", \"B\", role = c(\"aut\", \"cre\"), \
          email = \"a@example.com\", comment = c(ORCID = \"1234-5678-9012-3456\"))\n",
+    ),
+    // The two CRAN version NOTEs. `.check_package_CRAN_incoming` reaches the
+    // version only after a `Maintainer` it can compare against "ORPHANED" and a
+    // `Title` it can inspect, and errors on the `NA` otherwise, so these cases
+    // carry both — a signal no case fires is a gate that proves nothing.
+    (
+        "version-leading-zeroes",
+        "Package: testpkg\nVersion: 1.01\nTitle: A Test Package\n\
+         Maintainer: Jane Doe <jane@example.com>\n",
+    ),
+    (
+        "version-large-component",
+        "Package: testpkg\nVersion: 1234.0\nTitle: A Test Package\n\
+         Maintainer: Jane Doe <jane@example.com>\n",
+    ),
+    // Where arity is deliberately looser than CRAN, so the gate sees the
+    // withholding and not only the reporting: CRAN NOTEs the second of these
+    // and arity says nothing, because a trailing `.9000` is the
+    // development-version marker `usethis` writes and CRAN never expects to
+    // receive.
+    (
+        "version-calendar",
+        "Package: testpkg\nVersion: 2026.01\nTitle: A Test Package\n\
+         Maintainer: Jane Doe <jane@example.com>\n",
+    ),
+    (
+        "version-development-suffix",
+        "Package: testpkg\nVersion: 0.1.0.9000\nTitle: A Test Package\n\
+         Maintainer: Jane Doe <jane@example.com>\n",
     ),
 ];
 

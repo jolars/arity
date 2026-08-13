@@ -30,10 +30,8 @@
 //! textual edit to this one field would only make the description disagree with
 //! the package.
 
-use rowan::TextRange;
-
-use crate::dcf;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
+use crate::linter::rules::packaging::scalar_field::{escape, value};
 use crate::linter::rules::{DcfRule, DcfRuleContext, Example};
 use crate::semantic::symbols::base_priority_packages;
 
@@ -144,60 +142,4 @@ fn names_a_base_package(name: &str, ctx: &DcfRuleContext<'_>) -> bool {
         .field("Priority")
         .is_some_and(|field| field.folded_value().trim() == "base");
     !declares_base_priority && base_priority_packages().contains(&name)
-}
-
-/// The field's logical value and the source range spanning it, whitespace
-/// excluded on both ends. `None` when the field carries no value at all.
-///
-/// The fold is `read.dcf`'s rather than [`dcf::Field::folded_value`]'s: an empty
-/// value line contributes nothing, so `Package:\n  mypkg` reads as `mypkg` here
-/// and in R, instead of arity's leading-`\n` spelling. A value that really does
-/// wrap still folds with the `\n` R rejects it for.
-fn value(field: &dcf::Field) -> Option<(String, TextRange)> {
-    let lines: Vec<dcf::ValueLine> = field
-        .value_lines()
-        .filter(|line| !line.trimmed_text().is_empty())
-        .collect();
-    let (first, last) = (lines.first()?, lines.last()?);
-    let text = lines
-        .iter()
-        .map(dcf::ValueLine::trimmed_text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    Some((
-        text,
-        TextRange::new(trimmed_start(first), trimmed_end(last)),
-    ))
-}
-
-/// The offset of a value line's content, past the whitespace `VALUE_TEXT` may
-/// still carry — the caret belongs on the name, not on the space after the colon.
-fn trimmed_start(line: &dcf::ValueLine) -> rowan::TextSize {
-    let range = line.content_range();
-    match line.content() {
-        Some(tok) => {
-            let lead = tok.text().len() - tok.text().trim_start().len();
-            range.start() + rowan::TextSize::from(lead as u32)
-        }
-        None => range.start(),
-    }
-}
-
-/// The offset just past a value line's content. See [`trimmed_start`].
-fn trimmed_end(line: &dcf::ValueLine) -> rowan::TextSize {
-    let range = line.content_range();
-    match line.content() {
-        Some(tok) => {
-            let trail = tok.text().len() - tok.text().trim_end().len();
-            range.end() - rowan::TextSize::from(trail as u32)
-        }
-        None => range.end(),
-    }
-}
-
-/// A value spanning continuation lines carries the fold's `\n`, and the report
-/// is line-oriented. Shown the way R's regexp reads it: as a character that is
-/// not part of any name.
-fn escape(text: &str) -> String {
-    text.replace('\n', "\\n")
 }
