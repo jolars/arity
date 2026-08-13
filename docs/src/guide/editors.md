@@ -17,6 +17,27 @@ on; see the [code action reference](../reference/code-actions.md).
 Configuration is read from an `arity.toml` discovered from each file's directory
 (see the [configuration reference](../reference/configuration.md)).
 
+## DESCRIPTION files
+
+The server also serves a package's `DESCRIPTION`, which is a different grammar
+from R. There it offers the packaging diagnostics, completion of package names
+in `Depends`, `Imports`, `Suggests`, `LinkingTo`, and `Enhances`, and hover
+showing a dependency's installed version and title. An unsaved edit counts
+immediately, so adding a package to `Imports` clears the
+[`undeclared-dependency`](../reference/rules.md#undeclared-dependency) findings
+in the R files that use it without saving first.
+
+Diagnostics are reported only for a `DESCRIPTION` at a package root of its own,
+matching what `arity lint` walks. A complete miniature package under
+`tests/testthat/` is fixture data for a test, so it stays quiet.
+
+There is no formatter for `DESCRIPTION` yet: formatting requests return no
+edits, and format-on-save leaves the file alone.
+
+Editors need to be told to send the file, since most do not recognize
+`DESCRIPTION` on their own. The VS Code extension does this for you; for the
+rest, see the sections below.
+
 ## VS Code/Positron
 
 Install the **Arity** extension from the [VS Code
@@ -58,13 +79,20 @@ With [`nvim-lspconfig`](https://github.com/neovim/nvim-lspconfig) installed,
 register arity as a server for R files:
 
 ```lua
+-- Neovim ships no filetype for DESCRIPTION, so give it one. The name is yours
+-- to choose: arity routes on the file name, not on what the client calls it.
+vim.filetype.add({ filename = { DESCRIPTION = "r-description" } })
+
 vim.lsp.config("arity", {
   cmd = { "arity", "lsp" },
-  filetypes = { "r" },
+  filetypes = { "r", "r-description" },
   root_markers = { "arity.toml", "DESCRIPTION", ".git" },
 })
 vim.lsp.enable("arity")
 ```
+
+Drop the `vim.filetype.add` line and the second entry in `filetypes` if you only
+want arity on `.R` files.
 
 Format on save (optional):
 
@@ -96,3 +124,8 @@ auto-format = true
 Any LSP-capable editor can use arity by launching `arity lsp` over stdio for the
 `r` language. Point your client's R language-server command at `arity` with the
 `lsp` argument.
+
+To get the `DESCRIPTION` features too, add the file to whatever the client uses
+to decide which documents to send. Arity decides the grammar from the file name,
+so the language id the client reports does not matter, and one that says `r` is
+still handled as DCF.

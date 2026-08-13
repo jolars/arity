@@ -767,12 +767,73 @@ completion and hover, and it formats. Staged so each step is useful alone.
   package is a control-flow question over `ctx.cfg`, not a name-set one, and
   R exempts `Suggests` for exactly that reason.
 
-- [ ] **4. DESCRIPTION in the LSP.** `didOpen` for DESCRIPTION (today it is only
-  a watched file, never a document), a `documentSelector` entry in
-  `editors/code`, then: diagnostics from stages 1+3; **completion of package
-  names** in dependency fields off the rindex plus the bundled CRAN
-  lists—the flashiest item here and nearly free; hover showing a
-  dependency's installed version and `Title`.
+- [x] **4. DESCRIPTION in the LSP.** Done. `didOpen` routes a DESCRIPTION to the
+  DCF pipeline; diagnostics, package-name completion in dependency fields, and
+  hover with a dependency's installed version and `Title`.
+
+  The premise turned out to be understated. The server had **no** file-type
+  routing at all—`didOpen` accepted any document and linted it as R—so the
+  gap was not a missing feature but a live hazard: a DESCRIPTION parsed as R
+  published eight bogus syntax errors, and `textDocument/formatting` answered
+  with the file reflowed as R, rewriting `Package: testpkg` to
+  `Package:testpkg`. Only `editors/code` not claiming the file kept it
+  theoretical. `DocumentKind` is therefore step one, and the guard is
+  structural rather than a checklist: `doc_snapshot` is gone, replaced by
+  `r_doc_snapshot` (18 R-only handlers) and `doc_snapshot_any` (diagnostics,
+  hover, completion), so there is no un-annotated way to get a buffer and a
+  handler added later cannot inherit the wrong grammar by accident.
+
+  **The file name beats the client's `languageId`.** `editors/code` already
+  registers `NAMESPACE` under language `r`, so a client reporting `r` for a
+  DESCRIPTION is entirely plausible—and trusting it would format DCF as R.
+  Read off the URI's last segment, not `uri::to_path`, which gives up on
+  `git:`/`untitled:` schemes.
+
+  Diagnostics are gated on `is_own_package_root`, mirroring the CLI *walk*
+  rather than its explicit-path policy: an editor sends every file a user
+  glances at. The accepted cost is silence on a hand-edited
+  `tests/testthat/testpkg/DESCRIPTION`, and on a skeleton with no `R/` yet.
+
+  An open buffer is authoritative in salsa, so an unsaved `Imports: dplyr`
+  clears `undeclared-dependency` in open R files. The fan-out is gated on
+  `DescriptionFacts` actually moving, so prose keystrokes cost one DCF parse
+  instead of re-linting the package; it terminates after exactly one extra
+  generation only because `upsert_description` short-circuits on equal text,
+  which `a_facts_change_relints_once_and_settles` pins. Two ways the buffer
+  could be silently reverted, both closed: seeding is ordered **before** the
+  upsert (`refresh_package_graph` re-reads every DESCRIPTION from disk), and a
+  watched `CHANGED` event under an open buffer is now dropped, as it already
+  was for `.R`. `didClose` restores the on-disk facts by reusing the
+  watched-file path rather than adding a second message.
+
+  `Title` is **harvested** (`SCHEMA_VERSION` 2 → 3), not read on demand. The
+  deciding argument is completion, not hover: labeling every candidate at once
+  rules out a file read per candidate, and on-demand reading is not even
+  independent of the index—it needs `PackageIndex::lib_path` to find the
+  file, so it answers a strict subset. The bump costs one background
+  re-harvest, since `packages_to_build` queues everything the now-empty index
+  no longer covers; an additive field without a bump would instead have left
+  the `Title` missing forever for already-indexed packages.
+
+  Completion items carry an **explicit** `textEdit`, unlike the R path, which
+  leans on the client's word pattern—that pattern belongs to a language id
+  we just invented, and the wrapped one-per-line `Imports` that `usethis`
+  writes is exactly what it would get wrong. Every range comes from the CST via
+  `dependency_entries`; a range off `folded_value()` does not index the buffer.
+  No new `ReadJob` variants: `hover_via_db`/`completion_via_db` branch on the
+  path, because a new variant means a new arm in `run_read` *and* in the drain
+  match, where a miss leaks a request forever.
+
+  Deliberately **not** here. Field-name completion (`Package`, `Version`, …):
+  a different context and a different candidate list, whose natural home is
+  stage 5, which must own the canonical field order anyway—building that list
+  twice is the failure mode. And no `configurationDefaults` formatter entry for
+  the new `r-description` language: declaring ourselves the formatter for a
+  file we answer `null` for makes format-on-save silently do nothing, which
+  reads as a broken extension.
+
+  Neovim ships **no** filetype for `DESCRIPTION` (verified, not assumed), so
+  `docs/src/guide/editors.md` hands users a `vim.filetype.add` line.
 
 - [ ] **5. DESCRIPTION formatting.** Canonical style is what `desc`/`usethis`
   write: field order, dependency lists one per line with `,\n    `, wrapped

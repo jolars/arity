@@ -40,6 +40,29 @@ model.
   `salsa::Cancelled`; that and a cache miss both fall back to a fresh parse.
   **Reads are always correct, only sometimes warm** — never trade that away.
 
+## Two grammars
+
+The server serves R **and** the DCF of a `DESCRIPTION`. Nearly every request is
+R-only, and answering one for a `DESCRIPTION` ranges from useless (folding) to
+destructive (formatting hands back the file reflowed as R).
+
+- `DocumentKind` is decided once at `didOpen` and carried on `Document` and
+  `LintRequest`. **The file name beats the client's `languageId`** — a client
+  may register `DESCRIPTION` under language `r`, as `editors/code` already does
+  for `NAMESPACE`.
+- **There is no un-annotated way to get a buffer.** `r_doc_snapshot` returns
+  `None` for a `DESCRIPTION`, so a handler's existing "not open" arm declines
+  correctly; `doc_snapshot_any` is for the three requests that serve both. A new
+  handler must pick one, which is the point — a plain `doc_snapshot` would let it
+  inherit the wrong grammar silently.
+- Read jobs branch **inside** `hover_via_db`/`completion_via_db` on
+  `DocumentKind::from_path`, not on new `ReadJob` variants: a variant needs an
+  arm in `run_read` *and* in `state.rs`'s drain match, where a miss leaks a
+  request forever.
+- An open `DESCRIPTION` is authoritative in salsa. Seed **before**
+  `upsert_description` (`refresh_package_graph` re-reads the file from disk), and
+  fan out with `RelintAll` only when `DescriptionFacts` actually moved.
+
 ## Buffers
 
 - An open document is an `Arc<TextBuffer>`: text next to its `LineIndex`, kept
