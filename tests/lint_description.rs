@@ -624,6 +624,161 @@ fn multiple_fields_ships_no_fix() {
 }
 
 // ---------------------------------------------------------------------------
+// description-malformed-name
+// ---------------------------------------------------------------------------
+
+const MALFORMED_NAME: &str = "description-malformed-name";
+
+/// `COMPLETE_DESCRIPTION` with a different package name, so a case varies only
+/// the field the rule reads.
+fn named(package: &str) -> String {
+    COMPLETE_DESCRIPTION.replacen("Package: testpkg", &format!("Package: {package}"), 1)
+}
+
+/// The findings of `MALFORMED_NAME`, as the source text each one spans.
+fn name_hits(text: &str) -> Vec<String> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .expect("linting should not error")
+        .iter()
+        .filter(|d| d.rule == MALFORMED_NAME)
+        .map(|d| {
+            let start: usize = d.range.start().into();
+            let end: usize = d.range.end().into();
+            text[start..end].to_string()
+        })
+        .collect()
+}
+
+/// Every shape R's `valid_package_name` rejects, one per clause of the regexp
+/// `[[:alpha:]][[:alnum:].]*[[:alnum:]]`.
+#[test]
+fn a_name_r_would_reject_is_flagged() {
+    for name in [
+        "3bad",       // does not start with a letter
+        ".hidden",    // nor with a period
+        "my_pkg",     // underscores are not allowed anywhere
+        "my-pkg",     // nor hyphens
+        "mypkg.",     // must end in a letter or digit
+        "p",          // at least two characters
+        "my pkg",     // a space is not a name character
+        "my pkg (1)", // nor is anything else
+    ] {
+        assert_eq!(
+            name_hits(&named(name)),
+            [name],
+            "`{name}` should be flagged, spanning the name",
+        );
+    }
+}
+
+#[test]
+fn a_name_r_accepts_is_not_flagged() {
+    for name in ["testpkg", "data.table", "R6", "Rcpp", "ggplot2", "A1"] {
+        assert!(
+            name_hits(&named(name)).is_empty(),
+            "`{name}` should not be flagged",
+        );
+    }
+}
+
+/// R's regexp is `^(R|[[:alpha:]][[:alnum:].]*[[:alnum:]])$`: the language's own
+/// name is spelled out as an alternative, so it survives the two-character
+/// floor that rejects every other single letter.
+#[test]
+fn the_literal_r_is_accepted() {
+    assert!(name_hits(&named("R")).is_empty());
+}
+
+/// `[[:alpha:]]` is locale-dependent, and R runs this check in the session's
+/// locale: under a UTF-8 one it matches any Unicode letter, so `café` is a name
+/// R accepts. Flagging it would be a false positive against `R CMD check`.
+#[test]
+fn a_non_ascii_letter_is_not_flagged() {
+    assert!(name_hits(&named("caf\u{e9}")).is_empty());
+}
+
+/// Case-sensitive, like every R package name — and `Stats` is nobody's base
+/// package.
+#[test]
+fn a_differently_cased_base_name_is_not_a_base_package() {
+    assert!(name_hits(&named("Stats")).is_empty());
+}
+
+#[test]
+fn a_base_package_name_is_flagged() {
+    for name in ["stats", "utils", "methods", "tools", "parallel"] {
+        assert_eq!(
+            name_hits(&named(name)),
+            [name],
+            "`{name}` is the name of a base package",
+        );
+    }
+}
+
+/// The two defects are different repairs, so they read differently: one asks
+/// for a well-formed name, the other for one nothing already claims.
+#[test]
+fn the_message_names_which_defect_it_is() {
+    let base = messages(&named("stats"), MALFORMED_NAME)
+        .pop()
+        .expect("a message");
+    assert!(base.contains("base"), "{base}");
+
+    let malformed = messages(&named("3bad"), MALFORMED_NAME)
+        .pop()
+        .expect("a message");
+    assert!(!malformed.contains("base"), "{malformed}");
+}
+
+/// R skips the base-name clause for a package that declares `Priority: base` —
+/// which is how the real `stats` describes itself.
+#[test]
+fn a_base_package_may_name_itself() {
+    let text = format!("{}Priority: base\n", named("stats"));
+    assert!(name_hits(&text).is_empty());
+}
+
+/// The exemption is R's exactly: the *name* is still checked against the
+/// regexp, so `Priority: base` does not license anything.
+#[test]
+fn priority_base_does_not_excuse_a_malformed_name() {
+    let text = format!("{}Priority: base\n", named("3bad"));
+    assert_eq!(name_hits(&text), ["3bad"]);
+}
+
+/// A wrapped `Package` is one R rejects — `read.dcf` folds the continuation in
+/// with a newline, and no newline is a name character.
+#[test]
+fn a_wrapped_name_is_flagged() {
+    let text = named("my\n  pkg");
+    assert_eq!(name_hits(&text), ["my\n  pkg"]);
+}
+
+/// An absent or empty `Package` is `description-missing-field`'s finding, and
+/// "malformed" is the wrong word for a field with no value in it.
+#[test]
+fn a_package_field_without_a_value_is_silent() {
+    assert!(name_hits("Version: 0.1.0\n").is_empty());
+    assert!(name_hits("Package:\nVersion: 0.1.0\n").is_empty());
+    assert!(name_hits("Package:   \nVersion: 0.1.0\n").is_empty());
+}
+
+/// No autofix: the package's name is in its NAMESPACE, its file names, its
+/// tests, and every `pkg::` that reaches it, so a name is renamed by its
+/// author, not by a textual edit to one field.
+#[test]
+fn malformed_name_ships_no_fix() {
+    let text = named("3bad");
+    let finding =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error")
+            .into_iter()
+            .find(|d| d.rule == MALFORMED_NAME)
+            .expect("a malformed-name finding");
+    assert!(finding.fix.is_none());
+}
+
+// ---------------------------------------------------------------------------
 // Suppression
 // ---------------------------------------------------------------------------
 

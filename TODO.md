@@ -133,10 +133,18 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   field to keep decides whether the code may rely on the package. `duplicates`
   moved from `PLANNED` to `GATES` in `tests/description_oracle.rs`.
 
-- [ ] `description-malformed-name`. `Package` against R's
-  `valid_package_name` (`[[:alpha:]][[:alnum:].]*[[:alnum:]]`), plus "this is
-  the name of a base package"; the base list is already in
-  `src/semantic/symbols.rs`.
+- [x] `description-malformed-name` (packaging; syn; no fix, default on). Done.
+  `Package` against R's `valid_package_name`
+  (`[[:alpha:]][[:alnum:].]*[[:alnum:]]`), plus "this is the name of a base
+  package" off `base_priority_packages()`. Three exclusions a rule written from
+  the regexp alone would get wrong: R checks `^(R|<regexp>)$`, so the language's
+  own name survives the two-character floor; `[[:alpha:]]` is *locale*-dependent
+  and matches Unicode letters under UTF-8, so `café` is a name R accepts;
+  and `Priority: base` exempts a base package from naming itself. An absent or
+  empty `Package` stays `description-missing-field`'s. No fix—the name is also
+  in the NAMESPACE, the file names, and every `pkg::`. `bad_package` moved from
+  `PLANNED` to `GATES` in `tests/description_oracle.rs`, backed by the signal's
+  presence rather than its detail (R's detail is its own message, not the name).
 
 - [ ] `description-malformed-version`. `Version` against
   `valid_package_version` (`([[:digit:]]+[.-]){1,}[[:digit:]]+`), plus CRAN's

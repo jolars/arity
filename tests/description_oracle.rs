@@ -49,6 +49,21 @@ use arity::linter::check_description_document;
 struct Gate {
     rule: &'static str,
     signals: &'static [&'static str],
+    backing: Backing,
+}
+
+/// What it takes for one of R's signals to back one of arity's findings.
+enum Backing {
+    /// R's detail names the offender, so findings compare entry by entry: the
+    /// text arity spans must be one of the entries R rejected. The stronger
+    /// check, and the default.
+    Entry,
+    /// R's detail is prose rather than an offender — `bad_package` reports
+    /// "Malformed package name", not the name — so what backs a finding is the
+    /// signal being raised for this file at all. That is the whole claim a rule
+    /// keyed on a single scalar field makes, since there is only one `Package`
+    /// to be wrong about.
+    Signal,
 }
 
 /// R buckets a bad dependency entry three ways, and
@@ -60,6 +75,7 @@ const GATES: &[Gate] = &[
     Gate {
         rule: "description-version-constraint",
         signals: &["bad_dep_entry", "bad_dep_op", "bad_dep_version"],
+        backing: Backing::Entry,
     },
     // R reports the bare package name, and the rule spans the bare package
     // name, so the two are directly comparable. Note R's own exclusions the
@@ -70,6 +86,17 @@ const GATES: &[Gate] = &[
     Gate {
         rule: "description-package-in-multiple-fields",
         signals: &["duplicates"],
+        backing: Backing::Entry,
+    },
+    // R folds "malformed" and "this is a base package's name" into one signal
+    // whose detail is its own message, so this one is backed by presence. Note
+    // the exclusions the rule mirrors for containment to hold: `Package: R` is
+    // spelled out in R's regexp, `[[:alpha:]]` is Unicode under a UTF-8 locale,
+    // and `Priority: base` exempts a base package from naming itself.
+    Gate {
+        rule: "description-malformed-name",
+        signals: &["bad_package"],
+        backing: Backing::Signal,
     },
 ];
 
@@ -77,7 +104,6 @@ const GATES: &[Gate] = &[
 /// earmarked for. Listing them is the point: this is the work-list, and moving
 /// one into [`GATES`] is what "the rule landed" means.
 const PLANNED: &[(&str, &str)] = &[
-    ("bad_package", "description-malformed-name"),
     ("bad_version", "description-malformed-version"),
     ("bad_maintainer", "description-malformed-maintainer"),
     ("bad_Title", "description-title-format"),
@@ -240,9 +266,13 @@ fn compare(input: &str, signals: &[(String, String)]) -> Result<(), String> {
             .collect();
 
         for finding in rule_hits(input, gate.rule) {
-            // R reports the offending dependency entry trimmed, and arity spans
-            // the whole entry, so the texts are directly comparable.
-            if !backing.contains(finding.trim()) {
+            let backed = match gate.backing {
+                // R reports the offending dependency entry trimmed, and arity
+                // spans the whole entry, so the texts are directly comparable.
+                Backing::Entry => backing.contains(finding.trim()),
+                Backing::Signal => !backing.is_empty(),
+            };
+            if !backed {
                 return Err(format!(
                     "`{}` flagged {:?}, which R does not consider bad \
                      (R flagged {:?} via {:?})",
@@ -403,6 +433,14 @@ const PLANTED: &[(&str, &str)] = &[
     ),
     ("bad-package-name", "Package: 3bad\nVersion: 0.1.0\n"),
     ("base-package-name", "Package: stats\nVersion: 0.1.0\n"),
+    // The two names R accepts that a rule written from the regexp alone would
+    // reject: the language's own name is an explicit alternative, and a base
+    // package declaring itself is exempt from the base-name clause.
+    ("package-name-r", "Package: R\nVersion: 0.1.0\n"),
+    (
+        "base-package-naming-itself",
+        "Package: stats\nVersion: 0.1.0\nPriority: base\n",
+    ),
     ("bad-version", "Package: testpkg\nVersion: 1.0.0.beta\n"),
     (
         "bad-maintainer-no-email",

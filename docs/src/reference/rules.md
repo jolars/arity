@@ -86,6 +86,7 @@ so this page never drifts from the rules' actual behavior.
 - [`description-duplicate-field`](#description-duplicate-field)
 - [`description-version-constraint`](#description-version-constraint)
 - [`description-package-in-multiple-fields`](#description-package-in-multiple-fields)
+- [`description-malformed-name`](#description-malformed-name)
 - [`unused-dependency`](#unused-dependency)
 
 **Meta**
@@ -1575,6 +1576,54 @@ warning: description-package-in-multiple-fields
 4 | Suggests: dplyr, testthat
   |           ^^^^^ `dplyr` is already listed in `Imports`; a package belongs in only one dependency field
   = help: List `dplyr` in either `Imports` or `Suggests`, and delete the other entry.
+```
+
+### `description-malformed-name`
+
+Flag a `Package` value R will not accept as a package name.
+
+R's `valid_package_name` is `[[:alpha:]][[:alnum:].]*[[:alnum:]]`: a letter, then letters, digits, and periods, ending in a letter or digit. So underscores, hyphens, and a leading period are all out, and a name is at least two characters long—except the literal `R`, which R's check spells out as an alternative.
+
+A `Package` naming one of the packages R itself ships (`stats`, `utils`, `methods`, …) is reported too, since that package could never be installed alongside the one R ships. A description declaring `Priority: base` is exempt, which is how the base packages name themselves.
+
+The letter and digit classes are matched as Unicode, exactly as R matches them under a UTF-8 locale, so `café` is accepted—a stricter reading would report a defect `R CMD check` does not have.
+
+An absent or empty `Package` is `description-missing-field`'s finding, not this one's.
+
+There is no autofix: the name is also in the NAMESPACE, the file names, the tests, and every `pkg::` that reaches the package, so renaming is the author's.
+
+This rule is **enabled by default**.
+
+A name R's `valid_package_name` rejects, since underscores are not name characters:
+
+```text
+Package: my_pkg
+Version: 0.1.0
+```
+
+```text
+warning: description-malformed-name
+ --> DESCRIPTION:1:10
+  |
+1 | Package: my_pkg
+  |          ^^^^^^ `my_pkg` is not a valid package name: R requires a letter, then letters, digits, and periods, ending in a letter or digit
+  = help: Rename the package: at least two characters, starting with a letter, ending in a letter or digit, and made of letters, digits, and periods.
+```
+
+A name R already ships:
+
+```text
+Package: stats
+Version: 0.1.0
+```
+
+```text
+warning: description-malformed-name
+ --> DESCRIPTION:1:10
+  |
+1 | Package: stats
+  |          ^^^^^ `stats` is the name of a base R package
+  = help: Rename the package to one R does not already ship.
 ```
 
 ### `unused-dependency`
