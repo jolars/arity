@@ -32,24 +32,26 @@
 ## Linter
 
 - [ ] *Speculative micro-opt (deferred):* `resolves_to_base` does a linear
-      `model.idents().iter().any(...)` scan for the callee's shadow check. It runs
-      only after a rule fully shape-matches (`any(is.na(x))`, unreachable
-      `return`/`stop`), so the call count is tiny and it is not currently hot—not
-      worth an offset->ident index yet. If it ever becomes hot, resolve via the
-      covering element at the callee offset instead of scanning.
+  `model.idents().iter().any(...)` scan for the callee's shadow check. It runs
+  only after a rule fully shape-matches (`any(is.na(x))`, unreachable
+  `return`/`stop`), so the call count is tiny and it is not currently hot—not
+  worth an offset->ident index yet. If it ever becomes hot, resolve via the
+  covering element at the callee offset instead of scanning.
+
 - [ ] **Hardening sub-pass**: upgrade Phase 1/2 fixes from bare-name to
-      `resolves_to_base`-confirmed + shadow-checked, graduating the call-rewrite
-      rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
-      user-redefined. (`true-false-symbol` already shipped shadow-checked.)
+  `resolves_to_base`-confirmed + shadow-checked, graduating the call-rewrite
+  rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
+  user-redefined. (`true-false-symbol` already shipped shadow-checked.)
+
 - [ ] **Give the driver's per-file context a struct.** `lint_parsed_file` takes
-      eight arguments behind an `#[allow(clippy::too_many_arguments)]` and
-      `run_rules` takes nine, each ending in three adjacent `Option<&_>`
-      (`project`, `resolution`, `package`) that only get threaded through to
-      `RuleContext`—so a transposed pair type-checks. Building that context once
-      per file and passing it whole removes both the allow and the hazard. Every
-      DESCRIPTION-stage addition landed as one more parameter, and stage 4 adds
-      another, so do it before that: it touches every call site of both
-      functions, `run_dcf_rules`' twin included, and `run_rules` is public API.
+  eight arguments behind an `#[allow(clippy::too_many_arguments)]` and
+  `run_rules` takes nine, each ending in three adjacent `Option<&_>`
+  (`project`, `resolution`, `package`) that only get threaded through to
+  `RuleContext`—so a transposed pair type-checks. Building that context once
+  per file and passing it whole removes both the allow and the hazard. Every
+  DESCRIPTION-stage addition landed as one more parameter, and stage 4 adds
+  another, so do it before that: it touches every call site of both
+  functions, `run_dcf_rules`' twin included, and `run_rules` is public API.
 
 ### More DESCRIPTION rules (follow-ups to stage 3)
 
@@ -64,39 +66,40 @@ them and is looser than the code.
 Prerequisite worth doing first, and the thing that makes the rest defensible:
 
 - [x] **A `.check_package_description` differential oracle.** Done:
-      `tests/oracle/description_oracle.R` + `tests/description_oracle.rs`,
-      `#[ignore]`d, `task description-oracle`. 47 cases (the rindex fixtures,
-      the reference checkouts when present, and a planted-defect table), and a
-      missing `Rscript` is a skip, as in the other two oracles.
+  `tests/oracle/description_oracle.R` + `tests/description_oracle.rs`,
+  `#[ignore]`d, `task description-oracle`. 47 cases (the rindex fixtures,
+  the reference checkouts when present, and a planted-defect table), and a
+  missing `Rscript` is a skip, as in the other two oracles.
 
-      Three checkers, because one is not enough:
-      `.check_package_description(strict = TRUE)`,
-      `.check_package_description_authors_at_R_field(strict = 2L)` (the outer
-      checker calls it at `strict = FALSE`, so the per-person name, role, ORCID,
-      and ROR signals are unreachable from there), and the `duplicates` half of
-      `.check_package_description2`. Its other halves need installed packages
-      and a `src/`, which a text-only oracle has no business simulating.
+  Three checkers, because one is not enough:
+  `.check_package_description(strict = TRUE)`,
+  `.check_package_description_authors_at_R_field(strict = 2L)` (the outer
+  checker calls it at `strict = FALSE`, so the per-person name, role, ORCID,
+  and ROR signals are unreachable from there), and the `duplicates` half of
+  `.check_package_description2`. Its other halves need installed packages
+  and a `src/`, which a text-only oracle has no business simulating.
 
-      **Two-sided by construction**, because arity implements a fraction of what
-      R checks. `GATES` holds the rules arity ships and requires containment,
-      not parity: every finding arity reports must be backed by an R signal on
-      that case. The reverse is not gated—`description-version-constraint`
-      deliberately says nothing about a malformed package *name*, and demanding
-      parity would be demanding a rule that does not exist. `PLANNED` holds the
-      signals no rule covers, each tagged with the rule above that will claim
-      it; they are counted and ranked, never failed, and that ranking is the
-      work-list. Today: text-format 10, authors-at-r 4, encoding 3,
-      malformed-name 3, then one or two each for the rest.
+  **Two-sided by construction**, because arity implements a fraction of what
+  R checks. `GATES` holds the rules arity ships and requires containment,
+  not parity: every finding arity reports must be backed by an R signal on
+  that case. The reverse is not gated—`description-version-constraint`
+  deliberately says nothing about a malformed package *name*, and demanding
+  parity would be demanding a rule that does not exist. `PLANNED` holds the
+  signals no rule covers, each tagged with the rule above that will claim
+  it; they are counted and ranked, never failed, and that ranking is the
+  work-list. Today: text-format 10, authors-at-r 4, encoding 3,
+  malformed-name 3, then one or two each for the rest.
 
-      Two structural failures keep it honest, and both were verified by
-      mutation rather than assumed: an **unknown signal fails** (R's checkers
-      are data that changes with R, so a new check must be classified, not
-      absorbed), and a **gated signal no case exercises fails** (an oracle that
-      tests nothing passes quietly forever). Moving a signal from `PLANNED` to
-      `GATES` is what "the rule landed" means.
+  Two structural failures keep it honest, and both were verified by
+  mutation rather than assumed: an **unknown signal fails** (R's checkers
+  are data that changes with R, so a new check must be classified, not
+  absorbed), and a **gated signal no case exercises fails** (an oracle that
+  tests nothing passes quietly forever). Moving a signal from `PLANNED` to
+  `GATES` is what "the rule landed" means.
 
-      Facts it established, each of which contradicts a plausible reading of
-      R-exts:
+  Facts it established, each of which contradicts a plausible reading of
+  R-exts:
+
   - `person("A", "B", role = c("aut", "cre"))` with **no email** is rejected
     by R (`bad_authors_at_R_field_has_no_valid_maintainer`), because
     `Maintainer` is *derived* and the derivation needs one. See the
@@ -121,165 +124,173 @@ Prerequisite worth doing first, and the thing that makes the rest defensible:
 Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
 
 - [ ] `description-package-in-multiple-fields`. A package named in more than one
-      of `Depends`/`Imports`/`Suggests`/`Enhances`; R-exts says a package should
-      be listed in only one. Reads straight off `DescriptionFacts::dependencies`.
-      Highest real-world hit rate of anything here and the cheapest—do it first.
+  of `Depends`/`Imports`/`Suggests`/`Enhances`; R-exts says a package should
+  be listed in only one. Reads straight off `DescriptionFacts::dependencies`.
+  Highest real-world hit rate of anything here and the cheapest—do it first.
+
 - [ ] `description-malformed-name`. `Package` against R's
-      `valid_package_name` (`[[:alpha:]][[:alnum:].]*[[:alnum:]]`), plus "this is
-      the name of a base package"; the base list is already in
-      `src/semantic/symbols.rs`.
+  `valid_package_name` (`[[:alpha:]][[:alnum:].]*[[:alnum:]]`), plus "this is
+  the name of a base package"; the base list is already in
+  `src/semantic/symbols.rs`.
+
 - [ ] `description-malformed-version`. `Version` against
-      `valid_package_version` (`([[:digit:]]+[.-]){1,}[[:digit:]]+`), plus CRAN's
-      leading-zeroes (`1.01`) and absurd-component NOTEs.
+  `valid_package_version` (`([[:digit:]]+[.-]){1,}[[:digit:]]+`), plus CRAN's
+  leading-zeroes (`1.01`) and absurd-component NOTEs.
+
 - [ ] `description-malformed-maintainer`. R's
-      `.valid_maintainer_field_regexp`: exactly one `Name <email>`, or the
-      literal `ORPHANED`. A **missing address** (`Maintainer: Jane Doe`) is the
-      common case and fails the regexp outright; so do two maintainers and an
-      unquoted comma in the name. Port R's regexp verbatim and do **not**
-      substitute a stricter RFC 5322 grammar: R's is deliberately loose (quoted
-      local parts, no TLD requirement), so anything tighter false-positives on
-      addresses R accepts. Three CRAN-incoming checks cover the *name* half and
-      belong here: `empty_Maintainer_name`, `Maintainer_needs_quotes` (a comma
-      in an unquoted display name), and `Maintainer_invalid_or_multi_person`
-      (trailing text after the `<...>`).
+  `.valid_maintainer_field_regexp`: exactly one `Name <email>`, or the
+  literal `ORPHANED`. A **missing address** (`Maintainer: Jane Doe`) is the
+  common case and fails the regexp outright; so do two maintainers and an
+  unquoted comma in the name. Port R's regexp verbatim and do **not**
+  substitute a stricter RFC 5322 grammar: R's is deliberately loose (quoted
+  local parts, no TLD requirement), so anything tighter false-positives on
+  addresses R accepts. Three CRAN-incoming checks cover the *name* half and
+  belong here: `empty_Maintainer_name`, `Maintainer_needs_quotes` (a comma
+  in an unquoted display name), and `Maintainer_invalid_or_multi_person`
+  (trailing text after the `<...>`).
+
 - [ ] **Gap in the shipped `description-missing-field`.** It treats the mere
-      presence of `Authors@R` as satisfying `Author` and `Maintainer`, but R only
-      *derives* them if some person has role `"cre"`, a **valid email**, and a
-      non-empty name; otherwise `R CMD check` errors with "Authors@R field gives
-      no person with maintainer role, valid email address and non-empty name."
-      So `person("Jane", "Doe", role = c("aut", "cre"))`—no `email`—is rejected
-      by R and passes arity today. Confirmed against R. Fixing it means the rule
-      consults the parsed `Authors@R` rather than testing the field for
-      non-emptiness, which makes it depend on `description-authors-at-r` below;
-      do that one first. Write the failing test before the fix.
+  presence of `Authors@R` as satisfying `Author` and `Maintainer`, but R only
+  *derives* them if some person has role `"cre"`, a **valid email**, and a
+  non-empty name; otherwise `R CMD check` errors with "Authors@R field gives
+  no person with maintainer role, valid email address and non-empty name."
+  So `person("Jane", "Doe", role = c("aut", "cre"))`—no `email`—is rejected
+  by R and passes arity today. Confirmed against R. Fixing it means the rule
+  consults the parsed `Authors@R` rather than testing the field for
+  non-emptiness, which makes it depend on `description-authors-at-r` below;
+  do that one first. Write the failing test before the fix.
+
 - [ ] `description-title-format`. The parts R and CRAN actually enforce: no
-      continuation lines (R-exts says Title *cannot* have any, and
-      `Field::value_lines` makes that a one-liner), no trailing period with R's
-      own `et al.`/`...` carve-out, Title equal to or redundantly containing the
-      package name, and the `usethis` placeholder `What the package does...`.
+  continuation lines (R-exts says Title *cannot* have any, and
+  `Field::value_lines` makes that a one-liner), no trailing period with R's
+  own `et al.`/`...` carve-out, Title equal to or redundantly containing the
+  package name, and the `usethis` placeholder `What the package does...`.
+
 - [ ] `description-text-format`, on the `Description` field: must end in
-      `[.!?]`, must start with a capital, must not start with the package name or
-      `The`/`This`/`A`/`In this`/`In the` `package`, and bare `https?://` and
-      `doi:` must be angle-bracketed. The angle brackets are the one **safe fix**
-      in the tier.
+  `[.!?]`, must start with a capital, must not start with the package name or
+  `The`/`This`/`A`/`In this`/`In the` `package`, and bare `https?://` and
+  `doi:` must be angle-bracketed. The angle brackets are the one **safe fix**
+  in the tier.
+
 - [ ] `description-date-format`. `Date`, if present, must be ISO 8601
-      `yyyy-mm-dd`. Deliberately **not** porting CRAN's "over a month old" and
-      "in the future" clauses: a lint whose result changes overnight with no edit
-      is a bad lint.
+  `yyyy-mm-dd`. Deliberately **not** porting CRAN's "over a month old" and
+  "in the future" clauses: a lint whose result changes overnight with no edit
+  is a bad lint.
+
 - [ ] Extend `description-version-constraint` rather than adding a rule: it
-      catches a missing or non-comparison operator but not an invalid version
-      *string* (`dplyr (>= latest)`). Note R's special case allowing `r12345` svn
-      revisions, but only for `Depends: R`.
+  catches a missing or non-comparison operator but not an invalid version
+  *string* (`dplyr (>= latest)`). Note R's special case allowing `r12345` svn
+  revisions, but only for `Depends: R`.
 
 Tier 2—needs a small bundled table or the project layer:
 
 - [ ] `description-license`. Validate the spec grammar (`|` alternatives,
-      `+ file LICENSE`, version restrictions, `file LICENCE`, `Unlimited`)
-      against R's license db, which is ~50 stable entries and bundles like the
-      CRAN symbol lists already do. The payoff:
-      `tools:::.standardizable_license_specs_db` is an exact
-      `"GPL 2.0" -> "GPL-2"` mapping table, making this the only rule in the set
-      with a genuinely **safe autofix**.
-- [ ] `description-encoding`. Non-ASCII bytes with no `Encoding` field (R's
-      `missing_encoding`), and non-ASCII in the fields R requires be ASCII
-      (`Package`, `Version`, `License`, `Encoding`). arity already reads the file
-      as UTF-8, so "is this valid UTF-8" is decided, which makes
-      `Encoding: UTF-8` a **safe fix**.
-- [ ] `description-authors-at-r`. Parse the `Authors@R` value with arity's own R
-      parser—exactly the trick `src/project/description.rs` already plays on the
-      `Roxygen` field—then check statically: at least one `"cre"` role, an
-      `email` on that person, a non-empty name, and roles drawn from R's known
-      set. Those first three are what R's own derivation needs, so this rule is
-      the prerequisite for the `description-missing-field` gap above. R's
-      `.check_package_description_authors_at_R_field` adds, at its strict tiers,
-      persons with no name and persons with no role, plus ORCID and ROR checksum
-      validation—the identifiers are self-validating, so they need no network.
-      No evaluation, so the static-semantics tenet holds; anything computed
-      resolves to "unknown" and the rule stays silent, like the markdown
-      resolver.
+  `+ file LICENSE`, version restrictions, `file LICENCE`, `Unlimited`)
+  against R's license db, which is ~50 stable entries and bundles like the
+  CRAN symbol lists already do. The payoff:
+  `tools:::.standardizable_license_specs_db` is an exact
+  `"GPL 2.0" -> "GPL-2"` mapping table, making this the only rule in the set
+  with a genuinely **safe autofix**.
 
-      Two CRAN-incoming checks on the neighboring `Author` field fold in here,
-      since both are about `Authors@R` content written under the wrong key:
-      `author_starts_with_Author` (a value literally beginning `Author:`, i.e. a
-      pasted-in field header) and `author_should_be_authors_at_R` (a value that
-      is a `person(...)` or `c(...)` call, which R stores as a plain string and
-      never evaluates).
+- [ ] `description-encoding`. Non-ASCII bytes with no `Encoding` field (R's
+  `missing_encoding`), and non-ASCII in the fields R requires be ASCII
+  (`Package`, `Version`, `License`, `Encoding`). arity already reads the file
+  as UTF-8, so "is this valid UTF-8" is decided, which makes
+  `Encoding: UTF-8` a **safe fix**.
+
+- [ ] `description-authors-at-r`. Parse the `Authors@R` value with arity's own R
+  parser—exactly the trick `src/project/description.rs` already plays on the
+  `Roxygen` field—then check statically: at least one `"cre"` role, an
+  `email` on that person, a non-empty name, and roles drawn from R's known
+  set. Those first three are what R's own derivation needs, so this rule is
+  the prerequisite for the `description-missing-field` gap above. R's
+  `.check_package_description_authors_at_R_field` adds, at its strict tiers,
+  persons with no name and persons with no role, plus ORCID and ROR checksum
+  validation—the identifiers are self-validating, so they need no network.
+  No evaluation, so the static-semantics tenet holds; anything computed
+  resolves to "unknown" and the rule stays silent, like the markdown
+  resolver.
+
+  Two CRAN-incoming checks on the neighboring `Author` field fold in here,
+  since both are about `Authors@R` content written under the wrong key:
+  `author_starts_with_Author` (a value literally beginning `Author:`, i.e. a
+  pasted-in field header) and `author_should_be_authors_at_R` (a value that
+  is a `person(...)` or `c(...)` call, which R stores as a plain string and
+  never evaluates).
 - [ ] Emails appear in exactly three places in a `DESCRIPTION`—`Maintainer`,
-      `Authors@R`'s `email =`, and the rare `Contact` field—so there is **no**
-      general "lint emails" rule to write. Validate them where they occur, in
-      the two rules above, against R's regexp. A shared helper is the whole
-      abstraction that is warranted.
+  `Authors@R`'s `email =`, and the rare `Contact` field—so there is **no**
+  general "lint emails" rule to write. Validate them where they occur, in
+  the two rules above, against R's regexp. A shared helper is the whole
+  abstraction that is warranted.
 - [ ] `description-collate-mismatch`. `Collate` must name every `.R` file and
-      only files that exist. `DescriptionFacts::collate` is already computed and
-      the file set comes from the project layer. A file missing from `Collate` is
-      real breakage, not style. A fix means editing a list, so it belongs to
-      stage 5.
+  only files that exist. `DescriptionFacts::collate` is already computed and
+  the file set comes from the project layer. A file missing from `Collate` is
+  real breakage, not style. A fix means editing a list, so it belongs to
+  stage 5.
 - [ ] `description-unknown-field`. **Not** a whitelist—`Config/*`, `Remotes`,
-      and `RoxygenNote` are legal and everywhere—but a *near-miss* check: edit
-      distance 1 from a standard field name. `Suggest:`, `Depend:`, and
-      `Mantainer:` are silently ignored by R today. The trimmed-field-name
-      divergence under stage 1 wants a home too, and this is it.
+  and `RoxygenNote` are legal and everywhere—but a *near-miss* check: edit
+  distance 1 from a standard field name. `Suggest:`, `Depend:`, and
+  `Mantainer:` are silently ignored by R today. The trimmed-field-name
+  divergence under stage 1 wants a home too, and this is it.
 
 Tier 3—argued for default-off, or against:
 
 - [ ] `description-authors-at-r-required`, **default off**. R-exts: "For CRAN,
-      providing 'Authors@R' is required", and CRAN incoming emits
-      `authors_at_R_missing` whenever the field is absent—*even with* a valid
-      `Author` plus `Maintainer`, which is precisely the case
-      `description-missing-field` treats as complete. Default off because it is
-      CRAN policy rather than an R requirement, so it would fire on every
-      non-CRAN package; a package targeting CRAN opts in. Keep it a separate ID
-      from `description-missing-field` for that reason—one is "R rejects this",
-      the other is "CRAN rejects this", and they want different defaults and
-      different suppressions.
+  providing 'Authors@R' is required", and CRAN incoming emits
+  `authors_at_R_missing` whenever the field is absent—*even with* a valid
+  `Author` plus `Maintainer`, which is precisely the case
+  `description-missing-field` treats as complete. Default off because it is
+  CRAN policy rather than an R requirement, so it would fire on every
+  non-CRAN package; a package targeting CRAN opts in. Keep it a separate ID
+  from `description-missing-field` for that reason—one is "R rejects this",
+  the other is "CRAN rejects this", and they want different defaults and
+  different suppressions.
+
 - [ ] `description-title-case`, **default off**. Porting `tools::toTitleCase`
-      faithfully means porting its stopword list and the perl-regex carve-out
-      exempting quoted software names. CRAN's own version is the noisiest NOTE in
-      the pretest and maintainers routinely override it, so ship it only behind
-      the oracle above—pinned against R's `toTitleCase` over a corpus of real
-      titles—and default off, like `unused-dependency`.
-- Out of scope, recorded so it is not re-proposed: spell-checking (needs a
-  dictionary), URL liveness and ORCID validation (network), tarball size, and
-  anything that would normalize DESCRIPTION layout—field order and wrapping are
-  stage 5's job, not the linter's.
+  faithfully means porting its stopword list and the perl-regex carve-out
+  exempting quoted software names. CRAN's own version is the noisiest NOTE in
+  the pretest and maintainers routinely override it, so ship it only behind
+  the oracle above—pinned against R's `toTitleCase` over a corpus of real
+  titles—and default off, like `unused-dependency`.
 
 ### Phase 5—Package-aware rules
 
 Gated on the package being attached (`model.loaded_packages()`).
 
 - [ ] `pkg/testthat/` as one cohesive PR (shared `expect_*` matcher):
-      `expect-true-false`, `expect-length`, `expect-named`, `expect-null`,
-      `expect-type`, `expect-s3-class`, `expect-match`/`expect-no-match` (all ns,
-      safe). High value for test-heavy repos.
+  `expect-true-false`, `expect-length`, `expect-named`, `expect-null`,
+  `expect-type`, `expect-s3-class`, `expect-match`/`expect-no-match` (all ns,
+  safe). High value for test-heavy repos.
+
 - [ ] `pkg/dplyr/`: `dplyr-filter-out` `filter(!(x %in% y))` (ns, safe). Defer
-      `dplyr-group-by-ungroup`—needs **§I8 pipe-chain abstraction**
-      (`%>%`/`|>` stage walk) that doesn't exist yet.
+  `dplyr-group-by-ungroup`—needs **§I8 pipe-chain abstraction**
+  (`%>%`/`|>` stage walk) that doesn't exist yet.
 
 ### Documentation rules (roxygen2), `documentation/`
 
 - [x] `roxygen2-compat` (documentation; syn; no fix) and `r-compat`
-      (correctness; syn; safe lambda fix only)—version-aware rules keyed on
-      the `[compat]` floors (explicit `arity.toml` keys, else derived from
-      `DESCRIPTION`; silent with neither). `roxygen2-compat` flags roxygen2
-      8.0.0-only syntax under an older target (`@prop`/`@R6method`,
-      `` `Rd expr` `` spans, `@inheritParams` filters, backtick-quoted spaced
-      names) and multiline single-line tags at an 8.0.0 target; `r-compat`
-      flags raw strings (4.0), `|>`/`\(x)` (4.1), and the `_` placeholder
-      (4.2) below their floors.
+  (correctness; syn; safe lambda fix only)—version-aware rules keyed on
+  the `[compat]` floors (explicit `arity.toml` keys, else derived from
+  `DESCRIPTION`; silent with neither). `roxygen2-compat` flags roxygen2
+  8.0.0-only syntax under an older target (`@prop`/`@R6method`,
+  `` `Rd expr` `` spans, `@inheritParams` filters, backtick-quoted spaced
+  names) and multiline single-line tags at an 8.0.0 target; `r-compat`
+  flags raw strings (4.0), `|>`/`\(x)` (4.1), and the `_` placeholder
+  (4.2) below their floors.
 - [ ] Follow-ups (deferred): run the full rule set over extracted example code
-      (needs package-context symbol handling to avoid FPs); unsafe-delete fixes
-      for duplicate/nonexistent `@param`; a missing-description variant of
-      `roxygen-title` (roxygen2 auto-copies the title into `\description`, so
-      it never warns—decide against CRAN's stance first); mine the oracle's
-      "uncovered signals" table (mismatched braces/quotes, markdown-link
-      plain-text restriction) for new rules.
+  (needs package-context symbol handling to avoid FPs); unsafe-delete fixes
+  for duplicate/nonexistent `@param`; a missing-description variant of
+  `roxygen-title` (roxygen2 auto-copies the title into `\description`, so
+  it never warns—decide against CRAN's stance first); mine the oracle's
+  "uncovered signals" table (mismatched braces/quotes, markdown-link
+  plain-text restriction) for new rules.
 
 ## Static analysis
 
 - [ ] Only if a concrete rule (dead-store, redundant reassignment) justifies it:
-      a flow-sensitive fixpoint over the Phase B CFG, lattice over bindings. This
-      is the first analysis that is real work to keep incremental—revisit after
-      B ships and a rule demands it.
+  a flow-sensitive fixpoint over the Phase B CFG, lattice over bindings. This
+  is the first analysis that is real work to keep incremental—revisit after
+  B ships and a rule demands it.
 
 ## Language Server
 
@@ -333,6 +344,7 @@ Gated on the package being attached (`model.loaded_packages()`).
   and groups them by enclosing function; outgoing walks the `FUNCTION_EXPR`'s
   `CALL_EXPR`s, resolving each callee through the scope tree then via
   `visible_def_files`.
+
   - **Scope:** items are **named function definitions at any scope**—file-scope
     functions (the names the cross-file index keys on) and nested/local ones—plus
     the synthetic per-file script scope that owns top-level calls. An
@@ -341,6 +353,7 @@ Gated on the package being attached (`model.loaded_packages()`).
     live buffer while incoming/outgoing read the db snapshot the lint thread only
     catches up to asynchronously. Edges are strict *callee-position* uses
     `F(...)`, never value uses (`lapply(xs, F)`).
+
   - [x] **Nested/local functions are items.** A call is attributed to the
     innermost enclosing *named* function (anonymous bodies fall through to their
     nearest named ancestor); outgoing reports only an item's own calls, so a
@@ -348,6 +361,7 @@ Gated on the package being attached (`model.loaded_packages()`).
     scope tree, so a nested `helper` no longer misresolves to a sibling file's
     top-level `helper`. Nested names are file-private, so their incoming edges
     are intra-file by construction.
+
   - [x] **Script top-level call sites are items.** A call inside no function is
     attributed to the file's synthetic **script-scope** item (`script_item`):
     `SymbolKind::FILE`, named after the file, identified by `ItemData::script`
@@ -355,12 +369,14 @@ Gated on the package being attached (`model.loaded_packages()`).
     `incoming` on it is empty, while `outgoing` lists the file's top-level calls.
     Attribution stays the one `enclosing_function` predicate—`None` now means the
     script scope instead of "drop"—so the two directions still cannot disagree.
+
   - [x] **Ambiguous cross-file callees report every candidate.** A free read that
     more than one visible sibling defines yields one outgoing edge per definition,
     not the first sorted one. Which one R reaches is a runtime fact
     (`visible_def_files` treats >1 as unresolved for the same reason), and
     `prepare` already returns one item per candidate, so this makes the two ends
     agree. A locally bound callee still resolves to exactly one target.
+
   - [ ] String/backtick callees (`` `+`(…) ``, `"foo"()`) are skipped. **Not a
     call-hierarchy fix**: the semantic model records a backticked read's name
     *with* its backticks (so `` `foo`() `` never resolves to binding `foo`), and
@@ -417,31 +433,37 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 ### Cross-cutting prerequisite
 
 - [x] Downloadable CRAN sidecar—names-only client (escalation of the bundled
-      lists above). A dynamic, disk-cached, version-keyed `RemoteExports` tier
-      (`src/rindex/remote.rs`) sits between the harvested index and the bundled
-      lists in `resolve_origin`, carried in the salsa `LibraryIndex`'s `remote`
-      field at HIGH durability (`src/incremental.rs`). The LSP lint thread fetches
-      per-package export lists on demand over a CDN (`Sidecar` + `ureq`, gzip via
-      `flate2`), opt-in via the `ARITY_REMOTE_URL` environment variable (a
-      per-user/per-machine consent decision, deliberately *not* in the shared
-      `arity.toml`; default off so arity stays offline). Lifts the whole-file
-      `undefined-symbol` suppression for uninstalled, unbundled packages and
-      feeds `pkg::`/bare completion.
-      Remaining escalations:
+  lists above). A dynamic, disk-cached, version-keyed `RemoteExports` tier
+  (`src/rindex/remote.rs`) sits between the harvested index and the bundled
+  lists in `resolve_origin`, carried in the salsa `LibraryIndex`'s `remote`
+  field at HIGH durability (`src/incremental.rs`). The LSP lint thread fetches
+  per-package export lists on demand over a CDN (`Sidecar` + `ureq`, gzip via
+  `flate2`), opt-in via the `ARITY_REMOTE_URL` environment variable (a
+  per-user/per-machine consent decision, deliberately *not* in the shared
+  `arity.toml`; default off so arity stays offline). Lifts the whole-file
+  `undefined-symbol` suppression for uninstalled, unbundled packages and
+  feeds `pkg::`/bare completion.
+
+  Remaining escalations:
+
   - [ ] Server pipeline + hosting (separate repo): install all of CRAN via PPM
-        binaries, dump per-package names keyed by current version + a
-        `pkg → version` manifest, publish gzipped to a CDN (Pages/Releases),
-        refresh weekly and additively. arity ships only the client + default URL.
+    binaries, dump per-package names keyed by current version + a
+    `pkg → version` manifest, publish gzipped to a CDN (Pages/Releases),
+    refresh weekly and additively. arity ships only the client + default URL.
+
   - [ ] Full-metadata tier (formals + Rd docs) so hover/signature help work for
-        uninstalled packages—a richer payload reusing the same fetch path.
+    uninstalled packages—a richer payload reusing the same fetch path.
+
   - [ ] Bulk/CI prefetch path (download-once snapshot, no per-file network).
+
   - [ ] Pin-aware versions: resolve the project's actual version from
-        renv.lock/DESCRIPTION (needs CRAN Archive coverage); the URL/disk schema
-        is already version-keyed for this.
+    renv.lock/DESCRIPTION (needs CRAN Archive coverage); the URL/disk schema
+    is already version-keyed for this.
+
   - [x] Feed DESCRIPTION `Imports`/`Depends` and `import(pkg)` into the referenced
-        and resolved sets so the `resolution_incomplete` poison
-        (`src/project/scope.rs`) clears once the sidecar can enumerate exports.
-        Landed with DESCRIPTION stage 2 below, as one change.
+    and resolved sets so the `resolution_incomplete` poison
+    (`src/project/scope.rs`) clears once the sidecar can enumerate exports.
+    Landed with DESCRIPTION stage 2 below, as one change.
 
 - [x] Data-masking/tidy-eval suppression (landed). A bare name in a
   data-masking verb's arguments (`mutate(b = a + 1)`) resolves to a data-frame
@@ -531,8 +553,10 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 
     - [ ] Transitive attaches: a meta-package attaching another meta-package
       expands one level only (matches the old static behavior; no known case).
+
     - [ ] Attach sets do not flow through the remote sidecar or bundled tiers
       (names-only formats); a sidecar v2 could carry them.
+
     - [ ] Grow `ATTACH_SET_VARS` beyond `core` as evidence of other
       conventions appears; `Depends`-driven attachment could also be captured
       statically from `DESCRIPTION` without any probe.
@@ -610,175 +634,178 @@ dependencies drive name resolution, the file itself carries diagnostics,
 completion and hover, and it formats. Staged so each step is useful alone.
 
 - [x] **1. A principled DCF parser** (`crates/arity-parser/src/dcf/`). A second
-      `rowan::Language` alongside the R grammar: lossless
-      (`reconstruct(text) == text`), spanned, record-aware, with diagnostics on
-      the usual side channel (malformed line, orphan continuation, empty field
-      name). Typed wrappers (`dcf::ast`) are the only surface consumers touch,
-      so nothing outside the module names the second `SyntaxKind`. Replaced
-      `parse_dcf` and all five of its consumers with no behavior change. Lives
-      in the published parser crate so a dprint plugin can reach it at stage 5.
+  `rowan::Language` alongside the R grammar: lossless
+  (`reconstruct(text) == text`), spanned, record-aware, with diagnostics on
+  the usual side channel (malformed line, orphan continuation, empty field
+  name). Typed wrappers (`dcf::ast`) are the only surface consumers touch,
+  so nothing outside the module names the second `SyntaxKind`. Replaced
+  `parse_dcf` and all five of its consumers with no behavior change. Lives
+  in the published parser crate so a dprint plugin can reach it at stage 5.
 
 - [x] **2. DESCRIPTION as an analysis input.** Done. `dcf::deps` parses
-      dependency entries (name plus version constraints, spanned), and
-      `DescriptionFacts` (`src/project/description.rs`) derives every fact in
-      one parse: `package_name`, `description_compat`, the `Roxygen` field, and
-      `expected_r_sources`'s `Collate` half are all projections of it, and
-      `r_depends_floor` became a lookup over the entries rather than a bespoke
-      string splitter. `harvest` is deliberately untouched—it reads *installed*
-      packages in a library directory, a different problem with no database and
-      no watcher.
+  dependency entries (name plus version constraints, spanned), and
+  `DescriptionFacts` (`src/project/description.rs`) derives every fact in
+  one parse: `package_name`, `description_compat`, the `Roxygen` field, and
+  `expected_r_sources`'s `Collate` half are all projections of it, and
+  `r_depends_floor` became a lookup over the entries rather than a bespoke
+  string splitter. `harvest` is deliberately untouched—it reads *installed*
+  packages in a library directory, a different problem with no database and
+  no watcher.
 
-      DESCRIPTION is a salsa input holding **text** (`DescriptionFile`), with
-      `description_facts` the `Eq` projection over it. That split is the whole
-      point: a `Description:` prose edit re-derives the facts, they compare
-      equal, and salsa backdates—so `workspace_project` is never re-executed.
-      `discover_packages` no longer reads DESCRIPTION at all
-      (`PackageInfo.expected_sources` became `dir_sources`).
+  DESCRIPTION is a salsa input holding **text** (`DescriptionFile`), with
+  `description_facts` the `Eq` projection over it. That split is the whole
+  point: a `Description:` prose edit re-derives the facts, they compare
+  equal, and salsa backdates—so `workspace_project` is never re-executed.
+  `discover_packages` no longer reads DESCRIPTION at all
+  (`PackageInfo.expected_sources` became `dir_sources`).
 
-      Declared packages feed both sets. `Depends` joins the resolved set via
-      `attached_names`; `Imports` deliberately does **not** (R does not attach
-      it). All five fields join the referenced set, so `arity index` and the
-      sidecar fetch cover a dependency no `.R` file mentions. `import(pkg)` no
-      longer poisons: `ProjectScope::build` stays pure and records the packages,
-      and `external_resolution`—which holds the library index—runs them through
-      the existing enumerability gate, so the suppression lifts by itself once
-      the package can be enumerated. `resolution_incomplete` now means only "a
-      dynamic or unanalyzed `source()`".
+  Declared packages feed both sets. `Depends` joins the resolved set via
+  `attached_names`; `Imports` deliberately does **not** (R does not attach
+  it). All five fields join the referenced set, so `arity index` and the
+  sidecar fetch cover a dependency no `.R` file mentions. `import(pkg)` no
+  longer poisons: `ProjectScope::build` stays pure and records the packages,
+  and `external_resolution`—which holds the library index—runs them through
+  the existing enumerability gate, so the suppression lifts by itself once
+  the package can be enumerated. `resolution_incomplete` now means only "a
+  dynamic or unanalyzed `source()`".
 
-      Invalidation is no longer blunt: `WatchedFilesBatch` carries each changed
-      path with its kind, the refreshers report whether they actually wrote, and
-      a save that changed nothing no longer relints.
+  Invalidation is no longer blunt: `WatchedFilesBatch` carries each changed
+  path with its kind, the refreshers report whether they actually wrote, and
+  a save that changed nothing no longer relints.
 
-      Two consequences worth knowing, both the conservative-correct direction
-      and both pinned by tests: a `Depends` we cannot enumerate now suppresses
-      the whole file (exactly as an unindexed `library()` already did), and
-      lifting the `import(pkg)` poison exposes findings in every package using
-      it—which is how the item below was found.
+  Two consequences worth knowing, both the conservative-correct direction
+  and both pinned by tests: a `Depends` we cannot enumerate now suppresses
+  the whole file (exactly as an unindexed `library()` already did), and
+  lifting the `import(pkg)` poison exposes findings in every package using
+  it—which is how the item below was found.
 
 - [x] **A backticked name never resolves against a package export list.** Fixed.
-      `` e$a <- `:` `` and ``map_lgl(imp, `%in%`, x = topic)`` were flagged
-      `undefined-symbol`. The backticks are part of the `IDENT` token, which is
-      *correct* and load-bearing for user operators (`src/semantic/builder.rs`
-      records a `` `%+%` `` binding backtick-quoted so references match), but
-      the base and CRAN export lists store `:` and `%in%` unquoted, so the
-      lookup missed.
+  `` e$a <- `:` `` and ``map_lgl(imp, `%in%`, x = topic)`` were flagged
+  `undefined-symbol`. The backticks are part of the `IDENT` token, which is
+  *correct* and load-bearing for user operators (`src/semantic/builder.rs`
+  records a `` `%+%` `` binding backtick-quoted so references match), but
+  the base and CRAN export lists store `:` and `%in%` unquoted, so the
+  lookup missed.
 
-      `semantic::symbols::unbacktick` strips a *matched* backtick pair, and
-      every leaf provider lookup now applies it: `StaticBaseR`'s
-      `origin`/`is_base`/`package_of`, `BundledPackages::exports`,
-      `RemoteExports::exports`, and `IndexedProvider`'s `exports`/`lookup`. Put
-      at the leaves rather than in `resolve_origin` so all four resolution
-      tiers, `StaticBaseR` used as a bare provider, and hover's rich `lookup`
-      are covered by one rule. Nothing changed in the builder, which must keep
-      quoting bindings.
+  `semantic::symbols::unbacktick` strips a *matched* backtick pair, and
+  every leaf provider lookup now applies it: `StaticBaseR`'s
+  `origin`/`is_base`/`package_of`, `BundledPackages::exports`,
+  `RemoteExports::exports`, and `IndexedProvider`'s `exports`/`lookup`. Put
+  at the leaves rather than in `resolve_origin` so all four resolution
+  tiers, `StaticBaseR` used as a bare provider, and hover's rich `lookup`
+  are covered by one rule. Nothing changed in the builder, which must keep
+  quoting bindings.
 
-      Predated stage 2 (reproduced on `2c5168c`); it was invisible in packages
-      using `import(pkg)` only because the wholesale-import poison suppressed
-      the whole file.
+  Predated stage 2 (reproduced on `2c5168c`); it was invisible in packages
+  using `import(pkg)` only because the wholesale-import poison suppressed
+  the whole file.
 
 - [x] **3. DESCRIPTION lint rules.** Done. Five rules in a new `Packaging`
-      category, the one category spanning both grammars:
-      `undeclared-dependency` (R-side, default on), `unused-dependency`
-      (DESCRIPTION-side, **default off**), `description-missing-field`,
-      `description-duplicate-field`, `description-version-constraint`. None
-      ships an autofix; each repair needs a value or a decision only the author
-      has, and for `unused-dependency` a fix would also mean editing a
-      comma-separated list, which is stage 5's job.
+  category, the one category spanning both grammars:
+  `undeclared-dependency` (R-side, default on), `unused-dependency`
+  (DESCRIPTION-side, **default off**), `description-missing-field`,
+  `description-duplicate-field`, `description-version-constraint`. None
+  ships an autofix; each repair needs a value or a decision only the author
+  has, and for `unused-dependency` a fix would also mean editing a
+  comma-separated list, which is stage 5's job.
 
-      A `DcfRule` runs over a parsed `DESCRIPTION` the way `Rule` runs over R,
-      and both register in the **same** `rules_by_category` via `AnyRule`, so
-      rule IDs stay one namespace and `all_rule_ids`, `select`/`ignore`, and the
-      reference page are still derived from one list. A second registry was
-      rejected: merging two per-category lists back together to render one
-      section *is* a second source of truth for catalogue order. `ResolvedRules`
-      splits the two dispatch tables once, in `with_config`, so a run over R
-      files never pays for the DCF table. `linter::render` and
-      `to_lsp_diagnostic` needed no change, as predicted.
+  A `DcfRule` runs over a parsed `DESCRIPTION` the way `Rule` runs over R,
+  and both register in the **same** `rules_by_category` via `AnyRule`, so
+  rule IDs stay one namespace and `all_rule_ids`, `select`/`ignore`, and the
+  reference page are still derived from one list. A second registry was
+  rejected: merging two per-category lists back together to render one
+  section *is* a second source of truth for catalogue order. `ResolvedRules`
+  splits the two dispatch tables once, in `with_config`, so a run over R
+  files never pays for the DCF table. `linter::render` and
+  `to_lsp_diagnostic` needed no change, as predicted.
 
-      `# arity-ignore` works in `DESCRIPTION`. A comment line is a child of the
-      field it follows—a `FIELD` stays open across its continuation lines—so a
-      directive attaches to its enclosing field only when a value line still
-      follows it, and otherwise points at the next field, which is what its
-      author meant.
+  `# arity-ignore` works in `DESCRIPTION`. A comment line is a child of the
+  field it follows—a `FIELD` stays open across its continuation lines—so a
+  directive attaches to its enclosing field only when a value line still
+  follows it, and otherwise points at the next field, which is what its
+  author meant.
 
-      `collect_lint_files` splits discovery by grammar. A walk takes a
-      `DESCRIPTION` only at a package root that is not itself inside another
-      package: the first half skips `inst/extdata` fixtures, the second skips
-      the complete fake packages roxygen2 and devtools keep under `tests/`,
-      which a corpus sweep found immediately. An explicitly named one is always
-      linted. Reading is *not* gated on the rule set: `syntax-error` is not a
-      rule, so a `DESCRIPTION` `read.dcf` would reject surfaces under `--select`
-      exactly as a broken `.R` file does.
+  `collect_lint_files` splits discovery by grammar. A walk takes a
+  `DESCRIPTION` only at a package root that is not itself inside another
+  package: the first half skips `inst/extdata` fixtures, the second skips
+  the complete fake packages roxygen2 and devtools keep under `tests/`,
+  which a corpus sweep found immediately. An explicitly named one is always
+  linted. Reading is *not* gated on the rule set: `syntax-error` is not a
+  rule, so a `DESCRIPTION` `read.dcf` would reject surfaces under `--select`
+  exactly as a broken `.R` file does.
 
-      The exempt set for `undeclared-dependency` is R's own, read off
-      `tools:::.check_packages_used` and pinned against R by
-      `tests/deps_oracle.rs` (`task deps-oracle`): the base-priority packages
-      minus `methods` and `stats4`. That is deliberately **not**
-      `default_packages()`, which answers what a session *attaches* and differs
-      in both directions—`parallel` and `tools` ship unattached, `methods` is
-      attached and still has to be declared.
+  The exempt set for `undeclared-dependency` is R's own, read off
+  `tools:::.check_packages_used` and pinned against R by
+  `tests/deps_oracle.rs` (`task deps-oracle`): the base-priority packages
+  minus `methods` and `stats4`. That is deliberately **not**
+  `default_packages()`, which answers what a session *attaches* and differs
+  in both directions—`parallel` and `tools` ship unattached, `methods` is
+  attached and still has to be declared.
 
-      `unused-dependency` reports on *absence*, so it is the one rule here that
-      could talk a maintainer into deleting a dependency their package needs.
-      Hence default-off, `PackageUsage::complete` (the whole `R/` set analyzed,
-      a NAMESPACE read, at least one source), and exemptions for a `LinkingTo`
-      co-declaration, `methods` under S4, and any package named as a plain
-      string. `PackageReferences` records load calls at **any depth**—
-      `requireNamespace()` in a function body is the conditional-dependency
-      idiom, and `SemanticModel::loaded_packages` is top-level-only because it
-      models attachment, a narrower fact. Both it and the `package_usage` fold
-      are range-free `Eq` firewalls, guarded with negative controls in
-      `tests/salsa_incremental.rs`.
+  `unused-dependency` reports on *absence*, so it is the one rule here that
+  could talk a maintainer into deleting a dependency their package needs.
+  Hence default-off, `PackageUsage::complete` (the whole `R/` set analyzed,
+  a NAMESPACE read, at least one source), and exemptions for a `LinkingTo`
+  co-declaration, `methods` under S4, and any package named as a plain
+  string. `PackageReferences` records load calls at **any depth**—
+  `requireNamespace()` in a function body is the conditional-dependency
+  idiom, and `SemanticModel::loaded_packages` is top-level-only because it
+  models attachment, a narrower fact. Both it and the `package_usage` fold
+  are range-free `Eq` firewalls, guarded with negative controls in
+  `tests/salsa_incremental.rs`.
 
-      A sweep over 15 real packages (tidyverse, r-lib, data.table, Rcpp) found
-      zero findings; injecting an unused `Imports` entry and deleting a used one
-      proved both dependency rules fire. That sweep is the gate for ever
-      flipping `unused-dependency` on, and it is not enough on its own—the
-      `linter-investigation` skill is.
+  A sweep over 15 real packages (tidyverse, r-lib, data.table, Rcpp) found
+  zero findings; injecting an unused `Imports` entry and deleting a used one
+  proved both dependency rules fire. That sweep is the gate for ever
+  flipping `unused-dependency` on, and it is not enough on its own—the
+  `linter-investigation` skill is.
 
-      Two rules deliberately **not** written here. `library-in-package`:
-      `library(dplyr)` in `R/` is wrong even when `dplyr` *is* in `Imports`, and
-      reporting that under an ID meaning "not declared" would read as a false
-      positive. `unconditional-suggest`: flagging unguarded use of a `Suggests`
-      package is a control-flow question over `ctx.cfg`, not a name-set one, and
-      R exempts `Suggests` for exactly that reason.
+  Two rules deliberately **not** written here. `library-in-package`:
+  `library(dplyr)` in `R/` is wrong even when `dplyr` *is* in `Imports`, and
+  reporting that under an ID meaning "not declared" would read as a false
+  positive. `unconditional-suggest`: flagging unguarded use of a `Suggests`
+  package is a control-flow question over `ctx.cfg`, not a name-set one, and
+  R exempts `Suggests` for exactly that reason.
 
 - [ ] **4. DESCRIPTION in the LSP.** `didOpen` for DESCRIPTION (today it is only
-      a watched file, never a document), a `documentSelector` entry in
-      `editors/code`, then: diagnostics from stages 1+3; **completion of package
-      names** in dependency fields off the rindex plus the bundled CRAN
-      lists—the flashiest item here and nearly free; hover showing a
-      dependency's installed version and `Title`.
+  a watched file, never a document), a `documentSelector` entry in
+  `editors/code`, then: diagnostics from stages 1+3; **completion of package
+  names** in dependency fields off the rindex plus the bundled CRAN
+  lists—the flashiest item here and nearly free; hover showing a
+  dependency's installed version and `Title`.
 
 - [ ] **5. DESCRIPTION formatting.** Canonical style is what `desc`/`usethis`
-      write: field order, dependency lists one per line with `,\n    `, wrapped
-      `Description`. arity's differentiator is that `Authors@R` and `Roxygen`
-      are *R code*, which we can format with our own formatter—`desc` cannot.
-      Must be opt-in: `usethis`, `devtools` and `R CMD build` rewrite this file
-      on their own schedule, and a field-order fight is a fast way to lose
-      trust. Ships through the dprint plugin too, which is why stage 1 lives in
-      the parser crate.
+  write: field order, dependency lists one per line with `,\n    `, wrapped
+  `Description`. arity's differentiator is that `Authors@R` and `Roxygen`
+  are *R code*, which we can format with our own formatter—`desc` cannot.
+  Must be opt-in: `usethis`, `devtools` and `R CMD build` rewrite this file
+  on their own schedule, and a field-order fight is a fast way to lose
+  trust. Ships through the dprint plugin too, which is why stage 1 lives in
+  the parser crate.
 
 - [x] **A `read.dcf` differential oracle** (`tests/oracle/dcf_oracle.R` +
-      `tests/dcf_oracle.rs`, `#[ignore]`d, `task dcf-oracle`). R's `read.dcf`
-      *is* the definition of what a DESCRIPTION means, so the parser is checked
-      against it rather than against comments claiming what R does. 71 cases:
-      the committed DCF fixtures, the rindex DESCRIPTIONs, the untracked
-      `roxygen2-ref` checkout when present, and an adversarial table mirroring
-      the parser's losslessness cases. The three divergences below are
-      normalized; **anything else fails**, so closing one is a matter of
-      deleting its normalization and watching the oracle prove the fix. It
-      earned its keep immediately by finding divergence 3, which had been
-      assumed away.
+  `tests/dcf_oracle.rs`, `#[ignore]`d, `task dcf-oracle`). R's `read.dcf`
+  *is* the definition of what a DESCRIPTION means, so the parser is checked
+  against it rather than against comments claiming what R does. 71 cases:
+  the committed DCF fixtures, the rindex DESCRIPTIONs, the untracked
+  `roxygen2-ref` checkout when present, and an adversarial table mirroring
+  the parser's losslessness cases. The three divergences below are
+  normalized; **anything else fails**, so closing one is a matter of
+  deleting its normalization and watching the oracle prove the fix. It
+  earned its keep immediately by finding divergence 3, which had been
+  assumed away.
 
 - [ ] **Known divergences from R's `read.dcf`**, deliberate, normalized in the
-      oracle and pinned by tests in `dcf/parser.rs`; each is its own future
-      commit, never a drive-by:
+  oracle and pinned by tests in `dcf/parser.rs`; each is its own future
+  commit, never a drive-by:
+
   - A field whose own line is empty folds with a leading `\n`
     (`Collate:\n a.R\n b.R` -> `"\na.R\nb.R"`); R drops the empty segment.
+
   - A duplicate field resolves to the **first** occurrence; R takes the last.
     `description-duplicate-field` now makes this visible at the duplicate
     instead of leaving it silent, which is the prerequisite for the flip.
+
   - A field name is trimmed. R does *not*: `Package : p` declares a field
     literally named `"Package "`, so R sees no `Package` at all. arity is
     deliberately lenient here (it reads the obvious intent of a typo'd header),
@@ -786,14 +813,17 @@ completion and hover, and it formats. Staged so each step is useful alone.
     can flag it precisely instead of the parser guessing.
 
 - [ ] **`desc` is a style reference for stage 5, not an oracle.** Tested against
-      desc 1.4.3: `desc::desc_normalize()` reorders fields, splits dependency
-      lists one per line, and quotes `Collate` entries—all of which stage 5
-      wants—but it **drops comments even on a plain parse->write with no
-      normalization**, and emits a trailing space after `Depends:`. Matching it
-      byte for byte would mean deleting user content, which contradicts the
-      invariant the DCF parser exists to uphold. So measure against it the way
-      `air` is measured for R: soft, one-directional, never a gate, with comment
-      preservation and the trailing space as known divergences.
+  desc 1.4.3: `desc::desc_normalize()` reorders fields, splits dependency
+  lists one per line, and quotes `Collate` entries—all of which stage 5
+  wants—but it **drops comments even on a plain parse->write with no
+  normalization**, and emits a trailing space after `Depends:`. Matching it
+  byte for byte would mean deleting user content, which contradicts the
+  invariant the DCF parser exists to uphold. So measure against it the way
+  `air` is measured for R: soft, one-directional, never a gate, with comment
+  preservation and the trailing space as known divergences.
+
+- [ ] Inlay hints for dependency fields: show the installed version for Imports,
+  Depends, Suggests.
 
 ## Misc
 
