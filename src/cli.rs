@@ -71,12 +71,17 @@ pub enum Commands {
         #[arg(long)]
         verify: bool,
     },
-    /// Format .R files
+    /// Format R files and package DESCRIPTIONs
     Format {
         /// Input file(s) or director(ies). Pass `-` for stdin, also read when
         /// paths are omitted and stdin is not a terminal
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
+
+        /// Filename the stdin buffer stands for; decides which grammar it is
+        /// formatted as. Without it, stdin is formatted as R
+        #[arg(long, value_name = "PATH")]
+        stdin_filename: Option<PathBuf>,
 
         /// Verify formatting idempotence for supported inputs (does not write files)
         #[arg(long)]

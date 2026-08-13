@@ -50,7 +50,7 @@ Parse and display the CST tree for debugging
 
 ## `arity format`
 
-Format .R files
+Format R files and package DESCRIPTIONs
 
 **Usage:** `arity format [OPTIONS] [PATH]...`
 
@@ -60,6 +60,9 @@ Format .R files
 :   Input file(s) or director(ies). Pass `-` for stdin, also read when paths are omitted and stdin is not a terminal
 
 ### Options
+
+`--stdin-filename <PATH>`
+:   Filename the stdin buffer stands for; decides which grammar it is formatted as. Without it, stdin is formatted as R
 
 `--verify`
 :   Verify formatting idempotence for supported inputs (does not write files)

@@ -64,6 +64,7 @@ extend-exclude = ["vendor/", "*.gen.R"]
   | `line-width`   | integer (1–1000) | `80`     | The width the formatter tries to keep lines within. Not a hard cap.   |
   | `indent-width` | integer (1–1000) | `2`      | Number of spaces per indentation level.                               |
   | `line-ending`  | string           | `"auto"` | Newline style: `"auto"`, `"lf"`, `"crlf"`, or `"native"` (see below). |
+  | `description`  | boolean          | `true`   | Whether a package `DESCRIPTION` is formatted.                         |
 
 `line-ending = "auto"` mirrors the source file's first line ending (defaulting
 to `lf` when the file has none); `"native"` is `crlf` on Windows and `lf`
@@ -74,10 +75,20 @@ elsewhere; `"lf"` and `"crlf"` force that ending.
 line-width = 80
 indent-width = 2
 line-ending = "auto"
+description = true
 ```
 
 `line-width` and `indent-width` can be overridden per run with the
-`--line-width`/`--indent-width` flags on `arity format`.
+`--line-width`/`--indent-width` flags on `arity format`. They apply to
+`DESCRIPTION` too, except that its continuation indent is always four spaces —
+the file format's convention, and a different axis from R-code nesting.
+
+Setting `description = false` leaves `DESCRIPTION` alone, in both the CLI and
+the editor. Reach for it if arity and your package tooling end up disagreeing
+about the file. Note that `extend-exclude` is not a substitute: excludes are
+shared with the linter, so excluding `DESCRIPTION` would also silence the
+packaging rules, and the language server applies no exclude filter to formatting
+at all.
 
 ## `[lint]`
 

@@ -100,6 +100,19 @@ pub struct FormatConfig {
     /// The newline style the formatter emits. See [`LineEndingConfig`].
     #[serde(default)]
     pub line_ending: LineEndingConfig,
+    /// Whether a package's `DESCRIPTION` is formatted. On by default.
+    ///
+    /// The off switch exists because arity is not the only tool that writes this
+    /// file — `usethis` and `roxygen2` do too — and the honest answer to "arity
+    /// and my package tooling disagree about my `DESCRIPTION`" has to be
+    /// something other than "stop running `arity format`".
+    ///
+    /// It cannot be `extend-exclude`: excludes are shared with the linter, so
+    /// excluding `DESCRIPTION` to stop formatting would also silence the
+    /// packaging rules, and the language server applies no exclude filter to
+    /// formatting at all.
+    #[serde(default = "default_true")]
+    pub description: bool,
 }
 
 impl Default for FormatConfig {
@@ -108,6 +121,7 @@ impl Default for FormatConfig {
             line_width: DEFAULT_LINE_WIDTH,
             indent_width: DEFAULT_INDENT_WIDTH,
             line_ending: LineEndingConfig::default(),
+            description: true,
         }
     }
 }

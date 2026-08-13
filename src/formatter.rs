@@ -7,6 +7,7 @@
 
 pub mod cache;
 pub mod check;
+pub mod source;
 
 pub use arity_formatter::formatter::*;
 
@@ -15,3 +16,4 @@ pub use check::{
     ChangedFile, CheckError, CheckResult, check_paths, check_paths_with_style,
     check_paths_with_style_cached,
 };
+pub use source::{FormatSourceError, Formatted, format_file, merge};

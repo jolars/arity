@@ -14,6 +14,19 @@ fn run_cli_no_stdin<const N: usize>(args: [&str; N]) -> std::process::Output {
         .expect("failed to run cli")
 }
 
+/// Like [`run_cli_no_stdin`], but from `dir` — config discovery anchors at the
+/// working directory, so a test with its own `arity.toml` has to run there.
+fn run_cli_in<const N: usize>(dir: &std::path::Path, args: [&str; N]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_arity"))
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to run cli")
+}
+
 fn run_cli<const N: usize>(args: [&str; N], stdin_input: &str) -> std::process::Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_arity"));
     cmd.args(args)
@@ -319,5 +332,171 @@ fn cli_format_check_rejects_stdin() {
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("cannot read from stdin"),
         "`--check` reports on files it leaves on disk"
+    );
+}
+
+// --- DESCRIPTION ---------------------------------------------------------
+
+/// A package whose `DESCRIPTION` is unformatted and whose `R/` file is already
+/// canonical, so a walk's effect on the metadata file is unambiguous.
+fn write_unformatted_package(root: &std::path::Path) -> std::path::PathBuf {
+    std::fs::create_dir(root.join("R")).expect("R/");
+    let description = root.join("DESCRIPTION");
+    std::fs::write(&description, "Imports: b, a\nPackage: p\n").expect("DESCRIPTION");
+    std::fs::write(root.join("R/ok.R"), "x <- 1\n").expect("ok.R");
+    description
+}
+
+const FORMATTED_DESCRIPTION: &str = "Package: p\nImports:\n    a,\n    b\n";
+
+#[test]
+fn cli_format_writes_a_walked_description() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let description = write_unformatted_package(dir.path());
+
+    let output = run_cli_no_stdin(["format", dir.path().to_str().expect("utf-8 path")]);
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&description).expect("read back"),
+        FORMATTED_DESCRIPTION
+    );
+}
+
+#[test]
+fn cli_format_writes_an_explicitly_named_description() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let description = write_unformatted_package(dir.path());
+
+    let output = run_cli_no_stdin(["format", description.to_str().expect("utf-8 path")]);
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&description).expect("read back"),
+        FORMATTED_DESCRIPTION
+    );
+}
+
+#[test]
+fn cli_format_skips_a_nested_packages_description_on_a_walk() {
+    // A package under a package is fixture data — often asserted on byte for
+    // byte by its own project's tests. Naming it still formats it.
+    let dir = tempdir().expect("failed to create temp dir");
+    write_unformatted_package(dir.path());
+    let nested = dir.path().join("tests/testthat/testpkg");
+    std::fs::create_dir_all(nested.join("R")).expect("nested R/");
+    let nested_description = nested.join("DESCRIPTION");
+    std::fs::write(&nested_description, "Imports: b, a\nPackage: inner\n").expect("nested");
+
+    let output = run_cli_no_stdin(["format", dir.path().to_str().expect("utf-8 path")]);
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&nested_description).expect("read back"),
+        "Imports: b, a\nPackage: inner\n",
+        "a walk must leave a nested package's DESCRIPTION alone"
+    );
+
+    let output = run_cli_no_stdin(["format", nested_description.to_str().expect("utf-8 path")]);
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&nested_description).expect("read back"),
+        "Package: inner\nImports:\n    a,\n    b\n"
+    );
+}
+
+#[test]
+fn cli_format_check_reports_an_unformatted_description() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let description = write_unformatted_package(dir.path());
+
+    let output = run_cli_no_stdin([
+        "format",
+        "--check",
+        dir.path().to_str().expect("utf-8 path"),
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).expect("utf-8");
+    assert!(stdout.contains("Diff in"));
+    assert_eq!(
+        std::fs::read_to_string(&description).expect("read back"),
+        "Imports: b, a\nPackage: p\n",
+        "--check must not write"
+    );
+}
+
+#[test]
+fn cli_format_verify_accepts_a_description_path() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let description = write_unformatted_package(dir.path());
+
+    let output = run_cli_no_stdin([
+        "format",
+        "--verify",
+        description.to_str().expect("utf-8 path"),
+    ]);
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&description).expect("read back"),
+        "Imports: b, a\nPackage: p\n",
+        "--verify must not write"
+    );
+}
+
+#[test]
+fn cli_format_leaves_a_description_alone_when_the_config_says_so() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let description = write_unformatted_package(dir.path());
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[format]\ndescription = false\n",
+    )
+    .expect("arity.toml");
+
+    let output = run_cli_in(dir.path(), ["format", "."]);
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&description).expect("read back"),
+        "Imports: b, a\nPackage: p\n"
+    );
+
+    // Naming it explicitly now reports why, rather than silently doing nothing.
+    let output = run_cli_in(dir.path(), ["format", "DESCRIPTION"]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("utf-8");
+    assert!(stderr.contains("[format] description = false"), "{stderr}");
+}
+
+#[test]
+fn cli_format_refuses_a_description_it_cannot_restyle_safely() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let description = write_unformatted_package(dir.path());
+    // Two records: valid DCF, not a DESCRIPTION.
+    std::fs::write(&description, "Package: p\n\nPackage: q\n").expect("write");
+
+    let output = run_cli_no_stdin(["format", description.to_str().expect("utf-8 path")]);
+    assert!(output.status.success(), "a decline is not a failure");
+    assert_eq!(
+        std::fs::read_to_string(&description).expect("read back"),
+        "Package: p\n\nPackage: q\n"
+    );
+}
+
+#[test]
+fn cli_format_stdin_is_r_unless_the_filename_says_otherwise() {
+    // Valid under both grammars — as R it is two `:` expressions — so only
+    // `--stdin-filename` can decide which one the buffer is.
+    let source = "Package: p\nImports: b\n";
+
+    let output = run_cli(["format", "-"], source);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8"),
+        "Package:p\nImports:b\n",
+        "an unnamed buffer is R"
+    );
+
+    let output = run_cli(["format", "--stdin-filename", "DESCRIPTION", "-"], source);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8"),
+        "Package: p\nImports:\n    b\n"
     );
 }
