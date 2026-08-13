@@ -17,7 +17,7 @@ Version: 0.1.0
 Title: A Test Package
 Description: Fixture data for arity's own tests.
 License: MIT + file LICENSE
-Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
+Authors@R: person(\"Test\", \"User\", email = \"test@example.com\", role = c(\"aut\", \"cre\"))
 ";
 
 /// Rule ids reported for the file named `file_name` in `result`.

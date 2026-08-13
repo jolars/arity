@@ -63,12 +63,60 @@ them and is looser than the code.
 
 Prerequisite worth doing first, and the thing that makes the rest defensible:
 
-- [ ] **A `.check_package_description` differential oracle**, alongside
-      `tests/deps_oracle.rs` and `tests/dcf_oracle.rs`: run R's checker with
-      `strict = TRUE` over the DESCRIPTION corpus and assert arity's findings
-      agree. Turns "did we read CRAN's rules right" from reading comprehension
-      into a pinned test, and it is the precondition for the title-case port
-      below.
+- [x] **A `.check_package_description` differential oracle.** Done:
+      `tests/oracle/description_oracle.R` + `tests/description_oracle.rs`,
+      `#[ignore]`d, `task description-oracle`. 47 cases (the rindex fixtures,
+      the reference checkouts when present, and a planted-defect table), and a
+      missing `Rscript` is a skip, as in the other two oracles.
+
+      Three checkers, because one is not enough:
+      `.check_package_description(strict = TRUE)`,
+      `.check_package_description_authors_at_R_field(strict = 2L)` (the outer
+      checker calls it at `strict = FALSE`, so the per-person name, role, ORCID,
+      and ROR signals are unreachable from there), and the `duplicates` half of
+      `.check_package_description2`. Its other halves need installed packages
+      and a `src/`, which a text-only oracle has no business simulating.
+
+      **Two-sided by construction**, because arity implements a fraction of what
+      R checks. `GATES` holds the rules arity ships and requires containment,
+      not parity: every finding arity reports must be backed by an R signal on
+      that case. The reverse is not gated—`description-version-constraint`
+      deliberately says nothing about a malformed package *name*, and demanding
+      parity would be demanding a rule that does not exist. `PLANNED` holds the
+      signals no rule covers, each tagged with the rule above that will claim
+      it; they are counted and ranked, never failed, and that ranking is the
+      work-list. Today: text-format 10, authors-at-r 4, encoding 3,
+      malformed-name 3, then one or two each for the rest.
+
+      Two structural failures keep it honest, and both were verified by
+      mutation rather than assumed: an **unknown signal fails** (R's checkers
+      are data that changes with R, so a new check must be classified, not
+      absorbed), and a **gated signal no case exercises fails** (an oracle that
+      tests nothing passes quietly forever). Moving a signal from `PLANNED` to
+      `GATES` is what "the rule landed" means.
+
+      Facts it established, each of which contradicts a plausible reading of
+      R-exts:
+  - `person("A", "B", role = c("aut", "cre"))` with **no email** is rejected
+    by R (`bad_authors_at_R_field_has_no_valid_maintainer`), because
+    `Maintainer` is *derived* and the derivation needs one. See the
+    `description-missing-field` gap above; the fixtures in `tests/lint.rs` and
+    `tests/lint_description.rs` were themselves incomplete this way and now
+    carry an `email`.
+  - `missing_encoding` is **not** "contains non-ASCII": R's condition is
+    `!all(.is_ISO_8859(db))`, so a Latin-1-representable `Café` does not
+    trigger it and CJK does. A rule written from the manual would be wrong.
+  - `valid_package_name` requires **at least two characters**, so `Package: p`
+    is itself malformed—which quietly contaminates any hand-written fixture.
+  - R buckets a bad dependency entry three ways and they are not the obvious
+    ones: `dplyr (1.0.0)` is a `bad_dep_entry` (the parens do not hold
+    `op version` at all), `dplyr (=> 1.0)` a `bad_dep_op`, `dplyr (>= foo)` a
+    `bad_dep_version`. `description-version-constraint` cuts across all three,
+    which is why it is gated against their union.
+  - `.check_package_description` does **not** check for missing mandatory
+    fields at all—that lives in `R CMD build`—so `description-missing-field`
+    and `description-duplicate-field` have no counterpart signal and stay
+    ungated. Worth knowing before hunting for one.
 
 Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
 

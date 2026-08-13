@@ -103,6 +103,11 @@ tasks:
     cmds:
       - cargo test --test deps_oracle -- --ignored --nocapture
 
+  description-oracle:
+    desc: Check the DESCRIPTION rules against `R CMD check`'s own, and report the signals no rule covers yet (needs R)
+    cmds:
+      - cargo test --test description_oracle -- --ignored --nocapture
+
   roxygen-oracle:
     desc: Measure roxygen2 Rd-preservation fixed point on the curated corpus (writes ROXYGEN_ORACLE.md; needs R + roxygen2)
     cmds:

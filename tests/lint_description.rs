@@ -16,13 +16,18 @@ use tempfile::TempDir;
 
 /// A DESCRIPTION with every field `R CMD check` requires, so a fixture only
 /// varies what its test is actually about.
+///
+/// The creator carries an `email` because R derives `Maintainer` from
+/// `Authors@R` and refuses to without one — a fixture missing it is not
+/// complete, whatever arity currently reports
+/// (`a_creator_without_an_email_is_not_yet_reported`).
 const COMPLETE_DESCRIPTION: &str = "\
 Package: testpkg
 Version: 0.1.0
 Title: A Test Package
 Description: Fixture data for arity's own tests.
 License: MIT + file LICENSE
-Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
+Authors@R: person(\"Test\", \"User\", email = \"test@example.com\", role = c(\"aut\", \"cre\"))
 ";
 
 /// Write a package rooted at a fresh temp dir: `DESCRIPTION`, `NAMESPACE`, and
@@ -342,9 +347,39 @@ Version: 0.1.0
 Title: A Test Package
 Description: Fixture data.
 License: MIT + file LICENSE
-Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
+Authors@R: person(\"Test\", \"User\", email = \"test@example.com\", role = c(\"aut\", \"cre\"))
 ";
     assert!(!ids(text).contains(&"description-missing-field"));
+}
+
+/// **Known gap**, pinned so it reads as a defect rather than as intent.
+///
+/// The rule accepts any non-empty `Authors@R`, but R only *derives* `Author` and
+/// `Maintainer` from a person with role `"cre"`, a **valid email**, and a
+/// non-empty name. Without the email R rejects the package outright —
+/// "Authors@R field gives no person with maintainer role, valid email address
+/// and non-empty name", signal
+/// `bad_authors_at_R_field_has_no_valid_maintainer`, confirmed by
+/// `tests/description_oracle.rs`.
+///
+/// Closing it means consulting the parsed field instead of testing it for
+/// non-emptiness, so it waits on `description-authors-at-r` (`TODO.md`). When it
+/// lands, invert this assertion.
+#[test]
+fn a_creator_without_an_email_is_not_yet_reported() {
+    let text = "\
+Package: testpkg
+Version: 0.1.0
+Title: A Test Package
+Description: Fixture data.
+License: MIT + file LICENSE
+Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
+";
+    assert!(
+        !ids(text).contains(&"description-missing-field"),
+        "the gap has been closed — invert this assertion and gate \
+         `bad_authors_at_R_field_has_no_valid_maintainer` in the oracle",
+    );
 }
 
 /// The legacy pair satisfies it too — plenty of packages still write both.
