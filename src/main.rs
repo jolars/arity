@@ -784,7 +784,7 @@ fn run_format_write_paths(
 ) -> ExitCode {
     let files = match arity::file_discovery::collect_r_files(paths, exclude) {
         Ok(files) => files,
-        Err(arity::file_discovery::FileDiscoveryError::NonRFilePath { path }) => {
+        Err(arity::file_discovery::FileDiscoveryError::UnsupportedFilePath { path }) => {
             eprintln!(
                 "error: input file {} is not an .R file; format only supports .R files",
                 path.display()
@@ -983,7 +983,7 @@ fn run_lint(
 /// `Some(exit_code)` only on a hard error (discovery / IO); on success returns
 /// `None` so the caller falls through to the normal reporting pass.
 ///
-/// Deliberately `collect_r_files`, not `collect_lint_files`: no `DESCRIPTION`
+/// Deliberately `collect_r_files`, not `collect_source_files`: no `DESCRIPTION`
 /// rule ships a fix, and reading one here would only invite feeding it to the R
 /// parser. The day a DCF fix lands, this has to widen.
 fn apply_fixes_to_paths(

@@ -1,5 +1,9 @@
 use super::*;
 
+/// The one spelling of the file name, shared with file discovery so the server
+/// and the CLI can never disagree about which grammar a path is.
+use crate::file_discovery::DESCRIPTION_FILE_NAME;
+
 /// Which grammar an open document is written in.
 ///
 /// The server serves **two** languages — R and the DCF of a `DESCRIPTION` — and
@@ -44,10 +48,10 @@ impl DocumentKind {
     /// `untitled:` buffer gets (see
     /// [`placeholder_file_name`](Self::placeholder_file_name)).
     pub(crate) fn from_path(path: &Path) -> Self {
-        match path.file_name().and_then(|n| n.to_str()) {
-            Some(DESCRIPTION_FILE_NAME) => Self::Description,
-            _ => Self::R,
+        if crate::file_discovery::is_description_file(path) {
+            return Self::Description;
         }
+        Self::R
     }
 
     /// The file name a document of this kind gets when its URI has no path —
@@ -61,10 +65,6 @@ impl DocumentKind {
         }
     }
 }
-
-/// The one spelling of the file name, shared by both [`DocumentKind`]
-/// constructors so they cannot drift apart.
-const DESCRIPTION_FILE_NAME: &str = "DESCRIPTION";
 
 /// An open document: the live buffer plus the version the client last sent.
 ///

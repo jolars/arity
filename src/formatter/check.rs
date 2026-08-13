@@ -26,8 +26,8 @@ pub struct ChangedFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckError {
     MissingPaths,
-    NoRFiles,
-    NonRFilePath { path: PathBuf },
+    NoFiles,
+    UnsupportedFilePath { path: PathBuf },
     WalkError { path: PathBuf, message: String },
     ReadError { path: PathBuf, source: String },
     FormatError { path: PathBuf, source: FormatError },
@@ -42,10 +42,10 @@ impl fmt::Display for CheckError {
                     "--check requires at least one input path (file or directory)"
                 )
             }
-            Self::NoRFiles => {
+            Self::NoFiles => {
                 write!(f, "no .R files found under the provided input paths")
             }
-            Self::NonRFilePath { path } => {
+            Self::UnsupportedFilePath { path } => {
                 write!(
                     f,
                     "input file {} is not an .R file; --check only supports .R files",
@@ -70,7 +70,7 @@ impl std::error::Error for CheckError {}
 impl From<FileDiscoveryError> for CheckError {
     fn from(value: FileDiscoveryError) -> Self {
         match value {
-            FileDiscoveryError::NonRFilePath { path } => Self::NonRFilePath { path },
+            FileDiscoveryError::UnsupportedFilePath { path } => Self::UnsupportedFilePath { path },
             FileDiscoveryError::WalkError { path, message } => Self::WalkError { path, message },
         }
     }
@@ -113,7 +113,7 @@ pub fn check_paths_with_style_cached(
                 changed_files: Vec::new(),
             });
         }
-        return Err(CheckError::NoRFiles);
+        return Err(CheckError::NoFiles);
     }
 
     let checked_files = files.len();

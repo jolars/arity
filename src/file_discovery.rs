@@ -8,7 +8,7 @@ use crate::project::is_package_root;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileDiscoveryError {
-    NonRFilePath { path: PathBuf },
+    UnsupportedFilePath { path: PathBuf },
     WalkError { path: PathBuf, message: String },
 }
 
@@ -130,18 +130,18 @@ impl ExcludeFilter {
     }
 }
 
-/// The files one lint run will process, split by grammar.
+/// The files one run will process, split by grammar.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveredFiles {
     pub r: Vec<PathBuf>,
-    /// Package `DESCRIPTION`s — see [`collect_lint_files`] for which ones a walk
+    /// Package `DESCRIPTION`s — see [`collect_source_files`] for which ones a walk
     /// picks up.
     pub description: Vec<PathBuf>,
 }
 
 /// Discover the `.R` files under `paths`. The R-only view, for the callers that
-/// want exactly that: the formatter, `arity index`, and the lint driver's
-/// project-scope seeding.
+/// want exactly that: `arity index`, the lint driver's project-scope seeding,
+/// and `lint --fix`.
 pub fn collect_r_files(
     paths: &[PathBuf],
     exclude: &ExcludeFilter,
@@ -149,8 +149,8 @@ pub fn collect_r_files(
     collect(paths, exclude, false).map(|files| files.r)
 }
 
-/// Discover both grammars' lint inputs under `paths` — the lint driver's entry
-/// point.
+/// Discover both grammars' inputs under `paths` — what `arity lint` and
+/// `arity format` each process.
 ///
 /// A **walk** picks up a `DESCRIPTION` only when its directory is a package root
 /// ([`is_package_root`]) that is not itself inside another package. The first
@@ -159,9 +159,15 @@ pub fn collect_r_files(
 /// `tests/`, which is fixture data for a test rather than anybody's package
 /// metadata — the same reason `undeclared-dependency` looks only at `R/`.
 ///
+/// That gate matters more to `format` than it did to `lint`, and for a different
+/// reason: a fixture package's `DESCRIPTION` is often deliberately malformed and
+/// asserted on byte for byte by its own project's tests. Linting one wastes the
+/// reader's time; rewriting one breaks their suite.
+///
 /// An **explicitly named** `DESCRIPTION` is always accepted, matching how an
-/// explicitly named excluded `.R` file is still processed.
-pub fn collect_lint_files(
+/// explicitly named excluded `.R` file is still processed. The user typed the
+/// path; that is consent.
+pub fn collect_source_files(
     paths: &[PathBuf],
     exclude: &ExcludeFilter,
 ) -> Result<DiscoveredFiles, FileDiscoveryError> {
@@ -192,7 +198,7 @@ fn collect(
                 found_descriptions.push(path.clone());
                 continue;
             }
-            return Err(FileDiscoveryError::NonRFilePath { path: path.clone() });
+            return Err(FileDiscoveryError::UnsupportedFilePath { path: path.clone() });
         }
 
         if path.is_dir() {
@@ -256,10 +262,18 @@ fn is_r_file(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("r"))
 }
 
+/// The one file name R reads package metadata from.
+pub const DESCRIPTION_FILE_NAME: &str = "DESCRIPTION";
+
 /// Whether `path` is named `DESCRIPTION`. Case-sensitive: R reads that exact
 /// name, so `description` is an unrelated file.
-fn is_description_file(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "DESCRIPTION")
+///
+/// The single path-to-grammar classifier. The language server's `DocumentKind`
+/// goes through it too, so a path can never be an R file to one half of the
+/// codebase and a `DESCRIPTION` to the other.
+pub fn is_description_file(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == DESCRIPTION_FILE_NAME)
 }
 
 /// Whether `dir` is a package root in its own right, rather than a package

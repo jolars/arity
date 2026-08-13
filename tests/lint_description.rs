@@ -82,7 +82,7 @@ fn a_packages_description_is_linted_by_a_directory_walk() {
     assert_eq!(description_report(&result).status, LintStatus::Clean);
 }
 
-/// An explicitly named `DESCRIPTION` used to be a hard `NonRFilePath` error.
+/// An explicitly named `DESCRIPTION` used to be a hard `UnsupportedFilePath` error.
 #[test]
 fn an_explicitly_named_description_is_linted() {
     let (_dir, root) = package(COMPLETE_DESCRIPTION, "", &[("a.R", "f <- function() 1\n")]);
@@ -189,7 +189,7 @@ fn a_non_lintable_explicit_path_is_still_an_error() {
     std::fs::write(&path, "hello\n").unwrap();
 
     let err = check_paths(std::slice::from_ref(&path)).expect_err("should reject the path");
-    assert_eq!(err, LintError::NonRFilePath { path });
+    assert_eq!(err, LintError::UnsupportedFilePath { path });
 }
 
 // ---------------------------------------------------------------------------
