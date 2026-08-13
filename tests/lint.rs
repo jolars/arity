@@ -3941,6 +3941,41 @@ fn seq_skips_shadowed_length() {
 }
 
 #[test]
+fn seq_message_names_the_actual_range() {
+    // The message quotes the code that is there, not a stand-in shape: a
+    // `1:NCOL(a)` finding must not talk about `1:nrow(x)`.
+    for (src, shape, replacement) in [
+        ("idx <- 1:NCOL(a)\n", "1:NCOL(a)", "seq_len(NCOL(a))"),
+        (
+            "idx <- 1:length(df$col)\n",
+            "1:length(df$col)",
+            "seq_along(df$col)",
+        ),
+        ("idx <- 1:n\n", "1:n", "seq_len(n)"),
+    ] {
+        let d = diagnostics(src)
+            .into_iter()
+            .find(|d| d.rule == "seq")
+            .expect("expected a seq finding");
+        assert_eq!(
+            d.message.body,
+            format!(
+                "`{shape}` counts down (`1:0`) when the length is zero; \
+                 `{replacement}` handles empty input"
+            )
+        );
+        assert_eq!(
+            d.message.suggestion.as_deref(),
+            Some(format!("Use `{replacement}`.").as_str())
+        );
+        assert_eq!(
+            d.fix.expect("expected a fix").description,
+            format!("Replace `{shape}` with `{replacement}`")
+        );
+    }
+}
+
+#[test]
 fn seq_withholds_fix_for_dropped_comment() {
     // A comment outside the preserved operand would be dropped by the rewrite,
     // so the fix is withheld — the finding is still reported.

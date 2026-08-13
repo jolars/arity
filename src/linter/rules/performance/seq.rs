@@ -24,6 +24,9 @@
 //! lengths. The replacement is a call (a primary, binding tighter than the `:`
 //! expression it replaces), so no precedence guard is needed. The fix is
 //! withheld when a comment outside the preserved operand would be dropped.
+//!
+//! The message quotes the range and its rewrite as they appear in the file, so
+//! it reads as advice about *this* code rather than about a stand-in shape.
 
 use rowan::ast::AstNode as _;
 
@@ -43,6 +46,13 @@ const EXAMPLES: &[Example] = &[Example {
 /// The callees whose count the range runs up to. `length` gets the dedicated
 /// `seq_along(x)`; the dimension counts keep the call inside `seq_len(...)`.
 const DIM_CALLEES: &[&str] = &["nrow", "ncol", "NROW", "NCOL"];
+
+/// Render a snippet for the diagnostic text. The operands are arbitrary code,
+/// so a bound wrapped across lines would otherwise put a newline in the
+/// message; the fix keeps its own copy verbatim.
+fn compact(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 impl Rule for Seq {
     fn id(&self) -> &'static str {
@@ -89,18 +99,13 @@ impl Rule for Seq {
 
         // Classify the upper bound: a bare name, or a base length-like call.
         // `preserved` is the sole operand the fix carries over verbatim.
-        let (shape, replacement, content, preserved) = if let Some(token) = rhs.as_token() {
+        let (content, preserved) = if let Some(token) = rhs.as_token() {
             let is_name =
                 Ident::cast(token.clone()).is_some_and(|i| i.constant().is_none() && !i.is_dots());
             if !is_name {
                 return;
             }
-            (
-                "1:n",
-                "seq_len(n)",
-                format!("seq_len({})", token.text()),
-                rhs.text_range(),
-            )
+            (format!("seq_len({})", token.text()), rhs.text_range())
         } else if let Some(call) = rhs.as_node().and_then(|n| CallExpr::cast(n.clone())) {
             let Some(name) = matchers::callee_name(&call) else {
                 return;
@@ -115,14 +120,10 @@ impl Rule for Seq {
             }
             match name.as_str() {
                 "length" => (
-                    "1:length(x)",
-                    "seq_along(x)",
                     format!("seq_along({})", matchers::element_text(&arg)),
                     arg.text_range(),
                 ),
                 _ if DIM_CALLEES.contains(&name.as_str()) => (
-                    "1:nrow(x)",
-                    "seq_len(nrow(x))",
                     format!("seq_len({})", call.syntax().text()),
                     call.syntax().text_range(),
                 ),
@@ -131,6 +132,15 @@ impl Rule for Seq {
         } else {
             return;
         };
+
+        // Name the range that is actually there — a stand-in shape would tell a
+        // `1:NCOL(a)` reader about `1:nrow(x)`.
+        let shape = compact(&format!(
+            "{}:{}",
+            matchers::element_text(&lhs),
+            matchers::element_text(&rhs)
+        ));
+        let replacement = compact(&content);
 
         let r = node.text_range();
         // The fix preserves only the upper bound's operand. A comment anywhere
