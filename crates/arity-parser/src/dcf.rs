@@ -32,7 +32,10 @@ pub mod parser;
 pub mod syntax;
 
 pub use ast::{CommentLine, Document, Field, MalformedLine, Record, ValueLine};
-pub use deps::{DependencyEntry, VersionConstraint, VersionOp, dependency_entries};
+pub use deps::{
+    DEPENDENCY_FIELDS, DependencyEntry, VersionConstraint, VersionOp, dependency_entries,
+    is_dependency_field,
+};
 pub use parser::{ParseOutput, parse, reconstruct};
 pub use syntax::{DcfLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
