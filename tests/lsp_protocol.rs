@@ -238,9 +238,15 @@ impl Harness {
         );
     }
 
-    /// Format the current buffer and return the single whole-document edit's
-    /// `newText` — a proxy for the server's stored buffer contents.
-    fn formatted_buffer(&mut self, uri: &str) -> String {
+    /// Format the current buffer and return the document its edits produce,
+    /// applied to `buffer` — the text the caller believes the server stores.
+    ///
+    /// Formatting answers with edits scoped to the lines that change, so the
+    /// reply is no longer the whole document on its own. The callers keep every
+    /// line of their fixture un-canonical (the `x<-` prefix), so every line
+    /// comes back as a hunk and the read-back is still exact: a wrong splice
+    /// shows up as a hunk that rewrites text the caller never sent.
+    fn formatted_buffer(&mut self, uri: &str, buffer: &str) -> String {
         let id = self.request(
             "textDocument/formatting",
             json!({
@@ -255,12 +261,7 @@ impl Harness {
             .as_array()
             .expect("array of edits")
             .clone();
-        assert_eq!(edits.len(), 1, "one whole-document edit: {edits:#?}");
-        edits[0]
-            .get("newText")
-            .and_then(Value::as_str)
-            .expect("edit newText")
-            .to_string()
+        apply_edits(buffer, &edits)
     }
 
     /// Receive messages until `pred` matches, draining (ignoring) the rest. On
@@ -411,6 +412,70 @@ impl Harness {
     }
 }
 
+/// Apply formatting `edits` (wire JSON) to `text` the way a client does: every
+/// range indexes the *original* document, so splicing from the end keeps the
+/// earlier offsets valid. Checks the LSP requirement that they do not overlap
+/// along the way.
+///
+/// Positions are resolved here rather than through the server's own
+/// `LineIndex`, so a bug in it cannot cancel itself out. UTF-16 throughout,
+/// which is what these tests negotiate.
+fn apply_edits(text: &str, edits: &[Value]) -> String {
+    let mut spans: Vec<(usize, usize, &str)> = edits
+        .iter()
+        .map(|edit| {
+            let at = |which: &str| {
+                let line = edit
+                    .pointer(&format!("/range/{which}/line"))
+                    .and_then(Value::as_u64)
+                    .expect("edit position line");
+                let character = edit
+                    .pointer(&format!("/range/{which}/character"))
+                    .and_then(Value::as_u64)
+                    .expect("edit position character");
+                utf16_position_to_byte(text, line as usize, character as usize)
+            };
+            (
+                at("start"),
+                at("end"),
+                edit.get("newText")
+                    .and_then(Value::as_str)
+                    .expect("edit newText"),
+            )
+        })
+        .collect();
+    spans.sort_by_key(|&(start, ..)| start);
+    for pair in spans.windows(2) {
+        assert!(pair[0].1 <= pair[1].0, "edits must not overlap: {spans:?}");
+    }
+    let mut out = text.to_string();
+    for &(start, end, new_text) in spans.iter().rev() {
+        out.replace_range(start..end, new_text);
+    }
+    out
+}
+
+/// The byte offset of UTF-16 `character` on `line` of `text`, clamped to the
+/// end of the text (a range end may sit one line past the last one).
+fn utf16_position_to_byte(text: &str, line: usize, character: usize) -> usize {
+    let mut at = 0;
+    for _ in 0..line {
+        match text[at..].find('\n') {
+            Some(offset) => at += offset + 1,
+            None => return text.len(),
+        }
+    }
+    let mut units = 0;
+    for ch in text[at..].chars() {
+        if units >= character || ch == '\n' {
+            break;
+        }
+        units += ch.len_utf16();
+        at += ch.len_utf8();
+    }
+    at
+}
+
 impl Drop for Harness {
     fn drop(&mut self) {
         // If a test panicked before `shutdown()`, dropping the client
@@ -534,7 +599,8 @@ fn did_open_then_formatting_request_responds() {
     let edits = result
         .as_array()
         .expect("formatting returns an array of edits");
-    assert_eq!(edits.len(), 1, "one whole-document edit: {edits:#?}");
+    // Edits are line-scoped; this document is one line, so it is one edit.
+    assert_eq!(edits.len(), 1, "one changed line is one edit: {edits:#?}");
     assert_eq!(
         edits[0].get("newText").and_then(Value::as_str),
         Some("x <- 1\n"),
@@ -626,16 +692,21 @@ fn formatting_a_description_uses_the_dcf_grammar_over_the_wire() {
         }),
     );
     let resp = h.recv_response(&id);
-    let edits = resp.response_result.expect("formatting result");
-    let new_text = edits[0]["newText"].as_str().expect("edit text");
+    let edits = resp
+        .response_result
+        .expect("formatting result")
+        .as_array()
+        .expect("array of edits")
+        .clone();
+    let formatted = apply_edits(DESCRIPTION_VALID_AS_R, &edits);
     // The single assertion that guards the whole feature: `Package: testpkg`
     // keeps the space `read.dcf` needs. The R formatter would have written
     // `Package:testpkg`, which is a different file to R.
     assert!(
-        new_text.starts_with("Package: testpkg\n"),
-        "formatted as R, not DCF: {new_text:?}"
+        formatted.starts_with("Package: testpkg\n"),
+        "formatted as R, not DCF: {formatted:?}"
     );
-    assert!(new_text.contains("Depends:\n    R\n"), "{new_text:?}");
+    assert!(formatted.contains("Depends:\n    R\n"), "{formatted:?}");
     h.shutdown();
 }
 
@@ -1045,7 +1116,7 @@ fn incremental_did_change_applies_ranged_edit() {
             "text": "42"
         }]),
     );
-    assert_eq!(h.formatted_buffer(uri), "x <- 42\n");
+    assert_eq!(h.formatted_buffer(uri, "x<-42\n"), "x <- 42\n");
     h.shutdown();
 }
 
@@ -1073,7 +1144,10 @@ fn incremental_did_change_applies_ordered_changes() {
         ]),
     );
     // Formatting the spliced buffer proves both edits landed in order.
-    assert_eq!(h.formatted_buffer(uri), "x <- 1\nfoo\ny <- 2\n");
+    assert_eq!(
+        h.formatted_buffer(uri, "x<-1\nfoo\ny<-2\n"),
+        "x <- 1\nfoo\ny <- 2\n"
+    );
     h.shutdown();
 }
 
@@ -1141,7 +1215,10 @@ fn incremental_did_change_applies_utf16_ranged_edit() {
             "text": "z"
         }]),
     );
-    assert_eq!(h.formatted_buffer(uri), "x <- \"z\"\ny <- 2\n");
+    assert_eq!(
+        h.formatted_buffer(uri, "x<-\"z\"\ny<-2\n"),
+        "x <- \"z\"\ny <- 2\n"
+    );
     h.shutdown();
 }
 
@@ -1162,7 +1239,10 @@ fn incremental_did_change_across_a_wide_char_boundary() {
             "text": "Q"
         }]),
     );
-    assert_eq!(h.formatted_buffer(uri), "x <- \"\u{00e1}Q\"\n");
+    assert_eq!(
+        h.formatted_buffer(uri, "x<-\"\u{00e1}Q\"\n"),
+        "x <- \"\u{00e1}Q\"\n"
+    );
     h.shutdown();
 }
 
@@ -1195,7 +1275,7 @@ fn incremental_did_change_inserting_a_wide_char_shifts_later_positions() {
         ]),
     );
     assert_eq!(
-        h.formatted_buffer(uri),
+        h.formatted_buffer(uri, "x<-c(\"\u{00e1}\u{1F600}\", \"z\")\n"),
         "x <- c(\"\u{00e1}\u{1F600}\", \"z\")\n"
     );
     h.shutdown();
@@ -1223,7 +1303,10 @@ fn incremental_did_change_coerces_an_inverted_range() {
             "text": "9"
         }]),
     );
-    assert_eq!(h.formatted_buffer(uri), "x <- 1\ny <- 92\n");
+    assert_eq!(
+        h.formatted_buffer(uri, "x<-1\ny<-92\n"),
+        "x <- 1\ny <- 92\n"
+    );
     h.shutdown();
 }
 
@@ -1244,7 +1327,10 @@ fn full_replacement_after_ranged_edits_reseeds_the_buffer() {
             { "text": "z<-\"\u{1F600}\"\n" }
         ]),
     );
-    assert_eq!(h.formatted_buffer(uri), "z <- \"\u{1F600}\"\n");
+    assert_eq!(
+        h.formatted_buffer(uri, "z<-\"\u{1F600}\"\n"),
+        "z <- \"\u{1F600}\"\n"
+    );
     // A ranged edit against the reseeded buffer still resolves correctly.
     h.did_change_raw(
         uri,
@@ -1255,7 +1341,10 @@ fn full_replacement_after_ranged_edits_reseeds_the_buffer() {
             "text": "w"
         }]),
     );
-    assert_eq!(h.formatted_buffer(uri), "w <- \"\u{1F600}\"\n");
+    assert_eq!(
+        h.formatted_buffer(uri, "w<-\"\u{1F600}\"\n"),
+        "w <- \"\u{1F600}\"\n"
+    );
     h.shutdown();
 }
 
@@ -1508,7 +1597,9 @@ fn format_end_character(h: &mut Harness, uri: &str, text: &str) -> i64 {
         .as_array()
         .expect("array of edits")
         .clone();
-    assert_eq!(edits.len(), 1, "one whole-document edit: {edits:#?}");
+    // Edits are line-scoped; these fixtures are one line, so the single edit's
+    // end is the end of the document, which is what the encoding is read off.
+    assert_eq!(edits.len(), 1, "one changed line is one edit: {edits:#?}");
     edits[0]
         .pointer("/range/end/character")
         .and_then(Value::as_i64)

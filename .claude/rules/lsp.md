@@ -98,6 +98,23 @@ misleading (rename).
   coverage for the splice.
 - `compute_*` keep `&str` signatures (public API, and `tests/lsp.rs` drives
   them); the buffer-taking `*_in` / `*_via_db` forms are the hot path.
+- **Formatting answers with line-scoped edits, not a whole-document
+  replacement** (`format.rs::line_diff_edits`): the formatted output is
+  line-diffed against the buffer, so an untouched line keeps the client's
+  cursor, folds, and markers. A diff covering more than half the span falls
+  back to the single replacement, which is the only case that should produce
+  one. Both the full-document and the range path go through it, `DESCRIPTION`
+  included, and whatever comes back must reproduce `format` byte for byte —
+  that property is what `format.rs`'s tests assert.
+- **The reason is the client's anchors, not our own work.** The `didChange` the
+  client echoes back costs the server the same either way, and this was
+  measured, not assumed: `parsed_document` recovers a spanning `diff_edit` from
+  the old and new text, so a whole-document echo reparses exactly as
+  incrementally as a scoped one, and the staged multi-edit path (Stage B) never
+  fires for format hunks — a whole-line replacement misses the single-edit
+  ladder, and one miss fails the whole sequence. The splice saves ~20 µs on a
+  62 KB file. Do not re-derive a performance argument here; if the reparse
+  ladder later takes line-shaped edits, measure again before claiming one.
 
 ## Paths
 

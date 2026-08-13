@@ -163,6 +163,11 @@ tasks:
     cmds:
       - cargo bench --bench line_index
 
+  bench-format-edits:
+    desc: Measure what line-scoped LSP formatting edits cost and what they save
+    cmds:
+      - cargo bench --bench format_edits
+
   docs-gen:
     desc: Regenerate generated mdBook pages (CLI reference + rule docs)
     cmds:

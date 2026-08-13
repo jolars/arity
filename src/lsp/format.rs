@@ -1,3 +1,5 @@
+use similar::{DiffTag, TextDiff};
+
 use super::*;
 
 /// The [`ParseOptions`] for re-parsing `path`'s buffer outside the db: the
@@ -175,6 +177,9 @@ pub(crate) fn lsp_range_to_text_range(
 
 /// Turn a [`RangeFormatted`] region into the LSP edit list, dropping the edit
 /// when it would not change the buffer.
+///
+/// Line-scoped within the widened span where the diff is small
+/// ([`line_diff_edits`]), one replacement of the whole span otherwise.
 pub(crate) fn range_edits(
     line_index: &LineIndex,
     text: &str,
@@ -183,8 +188,14 @@ pub(crate) fn range_edits(
 ) -> Vec<TextEdit> {
     let start = usize::from(formatted.range.start());
     let end = usize::from(formatted.range.end());
-    if text.get(start..end) == Some(formatted.text.as_str()) {
+    let old = text.get(start..end);
+    if old == Some(formatted.text.as_str()) {
         return Vec::new();
+    }
+    if let Some(edits) =
+        old.and_then(|old| line_diff_edits(line_index, start, old, &formatted.text, encoding))
+    {
+        return edits;
     }
     vec![TextEdit {
         range: Range {
@@ -195,9 +206,12 @@ pub(crate) fn range_edits(
     }]
 }
 
-/// The whole-document edit replacing `text` with its formatted form (empty when
-/// already formatted). The single source of the edit geometry shared by the
-/// re-parse path ([`compute_format_edits`]) and the cached-tree path.
+/// The edits turning `text` into its formatted form (empty when already
+/// formatted). The single source of the edit geometry shared by the re-parse
+/// path ([`compute_format_edits`]) and the cached-tree path.
+///
+/// Line-scoped where the diff is small ([`line_diff_edits`]), one
+/// whole-document replacement otherwise.
 pub(crate) fn edits_for_formatted(
     text: &str,
     formatted: String,
@@ -217,7 +231,11 @@ pub(crate) fn edits_for_formatted_in(
     if formatted == text {
         return Vec::new();
     }
-    let end = buffer.line_index().byte_to_position(text.len(), encoding);
+    let line_index = buffer.line_index();
+    if let Some(edits) = line_diff_edits(line_index, 0, text, &formatted, encoding) {
+        return edits;
+    }
+    let end = line_index.byte_to_position(text.len(), encoding);
     vec![TextEdit {
         range: Range {
             start: Position::new(0, 0),
@@ -225,6 +243,98 @@ pub(crate) fn edits_for_formatted_in(
         },
         new_text: formatted,
     }]
+}
+
+/// A diff touching more than this fraction of the span it replaces is not worth
+/// expressing as hunks: past it the client's cursor, folds, and markers are
+/// disturbed either way, so one replacement is the cheaper equivalent.
+const MAX_DIFF_COVERAGE: f64 = 0.5;
+
+/// The smallest set of line-granular edits turning `old` into `new`, where
+/// `old` is the slice of the document at byte offset `base` — the whole
+/// document when `base` is 0, a widened range-format span otherwise.
+///
+/// Returns `None` when the diff degenerates, covering more than
+/// [`MAX_DIFF_COVERAGE`] of `old`, leaving the caller to emit its single
+/// replacement instead. That is what keeps a `line_width` change or a
+/// line-ending normalization, which rewrite every line, from becoming a hunk
+/// per line. `None` rather than the edit itself, so neither caller has to clone
+/// the formatted string it already owns.
+///
+/// Why lines and not something finer: a hunk boundary has to be a position the
+/// client can reason about, the formatter's unit of change *is* the line, and
+/// character-level diffing would cost more than the format it follows to spare
+/// edits nobody can see. The edits come back ascending and non-overlapping, as
+/// `textDocument/formatting` requires, and every range indexes the *original*
+/// document.
+fn line_diff_edits(
+    line_index: &LineIndex,
+    base: usize,
+    old: &str,
+    new: &str,
+    encoding: PositionEncoding,
+) -> Option<Vec<TextEdit>> {
+    let diff = TextDiff::from_lines(old, new);
+    // Byte offset of each line start on either side, so a line-index range from
+    // the diff becomes a byte range. Built from the diff's own slices, which
+    // cannot disagree with the indices its ops carry.
+    let old_offsets = line_offsets(diff.iter_old_slices());
+    let new_offsets = line_offsets(diff.iter_new_slices());
+
+    let mut hunks: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> = Vec::new();
+    for op in diff.ops() {
+        let (tag, old_lines, new_lines) = op.as_tag_tuple();
+        if tag == DiffTag::Equal {
+            continue;
+        }
+        match hunks.last_mut() {
+            // Consecutive non-equal ops (a delete abutting an insert) are one
+            // hunk: the client gets a replacement rather than a pair of edits
+            // meeting at a point.
+            Some((old_prev, new_prev))
+                if old_prev.end == old_lines.start && new_prev.end == new_lines.start =>
+            {
+                old_prev.end = old_lines.end;
+                new_prev.end = new_lines.end;
+            }
+            _ => hunks.push((old_lines, new_lines)),
+        }
+    }
+
+    let covered: usize = hunks
+        .iter()
+        .map(|(old_lines, _)| old_offsets[old_lines.end] - old_offsets[old_lines.start])
+        .sum();
+    if hunks.len() > 1 && covered as f64 > old.len() as f64 * MAX_DIFF_COVERAGE {
+        return None;
+    }
+
+    Some(
+        hunks
+            .into_iter()
+            .map(|(old_lines, new_lines)| TextEdit {
+                range: Range {
+                    start: line_index
+                        .byte_to_position(base + old_offsets[old_lines.start], encoding),
+                    end: line_index.byte_to_position(base + old_offsets[old_lines.end], encoding),
+                },
+                new_text: new[new_offsets[new_lines.start]..new_offsets[new_lines.end]].to_string(),
+            })
+            .collect(),
+    )
+}
+
+/// Byte offset of the start of each line, indexed the way the diff's line
+/// indices are, with the total length appended so `offsets[line_count]` closes
+/// the last line.
+fn line_offsets<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<usize> {
+    let mut offsets = vec![0];
+    let mut at = 0;
+    for line in lines {
+        at += line.len();
+        offsets.push(at);
+    }
+    offsets
 }
 
 pub(crate) fn to_lsp_diagnostic(
@@ -291,8 +401,13 @@ mod tests {
             PositionEncoding::Utf16,
         )
         .expect("formatter accepts the buffer");
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].new_text, "Package: p\nImports:\n    a,\n    b\n");
+        // What the edits produce, not their geometry (which
+        // `description_edits_are_scoped_to_the_field_that_changes` pins):
+        // `Imports` reflowed one-per-line is the DCF answer, not the R one.
+        assert_eq!(
+            apply(buffer, &edits, PositionEncoding::Utf16),
+            "Package: p\nImports:\n    a,\n    b\n"
+        );
     }
 
     /// A `DESCRIPTION` the formatter refuses produces no edits at all, which is
@@ -383,6 +498,201 @@ mod tests {
         assert_eq!(item.source.as_deref(), Some("arity"));
         assert_eq!(item.message, "a demo finding");
         assert!(matches!(&item.code, Some(NumberOrString::String(c)) if c == "demo-rule"));
+    }
+
+    // --- edit geometry ----------------------------------------------------
+
+    /// Apply `edits` the way a client does: every range indexes the *original*
+    /// document, so splicing from the end keeps the earlier offsets valid.
+    /// Asserts the LSP requirement that the edits do not overlap along the way.
+    fn apply(text: &str, edits: &[TextEdit], encoding: PositionEncoding) -> String {
+        let line_index = LineIndex::new(text);
+        let mut spans: Vec<(usize, usize, &str)> = edits
+            .iter()
+            .map(|edit| {
+                (
+                    line_index.position_to_byte(edit.range.start, encoding),
+                    line_index.position_to_byte(edit.range.end, encoding),
+                    edit.new_text.as_str(),
+                )
+            })
+            .collect();
+        spans.sort_by_key(|&(start, ..)| start);
+        for pair in spans.windows(2) {
+            assert!(pair[0].1 <= pair[1].0, "edits must not overlap: {spans:?}");
+        }
+        let mut out = text.to_string();
+        for &(start, end, new_text) in spans.iter().rev() {
+            out.replace_range(start..end, new_text);
+        }
+        out
+    }
+
+    fn format_edits(text: &str, encoding: PositionEncoding) -> Vec<TextEdit> {
+        compute_format_edits(text, FormatStyle::default(), encoding, &Default::default())
+            .expect("formatter accepts the fixture")
+    }
+
+    /// A one-line change in a longer document is one edit covering that line,
+    /// not a whole-document replacement. This is what leaves the client's
+    /// cursor, folds, and markers on every other line alone.
+    #[test]
+    fn format_edits_are_scoped_to_the_lines_that_change() {
+        let text = "a <- 1\nb <- 2\nc<-3\nd <- 4\ne <- 5\n";
+        let edits = format_edits(text, PositionEncoding::Utf16);
+        assert_eq!(edits.len(), 1, "one changed line is one edit: {edits:?}");
+        assert_eq!(
+            edits[0].range,
+            Range::new(Position::new(2, 0), Position::new(3, 0)),
+            "the edit must cover exactly the third line"
+        );
+        assert_eq!(edits[0].new_text, "c <- 3\n");
+    }
+
+    /// Changes separated by untouched lines come back as separate edits.
+    #[test]
+    fn separated_changes_are_separate_edits() {
+        let text = "a<-1\nb <- 2\nc <- 3\nd <- 4\ne<-5\n";
+        let edits = format_edits(text, PositionEncoding::Utf16);
+        assert_eq!(edits.len(), 2, "two changed lines are two edits: {edits:?}");
+        assert_eq!(
+            edits[0].range,
+            Range::new(Position::new(0, 0), Position::new(1, 0))
+        );
+        assert_eq!(edits[0].new_text, "a <- 1\n");
+        assert_eq!(
+            edits[1].range,
+            Range::new(Position::new(4, 0), Position::new(5, 0))
+        );
+        assert_eq!(edits[1].new_text, "e <- 5\n");
+    }
+
+    /// A diff scattered across most of the document collapses back to the
+    /// single whole-document replacement: past that point the client's anchors
+    /// are disturbed either way, and one edit is the cheaper equivalent.
+    #[test]
+    fn scattered_wholesale_change_falls_back_to_one_edit() {
+        let text = "a<-1\nb <- 2\nc<-3\nd <- 4\ne<-5\n";
+        let edits = format_edits(text, PositionEncoding::Utf16);
+        assert_eq!(
+            edits.len(),
+            1,
+            "a majority-of-the-file change must collapse: {edits:?}"
+        );
+        assert_eq!(
+            edits[0].range,
+            Range::new(Position::new(0, 0), Position::new(5, 0)),
+            "the fallback edit must span the whole document"
+        );
+    }
+
+    /// The property the whole scheme rests on: whatever set of edits comes
+    /// back, applying it to the original must reproduce `format` byte for byte.
+    #[test]
+    fn format_edits_reproduce_the_formatted_document() {
+        let style = FormatStyle::default();
+        let cases = [
+            "",
+            "x <- 1\n",
+            "x<-1\n",
+            "x <- 1",
+            "x<-1",
+            "a <- 1\nb <- 2\nc<-3\nd <- 4\ne <- 5\n",
+            "a<-1\nb<-2\nc<-3\nd<-4\n",
+            "a<-1\nb <- 2\nc <- 3\nd <- 4\ne<-5\n",
+            "f <- function(x) {\n  y <- 1\n    z<-2\n  y+z\n}\n",
+            "s <- \"\u{1F600}\"\nt<-\"\u{00E9}\"\nu <- 3\n",
+            "a <- 1\r\nb<-2\r\nc <- 3\r\n",
+            "# comment\n\n\n\nx<-1\n",
+            "f(a,b,c)\ng( 1 )\n",
+            "#' Title\n#'\n#' @param x A value.\nf<-function(x) x\n",
+        ];
+        for text in cases {
+            let formatted =
+                format_with_options(text, style, &Default::default()).expect("fixture must format");
+            for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+                let edits = format_edits(text, encoding);
+                assert_eq!(
+                    apply(text, &edits, encoding),
+                    formatted,
+                    "edits must reproduce the formatted text for {text:?} ({encoding:?})"
+                );
+            }
+        }
+    }
+
+    /// A `DESCRIPTION` narrows the same way, through the same choke point: the
+    /// clean `Package:` line is left alone and only the reflowed field moves.
+    #[test]
+    fn description_edits_are_scoped_to_the_field_that_changes() {
+        use crate::incremental::IncrementalDatabase;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("DESCRIPTION");
+        let text = "Package: p\nImports: b, a\n";
+        let db = IncrementalDatabase::default();
+
+        let edits = format_edits_via_db(
+            &db.snapshot(),
+            &path,
+            &buf(text),
+            FormatStyle::default(),
+            PositionEncoding::Utf16,
+        )
+        .expect("formatter accepts the buffer");
+        assert_eq!(edits.len(), 1, "one reflowed field is one edit: {edits:?}");
+        assert_eq!(
+            edits[0].range,
+            Range::new(Position::new(1, 0), Position::new(2, 0)),
+            "the `Package:` line must be left alone"
+        );
+        assert_eq!(edits[0].new_text, "Imports:\n    a,\n    b\n");
+    }
+
+    /// Range formatting narrows within the widened span the same way: the
+    /// formatter's unit of work is the enclosing statements, but the edits
+    /// cover only the lines that actually changed.
+    #[test]
+    fn range_edits_are_scoped_to_the_lines_that_change() {
+        let text = "a <- 1\nb <- 2\nc<-3\nd <- 4\n";
+        // A selection spanning all four statements widens to all four.
+        let range = Range::new(Position::new(0, 0), Position::new(3, 6));
+        let edits = compute_format_range_edits(
+            text,
+            range,
+            FormatStyle::default(),
+            PositionEncoding::Utf16,
+            &Default::default(),
+        )
+        .expect("formats");
+        assert_eq!(edits.len(), 1, "one changed line is one edit: {edits:?}");
+        assert_eq!(
+            edits[0].range,
+            Range::new(Position::new(2, 0), Position::new(3, 0)),
+            "the edit must cover only the changed line, not the widened span"
+        );
+        assert_eq!(edits[0].new_text, "c <- 3\n");
+    }
+
+    /// [`format_edits_reproduce_the_formatted_document`]'s property for the
+    /// range path: the edits reproduce what the formatter produced for the
+    /// widened span, and leave the rest of the document alone.
+    #[test]
+    fn range_edits_reproduce_the_formatted_span() {
+        let style = FormatStyle::default();
+        let text = "a<-1\nb <- 2\nc<-3\nd <- 4\ne<-5\n";
+        for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+            // Widens to the middle three statements, leaving the outer two.
+            let range = Range::new(Position::new(1, 0), Position::new(3, 6));
+            let edits =
+                compute_format_range_edits(text, range, style, encoding, &Default::default())
+                    .expect("formats");
+            assert_eq!(
+                apply(text, &edits, encoding),
+                "a<-1\nb <- 2\nc <- 3\nd <- 4\ne<-5\n",
+                "only the widened span may change ({encoding:?})"
+            );
+        }
     }
 
     // --- db read path -----------------------------------------------------

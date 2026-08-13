@@ -129,7 +129,7 @@ fn completion_bare_includes_base_name() {
 }
 
 #[test]
-fn reformats_unformatted_input_with_full_document_edit() {
+fn reformats_unformatted_input() {
     let input = "x<-1\n";
     let style = FormatStyle::default();
     let expected = format_with_style(input, style).expect("formats");
@@ -137,7 +137,9 @@ fn reformats_unformatted_input_with_full_document_edit() {
 
     let edits = compute_format_edits(input, style, PositionEncoding::Utf16, &Default::default())
         .expect("formatter accepts input");
-    assert_eq!(edits.len(), 1, "expected a single whole-document edit");
+    // Edits are line-scoped; this document is one line, so it is one edit
+    // spanning it. `src/lsp/format.rs` is where the geometry is pinned.
+    assert_eq!(edits.len(), 1, "one changed line is one edit");
 
     let edit = &edits[0];
     assert_eq!(edit.new_text, expected);
