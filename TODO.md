@@ -31,6 +31,67 @@
 
 ## Linter
 
+### `unused-binding` false positives (rlang sweep, 2026-08-13)
+
+All confirmed against `Rscript`. Each also *deletes working code* under
+`lint --fix --unsafe-fixes`, so these are data-loss bugs, not just noise.
+
+- [ ] **An unregistered S3 method is still reached by dispatch.** `used_elsewhere`
+  asks NAMESPACE, which is authoritative for "is this public", not for "is this
+  reachable": R dispatches to a method defined in the package namespace whether
+  or not `S3method()` registers it. rlang's `` `$.r6lite` `` (`R/utils.R:111`)
+  is flagged, and `--unsafe-fixes` deletes it, breaking every `r6lite` object.
+  Reproducer (no NAMESPACE entry needed):
+
+  ```r
+  x <- structure(list(), class = "cls")
+  `$.cls` <- function(self, arg) "dispatched"   # flagged unused
+  x$foo
+  ```
+
+  `unused-function` already faces this and answers it with the dotted-name tier
+  in its `is_s3_method` (`generic.class` is withheld when there is no project);
+  the same reasoning applies *with* a project, for internal methods.
+
+- [ ] **`s3_register()` registers by name convention.** The two-argument form
+  `s3_register("pillar::pillar_shaft", "rlib_bytes")` reaches
+  `pillar_shaft.rlib_bytes` through a name assembled from two string literals —
+  statically derivable, but arity sees no read. Six findings in rlang
+  (`R/bytes.R:264-270`). The three-argument form passes the method as a value,
+  so it is already clean; only the two-argument form is affected. The idiom is
+  vendored widely (vctrs, tibble, pillar, scales) via `standalone-s3-register.R`.
+
+### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
+
+- [ ] **`useDynLib(pkg, .registration = TRUE)` binds native routines arity cannot
+  enumerate.** They live in the C sources, so a reference outside a `.Call`
+  head — passed as a value (`capture_arg = ffi_enquo`) or compared
+  (`identical(capture_arg, ffi_enquo)`) — is a false positive. ~12 findings in
+  rlang (`R/nse-defuse.R`, `R/dots.R`). The head-position case is already
+  handled by the `.C`/`.Call`/`.Fortran`/`.External`/`.External2` arm in
+  `semantic/builder.rs`. Either suppress unresolved bare names in a package
+  declaring `.registration = TRUE`, or harvest the routine names from `src/`'s
+  `R_CallMethodDef` table.
+
+- [ ] **rlang's defusing operators are not data-masking-aware.** `quote()`,
+  `bquote()`, `substitute()`, and `expression()` mask their bodies
+  (`is_quoting_call`, `semantic/builder.rs`), but `quo()`, `quos()`, `expr()`,
+  `exprs()`, `enquo()`, `enquos()` do not, so every captured symbol reads as
+  undefined. Confirmed: `quo(fn(this, that))` yields three findings, the base
+  `quote(fn(this, that))` none. A fix has to respect unquoting — `!!`, `!!!`,
+  and `{{ }}` *do* evaluate — so it is not just a longer name list.
+
+### `roxygen-param` false positive (rlang sweep, 2026-08-13)
+
+- [ ] **`@rdname` merges topics, and the owner block is judged alone.** A block
+  with no `@rdname` of its own can still own a topic that siblings join, and
+  roxygen2 checks `@param` against the *union* of the merged functions' formals.
+  rlang's `missing_arg` block carries `@param x` while `missing_arg()` has no
+  formals; `is_missing(x)` joins via `@rdname missing_arg`, and the generated
+  `man/missing_arg.Rd` has `\item{x}` with three aliases. The existing negative
+  case covers only the block that *joins* a topic, not the one that owns it.
+  Needs cross-block topic resolution within the file.
+
 - [ ] *Speculative micro-opt (deferred):* `resolves_to_base` does a linear
   `model.idents().iter().any(...)` scan for the callee's shadow check. It runs
   only after a rule fully shape-matches (`any(is.na(x))`, unreachable
