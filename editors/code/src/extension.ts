@@ -243,6 +243,8 @@ function buildMiddleware(): Middleware {
       lf(() => next(document, token)),
     provideColorPresentations: (color, context, token, next) =>
       lf(() => next(color, context, token)),
+    provideInlayHints: (document, viewPort, token, next) =>
+      lf(() => next(document, viewPort, token)),
     provideDocumentSemanticTokens: (document, token, next) =>
       lf(() => next(document, token)),
     provideDocumentSemanticTokensEdits: (
