@@ -51,6 +51,150 @@
       another, so do it before that: it touches every call site of both
       functions, `run_dcf_rules`' twin included, and `run_rules` is public API.
 
+### More DESCRIPTION rules (follow-ups to stage 3)
+
+Stage 3 shipped three `description-*` rules; R's own checks define a much larger
+checkable surface. The oracle is three functions, not the prose in R-exts:
+`tools:::.check_package_description` (what `R CMD check` enforces, plus its
+`strict = TRUE` Title/Description clauses), `.check_package_description2`
+(cross-field dependency checks), and `.check_package_CRAN_incoming` (the CRAN
+pretest NOTEs). Read those before writing any rule here; the manual paraphrases
+them and is looser than the code.
+
+Prerequisite worth doing first, and the thing that makes the rest defensible:
+
+- [ ] **A `.check_package_description` differential oracle**, alongside
+      `tests/deps_oracle.rs` and `tests/dcf_oracle.rs`: run R's checker with
+      `strict = TRUE` over the DESCRIPTION corpus and assert arity's findings
+      agree. Turns "did we read CRAN's rules right" from reading comprehension
+      into a pinned test, and it is the precondition for the title-case port
+      below.
+
+Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
+
+- [ ] `description-package-in-multiple-fields`. A package named in more than one
+      of `Depends`/`Imports`/`Suggests`/`Enhances`; R-exts says a package should
+      be listed in only one. Reads straight off `DescriptionFacts::dependencies`.
+      Highest real-world hit rate of anything here and the cheapest—do it first.
+- [ ] `description-malformed-name`. `Package` against R's
+      `valid_package_name` (`[[:alpha:]][[:alnum:].]*[[:alnum:]]`), plus "this is
+      the name of a base package"; the base list is already in
+      `src/semantic/symbols.rs`.
+- [ ] `description-malformed-version`. `Version` against
+      `valid_package_version` (`([[:digit:]]+[.-]){1,}[[:digit:]]+`), plus CRAN's
+      leading-zeroes (`1.01`) and absurd-component NOTEs.
+- [ ] `description-malformed-maintainer`. R's
+      `.valid_maintainer_field_regexp`: exactly one `Name <email>`, or the
+      literal `ORPHANED`. A **missing address** (`Maintainer: Jane Doe`) is the
+      common case and fails the regexp outright; so do two maintainers and an
+      unquoted comma in the name. Port R's regexp verbatim and do **not**
+      substitute a stricter RFC 5322 grammar: R's is deliberately loose (quoted
+      local parts, no TLD requirement), so anything tighter false-positives on
+      addresses R accepts. Three CRAN-incoming checks cover the *name* half and
+      belong here: `empty_Maintainer_name`, `Maintainer_needs_quotes` (a comma
+      in an unquoted display name), and `Maintainer_invalid_or_multi_person`
+      (trailing text after the `<...>`).
+- [ ] **Gap in the shipped `description-missing-field`.** It treats the mere
+      presence of `Authors@R` as satisfying `Author` and `Maintainer`, but R only
+      *derives* them if some person has role `"cre"`, a **valid email**, and a
+      non-empty name; otherwise `R CMD check` errors with "Authors@R field gives
+      no person with maintainer role, valid email address and non-empty name."
+      So `person("Jane", "Doe", role = c("aut", "cre"))`—no `email`—is rejected
+      by R and passes arity today. Confirmed against R. Fixing it means the rule
+      consults the parsed `Authors@R` rather than testing the field for
+      non-emptiness, which makes it depend on `description-authors-at-r` below;
+      do that one first. Write the failing test before the fix.
+- [ ] `description-title-format`. The parts R and CRAN actually enforce: no
+      continuation lines (R-exts says Title *cannot* have any, and
+      `Field::value_lines` makes that a one-liner), no trailing period with R's
+      own `et al.`/`...` carve-out, Title equal to or redundantly containing the
+      package name, and the `usethis` placeholder `What the package does...`.
+- [ ] `description-text-format`, on the `Description` field: must end in
+      `[.!?]`, must start with a capital, must not start with the package name or
+      `The`/`This`/`A`/`In this`/`In the` `package`, and bare `https?://` and
+      `doi:` must be angle-bracketed. The angle brackets are the one **safe fix**
+      in the tier.
+- [ ] `description-date-format`. `Date`, if present, must be ISO 8601
+      `yyyy-mm-dd`. Deliberately **not** porting CRAN's "over a month old" and
+      "in the future" clauses: a lint whose result changes overnight with no edit
+      is a bad lint.
+- [ ] Extend `description-version-constraint` rather than adding a rule: it
+      catches a missing or non-comparison operator but not an invalid version
+      *string* (`dplyr (>= latest)`). Note R's special case allowing `r12345` svn
+      revisions, but only for `Depends: R`.
+
+Tier 2—needs a small bundled table or the project layer:
+
+- [ ] `description-license`. Validate the spec grammar (`|` alternatives,
+      `+ file LICENSE`, version restrictions, `file LICENCE`, `Unlimited`)
+      against R's license db, which is ~50 stable entries and bundles like the
+      CRAN symbol lists already do. The payoff:
+      `tools:::.standardizable_license_specs_db` is an exact
+      `"GPL 2.0" -> "GPL-2"` mapping table, making this the only rule in the set
+      with a genuinely **safe autofix**.
+- [ ] `description-encoding`. Non-ASCII bytes with no `Encoding` field (R's
+      `missing_encoding`), and non-ASCII in the fields R requires be ASCII
+      (`Package`, `Version`, `License`, `Encoding`). arity already reads the file
+      as UTF-8, so "is this valid UTF-8" is decided, which makes
+      `Encoding: UTF-8` a **safe fix**.
+- [ ] `description-authors-at-r`. Parse the `Authors@R` value with arity's own R
+      parser—exactly the trick `src/project/description.rs` already plays on the
+      `Roxygen` field—then check statically: at least one `"cre"` role, an
+      `email` on that person, a non-empty name, and roles drawn from R's known
+      set. Those first three are what R's own derivation needs, so this rule is
+      the prerequisite for the `description-missing-field` gap above. R's
+      `.check_package_description_authors_at_R_field` adds, at its strict tiers,
+      persons with no name and persons with no role, plus ORCID and ROR checksum
+      validation—the identifiers are self-validating, so they need no network.
+      No evaluation, so the static-semantics tenet holds; anything computed
+      resolves to "unknown" and the rule stays silent, like the markdown
+      resolver.
+
+      Two CRAN-incoming checks on the neighboring `Author` field fold in here,
+      since both are about `Authors@R` content written under the wrong key:
+      `author_starts_with_Author` (a value literally beginning `Author:`, i.e. a
+      pasted-in field header) and `author_should_be_authors_at_R` (a value that
+      is a `person(...)` or `c(...)` call, which R stores as a plain string and
+      never evaluates).
+- [ ] Emails appear in exactly three places in a `DESCRIPTION`—`Maintainer`,
+      `Authors@R`'s `email =`, and the rare `Contact` field—so there is **no**
+      general "lint emails" rule to write. Validate them where they occur, in
+      the two rules above, against R's regexp. A shared helper is the whole
+      abstraction that is warranted.
+- [ ] `description-collate-mismatch`. `Collate` must name every `.R` file and
+      only files that exist. `DescriptionFacts::collate` is already computed and
+      the file set comes from the project layer. A file missing from `Collate` is
+      real breakage, not style. A fix means editing a list, so it belongs to
+      stage 5.
+- [ ] `description-unknown-field`. **Not** a whitelist—`Config/*`, `Remotes`,
+      and `RoxygenNote` are legal and everywhere—but a *near-miss* check: edit
+      distance 1 from a standard field name. `Suggest:`, `Depend:`, and
+      `Mantainer:` are silently ignored by R today. The trimmed-field-name
+      divergence under stage 1 wants a home too, and this is it.
+
+Tier 3—argued for default-off, or against:
+
+- [ ] `description-authors-at-r-required`, **default off**. R-exts: "For CRAN,
+      providing 'Authors@R' is required", and CRAN incoming emits
+      `authors_at_R_missing` whenever the field is absent—*even with* a valid
+      `Author` plus `Maintainer`, which is precisely the case
+      `description-missing-field` treats as complete. Default off because it is
+      CRAN policy rather than an R requirement, so it would fire on every
+      non-CRAN package; a package targeting CRAN opts in. Keep it a separate ID
+      from `description-missing-field` for that reason—one is "R rejects this",
+      the other is "CRAN rejects this", and they want different defaults and
+      different suppressions.
+- [ ] `description-title-case`, **default off**. Porting `tools::toTitleCase`
+      faithfully means porting its stopword list and the perl-regex carve-out
+      exempting quoted software names. CRAN's own version is the noisiest NOTE in
+      the pretest and maintainers routinely override it, so ship it only behind
+      the oracle above—pinned against R's `toTitleCase` over a corpus of real
+      titles—and default off, like `unused-dependency`.
+- Out of scope, recorded so it is not re-proposed: spell-checking (needs a
+  dictionary), URL liveness and ORCID validation (network), tarball size, and
+  anything that would normalize DESCRIPTION layout—field order and wrapping are
+  stage 5's job, not the linter's.
+
 ### Phase 5—Package-aware rules
 
 Gated on the package being attached (`model.loaded_packages()`).
