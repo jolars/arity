@@ -36,7 +36,8 @@
     "workspaceContains:**/*.Rproj",
     "workspaceContains:arity.toml",
     "workspaceContains:.arity.toml",
-    "workspaceContains:DESCRIPTION"
+    "workspaceContains:DESCRIPTION",
+    "onLanguage:r-description"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -55,6 +56,16 @@
         ],
         "filenames": [
           "NAMESPACE"
+        ]
+      },
+      {
+        "id": "r-description",
+        "aliases": [
+          "R DESCRIPTION",
+          "DCF"
+        ],
+        "filenames": [
+          "DESCRIPTION"
         ]
       }
     ],
