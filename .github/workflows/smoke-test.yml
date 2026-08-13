@@ -48,6 +48,9 @@ jobs:
         rcppcore/rcpp
         futureverse/future
         cran/MASS
+        r-lib/desc
+        r-lib/usethis
+        r-lib/roxygen2
         deepayan/lattice
         dmurdoch/rgl
         r-spatial/sf
@@ -291,6 +294,9 @@ jobs:
               case "$failure_type" in
                 losslessness) echo "cargo run --release -- parse --verify --quiet \"/tmp/target/$sample_file\"" ;;
                 idempotence) echo "cargo run --release -- format --verify \"/tmp/target/$sample_file\"" ;;
+                # Every DESCRIPTION category reproduces the same way: format the
+                # one file and look at what came back.
+                dcf-*) echo "cargo run --release -- format --verify \"/tmp/target/$sample_file\"" ;;
                 *) echo "cargo run --release -- format < \"/tmp/target/$sample_file\" > /dev/null" ;;
               esac
               echo ""
@@ -317,6 +323,12 @@ jobs:
                 losslessness) color="D93F0B" ;;
                 format-error) color="FBCA04" ;;
                 panic) color="E11D21" ;;
+                dcf-idempotence) color="B60205" ;;
+                dcf-losslessness) color="D93F0B" ;;
+                dcf-format-error) color="FBCA04" ;;
+                dcf-meaning) color="7057FF" ;;
+                dcf-comment-loss) color="7057FF" ;;
+                dcf-panic) color="E11D21" ;;
                 *) color="6E7781" ;;
               esac
               ensure_label "$failure_type" "$color" "Corpus smoke-test failure category"

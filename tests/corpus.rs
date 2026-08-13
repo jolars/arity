@@ -39,7 +39,8 @@ use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
-use arity::formatter::{FormatError, format};
+use arity::dcf;
+use arity::formatter::{DescriptionFormatError, FormatError, format, format_description};
 use arity::parser::reconstruct;
 
 /// Why a single file failed the smoke test.
@@ -53,6 +54,21 @@ enum Failure {
     Idempotence,
     /// Parsing or formatting panicked.
     Panic(String),
+    /// A `DESCRIPTION` failure. Kept as its own family so the weekly scan's
+    /// per-`(repo, category)` issue dedup never mixes the two grammars.
+    Dcf(DcfFailure),
+}
+
+/// Why a single `DESCRIPTION` failed.
+enum DcfFailure {
+    Lossless,
+    FormatError(String),
+    Idempotence,
+    /// `read.dcf` would see a different set of records, fields, or values.
+    Meaning(String),
+    /// A comment was dropped or invented. `desc` drops them all; we must not.
+    CommentLoss,
+    Panic(String),
 }
 
 impl Failure {
@@ -62,6 +78,12 @@ impl Failure {
             Failure::FormatError(_) => "format error",
             Failure::Idempotence => "idempotence",
             Failure::Panic(_) => "panic",
+            Failure::Dcf(DcfFailure::Lossless) => "DESCRIPTION losslessness",
+            Failure::Dcf(DcfFailure::FormatError(_)) => "DESCRIPTION format error",
+            Failure::Dcf(DcfFailure::Idempotence) => "DESCRIPTION idempotence",
+            Failure::Dcf(DcfFailure::Meaning(_)) => "DESCRIPTION meaning",
+            Failure::Dcf(DcfFailure::CommentLoss) => "DESCRIPTION comment loss",
+            Failure::Dcf(DcfFailure::Panic(_)) => "DESCRIPTION panic",
         }
     }
 
@@ -73,6 +95,12 @@ impl Failure {
             Failure::FormatError(_) => "format-error",
             Failure::Idempotence => "idempotence",
             Failure::Panic(_) => "panic",
+            Failure::Dcf(DcfFailure::Lossless) => "dcf-losslessness",
+            Failure::Dcf(DcfFailure::FormatError(_)) => "dcf-format-error",
+            Failure::Dcf(DcfFailure::Idempotence) => "dcf-idempotence",
+            Failure::Dcf(DcfFailure::Meaning(_)) => "dcf-meaning",
+            Failure::Dcf(DcfFailure::CommentLoss) => "dcf-comment-loss",
+            Failure::Dcf(DcfFailure::Panic(_)) => "dcf-panic",
         }
     }
 
@@ -80,8 +108,16 @@ impl Failure {
     /// self-explanatory invariant violations.
     fn message(&self) -> &str {
         match self {
-            Failure::Lossless | Failure::Idempotence => "",
-            Failure::FormatError(msg) | Failure::Panic(msg) => msg,
+            Failure::Lossless
+            | Failure::Idempotence
+            | Failure::Dcf(
+                DcfFailure::Lossless | DcfFailure::Idempotence | DcfFailure::CommentLoss,
+            ) => "",
+            Failure::FormatError(msg)
+            | Failure::Panic(msg)
+            | Failure::Dcf(
+                DcfFailure::FormatError(msg) | DcfFailure::Panic(msg) | DcfFailure::Meaning(msg),
+            ) => msg,
         }
     }
 
@@ -109,8 +145,16 @@ fn corpus_smoke() {
     collect_r_files(&root, &root, &mut files);
     files.sort();
 
-    if files.is_empty() {
-        eprintln!("corpus: no .R files under {dir}; nothing to check.");
+    // Deliberately *without* the `is_own_package_root` gate `arity format` uses:
+    // the miniature packages under `tests/testthat/` are the most adversarial
+    // DCF in any repo, and here we are checking invariants, not addressing an
+    // author.
+    let mut descriptions = Vec::new();
+    collect_descriptions(&root, &root, &mut descriptions);
+    descriptions.sort();
+
+    if files.is_empty() && descriptions.is_empty() {
+        eprintln!("corpus: no .R or DESCRIPTION files under {dir}; nothing to check.");
         return;
     }
 
@@ -133,9 +177,27 @@ fn corpus_smoke() {
         }
     }
 
+    let dcf_total = descriptions.len();
+    let mut dcf_skipped = 0usize;
+    for (key, path) in &descriptions {
+        let Ok(raw) = fs::read_to_string(path) else {
+            dcf_skipped += 1;
+            continue;
+        };
+        match check_description(&raw) {
+            // Input the formatter refuses is not a failure; it is the design.
+            // Counting it keeps a shift between buckets visible to triage.
+            DcfOutcome::Skipped => dcf_skipped += 1,
+            DcfOutcome::Clean => {}
+            DcfOutcome::Failed(failure) => failures.push((key.clone(), Failure::Dcf(failure))),
+        }
+    }
+
     eprintln!(
-        "corpus: {total} files, {checked} checked, {skipped} skipped (unparseable), {failed} failed.",
+        "corpus: {total} files, {checked} checked, {skipped} skipped (unparseable), \
+         {dcf_total} DESCRIPTIONs, {dcf_checked} checked, {dcf_skipped} skipped, {failed} failed.",
         checked = total - skipped,
+        dcf_checked = dcf_total - dcf_skipped,
         failed = failures.len(),
     );
 
@@ -205,6 +267,160 @@ fn check_file(raw: &str) -> Option<Failure> {
     }
 }
 
+enum DcfOutcome {
+    Clean,
+    /// Refused by design, or unreadable. Not a failure.
+    Skipped,
+    Failed(DcfFailure),
+}
+
+/// Run the Tier 0 checks on one `DESCRIPTION`.
+fn check_description(raw: &str) -> DcfOutcome {
+    // Losslessness holds whether or not the file is formattable.
+    match catch_unwind(AssertUnwindSafe(|| dcf::reconstruct(raw))) {
+        Ok(round_trip) if round_trip != raw => return DcfOutcome::Failed(DcfFailure::Lossless),
+        Ok(_) => {}
+        Err(panic) => {
+            return DcfOutcome::Failed(DcfFailure::Panic(format!("parse: {}", panic_msg(&panic))));
+        }
+    }
+
+    let first = match catch_unwind(AssertUnwindSafe(|| format_description(raw))) {
+        Ok(Ok(out)) => out,
+        // A refusal and a parse error are both "we deliberately did nothing".
+        Ok(Err(
+            DescriptionFormatError::ParseErrors { .. } | DescriptionFormatError::Declined(_),
+        )) => {
+            return DcfOutcome::Skipped;
+        }
+        Err(panic) => {
+            return DcfOutcome::Failed(DcfFailure::Panic(format!("format: {}", panic_msg(&panic))));
+        }
+    };
+
+    if let Some(why) = meaning_changed(raw, &first) {
+        return DcfOutcome::Failed(DcfFailure::Meaning(why));
+    }
+    if comment_texts(raw) != comment_texts(&first) {
+        return DcfOutcome::Failed(DcfFailure::CommentLoss);
+    }
+
+    match catch_unwind(AssertUnwindSafe(|| format_description(&first))) {
+        Ok(Ok(second)) if second != first => DcfOutcome::Failed(DcfFailure::Idempotence),
+        Ok(Ok(_)) => DcfOutcome::Clean,
+        // The first pass produced output the formatter now rejects: a real bug,
+        // not a refusal.
+        Ok(Err(err)) => DcfOutcome::Failed(DcfFailure::FormatError(format!("on reformat: {err}"))),
+        Err(panic) => DcfOutcome::Failed(DcfFailure::Panic(format!(
+            "reformat: {}",
+            panic_msg(&panic)
+        ))),
+    }
+}
+
+/// What `read.dcf` would see, reduced to what formatting is allowed to change:
+/// record structure, field names, and each value modulo whitespace and (for a
+/// dependency field) entry order.
+///
+/// Deliberately coarse. The fixture suite owns the exact per-class relation;
+/// this is the sweep, and a sweep that cries wolf on real packages gets muted.
+/// The message names one field, not the whole projection: it travels into a
+/// GitHub issue body.
+fn meaning_changed(before: &str, after: &str) -> Option<String> {
+    let lhs = project_meaning(before);
+    let rhs = project_meaning(after);
+    if lhs.len() != rhs.len() {
+        return Some(format!("record count {} -> {}", lhs.len(), rhs.len()));
+    }
+    for (index, (want, got)) in lhs.iter().zip(&rhs).enumerate() {
+        if want.len() != got.len() {
+            return Some(format!("record {index} field count changed"));
+        }
+        for ((want_name, want_value), (got_name, got_value)) in want.iter().zip(got) {
+            if want_name != got_name {
+                return Some(format!("record {index}: {want_name:?} -> {got_name:?}"));
+            }
+            if want_value != got_value {
+                return Some(format!(
+                    "record {index} field {want_name:?}: {} -> {}",
+                    truncate(want_value),
+                    truncate(got_value)
+                ));
+            }
+        }
+    }
+    None
+}
+
+fn truncate(value: &str) -> String {
+    if value.chars().count() <= 160 {
+        return format!("{value:?}");
+    }
+    let head: String = value.chars().take(160).collect();
+    format!("{head:?}...")
+}
+
+fn project_meaning(text: &str) -> Vec<Vec<(String, String)>> {
+    dcf::parse(text)
+        .document()
+        .records()
+        .map(|record| {
+            let mut fields: Vec<(String, String)> = record
+                .fields()
+                .map(|field| {
+                    let name = field.name().to_string();
+                    let folded = field.folded_value();
+                    let value = folded.strip_prefix('\n').unwrap_or(&folded);
+                    (name.clone(), normalize_value(&name, value))
+                })
+                .collect();
+            fields.sort();
+            fields
+        })
+        .collect()
+}
+
+fn normalize_value(name: &str, value: &str) -> String {
+    if dcf::is_dependency_field(name) {
+        // Entries are sorted by design, so only the multiset survives.
+        let mut entries: Vec<String> = value
+            .split(',')
+            .map(collapse_ws)
+            .filter(|entry| !entry.is_empty())
+            .collect();
+        entries.sort();
+        return entries.join(",");
+    }
+    if matches!(name, "Authors@R" | "Roxygen") {
+        // R code, laid out by the R formatter. Collapsing whitespace is not
+        // enough — it respells an empty argument `,,` as `, ,` — so equality
+        // here means "formats to the same R".
+        return format(value).unwrap_or_else(|_| collapse_ws(value));
+    }
+    collapse_ws(value)
+}
+
+fn collapse_ws(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn comment_texts(text: &str) -> Vec<String> {
+    let parsed = dcf::parse(text);
+    let mut out: Vec<String> = parsed
+        .cst
+        .descendants()
+        .filter(|node| node.kind() == dcf::SyntaxKind::COMMENT_LINE)
+        .filter_map(|node| {
+            node.children_with_tokens()
+                .filter_map(|el| el.into_token())
+                .find(|tok| tok.kind() == dcf::SyntaxKind::COMMENT)
+                .map(|tok| tok.text().trim_end().to_string())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 fn panic_msg(panic: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = panic.downcast_ref::<&str>() {
         (*s).to_string()
@@ -225,6 +441,26 @@ fn collect_r_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
         if path.is_dir() {
             collect_r_files(root, &path, out);
         } else if path.extension().is_some_and(|e| e == "R" || e == "r") {
+            let key = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
+            out.push((key, path));
+        }
+    }
+}
+
+/// Collect files named `DESCRIPTION` under `dir`, keyed relative to `root`.
+fn collect_descriptions(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_descriptions(root, &path, out);
+        } else if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
             let key = path
                 .strip_prefix(root)
                 .unwrap_or(&path)
