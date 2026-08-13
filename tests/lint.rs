@@ -132,6 +132,31 @@ fn infix_operator_use_is_not_unused() {
 }
 
 #[test]
+fn walrus_outside_a_subscript_binds_nothing() {
+    // R parses `a := b` as a call to `` `:=` ``, a function base R does not
+    // define — it never binds. rlang's dynamic-dots name injection
+    // (`list2("{name}" := value)`) is the common shape, and the target there is
+    // a string, not even an identifier.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("walrus.R");
+    std::fs::write(
+        &path,
+        "list2 <- function(...) list(...)\n\
+         f <- function(name) {\n  list2(\"{name}\" := \"none\")\n}\nf(\"a\")\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    let rules = rules_for(&result, "walrus.R");
+    // Masked, not merely un-bound: recording the target as a plain read would
+    // trade the false unused-binding for a false undefined-symbol.
+    assert!(
+        !rules.contains(&"unused-binding") && !rules.contains(&"undefined-symbol"),
+        "walrus.R: {rules:?}"
+    );
+}
+
+#[test]
 fn reassigned_binding_read_after_each_assignment_is_not_unused() {
     // A name assigned twice in one scope, with a read after each assignment, is
     // used both times. The later binding's read must resolve to it, not to the

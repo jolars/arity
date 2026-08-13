@@ -49,7 +49,6 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
             pin_depth: 0,
             gate_verb: None,
             ident_gates: Vec::new(),
-            column_depth: 0,
             data_tables: HashSet::new(),
         };
         walk_generic(&mut ctx, root, file_scope);
@@ -109,10 +108,6 @@ struct BuildCtx<'a> {
     /// responsible for that read being masked. Builder-local so `IdentRef` (and
     /// with it every salsa projection) stays untouched.
     ident_gates: Vec<Option<u32>>,
-    /// How many data.table `[` argument lists deep we are. While `> 0` a `:=`
-    /// adds a *column*, so `handle_assignment` records a masked read instead of
-    /// a binding.
-    column_depth: usize,
     /// Names known to hold a data.table, from a constructor call
     /// (`dt <- data.table(…)`) or an in-place `setDT(df)`. Name-only and
     /// scope-free, populated during the same walk — so, exactly like
@@ -457,13 +452,23 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
     if ctx.quote_depth > 0 {
         return;
     }
-    // 2b. Inside a data.table `[`, `:=` adds or updates a *column*, not a
-    //     variable: `dt[, newcol := 1]` binds nothing in the frame. Record the
-    //     target as a masked read (it names a column) so it neither resolves
-    //     nor surfaces as an unused binding.
-    if ctx.column_depth > 0 && op == Some(SyntaxKind::WALRUS) {
+    // 2b. `:=` never binds a variable. R parses `a := b` as a call to `` `:=` ``,
+    //     which base R does not define; every package that gives it meaning
+    //     (data.table's `dt[, newcol := 1]` column update, rlang's
+    //     `list2("{name}" := value)` name injection) leaves the frame alone.
+    //     Record the target as a masked read so it neither resolves nor
+    //     surfaces as an unused binding.
+    if op == Some(SyntaxKind::WALRUS) {
         match (assign.target_name_token(), &target) {
-            (Some(tok), _) => record_ident_read(ctx, &tok, scope),
+            // The target names a column or an injected argument, never a
+            // binding, so mask it: outside a data-masking subscript there is no
+            // ambient mask to inherit. Pinned — the form is identified by
+            // syntax, not by a name a local binding could shadow.
+            (Some(tok), _) => {
+                ctx.enter_pinned_mask();
+                record_ident_read(ctx, &tok, scope);
+                ctx.exit_pinned_mask();
+            }
             // A computed LHS (`dt[, c("a", "b") := …]`) holds ordinary reads.
             (None, Some(NodeOrToken::Node(target_node))) => {
                 walk_node(ctx, target_node, scope);
@@ -827,9 +832,7 @@ fn handle_subset(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             // Pinned: the form was identified by syntax, not by a name a local
             // binding could shadow.
             ctx.enter_pinned_mask();
-            ctx.column_depth += 1;
             walk_node(ctx, child, scope);
-            ctx.column_depth -= 1;
             ctx.exit_pinned_mask();
         } else {
             walk_element(ctx, &el, scope);
