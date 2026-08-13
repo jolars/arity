@@ -181,6 +181,9 @@
     "configurationDefaults": {
       "[r]": {
         "editor.defaultFormatter": "jolars.arity"
+      },
+      "[r-description]": {
+        "editor.defaultFormatter": "jolars.arity"
       }
     },
     "commands": [
