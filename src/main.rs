@@ -688,6 +688,14 @@ fn run_format(
             .as_deref()
             .is_some_and(arity::file_discovery::is_description_file)
         {
+            // `[format] description = false` reaches stdin too. Falling through
+            // would reflow DCF as R, which is the corruption the key exists to
+            // prevent, and stdin is the shape an editor or pre-commit hook uses
+            // — the integrations most likely to need the off switch.
+            if !descriptions {
+                print!("{input}");
+                return ExitCode::SUCCESS;
+            }
             return format_description_stdin(&input, style, modes.verify);
         }
 

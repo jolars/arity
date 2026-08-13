@@ -83,12 +83,13 @@ description = true
 `DESCRIPTION` too, except that its continuation indent is always four spaces —
 the file format's convention, and a different axis from R-code nesting.
 
-Setting `description = false` leaves `DESCRIPTION` alone, in both the CLI and
-the editor. Reach for it if arity and your package tooling end up disagreeing
-about the file. Note that `extend-exclude` is not a substitute: excludes are
-shared with the linter, so excluding `DESCRIPTION` would also silence the
-packaging rules, and the language server applies no exclude filter to formatting
-at all.
+Setting `description = false` leaves `DESCRIPTION` alone, in the CLI (including
+a buffer piped in under `--stdin-filename DESCRIPTION`, which is passed through
+untouched) and in the editor. Reach for it if arity and your package tooling end
+up disagreeing about the file. Note that `extend-exclude` is not a substitute:
+excludes are shared with the linter, so excluding `DESCRIPTION` would also
+silence the packaging rules, and the language server applies no exclude filter
+to formatting at all.
 
 ## `[lint]`
 

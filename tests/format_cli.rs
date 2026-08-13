@@ -561,3 +561,39 @@ fn cli_format_stdin_is_r_unless_the_filename_says_otherwise() {
         "Package: p\nImports:\n    b\n"
     );
 }
+
+/// `[format] description = false` reaches the stdin door too. Stdin with
+/// `--stdin-filename` is the shape editors and pre-commit hooks use — the
+/// integrations most likely to need the off switch — and falling through to the
+/// R formatter would produce exactly the corruption the key exists to prevent.
+#[test]
+fn cli_format_stdin_description_honors_the_off_switch() {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[format]\ndescription = false\n",
+    )
+    .expect("write config");
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_arity"));
+    cmd.args(["format", "--stdin-filename", "DESCRIPTION", "-"])
+        .current_dir(dir.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("failed to spawn arity cli");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"Package: p\nImports: b, a\n")
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("failed to wait for cli");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8"),
+        "Package: p\nImports: b, a\n",
+        "the buffer must come back untouched, not reflowed as R"
+    );
+}
