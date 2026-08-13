@@ -38,6 +38,7 @@ use rowan::TextRange;
 
 use crate::project::source::{SourceEdgeKey, SourceTarget, TopLevelEvent};
 use crate::rindex::harvest::parse_namespace;
+use crate::semantic::symbols::unbacktick;
 
 static EMPTY: BTreeSet<String> = BTreeSet::new();
 // `HashSet::new` isn't `const` (its hasher state isn't const-constructible), so
@@ -246,19 +247,19 @@ impl<'a> FileScope<'a> {
     /// True when `name` (a top-level binding here) is read by a file that can
     /// see this one — so it isn't unused even if unread locally.
     pub fn read_elsewhere(&self, name: &str) -> bool {
-        self.read_by_others.contains(name)
+        self.read_by_others.contains(unbacktick(name))
     }
 
     /// True when `name` (a top-level binding here) is `export()`ed by the
     /// package's NAMESPACE, i.e. it is public API.
     pub fn exported_by_namespace(&self, name: &str) -> bool {
-        self.namespace_exports.contains(name)
+        self.namespace_exports.contains(unbacktick(name))
     }
 
     /// True when `name` is registered as an S3 method by the package's
     /// NAMESPACE (`S3method(generic, class)`).
     pub fn is_s3_method(&self, name: &str) -> bool {
-        self.s3_methods.contains(name)
+        self.s3_methods.contains(unbacktick(name))
     }
 
     /// True when `name` (a top-level binding here) must not be reported unused:
@@ -402,10 +403,13 @@ impl ProjectScope {
             // "used by others" set. A `pkg::name` / `pkg:::name` access counts as
             // a use too (e.g. `pkg:::helper()` in a test): fold in `f`'s qualified
             // reads, which resolve to a same-package sibling's binding.
+            // Backticking is a *spelling*, not a different name: `foo` and
+            // `` `foo` `` are one binding. Reads are recorded as spelled, so
+            // normalize here — the accessors strip the queried name to match.
             for seen in &sees[&f.path] {
                 if let Some(used) = read_by_others.get_mut(seen) {
-                    used.extend(f.free_reads.iter().cloned());
-                    used.extend(f.qualified_reads.iter().cloned());
+                    used.extend(f.free_reads.iter().map(|n| unbacktick(n).to_string()));
+                    used.extend(f.qualified_reads.iter().map(|n| unbacktick(n).to_string()));
                 }
             }
         }

@@ -628,6 +628,58 @@ fn namespace_export_is_not_unused() {
     );
 }
 
+#[test]
+fn backtick_quoted_namespace_export_is_not_unused() {
+    // A non-syntactic name can only be *bound* backtick-quoted, but NAMESPACE
+    // stores it bare. The two spellings must still meet.
+    let result = lint_package(
+        "export(\"names2<-\")\n",
+        "`names2<-` <- function(x, value) x\n",
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn backtick_quoted_s3_method_is_not_unused() {
+    // `S3method("[", cls)` registers `[.cls`, which is reachable only by
+    // dispatch and can only be bound backtick-quoted.
+    let result = lint_package("S3method(\"[\",cls)\n", "`[.cls` <- function(x, i) x\n");
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn sibling_read_matches_across_backtick_spelling() {
+    // Backticking is a spelling of the *same* name, so a sibling's read counts
+    // whichever side wears the backticks.
+    let result = lint_package_files(
+        "export(nothing)\n",
+        &[
+            (
+                "a.R",
+                "`helper_bt` <- function(x) x\n\nplain_helper <- function(x) x\n",
+            ),
+            (
+                "b.R",
+                "caller <- function() {\n  helper_bt(1)\n  `plain_helper`(2)\n}\n",
+            ),
+        ],
+        &LintConfig::default(),
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // unused-function
 // ---------------------------------------------------------------------------
