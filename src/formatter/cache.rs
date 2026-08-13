@@ -1,9 +1,12 @@
 //! Persistent "already-formatted" cache for `arity format --check`.
 //!
-//! The cache is a set of content hashes that are *fixed points* of the formatter
-//! under a given style and arity version: contents for which
-//! `format(content) == content`. A cache hit means "already formatted", so the
-//! file can be counted as unchanged without parsing or formatting it.
+//! The cache is a set of hashes naming *fixed points* of the formatter under a
+//! given style and arity version: contents for which `format(content) ==
+//! content`. A cache hit means "already formatted", so the file can be counted
+//! as unchanged without parsing or formatting it.
+//!
+//! A hash keys a [`CacheKey`], not bare content — the formatter serves two
+//! grammars, and some byte strings are fixed points of both.
 //!
 //! Formatter behavior depends on both the arity version and the [`FormatStyle`],
 //! so both are baked into the on-disk path; a stale, missing, or corrupt file
@@ -36,6 +39,11 @@ use crate::formatter::FormatStyle;
 use crate::rindex::cache::{CacheError, atomic_write};
 
 /// Bump when the on-disk [`CacheFile`] shape changes within a release cycle.
+///
+/// Deliberately **not** covering the hash function. Changing how a key is hashed
+/// produces misses, never wrong answers, and [`cache_path`] already embeds the
+/// arity version — so a binary that hashes differently never reads an older
+/// binary's file in the first place.
 const SCHEMA_VERSION: u32 = 1;
 
 const ARITY_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -72,23 +80,16 @@ impl FormatCache {
         }
     }
 
-    /// Whether `content` is a known fixed point (already formatted) under
-    /// `roxygen_markdown` — the file's resolved package-wide markdown default,
-    /// which changes formatting and so must key the hash: the same bytes can be
-    /// a fixed point in a markdown-first package and not in an Rd-first one.
-    pub fn is_fixed_point(&self, content: &str, roxygen_markdown: bool) -> bool {
-        self.fixed_points
-            .contains(&hash_content(content, roxygen_markdown))
+    /// Whether `key` names a known fixed point — content the formatter would
+    /// leave unchanged, so the file can be counted clean without formatting it.
+    pub fn is_fixed_point(&self, key: CacheKey<'_>) -> bool {
+        self.fixed_points.contains(&key.hash())
     }
 
-    /// Record `content` as a fixed point under `roxygen_markdown`. Marks the
-    /// cache dirty only when the hash was not already present, so an all-hit
-    /// run writes nothing.
-    pub fn record_fixed_point(&mut self, content: &str, roxygen_markdown: bool) {
-        if self
-            .fixed_points
-            .insert(hash_content(content, roxygen_markdown))
-        {
+    /// Record `key` as a fixed point. Marks the cache dirty only when the hash
+    /// was not already present, so an all-hit run writes nothing.
+    pub fn record_fixed_point(&mut self, key: CacheKey<'_>) {
+        if self.fixed_points.insert(key.hash()) {
             self.dirty = true;
         }
     }
@@ -120,11 +121,59 @@ fn cache_path(root: &Path, style: &FormatStyle) -> PathBuf {
         .join(format!("{:016x}.postcard", style_hash(style)))
 }
 
-fn hash_content(content: &str, roxygen_markdown: bool) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
-    roxygen_markdown.hash(&mut hasher);
-    hasher.finish()
+/// Which grammar a cached fixed point belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Grammar {
+    R,
+    Dcf,
+}
+
+/// What a fixed point is keyed by: the grammar, the content, and whatever else
+/// changes the formatter's answer for *that* grammar.
+///
+/// The grammar is not decoration. Some byte strings — a lone comment line, an
+/// empty file — are valid under both grammars and can be a fixed point of both,
+/// and a cross-grammar hit would report a dirty `DESCRIPTION` as clean and turn
+/// a CI `--check` green on unformatted output.
+#[derive(Debug, Clone, Copy)]
+pub struct CacheKey<'a> {
+    grammar: Grammar,
+    content: &'a str,
+    /// The file's resolved package-wide roxygen markdown default. It changes
+    /// formatting, so the same bytes can be a fixed point in a markdown-first
+    /// package and not in an Rd-first one.
+    roxygen_markdown: bool,
+}
+
+impl<'a> CacheKey<'a> {
+    pub fn r(content: &'a str, roxygen_markdown: bool) -> Self {
+        Self {
+            grammar: Grammar::R,
+            content,
+            roxygen_markdown,
+        }
+    }
+
+    /// A `DESCRIPTION`. There is no markdown default to carry: it is a fact
+    /// about parsing *R*, and a `false` a reader has to decode as "not
+    /// applicable" is the kind of argument that gets copy-pasted wrong.
+    pub fn dcf(content: &'a str) -> Self {
+        Self {
+            grammar: Grammar::Dcf,
+            content,
+            roxygen_markdown: false,
+        }
+    }
+
+    fn hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.grammar.hash(&mut hasher);
+        self.content.hash(&mut hasher);
+        if self.grammar == Grammar::R {
+            self.roxygen_markdown.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
 }
 
 fn style_hash(style: &FormatStyle) -> u64 {
@@ -164,14 +213,29 @@ mod tests {
         let style = FormatStyle::default();
 
         let mut cache = FormatCache::load(tmp.path(), &style);
-        assert!(!cache.is_fixed_point("x <- 1\n", false));
-        cache.record_fixed_point("x <- 1\n", false);
+        assert!(!cache.is_fixed_point(CacheKey::r("x <- 1\n", false)));
+        cache.record_fixed_point(CacheKey::r("x <- 1\n", false));
         cache.store().unwrap();
 
         // A fresh load sees the persisted hash.
         let reloaded = FormatCache::load(tmp.path(), &style);
-        assert!(reloaded.is_fixed_point("x <- 1\n", false));
-        assert!(!reloaded.is_fixed_point("y <- 2\n", false));
+        assert!(reloaded.is_fixed_point(CacheKey::r("x <- 1\n", false)));
+        assert!(!reloaded.is_fixed_point(CacheKey::r("y <- 2\n", false)));
+    }
+
+    #[test]
+    fn grammar_keys_the_fixed_point() {
+        // A lone comment line is valid under both grammars and is plausibly a
+        // fixed point of both. Without the discriminant, formatting a
+        // `DESCRIPTION` would hit an entry recorded for an `.R` file.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = FormatCache::load(tmp.path(), &FormatStyle::default());
+        cache.record_fixed_point(CacheKey::r("# a comment\n", false));
+        assert!(cache.is_fixed_point(CacheKey::r("# a comment\n", false)));
+        assert!(!cache.is_fixed_point(CacheKey::dcf("# a comment\n")));
+
+        cache.record_fixed_point(CacheKey::dcf("# a comment\n"));
+        assert!(cache.is_fixed_point(CacheKey::dcf("# a comment\n")));
     }
 
     #[test]
@@ -180,16 +244,16 @@ mod tests {
         // not in an Rd-first one — the flag must disambiguate.
         let tmp = tempfile::tempdir().unwrap();
         let mut cache = FormatCache::load(tmp.path(), &FormatStyle::default());
-        cache.record_fixed_point("#' doc\nNULL\n", true);
-        assert!(cache.is_fixed_point("#' doc\nNULL\n", true));
-        assert!(!cache.is_fixed_point("#' doc\nNULL\n", false));
+        cache.record_fixed_point(CacheKey::r("#' doc\nNULL\n", true));
+        assert!(cache.is_fixed_point(CacheKey::r("#' doc\nNULL\n", true)));
+        assert!(!cache.is_fixed_point(CacheKey::r("#' doc\nNULL\n", false)));
     }
 
     #[test]
     fn missing_file_loads_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = FormatCache::load(tmp.path(), &FormatStyle::default());
-        assert!(!cache.is_fixed_point("anything\n", false));
+        assert!(!cache.is_fixed_point(CacheKey::r("anything\n", false)));
     }
 
     #[test]
@@ -207,12 +271,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let style = FormatStyle::default();
         let mut cache = FormatCache::load(tmp.path(), &style);
-        cache.record_fixed_point("x <- 1\n", false);
+        cache.record_fixed_point(CacheKey::r("x <- 1\n", false));
         cache.store().unwrap();
 
         // Reload and re-record the same content: no new hash, so store is a no-op.
         let mut reloaded = FormatCache::load(tmp.path(), &style);
-        reloaded.record_fixed_point("x <- 1\n", false);
+        reloaded.record_fixed_point(CacheKey::r("x <- 1\n", false));
         assert!(!reloaded.dirty);
     }
 
@@ -224,12 +288,12 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let stale = CacheFile {
             schema_version: SCHEMA_VERSION + 1,
-            fixed_points: HashSet::from([hash_content("x <- 1\n", false)]),
+            fixed_points: HashSet::from([CacheKey::r("x <- 1\n", false).hash()]),
         };
         std::fs::write(&path, postcard::to_allocvec(&stale).unwrap()).unwrap();
 
         let cache = FormatCache::load(tmp.path(), &style);
-        assert!(!cache.is_fixed_point("x <- 1\n", false));
+        assert!(!cache.is_fixed_point(CacheKey::r("x <- 1\n", false)));
     }
 
     #[test]
@@ -241,7 +305,7 @@ mod tests {
         std::fs::write(&path, b"not postcard at all").unwrap();
 
         let cache = FormatCache::load(tmp.path(), &style);
-        assert!(!cache.is_fixed_point("x <- 1\n", false));
+        assert!(!cache.is_fixed_point(CacheKey::r("x <- 1\n", false)));
     }
 
     #[test]
@@ -264,7 +328,7 @@ mod tests {
         std::fs::create_dir_all(&stale_dir).unwrap();
 
         let mut cache = FormatCache::load(tmp.path(), &style);
-        cache.record_fixed_point("x <- 1\n", false);
+        cache.record_fixed_point(CacheKey::r("x <- 1\n", false));
         cache.store().unwrap();
 
         assert!(!stale_dir.exists());

@@ -10,7 +10,7 @@ pub mod check;
 
 pub use arity_formatter::formatter::*;
 
-pub use cache::FormatCache;
+pub use cache::{CacheKey, FormatCache};
 pub use check::{
     ChangedFile, CheckError, CheckResult, check_paths, check_paths_with_style,
     check_paths_with_style_cached,

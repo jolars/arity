@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use arity::file_discovery::ExcludeFilter;
-use arity::formatter::{FormatCache, FormatStyle, check_paths_with_style_cached};
+use arity::formatter::{CacheKey, FormatCache, FormatStyle, check_paths_with_style_cached};
 
 fn write_file(dir: &std::path::Path, name: &str, contents: &str) -> PathBuf {
     let path = dir.join(name);
@@ -34,12 +34,12 @@ fn already_formatted_file_is_recorded_and_persists() {
     // A clean file: no diff, and recorded as a fixed point.
     assert!(result.changed_files.is_empty());
     assert_eq!(result.checked_files, 1);
-    assert!(cache.is_fixed_point(clean, false));
+    assert!(cache.is_fixed_point(CacheKey::r(clean, false)));
 
     // The record was persisted: a fresh load off disk still sees it, and a
     // second run serves it from cache (still clean).
     let mut reloaded = FormatCache::load(cache_root.path(), &style);
-    assert!(reloaded.is_fixed_point(clean, false));
+    assert!(reloaded.is_fixed_point(CacheKey::r(clean, false)));
     let second = check_paths_with_style_cached(
         std::slice::from_ref(&file),
         style,
@@ -70,10 +70,10 @@ fn unformatted_file_is_never_recorded() {
 
     assert_eq!(result.changed_files.len(), 1);
     // The unformatted content must not be cached as a fixed point.
-    assert!(!cache.is_fixed_point(dirty, false));
+    assert!(!cache.is_fixed_point(CacheKey::r(dirty, false)));
     // A fresh load confirms nothing about it was persisted.
     let reloaded = FormatCache::load(cache_root.path(), &style);
-    assert!(!reloaded.is_fixed_point(dirty, false));
+    assert!(!reloaded.is_fixed_point(CacheKey::r(dirty, false)));
 }
 
 #[test]

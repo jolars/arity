@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::{FormatError, FormatStyle, format_with_options};
 use crate::file_discovery::{ExcludeFilter, FileDiscoveryError, collect_r_files};
-use crate::formatter::cache::FormatCache;
+use crate::formatter::cache::{CacheKey, FormatCache};
 use crate::parser::ParseOptions;
 use crate::project::description::MarkdownDefaultResolver;
 
@@ -133,7 +133,7 @@ pub fn check_paths_with_style_cached(
         // Cache hit: already-formatted, skip parse+format.
         if cache
             .as_deref()
-            .is_some_and(|c| c.is_fixed_point(&content, md))
+            .is_some_and(|c| c.is_fixed_point(CacheKey::r(&content, md)))
         {
             continue;
         }
@@ -152,7 +152,7 @@ pub fn check_paths_with_style_cached(
                 formatted,
             });
         } else if let Some(c) = cache.as_deref_mut() {
-            c.record_fixed_point(&content, md);
+            c.record_fixed_point(CacheKey::r(&content, md));
         }
     }
 
