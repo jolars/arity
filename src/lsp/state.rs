@@ -365,7 +365,7 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
+        let Some((buffer, version, kind)) = self.doc_snapshot_any(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
@@ -373,7 +373,17 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        if kind == DocumentKind::Description && !settings.format_descriptions {
+            // Decline before spending a read slot, so `[format] description =
+            // false` costs nothing rather than costing a round trip.
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        }
+        // The synthesized name must match the kind: `run_read` re-derives the
+        // grammar from this path, and an unsaved `DESCRIPTION` called
+        // `untitled.R` would come back reflowed as R.
+        let path =
+            uri::to_path(&uri).unwrap_or_else(|| PathBuf::from(kind.placeholder_file_name()));
         self.register_read(id.clone(), Some((uri, version)));
         self.dispatch_read(ReadJob::Format {
             id,
@@ -400,7 +410,11 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        // `r_doc_snapshot` already guaranteed R, so the placeholder is R's —
+        // spelled through the kind rather than as a literal, because the path is
+        // what `run_read` re-derives the grammar from.
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
         self.register_read(id.clone(), Some((uri, version)));
         self.dispatch_read(ReadJob::FormatRange {
             id,
@@ -1627,6 +1641,7 @@ impl GlobalState {
             .filter(|s| !s.is_empty());
         let resolved = ResolvedSettings {
             style,
+            format_descriptions: config.format.description,
             lint: config.lint,
             index,
         };
@@ -2189,20 +2204,18 @@ mod cancellation_gate {
 
     /// Every R-grammar request, asked of a `DESCRIPTION`.
     ///
-    /// `textDocument/formatting` is the one that matters most: the R formatter
-    /// happily rewrites `Package: testpkg` to `Package:testpkg`, so answering it
-    /// here would corrupt the user's file. The rest range from useless to
-    /// misleading. Each must decline *without* spending a read slot.
+    /// These range from useless (folding) to misleading (rename). Each must
+    /// decline *without* spending a read slot.
+    ///
+    /// `textDocument/formatting` is deliberately **not** here: it serves both
+    /// grammars now. `rangeFormatting` stays, because canonical field order is a
+    /// whole-document property and a range has no coherent answer.
     #[test]
     fn r_only_requests_return_null_for_a_description() {
         let uri = description_uri();
         let position = json!({ "line": 0, "character": 3 });
         let doc = json!({ "uri": uri.as_str() });
         let cases: Vec<(&str, serde_json::Value)> = vec![
-            (
-                "textDocument/formatting",
-                json!({ "textDocument": doc, "options": { "tabSize": 2, "insertSpaces": true } }),
-            ),
             (
                 "textDocument/rangeFormatting",
                 json!({
@@ -2318,6 +2331,46 @@ mod cancellation_gate {
                 "{method} did nothing at all for an R buffer — is it routed?"
             );
         }
+    }
+
+    /// The counterpart to the table above: formatting is the one R-grammar
+    /// request a `DESCRIPTION` now *does* get, so it must reach the read pool
+    /// rather than decline.
+    #[test]
+    fn formatting_a_description_dispatches_read_work() {
+        let (mut state, rig) = test_state();
+        let uri = description_uri();
+        state.on_notification(did_open(&uri, "Package: testpkg\nDepends: R\n", "r"));
+        let _ = rig.try_lint_msg();
+
+        state.on_request(Request::new(
+            RequestId::from(1),
+            "textDocument/formatting".to_string(),
+            json!({
+                "textDocument": { "uri": uri.as_str() },
+                "options": { "tabSize": 2, "insertSpaces": true }
+            }),
+        ));
+
+        assert!(
+            !rig.no_read_work(),
+            "formatting a DESCRIPTION should reach the read pool"
+        );
+    }
+
+    /// An `untitled:` `DESCRIPTION` has no path, so the server synthesizes one —
+    /// and `run_read` re-derives the grammar from it. A literal `untitled.R`
+    /// here would hand the buffer back reflowed as R.
+    #[test]
+    fn an_untitled_buffers_placeholder_path_keeps_its_grammar() {
+        assert_eq!(
+            DocumentKind::from_path(Path::new(DocumentKind::Description.placeholder_file_name())),
+            DocumentKind::Description
+        );
+        assert_eq!(
+            DocumentKind::from_path(Path::new(DocumentKind::R.placeholder_file_name())),
+            DocumentKind::R
+        );
     }
 
     #[test]

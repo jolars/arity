@@ -606,7 +606,7 @@ fn did_open_description_publishes_no_r_syntax_errors() {
 const DESCRIPTION_VALID_AS_R: &str = "Package: testpkg\nDepends: R\n";
 
 #[test]
-fn formatting_a_description_returns_null_over_the_wire() {
+fn formatting_a_description_uses_the_dcf_grammar_over_the_wire() {
     let mut h = Harness::start_push();
     let uri = description_uri();
     h.did_open_as(uri, DESCRIPTION_VALID_AS_R, 1, "r-description");
@@ -619,12 +619,70 @@ fn formatting_a_description_returns_null_over_the_wire() {
         }),
     );
     let resp = h.recv_response(&id);
-    // There is no DCF formatter. Answering with R-formatted edits here would
-    // rewrite the user's DESCRIPTION into something `read.dcf` rejects.
+    let edits = resp.response_result.expect("formatting result");
+    let new_text = edits[0]["newText"].as_str().expect("edit text");
+    // The single assertion that guards the whole feature: `Package: testpkg`
+    // keeps the space `read.dcf` needs. The R formatter would have written
+    // `Package:testpkg`, which is a different file to R.
+    assert!(
+        new_text.starts_with("Package: testpkg\n"),
+        "formatted as R, not DCF: {new_text:?}"
+    );
+    assert!(new_text.contains("Depends:\n    R\n"), "{new_text:?}");
+    h.shutdown();
+}
+
+#[test]
+fn range_formatting_a_description_returns_null_over_the_wire() {
+    // Canonical field order is a whole-document property, so "format these three
+    // lines" has no coherent answer. Format-on-save uses the document provider,
+    // which does work, so this is not a silently broken formatter.
+    let mut h = Harness::start_push();
+    let uri = description_uri();
+    h.did_open_as(uri, DESCRIPTION_VALID_AS_R, 1, "r-description");
+
+    let id = h.request(
+        "textDocument/rangeFormatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 1, "character": 0 }
+            },
+            "options": { "tabSize": 2, "insertSpaces": true }
+        }),
+    );
+    let resp = h.recv_response(&id);
+    assert_eq!(
+        resp.response_result.expect("range formatting result"),
+        Value::Null
+    );
+    h.shutdown();
+}
+
+#[test]
+fn formatting_a_description_is_declined_when_the_config_says_so() {
+    let (dir, desc_uri, _) = package_fixture(DESCRIPTION_VALID_AS_R, "f <- function() 1\n");
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[format]\ndescription = false\n",
+    )
+    .expect("arity.toml");
+
+    let mut h = Harness::start_push();
+    h.did_open_as(&desc_uri, DESCRIPTION_VALID_AS_R, 1, "r-description");
+
+    let id = h.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": desc_uri },
+            "options": { "tabSize": 2, "insertSpaces": true }
+        }),
+    );
+    let resp = h.recv_response(&id);
     assert_eq!(
         resp.response_result.expect("formatting result"),
-        Value::Null,
-        "formatting a DESCRIPTION must produce no edits"
+        Value::Null
     );
     h.shutdown();
 }
