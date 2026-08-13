@@ -1,12 +1,12 @@
 ---
 source: tests/rule_docs.rs
-expression: render_rule_doc(rule.as_ref())
+expression: render_rule_doc(&rule)
 ---
 ### `roxygen-param`
 
 Flag `@param` documentation that does not match the documented function.
 
-Four shapes are reported: a formal argument with no `@param`, a `@param` naming a nonexistent formal (often a rename that never reached the docs), a name documented twice, and a `@param` missing its name or description. Blocks that inherit or merge documentation (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt from the coverage checks; duplicates are always reported.
+Four shapes are reported: a formal argument with no `@param`, a `@param` naming a nonexistent formal (often a rename that never reached the docs), a name documented twice, and a `@param` missing its name or description. Blocks that inherit or merge documentation (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt from the coverage checks, and a titleless S3 method (registered with `S3method()`, so it generates no `.Rd`) is exempt from the missing-`@param` check; duplicates are always reported.
 
 This rule is **enabled by default**.
 

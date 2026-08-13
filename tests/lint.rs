@@ -5137,6 +5137,118 @@ fn roxygen_param_negatives() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// S3 methods: a bare `#' @export` on `generic.class` registers the method
+// (`S3method(generic, class)`) rather than exporting it, so roxygen2 generates
+// no Rd topic and `R CMD check` reports no undocumented export. Documenting
+// the generic and leaving the methods bare is the standard idiom, so none of
+// the three topic rules may fire on a method.
+// ---------------------------------------------------------------------------
+
+/// The idiomatic shape: a documented generic plus a bare `@export` method.
+const S3_METHOD_SRC: &str = "\
+#' Refit a model
+#'
+#' @param object An object.
+#' @param ... Other args.
+#' @return A refitted model.
+#' @export
+refit <- function(object, ...) {
+  UseMethod(\"refit\")
+}
+
+#' @export
+refit.TrainedSLOPE <- function(object, x = NULL, ...) {
+  object
+}
+";
+
+#[test]
+fn roxygen_topic_rules_skip_s3_methods() {
+    let result = lint_package(
+        "S3method(refit,TrainedSLOPE)\nexport(refit)\n",
+        S3_METHOD_SRC,
+    );
+    let rules = rules_for(&result, "a.R");
+    for rule in ["roxygen-title", "roxygen-return", "roxygen-param"] {
+        assert!(
+            !rules.contains(&rule),
+            "{rule} should not fire on an S3 method: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn roxygen_topic_rules_still_flag_plain_export_in_a_package() {
+    // The guard is scoped to registered methods: a genuine `export()` is still
+    // an undocumented export, which is what these rules exist to catch.
+    let result = lint_package(
+        "S3method(refit,TrainedSLOPE)\nexport(plain_export)\n",
+        "#' @export\nplain_export <- function(z) z\n",
+    );
+    let rules = rules_for(&result, "a.R");
+    assert!(
+        rules.contains(&"roxygen-title"),
+        "a plain export is still undocumented: {rules:?}"
+    );
+}
+
+#[test]
+fn roxygen_title_still_flags_untitled_s3_method_that_asks_for_a_topic() {
+    // Verified against roxygen2 8.0.0: a method block carrying `@param` but no
+    // title gets "Skipping; no name and/or title" and writes no Rd. The title
+    // is the real gap, so `roxygen-title` fires; the `@param` coverage rules
+    // stay quiet because there is still no topic.
+    let result = lint_package(
+        "S3method(refit,TrainedSLOPE)\n",
+        "#' @param object An object.\n#' @export\nrefit.TrainedSLOPE <- function(object, x) object\n",
+    );
+    let rules = rules_for(&result, "a.R");
+    assert!(
+        rules.contains(&"roxygen-title"),
+        "roxygen2 warns here, so arity should too: {rules:?}"
+    );
+    assert!(
+        !rules.contains(&"roxygen-param") && !rules.contains(&"roxygen-return"),
+        "no topic is generated, so no section is owed: {rules:?}"
+    );
+}
+
+#[test]
+fn roxygen_param_still_flags_nonexistent_formal_on_an_s3_method() {
+    // The missing direction is suppressed for a topicless method; a `@param`
+    // naming nothing real is a block-vs-function mismatch either way.
+    let result = lint_package(
+        "S3method(refit,TrainedSLOPE)\n",
+        "#' @param nope Not a formal.\n#' @export\nrefit.TrainedSLOPE <- function(object) object\n",
+    );
+    let messages: Vec<_> = result
+        .reports
+        .iter()
+        .flat_map(|r| r.diagnostics.iter())
+        .filter(|d| d.rule == "roxygen-param")
+        .map(|d| d.message.body.clone())
+        .collect();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("nope"), "{messages:?}");
+}
+
+#[test]
+fn roxygen_topic_rules_flag_documented_s3_method_gaps() {
+    // A method that *does* open a topic (it has prose, so roxygen2 writes an
+    // Rd) is judged like any other documented function: `@param` coverage and
+    // the missing `@return` are real there.
+    let result = lint_package(
+        "S3method(refit,TrainedSLOPE)\n",
+        "#' Refit a trained model\n#' @export\nrefit.TrainedSLOPE <- function(object, x) object\n",
+    );
+    let rules = rules_for(&result, "a.R");
+    assert!(
+        rules.contains(&"roxygen-param"),
+        "an Rd-generating method still owes @param: {rules:?}"
+    );
+}
+
 #[test]
 fn roxygen_examples_flags_parse_error() {
     // An unclosed call: the same shape the parser diagnoses in plain R code.

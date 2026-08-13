@@ -16,7 +16,10 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
-use crate::linter::rules::roxygen::{documented_function, inherits_docs, wants_rd_topic};
+use crate::linter::rules::roxygen::{
+    asks_for_rd_on_its_own, documented_function, documents_s3_method, has_title, inherits_docs,
+    wants_rd_topic,
+};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
@@ -39,7 +42,9 @@ impl Rule for RoxygenTitle {
          generated `.Rd`. An `@export` with no documentation at all is flagged \
          too—`R CMD check` reports it as an undocumented export. Blocks that \
          merge into or inherit another topic (`@rdname`, `@describeIn`, \
-         `@inherit*`, `@template`) and `@noRd` blocks are skipped."
+         `@inherit*`, `@template`) and `@noRd` blocks are skipped, as is a bare \
+         `@export` on a function the package's NAMESPACE registers with \
+         `S3method()`—that generates no topic and no undocumented export."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -50,7 +55,7 @@ impl Rule for RoxygenTitle {
         &[SyntaxKind::ROXYGEN_BLOCK]
     }
 
-    fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+    fn check(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let Some(block) = el.as_node().cloned().and_then(RoxygenBlock::cast) else {
             return;
         };
@@ -61,9 +66,15 @@ impl Rule for RoxygenTitle {
         {
             return;
         }
-        let has_title =
-            block.intro().is_some_and(|intro| intro.has_prose()) || block.has_tag("title");
-        if has_title {
+        if has_title(&block) {
+            return;
+        }
+        // `@export` on a registered S3 method becomes `S3method(...)`, not
+        // `export(...)`: no topic is generated and `R CMD check` reports no
+        // undocumented export, so a bare method block owes no title. A method
+        // block that asks for a topic anyway (`@param`, `@examples`, …) is
+        // still flagged—roxygen2 warns "Skipping; no name and/or title" there.
+        if documents_s3_method(&block, ctx) && !asks_for_rd_on_its_own(&block) {
             return;
         }
         // Point at the block's first marker, not the whole block.

@@ -16,9 +16,11 @@
 
 use rowan::ast::AstNode as _;
 use rowan::{TextRange, TextSize};
+use smol_str::SmolStr;
 
 use crate::ast::{AssignmentExpr, FunctionExpr, RoxygenBlock, RoxygenSection};
-use crate::syntax::{SyntaxElement, SyntaxKind};
+use crate::linter::rules::RuleContext;
+use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Every tag understood by roxygen2 (8.0.0) plus the `@md`/`@noMd` toggles.
 /// Version *availability* (`@prop`/`@R6method` need roxygen2 >= 8.0.0) is the
@@ -142,20 +144,35 @@ fn is_namespace_or_toggle_tag(name: &str) -> bool {
 /// report as an undocumented export). Import-attachment blocks (namespace
 /// tags only, no export) do not.
 pub(crate) fn wants_rd_topic(block: &RoxygenBlock) -> bool {
-    block.has_tag("export")
-        || block.intro().is_some_and(|intro| intro.has_prose())
+    block.has_tag("export") || asks_for_rd_on_its_own(block)
+}
+
+/// Whether the block asks for a topic on its own content—prose or an
+/// Rd-generating tag—ignoring `@export`. This is [`wants_rd_topic`] minus the
+/// clause that only holds because the target is exported, which is exactly the
+/// distinction an S3 method needs: a method is never exported, but a method
+/// block carrying `@param` still asks roxygen2 for a topic (and gets the
+/// "Skipping; no name and/or title" warning when it has no title).
+pub(crate) fn asks_for_rd_on_its_own(block: &RoxygenBlock) -> bool {
+    block.intro().is_some_and(|intro| intro.has_prose())
         || block.tags().any(|tag| {
             tag.name()
                 .is_some_and(|name| !is_namespace_or_toggle_tag(&name))
         })
 }
 
-/// The function this block documents, when that is unambiguous: the next
-/// non-trivia sibling is `name <- function(...)` (also `=` / `<<-`, string
-/// LHS) or a bare `function(...)` literal. Anything else—another roxygen
-/// block, `setMethod(...)`, an R6 class call, `"_PACKAGE"`, `NULL`—returns
-/// `None`.
-pub(crate) fn documented_function(block: &RoxygenBlock) -> Option<FunctionExpr> {
+/// Whether the block supplies a topic title: a leading prose paragraph (whose
+/// first sentence becomes the title) or an explicit `@title`. roxygen2 writes
+/// no `.Rd` without one, so this gates every rule whose subject is a section
+/// of the generated topic.
+pub(crate) fn has_title(block: &RoxygenBlock) -> bool {
+    block.intro().is_some_and(|intro| intro.has_prose()) || block.has_tag("title")
+}
+
+/// The statement this block documents: the next sibling node, skipping only
+/// trivia. A non-trivia *token* before it (so the block does not lead a
+/// statement) ends the walk.
+fn documented_statement(block: &RoxygenBlock) -> Option<SyntaxNode> {
     let mut next = block.syntax().next_sibling_or_token();
     while let Some(element) = next {
         match &element {
@@ -167,34 +184,75 @@ pub(crate) fn documented_function(block: &RoxygenBlock) -> Option<FunctionExpr> 
                     return None;
                 }
             }
-            SyntaxElement::Node(node) => {
-                return match node.kind() {
-                    SyntaxKind::FUNCTION_EXPR => FunctionExpr::cast(node.clone()),
-                    SyntaxKind::ASSIGNMENT_EXPR => {
-                        let assign = AssignmentExpr::cast(node.clone())?;
-                        if !matches!(
-                            assign.op_kind(),
-                            Some(
-                                SyntaxKind::ASSIGN_LEFT
-                                    | SyntaxKind::ASSIGN_EQ
-                                    | SyntaxKind::SUPER_ASSIGN
-                            )
-                        ) || assign.target_name().is_none()
-                        {
-                            return None;
-                        }
-                        match assign.value_element()? {
-                            SyntaxElement::Node(value) => FunctionExpr::cast(value),
-                            SyntaxElement::Token(_) => None,
-                        }
-                    }
-                    _ => None,
-                };
-            }
+            SyntaxElement::Node(node) => return Some(node.clone()),
         }
         next = element.next_sibling_or_token();
     }
     None
+}
+
+/// The assignment this block documents, when it is a plain binding: `name <-`
+/// (also `=` / `<<-`, string LHS). Excludes replacement-style targets
+/// (`dim(x) <-`), which have no `target_name`.
+fn documented_assignment(block: &RoxygenBlock) -> Option<AssignmentExpr> {
+    let node = documented_statement(block)?;
+    if node.kind() != SyntaxKind::ASSIGNMENT_EXPR {
+        return None;
+    }
+    let assign = AssignmentExpr::cast(node)?;
+    if !matches!(
+        assign.op_kind(),
+        Some(SyntaxKind::ASSIGN_LEFT | SyntaxKind::ASSIGN_EQ | SyntaxKind::SUPER_ASSIGN)
+    ) || assign.target_name().is_none()
+    {
+        return None;
+    }
+    Some(assign)
+}
+
+/// The name this block's documented statement binds, when it is a plain
+/// binding. `None` for a bare `function(...)` literal and every non-assignment
+/// shape.
+pub(crate) fn documented_binding_name(block: &RoxygenBlock) -> Option<SmolStr> {
+    documented_assignment(block)?.target_name()
+}
+
+/// The function this block documents, when that is unambiguous: the next
+/// non-trivia sibling is `name <- function(...)` (also `=` / `<<-`, string
+/// LHS) or a bare `function(...)` literal. Anything else—another roxygen
+/// block, `setMethod(...)`, an R6 class call, `"_PACKAGE"`, `NULL`—returns
+/// `None`.
+pub(crate) fn documented_function(block: &RoxygenBlock) -> Option<FunctionExpr> {
+    let node = documented_statement(block)?;
+    match node.kind() {
+        SyntaxKind::FUNCTION_EXPR => FunctionExpr::cast(node),
+        SyntaxKind::ASSIGNMENT_EXPR => match documented_assignment(block)?.value_element()? {
+            SyntaxElement::Node(value) => FunctionExpr::cast(value),
+            SyntaxElement::Token(_) => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether this block documents a function registered as an S3 method by the
+/// package's `NAMESPACE` (`S3method(generic, class)`).
+///
+/// roxygen2 turns `@export` on such a name into `S3method(...)`, not
+/// `export(...)`: the method is reached by dispatch, generates no Rd topic of
+/// its own, and `R CMD check` never reports it as an undocumented export. So
+/// the topic rules' premise—"an `@export` whose target owes documentation"—
+/// does not hold, and documenting the generic while leaving each method a bare
+/// `#' @export` is the standard idiom.
+///
+/// Answered from the parsed `NAMESPACE` rather than the name's shape: `foo.bar`
+/// is only a method if a generic actually claims it, and arity never evaluates
+/// R. Consequently this is `false` on the single-file paths (no project scope)
+/// and for a package whose `NAMESPACE` has not been regenerated.
+pub(crate) fn documents_s3_method(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
+    let Some(project) = ctx.project else {
+        return false;
+    };
+    documented_binding_name(block).is_some_and(|name| project.is_s3_method(&name))
 }
 
 /// What a `@param` section documents.

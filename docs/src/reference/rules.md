@@ -1292,7 +1292,7 @@ warning: roxygen-unknown-tag
 
 Flag a documented function whose roxygen block has no title.
 
-The first untagged paragraph (or an explicit `@title`) becomes the topic title; without one, roxygen2 warns and `R CMD check` rejects the generated `.Rd`. An `@export` with no documentation at all is flagged too—`R CMD check` reports it as an undocumented export. Blocks that merge into or inherit another topic (`@rdname`, `@describeIn`, `@inherit*`, `@template`) and `@noRd` blocks are skipped.
+The first untagged paragraph (or an explicit `@title`) becomes the topic title; without one, roxygen2 warns and `R CMD check` rejects the generated `.Rd`. An `@export` with no documentation at all is flagged too—`R CMD check` reports it as an undocumented export. Blocks that merge into or inherit another topic (`@rdname`, `@describeIn`, `@inherit*`, `@template`) and `@noRd` blocks are skipped, as is a bare `@export` on a function the package's NAMESPACE registers with `S3method()`—that generates no topic and no undocumented export.
 
 This rule is **enabled by default**.
 
@@ -1317,7 +1317,7 @@ warning: roxygen-title
 
 Flag an `@export`ed function documented without `@return`.
 
-CRAN requires every exported function's documentation to describe its return value (the `.Rd` `\value` section); roxygen2 itself stays silent, so the omission otherwise surfaces only at submission time. `@returns` is accepted as an alias. `@noRd` blocks and merged or inherited topics (`@rdname`, `@inherit`, …) are skipped.
+CRAN requires every exported function's documentation to describe its return value (the `.Rd` `\value` section); roxygen2 itself stays silent, so the omission otherwise surfaces only at submission time. `@returns` is accepted as an alias. `@noRd` blocks and merged or inherited topics (`@rdname`, `@inherit`, …) are skipped, as is a titleless S3 method (registered with `S3method()`, so it is not exported and generates no `.Rd`); the generic's topic owns the value.
 
 This rule is **enabled by default**.
 
@@ -1343,7 +1343,7 @@ warning: roxygen-return
 
 Flag `@param` documentation that does not match the documented function.
 
-Four shapes are reported: a formal argument with no `@param`, a `@param` naming a nonexistent formal (often a rename that never reached the docs), a name documented twice, and a `@param` missing its name or description. Blocks that inherit or merge documentation (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt from the coverage checks; duplicates are always reported.
+Four shapes are reported: a formal argument with no `@param`, a `@param` naming a nonexistent formal (often a rename that never reached the docs), a name documented twice, and a `@param` missing its name or description. Blocks that inherit or merge documentation (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt from the coverage checks, and a titleless S3 method (registered with `S3method()`, so it generates no `.Rd`) is exempt from the missing-`@param` check; duplicates are always reported.
 
 This rule is **enabled by default**.
 

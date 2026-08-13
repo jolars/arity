@@ -1,12 +1,12 @@
 ---
 source: tests/rule_docs.rs
-expression: render_rule_doc(rule.as_ref())
+expression: render_rule_doc(&rule)
 ---
 ### `roxygen-return`
 
 Flag an `@export`ed function documented without `@return`.
 
-CRAN requires every exported function's documentation to describe its return value (the `.Rd` `\value` section); roxygen2 itself stays silent, so the omission otherwise surfaces only at submission time. `@returns` is accepted as an alias. `@noRd` blocks and merged or inherited topics (`@rdname`, `@inherit`, …) are skipped.
+CRAN requires every exported function's documentation to describe its return value (the `.Rd` `\value` section); roxygen2 itself stays silent, so the omission otherwise surfaces only at submission time. `@returns` is accepted as an alias. `@noRd` blocks and merged or inherited topics (`@rdname`, `@inherit`, …) are skipped, as is a titleless S3 method (registered with `S3method()`, so it is not exported and generates no `.Rd`); the generic's topic owns the value.
 
 This rule is **enabled by default**.
 

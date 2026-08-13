@@ -17,7 +17,9 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::{RoxygenBlock, RoxygenTag};
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
-use crate::linter::rules::roxygen::{ParamDoc, documented_function, inherits_docs, param_doc};
+use crate::linter::rules::roxygen::{
+    ParamDoc, documented_function, documents_s3_method, has_title, inherits_docs, param_doc,
+};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
@@ -52,7 +54,9 @@ impl Rule for RoxygenParam {
          reached the docs), a name documented twice, and a `@param` missing \
          its name or description. Blocks that inherit or merge documentation \
          (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt \
-         from the coverage checks; duplicates are always reported."
+         from the coverage checks, and a titleless S3 method (registered with \
+         `S3method()`, so it generates no `.Rd`) is exempt from the \
+         missing-`@param` check; duplicates are always reported."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -63,12 +67,18 @@ impl Rule for RoxygenParam {
         &[SyntaxKind::ROXYGEN_BLOCK]
     }
 
-    fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+    fn check(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let Some(block) = el.as_node().cloned().and_then(RoxygenBlock::cast) else {
             return;
         };
         let function = documented_function(&block);
         let judge_coverage = function.is_some() && !inherits_docs(&block);
+        // A registered S3 method with no title generates no `.Rd`, so it has no
+        // parameter list that could be incomplete—the generic's topic documents
+        // the arguments. A `@param` naming a nonexistent formal is still a
+        // block-vs-function mismatch, so only the missing direction is dropped.
+        let judge_missing =
+            judge_coverage && !(documents_s3_method(&block, ctx) && !has_title(&block));
         let formals = function.map(|f| f.params()).unwrap_or_default();
 
         let mut documented: Vec<smol_str::SmolStr> = Vec::new();
@@ -135,7 +145,7 @@ impl Rule for RoxygenParam {
         }
 
         // An unrecoverable `@param` head means coverage can't be judged.
-        if !judge_coverage || any_unknown {
+        if !judge_missing || any_unknown {
             return;
         }
         for formal in formals {

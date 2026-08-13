@@ -13,7 +13,9 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
-use crate::linter::rules::roxygen::{documented_function, inherits_docs};
+use crate::linter::rules::roxygen::{
+    documented_function, documents_s3_method, has_title, inherits_docs,
+};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
@@ -35,7 +37,9 @@ impl Rule for RoxygenReturn {
          its return value (the `.Rd` `\\value` section); roxygen2 itself stays \
          silent, so the omission otherwise surfaces only at submission time. \
          `@returns` is accepted as an alias. `@noRd` blocks and merged or \
-         inherited topics (`@rdname`, `@inherit`, …) are skipped."
+         inherited topics (`@rdname`, `@inherit`, …) are skipped, as is a \
+         titleless S3 method (registered with `S3method()`, so it is not \
+         exported and generates no `.Rd`); the generic's topic owns the value."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -46,7 +50,7 @@ impl Rule for RoxygenReturn {
         &[SyntaxKind::ROXYGEN_BLOCK]
     }
 
-    fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+    fn check(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let Some(block) = el.as_node().cloned().and_then(RoxygenBlock::cast) else {
             return;
         };
@@ -62,6 +66,13 @@ impl Rule for RoxygenReturn {
             || inherits_docs(&block)
             || documented_function(&block).is_none()
         {
+            return;
+        }
+        // A registered S3 method is not exported, and without a title roxygen2
+        // writes no `.Rd` at all—so there is no `\value` section for CRAN to
+        // want. The generic's topic is where the value is described. A titled
+        // method does generate a topic and is judged like any other function.
+        if documents_s3_method(&block, ctx) && !has_title(&block) {
             return;
         }
         sink.push(Diagnostic {
