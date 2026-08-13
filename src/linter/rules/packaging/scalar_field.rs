@@ -1,9 +1,9 @@
 //! Reading a `DESCRIPTION` field that holds one scalar value, the way R does.
 //!
 //! Shared by the rules that check a single field against one of R's regexps
-//! (`description-malformed-name`, `description-malformed-version`), which all
-//! need the same two things: the value R would compare, and the source range to
-//! put the caret on.
+//! (`description-malformed-name`, `description-malformed-version`,
+//! `description-malformed-maintainer`), which all need the same two things: the
+//! value R would compare, and the source range to put the caret on.
 
 use rowan::{TextRange, TextSize};
 

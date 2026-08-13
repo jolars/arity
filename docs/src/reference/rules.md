@@ -88,6 +88,7 @@ so this page never drifts from the rules' actual behavior.
 - [`description-package-in-multiple-fields`](#description-package-in-multiple-fields)
 - [`description-malformed-name`](#description-malformed-name)
 - [`description-malformed-version`](#description-malformed-version)
+- [`description-malformed-maintainer`](#description-malformed-maintainer)
 - [`unused-dependency`](#unused-dependency)
 
 **Meta**
@@ -1689,6 +1690,73 @@ warning: description-malformed-version
 2 | Version: 1.0.5000
   |          ^^^^^^^^ `1.0.5000` has an implausibly large component (`5000`)
   = help: Check the number: a component of 1234 or more is usually a typo or a date in the wrong slot.
+```
+
+### `description-malformed-maintainer`
+
+Flag a `Maintainer` value R or CRAN will object to.
+
+R's `.valid_maintainer_field_regexp` wants exactly one `Name <address>`, or the literal `ORPHANED`. A **missing address** (`Maintainer: Jane Doe`) is the common case and fails it outright.
+
+Three CRAN pretest checks cover the rest of the field and are reported by the same rule, since they are one conversation about who maintains the package: text after the address, which is what **two maintainers** look like (R's own regexp accepts those, so this is the clause that catches them); an address with **no name** in front of it; and a **comma in an unquoted display name**, which reads as a list of people—`"Doe, Jane" <jane@example.com>` is the repair.
+
+R's regexp is ported as written and deliberately not tightened to RFC 5322: a quoted local part, a domain with no TLD, and a domain label starting with `-` are all addresses `R CMD check` accepts. A `Maintainer` wrapped across continuation lines is accepted too, exactly as R accepts it.
+
+An absent or empty `Maintainer` is not this rule's finding: R derives one from `Authors@R`, and whether the package names a maintainer at all is `description-missing-field`'s subject.
+
+There is no autofix: an address cannot be invented, a name cannot be invented, and whether a comma separates a surname from a given name or separates two people is a question only the author can answer.
+
+This rule is **enabled by default**.
+
+A maintainer with no address, which is what R's `.valid_maintainer_field_regexp` mostly catches:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Maintainer: Jane Doe
+```
+
+```text
+warning: description-malformed-maintainer
+ --> DESCRIPTION:3:13
+  |
+3 | Maintainer: Jane Doe
+  |             ^^^^^^^^ `Jane Doe` has no email address
+  = help: Add the maintainer's address: `Name <name@example.com>`, or `ORPHANED` if the package has no maintainer.
+```
+
+Two maintainers, where R's `Maintainer` holds exactly one:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Maintainer: Jane Doe <jane@example.com>, John Roe <john@example.org>
+```
+
+```text
+warning: description-malformed-maintainer
+ --> DESCRIPTION:3:13
+  |
+3 | Maintainer: Jane Doe <jane@example.com>, John Roe <john@example.org>
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Jane Doe <jane@example.com>, John Roe <john@example.org>` names more than one person
+  = help: Name one maintainer here and credit everyone else in `Authors@R`: R's `Maintainer` is the single person to write to.
+```
+
+A comma in an unquoted display name, which reads as a list of people:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Maintainer: Doe, Jane <jane@example.com>
+```
+
+```text
+warning: description-malformed-maintainer
+ --> DESCRIPTION:3:13
+  |
+3 | Maintainer: Doe, Jane <jane@example.com>
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the maintainer name `Doe, Jane` contains a comma but is not quoted
+  = help: Quote the name (`"Doe, Jane" <jane@example.com>`), so the comma does not read as a second maintainer.
 ```
 
 ### `unused-dependency`

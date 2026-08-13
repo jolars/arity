@@ -7,6 +7,7 @@
 //! two sides, and a reader looking for either should find both in one place.
 
 mod description_duplicate_field;
+mod description_malformed_maintainer;
 mod description_malformed_name;
 mod description_malformed_version;
 mod description_missing_field;
@@ -17,6 +18,7 @@ mod undeclared_dependency;
 mod unused_dependency;
 
 pub use description_duplicate_field::DescriptionDuplicateField;
+pub use description_malformed_maintainer::DescriptionMalformedMaintainer;
 pub use description_malformed_name::DescriptionMalformedName;
 pub use description_malformed_version::DescriptionMalformedVersion;
 pub use description_missing_field::DescriptionMissingField;

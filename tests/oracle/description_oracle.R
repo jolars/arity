@@ -20,8 +20,8 @@
 #       dependency field. Its other components need installed packages and a
 #       `src/` directory, which a text-only oracle has no business simulating.
 #   tools:::.check_package_CRAN_incoming(localOnly = TRUE)
-#       only its two version components, on the same grounds: the CRAN pretest
-#       is mostly about files, URLs, and network state, but the version NOTEs
+#       only its version and Maintainer components, on the same grounds: the
+#       CRAN pretest is mostly about files, URLs, and network state, but these
 #       are functions of the DESCRIPTION text and nothing else covers them.
 #
 # Reads DESCRIPTION text from stdin, writes a line-oriented report to stdout.
@@ -157,12 +157,19 @@ if (!is.null(out2)) {
   emit("duplicates", out2$duplicates)
 }
 
-# The CRAN pretest, for the two clauses that are functions of the DESCRIPTION
-# text alone. Cherry-picked exactly as `.check_package_description2` is above,
-# and for the same reason: of this checker's ~85 components, nearly all are
-# about files, URLs, network state, or installed packages, and a text-only
-# oracle has no business simulating those. What is left is the version half,
-# which `.check_package_description` does not cover at all.
+# The CRAN pretest, for the clauses that are functions of the DESCRIPTION text
+# alone. Cherry-picked exactly as `.check_package_description2` is above, and
+# for the same reason: of this checker's ~85 components, nearly all are about
+# files, URLs, network state, or installed packages, and a text-only oracle has
+# no business simulating those. What is left is the version half, which
+# `.check_package_description` does not cover at all, and the three Maintainer
+# NOTEs, which cover the *name* half of a field whose address half is all that
+# `.valid_maintainer_field_regexp` looks at.
+#
+# The three Maintainer components are logical flags rather than offenders, so
+# `emit_component` reports them with an empty detail — the gate on them is
+# `Backing::Signal`, which is the whole claim a rule keyed on one scalar field
+# makes.
 #
 # Note it errors outright on a DESCRIPTION with no `Maintainer` — it compares
 # one against "ORPHANED" before reaching anything else, and NA is not a
@@ -174,6 +181,12 @@ cran <- tryCatch(
 if (!is.null(cran)) {
   emit("version_with_leading_zeroes", cran$version_with_leading_zeroes)
   emit("version_with_large_components", cran$version_with_large_components)
+  emit_component("empty_Maintainer_name", cran$empty_Maintainer_name)
+  emit_component("Maintainer_needs_quotes", cran$Maintainer_needs_quotes)
+  emit_component(
+    "Maintainer_invalid_or_multi_person",
+    cran$Maintainer_invalid_or_multi_person
+  )
 }
 
 cat(seen, sep = "\n")

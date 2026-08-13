@@ -176,17 +176,28 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   fourth checker now exposes; four planted cases exercise them, two of them
   pinning the places arity deliberately withholds.
 
-- [ ] `description-malformed-maintainer`. R's
-  `.valid_maintainer_field_regexp`: exactly one `Name <email>`, or the
-  literal `ORPHANED`. A **missing address** (`Maintainer: Jane Doe`) is the
-  common case and fails the regexp outright; so do two maintainers and an
-  unquoted comma in the name. Port R's regexp verbatim and do **not**
-  substitute a stricter RFC 5322 grammar: R's is deliberately loose (quoted
-  local parts, no TLD requirement), so anything tighter false-positives on
-  addresses R accepts. Three CRAN-incoming checks cover the *name* half and
-  belong here: `empty_Maintainer_name`, `Maintainer_needs_quotes` (a comma
-  in an unquoted display name), and `Maintainer_invalid_or_multi_person`
-  (trailing text after the `<...>`).
+- [x] `description-malformed-maintainer` (packaging; syn; no fix, default on).
+  Done. `Maintainer` against `.valid_maintainer_field_regexp` (exactly one
+  `Name <email>`, or the literal `ORPHANED`), plus the three CRAN-incoming
+  checks that cover the *name* half: `empty_Maintainer_name`,
+  `Maintainer_needs_quotes`, and `Maintainer_invalid_or_multi_person`. First
+  clause wins; the missing-address case gets its own message, since it is the
+  common one. R's regexp is ported as written and **not** tightened to RFC
+  5322 — a quoted local part, a domain with no TLD, and a domain label
+  starting with `-` are all addresses R accepts. Two things a rule written
+  from the regexp alone would get wrong: **two maintainers pass it**, because
+  the `.*` before the `<` swallows the first person, so the multi-person
+  shape is caught only by the CRAN NOTE (the planted
+  `maintainer-multi-person` case fires no `bad_maintainer` at all); and a
+  `Maintainer` **wrapped across continuation lines** is one R accepts, since
+  it matches the folded value with a `.` that takes a newline. No fix — an
+  address cannot be invented, a name cannot be invented, and whether a comma
+  separates a surname from a given name or separates two people is the
+  author's call. `bad_maintainer` moved from `PLANNED` to `GATES` in
+  `tests/description_oracle.rs`, joined by the three CRAN signals the driver
+  now exposes; backed by presence, since three of the four are logical flags.
+  Six planted cases exercise them, three of them pinning the places arity
+  deliberately withholds.
 
 - [ ] **Gap in the shipped `description-missing-field`.** It treats the mere
   presence of `Authors@R` as satisfying `Author` and `Maintainer`, but R only

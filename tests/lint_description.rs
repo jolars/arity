@@ -1005,6 +1005,224 @@ fn malformed_version_ships_no_fix() {
 }
 
 // ---------------------------------------------------------------------------
+// description-malformed-maintainer
+// ---------------------------------------------------------------------------
+
+const MALFORMED_MAINTAINER: &str = "description-malformed-maintainer";
+
+/// `COMPLETE_DESCRIPTION` with a `Maintainer` added, so a case varies only the
+/// field the rule reads. The base fixture has none — R derives one from
+/// `Authors@R` — which is itself the `an_absent_maintainer_is_silent` case.
+fn maintained(maintainer: &str) -> String {
+    format!("{COMPLETE_DESCRIPTION}Maintainer: {maintainer}\n")
+}
+
+/// The findings of `MALFORMED_MAINTAINER`, as the source text each one spans.
+fn maintainer_hits(text: &str) -> Vec<String> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .expect("linting should not error")
+        .iter()
+        .filter(|d| d.rule == MALFORMED_MAINTAINER)
+        .map(|d| {
+            let start: usize = d.range.start().into();
+            let end: usize = d.range.end().into();
+            text[start..end].to_string()
+        })
+        .collect()
+}
+
+/// Every shape R's `.valid_maintainer_field_regexp` rejects. Verified case by
+/// case against `grepl` in R 4.6.1.
+#[test]
+fn a_maintainer_r_would_reject_is_flagged() {
+    for maintainer in [
+        "Jane Doe",                             // no address at all — the common case
+        "Jane Doe <jane at example.com>",       // nor an obfuscated one
+        "Jane <>",                              // the angle brackets need contents
+        "Jane Doe <@example.com>",              // a local part
+        "Jane Doe <jane@>",                     // and a domain
+        "Jane Doe <jane..doe@example.com>",     // no empty local-part component
+        "Jane Doe <jane@example..com>",         // nor an empty domain label
+        "Jane Doe <jane@exa_mple.com>",         // `_` is not a domain character
+        "Jane Doe < jane@example.com>",         // no space inside the brackets
+        "Jane Doe <jane@example.com >",         // on either side
+        "Jane Doe <jane@example.com> and John", // and nothing after them
+        "orphaned",                             // the literal is spelled in capitals
+    ] {
+        assert_eq!(
+            maintainer_hits(&maintained(maintainer)),
+            [maintainer],
+            "`{maintainer}` should be flagged, spanning the field's value",
+        );
+    }
+}
+
+/// R's regexp is deliberately looser than RFC 5322, and a stricter reading
+/// would report addresses `R CMD check` accepts. Every one of these is verified
+/// against `grepl`.
+#[test]
+fn a_maintainer_r_accepts_is_not_flagged() {
+    for maintainer in [
+        "Jane Doe <jane@example.com>",
+        "R Core Team <R-core@r-project.org>",
+        "Jane Doe <jane@example>",             // no TLD is required
+        "Jane Doe <\"jane doe\"@example.com>", // a quoted local part
+        "Jane Doe <jane+x@sub.example.co.uk>",
+        "Jane Doe <jane@-example.com>", // a domain label may start with `-`
+        "Jos\u{e9} Caf\u{e9} <jose@example.com>",
+        "Jane Doe<jane@example.com>", // the space before `<` is optional
+        "\"Doe, Jane\" <jane@example.com>",
+    ] {
+        assert!(
+            maintainer_hits(&maintained(maintainer)).is_empty(),
+            "`{maintainer}` should not be flagged",
+        );
+    }
+}
+
+/// The regexp's second alternative, spelled out: an orphaned package names no
+/// maintainer, and the literal is case-sensitive.
+#[test]
+fn the_literal_orphaned_is_accepted() {
+    assert!(maintainer_hits(&maintained("ORPHANED")).is_empty());
+    assert_eq!(maintainer_hits(&maintained("Orphaned")), ["Orphaned"]);
+}
+
+/// CRAN's `Maintainer_invalid_or_multi_person`: text after the `<...>`. Two
+/// maintainers is the shape it exists for, and it is one R's own regexp accepts
+/// — the trailing `.*<` before the address happily swallows the first person.
+#[test]
+fn a_second_maintainer_is_flagged() {
+    for maintainer in [
+        "Jane Doe <jane@example.com>, John Roe <john@example.org>",
+        "Jane Doe <jane@example.com> <john@example.org>",
+    ] {
+        assert_eq!(
+            maintainer_hits(&maintained(maintainer)),
+            [maintainer],
+            "`{maintainer}` names more than one person",
+        );
+    }
+}
+
+/// CRAN's `empty_Maintainer_name`: an address with nobody in front of it.
+#[test]
+fn an_address_without_a_name_is_flagged() {
+    assert_eq!(
+        maintainer_hits(&maintained("<jane@example.com>")),
+        ["<jane@example.com>"],
+    );
+}
+
+/// CRAN's `Maintainer_needs_quotes`: a comma in an unquoted display name reads
+/// as a list of people to everything that parses one.
+#[test]
+fn an_unquoted_comma_in_the_name_is_flagged() {
+    assert_eq!(
+        maintainer_hits(&maintained("Doe, Jane <jane@example.com>")),
+        ["Doe, Jane <jane@example.com>"],
+    );
+    assert!(
+        maintainer_hits(&maintained("\"Doe, Jane\" <jane@example.com>")).is_empty(),
+        "quoting the display name is exactly the repair CRAN asks for",
+    );
+}
+
+/// A comma *after* the address is somebody else's clause, and it is the
+/// multi-person one: `display` is cut at the first `<`, so the name half never
+/// sees it.
+#[test]
+fn a_comma_after_the_address_is_not_a_quoting_problem() {
+    let text = maintained("Jane Doe <jane@example.com>, John Roe <john@example.org>");
+    let message = messages(&text, MALFORMED_MAINTAINER)
+        .pop()
+        .expect("a message");
+    assert!(!message.contains("quote"), "{message}");
+}
+
+/// `read.dcf` folds a continuation line in with a `\n`, and R's regexp is
+/// written with a `.` that matches one — so a wrapped `Maintainer` is a
+/// `Maintainer` R accepts. Confirmed against `.check_package_description`.
+#[test]
+fn a_wrapped_maintainer_is_accepted() {
+    assert!(maintainer_hits(&maintained("Jane Doe\n  <jane@example.com>")).is_empty());
+}
+
+/// ...but the fold does not license trailing text: the address still has to be
+/// the last thing in the field.
+#[test]
+fn text_after_a_wrapped_address_is_flagged() {
+    let text = maintained("Jane Doe <jane@example.com>\n  and John Roe");
+    assert_eq!(
+        maintainer_hits(&text),
+        ["Jane Doe <jane@example.com>\n  and John Roe"],
+    );
+}
+
+/// The four defects are four different repairs, so they read differently.
+#[test]
+fn the_message_names_which_maintainer_defect_it_is() {
+    let missing = messages(&maintained("Jane Doe"), MALFORMED_MAINTAINER)
+        .pop()
+        .expect("a message");
+    assert!(missing.contains("email address"), "{missing}");
+
+    let malformed = messages(&maintained("Jane Doe <jane@>"), MALFORMED_MAINTAINER)
+        .pop()
+        .expect("a message");
+    assert!(malformed.contains("not a valid"), "{malformed}");
+
+    let multi = messages(
+        &maintained("Jane Doe <jane@example.com>, John Roe <john@example.org>"),
+        MALFORMED_MAINTAINER,
+    )
+    .pop()
+    .expect("a message");
+    assert!(multi.contains("one person"), "{multi}");
+
+    let nameless = messages(&maintained("<jane@example.com>"), MALFORMED_MAINTAINER)
+        .pop()
+        .expect("a message");
+    assert!(nameless.contains("name"), "{nameless}");
+
+    let quotes = messages(
+        &maintained("Doe, Jane <jane@example.com>"),
+        MALFORMED_MAINTAINER,
+    )
+    .pop()
+    .expect("a message");
+    assert!(quotes.contains("quote"), "{quotes}");
+}
+
+/// R checks the `Maintainer` it *has*, deriving one from `Authors@R` when the
+/// field is absent — and a derived one is well formed by construction. Whether
+/// the package names a maintainer at all is `description-missing-field`'s
+/// subject, and "malformed" is the wrong word for a field with no value in it.
+#[test]
+fn a_maintainer_field_without_a_value_is_silent() {
+    assert!(maintainer_hits(COMPLETE_DESCRIPTION).is_empty());
+    assert!(maintainer_hits(&maintained("")).is_empty());
+    assert!(maintainer_hits(&maintained("   ")).is_empty());
+}
+
+/// No autofix. Three of the four defects have nothing to edit *to* — an address
+/// cannot be invented, a name cannot be invented, and choosing between two
+/// people is not a spelling — and the fourth, quoting a comma'd name, is a
+/// judgment about whether that comma separates a surname from a given name or
+/// separates two maintainers.
+#[test]
+fn malformed_maintainer_ships_no_fix() {
+    let text = maintained("Doe, Jane <jane@example.com>");
+    let finding =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error")
+            .into_iter()
+            .find(|d| d.rule == MALFORMED_MAINTAINER)
+            .expect("a malformed-maintainer finding");
+    assert!(finding.fix.is_none());
+}
+
+// ---------------------------------------------------------------------------
 // Suppression
 // ---------------------------------------------------------------------------
 

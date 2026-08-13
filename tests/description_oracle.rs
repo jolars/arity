@@ -4,7 +4,8 @@
 //! the Packaging rules are pinned against the code that actually decides —
 //! `tools:::.check_package_description(strict = TRUE)`, the `Authors@R` checker
 //! at its strict tier, the `duplicates` half of `.check_package_description2`,
-//! and the two version components of `.check_package_CRAN_incoming`. The last
+//! and the version and `Maintainer` components of
+//! `.check_package_CRAN_incoming`. The last
 //! two are cherry-picked rather than taken whole, because most of what those
 //! checkers report is about files, URLs, network state, and installed packages,
 //! which a text-only oracle has no business simulating. The driver is
@@ -122,13 +123,34 @@ const GATES: &[Gate] = &[
         ],
         backing: Backing::Entry,
     },
+    // Four signals, two checkers, one field: R's regexp looks only at the
+    // address half, and CRAN's three NOTEs cover the name half and the
+    // "exactly one person" part R's `.*` lets through. Three of the four are
+    // logical flags with no offender in them, so the gate is presence — the
+    // same argument as `description-malformed-name`, and the same one a rule
+    // keyed on a single scalar field always makes.
+    //
+    // Note the exclusions the rule mirrors for containment to hold: `ORPHANED`
+    // is R's second alternative, the address classes are looser than RFC 5322
+    // (a quoted local part, no TLD, a leading `-` in a domain label), and a
+    // `Maintainer` folded across continuation lines is one R accepts, since it
+    // matches the field with a `.` that takes a newline.
+    Gate {
+        rule: "description-malformed-maintainer",
+        signals: &[
+            "bad_maintainer",
+            "empty_Maintainer_name",
+            "Maintainer_needs_quotes",
+            "Maintainer_invalid_or_multi_person",
+        ],
+        backing: Backing::Signal,
+    },
 ];
 
 /// Signals no rule covers yet, each tagged with the `TODO.md` rule it is
 /// earmarked for. Listing them is the point: this is the work-list, and moving
 /// one into [`GATES`] is what "the rule landed" means.
 const PLANNED: &[(&str, &str)] = &[
-    ("bad_maintainer", "description-malformed-maintainer"),
     ("bad_Title", "description-title-format"),
     ("bad_Description", "description-text-format"),
     ("missing_encoding", "description-encoding"),
@@ -468,6 +490,44 @@ const PLANTED: &[(&str, &str)] = &[
     (
         "bad-maintainer-no-email",
         "Package: testpkg\nVersion: 0.1.0\nMaintainer: Jane Doe\n",
+    ),
+    // The three CRAN Maintainer NOTEs. Like the version ones below, they need a
+    // `Title` and a `Version` before `.check_package_CRAN_incoming` will reach
+    // them. Note the second: R's own regexp *accepts* two maintainers, so this
+    // case fires no `bad_maintainer` at all and the CRAN NOTE is the only thing
+    // backing the rule on it.
+    (
+        "maintainer-empty-name",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\
+         Maintainer: <jane@example.com>\n",
+    ),
+    (
+        "maintainer-multi-person",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\
+         Maintainer: Jane Doe <jane@example.com>, John Roe <john@example.org>\n",
+    ),
+    (
+        "maintainer-needs-quotes",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\
+         Maintainer: Doe, Jane <jane@example.com>\n",
+    ),
+    // Where the rule deliberately says nothing, so the gate sees the
+    // withholding and not only the reporting: `ORPHANED` is R's second
+    // alternative, a wrapped field is one R's `.` folds right through, and the
+    // address grammar is looser than RFC 5322 in three separate places.
+    (
+        "maintainer-orphaned",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\nMaintainer: ORPHANED\n",
+    ),
+    (
+        "maintainer-wrapped",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\
+         Maintainer: Jane Doe\n  <jane@example.com>\n",
+    ),
+    (
+        "maintainer-loose-address",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\
+         Maintainer: \"Doe, Jane\" <\"jane doe\"@example>\n",
     ),
     (
         "bad-title-trailing-period",
