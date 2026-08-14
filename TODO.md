@@ -31,36 +31,6 @@
 
 ## Linter
 
-### `unused-binding` false positives (rlang sweep, 2026-08-13)
-
-All confirmed against `Rscript`. Each also *deletes working code* under
-`lint --fix --unsafe-fixes`, so these are data-loss bugs, not just noise.
-
-- [ ] **An unregistered S3 method is still reached by dispatch.** `used_elsewhere`
-  asks NAMESPACE, which is authoritative for "is this public", not for "is this
-  reachable": R dispatches to a method defined in the package namespace whether
-  or not `S3method()` registers it. rlang's `` `$.r6lite` `` (`R/utils.R:111`)
-  is flagged, and `--unsafe-fixes` deletes it, breaking every `r6lite` object.
-  Reproducer (no NAMESPACE entry needed):
-
-  ```r
-  x <- structure(list(), class = "cls")
-  `$.cls` <- function(self, arg) "dispatched"   # flagged unused
-  x$foo
-  ```
-
-  `unused-function` already faces this and answers it with the dotted-name tier
-  in its `is_s3_method` (`generic.class` is withheld when there is no project);
-  the same reasoning applies *with* a project, for internal methods.
-
-- [ ] **`s3_register()` registers by name convention.** The two-argument form
-  `s3_register("pillar::pillar_shaft", "rlib_bytes")` reaches
-  `pillar_shaft.rlib_bytes` through a name assembled from two string literals —
-  statically derivable, but arity sees no read. Six findings in rlang
-  (`R/bytes.R:264-270`). The three-argument form passes the method as a value,
-  so it is already clean; only the two-argument form is affected. The idiom is
-  vendored widely (vctrs, tibble, pillar, scales) via `standalone-s3-register.R`.
-
 ### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
 
 - [ ] **`useDynLib(pkg, .registration = TRUE)` binds native routines arity cannot

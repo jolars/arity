@@ -311,6 +311,93 @@ fn s3method_registration_is_not_unused() {
 }
 
 #[test]
+fn unregistered_s3_method_is_not_unused() {
+    // Dispatch reaches a method defined in the namespace whether or not
+    // `S3method()` registers it, so an *unregistered* `generic.class` is live
+    // code. Confirmed against R: with `` `$.cls` `` defined and no NAMESPACE
+    // entry at all, `x$foo` dispatches to it.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("dispatch.R");
+    std::fs::write(
+        &path,
+        "x <- structure(list(), class = \"cls\")\n`$.cls` <- function(self, arg) \"dispatched\"\nprint(x$foo)\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "dispatch.R").contains(&"unused-binding"),
+        "dispatch.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn unregistered_s3_method_in_a_package_is_not_unused() {
+    // The same holds *with* a project: NAMESPACE is authoritative for "is this
+    // public", not for "is this reachable". An internal method registered
+    // nowhere is still dispatched to from inside the package.
+    let result = lint_package("", "print.foo <- function(x, ...) invisible(x)\n");
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn local_s3_method_is_not_unused() {
+    // Dispatch searches the frame the generic was called from, so a method
+    // defined inside a function body is reachable there too (confirmed against
+    // R). Same data-loss risk, same exemption.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("local.R");
+    std::fs::write(
+        &path,
+        "f <- function() {\n  print.myclass <- function(x, ...) cat(\"hi\\n\")\n  print(structure(list(), class = \"myclass\"))\n}\nf()\n",
+    )
+    .expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "local.R").contains(&"unused-binding"),
+        "local.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn dotted_non_function_binding_is_still_unused() {
+    // The exemption is for *methods*: only a function-valued binding can be
+    // dispatched to, so a dotted constant is reported as before.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("konst.R");
+    std::fs::write(&path, "my.const <- 1\nprint(2)\n").expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        rules_for(&result, "konst.R").contains(&"unused-binding"),
+        "konst.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
+fn undotted_dead_function_is_still_unused() {
+    // No dot, no dispatch: a plain dead helper keeps its finding and its fix.
+    let dir = tempdir().expect("failed to create temp dir");
+    let path = dir.path().join("dead.R");
+    std::fs::write(&path, "helper <- function() 1\nprint(2)\n").expect("failed to write file");
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    assert!(
+        rules_for(&result, "dead.R").contains(&"unused-binding"),
+        "dead.R: {:?}",
+        result.reports[0].diagnostics,
+    );
+}
+
+#[test]
 fn named_subscript_argument_is_not_a_binding() {
     // `drop = FALSE` inside `[` is a named argument to the subset operator, not
     // a local assignment — it must not be reported as an unused binding.

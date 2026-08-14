@@ -13,7 +13,10 @@ use rowan::TextRange;
 use rowan::ast::AstNode as _;
 use smol_str::SmolStr;
 
-use crate::ast::{Arg, AstToken as _, BinaryExpr, CallExpr, Expr, ForExpr, HasArgList as _, Ident};
+use crate::ast::{
+    Arg, AssignmentExpr, AstToken as _, BinaryExpr, CallExpr, Expr, ForExpr, HasArgList as _, Ident,
+};
+use crate::semantic::symbols::unbacktick;
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 // --- calls & callees -------------------------------------------------------
@@ -283,6 +286,50 @@ pub fn for_clause(for_expr: &ForExpr) -> Option<ForClause> {
     })
 }
 
+// --- bindings and dispatch -------------------------------------------------
+
+/// Whether the binding whose defining identifier spans `def_range` is assigned a
+/// function literal (`f <- function(x) …`, `f <- \(x) …`). Conservative: any
+/// other shape — a call's return value, a constant, a nested or chained
+/// assignment — is not a function *definition* as far as a rule asking this is
+/// concerned.
+pub fn binds_a_function(root: &SyntaxNode, def_range: TextRange) -> bool {
+    let Some(token) = root.covering_element(def_range).into_token() else {
+        return false;
+    };
+    let Some(assign) = token.parent().and_then(AssignmentExpr::cast) else {
+        return false;
+    };
+    assign
+        .value_element()
+        .and_then(|el| el.into_node())
+        .is_some_and(|value| value.kind() == SyntaxKind::FUNCTION_EXPR)
+}
+
+/// Whether `name` has the shape of an S3 method, `generic.class`.
+///
+/// Dispatch reaches a method without any read of its name, so "nothing reads
+/// it" is no evidence that it is dead. A `NAMESPACE` lookup
+/// ([`crate::project::FileScope::is_s3_method`]) answers a *different*
+/// question — `S3method()` decides what is registered for outside callers,
+/// while R dispatches to a method defined in the namespace either way — so for
+/// reachability the name's shape is all there is. Whether the prefix really
+/// names a generic is a run-time fact, and arity never evaluates R; roxygen2
+/// hits the same wall and consults the build-time generic set. Deliberately
+/// blunt in the safe direction: a genuinely dead `my.util` goes unreported
+/// rather than a live method being reported (and, under `--unsafe-fixes`,
+/// deleted).
+///
+/// Backticks are stripped first, so operator methods (`` `$.cls` ``,
+/// `` `[.cls` ``, `` `==.cls` ``) are recognized. The dot must sit strictly
+/// inside the name: a leading one is R's convention for an internal name, and a
+/// trailing one names no class.
+pub fn looks_like_s3_method(name: &str) -> bool {
+    let bare = unbacktick(name);
+    bare.char_indices()
+        .any(|(i, c)| c == '.' && i > 0 && i + 1 < bare.len())
+}
+
 // --- shared helpers --------------------------------------------------------
 
 /// The source text of an element: a token's text, or a node's full text.
@@ -472,6 +519,26 @@ mod tests {
         let call = first_call("grepl('a.b', x)");
         let tok = nth_arg(&call, 0).unwrap().into_token().unwrap();
         assert_eq!(string_literal(&tok), Some(('\'', "a.b")));
+    }
+
+    #[test]
+    fn looks_like_s3_method_needs_an_interior_dot() {
+        assert!(looks_like_s3_method("print.foo"));
+        assert!(looks_like_s3_method("as.data.frame.myclass"));
+        // Operator and replacement methods, which only appear backticked.
+        assert!(looks_like_s3_method("`$.cls`"));
+        assert!(looks_like_s3_method("`[.cls`"));
+        assert!(looks_like_s3_method("`length<-.cls`"));
+        // A generic may itself carry a dot.
+        assert!(looks_like_s3_method(".subset.cls"));
+
+        assert!(!looks_like_s3_method("helper"));
+        assert!(!looks_like_s3_method("`%||%`"));
+        // A leading dot is R's internal-name convention, not a generic; a
+        // trailing one names no class.
+        assert!(!looks_like_s3_method(".internal"));
+        assert!(!looks_like_s3_method("trailing."));
+        assert!(!looks_like_s3_method("."));
     }
 
     #[test]

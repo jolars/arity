@@ -4,6 +4,13 @@
 //! meaning even when unused — they're part of the API surface). Names starting
 //! with `.` are skipped too, following R convention for intentionally unused
 //! identifiers.
+//!
+//! Two more exemptions cover the ways a top-level binding is reached from
+//! outside this file: `FileScope::used_elsewhere` (a sibling reads it, or the
+//! package's NAMESPACE exports it as public API), and dispatch — a
+//! function bound to a `generic.class` name is an S3 method whatever the
+//! NAMESPACE says, so it is never "unread". See
+//! [`matchers::looks_like_s3_method`].
 
 use rowan::TextRange;
 
@@ -22,7 +29,9 @@ impl Rule for UnusedBinding {
     fn description(&self) -> &'static str {
         "Flag a local binding that is never read in the same file. Function \
          parameters, `for`-loop variables, and names beginning with `.` are \
-         exempt, since those are meaningful even when unused."
+         exempt, since those are meaningful even when unused. A function bound \
+         to a `generic.class` name is exempt too: S3 dispatch reaches a method \
+         without reading its name, registered in the `NAMESPACE` or not."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -41,12 +50,22 @@ impl Rule for UnusedBinding {
         sink.extend(
             ctx.model
                 .unused_local_bindings()
-                // A top-level binding read by a sibling file (same package or
-                // source-closure) is used cross-file, so it isn't unused.
                 .filter(|id| {
                     let b = ctx.model.binding(*id);
+                    // A top-level binding read by a sibling file (same package or
+                    // source-closure) is used cross-file, so it isn't unused.
                     let top_level = ctx.model.scope(b.scope).kind == ScopeKind::File;
-                    !(top_level && ctx.project.is_some_and(|p| p.used_elsewhere(&b.name)))
+                    if top_level && ctx.project.is_some_and(|p| p.used_elsewhere(&b.name)) {
+                        return false;
+                    }
+                    // A method is reached by dispatch, not by a read of its
+                    // name. Not gated on the NAMESPACE — that is authoritative
+                    // for "is this public", not for "is this reachable" — nor on
+                    // the scope: dispatch searches the frame the generic was
+                    // called from, so a method defined inside a body is live
+                    // there too.
+                    !(matchers::looks_like_s3_method(&b.name)
+                        && matchers::binds_a_function(ctx.root, b.def_range))
                 })
                 .map(|id| {
                     let b = ctx.model.binding(id);

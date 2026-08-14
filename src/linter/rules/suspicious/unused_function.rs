@@ -5,8 +5,10 @@
 //! API (`FileScope::used_elsewhere` folds in the package's NAMESPACE
 //! `export()`s) — otherwise every exported function in a library would flag.
 //! This rule reports exactly that exempted set: a function that is declared
-//! public yet has no caller anywhere we can see. Between them, each dead
-//! top-level function draws exactly one finding.
+//! public yet has no caller anywhere we can see. Between them, a dead top-level
+//! function draws at most one finding, and never two. (Not always one: both
+//! rules withhold on a name S3 dispatch could reach, so a dead `my.util` that
+//! nothing exports draws none.)
 //!
 //! Dead *public* API is normal for a library — the callers are downstream, out
 //! of view — so this is **default-off**: an opt-in sweep for an author auditing
@@ -31,9 +33,9 @@ use smol_str::SmolStr;
 use crate::ast::{AssignmentExpr, RoxygenBlock};
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::roxygen::documented_function;
-use crate::linter::rules::{Example, Rule, RuleContext};
+use crate::linter::rules::{Example, Rule, RuleContext, matchers};
 use crate::semantic::ScopeKind;
-use crate::syntax::{SyntaxKind, SyntaxNode};
+use crate::syntax::SyntaxNode;
 
 const EXAMPLES: &[Example] = &[Example {
     caption: "`add_one` is exported but never called anywhere in the package:",
@@ -81,7 +83,7 @@ impl Rule for UnusedFunction {
                     if ctx.model.scope(b.scope).kind != ScopeKind::File {
                         return false;
                     }
-                    if !binds_a_function(ctx.root, b.def_range) {
+                    if !matchers::binds_a_function(ctx.root, b.def_range) {
                         return false;
                     }
                     // A sibling that calls it is a real use — this is the half of
@@ -122,35 +124,24 @@ impl Rule for UnusedFunction {
 /// Whether `name` names an S3 method, which dispatch reaches without any direct
 /// call — so "nothing calls it" is not evidence that it is dead.
 ///
-/// Two tiers, mirroring the two export signals. With a project, the NAMESPACE
-/// answers exactly: `S3method(print, foo)` registers `print.foo`. Without one,
-/// arity cannot reproduce roxygen2's decision — roxygen2 splits `print.foo`
-/// into `generic.class` only if `print` is a generic *at build time*, which is a
-/// runtime fact — so any dotted name is withheld rather than risk reporting a
-/// dispatched method. That under-reports a genuinely dead `my.util`, which is
-/// the safe direction for an opt-in audit; the NAMESPACE path still reports it.
+/// Two tiers, mirroring the two export signals. This rule only ever fires on a
+/// name declared *exported*, and with a project the NAMESPACE answers that
+/// exactly: `S3method(print, foo)` registers `print.foo`, while `export(my.util)`
+/// is roxygen2 stating the name is not a method. Without a project arity cannot
+/// reproduce that decision — roxygen2 splits `print.foo` into `generic.class`
+/// only if `print` is a generic *at build time*, which is a runtime fact — so
+/// the name's shape decides and any dotted name is withheld. That under-reports
+/// a genuinely dead `my.util`, which is the safe direction for an opt-in audit;
+/// the NAMESPACE path still reports it.
+///
+/// The shape tier is `unused-binding`'s *only* tier, because it asks about
+/// reachability rather than about the public surface — see
+/// [`matchers::looks_like_s3_method`].
 fn is_s3_method(ctx: &RuleContext<'_>, name: &str) -> bool {
     match ctx.project {
         Some(project) => project.is_s3_method(name),
-        None => name.contains('.'),
+        None => matchers::looks_like_s3_method(name),
     }
-}
-
-/// Whether the binding whose defining identifier spans `def_range` is assigned a
-/// function literal (`f <- function(x) …`, `f <- \(x) …`). Conservative: any
-/// other shape — a call's return value, a constant, a nested or chained
-/// assignment — is not a function *definition* as far as this rule is concerned.
-fn binds_a_function(root: &SyntaxNode, def_range: rowan::TextRange) -> bool {
-    let Some(token) = root.covering_element(def_range).into_token() else {
-        return false;
-    };
-    let Some(assign) = token.parent().and_then(AssignmentExpr::cast) else {
-        return false;
-    };
-    assign
-        .value_element()
-        .and_then(|el| el.into_node())
-        .is_some_and(|value| value.kind() == SyntaxKind::FUNCTION_EXPR)
 }
 
 /// The names a roxygen `@export` declares in this file: for every top-level

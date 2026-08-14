@@ -126,7 +126,7 @@ warning: undefined-symbol
 
 ### `unused-binding`
 
-Flag a local binding that is never read in the same file. Function parameters, `for`-loop variables, and names beginning with `.` are exempt, since those are meaningful even when unused.
+Flag a local binding that is never read in the same file. Function parameters, `for`-loop variables, and names beginning with `.` are exempt, since those are meaningful even when unused. A function bound to a `generic.class` name is exempt too: S3 dispatch reaches a method without reading its name, registered in the `NAMESPACE` or not.
 
 This rule is **enabled by default**.
 
