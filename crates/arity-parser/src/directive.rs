@@ -94,6 +94,16 @@ pub enum Verb {
 }
 
 impl Verb {
+    /// The verb as written in a directive.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verb::Skip => "skip",
+            Verb::Off => "off",
+            Verb::On => "on",
+            Verb::SkipFile => "skip-file",
+        }
+    }
+
     fn from_word(word: &str) -> Option<Self> {
         match word {
             "skip" => Some(Verb::Skip),
@@ -171,6 +181,10 @@ pub enum RuleScope {
 pub struct Directive<'a> {
     pub tool: Tool,
     pub verb: Verb,
+    /// The tool prefix as written — `arity-lint`, `arity-format`, `arity`, or a
+    /// deprecated `arity-ignore`/`arity-ignore-file`. A rule that rewrites the
+    /// spelling replaces exactly these bytes and leaves the rest alone.
+    pub prefix: TextRange,
     pub scope: RuleScope,
     /// The text after the `:`, trimmed. `None` when there is no `:`, or nothing
     /// but whitespace follows it.
@@ -221,11 +235,16 @@ pub fn parse(text: &str) -> Option<Parsed<'_>> {
             Verb::SkipFile,
             rest,
             rest_at,
+            word_range(body_at, "arity-ignore-file"),
             Spelling::Deprecated,
         )));
     }
     if let Some((rest, rest_at)) = strip_word(body, body_at, "arity-ignore") {
-        return Some(arity_ignore(rest, rest_at));
+        return Some(arity_ignore(
+            rest,
+            rest_at,
+            word_range(body_at, "arity-ignore"),
+        ));
     }
     for (prefix, tool) in [("arity-lint", Tool::Lint), ("arity-format", Tool::Format)] {
         if let Some((rest, rest_at)) = strip_word(body, body_at, prefix) {
@@ -233,7 +252,7 @@ pub fn parse(text: &str) -> Option<Parsed<'_>> {
                 tool,
                 rest,
                 rest_at,
-                TextRange::at(size(body_at), size(prefix.len())),
+                word_range(body_at, prefix),
             ));
         }
     }
@@ -245,7 +264,7 @@ pub fn parse(text: &str) -> Option<Parsed<'_>> {
             Tool::Both,
             rest,
             rest_at,
-            TextRange::at(size(body_at), size("arity".len())),
+            word_range(body_at, "arity"),
         ));
     }
     None
@@ -253,7 +272,7 @@ pub fn parse(text: &str) -> Option<Parsed<'_>> {
 
 /// The deprecated `# arity-ignore …`, which spells its own verb: it *is*
 /// `arity-lint skip`, so a verb after it is a mix of the two spellings.
-fn arity_ignore(rest: &str, rest_at: usize) -> Parsed<'_> {
+fn arity_ignore(rest: &str, rest_at: usize, prefix: TextRange) -> Parsed<'_> {
     match next_word(rest) {
         Some(word) if Verb::from_word(word).is_some() => Parsed::Malformed(Malformed {
             tool: Tool::Lint,
@@ -261,7 +280,13 @@ fn arity_ignore(rest: &str, rest_at: usize) -> Parsed<'_> {
             range: TextRange::at(size(rest_at), size(word.len())),
             word: word.to_string(),
         }),
-        _ => Parsed::Directive(lint_tail(Verb::Skip, rest, rest_at, Spelling::Deprecated)),
+        _ => Parsed::Directive(lint_tail(
+            Verb::Skip,
+            rest,
+            rest_at,
+            prefix,
+            Spelling::Deprecated,
+        )),
     }
 }
 
@@ -269,7 +294,13 @@ fn arity_ignore(rest: &str, rest_at: usize) -> Parsed<'_> {
 ///
 /// A `:` where the rule ID would go is the blanket form; nothing at all is the
 /// inert one.
-fn lint_tail(verb: Verb, rest: &str, rest_at: usize, spelling: Spelling) -> Directive<'_> {
+fn lint_tail(
+    verb: Verb,
+    rest: &str,
+    rest_at: usize,
+    prefix: TextRange,
+    spelling: Spelling,
+) -> Directive<'_> {
     let scope = match parse_rule(rest, rest_at) {
         Some(rule) => RuleScope::Rule(rule),
         None if rest.starts_with(':') => RuleScope::All,
@@ -278,6 +309,7 @@ fn lint_tail(verb: Verb, rest: &str, rest_at: usize, spelling: Spelling) -> Dire
     Directive {
         tool: Tool::Lint,
         verb,
+        prefix,
         scope,
         reason: parse_reason(rest),
         spelling,
@@ -333,6 +365,7 @@ fn tool_prefixed(tool: Tool, rest: &str, rest_at: usize, prefix: TextRange) -> P
     Parsed::Directive(Directive {
         tool,
         verb,
+        prefix,
         scope,
         reason: parse_reason(tail),
         spelling: Spelling::Canonical,
@@ -381,6 +414,11 @@ fn parse_reason(rest: &str) -> Option<&str> {
 fn trim_start_at(s: &str, offset: usize) -> (&str, usize) {
     let trimmed = s.trim_start();
     (trimmed, offset + (s.len() - trimmed.len()))
+}
+
+/// The range a whole-word prefix occupies, starting at `at`.
+fn word_range(at: usize, word: &str) -> TextRange {
+    TextRange::at(size(at), size(word.len()))
 }
 
 fn size(n: usize) -> TextSize {
@@ -637,6 +675,41 @@ mod tests {
         let end: usize = m.range.end().into();
         assert_eq!(&"# arity-format"[start..end], "arity-format");
         assert_eq!(m.word, "arity-format");
+    }
+
+    #[test]
+    fn the_prefix_range_spans_exactly_the_prefix() {
+        for text in [
+            "# arity-lint skip browser: r",
+            "#   arity-format   off",
+            "# arity-ignore-file browser: r",
+            "# arity-ignore browser: r",
+            "# arity skip: r",
+        ] {
+            let d = directive(text);
+            let start: usize = d.prefix.start().into();
+            let end: usize = d.prefix.end().into();
+            let written = &text[start..end];
+            assert!(
+                written.starts_with("arity") && !written.contains(char::is_whitespace),
+                "{text:?} -> {written:?}"
+            );
+        }
+        let d = directive("# arity-ignore-file browser: r");
+        let start: usize = d.prefix.start().into();
+        let end: usize = d.prefix.end().into();
+        assert_eq!(
+            &"# arity-ignore-file browser: r"[start..end],
+            "arity-ignore-file"
+        );
+    }
+
+    #[test]
+    fn a_verb_renders_as_written() {
+        assert_eq!(Verb::Skip.as_str(), "skip");
+        assert_eq!(Verb::SkipFile.as_str(), "skip-file");
+        assert_eq!(Verb::Off.as_str(), "off");
+        assert_eq!(Verb::On.as_str(), "on");
     }
 
     #[test]
