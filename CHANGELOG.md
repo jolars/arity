@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+The most prominent feature of this release is that Arity now handles the `DESCRIPTION`
+file in R projects: it lints it, formats it, and provides language-server features like
+inlay hints for loaded versions.
+
 ## [0.18.0](https://github.com/jolars/arity/compare/v0.17.0...v0.18.0) (2026-08-11)
 
 ### Features
