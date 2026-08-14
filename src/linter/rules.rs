@@ -491,6 +491,24 @@ impl EnabledRules {
     }
 }
 
+/// The cross-file facts the driver has already resolved for one file, bundled
+/// so they travel as a unit.
+///
+/// Every field is `Option<&_>` and `None` on the single-file paths, which is
+/// exactly why they are a struct: passed flat they were three adjacent
+/// same-shaped arguments, and a transposed pair type-checked. They are moved
+/// onto [`RuleContext`] verbatim — rules keep reading `ctx.project`,
+/// `ctx.resolution`, `ctx.package`.
+#[derive(Default)]
+pub struct FileContext<'a> {
+    /// See [`RuleContext::project`].
+    pub project: Option<&'a FileScope<'a>>,
+    /// See [`RuleContext::resolution`].
+    pub resolution: Option<&'a ExternalResolution>,
+    /// See [`RuleContext::package`].
+    pub package: Option<&'a DescriptionFacts>,
+}
+
 pub struct RuleContext<'a> {
     pub path: &'a Path,
     pub root: &'a SyntaxNode,
@@ -880,7 +898,6 @@ impl ResolvedRules {
 /// The dispatch table (`resolved.by_kind`) and severity map are precomputed on
 /// `resolved`, so this is on the hot path only for the per-file traversal and
 /// the rules' own work, not for rebuilding the rule-set-derived state.
-#[allow(clippy::too_many_arguments)]
 pub fn run_rules(
     resolved: &ResolvedRules,
     path: &Path,
@@ -888,9 +905,7 @@ pub fn run_rules(
     model: &SemanticModel,
     cfg: &FileControlFlow,
     symbols: &dyn SymbolProvider,
-    project: Option<&FileScope<'_>>,
-    resolution: Option<&ExternalResolution>,
-    package: Option<&DescriptionFacts>,
+    file: &FileContext<'_>,
 ) -> Vec<Diagnostic> {
     let suppressions = SuppressionMap::build(root);
     let ctx = RuleContext {
@@ -899,9 +914,9 @@ pub fn run_rules(
         model,
         cfg,
         symbols,
-        project,
-        resolution,
-        package,
+        project: file.project,
+        resolution: file.resolution,
+        package: file.package,
         config: &resolved.rules_config,
         suppressions: &suppressions,
         enabled_rules: &resolved.enabled,
@@ -1274,9 +1289,7 @@ mod tests {
             &model,
             &cfg,
             &symbols,
-            None,
-            None,
-            None,
+            &FileContext::default(),
         );
         assert_eq!(diags.len(), 1);
         // Emitted with the `Warning` placeholder; the override stamps `Error`.
@@ -1304,9 +1317,7 @@ mod tests {
             &model,
             &cfg,
             &symbols,
-            None,
-            None,
-            None,
+            &FileContext::default(),
         );
         assert!(diags.is_empty(), "expected no findings, got {diags:?}");
     }

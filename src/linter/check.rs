@@ -22,15 +22,15 @@ use crate::incremental::{
 };
 use crate::project::description::DescriptionFacts;
 use crate::project::{
-    ExternalResolution, FileScope, PackageCollation, PackageDeclarations, PackageUsage, Project,
-    ProjectMember, expected_r_sources, external_resolution, package_facts_for, package_root,
-    package_usage_for, visible_symbols, workspace_project,
+    PackageCollation, PackageDeclarations, PackageUsage, Project, ProjectMember,
+    expected_r_sources, external_resolution, package_facts_for, package_root, package_usage_for,
+    visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
 
 use super::diagnostic::{Diagnostic, Severity, ViolationData};
-use super::rules::{ResolvedRules, default_symbol_provider, run_dcf_rules, run_rules};
+use super::rules::{FileContext, ResolvedRules, default_symbol_provider, run_dcf_rules, run_rules};
 
 /// Synthetic rule id carried by findings that originate from the parser's error
 /// side channel rather than a lint rule. Shown as the `[code]` in CLI output and
@@ -358,9 +358,11 @@ pub fn check_paths_with_index(
                     &path,
                     &rules,
                     &fallback,
-                    Some(&file_scope),
-                    Some(resolution),
-                    package,
+                    &FileContext {
+                        project: Some(&file_scope),
+                        resolution: Some(resolution),
+                        package,
+                    },
                 );
                 let status = if kept.is_empty() {
                     LintStatus::Clean
@@ -459,23 +461,18 @@ fn intern_project<'db>(
 /// without diagnostics.
 ///
 /// Suppression filtering happens inside [`run_rules`], not here — see its doc.
-#[allow(clippy::too_many_arguments)]
 fn lint_parsed_file(
     db: &dyn IncrementalDb,
     file: SourceFile,
     path: &Path,
     rules: &ResolvedRules,
     provider: &dyn SymbolProvider,
-    project: Option<&FileScope<'_>>,
-    resolution: Option<&ExternalResolution>,
-    package: Option<&DescriptionFacts>,
+    context: &FileContext<'_>,
 ) -> Vec<Diagnostic> {
     let root_node = parsed_tree_root(db, file);
     let model = semantic_model(db, file);
     let cfg = control_flow(db, file);
-    let mut diagnostics = run_rules(
-        rules, path, &root_node, model, cfg, provider, project, resolution, package,
-    );
+    let mut diagnostics = run_rules(rules, path, &root_node, model, cfg, provider, context);
     for d in &mut diagnostics {
         d.path = path.to_path_buf();
     }
@@ -502,7 +499,12 @@ pub fn check_tracked_file(
         return Ok(syntax_error_diagnostics(parse_diagnostics, path));
     }
     Ok(lint_parsed_file(
-        db, file, path, &rules, provider, None, None, None,
+        db,
+        file,
+        path,
+        &rules,
+        provider,
+        &FileContext::default(),
     ))
 }
 
@@ -706,9 +708,11 @@ pub fn analyze_prepared(
         &active_path,
         &prepared.rules,
         provider,
-        Some(&file_scope),
-        resolution,
-        package_facts_for(db, &active_path),
+        &FileContext {
+            project: Some(&file_scope),
+            resolution,
+            package: package_facts_for(db, &active_path),
+        },
     )
 }
 
