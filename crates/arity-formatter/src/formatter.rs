@@ -1,6 +1,7 @@
 pub(crate) mod context;
 pub mod core;
 pub mod description;
+pub mod directive;
 pub(crate) mod ir;
 pub(crate) mod printer;
 pub(crate) mod render;

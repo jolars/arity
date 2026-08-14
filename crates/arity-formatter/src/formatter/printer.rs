@@ -86,6 +86,19 @@ impl Writer {
         self.needs_indent = true;
     }
 
+    /// Splice source the formatter was told not to touch, byte for byte.
+    ///
+    /// Unlike [`Writer::write_verbatim`], the pending indent is *dropped* rather
+    /// than honored: the text was sliced from the start of its own line, so its
+    /// original indentation is already there, and emitting the structural indent
+    /// too would shift it. This is the one place where the formatter deliberately
+    /// declines to choose a column.
+    fn write_skipped(&mut self, s: &str) {
+        self.needs_indent = false;
+        self.pending_indent = 0;
+        self.write_verbatim(s);
+    }
+
     /// Splice a possibly multi-line string verbatim. The string is assumed to
     /// already carry its own indentation, so only a pending indent on the very
     /// first line is honored.
@@ -141,6 +154,7 @@ impl Printer {
                 Ir::Nil => {}
                 Ir::Text(s) => w.write_text(s),
                 Ir::Verbatim { text, .. } => w.write_verbatim(text),
+                Ir::Skipped(text) => w.write_skipped(text),
                 // A trailing comment sits exactly where it appears (an adjacent
                 // HardLine ends the line right after it), so it renders inline
                 // like text; only fit measurement treats it as zero width.
@@ -305,6 +319,8 @@ impl Printer {
                     remaining -= w;
                 }
                 Ir::HardLine | Ir::EmptyLine => return hug,
+                // Skipped source owns its lines, so it can never be laid flat.
+                Ir::Skipped(_) => return false,
                 Ir::Verbatim { text, force_break } => {
                     if *force_break {
                         // A multi-line force-break verbatim (e.g. a brace-token
@@ -386,7 +402,7 @@ impl Printer {
                         return false;
                     }
                 }
-                Ir::HardLine | Ir::EmptyLine => return false,
+                Ir::HardLine | Ir::EmptyLine | Ir::Skipped(_) => return false,
                 Ir::Verbatim { text, force_break } => {
                     if *force_break {
                         return false;
@@ -462,7 +478,8 @@ impl Printer {
                         return false;
                     }
                 }
-                Ir::HardLine | Ir::EmptyLine => return true,
+                // Like a hard break: the current line ends at it.
+                Ir::HardLine | Ir::EmptyLine | Ir::Skipped(_) => return true,
                 Ir::Line => match mode {
                     Mode::Flat => {
                         col += 1;
@@ -549,6 +566,7 @@ impl Printer {
                         return false;
                     }
                 }
+                Ir::Skipped(_) => return false,
                 Ir::Verbatim { text, force_break } => {
                     if let Some(first_line) = text.split_once('\n').map(|(l, _)| l) {
                         col += first_line.chars().count();

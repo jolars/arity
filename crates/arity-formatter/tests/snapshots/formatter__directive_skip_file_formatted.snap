@@ -1,0 +1,7 @@
+---
+source: crates/arity-formatter/tests/formatter.rs
+expression: formatted
+---
+# arity-format skip-file: vendored verbatim
+x<-1
+   y<-2

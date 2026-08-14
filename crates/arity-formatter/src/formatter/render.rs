@@ -57,12 +57,25 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
 ) -> Result<Ir, FormatError> {
     let lines = split_lines(block_statement_elements(node)?, "block body")?;
 
+    let plan = super::directive::plan(&lines);
     let mut items: Vec<Ir> = Vec::new();
     for comment in prefixed_comments {
         items.push(Ir::text(comment.clone()));
     }
-    for line in &lines {
-        items.push(ir_line(line, indent + 1, ctx)?);
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        // A line the author marked `# arity-format skip`/`off` comes back
+        // exactly as written, indent included.
+        match super::directive::skipped_at(&lines, &plan, idx) {
+            Some((skipped, last)) => {
+                items.push(skipped);
+                idx = last + 1;
+            }
+            None => {
+                items.push(ir_line(&lines[idx], indent + 1, ctx)?);
+                idx += 1;
+            }
+        }
     }
     if items.is_empty() {
         return Ok(Ir::text("{}"));

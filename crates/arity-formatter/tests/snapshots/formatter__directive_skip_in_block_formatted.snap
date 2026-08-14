@@ -1,0 +1,9 @@
+---
+source: crates/arity-formatter/tests/formatter.rs
+expression: formatted
+---
+f <- function() {
+  # arity-format skip: aligned by hand
+    a<-c(1,   2)
+  g(x)
+}

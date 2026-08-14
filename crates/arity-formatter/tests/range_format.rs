@@ -181,3 +181,40 @@ fn crlf_source_yields_crlf_edit() {
         "unexpected bare LF: {formatted:?}"
     );
 }
+
+#[test]
+fn a_skipped_statement_in_the_selection_stays_verbatim() {
+    // The selection covers both statements; only the unskipped one is laid out.
+    let out = range_format("<<# arity-format skip: aligned\nm<-c(1,  2)\nz<-3>>\n");
+    assert_eq!(out, "# arity-format skip: aligned\nm<-c(1,  2)\nz <- 3\n");
+}
+
+#[test]
+fn a_skipped_region_in_the_selection_stays_verbatim() {
+    let out = range_format("<<a<-1\n# arity-format off\nb<-2\n# arity-format on\nc<-3>>\n");
+    assert_eq!(
+        out,
+        "a <- 1\n# arity-format off\nb<-2\n# arity-format on\nc <- 3\n"
+    );
+}
+
+#[test]
+fn a_skipped_statement_inside_a_block_keeps_its_own_column() {
+    let out = range_format("f <- function() {\n  <<# arity-format skip: kept\n    g(1,  2)>>\n}\n");
+    assert_eq!(
+        out,
+        "f <- function() {\n  # arity-format skip: kept\n    g(1,  2)\n}\n"
+    );
+}
+
+#[test]
+fn skip_file_declines_to_format_any_range() {
+    // The whole file is off limits, so there is no edit to make.
+    let (text, range) = parse_marked("# arity-format skip-file: vendored\n<<x<-1>>\n");
+    let parsed = parse(&text);
+    assert!(parsed.diagnostics.is_empty());
+    assert_eq!(
+        format_range(&parsed.cst, range, FormatStyle::default(), &text).expect("format_range"),
+        None
+    );
+}

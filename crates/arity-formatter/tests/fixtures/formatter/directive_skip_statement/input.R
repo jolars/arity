@@ -1,0 +1,7 @@
+x<-1
+
+# arity-format skip: hand-aligned
+m <- matrix(c(1, 0,
+              0, 1), nrow = 2)
+
+y<-2

@@ -109,6 +109,13 @@ pub fn format_node(
     source: &str,
 ) -> Result<String, FormatError> {
     validate_supported_tokens(root)?;
+    // `# arity-format skip-file` is answered here and nowhere else: the file
+    // comes back byte for byte, so `--check` reports it clean and idempotence
+    // holds trivially. Not even the line ending is normalized — the point of
+    // the directive is that nothing is decided.
+    if super::directive::file_is_skipped(root) {
+        return Ok(source.to_string());
+    }
     let ctx = FormatContext::new(style);
     let mut formatted = format_root(root, ctx)?;
     if source.ends_with('\n') && !formatted.ends_with('\n') {
@@ -146,6 +153,9 @@ pub fn format_range(
     source: &str,
 ) -> Result<Option<RangeFormatted>, FormatError> {
     validate_supported_tokens(root)?;
+    if super::directive::file_is_skipped(root) {
+        return Ok(None);
+    }
     let ctx = FormatContext::new(style);
 
     let container = statement_container(root, range);
@@ -292,6 +302,7 @@ pub(super) fn ir_statements(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<StatementsIr, FormatError> {
+    let plan = super::directive::plan(lines);
     let mut items: Vec<Ir> = Vec::new();
     let mut first_line: Option<usize> = None;
     let mut last_line: Option<usize> = None;
@@ -310,30 +321,36 @@ pub(super) fn ir_statements(
             }
         }
 
-        let consumed = if let Some((body_ir, consumed)) =
-            try_format_for_with_external_body(lines, idx, indent, ctx)?
-        {
-            items.push(body_ir);
-            consumed
-        } else if let Some((body_ir, consumed)) =
-            try_format_while_with_external_body(lines, idx, indent, ctx)?
-        {
-            items.push(body_ir);
-            consumed
-        } else if let Some((body_ir, consumed)) =
-            try_format_if_with_external_body(lines, idx, indent, ctx)?
-        {
-            items.push(body_ir);
-            consumed
-        } else if let Some((body_ir, consumed)) =
-            try_format_repeat_with_external_body(lines, idx, indent, ctx)?
-        {
-            items.push(body_ir);
-            consumed
-        } else {
-            items.push(ir_line(&lines[idx], indent, ctx)?);
-            0
-        };
+        let consumed =
+            if let Some((skipped, last)) = super::directive::skipped_at(lines, &plan, idx) {
+                // The author asked for these lines back exactly as written; the
+                // layout engine gets no say, including over the indent.
+                items.push(skipped);
+                last - idx
+            } else if let Some((body_ir, consumed)) =
+                try_format_for_with_external_body(lines, idx, indent, ctx)?
+            {
+                items.push(body_ir);
+                consumed
+            } else if let Some((body_ir, consumed)) =
+                try_format_while_with_external_body(lines, idx, indent, ctx)?
+            {
+                items.push(body_ir);
+                consumed
+            } else if let Some((body_ir, consumed)) =
+                try_format_if_with_external_body(lines, idx, indent, ctx)?
+            {
+                items.push(body_ir);
+                consumed
+            } else if let Some((body_ir, consumed)) =
+                try_format_repeat_with_external_body(lines, idx, indent, ctx)?
+            {
+                items.push(body_ir);
+                consumed
+            } else {
+                items.push(ir_line(&lines[idx], indent, ctx)?);
+                0
+            };
 
         if first_line.is_none() {
             first_line = Some(idx);
@@ -359,21 +376,30 @@ pub(super) fn ir_block_statements(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<StatementsIr, FormatError> {
+    let plan = super::directive::plan(lines);
     let mut items: Vec<Ir> = Vec::new();
     let mut first_line: Option<usize> = None;
     let mut last_line: Option<usize> = None;
-    for idx in window {
-        if idx >= lines.len() {
-            break;
-        }
+    let mut idx = window.start;
+    while idx < window.end && idx < lines.len() {
         if first_line.is_some() {
             items.push(Ir::hard_line());
         }
-        items.push(ir_line(&lines[idx], indent, ctx)?);
+        let consumed = match super::directive::skipped_at(lines, &plan, idx) {
+            Some((skipped, last)) => {
+                items.push(skipped);
+                last - idx
+            }
+            None => {
+                items.push(ir_line(&lines[idx], indent, ctx)?);
+                0
+            }
+        };
         if first_line.is_none() {
             first_line = Some(idx);
         }
-        last_line = Some(idx);
+        last_line = Some(idx + consumed);
+        idx += consumed + 1;
     }
     Ok(StatementsIr {
         ir: Ir::concat(items),

@@ -81,6 +81,15 @@ pub(crate) enum Ir {
     /// stay flat (used for comments and for multi-line bridged renderings);
     /// otherwise it behaves as opaque inline text of its own width.
     Verbatim { text: Rc<str>, force_break: bool },
+    /// Source the author told the formatter not to touch, via an
+    /// `# arity-format skip`/`off` directive: spliced back byte for byte,
+    /// starting at column zero so the text's own leading indentation is what
+    /// lands, not the structural indent. Distinct from [`Ir::Verbatim`] on
+    /// purpose — that one carries relocated comments and flat-rendered
+    /// candidates, and must never grow into a way to dodge the layout engine.
+    /// This one is the layout engine being told, explicitly, to stand down.
+    /// Always forces a break: a skipped statement owns its lines.
+    Skipped(Rc<str>),
     /// A trailing comment that runs to end of line, rendered inline where it sits
     /// but counted as **zero width** by every fit measurement. This is the
     /// Wadler/Prettier "line suffix" concept, scoped to same-line trailing
@@ -240,6 +249,12 @@ impl Ir {
         }
     }
 
+    /// Source spliced back untouched under an `# arity-format` directive; see
+    /// [`Ir::Skipped`].
+    pub(crate) fn skipped(s: impl Into<Rc<str>>) -> Ir {
+        Ir::Skipped(s.into())
+    }
+
     /// A trailing comment rendered inline but measured as zero width; see
     /// [`Ir::LineSuffix`].
     pub(crate) fn line_suffix(s: impl Into<Rc<str>>) -> Ir {
@@ -266,6 +281,7 @@ impl Ir {
             Ir::IfBreak { flat, broken } => flat.contains_group() || broken.contains_group(),
             Ir::Text(_)
             | Ir::Verbatim { .. }
+            | Ir::Skipped(_)
             | Ir::LineSuffix(_)
             | Ir::HardLine
             | Ir::EmptyLine
@@ -295,7 +311,7 @@ impl Ir {
     /// arg list open.
     pub(crate) fn contains_forced_break(&self) -> bool {
         match self {
-            Ir::HardLine | Ir::EmptyLine => true,
+            Ir::HardLine | Ir::EmptyLine | Ir::Skipped(_) => true,
             Ir::Verbatim { force_break, .. } => *force_break,
             Ir::Concat(items) => items.iter().any(Ir::contains_forced_break),
             Ir::Indent(inner) | Ir::BreakBody(inner) => inner.contains_forced_break(),
@@ -325,7 +341,7 @@ impl Ir {
     pub(crate) fn ends_with_line_suffix(&self) -> bool {
         match self {
             Ir::LineSuffix(_) => true,
-            Ir::Verbatim { text, .. } => text
+            Ir::Verbatim { text, .. } | Ir::Skipped(text) => text
                 .rsplit('\n')
                 .next()
                 .is_some_and(|last| last.trim_start().starts_with('#')),
