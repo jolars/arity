@@ -4784,6 +4784,34 @@ fn different_names_do_not_merge() {
 }
 
 #[test]
+fn markdown_topic_names_are_not_truncated() {
+    // Under `@md` an intraword `_` lexes as an unresolved markdown delimiter, so
+    // the tag value spans several leaves. Reading only the first would truncate
+    // both names to `missing` and wrongly merge two distinct topics.
+    let src = "#' T1\n#' @md\n#' @rdname missing_arg\nNULL\n\n\
+               #' T2\n#' @md\n#' @rdname missing_val\nNULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"T1\"))\n\
+         (\\description (TEXT \"T2\"))\n\
+         (\\title (TEXT \"T1\"))\n\
+         (\\title (TEXT \"T2\"))"
+    );
+}
+
+#[test]
+fn markdown_topic_name_merges_across_blocks() {
+    // The same underscored name in two blocks is still one topic: the value is
+    // read whole, so both blocks land in the same group and merge.
+    let src = "#' T1\n#' @md\n#' @rdname missing_arg\nNULL\n\n\
+               #' T2\n#' @md\n#' @rdname missing_arg\nNULL\n";
+    assert_eq!(
+        project_to_rd(src),
+        "(\\description (TEXT \"T1 T2\"))\n(\\title (TEXT \"T1\"))"
+    );
+}
+
+#[test]
 fn thematic_break_ends_block_quote() {
     // A `---` (three-plus dash run) is a thematic break, which *interrupts* a
     // paragraph, so it is not a lazy continuation: it ends the quote (and

@@ -158,23 +158,24 @@ fn roxygen_scan_end(root: &SyntaxNode) -> rowan::TextSize {
 /// that, `@rdname`) tag. Blocks sharing a key render into one Rd file and so merge
 /// (`project_to_rd`). Returns `None` when the block names no topic — arity does
 /// not statically derive an object's default topic, so such a block never merges.
+///
+/// The value comes from [`RoxygenTag::value_text`], not the first `ROXYGEN_TEXT`
+/// leaf: under `@md` a name containing `_` or `*` lexes as several leaves around
+/// an unresolved markdown delimiter, and reading one leaf would truncate
+/// `missing_arg` to `missing` — merging two distinct topics. This is the narrower
+/// twin of [`crate::project::roxygen::topic_key`], which also derives an object's
+/// default topic; keep the two in step.
 fn topic_name(block: &RoxygenBlock) -> Option<String> {
     let mut rdname: Option<String> = None;
     for section in block.sections() {
         let Some(tag) = section.tag() else { continue };
         match tag.name().as_deref() {
             Some("name") => {
-                let value = tag.text().map(|t| t.text().trim().to_string());
-                if let Some(v) = value.filter(|v| !v.is_empty()) {
-                    return Some(v);
+                if let Some(value) = tag.value_text() {
+                    return Some(value);
                 }
             }
-            Some("rdname") if rdname.is_none() => {
-                rdname = tag
-                    .text()
-                    .map(|t| t.text().trim().to_string())
-                    .filter(|v| !v.is_empty());
-            }
+            Some("rdname") if rdname.is_none() => rdname = tag.value_text(),
             _ => {}
         }
     }

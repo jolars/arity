@@ -61,14 +61,11 @@ folds it into a `RoxygenTopicIndex` keyed by package root, and
 topic wherever the joiners live (`RuleContext::topics`, with the file-local
 `RoxygenTopics` as the single-document fallback). 28 findings dropped in rlang,
 none added; rlang, ggplot2, and dplyr are byte-identical across the cross-file
-step, which only ever removes findings. What remains:
-
-- [ ] **The Rd projector reads a tag value the narrow way.** `topic_name`
-  (`src/roxygen/project_rd.rs`) still takes the first `ROXYGEN_TEXT` leaf, so
-  under `@md` it truncates a topic name at the first `_`/`*`
-  (`@rdname missing_arg` → `missing`). The linter now goes through
-  `RoxygenTag::value_text`; the projector should too, but it sits behind pinned
-  `.rdtree` files, so the switch needs a parity run rather than a blind edit.
+step, which only ever removes findings. The Rd projector's `topic_name`
+(`src/roxygen/project_rd.rs`) now reads tag values through
+`RoxygenTag::value_text` too, so an `@md` topic name is no longer truncated at
+the first `_`/`*`; the parity run showed an unchanged pass set (1030 cases), so
+no pin or allowlist entry moved. What remains:
 
 - [ ] *Speculative micro-opt (deferred):* `resolves_to_base` does a linear
   `model.idents().iter().any(...)` scan for the callee's shadow check. It runs
