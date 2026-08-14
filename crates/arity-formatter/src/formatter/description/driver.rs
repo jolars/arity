@@ -118,6 +118,13 @@ pub fn format_description_with_style(
         });
     }
 
+    // `# arity-format skip-file` hands the file back byte for byte, as in R.
+    // The narrower verbs need the field planner to learn verbatim fields and
+    // are not honored here yet (`TODO.md`).
+    if super::super::directive::dcf_file_is_skipped(&parsed.cst) {
+        return Ok(input.to_string());
+    }
+
     let plan = plan::build(&parsed.document()).map_err(DescriptionFormatError::Declined)?;
 
     let lines = render(&plan, style);

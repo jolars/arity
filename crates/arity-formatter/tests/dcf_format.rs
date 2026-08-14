@@ -209,3 +209,25 @@ fn a_comments_only_file_keeps_its_comments() {
 fn an_empty_file_formats_to_nothing() {
     assert_eq!(format_description("").expect("formats"), "");
 }
+
+#[test]
+fn skip_file_hands_a_description_back_untouched() {
+    let input =
+        "Package: testpkg\n# arity-format skip-file: vendored\nTitle:    Ragged\nVersion: 0.1.0\n";
+    assert_eq!(format_description(input).expect("formats"), input);
+    // Idempotent by construction, but assert it: the directive must not be
+    // consumed on a second pass.
+    let once = format_description(input).expect("formats");
+    assert_eq!(format_description(&once).expect("formats"), once);
+}
+
+#[test]
+fn a_narrower_format_directive_is_not_yet_honored_in_dcf() {
+    // Only `skip-file` reaches DCF today; a `skip` is inert there, which is
+    // what the docs say and what `TODO.md` tracks.
+    let input = "Package: testpkg\n# arity-format skip: not honored here\nTitle:    Ragged\n";
+    assert_eq!(
+        format_description(input).expect("formats"),
+        "Package: testpkg\n# arity-format skip: not honored here\nTitle: Ragged\n"
+    );
+}

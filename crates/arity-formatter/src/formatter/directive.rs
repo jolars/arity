@@ -52,9 +52,26 @@ pub(super) fn file_is_skipped(root: &SyntaxNode) -> bool {
         let NodeOrToken::Token(token) = element else {
             return false;
         };
-        token.kind() == SyntaxKind::COMMENT
-            && matches!(parse(token.text()), Some(Parsed::Directive(d))
-                if d.tool.affects_format() && d.verb == Verb::SkipFile)
+        token.kind() == SyntaxKind::COMMENT && is_skip_file(token.text())
+    })
+}
+
+/// Whether a comment reads as a `skip-file` addressed to the formatter.
+fn is_skip_file(text: &str) -> bool {
+    matches!(parse(text), Some(Parsed::Directive(d))
+        if d.tool.affects_format() && d.verb == Verb::SkipFile)
+}
+
+/// Whether a `DESCRIPTION` is `# arity-format skip-file`.
+///
+/// The other verbs are not honored in DCF: a field's lines are laid out by its
+/// class, not sequenced, so there is nothing to splice a span into yet.
+pub(super) fn dcf_file_is_skipped(root: &crate::dcf::SyntaxNode) -> bool {
+    root.descendants_with_tokens().any(|element| {
+        let NodeOrToken::Token(token) = element else {
+            return false;
+        };
+        token.kind() == crate::dcf::SyntaxKind::COMMENT && is_skip_file(token.text())
     })
 }
 
