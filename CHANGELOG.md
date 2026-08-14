@@ -1,10 +1,83 @@
 # Changelog
 
-## Unreleased
+## [0.19.0](https://github.com/jolars/arity/compare/v0.18.0...v0.19.0) (2026-08-14)
 
 The most prominent feature of this release is that Arity now handles the `DESCRIPTION`
 file in R projects: it lints it, formats it, and provides language-server features like
 inlay hints for loaded versions.
+
+### Breaking changes
+- **deps:** bump `rowan` to 0.17 ([`64ad43b`](https://github.com/jolars/arity/commit/64ad43be2125e8713e0656307d094a8e0a0601a4))
+
+### Features
+- **lint:** add deprecated-suppression ([`41c37c0`](https://github.com/jolars/arity/commit/41c37c062d812c7326cfa6866a04a6604084f8cb))
+- **lint:** add region directives and lint the new forms ([`fdd1e5e`](https://github.com/jolars/arity/commit/fdd1e5e89cb7461e22a478bb2a47ad43742bba41))
+- **lsp:** send line-scoped formatting edits ([`406b5ab`](https://github.com/jolars/arity/commit/406b5abc7a34c7dbacb4e87ddfbb0fe84f1084fd))
+- **lsp:** add inlay hints for DESCRIPTION deps ([`7aa282a`](https://github.com/jolars/arity/commit/7aa282a008861c40806b126de4898013153b6e6e))
+- **lint:** add `description-empty-person` ([`41c7786`](https://github.com/jolars/arity/commit/41c77868b6f7a9dd8849f4dd91bb42439b3c3c13))
+- **lint:** add `description-authors-at-r` ([`21c4597`](https://github.com/jolars/arity/commit/21c4597dbddb9893391c76ce6cc3cdf07de7a3de))
+- **lint:** add `description-malformed-maintainer` ([`f813cb5`](https://github.com/jolars/arity/commit/f813cb538927e66faf9f1d7dc4b1dacefd655808))
+- **lint:** add `description-malformed-version` ([`31fcb76`](https://github.com/jolars/arity/commit/31fcb765d659c8f00d615f34abccb96aa6a3aa96))
+- **lint:** add `description-malformed-name` ([`3347825`](https://github.com/jolars/arity/commit/3347825cca35ddecc36ad951f2425bd3dcd7d106))
+- **lint:** add `description-package-in-multiple-fields` ([`41cd5af`](https://github.com/jolars/arity/commit/41cd5af4f8c792116eded921bd5c7f4dc4cf00f7))
+- format package DESCRIPTION files (#104) ([`40583bf`](https://github.com/jolars/arity/commit/40583bf0caf22499453080456dfac9e12e8c239d))
+- **lsp:** hover a DESCRIPTION dependency ([`5655f64`](https://github.com/jolars/arity/commit/5655f647824827b0f1b75ee2afe9b06400943d26))
+- **lsp:** complete package names in DESCRIPTION dependency fields ([`76f339f`](https://github.com/jolars/arity/commit/76f339f69174642cef22c0d795f4187ebf537247))
+- **lsp:** make an open DESCRIPTION authoritative in salsa ([`2537f39`](https://github.com/jolars/arity/commit/2537f398558c17a2e99f3423291a37fc397860c7))
+- **lsp:** publish DESCRIPTION diagnostics ([`9b433a5`](https://github.com/jolars/arity/commit/9b433a52c0d34411ade474027831737b8de573f9))
+- **lsp:** route DESCRIPTION documents away from the R pipeline ([`23a61fc`](https://github.com/jolars/arity/commit/23a61fc327464e8b885d13f0ed8d4cf02b616686))
+- **linter:** add unused-dependency ([`b6d73cf`](https://github.com/jolars/arity/commit/b6d73cf7f7a6701791dc5f1584a88ad5b89cce05))
+- **linter:** add undeclared-dependency ([`d35c7fc`](https://github.com/jolars/arity/commit/d35c7fc13efdffe407b534a0d0be3ea970e46e21))
+- **linter:** add three DESCRIPTION rules ([`7ac50e4`](https://github.com/jolars/arity/commit/7ac50e4024343398c3f1d41da462029eccbd6592))
+- **linter:** discover and lint DESCRIPTION files ([`18c9366`](https://github.com/jolars/arity/commit/18c9366cc7bb413bcd3fcc88c5d8c2065cbb74ce))
+- **linter:** add a rule trait for the DCF grammar ([`f3779d5`](https://github.com/jolars/arity/commit/f3779d50de5052a0985bb9bd0e7dac8adbeb6565))
+- **rindex:** treat declared dependencies as referenced ([`256d4c8`](https://github.com/jolars/arity/commit/256d4c8b7f2a831dd4ab958823b5fb75b301482a))
+- **project:** defer the import(pkg) verdict to the library index ([`6f580bf`](https://github.com/jolars/arity/commit/6f580bf27e75c5314b8a250ab99618c3f95a189e))
+- **project:** resolve against declared Depends ([`d999290`](https://github.com/jolars/arity/commit/d9992901c758845e83dd53671c3c36bdc40edf2e))
+- **incremental:** make DESCRIPTION a salsa input ([`3340923`](https://github.com/jolars/arity/commit/33409232acd5d931f123efdf870564ad9c069bc1))
+- **parser:** add a lossless DCF CST parser ([`42ca268`](https://github.com/jolars/arity/commit/42ca26849d41bff20c8e4189c2a73b9ad9a166a1))
+- **lsp:** widen call hierarchy edge attribution ([`00a798d`](https://github.com/jolars/arity/commit/00a798dd4d7dcb62e1c3d67bb35cd8defab4501a))
+- **formatter:** honor skip-file in a DESCRIPTION ([`f737e8b`](https://github.com/jolars/arity/commit/f737e8b03aec62b72e3a15f59f843ab38d42e07d))
+- **formatter:** honor arity-format directives ([`922813c`](https://github.com/jolars/arity/commit/922813c86fccb2b1204c62b3c1b52ba6f786c268))
+- **parser:** record a directive's prefix range ([`72d8536`](https://github.com/jolars/arity/commit/72d853656683116b4f5716c67dfc805ec76ebe3e))
+- **parser:** add the shared arity directive grammar ([`39651b0`](https://github.com/jolars/arity/commit/39651b0789e6bd6de24fcc741d24077cb79e3902))
+- **ast:** add `RoxygenTag::value_text` ([`5b35b6d`](https://github.com/jolars/arity/commit/5b35b6dd190c9a41cd4f0cd2dbbe2b28fe7ceb09))
+- **parser:** re-export the dependency-field helpers from dcf ([`fbb8183`](https://github.com/jolars/arity/commit/fbb8183efa0bfd4140b3b82ad40049514d86b6dc))
+- **dcf:** parse structured dependency entries ([`e5ee844`](https://github.com/jolars/arity/commit/e5ee8448186e949c14fd8839816846b2be9b935d))
+- **vscode:** gate inlay hints on the feature toggle ([`dd6fde8`](https://github.com/jolars/arity/commit/dd6fde821a63fa24a48517cf95472f035264e520))
+- **code:** claim DESCRIPTION for the language server ([`0fe3077`](https://github.com/jolars/arity/commit/0fe30773c0c30d8f16f61f333c0fca6b47acef8b))
+
+### Bug Fixes
+- **linter:** skip `coalesce` in the `%||%` definition ([`2114c88`](https://github.com/jolars/arity/commit/2114c88ede126119788f924aebd26f4632eca0c2))
+- **semantic:** mark every def a closure read reaches ([`32e98e2`](https://github.com/jolars/arity/commit/32e98e2f1f3930105c470033e14310ce5f7ea65e))
+- **semantic:** resolve names bound by `useDynLib` ([`c72462a`](https://github.com/jolars/arity/commit/c72462a6d28d3aa5f826c69e5d817e3ba3640e70))
+- **semantic:** make defusing operators unquote-aware ([`dd2ce0a`](https://github.com/jolars/arity/commit/dd2ce0a96fad2aa3297b6aeeab2a171d2a16d564))
+- **roxygen:** read projector topic names whole ([`f7b6d3e`](https://github.com/jolars/arity/commit/f7b6d3e4688ed706f4df0f2ac098150e42540cec))
+- **lint:** resolve roxygen topics across the package ([`7e6e7ce`](https://github.com/jolars/arity/commit/7e6e7ce82071926a53ed6f4add86e28b6cdf582a))
+- **lint:** exempt S3 methods from `unused-binding` ([`a107859`](https://github.com/jolars/arity/commit/a1078598efa1cd279bd31490d2c358ff757f3c40))
+- **lint:** judge roxygen topics, not single blocks ([`3357e83`](https://github.com/jolars/arity/commit/3357e83a9da4b8baf4f3b92f8fb864f3ba88c36c))
+- **cli:** give `lint --fix` the project scope ([`85d6d1e`](https://github.com/jolars/arity/commit/85d6d1e22abb00ace742ee538c2aabecc31f310e))
+- **lint:** skip `roxygen-param` on `@noRd` blocks ([`0b842d9`](https://github.com/jolars/arity/commit/0b842d9d24df2ec6c5e1b40693261dfa20b57ecf))
+- **semantic:** mask the `.External2` routine name ([`c090566`](https://github.com/jolars/arity/commit/c090566e9e114a5e324e5a3d458c67895a91007a))
+- **semantic:** never bind the walrus operator ([`d1251b9`](https://github.com/jolars/arity/commit/d1251b9d440e792b325e5c43559de1297938ddd9))
+- **semantic:** match backticked names to NAMESPACE ([`078d0e0`](https://github.com/jolars/arity/commit/078d0e040e67096303b1f4f4fd451730e1fe6985))
+- **lint:** name the actual range in `seq` messages ([`5d4cbab`](https://github.com/jolars/arity/commit/5d4cbab256b1ac3e359e31bc8e1c551c189f891c))
+- **lint:** skip roxygen topic rules on S3 methods ([`029af86`](https://github.com/jolars/arity/commit/029af86114891fa2b3f55fc8a41ba7c2e50bae38))
+- **lsp:** refresh the graph when a DESCRIPTION disappears ([`f987130`](https://github.com/jolars/arity/commit/f98713095c2980c23c2ee8b56123d8671ab3343a))
+- **linter:** skip a fixture package's DESCRIPTION when walking ([`0d70adb`](https://github.com/jolars/arity/commit/0d70adb29157f91b0a879f1b6bfa8580f9ef531a))
+- **semantic:** resolve backtick-quoted names ([`cc3d1db`](https://github.com/jolars/arity/commit/cc3d1dbfa7a0bbf9d10bd4c61a476e2d48f57358))
+- **rindex:** keep only the packages import() names ([`205957c`](https://github.com/jolars/arity/commit/205957ca2fd6ebfdf042007e6238748d6621bac9))
+- **formatter:** give an Rd `\item` its own line ([`481b9ac`](https://github.com/jolars/arity/commit/481b9ac1ccfa72f2db0496b475bf94012d1fa465))
+- **formatter:** flush a block Rd macro's opener line ([`bd27d5c`](https://github.com/jolars/arity/commit/bd27d5c35f327475facea9b8128e0a3ce418b23d))
+
+### Performance Improvements
+- **linter:** keep the standalone attach set lazy ([`a238d64`](https://github.com/jolars/arity/commit/a238d648de42c02357b51e3b42e06a06c9c0dec3))
+- **lsp:** invalidate package metadata by path ([`629ac9c`](https://github.com/jolars/arity/commit/629ac9cd01dc3487a875dc25100bf24b7d433472))
+- **formatter:** answer both prepasses in one green-tree walk ([`6f8a444`](https://github.com/jolars/arity/commit/6f8a4440d3efb68e65058044d5581de051412de6))
+
+### Dependencies
+- updated crates/arity-formatter to v0.4.0
+- updated crates/arity-parser to v0.5.0
 
 ## [0.18.0](https://github.com/jolars/arity/compare/v0.17.0...v0.18.0) (2026-08-11)
 

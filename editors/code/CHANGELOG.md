@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.19.0](https://github.com/jolars/arity/compare/arity-code-v0.18.0...arity-code-v0.19.0) (2026-08-14)
+
+### Features
+- **vscode:** gate inlay hints on the feature toggle ([`dd6fde8`](https://github.com/jolars/arity/commit/dd6fde821a63fa24a48517cf95472f035264e520))
+- format package DESCRIPTION files (#104) ([`40583bf`](https://github.com/jolars/arity/commit/40583bf0caf22499453080456dfac9e12e8c239d))
+- **code:** claim DESCRIPTION for the language server ([`0fe3077`](https://github.com/jolars/arity/commit/0fe30773c0c30d8f16f61f333c0fca6b47acef8b))
+
+### Dependencies
+- updated arity to v0.19.0
+
 ## [0.18.0](https://github.com/jolars/arity/compare/arity-code-v0.17.0...arity-code-v0.18.0) (2026-08-11)
 
 ### Dependencies

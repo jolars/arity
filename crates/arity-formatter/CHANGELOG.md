@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/jolars/arity/compare/arity-formatter-v0.3.1...arity-formatter-v0.4.0) (2026-08-14)
+
+### Breaking changes
+- **deps:** bump `rowan` to 0.17 ([`64ad43b`](https://github.com/jolars/arity/commit/64ad43be2125e8713e0656307d094a8e0a0601a4))
+
+### Features
+- **formatter:** honor skip-file in a DESCRIPTION ([`f737e8b`](https://github.com/jolars/arity/commit/f737e8b03aec62b72e3a15f59f843ab38d42e07d))
+- **formatter:** honor arity-format directives ([`922813c`](https://github.com/jolars/arity/commit/922813c86fccb2b1204c62b3c1b52ba6f786c268))
+- format package DESCRIPTION files (#104) ([`40583bf`](https://github.com/jolars/arity/commit/40583bf0caf22499453080456dfac9e12e8c239d))
+
+### Bug Fixes
+- **formatter:** give an Rd `\item` its own line ([`481b9ac`](https://github.com/jolars/arity/commit/481b9ac1ccfa72f2db0496b475bf94012d1fa465))
+- **formatter:** flush a block Rd macro's opener line ([`bd27d5c`](https://github.com/jolars/arity/commit/bd27d5c35f327475facea9b8128e0a3ce418b23d))
+
+### Performance Improvements
+- **formatter:** answer both prepasses in one green-tree walk ([`6f8a444`](https://github.com/jolars/arity/commit/6f8a4440d3efb68e65058044d5581de051412de6))
+
+### Dependencies
+- updated crates/arity-parser to v0.5.0
+
 ## [0.3.1](https://github.com/jolars/arity/compare/arity-formatter-v0.3.0...arity-formatter-v0.3.1) (2026-08-11)
 
 ### Bug Fixes
