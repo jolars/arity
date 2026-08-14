@@ -4,7 +4,7 @@
 //! so a misspelled tag (`@exprot`, `@parma`) silently loses documentation.
 //! The parser recognizes *any* `@name` as a tag, so this is a lint concern,
 //! not a parse error. There is no fix: the intended tag is unknowable.
-//! Custom tags from extension roclets can be suppressed with `# arity-ignore`.
+//! Custom tags from extension roclets can be suppressed with `# arity-lint skip`.
 
 use rowan::ast::AstNode as _;
 
@@ -32,7 +32,7 @@ impl Rule for RoxygenUnknownTag {
          `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses \
          documentation—or worse, an intended `@export` never reaches the \
          `NAMESPACE`. Custom tags from extension roclets can be suppressed \
-         with `# arity-ignore roxygen-unknown-tag`."
+         with `# arity-lint skip roxygen-unknown-tag`."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -75,7 +75,7 @@ impl Rule for RoxygenUnknownTag {
             )
             .with_suggestion(
                 "Check the spelling against the roxygen2 tag index; suppress with \
-                 `# arity-ignore roxygen-unknown-tag` for extension-roclet tags.",
+                 `# arity-lint skip roxygen-unknown-tag` for extension-roclet tags.",
             ),
             fix: None,
         });

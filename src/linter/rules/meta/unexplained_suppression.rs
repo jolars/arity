@@ -1,15 +1,17 @@
-//! `unexplained-suppression`: a `# arity-ignore` directive with no reason.
+//! `unexplained-suppression`: a directive with no reason.
 //!
-//! A suppression is a claim that the linter is wrong here, and that claim
-//! outlives the person who made it. `# arity-ignore vector-logic` says nothing
-//! about *why* — whether the operands are known scalars, whether it is a
+//! Telling a tool to stand down is a claim that it is wrong here, and that claim
+//! outlives the person who made it. `# arity-lint skip vector-logic` says
+//! nothing about *why* — whether the operands are known scalars, whether it is a
 //! deliberate vectorized comparison, or whether someone was silencing noise on
 //! a deadline. The next reader cannot tell a considered exception from a
 //! papered-over bug, so the suppression becomes permanent by default.
 //!
+//! An `on` is exempt: it closes a region whose `off` already carried the reason.
+//!
 //! Off by default: requiring a reason is a house style, not a defect, and a
-//! codebase that has adopted `# arity-ignore <rule>` without reasons would see
-//! a finding per directive on the first run. Enable it with `select`.
+//! codebase that has adopted directives without reasons would see a finding per
+//! directive on the first run. Enable it with `select`.
 //!
 //! Report-only, and not merely for convention — writing the reason *is* the
 //! fix, and inventing one would fabricate a justification nobody stands behind.
@@ -21,7 +23,7 @@ pub struct UnexplainedSuppression;
 
 const EXAMPLES: &[Example] = &[Example {
     caption: "The directive says what to silence, but not why:",
-    source: "# arity-ignore unused-binding\nx <- 1\n",
+    source: "# arity-lint skip unused-binding\nx <- 1\n",
 }];
 
 impl Rule for UnexplainedSuppression {
@@ -34,13 +36,14 @@ impl Rule for UnexplainedSuppression {
     }
 
     fn description(&self) -> &'static str {
-        "Flags a `# arity-ignore` directive that carries no reason — the text \
-after the `:`. A suppression is a standing claim that the linter is wrong at \
+        "Flags an `# arity` directive that carries no reason — the text after \
+the `:`. Telling a tool to stand down is a standing claim that it is wrong at \
 this spot, and without a reason the next reader cannot tell a considered \
 exception from noise someone silenced under deadline, so it becomes permanent \
-by default. Disabled by default, since requiring reasons is a house style \
-rather than a defect; enable it with `select`. Report-only: writing the reason \
-is the fix, and inventing one would fabricate a justification."
+by default. An `# arity-lint on` is exempt: it closes a region whose `off` \
+already gave the reason. Disabled by default, since requiring reasons is a \
+house style rather than a defect; enable it with `select`. Report-only: writing \
+the reason is the fix, and inventing one would fabricate a justification."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -49,7 +52,7 @@ is the fix, and inventing one would fabricate a justification."
 
     fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         for directive in ctx.suppressions.directives() {
-            if directive.has_reason() {
+            if directive.has_reason() || !directive.verb.wants_reason() {
                 continue;
             }
             sink.push(Diagnostic {
@@ -61,7 +64,7 @@ is the fix, and inventing one would fabricate a justification."
                     "unexplained-suppression",
                     "this suppression gives no reason",
                 )
-                .with_suggestion("add one after the rule: `# arity-ignore <rule>: <reason>`"),
+                .with_suggestion("add one after the rule: `# arity-lint skip <rule>: <reason>`"),
                 fix: None,
             });
         }

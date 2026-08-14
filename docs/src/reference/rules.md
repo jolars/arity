@@ -6,7 +6,7 @@
 for every match. This page is the catalogue: one section per rule, keyed by its
 stable **rule ID**. That ID is what a finding reports, what `select`/`ignore`
 target in the [`[lint]` table](configuration.md#lint), and what an
-`# arity-ignore` comment names (see
+`# arity-lint skip` comment names (see
 [Suppressing findings](suppression.md)).
 
 Where a rewrite is unambiguous a rule carries an autofix. A *safe* fix (shown
@@ -97,6 +97,7 @@ so this page never drifts from the rules' actual behavior.
 
 - [`misnamed-suppression`](#misnamed-suppression)
 - [`blanket-suppression`](#blanket-suppression)
+- [`misplaced-suppression`](#misplaced-suppression)
 - [`unexplained-suppression`](#unexplained-suppression)
 - [`outdated-suppression`](#outdated-suppression)
 
@@ -1267,7 +1268,7 @@ warning: sort
 
 Flag roxygen tags that roxygen2 does not understand.
 
-roxygen2 warns on an unknown tag and drops it from the generated `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses documentation—or worse, an intended `@export` never reaches the `NAMESPACE`. Custom tags from extension roclets can be suppressed with `# arity-ignore roxygen-unknown-tag`.
+roxygen2 warns on an unknown tag and drops it from the generated `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses documentation—or worse, an intended `@export` never reaches the `NAMESPACE`. Custom tags from extension roclets can be suppressed with `# arity-lint skip roxygen-unknown-tag`.
 
 This rule is **enabled by default**.
 
@@ -1285,7 +1286,7 @@ warning: roxygen-unknown-tag
   |
 2 | #' @exprot
   |    ^^^^^^^ `@exprot` is not a tag roxygen2 understands
-  = help: Check the spelling against the roxygen2 tag index; suppress with `# arity-ignore roxygen-unknown-tag` for extension-roclet tags.
+  = help: Check the spelling against the roxygen2 tag index; suppress with `# arity-lint skip roxygen-unknown-tag` for extension-roclet tags.
 ```
 
 ### `roxygen-title`
@@ -1924,59 +1925,59 @@ warning: unused-dependency
 
 ### `misnamed-suppression`
 
-Flags a `# arity-ignore` directive whose rule ID is not a rule arity ships. Such a directive suppresses nothing, and does so silently — the failure mode of a suppression is that no output appears, which is also what success looks like. When exactly one shipped rule ID is an unambiguous near-match, the fix rewrites the ID and leaves the reason text alone; otherwise the finding is report-only. Note that `syntax-error` is not a lint rule: parse errors are reported before any rule runs and cannot be suppressed.
+Flags an `# arity` directive that names a rule arity does not ship, or that does not parse as a directive at all (an unknown verb, a missing one, a rule named where the form takes none). Either way it suppresses nothing, and does so silently — the failure mode of a suppression is that no output appears, which is also what success looks like. When exactly one shipped rule ID is an unambiguous near-match, the fix rewrites the ID and leaves the reason text alone; otherwise the finding is report-only. Note that `syntax-error` is not a lint rule: parse errors are reported before any rule runs and cannot be suppressed.
 
 This rule is **enabled by default**.
 
 The rule ID is misspelled, so the directive suppresses nothing:
 
 ```r
-# arity-ignore unusd-binding: leftover from a refactor
+# arity-lint skip unusd-binding: leftover from a refactor
 x <- 1
 ```
 
 ```text
 warning: misnamed-suppression
- --> example.R:1:16
+ --> example.R:1:19
   |
-1 | # arity-ignore unusd-binding: leftover from a refactor
-  |                ^^^^^^^^^^^^^ `unusd-binding` is not an arity lint rule, so this directive suppresses nothing
+1 | # arity-lint skip unusd-binding: leftover from a refactor
+  |                   ^^^^^^^^^^^^^ `unusd-binding` is not an arity lint rule, so this directive suppresses nothing
   = help: did you mean `unused-binding`?
 ```
 
 After applying the fix:
 
 ```r
-# arity-ignore unused-binding: leftover from a refactor
+# arity-lint skip unused-binding: leftover from a refactor
 x <- 1
 ```
 
 A comma-separated list is not supported — write one directive per rule:
 
 ```r
-# arity-ignore browser, repeat: debugging
+# arity-lint skip browser, repeat: debugging
 x <- 1
 ```
 
 ```text
 warning: misnamed-suppression
- --> example.R:1:16
+ --> example.R:1:19
   |
-1 | # arity-ignore browser, repeat: debugging
-  |                ^^^^^^^^ `browser,` is not an arity lint rule, so this directive suppresses nothing
-  = help: a directive names one rule; write a separate `# arity-ignore` per rule
+1 | # arity-lint skip browser, repeat: debugging
+  |                   ^^^^^^^^ `browser,` is not an arity lint rule, so this directive suppresses nothing
+  = help: a directive names one rule; write a separate `# arity-lint skip` per rule
 ```
 
 ### `blanket-suppression`
 
-Flags a `# arity-ignore` directive that names no rule. `# arity-ignore-file: <reason>` disables every rule for the file — including every rule arity ships in the future — so the file quietly stops being checked as the rule set grows. A bare `# arity-ignore` is the opposite failure: it names nothing, so it suppresses nothing. Both are fixed by naming the rule. The rule-scoped `# arity-ignore-file <rule>: <reason>` is not flagged; it is broad in range but narrow in effect. Report-only — choosing the rules for the author would guess at intent in either direction.
+Flags an `# arity-lint` directive that names no rule where it could have. `# arity-lint skip-file: <reason>` disables every rule for the file, and `# arity-lint off: <reason>` does so until the matching `on` — including every rule arity ships in the future, so the code quietly stops being checked as the rule set grows. A directive with nothing after the verb is the opposite failure: it names nothing, so it suppresses nothing. Both are fixed by naming the rule. Not flagged: the rule-scoped `# arity-lint skip-file <rule>`, broad in range but narrow in effect, and `# arity skip: <reason>`, broad in rules but bounded to one statement. Report-only — choosing the rules for the author would guess at intent in either direction.
 
 This rule is **enabled by default**.
 
 Disabling every rule for the file, including rules that do not exist yet:
 
 ```r
-# arity-ignore-file: generated by a script
+# arity-lint skip-file: generated by a script
 x <- 1
 ```
 
@@ -1984,15 +1985,15 @@ x <- 1
 warning: blanket-suppression
  --> example.R:1:1
   |
-1 | # arity-ignore-file: generated by a script
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this directive disables every lint rule for the whole file
-  = help: scope it with `# arity-ignore-file <rule>: <reason>`
+1 | # arity-lint skip-file: generated by a script
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this directive disables every lint rule for the whole file
+  = help: scope it with `# arity-lint skip-file <rule>: <reason>`
 ```
 
 A directive with no rule ID suppresses nothing at all:
 
 ```r
-# arity-ignore
+# arity-lint skip
 x <- 1
 ```
 
@@ -2000,21 +2001,64 @@ x <- 1
 warning: blanket-suppression
  --> example.R:1:1
   |
-1 | # arity-ignore
-  | ^^^^^^^^^^^^^^ this directive names no rule, so it suppresses nothing
-  = help: name the rule: `# arity-ignore <rule>: <reason>`
+1 | # arity-lint skip
+  | ^^^^^^^^^^^^^^^^^ this directive names no rule, so it suppresses nothing
+  = help: name the rule: `# arity-lint skip <rule>: <reason>`
+```
+
+### `misplaced-suppression`
+
+Flags an `# arity` directive written where it can never take effect. A `# arity-format` directive is honored in statement lists — the top level and a block body — because that is where the formatter can splice source back verbatim; between two call arguments it marks nothing. An `# arity-lint on` with no open region closes nothing, which usually means its `off` was written with a different prefix (`# arity off` and `# arity-lint off` are separate regions). Both fail silently: a directive that does nothing looks exactly like one that worked. Report-only — moving the comment would mean guessing which statement the author meant.
+
+This rule is **enabled by default**.
+
+The formatter acts on whole statements, so a directive between two arguments marks nothing:
+
+```r
+f(
+  a = 1,
+  # arity-format skip: hand-aligned
+  b = 2
+)
+```
+
+```text
+warning: misplaced-suppression
+ --> example.R:3:3
+  |
+3 |   # arity-format skip: hand-aligned
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the formatter ignores a directive here; it acts on whole statements
+  = help: move it above the statement, at the top level or in a block body
+```
+
+An `on` closes only a region opened with the same prefix, so this one closes nothing:
+
+```r
+# arity off
+x <- 1
+# arity-lint on
+y <- 2
+```
+
+```text
+warning: misplaced-suppression
+ --> example.R:3:1
+  |
+3 | # arity-lint on
+  | ^^^^^^^^^^^^^^^ this `on` closes no open region, so it does nothing
+  = help: open one first, with the same prefix: `# arity-lint off <rule>: <reason>`
 ```
 
 ### `unexplained-suppression`
 
-Flags a `# arity-ignore` directive that carries no reason — the text after the `:`. A suppression is a standing claim that the linter is wrong at this spot, and without a reason the next reader cannot tell a considered exception from noise someone silenced under deadline, so it becomes permanent by default. Disabled by default, since requiring reasons is a house style rather than a defect; enable it with `select`. Report-only: writing the reason is the fix, and inventing one would fabricate a justification.
+Flags an `# arity` directive that carries no reason — the text after the `:`. Telling a tool to stand down is a standing claim that it is wrong at this spot, and without a reason the next reader cannot tell a considered exception from noise someone silenced under deadline, so it becomes permanent by default. An `# arity-lint on` is exempt: it closes a region whose `off` already gave the reason. Disabled by default, since requiring reasons is a house style rather than a defect; enable it with `select`. Report-only: writing the reason is the fix, and inventing one would fabricate a justification.
 
 This rule is **disabled by default**; enable it with `select`.
 
 The directive says what to silence, but not why:
 
 ```r
-# arity-ignore unused-binding
+# arity-lint skip unused-binding
 x <- 1
 ```
 
@@ -2022,14 +2066,14 @@ x <- 1
 warning: unexplained-suppression
  --> example.R:1:1
   |
-1 | # arity-ignore unused-binding
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this suppression gives no reason
-  = help: add one after the rule: `# arity-ignore <rule>: <reason>`
+1 | # arity-lint skip unused-binding
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this suppression gives no reason
+  = help: add one after the rule: `# arity-lint skip <rule>: <reason>`
 ```
 
 ### `outdated-suppression`
 
-Flags a `# arity-ignore` directive that suppressed nothing on this run — the code it was written for has changed, but the directive stayed. A stale suppression is misleading (it asserts arity is wrong at a spot where arity says nothing) and it is a trap: it will silence a real finding if the shape ever comes back. The fix deletes the directive.
+Flags an `# arity-lint` directive that suppressed nothing on this run — the code it was written for has changed, but the directive stayed. A stale suppression is misleading (it asserts arity is wrong at a spot where arity says nothing) and it is a trap: it will silence a real finding if the shape ever comes back. The fix deletes the directive.
 
 To avoid reporting a directive that is merely *dormant*, the rule only fires when the rule the directive names actually ran — a rule excluded by `select`/`ignore`, or one that is off by default, leaves its directives alone — or when the directive is dangling, with no code after it to attach to. Directives naming no rule are left to `blanket-suppression`, and unknown rule IDs to `misnamed-suppression`.
 
@@ -2038,7 +2082,7 @@ This rule is **enabled by default**.
 `x` is read, so `unused-binding` finds nothing and the directive is dead:
 
 ```r
-# arity-ignore unused-binding: no longer needed
+# arity-lint skip unused-binding: no longer needed
 x <- 1
 print(x)
 ```
@@ -2047,8 +2091,8 @@ print(x)
 warning: outdated-suppression
  --> example.R:1:1
   |
-1 | # arity-ignore unused-binding: no longer needed
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `unused-binding` reports nothing here; this suppression is no longer needed
+1 | # arity-lint skip unused-binding: no longer needed
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `unused-binding` reports nothing here; this suppression is no longer needed
 ```
 
 After applying the fix:

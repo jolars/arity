@@ -6054,6 +6054,162 @@ fn fixed_output_selecting(src: &str, rule: &str) -> String {
 }
 
 #[test]
+fn canonical_spelling_suppresses_on_the_next_statement() {
+    let src = "# arity-lint skip browser: debugging aid, kept\nbrowser()\n";
+    assert!(rule_diags(src, "browser").is_empty(), "{src}");
+    // ...and the statement after the target is still checked.
+    let src = "# arity-lint skip browser: kept\nbrowser()\nbrowser()\n";
+    assert_eq!(rule_diags(src, "browser").len(), 1);
+}
+
+#[test]
+fn canonical_file_spelling_suppresses_everywhere() {
+    let src = "# arity-lint skip-file browser: generated\nbrowser()\nbrowser()\n";
+    assert!(rule_diags(src, "browser").is_empty(), "{src}");
+}
+
+#[test]
+fn a_region_suppresses_between_off_and_on() {
+    let src = "browser()\n# arity-lint off browser: generated block\nbrowser()\nbrowser()\n# arity-lint on\nbrowser()\n";
+    let d = rule_diags(src, "browser");
+    assert_eq!(d.len(), 2, "only the two outside the region: {d:?}");
+    assert!(usize::from(d[0].range.start()) < src.find("# arity-lint off").unwrap());
+    assert!(usize::from(d[1].range.start()) > src.find("# arity-lint on").unwrap());
+}
+
+#[test]
+fn an_unclosed_region_runs_to_the_end_of_the_file() {
+    let src = "browser()\n# arity-lint off browser: rest is generated\nbrowser()\nbrowser()\n";
+    assert_eq!(rule_diags(src, "browser").len(), 1);
+}
+
+#[test]
+fn a_region_leaves_other_rules_alone() {
+    // Scoped to one rule: a finding from another rule inside the region stands.
+    let src = "# arity-lint off browser: r\nbrowser()\nx <- 1\n# arity-lint on\n";
+    assert!(rule_diags(src, "browser").is_empty());
+    assert_eq!(rule_diags(src, "unused-binding").len(), 1);
+}
+
+#[test]
+fn a_blanket_region_suppresses_every_rule() {
+    let src = "# arity off\nbrowser()\nx <- 1\n# arity on\nbrowser()\n";
+    assert!(rule_diags(src, "unused-binding").is_empty());
+    assert_eq!(
+        rule_diags(src, "browser").len(),
+        1,
+        "only the one after `on`"
+    );
+}
+
+#[test]
+fn a_region_does_not_leak_out_of_a_block() {
+    // Lint regions are byte ranges, not structural: an `off` inside a block
+    // stays open past the closing brace until `on` or end of file.
+    let src = "f <- function() {\n  # arity-lint off browser: r\n  browser()\n}\nbrowser()\n";
+    assert!(rule_diags(src, "browser").is_empty(), "{src}");
+}
+
+#[test]
+fn an_on_before_any_off_suppresses_nothing() {
+    let src = "# arity-lint on\nbrowser()\n";
+    assert_eq!(rule_diags(src, "browser").len(), 1);
+}
+
+#[test]
+fn misplaced_suppression_flags_a_format_directive_in_an_argument_list() {
+    let src = "f(\n  a = 1,\n  # arity-format skip: inert here\n  b = 2\n)\n";
+    let d = meta_rules(src, "misplaced-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(&src[d[0].range], "# arity-format skip: inert here");
+    assert!(d[0].fix.is_none(), "report-only");
+}
+
+#[test]
+fn misplaced_suppression_accepts_a_format_directive_in_a_statement_list() {
+    for src in [
+        "# arity-format skip: fine\nx <- 1\n",
+        "f <- function() {\n  # arity-format skip: fine\n  x <- 1\n}\n",
+        "# arity-format skip-file: fine\nx <- 1\n",
+    ] {
+        assert!(
+            meta_rules(src, "misplaced-suppression").is_empty(),
+            "{src:?}"
+        );
+    }
+}
+
+#[test]
+fn misplaced_suppression_ignores_a_lint_only_directive() {
+    // The linter attaches by node, not by statement list, so a lint directive
+    // inside an argument list still does something.
+    let src = "f(\n  a = 1,\n  # arity-lint skip browser: r\n  b = 2\n)\n";
+    assert!(meta_rules(src, "misplaced-suppression").is_empty());
+}
+
+#[test]
+fn misplaced_suppression_flags_an_on_that_closes_nothing() {
+    let d = meta_rules("# arity-lint on\nx <- 1\n", "misplaced-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert!(d[0].fix.is_none(), "report-only");
+}
+
+#[test]
+fn misplaced_suppression_accepts_a_matched_on() {
+    let src = "# arity-lint off browser: r\nx <- 1\n# arity-lint on\n";
+    assert!(meta_rules(src, "misplaced-suppression").is_empty());
+}
+
+#[test]
+fn misplaced_suppression_flags_an_on_whose_off_used_another_prefix() {
+    // `# arity off` and `# arity-lint off` open different regions.
+    let src = "# arity off\nx <- 1\n# arity-lint on\n";
+    assert_eq!(meta_rules(src, "misplaced-suppression").len(), 1);
+}
+
+#[test]
+fn misnamed_suppression_flags_an_unknown_verb() {
+    let src = "# arity-format skipp: typo\nx <- 1\n";
+    let d = meta_rules(src, "misnamed-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(&src[d[0].range], "skipp");
+}
+
+#[test]
+fn misnamed_suppression_flags_a_missing_verb() {
+    let d = meta_rules("# arity-lint\nx <- 1\n", "misnamed-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+}
+
+#[test]
+fn misnamed_suppression_flags_a_rule_named_where_none_can_be() {
+    let src = "# arity-format skip unused-binding: no rule slot\nx <- 1\n";
+    let d = meta_rules(src, "misnamed-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(&src[d[0].range], "unused-binding");
+}
+
+#[test]
+fn misnamed_suppression_flags_the_two_spellings_mixed() {
+    let src = "# arity-ignore skip browser: mixed\nx <- 1\n";
+    let d = meta_rules(src, "misnamed-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(&src[d[0].range], "skip");
+}
+
+#[test]
+fn no_rule_id_collides_with_a_directive_verb() {
+    // A verb sits where a rule ID would go, so such a rule could never be
+    // named in a directive at all.
+    for id in arity::linter::rules::all_rule_ids() {
+        assert!(
+            !matches!(id, "skip" | "skip-file" | "off" | "on"),
+            "rule `{id}` collides with a directive verb"
+        );
+    }
+}
+
+#[test]
 fn blanket_suppression_flags_the_unscoped_file_directive() {
     let src = "# arity-ignore-file: generated, do not lint\nx <- 1\n";
     let d = meta_rules(src, "blanket-suppression");
@@ -6271,4 +6427,51 @@ fn fixed_output_selecting_all(src: &str, rules: &[&str]) -> String {
         assert_eq!(fix.applicability, Applicability::Safe);
     }
     apply_fixes(src, &fixes, false).output
+}
+
+#[test]
+fn unexplained_suppression_exempts_an_on() {
+    // The `off` above it carried the reason; the `on` just closes the region.
+    let src = "# arity-lint off browser: debugging block\nbrowser()\n# arity-lint on\n";
+    assert!(
+        meta_rules(src, "unexplained-suppression").is_empty(),
+        "{src}"
+    );
+}
+
+#[test]
+fn unexplained_suppression_covers_the_format_forms() {
+    for src in [
+        "# arity-format skip\nx <- 1\n",
+        "# arity off\nx <- 1\n# arity on\n",
+    ] {
+        assert!(
+            !meta_rules(src, "unexplained-suppression").is_empty(),
+            "{src:?}"
+        );
+    }
+}
+
+#[test]
+fn outdated_suppression_flags_a_region_that_silenced_nothing() {
+    let src = "# arity-lint off browser: stale\nx <- 1\n# arity-lint on\nprint(x)\n";
+    let d = diagnostics_selecting(src, &["outdated-suppression", "browser"]);
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(d[0].rule, "outdated-suppression");
+    assert_eq!(&src[d[0].range], "# arity-lint off browser: stale");
+}
+
+#[test]
+fn outdated_suppression_accepts_a_region_that_fired() {
+    let src = "# arity-lint off browser: needed\nbrowser()\n# arity-lint on\n";
+    let d = diagnostics_selecting(src, &["outdated-suppression", "browser"]);
+    assert!(d.is_empty(), "got {d:?}");
+}
+
+#[test]
+fn outdated_suppression_ignores_a_format_directive() {
+    // Whether the formatter would have changed those lines is a `format
+    // --check` fact, not a semantic one.
+    let src = "# arity-format skip: hand-aligned\nx <- 1\nprint(x)\n";
+    assert!(meta_rules(src, "outdated-suppression").is_empty(), "{src}");
 }

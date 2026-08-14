@@ -3,7 +3,7 @@
 //! The linter is purely semantic: any check that the formatter's `--check`
 //! mode can perform belongs to the formatter, not here. Rules consume a
 //! [`crate::semantic::SemanticModel`] and emit [`Diagnostic`]s. Suppression
-//! via `# arity-ignore` comments is honored inside
+//! via `# arity` directive comments is honored inside
 //! [`rules::run_rules`], after the rules have run — rules always emit
 //! unconditionally and the driver's filter does the rest. The `meta/*-suppression`
 //! rules then lint the directives themselves, reading the parsed directive list

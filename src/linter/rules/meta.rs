@@ -1,4 +1,4 @@
-//! Meta rules: lints about arity's own `# arity-ignore` directives.
+//! Meta rules: lints about arity's own `# arity` directives.
 //!
 //! Unlike every other category, these rules do not read the R code at all —
 //! they read the directive list the driver parsed off the file's comments
@@ -8,17 +8,19 @@
 //! point of a suppression is that nothing is reported.
 //!
 //! One limitation applies to all of them. Their findings are spanned on comment
-//! tokens, and a node-level `# arity-ignore` attaches to the next *non-trivia*
-//! sibling — which skips comments. So a meta finding cannot be suppressed by a
-//! `# arity-ignore` on the line above it; use the file-wide form
-//! (`# arity-ignore-file <meta-rule>: …`) or `[lint] ignore`.
+//! tokens, and a node-level `# arity-lint skip` attaches to the next
+//! *non-trivia* sibling — which skips comments. So a meta finding cannot be
+//! suppressed by a directive on the line above it; use the file-wide form
+//! (`# arity-lint skip-file <meta-rule>: …`) or `[lint] ignore`.
 
 mod blanket_suppression;
 mod misnamed_suppression;
+mod misplaced_suppression;
 mod outdated_suppression;
 mod unexplained_suppression;
 
 pub use blanket_suppression::BlanketSuppression;
 pub use misnamed_suppression::MisnamedSuppression;
+pub use misplaced_suppression::MisplacedSuppression;
 pub use outdated_suppression::OutdatedSuppression;
 pub use unexplained_suppression::UnexplainedSuppression;

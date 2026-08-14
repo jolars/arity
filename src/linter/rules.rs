@@ -215,6 +215,7 @@ fn meta_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(meta::MisnamedSuppression),
         Box::new(meta::BlanketSuppression),
+        Box::new(meta::MisplacedSuppression),
         Box::new(meta::UnexplainedSuppression),
         Box::new(meta::OutdatedSuppression),
     ]
@@ -223,7 +224,7 @@ fn meta_rules() -> Vec<Box<dyn Rule>> {
 /// Every shipped rule's ID, derived from [`all_rules`] so the two never drift.
 /// Used to validate `LintConfig::select` / `ignore`.
 ///
-/// Both grammars' IDs, in one namespace: `select`, `ignore`, `# arity-ignore`,
+/// Both grammars' IDs, in one namespace: `select`, `ignore`, `# arity-lint`,
 /// and `misnamed-suppression` all see one flat set of rule names, and none of
 /// them has to learn which file type a rule fires in.
 pub fn all_rule_ids() -> Vec<&'static str> {
@@ -296,7 +297,7 @@ pub trait Rule: Send + Sync {
     }
 
     /// Post-suppression pass, run once after the surviving findings have been
-    /// filtered through the file's `# arity-ignore` directives. `used` records
+    /// filtered through the file's `# arity` directives. `used` records
     /// which directives actually matched a finding.
     ///
     /// Separate from [`Rule::check_file`] because its input is a *driver* fact —

@@ -1,0 +1,46 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `misplaced-suppression`
+
+Flags an `# arity` directive written where it can never take effect. A `# arity-format` directive is honored in statement lists — the top level and a block body — because that is where the formatter can splice source back verbatim; between two call arguments it marks nothing. An `# arity-lint on` with no open region closes nothing, which usually means its `off` was written with a different prefix (`# arity off` and `# arity-lint off` are separate regions). Both fail silently: a directive that does nothing looks exactly like one that worked. Report-only — moving the comment would mean guessing which statement the author meant.
+
+This rule is **enabled by default**.
+
+The formatter acts on whole statements, so a directive between two arguments marks nothing:
+
+```r
+f(
+  a = 1,
+  # arity-format skip: hand-aligned
+  b = 2
+)
+```
+
+```text
+warning: misplaced-suppression
+ --> example.R:3:3
+  |
+3 |   # arity-format skip: hand-aligned
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the formatter ignores a directive here; it acts on whole statements
+  = help: move it above the statement, at the top level or in a block body
+```
+
+An `on` closes only a region opened with the same prefix, so this one closes nothing:
+
+```r
+# arity off
+x <- 1
+# arity-lint on
+y <- 2
+```
+
+```text
+warning: misplaced-suppression
+ --> example.R:3:1
+  |
+3 | # arity-lint on
+  | ^^^^^^^^^^^^^^^ this `on` closes no open region, so it does nothing
+  = help: open one first, with the same prefix: `# arity-lint off <rule>: <reason>`
+```

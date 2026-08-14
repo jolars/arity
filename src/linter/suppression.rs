@@ -1,12 +1,19 @@
-//! Comment-based suppression: `# arity-ignore` directives.
-//!
-//! Three forms are recognized:
+//! Comment-based suppression: the lint half of the `# arity` directive table.
 //!
 //! ```text
-//! # arity-ignore <rule>: <reason>           # suppresses on the next non-trivia sibling
-//! # arity-ignore-file <rule>: <reason>      # suppresses anywhere in the file
-//! # arity-ignore-file: <reason>             # suppresses ALL rules
+//! # arity-lint skip <rule>: <reason>        the next non-trivia sibling
+//! # arity-lint off <rule>: <reason>         until `# arity-lint on`, or end of file
+//! # arity-lint skip-file <rule>: <reason>   anywhere in the file
 //! ```
+//!
+//! A `:` where the rule ID would go widens any of the three to every rule, as
+//! does the `# arity` spelling, which addresses the formatter at the same time.
+//! `# arity-ignore` and `# arity-ignore-file` are the deprecated spellings of
+//! `skip` and `skip-file`; they behave identically here.
+//!
+//! The grammar itself lives in [`crate::directive`] so the formatter and both
+//! of arity's grammars read one table. This module is what that table *means*
+//! to the linter: where a directive attaches, and which findings it removes.
 //!
 //! Implementation note: the comment-to-node attachment for a node-level
 //! suppression is "next non-trivia sibling", computed during the walk. This
@@ -14,9 +21,10 @@
 //!
 //! Every recognized directive is also recorded in [`SuppressionMap::directives`]
 //! — *including* the ones that suppress nothing (an unknown rule ID, a directive
-//! with no following sibling, one that names no rule at all). Those are exactly
-//! what the `meta/*-suppression` rules exist to report, and they reach a rule
-//! through `RuleContext::suppressions`.
+//! with no following sibling, one that names no rule at all), and separately the
+//! ones that do not parse at all ([`SuppressionMap::malformed`]). Those are
+//! exactly what the `meta/*-suppression` rules exist to report, and they reach a
+//! rule through `RuleContext::suppressions`.
 //!
 //! [`SuppressionMap::filter`] additionally reports which directives actually
 //! fired. That is a *driver* fact — it does not exist until the findings have
@@ -25,55 +33,61 @@
 
 use std::collections::HashMap;
 
-use rowan::{NodeOrToken, TextRange};
+use rowan::{NodeOrToken, TextRange, TextSize};
 
 use crate::dcf;
+use crate::directive::{self, Parsed, RuleScope};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 use super::diagnostic::Diagnostic;
 
-/// Which of the three directive forms a comment is.
+pub use crate::directive::{MalformedKind, RuleRef, Spelling, Tool, Verb};
+
+/// What a directive covers, once its position in the file is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DirectiveKind {
-    /// `# arity-ignore <rule>: …` — the next non-trivia sibling only.
-    Node,
-    /// `# arity-ignore-file <rule>: …` — the whole file, one rule.
+pub enum Coverage {
+    /// The whole file.
     File,
-    /// `# arity-ignore-file: …` — the whole file, every rule.
-    FileAll,
+    /// Exactly this range: the node a `skip` attached to, or the span from an
+    /// `off` to its `on`.
+    Range(TextRange),
+    /// Nothing at all — a `skip` with nothing after it, an `on` that closes no
+    /// open region, or a directive addressed only to the formatter.
+    Nothing,
 }
 
-/// A rule ID as written in a directive, with the byte range it occupies. The
-/// range is what `misnamed-suppression` reports and rewrites, so a fix touches
-/// the ID alone and leaves the author's reason prose intact.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuleRef {
-    pub id: String,
-    pub range: TextRange,
-}
-
-/// One parsed `# arity-ignore…` comment.
+/// One parsed `# arity…` comment, placed in the file.
+///
+/// The ranges inside [`Directive::scope`] are absolute, unlike the relative ones
+/// [`crate::directive::parse`] returns.
 #[derive(Debug, Clone)]
 pub struct Directive {
-    pub kind: DirectiveKind,
-    /// The rule as written. `None` for [`DirectiveKind::FileAll`] and for a bare
-    /// `# arity-ignore` that names no rule — both recorded, both inert, both
-    /// reported by `blanket-suppression`.
-    pub rule: Option<RuleRef>,
+    pub tool: Tool,
+    pub verb: Verb,
+    pub scope: RuleScope,
+    pub spelling: Spelling,
     /// The text after the `:` that follows the rule ID, trimmed. `None` when
     /// there is no `:` at all, or nothing but whitespace follows it.
     pub reason: Option<String>,
     /// The `COMMENT` token's own range — the span a meta rule reports on.
     pub comment: TextRange,
-    /// The node a [`DirectiveKind::Node`] directive attaches to. `None` when no
-    /// non-trivia sibling follows, i.e. the directive can never match anything.
-    /// Always `None` for the file-scope forms, which need no target.
-    pub target: Option<TextRange>,
+    pub coverage: Coverage,
+    /// Whether an `off` found its `on`, or an `on` closed an open region.
+    /// Meaningless (and `false`) for the other verbs.
+    pub matched: bool,
     /// The comment's text, verbatim.
     pub raw: String,
 }
 
 impl Directive {
+    /// The rule the author named, if they named one.
+    pub fn rule(&self) -> Option<&RuleRef> {
+        match &self.scope {
+            RuleScope::Rule(rule) => Some(rule),
+            _ => None,
+        }
+    }
+
     /// Whether the author wrote a reason for the suppression.
     pub fn has_reason(&self) -> bool {
         self.reason.is_some()
@@ -82,8 +96,26 @@ impl Directive {
     /// Whether this directive can never suppress anything because nothing
     /// follows it — dead regardless of which rules ran.
     pub fn is_dangling(&self) -> bool {
-        self.kind == DirectiveKind::Node && self.target.is_none()
+        self.verb == Verb::Skip && self.coverage == Coverage::Nothing
     }
+
+    /// Whether the rule slot means anything here; see
+    /// [`crate::directive::Directive::has_rule_slot`].
+    pub fn has_rule_slot(&self) -> bool {
+        self.tool.affects_lint() && self.verb != Verb::On
+    }
+}
+
+/// A comment that announced itself as a directive but does not parse as one.
+#[derive(Debug, Clone)]
+pub struct Malformed {
+    pub tool: Tool,
+    pub kind: MalformedKind,
+    /// The offending word's absolute range.
+    pub range: TextRange,
+    pub word: String,
+    /// The `COMMENT` token's own range.
+    pub comment: TextRange,
 }
 
 /// Which directives suppressed at least one finding, parallel to
@@ -102,19 +134,27 @@ impl DirectiveUsage {
 pub struct SuppressionMap {
     /// Every recognized directive, in source order.
     directives: Vec<Directive>,
-    /// Indices of the [`DirectiveKind::FileAll`] directives.
-    file_all: Vec<usize>,
-    /// Rule ID -> indices of the file-wide directives naming it.
-    file_rules: HashMap<String, Vec<usize>>,
-    /// Rule ID -> (attached node range, directive index). A diagnostic is
-    /// suppressed if its range falls fully inside one of those ranges.
-    node_skips: HashMap<String, Vec<(TextRange, usize)>>,
+    /// Every comment that meant to be a directive and is not.
+    malformed: Vec<Malformed>,
+    /// Indices of the directives covering every rule.
+    all_rules: Vec<usize>,
+    /// Rule ID -> indices of the directives naming it.
+    by_rule: HashMap<String, Vec<usize>>,
 }
 
 impl SuppressionMap {
     pub fn build(root: &SyntaxNode) -> Self {
         let mut map = Self::default();
-        visit(root, &mut map);
+        for element in root.descendants_with_tokens() {
+            if let NodeOrToken::Token(token) = element
+                && token.kind() == SyntaxKind::COMMENT
+            {
+                map.classify(token.text(), token.text_range(), || {
+                    next_meaningful_sibling(&token)
+                });
+            }
+        }
+        map.finish(root.text_range().end());
         map
     }
 
@@ -131,14 +171,12 @@ impl SuppressionMap {
             if let NodeOrToken::Token(tok) = el
                 && tok.kind() == dcf::SyntaxKind::COMMENT
             {
-                classify_comment_with(
-                    tok.text(),
-                    tok.text_range(),
-                    || next_meaningful_dcf_sibling(&tok),
-                    &mut map,
-                );
+                map.classify(tok.text(), tok.text_range(), || {
+                    next_meaningful_dcf_sibling(&tok)
+                });
             }
         }
+        map.finish(root.text_range().end());
         map
     }
 
@@ -147,17 +185,13 @@ impl SuppressionMap {
         &self.directives
     }
 
+    /// Every comment that announced itself as a directive and does not parse.
+    pub fn malformed(&self) -> &[Malformed] {
+        &self.malformed
+    }
+
     pub fn is_suppressed(&self, rule: &str, range: TextRange) -> bool {
-        self.file_all.iter().any(|&i| self.applies(i, range))
-            || self
-                .file_rules
-                .get(rule)
-                .is_some_and(|ix| ix.iter().any(|&i| self.applies(i, range)))
-            || self.node_skips.get(rule).is_some_and(|ranges| {
-                ranges
-                    .iter()
-                    .any(|&(r, i)| r.contains_range(range) && self.applies(i, range))
-            })
+        self.candidates(rule).any(|i| self.covers(i, range))
     }
 
     /// Drop the suppressed diagnostics, reporting which directives fired.
@@ -174,7 +208,7 @@ impl SuppressionMap {
         let mut hits = Vec::new();
         diagnostics.retain(|d| {
             hits.clear();
-            self.matches(d.rule, d.range, &mut hits);
+            hits.extend(self.candidates(d.rule).filter(|&i| self.covers(i, d.range)));
             for &i in &hits {
                 used[i] = true;
             }
@@ -183,188 +217,160 @@ impl SuppressionMap {
         DirectiveUsage(used)
     }
 
-    /// Collect the indices of every directive that suppresses `(rule, range)`.
-    fn matches(&self, rule: &str, range: TextRange, out: &mut Vec<usize>) {
-        out.extend(
-            self.file_all
-                .iter()
-                .copied()
-                .filter(|&i| self.applies(i, range)),
-        );
-        if let Some(indices) = self.file_rules.get(rule) {
-            out.extend(indices.iter().copied().filter(|&i| self.applies(i, range)));
-        }
-        if let Some(ranges) = self.node_skips.get(rule) {
-            out.extend(
-                ranges
-                    .iter()
-                    .filter(|&&(r, i)| r.contains_range(range) && self.applies(i, range))
-                    .map(|&(_, i)| i),
-            );
-        }
+    /// Every directive that could suppress `rule`: the blanket ones and the ones
+    /// naming it.
+    fn candidates<'a>(&'a self, rule: &str) -> impl Iterator<Item = usize> + 'a {
+        self.all_rules
+            .iter()
+            .copied()
+            .chain(self.by_rule.get(rule).into_iter().flatten().copied())
     }
 
-    /// A directive never suppresses a finding that lies inside its own comment.
+    /// Whether directive `index` covers a finding at `range`.
     ///
-    /// Without this, `# arity-ignore-file: …` would suppress the
-    /// `blanket-suppression` finding *about itself*, making that rule
-    /// structurally unreportable in the one case it exists for. It stays inert
-    /// for every non-`meta` rule: no other rule's finding is ever spanned on a
-    /// suppression comment.
-    fn applies(&self, index: usize, range: TextRange) -> bool {
-        !self.directives[index].comment.contains_range(range)
-    }
-}
-
-fn visit(node: &SyntaxNode, map: &mut SuppressionMap) {
-    // Walk every comment token in the file. Comments may appear as direct
-    // children of any node or as part of trivia between siblings. We use a
-    // descendants iterator on tokens.
-    for el in node.descendants_with_tokens() {
-        if let NodeOrToken::Token(tok) = el
-            && tok.kind() == SyntaxKind::COMMENT
-        {
-            classify_comment(&tok, map);
+    /// A *blanket* directive never suppresses a finding spanned on a directive
+    /// comment — its own or any other's. Without that, `# arity-lint skip-file:`
+    /// would suppress the `blanket-suppression` finding about itself, and an
+    /// unclosed `# arity off` would suppress the `misplaced-suppression` finding
+    /// about the `on` that failed to close it: the two rules would be
+    /// structurally unreportable in the cases they exist for. A directive that
+    /// *names* a meta rule still silences it, which is how an author says "I
+    /// know". The exemption is inert for every non-`meta` rule: no other rule's
+    /// finding is ever spanned on a comment.
+    fn covers(&self, index: usize, range: TextRange) -> bool {
+        let directive = &self.directives[index];
+        if directive.scope == RuleScope::All && self.spans_a_directive(range) {
+            return false;
+        }
+        match directive.coverage {
+            Coverage::File => true,
+            Coverage::Range(covered) => covered.contains_range(range),
+            Coverage::Nothing => false,
         }
     }
-}
 
-fn classify_comment(tok: &rowan::SyntaxToken<crate::syntax::RLanguage>, map: &mut SuppressionMap) {
-    classify_comment_with(
-        tok.text(),
-        tok.text_range(),
-        || next_meaningful_sibling(tok),
-        map,
-    );
-}
+    /// Whether `range` lies inside some directive's own comment — recognized or
+    /// malformed, since both are reported by the `meta` rules.
+    fn spans_a_directive(&self, range: TextRange) -> bool {
+        self.directives
+            .iter()
+            .map(|d| d.comment)
+            .chain(self.malformed.iter().map(|m| m.comment))
+            .any(|comment| comment.contains_range(range))
+    }
 
-/// Parse one `#` comment into a directive, grammar-free.
-///
-/// `target` is invoked only for the node-scope form, so the common case (a
-/// file-scope directive, and every comment that is not a directive at all)
-/// never pays for the sibling walk. That laziness is the whole reason this
-/// function is split out: it is what lets both grammars share the parsing
-/// without sharing a tree type.
-fn classify_comment_with(
-    text: &str,
-    comment: TextRange,
-    target: impl FnOnce() -> Option<TextRange>,
-    map: &mut SuppressionMap,
-) {
-    let base = comment.start();
-    // Byte offset of the comment body within the token, so a `RuleRef` range is
-    // absolute in the file.
-    let Some(body_start) = text.find('#').map(|i| i + 1) else {
-        return;
-    };
-    let body = text[body_start..].trim_start();
-    let body_offset = body_start + (text.len() - body_start - body.len());
-
-    if let Some(rest) = body.strip_prefix("arity-ignore-file") {
-        let rest_offset = body_offset + "arity-ignore-file".len();
-        let (rest, rest_offset) = trim_start_at(rest, rest_offset);
-        if let Some(reason) = rest.strip_prefix(':') {
-            record(
-                map,
-                Directive {
-                    kind: DirectiveKind::FileAll,
-                    rule: None,
-                    reason: clean_reason(reason),
+    /// Parse one comment and record what it is, grammar-free.
+    ///
+    /// `target` is invoked only for the node-scope form, so the common case (a
+    /// file-scope directive, and every comment that is not a directive at all)
+    /// never pays for the sibling walk. That laziness is why both grammars can
+    /// share this without sharing a tree type.
+    fn classify(
+        &mut self,
+        text: &str,
+        comment: TextRange,
+        target: impl FnOnce() -> Option<TextRange>,
+    ) {
+        let base = comment.start();
+        match directive::parse(text) {
+            Some(Parsed::Directive(parsed)) => {
+                let coverage = match parsed.verb {
+                    Verb::SkipFile => Coverage::File,
+                    Verb::Skip => target().map_or(Coverage::Nothing, Coverage::Range),
+                    // Resolved against the matching `on` once the walk is done.
+                    Verb::Off | Verb::On => Coverage::Nothing,
+                };
+                self.directives.push(Directive {
+                    tool: parsed.tool,
+                    verb: parsed.verb,
+                    scope: absolute_scope(parsed.scope, base),
+                    spelling: parsed.spelling,
+                    reason: parsed.reason.map(str::to_string),
                     comment,
-                    target: None,
+                    coverage,
+                    matched: false,
                     raw: text.to_string(),
-                },
-            );
-            return;
-        }
-        // `arity-ignore-file <rule>: reason` — rest starts with the rule ID.
-        record(
-            map,
-            Directive {
-                kind: DirectiveKind::File,
-                rule: parse_rule(rest, rest_offset, base),
-                reason: parse_reason(rest),
+                });
+            }
+            Some(Parsed::Malformed(bad)) => self.malformed.push(Malformed {
+                tool: bad.tool,
+                kind: bad.kind,
+                range: bad.range + base,
+                word: bad.word,
                 comment,
-                target: None,
-                raw: text.to_string(),
-            },
-        );
-        return;
-    }
-
-    if let Some(rest) = body.strip_prefix("arity-ignore") {
-        let rest_offset = body_offset + "arity-ignore".len();
-        let (rest, rest_offset) = trim_start_at(rest, rest_offset);
-        record(
-            map,
-            Directive {
-                kind: DirectiveKind::Node,
-                rule: parse_rule(rest, rest_offset, base),
-                reason: parse_reason(rest),
-                comment,
-                target: target(),
-                raw: text.to_string(),
-            },
-        );
-    }
-}
-
-/// Record a directive and index it so `is_suppressed` stays a map lookup.
-/// Directives that cannot match anything (no rule, or a node directive with no
-/// following sibling) live only in `directives`.
-fn record(map: &mut SuppressionMap, directive: Directive) {
-    let index = map.directives.len();
-    match (&directive.kind, &directive.rule, &directive.target) {
-        (DirectiveKind::FileAll, _, _) => map.file_all.push(index),
-        (DirectiveKind::File, Some(rule), _) => {
-            map.file_rules
-                .entry(rule.id.clone())
-                .or_default()
-                .push(index);
+            }),
+            None => {}
         }
-        (DirectiveKind::Node, Some(rule), Some(target)) => {
-            map.node_skips
-                .entry(rule.id.clone())
-                .or_default()
-                .push((*target, index));
+    }
+
+    /// Close the regions and index everything. Runs once, after the walk, since
+    /// an `off` cannot know where it ends until its `on` has been seen.
+    fn finish(&mut self, end_of_file: TextSize) {
+        self.close_regions(end_of_file);
+        for index in 0..self.directives.len() {
+            let directive = &self.directives[index];
+            if !directive.tool.affects_lint() || directive.verb == Verb::On {
+                continue;
+            }
+            match &directive.scope {
+                RuleScope::All => self.all_rules.push(index),
+                RuleScope::Rule(rule) => {
+                    self.by_rule.entry(rule.id.clone()).or_default().push(index);
+                }
+                // Names nothing, so it can match nothing. Recorded all the same:
+                // that is what `blanket-suppression` reports.
+                RuleScope::Unnamed => {}
+            }
         }
-        _ => {}
     }
-    map.directives.push(directive);
-}
 
-/// `str::trim_start`, carrying the byte offset along.
-fn trim_start_at(s: &str, offset: usize) -> (&str, usize) {
-    let trimmed = s.trim_start();
-    (trimmed, offset + (s.len() - trimmed.len()))
-}
+    /// Give every `off` the span it covers: from its own comment to the first
+    /// `on` written with the same prefix, or to end of file.
+    ///
+    /// One `on` closes *every* region its prefix has open — there is no nesting
+    /// to unwind, and "close the innermost" would silently leave the outer one
+    /// running.
+    fn close_regions(&mut self, end_of_file: TextSize) {
+        let ends: Vec<(usize, Option<usize>)> = self
+            .directives
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.verb == Verb::Off)
+            .map(|(i, off)| {
+                let closer = self.directives[i + 1..]
+                    .iter()
+                    .position(|d| d.verb == Verb::On && d.tool == off.tool)
+                    .map(|offset| i + 1 + offset);
+                (i, closer)
+            })
+            .collect();
 
-/// Parse the rule ID at the head of `rest`, which starts at byte `offset`
-/// within the comment token that begins at `base`.
-fn parse_rule(rest: &str, offset: usize, base: rowan::TextSize) -> Option<RuleRef> {
-    // Expect `<rule>: ...` or just `<rule>` (lone trailing whitespace).
-    let end = rest
-        .find(|c: char| c == ':' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    if end == 0 {
-        return None;
+        for (index, closer) in ends {
+            let end = match closer {
+                Some(j) => {
+                    self.directives[j].matched = true;
+                    self.directives[j].comment.start()
+                }
+                None => end_of_file,
+            };
+            let start = self.directives[index].comment.end();
+            self.directives[index].matched = closer.is_some();
+            if start <= end {
+                self.directives[index].coverage = Coverage::Range(TextRange::new(start, end));
+            }
+        }
     }
-    let start = base + rowan::TextSize::from(offset as u32);
-    Some(RuleRef {
-        id: rest[..end].to_string(),
-        range: TextRange::at(start, rowan::TextSize::from(end as u32)),
-    })
 }
 
-/// The reason is everything after the first `:`, trimmed.
-fn parse_reason(rest: &str) -> Option<String> {
-    rest.split_once(':')
-        .and_then(|(_, reason)| clean_reason(reason))
-}
-
-fn clean_reason(reason: &str) -> Option<String> {
-    let trimmed = reason.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+/// Re-anchor a scope's ranges from comment-relative to absolute.
+fn absolute_scope(scope: RuleScope, base: TextSize) -> RuleScope {
+    match scope {
+        RuleScope::Rule(rule) => RuleScope::Rule(RuleRef {
+            id: rule.id,
+            range: rule.range + base,
+        }),
+        other => other,
+    }
 }
 
 /// What a node-scope directive in a `DESCRIPTION` attaches to: the next thing,
@@ -558,15 +564,13 @@ mod tests {
         let src = "# arity-ignore unused-binding: still needed\nx <- 1\n";
         let m = map_of(src);
         let d = only(&m);
-        assert_eq!(d.kind, DirectiveKind::Node);
-        assert_eq!(
-            d.rule.as_ref().map(|r| r.id.as_str()),
-            Some("unused-binding")
-        );
+        assert_eq!((d.tool, d.verb), (Tool::Lint, Verb::Skip));
+        assert_eq!(d.rule().map(|r| r.id.as_str()), Some("unused-binding"));
         assert_eq!(d.reason.as_deref(), Some("still needed"));
         assert_eq!(d.comment, TextRange::new(0.into(), 43.into()));
         assert_eq!(d.raw, "# arity-ignore unused-binding: still needed");
-        assert!(d.target.is_some());
+        assert_eq!(d.spelling, Spelling::Deprecated);
+        assert!(matches!(d.coverage, Coverage::Range(_)));
         assert!(!d.is_dangling());
     }
 
@@ -574,7 +578,7 @@ mod tests {
     fn rule_ref_range_spans_exactly_the_written_id() {
         let src = "# arity-ignore unused-binding: r\nx <- 1\n";
         let m = map_of(src);
-        let rule = only(&m).rule.clone().expect("a rule ref");
+        let rule = only(&m).rule().expect("a rule ref").clone();
         assert_eq!(&src[rule.range], "unused-binding");
     }
 
@@ -582,7 +586,7 @@ mod tests {
     fn rule_ref_range_is_absolute_for_an_indented_file_directive() {
         let src = "f <- function() {\n  # arity-ignore-file browser: r\n  1\n}\n";
         let m = map_of(src);
-        let rule = only(&m).rule.clone().expect("a rule ref");
+        let rule = only(&m).rule().expect("a rule ref").clone();
         assert_eq!(&src[rule.range], "browser");
     }
 
@@ -602,21 +606,18 @@ mod tests {
     fn blanket_file_directive_has_no_rule_but_keeps_its_reason() {
         let m = map_of("# arity-ignore-file: generated code\nx <- 1\n");
         let d = only(&m);
-        assert_eq!(d.kind, DirectiveKind::FileAll);
-        assert_eq!(d.rule, None);
+        assert_eq!(d.verb, Verb::SkipFile);
+        assert_eq!(d.scope, RuleScope::All);
         assert_eq!(d.reason.as_deref(), Some("generated code"));
-        assert_eq!(d.target, None);
+        assert_eq!(d.coverage, Coverage::File);
     }
 
     #[test]
     fn scoped_file_directive_keeps_rule_and_reason() {
         let m = map_of("# arity-ignore-file unused-binding: temp\nx <- 1\n");
         let d = only(&m);
-        assert_eq!(d.kind, DirectiveKind::File);
-        assert_eq!(
-            d.rule.as_ref().map(|r| r.id.as_str()),
-            Some("unused-binding")
-        );
+        assert_eq!(d.verb, Verb::SkipFile);
+        assert_eq!(d.rule().map(|r| r.id.as_str()), Some("unused-binding"));
         assert_eq!(d.reason.as_deref(), Some("temp"));
     }
 
@@ -625,26 +626,23 @@ mod tests {
         // Suppresses nothing today, and did so silently before it was recorded.
         let m = map_of("# arity-ignore\nx <- 1\n");
         let d = only(&m);
-        assert_eq!(d.kind, DirectiveKind::Node);
-        assert_eq!(d.rule, None);
+        assert_eq!(d.verb, Verb::Skip);
+        assert_eq!(d.scope, RuleScope::Unnamed);
     }
 
     #[test]
     fn node_directive_with_nothing_after_it_is_still_recorded() {
         let m = map_of("x <- 1\n# arity-ignore unused-binding: dangling\n");
         let d = only(&m);
-        assert_eq!(d.kind, DirectiveKind::Node);
-        assert_eq!(d.target, None);
+        assert_eq!(d.verb, Verb::Skip);
+        assert_eq!(d.coverage, Coverage::Nothing);
         assert!(d.is_dangling());
     }
 
     #[test]
     fn unknown_rule_id_is_recorded() {
         let m = map_of("# arity-ignore not-a-rule: r\nx <- 1\n");
-        assert_eq!(
-            only(&m).rule.as_ref().map(|r| r.id.as_str()),
-            Some("not-a-rule")
-        );
+        assert_eq!(only(&m).rule().map(|r| r.id.as_str()), Some("not-a-rule"));
     }
 
     #[test]
@@ -653,10 +651,7 @@ mod tests {
         // comma rides along and the directive silently suppresses nothing.
         // `misnamed-suppression` is what makes this audible.
         let m = map_of("# arity-ignore browser, repeat: r\nx <- 1\n");
-        assert_eq!(
-            only(&m).rule.as_ref().map(|r| r.id.as_str()),
-            Some("browser,")
-        );
+        assert_eq!(only(&m).rule().map(|r| r.id.as_str()), Some("browser,"));
     }
 
     #[test]
@@ -700,6 +695,66 @@ mod tests {
         assert!(!m.is_suppressed("blanket-suppression", own));
         // …but it still suppresses everything else in the file.
         assert!(m.is_suppressed("unused-binding", TextRange::new(27.into(), 33.into())));
+    }
+
+    #[test]
+    fn a_region_covers_from_off_to_on() {
+        let src = "x <- 1\n# arity-lint off browser: r\ny <- 2\n# arity-lint on\nz <- 3\n";
+        let m = map_of(src);
+        assert!(m.is_suppressed("browser", range_of(src, "y <- 2")));
+        assert!(!m.is_suppressed("browser", range_of(src, "x <- 1")));
+        assert!(!m.is_suppressed("browser", range_of(src, "z <- 3")));
+        assert!(m.directives()[0].matched, "the `off` found its `on`");
+        assert!(m.directives()[1].matched, "the `on` closed a region");
+    }
+
+    #[test]
+    fn an_unclosed_region_runs_to_end_of_file() {
+        let src = "x <- 1\n# arity-lint off browser: r\ny <- 2\n";
+        let m = map_of(src);
+        assert!(m.is_suppressed("browser", range_of(src, "y <- 2")));
+        assert!(!m.directives()[0].matched);
+    }
+
+    #[test]
+    fn an_on_with_nothing_open_covers_nothing() {
+        let m = map_of("# arity-lint on\nx <- 1\n");
+        let d = only(&m);
+        assert_eq!(d.verb, Verb::On);
+        assert_eq!(d.coverage, Coverage::Nothing);
+        assert!(!d.matched);
+    }
+
+    #[test]
+    fn a_region_closes_only_on_its_own_prefix() {
+        // `# arity off` and `# arity-lint off` are different regions.
+        let src = "# arity off\nx <- 1\n# arity-lint on\ny <- 2\n";
+        let m = map_of(src);
+        assert!(!m.directives()[0].matched);
+        assert!(
+            m.is_suppressed("browser", range_of(src, "y <- 2")),
+            "runs on to EOF"
+        );
+    }
+
+    #[test]
+    fn a_format_only_directive_suppresses_no_lint_finding() {
+        let src = "# arity-format skip: layout only\nx <- 1\n";
+        let m = map_of(src);
+        assert_eq!(only(&m).tool, Tool::Format);
+        assert!(!m.is_suppressed("unused-binding", range_of(src, "x <- 1")));
+    }
+
+    #[test]
+    fn a_malformed_directive_is_recorded_separately() {
+        let src = "# arity-format skipp: typo\nx <- 1\n";
+        let m = map_of(src);
+        assert!(m.directives().is_empty());
+        let [bad] = m.malformed() else {
+            panic!("expected one malformed directive, got {:?}", m.malformed())
+        };
+        assert_eq!(bad.kind, MalformedKind::UnknownVerb);
+        assert_eq!(&src[bad.range], "skipp");
     }
 
     /// The range of `needle`'s first occurrence in `src`.

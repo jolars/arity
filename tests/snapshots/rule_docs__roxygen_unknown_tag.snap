@@ -1,12 +1,12 @@
 ---
 source: tests/rule_docs.rs
-expression: render_rule_doc(rule.as_ref())
+expression: render_rule_doc(&rule)
 ---
 ### `roxygen-unknown-tag`
 
 Flag roxygen tags that roxygen2 does not understand.
 
-roxygen2 warns on an unknown tag and drops it from the generated `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses documentation—or worse, an intended `@export` never reaches the `NAMESPACE`. Custom tags from extension roclets can be suppressed with `# arity-ignore roxygen-unknown-tag`.
+roxygen2 warns on an unknown tag and drops it from the generated `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses documentation—or worse, an intended `@export` never reaches the `NAMESPACE`. Custom tags from extension roclets can be suppressed with `# arity-lint skip roxygen-unknown-tag`.
 
 This rule is **enabled by default**.
 
@@ -24,5 +24,5 @@ warning: roxygen-unknown-tag
   |
 2 | #' @exprot
   |    ^^^^^^^ `@exprot` is not a tag roxygen2 understands
-  = help: Check the spelling against the roxygen2 tag index; suppress with `# arity-ignore roxygen-unknown-tag` for extension-roclet tags.
+  = help: Check the spelling against the roxygen2 tag index; suppress with `# arity-lint skip roxygen-unknown-tag` for extension-roclet tags.
 ```

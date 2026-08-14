@@ -1,4 +1,4 @@
-//! `outdated-suppression`: a `# arity-ignore` directive that no longer silences
+//! `outdated-suppression`: a directive that no longer silences
 //! anything.
 //!
 //! Suppressions outlive the code they were written for. The binding gets read
@@ -38,7 +38,7 @@ pub struct OutdatedSuppression;
 
 const EXAMPLES: &[Example] = &[Example {
     caption: "`x` is read, so `unused-binding` finds nothing and the directive is dead:",
-    source: "# arity-ignore unused-binding: no longer needed\nx <- 1\nprint(x)\n",
+    source: "# arity-lint skip unused-binding: no longer needed\nx <- 1\nprint(x)\n",
 }];
 
 impl Rule for OutdatedSuppression {
@@ -47,7 +47,7 @@ impl Rule for OutdatedSuppression {
     }
 
     fn description(&self) -> &'static str {
-        "Flags a `# arity-ignore` directive that suppressed nothing on this run \
+        "Flags an `# arity-lint` directive that suppressed nothing on this run \
 — the code it was written for has changed, but the directive stayed. A stale \
 suppression is misleading (it asserts arity is wrong at a spot where arity says \
 nothing) and it is a trap: it will silence a real finding if the shape ever \
@@ -79,7 +79,7 @@ IDs to `misnamed-suppression`."
         let source = ctx.root.text().to_string();
         for (index, directive) in ctx.suppressions.directives().iter().enumerate() {
             // Names no rule -> `blanket-suppression`.
-            let Some(rule) = &directive.rule else {
+            let Some(rule) = directive.rule() else {
                 continue;
             };
             // Names a rule that does not exist -> `misnamed-suppression`.

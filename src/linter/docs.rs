@@ -33,7 +33,7 @@ const PAGE_PREAMBLE: &str = "\
 for every match. This page is the catalogue: one section per rule, keyed by its
 stable **rule ID**. That ID is what a finding reports, what `select`/`ignore`
 target in the [`[lint]` table](configuration.md#lint), and what an
-`# arity-ignore` comment names (see
+`# arity-lint skip` comment names (see
 [Suppressing findings](suppression.md)).
 
 Where a rewrite is unambiguous a rule carries an autofix. A *safe* fix (shown
