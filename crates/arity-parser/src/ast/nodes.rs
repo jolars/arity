@@ -124,6 +124,34 @@ impl RoxygenTag {
         first_child_token(&self.0, SyntaxKind::ROXYGEN_TEXT)
     }
 
+    /// The tag's whole same-line value, with the roxygen markers dropped and
+    /// the ends trimmed: every token after the tag head (`@name`, plus the arg
+    /// token for an arg-bearing tag), joined.
+    ///
+    /// [`RoxygenTag::text`] returns the *first* `ROXYGEN_TEXT` leaf alone,
+    /// which under `@md` is only part of the value: an intraword `_` or `*` is
+    /// carved as an unresolved `ROXYGEN_MD_DELIM`, so `@rdname missing_arg` is
+    /// three leaves. Reach for this whenever the value is a *name* rather than
+    /// prose (`@name`, `@rdname`, `@describeIn`) — those tags never fold
+    /// continuation lines, so their node spans exactly one line.
+    pub fn value_text(&self) -> Option<String> {
+        let head_end = self.arg().map(|arg| arg.text_range().end()).or_else(|| {
+            first_child_token(&self.0, SyntaxKind::ROXYGEN_TAG_NAME)
+                .map(|name| name.text_range().end())
+        })?;
+        let value: String = self
+            .0
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| {
+                token.text_range().start() >= head_end && token.kind() != SyntaxKind::ROXYGEN_MARKER
+            })
+            .map(|token| token.text().to_string())
+            .collect();
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
     /// Whether this is an `@examples`/`@examplesIf` tag (embedded R code).
     pub fn is_examples(&self) -> bool {
         matches!(self.name().as_deref(), Some("examples" | "examplesIf"))

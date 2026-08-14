@@ -293,6 +293,40 @@ fn roxygen_block_sections_classify_intro_and_tags() {
 }
 
 #[test]
+fn roxygen_tag_value_text_survives_markdown_tokenization() {
+    // Rd-first: the value is a single `ROXYGEN_TEXT` leaf, so `text()` already
+    // has all of it.
+    let block = first_roxygen_block("#' @rdname missing_arg\nf <- function() 1\n");
+    let tag = block.tags().next().expect("rdname tag");
+    assert_eq!(tag.text().unwrap().text(), "missing_arg");
+    assert_eq!(tag.value_text().as_deref(), Some("missing_arg"));
+
+    // Under `@md` the intraword `_` is carved as an unresolved markdown
+    // delimiter, splitting the name across three leaves. `text()` sees only the
+    // first; `value_text()` rejoins them.
+    let block = first_roxygen_block("#' @md\n#' @rdname missing_arg\nf <- function() 1\n");
+    let tag = block
+        .tags()
+        .find(|t| t.name().as_deref() == Some("rdname"))
+        .expect("rdname tag");
+    assert_eq!(tag.text().unwrap().text(), "missing");
+    assert_eq!(tag.value_text().as_deref(), Some("missing_arg"));
+
+    // An arg-bearing tag's value starts after the arg token.
+    let block =
+        first_roxygen_block("#' @md\n#' @param x A snake_case value.\nf <- function(x) x\n");
+    let tag = block
+        .tags()
+        .find(|t| t.name().as_deref() == Some("param"))
+        .expect("param tag");
+    assert_eq!(tag.value_text().as_deref(), Some("A snake_case value."));
+
+    // No value at all.
+    let block = first_roxygen_block("#' @export\nf <- function() 1\n");
+    assert!(block.tags().next().unwrap().value_text().is_none());
+}
+
+#[test]
 fn roxygen_block_tag_lookup() {
     let block = first_roxygen_block(
         "#' Title\n#'\n#' @param x A number.\n#' @export\nf <- function(x) x\n",
