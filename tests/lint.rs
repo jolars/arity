@@ -4972,6 +4972,23 @@ fn coalesce_skips_shadowed_is_null() {
 }
 
 #[test]
+fn coalesce_skips_the_definition_of_the_operator_itself() {
+    // A polyfill `%||%` — common while a package's R floor is below 4.4 — *is*
+    // the null-coalesce. Reporting it advises rewriting the operator as a call
+    // to itself.
+    let src = "`%||%` <- function(x, y) if (is.null(x)) y else x\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"coalesce"), "got: {rules:?}");
+}
+
+#[test]
+fn coalesce_skips_the_operator_definition_with_a_braced_body() {
+    let src = "`%||%` <- function(a, b) {\n  if (is.null(a)) b else a\n}\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"coalesce"), "got: {rules:?}");
+}
+
+#[test]
 fn coalesce_withholds_fix_for_non_atom_operand() {
     // A non-atom fallback (`a + b`) would misbind under `%||%`, so the fix is
     // withheld while the finding still reports.
