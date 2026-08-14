@@ -1,4 +1,4 @@
-use rowan::{NodeOrToken, SyntaxElement, TextRange};
+use rowan::{Language, NodeOrToken, SyntaxElement, TextRange};
 
 use super::context::FormatContext;
 use super::ir::Ir;
@@ -108,12 +108,11 @@ pub fn format_node(
     style: FormatStyle,
     source: &str,
 ) -> Result<String, FormatError> {
-    validate_supported_tokens(root)?;
     // `# arity-format skip-file` is answered here and nowhere else: the file
     // comes back byte for byte, so `--check` reports it clean and idempotence
     // holds trivially. Not even the line ending is normalized — the point of
     // the directive is that nothing is decided.
-    if super::directive::file_is_skipped(root) {
+    if scan_tokens(root)?.skipped {
         return Ok(source.to_string());
     }
     let ctx = FormatContext::new(style);
@@ -152,8 +151,7 @@ pub fn format_range(
     style: FormatStyle,
     source: &str,
 ) -> Result<Option<RangeFormatted>, FormatError> {
-    validate_supported_tokens(root)?;
-    if super::directive::file_is_skipped(root) {
+    if scan_tokens(root)?.skipped {
         return Ok(None);
     }
     let ctx = FormatContext::new(style);
@@ -247,20 +245,54 @@ fn line_significant_span(line: &[SyntaxElement<RLanguage>]) -> Option<TextRange>
     ))
 }
 
-fn validate_supported_tokens(root: &SyntaxNode) -> Result<(), FormatError> {
-    for element in root.descendants_with_tokens() {
-        let Some(token) = element.into_token() else {
+/// The two whole-tree facts every entry point needs before a single layout
+/// decision: whether the parse left a stray `ERROR` token, and whether the file
+/// carries a `# arity-format skip-file`.
+///
+/// Both are pure token predicates, so this walks the **green** tree rather than
+/// taking two `descendants_with_tokens()` passes. A cursor walk allocates and
+/// drops a `SyntaxNode` per element visited, and these prepasses touch every
+/// element in the file before any work that could use one.
+///
+/// An `ERROR` token outranks the directive: `skip-file` declines to decide
+/// layout, it does not certify that the tree is formattable.
+fn scan_tokens(root: &SyntaxNode) -> Result<TokenScan, FormatError> {
+    let mut scan = TokenScan { skipped: false };
+    // An explicit stack, not recursion: nesting depth is the input's, and a
+    // prepass must not be the thing that overflows on a tree the parser built.
+    let mut stack: Vec<rowan::Children<'_>> = vec![root.green().children()];
+    while let Some(children) = stack.last_mut() {
+        let Some(child) = children.next() else {
+            stack.pop();
             continue;
         };
-        let kind = token.kind();
-        if matches!(kind, SyntaxKind::ERROR) {
-            return Err(FormatError::UnsupportedConstruct {
-                kind,
-                snippet: token.text().to_string(),
-            });
+        match child {
+            NodeOrToken::Node(node) => stack.push(node.children()),
+            NodeOrToken::Token(token) => {
+                let kind = RLanguage::kind_from_raw(token.kind());
+                if kind == SyntaxKind::ERROR {
+                    return Err(FormatError::UnsupportedConstruct {
+                        kind,
+                        snippet: token.text().to_string(),
+                    });
+                }
+                if !scan.skipped
+                    && kind == SyntaxKind::COMMENT
+                    && super::directive::is_skip_file(token.text())
+                {
+                    scan.skipped = true;
+                }
+            }
         }
     }
-    Ok(())
+    Ok(scan)
+}
+
+/// What [`scan_tokens`] found. An `ERROR` token is reported as the `Err`, so
+/// reaching this means the tree is formattable.
+struct TokenScan {
+    /// The file is `# arity-format skip-file`.
+    skipped: bool,
 }
 
 fn format_root(root: &SyntaxNode, ctx: FormatContext) -> Result<String, FormatError> {
@@ -648,6 +680,56 @@ mod tests {
             let parsed = parse(input);
             let via_node = format_node(&parsed.cst, style, input);
             assert_eq!(via_text, via_node, "mismatch for {input:?}");
+        }
+    }
+
+    /// A stray `ERROR` token is refused with the *first* one in document
+    /// order, and it outranks a `skip-file` directive: the directive declines
+    /// to decide layout, it does not certify that the tree is formattable.
+    #[test]
+    fn stray_error_token_is_refused_before_skip_file() {
+        let style = FormatStyle::default();
+        let source = "# arity-format skip-file\nx <- \u{1}\ny <- \u{2}\n";
+        let parsed = parse(source);
+        assert_eq!(
+            format_node(&parsed.cst, style, source),
+            Err(FormatError::UnsupportedConstruct {
+                kind: SyntaxKind::ERROR,
+                snippet: "\u{1}".to_string(),
+            })
+        );
+        assert_eq!(
+            format_range(&parsed.cst, TextRange::default(), style, source),
+            Err(FormatError::UnsupportedConstruct {
+                kind: SyntaxKind::ERROR,
+                snippet: "\u{1}".to_string(),
+            })
+        );
+    }
+
+    /// `skip-file` hands the source back byte for byte, wherever the directive
+    /// sits and whichever spelling addresses the formatter.
+    #[test]
+    fn skip_file_returns_source_byte_for_byte() {
+        let style = FormatStyle::default();
+        for source in [
+            "# arity-format skip-file\nx<-1\n",
+            "x<-1\n# arity-format skip-file\n",
+            "f <- function() {\n  # arity-format skip-file\n  x<-1\n}\n",
+            "# arity skip-file\r\nx<-1\r\n",
+            "# arity-format skip-file\nx<-1", // no trailing newline
+        ] {
+            let parsed = parse(source);
+            assert_eq!(
+                format_node(&parsed.cst, style, source).as_deref(),
+                Ok(source),
+                "mismatch for {source:?}"
+            );
+            assert_eq!(
+                format_range(&parsed.cst, TextRange::default(), style, source),
+                Ok(None),
+                "mismatch for {source:?}"
+            );
         }
     }
 

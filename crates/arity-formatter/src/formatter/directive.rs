@@ -30,7 +30,7 @@ use arity_parser::directive::{Parsed, Verb, parse};
 
 use super::ir::Ir;
 use super::trivia::is_trivia;
-use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode, SyntaxToken};
+use crate::syntax::{RLanguage, SyntaxKind, SyntaxToken};
 
 /// Whether a directive written on `token` is one the formatter acts on.
 ///
@@ -43,21 +43,12 @@ pub fn is_honored_position(token: &SyntaxToken) -> bool {
         .is_some_and(|parent| matches!(parent.kind(), SyntaxKind::ROOT | SyntaxKind::BLOCK_EXPR))
 }
 
-/// Whether the whole file is `# arity-format skip-file`.
-///
-/// Checked once, before any formatting: the answer is to hand the source back
-/// untouched.
-pub(super) fn file_is_skipped(root: &SyntaxNode) -> bool {
-    root.descendants_with_tokens().any(|element| {
-        let NodeOrToken::Token(token) = element else {
-            return false;
-        };
-        token.kind() == SyntaxKind::COMMENT && is_skip_file(token.text())
-    })
-}
-
 /// Whether a comment reads as a `skip-file` addressed to the formatter.
-fn is_skip_file(text: &str) -> bool {
+///
+/// The R grammar asks this once per file, before any formatting, and the answer
+/// is to hand the source back untouched. That whole-file walk lives in
+/// [`super::core`]'s single token prepass; this is the predicate it applies.
+pub(super) fn is_skip_file(text: &str) -> bool {
     matches!(parse(text), Some(Parsed::Directive(d))
         if d.tool.affects_format() && d.verb == Verb::SkipFile)
 }
