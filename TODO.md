@@ -97,6 +97,40 @@
   path, which masked without raising `quote_depth` — `base::quote({n <- 1})` used
   to record `n` as a binding while the bare spelling did not.
 
+### False positives (eulerr sweep, 2026-08-14)
+
+- [x] **`unused-binding` missed a closure's read of a reassigned name.** Past the
+  frame boundary `reads_reached` (`semantic/builder.rs`) returned only the *first*
+  same-name binding, so in `fit <- 1; print(fit); fit <- 2; h <- function()
+  print(fit)` the second `fit` looked unread — and its unsafe fix would have
+  deleted the assignment `h()` actually reads. A closure body carries no textual
+  ordering relative to the enclosing frame, so every candidate there is now
+  marked, matching the conservatism the in-frame branch already applied to a
+  reassignment. One finding dropped in eulerr, none added.
+
+- [x] **`coalesce` fired on the definition of `%||%` itself**, advising that the
+  operator be defined as a call to itself. A local polyfill is routine below the
+  R 4.4 floor the rule's own fix warns about. Exempt via `defines_coalesce_operator`.
+
+- [ ] **NSE argument to a package-local function.** eulerr's `euler()`/`venn()` do
+  `by <- substitute(by)`, so `euler(dat, by = list(sex, age))` never evaluates
+  `sex`/`age` in the caller — but all 21 remaining `undefined-symbol` findings in
+  eulerr are exactly that. `is_data_masking_callee` matches a hardcoded verb list
+  by name and is single-file, so catching this needs a new cross-file fact:
+  *which formals does this package's function defuse*, inferred from
+  `substitute`/`match.call`/`eval(..., envir)` in its body, then gating the
+  matching call-site arguments the way `gate_verb` already gates a masking verb's.
+  Two constraints make it a design pass, not a patch: it crosses the
+  semantic/project split `.claude/rules/semantic.md` keeps apart, and the per-file
+  projection it would live on **must stay range-free** or every keystroke rebuilds
+  the project graph (`tests/salsa_incremental.rs`). Reproducer: `R/euler.R:272`
+  against `tests/testthat/test-plotting.R:672`.
+
+- Deliberately **not** changed: `duplicated-arguments` on `list(b = 1, b = 2)`.
+  Legal R (two elements, both named `b`), so it is the same shape as the `c()`
+  exemption in 6f0db6d — but unlike `c()` it is usually a typo, and 6f0db6d chose
+  to keep flagging it. Revisit only with a survey showing the noise is real.
+
 ### Roxygen topic rules
 
 The rlang `roxygen-param` false positive is fixed, and topic resolution now
