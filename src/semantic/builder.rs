@@ -45,6 +45,7 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
             loop_range: None,
             deferred: false,
             quote_depth: 0,
+            escape: None,
             gate_depth: 0,
             pin_depth: 0,
             gate_verb: None,
@@ -92,6 +93,12 @@ struct BuildCtx<'a> {
     /// unevaluated, not a real local binding, so `handle_assignment` records no
     /// binding for it.
     quote_depth: usize,
+    /// Which unquoting escape, if any, punches a hole in the quoting mask we are
+    /// under: rlang's `!!`/`!!!`/`{{ }}` or `bquote`'s `.()`/`..()`. Set on
+    /// entering a quoting mask, so an *opaque* callee clears it — `expr(quote(!!x))`
+    /// stays masked even though rlang would unquote through the inner `quote`,
+    /// the suppressing direction for a false-positive-only rule.
+    escape: Option<Unquote>,
     /// How many *gateable* masks deep we are — those from a bare data-masking
     /// verb, whose name-only match `apply_shadow_gate` may later retract.
     gate_depth: usize,
@@ -151,6 +158,47 @@ impl BuildCtx<'_> {
         self.gate_depth -= 1;
         self.mask_depth -= 1;
     }
+
+    /// Open a quoting callee's mask. A quoting callee doesn't evaluate its
+    /// argument body at all, so the mask is pinned *and* `quote_depth` rises,
+    /// which is what stops `handle_assignment` recording a captured `<-` as a
+    /// local binding. Returns the previous escape to hand back to
+    /// [`exit_quote_mask`](Self::exit_quote_mask).
+    fn enter_quote_mask(&mut self, kind: QuoteKind) -> Option<Unquote> {
+        self.enter_pinned_mask();
+        self.quote_depth += 1;
+        std::mem::replace(&mut self.escape, kind.escape())
+    }
+
+    fn exit_quote_mask(&mut self, prev: Option<Unquote>) {
+        self.escape = prev;
+        self.quote_depth -= 1;
+        self.exit_pinned_mask();
+    }
+}
+
+/// Walk `element` as ordinary, evaluated code, with every mask the walk is
+/// currently under lifted for the duration — the unquoted operand of an escape
+/// really is evaluated where the defusing call is written, so its names resolve
+/// like any other. Clearing `escape` too is what lets a nested defusing call
+/// inside `!!…` re-establish its own mask through the normal path, and clearing
+/// `quote_depth` is what makes `quo(!!(n <- 1))` record the binding R creates.
+fn walk_evaluated(ctx: &mut BuildCtx<'_>, element: &SyntaxElement, scope: ScopeId) {
+    let mask_depth = std::mem::take(&mut ctx.mask_depth);
+    let pin_depth = std::mem::take(&mut ctx.pin_depth);
+    let gate_depth = std::mem::take(&mut ctx.gate_depth);
+    let quote_depth = std::mem::take(&mut ctx.quote_depth);
+    let gate_verb = ctx.gate_verb.take();
+    let escape = ctx.escape.take();
+
+    walk_element(ctx, element, scope);
+
+    ctx.escape = escape;
+    ctx.gate_verb = gate_verb;
+    ctx.quote_depth = quote_depth;
+    ctx.gate_depth = gate_depth;
+    ctx.pin_depth = pin_depth;
+    ctx.mask_depth = mask_depth;
 }
 
 /// Record an identifier read, keeping [`BuildCtx::ident_gates`] in lockstep with
@@ -196,6 +244,15 @@ fn apply_shadow_gate(model: &mut SemanticModel, ident_gates: &[Option<u32>]) {
 }
 
 fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    // An unquoting escape inside a defused body is a hole in the mask: what it
+    // wraps is evaluated where the defusing call is written, so it resolves like
+    // ordinary code.
+    if let Some(escape) = ctx.escape
+        && let Some(operand) = unquote_operand(escape, node)
+    {
+        walk_evaluated(ctx, &operand, scope);
+        return;
+    }
     match node.kind() {
         SyntaxKind::FUNCTION_EXPR => handle_function(ctx, node, scope),
         SyntaxKind::FOR_EXPR => handle_for(ctx, node, scope),
@@ -608,12 +665,10 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     // unmasked (a typo'd verb name is still a genuine undefined read) but mask
     // the argument list so its bare reads aren't flagged.
     if call_masks_arguments(node) {
-        // A quoting callee additionally captures its argument body unevaluated, so
-        // an inner `<-` there is not a real local binding: track quote depth so
-        // `handle_assignment` records no binding for it.
-        let quoting = CallExpr::cast(node.clone())
-            .and_then(|call| call_callee_ident(&call))
-            .is_some_and(|name| is_quoting_callee(&name));
+        // A quoting callee additionally captures its argument body unevaluated,
+        // so an inner `<-` there is not a real local binding, and its unquoting
+        // escapes (if it has any) do evaluate. `enter_quote_mask` carries both.
+        let quoting = call_quote_kind(node);
         // The callee is the first read recorded below (it precedes the
         // `ARG_LIST` among the call's children). Remember which one it is so
         // `apply_shadow_gate` can retract the mask if it turns out to name the
@@ -631,18 +686,13 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                 let verb = u32::try_from(verb_start)
                     .ok()
                     .filter(|_| ctx.model.idents.len() > verb_start);
-                let prev = if quoting {
-                    ctx.enter_pinned_mask();
-                    ctx.quote_depth += 1;
-                    None
+                if let Some(kind) = quoting {
+                    let prev = ctx.enter_quote_mask(kind);
+                    walk_node(ctx, child, scope);
+                    ctx.exit_quote_mask(prev);
                 } else {
-                    ctx.enter_gated_mask(verb)
-                };
-                walk_node(ctx, child, scope);
-                if quoting {
-                    ctx.quote_depth -= 1;
-                    ctx.exit_pinned_mask();
-                } else {
+                    let prev = ctx.enter_gated_mask(verb);
+                    walk_node(ctx, child, scope);
                     ctx.exit_gated_mask(prev);
                 }
             } else {
@@ -918,17 +968,158 @@ fn call_masks_arguments(node: &SyntaxNode) -> bool {
     CallExpr::cast(node.clone())
         .and_then(|call| call_callee_ident(&call))
         .is_some_and(|name| {
-            crate::semantic::is_data_masking_callee(&name) || is_quoting_callee(&name)
+            crate::semantic::is_data_masking_callee(&name) || quoting_callee_kind(&name).is_some()
         })
 }
 
-/// Whether a call to `name` quotes its argument body rather than evaluating it:
-/// `quote`/`bquote`/`substitute`/`expression` capture their arguments as
-/// unevaluated language objects, so a bare name inside is not a resolvable read.
+/// How a quoting callee defuses its argument body — specifically, which
+/// unquoting escape (if any) it honors inside that body.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuoteKind {
+    /// Nothing in the body is ever evaluated (`quote`, `substitute`,
+    /// `expression`), so there is no escape at all.
+    Opaque,
+    /// `bquote`, which evaluates the operand of `.()` and `..()`.
+    Dot,
+    /// rlang's defusing operators, which evaluate `!!`, `!!!`, and `{{ }}`.
+    Unquoting,
+}
+
+/// The escape a defused body honors: the tail of [`QuoteKind`] with `Opaque`
+/// collapsed to `None`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unquote {
+    Dot,
+    Bang,
+}
+
+impl QuoteKind {
+    fn escape(self) -> Option<Unquote> {
+        match self {
+            QuoteKind::Opaque => None,
+            QuoteKind::Dot => Some(Unquote::Dot),
+            QuoteKind::Unquoting => Some(Unquote::Bang),
+        }
+    }
+}
+
+/// How a call to `name` quotes its argument body, or `None` when it evaluates
+/// normally. These capture their arguments as unevaluated language objects, so
+/// a bare name inside is not a resolvable read.
+///
 /// Name-only (independent of package), matching `is_data_masking_callee`;
 /// over-matching only ever suppresses a finding, the conservative direction.
-fn is_quoting_callee(name: &str) -> bool {
-    matches!(name, "quote" | "bquote" | "substitute" | "expression")
+///
+/// rlang's `enquo`/`enexpr`/`ensym` families are deliberately absent: their
+/// argument must *name a formal* of the enclosing function, so a bare name there
+/// is a genuine read that already resolves, and masking it would only discard
+/// the true positive `enquo(typo)`.
+fn quoting_callee_kind(name: &str) -> Option<QuoteKind> {
+    match name {
+        "quote" | "substitute" | "expression" => Some(QuoteKind::Opaque),
+        "bquote" => Some(QuoteKind::Dot),
+        // rlang
+        "quo" | "quos" | "expr" | "exprs" => Some(QuoteKind::Unquoting),
+        _ => None,
+    }
+}
+
+/// How the `CALL_EXPR` `node`'s callee quotes its argument body, if it does.
+fn call_quote_kind(node: &SyntaxNode) -> Option<QuoteKind> {
+    CallExpr::cast(node.clone())
+        .and_then(|call| call_callee_ident(&call))
+        .and_then(|name| quoting_callee_kind(&name))
+}
+
+/// The operand that `escape` evaluates inside `node`, when `node` is that
+/// escape's shape. None of the three has a dedicated `SyntaxKind`, so each is
+/// matched structurally:
+///
+/// - `!!x` is a doubled unary `!` and `!!!x` a tripled one, so peel every `BANG`
+///   layer and return what is left. A single `!x` is ordinary negation.
+/// - `{{ x }}` is a `BLOCK_EXPR` nested directly in another. rlang accepts the
+///   embrace only around a symbol, so require exactly that — a nested block
+///   holding real statements is ordinary quoted code.
+/// - `.(x)`/`..(x)` yield the call's `ARG_LIST` rather than the call, so the `.`
+///   head — which names no binding — is never recorded as a read of its own.
+fn unquote_operand(escape: Unquote, node: &SyntaxNode) -> Option<SyntaxElement> {
+    match escape {
+        Unquote::Bang => match node.kind() {
+            SyntaxKind::UNARY_EXPR => {
+                // Two layers minimum: `!x` alone negates, it does not unquote.
+                let inner = bang_operand(node)?;
+                let inner = inner
+                    .as_node()
+                    .filter(|n| n.kind() == SyntaxKind::UNARY_EXPR)?;
+                // `!!!x` peels one more. Deeper nestings are not rlang syntax,
+                // but peeling them all keeps the shape test simple.
+                Some(peel_bangs(bang_operand(inner)?))
+            }
+            SyntaxKind::BLOCK_EXPR => {
+                let inner = sole_inner_expr(node)?;
+                let inner = inner
+                    .as_node()
+                    .filter(|n| n.kind() == SyntaxKind::BLOCK_EXPR)?;
+                sole_inner_expr(inner).filter(|el| el.kind() == SyntaxKind::IDENT)
+            }
+            _ => None,
+        },
+        Unquote::Dot => {
+            let call = CallExpr::cast(node.clone())?;
+            let name = call_callee_ident(&call)?;
+            if name != "." && name != ".." {
+                return None;
+            }
+            node.children()
+                .find(|child| child.kind() == SyntaxKind::ARG_LIST)
+                .map(SyntaxElement::from)
+        }
+    }
+}
+
+/// The operand of a `UNARY_EXPR` whose operator is `!`, or `None` for any other
+/// prefix operator.
+fn bang_operand(node: &SyntaxNode) -> Option<SyntaxElement> {
+    let mut operand = None;
+    let mut is_bang = false;
+    for el in node.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::BANG => is_bang = true,
+            SyntaxKind::WHITESPACE | SyntaxKind::COMMENT | SyntaxKind::NEWLINE => {}
+            _ => operand = Some(el),
+        }
+    }
+    is_bang.then_some(operand).flatten()
+}
+
+/// Strip any remaining `!` layers, so `!!!x` reaches `x` rather than `!x`.
+fn peel_bangs(element: SyntaxElement) -> SyntaxElement {
+    let mut current = element;
+    while let Some(node) = current.as_node()
+        && node.kind() == SyntaxKind::UNARY_EXPR
+        && let Some(inner) = bang_operand(node)
+    {
+        current = inner;
+    }
+    current
+}
+
+/// The single expression a delimited node wraps, or `None` when it wraps none or
+/// several. Delimiters, separators, and trivia don't count.
+fn sole_inner_expr(node: &SyntaxNode) -> Option<SyntaxElement> {
+    let mut inner = node.children_with_tokens().filter(|el| {
+        !matches!(
+            el.kind(),
+            SyntaxKind::LBRACE
+                | SyntaxKind::RBRACE
+                | SyntaxKind::SEMICOLON
+                | SyntaxKind::WHITESPACE
+                | SyntaxKind::NEWLINE
+                | SyntaxKind::COMMENT
+        )
+    });
+    let first = inner.next()?;
+    inner.next().is_none().then_some(first)
 }
 
 fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -989,6 +1180,7 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                             // model-frame arguments for a qualified model fit
                             // (`MASS::polr(..., data = d, weights = w)`).
                             let masked = call_masks_arguments(child);
+                            let quoting = call_quote_kind(child);
                             let model_frame_mask = if masked {
                                 None
                             } else {
@@ -1015,13 +1207,27 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                                     NodeOrToken::Node(grandchild) => {
                                         // A qualified verb names the package's
                                         // function outright, so no local
-                                        // binding can shadow it: pinned.
-                                        if masked {
-                                            ctx.enter_pinned_mask();
-                                        }
-                                        walk_node(ctx, &grandchild, scope);
-                                        if masked {
-                                            ctx.exit_pinned_mask();
+                                        // binding can shadow it: pinned. A
+                                        // qualified *quoting* callee defuses
+                                        // exactly as the bare spelling does, so
+                                        // it goes through the same entry point
+                                        // — `base::quote({n <- 1})` binds no
+                                        // more than `quote({n <- 1})` does.
+                                        match quoting.filter(|_| masked) {
+                                            Some(kind) => {
+                                                let prev = ctx.enter_quote_mask(kind);
+                                                walk_node(ctx, &grandchild, scope);
+                                                ctx.exit_quote_mask(prev);
+                                            }
+                                            None => {
+                                                if masked {
+                                                    ctx.enter_pinned_mask();
+                                                }
+                                                walk_node(ctx, &grandchild, scope);
+                                                if masked {
+                                                    ctx.exit_pinned_mask();
+                                                }
+                                            }
                                         }
                                     }
                                     _ => {}

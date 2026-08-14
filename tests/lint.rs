@@ -2007,6 +2007,60 @@ fn undefined_symbol_skips_quoting_bodies() {
 }
 
 #[test]
+fn undefined_symbol_skips_rlang_defusing_bodies() {
+    // rlang's `quo`/`quos`/`expr`/`exprs` defuse their bodies the same way, so
+    // the captured symbols are not reads to resolve. With base R only, the
+    // callee itself is still unresolved — that is the one finding expected.
+    let p = CompositeProvider::base_only();
+    for (src, callee) in [
+        ("quo(xyz)\n", "quo"),
+        ("quos(xyz)\n", "quos"),
+        ("expr(foo + bar)\n", "expr"),
+        ("exprs(alpha, beta)\n", "exprs"),
+    ] {
+        let msgs = undefined_with(src, &p);
+        assert_eq!(msgs.len(), 1, "only the callee, got {msgs:?} for {src:?}");
+        assert!(
+            msgs[0].contains(callee),
+            "expected `{callee}`, got {msgs:?}"
+        );
+    }
+}
+
+#[test]
+fn undefined_symbol_still_flags_unquoted_operands() {
+    // `!!`, `!!!`, and `{{ }}` are evaluated when the quosure is built, so an
+    // unresolved name there is genuinely undefined.
+    let p = CompositeProvider::base_only();
+    for src in [
+        "quo(!!bogus)\n",
+        "expr(length(!!!bogus))\n",
+        "quo(mean({{ bogus }}))\n",
+    ] {
+        let msgs = undefined_with(src, &p);
+        assert!(
+            msgs.iter().any(|m| m.contains("bogus")),
+            "unquoted operand must be flagged, got {msgs:?} for {src:?}"
+        );
+    }
+}
+
+#[test]
+fn undefined_symbol_flags_bquote_dot_escape() {
+    // `bquote` unquotes with `.()`, which evaluates; the rest of its body does
+    // not. `.` itself is the escape, not a symbol to resolve.
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with("bquote(.(bogus))\n", &p);
+    assert_eq!(msgs.len(), 1, "only `bogus`, got {msgs:?}");
+    assert!(msgs[0].contains("bogus"));
+
+    assert!(
+        undefined_with("bquote(bogus)\n", &p).is_empty(),
+        "an unescaped bquote body stays defused"
+    );
+}
+
+#[test]
 fn undefined_symbol_still_flags_outside_quoting() {
     // Masking is confined to the quoting call's arguments.
     let p = CompositeProvider::base_only();

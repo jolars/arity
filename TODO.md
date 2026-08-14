@@ -70,13 +70,20 @@
   declaring `.registration = TRUE`, or harvest the routine names from `src/`'s
   `R_CallMethodDef` table.
 
-- [ ] **rlang's defusing operators are not data-masking-aware.** `quote()`,
-  `bquote()`, `substitute()`, and `expression()` mask their bodies
-  (`is_quoting_call`, `semantic/builder.rs`), but `quo()`, `quos()`, `expr()`,
-  `exprs()`, `enquo()`, `enquos()` do not, so every captured symbol reads as
-  undefined. Confirmed: `quo(fn(this, that))` yields three findings, the base
-  `quote(fn(this, that))` none. A fix has to respect unquoting — `!!`, `!!!`,
-  and `{{ }}` *do* evaluate — so it is not just a longer name list.
+- [x] **rlang's defusing operators are unquote-aware.** `quo`/`quos`/`expr`/`exprs`
+  joined the base four in `quoting_callee_kind` (`semantic/builder.rs`), and the
+  mask now has holes in it: `unquote_operand` matches `!!`/`!!!`/`{{ }}`
+  structurally (no dedicated `SyntaxKind` — a doubled unary `!`, a doubly nested
+  `BLOCK_EXPR` around a lone symbol) and `walk_evaluated` lifts every mask over
+  the operand, so an unresolved name there is still reported. `bquote`'s
+  `.()`/`..()` got the same treatment. `enquo`/`enexpr`/`ensym` are deliberately
+  *not* masked — their argument must name a formal, so it already resolves, and
+  masking would only discard the true positive `enquo(typo)`. Two deliberate
+  limits: a base `quote()` clears the escape, so `expr(quote(!!x))` masks where
+  rlang would unquote; and `!!` under a data-masking verb (`mutate(df, !!x)`)
+  still masks. Both suppress only. `enter_quote_mask` also fixed the qualified
+  path, which masked without raising `quote_depth` — `base::quote({n <- 1})` used
+  to record `n` as a binding while the bare spelling did not.
 
 ### Roxygen topic rules
 

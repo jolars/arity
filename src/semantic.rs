@@ -996,6 +996,98 @@ mod tests {
     }
 
     #[test]
+    fn rlang_defusing_body_is_masked() {
+        // rlang's `quo`/`quos`/`expr`/`exprs` defuse their body exactly as base
+        // `quote` does, so a bare name inside is not a resolvable read.
+        for src in [
+            "quo(fn(this, that))",
+            "quos(fn(this, that))",
+            "expr(fn(this, that))",
+            "exprs(this, that)",
+        ] {
+            let m = model_of(src);
+            for name in ["this", "that"] {
+                assert!(
+                    ident_named(&m, name).data_masked,
+                    "`{name}` should be masked in {src:?}"
+                );
+            }
+        }
+        // The callee itself is still an ordinary read: a typo'd `qou(...)` is a
+        // genuine undefined symbol.
+        let m = model_of("quo(fn(this))");
+        assert!(!ident_named(&m, "quo").data_masked);
+    }
+
+    #[test]
+    fn unquoted_operand_inside_defusing_is_evaluated() {
+        // `!!`, `!!!`, and `{{ }}` are evaluated when the quosure is built, so
+        // their operands are real reads even though the body around them is not.
+        let m = model_of("quo(!!a)");
+        assert!(!ident_named(&m, "a").data_masked);
+
+        let m = model_of("expr(g(!!!b))");
+        assert!(!ident_named(&m, "b").data_masked);
+        assert!(ident_named(&m, "g").data_masked, "`g` is still defused");
+
+        let m = model_of("quo(mean({{ c }}, na.rm = TRUE))");
+        assert!(!ident_named(&m, "c").data_masked);
+        assert!(ident_named(&m, "mean").data_masked);
+    }
+
+    #[test]
+    fn unquote_escape_does_not_apply_under_base_quote() {
+        // `quote()` evaluates nothing at all, so `!!x` there is plain double
+        // negation of code that never runs — not an unquote.
+        let m = model_of("quote(!!a)");
+        assert!(ident_named(&m, "a").data_masked);
+
+        let m = model_of("substitute({{ c }})");
+        assert!(ident_named(&m, "c").data_masked);
+    }
+
+    #[test]
+    fn bquote_dot_escape_is_evaluated() {
+        // `bquote` unquotes with `.()`/`..()`, not `!!`.
+        let m = model_of("bquote(x + .(y) + ..(z))");
+        assert!(ident_named(&m, "x").data_masked);
+        assert!(!ident_named(&m, "y").data_masked);
+        assert!(!ident_named(&m, "z").data_masked);
+        // The escape's own `.`/`..` head names no binding, so it is not a read.
+        assert!(m.idents.iter().all(|i| i.name != "." && i.name != ".."));
+
+        // `!!` is not an escape here.
+        let m = model_of("bquote(!!w)");
+        assert!(ident_named(&m, "w").data_masked);
+    }
+
+    #[test]
+    fn embrace_requires_a_single_symbol() {
+        // A nested block holding real statements is ordinary quoted code, not
+        // the curly-curly operator, which rlang accepts only around a symbol.
+        let m = model_of("expr({ { f(); g() } })");
+        assert!(ident_named(&m, "f").data_masked);
+        assert!(ident_named(&m, "g").data_masked);
+    }
+
+    #[test]
+    fn qualified_quoting_callee_defuses_like_the_bare_one() {
+        // `base::quote({n <- 1})` captures the assignment unevaluated, so it
+        // binds nothing analyzable — same as the unqualified spelling.
+        let m = model_of("base::quote({ n <- 1 })");
+        assert!(
+            !binding_names(&m).contains(&"n"),
+            "quoted assignment is not a binding: {:?}",
+            binding_names(&m)
+        );
+
+        // And the unquote escape reaches through the qualified form too.
+        let m = model_of("rlang::quo(fn(!!a, that))");
+        assert!(!ident_named(&m, "a").data_masked);
+        assert!(ident_named(&m, "that").data_masked);
+    }
+
+    #[test]
     fn mask_carries_into_inline_function_body() {
         // A closure written inside a masked argument is *created in* the data
         // mask, so the mask is its lexical parent and a bare column name in its
