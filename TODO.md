@@ -81,16 +81,26 @@ All confirmed against `Rscript`. Each also *deletes working code* under
   `quote(fn(this, that))` none. A fix has to respect unquoting — `!!`, `!!!`,
   and `{{ }}` *do* evaluate — so it is not just a longer name list.
 
-### `roxygen-param` false positive (rlang sweep, 2026-08-13)
+### Roxygen topic rules: merged topics resolve within a file only
 
-- [ ] **`@rdname` merges topics, and the owner block is judged alone.** A block
-  with no `@rdname` of its own can still own a topic that siblings join, and
-  roxygen2 checks `@param` against the *union* of the merged functions' formals.
-  rlang's `missing_arg` block carries `@param x` while `missing_arg()` has no
-  formals; `is_missing(x)` joins via `@rdname missing_arg`, and the generated
-  `man/missing_arg.Rd` has `\item{x}` with three aliases. The existing negative
-  case covers only the block that *joins* a topic, not the one that owns it.
-  Needs cross-block topic resolution within the file.
+The owner-block half of the rlang `roxygen-param` false positive is fixed:
+`RoxygenTopics` (`src/linter/rules/roxygen.rs`, memoized on `RuleContext`)
+groups a file's blocks by topic, and `roxygen-param`/`roxygen-return`/
+`roxygen-title` judge an owner against its whole topic (28 findings dropped in
+rlang, none added). What remains:
+
+- [ ] **Topic resolution stops at the file boundary.** A `@rdname` in another
+  file of the same package still merges in roxygen2, and `RuleContext::project`
+  (`FileScope`) carries no roxygen or topic information — so an owner whose only
+  joiner lives elsewhere can still false-positive. Closing it needs a
+  salsa-tracked project-level roxygen topic index in `src/project/`.
+
+- [ ] **The Rd projector reads a tag value the narrow way.** `topic_name`
+  (`src/roxygen/project_rd.rs`) still takes the first `ROXYGEN_TEXT` leaf, so
+  under `@md` it truncates a topic name at the first `_`/`*`
+  (`@rdname missing_arg` → `missing`). The linter now goes through
+  `RoxygenTag::value_text`; the projector should too, but it sits behind pinned
+  `.rdtree` files, so the switch needs a parity run rather than a blind edit.
 
 - [ ] *Speculative micro-opt (deferred):* `resolves_to_base` does a linear
   `model.idents().iter().any(...)` scan for the callee's shadow check. It runs

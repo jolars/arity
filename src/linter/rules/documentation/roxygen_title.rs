@@ -11,6 +11,10 @@
 //! elsewhere), import-attachment blocks (namespace tags only, nothing
 //! exported), and blocks whose following statement is not a plain
 //! `name <- function(...)`.
+//!
+//! The title belongs to the *topic*, so a block that owns a topic is satisfied
+//! by any sibling merging into it that supplies one ([`local_topic_members`]);
+//! roxygen2's `\title` keeps the first value the merged topic offers.
 
 use rowan::ast::AstNode as _;
 
@@ -18,7 +22,7 @@ use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
     asks_for_rd_on_its_own, documented_function, documents_s3_method, has_title, inherits_docs,
-    wants_rd_topic,
+    local_topic_members, wants_rd_topic,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -29,6 +33,17 @@ const EXAMPLES: &[Example] = &[Example {
     caption: "A documented, exported function with no title paragraph:",
     source: "#' @param x A number.\n#' @export\nadd_one <- function(x) x + 1\n",
 }];
+
+/// Whether the topic this block renders into has a title: a leading prose
+/// paragraph or `@title` on the block itself or on any sibling merging into
+/// the same topic. Falls back to the block alone when the topic is not locally
+/// resolvable.
+fn topic_has_title(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
+    match local_topic_members(block, ctx) {
+        Some(members) => members.iter().any(has_title),
+        None => has_title(block),
+    }
+}
 
 impl Rule for RoxygenTitle {
     fn id(&self) -> &'static str {
@@ -42,7 +57,9 @@ impl Rule for RoxygenTitle {
          generated `.Rd`. An `@export` with no documentation at all is flagged \
          too—`R CMD check` reports it as an undocumented export. Blocks that \
          merge into or inherit another topic (`@rdname`, `@describeIn`, \
-         `@inherit*`, `@template`) and `@noRd` blocks are skipped, as is a bare \
+         `@inherit*`, `@template`) and `@noRd` blocks are skipped, and a block \
+         owning a topic is satisfied by a title on any file-local sibling \
+         merging into it—the title belongs to the topic. Skipped too is a bare \
          `@export` on a function the package's NAMESPACE registers with \
          `S3method()`—that generates no topic and no undocumented export."
     }
@@ -66,7 +83,7 @@ impl Rule for RoxygenTitle {
         {
             return;
         }
-        if has_title(&block) {
+        if topic_has_title(&block, ctx) {
             return;
         }
         // `@export` on a registered S3 method becomes `S3method(...)`, not

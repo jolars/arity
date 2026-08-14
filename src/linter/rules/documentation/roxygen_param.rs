@@ -5,9 +5,16 @@
 //! documented twice, and a `@param` missing its name or description
 //! (roxygen2's "requires a name and description" warning). Coverage
 //! (missing/nonexistent) is judged only when the block unambiguously
-//! documents a plain `name <- function(...)` and does not inherit or merge
-//! docs (`@inheritParams`, `@rdname`, …, where params may live elsewhere);
-//! duplicates are a per-block fact and are always checked.
+//! documents a plain `name <- function(...)` and does not inherit docs from
+//! another object (`@inheritParams`, `@template`, …); duplicates are a
+//! per-block fact and are always checked.
+//!
+//! Coverage is judged against the **topic**, not the block. `@rdname` merges
+//! several functions into one `.Rd`, and roxygen2 checks `@param` against the
+//! union of the merged functions' formals — so a block that owns a topic is
+//! judged against every sibling that joins it, resolved across the file by
+//! [`local_topic_members`]. A block that *joins* someone else's topic is not
+//! judged at all: its owner may live in another file.
 //!
 //! No fixes: adding a `@param` means inventing prose, and deleting one drops
 //! prose the author wrote.
@@ -18,7 +25,8 @@ use rowan::ast::AstNode as _;
 use crate::ast::{RoxygenBlock, RoxygenTag};
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
-    ParamDoc, documented_function, documents_s3_method, has_title, inherits_docs, param_doc,
+    ParamDoc, documented_function, documents_s3_method, has_title, inherits_params,
+    local_topic_members, param_doc,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -29,6 +37,46 @@ const EXAMPLES: &[Example] = &[Example {
     caption: "`y` is undocumented and `@param z` matches nothing:",
     source: "#' Add two numbers\n#' @param x The first number.\n#' @param z The other one.\n#' @export\nadd <- function(x, y) x + y\n",
 }];
+
+/// The argument surface of one Rd topic: every formal of the functions merged
+/// into it, and every name any of their blocks documents with `@param`.
+#[derive(Default)]
+struct TopicParams {
+    formals: Vec<smol_str::SmolStr>,
+    documented: Vec<smol_str::SmolStr>,
+}
+
+/// The union this block's `@param`s are judged against, or `None` when the
+/// topic is unknowable and coverage must be skipped entirely.
+///
+/// Unknowable means any of: the block inherits its argument list from another
+/// object; it joins a topic whose owner may sit in another file; or some
+/// member of its topic documents a statement arity cannot classify (a
+/// `setMethod`, an R6 call), whose formals are therefore invisible.
+fn topic_params(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> Option<TopicParams> {
+    if inherits_params(block) {
+        return None;
+    }
+    let members = local_topic_members(block, ctx)?;
+    let mut params = TopicParams::default();
+    for member in members {
+        if inherits_params(member) {
+            return None;
+        }
+        let function = documented_function(member)?;
+        params
+            .formals
+            .extend(function.params().into_iter().map(|p| p.name));
+        for section in member.sections() {
+            if let Some(ParamDoc::Named { names, .. }) = param_doc(&section) {
+                params
+                    .documented
+                    .extend(names.into_iter().map(|(name, _)| name));
+            }
+        }
+    }
+    Some(params)
+}
 
 /// The range of the tag head: `@param` alone, or `@param name` when an arg is
 /// present.
@@ -52,11 +100,15 @@ impl Rule for RoxygenParam {
          \n\nFour shapes are reported: a formal argument with no `@param`, a \
          `@param` naming a nonexistent formal (often a rename that never \
          reached the docs), a name documented twice, and a `@param` missing \
-         its name or description. Blocks that inherit or merge documentation \
-         (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt \
-         from the coverage checks, and a titleless S3 method (registered with \
-         `S3method()`, so it generates no `.Rd`) is exempt from the \
-         missing-`@param` check; duplicates are always reported."
+         its name or description. Coverage is judged against the generated \
+         topic, not the block: `@rdname` and `@describeIn` merge several \
+         functions into one `.Rd`, so a block owning a topic is judged against \
+         the union of its file-local siblings' formals. Blocks that inherit \
+         documentation from another object (`@inheritParams`, `@template`, …) \
+         or that join a topic owned elsewhere are exempt from the coverage \
+         checks, and a titleless S3 method (registered with `S3method()`, so it \
+         generates no `.Rd`) is exempt from the missing-`@param` check; \
+         duplicates are always reported."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -78,13 +130,17 @@ impl Rule for RoxygenParam {
             return;
         }
         let function = documented_function(&block);
-        let judge_coverage = function.is_some() && !inherits_docs(&block);
+        let topic = topic_params(&block, ctx);
+        let judge_coverage = function.is_some() && topic.is_some();
         // A registered S3 method with no title generates no `.Rd`, so it has no
         // parameter list that could be incomplete—the generic's topic documents
         // the arguments. A `@param` naming a nonexistent formal is still a
         // block-vs-function mismatch, so only the missing direction is dropped.
         let judge_missing =
             judge_coverage && !(documents_s3_method(&block, ctx) && !has_title(&block));
+        let topic = topic.unwrap_or_default();
+        // The block's own formals are what the missing-`@param` findings point
+        // at; the topic's union is what they are judged against.
         let formals = function.map(|f| f.params()).unwrap_or_default();
 
         let mut documented: Vec<smol_str::SmolStr> = Vec::new();
@@ -134,7 +190,7 @@ impl Rule for RoxygenParam {
                             ));
                             continue;
                         }
-                        if judge_coverage && !formals.iter().any(|p| p.name == name) {
+                        if judge_coverage && !topic.formals.contains(&name) {
                             sink.push(diagnostic(
                                 range,
                                 format!(
@@ -155,7 +211,7 @@ impl Rule for RoxygenParam {
             return;
         }
         for formal in formals {
-            if !documented.contains(&formal.name) {
+            if !documented.contains(&formal.name) && !topic.documented.contains(&formal.name) {
                 sink.push(diagnostic(
                     formal.name_token.text_range(),
                     format!(

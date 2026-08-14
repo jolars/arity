@@ -31,6 +31,7 @@ use rowan::ast::AstNode as _;
 use crate::ast::{BinaryExpr, CallExpr};
 use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
 use crate::dcf;
+use crate::linter::rules::roxygen::RoxygenTopics;
 use crate::project::description::{DescriptionCompat, DescriptionFacts};
 use crate::project::{ExternalResolution, FileScope, PackageUsage};
 use crate::rindex::provider::CompositeProvider;
@@ -536,9 +537,24 @@ pub struct RuleContext<'a> {
     /// fallback under the configured floors. Same lazy-disk discipline as
     /// [`RuleContext::own_package`]: only the version-aware rules pay the walk.
     description_compat: OnceLock<DescriptionCompat>,
+    /// Lazily-built index of the file's Rd topics — see
+    /// [`RuleContext::roxygen_topics`]. Same lazy discipline as the two fields
+    /// above: a file with no documentation never pays for the walk.
+    roxygen_topics: OnceLock<RoxygenTopics>,
 }
 
 impl RuleContext<'_> {
+    /// The file's Rd topics, grouped by topic key.
+    ///
+    /// roxygen2 merges every block resolving to the same topic into one `.Rd`
+    /// and judges the merged result, so the three `roxygen-*` topic rules need
+    /// the file's other blocks, not just the one they were handed. Built once
+    /// per file: the walk is shared, and a file without roxygen never pays it.
+    pub(crate) fn roxygen_topics(&self) -> &RoxygenTopics {
+        self.roxygen_topics
+            .get_or_init(|| RoxygenTopics::build(self.root))
+    }
+
     /// The name of the R package this file belongs to, from the `Package` field
     /// of the DESCRIPTION at the enclosing package root. `None` for a loose
     /// script, a directory that is not a package, or an unreadable DESCRIPTION.
@@ -892,6 +908,7 @@ pub fn run_rules(
         own_package: OnceLock::new(),
         compat: &resolved.compat,
         description_compat: OnceLock::new(),
+        roxygen_topics: OnceLock::new(),
     };
     let rules = &resolved.rules;
     let mut all = Vec::new();
@@ -1329,6 +1346,7 @@ mod tests {
             own_package: OnceLock::new(),
             compat: &CompatConfig::default(),
             description_compat: OnceLock::new(),
+            roxygen_topics: OnceLock::new(),
         };
         let call = root
             .descendants()

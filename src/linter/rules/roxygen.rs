@@ -98,6 +98,13 @@ pub(crate) fn is_known_tag(name: &str) -> bool {
 /// shared topic. When any is present, per-block coverage (params, title,
 /// return) cannot be judged locally, so the coverage checks skip.
 pub(crate) fn inherits_docs(block: &RoxygenBlock) -> bool {
+    inherits_params(block) || joins_other_topic(block)
+}
+
+/// Tags that pull the argument list in from outside this block. Unlike a topic
+/// merge ([`joins_other_topic`]), no amount of cross-block resolution recovers
+/// what they add: the source is another *object*, possibly in another package.
+pub(crate) fn inherits_params(block: &RoxygenBlock) -> bool {
     block.tags().any(|tag| {
         matches!(
             tag.name().as_deref(),
@@ -106,13 +113,102 @@ pub(crate) fn inherits_docs(block: &RoxygenBlock) -> bool {
                     | "inheritParams"
                     | "inheritSection"
                     | "inheritDotParams"
-                    | "rdname"
-                    | "describeIn"
                     | "template"
                     | "usage"
             )
         )
     })
+}
+
+/// Whether this block merges into a topic named by someone else (`@rdname`,
+/// `@describeIn`). The owner of that topic may sit in another file, so such a
+/// block's topic is never resolvable from this file alone.
+pub(crate) fn joins_other_topic(block: &RoxygenBlock) -> bool {
+    block.has_tag("rdname") || block.has_tag("describeIn")
+}
+
+/// The Rd topic this block resolves to, in roxygen2's precedence: an explicit
+/// `@name`, else `@rdname`, else `@describeIn`'s destination (its first word,
+/// the rest being the description), else the name the documented statement
+/// binds — an object's default topic. `None` when the block names no topic and
+/// binds nothing.
+///
+/// `@name`/`@rdname`/`@describeIn` are not arg-bearing tags (`ARG_BEARING_TAGS`
+/// in the roxygen sub-lexer), so the value comes from the tag's text — read via
+/// [`RoxygenTag::value_text`], because under `@md` a name containing `_` or `*`
+/// lexes as several leaves around an unresolved markdown delimiter.
+///
+/// The test-only Rd projector carries a narrower twin of this
+/// (`crate::roxygen::project_rd`'s `topic_name`): it stops at `@name`/`@rdname`
+/// because merging *sections* never needs an object's default topic, while
+/// judging an owner block against its topic does. Keep the two in step.
+pub(crate) fn topic_key(block: &RoxygenBlock) -> Option<SmolStr> {
+    let mut rdname: Option<SmolStr> = None;
+    let mut describe_in: Option<SmolStr> = None;
+    for tag in block.tags() {
+        match tag.name().as_deref() {
+            Some("name") => {
+                if let Some(value) = tag.value_text() {
+                    return Some(SmolStr::new(value));
+                }
+            }
+            Some("rdname") if rdname.is_none() => rdname = tag.value_text().map(SmolStr::new),
+            Some("describeIn") if describe_in.is_none() => {
+                describe_in = tag
+                    .value_text()
+                    .and_then(|value| value.split_whitespace().next().map(SmolStr::new));
+            }
+            _ => {}
+        }
+    }
+    rdname
+        .or(describe_in)
+        .or_else(|| documented_binding_name(block))
+}
+
+/// The Rd topics of one file: every topic key mapped to the blocks that merge
+/// into it, in document order. Built once per file and memoized on
+/// [`RuleContext`], because three rules ask the same question and re-walking
+/// the tree per block would be quadratic on a file full of documentation.
+#[derive(Debug, Default)]
+pub(crate) struct RoxygenTopics {
+    topics: std::collections::HashMap<SmolStr, Vec<RoxygenBlock>>,
+}
+
+impl RoxygenTopics {
+    /// Group every `ROXYGEN_BLOCK` under `root` by [`topic_key`]. Blocks that
+    /// name no topic are dropped: they merge with nothing.
+    pub(crate) fn build(root: &SyntaxNode) -> Self {
+        let mut topics: std::collections::HashMap<SmolStr, Vec<RoxygenBlock>> = Default::default();
+        for block in root.descendants().filter_map(RoxygenBlock::cast) {
+            if let Some(key) = topic_key(&block) {
+                topics.entry(key).or_default().push(block);
+            }
+        }
+        Self { topics }
+    }
+
+    fn members(&self, key: &str) -> &[RoxygenBlock] {
+        self.topics.get(key).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The blocks that merge into this block's topic — the block itself plus every
+/// sibling joining it — resolved across **this file only**.
+///
+/// `None` when the topic is not locally resolvable: the block joins someone
+/// else's topic (whose owner may live in another file) or names no topic at
+/// all. A caller that gets `None` must fall back to judging the block alone,
+/// or skip.
+pub(crate) fn local_topic_members<'a>(
+    block: &RoxygenBlock,
+    ctx: &'a RuleContext<'_>,
+) -> Option<&'a [RoxygenBlock]> {
+    if joins_other_topic(block) {
+        return None;
+    }
+    let key = topic_key(block)?;
+    Some(ctx.roxygen_topics().members(&key))
 }
 
 /// Tags that only drive the `NAMESPACE` (or toggle parsing modes) and never
@@ -534,6 +630,61 @@ mod tests {
                 "case: {src:?}"
             );
         }
+    }
+
+    #[test]
+    fn topic_key_follows_roxygen2_precedence() {
+        let cases: &[(&str, Option<&str>)] = &[
+            // No topic tag: the object's default topic is its binding name.
+            ("#' T\nf <- function(x) x\n", Some("f")),
+            ("#' T\n\"f\" <- function(x) x\n", Some("f")),
+            // `@name` wins over `@rdname`.
+            ("#' @name a\n#' @rdname b\nf <- function() 1\n", Some("a")),
+            ("#' @rdname b\nf <- function() 1\n", Some("b")),
+            // `@describeIn`'s first word is the destination; the rest is prose.
+            (
+                "#' @describeIn b Some variant.\nf <- function() 1\n",
+                Some("b"),
+            ),
+            // An empty tag value falls through to the next candidate.
+            ("#' @name\nf <- function() 1\n", Some("f")),
+            // Nothing names a topic and nothing is bound.
+            (
+                "#' T\nsetMethod(\"show\", \"C\", function(object) 1)\n",
+                None,
+            ),
+        ];
+        for (src, expect) in cases {
+            let block = first_block(src);
+            assert_eq!(topic_key(&block).as_deref(), *expect, "case: {src:?}");
+        }
+    }
+
+    #[test]
+    fn joins_other_topic_is_rdname_and_describe_in() {
+        for src in [
+            "#' @rdname b\nf <- function() 1\n",
+            "#' @describeIn b Variant.\nf <- function() 1\n",
+        ] {
+            assert!(joins_other_topic(&first_block(src)), "case: {src:?}");
+        }
+        for src in [
+            "#' @name b\nf <- function() 1\n",
+            "#' T\nf <- function() 1\n",
+        ] {
+            assert!(!joins_other_topic(&first_block(src)), "case: {src:?}");
+        }
+    }
+
+    #[test]
+    fn topics_group_owner_with_its_joiners() {
+        let src = "#' Owner\n#' @param x X.\nf <- function() NULL\n\n\
+                   #' @rdname f\ng <- function(x) x\n\n\
+                   #' Unrelated\nh <- function() 1\n";
+        let topics = RoxygenTopics::build(&parse(src).cst);
+        assert_eq!(topics.members("f").len(), 2);
+        assert_eq!(topics.members("h").len(), 1);
+        assert!(topics.members("nope").is_empty());
     }
 
     #[test]

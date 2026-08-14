@@ -5260,6 +5260,176 @@ fn roxygen_param_negatives() {
 }
 
 // ---------------------------------------------------------------------------
+// Merged topics: `@rdname`/`@describeIn` fold several blocks into one `.Rd`,
+// and roxygen2 judges the topic, not the block. The block that *joins* a topic
+// carries the tag and is skipped; the block that *owns* it carries nothing, so
+// the topic has to be resolved across the file's blocks.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn roxygen_param_owner_block_sees_merged_topic_formals() {
+    // rlang's shape: `missing_arg()` has no formals, but `is_missing(x)` joins
+    // its topic and supplies `x`, so `man/missing_arg.Rd` documents it.
+    let src = "#' Missing argument\n\
+               #' @param x An object.\n\
+               #' @export\n\
+               missing_arg <- function() NULL\n\
+               \n\
+               #' @rdname missing_arg\n\
+               #' @export\n\
+               is_missing <- function(x) TRUE\n";
+    assert!(
+        roxygen_param_findings(src).is_empty(),
+        "{:?}",
+        roxygen_param_findings(src)
+    );
+}
+
+#[test]
+fn roxygen_param_merged_topic_negatives() {
+    let cases: &[&str] = &[
+        // The owner names its own topic with `@name`.
+        "#' Missing argument\n#' @name missing_arg\n#' @param x An object.\nNULL\n\n\
+         #' @rdname missing_arg\nis_missing <- function(x) TRUE\n",
+        // `@describeIn` joins the same way.
+        "#' Missing argument\n#' @param x An object.\nmissing_arg <- function() NULL\n\n\
+         #' @describeIn missing_arg Test for it.\nis_missing <- function(x) TRUE\n",
+        // The missing direction: the sibling documents the owner's formal.
+        "#' Add\n#' @export\nf <- function(x) x\n\n\
+         #' @rdname f\n#' @param x The x.\ng <- function(x) x\n",
+        // A joiner whose statement is unclassifiable makes the union unknowable.
+        "#' Add\n#' @param x X.\nf <- function() NULL\n\n\
+         #' @rdname f\nsetMethod(\"show\", \"C\", function(object) 1)\n",
+        // A joiner that inherits params moves the argument list out of the file.
+        "#' Add\n#' @param x X.\nf <- function() NULL\n\n\
+         #' @rdname f\n#' @inheritParams other\ng <- function(y) y\n",
+    ];
+    for src in cases {
+        assert!(
+            roxygen_param_findings(src).is_empty(),
+            "should not flag: {src:?} -> {:?}",
+            roxygen_param_findings(src)
+        );
+    }
+}
+
+#[test]
+fn roxygen_param_merged_topic_resolves_under_markdown() {
+    // Under `@md` an underscore inside a name is carved as an unresolved
+    // markdown delimiter, so `@rdname missing_arg` is three leaves. Reading
+    // only the first would resolve the topic to `missing` and lose the merge.
+    let src = "#' @md\n\
+               #' Missing argument\n\
+               #' @param x An object.\n\
+               missing_arg <- function() NULL\n\
+               \n\
+               #' @md\n\
+               #' @rdname missing_arg\n\
+               is_missing <- function(x) TRUE\n";
+    assert!(
+        roxygen_param_findings(src).is_empty(),
+        "{:?}",
+        roxygen_param_findings(src)
+    );
+}
+
+#[test]
+fn roxygen_param_merged_topic_still_flags_unknown_name() {
+    // `z` is a formal of neither function in the topic.
+    let src = "#' Missing argument\n\
+               #' @param z An object.\n\
+               missing_arg <- function() NULL\n\
+               \n\
+               #' @rdname missing_arg\n\
+               is_missing <- function(x) TRUE\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(&src[findings[0].range], "z");
+}
+
+#[test]
+fn roxygen_param_merged_topic_still_flags_undocumented_formal() {
+    // Neither block documents the owner's `y`.
+    let src = "#' Add\n\
+               #' @param x X.\n\
+               f <- function(x, y) x\n\
+               \n\
+               #' @rdname f\n\
+               g <- function(x) x\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(&src[findings[0].range], "y");
+}
+
+#[test]
+fn roxygen_return_owner_block_sees_merged_topic_value() {
+    let src = "#' Add\n\
+               #' @export\n\
+               f <- function(x) x\n\
+               \n\
+               #' @rdname f\n\
+               #' @return A number.\n\
+               #' @export\n\
+               g <- function(x) x\n";
+    assert!(
+        diagnostics(src)
+            .into_iter()
+            .all(|d| d.rule != "roxygen-return")
+    );
+}
+
+#[test]
+fn roxygen_return_still_flags_merged_topic_without_value() {
+    let src = "#' Add\n\
+               #' @export\n\
+               f <- function(x) x\n\
+               \n\
+               #' @rdname f\n\
+               #' @export\n\
+               g <- function(x) x\n";
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "roxygen-return")
+        .collect();
+    // Only the owner is judged; the joiner keeps skipping (its topic's owner
+    // may live in another file).
+    assert_eq!(findings.len(), 1, "{findings:?}");
+}
+
+#[test]
+fn roxygen_title_owner_block_sees_merged_topic_title() {
+    let src = "#' @param x X.\n\
+               #' @export\n\
+               f <- function(x) x\n\
+               \n\
+               #' Add things.\n\
+               #' @rdname f\n\
+               #' @export\n\
+               g <- function(x) x\n";
+    assert!(
+        diagnostics(src)
+            .into_iter()
+            .all(|d| d.rule != "roxygen-title")
+    );
+}
+
+#[test]
+fn roxygen_title_still_flags_merged_topic_without_title() {
+    let src = "#' @param x X.\n\
+               #' @export\n\
+               f <- function(x) x\n\
+               \n\
+               #' @rdname f\n\
+               #' @export\n\
+               g <- function(x) x\n";
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "roxygen-title")
+        .collect();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+}
+
+// ---------------------------------------------------------------------------
 // S3 methods: a bare `#' @export` on `generic.class` registers the method
 // (`S3method(generic, class)`) rather than exporting it, so roxygen2 generates
 // no Rd topic and `R CMD check` reports no undocumented export. Documenting

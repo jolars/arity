@@ -6,7 +6,7 @@ expression: render_rule_doc(&rule)
 
 Flag `@param` documentation that does not match the documented function.
 
-Four shapes are reported: a formal argument with no `@param`, a `@param` naming a nonexistent formal (often a rename that never reached the docs), a name documented twice, and a `@param` missing its name or description. Blocks that inherit or merge documentation (`@inheritParams`, `@rdname`, `@describeIn`, `@template`) are exempt from the coverage checks, and a titleless S3 method (registered with `S3method()`, so it generates no `.Rd`) is exempt from the missing-`@param` check; duplicates are always reported.
+Four shapes are reported: a formal argument with no `@param`, a `@param` naming a nonexistent formal (often a rename that never reached the docs), a name documented twice, and a `@param` missing its name or description. Coverage is judged against the generated topic, not the block: `@rdname` and `@describeIn` merge several functions into one `.Rd`, so a block owning a topic is judged against the union of its file-local siblings' formals. Blocks that inherit documentation from another object (`@inheritParams`, `@template`, …) or that join a topic owned elsewhere are exempt from the coverage checks, and a titleless S3 method (registered with `S3method()`, so it generates no `.Rd`) is exempt from the missing-`@param` check; duplicates are always reported.
 
 This rule is **enabled by default**.
 

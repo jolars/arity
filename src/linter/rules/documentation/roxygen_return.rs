@@ -8,13 +8,17 @@
 //! Skips: `@noRd` blocks, and inherited/merged topics
 //! (`@rdname`/`@describeIn`/`@inherit*`/`@template`—`@inherit other return`
 //! is precisely how a shared value section is pulled in).
+//!
+//! The `\value` section belongs to the *topic*, so a block that owns a topic
+//! is satisfied by any sibling merging into it that carries `@return`
+//! ([`local_topic_members`]).
 
 use rowan::ast::AstNode as _;
 
 use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
-    documented_function, documents_s3_method, has_title, inherits_docs,
+    documented_function, documents_s3_method, has_title, inherits_docs, local_topic_members,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -26,6 +30,18 @@ const EXAMPLES: &[Example] = &[Example {
     source: "#' Add one\n#' @param x A number.\n#' @export\nadd_one <- function(x) x + 1\n",
 }];
 
+/// Whether the topic this block renders into describes its value: `@return`
+/// (or its `@returns` alias) on the block itself or on any sibling merging
+/// into the same topic. Falls back to the block alone when the topic is not
+/// locally resolvable.
+fn documents_value(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
+    let has_return = |b: &RoxygenBlock| b.has_tag("return") || b.has_tag("returns");
+    match local_topic_members(block, ctx) {
+        Some(members) => members.iter().any(has_return),
+        None => has_return(block),
+    }
+}
+
 impl Rule for RoxygenReturn {
     fn id(&self) -> &'static str {
         "roxygen-return"
@@ -36,10 +52,13 @@ impl Rule for RoxygenReturn {
          \n\nCRAN requires every exported function's documentation to describe \
          its return value (the `.Rd` `\\value` section); roxygen2 itself stays \
          silent, so the omission otherwise surfaces only at submission time. \
-         `@returns` is accepted as an alias. `@noRd` blocks and merged or \
-         inherited topics (`@rdname`, `@inherit`, …) are skipped, as is a \
-         titleless S3 method (registered with `S3method()`, so it is not \
-         exported and generates no `.Rd`); the generic's topic owns the value."
+         `@returns` is accepted as an alias. `@noRd` blocks and blocks that \
+         merge into or inherit another topic (`@rdname`, `@inherit`, …) are \
+         skipped, and a block owning a topic is satisfied by a `@return` on any \
+         file-local sibling merging into it—the `\\value` section belongs to \
+         the topic. A titleless S3 method is skipped too (registered with \
+         `S3method()`, so it is not exported and generates no `.Rd`); the \
+         generic's topic owns the value."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -60,11 +79,10 @@ impl Rule for RoxygenReturn {
         else {
             return;
         };
-        if block.has_tag("return")
-            || block.has_tag("returns")
-            || block.has_tag("noRd")
+        if block.has_tag("noRd")
             || inherits_docs(&block)
             || documented_function(&block).is_none()
+            || documents_value(&block, ctx)
         {
             return;
         }
