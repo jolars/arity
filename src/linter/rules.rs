@@ -216,6 +216,7 @@ fn meta_rules() -> Vec<Box<dyn Rule>> {
         Box::new(meta::MisnamedSuppression),
         Box::new(meta::BlanketSuppression),
         Box::new(meta::MisplacedSuppression),
+        Box::new(meta::DeprecatedSuppression),
         Box::new(meta::UnexplainedSuppression),
         Box::new(meta::OutdatedSuppression),
     ]

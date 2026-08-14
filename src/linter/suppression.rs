@@ -64,6 +64,8 @@ pub enum Coverage {
 pub struct Directive {
     pub tool: Tool,
     pub verb: Verb,
+    /// The tool prefix as written; see [`crate::directive::Directive::prefix`].
+    pub prefix: TextRange,
     pub scope: RuleScope,
     pub spelling: Spelling,
     /// The text after the `:` that follows the rule ID, trimmed. `None` when
@@ -283,6 +285,7 @@ impl SuppressionMap {
                 self.directives.push(Directive {
                     tool: parsed.tool,
                     verb: parsed.verb,
+                    prefix: parsed.prefix + base,
                     scope: absolute_scope(parsed.scope, base),
                     spelling: parsed.spelling,
                     reason: parsed.reason.map(str::to_string),

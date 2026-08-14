@@ -46,13 +46,17 @@
 
 ## Linter
 
-- [ ] Add a rule that flags the **deprecated `# arity-ignore` spellings** and
-  rewrites them to `# arity-lint skip` / `# arity-lint skip-file`. Both still
-  parse and behave identically (`Spelling::Deprecated` on the parsed directive
-  is exactly the hook), so this is a migration aid, not a correctness fix: it
-  wants a `Safe` autofix over the prefix alone, leaving the rule ID and the
-  author's reason untouched. Once it has been out for a release or two, the
-  aliases can go.
+- [x] `deprecated-suppression` flags the **deprecated `# arity-ignore`
+  spellings** and rewrites them to `# arity-lint skip` / `# arity-lint
+  skip-file`. Keyed off `Spelling::Deprecated`; `Safe` fix over the parsed
+  directive's `prefix` range alone, so the rule ID, the reason, and the author's
+  spacing are untouched. A migration aid, not a correctness fix — enabled by
+  default, since a deprecation nobody sees drives no migration.
+
+- [ ] Remove the `# arity-ignore`/`# arity-ignore-file` aliases once
+  `deprecated-suppression` has been out for a release or two. Parser side is one
+  branch each in `crates/arity-parser/src/directive.rs`, plus `Spelling` and the
+  rule itself.
 
 ### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
 

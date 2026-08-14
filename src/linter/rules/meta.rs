@@ -14,12 +14,14 @@
 //! (`# arity-lint skip-file <meta-rule>: …`) or `[lint] ignore`.
 
 mod blanket_suppression;
+mod deprecated_suppression;
 mod misnamed_suppression;
 mod misplaced_suppression;
 mod outdated_suppression;
 mod unexplained_suppression;
 
 pub use blanket_suppression::BlanketSuppression;
+pub use deprecated_suppression::DeprecatedSuppression;
 pub use misnamed_suppression::MisnamedSuppression;
 pub use misplaced_suppression::MisplacedSuppression;
 pub use outdated_suppression::OutdatedSuppression;

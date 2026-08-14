@@ -4969,8 +4969,11 @@ fn assert_fixed_output_is_clean(input: &str) {
 #[test]
 fn fixed_output_is_parseable_and_clean() {
     let cases = [
-        // meta/suppression rules (misnamed rename, outdated delete)
+        // meta/suppression rules (misnamed rename, outdated delete, deprecated
+        // spelling rewrite)
         "# arity-ignore unusd-binding: typo\nx <- 1\nprint(x)\n",
+        "# arity-ignore-file browser: generated\nx <- 1\nprint(x)\n",
+        "# arity-lint skip browser: kept\nbrowser()\n",
         "# arity-ignore browser: stale\nx <- 1\nprint(x)\n",
         "f <- function() {\n  # arity-ignore browser: stale\n  x <- 1\n  print(x)\n}\n",
         "x <- 1  # arity-ignore browser: stale\nprint(x)\n",
@@ -6474,4 +6477,78 @@ fn outdated_suppression_ignores_a_format_directive() {
     // --check` fact, not a semantic one.
     let src = "# arity-format skip: hand-aligned\nx <- 1\nprint(x)\n";
     assert!(meta_rules(src, "outdated-suppression").is_empty(), "{src}");
+}
+
+#[test]
+fn deprecated_suppression_rewrites_the_node_form() {
+    let src = "# arity-ignore unused-binding: part of the API\nx <- 1\n";
+    let d = meta_rules(src, "deprecated-suppression");
+    assert_eq!(d.len(), 1, "got {d:?}");
+    assert_eq!(&src[d[0].range], "arity-ignore", "spans the prefix alone");
+    assert_eq!(
+        fixed_output(src, "deprecated-suppression"),
+        "# arity-lint skip unused-binding: part of the API\nx <- 1\n"
+    );
+}
+
+#[test]
+fn deprecated_suppression_rewrites_the_file_form() {
+    let src = "# arity-ignore-file unused-binding: generated\nx <- 1\n";
+    assert_eq!(
+        fixed_output(src, "deprecated-suppression"),
+        "# arity-lint skip-file unused-binding: generated\nx <- 1\n"
+    );
+}
+
+#[test]
+fn deprecated_suppression_rewrites_the_blanket_file_form() {
+    let src = "# arity-ignore-file: generated, do not lint\nx <- 1\n";
+    assert_eq!(
+        fixed_output(src, "deprecated-suppression"),
+        "# arity-lint skip-file: generated, do not lint\nx <- 1\n"
+    );
+}
+
+#[test]
+fn deprecated_suppression_keeps_the_authors_spacing_and_reason() {
+    let src = "#   arity-ignore   unused-binding:  because reasons  \nx <- 1\n";
+    assert_eq!(
+        fixed_output(src, "deprecated-suppression"),
+        "#   arity-lint skip   unused-binding:  because reasons  \nx <- 1\n"
+    );
+}
+
+#[test]
+fn deprecated_suppression_rewrites_a_trailing_directive() {
+    let src = "x <- 1 # arity-ignore browser: kept\nbrowser()\n";
+    assert_eq!(
+        fixed_output(src, "deprecated-suppression"),
+        "x <- 1 # arity-lint skip browser: kept\nbrowser()\n"
+    );
+}
+
+#[test]
+fn deprecated_suppression_accepts_the_canonical_spellings() {
+    for src in [
+        "# arity-lint skip unused-binding: r\nx <- 1\n",
+        "# arity-lint skip-file unused-binding: r\nx <- 1\n",
+        "# arity-lint off unused-binding: r\nx <- 1\n# arity-lint on\n",
+        "# arity-format skip: r\nx <- 1\n",
+        "# arity skip: r\nx <- 1\n",
+        "# a plain comment\nx <- 1\n",
+    ] {
+        assert!(
+            meta_rules(src, "deprecated-suppression").is_empty(),
+            "{src:?}"
+        );
+    }
+}
+
+#[test]
+fn deprecated_suppression_rewrite_still_suppresses_the_same_finding() {
+    // The whole point: the migration must be behavior-preserving.
+    let src = "# arity-ignore browser: intentional\nbrowser()\n";
+    assert!(rule_diags(src, "browser").is_empty(), "before: {src}");
+    let fixed = fixed_output(src, "deprecated-suppression");
+    assert!(rule_diags(&fixed, "browser").is_empty(), "after: {fixed}");
 }

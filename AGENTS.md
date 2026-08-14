@@ -136,7 +136,7 @@ matching `.claude/rules/` file.
   `source()` graph, a package's implicit shared namespace, per-file export
   projection, the S4/R6/reference-class index, wired into salsa by `graph.rs`.
 - **Linter** (`src/linter/`) — **purely semantic**; anything `format --check`
-  catches belongs to the formatter. 60 rules across seven categories, with
+  catches belongs to the formatter. 61 rules across seven categories, with
   autofixes, `# arity-lint` suppression, and a generated rule reference. Runs
   over **two grammars**: `Rule` for `.R`, `DcfRule` for `DESCRIPTION`, one
   registry and one namespace of rule IDs.

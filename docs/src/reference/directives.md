@@ -120,8 +120,8 @@ convention; it is off by default, so enable it with `select`.
 ## Directives are linted too
 
 Directives fail silently by nature: when one goes wrong, the symptom is that
-nothing happens, which is exactly what success looks like. Five `meta` rules
-make those failures visible:
+nothing happens, which is exactly what success looks like. Six `meta` rules make
+those failures visible:
 
   | Rule                                                          | Flags                                        |
   | ------------------------------------------------------------- | -------------------------------------------- |
@@ -130,6 +130,10 @@ make those failures visible:
   | [`blanket-suppression`](rules.md#blanket-suppression)         | a directive that names no rule               |
   | [`unexplained-suppression`](rules.md#unexplained-suppression) | a directive with no reason (off by default)  |
   | [`outdated-suppression`](rules.md#outdated-suppression)       | a directive that no longer silences anything |
+  | [`deprecated-suppression`](rules.md#deprecated-suppression)   | one of the spellings arity shipped with      |
+
+They read the directives of `.R` files only; a directive in a `DESCRIPTION` is
+honored but not linted.
 
 ## Limits
 
@@ -162,10 +166,16 @@ make those failures visible:
 
 `# arity-ignore <rule>: <reason>` and `# arity-ignore-file <rule>: <reason>` are
 what the linter shipped with. They still work, and mean exactly
-`# arity-lint skip` and `# arity-lint skip-file` — but they are deprecated and
-new code should use the canonical forms. Mixing the two
-(`# arity-ignore skip <rule>`) is an error, and `misnamed-suppression` reports
-it.
+`# arity-lint skip` and `# arity-lint skip-file` — but they are deprecated, and
+[`deprecated-suppression`](rules.md#deprecated-suppression) flags them with a
+safe autofix, so `arity lint --fix` migrates a codebase in one pass:
+
+```sh
+arity lint --fix --select deprecated-suppression .
+```
+
+Mixing the two (`# arity-ignore skip <rule>`) is an error, and
+`misnamed-suppression` reports it.
 
 ## Turning a rule off entirely
 
