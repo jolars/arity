@@ -152,23 +152,27 @@ one day. **Re-measure rather than trusting these**; they are a starting map, not
 a fact. Sub-entries are shares of total, not of the phase above them.
 
 ```text
---mode format (cold: what `arity format` pays on one file)
-  format                 100%
-    parse               63.6%     <- most of a cold format is the parser
-      build_tree        19.1%
-      parse_expr        12.7%
-      roxygen           10.2%
-      lex                8.8%
-    format_node         30.5%
-    validate_supported_tokens  18.4%   <- a whole-CST prepass
-    file_is_skipped            11.2%   <- a second whole-CST prepass
-  rowan                 45.0%
-  allocator              9.5%
+--mode format (cold, --path tidyr/R/pivot-wide.R: a real 23 KB package file)
+  format                 99.9%
+    lower               39.4%     <- the formatter's own IR lowering dominates
+    render              28.3%
+    print                6.7%
+    parse               35.9%
+      build_tree        11.1%
+      parse_expr         8.9%
+      structural         7.7%
+      roxygen            6.6%
+      lex                4.8%
+  rowan                 33.0%
+  allocator              9.9%
 
---mode format-warm (what the LSP pays: CST already in salsa)
-  format                98.1%
-  rowan                 83.5%
-  allocator              2.9%
+--mode format (cold, the synthetic fixture corpus)
+  format                 100%
+    parse               86.2%     <- the corpus is tiny files; parse dominates
+    format_node          6.6%
+      scan_tokens        6.6%
+  rowan                 27.5%
+  allocator             11.5%
 
 --mode lint (single file, one-shot database)
   lint_rules            69.0%
@@ -187,10 +191,12 @@ a fact. Sub-entries are shares of total, not of the phase above them.
 Three readings that follow, and that anyone profiling "the formatter" needs to
 absorb before touching anything:
 
-1. **Nearly two thirds of a cold `format()` is parsing.** `arity format` on a
-   cold file cannot beat its parse. If the target is LSP latency, profile
-   `format-warm` instead and don't spend effort on parse cost the editor never
-   pays.
+1. **Profile with `--path` on a real package file, not the default corpus.**
+   The two columns above are the *same mode on different input*, and they
+   disagree about what a cold format even is: parse is 36% on real code and 86%
+   on the corpus. The corpus is many tiny fixtures, so it measures per-file
+   fixed costs and flatters anything that scales with file count. Every ranking
+   below comes from the real-file column.
 2. **The formatter's own internals hide inside `format_node`.** In the
    single-file mode they are inlined into it; `--mode format-dir` (a different
    call site) resolves `lower` at ~35%, `render` ~7%, `print` ~5%. If a phase's
@@ -205,17 +211,28 @@ absorb before touching anything:
 Open leads plus known shapes. Add to it as things are confirmed or ruled out —
 a lead that was measured and didn't pay belongs in §Don't redo.
 
-- **Whole-CST prepasses before the real work** — `validate_supported_tokens`
-  (18.4% inclusive) and `file_is_skipped` (11.2%) each walk the entire tree
-  before a single layout decision is made, and both are cursor walks. The
-  strongest open lead in the formatter. Anything here must keep the *answers*
-  identical: `validate_supported_tokens` is a correctness gate, and
-  `# arity-format skip-file` must still return the file byte for byte.
-- **rowan cursor traversal** — `PreorderWithTokens::next` is the single largest
-  self-time leaf (~20%), with `rowan::cursor::free` alongside it: cursor nodes
-  are being allocated and dropped. Proportional to how many times a pass
-  re-walks the same children. Look for a rule or lowering step that iterates
-  `children()` more than once over the same node.
+- **A whole-tree pass that only asks token questions** — walk the **green**
+  tree, not a cursor. `root.green().children()` over an explicit stack of
+  `rowan::Children` allocates nothing, where `descendants_with_tokens()`
+  allocates and drops a `SyntaxNode` per element. *Closed instance:*
+  `validate_supported_tokens` + `file_is_skipped` were two such passes at 31%
+  of a cold format; folding them into one green walk (`core::scan_tokens`) took
+  `format_node` from 31.3% to 6.6% inclusive and `arity format --check` on
+  `tidyr/R` from 39.9 to 36.3 ms. Anything here must keep the *answers*
+  identical: the `ERROR` gate is a correctness gate that reports the first token
+  in document order and outranks the directive, and `# arity-format skip-file`
+  must still return the file byte for byte. Both are pinned by tests in
+  `core.rs`.
+- **IR lowering — the largest open lead in the formatter.** On real code
+  `lower` is 39.4% and `render` 28.3%, against `print` at 6.7%: the cost is
+  building the document, not laying it out. `ir_statements`/`ir_line` (54%) and
+  the `ir_binary_side`/`ir_assignment_expr` chain (~38%) are the spine.
+- **rowan cursor traversal** — now ~9% of a cold format, spread over
+  `SyntaxToken::next_sibling_or_token`, `SyntaxElementChildren::next`, and the
+  `Vec<SyntaxElement>` that `children_with_tokens().collect()` builds for
+  `split_lines`. Proportional to how many times a pass re-walks or re-collects
+  the same children. Look for a lowering step that collects the same node's
+  children more than once.
 - **Green-tree construction** — `build_tree` is 19–26% of a parse, with
   `NodeCache::{token,node}` and `ThinArc::from_header_and_iter` underneath.
   Proportional to token and node count. Reducing it means emitting fewer nodes,
@@ -294,6 +311,17 @@ cargo run --release -- format --verify <file.R>    # idempotence on one file
 cat file.R | cargo run --release -- parse --verify --quiet
 ```
 
+The most direct proof for a formatter change is a **differential format**: run
+the before and after binaries over a real package and `diff -r` the two output
+trees. It catches what a fixture cannot, because the input is code nobody wrote
+a fixture for.
+
+```sh
+cp -r pkg/R out_old && cp -r pkg/R out_new
+./arity_old format --no-cache out_old && ./arity_new format --no-cache out_new
+diff -r out_old out_new     # must be silent
+```
+
 **Never accept an insta snapshot you have not read**, and on a perf commit a
 changed snapshot is a red flag by default: the whole premise is that behavior is
 identical.
@@ -308,14 +336,18 @@ site build.
 Name the bucket and quote the median, including when it's in the noise — that's
 the honest record and lets a reviewer decide whether to ship it at all.
 
+`6f8a444` is the worked example — the shape to copy:
+
 ```text
-perf(formatter): fold the skip-file check into the token validation walk
+perf(formatter): answer both prepasses in one green-tree walk
 
-The profile put 30% of a cold `format()` in two whole-CST prepasses that
-each walk every token before any layout decision. One walk answers both.
+The profile put 31% of a cold `format()` in two whole-CST cursor walks that
+each visit every element before a single layout decision. Both ask only
+token questions, so one walk over the green tree answers both.
 
-Median `arity format --check --no-cache tidyr/R` (20 runs, pinned):
-~X ms -> ~Y ms (~Z%). Fixtures and parser snapshots unchanged.
+Median `arity format --check --no-cache tidyr/R` (15 interleaved rounds,
+pinned to one core): 39.89 ms -> 36.29 ms (-9.0%); min -8.7%.
+Fixtures and parser snapshots unchanged; output over tidyr byte-identical.
 ```
 
 Keep commits atomic per area — root crate, `crates/arity-parser`,
@@ -327,7 +359,7 @@ Keep commits atomic per area — root crate, `crates/arity-parser`,
 - `scripts/profile.sh` — the harness; `benches/profile.rs` is what it samples,
   and `[profile.profiling]` in `Cargo.toml` is what makes symbols resolve.
 - `crates/arity-formatter/src/formatter/core.rs` — `format_with_options`,
-  `format_node`, `validate_supported_tokens`; the phase roots.
+  `format_node`, `scan_tokens`; the phase roots.
 - `crates/arity-formatter/src/formatter/{rules.rs,printer.rs,render.rs}` —
   lowering, the best-fit layout engine, and rendering.
 - `crates/arity-parser/src/parser/{core.rs,lexer.rs,expr.rs,structural.rs,tree_builder.rs}`
@@ -341,6 +373,16 @@ Keep commits atomic per area — root crate, `crates/arity-parser`,
 
 ## Don't redo / known traps
 
+- **A share measured on the default corpus can be pure timer resolution.** The
+  whole `format-warm` corpus run is ~0.08 ms/iter, and the harness reports to
+  0.01 ms — so a "18.8% of the warm path" reading there is worth ~one tick.
+  Confirm any share on a real file with `--path` before acting on it.
+- **Prefiltering `directive::parse` on `body.starts_with("arity")` does not
+  pay.** It looks certain to: the formatter and linter run it over every comment
+  token, and all five spellings need that prefix. Measured on
+  `tidyr/R/pivot-wide.R` (237 comments, 9 interleaved rounds): `format-warm`
+  1.310 -> 1.300 ms/iter and cold `format` 2.090 -> 2.080, i.e. one resolution
+  tick with identical minima. It only looked hot on the synthetic corpus.
 - **`arity format --check` without `--no-cache` measures a hash lookup.** In a
   release build the persistent already-formatted cache is on by default (it is
   compiled out in debug builds, which is its own reason not to time a debug
