@@ -1689,10 +1689,10 @@ fn is_fence_marker(content: &str) -> bool {
 }
 
 /// Whether `content` (a line's trimmed content) is a structured line that must
-/// not be reflowed: a list item, blockquote, ATX header, table delimiter row,
-/// or fence. `in_paragraph` is whether this line continues open prose (a
-/// paragraph or a tag unit), which gates ordered-list recognition (see
-/// `starts_ordered_list_item`).
+/// not be reflowed: a list item (markdown *or* Rd), blockquote, ATX header,
+/// table delimiter row, or fence. `in_paragraph` is whether this line continues
+/// open prose (a paragraph or a tag unit), which gates ordered-list recognition
+/// (see `starts_ordered_list_item`).
 ///
 /// A line that merely *contains* a `|` (an R pipe `|>`, an `||`, prose like
 /// `this | that`) is ordinary prose: GFM recognizes a table only on a
@@ -1711,6 +1711,28 @@ fn is_structured(content: &str, in_paragraph: bool) -> bool {
         || is_fence_marker(content)
         || is_table_delim_row(content)
         || starts_ordered_list_item(content, in_paragraph)
+        || starts_rd_item(content)
+}
+
+/// Whether `content` opens an Rd list item (`\item`). `\item` is the entry macro
+/// of every Rd list — `\describe`, `\itemize`, `\enumerate`, and the `\value` /
+/// `\arguments` that `@return` and `@param` become — so it is the Rd counterpart
+/// of the `- ` that [`is_structured`] already recognizes, and it earns a line the
+/// same way: sibling entries reflowed into one paragraph render as the same Rd
+/// but read as a wall of text.
+///
+/// This is a rule about a *grammar's list syntax*, not a special case for one
+/// construct, and it never consults how the input was laid out: an `\item` starts
+/// a line whether or not the author put it on one.
+///
+/// A bare `\item` (the no-argument form `\itemize` and `\enumerate` take) counts
+/// as much as the two-brace `\describe` form, so the test is a `\item` prefix not
+/// continued by a name character — which is exactly what keeps `\itemize{…}`, a
+/// list *container* and ordinary inline prose here, from matching.
+fn starts_rd_item(content: &str) -> bool {
+    content.strip_prefix("\\item").is_some_and(|rest| {
+        !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+    })
 }
 
 /// Whether `content` opens an ordered-list item that markdown would honor in

@@ -1,0 +1,12 @@
+#' Title
+#'
+#' @return
+#' A list with the following components.
+#' \item{a}{alpha}
+#' \item{b}{beta}
+#' \item{c}{gamma}
+#' \itemize{\item one \item two} is prose, not a list item, so it reflows into
+#' the surrounding paragraph as ordinary text.
+#'
+#' @export
+f <- function() {}
