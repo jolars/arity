@@ -24,7 +24,7 @@ use crate::project::description::DescriptionFacts;
 use crate::project::{
     PackageCollation, PackageDeclarations, PackageUsage, Project, ProjectMember,
     expected_r_sources, external_resolution, package_facts_for, package_root, package_usage_for,
-    visible_symbols, workspace_project,
+    roxygen_topics_for, visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -362,6 +362,7 @@ pub fn check_paths_with_index(
                         project: Some(&file_scope),
                         resolution: Some(resolution),
                         package,
+                        topics: roxygen_topics_for(worker, project, &path),
                     },
                 );
                 let status = if kept.is_empty() {
@@ -712,6 +713,7 @@ pub fn analyze_prepared(
             project: Some(&file_scope),
             resolution,
             package: package_facts_for(db, &active_path),
+            topics: roxygen_topics_for(db, project, &active_path),
         },
     )
 }

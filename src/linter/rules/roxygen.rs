@@ -7,6 +7,13 @@
 //! R6 classes, package-level docs, …) yields `None`, and the function-shape
 //! checks skip rather than risk a wrong finding.
 //!
+//! [`topic_members`] answers "what merges into this block's topic?". roxygen2
+//! merges `@rdname`/`@describeIn` blocks package-wide, so the answer is
+//! cross-file and comes from the salsa-tracked index when the caller resolved
+//! one ([`RuleContext::topics`]); [`RoxygenTopics`] is the file-local fallback
+//! for the single-document paths. Both read the *same* projection
+//! ([`crate::project::file_roxygen_topics`]), so the two views cannot drift.
+//!
 //! [`extract_examples`] recovers the R code embedded in an `@examples` /
 //! `@examplesIf` section by concatenating the section's tokens (never the
 //! joined tag text: under `@md` the parser tokenizes markdown inside example
@@ -16,11 +23,19 @@
 
 use rowan::ast::AstNode as _;
 use rowan::{TextRange, TextSize};
-use smol_str::SmolStr;
 
-use crate::ast::{AssignmentExpr, FunctionExpr, RoxygenBlock, RoxygenSection};
+use crate::ast::{RoxygenBlock, RoxygenSection};
 use crate::linter::rules::RuleContext;
-use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
+use crate::syntax::{SyntaxKind, SyntaxNode};
+
+// The block-to-facts reduction lives in `src/project/roxygen.rs`: topics merge
+// package-wide, so the grouping is a per-file projection the project graph
+// folds, not something the linter can own. Re-exported here so the rule modules
+// keep one import site.
+pub(crate) use crate::project::{
+    ParamDoc, TopicMember, documented_binding_name, documented_function, has_title,
+    inherits_params, joins_other_topic, param_doc, topic_key,
+};
 
 /// Every tag understood by roxygen2 (8.0.0) plus the `@md`/`@noMd` toggles.
 /// Version *availability* (`@prop`/`@R6method` need roxygen2 >= 8.0.0) is the
@@ -101,114 +116,55 @@ pub(crate) fn inherits_docs(block: &RoxygenBlock) -> bool {
     inherits_params(block) || joins_other_topic(block)
 }
 
-/// Tags that pull the argument list in from outside this block. Unlike a topic
-/// merge ([`joins_other_topic`]), no amount of cross-block resolution recovers
-/// what they add: the source is another *object*, possibly in another package.
-pub(crate) fn inherits_params(block: &RoxygenBlock) -> bool {
-    block.tags().any(|tag| {
-        matches!(
-            tag.name().as_deref(),
-            Some(
-                "inherit"
-                    | "inheritParams"
-                    | "inheritSection"
-                    | "inheritDotParams"
-                    | "template"
-                    | "usage"
-            )
-        )
-    })
-}
-
-/// Whether this block merges into a topic named by someone else (`@rdname`,
-/// `@describeIn`). The owner of that topic may sit in another file, so such a
-/// block's topic is never resolvable from this file alone.
-pub(crate) fn joins_other_topic(block: &RoxygenBlock) -> bool {
-    block.has_tag("rdname") || block.has_tag("describeIn")
-}
-
-/// The Rd topic this block resolves to, in roxygen2's precedence: an explicit
-/// `@name`, else `@rdname`, else `@describeIn`'s destination (its first word,
-/// the rest being the description), else the name the documented statement
-/// binds — an object's default topic. `None` when the block names no topic and
-/// binds nothing.
+/// The Rd topics of one file, as [`TopicMember`] summaries — the fallback view
+/// used when the caller resolved no project (the single-document paths).
 ///
-/// `@name`/`@rdname`/`@describeIn` are not arg-bearing tags (`ARG_BEARING_TAGS`
-/// in the roxygen sub-lexer), so the value comes from the tag's text — read via
-/// [`RoxygenTag::value_text`], because under `@md` a name containing `_` or `*`
-/// lexes as several leaves around an unresolved markdown delimiter.
-///
-/// The test-only Rd projector carries a narrower twin of this
-/// (`crate::roxygen::project_rd`'s `topic_name`): it stops at `@name`/`@rdname`
-/// because merging *sections* never needs an object's default topic, while
-/// judging an owner block against its topic does. Keep the two in step.
-pub(crate) fn topic_key(block: &RoxygenBlock) -> Option<SmolStr> {
-    let mut rdname: Option<SmolStr> = None;
-    let mut describe_in: Option<SmolStr> = None;
-    for tag in block.tags() {
-        match tag.name().as_deref() {
-            Some("name") => {
-                if let Some(value) = tag.value_text() {
-                    return Some(SmolStr::new(value));
-                }
-            }
-            Some("rdname") if rdname.is_none() => rdname = tag.value_text().map(SmolStr::new),
-            Some("describeIn") if describe_in.is_none() => {
-                describe_in = tag
-                    .value_text()
-                    .and_then(|value| value.split_whitespace().next().map(SmolStr::new));
-            }
-            _ => {}
-        }
-    }
-    rdname
-        .or(describe_in)
-        .or_else(|| documented_binding_name(block))
-}
-
-/// The Rd topics of one file: every topic key mapped to the blocks that merge
-/// into it, in document order. Built once per file and memoized on
-/// [`RuleContext`], because three rules ask the same question and re-walking
-/// the tree per block would be quadratic on a file full of documentation.
+/// Built once per file and memoized on [`RuleContext`], because three rules ask
+/// the same question and re-walking the tree per block would be quadratic on a
+/// file full of documentation. It is the *same* projection the package-wide
+/// index folds ([`crate::project::file_roxygen_topics`]), so the two views
+/// cannot drift.
 #[derive(Debug, Default)]
 pub(crate) struct RoxygenTopics {
-    topics: std::collections::HashMap<SmolStr, Vec<RoxygenBlock>>,
+    topics: std::collections::BTreeMap<String, Vec<TopicMember>>,
 }
 
 impl RoxygenTopics {
-    /// Group every `ROXYGEN_BLOCK` under `root` by [`topic_key`]. Blocks that
-    /// name no topic are dropped: they merge with nothing.
     pub(crate) fn build(root: &SyntaxNode) -> Self {
-        let mut topics: std::collections::HashMap<SmolStr, Vec<RoxygenBlock>> = Default::default();
-        for block in root.descendants().filter_map(RoxygenBlock::cast) {
-            if let Some(key) = topic_key(&block) {
-                topics.entry(key).or_default().push(block);
-            }
+        Self {
+            topics: crate::project::file_roxygen_topics(root),
         }
-        Self { topics }
     }
 
-    fn members(&self, key: &str) -> &[RoxygenBlock] {
+    pub(crate) fn members(&self, key: &str) -> &[TopicMember] {
         self.topics.get(key).map_or(&[], Vec::as_slice)
     }
 }
 
 /// The blocks that merge into this block's topic — the block itself plus every
-/// sibling joining it — resolved across **this file only**.
+/// block joining it — resolved across the whole **package** when the caller
+/// supplied one ([`RuleContext::topics`]), else across this file only.
 ///
-/// `None` when the topic is not locally resolvable: the block joins someone
-/// else's topic (whose owner may live in another file) or names no topic at
-/// all. A caller that gets `None` must fall back to judging the block alone,
+/// roxygen2 merges `@rdname`/`@describeIn` package-wide, so a file-local answer
+/// false-positives whenever the joiner that supplies a `@param`, a `@return`,
+/// or a title sits in a sibling `R/` file.
+///
+/// `None` when the topic is not resolvable *from this block*: it joins someone
+/// else's topic (so it is not the owner and is never judged) or names no topic
+/// at all. A caller that gets `None` must fall back to judging the block alone,
 /// or skip.
-pub(crate) fn local_topic_members<'a>(
+pub(crate) fn topic_members<'a>(
     block: &RoxygenBlock,
     ctx: &'a RuleContext<'_>,
-) -> Option<&'a [RoxygenBlock]> {
+) -> Option<&'a [TopicMember]> {
     if joins_other_topic(block) {
         return None;
     }
     let key = topic_key(block)?;
-    Some(ctx.roxygen_topics().members(&key))
+    Some(match ctx.topics {
+        Some(package) => package.members(&key),
+        None => ctx.roxygen_topics().members(&key),
+    })
 }
 
 /// Tags that only drive the `NAMESPACE` (or toggle parsing modes) and never
@@ -257,79 +213,6 @@ pub(crate) fn asks_for_rd_on_its_own(block: &RoxygenBlock) -> bool {
         })
 }
 
-/// Whether the block supplies a topic title: a leading prose paragraph (whose
-/// first sentence becomes the title) or an explicit `@title`. roxygen2 writes
-/// no `.Rd` without one, so this gates every rule whose subject is a section
-/// of the generated topic.
-pub(crate) fn has_title(block: &RoxygenBlock) -> bool {
-    block.intro().is_some_and(|intro| intro.has_prose()) || block.has_tag("title")
-}
-
-/// The statement this block documents: the next sibling node, skipping only
-/// trivia. A non-trivia *token* before it (so the block does not lead a
-/// statement) ends the walk.
-fn documented_statement(block: &RoxygenBlock) -> Option<SyntaxNode> {
-    let mut next = block.syntax().next_sibling_or_token();
-    while let Some(element) = next {
-        match &element {
-            SyntaxElement::Token(token) => {
-                if !matches!(
-                    token.kind(),
-                    SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
-                ) {
-                    return None;
-                }
-            }
-            SyntaxElement::Node(node) => return Some(node.clone()),
-        }
-        next = element.next_sibling_or_token();
-    }
-    None
-}
-
-/// The assignment this block documents, when it is a plain binding: `name <-`
-/// (also `=` / `<<-`, string LHS). Excludes replacement-style targets
-/// (`dim(x) <-`), which have no `target_name`.
-fn documented_assignment(block: &RoxygenBlock) -> Option<AssignmentExpr> {
-    let node = documented_statement(block)?;
-    if node.kind() != SyntaxKind::ASSIGNMENT_EXPR {
-        return None;
-    }
-    let assign = AssignmentExpr::cast(node)?;
-    if !matches!(
-        assign.op_kind(),
-        Some(SyntaxKind::ASSIGN_LEFT | SyntaxKind::ASSIGN_EQ | SyntaxKind::SUPER_ASSIGN)
-    ) || assign.target_name().is_none()
-    {
-        return None;
-    }
-    Some(assign)
-}
-
-/// The name this block's documented statement binds, when it is a plain
-/// binding. `None` for a bare `function(...)` literal and every non-assignment
-/// shape.
-pub(crate) fn documented_binding_name(block: &RoxygenBlock) -> Option<SmolStr> {
-    documented_assignment(block)?.target_name()
-}
-
-/// The function this block documents, when that is unambiguous: the next
-/// non-trivia sibling is `name <- function(...)` (also `=` / `<<-`, string
-/// LHS) or a bare `function(...)` literal. Anything else—another roxygen
-/// block, `setMethod(...)`, an R6 class call, `"_PACKAGE"`, `NULL`—returns
-/// `None`.
-pub(crate) fn documented_function(block: &RoxygenBlock) -> Option<FunctionExpr> {
-    let node = documented_statement(block)?;
-    match node.kind() {
-        SyntaxKind::FUNCTION_EXPR => FunctionExpr::cast(node),
-        SyntaxKind::ASSIGNMENT_EXPR => match documented_assignment(block)?.value_element()? {
-            SyntaxElement::Node(value) => FunctionExpr::cast(value),
-            SyntaxElement::Token(_) => None,
-        },
-        _ => None,
-    }
-}
-
 /// Whether this block documents a function registered as an S3 method by the
 /// package's `NAMESPACE` (`S3method(generic, class)`).
 ///
@@ -349,98 +232,6 @@ pub(crate) fn documents_s3_method(block: &RoxygenBlock, ctx: &RuleContext<'_>) -
         return false;
     };
     documented_binding_name(block).is_some_and(|name| project.is_s3_method(&name))
-}
-
-/// What a `@param` section documents.
-pub(crate) enum ParamDoc {
-    /// `@param` with no name and no prose at all.
-    Empty,
-    /// One or more names (each with the sub-range of its own text), plus
-    /// whether any description prose is present.
-    Named {
-        names: Vec<(smol_str::SmolStr, TextRange)>,
-        has_description: bool,
-    },
-    /// Prose exists but no name could be recovered (exotic markup head); the
-    /// caller should judge nothing about this param.
-    Unknown,
-}
-
-/// Classify a `@param` section. Returns `None` for non-`@param` sections.
-///
-/// roxygen2 folds continuation lines into the tag value and splits on the
-/// first whitespace, so `@param` with the name on the next line still names a
-/// param—when the arg token is absent, the first word of the section's
-/// leading prose is used instead.
-pub(crate) fn param_doc(section: &RoxygenSection) -> Option<ParamDoc> {
-    let tag = section.tag()?;
-    if tag.name().as_deref() != Some("param") {
-        return None;
-    }
-    if tag.arg().is_some() {
-        return Some(ParamDoc::Named {
-            names: tag.arg_names(),
-            has_description: section.has_prose(),
-        });
-    }
-    if !section.has_prose() {
-        return Some(ParamDoc::Empty);
-    }
-    // No arg token but prose follows: recover the name from the first word of
-    // the first plain-text leaf, as roxygen2's fold-then-split would.
-    let tag_end = tag.syntax().text_range().end();
-    let first_text = section
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|e| e.into_token())
-        .find(|t| t.kind() == SyntaxKind::ROXYGEN_TEXT && t.text_range().start() >= tag_end);
-    let Some(token) = first_text else {
-        return Some(ParamDoc::Unknown);
-    };
-    let text = token.text();
-    let Some(word) = text.split_whitespace().next() else {
-        return Some(ParamDoc::Unknown);
-    };
-    let word_offset = text.find(word).expect("first word is in its own text");
-    let word_start = token.text_range().start() + TextSize::from(word_offset as u32);
-    let names = split_comma_names(word, word_start);
-    if names.is_empty() {
-        return Some(ParamDoc::Unknown);
-    }
-    let has_description = !text[word_offset + word.len()..].trim().is_empty()
-        || section.paragraphs().count() > 1
-        || section
-            .syntax()
-            .descendants_with_tokens()
-            .filter_map(|e| e.into_token())
-            .any(|t| {
-                t.kind() == SyntaxKind::ROXYGEN_TEXT
-                    && t.text_range().start() > token.text_range().end()
-            });
-    Some(ParamDoc::Named {
-        names,
-        has_description,
-    })
-}
-
-/// Split a comma-joined name list (`a,b`) into names with their sub-ranges,
-/// mirroring `RoxygenTag::arg_names`.
-fn split_comma_names(text: &str, start: TextSize) -> Vec<(smol_str::SmolStr, TextRange)> {
-    let mut names = Vec::new();
-    let mut offset = 0usize;
-    for piece in text.split(',') {
-        let trimmed = piece.trim();
-        if !trimmed.is_empty() {
-            let lead = piece.len() - piece.trim_start().len();
-            let piece_start = start + TextSize::from((offset + lead) as u32);
-            names.push((
-                smol_str::SmolStr::new(trimmed),
-                TextRange::at(piece_start, TextSize::of(trimmed)),
-            ));
-        }
-        offset += piece.len() + 1;
-    }
-    names
 }
 
 /// A contiguous piece of extracted code and where it came from.

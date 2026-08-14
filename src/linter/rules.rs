@@ -33,7 +33,7 @@ use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
 use crate::dcf;
 use crate::linter::rules::roxygen::RoxygenTopics;
 use crate::project::description::{DescriptionCompat, DescriptionFacts};
-use crate::project::{ExternalResolution, FileScope, PackageUsage};
+use crate::project::{ExternalResolution, FileScope, PackageTopics, PackageUsage};
 use crate::rindex::provider::CompositeProvider;
 use crate::semantic::{FileControlFlow, PackageOrigin, SemanticModel, SymbolProvider};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
@@ -507,6 +507,8 @@ pub struct FileContext<'a> {
     pub resolution: Option<&'a ExternalResolution>,
     /// See [`RuleContext::package`].
     pub package: Option<&'a DescriptionFacts>,
+    /// See [`RuleContext::topics`].
+    pub topics: Option<&'a PackageTopics>,
 }
 
 pub struct RuleContext<'a> {
@@ -532,6 +534,13 @@ pub struct RuleContext<'a> {
     /// [`RuleContext::own_package`] and the compat floors fall back to the lazy
     /// disk walk below.
     pub package: Option<&'a DescriptionFacts>,
+    /// The enclosing package's Rd topics, when the caller resolved a project and
+    /// this file sits in a package. roxygen2 merges `@rdname`/`@describeIn`
+    /// blocks package-wide, so the documentation rules need every `R/` file's
+    /// blocks, not just this one's. `None` on the single-file paths and outside
+    /// a package, where [`RuleContext::roxygen_topics`] is the file-local
+    /// fallback.
+    pub topics: Option<&'a PackageTopics>,
     /// Per-rule option tables from `[lint.rules.<id>]`, resolved once per run and
     /// carried on [`ResolvedRules`]. Rules that take no options ignore this.
     pub config: &'a RulesConfig,
@@ -917,6 +926,7 @@ pub fn run_rules(
         project: file.project,
         resolution: file.resolution,
         package: file.package,
+        topics: file.topics,
         config: &resolved.rules_config,
         suppressions: &suppressions,
         enabled_rules: &resolved.enabled,
@@ -1351,6 +1361,7 @@ mod tests {
             project: None,
             resolution: None,
             package: None,
+            topics: None,
             config: &RulesConfig::default(),
             suppressions: &SuppressionMap::default(),
             enabled_rules: &EnabledRules::default(),

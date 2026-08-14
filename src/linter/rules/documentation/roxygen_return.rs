@@ -10,15 +10,16 @@
 //! is precisely how a shared value section is pulled in).
 //!
 //! The `\value` section belongs to the *topic*, so a block that owns a topic
-//! is satisfied by any sibling merging into it that carries `@return`
-//! ([`local_topic_members`]).
+//! is satisfied by any block merging into it that carries `@return`
+//! ([`topic_members`]) — anywhere in the package, since that is where roxygen2
+//! merges topics.
 
 use rowan::ast::AstNode as _;
 
 use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
-    documented_function, documents_s3_method, has_title, inherits_docs, local_topic_members,
+    documented_function, documents_s3_method, has_title, inherits_docs, topic_members,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -31,14 +32,13 @@ const EXAMPLES: &[Example] = &[Example {
 }];
 
 /// Whether the topic this block renders into describes its value: `@return`
-/// (or its `@returns` alias) on the block itself or on any sibling merging
-/// into the same topic. Falls back to the block alone when the topic is not
-/// locally resolvable.
+/// (or its `@returns` alias) on the block itself or on any block merging into
+/// the same topic, anywhere in the package. Falls back to the block alone when
+/// the topic is not resolvable.
 fn documents_value(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
-    let has_return = |b: &RoxygenBlock| b.has_tag("return") || b.has_tag("returns");
-    match local_topic_members(block, ctx) {
-        Some(members) => members.iter().any(has_return),
-        None => has_return(block),
+    match topic_members(block, ctx) {
+        Some(members) => members.iter().any(|member| member.has_value),
+        None => block.has_tag("return") || block.has_tag("returns"),
     }
 }
 
@@ -55,8 +55,8 @@ impl Rule for RoxygenReturn {
          `@returns` is accepted as an alias. `@noRd` blocks and blocks that \
          merge into or inherit another topic (`@rdname`, `@inherit`, …) are \
          skipped, and a block owning a topic is satisfied by a `@return` on any \
-         file-local sibling merging into it—the `\\value` section belongs to \
-         the topic. A titleless S3 method is skipped too (registered with \
+         block merging into it, anywhere in the package—the `\\value` section \
+         belongs to the topic. A titleless S3 method is skipped too (registered with \
          `S3method()`, so it is not exported and generates no `.Rd`); the \
          generic's topic owns the value."
     }

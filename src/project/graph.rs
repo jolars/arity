@@ -25,12 +25,13 @@ use smol_str::SmolStr;
 use crate::incremental::{
     Descriptions, IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile,
     Workspace, description_facts, file_class_defs, file_def_sites, file_exports, file_free_reads,
-    file_qualified_reads, loaded_names, package_references, parse_diagnostics, source_edges,
-    top_level_events,
+    file_qualified_reads, file_roxygen_topics, loaded_names, package_references, parse_diagnostics,
+    source_edges, top_level_events,
 };
 use crate::project::classes::ClassSystem;
 use crate::project::description::DescriptionFacts;
 use crate::project::exports::DefKind;
+use crate::project::roxygen::TopicMember;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::provider::{attach_members, package_indexed, resolve_origin};
@@ -716,6 +717,96 @@ pub fn project_classes<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -
         }
     }
     index
+}
+
+/// One package's Rd topics: each topic name mapped to the blocks that merge
+/// into it, across every `R/` file of that package.
+///
+/// The borrowed view a rule consults — the [`FileScope`] analog for
+/// documentation. Wrapping the map rather than exposing it keeps the lookup
+/// ("what merges into this topic?") the only question callers can ask.
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub struct PackageTopics {
+    by_topic: BTreeMap<String, Vec<TopicMember>>,
+}
+
+impl PackageTopics {
+    /// The blocks merging into `key`, in package order, or empty when no block
+    /// resolves to that topic.
+    pub fn members(&self, key: &str) -> &[TopicMember] {
+        self.by_topic.get(key).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// A project-wide roxygen topic index, keyed by package root.
+///
+/// Keyed by *package* and not flat because roxygen2 merges topics within one
+/// package: two packages under one workspace each own their `add` topic, and
+/// [`topic_key`](crate::project::topic_key) falls back to the documented
+/// binding's name, so a flat map would merge unrelated `helper()`s. Members
+/// outside any package contribute nothing — roxygen2 only runs on packages, so
+/// a loose script keeps the file-local view.
+///
+/// Range-free (no spans), aggregated from the per-file
+/// [`file_roxygen_topics`](crate::incremental::file_roxygen_topics) firewall, so
+/// it backdates across body edits.
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub struct RoxygenTopicIndex {
+    by_package: BTreeMap<PathBuf, PackageTopics>,
+}
+
+impl RoxygenTopicIndex {
+    /// The topics of the package rooted at `root`, or `None` when that root has
+    /// no members here.
+    pub fn for_package(&self, root: &Path) -> Option<&PackageTopics> {
+        self.by_package.get(root)
+    }
+}
+
+/// Aggregate every package member's [`file_roxygen_topics`] into the
+/// package-wide [`RoxygenTopicIndex`]. Keyed on the interned [`Project`] and the
+/// per-file firewall, so it backdates across body edits and re-runs only when
+/// some file's documentation actually changes.
+///
+/// Members are visited in `project.members` order, which is sorted by path, so
+/// a topic's member list is deterministic.
+#[salsa::tracked(returns(ref))]
+pub fn project_roxygen_topics<'db>(
+    db: &'db dyn IncrementalDb,
+    project: Project<'db>,
+) -> RoxygenTopicIndex {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ProjectRoxygenTopics,
+        file: None,
+    });
+    let mut index = RoxygenTopicIndex::default();
+    for member in project.members(db) {
+        let Some(root) = member.package_root.as_ref() else {
+            continue;
+        };
+        let package = index.by_package.entry(root.clone()).or_default();
+        for (topic, members) in file_roxygen_topics(db, member.file) {
+            package
+                .by_topic
+                .entry(topic.clone())
+                .or_default()
+                .extend(members.iter().cloned());
+        }
+    }
+    index
+}
+
+/// The [`PackageTopics`] of the package enclosing `path`. `None` outside every
+/// tracked package, where topic resolution falls back to the file-local view.
+pub fn roxygen_topics_for<'db>(
+    db: &'db dyn IncrementalDb,
+    project: Project<'db>,
+    path: &Path,
+) -> Option<&'db PackageTopics> {
+    let index = project_roxygen_topics(db, project);
+    let roots: BTreeSet<&PathBuf> = index.by_package.keys().collect();
+    let root = package_root_in(path, &roots)?;
+    index.by_package.get(&root)
 }
 
 /// A project-wide name → read-site index: for each name a member *free-reads*

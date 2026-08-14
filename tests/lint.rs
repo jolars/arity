@@ -5517,6 +5517,155 @@ fn roxygen_title_still_flags_merged_topic_without_title() {
 }
 
 // ---------------------------------------------------------------------------
+// Topic resolution across the package. roxygen2 merges `@rdname`/`@describeIn`
+// blocks into one `.Rd` package-wide, not per file, so an owner in `R/a.R` must
+// see a joiner in `R/b.R`. Only owners are judged; a joiner is still skipped,
+// so none of these can *add* a finding.
+// ---------------------------------------------------------------------------
+
+/// The `rule` findings reported for `file_name` in a two-file package.
+fn cross_file_findings(rule: &str, a_r: &str, b_r: &str, file_name: &str) -> Vec<String> {
+    let result = lint_package_files(
+        "export(nothing)\n",
+        &[("a.R", a_r), ("b.R", b_r)],
+        &LintConfig::default(),
+    );
+    result
+        .reports
+        .iter()
+        .find(|r| r.path.file_name().and_then(|n| n.to_str()) == Some(file_name))
+        .map(|r| {
+            r.diagnostics
+                .iter()
+                .filter(|d| d.rule == rule)
+                .map(|d| d.message.body.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn roxygen_param_owner_sees_joiner_in_another_file() {
+    // `y` is documented by the `@rdname add` joiner in `R/b.R`, which roxygen2
+    // merges into `man/add.Rd`.
+    let findings = cross_file_findings(
+        "roxygen-param",
+        "#' Add\n#' @param x A number.\n#' @export\nadd <- function(x, y) x + y\n",
+        "#' @rdname add\n#' @param y The other number.\nadd2 <- function(x, y) x + y\n",
+        "a.R",
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn roxygen_param_owner_sees_cross_file_joiner_formals() {
+    // The mirror direction: the owner's `@param z` matches no formal of its own
+    // function, but the cross-file joiner has one.
+    let findings = cross_file_findings(
+        "roxygen-param",
+        "#' Add\n#' @param z An object.\nadd <- function() NULL\n",
+        "#' @rdname add\nadd2 <- function(z) z\n",
+        "a.R",
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn roxygen_return_owner_sees_cross_file_value() {
+    let findings = cross_file_findings(
+        "roxygen-return",
+        "#' Add\n#' @param x X.\n#' @export\nadd <- function(x) x\n",
+        "#' @rdname add\n#' @return A number.\nadd2 <- function(x) x\n",
+        "a.R",
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn roxygen_title_owner_sees_cross_file_title() {
+    let findings = cross_file_findings(
+        "roxygen-title",
+        "#' @param x X.\n#' @export\nadd <- function(x) x\n",
+        "#' Add things.\n#' @rdname add\nadd2 <- function(x) x\n",
+        "a.R",
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn cross_file_topic_still_flags_what_no_member_documents() {
+    // The joiner exists but documents neither `y`, nor a value, nor a title, so
+    // every rule keeps firing on the owner. Widening the topic must not turn
+    // into blanket amnesty.
+    let a_r = "#' @param x X.\n#' @export\nadd <- function(x, y) x + y\n";
+    let b_r = "#' @rdname add\nadd2 <- function(x) x\n";
+    for rule in ["roxygen-param", "roxygen-return", "roxygen-title"] {
+        let findings = cross_file_findings(rule, a_r, b_r, "a.R");
+        assert_eq!(findings.len(), 1, "{rule}: {findings:?}");
+    }
+}
+
+#[test]
+fn cross_file_topic_still_flags_unknown_param_name() {
+    // `w` is a formal of neither member of the topic.
+    let findings = cross_file_findings(
+        "roxygen-param",
+        "#' Add\n#' @param w An object.\nadd <- function() NULL\n",
+        "#' @rdname add\nadd2 <- function(z) z\n",
+        "a.R",
+    );
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(findings[0].contains('w'), "{findings:?}");
+}
+
+#[test]
+fn cross_file_joiner_block_is_still_never_judged() {
+    // `b.R`'s block joins someone else's topic, so it is not judged at all —
+    // its own `y` stays unreported even though the owner is now resolvable.
+    let findings = cross_file_findings(
+        "roxygen-param",
+        "#' Add\n#' @param x X.\n#' @param y Y.\n#' @export\nadd <- function(x, y) x + y\n",
+        "#' @rdname add\nadd2 <- function(x, y, extra) x\n",
+        "b.R",
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn topics_do_not_merge_across_packages() {
+    // Two packages under one root. `pkg_b`'s joiner documents `y`, but it is a
+    // different package, so `pkg_a`'s `add` is still missing `@param y`.
+    let dir = tempdir().expect("failed to create temp dir");
+    for (pkg, src) in [
+        (
+            "pkg_a",
+            "#' Add\n#' @param x A number.\n#' @export\nadd <- function(x, y) x + y\n",
+        ),
+        (
+            "pkg_b",
+            "#' @rdname add\n#' @param y The other number.\nadd2 <- function(x, y) x + y\n",
+        ),
+    ] {
+        let root = dir.path().join(pkg);
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::write(root.join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+        std::fs::write(root.join("NAMESPACE"), "export(nothing)\n").unwrap();
+        std::fs::write(root.join("R").join("a.R"), src).unwrap();
+    }
+    let result = check_paths(&[dir.path().to_path_buf()]).expect("lint should succeed");
+    let flagged = result
+        .reports
+        .iter()
+        .filter(|r| r.path.starts_with(dir.path().join("pkg_a")))
+        .any(|r| r.diagnostics.iter().any(|d| d.rule == "roxygen-param"));
+    assert!(
+        flagged,
+        "pkg_a's `y` must stay flagged: {:?}",
+        result.reports
+    );
+}
+
+// ---------------------------------------------------------------------------
 // S3 methods: a bare `#' @export` on `generic.class` registers the method
 // (`S3method(generic, class)`) rather than exporting it, so roxygen2 generates
 // no Rd topic and `R CMD check` reports no undocumented export. Documenting

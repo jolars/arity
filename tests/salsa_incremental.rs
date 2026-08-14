@@ -8,8 +8,8 @@ use arity::incremental::{
 use arity::parser::Edit;
 use arity::project::{
     DefKind, Project, ProjectMember, external_resolution, package_facts_for, package_usage,
-    project_classes, project_defs, project_reads, reverse_source_edges, visible_symbols,
-    workspace_project,
+    project_classes, project_defs, project_reads, project_roxygen_topics, reverse_source_edges,
+    visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -665,6 +665,74 @@ fn adding_a_class_rebuilds_project_classes() {
             .subtypes
             .get("Animal")
             .is_some_and(|c| c.contains("Dog"))
+    );
+}
+
+/// A documented `add(x, y)` in a.R whose `@param y` lives on a `@rdname add`
+/// joiner in b.R — the shape the package-wide topic index exists for.
+const TOPIC_A: &str =
+    "#' Add\n#' @param x A number.\n#' @export\nadd <- function(x, y) {\n  x + y\n}\n";
+const TOPIC_B: &str =
+    "#' @rdname add\n#' @param y The other number.\nadd2 <- function(x, y) x + y\n";
+
+#[test]
+fn body_edit_does_not_rebuild_project_roxygen_topics() {
+    // The firewall: the topic projection is range-free and turns only on the
+    // documentation and the formals, so editing a body leaves it equal.
+    let (mut db, a, b) = package_ab(TOPIC_A, TOPIC_B);
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_roxygen_topics(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        "#' Add\n#' @param x A number.\n#' @export\nadd <- function(x, y) {\n  x + y + 0\n}\n",
+    );
+
+    let project = project_ab(&db, a, b);
+    let _ = project_roxygen_topics(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ProjectRoxygenTopics),
+        None,
+        "a body edit must not rebuild project_roxygen_topics"
+    );
+}
+
+#[test]
+fn adding_a_param_tag_rebuilds_project_roxygen_topics() {
+    let (mut db, a, b) = package_ab(TOPIC_A, "#' @rdname add\nadd2 <- function(x, y) x + y\n");
+
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_roxygen_topics(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, TOPIC_B);
+
+    let project = project_ab(&db, a, b);
+    let topics = project_roxygen_topics(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(
+        counts.get(&QueryKind::ProjectRoxygenTopics),
+        Some(&1),
+        "a new `@param` must rebuild project_roxygen_topics"
+    );
+    let members = topics
+        .for_package(Path::new("/pkg"))
+        .expect("the package's topics")
+        .members("add");
+    assert!(
+        members
+            .iter()
+            .any(|m| m.documented_params.iter().any(|p| p == "y")),
+        "the new `@param y` must be in the index: {members:?}"
     );
 }
 

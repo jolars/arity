@@ -6,7 +6,7 @@ expression: render_rule_doc(&rule)
 
 Flag a documented function whose roxygen block has no title.
 
-The first untagged paragraph (or an explicit `@title`) becomes the topic title; without one, roxygen2 warns and `R CMD check` rejects the generated `.Rd`. An `@export` with no documentation at all is flagged too—`R CMD check` reports it as an undocumented export. Blocks that merge into or inherit another topic (`@rdname`, `@describeIn`, `@inherit*`, `@template`) and `@noRd` blocks are skipped, and a block owning a topic is satisfied by a title on any file-local sibling merging into it—the title belongs to the topic. Skipped too is a bare `@export` on a function the package's NAMESPACE registers with `S3method()`—that generates no topic and no undocumented export.
+The first untagged paragraph (or an explicit `@title`) becomes the topic title; without one, roxygen2 warns and `R CMD check` rejects the generated `.Rd`. An `@export` with no documentation at all is flagged too—`R CMD check` reports it as an undocumented export. Blocks that merge into or inherit another topic (`@rdname`, `@describeIn`, `@inherit*`, `@template`) and `@noRd` blocks are skipped, and a block owning a topic is satisfied by a title on any block merging into it, anywhere in the package—the title belongs to the topic. Skipped too is a bare `@export` on a function the package's NAMESPACE registers with `S3method()`—that generates no topic and no undocumented export.
 
 This rule is **enabled by default**.
 

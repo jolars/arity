@@ -51,19 +51,17 @@
   `quote(fn(this, that))` none. A fix has to respect unquoting — `!!`, `!!!`,
   and `{{ }}` *do* evaluate — so it is not just a longer name list.
 
-### Roxygen topic rules: merged topics resolve within a file only
+### Roxygen topic rules
 
-The owner-block half of the rlang `roxygen-param` false positive is fixed:
-`RoxygenTopics` (`src/linter/rules/roxygen.rs`, memoized on `RuleContext`)
-groups a file's blocks by topic, and `roxygen-param`/`roxygen-return`/
-`roxygen-title` judge an owner against its whole topic (28 findings dropped in
-rlang, none added). What remains:
-
-- [ ] **Topic resolution stops at the file boundary.** A `@rdname` in another
-  file of the same package still merges in roxygen2, and `RuleContext::project`
-  (`FileScope`) carries no roxygen or topic information — so an owner whose only
-  joiner lives elsewhere can still false-positive. Closing it needs a
-  salsa-tracked project-level roxygen topic index in `src/project/`.
+The rlang `roxygen-param` false positive is fixed, and topic resolution now
+spans the package: `file_roxygen_topics` (`src/project/roxygen.rs`) is the
+range-free per-file projection, `project_roxygen_topics` (`src/project/graph.rs`)
+folds it into a `RoxygenTopicIndex` keyed by package root, and
+`roxygen-param`/`roxygen-return`/`roxygen-title` judge an owner against its whole
+topic wherever the joiners live (`RuleContext::topics`, with the file-local
+`RoxygenTopics` as the single-document fallback). 28 findings dropped in rlang,
+none added; rlang, ggplot2, and dplyr are byte-identical across the cross-file
+step, which only ever removes findings. What remains:
 
 - [ ] **The Rd projector reads a tag value the narrow way.** `topic_name`
   (`src/roxygen/project_rd.rs`) still takes the first `ROXYGEN_TEXT` leaf, so
@@ -84,15 +82,10 @@ rlang, none added). What remains:
   rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
   user-redefined. (`true-false-symbol` already shipped shadow-checked.)
 
-- [ ] **Give the driver's per-file context a struct.** `lint_parsed_file` takes
-  eight arguments behind an `#[allow(clippy::too_many_arguments)]` and
-  `run_rules` takes nine, each ending in three adjacent `Option<&_>`
-  (`project`, `resolution`, `package`) that only get threaded through to
-  `RuleContext`—so a transposed pair type-checks. Building that context once
-  per file and passing it whole removes both the allow and the hazard. Every
-  DESCRIPTION-stage addition landed as one more parameter, and stage 4 adds
-  another, so do it before that: it touches every call site of both
-  functions, `run_dcf_rules`' twin included, and `run_rules` is public API.
+- [x] **Give the driver's per-file context a struct.** Done: `FileContext`
+  (`src/linter/rules.rs`) carries `project`/`resolution`/`package`/`topics`, and
+  both `#[allow(clippy::too_many_arguments)]`s are gone. `run_dcf_rules` is
+  untouched — six parameters, a different set of inputs.
 
 ### More DESCRIPTION rules (follow-ups to stage 3)
 

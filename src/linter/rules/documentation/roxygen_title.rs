@@ -13,7 +13,8 @@
 //! `name <- function(...)`.
 //!
 //! The title belongs to the *topic*, so a block that owns a topic is satisfied
-//! by any sibling merging into it that supplies one ([`local_topic_members`]);
+//! by any block merging into it that supplies one ([`topic_members`]) —
+//! anywhere in the package, since that is where roxygen2 merges topics;
 //! roxygen2's `\title` keeps the first value the merged topic offers.
 
 use rowan::ast::AstNode as _;
@@ -22,7 +23,7 @@ use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
     asks_for_rd_on_its_own, documented_function, documents_s3_method, has_title, inherits_docs,
-    local_topic_members, wants_rd_topic,
+    topic_members, wants_rd_topic,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -35,12 +36,12 @@ const EXAMPLES: &[Example] = &[Example {
 }];
 
 /// Whether the topic this block renders into has a title: a leading prose
-/// paragraph or `@title` on the block itself or on any sibling merging into
-/// the same topic. Falls back to the block alone when the topic is not locally
-/// resolvable.
+/// paragraph or `@title` on the block itself or on any block merging into the
+/// same topic, anywhere in the package. Falls back to the block alone when the
+/// topic is not resolvable.
 fn topic_has_title(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
-    match local_topic_members(block, ctx) {
-        Some(members) => members.iter().any(has_title),
+    match topic_members(block, ctx) {
+        Some(members) => members.iter().any(|member| member.has_title),
         None => has_title(block),
     }
 }
@@ -58,8 +59,8 @@ impl Rule for RoxygenTitle {
          too—`R CMD check` reports it as an undocumented export. Blocks that \
          merge into or inherit another topic (`@rdname`, `@describeIn`, \
          `@inherit*`, `@template`) and `@noRd` blocks are skipped, and a block \
-         owning a topic is satisfied by a title on any file-local sibling \
-         merging into it—the title belongs to the topic. Skipped too is a bare \
+         owning a topic is satisfied by a title on any block merging into it, \
+         anywhere in the package—the title belongs to the topic. Skipped too is a bare \
          `@export` on a function the package's NAMESPACE registers with \
          `S3method()`—that generates no topic and no undocumented export."
     }

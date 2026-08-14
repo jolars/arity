@@ -295,6 +295,7 @@ pub enum QueryKind {
     FileQualifiedReads,
     FileDefSites,
     FileClassDefs,
+    FileRoxygenTopics,
     SourceEdges,
     TopLevelEvents,
     ReverseSourceEdges,
@@ -302,6 +303,7 @@ pub enum QueryKind {
     ProjectGraph,
     ProjectDefs,
     ProjectClasses,
+    ProjectRoxygenTopics,
     ProjectReads,
     VisibleSymbols,
     LoadedNames,
@@ -583,6 +585,23 @@ pub fn file_class_defs(
         file: Some(file),
     });
     crate::project::file_class_defs(&parsed_tree_root(db, file))
+}
+
+/// The file's roxygen blocks grouped by the Rd topic they merge into
+/// ([`crate::project::file_roxygen_topics`]), as a tracked query. Range-free
+/// like [`file_class_defs`] — it turns on the documentation and the documented
+/// functions' formals, not on any body — so it backdates across a body edit; a
+/// rule that needs a span has the block in hand and reads it from the live tree.
+#[salsa::tracked(returns(ref))]
+pub fn file_roxygen_topics(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> BTreeMap<String, Vec<crate::project::TopicMember>> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FileRoxygenTopics,
+        file: Some(file),
+    });
+    crate::project::file_roxygen_topics(&parsed_tree_root(db, file))
 }
 
 /// The names of the packages attached via `library()`/`require()` in the file,

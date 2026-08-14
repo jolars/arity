@@ -10,6 +10,7 @@ pub mod deps;
 pub mod description;
 pub mod exports;
 pub mod graph;
+pub mod roxygen;
 pub mod scope;
 pub mod sequence;
 pub mod source;
@@ -24,10 +25,15 @@ pub use description::{
 pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads, file_qualified_reads};
 pub use graph::{
     ClassIndex, DefIndex, ExternalResolution, PackageCollation, PackageDeclarations, PackageInfo,
-    PackageUsage, Project, ProjectMember, ReadIndex, ReverseSources, Visibility, attached_names,
-    discover_packages, expected_r_sources, external_resolution, package_facts_for, package_usage,
-    package_usage_for, project_classes, project_defs, project_graph, project_reads,
-    reverse_source_edges, visible_symbols, workspace_project,
+    PackageTopics, PackageUsage, Project, ProjectMember, ReadIndex, ReverseSources,
+    RoxygenTopicIndex, Visibility, attached_names, discover_packages, expected_r_sources,
+    external_resolution, package_facts_for, package_usage, package_usage_for, project_classes,
+    project_defs, project_graph, project_reads, project_roxygen_topics, reverse_source_edges,
+    roxygen_topics_for, visible_symbols, workspace_project,
+};
+pub use roxygen::{
+    ParamDoc, TopicMember, documented_binding_name, documented_function, file_roxygen_topics,
+    has_title, inherits_params, joins_other_topic, param_doc, topic_key, topic_member,
 };
 pub use scope::{
     FileFacts, FileScope, ProjectScope, ReadBinding, ReadSite, is_package_root, package_root,

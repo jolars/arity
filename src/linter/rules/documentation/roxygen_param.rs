@@ -12,9 +12,10 @@
 //! Coverage is judged against the **topic**, not the block. `@rdname` merges
 //! several functions into one `.Rd`, and roxygen2 checks `@param` against the
 //! union of the merged functions' formals — so a block that owns a topic is
-//! judged against every sibling that joins it, resolved across the file by
-//! [`local_topic_members`]. A block that *joins* someone else's topic is not
-//! judged at all: its owner may live in another file.
+//! judged against every block that joins it, resolved across the whole package
+//! by [`topic_members`] — roxygen2 merges topics package-wide, so a joiner in a
+//! sibling `R/` file counts. A block that *joins* someone else's topic is not
+//! judged at all: it is not the topic's owner.
 //!
 //! No fixes: adding a `@param` means inventing prose, and deleting one drops
 //! prose the author wrote.
@@ -25,8 +26,8 @@ use rowan::ast::AstNode as _;
 use crate::ast::{RoxygenBlock, RoxygenTag};
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
-    ParamDoc, documented_function, documents_s3_method, has_title, inherits_params,
-    local_topic_members, param_doc,
+    ParamDoc, documented_function, documents_s3_method, has_title, inherits_params, param_doc,
+    topic_members,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -42,38 +43,41 @@ const EXAMPLES: &[Example] = &[Example {
 /// into it, and every name any of their blocks documents with `@param`.
 #[derive(Default)]
 struct TopicParams {
-    formals: Vec<smol_str::SmolStr>,
-    documented: Vec<smol_str::SmolStr>,
+    formals: Vec<String>,
+    documented: Vec<String>,
+}
+
+impl TopicParams {
+    fn contains_formal(&self, name: &str) -> bool {
+        self.formals.iter().any(|formal| formal == name)
+    }
+
+    fn is_documented(&self, name: &str) -> bool {
+        self.documented.iter().any(|doc| doc == name)
+    }
 }
 
 /// The union this block's `@param`s are judged against, or `None` when the
 /// topic is unknowable and coverage must be skipped entirely.
 ///
 /// Unknowable means any of: the block inherits its argument list from another
-/// object; it joins a topic whose owner may sit in another file; or some
-/// member of its topic documents a statement arity cannot classify (a
-/// `setMethod`, an R6 call), whose formals are therefore invisible.
+/// object; it joins a topic someone else owns; or some member of its topic
+/// documents a statement arity cannot classify (a `setMethod`, an R6 call),
+/// whose formals are therefore invisible.
 fn topic_params(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> Option<TopicParams> {
     if inherits_params(block) {
         return None;
     }
-    let members = local_topic_members(block, ctx)?;
+    let members = topic_members(block, ctx)?;
     let mut params = TopicParams::default();
     for member in members {
-        if inherits_params(member) {
+        if member.inherits_params {
             return None;
         }
-        let function = documented_function(member)?;
+        params.formals.extend(member.formals.clone()?);
         params
-            .formals
-            .extend(function.params().into_iter().map(|p| p.name));
-        for section in member.sections() {
-            if let Some(ParamDoc::Named { names, .. }) = param_doc(&section) {
-                params
-                    .documented
-                    .extend(names.into_iter().map(|(name, _)| name));
-            }
-        }
+            .documented
+            .extend(member.documented_params.iter().cloned());
     }
     Some(params)
 }
@@ -103,7 +107,7 @@ impl Rule for RoxygenParam {
          its name or description. Coverage is judged against the generated \
          topic, not the block: `@rdname` and `@describeIn` merge several \
          functions into one `.Rd`, so a block owning a topic is judged against \
-         the union of its file-local siblings' formals. Blocks that inherit \
+         the union of every joiner's formals, anywhere in the package. Blocks that inherit \
          documentation from another object (`@inheritParams`, `@template`, …) \
          or that join a topic owned elsewhere are exempt from the coverage \
          checks, and a titleless S3 method (registered with `S3method()`, so it \
@@ -190,7 +194,7 @@ impl Rule for RoxygenParam {
                             ));
                             continue;
                         }
-                        if judge_coverage && !topic.formals.contains(&name) {
+                        if judge_coverage && !topic.contains_formal(&name) {
                             sink.push(diagnostic(
                                 range,
                                 format!(
@@ -211,7 +215,7 @@ impl Rule for RoxygenParam {
             return;
         }
         for formal in formals {
-            if !documented.contains(&formal.name) && !topic.documented.contains(&formal.name) {
+            if !documented.contains(&formal.name) && !topic.is_documented(&formal.name) {
                 sink.push(diagnostic(
                     formal.name_token.text_range(),
                     format!(
