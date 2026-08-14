@@ -81,6 +81,21 @@ harness = false
 name = "format_edits"
 harness = false
 
+[[bench]]
+name = "profile"
+harness = false
+
+# The profiler's build. `release` is what ships, and it is built for size and
+# speed, not for being observable: no debug info means perf can only resolve
+# what the symbol table happens to keep, and inlined frames vanish entirely.
+# This profile keeps the release codegen and adds back what a profile needs.
+# `scripts/profile.sh` also passes `-Cforce-frame-pointers=yes`, which release
+# codegen omits and without which the call graph collapses to self time.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
+
 [build-dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
 clapdown = "0.2.0"

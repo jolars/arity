@@ -153,6 +153,11 @@ tasks:
     cmds:
       - ./scripts/bench.sh
 
+  profile:
+    desc: 'Profile one phase with perf and print a phase split (opt-in, local; e.g. task profile -- --mode lint --path pkg/R)'
+    cmds:
+      - ./scripts/profile.sh {{.CLI_ARGS}}
+
   bench-parse:
     desc: Benchmark parse + incremental-reparse speed (criterion)
     cmds:

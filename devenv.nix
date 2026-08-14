@@ -25,6 +25,9 @@
     pkgs.wasm-pack
     pkgs.stylua
     pkgs.hyperfine
+    # `scripts/bench.sh` reads hyperfine's JSON export with jq, and silently
+    # falls back to a mean-only shell loop without it.
+    pkgs.jq
     pkgs.yamlfmt
     pkgs.vsce
   ];
