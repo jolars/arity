@@ -415,6 +415,32 @@ pub struct NamespaceInfo {
     /// call — so "nothing calls this name" says nothing about a method being
     /// dead. Tracked apart so `unused-function` can exclude them.
     pub s3_methods: BTreeSet<String>,
+    /// Names `useDynLib()` binds *by enumeration*: every positional argument
+    /// after the DLL name, plus the alias of each `alias = routine` form. These
+    /// are native symbol objects, not R bindings, so nothing in the package's R
+    /// sources defines them.
+    pub dynlib_routines: BTreeSet<String>,
+    /// `Some(fixes)` when a `useDynLib()` declares `.registration = TRUE`. The
+    /// routine names then live in the package's C sources rather than here, so
+    /// this only carries the affixes R wraps each harvested name in — see
+    /// [`crate::project::native`].
+    pub dynlib_registration: Option<DynLibFixes>,
+}
+
+/// The `.fixes` of a `useDynLib(..., .registration = TRUE)`: the prefix and
+/// suffix R puts around every registered routine name when it binds it. Both
+/// empty when `.fixes` is absent.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DynLibFixes {
+    pub prefix: String,
+    pub suffix: String,
+}
+
+impl DynLibFixes {
+    /// `routine` as R binds it in the package namespace.
+    pub fn apply(&self, routine: &str) -> String {
+        format!("{}{routine}{}", self.prefix, self.suffix)
+    }
 }
 
 /// Parse a NAMESPACE file into the exports and imports it declares, expanding
@@ -470,6 +496,7 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
                 // index can enumerate.
                 info.imported_packages.extend(directive.positional());
             }
+            "useDynLib" => parse_use_dyn_lib(directive, &mut info),
             _ => {}
         }
     }
@@ -483,6 +510,61 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
     }
 
     info
+}
+
+/// Fold one `useDynLib(name, ...)` directive into `info`.
+///
+/// The first *positional* argument is the DLL, not a routine. Every later one
+/// names a routine bound under its own name, and `alias = routine` binds the
+/// alias. `.registration` and `.fixes` are options, so they are the two keywords
+/// that do not name a binding.
+fn parse_use_dyn_lib(directive: NamespaceDirective, info: &mut NamespaceInfo) {
+    let mut fixes: Option<DynLibFixes> = None;
+    let mut registration = false;
+    let mut seen_dll = false;
+    for arg in directive.args {
+        match arg.name.as_deref() {
+            Some(".registration") => registration |= is_r_true(&arg.value),
+            Some(".fixes") => fixes = Some(parse_fixes(&arg.value)),
+            Some(alias) => {
+                info.dynlib_routines.insert(alias.to_string());
+            }
+            None if !seen_dll => seen_dll = true,
+            None => {
+                info.dynlib_routines.insert(arg.value);
+            }
+        }
+    }
+    if registration {
+        info.dynlib_registration = Some(fixes.unwrap_or_default());
+    }
+}
+
+/// Whether an R literal spells truth. `parse_args` has already unquoted, so
+/// only the two bare spellings can appear.
+fn is_r_true(value: &str) -> bool {
+    matches!(value.trim(), "TRUE" | "T")
+}
+
+/// Parse a `.fixes` value: a length-1 or length-2 character vector giving the
+/// prefix and suffix. `parse_args` leaves an unquoted `c(...)` call intact, so
+/// the vector form is unwrapped here.
+fn parse_fixes(value: &str) -> DynLibFixes {
+    let trimmed = value.trim();
+    let parts: Vec<String> = match trimmed
+        .strip_prefix("c(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        Some(inner) => split_top_level_commas(inner)
+            .into_iter()
+            .map(|part| unquote(part).unwrap_or_default())
+            .collect(),
+        None => vec![trimmed.to_string()],
+    };
+    DynLibFixes {
+        prefix: parts.first().cloned().unwrap_or_default(),
+        suffix: parts.get(1).cloned().unwrap_or_default(),
+    }
 }
 
 /// Resolve the set of exported names from a NAMESPACE file, expanding
@@ -549,6 +631,7 @@ const RECOGNIZED: &[&str] = &[
     "importMethodsFrom",
     "import",
     "S3method",
+    "useDynLib",
 ];
 
 impl<'a> NamespaceDirectives<'a> {
@@ -1024,6 +1107,65 @@ mod tests {
             info.imported_names,
             ["filter".to_string(), "select".to_string()].into()
         );
+    }
+
+    #[test]
+    fn use_dyn_lib_enumerates_explicit_routines() {
+        // The first positional argument is the DLL, every later one a routine.
+        let info = parse_namespace("useDynLib(backports, dotsElt, dotsLength)\n", &[]);
+        assert_eq!(
+            info.dynlib_routines,
+            ["dotsElt".to_string(), "dotsLength".to_string()].into()
+        );
+        assert!(info.dynlib_registration.is_none());
+    }
+
+    #[test]
+    fn use_dyn_lib_binds_the_alias_not_the_routine() {
+        let info = parse_namespace("useDynLib(pkg, my_alias = c_routine)\n", &[]);
+        assert_eq!(info.dynlib_routines, ["my_alias".to_string()].into());
+    }
+
+    #[test]
+    fn use_dyn_lib_registration_records_its_fixes() {
+        // `.registration`/`.fixes` are options, so neither names a binding, and
+        // the routines themselves live in the package's C sources.
+        let info = parse_namespace(
+            "useDynLib(bit, .registration = TRUE, .fixes = \"C_\")\n",
+            &[],
+        );
+        assert!(info.dynlib_routines.is_empty());
+        let fixes = info.dynlib_registration.expect("registration declared");
+        assert_eq!(fixes.apply("foo"), "C_foo");
+
+        // Length-2 `.fixes` gives a suffix too, and an unspaced `=` is legal.
+        let info = parse_namespace(
+            "useDynLib(pkg,.registration=TRUE,.fixes=c(\"C_\",\"_\"))",
+            &[],
+        );
+        let fixes = info.dynlib_registration.expect("registration declared");
+        assert_eq!(fixes.apply("foo"), "C_foo_");
+
+        // Without `.fixes` the registered name is bound verbatim.
+        let info = parse_namespace("useDynLib(rlang, .registration = TRUE)\n", &[]);
+        assert_eq!(
+            info.dynlib_registration.expect("registration").apply("ffi"),
+            "ffi"
+        );
+    }
+
+    #[test]
+    fn use_dyn_lib_without_registration_declares_none() {
+        // A plain `useDynLib(pkg)` loads the library without binding any name,
+        // and an explicit `FALSE` is not a declaration either.
+        assert!(
+            parse_namespace("useDynLib(caret)\n", &[])
+                .dynlib_registration
+                .is_none()
+        );
+        let info = parse_namespace("useDynLib(pkg, .registration = FALSE)\n", &[]);
+        assert!(info.dynlib_registration.is_none());
+        assert!(info.dynlib_routines.is_empty());
     }
 
     /// The S4 forms reference their package exactly as `importFrom` does. An S4

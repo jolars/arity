@@ -275,11 +275,14 @@ impl ProjectScope {
     /// root to its NAMESPACE file contents, when present. `package_complete` maps
     /// a package root to whether its analyzed member set is complete (see
     /// [`ProjectScope::package_complete`]); a root absent from the map is treated
-    /// as complete.
+    /// as complete. `native_routines` maps a package root to the names its
+    /// `useDynLib()` binds ([`crate::project::native`]); resolved by the caller,
+    /// which is what keeps this builder pure.
     pub fn build(
         files: &[FileFacts],
         namespaces: &HashMap<PathBuf, String>,
         package_complete: &HashMap<PathBuf, bool>,
+        native_routines: &HashMap<PathBuf, BTreeSet<String>>,
     ) -> Self {
         let by_path: HashMap<&Path, &FileFacts> =
             files.iter().map(|f| (f.path.as_path(), f)).collect();
@@ -451,6 +454,21 @@ impl ProjectScope {
                         .entry(path)
                         .or_default()
                         .extend(wildcards.iter().cloned());
+                }
+            }
+        }
+
+        // `useDynLib()` binds native routines in the package namespace, so a
+        // reference to one resolves anywhere in the package — not only in a
+        // `.Call()` head. Nothing in the R sources defines them, which is why
+        // they are injected here rather than reached through `sees`.
+        for (root, routines) in native_routines {
+            let Some(members) = package_members.get(root.as_path()) else {
+                continue;
+            };
+            for member in members {
+                if let Some(vis) = visible.get_mut(*member) {
+                    vis.extend(routines.iter().cloned());
                 }
             }
         }
@@ -858,7 +876,7 @@ mod tests {
 
     /// Build a scope with no NAMESPACE data.
     fn build_scope(files: &[FileFacts]) -> ProjectScope {
-        ProjectScope::build(files, &HashMap::new(), &HashMap::new())
+        ProjectScope::build(files, &HashMap::new(), &HashMap::new(), &HashMap::new())
     }
 
     #[test]
@@ -1054,7 +1072,7 @@ mod tests {
         // `foo` is exported, so it isn't unused even though no file reads it.
         let files = [facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "export(foo)\n")]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new());
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
         assert!(
             scope
                 .for_file(Path::new("/pkg/R/a.R"))
@@ -1066,7 +1084,7 @@ mod tests {
     fn namespace_import_from_resolves_name() {
         let files = [facts("/pkg/R/a.R", &[], &["filter"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\n")]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new());
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
         let a = scope.for_file(Path::new("/pkg/R/a.R"));
         assert!(a.resolves("filter"));
         assert!(!a.resolution_incomplete);
@@ -1079,7 +1097,7 @@ mod tests {
         // library index, which this pure builder deliberately does not have.
         let files = [facts("/pkg/R/a.R", &[], &["abort"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "import(rlang)\n")]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new());
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
         let a = scope.for_file(Path::new("/pkg/R/a.R"));
         assert_eq!(
             a.wildcard_import_packages(),

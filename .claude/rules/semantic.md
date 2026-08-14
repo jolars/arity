@@ -51,6 +51,13 @@ Two layers, deliberately separate: `src/semantic/` is **strictly single-file**,
 - **Only `Depends` attaches.** `Imports` is reachable solely through `pkg::` or
   a NAMESPACE `importFrom`/`import`; resolving its exports as bare names would
   accept code that fails under `R CMD check`.
+- `native.rs` resolves what `useDynLib()` binds — the routines a package
+  registers in its C sources, which no R source defines. It is the one place
+  that reads `src/`, and only under `.registration = TRUE`. **Harvest, never
+  blanket-suppress:** "this package registers routines, so stop reporting
+  unresolved names" would silence `undefined-symbol` across the whole package.
+  A shape the scanner misses keeps its false positives; that is the right
+  direction.
 - `ProjectScope::build` is **pure** and must stay so. It *records* a wholesale
   `import(pkg)` rather than deciding it: "can we enumerate pkg's exports" needs
   the `LibraryIndex`, so `external_resolution` decides. An index lookup put back

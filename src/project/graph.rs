@@ -31,6 +31,7 @@ use crate::incremental::{
 use crate::project::classes::ClassSystem;
 use crate::project::description::DescriptionFacts;
 use crate::project::exports::DefKind;
+use crate::project::native::dynlib_bound_names;
 use crate::project::roxygen::TopicMember;
 use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
@@ -83,6 +84,13 @@ pub struct PackageInfo {
     /// `Collate` edit then reaches the graph through the backdating firewall,
     /// while an unrelated `DESCRIPTION` edit does not reach it at all.
     pub dir_sources: BTreeSet<String>,
+    /// The names this root's `useDynLib()` directives bind, resolved against
+    /// `src/` where the NAMESPACE only declares `.registration = TRUE`
+    /// ([`dynlib_bound_names`]). Empty for a package with no `useDynLib()`.
+    ///
+    /// Discovered here rather than derived in [`project_graph`] because it needs
+    /// disk, which that query must not touch.
+    pub native_routines: BTreeSet<String>,
 }
 
 /// One package root's *resolution-relevant* declarations, frozen into the
@@ -107,10 +115,11 @@ pub struct PackageDeclarations {
 
 /// A project as an interned membership snapshot: the set of member files, the
 /// NAMESPACE texts of the packages they belong to, each package root's
-/// collation/completeness verdict, and its declared dependencies. Interning
-/// dedups by value, so an unchanged membership yields the same id across lints
-/// (a body edit doesn't change the set) and the graph memo survives. Callers
-/// must sort every field for a stable, dedup-friendly key.
+/// collation/completeness verdict, its declared dependencies, and the native
+/// routines it binds. Interning dedups by value, so an unchanged membership
+/// yields the same id across lints (a body edit doesn't change the set) and the
+/// graph memo survives. Callers must sort every field for a stable,
+/// dedup-friendly key.
 #[salsa::interned]
 pub struct Project<'db> {
     #[returns(ref)]
@@ -121,6 +130,12 @@ pub struct Project<'db> {
     pub collations: Vec<PackageCollation>,
     #[returns(ref)]
     pub declarations: Vec<PackageDeclarations>,
+    /// Per package root, the names its `useDynLib()` binds
+    /// ([`PackageInfo::native_routines`]). Disk-derived like `namespaces`, and
+    /// frozen here for the same reason: [`project_graph`] resolves against them
+    /// without touching disk.
+    #[returns(ref)]
+    pub native_routines: Vec<(PathBuf, BTreeSet<String>)>,
 }
 
 /// One file's owned view of its project: the names it can see, the names of its
@@ -179,10 +194,17 @@ pub fn discover_packages(member_paths: &[PathBuf]) -> Vec<PackageInfo> {
         .collect();
     roots
         .into_iter()
-        .map(|root| PackageInfo {
-            namespace: std::fs::read_to_string(root.join("NAMESPACE")).ok(),
-            dir_sources: r_dir_sources(&root),
-            root,
+        .map(|root| {
+            let namespace = std::fs::read_to_string(root.join("NAMESPACE")).ok();
+            PackageInfo {
+                native_routines: namespace
+                    .as_deref()
+                    .map(|text| dynlib_bound_names(text, &root))
+                    .unwrap_or_default(),
+                namespace,
+                dir_sources: r_dir_sources(&root),
+                root,
+            }
         })
         .collect()
 }
@@ -311,6 +333,20 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
         })
         .collect();
     namespaces.sort_by(|a, b| a.0.cmp(&b.0));
+    // Same restriction and ordering as `namespaces` — a root only enters the
+    // key when it has an analyzed member. Roots that bind nothing are dropped so
+    // the common (no `useDynLib`) case leaves the key untouched.
+    let mut native_routines: Vec<(PathBuf, BTreeSet<String>)> = analyzed
+        .keys()
+        .filter_map(|root| {
+            by_root
+                .get(root)
+                .map(|info| info.native_routines.clone())
+                .filter(|routines| !routines.is_empty())
+                .map(|routines| (root.clone(), routines))
+        })
+        .collect();
+    native_routines.sort_by(|a, b| a.0.cmp(&b.0));
     // The expected source set is the `R/` listing (from the graph input) union
     // the `Collate:` entries (from the DESCRIPTION facts) — union, not
     // intersection, so neither a stale `Collate:` nor an unlisted file can
@@ -348,7 +384,14 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
         .collect();
     declarations.sort_by(|a, b| a.root.cmp(&b.root));
 
-    Project::new(db, members, namespaces, collations, declarations)
+    Project::new(
+        db,
+        members,
+        namespaces,
+        collations,
+        declarations,
+        native_routines,
+    )
 }
 
 /// The [`DescriptionFacts`] of the package enclosing `path`, from the tracked
@@ -524,7 +567,9 @@ pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
         .iter()
         .map(|c| (c.root.clone(), c.complete))
         .collect();
-    ProjectScope::build(&facts, &namespaces, &package_complete)
+    let native_routines: HashMap<PathBuf, BTreeSet<String>> =
+        project.native_routines(db).iter().cloned().collect();
+    ProjectScope::build(&facts, &namespaces, &package_complete, &native_routines)
 }
 
 /// One file's [`Visibility`] within `project`. Depends only on [`project_graph`]

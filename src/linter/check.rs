@@ -452,9 +452,17 @@ fn intern_project<'db>(
     namespaces: Vec<(PathBuf, String)>,
     collations: Vec<PackageCollation>,
     declarations: Vec<PackageDeclarations>,
+    native_routines: Vec<(PathBuf, BTreeSet<String>)>,
 ) -> Project<'db> {
     members.sort_by(|a, b| a.path.cmp(&b.path));
-    Project::new(db, members, namespaces, collations, declarations)
+    Project::new(
+        db,
+        members,
+        namespaces,
+        collations,
+        declarations,
+        native_routines,
+    )
 }
 
 /// Run the resolved rules against a cleanly-parsed file, using the cached parse
@@ -538,6 +546,9 @@ pub struct PreparedProject {
     /// Per package root, the dependencies its `DESCRIPTION` declares, sorted by
     /// root. Snapshotted from the interned [`Project`] like `collations`.
     declarations: Vec<PackageDeclarations>,
+    /// Per package root, the names its `useDynLib()` binds, sorted by root.
+    /// Snapshotted from the interned [`Project`] like `collations`.
+    native_routines: Vec<(PathBuf, BTreeSet<String>)>,
 }
 
 /// Write-phase of cross-file linting (needs `&mut db`). Discovers the enclosing
@@ -573,6 +584,7 @@ pub fn prepare_document_in_project(
     let namespaces = project.namespaces(&*db).clone();
     let collations = project.collations(&*db).clone();
     let declarations = project.declarations(&*db).clone();
+    let native_routines = project.native_routines(&*db).clone();
 
     Some(PreparedProject {
         active,
@@ -581,6 +593,7 @@ pub fn prepare_document_in_project(
         namespaces,
         collations,
         declarations,
+        native_routines,
     })
 }
 
@@ -690,6 +703,7 @@ pub fn analyze_prepared(
         prepared.namespaces.clone(),
         prepared.collations.clone(),
         prepared.declarations.clone(),
+        prepared.native_routines.clone(),
     );
     let active_path = analysis
         .file_path(prepared.active)

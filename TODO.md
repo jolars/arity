@@ -60,15 +60,27 @@
 
 ### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
 
-- [ ] **`useDynLib(pkg, .registration = TRUE)` binds native routines arity cannot
-  enumerate.** They live in the C sources, so a reference outside a `.Call`
-  head — passed as a value (`capture_arg = ffi_enquo`) or compared
-  (`identical(capture_arg, ffi_enquo)`) — is a false positive. ~12 findings in
-  rlang (`R/nse-defuse.R`, `R/dots.R`). The head-position case is already
-  handled by the `.C`/`.Call`/`.Fortran`/`.External`/`.External2` arm in
-  `semantic/builder.rs`. Either suppress unresolved bare names in a package
-  declaring `.registration = TRUE`, or harvest the routine names from `src/`'s
-  `R_CallMethodDef` table.
+- [x] **`useDynLib()` binds native routines arity could not enumerate.** They
+  live in the C sources, so a reference outside a `.Call` head — passed as a
+  value (`capture_arg = ffi_enquo`) or compared
+  (`identical(capture_arg, ffi_enquo)`) — was a false positive. Closed by
+  *harvesting*, not by suppressing: `src/project/native.rs` reads the
+  `R_CallMethodDef`/`R_CMethodDef`/`R_FortranMethodDef`/`R_ExternalMethodDef`
+  tables out of `src/` (recursively — rlang's is in `src/internal/internal.c`),
+  handling both the string-literal shape and the stringifying `CALLDEF(fn, n)`
+  macro, and `parse_namespace` learned `useDynLib`, so explicitly named routines,
+  `alias = routine`, and `.fixes` all resolve too. Disk-derived in
+  `discover_packages`, frozen into the interned `Project`, folded into each
+  package member's `visible` set by `ProjectScope::build` (which stays pure).
+  Blanket suppression under `.registration = TRUE` was the rejected alternative:
+  it would silence `undefined-symbol` across the whole package. 9 findings
+  dropped in rlang (`R/nse-defuse.R`, `R/hash.R`), none added; harvest verified
+  exact against rlang, checkmate, bit, Matrix, and data.table. Known limits: a
+  registration shape the scanner does not recognize leaves its false positives in
+  place (the reporting direction), and an entry behind `#ifdef` is harvested
+  whether or not this build compiles it (suppress-only). Costs ~7 ms of `src/`
+  I/O per package discovery, and nothing at all for a package with no
+  `useDynLib`.
 
 - [x] **rlang's defusing operators are unquote-aware.** `quo`/`quos`/`expr`/`exprs`
   joined the base four in `quoting_callee_kind` (`semantic/builder.rs`), and the

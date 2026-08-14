@@ -134,7 +134,8 @@ matching `.claude/rules/` file.
   namespace resolution against base R and bundled CRAN symbol lists.
 - **Project layer** (`src/project/`) — the *cross-file* counterpart: the
   `source()` graph, a package's implicit shared namespace, per-file export
-  projection, the S4/R6/reference-class index, wired into salsa by `graph.rs`.
+  projection, the S4/R6/reference-class index, and the native routines
+  `useDynLib()` binds, wired into salsa by `graph.rs`.
 - **Linter** (`src/linter/`) — **purely semantic**; anything `format --check`
   catches belongs to the formatter. 61 rules across seven categories, with
   autofixes, `# arity-lint` suppression, and a generated rule reference. Runs

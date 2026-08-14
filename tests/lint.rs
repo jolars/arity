@@ -1104,6 +1104,176 @@ fn namespace_wholesale_import_suppresses_undefined_symbol() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// useDynLib: native routines bound in the package namespace
+// ---------------------------------------------------------------------------
+
+/// Write a minimal package (DESCRIPTION + NAMESPACE + R/a.R + one `src/` file
+/// per entry, path relative to `src/`) and lint it.
+fn lint_package_with_src(namespace: &str, a_r: &str, src: &[(&str, &str)]) -> LintResult {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), a_r).unwrap();
+    for (name, contents) in src {
+        let path = dir.path().join("src").join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+    check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed")
+}
+
+/// A registration table in the shape `R CMD check`'s `package_native_routine_
+/// registration_skeleton` writes: string-literal entry names.
+const INIT_C: &str = "\
+#include <R_ext/Rdynload.h>
+
+extern SEXP ffi_enquo(SEXP, SEXP);
+
+static const R_CallMethodDef CallEntries[] = {
+    {\"ffi_enquo\", (DL_FUNC) &ffi_enquo, 2},
+    {NULL, NULL, 0}
+};
+
+void R_init_testpkg(DllInfo *dll) {
+    R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
+}
+";
+
+#[test]
+fn registered_native_routine_resolves_outside_call_head() {
+    // `useDynLib(pkg, .registration = TRUE)` binds every routine of the
+    // registration table in the package namespace, so passing one around as a
+    // value is a read of a real binding, not an undefined symbol.
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE)\nexport(f)\n",
+        "f <- function(x) identical(x, ffi_enquo)\n",
+        &[("init.c", INIT_C)],
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn registration_does_not_silence_unrelated_undefined_symbol() {
+    // Harvesting the table is precise, so it must not become a blanket
+    // suppression: a typo in the same package is still a finding.
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE)\nexport(f)\n",
+        "f <- function(x) lenth(x)\n",
+        &[("init.c", INIT_C)],
+    );
+    assert!(
+        rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn registered_native_routine_honors_fixes_prefix() {
+    // `.fixes` renames every registered routine on the R side; the bare C name
+    // is *not* bound.
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE, .fixes = \"C_\")\nexport(f)\n",
+        "f <- function(x) identical(x, C_ffi_enquo)\n",
+        &[("init.c", INIT_C)],
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+
+    let bare = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE, .fixes = \"C_\")\nexport(f)\n",
+        "f <- function(x) identical(x, ffi_enquo)\n",
+        &[("init.c", INIT_C)],
+    );
+    assert!(
+        rules_for(&bare, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&bare, "a.R")
+    );
+}
+
+#[test]
+fn explicitly_named_dynlib_routine_resolves_without_c_sources() {
+    // `useDynLib(pkg, routine)` enumerates the binding in the NAMESPACE itself,
+    // so no `src/` scan is involved.
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, dotsElt)\nexport(f)\n",
+        "f <- function(x) identical(x, dotsElt)\n",
+        &[],
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn aliased_dynlib_routine_binds_the_alias() {
+    // `useDynLib(pkg, alias = routine)` binds `alias`, not `routine`.
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, my_alias = ffi_enquo)\nexport(f)\n",
+        "f <- function(x) identical(x, my_alias)\n",
+        &[],
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn registration_table_found_in_src_subdirectory() {
+    // rlang keeps its table in `src/internal/internal.c`, so the harvest cannot
+    // stop at the top level of `src/`.
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE)\nexport(f)\n",
+        "f <- function(x) identical(x, ffi_enquo)\n",
+        &[("internal/internal.c", INIT_C)],
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
+#[test]
+fn registration_table_written_with_a_macro_resolves() {
+    // The other ubiquitous table shape stringifies its entries through a macro
+    // (`#define CALLDEF(name, n) {#name, (DL_FUNC) &name, n}`).
+    let src = "\
+#include <R_ext/Rdynload.h>
+#define CALLDEF(name, n)  {#name, (DL_FUNC) &name, n}
+
+static R_CallMethodDef CallEntries[] = {
+    CALLDEF(R_all0, 1),
+    {NULL, NULL, 0}
+};
+";
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE)\nexport(f)\n",
+        "f <- function(x) identical(x, R_all0)\n",
+        &[("init.c", src)],
+    );
+    assert!(
+        !rules_for(&result, "a.R").contains(&"undefined-symbol"),
+        "a.R: {:?}",
+        rules_for(&result, "a.R")
+    );
+}
+
 #[test]
 fn project_aware_document_resolves_cross_file() {
     // The LSP entry: linting b.R (live buffer) resolves `foo` from a sibling

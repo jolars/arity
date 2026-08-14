@@ -450,7 +450,7 @@ fn project_ab(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project
             package_root: Some(PathBuf::from("/pkg")),
         },
     ];
-    Project::new(db, members, Vec::new(), Vec::new(), Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new(), Vec::new(), Vec::new())
 }
 
 /// A two-script project where `a.R` sources `b.R`. No package root, so the only
@@ -475,7 +475,7 @@ fn project_scripts(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Pr
             package_root: None,
         },
     ];
-    Project::new(db, members, Vec::new(), Vec::new(), Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new(), Vec::new(), Vec::new())
 }
 
 #[test]
@@ -1257,7 +1257,7 @@ fn project_one<'db>(db: &'db IncrementalDatabase, file: SourceFile, path: &str) 
         path: PathBuf::from(path),
         package_root: None,
     }];
-    Project::new(db, members, Vec::new(), Vec::new(), Vec::new())
+    Project::new(db, members, Vec::new(), Vec::new(), Vec::new(), Vec::new())
 }
 
 /// A harvested package index for `name` exporting `exports`.
