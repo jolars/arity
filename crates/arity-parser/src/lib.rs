@@ -21,5 +21,6 @@
 
 pub mod ast;
 pub mod dcf;
+pub mod directive;
 pub mod parser;
 pub mod syntax;
