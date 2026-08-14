@@ -683,6 +683,19 @@ mod tests {
         assert_eq!(unused, vec!["x"]);
     }
 
+    /// A closure body's read carries no ordering relative to the enclosing
+    /// frame's assignments: the closure runs when it is *called*, so any of the
+    /// same-name bindings there may be the one it sees. Marking only the first
+    /// made every later reassignment look unread.
+    #[test]
+    fn closure_read_marks_every_enclosing_reassignment() {
+        let m = model_of("fit <- 1\nprint(fit)\n\nfit <- 2\nh <- function() print(fit)\nh()\n");
+        assert!(
+            !unused_names(&m).contains("fit"),
+            "`fit <- 2` is what `h()` reads; it is not unused"
+        );
+    }
+
     #[test]
     fn dotted_unused_binding_skipped() {
         let m = model_of(".x <- 1");

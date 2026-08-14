@@ -2509,6 +2509,15 @@ fn assignment_in_condition_emits_safe_eq_fix() {
 }
 
 #[test]
+fn unused_binding_sees_a_closure_read_of_a_reassigned_name() {
+    // `h` runs when it is *called*, so the read reaches whichever `fit` is live
+    // then — here the second one. Deleting it would change what `h()` prints.
+    let src = "fit <- 1\nprint(fit)\n\nfit <- 2\nh <- function() print(fit)\nh()\n";
+    let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+    assert!(!rules.contains(&"unused-binding"), "got: {rules:?}");
+}
+
+#[test]
 fn unused_binding_emits_unsafe_deletion_fix() {
     let src = "x <- 1\nprint(2)\n";
     let diags = diagnostics(src);

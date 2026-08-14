@@ -1560,7 +1560,11 @@ fn resolve_reads(model: &mut SemanticModel) {
 /// Past the frame boundary lie *enclosing* functions, reached only through a
 /// closure, whose body runs when the closure is later called. Textual position
 /// carries no ordering there (the closure can read a binding defined after it),
-/// so the first match suffices.
+/// so *every* same-name binding in the innermost enclosing scope that has one is
+/// a candidate and all are marked — the same conservatism the in-frame branch
+/// applies to a reassignment. Marking only the first left every later
+/// reassignment looking unread, even when it is the one the closure actually
+/// sees.
 fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
     let mut current = Some(ident.scope);
     // Whether the scope under inspection still belongs to the read's own frame.
@@ -1600,8 +1604,11 @@ fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
             if !preceding.is_empty() {
                 return preceding;
             }
-        } else if let Some(id) = matches().next() {
-            return vec![id];
+        } else {
+            let candidates: Vec<BindingId> = matches().collect();
+            if !candidates.is_empty() {
+                return candidates;
+            }
         }
 
         // The frame ends at the first `function`/file scope: its parent (if any)
