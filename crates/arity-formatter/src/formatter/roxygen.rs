@@ -173,11 +173,20 @@ fn is_block_macro(node: &SyntaxNode) -> bool {
 /// Emit a block Rd macro as atomic, marker-preserving passthrough: its own source
 /// lines, each on its own output line, flush at `#'`. The node's text already
 /// carries the `#'` markers (the opening one and the continuations) and the
-/// in-macro indentation; only the inter-line indentation *before* a continuation
-/// marker is dropped (the formatter recomputes the block's own indent), matching
-/// the fenced-code and air-compatible verbatim treatment of Rd lists. A block
-/// never hangs under a tag: a `SectioningProse` tag carrying a block is laid out
-/// form-2, so the block sits flush beneath the bare `#' @tag` line.
+/// in-macro indentation; the inter-line indentation *before* a continuation marker
+/// is dropped (the formatter recomputes the block's own indent), matching the
+/// fenced-code and air-compatible verbatim treatment of Rd lists. A block never
+/// hangs under a tag: a `SectioningProse` tag carrying a block is laid out form-2,
+/// so the block sits flush beneath the bare `#' @tag` line.
+///
+/// The **opener** line is marker-normalized rather than passed through, so the
+/// indentation the author wrote between that line's `#'` and the `\name{` is
+/// dropped. It is not content — the macro has not opened yet, so nothing renders
+/// it — and keeping it would let the input's layout decide the output (Tenet 1),
+/// splitting sibling `\item`s into two indentations purely by whether each
+/// happened to wrap: a one-line `\item` is an *inline* macro reflowed flush as
+/// prose, while a wrapped one lands here. Interior lines keep their indentation,
+/// which is the block's own visual structure.
 fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
     let text = node.text().to_string();
     // A *mid-prose* opener (`text \preformatted{ …`) has no marker of its own — the
@@ -193,7 +202,7 @@ fn emit_block_macro(items: &mut Vec<Ir>, node: &SyntaxNode) {
             if mid_prose {
                 format!("#' {}", seg.trim_end())
             } else {
-                seg.trim_end().to_string()
+                normalize_marker_text(seg)
             }
         } else {
             seg.trim_start().trim_end().to_string()

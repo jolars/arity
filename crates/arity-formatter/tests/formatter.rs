@@ -153,6 +153,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_loose_in_subset",
         "roxygen_block_passthrough",
         "roxygen_section_block_flush",
+        "roxygen_rd_block_macro_opener_flush",
         "roxygen_rd_verbatim_not_hung",
         "roxygen_section_return_form1",
         "roxygen_section_return_form2",
