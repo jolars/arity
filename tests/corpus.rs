@@ -391,6 +391,12 @@ fn normalize_value(name: &str, value: &str) -> String {
         entries.sort();
         return entries.join(",");
     }
+    if matches!(name, "Collate" | "Collate.windows" | "Collate.unix") {
+        // R reads this field with `scan()` (`tools:::.read_collate_field`),
+        // which strips the quotes the canonical style adds, so only the token
+        // sequence means anything. Order is execution order and survives.
+        return collate_tokens(value);
+    }
     if matches!(name, "Authors@R" | "Roxygen") {
         // R code, laid out by the R formatter. Collapsing whitespace is not
         // enough — it respells an empty argument `,,` as `, ,` — so equality
@@ -402,6 +408,39 @@ fn normalize_value(name: &str, value: &str) -> String {
 
 fn collapse_ws(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The `Collate` entries `scan()` would see, each re-quoted so that a token
+/// boundary the formatter moved cannot hide inside the join.
+fn collate_tokens(value: &str) -> String {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut chars = value.chars().peekable();
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            chars.next();
+            continue;
+        }
+        let mut token = String::new();
+        if ch == '\'' || ch == '"' {
+            chars.next();
+            for next in chars.by_ref() {
+                if next == ch {
+                    break;
+                }
+                token.push(next);
+            }
+        } else {
+            while let Some(&next) = chars.peek() {
+                if next.is_whitespace() {
+                    break;
+                }
+                token.push(next);
+                chars.next();
+            }
+        }
+        tokens.push(format!("{token:?}"));
+    }
+    tokens.join(" ")
 }
 
 fn comment_texts(text: &str) -> Vec<String> {
@@ -468,5 +507,36 @@ fn collect_descriptions(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)
                 .into_owned();
             out.push((key, path));
         }
+    }
+}
+
+#[cfg(test)]
+mod meaning_tests {
+    use super::meaning_changed;
+
+    /// `scan()` is what R reads a `Collate` field with, so it strips the quotes
+    /// the canonical style adds. A sweep that called that a meaning change would
+    /// report every package whose `Collate` was written bare.
+    #[test]
+    fn collate_quoting_is_not_a_meaning_change() {
+        let before = "Package: p\nCollate: b.R a.R\n";
+        let after = "Package: p\nCollate:\n    'b.R'\n    'a.R'\n";
+        assert_eq!(meaning_changed(before, after), None);
+    }
+
+    #[test]
+    fn collate_reordering_is_a_meaning_change() {
+        let before = "Package: p\nCollate: b.R a.R\n";
+        let after = "Package: p\nCollate:\n    'a.R'\n    'b.R'\n";
+        assert!(meaning_changed(before, after).is_some());
+    }
+
+    /// Quote-blindness stops at the field's own class: a quote elsewhere is a
+    /// byte the sweep still guards.
+    #[test]
+    fn quotes_in_other_fields_still_count() {
+        let before = "Package: p\nTitle: a b\n";
+        let after = "Package: p\nTitle: 'a' 'b'\n";
+        assert!(meaning_changed(before, after).is_some());
     }
 }
