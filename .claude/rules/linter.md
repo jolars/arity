@@ -44,14 +44,19 @@ linter against a real R codebase: the `linter-investigation` skill.
 - `Rule::check_suppressions` is the post-pass for facts that only exist after
   every rule has emitted (`outdated-suppression` asks "did this directive match
   anything", which is a fact about the driver's filtering step).
-- The `meta` rules lint arity's own `# arity-ignore` directives rather than R
-  code, reading the parsed list off `RuleContext::suppressions`.
+- The `meta` rules lint arity's own `# arity` directives rather than R code,
+  reading the parsed list off `RuleContext::suppressions`. `misplaced-suppression`
+  asks the **formatter** where a format directive takes effect
+  (`arity_formatter::formatter::directive::is_honored_position`) instead of
+  re-deriving it — a report about behavior must not drift from the behavior.
 
 ## Rule identity
 
 - A rule `id` is stable kebab-case and **user-visible**: it is the
-  `# arity-ignore` target, the reported rule, and the `select`/`ignore` and
-  `[lint.rules.<id>]` key. Renaming one is a breaking change.
+  `# arity-lint skip` target, the reported rule, and the `select`/`ignore` and
+  `[lint.rules.<id>]` key. Renaming one is a breaking change. It must never be
+  one of the directive verbs (`skip`/`skip-file`/`off`/`on`), which sit where a
+  rule ID would go; a test in `tests/lint.rs` guards that.
 - Every rule needs a description and `examples()`. The examples are run through
   the **real linter** to render the docs page, so they are behavior, not prose.
   A rule whose subject is a *package-level* fact is silent on the single-file
@@ -73,6 +78,26 @@ A fix is a **textual edit**, so the bar is **correctness, not formatting**.
   shape** — and still report the finding. That withhold/atom-guard discipline is
   what keeps the current fixes safe.
 - `Safe` fixes apply under `lint --fix`; the rest need `--unsafe-fixes`.
+
+## Directives (`src/linter/suppression.rs`)
+
+`# arity-lint skip|off|on|skip-file [<rule>]`, plus the `# arity` column that
+addresses the formatter too. The grammar is `arity_parser::directive` — shared,
+never re-parsed here; this module only decides what it *means*: where a
+directive attaches and which findings it removes.
+
+- `# arity-ignore`/`# arity-ignore-file` are **deprecated aliases** of
+  `skip`/`skip-file`, tagged `Spelling::Deprecated`. They behave identically;
+  only a rule that rewrites them should look at the tag. Keep them out of docs
+  and examples.
+- **Three scopes, one predicate.** `Coverage::{File, Range, Nothing}` is what
+  `is_suppressed` tests. A lint region is a plain byte range, so an unclosed
+  `off` runs past a closing brace to end of file — unlike the formatter's, which
+  is list-local.
+- **A blanket directive never silences a finding spanned on a directive
+  comment.** Otherwise `blanket-suppression` and `misplaced-suppression` would
+  be unreportable in the very cases they exist for. A directive that *names* a
+  meta rule still silences it — that is how an author says "I know".
 
 ## Config
 

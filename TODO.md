@@ -2,11 +2,14 @@
 
 ## Parser
 
-- [ ] Comment-aware suppression placement edge cases: directives inside
-  `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` need special
-  handling so they attach to `next_arg` instead of the argument list. (Jarl
-  solved this by overriding biome's `place_comment`; arity's
-  next-non-trivia-sibling walk already handles most cases.)
+- [ ] Comment-aware suppression placement edge cases: a **lint** directive
+  inside `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` needs
+  special handling so it attaches to `next_arg` instead of the whole argument
+  list — over-broad rather than inert, so no rule reports it. (Jarl solved this
+  by overriding biome's `place_comment`; arity's next-non-trivia-sibling walk
+  already handles most cases.) The **format** half of this is closed: the
+  formatter acts on statement lists only, and `misplaced-suppression` reports a
+  format directive that lands anywhere else.
 - [ ] Give the test-only Rd projector (`src/roxygen/project_rd/section.rs`
   `block_md`) a package-wide markdown default, so oracle cases from
   markdown-first packages become representable without a per-block `@md`. The
@@ -29,7 +32,27 @@
 
 - [ ] Tribbles
 
+- [ ] Report an **outdated `# arity-format` directive** — one whose marked span
+  the formatter would not have changed anyway. It is a `format --check` fact,
+  not a semantic one, so it belongs to the formatter, not to
+  `outdated-suppression`: computing it means formatting the span and comparing,
+  which the linter must not do.
+
+- [ ] Honor `# arity-format skip` and `off`/`on` in a `DESCRIPTION`. Only
+  `skip-file` works there today; the other verbs need the field-class planner
+  (`formatter/description/plan.rs`) to learn to hand a field's lines back
+  verbatim. `misplaced-suppression` does not yet report the ones that are inert
+  there.
+
 ## Linter
+
+- [ ] Add a rule that flags the **deprecated `# arity-ignore` spellings** and
+  rewrites them to `# arity-lint skip` / `# arity-lint skip-file`. Both still
+  parse and behave identically (`Spelling::Deprecated` on the parsed directive
+  is exactly the hook), so this is a migration aid, not a correctness fix: it
+  wants a `Safe` autofix over the prefix alone, leaving the rule ID and the
+  author's reason untouched. Once it has been out for a release or two, the
+  aliases can go.
 
 ### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
 

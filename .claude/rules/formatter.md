@@ -58,6 +58,25 @@ tidyverse R style guide (vendored in `style/`, untracked).
   first: a lone comment line is a fixed point of both, and a cross-grammar hit
   would report a dirty `DESCRIPTION` clean.
 
+## Directives (`formatter/directive.rs`)
+
+`# arity-format skip` / `off`…`on` / `skip-file` (and the `# arity` forms) are
+the one place the engine declines to decide layout. Grammar in
+`arity_parser::directive`, shared with the linter — never re-parse it here.
+
+- **Byte for byte.** A skipped span is spliced from the source with its own
+  column: `Ir::Skipped` clears the pending indent before writing. Emitting the
+  structural indent instead would be the formatter deciding layout in the one
+  place it was told not to. Keep `Ir::Skipped` distinct from `Ir::verbatim` —
+  the latter is the comment/candidate bridge and must not grow into an escape
+  hatch (see "Engine shape" above).
+- **Statement lists only.** Honored in the three sequencers (`ir_statements`,
+  `ir_block_statements`, `ir_block_expr_with_prefixed_comments`), which is why
+  regions are list-local. `is_honored_position` is `pub` because the linter's
+  `misplaced-suppression` reports exactly what this predicate denies.
+- **`skip-file` short-circuits `format_node`** before anything else, returning
+  the source unchanged — line ending included. `format_range` returns `None`.
+
 ## `DESCRIPTION`
 
 `formatter/description/` formats the *other* grammar. It reuses none of the
@@ -73,7 +92,7 @@ first-fit, not the engine's all-or-nothing group.
   defensible: an unrecognized field's value is identical to `read.dcf`.
 - **Comments attach forward**, to the *next* field, matching
   `next_meaningful_dcf_sibling` in the linter's suppression map. Moving one
-  relative to its anchor would silently retarget a `# arity-ignore`.
+  relative to its anchor would silently retarget a directive.
 - **Refuse rather than guess.** Duplicate fields, multiple records, whitespace
   before a colon, a non-UTF-8 `Encoding`: each is a case where restyling could
   change what R reads. A refusal is not an error.

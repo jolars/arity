@@ -26,3 +26,4 @@ enable = true
 # URL working.
 [output.html.redirect]
 "/reference/benchmarks.html" = "../guide/performance.html"
+"/reference/suppression.html" = "directives.html"
