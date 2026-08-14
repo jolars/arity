@@ -7,6 +7,7 @@ paths:
   - "src/bench_docs.rs"
   - "benches/**/*"
   - "scripts/bench.sh"
+  - "scripts/profile.sh"
   - "tests/rule_docs.rs"
   - "tests/benchmarks_docs.rs"
 ---
@@ -59,3 +60,22 @@ sitemap entry. `.github/workflows/docs.yml` deploys to GitHub Pages.
 - `task bench-parse` (criterion) is the right tool for parser-level work.
 - `src/bench_docs.rs`'s renderer is deliberately tool-generic: adding a
   comparison tool to the artifact needs no code change.
+
+## Profiles: local observations, never artifacts
+
+`task profile` (`scripts/profile.sh`) samples `benches/profile.rs` with perf and
+prints a phase split plus inclusive and self-time lists. Unlike `task bench` it
+writes **nothing tracked** — everything lands under `target/profile/`, because a
+profile describes one machine on one day.
+
+Two settings there are load-bearing and easy to lose by hand-rolling a perf
+invocation: `-Cforce-frame-pointers=yes` with `--call-graph fp` (release codegen
+omits frame pointers, and without them every inclusive view silently collapses
+into self time), and `[profile.profiling]` in the root `Cargo.toml`, which adds
+the debug info `release` does not carry. `benches/profile.rs` also sets the
+mimalloc global allocator, as `src/main.rs` does: under glibc's malloc the same
+profile attributes ~4x as much time to allocator symbols, i.e. it profiles a
+program arity does not ship.
+
+The `perf-investigation` skill carries the workflow and the measured phase
+tables.

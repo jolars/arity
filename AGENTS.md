@@ -104,8 +104,8 @@ All commands honor an `arity.toml` found by an ancestor walk (`--config` forces
 one, `--no-config` ignores); the repo's own `arity.toml` dogfoods that path and
 documents the defaults. `task <name>` (`Taskfile.yml`) wraps the workflows:
 `lint`, `format`, `test`, `audit`, `deny`, `docs-gen`, `docs-build`,
-`docs-preview`, `air-compat`, `corpus`, `bench`, `bench-parse`, and the
-`roxygen-*` oracle and projector tasks. `task --list` shows them all.
+`docs-preview`, `air-compat`, `corpus`, `bench`, `bench-parse`, `profile`, and
+the `roxygen-*` oracle and projector tasks. `task --list` shows them all.
 
 **Logging is currently inert**: `env_logger` is never initialized and the
 workspace has three log sites in total, so `RUST_LOG` has no effect and
@@ -169,8 +169,9 @@ matching `.claude/rules/` file.
 - **Semantics stay static** — no R evaluation anywhere in the pipeline.
 - Dependency changes must stay clean under `cargo-audit` and `cargo-deny`
   (`deny.toml`).
-- Speed is **measured, not asserted**: benchmarks are opt-in, local, and never a
-  gate (`.claude/rules/docs.md`).
+- Speed is **measured, not asserted**: benchmarks and profiles are opt-in,
+  local, and never a gate (`.claude/rules/docs.md`). `task profile` samples one
+  phase with perf; `task bench` is the published comparison.
 
 ## Commits and versioning
 
@@ -211,7 +212,9 @@ fixture case or snapshot) before touching the fix. **Run
 
 Skills for the recurring workflows: `add-lint-rule` (the full sequence for a new
 rule), `linter-investigation` (triage the linter against a real R codebase),
-`roxygen-parity` (close a roxygen2 gap), `smoke-test-triage`.
+`roxygen-parity` (close a roxygen2 gap), `smoke-test-triage`,
+`perf-investigation` (profile a phase and recover wall time without changing
+behavior).
 
 ## Reference-only directories (not part of the build, untracked)
 
