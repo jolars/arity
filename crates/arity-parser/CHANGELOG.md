@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/jolars/arity/compare/arity-parser-v0.4.0...arity-parser-v0.5.0) (2026-08-14)
+
+### Breaking changes
+- **deps:** bump `rowan` to 0.17 ([`64ad43b`](https://github.com/jolars/arity/commit/64ad43be2125e8713e0656307d094a8e0a0601a4))
+
+### Features
+- **parser:** record a directive's prefix range ([`72d8536`](https://github.com/jolars/arity/commit/72d853656683116b4f5716c67dfc805ec76ebe3e))
+- **parser:** add the shared arity directive grammar ([`39651b0`](https://github.com/jolars/arity/commit/39651b0789e6bd6de24fcc741d24077cb79e3902))
+- **ast:** add `RoxygenTag::value_text` ([`5b35b6d`](https://github.com/jolars/arity/commit/5b35b6dd190c9a41cd4f0cd2dbbe2b28fe7ceb09))
+- **parser:** re-export the dependency-field helpers from dcf ([`fbb8183`](https://github.com/jolars/arity/commit/fbb8183efa0bfd4140b3b82ad40049514d86b6dc))
+- **linter:** add a rule trait for the DCF grammar ([`f3779d5`](https://github.com/jolars/arity/commit/f3779d50de5052a0985bb9bd0e7dac8adbeb6565))
+- **dcf:** parse structured dependency entries ([`e5ee844`](https://github.com/jolars/arity/commit/e5ee8448186e949c14fd8839816846b2be9b935d))
+- **parser:** add a lossless DCF CST parser ([`42ca268`](https://github.com/jolars/arity/commit/42ca26849d41bff20c8e4189c2a73b9ad9a166a1))
+
 ## [0.4.0](https://github.com/jolars/arity/compare/arity-parser-v0.3.0...arity-parser-v0.4.0) (2026-08-11)
 
 ### Features

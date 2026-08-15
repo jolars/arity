@@ -1,6 +1,6 @@
 [package]
 name = "arity-formatter"
-version = "0.3.1"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 readme = "README.md"
@@ -15,7 +15,7 @@ keywords = ["r", "formatter", "tidyverse"]
 categories = ["development-tools", "text-processing"]
 
 [dependencies]
-arity-parser = { path = "../arity-parser", version = "0.4.0" }
+arity-parser = { path = "../arity-parser", version = "0.5.0" }
 rowan = "0.17.0"
 schemars = { version = "1.2.2", optional = true }
 serde = { version = "1.0.229", features = ["derive"], optional = true }
